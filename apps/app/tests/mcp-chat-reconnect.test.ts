@@ -64,7 +64,7 @@ describe("chat MCP reconnect completion", () => {
       isScopeCurrent: () => false,
       timeoutMs: 10,
       intervalMs: 1,
-    })).rejects.toThrow("active OpenWork Cloud account changed")
+    })).rejects.toThrow("active Micx Cloud account changed")
   })
 
   test("times out without claiming a stale connected account was repaired", async () => {

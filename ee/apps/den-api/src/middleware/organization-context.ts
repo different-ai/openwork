@@ -1,4 +1,4 @@
-import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
+import { normalizeDenTypeId } from "@micx-ee/utils/typeid"
 import type { MiddlewareHandler } from "hono"
 import { getApiKeyScopedOrganizationId, isScopedApiKeyForOrganization } from "../api-keys.js"
 import { getOrganizationContextForUser, resolveUserOrganizations, type OrganizationContext } from "../orgs.js"

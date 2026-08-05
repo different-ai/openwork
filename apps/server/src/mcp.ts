@@ -1,5 +1,5 @@
 import { minimatch } from "minimatch";
-import { resolveGlobalOpencodeConfigPath } from "@openwork/paths";
+import { resolveGlobalOpencodeConfigPath } from "@micx/paths";
 import type { McpItem, ServerConfig } from "./types.js";
 import { sanitizeDiagnosticString } from "./diagnostic-sanitizer.js";
 import { readJsoncFile } from "./jsonc.js";
@@ -23,9 +23,9 @@ export type McpToolDeny = {
 
 type McpToolAllow = McpToolDeny;
 
-const OPENWORK_CLOUD_DIAGNOSTIC_TOOL_IDS = [
-  "openwork-cloud_search_capabilities",
-  "openwork-cloud_execute_capability",
+const MICX_CLOUD_DIAGNOSTIC_TOOL_IDS = [
+  "micx-cloud_search_capabilities",
+  "micx-cloud_execute_capability",
 ];
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -73,7 +73,7 @@ function getToolIdsForDiagnostics(name: string, toolIds: string[]): string[] {
 }
 
 function diagnosticToolIdsForMcp(name: string): string[] {
-  return name === "openwork-cloud" ? OPENWORK_CLOUD_DIAGNOSTIC_TOOL_IDS : [];
+  return name === "micx-cloud" ? MICX_CLOUD_DIAGNOSTIC_TOOL_IDS : [];
 }
 
 function permissionCandidates(name: string, toolId: string): string[] {
@@ -471,7 +471,7 @@ function deniedToolIds(
 
 function isMcpDisabledByTools(config: Record<string, unknown>, name: string): boolean {
   const sanitizedName = name.replace(/[^a-zA-Z0-9_-]/g, "_");
-  return deniedToolIds([config], "", [`${sanitizedName}___openwork_mcp_probe__`]).length > 0;
+  return deniedToolIds([config], "", [`${sanitizedName}___micx_mcp_probe__`]).length > 0;
 }
 
 export async function listMcp(serverConfig: ServerConfig, workspaceId: string, workspaceRoot: string): Promise<McpItem[]> {
@@ -584,7 +584,7 @@ export async function listMcpFromRuntimeSnapshot(
 /**
  * Diagnostics-only passive inventory. It returns every configured layer and
  * collision metadata without claiming which entry is effective: OpenCode's
- * static config merge and OpenWork's later dynamic MCP registration can make
+ * static config merge and Micx's later dynamic MCP registration can make
  * that answer lifecycle-dependent, and observing it would wake a cold engine.
  */
 export async function inspectMcpLayersFromRuntimeSnapshot(

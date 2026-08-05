@@ -33,7 +33,7 @@ describe("mcpAuthorizationPendingDocument", () => {
     expect(document).toContain("Connect your account")
     expect(document).toContain("preparing the secure provider sign-in")
     expect(document).toContain("Keep this window open")
-    expect(document).toContain("OpenWork Connect")
+    expect(document).toContain("Micx Connect")
     expect(document).toContain('role="status"')
     expect(document).toContain('aria-live="polite"')
     expect(document).toContain("Continue to your provider")
@@ -51,11 +51,11 @@ describe("mcpAuthorizationErrorDocument", () => {
       details: {
         httpStatus: 409,
         errorCode: "mcp_oauth_configuration_required",
-        redirectUri: "https://api.openwork.example/v1/mcp-connections/oauth/callback",
-        clientMetadataUrl: "https://api.openwork.example/.well-known/oauth-client",
+        redirectUri: "https://api.micx.example/v1/mcp-connections/oauth/callback",
+        clientMetadataUrl: "https://api.micx.example/.well-known/oauth-client",
         responseJson: JSON.stringify({
           error: "mcp_oauth_configuration_required",
-          callbackUrl: "https://api.openwork.example/v1/mcp-connections/oauth/callback",
+          callbackUrl: "https://api.micx.example/v1/mcp-connections/oauth/callback",
         }, null, 2),
       },
     })
@@ -64,7 +64,7 @@ describe("mcpAuthorizationErrorDocument", () => {
     expect(document).toContain("A pre-registered OAuth client is required.")
     expect(document).toContain("Technical details")
     expect(document).toContain("Redirect URI")
-    expect(document).toContain("https://api.openwork.example/v1/mcp-connections/oauth/callback")
+    expect(document).toContain("https://api.micx.example/v1/mcp-connections/oauth/callback")
     expect(document).toContain("HTTP status")
     expect(document).toContain("409")
     expect(document).toContain("Error code")

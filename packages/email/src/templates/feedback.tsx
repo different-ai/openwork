@@ -9,7 +9,7 @@ export type FeedbackEmailProps = {
   entrypoint: string
   deployment: string
   appVersion: string
-  openworkServerVersion: string
+  micxServerVersion: string
   opencodeVersion: string
   osName: string
   osVersion: string
@@ -27,7 +27,7 @@ export function FeedbackEmail({
   entrypoint,
   deployment,
   appVersion,
-  openworkServerVersion,
+  micxServerVersion,
   opencodeVersion,
   osName,
   osVersion,
@@ -43,7 +43,7 @@ export function FeedbackEmail({
     ["Entrypoint", entrypoint],
     ["Deployment", deployment],
     ["App version", appVersion],
-    ["OpenWork server", openworkServerVersion],
+    ["Micx server", micxServerVersion],
     ["OpenCode", opencodeVersion],
     ["OS", osLabel],
     ["Platform", platform],
@@ -53,10 +53,10 @@ export function FeedbackEmail({
   return (
     <Html>
       <Head />
-      <Preview>{name} sent an OpenWork {label} from {entrypoint || source || "unknown"}</Preview>
+      <Preview>{name} sent an Micx {label} from {entrypoint || source || "unknown"}</Preview>
       <Body style={styles.body}>
         <Container style={styles.container}>
-          <Text style={styles.eyebrow}>{isContact ? "OpenWork contact" : "OpenWork feedback"}</Text>
+          <Text style={styles.eyebrow}>{isContact ? "Micx contact" : "Micx feedback"}</Text>
           <Heading style={styles.heading}>{isContact ? "Contact message" : "Feedback"} from {name}</Heading>
           <Text style={styles.contact}>{email}</Text>
 

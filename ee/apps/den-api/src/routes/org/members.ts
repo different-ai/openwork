@@ -1,5 +1,5 @@
-import { MemberTable } from "@openwork-ee/den-db/schema"
-import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
+import { MemberTable } from "@micx-ee/den-db/schema"
+import { normalizeDenTypeId } from "@micx-ee/utils/typeid"
 import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"

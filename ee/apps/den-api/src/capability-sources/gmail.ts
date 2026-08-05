@@ -123,7 +123,7 @@ export function buildGmailDraftRaw(input: { to: string; cc?: string; bcc?: strin
   ].filter((line) => typeof line === "string")
   const attachments = input.attachments ?? []
   const body = normalizeDraftBody(input.body)
-  const alternativeBoundary = `openwork-alternative-${randomUUID()}`
+  const alternativeBoundary = `micx-alternative-${randomUUID()}`
   const message = attachments.length === 0 ? [
     ...headers,
     "MIME-Version: 1.0",
@@ -132,7 +132,7 @@ export function buildGmailDraftRaw(input: { to: string; cc?: string; bcc?: strin
     ...alternativeMimeParts(alternativeBoundary, body),
     "",
   ].join("\r\n") : (() => {
-    const mixedBoundary = `openwork-mixed-${randomUUID()}`
+    const mixedBoundary = `micx-mixed-${randomUUID()}`
     return [
       ...headers,
       "MIME-Version: 1.0",

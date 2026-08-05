@@ -1,4 +1,4 @@
-import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
+import { normalizeDenTypeId } from "@micx-ee/utils/typeid"
 import type { Hono } from "hono"
 import { bodyLimit } from "hono/body-limit"
 import { describeRoute } from "hono-openapi"

@@ -1,11 +1,11 @@
 import { randomBytes } from "node:crypto"
-import { and, asc, desc, eq, isNull } from "@openwork-ee/den-db/drizzle"
+import { and, asc, desc, eq, isNull } from "@micx-ee/den-db/drizzle"
 import {
   WorkerInstanceTable,
   WorkerTable,
   WorkerTokenTable,
-} from "@openwork-ee/den-db/schema"
-import type { DenTypeId } from "@openwork-ee/utils/typeid"
+} from "@micx-ee/den-db/schema"
+import type { DenTypeId } from "@micx-ee/utils/typeid"
 import { db } from "../db.js"
 import { env } from "../env.js"
 import { customDomainForWorker } from "../workers/vanity-domain.js"
@@ -138,7 +138,7 @@ function workerHeaders(access: TelegramWorkerAccess, hasBody: boolean): Headers 
   const headers = new Headers({
     Accept: "application/json",
     Authorization: `Bearer ${access.clientToken}`,
-    "X-OpenWork-Host-Token": access.hostToken,
+    "X-Micx-Host-Token": access.hostToken,
   })
   if (hasBody) headers.set("Content-Type", "application/json")
   return headers

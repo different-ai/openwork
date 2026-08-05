@@ -76,7 +76,7 @@ export function ResetPasswordScreen() {
           <p className="den-eyebrow">Account</p>
           <div className="grid gap-2">
             <h1 className="den-title-lg">Choose a new password.</h1>
-            <p className="den-copy">Use the reset link from your email to secure your OpenWork account.</p>
+            <p className="den-copy">Use the reset link from your email to secure your Micx account.</p>
           </div>
         </div>
 

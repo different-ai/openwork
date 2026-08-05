@@ -1,5 +1,5 @@
 {
-  "name": "@openwork-ee/diagnostics",
+  "name": "@micx-ee/diagnostics",
   "private": true,
   "version": "0.0.0",
   "scripts": {
@@ -10,7 +10,7 @@
     "test": "bun test"
   },
   "dependencies": {
-    "@openwork/types": "workspace:*",
+    "@micx/types": "workspace:*",
     "next": "16.2.11",
     "react": "catalog:",
     "react-dom": "catalog:"

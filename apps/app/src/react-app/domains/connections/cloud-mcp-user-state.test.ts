@@ -13,10 +13,10 @@ import {
   writeCloudMcpUnhealthyRemintAttempt,
 } from "./cloud-mcp-user-state";
 
-const UNHEALTHY_REMINT_ATTEMPT_KEY = "openwork.den.mcp.unhealthyRemintAttempt";
+const UNHEALTHY_REMINT_ATTEMPT_KEY = "micx.den.mcp.unhealthyRemintAttempt";
 const scope = {
-  denBaseUrl: "https://cloud.openwork.test",
-  serverBaseUrl: "https://worker.openwork.test",
+  denBaseUrl: "https://cloud.micx.test",
+  serverBaseUrl: "https://worker.micx.test",
   orgId: "org_1",
   workspaceId: "ws_1",
 };

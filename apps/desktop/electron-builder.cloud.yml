@@ -1,18 +1,18 @@
 extends: ./electron-builder.base.yml
-appId: com.differentai.openwork
-productName: OpenWork Cloud
+appId: com.differentai.micx
+productName: Micx Cloud
 extraMetadata:
-  openworkDistribution: cloud
+  micxDistribution: cloud
 protocols:
-  - name: OpenWork Cloud
+  - name: Micx Cloud
     schemes:
-      - openwork
+      - micx
 publish:
   - provider: github
     owner: different-ai
-    repo: openwork
+    repo: micx
     releaseType: release
     channel: cloud
 linux:
-  executableName: openwork-cloud
-artifactName: openwork-cloud-${os}-${arch}-${version}.${ext}
+  executableName: micx-cloud
+artifactName: micx-cloud-${os}-${arch}-${version}.${ext}

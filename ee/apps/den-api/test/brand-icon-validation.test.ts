@@ -1,5 +1,5 @@
 import { deflateSync } from "node:zlib"
-import { createDenTypeId } from "@openwork-ee/utils/typeid"
+import { createDenTypeId } from "@micx-ee/utils/typeid"
 import { afterAll, afterEach, beforeAll, expect, mock, test } from "bun:test"
 import { Hono } from "hono"
 import { BRAND_ICON_FETCH_USER_AGENT, validateBrandIconUrl } from "../src/brand-icon-validation.js"

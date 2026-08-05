@@ -4,9 +4,9 @@ import {
   derivePendingCloudPluginChanges,
   readPendingCloudSyncChanges,
 } from "../src/app/cloud/desktop-cloud-sync";
-import type { OpenworkDesktopCloudSyncChange } from "../src/app/lib/openwork-server";
+import type { MicxDesktopCloudSyncChange } from "../src/app/lib/micx-server";
 
-function change(input: Partial<OpenworkDesktopCloudSyncChange> & Pick<OpenworkDesktopCloudSyncChange, "id" | "kind" | "resourceKind">): OpenworkDesktopCloudSyncChange {
+function change(input: Partial<MicxDesktopCloudSyncChange> & Pick<MicxDesktopCloudSyncChange, "id" | "kind" | "resourceKind">): MicxDesktopCloudSyncChange {
   return {
     marketplaceId: undefined,
     pluginId: undefined,

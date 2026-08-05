@@ -19,10 +19,10 @@ describe("app inspector OpenCode client", () => {
     const disposeFirst = publishInspectorOpencodeClient(first);
     const disposeSecond = publishInspectorOpencodeClient(second);
 
-    expect(window.__openwork?.opencode).toBe(second);
+    expect(window.__micx?.opencode).toBe(second);
     disposeFirst();
-    expect(window.__openwork?.opencode).toBe(second);
+    expect(window.__micx?.opencode).toBe(second);
     disposeSecond();
-    expect(window.__openwork?.opencode).toBeNull();
+    expect(window.__micx?.opencode).toBeNull();
   });
 });

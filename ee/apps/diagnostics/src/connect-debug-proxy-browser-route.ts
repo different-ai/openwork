@@ -1,6 +1,6 @@
 import { parseConnectDebugProxyScenario } from "./connect-debug-proxy-scenarios"
 
-export const CONNECT_DEBUG_PROXY_BROWSER_ROUTE_COOKIE = "openwork_connect_debug_route"
+export const CONNECT_DEBUG_PROXY_BROWSER_ROUTE_COOKIE = "micx_connect_debug_route"
 export const CONNECT_DEBUG_PROXY_BROWSER_ROUTE_SECONDS = 10 * 60
 
 function validProxyPath(value: string): boolean {

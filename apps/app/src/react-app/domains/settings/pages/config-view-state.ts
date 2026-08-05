@@ -1,37 +1,37 @@
-export type OpenworkTestState = "idle" | "testing" | "success" | "error";
+export type MicxTestState = "idle" | "testing" | "success" | "error";
 
-export type OpenworkConnectionState = {
+export type MicxConnectionState = {
   url: string;
   token: string;
-  testState: OpenworkTestState;
+  testState: MicxTestState;
   testMessage: string | null;
 };
 
-export type TokenVisibilityKey = "openwork" | "client" | "owner" | "host";
+export type TokenVisibilityKey = "micx" | "client" | "owner" | "host";
 
 type ConfigLocalState = {
-  openworkConnection: OpenworkConnectionState;
+  micxConnection: MicxConnectionState;
   tokenVisible: Record<TokenVisibilityKey, boolean>;
   copyingField: string | null;
 };
 
 type ConfigLocalAction =
-  | { type: "serverSettings"; connection: OpenworkConnectionState }
+  | { type: "serverSettings"; connection: MicxConnectionState }
   | { type: "url"; url: string }
   | { type: "token"; token: string }
-  | { type: "testState"; testState: OpenworkTestState; testMessage: string | null }
+  | { type: "testState"; testState: MicxTestState; testMessage: string | null }
   | { type: "toggleToken"; key: TokenVisibilityKey }
   | { type: "copyingField"; field: string | null };
 
 export const initialConfigLocalState: ConfigLocalState = {
-  openworkConnection: {
+  micxConnection: {
     url: "",
     token: "",
     testState: "idle",
     testMessage: null,
   },
   tokenVisible: {
-    openwork: false,
+    micx: false,
     client: false,
     owner: false,
     host: false,
@@ -45,12 +45,12 @@ export function configLocalReducer(
 ): ConfigLocalState {
   switch (action.type) {
     case "serverSettings":
-      return { ...state, openworkConnection: action.connection };
+      return { ...state, micxConnection: action.connection };
     case "url":
       return {
         ...state,
-        openworkConnection: {
-          ...state.openworkConnection,
+        micxConnection: {
+          ...state.micxConnection,
           url: action.url,
           testState: "idle",
           testMessage: null,
@@ -59,8 +59,8 @@ export function configLocalReducer(
     case "token":
       return {
         ...state,
-        openworkConnection: {
-          ...state.openworkConnection,
+        micxConnection: {
+          ...state.micxConnection,
           token: action.token,
           testState: "idle",
           testMessage: null,
@@ -69,8 +69,8 @@ export function configLocalReducer(
     case "testState":
       return {
         ...state,
-        openworkConnection: {
-          ...state.openworkConnection,
+        micxConnection: {
+          ...state.micxConnection,
           testState: action.testState,
           testMessage: action.testMessage,
         },

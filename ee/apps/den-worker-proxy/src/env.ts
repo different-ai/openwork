@@ -11,7 +11,7 @@ const EnvSchema = z.object({
   DAYTONA_API_URL: z.string().optional(),
   DAYTONA_API_KEY: z.string().optional(),
   DAYTONA_TARGET: z.string().optional(),
-  DAYTONA_OPENWORK_PORT: z.string().optional(),
+  DAYTONA_MICX_PORT: z.string().optional(),
   DAYTONA_SIGNED_PREVIEW_EXPIRES_SECONDS: z.string().optional(),
 }).superRefine((value, ctx) => {
   const inferredMode = value.DB_MODE ?? (value.DATABASE_URL ? "mysql" : "planetscale")
@@ -63,7 +63,7 @@ export const env = {
     apiUrl: optionalString(parsed.DAYTONA_API_URL) ?? "https://app.daytona.io/api",
     apiKey: optionalString(parsed.DAYTONA_API_KEY),
     target: optionalString(parsed.DAYTONA_TARGET),
-    openworkPort: Number(parsed.DAYTONA_OPENWORK_PORT ?? "8787"),
+    micxPort: Number(parsed.DAYTONA_MICX_PORT ?? "8787"),
     signedPreviewExpiresSeconds: Number(parsed.DAYTONA_SIGNED_PREVIEW_EXPIRES_SECONDS ?? "86400"),
   },
 }

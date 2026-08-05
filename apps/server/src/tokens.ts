@@ -1,6 +1,6 @@
 import { dirname, join, resolve } from "node:path";
 import { readFile, writeFile } from "node:fs/promises";
-import { openworkConfigDir } from "@openwork/paths";
+import { micxConfigDir } from "@micx/paths";
 
 import type { ServerConfig, TokenScope } from "./types.js";
 import { ensureDir, exists, hashToken, shortId } from "./utils.js";
@@ -25,11 +25,11 @@ function normalizeScope(value: unknown): TokenScope | null {
 }
 
 function resolveTokenStorePath(config: ServerConfig): string {
-  const override = (process.env.OPENWORK_TOKEN_STORE ?? "").trim();
+  const override = (process.env.MICX_TOKEN_STORE ?? "").trim();
   if (override) return resolve(override);
 
   const configPath = config.configPath?.trim();
-  const configDir = configPath ? dirname(configPath) : openworkConfigDir();
+  const configDir = configPath ? dirname(configPath) : micxConfigDir();
   return join(configDir, "tokens.json");
 }
 

@@ -1,5 +1,5 @@
-import { and, asc, eq, isNull, lt, or } from "@openwork-ee/den-db/drizzle"
-import { WorkerTable, WorkerTokenTable } from "@openwork-ee/den-db/schema"
+import { and, asc, eq, isNull, lt, or } from "@micx-ee/den-db/drizzle"
+import { WorkerTable, WorkerTokenTable } from "@micx-ee/den-db/schema"
 import { db } from "../db.js"
 import { env } from "../env.js"
 import { materializeCloudWorkerProviders } from "../llm/cloud-provider-materialization.js"

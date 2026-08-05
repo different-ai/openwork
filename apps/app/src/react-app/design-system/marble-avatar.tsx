@@ -22,7 +22,7 @@ export type MarbleAvatarProps = {
 };
 
 export function MarbleAvatar({ seed, className, square }: MarbleAvatarProps) {
-  const normalizedSeed = seed.trim() || "openwork";
+  const normalizedSeed = seed.trim() || "micx";
 
   return (
     <Avatar

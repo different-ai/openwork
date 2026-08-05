@@ -23,7 +23,7 @@ import type {
   OTelSignalConfig,
   JsonObject,
   StructuredLogLevel,
-} from "@openwork-ee/utils/observability";
+} from "@micx-ee/utils/observability";
 
 import {
   isTelemetrySdkStarted,

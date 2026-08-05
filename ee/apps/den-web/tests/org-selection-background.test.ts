@@ -24,7 +24,7 @@ describe("org selection desktop sign-in pattern", () => {
     expect(source).toContain("const shaderSpeed = reducedMotion ? 0 : 0.01;");
     expect(source).toContain("max-w-[720px]");
     expect(source).toContain("rounded-3xl");
-    expect(source).toContain("/openwork-mark.svg");
+    expect(source).toContain("/micx-mark.svg");
     expect(source).not.toContain("bg-[#f8fbff]");
     expect(source).not.toContain('colorFront="#8FB7E8"');
     expect(source).not.toContain("PaperMeshGradient");

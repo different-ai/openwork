@@ -8,12 +8,12 @@ import {
   PluginAccessGrantTable,
   PluginConfigObjectTable,
   PluginTable,
-} from "@openwork-ee/den-db/schema"
-import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
+} from "@micx-ee/den-db/schema"
+import { createDenTypeId, normalizeDenTypeId } from "@micx-ee/utils/typeid"
 import type { PluginArchActorContext } from "../src/routes/org/plugin-system/access.js"
 
 function seedRequiredEnv() {
-  process.env.DATABASE_URL = process.env.DATABASE_URL ?? "mysql://root:password@127.0.0.1:3306/openwork_test"
+  process.env.DATABASE_URL = process.env.DATABASE_URL ?? "mysql://root:password@127.0.0.1:3306/micx_test"
   process.env.DEN_DB_ENCRYPTION_KEY = process.env.DEN_DB_ENCRYPTION_KEY ?? "x".repeat(32)
   process.env.BETTER_AUTH_SECRET = process.env.BETTER_AUTH_SECRET ?? "y".repeat(32)
   process.env.BETTER_AUTH_URL = process.env.BETTER_AUTH_URL ?? "http://127.0.0.1:8790"
@@ -457,7 +457,7 @@ test("createPluginBundle composes component creation, org-wide grants, and marke
   const marketplace = {
     id: createDenTypeId("marketplace"),
     organizationId,
-    name: "OpenWork Marketplace",
+    name: "Micx Marketplace",
     description: "Company extensions",
     logoUrl: null,
     status: "active",

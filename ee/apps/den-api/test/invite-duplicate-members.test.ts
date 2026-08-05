@@ -1,4 +1,4 @@
-import { createDenTypeId } from "@openwork-ee/utils/typeid"
+import { createDenTypeId } from "@micx-ee/utils/typeid"
 import { afterAll, beforeAll, expect, test } from "bun:test"
 
 const singleOrgSlug = "invite-duplicates-test"
@@ -39,7 +39,7 @@ const nonMatchingEmail = `non-matching+${nonMatchingInviteUserId}@invite-duplica
 const otherOrgEmail = `other-org+${otherOrgInviteUserId}@invite-duplicates.test`
 
 function seedRequiredEnv() {
-  process.env.DATABASE_URL = process.env.DATABASE_URL ?? "mysql://root:password@127.0.0.1:3306/openwork_test"
+  process.env.DATABASE_URL = process.env.DATABASE_URL ?? "mysql://root:password@127.0.0.1:3306/micx_test"
   process.env.DEN_DB_ENCRYPTION_KEY = process.env.DEN_DB_ENCRYPTION_KEY ?? "x".repeat(32)
   process.env.BETTER_AUTH_SECRET = process.env.BETTER_AUTH_SECRET ?? "y".repeat(32)
   process.env.BETTER_AUTH_URL = process.env.BETTER_AUTH_URL ?? "http://127.0.0.1:8790"
@@ -49,8 +49,8 @@ function seedRequiredEnv() {
 }
 
 let db: typeof import("../src/db.js").db | null = null
-let schema: typeof import("@openwork-ee/den-db/schema") | null = null
-let drizzle: typeof import("@openwork-ee/den-db/drizzle") | null = null
+let schema: typeof import("@micx-ee/den-db/schema") | null = null
+let drizzle: typeof import("@micx-ee/den-db/drizzle") | null = null
 let orgs: typeof import("../src/orgs.js") | null = null
 
 const userIds = [
@@ -158,8 +158,8 @@ beforeAll(async () => {
   seedRequiredEnv()
   const [dbModule, schemaModule, drizzleModule, orgsModule] = await Promise.all([
     import("../src/db.js"),
-    import("@openwork-ee/den-db/schema"),
-    import("@openwork-ee/den-db/drizzle"),
+    import("@micx-ee/den-db/schema"),
+    import("@micx-ee/den-db/drizzle"),
     import("../src/orgs.js"),
   ])
   db = dbModule.db

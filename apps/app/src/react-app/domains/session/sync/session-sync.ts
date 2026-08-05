@@ -13,7 +13,7 @@ import {
   parseStructuredOutputUIPart,
   STRUCTURED_OUTPUT_TOOL,
 } from "./parse-tool-parts";
-import type { OpenworkSessionSnapshot } from "@/app/lib/openwork-server";
+import type { MicxSessionSnapshot } from "@/app/lib/micx-server";
 import { applyRevertCursor, reconcileTranscriptMessages } from "./transcript-reconcile";
 import {
   useSessionActivityStore,
@@ -23,7 +23,7 @@ import { notifyDesktopEvent } from "../../../shell/desktop-notifications";
 type SyncOptions = {
   workspaceId: string;
   baseUrl: string;
-  openworkToken: string;
+  micxToken: string;
   onSessionCreated?: (session: Session) => void;
   onSessionUpdated?: (update: { sessionId: string; info: Record<string, unknown> }) => void;
   onSessionDeleted?: (sessionId: string) => void;
@@ -40,7 +40,7 @@ type PendingDelta = {
 
 type SyncEntry = {
   input: SyncOptions;
-  openworkToken: string;
+  micxToken: string;
   refs: number;
   dispose: () => void;
   disposeTimer: ReturnType<typeof setTimeout> | null;
@@ -62,31 +62,31 @@ type SyncEntry = {
 
 const idleStatus: SessionStatus = { type: "idle" };
 const syncs = new Map<string, SyncEntry>();
-const sessionSnapshotFetchStarts = new WeakMap<OpenworkSessionSnapshot, number>();
+const sessionSnapshotFetchStarts = new WeakMap<MicxSessionSnapshot, number>();
 const workspaceSyncDisposeGraceMs = 2_000;
 const retainedSessionTtlMs = 10 * 60_000;
 const idleRetainedSessionTtlMs = 10_000;
 
 type SyncSubscriptionFactory = (
   baseUrl: string,
-  openworkToken: string,
+  micxToken: string,
   signal: AbortSignal,
 ) => Promise<AsyncIterable<unknown>>;
 
 type SessionStatusFetcher = (
   baseUrl: string,
-  openworkToken: string,
+  micxToken: string,
   signal: AbortSignal,
 ) => Promise<Record<string, SessionStatus>>;
 
-const defaultSyncSubscriptionFactory: SyncSubscriptionFactory = async (baseUrl, openworkToken, signal) => {
-  const client = createClient(baseUrl, undefined, { token: openworkToken, mode: "openwork" });
+const defaultSyncSubscriptionFactory: SyncSubscriptionFactory = async (baseUrl, micxToken, signal) => {
+  const client = createClient(baseUrl, undefined, { token: micxToken, mode: "micx" });
   const subscription = await client.event.subscribe(undefined, { signal });
   return subscription.stream;
 };
 
-const defaultSessionStatusFetcher: SessionStatusFetcher = async (baseUrl, openworkToken, signal) => {
-  const client = createClient(baseUrl, undefined, { token: openworkToken, mode: "openwork" });
+const defaultSessionStatusFetcher: SessionStatusFetcher = async (baseUrl, micxToken, signal) => {
+  const client = createClient(baseUrl, undefined, { token: micxToken, mode: "micx" });
   const result = await client.session.status(undefined, { signal });
   if (result.data !== undefined) return result.data;
   throw result.error;
@@ -95,7 +95,7 @@ const defaultSessionStatusFetcher: SessionStatusFetcher = async (baseUrl, openwo
 let syncSubscriptionFactory = defaultSyncSubscriptionFactory;
 let sessionStatusFetcher = defaultSessionStatusFetcher;
 
-export function markSessionSnapshotFetchStart(snapshot: OpenworkSessionSnapshot, startedAt: number) {
+export function markSessionSnapshotFetchStart(snapshot: MicxSessionSnapshot, startedAt: number) {
   sessionSnapshotFetchStarts.set(snapshot, startedAt);
 }
 
@@ -670,11 +670,11 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
     // renderer derives the visible transcript from this cursor, so a revert
     // (or its cleanup on the next prompt) must reach the snapshot cache or
     // the transcript stays frozen on stale history.
-    queryClient.setQueryData<OpenworkSessionSnapshot>(
+    queryClient.setQueryData<MicxSessionSnapshot>(
       snapshotKey(workspaceId, update.sessionId),
       (current) => {
         if (!current) return current;
-        const revert = (update.info as { revert?: OpenworkSessionSnapshot["session"]["revert"] }).revert;
+        const revert = (update.info as { revert?: MicxSessionSnapshot["session"]["revert"] }).revert;
         return { ...current, session: { ...current.session, revert } };
       },
     );
@@ -878,7 +878,7 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
     queryClient.setQueryData<UIMessage[]>(transcriptKey(workspaceId, props.sessionID), (current = []) =>
       current.filter((message) => message.id !== props.messageID),
     );
-    queryClient.setQueryData<OpenworkSessionSnapshot>(
+    queryClient.setQueryData<MicxSessionSnapshot>(
       snapshotKey(workspaceId, props.sessionID),
       (current) => {
         if (!current) return current;
@@ -1116,7 +1116,7 @@ function startSync(input: SyncOptions, entry: SyncEntry) {
     const connectionController = new AbortController();
     activeConnectionController = connectionController;
     try {
-      const stream = await syncSubscriptionFactory(input.baseUrl, entry.openworkToken, connectionController.signal);
+      const stream = await syncSubscriptionFactory(input.baseUrl, entry.micxToken, connectionController.signal);
       retryDelayMs = 1_000;
       lastEventAt = Date.now();
       void reconcileSessionRunStatuses(entry, input, connectionController.signal);
@@ -1163,7 +1163,7 @@ async function reconcileSessionRunStatuses(entry: SyncEntry, input: SyncOptions,
   const startedAt = Date.now();
   let statuses: Record<string, SessionStatus>;
   try {
-    statuses = await sessionStatusFetcher(input.baseUrl, entry.openworkToken, signal);
+    statuses = await sessionStatusFetcher(input.baseUrl, entry.micxToken, signal);
   } catch {
     return;
   }
@@ -1186,7 +1186,7 @@ export function ensureWorkspaceSessionSync(input: SyncOptions) {
   const key = syncKey(input);
   const existing = syncs.get(key);
   if (existing) {
-    existing.openworkToken = input.openworkToken;
+    existing.micxToken = input.micxToken;
     if (existing.disposeTimer) {
       clearTimeout(existing.disposeTimer);
       existing.disposeTimer = null;
@@ -1201,7 +1201,7 @@ export function ensureWorkspaceSessionSync(input: SyncOptions) {
 
   syncs.set(key, {
     input,
-    openworkToken: input.openworkToken,
+    micxToken: input.micxToken,
     refs: 1,
     dispose: () => {},
     disposeTimer: null,
@@ -1241,7 +1241,7 @@ function releaseWorkspaceSessionSync(input: SyncOptions) {
   }, workspaceSyncDisposeGraceMs);
 }
 
-export function seedSessionState(workspaceId: string, snapshot: OpenworkSessionSnapshot) {
+export function seedSessionState(workspaceId: string, snapshot: MicxSessionSnapshot) {
   const queryClient = getReactQueryClient();
   const key = transcriptKey(workspaceId, snapshot.session.id);
   const incoming = snapshotToUIMessages(snapshot);
@@ -1290,7 +1290,7 @@ export function applySessionRevert(workspaceId: string, session: Session) {
   const queryClient = getReactQueryClient();
   const revertMessageId = session.revert?.messageID ?? null;
 
-  queryClient.setQueryData<OpenworkSessionSnapshot>(
+  queryClient.setQueryData<MicxSessionSnapshot>(
     snapshotKey(workspaceId, session.id),
     (current) => (current ? { ...current, session: { ...current.session, revert: session.revert } } : current),
   );
@@ -1347,7 +1347,7 @@ export function __createWorkspaceSessionSyncForTest(input: SyncOptions) {
   const key = syncKey(input);
   syncs.set(key, {
     input,
-    openworkToken: input.openworkToken,
+    micxToken: input.micxToken,
     refs: 1,
     dispose: () => {},
     disposeTimer: null,

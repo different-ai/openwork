@@ -9,11 +9,11 @@ export type ConnectDebugProxyLogEntry = {
 }
 
 declare global {
-  var __openworkConnectDebugProxyLog: ConnectDebugProxyLogEntry[] | undefined
+  var __micxConnectDebugProxyLog: ConnectDebugProxyLogEntry[] | undefined
 }
 
 const maximumEntries = 100
-const entries = globalThis.__openworkConnectDebugProxyLog ??= []
+const entries = globalThis.__micxConnectDebugProxyLog ??= []
 
 export function recordConnectDebugProxyRequest(entry: ConnectDebugProxyLogEntry): void {
   entries.unshift(entry)

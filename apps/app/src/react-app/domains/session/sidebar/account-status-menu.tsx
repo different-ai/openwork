@@ -23,9 +23,9 @@ import { cn } from "@/lib/utils";
 import { t } from "@/i18n";
 import { usePlatform } from "../../../kernel/platform";
 import { useDenAuth } from "../../cloud/den-auth-provider";
-import { useControlAction, type OpenworkControlAction } from "../../../shell/control/control-provider";
+import { useControlAction, type MicxControlAction } from "../../../shell/control/control-provider";
 import { useShellConfig } from "../../../shell/shell-config";
-import type { OpenworkServerStatus } from "../../../../app/lib/openwork-server";
+import type { MicxServerStatus } from "../../../../app/lib/micx-server";
 import {
   buildDenAuthUrl,
   clearDenSession,
@@ -35,20 +35,20 @@ import {
 } from "../../../../app/lib/den";
 import {
   openWorkConnectAttentionTitle,
-  resolveOpenWorkConnectStatus,
-  type OpenWorkConnectStatus,
-} from "../../connections/openwork-connect-status";
+  resolveMicxConnectStatus,
+  type MicxConnectStatus,
+} from "../../connections/micx-connect-status";
 import type { SessionCloudMcpMaintenanceState } from "../../connections/use-session-mcp-maintenance";
 import {
-  getOpenWorkModelsActionUrl,
-  hasOpenWorkModelsProvider,
-  hideOpenWorkModelsPromo,
-  isOpenWorkModelsPromoHidden,
+  getMicxModelsActionUrl,
+  hasMicxModelsProvider,
+  hideMicxModelsPromo,
+  isMicxModelsPromoHidden,
   openWorkModelsPromoChangedEvent,
-  useOpenWorkModelsPromoEligibility,
-} from "../../cloud/openwork-models-promo";
+  useMicxModelsPromoEligibility,
+} from "../../cloud/micx-models-promo";
 
-const DOCS_URL = "https://openworklabs.com/docs";
+const DOCS_URL = "https://micxlabs.com/docs";
 const BOOT_STARTED_AT = Date.now();
 const INITIALIZING_MS = 15_000;
 
@@ -81,7 +81,7 @@ type RuntimeStatus = {
 
 type RuntimeStatusInput = {
   clientConnected: boolean;
-  openworkServerStatus: OpenworkServerStatus;
+  micxServerStatus: MicxServerStatus;
   loading?: boolean;
   initializing: boolean;
   reloadBusy?: boolean;
@@ -99,7 +99,7 @@ function resolveRuntimeStatus(input: RuntimeStatusInput): RuntimeStatus {
   if (input.reloadError) {
     return { variant: "disconnected", label: t("system.reload_failed"), detail: input.reloadError };
   }
-  if (input.loading || (input.openworkServerStatus === "disconnected" && input.initializing)) {
+  if (input.loading || (input.micxServerStatus === "disconnected" && input.initializing)) {
     return {
       variant: "loading",
       label: t("session.preparing_workspace"),
@@ -109,7 +109,7 @@ function resolveRuntimeStatus(input: RuntimeStatusInput): RuntimeStatus {
   if (input.clientConnected) {
     return { variant: "connected", label: t("status.ready_for_tasks"), detail: null };
   }
-  if (input.openworkServerStatus === "limited") {
+  if (input.micxServerStatus === "limited") {
     return { variant: "partial", label: t("status.limited_mode"), detail: t("status.limited_hint") };
   }
   return {
@@ -119,7 +119,7 @@ function resolveRuntimeStatus(input: RuntimeStatusInput): RuntimeStatus {
   };
 }
 
-function connectDotVariant(status: OpenWorkConnectStatus): StatusDotVariant {
+function connectDotVariant(status: MicxConnectStatus): StatusDotVariant {
   if (status.state === "ready") return "connected";
   if (status.state === "checking") return "loading";
   return "disconnected";
@@ -127,18 +127,18 @@ function connectDotVariant(status: OpenWorkConnectStatus): StatusDotVariant {
 
 /**
  * Non-developer mode shows one status row: the runtime status, unless
- * OpenWork Connect needs attention (or is the only signal available).
+ * Micx Connect needs attention (or is the only signal available).
  * Developer mode keeps the two separate rows.
  */
 export function resolveCollapsedStatus(
   runtime: RuntimeStatus | null,
-  connect: OpenWorkConnectStatus | null,
+  connect: MicxConnectStatus | null,
 ): RuntimeStatus | null {
   if (runtime && runtime.variant !== "connected") return runtime;
   if (connect && connect.state === "needs_attention") {
     return {
       variant: "disconnected",
-      label: `OpenWork Connect: ${connect.label}`,
+      label: `Micx Connect: ${connect.label}`,
       detail: connect.description,
     };
   }
@@ -146,7 +146,7 @@ export function resolveCollapsedStatus(
   if (connect) {
     return {
       variant: connectDotVariant(connect),
-      label: `OpenWork Connect: ${connect.label}`,
+      label: `Micx Connect: ${connect.label}`,
       detail: connect.description,
     };
   }
@@ -161,23 +161,23 @@ function accountInitials(name: string | null, email: string) {
   return (parts[0][0] + parts[1][0]).toUpperCase();
 }
 
-function useOpenWorkModelsPromoVisible(hasOpenWorkModels: boolean) {
+function useMicxModelsPromoVisible(hasMicxModels: boolean) {
   const { config } = useShellConfig();
-  const eligible = useOpenWorkModelsPromoEligibility();
-  const [hidden, setHidden] = useState(isOpenWorkModelsPromoHidden);
+  const eligible = useMicxModelsPromoEligibility();
+  const [hidden, setHidden] = useState(isMicxModelsPromoHidden);
 
   useEffect(() => {
-    const sync = () => setHidden(isOpenWorkModelsPromoHidden());
+    const sync = () => setHidden(isMicxModelsPromoHidden());
     window.addEventListener(openWorkModelsPromoChangedEvent, sync);
     return () => window.removeEventListener(openWorkModelsPromoChangedEvent, sync);
   }, []);
 
-  return eligible && config.cloudSignin && !hasOpenWorkModels && !hidden;
+  return eligible && config.cloudSignin && !hasMicxModels && !hidden;
 }
 
 export type AccountStatusMenuProps = {
   clientConnected: boolean;
-  openworkServerStatus: OpenworkServerStatus;
+  micxServerStatus: MicxServerStatus;
   developerMode: boolean;
   /** Hidden until a workspace is selected, matching the old status bar. */
   showConnectionStatus: boolean;
@@ -206,11 +206,11 @@ export function AccountStatusMenu(props: AccountStatusMenuProps) {
     () => Date.now() - BOOT_STARTED_AT < INITIALIZING_MS,
   );
 
-  const hasOpenWorkModels = useMemo(
-    () => hasOpenWorkModelsProvider(props.providerConnectedIds),
+  const hasMicxModels = useMemo(
+    () => hasMicxModelsProvider(props.providerConnectedIds),
     [props.providerConnectedIds],
   );
-  const promoVisible = useOpenWorkModelsPromoVisible(hasOpenWorkModels);
+  const promoVisible = useMicxModelsPromoVisible(hasMicxModels);
 
   useEffect(() => {
     if (!initializing) return;
@@ -222,9 +222,9 @@ export function AccountStatusMenu(props: AccountStatusMenuProps) {
   const openSettings = props.onOpenAccountSettings;
   const openDocs = useCallback(() => platform.openLink(DOCS_URL), [platform]);
 
-  const docsControlAction = useMemo<OpenworkControlAction>(() => ({
+  const docsControlAction = useMemo<MicxControlAction>(() => ({
     id: "status.docs.open",
-    label: "Open OpenWork docs",
+    label: "Open Micx docs",
     description: "Open the documentation from the account menu.",
     sideEffect: "external",
     targetRef: triggerRef,
@@ -232,10 +232,10 @@ export function AccountStatusMenu(props: AccountStatusMenuProps) {
   }), [openDocs]);
   useControlAction(docsControlAction);
 
-  const feedbackControlAction = useMemo<OpenworkControlAction>(() => ({
+  const feedbackControlAction = useMemo<MicxControlAction>(() => ({
     id: "status.feedback.open",
     label: "Send feedback",
-    description: "Open the OpenWork feedback surface from the account menu.",
+    description: "Open the Micx feedback surface from the account menu.",
     sideEffect: "external",
     disabled: !props.onSendFeedback,
     targetRef: triggerRef,
@@ -243,7 +243,7 @@ export function AccountStatusMenu(props: AccountStatusMenuProps) {
   }), [props.onSendFeedback]);
   useControlAction(feedbackControlAction);
 
-  const settingsControlAction = useMemo<OpenworkControlAction>(() => ({
+  const settingsControlAction = useMemo<MicxControlAction>(() => ({
     id: "status.settings.open",
     label: "Open settings from the account menu",
     description: "Use the account menu in the sidebar footer.",
@@ -260,22 +260,22 @@ export function AccountStatusMenu(props: AccountStatusMenuProps) {
   const restoringSession = denAuth.status === "checking";
   const accountLabel = signedIn
     ? user.name?.trim() || user.email
-    : restoringSession ? "OpenWork Cloud" : "Sign in";
+    : restoringSession ? "Micx Cloud" : "Sign in";
   const accountDetail = signedIn
-    ? (user.name ? user.email : "OpenWork Cloud")
-    : restoringSession ? "Restoring your session" : "Sync with OpenWork Cloud";
+    ? (user.name ? user.email : "Micx Cloud")
+    : restoringSession ? "Restoring your session" : "Sync with Micx Cloud";
 
   const runtimeStatus = props.showConnectionStatus
     ? resolveRuntimeStatus({
       clientConnected: props.clientConnected,
-      openworkServerStatus: props.openworkServerStatus,
+      micxServerStatus: props.micxServerStatus,
       loading: props.loading,
       initializing,
       reloadBusy: props.reloadBusy,
       reloadError: props.reloadError,
     })
     : null;
-  const connectStatus = resolveOpenWorkConnectStatus(
+  const connectStatus = resolveMicxConnectStatus(
     denAuth.isSignedIn
       || (denAuth.status === "checking" && Boolean(readDenSettings().authToken?.trim())),
     props.openWorkConnectState,
@@ -315,7 +315,7 @@ export function AccountStatusMenu(props: AccountStatusMenuProps) {
             title={connectNeedsAttention
               ? openWorkConnectAttentionTitle(connectStatus.description)
               : connectStatus
-                ? `${runtimeStatus ? `${runtimeStatus.label} · ` : ""}OpenWork Connect: ${connectStatus.label}`
+                ? `${runtimeStatus ? `${runtimeStatus.label} · ` : ""}Micx Connect: ${connectStatus.label}`
                 : runtimeStatus?.label}
           >
               {signedIn ? (
@@ -369,13 +369,13 @@ export function AccountStatusMenu(props: AccountStatusMenuProps) {
                   </div>
                 ) : null}
                 {connectStatus ? (
-                  <div data-testid="openwork-connect-status" className="flex items-start gap-2">
+                  <div data-testid="micx-connect-status" className="flex items-start gap-2">
                     <span className="mt-1">
                       <StatusDot variant={connectDotVariant(connectStatus)} />
                     </span>
                     <div className="min-w-0">
                       <div className="text-[11.5px] font-medium text-foreground">
-                        {`OpenWork Connect: ${connectStatus.label}`}
+                        {`Micx Connect: ${connectStatus.label}`}
                       </div>
                       <div className="text-[10.5px] leading-tight text-muted-foreground">
                         {connectStatus.description}
@@ -419,14 +419,14 @@ export function AccountStatusMenu(props: AccountStatusMenuProps) {
         {promoVisible ? (
           <DropdownMenuItem
             onClick={() => {
-              hideOpenWorkModelsPromo();
+              hideMicxModelsPromo();
               if (!denAuth.isSignedIn) navigate("/settings/cloud-account");
-              platform.openLink(getOpenWorkModelsActionUrl(denAuth.isSignedIn));
+              platform.openLink(getMicxModelsActionUrl(denAuth.isSignedIn));
             }}
           >
             <Sparkles className="size-3.5 text-blue-11" />
             <span className="flex min-w-0 flex-col">
-              <span>OpenWork Models</span>
+              <span>Micx Models</span>
               <span className="text-[10.5px] text-muted-foreground">hosted frontier models</span>
             </span>
           </DropdownMenuItem>

@@ -7,7 +7,7 @@ import {
   type EnterpriseMcpClient,
   type EnterpriseMcpConnection,
   type EnterpriseMcpDiagnosticEvent,
-} from "@openwork/enterprise-mcp-client"
+} from "@micx/enterprise-mcp-client"
 import { env } from "../env.js"
 import { createGuardedFetch, createRealmSafeFetch } from "./url-guard.js"
 import type { ExternalMcpConnectionRow } from "./external-mcp-connections.js"

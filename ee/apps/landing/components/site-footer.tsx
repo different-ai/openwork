@@ -31,7 +31,7 @@ export function SiteFooter() {
             Desktop
           </Link>
           <a
-            href="https://app.openworklabs.com"
+            href="https://app.micxlabs.com"
             target="_blank"
             rel="noreferrer"
             className="transition-colors hover:text-gray-800"

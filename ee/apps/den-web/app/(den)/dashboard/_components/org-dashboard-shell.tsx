@@ -58,7 +58,7 @@ import { buildDenFeedbackUrl } from "../../_lib/feedback";
 import { OrgSelectionScreen } from "./org-selection-screen";
 import { UserProfileDialog } from "./user-profile-dialog";
 
-const OPENWORK_DOCS_URL = "/docs";
+const MICX_DOCS_URL = "/docs";
 
 type DashboardNavChild = {
   href: string;
@@ -92,14 +92,14 @@ function OrgMark({ name }: { name: string }) {
   );
 }
 
-function OpenWorkMark({ className = "h-9 w-auto" }: { className?: string }) {
+function MicxMark({ className = "h-9 w-auto" }: { className?: string }) {
   return (
     <svg
       xmlns="http://www.w3.org/2000/svg"
       viewBox="0 0 834 649"
       fill="none"
       className={className}
-      aria-label="OpenWork"
+      aria-label="Micx"
     >
       <path
         fill="#011627"
@@ -153,7 +153,7 @@ export function SidebarBrandMark({
   if (!iconUrl || failedUrl === iconUrl) {
     return (
       <div data-sidebar-brand-icon="fallback">
-        <OpenWorkMark />
+        <MicxMark />
       </div>
     );
   }
@@ -174,7 +174,7 @@ export function SidebarBrandMark({
   );
 }
 
-const DEFAULT_WORKSPACE_FAVICON_HREF = "/openwork-mark.svg";
+const DEFAULT_WORKSPACE_FAVICON_HREF = "/micx-mark.svg";
 
 export function WorkspaceFavicon({
   metadata,
@@ -266,7 +266,7 @@ function getDashboardPageTitle(pathname: string, orgSlug: string | null) {
     return "Diagnostics";
   }
   if (pathname.startsWith(getInferenceRoute(orgSlug))) {
-    return "OpenWork Models";
+    return "Micx Models";
   }
   if (pathname.startsWith(getWebRoute(orgSlug))) {
     return "Web";
@@ -387,20 +387,20 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
         ],
       }
     : null;
-  // OpenWork Models are a hosted OpenWork Cloud offering; self-hosted
+  // Micx Models are a hosted Micx Cloud offering; self-hosted
   // (single-org) deployments only manage their own LLM providers. Default
   // hidden until the runtime config confirms a hosted (multi-org) deployment.
-  const showOpenWorkModels = runtimeConfigLoaded && runtimeConfig.orgMode === "multi_org";
+  const showMicxModels = runtimeConfigLoaded && runtimeConfig.orgMode === "multi_org";
   const modelsGroup: DashboardNavItem | null = access.isAdmin && activeOrg
     ? {
-        href: showOpenWorkModels
+        href: showMicxModels
           ? getInferenceRoute(activeOrg.slug)
           : getCustomLlmProvidersRoute(activeOrg.slug),
         label: "Models",
         icon: Sparkles,
         children: [
-          ...(showOpenWorkModels
-            ? [{ href: getInferenceRoute(activeOrg.slug), label: "OpenWork Models" }]
+          ...(showMicxModels
+            ? [{ href: getInferenceRoute(activeOrg.slug), label: "Micx Models" }]
             : []),
           { href: getCustomLlmProvidersRoute(activeOrg.slug), label: "Bring your Own Keys" },
         ],
@@ -508,7 +508,7 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
         onClick={() => setSwitcherOpen((current) => !current)}
       >
         <div className="flex min-w-0 items-center gap-3">
-          <OrgMark name={activeOrg?.name ?? "OpenWork"} />
+          <OrgMark name={activeOrg?.name ?? "Micx"} />
           <div className="min-w-0">
             <p className="truncate text-[14px] font-medium text-gray-900">
               {activeOrg?.name ?? "Loading..."}
@@ -530,7 +530,7 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
         <div className="absolute bottom-[calc(100%+0.5rem)] left-0 w-[240px] z-30 grid gap-1 rounded-2xl border border-gray-200 bg-white py-2 shadow-[0_12px_24px_-12px_rgba(0,0,0,0.15)]">
           <div className="px-3 py-1.5">
             <p className="truncate text-[13px] font-medium text-gray-900">
-              {user?.email ?? "OpenWork user"}
+              {user?.email ?? "Micx user"}
             </p>
           </div>
           
@@ -784,7 +784,7 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
               </a>
             ) : null}
             <a
-              href={OPENWORK_DOCS_URL}
+              href={MICX_DOCS_URL}
               target="_blank"
               rel="noreferrer"
               className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[13px] text-gray-500 transition-colors hover:bg-gray-50 hover:text-gray-700"

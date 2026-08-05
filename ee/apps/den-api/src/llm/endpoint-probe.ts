@@ -143,7 +143,7 @@ function isBlockedHostname(hostname: string, allowLoopback: boolean): boolean {
 }
 
 export function assertProbeUrlAllowed(url: string, options?: { allowLoopback?: boolean }) {
-  const allowLoopback = options?.allowLoopback ?? process.env.OPENWORK_DEV_MODE === "1"
+  const allowLoopback = options?.allowLoopback ?? process.env.MICX_DEV_MODE === "1"
   const parsed = new URL(url)
   if (isBlockedHostname(parsed.hostname, allowLoopback)) {
     throw new EndpointProbeBlockedError(`Probing ${parsed.hostname} is not allowed.`)
@@ -246,7 +246,7 @@ function hintFor(vendor: ProbeVendor, status: number | null): string {
   if (status !== null) {
     return `The endpoint answered /models with HTTP ${status}.`
   }
-  return "Could not reach the endpoint. Check the URL, network access, and that the endpoint allows requests from OpenWork Cloud."
+  return "Could not reach the endpoint. Check the URL, network access, and that the endpoint allows requests from Micx Cloud."
 }
 
 /**

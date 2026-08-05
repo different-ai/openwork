@@ -3,8 +3,8 @@ import { test } from "node:test"
 import { Hono } from "hono"
 import type { InferenceHandledErrorReport, InferenceReporter, InferenceRequestReport } from "../src/inference-reporting.js"
 
-process.env.OPENWORK_DEV_MODE = "1"
-process.env.DATABASE_URL = "mysql://root:password@127.0.0.1:3306/openwork_den"
+process.env.MICX_DEV_MODE = "1"
+process.env.DATABASE_URL = "mysql://root:password@127.0.0.1:3306/micx_den"
 process.env.DEN_DB_ENCRYPTION_KEY = "local-dev-db-encryption-key-please-change-1234567890"
 process.env.OPENROUTER_UPSTREAM_URL = "https://upstream.test/api/v1"
 
@@ -101,7 +101,7 @@ function authHeaders(contentType?: string) {
 }
 
 function inferenceRequest(input: { method: string; headers: Headers; body?: string; path?: string }) {
-  return new Request(`http://openwork.test${input.path ?? "/api/v1/chat/completions"}`, {
+  return new Request(`http://micx.test${input.path ?? "/api/v1/chat/completions"}`, {
     method: input.method,
     headers: input.headers,
     body: input.body,
@@ -201,7 +201,7 @@ test("rewrites approved model aliases before forwarding JSON requests", async ()
   const response = await app.fetch(inferenceRequest({
     method: "POST",
     headers: authHeaders("application/json; charset=utf-8"),
-    body: JSON.stringify({ model: "openwork/openrouter/fusion", messages: [] }),
+    body: JSON.stringify({ model: "micx/openrouter/fusion", messages: [] }),
   }))
 
   assert.equal(response.status, 200)
@@ -217,7 +217,7 @@ test("rewrites approved model aliases before forwarding JSON requests", async ()
   const body = parseJsonObject(requireBodyText(upstream.body))
   assert.equal(body.model, "openrouter/fusion")
   assert.equal(body.user, "member_123")
-  assert.equal(body.session_id, upstream.headers.get("x-openwork-request-id"))
+  assert.equal(body.session_id, upstream.headers.get("x-micx-request-id"))
   const trace = body.trace
   assert.ok(isRecord(trace))
   assert.equal(trace.generation_name, "openrouter/fusion")
@@ -225,10 +225,10 @@ test("rewrites approved model aliases before forwarding JSON requests", async ()
   const report = requireRequestReport(reports)
   assert.equal(report.organizationId, "organization_123")
   assert.equal(report.inferenceKeyId, "inference_key_123")
-  assert.equal(report.openworkRequestId, upstream.headers.get("x-openwork-request-id"))
+  assert.equal(report.micxRequestId, upstream.headers.get("x-micx-request-id"))
   assert.equal(report.route, "/api/v1/chat/completions")
   assert.equal(report.method, "POST")
-  assert.equal(report.incomingModel, "openwork/openrouter/fusion")
+  assert.equal(report.incomingModel, "micx/openrouter/fusion")
   assert.equal(report.resolvedUpstreamModel, "openrouter/fusion")
 })
 
@@ -237,7 +237,7 @@ test("returns model_not_found for unknown JSON model aliases", async () => {
   const response = await app.fetch(inferenceRequest({
     method: "POST",
     headers: authHeaders("application/json"),
-    body: JSON.stringify({ model: "openwork/unknown-model", messages: [] }),
+    body: JSON.stringify({ model: "micx/unknown-model", messages: [] }),
   }))
 
   assert.equal(response.status, 404)
@@ -246,7 +246,7 @@ test("returns model_not_found for unknown JSON model aliases", async () => {
   assert.equal(calls.getOpenRouterProviderKey, 0)
   assert.equal(upstreamRequests.length, 0)
   const report = requireRequestReport(reports)
-  assert.equal(report.incomingModel, "openwork/unknown-model")
+  assert.equal(report.incomingModel, "micx/unknown-model")
   assert.equal(report.resolvedUpstreamModel, null)
 })
 
@@ -421,8 +421,8 @@ test("returns usage-limit 429 without reporting a handled error or contacting pr
 
     assert.equal(response.status, 429)
     assert.equal(await readErrorCode(response), "rate_limit_exceeded")
-    assert.equal(response.headers.get("x-openwork-limit-bucket-id"), "bucket_123")
-    assert.equal(response.headers.get("x-openwork-limit-window-type"), "monthly")
+    assert.equal(response.headers.get("x-micx-limit-bucket-id"), "bucket_123")
+    assert.equal(response.headers.get("x-micx-limit-window-type"), "monthly")
     assert.equal(response.headers.get("retry-after"), "90")
     assert.equal(response.headers.get("x-ratelimit-limit-tokens"), "100")
     assert.equal(response.headers.get("x-ratelimit-remaining-tokens"), "0")
@@ -452,7 +452,7 @@ test("reports handled upstream errors with searchable request context", async ()
   assert.equal(errorReport.reason, "upstream_failure")
   assert.equal(errorReport.organizationId, "organization_123")
   assert.equal(errorReport.inferenceKeyId, "inference_key_123")
-  assert.equal(errorReport.openworkRequestId, requestReport.openworkRequestId)
+  assert.equal(errorReport.micxRequestId, requestReport.micxRequestId)
   assert.equal(errorReport.route, "/api/v1/chat/completions")
   assert.equal(errorReport.method, "POST")
   assert.equal(errorReport.incomingModel, "openrouter/fusion")
@@ -487,7 +487,7 @@ test("blocks an unknown model when Content-Type is omitted", async () => {
   const response = await app.fetch(inferenceRequest({
     method: "POST",
     headers: authHeaders(),
-    body: JSON.stringify({ model: "openwork/unknown-model", messages: [] }),
+    body: JSON.stringify({ model: "micx/unknown-model", messages: [] }),
   }))
 
   assert.equal(response.status, 415)
@@ -502,7 +502,7 @@ test("blocks an unknown model sent as text/plain", async () => {
   const response = await app.fetch(inferenceRequest({
     method: "POST",
     headers: authHeaders("text/plain"),
-    body: JSON.stringify({ model: "openwork/unknown-model", messages: [] }),
+    body: JSON.stringify({ model: "micx/unknown-model", messages: [] }),
   }))
 
   assert.equal(response.status, 415)
@@ -516,8 +516,8 @@ test("accepts application/*+json media types", async () => {
   const { app, upstreamRequests } = createTestServer()
   const response = await app.fetch(inferenceRequest({
     method: "POST",
-    headers: authHeaders("application/vnd.openwork.request+json; charset=utf-8"),
-    body: JSON.stringify({ model: "openwork/openrouter/fusion", messages: [] }),
+    headers: authHeaders("application/vnd.micx.request+json; charset=utf-8"),
+    body: JSON.stringify({ model: "micx/openrouter/fusion", messages: [] }),
   }))
 
   assert.equal(response.status, 200)
@@ -545,7 +545,7 @@ test("does not forward caller headers or session IDs that can affect routing", a
   assert.equal(upstream.headers.get("x-session-id"), null)
   assert.equal(upstream.headers.get("x-openrouter-model"), null)
   const body = parseJsonObject(requireBodyText(upstream.body))
-  assert.equal(body.session_id, upstream.headers.get("x-openwork-request-id"))
+  assert.equal(body.session_id, upstream.headers.get("x-micx-request-id"))
 })
 
 for (const [field, value] of [
@@ -649,7 +649,7 @@ test("returns the authenticated local model catalog without forwarding", async (
   const model = payload.data[0]
   assert.ok(isRecord(model))
   assert.equal(typeof model.id, "string")
-  assert.ok(!model.id.startsWith("openwork/"))
+  assert.ok(!model.id.startsWith("micx/"))
   assert.equal(calls.findActiveInferenceKey, 1)
   assert.equal(calls.ensureUsableBuckets, 0)
   assert.equal(calls.getOpenRouterProviderKey, 0)

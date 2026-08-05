@@ -1,5 +1,5 @@
 import type { Breadcrumb, Event } from "@sentry/nextjs";
-import type { JsonObject, JsonValue } from "@openwork-ee/utils/observability";
+import type { JsonObject, JsonValue } from "@micx-ee/utils/observability";
 
 const redacted = "[redacted]";
 const redactedQuery = "[redacted-query]";

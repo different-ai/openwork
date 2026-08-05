@@ -59,7 +59,7 @@ function EnterpriseActivationPage() {
         >
           <div className="flex items-center gap-2.5">
             <img
-              src={resolveExtensionIconSrc("/openwork-mark.svg")}
+              src={resolveExtensionIconSrc("/micx-mark.svg")}
               alt=""
               width={26}
               height={26}
@@ -67,17 +67,17 @@ function EnterpriseActivationPage() {
               aria-hidden="true"
             />
             <span className="text-[15px] font-semibold tracking-tight text-foreground">
-              OpenWork Enterprise
+              Micx Enterprise
             </span>
           </div>
 
           <div className="mt-10 flex flex-col gap-2.5 sm:mt-14">
             <h1 className="text-[30px] font-semibold leading-[38px] tracking-[-0.03em] text-foreground sm:text-[38px] sm:leading-[46px]">
-              Activate OpenWork Enterprise
+              Activate Micx Enterprise
             </h1>
             <p className="text-[15px] leading-[23px] text-muted-foreground">
-              OpenWork Enterprise access is managed by your organization. Return to your organization&apos;s
-              OpenWork Enterprise download page and select <strong className="font-semibold text-foreground">Activate OpenWork Enterprise</strong>.
+              Micx Enterprise access is managed by your organization. Return to your organization&apos;s
+              Micx Enterprise download page and select <strong className="font-semibold text-foreground">Activate Micx Enterprise</strong>.
               This app will unlock when it receives the one-time activation link.
             </p>
           </div>

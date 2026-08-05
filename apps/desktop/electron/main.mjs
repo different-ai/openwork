@@ -16,7 +16,7 @@ import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { globalOpencodeConfigDir, workspaceOpencodeConfigCandidates } from "@openwork/paths";
+import { globalOpencodeConfigDir, workspaceOpencodeConfigCandidates } from "@micx/paths";
 
 import { configureFakeMediaForTests, installMediaPermissionHandlers } from "./media-permissions.mjs";
 import { registerMigrationIpc } from "./migration.mjs";
@@ -94,31 +94,31 @@ const {
   systemPreferences,
 } = require("electron");
 const pty = require(["node", "pty"].join("-"));
-const NATIVE_DEEP_LINK_EVENT = "openwork:deep-link-native";
-const isDevMode = process.env.OPENWORK_DEV_MODE === "1";
+const NATIVE_DEEP_LINK_EVENT = "micx:deep-link-native";
+const isDevMode = process.env.MICX_DEV_MODE === "1";
 const DESKTOP_DISTRIBUTION = resolveDesktopDistribution({
   isPackaged: app.isPackaged,
-  packageFlavor: Reflect.get(desktopPackageMetadata, "openworkDistribution"),
-  environmentFlavor: process.env.OPENWORK_DESKTOP_DISTRIBUTION,
+  packageFlavor: Reflect.get(desktopPackageMetadata, "micxDistribution"),
+  environmentFlavor: process.env.MICX_DESKTOP_DISTRIBUTION,
 });
 const TAURI_APP_IDENTIFIER = DESKTOP_DISTRIBUTION.appIdentifier;
 const DEV_APP_IDENTIFIER = `${DESKTOP_DISTRIBUTION.appIdentifier}.dev`;
 const DESKTOP_PROTOCOL_SCHEME = DESKTOP_DISTRIBUTION.protocolScheme;
 const APP_NAME =
-  (!app.isPackaged ? process.env.OPENWORK_ELECTRON_APP_NAME?.trim() : "") ||
+  (!app.isPackaged ? process.env.MICX_ELECTRON_APP_NAME?.trim() : "") ||
   (isDevMode ? `${DESKTOP_DISTRIBUTION.appName} - Dev` : DESKTOP_DISTRIBUTION.appName);
 let currentDisplayAppName = APP_NAME;
 const BASE_APP_IDENTIFIER = isDevMode ? DEV_APP_IDENTIFIER : TAURI_APP_IDENTIFIER;
 const APP_IDENTIFIER = resolveAppIdentifier({
-  appIdentifierOverride: process.env.OPENWORK_ELECTRON_APP_IDENTIFIER,
+  appIdentifierOverride: process.env.MICX_ELECTRON_APP_IDENTIFIER,
   appRootPath: APP_ROOT,
   baseAppIdentifier: BASE_APP_IDENTIFIER,
   devAppIdentifier: DEV_APP_IDENTIFIER,
-  devProfile: process.env.OPENWORK_DEV_PROFILE,
+  devProfile: process.env.MICX_DEV_PROFILE,
   isDevMode,
   isPackaged: app.isPackaged,
 });
-if (process.env.OPENWORK_ELECTRON_USE_MOCK_KEYCHAIN === "1") {
+if (process.env.MICX_ELECTRON_USE_MOCK_KEYCHAIN === "1") {
   // Fresh, isolated development profiles otherwise trigger macOS's native
   // "Login" keychain prompt as soon as Chromium persists an authenticated
   // cookie. That modal blocks the entire Electron main loop and makes the demo
@@ -126,9 +126,9 @@ if (process.env.OPENWORK_ELECTRON_USE_MOCK_KEYCHAIN === "1") {
   // system keychain normally.
   app.commandLine.appendSwitch("use-mock-keychain");
 }
-const RELEASE_DOWNLOAD_BASE_URL = "https://github.com/different-ai/openwork/releases/latest/download";
-const RELEASE_PAGE_URL = "https://github.com/different-ai/openwork/releases/latest";
-const DOCS_PAGE_URL = "https://openworklabs.com/docs";
+const RELEASE_DOWNLOAD_BASE_URL = "https://github.com/different-ai/micx/releases/latest/download";
+const RELEASE_PAGE_URL = "https://github.com/different-ai/micx/releases/latest";
+const DOCS_PAGE_URL = "https://micxlabs.com/docs";
 const applicationMenu = createApplicationMenu({
   appName: APP_NAME,
   docsUrl: DOCS_PAGE_URL,
@@ -180,14 +180,14 @@ function killTerminalsForWebContents(webContentsId) {
 // so in-place migration is a no-op for almost every file. Dev mode uses the
 // separate dev identifier so it can run beside the production app.
 //
-// Dev profile precedence: OPENWORK_ELECTRON_USERDATA (explicit profile path)
-// wins over everything; then OPENWORK_ELECTRON_APP_IDENTIFIER; then
-// OPENWORK_DEV_PROFILE in unpackaged dev; then the legacy identifier default.
+// Dev profile precedence: MICX_ELECTRON_USERDATA (explicit profile path)
+// wins over everything; then MICX_ELECTRON_APP_IDENTIFIER; then
+// MICX_DEV_PROFILE in unpackaged dev; then the legacy identifier default.
 app.setName(APP_NAME);
 app.setAppUserModelId(APP_IDENTIFIER);
 if (
   app.isPackaged
-  && process.env.OPENWORK_ELECTRON_DISABLE_PROTOCOL_REGISTRATION !== "1"
+  && process.env.MICX_ELECTRON_DISABLE_PROTOCOL_REGISTRATION !== "1"
   && !(process.platform === "linux" && process.env.APPIMAGE)
 ) {
   app.setAsDefaultProtocolClient(DESKTOP_PROTOCOL_SCHEME);
@@ -195,7 +195,7 @@ if (
 const userDataPath = resolveUserDataPath({
   appDataPath: app.getPath("appData"),
   appIdentifier: APP_IDENTIFIER,
-  userDataOverride: process.env.OPENWORK_ELECTRON_USERDATA,
+  userDataOverride: process.env.MICX_ELECTRON_USERDATA,
 });
 app.setPath("userData", userDataPath);
 const linuxDesktopIntegration = createLinuxDesktopIntegration({
@@ -348,7 +348,7 @@ async function resolveArchitectureInfo() {
   const systemArch = resolveSystemArch();
   const version = app.getVersion();
   const targetArch = systemArch === "arm64" || systemArch === "x64" ? systemArch : appArch;
-  const assetName = `openwork-${platformDownloadSlug()}-${downloadAssetArch(targetArch)}-${version}.${downloadAssetExtension()}`;
+  const assetName = `micx-${platformDownloadSlug()}-${downloadAssetArch(targetArch)}-${version}.${downloadAssetExtension()}`;
   const latestDownloadUrl = await resolveCorrectArchitectureDownloadUrl(targetArch);
   const hasCorrectArchitectureDownload = Boolean(latestDownloadUrl);
   return {
@@ -387,7 +387,7 @@ function brandIconWindowsPath() {
 }
 
 function defaultAppWindowsIconPath() {
-  return path.join(app.getPath("userData"), "openwork-stock.ico");
+  return path.join(app.getPath("userData"), "micx-stock.ico");
 }
 
 let cachedWindowsProgramsPath = null;
@@ -612,7 +612,7 @@ async function focusMainWindowFromNotification() {
 
 /**
  * @param {unknown} input
- * @returns {import("@openwork/types/desktop-ipc").DesktopNotificationResult}
+ * @returns {import("@micx/types/desktop-ipc").DesktopNotificationResult}
  */
 function showDesktopNotification(input) {
   if (!ElectronNotification.isSupported()) {
@@ -888,7 +888,7 @@ if (process.platform === "darwin" && INITIAL_APP_ICON_IMAGE && !INITIAL_APP_ICON
 }
 
 // Expose Chrome DevTools Protocol so the opencode-chrome-devtools plugin can
-// drive the built-in browser panel.  Use OPENWORK_ELECTRON_REMOTE_DEBUG_PORT to
+// drive the built-in browser panel.  Use MICX_ELECTRON_REMOTE_DEBUG_PORT to
 // pin a specific port; otherwise probe for a free one starting at 9223.
 // Must resolve before app.commandLine.appendSwitch (before `ready`).
 function probePort(port) {
@@ -909,7 +909,7 @@ async function findFreeCdpPort(candidates) {
 }
 
 const explicitCdpPort = Number.parseInt(
-  process.env.OPENWORK_ELECTRON_REMOTE_DEBUG_PORT?.trim() ?? "",
+  process.env.MICX_ELECTRON_REMOTE_DEBUG_PORT?.trim() ?? "",
   10,
 );
 const remoteDebugPort = Number.isFinite(explicitCdpPort) && explicitCdpPort > 0
@@ -920,11 +920,11 @@ if (remoteDebugPort > 0) {
   app.commandLine.appendSwitch("remote-debugging-address", "127.0.0.1");
 }
 // Make the resolved port available to the embedded server so it flows into
-// agent instructions via ensureOpenworkAgent → resolveAgentTemplate.
-process.env.OPENWORK_ELECTRON_REMOTE_DEBUG_PORT = String(remoteDebugPort);
+// agent instructions via ensureMicxAgent → resolveAgentTemplate.
+process.env.MICX_ELECTRON_REMOTE_DEBUG_PORT = String(remoteDebugPort);
 if (isDevMode && !app.isPackaged) {
   const cdpAddress = remoteDebugPort > 0 ? `http://127.0.0.1:${remoteDebugPort}` : "disabled";
-  console.log(`[openwork] dev profile=${app.getPath("userData")} cdp=${cdpAddress}`);
+  console.log(`[micx] dev profile=${app.getPath("userData")} cdp=${cdpAddress}`);
 }
 
 // Apply extra Chromium flags from ELECTRON_EXTRA_LAUNCH_ARGS.
@@ -942,11 +942,11 @@ if (extraLaunchArgs) {
     }
   }
 }
-configureFakeMediaForTests(app, envFlagEnabled("OPENWORK_ELECTRON_FAKE_MEDIA"));
-const DEFAULT_DEN_BASE_URL = "https://app.openworklabs.com";
+configureFakeMediaForTests(app, envFlagEnabled("MICX_ELECTRON_FAKE_MEDIA"));
+const DEFAULT_DEN_BASE_URL = "https://app.micxlabs.com";
 const DEFAULT_LOCAL_BASE_URL = "http://127.0.0.1:4096";
 const FORCE_DESKTOP_REQUIRE_SIGNIN =
-  DESKTOP_DISTRIBUTION.requireSignin || envFlagEnabled("OPENWORK_FORCE_SIGNIN");
+  DESKTOP_DISTRIBUTION.requireSignin || envFlagEnabled("MICX_FORCE_SIGNIN");
 const DEFAULT_DESKTOP_REQUIRE_SIGNIN = FORCE_DESKTOP_REQUIRE_SIGNIN;
 
 function envFlagEnabled(name) {
@@ -971,7 +971,7 @@ const IDLE_ENGINE_INFO = Object.freeze({
   lastStderr: null,
 });
 
-const IDLE_OPENWORK_SERVER_INFO = Object.freeze({
+const IDLE_MICX_SERVER_INFO = Object.freeze({
   running: false,
   remoteAccessEnabled: false,
   host: null,
@@ -1023,7 +1023,7 @@ const connectLinkReplayGuard = createConnectLinkReplayGuard({
 
 /**
  * @param {string} rawUrl
- * @returns {import("@openwork/types/connect-link").ConnectLinkVerifyResult}
+ * @returns {import("@micx/types/connect-link").ConnectLinkVerifyResult}
  */
 function verifyConnectLink(rawUrl) {
   return verifyConnectLinkUrl(String(rawUrl ?? ""), {
@@ -1093,7 +1093,7 @@ function forwardedDeepLinks(argv) {
     .filter(
       (entry) =>
         entry.startsWith(`${DESKTOP_PROTOCOL_SCHEME}://`) ||
-        (!app.isPackaged && entry.startsWith("openwork-dev://")) ||
+        (!app.isPackaged && entry.startsWith("micx-dev://")) ||
         entry.startsWith("https://") ||
         entry.startsWith("http://"),
     );
@@ -1190,7 +1190,7 @@ const runtimeManager = createRuntimeManager({
 });
 const desktopAutomationRunner = createDesktopAutomationRunner({
   getLocalRuntime: async () => {
-    const server = await runtimeManager.openworkServerInfo();
+    const server = await runtimeManager.micxServerInfo();
     return { baseUrl: server.baseUrl, token: server.clientToken ?? server.ownerToken };
   },
   log: (state) => console.info(`[automation-runner] ${state}`),
@@ -1222,7 +1222,7 @@ function showShutdownScreen() {
   <body>
     <main>
       <div class="spinner" aria-hidden="true"></div>
-      <div class="title">Stopping OpenWork services</div>
+      <div class="title">Stopping Micx services</div>
       <div class="body">Closing local workers and background services...</div>
     </main>
   </body>
@@ -1243,15 +1243,15 @@ async function disposeRuntimeBeforeQuit() {
   }
 }
 
-function assertOpenworkServerReady(info) {
+function assertMicxServerReady(info) {
   if (!info?.running) {
-    throw new Error("OpenWork server did not stay running after startup.");
+    throw new Error("Micx server did not stay running after startup.");
   }
   if (!info.baseUrl) {
-    throw new Error("OpenWork server did not report a base URL after startup.");
+    throw new Error("Micx server did not report a base URL after startup.");
   }
   if (!info.ownerToken && !info.clientToken) {
-    throw new Error("OpenWork server did not report an access token after startup.");
+    throw new Error("Micx server did not report an access token after startup.");
   }
   return info;
 }
@@ -1311,8 +1311,8 @@ async function bootRuntimeForSelectedWorkspace() {
       watchedId: String(fallback.id ?? ""),
     }).catch(() => undefined);
   }
-  const openworkServer = assertOpenworkServerReady(await runtimeManager.openworkServerInfo());
-  return { ok: true, skipped: false, engine, openworkServer, workspaceId: bootWorkspace.id ?? null };
+  const micxServer = assertMicxServerReady(await runtimeManager.micxServerInfo());
+  return { ok: true, skipped: false, engine, micxServer, workspaceId: bootWorkspace.id ?? null };
 }
 
 function ensureRuntimeBootstrap() {
@@ -1610,9 +1610,9 @@ function applyNativeTheme(mode) {
 // entry here; handlers receive the ipcMain event followed by the renderer
 // arguments. The @type below asserts this registry against the shared
 // DesktopCommandMap contract (packages/types/src/desktop-ipc.ts): a missing,
-// extra, or renamed command fails `pnpm --filter @openwork/desktop
+// extra, or renamed command fails `pnpm --filter @micx/desktop
 // typecheck:electron`.
-/** @type {import("@openwork/types/desktop-ipc").DesktopCommandHandlers<import("electron").IpcMainInvokeEvent>} */
+/** @type {import("@micx/types/desktop-ipc").DesktopCommandHandlers<import("electron").IpcMainInvokeEvent>} */
 const desktopCommandHandlers = {
   "workspaceBootstrap": async (event, ...args) => {
       return workspaceStore.readWorkspaceState();
@@ -1641,13 +1641,13 @@ const desktopCommandHandlers = {
   "workspaceAddAuthorizedRoot": async (event, ...args) => {
       return workspaceStore.addAuthorizedRoot(args[0] ?? {});
   },
-  "workspaceOpenworkRead": async (event, ...args) => {
-      return workspaceStore.readWorkspaceOpenworkConfig(String(args[0]?.workspacePath ?? "").trim());
+  "workspaceMicxRead": async (event, ...args) => {
+      return workspaceStore.readWorkspaceMicxConfig(String(args[0]?.workspacePath ?? "").trim());
   },
-  "workspaceOpenworkWrite": async (event, ...args) => {
-      return workspaceStore.writeWorkspaceOpenworkConfig(
+  "workspaceMicxWrite": async (event, ...args) => {
+      return workspaceStore.writeWorkspaceMicxConfig(
         String(args[0]?.workspacePath ?? "").trim(),
-        args[0]?.config ?? workspaceStore.defaultWorkspaceOpenworkConfig(""),
+        args[0]?.config ?? workspaceStore.defaultWorkspaceMicxConfig(""),
       );
   },
   "workspaceExportConfig": async (event, ...args) => {
@@ -1705,9 +1705,9 @@ const desktopCommandHandlers = {
   "appBuildInfo": async (event, ...args) => {
       return {
         version: app.getVersion(),
-        gitSha: process.env.OPENWORK_GIT_SHA ?? null,
-        buildEpoch: process.env.OPENWORK_BUILD_EPOCH ?? null,
-        openworkDevMode: process.env.OPENWORK_DEV_MODE === "1",
+        gitSha: process.env.MICX_GIT_SHA ?? null,
+        buildEpoch: process.env.MICX_BUILD_EPOCH ?? null,
+        micxDevMode: process.env.MICX_DEV_MODE === "1",
       };
   },
   "desktopNotificationShow": async (event, ...args) => {
@@ -1724,17 +1724,17 @@ const desktopCommandHandlers = {
   },
   "getUiControlBridgeInfo": async (event, ...args) => {
       try {
-        const raw = await readFile(path.join(app.getPath("userData"), "openwork-ui-control.json"), "utf8");
+        const raw = await readFile(path.join(app.getPath("userData"), "micx-ui-control.json"), "utf8");
         return JSON.parse(raw);
       } catch {
         return null;
       }
   },
-  "getOpenworkUiMcpCommand": async (event, ...args) => {
-      if (process.env.OPENWORK_DEV_MODE === "1") {
-        return ["node", path.resolve(__dirname, "../../..", "packages/openwork-ui-mcp/index.mjs")];
+  "getMicxUiMcpCommand": async (event, ...args) => {
+      if (process.env.MICX_DEV_MODE === "1") {
+        return ["node", path.resolve(__dirname, "../../..", "packages/micx-ui-mcp/index.mjs")];
       }
-      return ["npx", "-y", "openwork-ui-mcp"];
+      return ["npx", "-y", "micx-ui-mcp"];
   },
   "getComputerUseMcpCommand": async (event, ...args) => {
       return getComputerUseMcpCommand();
@@ -1758,9 +1758,9 @@ const desktopCommandHandlers = {
       await openComputerUseSetupApp();
       return checkComputerUsePermissions();
   },
-  "getOpenworkUiMcpEnvironment": async (event, ...args) => {
+  "getMicxUiMcpEnvironment": async (event, ...args) => {
       return {
-        OPENWORK_UI_CONTROL_DISCOVERY: path.join(app.getPath("userData"), "openwork-ui-control.json"),
+        MICX_UI_CONTROL_DISCOVERY: path.join(app.getPath("userData"), "micx-ui-control.json"),
       };
   },
   "getDesktopBootstrapConfig": async (event, ...args) => {
@@ -1826,7 +1826,7 @@ const desktopCommandHandlers = {
       const config = await persistConnectLinkClaims(verified.claims);
       return { ok: true, config };
   },
-  "nukeOpenworkAndOpencodeConfigPreview": async (event, ...args) => {
+  "nukeMicxAndOpencodeConfigPreview": async (event, ...args) => {
       return buildNukeManifest({
         env: process.env,
         homedir: os.homedir(),
@@ -1836,7 +1836,7 @@ const desktopCommandHandlers = {
         workspacePaths: await workspaceStore.listLocalWorkspacePaths(),
       });
   },
-  "nukeOpenworkAndOpencodeConfigAndExit": async (event, ...args) => {
+  "nukeMicxAndOpencodeConfigAndExit": async (event, ...args) => {
       return executeNukeFreshStart({
         app,
         session,
@@ -1854,17 +1854,17 @@ const desktopCommandHandlers = {
         },
       });
   },
-  "sandboxCleanupOpenworkContainers": async (event, ...args) => {
-      return runtimeManager.sandboxCleanupOpenworkContainers();
+  "sandboxCleanupMicxContainers": async (event, ...args) => {
+      return runtimeManager.sandboxCleanupMicxContainers();
   },
-  "openworkServerInfo": async (event, ...args) => {
-      return runtimeManager.openworkServerInfo();
+  "micxServerInfo": async (event, ...args) => {
+      return runtimeManager.micxServerInfo();
   },
   "automationRunnerConfigure": async (event, ...args) => {
       return desktopAutomationRunner.configure(args[0] ?? null);
   },
-  "openworkServerRestart": async (event, ...args) => {
-      return runtimeManager.openworkServerRestart(args[0] ?? {});
+  "micxServerRestart": async (event, ...args) => {
+      return runtimeManager.micxServerRestart(args[0] ?? {});
   },
   "pickDirectory": async (event, ...args) => {
       const options = args[0] ?? {};
@@ -1991,8 +1991,8 @@ const desktopCommandHandlers = {
         String(args[2] ?? ""),
       );
   },
-  "resetOpenworkState": async (event, ...args) => {
-      return workspaceStore.resetOpenworkState();
+  "resetMicxState": async (event, ...args) => {
+      return workspaceStore.resetMicxState();
   },
   "resetOpencodeCache": async (event, ...args) => {
       return { removed: [], missing: [], errors: [] };
@@ -2277,7 +2277,7 @@ function assertDesktopActivation() {
     DESKTOP_DISTRIBUTION,
     workspaceStore.readDesktopBootstrapConfigSync(),
   )) {
-    throw new Error("OpenWork must be activated from your Den portal before this command is available.");
+    throw new Error("Micx must be activated from your Den portal before this command is available.");
   }
 }
 
@@ -2417,7 +2417,7 @@ async function createMainWindow() {
     browserPanel.routeBlockedMainWindowNavigation(url);
   });
 
-  const startUrl = process.env.OPENWORK_ELECTRON_START_URL?.trim() || process.env.ELECTRON_START_URL?.trim();
+  const startUrl = process.env.MICX_ELECTRON_START_URL?.trim() || process.env.ELECTRON_START_URL?.trim();
   if (startUrl) {
     await mainWindow.loadURL(startUrl);
   } else {
@@ -2429,29 +2429,29 @@ async function createMainWindow() {
   return mainWindow;
 }
 
-ipcMain.on("openwork:desktop-bootstrap-sync", (event) => {
+ipcMain.on("micx:desktop-bootstrap-sync", (event) => {
   event.returnValue = workspaceStore.readDesktopBootstrapConfigSync();
 });
-ipcMain.on("openwork:desktop-distribution-sync", (event) => {
+ipcMain.on("micx:desktop-distribution-sync", (event) => {
   event.returnValue = DESKTOP_DISTRIBUTION;
 });
-ipcMain.handle("openwork:desktop", handleDesktopInvoke);
-ipcMain.handle("openwork:shell:openExternal", async (_event, url) => {
+ipcMain.handle("micx:desktop", handleDesktopInvoke);
+ipcMain.handle("micx:shell:openExternal", async (_event, url) => {
   if (typeof url !== "string" || url.trim().length === 0) {
     return { ok: false, error: "empty url" };
   }
   return openExternalUrl(url.trim());
 });
-ipcMain.handle("openwork:shell:relaunch", async () => {
+ipcMain.handle("micx:shell:relaunch", async () => {
   app.relaunch();
   app.quit();
 });
-ipcMain.handle("openwork:system:architecture", async () => resolveArchitectureInfo());
-ipcMain.handle("openwork:system:microphoneStatus", async () => {
+ipcMain.handle("micx:system:architecture", async () => resolveArchitectureInfo());
+ipcMain.handle("micx:system:microphoneStatus", async () => {
   if (process.platform !== "darwin") return { platform: process.platform, status: "not-mac" };
   return { platform: process.platform, status: systemPreferences.getMediaAccessStatus("microphone") };
 });
-ipcMain.handle("openwork:system:askMicrophoneAccess", async () => {
+ipcMain.handle("micx:system:askMicrophoneAccess", async () => {
   if (process.platform !== "darwin") return { platform: process.platform, granted: true, status: "not-mac" };
   const before = systemPreferences.getMediaAccessStatus("microphone");
   const granted = await systemPreferences.askForMediaAccess("microphone");
@@ -2460,7 +2460,7 @@ ipcMain.handle("openwork:system:askMicrophoneAccess", async () => {
 });
 
 // ── Terminal IPC ────────────────────────────────────────────────────────
-ipcMain.handle("openwork:terminal:create", async (event, options = {}) => {
+ipcMain.handle("micx:terminal:create", async (event, options = {}) => {
   assertDesktopActivation();
   const cwd = await resolveTerminalCwd(options?.cwd);
   const cols = Number.isFinite(options?.cols) ? Math.max(20, Math.floor(options.cols)) : 80;
@@ -2476,7 +2476,7 @@ ipcMain.handle("openwork:terminal:create", async (event, options = {}) => {
       ...process.env,
       TERM: "xterm-256color",
       COLORTERM: "truecolor",
-      OPENWORK_TERMINAL: "1",
+      MICX_TERMINAL: "1",
     },
   });
 
@@ -2484,27 +2484,27 @@ ipcMain.handle("openwork:terminal:create", async (event, options = {}) => {
   event.sender.once("destroyed", () => killTerminalsForWebContents(event.sender.id));
   child.onData((data) => {
     if (event.sender.isDestroyed()) return;
-    event.sender.send("openwork:terminal:data", { terminalId, data });
+    event.sender.send("micx:terminal:data", { terminalId, data });
   });
   child.onExit(({ exitCode, signal }) => {
     terminalProcesses.delete(terminalId);
     if (event.sender.isDestroyed()) return;
-    event.sender.send("openwork:terminal:exit", { terminalId, exitCode, signal });
+    event.sender.send("micx:terminal:exit", { terminalId, exitCode, signal });
   });
 
   return { terminalId };
 });
-ipcMain.handle("openwork:terminal:write", (event, terminalId, data) => {
+ipcMain.handle("micx:terminal:write", (event, terminalId, data) => {
   const terminal = terminalForSender(event, terminalId);
   if (!terminal || typeof data !== "string") return;
   terminal.process.write(data);
 });
-ipcMain.handle("openwork:terminal:resize", (event, terminalId, cols, rows) => {
+ipcMain.handle("micx:terminal:resize", (event, terminalId, cols, rows) => {
   const terminal = terminalForSender(event, terminalId);
   if (!terminal || !Number.isFinite(cols) || !Number.isFinite(rows)) return;
   terminal.process.resize(Math.max(20, Math.floor(cols)), Math.max(5, Math.floor(rows)));
 });
-ipcMain.handle("openwork:terminal:kill", (event, terminalId) => {
+ipcMain.handle("micx:terminal:kill", (event, terminalId) => {
   const terminal = terminalForSender(event, terminalId);
   if (!terminal) return;
   killTerminal(String(terminalId));
@@ -2527,10 +2527,10 @@ const { ensureAutoUpdater } = registerUpdaterIpc({
 
 if (!app.requestSingleInstanceLock()) {
   if (isDevMode && !app.isPackaged) {
-    console.error(`[openwork] Another OpenWork dev instance already holds this profile directory:
+    console.error(`[micx] Another Micx dev instance already holds this profile directory:
   ${app.getPath("userData")}
 The second process is exiting so its CDP port is released.
-Run this worktree with an isolated profile: OPENWORK_DEV_PROFILE=auto pnpm dev
+Run this worktree with an isolated profile: MICX_DEV_PROFILE=auto pnpm dev
 or use: pnpm dev:worktree`);
     app.exit(1);
     setImmediate(() => process.exit(1));

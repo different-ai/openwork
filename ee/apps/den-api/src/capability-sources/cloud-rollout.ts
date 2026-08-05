@@ -1,5 +1,5 @@
 /**
- * Alpha rollout gate for OpenWork Cloud.
+ * Alpha rollout gate for Micx Cloud.
  *
  * Cloud is default-off for every organization. Platform admins must explicitly
  * enable the alpha with `metadata.capabilities.cloud: true`; absent and

@@ -6,9 +6,9 @@ import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { deflateRawSync } from "node:zlib";
 
-import { buildOpenworkRuntimeConfigObject } from "../openwork-runtime-config.js";
-import { openworkOfficeAttachmentsPluginPath } from "../openwork-extensions-plugin-path.js";
-import { OpenWorkOfficeAttachments } from "./openwork-office-attachments.js";
+import { buildMicxRuntimeConfigObject } from "../micx-runtime-config.js";
+import { micxOfficeAttachmentsPluginPath } from "../micx-extensions-plugin-path.js";
+import { MicxOfficeAttachments } from "./micx-office-attachments.js";
 
 const DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
 const PPTX_MIME = "application/vnd.openxmlformats-officedocument.presentationml.presentation";
@@ -28,7 +28,7 @@ type ZipFile = {
 };
 
 async function withWorkspace(fn: (root: string) => Promise<void>) {
-  const root = await mkdtemp(join(tmpdir(), "openwork-office-plugin-"));
+  const root = await mkdtemp(join(tmpdir(), "micx-office-plugin-"));
   try {
     await fn(root);
   } finally {
@@ -158,13 +158,13 @@ function xlsxFixture(text = XLSX_SENTINEL) {
 }
 
 async function transform(root: string, messages: unknown[]) {
-  const plugin = await OpenWorkOfficeAttachments({ directory: root });
+  const plugin = await MicxOfficeAttachments({ directory: root });
   const output = { messages: structuredClone(messages) };
   await plugin["experimental.chat.messages.transform"]({ context: { sessionID: "ses_test" } }, output);
   return output.messages;
 }
 
-describe("OpenWorkOfficeAttachments", () => {
+describe("MicxOfficeAttachments", () => {
   test("extracts DOCX/PPTX text, materializes exact bytes, strips binary parts, and preserves ids", async () => {
     await withWorkspace(async (root) => {
       const docx = docxFixture();
@@ -229,7 +229,7 @@ describe("OpenWorkOfficeAttachments", () => {
   test("preserves the output messages array reference", async () => {
     await withWorkspace(async (root) => {
       const docx = docxFixture();
-      const plugin = await OpenWorkOfficeAttachments({ directory: root });
+      const plugin = await MicxOfficeAttachments({ directory: root });
       const messages = [{ role: "user", parts: [{ id: "stable", type: "file", filename: "QuarterlyBrief.docx", mediaType: DOCX_MIME, url: dataUrl(DOCX_MIME, docx) }] }];
       const output = { messages };
       await plugin["experimental.chat.messages.transform"]({ context: { sessionID: "ses_test" } }, output);
@@ -278,7 +278,7 @@ describe("OpenWorkOfficeAttachments", () => {
 
   test("rejects file URLs that resolve outside the workspace through a symlink", async () => {
     await withWorkspace(async (root) => {
-      const outside = await mkdtemp(join(tmpdir(), "openwork-office-outside-"));
+      const outside = await mkdtemp(join(tmpdir(), "micx-office-outside-"));
       try {
         const docx = docxFixture();
         await writeFile(join(outside, "QuarterlyBrief.docx"), docx);
@@ -334,13 +334,13 @@ describe("OpenWorkOfficeAttachments", () => {
   test("uses factory directory and ignores Daytona non-git worktree root", async () => {
     await withWorkspace(async (root) => {
       const docx = docxFixture();
-      const plugin = await OpenWorkOfficeAttachments({ directory: root, worktree: "/" });
+      const plugin = await MicxOfficeAttachments({ directory: root, worktree: "/" });
       const output = { messages: [{ role: "user", parts: [{ type: "file", filename: "QuarterlyBrief.docx", mediaType: DOCX_MIME, url: dataUrl(DOCX_MIME, docx) }] }] };
       await plugin["experimental.chat.messages.transform"]({}, output);
       const text = textOf(messageParts(output.messages[0])[0]);
       const materialized = pathFromText(text);
       expect(text).toContain(DOCX_SENTINEL);
-      expect(materialized).toContain(".opencode/openwork/inbox/chat-attachments/");
+      expect(materialized).toContain(".opencode/micx/inbox/chat-attachments/");
       await expect(readFile(join(root, materialized))).resolves.toEqual(docx);
     });
   });
@@ -381,7 +381,7 @@ describe("OpenWorkOfficeAttachments", () => {
       const docx = docxFixture();
       const messages = await transform(root, [{ role: "user", parts: [{ type: "file", filename: "../evil/QuarterlyBrief.docx", mediaType: DOCX_MIME, url: dataUrl(DOCX_MIME, docx) }] }]);
       const materialized = pathFromText(textOf(messageParts(messages[0])[0]));
-      expect(materialized).toContain(".opencode/openwork/inbox/chat-attachments/");
+      expect(materialized).toContain(".opencode/micx/inbox/chat-attachments/");
       expect(materialized).toContain("QuarterlyBrief.docx");
       expect(materialized).not.toContain("evil");
       expect(materialized).not.toContain("..");
@@ -428,18 +428,18 @@ describe("OpenWorkOfficeAttachments", () => {
   });
 
   test("is registered in runtime config and bundled by the build script", async () => {
-    const runtime = await buildOpenworkRuntimeConfigObject();
+    const runtime = await buildMicxRuntimeConfigObject();
     const plugin = runtime.plugin;
     if (!Array.isArray(plugin)) throw new Error("Expected plugin list");
-    expect(plugin).toContain(openworkOfficeAttachmentsPluginPath());
+    expect(plugin).toContain(micxOfficeAttachmentsPluginPath());
 
     const packageJson = JSON.parse(await readFile(join(PACKAGE_ROOT, "package.json"), "utf8"));
     if (!isRecord(packageJson) || !isRecord(packageJson.scripts) || typeof packageJson.scripts.build !== "string") throw new Error("Expected package build script");
-    expect(packageJson.scripts.build).toContain("openwork-office-attachments.ts");
+    expect(packageJson.scripts.build).toContain("micx-office-attachments.ts");
   });
 
   test("module exposes only the plugin factory", async () => {
-    const mod = await import("./openwork-office-attachments.js");
-    expect(Object.keys(mod)).toEqual(["OpenWorkOfficeAttachments"]);
+    const mod = await import("./micx-office-attachments.js");
+    expect(Object.keys(mod)).toEqual(["MicxOfficeAttachments"]);
   });
 });

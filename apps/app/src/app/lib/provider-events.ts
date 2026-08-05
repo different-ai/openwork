@@ -6,7 +6,7 @@
  * Listeners (e.g. the global NewProvidersListener) should use this to
  * surface a notification-center entry.
  */
-export const newProvidersEvent = "openwork-new-providers-available";
+export const newProvidersEvent = "micx-new-providers-available";
 
 export type NewProviderInfo = {
   id: string;

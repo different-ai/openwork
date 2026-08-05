@@ -42,7 +42,7 @@ type UploadedChatAttachment = {
   file: AttachmentFile;
 };
 
-const WORKSPACE_INBOX_ROOT = ".opencode/openwork/inbox";
+const WORKSPACE_INBOX_ROOT = ".opencode/micx/inbox";
 
 const EXTENSION_MIME_TYPES: Record<string, string> = {
   jpg: "image/jpeg",
@@ -159,7 +159,7 @@ function isTextLikeAttachmentMime(mime: string) {
  * - text-like mimes are re-mimed to `text/plain` so opencode inlines their
  *   content via the Read tool (the proven `@file` mention mechanism);
  * - images, PDFs, and Office mimes pass through (Office parts are rewritten
- *   to text by the OpenWorkOfficeAttachments plugin before the provider);
+ *   to text by the MicxOfficeAttachments plugin before the provider);
  * - everything else returns `null`: workspace (`file://`) attachments fall
  *   back to a `text/plain` part that opencode mediates through the Read tool,
  *   while data-URL attachments are dropped (inlining binary bytes as text is

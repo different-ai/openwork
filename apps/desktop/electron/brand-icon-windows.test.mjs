@@ -84,10 +84,10 @@ test("updates both the live window icon and Windows taskbar identity", async () 
 
   await applyWindowsTaskbarIcon(window, {
     image,
-    appId: "com.differentai.openwork",
+    appId: "com.differentai.micx",
     appIconPath: "C:\\Users\\Admin\\brand-icon.ico",
-    relaunchCommand: "C:\\Program Files\\OpenWork\\OpenWork.exe",
-    relaunchDisplayName: "OpenWork",
+    relaunchCommand: "C:\\Program Files\\Micx\\Micx.exe",
+    relaunchDisplayName: "Micx",
   }, async () => calls.push(["waitForRefresh"]));
 
   assert.deepEqual(calls, [
@@ -96,10 +96,10 @@ test("updates both the live window icon and Windows taskbar identity", async () 
     ["setAppDetails", {
       appIconPath: "C:\\Users\\Admin\\brand-icon.ico",
       appIconIndex: 0,
-      relaunchCommand: "C:\\Program Files\\OpenWork\\OpenWork.exe",
-      relaunchDisplayName: "OpenWork",
+      relaunchCommand: "C:\\Program Files\\Micx\\Micx.exe",
+      relaunchDisplayName: "Micx",
     }],
-    ["setAppDetails", { appId: "com.differentai.openwork" }],
+    ["setAppDetails", { appId: "com.differentai.micx" }],
     ["setIcon", image],
     ["waitForRefresh"],
     ["setSkipTaskbar", false],
@@ -107,12 +107,12 @@ test("updates both the live window icon and Windows taskbar identity", async () 
 });
 
 test("uses a stable per-brand AppUserModelID to avoid the installed shortcut icon", () => {
-  const base = "com.differentai.openwork";
+  const base = "com.differentai.micx";
   const first = windowsBrandAppUserModelId(base, "https://den.internal/assets/acme.png");
   const repeated = windowsBrandAppUserModelId(base, "https://den.internal/assets/acme.png");
   const second = windowsBrandAppUserModelId(base, "https://den.internal/assets/other.png");
 
-  assert.match(first, /^com\.differentai\.openwork\.brand\.[a-f0-9]{16}$/);
+  assert.match(first, /^com\.differentai\.micx\.brand\.[a-f0-9]{16}$/);
   assert.equal(first, repeated);
   assert.notEqual(first, second);
   assert.equal(windowsBrandAppUserModelId(base, null), base);
@@ -128,10 +128,10 @@ test("does not refresh the taskbar button before the boot window is shown", asyn
     setSkipTaskbar: () => calls.push("skip"),
   }, {
     image: { id: "company-icon" },
-    appId: "com.differentai.openwork.brand.1234",
+    appId: "com.differentai.micx.brand.1234",
     appIconPath: "C:\\brand.ico",
-    relaunchCommand: "C:\\OpenWork.exe",
-    relaunchDisplayName: "OpenWork",
+    relaunchCommand: "C:\\Micx.exe",
+    relaunchDisplayName: "Micx",
   }, async () => calls.push("wait"));
 
   assert.deepEqual(calls, ["details", "details", "icon"]);
@@ -146,10 +146,10 @@ test("restores a visible taskbar button when refresh staging fails", async () =>
     setSkipTaskbar: (value) => calls.push(["skip", value]),
   }, {
     image: { id: "company-icon" },
-    appId: "com.differentai.openwork.brand.1234",
+    appId: "com.differentai.micx.brand.1234",
     appIconPath: "C:\\brand.ico",
-    relaunchCommand: "C:\\OpenWork.exe",
-    relaunchDisplayName: "OpenWork",
+    relaunchCommand: "C:\\Micx.exe",
+    relaunchDisplayName: "Micx",
   }, async () => {
     calls.push("wait");
     throw new Error("refresh failed");
@@ -160,41 +160,41 @@ test("restores a visible taskbar button when refresh staging fails", async () =>
 
 test("builds a per-user Start Menu shortcut with the branded Windows identity", () => {
   assert.equal(windowsBrandShortcutFileName('Agent: Blue/West'), "Agent- Blue-West.lnk");
-  assert.equal(windowsInstalledShortcutFileName("OpenWork"), "OpenWork.lnk");
+  assert.equal(windowsInstalledShortcutFileName("Micx"), "Micx.lnk");
   assert.deepEqual(windowsBrandShortcutDetails({
-    target: "C:\\Program Files\\OpenWork\\OpenWork.exe",
-    appId: "com.differentai.openwork.brand.1234",
+    target: "C:\\Program Files\\Micx\\Micx.exe",
+    appId: "com.differentai.micx.brand.1234",
     appIconPath: "C:\\Users\\Admin\\brand-icon.ico",
-    appName: "OpenWork",
+    appName: "Micx",
   }), {
-    target: "C:\\Program Files\\OpenWork\\OpenWork.exe",
-    cwd: "C:\\Program Files\\OpenWork",
-    description: "OpenWork organization desktop",
+    target: "C:\\Program Files\\Micx\\Micx.exe",
+    cwd: "C:\\Program Files\\Micx",
+    description: "Micx organization desktop",
     icon: "C:\\Users\\Admin\\brand-icon.ico",
     iconIndex: 0,
-    appUserModelId: "com.differentai.openwork.brand.1234",
+    appUserModelId: "com.differentai.micx.brand.1234",
   });
 });
 
 test("anchors a packaged shortcut target to the active Windows user profile", () => {
   assert.equal(windowsInstalledExecutablePath({
     packaged: true,
-    execPath: "C:\\Windows\\System32\\config\\systemprofile\\AppData\\Local\\Programs\\@openworkdesktop\\OpenWork.exe",
-    resourcesPath: "C:\\Windows\\System32\\config\\systemprofile\\AppData\\Local\\Programs\\@openworkdesktop\\resources",
+    execPath: "C:\\Windows\\System32\\config\\systemprofile\\AppData\\Local\\Programs\\@micxdesktop\\Micx.exe",
+    resourcesPath: "C:\\Windows\\System32\\config\\systemprofile\\AppData\\Local\\Programs\\@micxdesktop\\resources",
     shortcutPath: "C:\\Users\\Administrator\\AppData\\Roaming\\Microsoft\\Windows\\Start Menu\\Programs\\Northwind.lnk",
-  }), "C:\\Users\\Administrator\\AppData\\Local\\Programs\\@openworkdesktop\\OpenWork.exe");
+  }), "C:\\Users\\Administrator\\AppData\\Local\\Programs\\@micxdesktop\\Micx.exe");
 });
 
 test("creates a branded shortcut after callers remove stale Windows metadata", () => {
   const calls = [];
-  const details = { appUserModelId: "com.differentai.openwork.brand.1234" };
+  const details = { appUserModelId: "com.differentai.micx.brand.1234" };
   const shellApi = {
     writeShortcutLink: (...args) => {
       calls.push(args);
       return true;
     },
   };
-  const shortcutPath = "C:\\Users\\Admin\\OpenWork Organization.lnk";
+  const shortcutPath = "C:\\Users\\Admin\\Micx Organization.lnk";
 
   const created = writeWindowsBrandShortcut(shellApi, shortcutPath, details, false);
   assert.equal(created, true);

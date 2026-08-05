@@ -1,7 +1,7 @@
 import { createHmac, timingSafeEqual } from "node:crypto"
 
 function signaturePayload(runId: string, step: string): string {
-  return `openwork-diagnostics-v1\n${runId}\n${step}`
+  return `micx-diagnostics-v1\n${runId}\n${step}`
 }
 
 export function createDiagnosticRunSignature(secret: string, runId: string, step: string): string {

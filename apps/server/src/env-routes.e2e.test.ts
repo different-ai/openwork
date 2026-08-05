@@ -14,11 +14,11 @@ type Served = {
 const HOST_TOKEN = "owt_env_host_token";
 const stops: Array<() => void | Promise<void>> = [];
 const dirs: string[] = [];
-const priorEnvStore = process.env.OPENWORK_ENV_STORE;
-const priorTokenStore = process.env.OPENWORK_TOKEN_STORE;
+const priorEnvStore = process.env.MICX_ENV_STORE;
+const priorTokenStore = process.env.MICX_TOKEN_STORE;
 const priorOpenAiApiKey = process.env.OPENAI_API_KEY;
-const priorOpenWorkApiKey = process.env.OPENWORK_API_KEY;
-const priorOpenWorkInferenceBaseUrl = process.env.OPENWORK_INFERENCE_BASE_URL;
+const priorMicxApiKey = process.env.MICX_API_KEY;
+const priorMicxInferenceBaseUrl = process.env.MICX_INFERENCE_BASE_URL;
 const nativeFetch = globalThis.fetch;
 
 function baseConfig(): ServerConfig {
@@ -50,16 +50,16 @@ async function boot() {
 }
 
 function hostAuth() {
-  return { "x-openwork-host-token": HOST_TOKEN, "content-type": "application/json" };
+  return { "x-micx-host-token": HOST_TOKEN, "content-type": "application/json" };
 }
 
 beforeEach(() => {
-  const dir = mkdtempSync(join(tmpdir(), "openwork-env-routes-"));
+  const dir = mkdtempSync(join(tmpdir(), "micx-env-routes-"));
   dirs.push(dir);
   // Redirect the shared env.json path into a throwaway dir so the test never
-  // touches the developer's real ~/.config/openwork/env.json.
-  process.env.OPENWORK_ENV_STORE = join(dir, "env.json");
-  process.env.OPENWORK_TOKEN_STORE = join(dir, "tokens.json");
+  // touches the developer's real ~/.config/micx/env.json.
+  process.env.MICX_ENV_STORE = join(dir, "env.json");
+  process.env.MICX_TOKEN_STORE = join(dir, "tokens.json");
 });
 
 afterEach(async () => {
@@ -70,29 +70,29 @@ afterEach(async () => {
     rmSync(dirs.pop()!, { recursive: true, force: true });
   }
   if (priorEnvStore === undefined) {
-    delete process.env.OPENWORK_ENV_STORE;
+    delete process.env.MICX_ENV_STORE;
   } else {
-    process.env.OPENWORK_ENV_STORE = priorEnvStore;
+    process.env.MICX_ENV_STORE = priorEnvStore;
   }
   if (priorTokenStore === undefined) {
-    delete process.env.OPENWORK_TOKEN_STORE;
+    delete process.env.MICX_TOKEN_STORE;
   } else {
-    process.env.OPENWORK_TOKEN_STORE = priorTokenStore;
+    process.env.MICX_TOKEN_STORE = priorTokenStore;
   }
   if (priorOpenAiApiKey === undefined) {
     delete process.env.OPENAI_API_KEY;
   } else {
     process.env.OPENAI_API_KEY = priorOpenAiApiKey;
   }
-  if (priorOpenWorkApiKey === undefined) {
-    delete process.env.OPENWORK_API_KEY;
+  if (priorMicxApiKey === undefined) {
+    delete process.env.MICX_API_KEY;
   } else {
-    process.env.OPENWORK_API_KEY = priorOpenWorkApiKey;
+    process.env.MICX_API_KEY = priorMicxApiKey;
   }
-  if (priorOpenWorkInferenceBaseUrl === undefined) {
-    delete process.env.OPENWORK_INFERENCE_BASE_URL;
+  if (priorMicxInferenceBaseUrl === undefined) {
+    delete process.env.MICX_INFERENCE_BASE_URL;
   } else {
-    process.env.OPENWORK_INFERENCE_BASE_URL = priorOpenWorkInferenceBaseUrl;
+    process.env.MICX_INFERENCE_BASE_URL = priorMicxInferenceBaseUrl;
   }
   globalThis.fetch = nativeFetch;
 });
@@ -235,7 +235,7 @@ describe("env routes", () => {
   });
 
   test("invalid env store returns 409 instead of overwriting on PUT", async () => {
-    writeFileSync(process.env.OPENWORK_ENV_STORE!, "{ this is not json");
+    writeFileSync(process.env.MICX_ENV_STORE!, "{ this is not json");
     const { base } = await boot();
 
     const put = await fetch(`${base}/env`, {
@@ -289,13 +289,13 @@ describe("env routes", () => {
     const put = await fetch(`${base}/env`, {
       method: "PUT",
       headers: hostAuth(),
-      body: JSON.stringify({ key: "OPENWORK_TOKEN", value: "x" }),
+      body: JSON.stringify({ key: "MICX_TOKEN", value: "x" }),
     });
     expect(put.status).toBe(400);
     const body = (await put.json()) as { code: string; message: string };
     expect(body.code).toBe("reserved_env_key");
-    expect(body.message).toBe("Environment variable name is reserved for OpenWork internals");
-    expect(body.message).not.toContain("OPENWORK_TOKEN");
+    expect(body.message).toBe("Environment variable name is reserved for Micx internals");
+    expect(body.message).not.toContain("MICX_TOKEN");
   });
 
   test("PUT with no entries returns 400", async () => {
@@ -367,7 +367,7 @@ describe("env routes", () => {
     });
   });
 
-  test("voice realtime session prefers OpenWork Models broker when configured", async () => {
+  test("voice realtime session prefers Micx Models broker when configured", async () => {
     process.env.OPENAI_API_KEY = "sk-should-not-be-used";
     const { base } = await boot();
 
@@ -376,8 +376,8 @@ describe("env routes", () => {
       headers: hostAuth(),
       body: JSON.stringify({
         entries: [
-          { key: "OPENWORK_API_KEY", value: "ow_inf_test" },
-          { key: "OPENWORK_INFERENCE_BASE_URL", value: "https://inference.example.test" },
+          { key: "MICX_API_KEY", value: "ow_inf_test" },
+          { key: "MICX_INFERENCE_BASE_URL", value: "https://inference.example.test" },
         ],
       }),
     });
@@ -393,8 +393,8 @@ describe("env routes", () => {
           expiresAt: 456,
           model: "gpt-realtime-2",
           transcriptionModel: "gpt-4o-transcribe",
-          tools: ["openwork_snapshot"],
-          source: "openwork-models",
+          tools: ["micx_snapshot"],
+          source: "micx-models",
         }), {
           status: 200,
           headers: { "content-type": "application/json" },
@@ -424,7 +424,7 @@ describe("env routes", () => {
       ok: true,
       clientSecret: "managed-rt-secret",
       expiresAt: 456,
-      source: "openwork-models",
+      source: "micx-models",
     });
   });
 
@@ -437,8 +437,8 @@ describe("env routes", () => {
       headers: hostAuth(),
       body: JSON.stringify({
         entries: [
-          { key: "OPENWORK_API_KEY", value: "ow_inf_test" },
-          { key: "OPENWORK_INFERENCE_BASE_URL", value: "https://inference.example.test" },
+          { key: "MICX_API_KEY", value: "ow_inf_test" },
+          { key: "MICX_INFERENCE_BASE_URL", value: "https://inference.example.test" },
         ],
       }),
     });
@@ -482,7 +482,7 @@ describe("env routes", () => {
   test("voice realtime session shows clear error when broker 503 and no local key", async () => {
     delete process.env.OPENAI_API_KEY;
     delete process.env.OPENAI_REALTIME_API_KEY;
-    delete process.env.OPENWORK_OPENAI_REALTIME_API_KEY;
+    delete process.env.MICX_OPENAI_REALTIME_API_KEY;
     const { base } = await boot();
 
     await fetch(`${base}/env`, {
@@ -490,8 +490,8 @@ describe("env routes", () => {
       headers: hostAuth(),
       body: JSON.stringify({
         entries: [
-          { key: "OPENWORK_API_KEY", value: "ow_inf_test" },
-          { key: "OPENWORK_INFERENCE_BASE_URL", value: "https://inference.example.test" },
+          { key: "MICX_API_KEY", value: "ow_inf_test" },
+          { key: "MICX_INFERENCE_BASE_URL", value: "https://inference.example.test" },
         ],
       }),
     });
@@ -521,7 +521,7 @@ describe("env routes", () => {
 
     expect(response.status).toBe(503);
     const body = (await response.json()) as { code: string; message: string };
-    expect(body.code).toBe("openwork_models_voice_unavailable");
+    expect(body.code).toBe("micx_models_voice_unavailable");
     expect(body.message).toContain("not fully configured");
   });
 
@@ -534,8 +534,8 @@ describe("env routes", () => {
       headers: hostAuth(),
       body: JSON.stringify({
         entries: [
-          { key: "OPENWORK_API_KEY", value: "ow_inf_test" },
-          { key: "OPENWORK_INFERENCE_BASE_URL", value: "https://inference.example.test" },
+          { key: "MICX_API_KEY", value: "ow_inf_test" },
+          { key: "MICX_INFERENCE_BASE_URL", value: "https://inference.example.test" },
         ],
       }),
     });
@@ -568,7 +568,7 @@ describe("env routes", () => {
 
     expect(response.status).toBe(429);
     const body = (await response.json()) as { code: string };
-    expect(body.code).toBe("openwork_models_voice_failed");
+    expect(body.code).toBe("micx_models_voice_failed");
   });
 
   test("values persist across server restart", async () => {

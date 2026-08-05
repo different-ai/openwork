@@ -1,13 +1,13 @@
 import type {
-  OpenworkAffordanceArgument,
-  OpenworkAffordanceDescriptor,
-  OpenworkAffordanceEffects,
-  OpenworkProviderRef,
-} from "@openwork/types/openwork-affordance";
+  MicxAffordanceArgument,
+  MicxAffordanceDescriptor,
+  MicxAffordanceEffects,
+  MicxProviderRef,
+} from "@micx/types/micx-affordance";
 import type {
-  OpenworkFeatureContribution,
-  OpenworkGuidanceDescriptor,
-} from "@openwork/types/openwork-provider";
+  MicxFeatureContribution,
+  MicxGuidanceDescriptor,
+} from "@micx/types/micx-provider";
 
 export type ConnectSkillDescriptor = {
   name: string;
@@ -21,17 +21,17 @@ export type EngineMcpDescriptor = {
   status?: string;
 };
 
-const noEffects: OpenworkAffordanceEffects = {
+const noEffects: MicxAffordanceEffects = {
   data: "none",
   ui: "none",
   external: false,
 };
-const readEffects: OpenworkAffordanceEffects = {
+const readEffects: MicxAffordanceEffects = {
   data: "read",
   ui: "none",
   external: false,
 };
-const writeEffects: OpenworkAffordanceEffects = {
+const writeEffects: MicxAffordanceEffects = {
   data: "write",
   ui: "none",
   external: false,
@@ -39,10 +39,10 @@ const writeEffects: OpenworkAffordanceEffects = {
 
 function argument(
   name: string,
-  type: OpenworkAffordanceArgument["type"],
+  type: MicxAffordanceArgument["type"],
   required: boolean,
   description: string,
-): OpenworkAffordanceArgument {
+): MicxAffordanceArgument {
   return { name, type, required, description };
 }
 
@@ -51,11 +51,11 @@ function affordance(input: {
   kind: "query" | "command";
   title: string;
   description: string;
-  provider: OpenworkProviderRef;
-  arguments?: OpenworkAffordanceArgument[];
-  effects?: OpenworkAffordanceEffects;
+  provider: MicxProviderRef;
+  arguments?: MicxAffordanceArgument[];
+  effects?: MicxAffordanceEffects;
   tool?: string;
-}): OpenworkAffordanceDescriptor {
+}): MicxAffordanceDescriptor {
   return {
     id: input.id,
     kind: input.kind,
@@ -68,12 +68,12 @@ function affordance(input: {
     availability: { enabled: true },
     executor: input.tool
       ? { kind: "tool", tool: input.tool }
-      : { kind: "openwork" },
+      : { kind: "micx" },
   };
 }
 
-function sessionContribution(): OpenworkFeatureContribution {
-  const provider: OpenworkProviderRef = { id: "openwork-server", kind: "builtin" };
+function sessionContribution(): MicxFeatureContribution {
+  const provider: MicxProviderRef = { id: "micx-server", kind: "builtin" };
   return {
     featureId: "sessions",
     provider,
@@ -117,8 +117,8 @@ function sessionContribution(): OpenworkFeatureContribution {
   };
 }
 
-function extensionContribution(): OpenworkFeatureContribution {
-  const provider: OpenworkProviderRef = { id: "openwork-extensions", kind: "extension" };
+function extensionContribution(): MicxFeatureContribution {
+  const provider: MicxProviderRef = { id: "micx-extensions", kind: "extension" };
   return {
     featureId: "extensions",
     provider,
@@ -127,7 +127,7 @@ function extensionContribution(): OpenworkFeatureContribution {
         id: "extension.actions",
         kind: "query",
         title: "List extension actions",
-        description: "List actions exposed by enabled local OpenWork extensions.",
+        description: "List actions exposed by enabled local Micx extensions.",
         provider,
         arguments: [argument("extensionId", "string", false, "Optional extension id.")],
         effects: readEffects,
@@ -136,7 +136,7 @@ function extensionContribution(): OpenworkFeatureContribution {
         id: "extension.call",
         kind: "command",
         title: "Call an extension action",
-        description: "Execute one action exposed by a local OpenWork extension.",
+        description: "Execute one action exposed by a local Micx extension.",
         provider,
         arguments: [
           argument("extensionId", "string", true, "Extension id."),
@@ -153,10 +153,10 @@ function extensionContribution(): OpenworkFeatureContribution {
 function connectContribution(
   skills: ConnectSkillDescriptor[],
   cloudMcp: EngineMcpDescriptor | undefined,
-): OpenworkFeatureContribution | null {
+): MicxFeatureContribution | null {
   if (skills.length === 0 && !cloudMcp) return null;
-  const provider: OpenworkProviderRef = { id: "openwork-cloud", kind: "connect" };
-  const guidance: OpenworkGuidanceDescriptor[] = skills.map((skill) => ({
+  const provider: MicxProviderRef = { id: "micx-cloud", kind: "connect" };
+  const guidance: MicxGuidanceDescriptor[] = skills.map((skill) => ({
     ref: skill.capability,
     title: skill.title?.trim() || skill.name,
     description: skill.description,
@@ -179,7 +179,7 @@ function connectContribution(
           argument("type", "string", false, "Optional capability type filter."),
         ],
         effects: { data: "read", ui: "none", external: true },
-        tool: "openwork-cloud_search_capabilities",
+        tool: "micx-cloud_search_capabilities",
       }),
       affordance({
         id: "connect.capability.execute",
@@ -195,14 +195,14 @@ function connectContribution(
           argument("body", "object", false, "Request body for the capability."),
         ],
         effects: { data: "write", ui: "none", external: true },
-        tool: "openwork-cloud_execute_capability",
+        tool: "micx-cloud_execute_capability",
       }),
     ],
     guidance,
   };
 }
 
-function mcpContribution(mcp: EngineMcpDescriptor): OpenworkFeatureContribution {
+function mcpContribution(mcp: EngineMcpDescriptor): MicxFeatureContribution {
   return {
     featureId: `mcp:${mcp.name}`,
     provider: { id: mcp.name, kind: "mcp" },
@@ -211,17 +211,17 @@ function mcpContribution(mcp: EngineMcpDescriptor): OpenworkFeatureContribution 
   };
 }
 
-export function buildOpenworkProviderContributions(
+export function buildMicxProviderContributions(
   skills: ConnectSkillDescriptor[],
   mcps: EngineMcpDescriptor[] = [],
-): OpenworkFeatureContribution[] {
-  const cloudMcp = mcps.find((mcp) => mcp.name === "openwork-cloud");
+): MicxFeatureContribution[] {
+  const cloudMcp = mcps.find((mcp) => mcp.name === "micx-cloud");
   const connect = connectContribution(skills, cloudMcp);
   return [
     sessionContribution(),
     extensionContribution(),
     ...mcps
-      .filter((mcp) => mcp.name !== "openwork-cloud")
+      .filter((mcp) => mcp.name !== "micx-cloud")
       .map(mcpContribution),
     ...(connect ? [connect] : []),
   ];

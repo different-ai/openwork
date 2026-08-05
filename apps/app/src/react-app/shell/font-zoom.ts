@@ -12,7 +12,7 @@ import {
 import { setDesktopZoomFactor } from "../../app/lib/desktop";
 import { isDesktopRuntime } from "../../app/utils";
 
-const NATIVE_MENU_ZOOM_EVENT = "openwork:native-menu:zoom";
+const NATIVE_MENU_ZOOM_EVENT = "micx:native-menu:zoom";
 
 export function useDesktopFontZoomBehavior() {
   useEffect(() => {
@@ -26,7 +26,7 @@ export function useDesktopFontZoomBehavior() {
       void setDesktopZoomFactor(next)
         .then((applied) => {
           if (applied) {
-            document.documentElement.style.removeProperty("--openwork-font-size");
+            document.documentElement.style.removeProperty("--micx-font-size");
             return;
           }
           applyFontZoom(document.documentElement.style, next);

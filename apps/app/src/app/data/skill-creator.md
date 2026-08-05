@@ -1,6 +1,6 @@
 ---
 name: skill-creator
-description: Create or update skills in OpenWork Cloud when available, or locally when requested.
+description: Create or update skills in Micx Cloud when available, or locally when requested.
 ---
 
 # Skill Creator
@@ -9,13 +9,13 @@ This skill is a template + checklist for creating skills in a workspace.
 
 ## What is a skill?
 
-A local skill is a folder under `.opencode/skills/<skill-name>/` or `.claude/skills/<skill-name>/` anchored by `SKILL.md`. A remote skill is stored in OpenWork Cloud as a plugin skill component.
+A local skill is a folder under `.opencode/skills/<skill-name>/` or `.claude/skills/<skill-name>/` anchored by `SKILL.md`. A remote skill is stored in Micx Cloud as a plugin skill component.
 
-## OpenWork authoring contract
+## Micx authoring contract
 
 Follow the runtime `Skill creation:` instruction for this workspace/model:
 
-- `Cloud`: create or update the skill in OpenWork Cloud first when it is available, then follow the remote flow below.
+- `Cloud`: create or update the skill in Micx Cloud first when it is available, then follow the remote flow below.
 - `Local`: inspect `.opencode/skills/` and `.claude/skills/`, then write or update exactly one `.opencode/skills/<skill-name>/SKILL.md` and re-read it.
 - Use the local flow only when the user explicitly requests a workspace-local skill. Do not create both copies. Move an existing local skill to Cloud only when the user explicitly requests migration.
 
@@ -23,7 +23,7 @@ Follow the runtime `Skill creation:` instruction for this workspace/model:
 
 Use this flow only when the runtime instruction says `Cloud`:
 
-1. Search OpenWork Cloud with 2-4 variants for existing skills/config objects, plugins, marketplaces, plugin creation, config-object version creation, and read operations. Use only exact capability names returned by search.
+1. Search Micx Cloud with 2-4 variants for existing skills/config objects, plugins, marketplaces, plugin creation, config-object version creation, and read operations. Use only exact capability names returned by search.
 2. Resolve exact-name matches before writing: create when none exists, update when one exists and the user requested changes, or ask the user to choose when matches are ambiguous.
 3. Draft one complete replacement `SKILL.md` with frontmatter containing a matching `name`, a trigger-oriented `description`, and a non-empty instruction body. Do not include secrets.
 4. To create, execute the returned plugin-create capability with one component: `{"type":"skill","input":{"rawSourceText":"<complete SKILL.md>"}}`. Set organization-wide access or a marketplace only when the user requested and confirmed it.

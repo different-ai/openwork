@@ -2,7 +2,7 @@ import type { Hono } from "hono"
 import type { MiddlewareHandler } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
-import type { DenTypeId } from "@openwork-ee/utils/typeid"
+import type { DenTypeId } from "@micx-ee/utils/typeid"
 import { env } from "../../env.js"
 import { jsonValidator, orgMemberRoute, paramValidator, queryValidator } from "../../middleware/index.js"
 import { jsonResponse, unauthorizedSchema } from "../../openapi.js"
@@ -12,7 +12,7 @@ import { getOrgOAuthClient } from "../../capability-sources/oauth-credentials.js
 import { clientSelectedFeatures, getNativeOAuthProvider, providerScopesSatisfy } from "../../capability-sources/provider-registry.js"
 import type { OrgRouteVariables } from "./shared.js"
 
-const CONNECT_MICROSOFT_ACCOUNT_MESSAGE = "Connect your Microsoft work account first: open Settings > Connect and use Connect your account on the Microsoft 365 row, or connect from the OpenWork Cloud dashboard."
+const CONNECT_MICROSOFT_ACCOUNT_MESSAGE = "Connect your Microsoft work account first: open Settings > Connect and use Connect your account on the Microsoft 365 row, or connect from the Micx Cloud dashboard."
 
 const emailAddressSchema = z.object({
   name: z.string(),
@@ -281,7 +281,7 @@ function featureGranted(token: Extract<Microsoft365AccessToken, { kind: "ok" }>,
 }
 
 function missingPermissionMessage(label: string): string {
-  return `Your connected Microsoft account is missing the ${label} permission. An admin can enable it on the Microsoft 365 connector in OpenWork Cloud -> Connectors; then reconnect your account.`
+  return `Your connected Microsoft account is missing the ${label} permission. An admin can enable it on the Microsoft 365 connector in Micx Cloud -> Connectors; then reconnect your account.`
 }
 
 function disabledFeatureMessage(label: string): string {

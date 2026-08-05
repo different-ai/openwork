@@ -1,9 +1,9 @@
 import "./load-env.js"
 import { Daytona } from "@daytonaio/sdk"
 import { Hono } from "hono"
-import { and, eq, isNull, sql } from "@openwork-ee/den-db/drizzle"
-import { createDenDb, DaytonaSandboxTable, RateLimitTable, WorkerTokenTable } from "@openwork-ee/den-db"
-import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
+import { and, eq, isNull, sql } from "@micx-ee/den-db/drizzle"
+import { createDenDb, DaytonaSandboxTable, RateLimitTable, WorkerTokenTable } from "@micx-ee/den-db"
+import { createDenTypeId, normalizeDenTypeId } from "@micx-ee/utils/typeid"
 import { env } from "./env.js"
 
 const { db } = createDenDb({
@@ -21,8 +21,8 @@ const publicCorsAllowMethods = ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE",
 const publicCorsAllowHeaders = [
   "Authorization",
   "Content-Type",
-  "X-OpenWork-Host-Token",
-  "X-OpenWork-Client-Id",
+  "X-Micx-Host-Token",
+  "X-Micx-Client-Id",
   "X-OpenCode-Directory",
   "X-Opencode-Directory",
   "x-opencode-directory",
@@ -160,7 +160,7 @@ async function consumeRateLimit(input: {
 }
 
 async function resolveWorkerTokenScope(workerId: WorkerId, request: Request): Promise<WorkerTokenScope | "invalid" | null> {
-  const hostToken = request.headers.get("x-openwork-host-token")?.trim() || null
+  const hostToken = request.headers.get("x-micx-host-token")?.trim() || null
   const bearerToken = readBearerToken(request)
   const candidateTokens: Array<{ token: string; requiredScope: WorkerTokenScope | null }> = []
   if (hostToken) {
@@ -268,7 +268,7 @@ async function getSignedPreviewUrl(workerId: WorkerId) {
     await sandbox.refreshData()
 
     const expiresInSeconds = normalizedSignedPreviewExpirySeconds()
-    const preview = await sandbox.getSignedPreviewUrl(env.daytona.openworkPort, expiresInSeconds)
+    const preview = await sandbox.getSignedPreviewUrl(env.daytona.micxPort, expiresInSeconds)
 
     await db
       .update(DaytonaSandboxTable)

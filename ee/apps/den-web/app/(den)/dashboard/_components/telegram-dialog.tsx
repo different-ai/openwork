@@ -166,7 +166,7 @@ export function TelegramDialog({ open, onClose }: { open: boolean; onClose: () =
           <div className="mt-5 space-y-4">
             <div className="rounded-2xl border border-gray-100 bg-gray-50 p-4">
               <p className="text-[13px] font-semibold text-gray-900">1. Create a Telegram bot</p>
-              <p className="mt-1 text-[12px] leading-5 text-gray-500">Open {" "}<a href="https://t.me/BotFather" target="_blank" rel="noopener noreferrer" className="font-medium text-gray-900 underline decoration-gray-300 underline-offset-4">@BotFather</a>, run /newbot, and paste the token below. OpenWork encrypts it at rest and never shows it again.</p>
+              <p className="mt-1 text-[12px] leading-5 text-gray-500">Open {" "}<a href="https://t.me/BotFather" target="_blank" rel="noopener noreferrer" className="font-medium text-gray-900 underline decoration-gray-300 underline-offset-4">@BotFather</a>, run /newbot, and paste the token below. Micx encrypts it at rest and never shows it again.</p>
               <label className="mb-1.5 mt-3 block text-[12px] font-medium text-gray-700">Bot token</label>
               <DenInput data-testid="telegram-bot-token" type="password" autoComplete="off" value={botToken} onChange={(event) => setBotToken(event.target.value)} placeholder="123456789:AA…" />
             </div>
@@ -180,7 +180,7 @@ export function TelegramDialog({ open, onClose }: { open: boolean; onClose: () =
               </div>
             </div>
             <div className="rounded-2xl border border-amber-100 bg-amber-50 p-4 text-[12px] leading-5 text-amber-800">
-              Self-hosted setup needs a stable public HTTPS OpenWork API URL so Telegram can deliver the webhook. This first version accepts private text chats only—no groups, channels, or media.
+              Self-hosted setup needs a stable public HTTPS Micx API URL so Telegram can deliver the webhook. This first version accepts private text chats only—no groups, channels, or media.
             </div>
             <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
               {connection ? <DenButton variant="secondary" disabled={busy} onClick={() => setEditing(false)}>Cancel changes</DenButton> : null}

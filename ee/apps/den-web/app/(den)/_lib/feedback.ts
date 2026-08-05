@@ -1,4 +1,4 @@
-export const OPENWORK_FEEDBACK_URL = "https://openworklabs.com/feedback";
+export const MICX_FEEDBACK_URL = "https://micxlabs.com/feedback";
 
 export function buildDenFeedbackUrl(options?: {
   pathname?: string;
@@ -6,7 +6,7 @@ export function buildDenFeedbackUrl(options?: {
   topic?: string;
 }) {
   const params = new URLSearchParams({
-    source: "openwork-web-app",
+    source: "micx-web-app",
     deployment: "web",
     entrypoint: options?.pathname ?? "dashboard"
   });
@@ -19,5 +19,5 @@ export function buildDenFeedbackUrl(options?: {
     params.set("topic", options.topic);
   }
 
-  return `${OPENWORK_FEEDBACK_URL}?${params.toString()}`;
+  return `${MICX_FEEDBACK_URL}?${params.toString()}`;
 }

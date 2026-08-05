@@ -1,4 +1,4 @@
-import type { DenTypeId } from "@openwork-ee/utils/typeid"
+import type { DenTypeId } from "@micx-ee/utils/typeid"
 
 export function oauthClientIdentityChanged(input: {
   hadExistingClient: boolean

@@ -1,6 +1,6 @@
 import type { SessionCloudMcpMaintenanceState } from "./use-session-mcp-maintenance";
 
-export type OpenWorkConnectStatus = {
+export type MicxConnectStatus = {
   state: "checking" | "ready" | "needs_attention";
   label: "Checking" | "Ready" | "Needs attention";
   description: string;
@@ -10,10 +10,10 @@ export function openWorkConnectAttentionTitle(description: string): string {
   return `One possible issue: ${description}`;
 }
 
-export function resolveOpenWorkConnectStatus(
+export function resolveMicxConnectStatus(
   signedIn: boolean,
   maintenance: SessionCloudMcpMaintenanceState | undefined,
-): OpenWorkConnectStatus | null {
+): MicxConnectStatus | null {
   if (!signedIn) return null;
 
   // Den authentication is ready, but maintenance itself is workspace-scoped.
@@ -23,7 +23,7 @@ export function resolveOpenWorkConnectStatus(
     return {
       state: "ready",
       label: "Ready",
-      description: "Signed in to OpenWork Cloud. Connected service tools will be checked when a workspace is active.",
+      description: "Signed in to Micx Cloud. Connected service tools will be checked when a workspace is active.",
     };
   }
 
@@ -40,7 +40,7 @@ export function resolveOpenWorkConnectStatus(
       state: "needs_attention",
       label: "Needs attention",
       description: maintenance.issue?.message
-        ?? "OpenWork Connect could not verify connected service tools. Run diagnostics for details.",
+        ?? "Micx Connect could not verify connected service tools. Run diagnostics for details.",
     };
   }
 

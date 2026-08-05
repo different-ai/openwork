@@ -15,10 +15,10 @@ type Tool = {
 
 const destinations: Record<string, string> = {
   home: "/",
-  download: "https://app.openworklabs.com?mode=sign-up",
+  download: "https://app.micxlabs.com?mode=sign-up",
   pricing: "/pricing",
   enterprise: "/enterprise",
-  cloud: "https://app.openworklabs.com",
+  cloud: "https://app.micxlabs.com",
   docs: "/docs",
   trust: "/trust",
   feedback: "/feedback",
@@ -36,7 +36,7 @@ const pricingSummary = {
         "macOS and Linux downloads",
         "Bring your own provider keys",
       ],
-      cta: { label: "Get Started for free", href: "https://app.openworklabs.com?mode=sign-up" },
+      cta: { label: "Get Started for free", href: "https://app.micxlabs.com?mode=sign-up" },
     },
     {
       id: "team-starter",
@@ -49,7 +49,7 @@ const pricingSummary = {
         "Extension Marketplace",
         "Bring your own LLM keys, distributed to your team",
       ],
-      cta: { label: "Start team plan", href: "https://app.openworklabs.com/dashboard/billing" },
+      cta: { label: "Start team plan", href: "https://app.micxlabs.com/dashboard/billing" },
     },
     {
       id: "enterprise",
@@ -72,19 +72,19 @@ const pricingSummary = {
 }
 
 const downloadLinks = {
-  page: "https://app.openworklabs.com?mode=sign-up",
+  page: "https://app.micxlabs.com?mode=sign-up",
   platforms: {
     macos: {
-      page: "https://app.openworklabs.com?mode=sign-up",
-      note: "Sign up for OpenWork Cloud first, then use the guided desktop app access flow.",
+      page: "https://app.micxlabs.com?mode=sign-up",
+      note: "Sign up for Micx Cloud first, then use the guided desktop app access flow.",
     },
     windows: {
-      page: "https://app.openworklabs.com?mode=sign-up",
-      note: "Sign up for OpenWork Cloud first, then use the guided desktop app access flow.",
+      page: "https://app.micxlabs.com?mode=sign-up",
+      note: "Sign up for Micx Cloud first, then use the guided desktop app access flow.",
     },
     linux: {
-      page: "https://app.openworklabs.com?mode=sign-up",
-      note: "Sign up for OpenWork Cloud first, then use the guided desktop app access flow.",
+      page: "https://app.micxlabs.com?mode=sign-up",
+      note: "Sign up for Micx Cloud first, then use the guided desktop app access flow.",
     },
   },
 }
@@ -93,7 +93,7 @@ const tools: Tool[] = [
   {
     name: "navigate_to",
     description:
-      "Navigate the current tab to a key section of openworklabs.com. Use this when the user expresses intent to view pricing, download, enterprise, cloud, docs, trust, or feedback.",
+      "Navigate the current tab to a key section of micxlabs.com. Use this when the user expresses intent to view pricing, download, enterprise, cloud, docs, trust, or feedback.",
     inputSchema: {
       type: "object",
       properties: {
@@ -137,7 +137,7 @@ const tools: Tool[] = [
   {
     name: "get_pricing_summary",
     description:
-      "Return OpenWork's pricing tiers, what each includes, and the CTA destination. Read-only; does not navigate.",
+      "Return Micx's pricing tiers, what each includes, and the CTA destination. Read-only; does not navigate.",
     inputSchema: {
       type: "object",
       properties: {},

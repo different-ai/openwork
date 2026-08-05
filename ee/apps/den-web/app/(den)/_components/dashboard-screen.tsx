@@ -182,8 +182,8 @@ export function DashboardScreen({ showSidebar = true }: { showSidebar?: boolean 
     runtimeUpgradeBusy,
     copiedField,
     events,
-    openworkDeepLink,
-    openworkAppConnectUrl,
+    micxDeepLink,
+    micxAppConnectUrl,
     hasWorkspaceScopedUrl,
     selectedStatusMeta,
     isSelectedWorkerFailed,
@@ -222,9 +222,9 @@ export function DashboardScreen({ showSidebar = true }: { showSidebar?: boolean 
   const billingRoute = getBillingRoute();
   const isReady = selectedStatusMeta.bucket === "ready";
   const isStarting = selectedStatusMeta.bucket === "starting";
-  const webDisabled = !openworkAppConnectUrl || !isReady;
-  const desktopDisabled = !openworkDeepLink || !isReady;
-  const showConnectionHint = !openworkDeepLink || !hasWorkspaceScopedUrl;
+  const webDisabled = !micxAppConnectUrl || !isReady;
+  const desktopDisabled = !micxDeepLink || !isReady;
+  const showConnectionHint = !micxDeepLink || !hasWorkspaceScopedUrl;
 
   const mainContent = (
     <main className="min-h-0 flex-1 overflow-y-auto bg-[var(--dls-sidebar)]">
@@ -254,16 +254,16 @@ export function DashboardScreen({ showSidebar = true }: { showSidebar?: boolean 
                   <p className="text-[16px] leading-relaxed text-[var(--dls-text-secondary)] md:text-[17px]">
                     {isReady
                       ? "Open the worker in web or desktop, or copy the live credentials below."
-                      : "We are allocating resources and preparing the OpenWork connection before unlocking the rest of the controls."}
+                      : "We are allocating resources and preparing the Micx connection before unlocking the rest of the controls."}
                   </p>
 
                   <ProvisioningGraphic ready={isReady} />
                 </div>
 
                 <div className="flex w-full flex-col gap-3 md:w-[200px] md:shrink-0 md:items-end">
-                  {openworkAppConnectUrl ? (
+                  {micxAppConnectUrl ? (
                     <a
-                      href={openworkAppConnectUrl}
+                      href={micxAppConnectUrl}
                       target="_blank"
                       rel="noreferrer"
                       className={`flex w-full items-center justify-center gap-2 rounded-xl px-6 py-3.5 text-base font-medium transition-all md:min-h-[52px] md:text-sm ${
@@ -292,8 +292,8 @@ export function DashboardScreen({ showSidebar = true }: { showSidebar?: boolean 
                         desktopDisabled ? "border border-[var(--dls-border)] bg-[var(--dls-surface)] text-[var(--dls-text-secondary)]" : "border border-[var(--dls-border)] bg-[var(--dls-surface)] text-[var(--dls-text-secondary)] hover:bg-[var(--dls-hover)] hover:text-[var(--dls-text-primary)]"
                       }`}
                       onClick={() => {
-                        if (!desktopDisabled && openworkDeepLink) {
-                          window.location.href = openworkDeepLink;
+                        if (!desktopDisabled && micxDeepLink) {
+                          window.location.href = micxDeepLink;
                         }
                       }}
                       disabled={desktopDisabled}
@@ -301,7 +301,7 @@ export function DashboardScreen({ showSidebar = true }: { showSidebar?: boolean 
                       <MonitorIcon className="h-4 w-4" />
                       {desktopDisabled ? "Preparing desktop launch" : "Open in Desktop"}
                     </button>
-                    <span className="mt-2 text-[11px] font-medium text-[var(--dls-text-secondary)]">requires the OpenWork desktop app</span>
+                    <span className="mt-2 text-[11px] font-medium text-[var(--dls-text-secondary)]">requires the Micx desktop app</span>
                   </div>
                 </div>
               </div>
@@ -333,13 +333,13 @@ export function DashboardScreen({ showSidebar = true }: { showSidebar?: boolean 
                         type="button"
                         className="rounded-[16px] bg-[#011627] px-5 py-3 text-sm font-semibold text-white transition hover:bg-black disabled:cursor-not-allowed disabled:opacity-50"
                         onClick={() => {
-                          if (openworkDeepLink) {
-                            window.location.href = openworkDeepLink;
+                          if (micxDeepLink) {
+                            window.location.href = micxDeepLink;
                           }
                         }}
-                        disabled={!openworkDeepLink || !isReady}
+                        disabled={!micxDeepLink || !isReady}
                       >
-                        {openworkDeepLink ? "Open in Desktop" : "Preparing connection..."}
+                        {micxDeepLink ? "Open in Desktop" : "Preparing connection..."}
                       </button>
                       <button
                         type="button"
@@ -354,12 +354,12 @@ export function DashboardScreen({ showSidebar = true }: { showSidebar?: boolean 
                     <div className="mt-6 space-y-4">
                       <CredentialRow
                         label="Connection URL"
-                        value={activeWorker?.openworkUrl ?? activeWorker?.instanceUrl ?? null}
+                        value={activeWorker?.micxUrl ?? activeWorker?.instanceUrl ?? null}
                         placeholder="Connection URL is still preparing..."
-                        hint={showConnectionHint ? (!openworkDeepLink ? "Getting connection details ready..." : "Finishing your workspace URL...") : undefined}
-                        canCopy={Boolean(activeWorker?.openworkUrl ?? activeWorker?.instanceUrl)}
-                        copied={copiedField === "openwork-url"}
-                        onCopy={() => void copyToClipboard("openwork-url", activeWorker?.openworkUrl ?? activeWorker?.instanceUrl ?? null)}
+                        hint={showConnectionHint ? (!micxDeepLink ? "Getting connection details ready..." : "Finishing your workspace URL...") : undefined}
+                        canCopy={Boolean(activeWorker?.micxUrl ?? activeWorker?.instanceUrl)}
+                        copied={copiedField === "micx-url"}
+                        onCopy={() => void copyToClipboard("micx-url", activeWorker?.micxUrl ?? activeWorker?.instanceUrl ?? null)}
                         muted={!isReady}
                       />
 
@@ -594,7 +594,7 @@ export function DashboardScreen({ showSidebar = true }: { showSidebar?: boolean 
                 <div className="flex h-8 w-8 items-center justify-center rounded-lg border border-[var(--dls-border)] bg-[var(--dls-surface)] text-[var(--dls-text-primary)]">
                   <CubeIcon className="h-4 w-4" />
                 </div>
-                <span className="text-lg font-semibold tracking-tight text-[var(--dls-text-primary)]">OpenWork</span>
+                <span className="text-lg font-semibold tracking-tight text-[var(--dls-text-primary)]">Micx</span>
               </div>
               <button
                 type="button"

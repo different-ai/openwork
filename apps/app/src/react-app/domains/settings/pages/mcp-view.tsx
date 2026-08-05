@@ -26,7 +26,7 @@ import {
   Zap,
 } from "lucide-react";
 
-import { isBuiltInOpenWorkExtension, getMcpServerName, type McpDirectoryInfo } from "../../../../app/constants";
+import { isBuiltInMicxExtension, getMcpServerName, type McpDirectoryInfo } from "../../../../app/constants";
 import { evaluateEnablement } from "../../../../app/enablement";
 import type { EnablementResult } from "../../../../app/extensions";
 import type { CloudImportedPlugin } from "../../../../app/cloud/import-state";
@@ -75,14 +75,14 @@ import {
   canDisconnectNativeProviderAccount,
   canMemberAuthorizeConnection,
 } from "../../connections/native-provider-connections";
-import type { OpenworkClaudePluginPreview } from "../../../../app/lib/openwork-server";
+import type { MicxClaudePluginPreview } from "../../../../app/lib/micx-server";
 import {
-  isOpenWorkExtensionEnabled,
-  isOpenWorkExtensionHidden,
-  OPENWORK_EXTENSION_STATE_CHANGED,
+  isMicxExtensionEnabled,
+  isMicxExtensionHidden,
+  MICX_EXTENSION_STATE_CHANGED,
   readExtensionLayout,
-  setOpenWorkExtensionEnabled,
-  setOpenWorkExtensionHidden,
+  setMicxExtensionEnabled,
+  setMicxExtensionHidden,
   writeExtensionLayout,
 } from "../extension-state";
 import {
@@ -112,7 +112,7 @@ export type SkillItem = {
   trigger?: string;
   path: string;
   content?: string;
-  origin?: "local" | "openwork-connect";
+  origin?: "local" | "micx-connect";
   marketplaceName?: string;
   pluginName?: string;
 };
@@ -125,7 +125,7 @@ export type McpViewProps = {
   isRemoteWorkspace: boolean;
   /** Installed skills to render alongside MCPs in the grid. */
   installedSkills?: SkillItem[];
-  /** MCP capabilities assigned through OpenWork Connect. */
+  /** MCP capabilities assigned through Micx Connect. */
   availableConnectMcpServers?: McpServerEntry[];
   availableConnectMcpStatuses?: McpStatusMap;
   /** Organization inventory is still being fetched and nothing is cached yet. */
@@ -158,10 +158,10 @@ export type McpViewProps = {
   isExtensionConnected?: (entry: McpDirectoryInfo) => boolean;
   /** Enablement context for evaluating extension active state. */
   enablementContext?: import("../../../../app/enablement").EnablementContext;
-  /** Organization policy restriction for OpenWork-provided built-in extensions. */
+  /** Organization policy restriction for Micx-provided built-in extensions. */
   builtInExtensionsDisabled?: boolean;
   /** Preview a Claude Code plugin bundle from a GitHub URL ("Will install" disclosure). */
-  previewClaudePlugin?: (url: string) => Promise<OpenworkClaudePluginPreview>;
+  previewClaudePlugin?: (url: string) => Promise<MicxClaudePluginPreview>;
   /** Install a Claude Code plugin bundle from a GitHub URL. */
   installClaudePlugin?: (url: string) => Promise<{ ok: boolean; message: string }>;
   /** Connected org-level External MCP Connections rendered in My Extensions. */
@@ -241,8 +241,8 @@ const serviceIcon = (name: string) => {
   if (lower.includes("devtools")) {
     return MonitorSmartphone;
   }
-  if (lower.includes("openwork") && lower.includes("cloud")) return Cloud;
-  if (lower.includes("openwork") && lower.includes("ui")) return MonitorSmartphone;
+  if (lower.includes("micx") && lower.includes("cloud")) return Cloud;
+  if (lower.includes("micx") && lower.includes("ui")) return MonitorSmartphone;
   return Plug2;
 };
 
@@ -256,7 +256,7 @@ const serviceColor = (name: string) => {
   if (lower.includes("devtools")) {
     return "text-amber-11";
   }
-  if (lower.includes("openwork")) return "text-gray-12";
+  if (lower.includes("micx")) return "text-gray-12";
   return "text-dls-secondary";
 };
 
@@ -270,7 +270,7 @@ const serviceIconBg = (name: string) => {
   if (lower.includes("devtools")) {
     return "bg-amber-3 border-amber-6";
   }
-  if (lower.includes("openwork")) return "bg-gray-3 border-gray-6";
+  if (lower.includes("micx")) return "bg-gray-3 border-gray-6";
   return "bg-dls-hover border-dls-border";
 };
 
@@ -366,8 +366,8 @@ export function McpView(props: McpViewProps) {
   const detailPlugin = detailTarget?.kind === "plugin" ? detailTarget.plugin : null;
   const detailOrgMcpItem = detailTarget?.kind === "org-mcp" ? detailTarget.item : null;
   const [detailSkillContent, setDetailSkillContent] = useState<string | null>(null);
-  const [openworkUiMcpCommand, setOpenworkUiMcpCommand] = useState<string[] | null>(null);
-  const [openworkUiMcpEnvironment, setOpenworkUiMcpEnvironment] = useState<Record<string, string> | null>(null);
+  const [micxUiMcpCommand, setMicxUiMcpCommand] = useState<string[] | null>(null);
+  const [micxUiMcpEnvironment, setMicxUiMcpEnvironment] = useState<Record<string, string> | null>(null);
   const [computerUseMcpCommand, setComputerUseMcpCommand] = useState<string[] | null>(null);
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<ExtensionInventoryFilter>(props.initialFilter ?? "all");
@@ -459,7 +459,7 @@ export function McpView(props: McpViewProps) {
     setDetailTarget(target);
     if (target.kind === "skill") {
       setDetailSkillContent(target.skill.content ?? null);
-      if (!target.skill.content && target.skill.origin !== "openwork-connect" && props.readSkill) {
+      if (!target.skill.content && target.skill.origin !== "micx-connect" && props.readSkill) {
         void props.readSkill(target.skill.name).then((result) => {
           if (result?.content) {
             setDetailSkillContent(result.content);
@@ -498,7 +498,7 @@ export function McpView(props: McpViewProps) {
     setDetailTarget(resolved);
     if (resolved?.kind === "skill") {
       setDetailSkillContent(resolved.skill.content ?? null);
-      if (!resolved.skill.content && resolved.skill.origin !== "openwork-connect" && props.readSkill) {
+      if (!resolved.skill.content && resolved.skill.origin !== "micx-connect" && props.readSkill) {
         void props.readSkill(resolved.skill.name).then((result) => {
           if (result?.content) {
             setDetailSkillContent(result.content);
@@ -528,10 +528,10 @@ export function McpView(props: McpViewProps) {
 
   useEffect(() => {
     const refresh = () => setExtensionStateVersion((value) => value + 1);
-    window.addEventListener(OPENWORK_EXTENSION_STATE_CHANGED, refresh);
+    window.addEventListener(MICX_EXTENSION_STATE_CHANGED, refresh);
     window.addEventListener("storage", refresh);
     return () => {
-      window.removeEventListener(OPENWORK_EXTENSION_STATE_CHANGED, refresh);
+      window.removeEventListener(MICX_EXTENSION_STATE_CHANGED, refresh);
       window.removeEventListener("storage", refresh);
     };
   }, []);
@@ -540,25 +540,25 @@ export function McpView(props: McpViewProps) {
     if (!isDesktopRuntime()) return;
     void (async () => {
       try {
-        const command = await window.__OPENWORK_ELECTRON__?.invokeDesktop?.("getOpenworkUiMcpCommand");
+        const command = await window.__MICX_ELECTRON__?.invokeDesktop?.("getMicxUiMcpCommand");
         if (Array.isArray(command) && command.every((part) => typeof part === "string")) {
-          setOpenworkUiMcpCommand(command);
+          setMicxUiMcpCommand(command);
         }
-        const environment = await window.__OPENWORK_ELECTRON__?.invokeDesktop?.("getOpenworkUiMcpEnvironment");
+        const environment = await window.__MICX_ELECTRON__?.invokeDesktop?.("getMicxUiMcpEnvironment");
         if (environment && typeof environment === "object" && !Array.isArray(environment)) {
-          setOpenworkUiMcpEnvironment(Object.fromEntries(
+          setMicxUiMcpEnvironment(Object.fromEntries(
             Object.entries(environment).filter((entry): entry is [string, string] =>
               typeof entry[0] === "string" && typeof entry[1] === "string"
             ),
           ));
         }
-        const computerUseCommand = await window.__OPENWORK_ELECTRON__?.invokeDesktop?.("getComputerUseMcpCommand");
+        const computerUseCommand = await window.__MICX_ELECTRON__?.invokeDesktop?.("getComputerUseMcpCommand");
         if (Array.isArray(computerUseCommand) && computerUseCommand.every((part) => typeof part === "string")) {
           setComputerUseMcpCommand(computerUseCommand);
         }
       } catch {
-        setOpenworkUiMcpCommand(null);
-        setOpenworkUiMcpEnvironment(null);
+        setMicxUiMcpCommand(null);
+        setMicxUiMcpEnvironment(null);
         setComputerUseMcpCommand(null);
       }
     })();
@@ -632,14 +632,14 @@ export function McpView(props: McpViewProps) {
       );
     });
 
-  // Auto-configured built-ins like openwork-cloud remain active but hidden from
+  // Auto-configured built-ins like micx-cloud remain active but hidden from
   // Your apps until Show hidden reveals the row for disable/remove.
   const visibleMcpServers = inventoryState === "all" && (filter === "all" || filter === "mcp")
     ? showHidden
       ? props.mcpServers
       : props.mcpServers.filter((entry) => {
           const match = resolveQuickConnectMatch(entry.name);
-          return !match || !isOpenWorkExtensionHidden(match);
+          return !match || !isMicxExtensionHidden(match);
         })
     : [];
 
@@ -663,17 +663,17 @@ export function McpView(props: McpViewProps) {
   };
 
   const isEntryConfigured = (entry: McpDirectoryInfo) => {
-    if (props.builtInExtensionsDisabled && isBuiltInOpenWorkExtension(entry)) return false;
+    if (props.builtInExtensionsDisabled && isBuiltInMicxExtension(entry)) return false;
     const result = enablementForEntry(entry);
     if (result) return result.active;
     // Fallback for entries without enablement context.
-    if (isToggleOnlyExtension(entry)) return isOpenWorkExtensionEnabled(entry);
+    if (isToggleOnlyExtension(entry)) return isMicxExtensionEnabled(entry);
     if (entry.kind === "extension" && !isMcpBackedExtension(entry)) return props.isExtensionConnected?.(entry) ?? false;
     return isQuickConnectConfigured(entry);
   };
 
   const launchCommandForEntry = (entry: McpDirectoryInfo) => {
-    if (entry.serverName === "openwork-ui") return openworkUiMcpCommand ?? undefined;
+    if (entry.serverName === "micx-ui") return micxUiMcpCommand ?? undefined;
     if (entry.serverName === "computer-use") return computerUseMcpCommand ?? entry.command;
     return entry.command;
   };
@@ -687,11 +687,11 @@ export function McpView(props: McpViewProps) {
     return resolved?.status ?? "disconnected";
   };
 
-  const hiddenCount = quickConnectList.filter((entry) => isOpenWorkExtensionHidden(entry)).length +
-    (props.installedSkills ?? []).filter((skill) => isOpenWorkExtensionHidden(getSkillHiddenId(skill))).length +
-    (props.installedPlugins ?? []).filter((plugin) => isOpenWorkExtensionHidden(`plugin:${plugin.pluginId}`)).length;
+  const hiddenCount = quickConnectList.filter((entry) => isMicxExtensionHidden(entry)).length +
+    (props.installedSkills ?? []).filter((skill) => isMicxExtensionHidden(getSkillHiddenId(skill))).length +
+    (props.installedPlugins ?? []).filter((plugin) => isMicxExtensionHidden(`plugin:${plugin.pluginId}`)).length;
   const policyHiddenBuiltInCount = props.builtInExtensionsDisabled
-    ? quickConnectList.filter((entry) => isBuiltInOpenWorkExtension(entry) && !isOpenWorkExtensionHidden(entry)).length
+    ? quickConnectList.filter((entry) => isBuiltInMicxExtension(entry) && !isMicxExtensionHidden(entry)).length
     : 0;
   const hiddenOrPolicyCount = hiddenCount + policyHiddenBuiltInCount;
 
@@ -754,14 +754,14 @@ export function McpView(props: McpViewProps) {
       {detailEntry ? (() => {
         const extensionConfigSlot = props.configSlotForEntry?.(detailEntry) ?? null;
         const hasConfigSlot = extensionConfigSlot !== null;
-        const hidden = isOpenWorkExtensionHidden(detailEntry);
-        const disabledReason = props.builtInExtensionsDisabled && isBuiltInOpenWorkExtension(detailEntry)
+        const hidden = isMicxExtensionHidden(detailEntry);
+        const disabledReason = props.builtInExtensionsDisabled && isBuiltInMicxExtension(detailEntry)
           ? builtInExtensionDisabledReason()
           : null;
         const isConnected = disabledReason
           ? false
           : isToggleOnlyExtension(detailEntry)
-          ? isOpenWorkExtensionEnabled(detailEntry)
+          ? isMicxExtensionEnabled(detailEntry)
           : detailEntry.kind === "extension" && !isMcpBackedExtension(detailEntry)
           ? props.isExtensionConnected?.(detailEntry) ?? false
           : isQuickConnectConfigured(detailEntry);
@@ -786,33 +786,33 @@ export function McpView(props: McpViewProps) {
             resourceLabels={extensionResourceLabels(detailEntry)}
             contributionLabels={extensionContributionLabels(detailEntry)}
             launchCommand={launchCommandForEntry(detailEntry)}
-            environment={detailEntry.serverName === "openwork-ui" ? openworkUiMcpEnvironment ?? undefined : undefined}
+            environment={detailEntry.serverName === "micx-ui" ? micxUiMcpEnvironment ?? undefined : undefined}
             url={typeof detailEntry.url === "string" ? detailEntry.url : undefined}
             oauth={detailEntry.oauth}
             configSlot={disabledReason ? null : extensionConfigSlot}
             showEnablementCard
             onConnect={disabledReason ? undefined : isToggleOnlyExtension(detailEntry) ? () => {
-              setOpenWorkExtensionEnabled(detailEntry, true);
+              setMicxExtensionEnabled(detailEntry, true);
               closeDetail();
             } : hasConfigSlot ? undefined : () => {
               props.connectMcp(detailEntry);
               closeDetail();
             }}
             onUninstall={disabledReason ? undefined : isToggleOnlyExtension(detailEntry) && isConnected ? () => {
-              setOpenWorkExtensionEnabled(detailEntry, false);
+              setMicxExtensionEnabled(detailEntry, false);
             } : isQuickConnectConfigured(detailEntry) ? () => {
               const slug = getMcpIdentityKey(detailEntry);
               props.removeMcp(slug);
               closeDetail();
             } : undefined}
-            onHide={() => setOpenWorkExtensionHidden(detailEntry, true)}
-            onShow={() => setOpenWorkExtensionHidden(detailEntry, false)}
+            onHide={() => setMicxExtensionHidden(detailEntry, true)}
+            onShow={() => setMicxExtensionHidden(detailEntry, false)}
           />
         );
       })() : null}
 
       {detailSkill ? (() => {
-        const hidden = isOpenWorkExtensionHidden(getSkillHiddenId(detailSkill));
+        const hidden = isMicxExtensionHidden(getSkillHiddenId(detailSkill));
         return (
           <ExtensionDetailModal
             open={!!detailSkill}
@@ -823,21 +823,21 @@ export function McpView(props: McpViewProps) {
             description={detailSkill.description ?? "Installed skill"}
             taxonomy="skill"
             connected={true}
-            connectedLabel={detailSkill.origin === "openwork-connect" ? "Available through OpenWork Connect" : undefined}
+            connectedLabel={detailSkill.origin === "micx-connect" ? "Available through Micx Connect" : undefined}
             hidden={hidden}
-            path={detailSkill.origin === "openwork-connect" ? undefined : detailSkill.path}
+            path={detailSkill.origin === "micx-connect" ? undefined : detailSkill.path}
             trigger={detailSkill.trigger}
             contentPreview={detailSkillContent ?? undefined}
             configSlot={openInDenAction({ id: detailSkill.path })}
-            onReveal={detailSkill.path && detailSkill.origin !== "openwork-connect" ? () => {
+            onReveal={detailSkill.path && detailSkill.origin !== "micx-connect" ? () => {
               void revealDesktopItemInDir(detailSkill.path);
             } : undefined}
-            onUninstall={props.uninstallSkill && detailSkill.origin !== "openwork-connect" ? () => {
+            onUninstall={props.uninstallSkill && detailSkill.origin !== "micx-connect" ? () => {
               props.uninstallSkill?.(detailSkill.name);
               closeDetail();
             } : undefined}
-            onHide={() => setOpenWorkExtensionHidden(getSkillHiddenId(detailSkill), true)}
-            onShow={() => setOpenWorkExtensionHidden(getSkillHiddenId(detailSkill), false)}
+            onHide={() => setMicxExtensionHidden(getSkillHiddenId(detailSkill), true)}
+            onShow={() => setMicxExtensionHidden(getSkillHiddenId(detailSkill), false)}
           />
         );
       })() : null}
@@ -854,11 +854,11 @@ export function McpView(props: McpViewProps) {
               ? `Provided by ${detailConnectMcp.pluginName}${detailConnectMcp.marketplaceName ? ` · ${detailConnectMcp.marketplaceName}` : ""}.`
               : detailConnectMcp.marketplaceName
                 ? `Provided by ${detailConnectMcp.marketplaceName}.`
-                : "Available through OpenWork Connect."
+                : "Available through Micx Connect."
           }
           taxonomy="connection"
           connected={(props.availableConnectMcpStatuses?.[detailConnectMcp.id ?? detailConnectMcp.name]?.status) === "connected"}
-          connectedLabel="Available through OpenWork Connect"
+          connectedLabel="Available through Micx Connect"
           disconnectedLabel="Setup required"
           url={detailConnectMcp.config.type === "remote" ? detailConnectMcp.config.url : undefined}
           oauth={detailConnectMcp.config.type === "remote"}
@@ -868,7 +868,7 @@ export function McpView(props: McpViewProps) {
       ) : null}
 
       {detailPlugin ? (() => {
-        const hidden = isOpenWorkExtensionHidden(`plugin:${detailPlugin.pluginId}`);
+        const hidden = isMicxExtensionHidden(`plugin:${detailPlugin.pluginId}`);
         return (
           <ExtensionDetailModal
             open={!!detailPlugin}
@@ -885,8 +885,8 @@ export function McpView(props: McpViewProps) {
               void props.removeCloudPlugin?.(detailPlugin.pluginId);
               closeDetail();
             } : undefined}
-            onHide={() => setOpenWorkExtensionHidden(`plugin:${detailPlugin.pluginId}`, true)}
-            onShow={() => setOpenWorkExtensionHidden(`plugin:${detailPlugin.pluginId}`, false)}
+            onHide={() => setMicxExtensionHidden(`plugin:${detailPlugin.pluginId}`, true)}
+            onShow={() => setMicxExtensionHidden(`plugin:${detailPlugin.pluginId}`, false)}
           />
         );
       })() : null}
@@ -967,7 +967,7 @@ export function McpView(props: McpViewProps) {
 
       {props.builtInExtensionsDisabled ? (
         <div className="rounded-xl border border-amber-6 bg-amber-2 px-4 py-3 text-xs text-amber-11">
-          Built-in OpenWork extensions are disabled by your organization. Use Show hidden to review blocked built-ins.
+          Built-in Micx extensions are disabled by your organization. Use Show hidden to review blocked built-ins.
         </div>
       ) : null}
 
@@ -1020,7 +1020,7 @@ export function McpView(props: McpViewProps) {
         skillCount={skillCount}
         entries={
           quickConnectList.filter((entry) => {
-            if (!showHidden && (isOpenWorkExtensionHidden(entry) || (props.builtInExtensionsDisabled && isBuiltInOpenWorkExtension(entry)))) return false;
+            if (!showHidden && (isMicxExtensionHidden(entry) || (props.builtInExtensionsDisabled && isBuiltInMicxExtension(entry)))) return false;
             if (!matchesExtensionFilter(
               filter,
               taxonomyForDirectoryEntry(entry),
@@ -1033,7 +1033,7 @@ export function McpView(props: McpViewProps) {
         }
         installedSkills={
           installedSkills.filter((skill) => {
-            if (!showHidden && isOpenWorkExtensionHidden(getSkillHiddenId(skill))) return false;
+            if (!showHidden && isMicxExtensionHidden(getSkillHiddenId(skill))) return false;
             if (!matchesExtensionFilter(filter, "skill")) return false;
             if (!search.trim()) return true;
             const q = search.toLowerCase();
@@ -1060,7 +1060,7 @@ export function McpView(props: McpViewProps) {
         onStateCountsChange={setInventoryStateCounts}
         installedPlugins={
           installedPlugins.filter((plugin) => {
-            if (!showHidden && isOpenWorkExtensionHidden(`plugin:${plugin.pluginId}`)) return false;
+            if (!showHidden && isMicxExtensionHidden(`plugin:${plugin.pluginId}`)) return false;
             if (!matchesExtensionFilter(filter, "plugin")) return false;
             if (!search.trim()) return true;
             const q = search.toLowerCase();
@@ -1086,11 +1086,11 @@ export function McpView(props: McpViewProps) {
         organizationName={props.organizationName}
         busy={props.busy}
         connectingName={props.mcpConnectingName}
-        isEntryHidden={(entry) => isOpenWorkExtensionHidden(entry)}
-        isSkillHidden={(skill) => isOpenWorkExtensionHidden(getSkillHiddenId(skill))}
-        isPluginHidden={(plugin) => isOpenWorkExtensionHidden(`plugin:${plugin.pluginId}`)}
+        isEntryHidden={(entry) => isMicxExtensionHidden(entry)}
+        isSkillHidden={(skill) => isMicxExtensionHidden(getSkillHiddenId(skill))}
+        isPluginHidden={(plugin) => isMicxExtensionHidden(`plugin:${plugin.pluginId}`)}
         disabledReasonForEntry={(entry) =>
-          props.builtInExtensionsDisabled && isBuiltInOpenWorkExtension(entry)
+          props.builtInExtensionsDisabled && isBuiltInMicxExtension(entry)
             ? builtInExtensionDisabledReason()
             : null
         }
@@ -1442,7 +1442,7 @@ function McpQuickConnectSection(props: {
 
   for (const skill of props.installedSkills ?? []) {
     const hidden = props.isSkillHidden(skill);
-    const fromOrg = skill.origin === "openwork-connect";
+    const fromOrg = skill.origin === "micx-connect";
     cards.push({
       key: `skill:${skill.path}`,
       group: "ready",

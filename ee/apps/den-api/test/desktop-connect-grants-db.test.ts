@@ -1,10 +1,10 @@
-import { createDenTypeId } from "@openwork-ee/utils/typeid"
+import { createDenTypeId } from "@micx-ee/utils/typeid"
 import { afterAll, beforeAll, expect, test } from "bun:test"
 
 // MySQL integration coverage for the multi-replica trust boundary. Run after
 // pushing the current schema to the dedicated test database.
 process.env.DATABASE_URL = process.env.DESKTOP_CONNECT_TEST_DATABASE_URL
-  ?? "mysql://root:password@127.0.0.1:3306/openwork_test_connect"
+  ?? "mysql://root:password@127.0.0.1:3306/micx_test_connect"
 process.env.DB_MODE = "mysql"
 process.env.DEN_DB_ENCRYPTION_KEY = "connect-grant-test-encryption-key-1234567890"
 process.env.BETTER_AUTH_SECRET = "connect-grant-test-auth-secret-1234567890"
@@ -16,8 +16,8 @@ const installLinkId = createDenTypeId("installLink")
 const createdByUserId = createDenTypeId("user")
 
 let db: typeof import("../src/db.js").db
-let drizzle: typeof import("@openwork-ee/den-db/drizzle")
-let schema: typeof import("@openwork-ee/den-db/schema")
+let drizzle: typeof import("@micx-ee/den-db/drizzle")
+let schema: typeof import("@micx-ee/den-db/schema")
 let grants: typeof import("../src/desktop-connect-grants.js")
 
 async function clearRows() {
@@ -32,8 +32,8 @@ async function clearRows() {
 beforeAll(async () => {
   const modules = await Promise.all([
     import("../src/db.js"),
-    import("@openwork-ee/den-db/drizzle"),
-    import("@openwork-ee/den-db/schema"),
+    import("@micx-ee/den-db/drizzle"),
+    import("@micx-ee/den-db/schema"),
     import("../src/desktop-connect-grants.js"),
   ])
   db = modules[0].db
@@ -62,7 +62,7 @@ function mintGrant() {
   return grants.mintDesktopConnectGrant({
     installLinkId,
     organizationName: "Replica Test Org",
-    appName: "OpenWork",
+    appName: "Micx",
     logoUrl: null,
     iconUrl: null,
     webUrl: "https://den.example.test",

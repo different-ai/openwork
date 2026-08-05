@@ -2,7 +2,7 @@
  * Idempotently repair additive schema drift from historical hand-written migrations.
  *
  * Usage:
- *   DATABASE_URL=mysql://root:password@127.0.0.1:3306/openwork_den \
+ *   DATABASE_URL=mysql://root:password@127.0.0.1:3306/micx_den \
  *     node --import tsx scripts/ensure-schema-repairs.ts
  */
 import "../src/load-env.ts"

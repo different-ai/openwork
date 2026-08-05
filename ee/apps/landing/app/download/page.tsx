@@ -1,4 +1,4 @@
-import { DownloadOpenWorkCard } from "@openwork/ui/react";
+import { DownloadMicxCard } from "@micx/ui/react";
 import { SiteFooter } from "../../components/site-footer";
 import { SiteNav } from "../../components/site-nav";
 import { StructuredData } from "../../components/structured-data";
@@ -8,10 +8,10 @@ import { baseOpenGraph } from "../../lib/seo";
 const downloadSchema = {
   "@context": "https://schema.org",
   "@type": "SoftwareApplication",
-  name: "OpenWork",
+  name: "Micx",
   description:
-    "Open source Claude Cowork alternative. Download the OpenWork desktop app for macOS, Windows, or Linux. No account required.",
-  url: "https://openworklabs.com/download",
+    "Open source Claude Cowork alternative. Download the Micx desktop app for macOS, Windows, or Linux. No account required.",
+  url: "https://micxlabs.com/download",
   applicationCategory: "BusinessApplication",
   operatingSystem: "macOS, Windows, Linux",
   offers: {
@@ -21,21 +21,21 @@ const downloadSchema = {
   },
   publisher: {
     "@type": "Organization",
-    name: "OpenWork",
-    url: "https://openworklabs.com"
+    name: "Micx",
+    url: "https://micxlabs.com"
   }
 };
 
 export const metadata = {
-  title: "Download OpenWork — macOS, Windows, Linux",
+  title: "Download Micx — macOS, Windows, Linux",
   description:
-    "Download the OpenWork desktop app for macOS, Windows, or Linux. Free, open source, no account required.",
+    "Download the Micx desktop app for macOS, Windows, or Linux. Free, open source, no account required.",
   alternates: {
     canonical: "/download"
   },
   openGraph: {
     ...baseOpenGraph,
-    url: "https://openworklabs.com/download"
+    url: "https://micxlabs.com/download"
   }
 };
 
@@ -66,13 +66,13 @@ export default async function Download() {
           </div>
 
           <section className="my-8">
-            <DownloadOpenWorkCard installers={github.installers} releaseTag={releaseTag} />
+            <DownloadMicxCard installers={github.installers} releaseTag={releaseTag} />
           </section>
 
           <p className="max-w-md text-[13px] text-gray-500">
             Joining a team?{" "}
             <a
-              href="https://app.openworklabs.com"
+              href="https://app.micxlabs.com"
               className="text-gray-700 underline underline-offset-2"
             >
               Sign in

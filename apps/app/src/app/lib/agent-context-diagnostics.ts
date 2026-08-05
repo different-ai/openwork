@@ -6,7 +6,7 @@ import {
   type AgentContextDiagnosticsRequest,
   type AgentContextOrganizationConnectionSummary,
   type AgentContextOrganizationConnectionsProbe,
-} from "@openwork/types/agent-context-diagnostics";
+} from "@micx/types/agent-context-diagnostics";
 
 import type { DenExternalMcpConnection } from "./den";
 
@@ -15,10 +15,10 @@ const MAX_ORGANIZATION_CONNECTION_OBSERVATIONS = 200;
 
 export function isAgentContextDiagnosticsWorkspaceAllowed(workspace: {
   workspaceType: "local" | "remote";
-  remoteType?: "openwork" | "opencode" | null;
+  remoteType?: "micx" | "opencode" | null;
 } | null): boolean {
   if (!workspace) return false;
-  return workspace.workspaceType === "local" || workspace.remoteType === "openwork";
+  return workspace.workspaceType === "local" || workspace.remoteType === "micx";
 }
 
 function summarizeOrganizationConnection(

@@ -101,9 +101,9 @@ export function AuthScreen() {
 
           <div className="flex flex-col justify-center border-[var(--dls-border)] px-5 py-6 sm:px-7 sm:py-8 md:px-9 md:py-10 lg:border-l" data-testid="auth-landing-form">
             <div className="mb-6 flex items-center gap-2 lg:hidden" data-testid="auth-landing-mobile-brand">
-              <img src="/openwork-mark.svg" alt="OpenWork" className="h-7 w-auto" />
+              <img src="/micx-mark.svg" alt="Micx" className="h-7 w-auto" />
               <span className="text-[1.15rem] font-semibold tracking-tight text-[var(--dls-text-primary)]">
-                OpenWork
+                Micx
               </span>
             </div>
             {!sessionHydrated ? (

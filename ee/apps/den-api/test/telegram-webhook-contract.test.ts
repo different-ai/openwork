@@ -37,7 +37,7 @@ describe("Telegram webhook contract", () => {
 
   test("extracts only one-time /start pairing payloads", () => {
     expect(telegramPairingCode("/start ow_token")).toBe("ow_token")
-    expect(telegramPairingCode("/start@openwork_bot ow_token")).toBe("ow_token")
+    expect(telegramPairingCode("/start@micx_bot ow_token")).toBe("ow_token")
     expect(telegramPairingCode("/start")).toBeNull()
     expect(telegramPairingCode("hello ow_token")).toBeNull()
   })

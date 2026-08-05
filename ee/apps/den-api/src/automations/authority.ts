@@ -1,14 +1,14 @@
-import { and, eq, inArray, isNull, or } from "@openwork-ee/den-db/drizzle"
+import { and, eq, inArray, isNull, or } from "@micx-ee/den-db/drizzle"
 import {
   LlmProviderAccessTable,
   LlmProviderModelTable,
   LlmProviderTable,
   MemberTable,
   TeamMemberTable,
-} from "@openwork-ee/den-db/schema"
-import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
-import { AUTOMATION_FREE_MODEL } from "@openwork/types/automations"
-import { INFERENCE_MODEL_ALIASES } from "@openwork/types/den/inference"
+} from "@micx-ee/den-db/schema"
+import { normalizeDenTypeId } from "@micx-ee/utils/typeid"
+import { AUTOMATION_FREE_MODEL } from "@micx/types/automations"
+import { INFERENCE_MODEL_ALIASES } from "@micx/types/den/inference"
 import { db } from "../db.js"
 
 type ProviderId = typeof LlmProviderTable.$inferSelect.id
@@ -20,7 +20,7 @@ export type AutomationAuthorityMember = {
 
 export type AutomationAuthorityProvider = {
   id: ProviderId
-  source: "models_dev" | "custom" | "openwork"
+  source: "models_dev" | "custom" | "micx"
   name: string
 }
 
@@ -35,7 +35,7 @@ export type AutomationModelSelection = {
 }
 
 export type ResolvedAutomationModel = AutomationModelSelection & {
-  accessKind: "free" | "openwork_managed" | "authorized_custom"
+  accessKind: "free" | "micx_managed" | "authorized_custom"
   providerRecordId: string | null
   providerName: string
   modelName: string
@@ -53,7 +53,7 @@ export type AutomationAuthorityResult =
 
 export type AutomationModelAuthorityStore = {
   findActiveMember(input: { organizationId: string; ownerMemberId: string }): Promise<AutomationAuthorityMember | null>
-  findOpenWorkProvider(input: { organizationId: string; ownerMemberId: string }): Promise<AutomationAuthorityProvider | null>
+  findMicxProvider(input: { organizationId: string; ownerMemberId: string }): Promise<AutomationAuthorityProvider | null>
   findProvider(input: { organizationId: string; providerId: string }): Promise<AutomationAuthorityProvider | null>
   findModel(input: { providerRecordId: ProviderId; modelId: string }): Promise<AutomationAuthorityModel | null>
   canAccessProvider(input: { member: AutomationAuthorityMember; providerRecordId: ProviderId }): Promise<boolean>
@@ -69,12 +69,12 @@ const databaseAuthorityStore: AutomationModelAuthorityStore = {
     return members[0] ?? null
   },
 
-  async findOpenWorkProvider(input) {
+  async findMicxProvider(input) {
     const providers = await db.select().from(LlmProviderTable).where(and(
       eq(LlmProviderTable.organizationId, normalizeDenTypeId("organization", input.organizationId)),
       eq(LlmProviderTable.createdByOrgMembershipId, normalizeDenTypeId("member", input.ownerMemberId)),
-      eq(LlmProviderTable.source, "openwork"),
-      eq(LlmProviderTable.providerId, "openwork"),
+      eq(LlmProviderTable.source, "micx"),
+      eq(LlmProviderTable.providerId, "micx"),
     )).limit(1)
     return providers[0] ?? null
   },
@@ -117,7 +117,7 @@ const databaseAuthorityStore: AutomationModelAuthorityStore = {
   },
 }
 
-function enabledOpenWorkModel(modelId: string) {
+function enabledMicxModel(modelId: string) {
   const model = Object.entries(INFERENCE_MODEL_ALIASES)
     .find(([candidate]) => candidate === modelId)?.[1]
   return model?.enabled === true ? model : null
@@ -166,33 +166,33 @@ export async function resolveAutomationModelAccessWithStore(
     }
   }
 
-  if (input.providerId === "openwork") {
-    const model = enabledOpenWorkModel(input.modelId)
+  if (input.providerId === "micx") {
+    const model = enabledMicxModel(input.modelId)
     if (!model) {
-      return { ok: false, code: "model_access_lost", message: "The selected OpenWork-managed model is not available." }
+      return { ok: false, code: "model_access_lost", message: "The selected Micx-managed model is not available." }
     }
-    const provider = await store.findOpenWorkProvider(input)
+    const provider = await store.findMicxProvider(input)
     if (!provider) {
-      return { ok: false, code: "provider_unavailable", message: "OpenWork Models are not available for the Automation owner." }
+      return { ok: false, code: "provider_unavailable", message: "Micx Models are not available for the Automation owner." }
     }
     if (!await store.canAccessProvider({ member, providerRecordId: provider.id })) {
-      return { ok: false, code: "model_access_lost", message: "The Automation owner no longer has access to OpenWork Models." }
+      return { ok: false, code: "model_access_lost", message: "The Automation owner no longer has access to Micx Models." }
     }
     return {
       ok: true,
       value: {
-        accessKind: "openwork_managed",
+        accessKind: "micx_managed",
         providerRecordId: provider.id,
         providerId: input.providerId,
         modelId: input.modelId,
         providerName: provider.name,
-        modelName: model.displayName.replace(/^OpenWork:\s*/, ""),
+        modelName: model.displayName.replace(/^Micx:\s*/, ""),
       },
     }
   }
 
   const provider = await store.findProvider(input)
-  if (!provider || provider.source === "openwork") {
+  if (!provider || provider.source === "micx") {
     return { ok: false, code: "provider_unavailable", message: "The selected model provider is no longer available." }
   }
   const model = await store.findModel({ providerRecordId: provider.id, modelId: input.modelId })

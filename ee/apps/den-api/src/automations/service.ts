@@ -6,7 +6,7 @@ import type {
   AutomationRun,
   CreateAutomation,
   UpdateAutomation,
-} from "@openwork/types/automations"
+} from "@micx/types/automations"
 import { env } from "../env.js"
 import { isActiveAutomationOwner, resolveAutomationModelAccess } from "./authority.js"
 import { automationRepository } from "./repository.js"

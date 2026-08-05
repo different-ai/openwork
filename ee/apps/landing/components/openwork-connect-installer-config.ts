@@ -1,7 +1,7 @@
-export const MCP_SERVER_URL = "https://api.openworklabs.com/mcp/agent";
+export const MCP_SERVER_URL = "https://api.micxlabs.com/mcp/agent";
 export const CODEX_CONNECTIONS_DEEPLINK = "codex://settings/connections";
 export const CHATGPT_SETTINGS_URL = "https://chatgpt.com/#settings/Connectors";
-export type OpenWorkConnectClientId =
+export type MicxConnectClientId =
   | "cursor"
   | "codex"
   | "chatgpt-desktop"
@@ -9,23 +9,23 @@ export type OpenWorkConnectClientId =
   | "opencode"
   | "vs-code"
   | "any-client";
-export type OpenWorkConnectSupportStatus = "Verified" | "Setup only";
-export type OpenWorkConnectClientSupport = {
-  status: OpenWorkConnectSupportStatus;
+export type MicxConnectSupportStatus = "Verified" | "Setup only";
+export type MicxConnectClientSupport = {
+  status: MicxConnectSupportStatus;
   explanation: string;
 };
 
 export const CURSOR_SNIPPET = `${MCP_SERVER_URL}`;
 
-export const CLAUDE_CODE_COMMAND = `claude mcp add --transport http openwork ${MCP_SERVER_URL}`;
-export const CODEX_COMMAND = `codex mcp add openwork --url ${MCP_SERVER_URL}`;
-export const CODEX_LOGIN_COMMAND = `codex mcp login openwork`;
-export const CODEX_RECONNECT_COMMAND = `codex mcp logout openwork
-codex mcp login openwork`;
+export const CLAUDE_CODE_COMMAND = `claude mcp add --transport http micx ${MCP_SERVER_URL}`;
+export const CODEX_COMMAND = `codex mcp add micx --url ${MCP_SERVER_URL}`;
+export const CODEX_LOGIN_COMMAND = `codex mcp login micx`;
+export const CODEX_RECONNECT_COMMAND = `codex mcp logout micx
+codex mcp login micx`;
 
 export const OPENCODE_SNIPPET = `{
   "mcp": {
-    "openwork": {
+    "micx": {
       "type": "remote",
       "enabled": true,
       "url": "${MCP_SERVER_URL}",
@@ -34,20 +34,20 @@ export const OPENCODE_SNIPPET = `{
   }
 }`;
 
-export const VS_CODE_COMMAND = `code --add-mcp '{"name":"openwork","type":"http","url":"${MCP_SERVER_URL}"}'`;
+export const VS_CODE_COMMAND = `code --add-mcp '{"name":"micx","type":"http","url":"${MCP_SERVER_URL}"}'`;
 export const ANY_CLIENT_COMMAND = `${MCP_SERVER_URL}`;
-export const OPENCODE_AUTH_COMMAND = `opencode mcp auth openwork`;
-export const OPENCODE_RECONNECT_COMMAND = `opencode mcp logout openwork
-opencode mcp auth openwork`;
+export const OPENCODE_AUTH_COMMAND = `opencode mcp auth micx`;
+export const OPENCODE_RECONNECT_COMMAND = `opencode mcp logout micx
+opencode mcp auth micx`;
 
-export const CONNECT_CLIENT_SUPPORT: Record<OpenWorkConnectClientId, OpenWorkConnectClientSupport> = {
+export const CONNECT_CLIENT_SUPPORT: Record<MicxConnectClientId, MicxConnectClientSupport> = {
   "cursor": {
     status: "Setup only",
     explanation: "Setup guide only: paste the server URL into Cursor and start OAuth. Cursor Desktop's cursor://anysphere.cursor-mcp/oauth/callback callback is accepted through an exact allowlist with PKCE S256 enforced. Native proof is not complete."
   },
   "codex": {
     status: "Setup only",
-    explanation: "Setup guide only: add OpenWork, run codex mcp login openwork, and reconnect with logout then login. Native proof must be rerun on this exact branch."
+    explanation: "Setup guide only: add Micx, run codex mcp login micx, and reconnect with logout then login. Native proof must be rerun on this exact branch."
   },
   "chatgpt-desktop": {
     status: "Setup only",
@@ -71,7 +71,7 @@ export const CONNECT_CLIENT_SUPPORT: Record<OpenWorkConnectClientId, OpenWorkCon
   }
 };
 
-export const CONNECT_CLIENTS: OpenWorkConnectClientId[] = [
+export const CONNECT_CLIENTS: MicxConnectClientId[] = [
   "cursor",
   "codex",
   "chatgpt-desktop",

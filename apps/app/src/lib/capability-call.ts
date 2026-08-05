@@ -8,7 +8,7 @@ import type { DynamicToolUIPart } from "ai"
  */
 
 export type CapabilityCallSentence = {
-  /** Human service name, e.g. "Granola" or "OpenWork Cloud". */
+  /** Human service name, e.g. "Granola" or "Micx Cloud". */
   service: string | null
   /** Present-tense line while the call runs. */
   present: string
@@ -138,7 +138,7 @@ function verbPhrase(action: string, tense: "present" | "past"): string {
 /**
  * Build the human sentence for a dynamic (MCP / capability) tool call.
  * Tool names follow "{connection}_{tool}", e.g.
- * "openwork-cloud_search_capabilities".
+ * "micx-cloud_search_capabilities".
  */
 export function getCapabilityCallSentence(
   part: DynamicToolUIPart,

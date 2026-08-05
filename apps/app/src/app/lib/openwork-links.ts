@@ -1,9 +1,9 @@
 import { DEFAULT_DEN_BASE_URL, normalizeDenBaseUrl } from "./den";
-import { normalizeOpenworkServerUrl } from "./openwork-server";
+import { normalizeMicxServerUrl } from "./micx-server";
 
 export type RemoteWorkspaceDefaults = {
-  openworkHostUrl?: string | null;
-  openworkToken?: string | null;
+  micxHostUrl?: string | null;
+  micxToken?: string | null;
   directory?: string | null;
   displayName?: string | null;
   autoConnect?: boolean;
@@ -22,8 +22,8 @@ export type ConnectDeepLink = {
 
 function isSupportedDeepLinkProtocol(protocol: string): boolean {
   const normalized = protocol.toLowerCase();
-  return normalized === "openwork:"
-    || normalized === "openwork-dev:"
+  return normalized === "micx:"
+    || normalized === "micx-dev:"
     || normalized === "https:"
     || normalized === "http:";
 }
@@ -49,9 +49,9 @@ export function parseRemoteConnectDeepLink(rawUrl: string): RemoteWorkspaceDefau
     return null;
   }
 
-  const hostUrlRaw = url.searchParams.get("openworkHostUrl") ?? url.searchParams.get("openworkUrl") ?? "";
-  const tokenRaw = url.searchParams.get("openworkToken") ?? url.searchParams.get("accessToken") ?? "";
-  const normalizedHostUrl = normalizeOpenworkServerUrl(hostUrlRaw);
+  const hostUrlRaw = url.searchParams.get("micxHostUrl") ?? url.searchParams.get("micxUrl") ?? "";
+  const tokenRaw = url.searchParams.get("micxToken") ?? url.searchParams.get("accessToken") ?? "";
+  const normalizedHostUrl = normalizeMicxServerUrl(hostUrlRaw);
   const token = tokenRaw.trim();
   if (!normalizedHostUrl || !token) {
     return null;
@@ -68,8 +68,8 @@ export function parseRemoteConnectDeepLink(rawUrl: string): RemoteWorkspaceDefau
   const autoConnect = ["1", "true", "yes", "on"].includes(autoConnectRaw.trim().toLowerCase());
 
   return {
-    openworkHostUrl: normalizedHostUrl,
-    openworkToken: token,
+    micxHostUrl: normalizedHostUrl,
+    micxToken: token,
     directory: null,
     displayName: displayName || null,
     autoConnect,
@@ -86,9 +86,9 @@ export function stripRemoteConnectQuery(rawUrl: string): string | null {
 
   let changed = false;
   for (const key of [
-    "openworkHostUrl",
-    "openworkUrl",
-    "openworkToken",
+    "micxHostUrl",
+    "micxUrl",
+    "micxToken",
     "accessToken",
     "workerId",
     "workerName",
@@ -155,7 +155,7 @@ export function parseConnectDeepLink(rawUrl: string): ConnectDeepLink | null {
   // Unlike sibling parsers, organization connect credentials only ride the
   // dedicated desktop scheme, never ordinary web URLs.
   const protocol = url.protocol.toLowerCase();
-  if (protocol !== "openwork:" && protocol !== "openwork-dev:") {
+  if (protocol !== "micx:" && protocol !== "micx-dev:") {
     return null;
   }
 
@@ -183,7 +183,7 @@ function normalizeDebugDeepLinkInput(rawValue: string): string {
   const trimmed = rawValue.trim();
   if (!trimmed) return "";
 
-  const directMatch = trimmed.match(/(?:openwork-dev|openwork|https?):\/\/[^\s"'<>]+/i);
+  const directMatch = trimmed.match(/(?:micx-dev|micx|https?):\/\/[^\s"'<>]+/i);
   if (directMatch) return directMatch[0];
 
   return trimmed;

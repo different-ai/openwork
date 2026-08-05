@@ -1,16 +1,16 @@
 {
-  "name": "@openwork-ee/den-web",
+  "name": "@micx-ee/den-web",
   "private": true,
   "version": "0.0.0",
   "scripts": {
-    "dev": "OPENWORK_DEV_MODE=1 NEXT_PUBLIC_POSTHOG_KEY= NEXT_PUBLIC_POSTHOG_API_KEY= next dev --hostname 0.0.0.0 --port 3005",
-    "dev:local": "OPENWORK_DEV_MODE=1 NEXT_PUBLIC_POSTHOG_KEY= NEXT_PUBLIC_POSTHOG_API_KEY= next dev --hostname ${DEN_WEB_HOST:-0.0.0.0} --port ${DEN_WEB_PORT:-3005}",
+    "dev": "MICX_DEV_MODE=1 NEXT_PUBLIC_POSTHOG_KEY= NEXT_PUBLIC_POSTHOG_API_KEY= next dev --hostname 0.0.0.0 --port 3005",
+    "dev:local": "MICX_DEV_MODE=1 NEXT_PUBLIC_POSTHOG_KEY= NEXT_PUBLIC_POSTHOG_API_KEY= next dev --hostname ${DEN_WEB_HOST:-0.0.0.0} --port ${DEN_WEB_PORT:-3005}",
     "prebuild": "pnpm --dir ../../../packages/ui build && pnpm --dir ../../packages/utils build",
     "build": "next build",
     "start": "next start --hostname 0.0.0.0 --port 3005",
     "lint": "next lint",
     "typecheck": "tsc --noEmit --pretty false",
-    "test": "bun test tests/onboarding-page.test.ts tests/openwork-models-page.test.ts tests/web-page.test.ts tests/feedback-url.test.ts tests/byok-page-primitives.test.ts tests/observability-config.test.ts tests/desktop-version-options.test.ts tests/cloud-super-admins-role-hierarchy.test.ts tests/install-errors.test.ts tests/install-download-href.test.ts tests/desktop-handoff.test.ts tests/single-org-signup-ui.test.ts tests/auth-landing-contract.test.ts tests/catalog-card-surface.test.tsx tests/mcp-connection-smart-add.test.ts tests/mcp-credential-autofill.test.ts tests/org-selection-background.test.ts tests/join-org-invite-clean.test.ts tests/scim-sso-readiness.test.ts app/api/_lib/upstream-proxy.test.mjs",
+    "test": "bun test tests/onboarding-page.test.ts tests/micx-models-page.test.ts tests/web-page.test.ts tests/feedback-url.test.ts tests/byok-page-primitives.test.ts tests/observability-config.test.ts tests/desktop-version-options.test.ts tests/cloud-super-admins-role-hierarchy.test.ts tests/install-errors.test.ts tests/install-download-href.test.ts tests/desktop-handoff.test.ts tests/single-org-signup-ui.test.ts tests/auth-landing-contract.test.ts tests/catalog-card-surface.test.tsx tests/mcp-connection-smart-add.test.ts tests/mcp-credential-autofill.test.ts tests/org-selection-background.test.ts tests/join-org-invite-clean.test.ts tests/scim-sso-readiness.test.ts app/api/_lib/upstream-proxy.test.mjs",
     "test:observability": "bun test tests/observability-config.test.ts app/api/_lib/upstream-proxy.test.mjs"
   },
   "dependencies": {
@@ -25,9 +25,9 @@
     "@opentelemetry/sdk-node": "0.220.0",
     "@opentelemetry/sdk-trace-base": "2.9.0",
     "@opentelemetry/semantic-conventions": "1.42.0",
-    "@openwork/types": "workspace:*",
-    "@openwork-ee/utils": "workspace:*",
-    "@openwork/ui": "workspace:*",
+    "@micx/types": "workspace:*",
+    "@micx-ee/utils": "workspace:*",
+    "@micx/ui": "workspace:*",
     "@paper-design/shaders-react": "0.0.72",
     "@sentry/nextjs": "10.64.0",
     "@tanstack/react-query": "^5.96.2",

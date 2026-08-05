@@ -10,9 +10,9 @@ import {
   embeddedServerImportUrl,
   prioritizeWorkspacePaths,
   resolveEvalLocalServerDelayMs,
-  resolveOpenworkServerConfigPath,
+  resolveMicxServerConfigPath,
   seedWorkspacePathsForEmbeddedServer,
-  selectStickyOpenworkPortWorkspace,
+  selectStickyMicxPortWorkspace,
   snapshotEngineState,
 } from "./runtime.mjs";
 
@@ -48,17 +48,17 @@ describe("seedWorkspacePathsForEmbeddedServer", () => {
   });
 });
 
-describe("selectStickyOpenworkPortWorkspace", () => {
+describe("selectStickyMicxPortWorkspace", () => {
   it("uses the requested workspace even when server config owns workspace loading", () => {
     assert.equal(
-      selectStickyOpenworkPortWorkspace(["/workspace/current"], []),
+      selectStickyMicxPortWorkspace(["/workspace/current"], []),
       "/workspace/current",
     );
   });
 
   it("falls back to server workspace paths when no requested path is available", () => {
     assert.equal(
-      selectStickyOpenworkPortWorkspace([], ["/workspace/from-server"]),
+      selectStickyMicxPortWorkspace([], ["/workspace/from-server"]),
       "/workspace/from-server",
     );
   });
@@ -66,11 +66,11 @@ describe("selectStickyOpenworkPortWorkspace", () => {
 
 describe("resolveEvalLocalServerDelayMs", () => {
   it("enables only positive finite eval delays", () => {
-    assert.equal(resolveEvalLocalServerDelayMs({ OPENWORK_EVAL_LOCAL_SERVER_DELAY_MS: "3000" }), 3000);
-    assert.equal(resolveEvalLocalServerDelayMs({ OPENWORK_EVAL_LOCAL_SERVER_DELAY_MS: "0" }), 0);
-    assert.equal(resolveEvalLocalServerDelayMs({ OPENWORK_EVAL_LOCAL_SERVER_DELAY_MS: "-1" }), 0);
-    assert.equal(resolveEvalLocalServerDelayMs({ OPENWORK_EVAL_LOCAL_SERVER_DELAY_MS: "Infinity" }), 0);
-    assert.equal(resolveEvalLocalServerDelayMs({ OPENWORK_EVAL_LOCAL_SERVER_DELAY_MS: "invalid" }), 0);
+    assert.equal(resolveEvalLocalServerDelayMs({ MICX_EVAL_LOCAL_SERVER_DELAY_MS: "3000" }), 3000);
+    assert.equal(resolveEvalLocalServerDelayMs({ MICX_EVAL_LOCAL_SERVER_DELAY_MS: "0" }), 0);
+    assert.equal(resolveEvalLocalServerDelayMs({ MICX_EVAL_LOCAL_SERVER_DELAY_MS: "-1" }), 0);
+    assert.equal(resolveEvalLocalServerDelayMs({ MICX_EVAL_LOCAL_SERVER_DELAY_MS: "Infinity" }), 0);
+    assert.equal(resolveEvalLocalServerDelayMs({ MICX_EVAL_LOCAL_SERVER_DELAY_MS: "invalid" }), 0);
   });
 });
 
@@ -78,8 +78,8 @@ describe("commandMatchesPackagedSidecar", () => {
   it("matches packaged opencode sidecars with platform suffixes", () => {
     assert.equal(
       commandMatchesPackagedSidecar(
-        "/Applications/OpenWork.app/Contents/Resources/sidecars/opencode-aarch64-apple-darwin serve --hostname 127.0.0.1 --port 49174 --cors *",
-        ["/Applications/OpenWork.app/Contents/Resources/sidecars"],
+        "/Applications/Micx.app/Contents/Resources/sidecars/opencode-aarch64-apple-darwin serve --hostname 127.0.0.1 --port 49174 --cors *",
+        ["/Applications/Micx.app/Contents/Resources/sidecars"],
       ),
       true,
     );
@@ -89,7 +89,7 @@ describe("commandMatchesPackagedSidecar", () => {
     assert.equal(
       commandMatchesPackagedSidecar(
         "/usr/local/bin/opencode serve --hostname 127.0.0.1 --port 49174",
-        ["/Applications/OpenWork.app/Contents/Resources/sidecars"],
+        ["/Applications/Micx.app/Contents/Resources/sidecars"],
       ),
       false,
     );
@@ -98,7 +98,7 @@ describe("commandMatchesPackagedSidecar", () => {
 
 describe("embeddedServerImportUrl", () => {
   it("returns the same file URL for unchanged metadata", async () => {
-    const dir = await mkdtemp(path.join(os.tmpdir(), "openwork-runtime-"));
+    const dir = await mkdtemp(path.join(os.tmpdir(), "micx-runtime-"));
     try {
       const embeddedPath = path.join(dir, "embedded.js");
       await writeFile(embeddedPath, "export const value = 1;\n");
@@ -118,7 +118,7 @@ describe("embeddedServerImportUrl", () => {
   });
 
   it("changes when the file metadata changes", async () => {
-    const dir = await mkdtemp(path.join(os.tmpdir(), "openwork-runtime-"));
+    const dir = await mkdtemp(path.join(os.tmpdir(), "micx-runtime-"));
     try {
       const embeddedPath = path.join(dir, "embedded.js");
       await writeFile(embeddedPath, "export const value = 1;\n");
@@ -133,25 +133,25 @@ describe("embeddedServerImportUrl", () => {
   });
 
   it("falls back to the plain file URL if stat fails", () => {
-    const missingPath = path.join(os.tmpdir(), "openwork-missing-embedded.js");
+    const missingPath = path.join(os.tmpdir(), "micx-missing-embedded.js");
 
     assert.equal(embeddedServerImportUrl(missingPath), pathToFileURL(missingPath).href);
   });
 });
 
-describe("resolveOpenworkServerConfigPath", () => {
+describe("resolveMicxServerConfigPath", () => {
   it("respects explicit server config path", () => {
     assert.equal(
-      resolveOpenworkServerConfigPath({ OPENWORK_SERVER_CONFIG: "/tmp/openwork/server.json" }),
-      "/tmp/openwork/server.json",
+      resolveMicxServerConfigPath({ MICX_SERVER_CONFIG: "/tmp/micx/server.json" }),
+      "/tmp/micx/server.json",
     );
   });
 
   it("uses XDG config home on Unix", () => {
     if (process.platform === "win32") return;
     assert.equal(
-      resolveOpenworkServerConfigPath({ XDG_CONFIG_HOME: "/tmp/xdg" }),
-      "/tmp/xdg/openwork/server.json",
+      resolveMicxServerConfigPath({ XDG_CONFIG_HOME: "/tmp/xdg" }),
+      "/tmp/xdg/micx/server.json",
     );
   });
 });

@@ -1,4 +1,4 @@
-import type { EmailTemplate } from "@openwork/email"
+import type { EmailTemplate } from "@micx/email"
 import type { Hono } from "hono"
 import { env } from "../../env.js"
 import { publicRoute } from "../../middleware/index.js"
@@ -24,7 +24,7 @@ function normalizeEmailTemplate(value: string | null): EmailTemplate | null | un
 
 export function registerDevRoutes<T extends { Variables: AuthContextVariables }>(app: Hono<T>) {
   // Dev/eval-only email outbox. These endpoints intentionally 404 unless
-  // OPENWORK_DEV_MODE=1 so production deployments do not expose email HTML.
+  // MICX_DEV_MODE=1 so production deployments do not expose email HTML.
   app.get("/v1/dev/emails", publicRoute, (c) => {
     if (!env.devMode) {
       return c.json({ error: "not_found" }, 404)

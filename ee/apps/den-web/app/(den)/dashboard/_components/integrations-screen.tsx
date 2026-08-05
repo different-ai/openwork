@@ -329,7 +329,7 @@ function DisconnectConfirmDialog({
               Remove @{accountLogin}?
             </h2>
             <p className="mt-1 text-[13px] leading-6 text-gray-600">
-              This will permanently delete everything OpenWork imported from this GitHub account, including:
+              This will permanently delete everything Micx imported from this GitHub account, including:
             </p>
             <ul className="mt-3 space-y-1.5 text-[13px] leading-6 text-gray-600">
               <li className="flex gap-2">

@@ -2,7 +2,7 @@
 import type { ReactNode } from "react";
 import type { McpDirectoryInfo } from "../../../app/constants";
 import { extensionContribution } from "../../../app/extensions";
-import type { OpenworkServerClient } from "../../../app/lib/openwork-server";
+import type { MicxServerClient } from "../../../app/lib/micx-server";
 import type { LocalProviderInstallInput } from "./openai-image-extension";
 
 /**
@@ -10,8 +10,8 @@ import type { LocalProviderInstallInput } from "./openai-image-extension";
  * Each extension picks what it needs; unused fields are ignored.
  */
 export type ExtensionConfigContext = {
-  openworkServerClient?: OpenworkServerClient | null;
-  hostOpenworkServerClient?: OpenworkServerClient | null;
+  micxServerClient?: MicxServerClient | null;
+  hostMicxServerClient?: MicxServerClient | null;
   restartLocalServer?: () => Promise<boolean>;
   computerUse?: {
     connected: boolean;

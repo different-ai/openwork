@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef } from "react";
 
-import type { OpenworkSessionGroupState } from "@/app/lib/openwork-server";
+import type { MicxSessionGroupState } from "@/app/lib/micx-server";
 import type { ResolvedWorkspaceEndpoint } from "@/app/lib/workspace-endpoint";
 import {
   applySessionGroupServerState,
@@ -14,7 +14,7 @@ import {
 import type { RouteWorkspace } from "./route-workspaces";
 import { SessionGroupEventPoller } from "./session-group-event-poller";
 
-const MIGRATION_PREFIX = "openwork.sessionGroups.migrated.v2";
+const MIGRATION_PREFIX = "micx.sessionGroups.migrated.v2";
 
 type UseSessionGroupSyncInput = {
   workspaces: RouteWorkspace[];
@@ -25,7 +25,7 @@ function hasGroupData(state: SessionGroupServerState | WorkspaceGroupState | und
   return Boolean(state && (state.groups.length > 0 || Object.keys(state.assignments).length > 0));
 }
 
-function serverStateFromWorkspaceState(state: WorkspaceGroupState): OpenworkSessionGroupState {
+function serverStateFromWorkspaceState(state: WorkspaceGroupState): MicxSessionGroupState {
   return {
     groups: state.groups.map((group) => ({ id: group.id, label: group.label })),
     assignments: { ...state.assignments },

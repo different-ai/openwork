@@ -11,7 +11,7 @@ import {
 const roots: string[] = [];
 
 async function bootstrapFile(contents: unknown): Promise<string> {
-  const root = await mkdtemp(join(tmpdir(), "openwork-enterprise-origin-"));
+  const root = await mkdtemp(join(tmpdir(), "micx-enterprise-origin-"));
   roots.push(root);
   const path = join(root, "desktop-bootstrap.json");
   await writeFile(path, typeof contents === "string" ? contents : JSON.stringify(contents), "utf8");

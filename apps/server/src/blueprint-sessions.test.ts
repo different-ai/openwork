@@ -4,7 +4,7 @@ import {
   applyMaterializedBlueprintSessions,
   normalizeBlueprintSessionTemplates,
   readMaterializedBlueprintSessions,
-  sanitizeOpenworkTemplateConfig,
+  sanitizeMicxTemplateConfig,
 } from "./blueprint-sessions.js";
 
 describe("blueprint sessions", () => {
@@ -14,10 +14,10 @@ describe("blueprint sessions", () => {
         sessions: [
           {
             id: "welcome",
-            title: "Welcome to OpenWork",
+            title: "Welcome to Micx",
             openOnFirstLoad: true,
             messages: [
-              { role: "assistant", text: "Hi welcome to OpenWork!" },
+              { role: "assistant", text: "Hi welcome to Micx!" },
               { role: "user", text: "Help me get started." },
             ],
           },
@@ -28,10 +28,10 @@ describe("blueprint sessions", () => {
     expect(sessions).toEqual([
       {
         id: "welcome",
-        title: "Welcome to OpenWork",
+        title: "Welcome to Micx",
         openOnFirstLoad: true,
         messages: [
-          { role: "assistant", text: "Hi welcome to OpenWork!" },
+          { role: "assistant", text: "Hi welcome to Micx!" },
           { role: "user", text: "Help me get started." },
         ],
       },
@@ -39,7 +39,7 @@ describe("blueprint sessions", () => {
   });
 
   test("sanitizes materialized session state from exported template config", () => {
-    const sanitized = sanitizeOpenworkTemplateConfig({
+    const sanitized = sanitizeMicxTemplateConfig({
       blueprint: {
         sessions: [{ id: "welcome", title: "Welcome", messages: [{ role: "assistant", text: "Hello" }] }],
         materialized: {

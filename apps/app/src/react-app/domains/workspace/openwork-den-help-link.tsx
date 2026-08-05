@@ -12,15 +12,15 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 
-const SUPPORT_EMAIL = "team@openworklabs.com";
-const SUPPORT_MAILTO = `mailto:${SUPPORT_EMAIL}?subject=OpenWork%20Den%20remote%20worker%20upgrade`;
+const SUPPORT_EMAIL = "team@micxlabs.com";
+const SUPPORT_MAILTO = `mailto:${SUPPORT_EMAIL}?subject=Micx%20Den%20remote%20worker%20upgrade`;
 
 /**
  * Small inline link rendered inside the remote-worker error card. When clicked,
- * it opens a dialog explaining the OpenWork Den upgrade situation and how to
+ * it opens a dialog explaining the Micx Den upgrade situation and how to
  * reach support.
  */
-export function OpenWorkDenHelpLink() {
+export function MicxDenHelpLink() {
   const [open, setOpen] = useState(false);
 
   return (
@@ -30,17 +30,17 @@ export function OpenWorkDenHelpLink() {
         className="mt-2 inline-flex items-center text-[11px] font-medium text-blue-11 underline-offset-2 hover:underline"
         onClick={() => setOpen(true)}
       >
-        Using OpenWork Den Remote Workers? Click here
+        Using Micx Den Remote Workers? Click here
       </button>
 
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>OpenWork Den remote workers</DialogTitle>
+            <DialogTitle>Micx Den remote workers</DialogTitle>
             <DialogDescription>
               We recently upgraded our servers. If your remote worker was
               provisioned before that upgrade, it may no longer be compatible
-              with the current OpenWork app.
+              with the current Micx app.
             </DialogDescription>
           </DialogHeader>
 

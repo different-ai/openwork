@@ -341,18 +341,18 @@ const MOCK_PLUGINS: DenPlugin[] = [
     requiresProvider: "any",
   },
   {
-    id: "plg_openwork_release",
-    name: "OpenWork Release Kit",
-    slug: "openwork-release-kit",
+    id: "plg_micx_release",
+    name: "Micx Release Kit",
+    slug: "micx-release-kit",
     description:
-      "Internal plugin that automates OpenWork release prep, server package checks, and changelog generation. Shipped by OpenWork infra.",
+      "Internal plugin that automates Micx release prep, server package checks, and changelog generation. Shipped by Micx infra.",
     version: "2.3.1",
-    author: "OpenWork",
+    author: "Micx",
     category: "workflows",
     installed: true,
-    source: { type: "github", repo: "different-ai/openwork-plugins" },
+    source: { type: "github", repo: "different-ai/micx-plugins" },
     skills: [
-      { id: "sk_ow_release_prep", name: "Release Prep", description: "Bump versions across app, desktop, and openwork-server in lockstep." },
+      { id: "sk_ow_release_prep", name: "Release Prep", description: "Bump versions across app, desktop, and micx-server in lockstep." },
       { id: "sk_ow_changelog", name: "Changelog Drafter", description: "Generate markdown release notes from merged PRs." },
     ],
     hooks: [

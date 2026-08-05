@@ -69,7 +69,7 @@ export function mcpAuthorizationPendingDocument(): string {
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="color-scheme" content="light" />
-    <title>Connecting — OpenWork</title>
+    <title>Connecting — Micx</title>
     <style>
 ${authorizationDocumentStyles}
       .connect-card { padding: clamp(34px, 7vw, 76px); text-align: center; }
@@ -84,9 +84,9 @@ ${authorizationDocumentStyles}
   </head>
   <body>
     <main class="card connect-card" role="status" aria-live="polite">
-      <div class="brand"><span class="brand-mark">OW</span>OpenWork Connect</div>
+      <div class="brand"><span class="brand-mark">OW</span>Micx Connect</div>
       <h1>Connect your account</h1>
-      <p>OpenWork is preparing the secure provider sign-in.</p>
+      <p>Micx is preparing the secure provider sign-in.</p>
       <div class="status-row">
         <span class="status-number" aria-hidden="true">1</span>
         <span class="status-copy"><strong>Continue to your provider</strong><small>Keep this window open while we redirect you.</small></span>
@@ -149,7 +149,7 @@ export function mcpAuthorizationErrorDocument(input: {
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="color-scheme" content="light" />
-    <title>Connection failed — OpenWork</title>
+    <title>Connection failed — Micx</title>
     <style>
 ${authorizationDocumentStyles}
       .error-card { margin: auto; }
@@ -187,10 +187,10 @@ ${authorizationDocumentStyles}
   <body>
     <main class="card error-card" role="alert" aria-live="assertive">
       <div class="error-header">
-        <div class="brand"><span class="brand-mark">OW</span>OpenWork Connect</div>
+        <div class="brand"><span class="brand-mark">OW</span>Micx Connect</div>
         <div class="status">
           <h1>Connection failed</h1>
-          <p>OpenWork couldn’t start the provider sign-in.</p>
+          <p>Micx couldn’t start the provider sign-in.</p>
         </div>
         <div class="message">${escapeHtml(input.message)}</div>
         <div class="stay-open"><span aria-hidden="true">i</span><div>This window will stay open so you can inspect and copy the details below.</div></div>
@@ -217,10 +217,10 @@ export function showMcpAuthorizationError(
 }
 
 export function openMcpAuthorizationWindow(): Window {
-  const popupName = `openwork-mcp-authorization-${crypto.randomUUID()}`
+  const popupName = `micx-mcp-authorization-${crypto.randomUUID()}`
   const popup = window.open("", popupName, "popup,width=960,height=720")
   if (!popup) {
-    throw new Error("OpenWork could not open the sign-in window. Allow popups for OpenWork, then try again.")
+    throw new Error("Micx could not open the sign-in window. Allow popups for Micx, then try again.")
   }
   try {
     popup.opener = null

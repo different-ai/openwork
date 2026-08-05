@@ -1,7 +1,7 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { composeSkillMarkdown, parseSkillMarkdown } from "@openwork-ee/utils";
+import { composeSkillMarkdown, parseSkillMarkdown } from "@micx-ee/utils";
 import { getErrorMessage, getRequestError, requestJson } from "../../_lib/den-flow";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { pluginQueryKeys } from "./plugin-data";

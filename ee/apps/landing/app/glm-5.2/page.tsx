@@ -5,7 +5,7 @@ import { getGithubData } from "../../lib/github";
 import { baseOpenGraph } from "../../lib/seo";
 
 const CLOUD_SIGNUP_URL =
-  "https://app.openworklabs.com?mode=sign-up&intent=models";
+  "https://app.micxlabs.com?mode=sign-up&intent=models";
 const CALENDAR_URL =
   "https://calendar.google.com/calendar/u/0/appointments/schedules/AcZssZ0M6zjfdm9ntqokfGCWovfuM21J9C2sqB9R6E1v_plXo8MqKswICQET7-ncV4dOVM5W8pFn1RFM";
 const CHANGELOG_URL = "/docs/changelog";
@@ -14,10 +14,10 @@ const DOWNLOAD_URL = "/download";
 const glmSchema = {
   "@context": "https://schema.org",
   "@type": "SoftwareApplication",
-  name: "OpenWork — GLM 5.2",
+  name: "Micx — GLM 5.2",
   description:
-    "GLM 5.2 is available through OpenWork Models with 2x usage. Run real agent work on an open model at a fraction of the cost.",
-  url: "https://openworklabs.com/glm-5.2",
+    "GLM 5.2 is available through Micx Models with 2x usage. Run real agent work on an open model at a fraction of the cost.",
+  url: "https://micxlabs.com/glm-5.2",
   applicationCategory: "BusinessApplication",
   operatingSystem: "macOS, Windows, Linux",
   offers: {
@@ -28,33 +28,33 @@ const glmSchema = {
   },
   publisher: {
     "@type": "Organization",
-    name: "OpenWork",
-    url: "https://openworklabs.com"
+    name: "Micx",
+    url: "https://micxlabs.com"
   }
 };
 
 export const metadata = {
-  title: "GLM 5.2 is now in OpenWork — with 2x usage",
+  title: "GLM 5.2 is now in Micx — with 2x usage",
   description:
-    "GLM 5.2 is available through OpenWork Models, and we're doubling your usage so you can run real agent work on an open model at a fraction of the cost.",
+    "GLM 5.2 is available through Micx Models, and we're doubling your usage so you can run real agent work on an open model at a fraction of the cost.",
   alternates: {
     canonical: "/glm-5.2"
   },
   openGraph: {
     ...baseOpenGraph,
-    url: "https://openworklabs.com/glm-5.2"
+    url: "https://micxlabs.com/glm-5.2"
   }
 };
 
 const features = [
   {
-    title: "OpenWork Models — 2x usage",
-    body: "GLM 5.2 is available through OpenWork Models, our managed way to access leading OSS models without bringing your own keys. We're doubling your usage so your team can run real agent work at a fraction of the cost.",
+    title: "Micx Models — 2x usage",
+    body: "GLM 5.2 is available through Micx Models, our managed way to access leading OSS models without bringing your own keys. We're doubling your usage so your team can run real agent work at a fraction of the cost.",
     color: "border-sky-100 bg-sky-50/60"
   },
   {
     title: "Run your day from chat",
-    body: "Orchestrate OpenWork fully through chat. Tasks now organize into groups — In progress, Done, Requires attention — and you can move them by asking, not clicking. Try: \"Put this session in In progress now.\"",
+    body: "Orchestrate Micx fully through chat. Tasks now organize into groups — In progress, Done, Requires attention — and you can move them by asking, not clicking. Try: \"Put this session in In progress now.\"",
     color: "border-violet-100 bg-violet-50/50"
   },
   {
@@ -64,12 +64,12 @@ const features = [
   },
   {
     title: "Voice mode",
-    body: "Control the OpenWork UI by voice. Talk through a task, navigate panels, and drive the agent without touching the keyboard.",
+    body: "Control the Micx UI by voice. Talk through a task, navigate panels, and drive the agent without touching the keyboard.",
     color: "border-amber-100 bg-amber-50/50"
   },
   {
-    title: "Advanced analytics on OpenWork Cloud",
-    body: "The cloud platform now has advanced analytics — usage, activity, and team behavior in one view. If you're running OpenWork across a team, this is your new dashboard.",
+    title: "Advanced analytics on Micx Cloud",
+    body: "The cloud platform now has advanced analytics — usage, activity, and team behavior in one view. If you're running Micx across a team, this is your new dashboard.",
     color: "border-rose-100 bg-rose-50/50"
   }
 ];
@@ -90,15 +90,15 @@ export default async function GlmLanding() {
           {/* Hero */}
           <div className="animate-fade-up max-w-3xl">
             <div className="mb-3 text-[12px] font-bold uppercase tracking-wider text-gray-500">
-              New in OpenWork
+              New in Micx
             </div>
             <h1 className="mb-4 text-4xl font-bold tracking-tight md:text-5xl">
               GLM 5.2, now in the API — with 2x usage
             </h1>
             <p className="mb-6 text-[17px] leading-relaxed text-gray-700">
-              GLM 5.2 is available today through OpenWork Models, and we&apos;re
+              GLM 5.2 is available today through Micx Models, and we&apos;re
               doubling your usage so you and your team can run real agent work on
-              an open model at a fraction of the cost. OpenWork Models is our
+              an open model at a fraction of the cost. Micx Models is our
               managed way to get access to leading OSS models without bringing
               your own keys — and we&apos;re continuing to expand the lineup.
             </p>
@@ -109,7 +109,7 @@ export default async function GlmLanding() {
                 rel="noreferrer"
                 className="doc-button inline-flex"
               >
-                Try GLM 5.2 in OpenWork →
+                Try GLM 5.2 in Micx →
               </a>
               <a href={CHANGELOG_URL} className="secondary-button inline-flex" target="_blank" rel="noreferrer">
                 See the full changelog
@@ -138,8 +138,8 @@ export default async function GlmLanding() {
               Switch to GLM 5.2 and ask the chat to organize your tasks
             </h2>
             <p className="mb-6 text-[15px] leading-relaxed text-gray-700">
-              Open OpenWork, switch to GLM 5.2 from the model picker, and ask the
-              chat to organize your tasks. No setup, no keys — OpenWork Models
+              Open Micx, switch to GLM 5.2 from the model picker, and ask the
+              chat to organize your tasks. No setup, no keys — Micx Models
               handles the rest.
             </p>
             <div className="flex flex-wrap items-center gap-3">
@@ -149,7 +149,7 @@ export default async function GlmLanding() {
                 rel="noreferrer"
                 className="doc-button inline-flex"
               >
-                Try GLM 5.2 in OpenWork →
+                Try GLM 5.2 in Micx →
               </a>
               <a href={DOWNLOAD_URL} className="secondary-button inline-flex">
                 Download the app
@@ -172,8 +172,8 @@ export default async function GlmLanding() {
                   Sign up
                 </span>
                 <p className="text-[14px] text-gray-700">
-                  Create a free OpenWork Cloud account. After signup, you land
-                  directly on the OpenWork Models page.
+                  Create a free Micx Cloud account. After signup, you land
+                  directly on the Micx Models page.
                 </p>
               </div>
               <div className="feature-card">
@@ -182,7 +182,7 @@ export default async function GlmLanding() {
                   Subscribe
                 </span>
                 <p className="text-[14px] text-gray-700">
-                  Subscribe to OpenWork Models ($10/user/mo). GLM 5.2 is included
+                  Subscribe to Micx Models ($10/user/mo). GLM 5.2 is included
                   with 2x usage. One click to Stripe checkout.
                 </p>
               </div>
@@ -207,7 +207,7 @@ export default async function GlmLanding() {
             </h2>
             <p className="max-w-xl text-[15px] text-gray-600">
               Open source, 50+ models, and managed OSS model access — all in one
-              app. Start free, subscribe to OpenWork Models, and get 2x usage on
+              app. Start free, subscribe to Micx Models, and get 2x usage on
               GLM 5.2.
             </p>
             <div className="flex flex-wrap items-center justify-center gap-3">
@@ -217,7 +217,7 @@ export default async function GlmLanding() {
                 rel="noreferrer"
                 className="doc-button inline-flex"
               >
-                Try GLM 5.2 in OpenWork →
+                Try GLM 5.2 in Micx →
               </a>
               <a href={CALENDAR_URL} target="_blank" rel="noreferrer" className="secondary-button inline-flex">
                 Book a call

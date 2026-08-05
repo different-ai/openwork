@@ -21,16 +21,16 @@ import { usePlatform } from "@/react-app/kernel/platform";
 import { useCheckDesktopRestriction } from "@/react-app/domains/cloud/desktop-config-provider";
 import { useDenAuth } from "@/react-app/domains/cloud/den-auth-provider";
 import {
-  getOpenWorkModelsActionUrl,
-  hasOpenWorkModelsProvider,
-  hideOpenWorkModelsPromo,
-  useOpenWorkModelsPromoEligibility,
-  isOpenWorkModelsPromoHidden,
-  OPENWORK_MODEL_PREVIEWS,
-  OPENWORK_MODELS_PROVIDER_ID,
-  OPENWORK_MODELS_PROVIDER_NAME,
+  getMicxModelsActionUrl,
+  hasMicxModelsProvider,
+  hideMicxModelsPromo,
+  useMicxModelsPromoEligibility,
+  isMicxModelsPromoHidden,
+  MICX_MODEL_PREVIEWS,
+  MICX_MODELS_PROVIDER_ID,
+  MICX_MODELS_PROVIDER_NAME,
   openWorkModelsPromoChangedEvent,
-} from "@/react-app/domains/cloud/openwork-models-promo";
+} from "@/react-app/domains/cloud/micx-models-promo";
 import { getConnectedProviderItems, useProviderListQuery } from "@/react-app/infra/provider-list-query";
 import { filterEntitledModelOptions } from "@/react-app/domains/connections/provider-auth/provider-policy";
 import {
@@ -124,14 +124,14 @@ type ModelSelectModelItem = {
   option: ModelOption;
 };
 
-type ModelSelectOpenWorkItem = {
-  kind: "openwork";
+type ModelSelectMicxItem = {
+  kind: "micx";
   id: string;
   title: string;
   subtitle: string;
 };
 
-type ModelSelectItem = ModelSelectModelItem | ModelSelectOpenWorkItem;
+type ModelSelectItem = ModelSelectModelItem | ModelSelectMicxItem;
 
 type ModelSelectGroup = {
   value: string;
@@ -170,10 +170,10 @@ function groupByProvider(modelOptions: ModelOption[]): ModelSelectGroup[] {
 
 function openWorkModelsGroup(): ModelSelectGroup {
   return {
-    value: OPENWORK_MODELS_PROVIDER_NAME,
+    value: MICX_MODELS_PROVIDER_NAME,
     promo: true,
-    items: OPENWORK_MODEL_PREVIEWS.map((model) => ({
-      kind: "openwork",
+    items: MICX_MODEL_PREVIEWS.map((model) => ({
+      kind: "micx",
       id: model.id,
       title: model.title,
       subtitle: model.subtitle,
@@ -194,7 +194,7 @@ interface ModelSelectProps {
   disabled?: boolean;
   /** When set, "All models" opens the full picker scoped to this session. */
   sessionId?: string;
-  /** Den/import includes OpenWork Models — never show Subscribe while true. */
+  /** Den/import includes Micx Models — never show Subscribe while true. */
   openWorkModelsEntitled?: boolean;
 }
 
@@ -209,18 +209,18 @@ export function ModelSelect({
   openWorkModelsEntitled = false,
 }: ModelSelectProps) {
   const [search, setSearch] = React.useState("");
-  const [promoHidden, setPromoHidden] = React.useState(isOpenWorkModelsPromoHidden);
+  const [promoHidden, setPromoHidden] = React.useState(isMicxModelsPromoHidden);
   const searchInputRef = React.useRef<HTMLInputElement>(null);
   const modelOptions = useModelOptions(open);
   const denAuth = useDenAuth();
   const navigate = useNavigate();
   const platform = usePlatform();
-  const openWorkModelsPromoEligible = useOpenWorkModelsPromoEligibility();
+  const openWorkModelsPromoEligible = useMicxModelsPromoEligibility();
   const checkDesktopRestriction = useCheckDesktopRestriction();
   const canAddProviders = !checkDesktopRestriction({ restriction: "allowCustomProviders" });
 
   React.useEffect(() => {
-    const handlePromoChanged = () => setPromoHidden(isOpenWorkModelsPromoHidden());
+    const handlePromoChanged = () => setPromoHidden(isMicxModelsPromoHidden());
     window.addEventListener(openWorkModelsPromoChangedEvent, handlePromoChanged);
     return () => window.removeEventListener(openWorkModelsPromoChangedEvent, handlePromoChanged);
   }, []);
@@ -254,11 +254,11 @@ export function ModelSelect({
   );
 
   const openWorkModelsAvailable = React.useMemo(
-    () => hasOpenWorkModelsProvider(modelOptions.map((option) => option.providerID)),
+    () => hasMicxModelsProvider(modelOptions.map((option) => option.providerID)),
     [modelOptions],
   );
-  const showOpenWorkModelsSyncing = openWorkModelsEntitled && !openWorkModelsAvailable;
-  const showOpenWorkModelsPromo = React.useMemo(
+  const showMicxModelsSyncing = openWorkModelsEntitled && !openWorkModelsAvailable;
+  const showMicxModelsPromo = React.useMemo(
     () =>
       openWorkModelsPromoEligible &&
       !promoHidden &&
@@ -269,10 +269,10 @@ export function ModelSelect({
 
   const groups = React.useMemo(() => {
     const providerGroups = groupByProvider(modelOptions);
-    return showOpenWorkModelsPromo
+    return showMicxModelsPromo
       ? [openWorkModelsGroup(), ...providerGroups]
       : providerGroups;
-  }, [modelOptions, showOpenWorkModelsPromo]);
+  }, [modelOptions, showMicxModelsPromo]);
 
   const handleSelect = (option: ModelOption) => {
     onChange({ providerID: option.providerID, modelID: option.modelID });
@@ -280,29 +280,29 @@ export function ModelSelect({
     onOpenChange(false);
   };
 
-  const handleOpenWorkModels = React.useCallback(() => {
+  const handleMicxModels = React.useCallback(() => {
     onOpenChange(false);
     setSearch("");
     if (!denAuth.isSignedIn) {
       navigate("/settings/cloud-account");
     }
     window.setTimeout(() => {
-      platform.openLink(getOpenWorkModelsActionUrl(denAuth.isSignedIn));
+      platform.openLink(getMicxModelsActionUrl(denAuth.isSignedIn));
     }, 0);
   }, [denAuth.isSignedIn, navigate, onOpenChange, platform]);
 
-  const handleHideOpenWorkModels = React.useCallback(() => {
-    hideOpenWorkModelsPromo();
+  const handleHideMicxModels = React.useCallback(() => {
+    hideMicxModelsPromo();
     setPromoHidden(true);
   }, []);
 
   // Providers the user connected with their own key — OpenCode Zen and
-  // OpenWork Models are managed for them, so they never count as "your keys".
+  // Micx Models are managed for them, so they never count as "your keys".
   const keyProviders = React.useMemo(() => {
     const seen = new Map<string, string>();
     for (const option of modelOptions) {
       const id = option.providerID.trim().toLowerCase();
-      if (!id || id === "opencode" || id === OPENWORK_MODELS_PROVIDER_ID) continue;
+      if (!id || id === "opencode" || id === MICX_MODELS_PROVIDER_ID) continue;
       if (seen.has(id)) continue;
       seen.set(id, option.description ?? getProviderDisplayName(option.providerID));
     }
@@ -365,17 +365,17 @@ export function ModelSelect({
             />
           </CommandHeader>
           <CommandEmpty>No models found.</CommandEmpty>
-          {showOpenWorkModelsSyncing ? (
+          {showMicxModelsSyncing ? (
             <div className="mx-1 mb-1 flex items-center gap-2 rounded-md border border-amber-6/60 bg-amber-2/40 px-2 py-1.5">
               <ProviderIcon
-                providerId={OPENWORK_MODELS_PROVIDER_ID}
-                providerName={OPENWORK_MODELS_PROVIDER_NAME}
+                providerId={MICX_MODELS_PROVIDER_ID}
+                providerName={MICX_MODELS_PROVIDER_NAME}
                 className="size-3.5 shrink-0 text-amber-11"
                 size={14}
               />
               <span className="min-w-0 flex-1">
                 <span className="block truncate text-xs font-medium text-foreground">
-                  {OPENWORK_MODELS_PROVIDER_NAME}
+                  {MICX_MODELS_PROVIDER_NAME}
                 </span>
                 <span className="block truncate text-[11px] text-muted-foreground">
                   Included — syncing into this workspace…
@@ -401,17 +401,17 @@ export function ModelSelect({
                 </CommandGroupLabel>
                 <CommandCollection>
                   {(item: ModelSelectItem) => {
-                    if (item.kind === "openwork") {
+                    if (item.kind === "micx") {
                       return (
                         <CommandItem
                           className="gap-2"
                           key={item.id}
-                          value={`${OPENWORK_MODELS_PROVIDER_NAME} ${item.title} ${item.id} sign in subscribe`}
-                          onClick={handleOpenWorkModels}
+                          value={`${MICX_MODELS_PROVIDER_NAME} ${item.title} ${item.id} sign in subscribe`}
+                          onClick={handleMicxModels}
                         >
                           <ProviderIcon
-                            providerId={OPENWORK_MODELS_PROVIDER_ID}
-                            providerName={OPENWORK_MODELS_PROVIDER_NAME}
+                            providerId={MICX_MODELS_PROVIDER_ID}
+                            providerName={MICX_MODELS_PROVIDER_NAME}
                             className="size-3.5 opacity-70"
                             size={14}
                           />
@@ -456,7 +456,7 @@ export function ModelSelect({
                   <button
                     type="button"
                     className="mx-1 mb-1.5 mt-1 flex w-[calc(100%-0.5rem)] items-center gap-2 rounded-md bg-blue-2 px-3 py-2 text-left transition-colors hover:bg-blue-3"
-                    onClick={handleOpenWorkModels}
+                    onClick={handleMicxModels}
                   >
                     <span className="min-w-0 flex-1 text-xs leading-4 text-foreground">
                       One subscription unlocks these in every workspace.
@@ -517,11 +517,11 @@ export function ModelSelect({
                 <Settings2 className="size-3.5" />
                 All models
               </button>
-              {showOpenWorkModelsPromo ? (
+              {showMicxModelsPromo ? (
                 <button
                   type="button"
                   className="shrink-0 rounded-md px-2 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
-                  onClick={handleHideOpenWorkModels}
+                  onClick={handleHideMicxModels}
                 >
                   Hide
                 </button>

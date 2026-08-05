@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { homedir, platform } from "node:os";
 import { z } from "zod";
-import type { OpenworkAffordanceEffects } from "@openwork/types/openwork-affordance";
+import type { MicxAffordanceEffects } from "@micx/types/micx-affordance";
 import {
   combineInstructionSections,
   composeAgentInstructions,
@@ -10,16 +10,16 @@ import {
 } from "./agent-instruction-compose.js";
 import {
   composeSkillAuthoringInstruction,
-  resolveOpenWorkConnectSkillInstruction,
-  resolveOpenWorkExtensionDiscoveryInstruction,
+  resolveMicxConnectSkillInstruction,
+  resolveMicxExtensionDiscoveryInstruction,
   type OpenCodeContext,
-  type OpenWorkEngineMcpStatusClient,
-} from "./openwork-extensions-preview-steering.js";
+  type MicxEngineMcpStatusClient,
+} from "./micx-extensions-preview-steering.js";
 import {
-  buildOpenworkProviderContributions,
+  buildMicxProviderContributions,
   type ConnectSkillDescriptor,
   type EngineMcpDescriptor,
-} from "./openwork-provider-adapters.js";
+} from "./micx-provider-adapters.js";
 
 type ExtensionActionPayload = {
   extensionId: string;
@@ -38,10 +38,10 @@ const callArgsSchema = z.object({
   args: z.record(z.string(), z.unknown()).optional().describe("JSON arguments for the action."),
 });
 
-const openworkAffordanceRequestSchema = z.object({
-  id: z.string().trim().min(1).describe("Semantic affordance id from openwork_context."),
+const micxAffordanceRequestSchema = z.object({
+  id: z.string().trim().min(1).describe("Semantic affordance id from micx_context."),
   args: z.record(z.string(), z.unknown()).optional().describe("JSON arguments for the affordance."),
-  expectedRevision: z.number().int().nonnegative().optional().describe("Context revision from openwork_context. Use for commands to prevent stale writes."),
+  expectedRevision: z.number().int().nonnegative().optional().describe("Context revision from micx_context. Use for commands to prevent stale writes."),
   actor: z.string().trim().min(1).optional().describe("Optional agent or client id used to attribute serialized commands."),
 });
 
@@ -57,25 +57,25 @@ const connectSkillsEnvelopeSchema = z.object({
 }).passthrough();
 
 const sessionSearchArgsSchema = z.object({
-  query: z.string().trim().min(1).describe("Text to search for across OpenWork session titles and message transcripts."),
-  workspaceId: z.string().trim().optional().describe("Optional OpenWork workspace id/name to limit the search."),
+  query: z.string().trim().min(1).describe("Text to search for across Micx session titles and message transcripts."),
+  workspaceId: z.string().trim().optional().describe("Optional Micx workspace id/name to limit the search."),
   limit: z.number().int().positive().max(20).optional().describe("Maximum matching sessions to return. Defaults to 10, max 20."),
   scanLimit: z.number().int().positive().max(500).optional().describe("Maximum newest sessions to scan across matching workspaces. Defaults to 100, max 500."),
   messageLimit: z.number().int().positive().max(1000).optional().describe("Maximum recent messages to load per scanned session. Defaults to 400, max 1000."),
 });
 
 const sessionReadArgsSchema = z.object({
-  sessionId: z.string().trim().min(1).describe("OpenWork/OpenCode session ID returned by session.search."),
-  workspaceId: z.string().trim().optional().describe("Optional OpenWork workspace id/name. Omit to resolve the session across all workspaces."),
+  sessionId: z.string().trim().min(1).describe("Micx/OpenCode session ID returned by session.search."),
+  workspaceId: z.string().trim().optional().describe("Optional Micx workspace id/name. Omit to resolve the session across all workspaces."),
   count: z.number().int().positive().max(100).optional().describe("Number of recent transcript messages to return. Defaults to 30, max 100."),
 });
 
 const sessionCreateArgsSchema = z.object({
   sessions: z.array(z.object({
-    title: z.string().trim().min(1).max(120).describe("Short title shown in the OpenWork session list."),
+    title: z.string().trim().min(1).max(120).describe("Short title shown in the Micx session list."),
     prompt: z.string().trim().min(1).max(100_000).describe("Self-contained task to start in the new session."),
   })).min(1).describe("One entry per new session to create and start."),
-  workspaceId: z.string().trim().optional().describe("Optional OpenWork workspace id/name. Defaults to the workspace containing the current session."),
+  workspaceId: z.string().trim().optional().describe("Optional Micx workspace id/name. Defaults to the workspace containing the current session."),
 });
 
 const workspaceSchema = z.object({
@@ -133,19 +133,19 @@ const sessionMessagesEnvelopeSchema = z.object({
   items: z.array(sessionMessageSchema),
 }).passthrough();
 
-const OPENWORK_AGENT_SURFACE_INSTRUCTION =
-  `## OpenWork app context
-Use openwork_context when the request depends on the current OpenWork screen, open tabs, split view, focused pane, sidebar, side panel, settings panel, or available app actions.
-Each affordance declares its effects and executor. Use openwork_query only for side-effect-free affordances whose executor is OpenWork. Use openwork_execute for OpenWork commands without activating the desktop window. If executor names another tool, call that exact tool instead.
+const MICX_AGENT_SURFACE_INSTRUCTION =
+  `## Micx app context
+Use micx_context when the request depends on the current Micx screen, open tabs, split view, focused pane, sidebar, side panel, settings panel, or available app actions.
+Each affordance declares its effects and executor. Use micx_query only for side-effect-free affordances whose executor is Micx. Use micx_execute for Micx commands without activating the desktop window. If executor names another tool, call that exact tool instead.
 Reading another session does not require opening it. Prefer session.search then session.read for transcript questions; use session.create for new chats and a UI command only when the user asks to navigate.
-To open settings or navigate the app, use openwork_execute with ids from openwork_context such as settings.panel.open — never browser_* tools for the OpenWork app itself.`;
+To open settings or navigate the app, use micx_execute with ids from micx_context such as settings.panel.open — never browser_* tools for the Micx app itself.`;
 
-const OPENWORK_BROWSER_INSTRUCTION =
-  `Do NOT use browser_navigate, browser_click, or browser_snapshot to interact with the OpenWork app itself. Those are for browsing external websites.
+const MICX_BROWSER_INSTRUCTION =
+  `Do NOT use browser_navigate, browser_click, or browser_snapshot to interact with the Micx app itself. Those are for browsing external websites.
 
 ## Built-in Browser (external websites)
-For web browsing tasks, ALWAYS start with openwork_execute id browser.open_url. It creates/selects a built-in OpenWork browser tab and returns browser_url plus target_id. Use that exact browser_url and target_id for every later browser_snapshot, browser_click, browser_fill, browser_eval, and browser_screenshot call.
-Do not call browser_navigate without a target_id returned by browser.open_url. Do not use browser_* tools on the OpenWork app target (avoid targets with title "OpenWork" or URLs containing ":5173/#/").`;
+For web browsing tasks, ALWAYS start with micx_execute id browser.open_url. It creates/selects a built-in Micx browser tab and returns browser_url plus target_id. Use that exact browser_url and target_id for every later browser_snapshot, browser_click, browser_fill, browser_eval, and browser_screenshot call.
+Do not call browser_navigate without a target_id returned by browser.open_url. Do not use browser_* tools on the Micx app target (avoid targets with title "Micx" or URLs containing ":5173/#/").`;
 
 // ── UI control bridge discovery ──
 
@@ -155,7 +155,7 @@ let cachedBridgeAt = 0;
 const BRIDGE_CACHE_MS = 2_000;
 const BRIDGE_TIMEOUT_MS = 5_000;
 
-type OpenWorkWorkspace = z.infer<typeof workspaceSchema>;
+type MicxWorkspace = z.infer<typeof workspaceSchema>;
 type SessionInfo = z.infer<typeof sessionInfoSchema>;
 type SessionMessage = z.infer<typeof sessionMessageSchema>;
 type SessionSearchSnippet = { before: string; match: string; after: string };
@@ -171,14 +171,14 @@ type SessionSearchResult = {
   messageId?: string;
   messageIndex?: number;
 };
-type CreatedOpenWorkSessionResult = {
+type CreatedMicxSessionResult = {
   ok: true;
   sessionId: string;
   title: string;
   started: boolean;
   route: string;
 };
-type FailedOpenWorkSessionResult = {
+type FailedMicxSessionResult = {
   ok: false;
   title: string;
   error: string;
@@ -188,14 +188,14 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-const affordanceReadEffects: OpenworkAffordanceEffects = { data: "read", ui: "none", external: false };
-const affordanceWriteEffects: OpenworkAffordanceEffects = { data: "write", ui: "none", external: false };
-const affordanceExternalWriteEffects: OpenworkAffordanceEffects = { data: "write", ui: "none", external: true };
+const affordanceReadEffects: MicxAffordanceEffects = { data: "read", ui: "none", external: false };
+const affordanceWriteEffects: MicxAffordanceEffects = { data: "write", ui: "none", external: false };
+const affordanceExternalWriteEffects: MicxAffordanceEffects = { data: "write", ui: "none", external: true };
 
 function affordanceResult(
   id: string,
   result: unknown,
-  effects: OpenworkAffordanceEffects,
+  effects: MicxAffordanceEffects,
 ) {
   if (isRecord(result) && result.ok === false) {
     return {
@@ -218,17 +218,17 @@ function optionalStringProperty(value: unknown, key: string): string | undefined
   return typeof property === "string" && property.trim().length > 0 ? property : undefined;
 }
 
-type OpenWorkEngineMcpStatusFunction = OpenWorkEngineMcpStatusClient["mcp"]["status"];
+type MicxEngineMcpStatusFunction = MicxEngineMcpStatusClient["mcp"]["status"];
 
-function isOpenWorkEngineMcpStatusFunction(value: unknown): value is OpenWorkEngineMcpStatusFunction {
+function isMicxEngineMcpStatusFunction(value: unknown): value is MicxEngineMcpStatusFunction {
   return typeof value === "function";
 }
 
-function readEngineMcpStatusClient(value: unknown): OpenWorkEngineMcpStatusClient | undefined {
+function readEngineMcpStatusClient(value: unknown): MicxEngineMcpStatusClient | undefined {
   const client = isRecord(value) ? value.client : undefined;
   const mcp = isRecord(client) ? client.mcp : undefined;
   const status = isRecord(mcp) ? mcp.status : undefined;
-  if (!isOpenWorkEngineMcpStatusFunction(status)) return undefined;
+  if (!isMicxEngineMcpStatusFunction(status)) return undefined;
   return { mcp: { status: (request) => status.call(mcp, request) } };
 }
 
@@ -280,9 +280,9 @@ function userAppDataDir(): string {
 
 function uiControlDiscoveryPaths(): string[] {
   return [
-    process.env.OPENWORK_UI_CONTROL_DISCOVERY?.trim(),
-    join(userAppDataDir(), "com.differentai.openwork", "openwork-ui-control.json"),
-    join(userAppDataDir(), "com.differentai.openwork.dev", "openwork-ui-control.json"),
+    process.env.MICX_UI_CONTROL_DISCOVERY?.trim(),
+    join(userAppDataDir(), "com.differentai.micx", "micx-ui-control.json"),
+    join(userAppDataDir(), "com.differentai.micx.dev", "micx-ui-control.json"),
   ].filter((p): p is string => Boolean(p));
 }
 
@@ -306,7 +306,7 @@ async function discoverUiBridge(): Promise<UiBridge | null> {
 
 async function uiBridgeRequest(path: string, options: { method?: string; body?: unknown } = {}): Promise<unknown> {
   const bridge = await discoverUiBridge();
-  if (!bridge) return { ok: false, error: "OpenWork UI bridge not available. The desktop app may not be running." };
+  if (!bridge) return { ok: false, error: "Micx UI bridge not available. The desktop app may not be running." };
   try {
     const response = await fetch(`${bridge.baseUrl}${path}`, {
       method: options.method || "GET",
@@ -327,12 +327,12 @@ async function uiBridgeRequest(path: string, options: { method?: string; body?: 
 }
 
 async function serverGet(path: string): Promise<unknown> {
-  const { url, token } = requireOpenWorkServer();
+  const { url, token } = requireMicxServer();
   const response = await fetch(`${url}${path}`, {
     headers: { Authorization: `Bearer ${token}` },
   });
   const payload = await parseResponse(response);
-  if (!response.ok) throw new Error(errorMessage(payload, "OpenWork server request failed"));
+  if (!response.ok) throw new Error(errorMessage(payload, "Micx server request failed"));
   return payload;
 }
 
@@ -348,7 +348,7 @@ async function readConnectSkillDescriptors(): Promise<ConnectSkillDescriptor[]> 
 }
 
 async function readEngineMcpDescriptors(
-  client: OpenWorkEngineMcpStatusClient | undefined,
+  client: MicxEngineMcpStatusClient | undefined,
   directory: string | undefined,
 ): Promise<EngineMcpDescriptor[]> {
   if (!client) return [];
@@ -367,8 +367,8 @@ async function readEngineMcpDescriptors(
   }
 }
 
-async function readOpenworkAgentContext(
-  engineMcpStatusClient: OpenWorkEngineMcpStatusClient | undefined,
+async function readMicxAgentContext(
+  engineMcpStatusClient: MicxEngineMcpStatusClient | undefined,
   engineMcpStatusDirectory: string | undefined,
 ): Promise<Record<string, unknown>> {
   const [uiResult, skills, mcps] = await Promise.all([
@@ -376,7 +376,7 @@ async function readOpenworkAgentContext(
     readConnectSkillDescriptors(),
     readEngineMcpDescriptors(engineMcpStatusClient, engineMcpStatusDirectory),
   ]);
-  const contributions = buildOpenworkProviderContributions(skills, mcps);
+  const contributions = buildMicxProviderContributions(skills, mcps);
   const providerAffordances = contributions.flatMap((contribution) => contribution.affordances);
   const uiContext = isRecord(uiResult) && isRecord(uiResult.context) ? uiResult.context : null;
   if (!uiContext) {
@@ -401,19 +401,19 @@ async function readOpenworkAgentContext(
   };
 }
 
-async function queryOpenworkAffordance(rawArgs: unknown): Promise<unknown> {
-  const request = openworkAffordanceRequestSchema.parse(rawArgs);
+async function queryMicxAffordance(rawArgs: unknown): Promise<unknown> {
+  const request = micxAffordanceRequestSchema.parse(rawArgs);
   if (request.id === "session.search") {
     return affordanceResult(
       request.id,
-      await searchOpenWorkSessions(request.args ?? {}),
+      await searchMicxSessions(request.args ?? {}),
       affordanceReadEffects,
     );
   }
   if (request.id === "session.read") {
     return affordanceResult(
       request.id,
-      await readOpenWorkSession(request.args ?? {}),
+      await readMicxSession(request.args ?? {}),
       affordanceReadEffects,
     );
   }
@@ -429,7 +429,7 @@ async function queryOpenworkAffordance(rawArgs: unknown): Promise<unknown> {
   if (request.id.startsWith("connect.")) {
     return unavailableAffordance(
       request.id,
-      "This affordance declares a dedicated Connect executor. Call the tool named in openwork_context.",
+      "This affordance declares a dedicated Connect executor. Call the tool named in micx_context.",
     );
   }
   const result = await uiBridgeRequest("/query", {
@@ -438,18 +438,18 @@ async function queryOpenworkAffordance(rawArgs: unknown): Promise<unknown> {
   });
   return isRecord(result) && typeof result.ok === "boolean"
     ? result
-    : unavailableAffordance(request.id, "OpenWork UI query returned an invalid response.");
+    : unavailableAffordance(request.id, "Micx UI query returned an invalid response.");
 }
 
-async function executeOpenworkAffordance(
+async function executeMicxAffordance(
   rawArgs: unknown,
   context: OpenCodeContext,
 ): Promise<unknown> {
-  const request = openworkAffordanceRequestSchema.parse(rawArgs);
+  const request = micxAffordanceRequestSchema.parse(rawArgs);
   if (request.id === "session.create") {
     return affordanceResult(
       request.id,
-      await createOpenWorkSessions(request.args ?? {}, context),
+      await createMicxSessions(request.args ?? {}, context),
       affordanceWriteEffects,
     );
   }
@@ -469,7 +469,7 @@ async function executeOpenworkAffordance(
   if (request.id.startsWith("connect.")) {
     return unavailableAffordance(
       request.id,
-      "This affordance declares a dedicated Connect executor. Call the tool named in openwork_context.",
+      "This affordance declares a dedicated Connect executor. Call the tool named in micx_context.",
     );
   }
   const result = await uiBridgeRequest("/command", {
@@ -478,7 +478,7 @@ async function executeOpenworkAffordance(
   });
   return isRecord(result) && typeof result.ok === "boolean"
     ? result
-    : unavailableAffordance(request.id, "OpenWork UI command returned an invalid response.");
+    : unavailableAffordance(request.id, "Micx UI command returned an invalid response.");
 }
 
 function collapseWhitespace(value: string): string {
@@ -493,7 +493,7 @@ function buildSessionSnippet(text: string, index: number, length: number): Sessi
   return { before, match: text.slice(index, index + length), after };
 }
 
-function workspaceLabel(workspace: OpenWorkWorkspace): string {
+function workspaceLabel(workspace: MicxWorkspace): string {
   return workspace.displayName?.trim() || workspace.name?.trim() || workspace.path?.trim() || workspace.id;
 }
 
@@ -537,7 +537,7 @@ function findTextMatch(text: string, queryLower: string): { index: number; lengt
   return Number.isFinite(firstIndex) ? { index: firstIndex, length: firstLength } : null;
 }
 
-function titleSearchResult(workspace: OpenWorkWorkspace, session: SessionInfo, queryLower: string): SessionSearchResult | null {
+function titleSearchResult(workspace: MicxWorkspace, session: SessionInfo, queryLower: string): SessionSearchResult | null {
   const title = sessionTitle(session);
   const text = `${title} ${workspaceLabel(workspace)}`;
   const match = findTextMatch(text, queryLower);
@@ -553,7 +553,7 @@ function titleSearchResult(workspace: OpenWorkWorkspace, session: SessionInfo, q
   };
 }
 
-function messageSearchResult(workspace: OpenWorkWorkspace, session: SessionInfo, messages: SessionMessage[], queryLower: string): SessionSearchResult | null {
+function messageSearchResult(workspace: MicxWorkspace, session: SessionInfo, messages: SessionMessage[], queryLower: string): SessionSearchResult | null {
   let fallback: SessionSearchResult | null = null;
   for (const [index, message] of messages.entries()) {
     const role = message.info.role;
@@ -580,11 +580,11 @@ function messageSearchResult(workspace: OpenWorkWorkspace, session: SessionInfo,
   return fallback;
 }
 
-async function listOpenWorkWorkspaces(): Promise<OpenWorkWorkspace[]> {
+async function listMicxWorkspaces(): Promise<MicxWorkspace[]> {
   return workspaceListEnvelopeSchema.parse(await serverGet("/workspaces")).items;
 }
 
-function filterWorkspaces(workspaces: OpenWorkWorkspace[], workspaceId?: string): OpenWorkWorkspace[] {
+function filterWorkspaces(workspaces: MicxWorkspace[], workspaceId?: string): MicxWorkspace[] {
   const query = workspaceId?.trim().toLowerCase();
   if (!query) return workspaces;
   return workspaces.filter((workspace) => {
@@ -595,20 +595,20 @@ function filterWorkspaces(workspaces: OpenWorkWorkspace[], workspaceId?: string)
   });
 }
 
-async function listWorkspaceSessions(workspace: OpenWorkWorkspace, limit: number): Promise<SessionInfo[]> {
+async function listWorkspaceSessions(workspace: MicxWorkspace, limit: number): Promise<SessionInfo[]> {
   const query = new URLSearchParams({ roots: "true", limit: String(limit) });
   return sessionListEnvelopeSchema.parse(
     await serverGet(`/workspace/${encodeURIComponent(workspace.id)}/sessions?${query.toString()}`),
   ).items;
 }
 
-async function readWorkspaceSession(workspace: OpenWorkWorkspace, sessionId: string): Promise<SessionInfo> {
+async function readWorkspaceSession(workspace: MicxWorkspace, sessionId: string): Promise<SessionInfo> {
   return sessionEnvelopeSchema.parse(
     await serverGet(`/workspace/${encodeURIComponent(workspace.id)}/sessions/${encodeURIComponent(sessionId)}`),
   ).item;
 }
 
-async function readSessionMessages(workspace: OpenWorkWorkspace, sessionId: string, limit: number): Promise<SessionMessage[]> {
+async function readSessionMessages(workspace: MicxWorkspace, sessionId: string, limit: number): Promise<SessionMessage[]> {
   const query = new URLSearchParams({ limit: String(limit) });
   return sessionMessagesEnvelopeSchema.parse(
     await serverGet(`/workspace/${encodeURIComponent(workspace.id)}/sessions/${encodeURIComponent(sessionId)}/messages?${query.toString()}`),
@@ -627,18 +627,18 @@ async function forEachWithConcurrency<T>(items: T[], concurrency: number, run: (
   await Promise.all(Array.from({ length: Math.min(Math.max(1, concurrency), Math.max(1, items.length)) }, () => worker()));
 }
 
-async function searchOpenWorkSessions(rawArgs: unknown): Promise<object> {
+async function searchMicxSessions(rawArgs: unknown): Promise<object> {
   const args = sessionSearchArgsSchema.parse(rawArgs);
   const resultLimit = args.limit ?? SESSION_SEARCH_DEFAULT_LIMIT;
   const scanLimit = args.scanLimit ?? SESSION_SEARCH_DEFAULT_SCAN_LIMIT;
   const messageLimit = args.messageLimit ?? SESSION_SEARCH_DEFAULT_MESSAGE_LIMIT;
   const queryLower = args.query.trim().toLowerCase();
-  const workspaces = filterWorkspaces(await listOpenWorkWorkspaces(), args.workspaceId);
+  const workspaces = filterWorkspaces(await listMicxWorkspaces(), args.workspaceId);
   if (!workspaces.length) {
-    return { ok: false, error: args.workspaceId ? `No workspace matched ${args.workspaceId}` : "No OpenWork workspaces are available" };
+    return { ok: false, error: args.workspaceId ? `No workspace matched ${args.workspaceId}` : "No Micx workspaces are available" };
   }
 
-  const sessions: Array<{ workspace: OpenWorkWorkspace; session: SessionInfo }> = [];
+  const sessions: Array<{ workspace: MicxWorkspace; session: SessionInfo }> = [];
   const workspaceErrors: Array<{ workspaceId: string; workspace: string; error: string }> = [];
   await Promise.all(workspaces.map(async (workspace) => {
     try {
@@ -685,12 +685,12 @@ async function searchOpenWorkSessions(rawArgs: unknown): Promise<object> {
   };
 }
 
-async function readOpenWorkSession(rawArgs: unknown): Promise<object> {
+async function readMicxSession(rawArgs: unknown): Promise<object> {
   const args = sessionReadArgsSchema.parse(rawArgs);
   const count = args.count ?? 30;
-  const workspaces = filterWorkspaces(await listOpenWorkWorkspaces(), args.workspaceId);
+  const workspaces = filterWorkspaces(await listMicxWorkspaces(), args.workspaceId);
   if (!workspaces.length) {
-    return { ok: false, error: args.workspaceId ? `No workspace matched ${args.workspaceId}` : "No OpenWork workspaces are available" };
+    return { ok: false, error: args.workspaceId ? `No workspace matched ${args.workspaceId}` : "No Micx workspaces are available" };
   }
 
   for (const workspace of workspaces) {
@@ -721,22 +721,22 @@ async function readOpenWorkSession(rawArgs: unknown): Promise<object> {
     }
   }
 
-  return { ok: false, error: `Session ${args.sessionId} was not found in matching OpenWork workspaces` };
+  return { ok: false, error: `Session ${args.sessionId} was not found in matching Micx workspaces` };
 }
 
 function serverUrl(): string {
-  return String(process.env.OPENWORK_SERVER_URL || "").replace(/\/$/, "");
+  return String(process.env.MICX_SERVER_URL || "").replace(/\/$/, "");
 }
 
 function serverToken(): string {
-  return String(process.env.OPENWORK_SERVER_TOKEN || "");
+  return String(process.env.MICX_SERVER_TOKEN || "");
 }
 
-function requireOpenWorkServer(): { url: string; token: string } {
+function requireMicxServer(): { url: string; token: string } {
   const url = serverUrl();
   const token = serverToken();
   if (!url || !token) {
-    throw new Error("OpenWork extension tools are only available when OpenCode is launched by OpenWork.");
+    throw new Error("Micx extension tools are only available when OpenCode is launched by Micx.");
   }
   return { url, token };
 }
@@ -770,9 +770,9 @@ function normalizeDirPath(path: string): string {
   return path.replace(/\/+$/, "");
 }
 
-async function resolveContextWorkspace(workspaceId: string | undefined, context: OpenCodeContext): Promise<OpenWorkWorkspace> {
-  const workspaces = await listOpenWorkWorkspaces();
-  if (!workspaces.length) throw new Error("No OpenWork workspaces are available");
+async function resolveContextWorkspace(workspaceId: string | undefined, context: OpenCodeContext): Promise<MicxWorkspace> {
+  const workspaces = await listMicxWorkspaces();
+  if (!workspaces.length) throw new Error("No Micx workspaces are available");
   if (workspaceId) {
     const match = filterWorkspaces(workspaces, workspaceId).at(0);
     if (!match) throw new Error(`No workspace matched ${workspaceId}`);
@@ -794,13 +794,13 @@ async function resolveContextWorkspace(workspaceId: string | undefined, context:
   }
   const only = workspaces.at(0);
   if (workspaces.length === 1 && only) return only;
-  throw new Error(`Multiple OpenWork workspaces match; pass workspaceId. Available: ${workspaces.map((workspace) => workspaceLabel(workspace)).join(", ")}`);
+  throw new Error(`Multiple Micx workspaces match; pass workspaceId. Available: ${workspaces.map((workspace) => workspaceLabel(workspace)).join(", ")}`);
 }
 
-async function createOpenWorkSessions(rawArgs: unknown, context: OpenCodeContext): Promise<object> {
+async function createMicxSessions(rawArgs: unknown, context: OpenCodeContext): Promise<object> {
   const args = sessionCreateArgsSchema.parse(rawArgs);
   const workspace = await resolveContextWorkspace(args.workspaceId, context);
-  const results = await Promise.all(args.sessions.map(async (session): Promise<CreatedOpenWorkSessionResult | FailedOpenWorkSessionResult> => {
+  const results = await Promise.all(args.sessions.map(async (session): Promise<CreatedMicxSessionResult | FailedMicxSessionResult> => {
     try {
       const payload = createdSessionEnvelopeSchema.parse(await postJson(
         `/workspace/${encodeURIComponent(workspace.id)}/sessions`,
@@ -821,8 +821,8 @@ async function createOpenWorkSessions(rawArgs: unknown, context: OpenCodeContext
       };
     }
   }));
-  const created = results.filter((result): result is CreatedOpenWorkSessionResult => result.ok);
-  const failures = results.filter((result): result is FailedOpenWorkSessionResult => !result.ok);
+  const created = results.filter((result): result is CreatedMicxSessionResult => result.ok);
+  const failures = results.filter((result): result is FailedMicxSessionResult => !result.ok);
   return {
     ok: failures.length === 0,
     workspaceId: workspace.id,
@@ -833,7 +833,7 @@ async function createOpenWorkSessions(rawArgs: unknown, context: OpenCodeContext
 }
 
 async function postJson(path: string, body: ExtensionActionPayload | Record<string, unknown>): Promise<unknown> {
-  const { url, token } = requireOpenWorkServer();
+  const { url, token } = requireMicxServer();
   const response = await fetch(url + path, {
     method: "POST",
     headers: {
@@ -844,7 +844,7 @@ async function postJson(path: string, body: ExtensionActionPayload | Record<stri
   });
   const payload = await parseResponse(response);
   if (!response.ok) {
-    throw new Error(errorMessage(payload, "OpenWork extension call failed"));
+    throw new Error(errorMessage(payload, "Micx extension call failed"));
   }
   return payload;
 }
@@ -860,7 +860,7 @@ function contextPayload(context: OpenCodeContext) {
   };
 }
 
-export const OpenWorkExtensionsPreview = async (factoryInput?: unknown) => {
+export const MicxExtensionsPreview = async (factoryInput?: unknown) => {
   const factoryContext = normalizeOpenCodeContext(factoryInput);
   const engineMcpStatusClient = readEngineMcpStatusClient(factoryInput);
   const engineMcpStatusDirectory = factoryContext.directory ?? factoryContext.worktree;
@@ -868,15 +868,15 @@ export const OpenWorkExtensionsPreview = async (factoryInput?: unknown) => {
   "experimental.chat.system.transform": async (input: unknown, output: { system: string[] }) => {
     const mergedInput = mergeTransformInputWithFactoryContext(input, factoryContext);
     const [extensionInstruction, skillInstruction] = await Promise.all([
-      resolveOpenWorkExtensionDiscoveryInstruction(mergedInput, fetch, {
+      resolveMicxExtensionDiscoveryInstruction(mergedInput, fetch, {
         client: engineMcpStatusClient,
         directory: engineMcpStatusDirectory,
       }),
-      resolveOpenWorkConnectSkillInstruction(mergedInput, fetch),
+      resolveMicxConnectSkillInstruction(mergedInput, fetch),
     ]);
     const skillAuthoring = composeSkillAuthoringInstruction(extensionInstruction);
-    if (process.env.OPENWORK_DEV_MODE === "1") {
-      console.log("[openwork:skill-authoring] system prompt selected", {
+    if (process.env.MICX_DEV_MODE === "1") {
+      console.log("[micx:skill-authoring] system prompt selected", {
         mode: skillAuthoring.mode,
         prompt: skillAuthoring.prompt,
         directory: normalizeOpenCodeContext(mergedInput).directory ?? factoryContext.directory ?? null,
@@ -886,38 +886,38 @@ export const OpenWorkExtensionsPreview = async (factoryInput?: unknown) => {
     // remote skills, session, and browser guidance never overlap by accident.
     const sections = combineInstructionSections(
       createInstructionSection("routing", extensionInstruction),
-      createInstructionSection("agent-surface", OPENWORK_AGENT_SURFACE_INSTRUCTION),
+      createInstructionSection("agent-surface", MICX_AGENT_SURFACE_INSTRUCTION),
       createInstructionSection("skill-authoring", skillAuthoring.prompt),
       createInstructionSection("connect-skills", skillInstruction),
-      createInstructionSection("browser", OPENWORK_BROWSER_INSTRUCTION),
+      createInstructionSection("browser", MICX_BROWSER_INSTRUCTION),
     );
     output.system.push(...composeAgentInstructions(sections));
   },
   tool: {
-    openwork_context: {
-      description: "Read one semantic snapshot of OpenWork: current screen, retained conversation tabs, split view and focused pane, sidebar and side panel state, settings panel, provider contributions, remote skill guidance, and available affordances with explicit effects and executors.",
+    micx_context: {
+      description: "Read one semantic snapshot of Micx: current screen, retained conversation tabs, split view and focused pane, sidebar and side panel state, settings panel, provider contributions, remote skill guidance, and available affordances with explicit effects and executors.",
       args: {},
       async execute() {
         return JSON.stringify(
-          await readOpenworkAgentContext(engineMcpStatusClient, engineMcpStatusDirectory),
+          await readMicxAgentContext(engineMcpStatusClient, engineMcpStatusDirectory),
           null,
           2,
         );
       },
     },
-    openwork_query: {
-      description: "Run a side-effect-free OpenWork affordance whose executor is OpenWork. Use the exact id and arguments from openwork_context. This reads backend or app state without navigation or window focus.",
-      args: openworkAffordanceRequestSchema.shape,
+    micx_query: {
+      description: "Run a side-effect-free Micx affordance whose executor is Micx. Use the exact id and arguments from micx_context. This reads backend or app state without navigation or window focus.",
+      args: micxAffordanceRequestSchema.shape,
       async execute(rawArgs: unknown) {
-        return JSON.stringify(await queryOpenworkAffordance(rawArgs), null, 2);
+        return JSON.stringify(await queryMicxAffordance(rawArgs), null, 2);
       },
     },
-    openwork_execute: {
-      description: "Execute an OpenWork command whose executor is OpenWork without activating the desktop window. Use the exact id and arguments from openwork_context, and pass expectedRevision for UI commands to prevent stale writes. If the descriptor names another executor tool, call that tool instead.",
-      args: openworkAffordanceRequestSchema.shape,
+    micx_execute: {
+      description: "Execute an Micx command whose executor is Micx without activating the desktop window. Use the exact id and arguments from micx_context, and pass expectedRevision for UI commands to prevent stale writes. If the descriptor names another executor tool, call that tool instead.",
+      args: micxAffordanceRequestSchema.shape,
       async execute(rawArgs: unknown, context: OpenCodeContext) {
         const mergedContext = { ...factoryContext, ...normalizeOpenCodeContext(context) };
-        return JSON.stringify(await executeOpenworkAffordance(rawArgs, mergedContext), null, 2);
+        return JSON.stringify(await executeMicxAffordance(rawArgs, mergedContext), null, 2);
       },
     },
   },

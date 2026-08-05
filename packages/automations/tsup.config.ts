@@ -7,7 +7,7 @@ export default defineConfig({
     index: "src/index.ts",
     testing: "src/testing.ts",
   },
-  external: ["@openwork/types", "zod"],
+  external: ["@micx/types", "zod"],
   format: ["esm"],
   target: "es2022",
 })

@@ -88,16 +88,16 @@ describe("isCloudProviderOutOfSync", () => {
 });
 
 describe("buildCloudProviderConfig", () => {
-  test("omits empty models for openwork so catalog models can remain", () => {
+  test("omits empty models for micx so catalog models can remain", () => {
     const provider: DenOrgLlmProviderConnection = {
-      id: "lpr_openwork",
-      source: "openwork",
-      providerId: "openwork",
-      name: "OpenWork Models",
+      id: "lpr_micx",
+      source: "micx",
+      providerId: "micx",
+      name: "Micx Models",
       providerConfig: {
         npm: "@openrouter/ai-sdk-provider",
-        api: "https://inference.openworklabs.com/api/v1",
-        env: ["OPENWORK_API_KEY"],
+        api: "https://inference.micxlabs.com/api/v1",
+        env: ["MICX_API_KEY"],
       },
       hasApiKey: true,
       models: [],
@@ -109,10 +109,10 @@ describe("buildCloudProviderConfig", () => {
 
     const config = buildCloudProviderConfig(provider);
     expect(config.models).toBe(undefined);
-    expect(config.name).toBe("OpenWork Models");
+    expect(config.name).toBe("Micx Models");
   });
 
-  test("keeps an empty models map for non-openwork cloud providers", () => {
+  test("keeps an empty models map for non-micx cloud providers", () => {
     const provider: DenOrgLlmProviderConnection = {
       id: "lpr_custom",
       source: "custom",

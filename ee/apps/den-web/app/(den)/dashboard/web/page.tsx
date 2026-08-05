@@ -46,10 +46,10 @@ function CheckingWorkspaceAccess() {
   );
 }
 
-export function WebOpenButton({ openworkWebUrl }: { openworkWebUrl: string }) {
+export function WebOpenButton({ micxWebUrl }: { micxWebUrl: string }) {
   return (
-    <DenButton href={openworkWebUrl} target="_blank" rel="noopener noreferrer" icon={ExternalLink}>
-      Open OpenWork Web
+    <DenButton href={micxWebUrl} target="_blank" rel="noopener noreferrer" icon={ExternalLink}>
+      Open Micx Web
     </DenButton>
   );
 }
@@ -77,12 +77,12 @@ export default function WebPage() {
       icon={Globe}
       badgeLabel="Alpha"
       title="Web"
-      description="Open OpenWork in your browser."
+      description="Open Micx in your browser."
       colors={["#EFF6FF", "#0F172A", "#2563EB", "#BAE6FD"]}
     >
       <section className="rounded-3xl border border-gray-100 bg-white p-6 shadow-[0_18px_45px_-35px_rgba(15,23,42,0.35)]">
-        <p className="mb-5 text-[14px] leading-6 text-gray-500">This opens OpenWork in a new browser tab.</p>
-        <WebOpenButton openworkWebUrl={runtimeConfig.openworkWebUrl} />
+        <p className="mb-5 text-[14px] leading-6 text-gray-500">This opens Micx in a new browser tab.</p>
+        <WebOpenButton micxWebUrl={runtimeConfig.micxWebUrl} />
       </section>
     </DashboardPageTemplate>
   );

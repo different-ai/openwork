@@ -15,7 +15,7 @@ export const BUILTIN_SHARE_PLUGIN_CAPABILITY = "skill:share-plugin"
 const CREATE_SKILL_SOURCE = `---
 name: create-skill
 description: |
-  Create a new OpenWork Cloud skill as a plugin with one skill component.
+  Create a new Micx Cloud skill as a plugin with one skill component.
 
   Triggers when user mentions:
   - "create a skill"
@@ -29,7 +29,7 @@ Create exactly one new Cloud skill. It is immediately usable by its creator. Do 
 
 ## Fast path (prefer these exact MCP names)
 
-Call \`openwork-cloud_execute_capability\` with these names. Skip broad search unless a call returns \`unknown_capability\`.
+Call \`micx-cloud_execute_capability\` with these names. Skip broad search unless a call returns \`unknown_capability\`.
 
 | Step | Capability | Call |
 | --- | --- | --- |
@@ -84,7 +84,7 @@ Attach one existing plugin to one marketplace. Do not create a new skill or plug
 
 ## Fast path (prefer these exact MCP names)
 
-Call \`openwork-cloud_execute_capability\` with these names. Skip broad search unless a call returns \`unknown_capability\`.
+Call \`micx-cloud_execute_capability\` with these names. Skip broad search unless a call returns \`unknown_capability\`.
 
 | Step | Capability | Call |
 | --- | --- | --- |
@@ -130,7 +130,7 @@ Grant marketplace access to one member. Do not create plugins or attach plugins 
 
 ## Fast path (prefer these exact MCP names)
 
-Call \`openwork-cloud_execute_capability\` with these names. Skip broad search unless a call returns \`unknown_capability\`.
+Call \`micx-cloud_execute_capability\` with these names. Skip broad search unless a call returns \`unknown_capability\`.
 
 | Step | Capability | Call |
 | --- | --- | --- |
@@ -161,7 +161,7 @@ Treat "this user" / "them" as:
 const SHARE_PLUGIN_SOURCE = `---
 name: share-plugin
 description: |
-  Share an OpenWork Cloud skill's plugin with a person, team, or organization.
+  Share an Micx Cloud skill's plugin with a person, team, or organization.
 
   Triggers when user mentions:
   - "share this skill with"
@@ -176,7 +176,7 @@ Grant access to the plugin that owns a skill. Skills live inside plugins, so acc
 
 ## Fast path (prefer these exact MCP names)
 
-Call \`openwork-cloud_execute_capability\` with these names. Skip broad search unless a call returns \`unknown_capability\`.
+Call \`micx-cloud_execute_capability\` with these names. Skip broad search unless a call returns \`unknown_capability\`.
 
 | Step | Capability | Call |
 | --- | --- | --- |
@@ -209,7 +209,7 @@ export const BUILTIN_SKILLS: BuiltinSkillDefinition[] = [
     descriptor: {
       name: "create-skill",
       title: "Create Skill",
-      description: "Create a new OpenWork Cloud skill that its creator can use immediately.",
+      description: "Create a new Micx Cloud skill that its creator can use immediately.",
       capability: BUILTIN_CREATE_SKILL_CAPABILITY,
       location: "skill://create-skill/SKILL.md",
     },
@@ -242,7 +242,7 @@ export const BUILTIN_SKILLS: BuiltinSkillDefinition[] = [
     descriptor: {
       name: "share-plugin",
       title: "Share Plugin",
-      description: "Share an OpenWork Cloud skill's plugin with a person, team, or organization.",
+      description: "Share an Micx Cloud skill's plugin with a person, team, or organization.",
       capability: BUILTIN_SHARE_PLUGIN_CAPABILITY,
       location: "skill://share-plugin/SKILL.md",
     },
@@ -311,7 +311,7 @@ export function executeBuiltinSkillCapability(name: string): BuiltinSkillExecute
     kind: "skill",
     name: skill.descriptor.title,
     description: skill.descriptor.description,
-    provenance: "Built into OpenWork Cloud.",
+    provenance: "Built into Micx Cloud.",
     content: skill.source,
   }
 }

@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { getErrorMessage, requestJson } from "../../_lib/den-flow";
 
-export type DenLlmProviderSource = "models_dev" | "custom" | "openwork";
+export type DenLlmProviderSource = "models_dev" | "custom" | "micx";
 
 export type DenLlmProviderModel = {
   id: string;
@@ -186,7 +186,7 @@ function asLlmProvider(value: unknown): DenLlmProvider | null {
   const providerId = asString(value.providerId);
   const name = asString(value.name);
   const source =
-    value.source === "models_dev" || value.source === "custom" || value.source === "openwork"
+    value.source === "models_dev" || value.source === "custom" || value.source === "micx"
       ? value.source
       : null;
   if (!id || !organizationId || !createdByOrgMembershipId || !providerId || !name || !source) {

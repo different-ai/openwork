@@ -15,7 +15,7 @@ extraResources:
     filter:
       - "*.js"
   - from: ../../packages/docs
-    to: openwork-docs
+    to: micx-docs
     filter:
       - "**/*.md"
       - "**/*.mdx"
@@ -30,7 +30,7 @@ afterSign: scripts/electron-after-sign.cjs
 publish:
   - provider: github
     owner: different-ai
-    repo: openwork
+    repo: micx
     releaseType: release
 mac:
   icon: resources/icons/icon.icns
@@ -41,7 +41,7 @@ mac:
   entitlements: build/entitlements.mac.plist
   entitlementsInherit: build/entitlements.mac.plist
   extendInfo:
-    NSMicrophoneUsageDescription: OpenWork uses the microphone when you start Voice Mode so you can speak commands to your agent.
+    NSMicrophoneUsageDescription: Micx uses the microphone when you start Voice Mode so you can speak commands to your agent.
   extraResources:
     - from: resources/sidecars
       to: sidecars
@@ -55,7 +55,7 @@ mac:
     - from: resources/helpers
       to: helpers
       filter:
-        - "OpenWork Computer Use.app/**"
+        - "Micx Computer Use.app/**"
   target:
     - dmg
     - zip

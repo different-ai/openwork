@@ -1,11 +1,11 @@
 import { env } from "../env.js"
 
-export function openworkYourConnectionsUrl(connectionId: string) {
+export function micxYourConnectionsUrl(connectionId: string) {
   const url = new URL("/dashboard/your-connections", env.betterAuthUrl)
   url.searchParams.set("connectionId", connectionId)
   return url.toString()
 }
 
-export function openworkOrganizationConnectionsUrl() {
+export function micxOrganizationConnectionsUrl() {
   return new URL("/dashboard/mcp-connections", env.betterAuthUrl).toString()
 }

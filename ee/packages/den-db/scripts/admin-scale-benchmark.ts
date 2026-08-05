@@ -15,7 +15,7 @@ const INVITATION_COUNT = Math.ceil(USER_COUNT / 5)
 const TELEMETRY_EVENT_COUNT = Math.ceil(USER_COUNT / 4) * 2
 const INITIAL_BUDGET_MS = 500
 const SEARCH_BUDGET_MS = 300
-const DEFAULT_DATABASE_URL = "mysql://root:password@127.0.0.1:3306/openwork_admin_scale_benchmark"
+const DEFAULT_DATABASE_URL = "mysql://root:password@127.0.0.1:3306/micx_admin_scale_benchmark"
 const execFileAsync = promisify(execFile)
 
 type BenchmarkResult = {
@@ -55,7 +55,7 @@ function benchmarkDatabaseUrl() {
   }
 
   const url = new URL(baseUrl)
-  const baseName = databaseName(url) || "openwork_den"
+  const baseName = databaseName(url) || "micx_den"
   const benchmarkName = baseName.includes("admin_scale_benchmark") ? baseName : `${baseName}_admin_scale_benchmark`
   url.pathname = `/${benchmarkName}`
   return url.toString()

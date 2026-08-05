@@ -60,7 +60,7 @@ try {
   let sessionId;
 
   await step("session.create", async () => {
-    const session = await client.session.create({ title: "OpenWork e2e" });
+    const session = await client.session.create({ title: "Micx e2e" });
     sessionId = session.id;
     assert.ok(sessionId);
     return { id: session.id, title: session.title };
@@ -83,7 +83,7 @@ try {
     await client.session.prompt({
       sessionID: sessionId,
       noReply: true,
-      parts: [{ type: "text", text: "OpenWork e2e context injection" }],
+      parts: [{ type: "text", text: "Micx e2e context injection" }],
     });
     const msgs = await client.session.messages({ sessionID: sessionId, limit: 50 });
     assert.ok(Array.isArray(msgs));
@@ -115,7 +115,7 @@ try {
     })();
 
     // Trigger events.
-    await client.session.update({ sessionID: sessionId, title: "OpenWork e2e (updated)" });
+    await client.session.update({ sessionID: sessionId, title: "Micx e2e (updated)" });
 
     await new Promise((r) => setTimeout(r, 1200));
 

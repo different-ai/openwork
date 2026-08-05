@@ -19,10 +19,10 @@ type GithubFetchFixtures = {
   releases: GithubFixtureRelease[];
 };
 
-const repoUrl = "https://api.github.com/repos/different-ai/openwork";
-const latestReleaseUrl = "https://api.github.com/repos/different-ai/openwork/releases/latest";
-const releasesUrl = "https://api.github.com/repos/different-ai/openwork/releases?per_page=50";
-const fallbackReleaseUrl = "https://github.com/different-ai/openwork/releases";
+const repoUrl = "https://api.github.com/repos/different-ai/micx";
+const latestReleaseUrl = "https://api.github.com/repos/different-ai/micx/releases/latest";
+const releasesUrl = "https://api.github.com/repos/different-ai/micx/releases?per_page=50";
+const fallbackReleaseUrl = "https://github.com/different-ai/micx/releases";
 const releaseTag = "v0.17.38";
 const releasePageUrl = `${fallbackReleaseUrl}/tag/${releaseTag}`;
 const downloadBaseUrl = `${fallbackReleaseUrl}/download/${releaseTag}`;
@@ -80,23 +80,23 @@ afterEach(() => {
 
 describe("getGithubData", () => {
   test("selects only public desktop assets when installer assets are listed first", async () => {
-    const macArm64 = asset("openwork-mac-arm64-0.17.38.dmg");
-    const macX64 = asset("openwork-mac-x64-0.17.38.dmg");
-    const winArm64 = asset("openwork-win-arm64-0.17.38.exe");
-    const winX64 = asset("openwork-win-x64-0.17.38.exe");
-    const linuxX64 = asset("openwork-linux-x86_64-0.17.38.AppImage");
+    const macArm64 = asset("micx-mac-arm64-0.17.38.dmg");
+    const macX64 = asset("micx-mac-x64-0.17.38.dmg");
+    const winArm64 = asset("micx-win-arm64-0.17.38.exe");
+    const winX64 = asset("micx-win-x64-0.17.38.exe");
+    const linuxX64 = asset("micx-linux-x86_64-0.17.38.AppImage");
     const release = releaseWithAssets([
-      asset("OpenWork-Installer-mac-arm64.dmg"),
-      asset("OpenWork-Installer-mac-x64.dmg"),
-      asset("OpenWork-Installer-win-x64.exe"),
-      asset("openwork-cloud-mac-arm64-0.17.38.dmg"),
-      asset("openwork-cloud-mac-x64-0.17.38.dmg"),
-      asset("openwork-cloud-win-x64-0.17.38.exe"),
-      asset("openwork-cloud-linux-x86_64-0.17.38.AppImage"),
-      asset("openwork-enterprise-mac-arm64-0.17.38.dmg"),
-      asset("openwork-enterprise-mac-x64-0.17.38.dmg"),
-      asset("openwork-enterprise-win-x64-0.17.38.exe"),
-      asset("openwork-enterprise-linux-x86_64-0.17.38.AppImage"),
+      asset("Micx-Installer-mac-arm64.dmg"),
+      asset("Micx-Installer-mac-x64.dmg"),
+      asset("Micx-Installer-win-x64.exe"),
+      asset("micx-cloud-mac-arm64-0.17.38.dmg"),
+      asset("micx-cloud-mac-x64-0.17.38.dmg"),
+      asset("micx-cloud-win-x64-0.17.38.exe"),
+      asset("micx-cloud-linux-x86_64-0.17.38.AppImage"),
+      asset("micx-enterprise-mac-arm64-0.17.38.dmg"),
+      asset("micx-enterprise-mac-x64-0.17.38.dmg"),
+      asset("micx-enterprise-win-x64-0.17.38.exe"),
+      asset("micx-enterprise-linux-x86_64-0.17.38.AppImage"),
       macArm64,
       macX64,
       winArm64,
@@ -120,9 +120,9 @@ describe("getGithubData", () => {
 
   test("falls back to release pages when a release contains only installer assets", async () => {
     const release = releaseWithAssets([
-      asset("OpenWork-Installer-mac-arm64.dmg"),
-      asset("OpenWork-Installer-mac-x64.dmg"),
-      asset("OpenWork-Installer-win-x64.exe")
+      asset("Micx-Installer-mac-arm64.dmg"),
+      asset("Micx-Installer-mac-x64.dmg"),
+      asset("Micx-Installer-win-x64.exe")
     ]);
 
     installGithubFetch({ latestRelease: release, releases: [release] });

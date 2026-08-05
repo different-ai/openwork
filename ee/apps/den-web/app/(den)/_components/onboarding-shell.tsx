@@ -1,7 +1,7 @@
 "use client";
 
-import { DitheredOnboardingShell } from "@openwork/ui/react";
-import type { DitheredOnboardingShellProps } from "@openwork/ui/react";
+import { DitheredOnboardingShell } from "@micx/ui/react";
+import type { DitheredOnboardingShellProps } from "@micx/ui/react";
 import type { ReactNode } from "react";
 
 export function OnboardingShell({

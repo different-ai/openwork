@@ -7,7 +7,7 @@
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 
-export const PERSISTED_NOTIFICATION_STORE_KEY = "openwork:notifications:v1";
+export const PERSISTED_NOTIFICATION_STORE_KEY = "micx:notifications:v1";
 
 const MAX_NOTIFICATIONS = 100;
 const MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;

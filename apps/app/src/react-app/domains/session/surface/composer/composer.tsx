@@ -6,16 +6,16 @@ import fuzzysort from "fuzzysort";
 import { toast } from "@/components/ui/sonner";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuShortcut, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import {
-  OPENWORK_EXTENSION_CATALOG,
-  filterOpenWorkExtensionCatalogForPlatform,
-  resolveOpenWorkExtensionCatalogPlatform,
+  MICX_EXTENSION_CATALOG,
+  filterMicxExtensionCatalogForPlatform,
+  resolveMicxExtensionCatalogPlatform,
   type McpDirectoryInfo,
 } from "@/app/constants";
 import type { CloudImportedPlugin, CloudImportedPluginFile } from "@/app/cloud/import-state";
 import type { ComposerAttachment, McpServerEntry, McpStatusMap, ModelRef, SkillCard, SlashCommandOption } from "@/app/types";
 import { isMacPlatform } from "@/app/utils";
 import { t } from "@/i18n";
-import { isOpenWorkExtensionEnabled, isOpenWorkExtensionHidden, OPENWORK_EXTENSION_STATE_CHANGED } from "@/react-app/domains/settings/extension-state";
+import { isMicxExtensionEnabled, isMicxExtensionHidden, MICX_EXTENSION_STATE_CHANGED } from "@/react-app/domains/settings/extension-state";
 import { useDesktopRestriction } from "@/react-app/domains/cloud/desktop-config-provider";
 import { usePlatform } from "@/react-app/kernel/platform";
 import { resolveExtensionIconUrl } from "@/react-app/design-system/extension-icon-src";
@@ -48,8 +48,8 @@ function isComposerExtensionAvailable(entry: McpDirectoryInfo) {
   const hasSessionSurface = entry.extensionManifest?.contributions?.some((contribution) =>
     contribution.type === "session-side-panel" || contribution.type === "session-rail-item"
   ) === true;
-  if (hasSessionSurface) return isOpenWorkExtensionEnabled(entry);
-  return !entry.defaultEnabled || isOpenWorkExtensionEnabled(entry);
+  if (hasSessionSurface) return isMicxExtensionEnabled(entry);
+  return !entry.defaultEnabled || isMicxExtensionEnabled(entry);
 }
 
 type ComposerProps = {
@@ -120,12 +120,12 @@ type ComposerProps = {
   topAccessory?: ReactNode;
 };
 
-const FLUSH_PROMPT_EVENT = "openwork:flushPromptDraft";
-const FOCUS_PROMPT_EVENT = "openwork:focusPrompt";
+const FLUSH_PROMPT_EVENT = "micx:flushPromptDraft";
+const FOCUS_PROMPT_EVENT = "micx:focusPrompt";
 const IMAGE_COMPRESS_MAX_PX = 2048;
 const IMAGE_COMPRESS_QUALITY = 0.82;
 const IMAGE_COMPRESS_TARGET_BYTES = 1_500_000;
-const DEFAULT_AGENT_NAME = "openwork";
+const DEFAULT_AGENT_NAME = "micx";
 
 function isNonDefaultAgent(agent: Agent) {
   return agent.name !== DEFAULT_AGENT_NAME;
@@ -256,7 +256,7 @@ function mcpStatusBadgeClass(status: McpServerStatus) {
 }
 
 function isLocalCapability(origin: SkillCard["origin"] | McpServerEntry["origin"]) {
-  return origin !== "openwork-connect";
+  return origin !== "micx-connect";
 }
 
 function extensionIcon(entry: McpDirectoryInfo, size = 16) {
@@ -544,10 +544,10 @@ export function ReactSessionComposer(props: ComposerProps) {
 
   useEffect(() => {
     const refresh = () => setExtensionStateVersion((value) => value + 1);
-    window.addEventListener(OPENWORK_EXTENSION_STATE_CHANGED, refresh);
+    window.addEventListener(MICX_EXTENSION_STATE_CHANGED, refresh);
     window.addEventListener("storage", refresh);
     return () => {
-      window.removeEventListener(OPENWORK_EXTENSION_STATE_CHANGED, refresh);
+      window.removeEventListener(MICX_EXTENSION_STATE_CHANGED, refresh);
       window.removeEventListener("storage", refresh);
     };
   }, []);
@@ -786,7 +786,7 @@ export function ReactSessionComposer(props: ComposerProps) {
       origin: "local" as const,
     })),
     ...skills.filter((skill) =>
-      skill.origin === "openwork-connect" || !localCommandSkillNames.has(skill.name)
+      skill.origin === "micx-connect" || !localCommandSkillNames.has(skill.name)
     ),
   ];
   const pluginSections = importedPlugins
@@ -795,10 +795,10 @@ export function ReactSessionComposer(props: ComposerProps) {
   const activePlugin = toolMenuSection.startsWith("plugin:")
     ? pluginSections.find((entry) => entry.section === toolMenuSection)?.plugin ?? null
     : null;
-  const extensionCatalogPlatform = resolveOpenWorkExtensionCatalogPlatform(platform.platform, platform.os);
-  const composerExtensions = filterOpenWorkExtensionCatalogForPlatform(OPENWORK_EXTENSION_CATALOG, extensionCatalogPlatform).filter((entry) =>
+  const extensionCatalogPlatform = resolveMicxExtensionCatalogPlatform(platform.platform, platform.os);
+  const composerExtensions = filterMicxExtensionCatalogForPlatform(MICX_EXTENSION_CATALOG, extensionCatalogPlatform).filter((entry) =>
     !builtInExtensionsDisabled &&
-    !isOpenWorkExtensionHidden(entry) && isComposerExtensionAvailable(entry)
+    !isMicxExtensionHidden(entry) && isComposerExtensionAvailable(entry)
   );
   const canSend = props.draft.trim().length > 0 || props.attachments.length > 0;
 
@@ -840,7 +840,7 @@ export function ReactSessionComposer(props: ComposerProps) {
     const skill = typeof input === "string"
       ? { name: input, path: "", origin: "local" as const }
       : input;
-    if (skill.origin === "openwork-connect") {
+    if (skill.origin === "micx-connect") {
       const slug = skillSlashCommandName(skill);
       const token = encodeConnectSkillToken({
         slug,
@@ -905,7 +905,7 @@ export function ReactSessionComposer(props: ComposerProps) {
     setToolMenuOpen(false);
   };
 
-  // Configure lands on the matching OpenWork Extensions section: skills and
+  // Configure lands on the matching Micx Extensions section: skills and
   // plugin tabs keep their scoped views, everything else opens the inventory.
   const openToolMenuSettings = () => {
     const section: ToolMenuSettingsSection =
@@ -1535,7 +1535,7 @@ export function ReactSessionComposer(props: ComposerProps) {
                                         ) : null}
                                       </div>
                                       {skill.description ? <div className="truncate text-xs text-gray-10">{skill.description}</div> : null}
-                                      {skill.origin === "openwork-connect" ? (
+                                      {skill.origin === "micx-connect" ? (
                                         <div className="truncate text-[10px] text-gray-9">
                                           {[skill.marketplaceName, skill.pluginName].filter(Boolean).join(" · ")}
                                         </div>
@@ -1597,7 +1597,7 @@ export function ReactSessionComposer(props: ComposerProps) {
                                           </div>
                                         </div>
                                         <div className="truncate text-xs text-gray-10">
-                                          {entry.origin === "openwork-connect"
+                                          {entry.origin === "micx-connect"
                                             ? [entry.marketplaceName, entry.pluginName].filter(Boolean).join(" · ")
                                               || entry.config.url
                                               || "Remote app"

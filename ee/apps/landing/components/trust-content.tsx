@@ -72,17 +72,17 @@ export const dataHandlingRows: DataHandlingRow[] = [
   {
     dataType: "Source code",
     selfHosted: "Local only. Never leaves your machine.",
-    cloud: "Not stored by OpenWork. Accessed at runtime through your LLM provider."
+    cloud: "Not stored by Micx. Accessed at runtime through your LLM provider."
   },
   {
     dataType: "LLM API keys",
     selfHosted: "Local keychain or environment variables",
-    cloud: "Held by your LLM provider, not by OpenWork"
+    cloud: "Held by your LLM provider, not by Micx"
   },
   {
     dataType: "Prompts & responses",
     selfHosted: "Local only",
-    cloud: "Sent to your LLM provider. Not logged by OpenWork."
+    cloud: "Sent to your LLM provider. Not logged by Micx."
   },
   {
     dataType: "Usage telemetry",
@@ -166,5 +166,5 @@ export const sectionAnchors = [
 
 export const securityContact = {
   name: "Omar McAdam",
-  email: "team+security@openworklabs.com"
+  email: "team+security@micxlabs.com"
 };

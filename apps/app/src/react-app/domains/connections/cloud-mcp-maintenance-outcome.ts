@@ -9,7 +9,7 @@
  * Diagnostics work) can show when maintenance last ran and how it ended.
  */
 
-const CLOUD_MCP_MAINTENANCE_OUTCOME_KEY = "openwork.den.mcp.lastMaintenanceOutcome";
+const CLOUD_MCP_MAINTENANCE_OUTCOME_KEY = "micx.den.mcp.lastMaintenanceOutcome";
 const MAX_RECORDED_OUTCOMES = 8;
 const MAX_DETAIL_LENGTH = 200;
 

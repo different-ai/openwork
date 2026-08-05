@@ -1,5 +1,5 @@
 import { beforeAll, describe, expect, test } from "bun:test"
-import { createDenTypeId } from "@openwork-ee/utils/typeid"
+import { createDenTypeId } from "@micx-ee/utils/typeid"
 import type {
   AutomationAuthorityMember,
   AutomationAuthorityModel,
@@ -8,7 +8,7 @@ import type {
 } from "../src/automations/authority.js"
 
 function seedRequiredEnv() {
-  process.env.DATABASE_URL ??= "mysql://root:password@127.0.0.1:3306/openwork_test"
+  process.env.DATABASE_URL ??= "mysql://root:password@127.0.0.1:3306/micx_test"
   process.env.DEN_DB_ENCRYPTION_KEY ??= "x".repeat(32)
   process.env.BETTER_AUTH_SECRET ??= "y".repeat(32)
   process.env.BETTER_AUTH_URL ??= "http://127.0.0.1:8790"
@@ -25,8 +25,8 @@ beforeAll(async () => {
 const member: AutomationAuthorityMember = { id: createDenTypeId("member") }
 const openWorkProvider: AutomationAuthorityProvider = {
   id: createDenTypeId("llmProvider"),
-  source: "openwork",
-  name: "OpenWork Models",
+  source: "micx",
+  name: "Micx Models",
 }
 const customProvider: AutomationAuthorityProvider = {
   id: createDenTypeId("llmProvider"),
@@ -41,7 +41,7 @@ const customModel: AutomationAuthorityModel = {
 function authorityStore(overrides: Partial<AutomationModelAuthorityStore> = {}): AutomationModelAuthorityStore {
   return {
     async findActiveMember() { return member },
-    async findOpenWorkProvider() { return openWorkProvider },
+    async findMicxProvider() { return openWorkProvider },
     async findProvider() { return customProvider },
     async findModel() { return customModel },
     async canAccessProvider() { return true },
@@ -85,26 +85,26 @@ describe("Automation normalized model authority", () => {
     }, store)).toMatchObject({ ok: false, code: "model_access_lost" })
   })
 
-  test("resolves enabled OpenWork aliases through the owner's managed provider", async () => {
+  test("resolves enabled Micx aliases through the owner's managed provider", async () => {
     const result = await resolveAutomationModelAccessWithStore({
       ...base,
-      providerId: "openwork",
+      providerId: "micx",
       modelId: "z-ai/glm-5.2",
     }, authorityStore())
 
     expect(result).toMatchObject({
       ok: true,
       value: {
-        accessKind: "openwork_managed",
+        accessKind: "micx_managed",
         providerRecordId: openWorkProvider.id,
-        providerId: "openwork",
+        providerId: "micx",
         modelId: "z-ai/glm-5.2",
       },
     })
 
     expect(await resolveAutomationModelAccessWithStore({
       ...base,
-      providerId: "openwork",
+      providerId: "micx",
       modelId: "unknown/model",
     }, authorityStore())).toMatchObject({ ok: false, code: "model_access_lost" })
   })

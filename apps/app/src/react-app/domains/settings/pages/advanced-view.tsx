@@ -4,7 +4,7 @@ import { useEffect, useReducer, useState } from "react";
 import { Separator } from "@/components/ui/separator";
 
 import type { OpencodeConnectStatus } from "@/app/types";
-import type { OpenworkCloudMcpHealth, OpenworkRuntimeConfigStatus, OpenworkServerStatus } from "@/app/lib/openwork-server";
+import type { MicxCloudMcpHealth, MicxRuntimeConfigStatus, MicxServerStatus } from "@/app/lib/micx-server";
 import { t } from "@/i18n";
 import { LayoutStack } from "../settings-layout";
 import type { useDenSession } from "../cloud/use-den-session";
@@ -36,18 +36,18 @@ export type AdvancedViewProps = {
   busy: boolean;
   clientConnected: boolean;
   opencodeConnectStatus: OpencodeConnectStatus | null;
-  openworkServerStatus: OpenworkServerStatus;
+  micxServerStatus: MicxServerStatus;
   developerMode: boolean;
   toggleDeveloperMode: () => void;
   opencodeDevModeEnabled: boolean;
   openDebugDeepLink: (rawUrl: string) => Promise<{ ok: boolean; message: string }>;
   canMigrateRuntimeConfig: boolean;
   migrateRuntimeConfig: () => Promise<{ migrated: boolean; keys: string[] }>;
-  getRuntimeConfigStatus: () => Promise<OpenworkRuntimeConfigStatus>;
+  getRuntimeConfigStatus: () => Promise<MicxRuntimeConfigStatus>;
   organizationServer: AdvancedOrganizationServerSession;
   cloudMcpUrl: string | null;
-  cloudMcpHealth: OpenworkCloudMcpHealth | null;
-  refreshCloudMcpHealth: () => Promise<OpenworkCloudMcpHealth | null>;
+  cloudMcpHealth: MicxCloudMcpHealth | null;
+  refreshCloudMcpHealth: () => Promise<MicxCloudMcpHealth | null>;
 };
 
 type AdvancedStatusTone = "ready" | "warning" | "error" | "neutral";
@@ -57,7 +57,7 @@ export function AdvancedView(props: AdvancedViewProps) {
     advancedLocalReducer,
     initialAdvancedLocalState,
   );
-  const [configStatus, setConfigStatus] = useState<OpenworkRuntimeConfigStatus | null>(null);
+  const [configStatus, setConfigStatus] = useState<MicxRuntimeConfigStatus | null>(null);
   const [configStatusBusy, setConfigStatusBusy] = useState(false);
   const [configStatusError, setConfigStatusError] = useState<string | null>(null);
   const {
@@ -83,8 +83,8 @@ export function AdvancedView(props: AdvancedViewProps) {
     return props.clientConnected ? "ready" : "neutral";
   })();
 
-  const openworkStatusLabel = (() => {
-    switch (props.openworkServerStatus) {
+  const micxStatusLabel = (() => {
+    switch (props.micxServerStatus) {
       case "connected":
         return t("config.status_connected");
       case "limited":
@@ -94,8 +94,8 @@ export function AdvancedView(props: AdvancedViewProps) {
     }
   })();
 
-  const openworkTone: AdvancedStatusTone = (() => {
-    switch (props.openworkServerStatus) {
+  const micxTone: AdvancedStatusTone = (() => {
+    switch (props.micxServerStatus) {
       case "connected":
         return "ready";
       case "limited":
@@ -109,12 +109,12 @@ export function AdvancedView(props: AdvancedViewProps) {
     ? ["Chat and task creation can use the OpenCode engine for this workspace."]
     : [
         "Chat and task creation may fail until OpenCode restarts.",
-        "OpenWork server config sources below can still be inspected.",
+        "Micx server config sources below can still be inspected.",
       ];
 
-  const openworkDetailLines = props.openworkServerStatus === "connected"
+  const micxDetailLines = props.micxServerStatus === "connected"
     ? ["Runtime DB, workspace config, and migration diagnostics are available."]
-    : ["Runtime config diagnostics need the OpenWork server connection."];
+    : ["Runtime config diagnostics need the Micx server connection."];
 
   const submitDebugDeepLink = async () => {
     const rawUrl = debugDeepLinkInput.trim();
@@ -199,9 +199,9 @@ export function AdvancedView(props: AdvancedViewProps) {
         clientStatusLabel={clientStatusLabel}
         clientTone={clientTone}
         clientDetailLines={clientDetailLines}
-        openworkStatusLabel={openworkStatusLabel}
-        openworkTone={openworkTone}
-        openworkDetailLines={openworkDetailLines}
+        micxStatusLabel={micxStatusLabel}
+        micxTone={micxTone}
+        micxDetailLines={micxDetailLines}
       />
 
       <AdvancedCloudMcpDiagnosticsSection

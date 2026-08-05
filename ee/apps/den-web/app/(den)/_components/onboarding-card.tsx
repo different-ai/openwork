@@ -3,7 +3,7 @@
 import { useState, type ReactNode } from "react";
 import { OrganizationBrandIdentity, type OrganizationBrand } from "./organization-brand-identity";
 
-const OPENWORK_MARK_SRC = "/openwork-mark.svg";
+const MICX_MARK_SRC = "/micx-mark.svg";
 
 export type OnboardingCardOrganization = {
   name: string;
@@ -12,8 +12,8 @@ export type OnboardingCardOrganization = {
 
 function BrandIcon({ iconUrl }: { iconUrl: string | null }) {
   const [failedIconUrl, setFailedIconUrl] = useState<string | null>(null);
-  const iconSrc = iconUrl && iconUrl !== failedIconUrl ? iconUrl : OPENWORK_MARK_SRC;
-  const isFallbackIcon = iconSrc === OPENWORK_MARK_SRC;
+  const iconSrc = iconUrl && iconUrl !== failedIconUrl ? iconUrl : MICX_MARK_SRC;
+  const isFallbackIcon = iconSrc === MICX_MARK_SRC;
 
   return (
     // Organization assets may be served by private on-prem hosts that are
@@ -37,7 +37,7 @@ function BrandIcon({ iconUrl }: { iconUrl: string | null }) {
 
 function BrandLabel({ organization }: { organization: OnboardingCardOrganization | null }) {
   if (!organization) {
-    return <span>OpenWork Cloud</span>;
+    return <span>Micx Cloud</span>;
   }
 
   if (organization.brand.logoUrl) {

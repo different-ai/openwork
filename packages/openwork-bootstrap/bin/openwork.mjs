@@ -8,9 +8,9 @@ import { fileURLToPath } from "node:url"
 
 const VERSION = "0.1.0"
 // The installed command name. Keep it explicit so setup guides can distinguish
-// bootstrap actions from other OpenWork commands a user may already have.
-const COMMAND_NAME = "openwork-bootstrap"
-const DEFAULT_OPENWORK_MARKETPLACE_NAME = "OpenWork Marketplace"
+// bootstrap actions from other Micx commands a user may already have.
+const COMMAND_NAME = "micx-bootstrap"
+const DEFAULT_MICX_MARKETPLACE_NAME = "Micx Marketplace"
 const executableBasename = () => (process.platform === "win32" ? `${COMMAND_NAME}.cmd` : COMMAND_NAME)
 const here = dirname(fileURLToPath(import.meta.url))
 const selfPath = fileURLToPath(import.meta.url)
@@ -64,18 +64,18 @@ function jsonOut(value, json) {
 
 function printHelp() {
   console.log([
-    "openwork-bootstrap",
+    "micx-bootstrap",
     "",
     "Usage:",
-    "  openwork-bootstrap install [--bin-dir <path>] [--install-dir <path>] [--source <path>] [--json]",
-    "  openwork-bootstrap install app --manifest <url-or-file> [--app-dir <path>] [--json]",
-    "  openwork-bootstrap doctor [--bin-dir <path>] [--install-dir <path>] [--base-url <url>] [--desktop-bootstrap] [--json]",
-    "  OPENWORK_OWNER_PASSWORD=<password> openwork-bootstrap cloud onboard --base-url <url> --owner-email <email> --org-name <name> --invite-email <email> [--skill-name <name>] [--web-base-url <url>] [--prepare-desktop] [--json]",
-    "  openwork-bootstrap cloud bootstrap-workspace --base-url <url> --workspace-name <name> [--skill-name <name>] [--owner-email <email>] [--teammate-emails a@x.com,b@y.com] [--claim-roles owner,member] [--web-base-url <url>] [--prepare-desktop] [--json]",
-    "  openwork-bootstrap cloud claim-link [--role owner] [--desktop-bootstrap-path <path>] [--json]",
+    "  micx-bootstrap install [--bin-dir <path>] [--install-dir <path>] [--source <path>] [--json]",
+    "  micx-bootstrap install app --manifest <url-or-file> [--app-dir <path>] [--json]",
+    "  micx-bootstrap doctor [--bin-dir <path>] [--install-dir <path>] [--base-url <url>] [--desktop-bootstrap] [--json]",
+    "  MICX_OWNER_PASSWORD=<password> micx-bootstrap cloud onboard --base-url <url> --owner-email <email> --org-name <name> --invite-email <email> [--skill-name <name>] [--web-base-url <url>] [--prepare-desktop] [--json]",
+    "  micx-bootstrap cloud bootstrap-workspace --base-url <url> --workspace-name <name> [--skill-name <name>] [--owner-email <email>] [--teammate-emails a@x.com,b@y.com] [--claim-roles owner,member] [--web-base-url <url>] [--prepare-desktop] [--json]",
+    "  micx-bootstrap cloud claim-link [--role owner] [--desktop-bootstrap-path <path>] [--json]",
     "",
     "Commands:",
-    "  install          Install the openwork-bootstrap CLI into a user bin dir",
+    "  install          Install the micx-bootstrap CLI into a user bin dir",
     "  install app      Download and install the desktop app from a manifest",
     "  doctor           Check CLI installation and optional Den API health",
     "  cloud onboard    Sign up, create an org, invite a teammate, and create a skill",
@@ -87,8 +87,8 @@ function printHelp() {
     "Options:",
     "  --web-base-url   Browser-facing origin written into --prepare-desktop's",
     "                   config (used for the app's Sign In button and claim",
-    "                   links). Defaults to https://app.openworklabs.com when",
-    "                   --base-url is the hosted API (api.openworklabs.com);",
+    "                   links). Defaults to https://app.micxlabs.com when",
+    "                   --base-url is the hosted API (api.micxlabs.com);",
     "                   set explicitly for self-hosted/custom deployments.",
     "  --json           Print machine-readable JSON",
     "  --version        Print version",
@@ -105,19 +105,19 @@ async function readStdin() {
 }
 
 function defaultInstallDir() {
-  return process.env.OPENWORK_INSTALL_DIR || join(process.env.HOME || process.cwd(), ".openwork", "bootstrap")
+  return process.env.MICX_INSTALL_DIR || join(process.env.HOME || process.cwd(), ".micx", "bootstrap")
 }
 
 function defaultBinDir() {
-  return process.env.OPENWORK_BIN_DIR || join(process.env.HOME || process.cwd(), ".local", "bin")
+  return process.env.MICX_BIN_DIR || join(process.env.HOME || process.cwd(), ".local", "bin")
 }
 
 function defaultAppDir() {
-  return process.env.OPENWORK_APP_DIR || (process.platform === "darwin"
+  return process.env.MICX_APP_DIR || (process.platform === "darwin"
     ? join(process.env.HOME || process.cwd(), "Applications")
     : process.platform === "win32"
-      ? join(process.env.LOCALAPPDATA || join(process.env.HOME || process.cwd(), "AppData", "Local"), "OpenWork")
-      : join(process.env.HOME || process.cwd(), ".local", "share", "openwork"))
+      ? join(process.env.LOCALAPPDATA || join(process.env.HOME || process.cwd(), "AppData", "Local"), "Micx")
+      : join(process.env.HOME || process.cwd(), ".local", "share", "micx"))
 }
 
 function configHomeDir() {
@@ -132,29 +132,29 @@ function configHomeDir() {
 }
 
 function defaultDesktopBootstrapPath() {
-  return process.env.OPENWORK_DESKTOP_BOOTSTRAP_PATH || join(configHomeDir(), "openwork", "desktop-bootstrap.json")
+  return process.env.MICX_DESKTOP_BOOTSTRAP_PATH || join(configHomeDir(), "micx", "desktop-bootstrap.json")
 }
 
 function defaultSkillsDir() {
-  return process.env.OPENWORK_SKILLS_DIR || join(configHomeDir(), "opencode", "skills")
+  return process.env.MICX_SKILLS_DIR || join(configHomeDir(), "opencode", "skills")
 }
 
 function defaultDeviceKeyPath() {
-  return process.env.OPENWORK_DEVICE_KEY_PATH || join(configHomeDir(), "openwork", "bootstrap-device-key.json")
+  return process.env.MICX_DEVICE_KEY_PATH || join(configHomeDir(), "micx", "bootstrap-device-key.json")
 }
 
 // The desktop app's `desktop-bootstrap.json` `baseUrl` field is the WEB origin
 // it opens in the user's browser for sign-in (e.g. for "Sign in" and claim
 // links) - it is a different host than the API origin used for CLI/API calls
 // (`--base-url`, `apiBaseUrl`). Reusing the API host here breaks sign-in: the
-// browser opens `https://api.openworklabs.com/?mode=sign-in...` and shows raw
+// browser opens `https://api.micxlabs.com/?mode=sign-in...` and shows raw
 // API JSON instead of the sign-in page. Derive the correct web host instead
 // of assuming it equals the API host.
 function deriveWebBaseUrl(apiBaseUrl) {
   try {
     const url = new URL(apiBaseUrl)
-    if (url.hostname === "api.openworklabs.com") {
-      return "https://app.openworklabs.com"
+    if (url.hostname === "api.micxlabs.com") {
+      return "https://app.micxlabs.com"
     }
     // Local/self-hosted dev: den-web commonly proxies the API at a different
     // port on the same host (see ee/apps/den-web's /api/den proxy). Callers
@@ -166,7 +166,7 @@ function deriveWebBaseUrl(apiBaseUrl) {
 }
 
 function slugifySkillName(value) {
-  return value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 80) || "openwork-bootstrap-skill"
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 80) || "micx-bootstrap-skill"
 }
 
 function runInstall(args) {
@@ -186,7 +186,7 @@ function runInstall(args) {
   mkdirSync(installDir, { recursive: true })
   mkdirSync(binDir, { recursive: true })
 
-  const installedCli = join(installDir, "openwork.mjs")
+  const installedCli = join(installDir, "micx.mjs")
   copyFileSync(source, installedCli)
   chmodSync(installedCli, 0o755)
 
@@ -208,7 +208,7 @@ function runInstall(args) {
   }
   writeFileSync(join(installDir, "install.json"), JSON.stringify(manifest, null, 2))
 
-  jsonOut({ ok: true, message: `OpenWork CLI installed at ${executable}`, install: manifest }, json)
+  jsonOut({ ok: true, message: `Micx CLI installed at ${executable}`, install: manifest }, json)
 }
 
 function sha256(buffer) {
@@ -272,13 +272,13 @@ function inferArtifactType(url) {
 
 function defaultInstalledName(type, manifest, artifact) {
   if (artifact.appName || manifest.appName) return artifact.appName || manifest.appName
-  if (type === "dmg") return "OpenWork.app"
-  if (type === "appimage") return "OpenWork.AppImage"
-  if (type === "exe") return "OpenWork.exe"
-  if (type === "msi") return "OpenWork.msi"
-  if (process.platform === "darwin") return "OpenWork.app"
-  if (process.platform === "win32") return "OpenWork.exe"
-  return "openwork"
+  if (type === "dmg") return "Micx.app"
+  if (type === "appimage") return "Micx.AppImage"
+  if (type === "exe") return "Micx.exe"
+  if (type === "msi") return "Micx.msi"
+  if (process.platform === "darwin") return "Micx.app"
+  if (process.platform === "win32") return "Micx.exe"
+  return "micx"
 }
 
 function findInstallCandidate(root, expectedName) {
@@ -342,7 +342,7 @@ function installDmg(input) {
   try {
     execFileSync("hdiutil", ["attach", input.artifactPath, "-nobrowse", "-readonly", "-mountpoint", mountPoint], { stdio: "pipe" })
     mounted = true
-    const appName = input.appName || "OpenWork.app"
+    const appName = input.appName || "Micx.app"
     const sourceApp = join(mountPoint, appName)
     if (!existsSync(sourceApp)) {
       throw new Error(`app_not_found_in_dmg: ${appName}`)
@@ -394,11 +394,11 @@ function installSingleFile(input) {
 
 async function runInstallApp(args) {
   const json = hasFlag(args.flags, "json")
-  const manifestLocation = getFlag(args.flags, "manifest") || process.env.OPENWORK_INSTALL_MANIFEST
+  const manifestLocation = getFlag(args.flags, "manifest") || process.env.MICX_INSTALL_MANIFEST
   if (!manifestLocation) throw new Error("missing_required_flag: --manifest")
 
   const appDir = resolve(getFlag(args.flags, "app-dir", defaultAppDir()))
-  const workDir = join(tmpdir(), `openwork-app-install-${Date.now()}-${Math.random().toString(36).slice(2)}`)
+  const workDir = join(tmpdir(), `micx-app-install-${Date.now()}-${Math.random().toString(36).slice(2)}`)
   mkdirSync(workDir, { recursive: true })
 
   try {
@@ -407,7 +407,7 @@ async function runInstallApp(args) {
     const type = artifact.type || inferArtifactType(artifact.url)
     if (!type) throw new Error("unsupported_app_artifact_type: unknown")
 
-    const artifactPath = join(workDir, artifact.fileName || "OpenWork.dmg")
+    const artifactPath = join(workDir, artifact.fileName || "Micx.dmg")
     await downloadArtifact(artifact.url, artifactPath)
     const digest = sha256(readFileSync(artifactPath))
     if (artifact.sha256 && digest !== artifact.sha256) {
@@ -442,8 +442,8 @@ async function runInstallApp(args) {
       },
     }
     mkdirSync(dirname(appPath), { recursive: true })
-    writeFileSync(join(appDir, "openwork-app-install.json"), JSON.stringify(install, null, 2))
-    jsonOut({ ok: true, message: `OpenWork app installed at ${appPath}`, install }, json)
+    writeFileSync(join(appDir, "micx-app-install.json"), JSON.stringify(install, null, 2))
+    jsonOut({ ok: true, message: `Micx app installed at ${appPath}`, install }, json)
   } finally {
     rmSync(workDir, { recursive: true, force: true })
   }
@@ -464,7 +464,7 @@ async function runDoctor(args) {
 
   const executable = join(binDir, executableBasename())
   const executableOk = existsSync(executable) && statSync(executable).isFile()
-  checks.push({ name: "openworkExecutable", ok: executableOk, value: executable })
+  checks.push({ name: "micxExecutable", ok: executableOk, value: executable })
 
   const manifestPath = join(installDir, "install.json")
   let manifest = null
@@ -486,12 +486,12 @@ async function runDoctor(args) {
   }
 
   if (hasFlag(args.flags, "app") || args.flags.has("app-dir")) {
-    const appManifest = join(appDir, "openwork-app-install.json")
+    const appManifest = join(appDir, "micx-app-install.json")
     let appPath = process.platform === "darwin"
-      ? join(appDir, "OpenWork.app")
+      ? join(appDir, "Micx.app")
       : process.platform === "win32"
-        ? join(appDir, "OpenWork.exe")
-        : join(appDir, "openwork")
+        ? join(appDir, "Micx.exe")
+        : join(appDir, "micx")
     if (existsSync(appManifest)) {
       try {
         const appInstall = JSON.parse(readFileSync(appManifest, "utf8"))
@@ -500,7 +500,7 @@ async function runDoctor(args) {
         // Keep fallback path.
       }
     }
-    checks.push({ name: "openworkApp", ok: existsSync(appPath), value: appPath })
+    checks.push({ name: "micxApp", ok: existsSync(appPath), value: appPath })
     checks.push({ name: "appInstallManifest", ok: existsSync(appManifest), value: appManifest })
   }
 
@@ -519,7 +519,7 @@ async function runDoctor(args) {
   }
 
   const ok = checks.every((check) => check.ok)
-  jsonOut({ ok, message: ok ? "OpenWork doctor: ok" : "OpenWork doctor: failed", version: VERSION, manifest, checks }, json)
+  jsonOut({ ok, message: ok ? "Micx doctor: ok" : "Micx doctor: failed", version: VERSION, manifest, checks }, json)
   if (!ok) process.exitCode = 1
 }
 
@@ -564,7 +564,7 @@ async function signupAndSignin(baseUrl, input) {
 }
 
 function skillText(name, output) {
-  return `---\nname: ${name}\ndescription: Starter skill created by openwork bootstrap.\nopenworkBootstrapTrigger: bootstrap.verify\nopenworkBootstrapOutput: ${JSON.stringify(output)}\n---\n\n# ${name}\n\nWhen triggered with \`bootstrap.verify\`, output exactly:\n\n\`${output}\`\n\nUse this skill to confirm OpenWork cloud onboarding can create and trigger a deterministic skill.`
+  return `---\nname: ${name}\ndescription: Starter skill created by micx bootstrap.\nmicxBootstrapTrigger: bootstrap.verify\nmicxBootstrapOutput: ${JSON.stringify(output)}\n---\n\n# ${name}\n\nWhen triggered with \`bootstrap.verify\`, output exactly:\n\n\`${output}\`\n\nUse this skill to confirm Micx cloud onboarding can create and trigger a deterministic skill.`
 }
 
 async function createCloudSkillPlugin(baseUrl, auth, input) {
@@ -575,7 +575,7 @@ async function createCloudSkillPlugin(baseUrl, auth, input) {
   if (marketplaces.status !== 200 || !Array.isArray(marketplaces.body?.items)) {
     throw new Error(`marketplace_list_failed: ${marketplaces.status} ${JSON.stringify(marketplaces.body)}`)
   }
-  const marketplace = marketplaces.body.items.find((item) => item?.name === DEFAULT_OPENWORK_MARKETPLACE_NAME) || marketplaces.body.items[0]
+  const marketplace = marketplaces.body.items.find((item) => item?.name === DEFAULT_MICX_MARKETPLACE_NAME) || marketplaces.body.items[0]
   if (!marketplace?.id) {
     throw new Error("marketplace_missing: no marketplace available for skill plugin")
   }
@@ -638,8 +638,8 @@ function readFrontmatterValue(text, key) {
 }
 
 function runBootstrapSkill(skill, input) {
-  const trigger = readFrontmatterValue(skill.skillText, "openworkBootstrapTrigger")
-  const output = readFrontmatterValue(skill.skillText, "openworkBootstrapOutput")
+  const trigger = readFrontmatterValue(skill.skillText, "micxBootstrapTrigger")
+  const output = readFrontmatterValue(skill.skillText, "micxBootstrapOutput")
   const triggered = trigger === input.trigger && typeof output === "string" && output.length > 0
   return {
     triggered,
@@ -657,7 +657,7 @@ async function createDesktopHandoff(baseUrl, auth) {
   const handoff = await request(baseUrl, "/v1/auth/desktop-handoff", {
     method: "POST",
     headers: auth,
-    body: JSON.stringify({ desktopScheme: "openwork" }),
+    body: JSON.stringify({ desktopScheme: "micx" }),
   })
   if (handoff.status !== 200 || !handoff.body?.grant) {
     throw new Error(`desktop_handoff_failed: ${handoff.status} ${JSON.stringify(handoff.body)}`)
@@ -730,7 +730,7 @@ function writePreparedDesktop(input) {
             id: link.id,
             role: link.role,
             expiresAt: link.expiresAt,
-            url: `redacted: run "openwork-bootstrap cloud claim-link --role ${link.role}" to view`,
+            url: `redacted: run "micx-bootstrap cloud claim-link --role ${link.role}" to view`,
           })),
         }
       : {}),
@@ -762,7 +762,7 @@ async function resolveOwnerPassword(flags) {
   const fromFlag = getFlag(flags, "owner-password")
   if (fromFlag) return fromFlag
 
-  const envName = getFlag(flags, "owner-password-env", "OPENWORK_OWNER_PASSWORD")
+  const envName = getFlag(flags, "owner-password-env", "MICX_OWNER_PASSWORD")
   const fromEnv = process.env[envName]
   if (fromEnv) return fromEnv
 
@@ -788,8 +788,8 @@ async function runCloudOnboard(args) {
   const ownerPassword = await resolveOwnerPassword(args.flags)
   const orgName = getFlag(args.flags, "org-name")
   const inviteEmail = getFlag(args.flags, "invite-email")
-  const skillName = getFlag(args.flags, "skill-name", "First OpenWork Skill")
-  const skillOutput = getFlag(args.flags, "skill-output", "OPENWORK_BOOTSTRAP_SKILL_TRIGGERED")
+  const skillName = getFlag(args.flags, "skill-name", "First Micx Skill")
+  const skillOutput = getFlag(args.flags, "skill-output", "MICX_BOOTSTRAP_SKILL_TRIGGERED")
   const prepareDesktop = hasFlag(args.flags, "prepare-desktop")
   const desktopBootstrapPath = getFlag(args.flags, "desktop-bootstrap-path", defaultDesktopBootstrapPath())
   const skillsDir = getFlag(args.flags, "skills-dir", defaultSkillsDir())
@@ -805,7 +805,7 @@ async function runCloudOnboard(args) {
   }
 
   const owner = await signupAndSignin(baseUrl, {
-    name: "OpenWork Owner",
+    name: "Micx Owner",
     email: ownerEmail,
     password: ownerPassword,
   })
@@ -856,7 +856,7 @@ async function runCloudOnboard(args) {
 
   jsonOut({
     ok: true,
-    message: "OpenWork cloud onboarding complete",
+    message: "Micx cloud onboarding complete",
     user: { id: owner.user.id, email: owner.user.email, emailVerified: owner.user.emailVerified },
     organization: org.body.organization,
     invitation: invite.body,
@@ -868,9 +868,9 @@ async function runCloudOnboard(args) {
 
 async function runCloudBootstrapWorkspace(args) {
   const json = hasFlag(args.flags, "json")
-  const baseUrl = getFlag(args.flags, "base-url", "https://api.openworklabs.com")?.replace(/\/$/, "")
+  const baseUrl = getFlag(args.flags, "base-url", "https://api.micxlabs.com")?.replace(/\/$/, "")
   const workspaceName = getFlag(args.flags, "workspace-name")
-  const skillName = getFlag(args.flags, "skill-name", "First OpenWork Skill")
+  const skillName = getFlag(args.flags, "skill-name", "First Micx Skill")
   const ownerEmail = getFlag(args.flags, "owner-email")
   const prepareDesktop = hasFlag(args.flags, "prepare-desktop")
   const desktopBootstrapPath = getFlag(args.flags, "desktop-bootstrap-path", defaultDesktopBootstrapPath())
@@ -913,11 +913,11 @@ async function runCloudBootstrapWorkspace(args) {
 
   const skill = {
     ...response.body.skill,
-    skillText: skillText(response.body.skill.title, response.body.skill.output || "OPENWORK_BOOTSTRAP_SKILL_TRIGGERED"),
+    skillText: skillText(response.body.skill.title, response.body.skill.output || "MICX_BOOTSTRAP_SKILL_TRIGGERED"),
   }
 
   const skillRun = runBootstrapSkill(skill, { trigger: "bootstrap.verify" })
-  if (!skillRun.triggered || skillRun.output !== "OPENWORK_BOOTSTRAP_SKILL_TRIGGERED") {
+  if (!skillRun.triggered || skillRun.output !== "MICX_BOOTSTRAP_SKILL_TRIGGERED") {
     throw new Error(`skill_trigger_failed: ${JSON.stringify(skillRun)}`)
   }
 
@@ -936,7 +936,7 @@ async function runCloudBootstrapWorkspace(args) {
 
   jsonOut({
     ok: true,
-    message: "OpenWork workspace bootstrap complete",
+    message: "Micx workspace bootstrap complete",
     organization: response.body.organization,
     setup: response.body.setup,
     skill: response.body.skill,
@@ -946,7 +946,7 @@ async function runCloudBootstrapWorkspace(args) {
       role: link.role,
       expiresAt: link.expiresAt,
       url: prepareDesktop
-        ? `redacted: run "openwork-bootstrap cloud claim-link --role ${link.role}" to view`
+        ? `redacted: run "micx-bootstrap cloud claim-link --role ${link.role}" to view`
         : "discarded: rerun with --prepare-desktop to persist this link, otherwise it cannot be retrieved later",
     })),
     device: { publicKeyPath: deviceKey.path, reused: deviceKey.reused },

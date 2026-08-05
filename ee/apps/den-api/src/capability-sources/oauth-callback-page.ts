@@ -15,9 +15,9 @@ export function connectCallbackPage(input:
   const body = input.ok
     ? `<div class="status-row success">
         <span class="status-icon" aria-hidden="true">✓</span>
-        <span><strong>${escapeHtml(input.name)} is connected to OpenWork.</strong><small>Connection complete</small></span>
+        <span><strong>${escapeHtml(input.name)} is connected to Micx.</strong><small>Connection complete</small></span>
       </div>
-      <p>You can close this window and return to OpenWork.</p>
+      <p>You can close this window and return to Micx.</p>
       ${closeButton}`
     : `<div class="status-row failure">
         <span class="status-icon" aria-hidden="true">!</span>
@@ -31,7 +31,7 @@ export function connectCallbackPage(input:
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="color-scheme" content="light">
-    <title>${title} — OpenWork</title>
+    <title>${title} — Micx</title>
     <style>
       :root { color-scheme: light; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
       * { box-sizing: border-box; }
@@ -58,7 +58,7 @@ export function connectCallbackPage(input:
   </head>
   <body>
     <main role="${input.ok ? "status" : "alert"}" aria-live="${input.ok ? "polite" : "assertive"}">
-      <p class="eyebrow">OpenWork Connect</p>
+      <p class="eyebrow">Micx Connect</p>
       <h1>${title}</h1>
       ${body}
     </main>

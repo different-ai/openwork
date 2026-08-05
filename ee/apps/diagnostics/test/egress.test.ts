@@ -5,7 +5,7 @@ import {
   EGRESS_DIAGNOSTIC_RUN_HEADER,
   EGRESS_DIAGNOSTIC_SIGNATURE_HEADER,
   EGRESS_DIAGNOSTIC_STEP_HEADER,
-} from "@openwork/types/den/egress-diagnostics"
+} from "@micx/types/den/egress-diagnostics"
 import {
   GET as egressGet,
   HEAD as egressHead,
@@ -36,7 +36,7 @@ function request(path: string, runId: string, step: string, init: RequestInit = 
   const headers = new Headers(init.headers)
   headers.set(EGRESS_DIAGNOSTIC_RUN_HEADER, runId)
   headers.set(EGRESS_DIAGNOSTIC_STEP_HEADER, step)
-  headers.set(EGRESS_DIAGNOSTIC_SIGNATURE_HEADER, createDiagnosticRunSignature("OpenWorkDiagnosticsToken!", runId, step))
+  headers.set(EGRESS_DIAGNOSTIC_SIGNATURE_HEADER, createDiagnosticRunSignature("MicxDiagnosticsToken!", runId, step))
   return new Request(`http://localhost:3010${path}`, { ...init, headers })
 }
 
@@ -60,7 +60,7 @@ const diagnosticsRouteFetch: typeof fetch = async (input, init) => {
 describe("private-cloud egress diagnostic endpoints", () => {
   test("runs the real Den probe through the real Diagnostics routes", async () => {
     const result = await runEgressDiagnostic({
-      bearerToken: "OpenWorkDiagnosticsToken!",
+      bearerToken: "MicxDiagnosticsToken!",
       fetchImpl: diagnosticsRouteFetch,
       origin: "http://localhost:3010",
     })
@@ -85,8 +85,8 @@ describe("private-cloud egress diagnostic endpoints", () => {
     expect(options.headers.get("allow")).toContain("POST")
 
     const post = await egressPost(request("/diagnostics/egress", runId, "http-post", {
-      body: JSON.stringify({ probe: "openwork-egress-diagnostic" }),
-      headers: { authorization: "Bearer OpenWorkDiagnosticsToken!", "content-type": "application/json" },
+      body: JSON.stringify({ probe: "micx-egress-diagnostic" }),
+      headers: { authorization: "Bearer MicxDiagnosticsToken!", "content-type": "application/json" },
       method: "POST",
     }))
     expect(post.status).toBe(200)
@@ -103,7 +103,7 @@ describe("private-cloud egress diagnostic endpoints", () => {
     const token = await tokenPost(request("/oauth/token", runId, "oauth-token", {
       body: new URLSearchParams({ grant_type: "client_credentials", resource: "http://localhost:3010/mcp" }),
       headers: {
-        authorization: `Basic ${Buffer.from("openwork-diagnostics:OpenWorkDiagnosticsToken!").toString("base64")}`,
+        authorization: `Basic ${Buffer.from("micx-diagnostics:MicxDiagnosticsToken!").toString("base64")}`,
         "content-type": "application/x-www-form-urlencoded",
       },
       method: "POST",
@@ -137,13 +137,13 @@ describe("private-cloud egress diagnostic endpoints", () => {
     expect(await listWireHistory(runId)).toHaveLength(9)
     expect(history.map((exchange) => exchange.step)).toContain("oauth-token")
     expect(JSON.stringify(history)).not.toContain(accessToken)
-    expect(JSON.stringify(history)).not.toContain("OpenWorkDiagnosticsToken!")
+    expect(JSON.stringify(history)).not.toContain("MicxDiagnosticsToken!")
   })
 
   test("distinguishes a stripped diagnostic authorization header", async () => {
     const runId = randomUUID()
     const response = await egressPost(request("/diagnostics/egress", runId, "http-post", {
-      body: JSON.stringify({ probe: "openwork-egress-diagnostic" }),
+      body: JSON.stringify({ probe: "micx-egress-diagnostic" }),
       headers: { "content-type": "application/json" },
       method: "POST",
     }))

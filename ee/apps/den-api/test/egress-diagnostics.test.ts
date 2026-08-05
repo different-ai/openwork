@@ -8,10 +8,10 @@ import {
   EGRESS_DIAGNOSTIC_RUN_HEADER,
   EGRESS_DIAGNOSTIC_SIGNATURE_HEADER,
   egressDiagnosticRunSchema,
-} from "@openwork/types/den/egress-diagnostics"
+} from "@micx/types/den/egress-diagnostics"
 import { runEgressDiagnostic } from "../src/egress-diagnostics"
 
-const origin = "https://diagnostic.openwork.test"
+const origin = "https://diagnostic.micx.test"
 const denApiRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 
 function expectConfiguredOrigin(expectedOrigin: string, configuredOrigin?: string): void {
@@ -27,12 +27,12 @@ function expectConfiguredOrigin(expectedOrigin: string, configuredOrigin?: strin
       PATH: process.env.PATH ?? "",
       HOME: process.env.HOME ?? "",
       TMPDIR: process.env.TMPDIR ?? "",
-      DATABASE_URL: "mysql://root:password@127.0.0.1:3306/openwork_test",
+      DATABASE_URL: "mysql://root:password@127.0.0.1:3306/micx_test",
       DB_MODE: "mysql",
       DEN_DB_ENCRYPTION_KEY: "x".repeat(32),
       BETTER_AUTH_SECRET: "y".repeat(32),
-      BETTER_AUTH_URL: "https://den.openwork.test",
-      OPENWORK_DEV_MODE: "0",
+      BETTER_AUTH_URL: "https://den.micx.test",
+      MICX_DEV_MODE: "0",
       PROVISIONER_MODE: "stub",
       TEST_EXPECTED_ORIGIN: expectedOrigin,
       ...(configuredOrigin ? { DEN_DIAGNOSTICS_ORIGIN: configuredOrigin } : {}),
@@ -92,8 +92,8 @@ function healthyDiagnosticFetch(seen: Request[]): typeof fetch {
 }
 
 describe("Den private-cloud egress diagnostic", () => {
-  test("defaults to the OpenWork Labs diagnostic host and accepts an operator override", () => {
-    expectConfiguredOrigin("https://diagnostic.openworklabs.com")
+  test("defaults to the Micx Labs diagnostic host and accepts an operator override", () => {
+    expectConfiguredOrigin("https://diagnostic.micxlabs.com")
     expectConfiguredOrigin("https://diagnostic.customer.example", "https://diagnostic.customer.example/")
   })
 
@@ -150,7 +150,7 @@ describe("Den private-cloud egress diagnostic", () => {
     expect(seen.some((request) => new URL(request.url).pathname === "/mcp")).toBe(false)
   })
 
-  test("identifies DNS failure before HTTP reaches OpenWork", async () => {
+  test("identifies DNS failure before HTTP reaches Micx", async () => {
     const cause = Object.assign(new Error("lookup failed"), { code: "ENOTFOUND" })
     const result = await runEgressDiagnostic({
       bearerToken: "synthetic-diagnostics-secret",
@@ -170,7 +170,7 @@ describe("Den private-cloud egress diagnostic", () => {
     expect(result.steps.slice(1).every((step) => step.status === "skipped")).toBe(true)
   })
 
-  test("identifies a proxy-replaced response that lacks OpenWork receipt proof", async () => {
+  test("identifies a proxy-replaced response that lacks Micx receipt proof", async () => {
     const result = await runEgressDiagnostic({
       bearerToken: "synthetic-diagnostics-secret",
       fetchImpl: async () => Response.json({ ok: true }),

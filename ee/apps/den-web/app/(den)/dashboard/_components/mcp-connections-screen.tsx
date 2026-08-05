@@ -90,7 +90,7 @@ const MCP_REQUIREMENTS_DISCOVERY_DELAY_MS = 500;
 // single-URL requirements discovery.
 const SMART_RESOLVE_DELAY_MS = 800;
 const MCP_TOOL_PAGE_SIZE = 50;
-const MCP_OAUTH_REDIRECT_DOCS_URL = "https://openworklabs.com/docs/cloud/share-with-your-team/shared-mcp-connections#oauth-redirect-url";
+const MCP_OAUTH_REDIRECT_DOCS_URL = "https://micxlabs.com/docs/cloud/share-with-your-team/shared-mcp-connections#oauth-redirect-url";
 
 function isDiscoverableMcpUrl(value: string): boolean {
   try {
@@ -645,9 +645,9 @@ export function McpConnectionsScreen() {
     >
       {showStagingBanner ? (
         <div data-testid="mcp-connections-staging-banner" className="mb-6 rounded-[24px] border border-amber-200 bg-amber-50 px-5 py-4 text-[14px] leading-6 text-amber-800">
-          <p className="font-semibold text-amber-900">OpenWork Connect (beta) is staged for this org.</p>
+          <p className="font-semibold text-amber-900">Micx Connect (beta) is staged for this org.</p>
           <p className="mt-1">
-            Connectors and marketplace capabilities you set up here stay staged and invisible to members until a platform admin enables OpenWork Connect (beta) for this org. Admin management remains fully usable.
+            Connectors and marketplace capabilities you set up here stay staged and invisible to members until a platform admin enables Micx Connect (beta) for this org. Admin management remains fully usable.
           </p>
         </div>
       ) : null}
@@ -1440,10 +1440,10 @@ function GoogleWorkspaceDialog({
                 <p className="text-[13px] font-semibold text-gray-900">Credentials saved</p>
               </div>
               <p className="mt-1 text-[12px] leading-5 text-gray-500">
-                OpenWork keeps the saved Google client ID and secret when you save permission changes. Replace them only if you are rotating credentials.
+                Micx keeps the saved Google client ID and secret when you save permission changes. Replace them only if you are rotating credentials.
               </p>
               <div className="mt-3 rounded-xl border border-gray-100 bg-white px-3 py-2 text-[12px] text-gray-800">
-                Saved client ID: <span className="font-mono">{savedClientId ?? "stored in OpenWork"}</span>
+                Saved client ID: <span className="font-mono">{savedClientId ?? "stored in Micx"}</span>
               </div>
               <DenButton className="mt-3" variant="secondary" size="sm" onClick={startReplacingCredentials} disabled={submitting}>
                 Replace credentials
@@ -2471,7 +2471,7 @@ function EditConnectionDialog({
         {identityChanged && !marketplaceManaged ? (
           <div className="mt-5 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-[12px] leading-5 text-amber-900" data-testid="mcp-identity-change-warning">
             <p className="font-semibold">This changes the connection identity.</p>
-            <p className="mt-1">OpenWork will clear shared and individual sessions, API keys, pending OAuth state, OAuth client registration, scopes, and connected timestamps before the new server can be used.</p>
+            <p className="mt-1">Micx will clear shared and individual sessions, API keys, pending OAuth state, OAuth client registration, scopes, and connected timestamps before the new server can be used.</p>
             {authType === "oauth" ? <p className="mt-1 font-medium">The connection must be authorized again after saving.</p> : null}
             {confirmingIdentityChange ? <p className="mt-2 font-semibold">Confirm that you want to invalidate the old identity.</p> : null}
           </div>

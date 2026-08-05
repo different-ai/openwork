@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
-import { joinBaseUrl, readBaseUrlEnv } from "@openwork/types/url";
-import { DEFAULT_OPENWORK_WEB_URL } from "../../(den)/_lib/runtime-config";
+import { joinBaseUrl, readBaseUrlEnv } from "@micx/types/url";
+import { DEFAULT_MICX_WEB_URL } from "../../(den)/_lib/runtime-config";
 
 export const dynamic = "force-dynamic";
 
@@ -69,11 +69,11 @@ export async function GET() {
 
   return NextResponse.json(
     {
-      openworkAppConnectUrl: readPublicRuntimeEnv("DEN_WEB_OPENWORK_APP_CONNECT_URL"),
-      openworkWebUrl: readPublicRuntimeEnv("DEN_WEB_OPENWORK_WEB_URL") || DEFAULT_OPENWORK_WEB_URL,
-      openworkAuthCallbackUrl: readPublicRuntimeEnv("DEN_WEB_OPENWORK_AUTH_CALLBACK_URL"),
+      micxAppConnectUrl: readPublicRuntimeEnv("DEN_WEB_MICX_APP_CONNECT_URL"),
+      micxWebUrl: readPublicRuntimeEnv("DEN_WEB_MICX_WEB_URL") || DEFAULT_MICX_WEB_URL,
+      micxAuthCallbackUrl: readPublicRuntimeEnv("DEN_WEB_MICX_AUTH_CALLBACK_URL"),
       orgMode,
-      singleOrgName: readPublicRuntimeEnv("DEN_SINGLE_ORG_NAME") || "OpenWork",
+      singleOrgName: readPublicRuntimeEnv("DEN_SINGLE_ORG_NAME") || "Micx",
       singleOrgSlug: readPublicRuntimeEnv("DEN_SINGLE_ORG_SLUG") || "default",
       singleOrgAllowPublicSignup: readBooleanEnv("DEN_SINGLE_ORG_ALLOW_PUBLIC_SIGNUP", orgMode === "multi_org"),
       singleOrgSsoConfigured

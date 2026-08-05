@@ -75,9 +75,9 @@ describe("exchangeHandoffAndSignIn", () => {
     const result = await exchangeHandoffAndSignIn("grant_test", { baseUrl: "https://den.test" });
 
     expect(result.ok).toBe(true);
-    expect(window.localStorage.getItem("openwork.den.activeOrgId")).toBe("org_invited");
-    expect(window.localStorage.getItem("openwork.den.activeOrgSlug")).toBe("invited-org");
-    expect(window.localStorage.getItem("openwork.den.activeOrgName")).toBe("Invited Org");
+    expect(window.localStorage.getItem("micx.den.activeOrgId")).toBe("org_invited");
+    expect(window.localStorage.getItem("micx.den.activeOrgSlug")).toBe("invited-org");
+    expect(window.localStorage.getItem("micx.den.activeOrgName")).toBe("Invited Org");
   });
 
   test("prefers the caller-provided organization over the exchange payload", async () => {
@@ -94,21 +94,21 @@ describe("exchangeHandoffAndSignIn", () => {
     });
 
     expect(result.ok).toBe(true);
-    expect(window.localStorage.getItem("openwork.den.activeOrgId")).toBe("org_bootstrap");
+    expect(window.localStorage.getItem("micx.den.activeOrgId")).toBe("org_bootstrap");
   });
 
   test("preserves the stored organization when the exchange has none", async () => {
     stubWindow();
-    window.localStorage.setItem("openwork.den.activeOrgId", "org_stored");
-    window.localStorage.setItem("openwork.den.activeOrgSlug", "stored-org");
-    window.localStorage.setItem("openwork.den.activeOrgName", "Stored Org");
+    window.localStorage.setItem("micx.den.activeOrgId", "org_stored");
+    window.localStorage.setItem("micx.den.activeOrgSlug", "stored-org");
+    window.localStorage.setItem("micx.den.activeOrgName", "Stored Org");
     stubExchangeResponse({ token: "tok_handoff", user: exchangeUser });
 
     const result = await exchangeHandoffAndSignIn("grant_test", { baseUrl: "https://den.test" });
 
     expect(result.ok).toBe(true);
-    expect(window.localStorage.getItem("openwork.den.activeOrgId")).toBe("org_stored");
-    expect(window.localStorage.getItem("openwork.den.activeOrgSlug")).toBe("stored-org");
-    expect(window.localStorage.getItem("openwork.den.activeOrgName")).toBe("Stored Org");
+    expect(window.localStorage.getItem("micx.den.activeOrgId")).toBe("org_stored");
+    expect(window.localStorage.getItem("micx.den.activeOrgSlug")).toBe("stored-org");
+    expect(window.localStorage.getItem("micx.den.activeOrgName")).toBe("Stored Org");
   });
 });

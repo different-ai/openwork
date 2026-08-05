@@ -1,5 +1,5 @@
 /**
- * Single entry point for embedding the OpenWork server in-process.
+ * Single entry point for embedding the Micx server in-process.
  *
  * Handles config resolution, managed OpenCode spawn, and server start
  * in one call -- mirrors what cli.ts does but returns a handle instead
@@ -17,7 +17,7 @@ import {
 } from "./server.js";
 import { ensureLocalWorkspaceFiles } from "./workspace-init.js";
 import { findManagedEngineWorkspace } from "./workspaces.js";
-import { keepOpenworkRuntimeConfigFileFresh, writeOpenworkRuntimeConfigFile } from "./openwork-runtime-config.js";
+import { keepMicxRuntimeConfigFileFresh, writeMicxRuntimeConfigFile } from "./micx-runtime-config.js";
 import { sweepLegacyOpenCodeConfig } from "./legacy-config-sweep.js";
 import { resolveOpencodeModelsUrl } from "./opencode-models-url.js";
 import type { ServeResult } from "./serve-node.js";
@@ -26,7 +26,7 @@ import type { ServerConfig } from "./types.js";
 export type EmbeddedServerOptions = CliArgs & {
   /** When true, spawn a managed OpenCode child process. */
   manageOpencode?: boolean;
-  /** Path to the OpenCode binary. Falls back to OPENWORK_OPENCODE_BIN env. */
+  /** Path to the OpenCode binary. Falls back to MICX_OPENCODE_BIN env. */
   opencodeBin?: string;
   /** Working directory for the managed OpenCode process. */
   opencodeCwd?: string;
@@ -103,7 +103,7 @@ export async function startEmbeddedServer(options: EmbeddedServerOptions): Promi
 
     if (errors.length === 1) throw errors[0];
     if (errors.length > 1) {
-      throw new AggregateError(errors, "Failed to stop embedded OpenWork server");
+      throw new AggregateError(errors, "Failed to stop embedded Micx server");
     }
   };
 
@@ -121,7 +121,7 @@ export async function startEmbeddedServer(options: EmbeddedServerOptions): Promi
       } catch (cleanupError) {
         throw new AggregateError(
           [startupError, cleanupError],
-          "Embedded OpenWork server startup failed and cleanup was incomplete",
+          "Embedded Micx server startup failed and cleanup was incomplete",
         );
       }
       throw startupError;
@@ -136,26 +136,26 @@ export async function startEmbeddedServer(options: EmbeddedServerOptions): Promi
     const workspace = findManagedEngineWorkspace(config.workspaces);
     if (workspace) {
       // Server-managed config file: the engine re-reads it from disk on every
-      // instance rebuild, and keepOpenworkRuntimeConfigFileFresh synchronizes it
+      // instance rebuild, and keepMicxRuntimeConfigFileFresh synchronizes it
       // on every runtime-DB write — so disposes always pick up current state.
-      const { path: runtimeConfigPath } = await writeOpenworkRuntimeConfigFile(config, workspace.id);
-      stopRuntimeConfigFileRefresh = keepOpenworkRuntimeConfigFileFresh(config, workspace.id);
+      const { path: runtimeConfigPath } = await writeMicxRuntimeConfigFile(config, workspace.id);
+      stopRuntimeConfigFileRefresh = keepMicxRuntimeConfigFileFresh(config, workspace.id);
       const cwd = options.opencodeCwd
-        || process.env.OPENWORK_MANAGED_OPENCODE_CWD?.trim()
+        || process.env.MICX_MANAGED_OPENCODE_CWD?.trim()
         || workspace.path;
       await duringStartup(() => mkdir(cwd, { recursive: true }));
       await sweepLegacyOpenCodeConfig(config).catch(() => undefined);
       const opencodeModelsUrl = await duringStartup(() => resolveOpencodeModelsUrl());
 
       managedOpencode = await duringStartup(() => createManagedOpencodeServer({
-        bin: options.opencodeBin || process.env.OPENWORK_OPENCODE_BIN,
+        bin: options.opencodeBin || process.env.MICX_OPENCODE_BIN,
         cwd,
         excludedPorts: [config.port],
         env: {
-          ...(process.env.OPENWORK_DEV_MODE ? { OPENWORK_DEV_MODE: process.env.OPENWORK_DEV_MODE } : {}),
-          ...(process.env.OPENWORK_UI_CONTROL_DISCOVERY ? { OPENWORK_UI_CONTROL_DISCOVERY: process.env.OPENWORK_UI_CONTROL_DISCOVERY } : {}),
-          OPENWORK_SERVER_URL: serverUrl,
-          OPENWORK_SERVER_TOKEN: config.token,
+          ...(process.env.MICX_DEV_MODE ? { MICX_DEV_MODE: process.env.MICX_DEV_MODE } : {}),
+          ...(process.env.MICX_UI_CONTROL_DISCOVERY ? { MICX_UI_CONTROL_DISCOVERY: process.env.MICX_UI_CONTROL_DISCOVERY } : {}),
+          MICX_SERVER_URL: serverUrl,
+          MICX_SERVER_TOKEN: config.token,
           OPENCODE_CONFIG: runtimeConfigPath,
           OPENCODE_MODELS_URL: opencodeModelsUrl,
         },

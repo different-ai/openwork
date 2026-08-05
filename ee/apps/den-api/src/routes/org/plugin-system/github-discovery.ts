@@ -508,7 +508,7 @@ export function buildGithubRepoDiscovery(input: {
   //   } satisfies GithubRepoDiscoveryResult
   // }
 
-  warnings.push("OpenWork currently only supports Claude-compatible plugins and marketplaces. Add `.claude-plugin/marketplace.json` or `.claude-plugin/plugin.json` to this repository.")
+  warnings.push("Micx currently only supports Claude-compatible plugins and marketplaces. Add `.claude-plugin/marketplace.json` or `.claude-plugin/plugin.json` to this repository.")
 
   return {
     classification: "unsupported",

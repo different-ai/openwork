@@ -1,12 +1,12 @@
 import { describe, expect, test } from "bun:test";
 
 import {
-  buildOpenworkContext,
+  buildMicxContext,
   screenFromRoute,
-} from "../src/react-app/shell/openwork-context-projector";
+} from "../src/react-app/shell/micx-context-projector";
 import type { WorkbenchSnapshot } from "../src/react-app/domains/session/chat/workbench-store";
 
-type ContextProjectorInput = Parameters<typeof buildOpenworkContext>[0];
+type ContextProjectorInput = Parameters<typeof buildMicxContext>[0];
 
 const baseInput: ContextProjectorInput = {
   route: "/workspace/workspace-a/session/session-a",
@@ -39,9 +39,9 @@ const baseInput: ContextProjectorInput = {
   availableAffordances: [],
 };
 
-describe("OpenWork context projector", () => {
+describe("Micx context projector", () => {
   test("projects the focused split session and its panel state", () => {
-    const context = buildOpenworkContext(baseInput);
+    const context = buildMicxContext(baseInput);
 
     expect(context.conversations.layout).toEqual({
       kind: "split",
@@ -61,7 +61,7 @@ describe("OpenWork context projector", () => {
   });
 
   test("does not leak artifact tabs into a non-panel surface", () => {
-    const context = buildOpenworkContext({
+    const context = buildMicxContext({
       ...baseInput,
       ui: {
         ...baseInput.ui,
@@ -90,7 +90,7 @@ const splitWorkbench: WorkbenchSnapshot = {
 };
 
 function contextForRoute(route: string) {
-  return buildOpenworkContext({
+  return buildMicxContext({
     route,
     revision: 7,
     capturedAt: "2026-07-23T10:59:00.000Z",
@@ -106,8 +106,8 @@ function contextForRoute(route: string) {
         tabs: [{
           id: "browser-one",
           type: "browser",
-          label: "OpenWork docs",
-          url: "https://docs.openwork.so",
+          label: "Micx docs",
+          url: "https://docs.micx.so",
           favicon: null,
           status: "ready",
           canGoBack: false,
@@ -120,7 +120,7 @@ function contextForRoute(route: string) {
   });
 }
 
-describe("OpenWork context projector", () => {
+describe("Micx context projector", () => {
   test("represents all open tabs and both visible split sessions", () => {
     const context = contextForRoute("/workspace/workspace-a/session/session-a");
 

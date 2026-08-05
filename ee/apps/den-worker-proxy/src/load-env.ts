@@ -31,7 +31,7 @@ for (const filePath of [path.join(serviceDir, ".env.local"), path.join(serviceDi
   }
 }
 
-const explicitDaytonaEnvPath = process.env.OPENWORK_DAYTONA_ENV_PATH?.trim()
+const explicitDaytonaEnvPath = process.env.MICX_DAYTONA_ENV_PATH?.trim()
 const detectedDaytonaEnvPath = findUpwards(path.resolve(serviceDir, "..", ".."), ".env.daytona")
 const daytonaEnvPath = explicitDaytonaEnvPath || detectedDaytonaEnvPath
 

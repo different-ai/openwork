@@ -9,7 +9,7 @@ function reconnectStatus(connectionId = "emc_knowledge", connectionName = "Knowl
   return {
     version: 1,
     kind: "connection_action",
-    source: "openwork-cloud",
+    source: "micx-cloud",
     connectionId,
     connectionName,
     authType: "oauth",
@@ -18,7 +18,7 @@ function reconnectStatus(connectionId = "emc_knowledge", connectionName = "Knowl
     actor: "member",
     action: {
       type: "reconnect",
-      surface: "openwork_your_connections",
+      surface: "micx_your_connections",
       retry: "search_capabilities",
       label: "Reconnect in Your Connections",
     },
@@ -26,15 +26,15 @@ function reconnectStatus(connectionId = "emc_knowledge", connectionName = "Knowl
 }
 
 describe("chat tool error attribution", () => {
-  test("identifies an OpenWork-created capability deadline", () => {
+  test("identifies an Micx-created capability deadline", () => {
     expect(attributeChatToolError("The capability call exceeded 180s. Retry once.")).toEqual({
-      label: "OpenWork timeout",
+      label: "Micx timeout",
       confidence: "Confirmed",
-      description: "OpenWork created this deadline. The external operation may still have completed, so verify its state before retrying.",
+      description: "Micx created this deadline. The external operation may still have completed, so verify its state before retrying.",
     })
   })
 
-  test("identifies a structured OpenWork lifecycle deadline", () => {
+  test("identifies a structured Micx lifecycle deadline", () => {
     expect(attributeChatToolError(JSON.stringify({
       error: "connection_failed",
       diagnostic: {
@@ -43,16 +43,16 @@ describe("chat tool error attribution", () => {
         phase: "MCP_TOOL_EXECUTION",
       },
     }))).toMatchObject({
-      label: "OpenWork timeout",
+      label: "Micx timeout",
       confidence: "Confirmed",
     })
   })
 
-  test("identifies an OpenWork block before send", () => {
+  test("identifies an Micx block before send", () => {
     expect(attributeChatToolError(JSON.stringify({
       diagnostic: { code: "MCP_URL_BLOCKED", category: "security_blocked" },
     }))).toMatchObject({
-      label: "Blocked by OpenWork",
+      label: "Blocked by Micx",
       confidence: "Confirmed",
     })
   })
@@ -103,7 +103,7 @@ describe("chat tool error attribution", () => {
       connectionStatus: reconnectStatus(),
     })
 
-    expect(reconnectActionFromChatToolResult("openwork-cloud_execute_capability", errorText)).toEqual({
+    expect(reconnectActionFromChatToolResult("micx-cloud_execute_capability", errorText)).toEqual({
       connectionId: "emc_knowledge",
       connectionName: "Knowledge Hub",
       label: "Reconnect",
@@ -118,7 +118,7 @@ describe("chat tool error attribution", () => {
       }],
     })
 
-    expect(reconnectActionFromChatToolResult("openwork-cloud_search_capabilities", output)).toEqual({
+    expect(reconnectActionFromChatToolResult("micx-cloud_search_capabilities", output)).toEqual({
       connectionId: "emc_knowledge",
       connectionName: "Knowledge Hub",
       label: "Reconnect",
@@ -133,7 +133,7 @@ describe("chat tool error attribution", () => {
       },
     })
 
-    expect(reconnectActionFromChatToolResult("openwork-cloud_execute_capability", errorText)).toEqual({
+    expect(reconnectActionFromChatToolResult("micx-cloud_execute_capability", errorText)).toEqual({
       connectionId: "emc_knowledge",
       connectionName: "Knowledge Hub",
       label: "Reconnect",
@@ -151,14 +151,14 @@ describe("chat tool error attribution", () => {
         actor: "organization_admin",
         action: {
           type: "inspect_connection",
-          surface: "openwork_organization_connections",
+          surface: "micx_organization_connections",
           retry: "search_capabilities",
         },
       },
     })
 
     expect(reconnectActionFromChatToolResult("malicious_execute_capability", reconnectPayload)).toBeNull()
-    expect(reconnectActionFromChatToolResult("openwork-cloud_execute_capability", providerPayload)).toBeNull()
+    expect(reconnectActionFromChatToolResult("micx-cloud_execute_capability", providerPayload)).toBeNull()
   })
 
   test("does not guess between multiple reconnect targets in one discovery result", () => {
@@ -169,7 +169,7 @@ describe("chat tool error attribution", () => {
       })),
     }
 
-    expect(reconnectActionFromChatToolResult("openwork-cloud_search_capabilities", output)).toBeNull()
+    expect(reconnectActionFromChatToolResult("micx-cloud_search_capabilities", output)).toBeNull()
   })
 
   test("rejects unversioned, shared, and admin-owned action shapes", () => {
@@ -181,12 +181,12 @@ describe("chat tool error attribution", () => {
       actor: "organization_admin",
       action: {
         type: "reconnect",
-        surface: "openwork_organization_connections",
+        surface: "micx_organization_connections",
         retry: "search_capabilities",
       },
     }
 
-    expect(reconnectActionFromChatToolResult("openwork-cloud_execute_capability", { connectionStatus: unversioned })).toBeNull()
-    expect(reconnectActionFromChatToolResult("openwork-cloud_execute_capability", { connectionStatus: shared })).toBeNull()
+    expect(reconnectActionFromChatToolResult("micx-cloud_execute_capability", { connectionStatus: unversioned })).toBeNull()
+    expect(reconnectActionFromChatToolResult("micx-cloud_execute_capability", { connectionStatus: shared })).toBeNull()
   })
 })

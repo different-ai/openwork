@@ -53,7 +53,7 @@ export function MarketplacesScreen() {
       icon={Store}
       badgeLabel="Preview"
       title="Marketplaces"
-      description="Marketplaces contain plugins. OpenWork Marketplace is built in, and assigned marketplaces show up inside the desktop app after sign-in."
+      description="Marketplaces contain plugins. Micx Marketplace is built in, and assigned marketplaces show up inside the desktop app after sign-in."
       colors={["#FEF3C7", "#92400E", "#F59E0B", "#FDE68A"]}
     >
       <div className="mb-6 flex flex-col gap-3 sm:flex-row">
@@ -253,7 +253,7 @@ function ConnectIntegrationEmptyState({ integrationsHref }: { integrationsHref: 
   return (
     <EmptyState
       title="Connect an integration to discover marketplaces"
-      description="Marketplaces are created when OpenWork finds plugins in a connected repository. Assign them to everyone in your org or specific users and teams."
+      description="Marketplaces are created when Micx finds plugins in a connected repository. Assign them to everyone in your org or specific users and teams."
       action={{ href: integrationsHref, label: "Open Integrations", icon: Cable }}
     />
   );

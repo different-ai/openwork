@@ -1,4 +1,4 @@
-import { eq } from "@openwork-ee/den-db/drizzle"
+import { eq } from "@micx-ee/den-db/drizzle"
 import {
   AuthAccountTable,
   AuthApiKeyTable,
@@ -13,7 +13,7 @@ import {
   OAuthRefreshTokenTable,
   ScimSyncEventTable,
   WorkerTable,
-} from "@openwork-ee/den-db/schema"
+} from "@micx-ee/den-db/schema"
 import { db } from "./db.js"
 
 type UserId = typeof AuthUserTable.$inferSelect.id

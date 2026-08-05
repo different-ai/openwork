@@ -25,7 +25,7 @@ const MAX_EXTRACTED_TEXT_CHARS = 24_000;
 const MAX_XLSX_SHEETS = 24;
 const MAX_XLSX_CELLS = 600;
 const MAX_XLSX_SHARED_STRINGS = 4_000;
-const MATERIALIZED_DIR = join(".opencode", "openwork", "inbox", "chat-attachments");
+const MATERIALIZED_DIR = join(".opencode", "micx", "inbox", "chat-attachments");
 
 type RuntimeContext = {
   directory?: string;
@@ -667,7 +667,7 @@ function basePartIds(part: Record<string, unknown>): Record<string, unknown> {
 
 function normalizedText(part: OfficeFilePart, materialized: MaterializedAttachment | null, extractedText: string, error?: string): string {
   return [
-    "OpenWork normalized an Office attachment before sending this request to the model.",
+    "Micx normalized an Office attachment before sending this request to the model.",
     `filename: ${safeFilename(part.filename, part.kind)}`,
     `canonical_mime: ${part.mime}`,
     `sha256: ${materialized?.sha256 ?? "unavailable"}`,
@@ -713,7 +713,7 @@ async function transformMessage(value: unknown, root: string | null): Promise<un
 
 // Single export: the OpenCode plugin loader treats every export of a plugin
 // module as a plugin factory, so helpers must stay module-private.
-export const OpenWorkOfficeAttachments = async (factoryInput?: unknown) => {
+export const MicxOfficeAttachments = async (factoryInput?: unknown) => {
   const factoryContext = normalizeOpenCodeContext(factoryInput);
   return {
     "experimental.chat.messages.transform": async (input: unknown, output: { messages: unknown[] }) => {

@@ -8,7 +8,7 @@ describe("Telegram connection replacement", () => {
     const previous = {
       botToken: "same-token",
       secret: "old-secret",
-      url: "https://openwork.example/webhook/tgc_1",
+      url: "https://micx.example/webhook/tgc_1",
     }
     const next = { ...previous, secret: "new-secret" }
 

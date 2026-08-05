@@ -1,7 +1,7 @@
 import * as crypto from "node:crypto"
-import { and, eq, isNull } from "@openwork-ee/den-db/drizzle"
-import { MemberTable, OAuthAccessTokenTable } from "@openwork-ee/den-db/schema"
-import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
+import { and, eq, isNull } from "@micx-ee/den-db/drizzle"
+import { MemberTable, OAuthAccessTokenTable } from "@micx-ee/den-db/schema"
+import { normalizeDenTypeId } from "@micx-ee/utils/typeid"
 import { verifyJwsAccessToken } from "better-auth/oauth2"
 import {
   auth,
@@ -412,7 +412,7 @@ export async function verifyMcpRequest(headers: Headers, optionsInput?: string |
   if (sessionLiveness === "check_failed") {
     return mcpJsonResponse(503, {
       error: "mcp_session_check_unavailable",
-      message: "OpenWork could not verify the token session. Retry shortly.",
+      message: "Micx could not verify the token session. Retry shortly.",
       referenceId,
     }, undefined, { "retry-after": "10" })
   }

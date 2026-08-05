@@ -1,5 +1,5 @@
 import type { MiddlewareHandler } from "hono"
-import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
+import { normalizeDenTypeId } from "@micx-ee/utils/typeid"
 import { getMcpResourceContext, verifyMcpRequest } from "../mcp/auth.js"
 import { DEN_MCP_WRITE_SCOPE } from "../mcp/scopes.js"
 import { getOrganizationContextForUser } from "../orgs.js"

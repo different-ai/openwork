@@ -1,6 +1,6 @@
-# OpenWork Diagnostics
+# Micx Diagnostics
 
-OpenWork Diagnostics is a deliberately small, Vercel-native MCP compatibility
+Micx Diagnostics is a deliberately small, Vercel-native MCP compatibility
 endpoint. An enterprise can allowlist one stable host, point a client at
 `/mcp`, and use the authenticated dashboard to prove that requests arrived and
 inspect the safely redacted request/response sequence.
@@ -10,7 +10,7 @@ For customer-facing setup and interpretation guidance, see the published
 page.
 
 The authenticated **Connections** dashboard also keeps a seven-day rolling
-record of metadata-only OpenWork Connect incidents. It correlates what a
+record of metadata-only Micx Connect incidents. It correlates what a
 desktop maintenance probe observed with the initialize, initialized, and
 tools/list lifecycle requests that reached Den. Operators can filter by raw
 organization ID or desktop client UUID; the portal hashes those lookup values
@@ -20,7 +20,7 @@ It also supports a controlled Den egress diagnostic for private-cloud and
 Kubernetes deployments. A workspace owner or admin starts the run in **Org
 settings**. The requests originate in the Den process, so they exercise the
 customer's real container DNS, proxy, TLS trust, firewall, service mesh, and
-NetworkPolicy path. OpenWork support can filter the dashboard by the resulting
+NetworkPolicy path. Micx support can filter the dashboard by the resulting
 run ID and see the last request that reached the public service.
 
 It supports one active synthetic profile at a time (`generic`, `microsoft`, or
@@ -30,16 +30,16 @@ not an in-app multi-instance operation.
 ## Local development
 
 ```bash
-pnpm --filter @openwork-ee/diagnostics dev
+pnpm --filter @micx-ee/diagnostics dev
 ```
 
 Open `http://localhost:3010` and sign in with:
 
 - username: `diagnostics-admin`
-- password: `OpenWorkDiagnosticsLocal!`
+- password: `MicxDiagnosticsLocal!`
 
 The local MCP endpoint is `http://localhost:3010/mcp` with synthetic bearer
-token `OpenWorkDiagnosticsToken!`. Local history is process-memory only.
+token `MicxDiagnosticsToken!`. Local history is process-memory only.
 
 The Connect debug proxy is available at:
 
@@ -52,11 +52,11 @@ scenario URLs such as
 `http://localhost:3010/via/auth-expired/local-connect-debug-proxy`. In the
 desktop, enable **Settings → Advanced → Developer mode**, then paste a complete
 generated URL into **Settings → Cloud → Account → Cloud control plane URL**.
-The same editor is visible on the OpenWork Connect sign-in surface while signed
+The same editor is visible on the Micx Connect sign-in surface while signed
 out. Run the standalone local MCP smoke journey with:
 
 ```bash
-pnpm --filter @openwork-ee/diagnostics smoke:debug-proxy
+pnpm --filter @micx-ee/diagnostics smoke:debug-proxy
 ```
 
 The MCP catalog also contains two diagnostics-only authorization tools:
@@ -76,7 +76,7 @@ To expose the controlled run in a local Den, set:
 
 ```dotenv
 DEN_DIAGNOSTICS_ORIGIN=http://localhost:3010
-DEN_DIAGNOSTICS_BEARER_TOKEN=OpenWorkDiagnosticsToken!
+DEN_DIAGNOSTICS_BEARER_TOKEN=MicxDiagnosticsToken!
 ```
 
 The standard `pnpm dev:den` command supplies these local defaults. The browser
@@ -87,7 +87,7 @@ never submits the target or token; both are owned by the Den operator.
 Create a Vercel project from this repository with **Root Directory** set to
 `ee/apps/diagnostics`. Keep **Include source files outside of the Root
 Directory** enabled so Vercel can install the root pnpm workspace and the
-shared `@openwork/types` package. Link an Upstash Redis database from the
+shared `@micx/types` package. Link an Upstash Redis database from the
 Vercel Marketplace. Vercel injects the Redis REST URL/token; the app accepts
 either a complete `UPSTASH_REDIS_REST_*` pair or a complete `KV_REST_API_*`
 pair, but never mixes values between the two integrations.
@@ -101,9 +101,9 @@ Set these production environment variables:
 | `DIAGNOSTICS_SIGNING_SECRET` | Signs the one-hour dashboard cookie, short-lived synthetic OAuth access tokens, and stateless MCP session IDs; at least 32 characters. |
 | `DIAGNOSTICS_MCP_BEARER_TOKEN` | Synthetic diagnostic and Connect-intake token shared with Den, at least 24 characters. It also keys organization/client pseudonyms; never use a provider/customer credential. |
 | `DIAGNOSTICS_PROFILE` | `generic`, `microsoft`, or `servicenow`. |
-| `NEXT_PUBLIC_DIAGNOSTICS_ORIGIN` | Fixed production origin, normally `https://diagnostic.openworklabs.com`. Preview deployments use Vercel's deployment-specific `VERCEL_URL` instead. |
+| `NEXT_PUBLIC_DIAGNOSTICS_ORIGIN` | Fixed production origin, normally `https://diagnostic.micxlabs.com`. Preview deployments use Vercel's deployment-specific `VERCEL_URL` instead. |
 | `DEBUG_PROXY_ACCESS_KEY` | URL-safe random value (16+ characters) required for the Connect debug proxy UI and traffic. It becomes a path segment in generated desktop-compatible URLs. |
-| `DEBUG_PROXY_DEFAULT_UPSTREAM` | Default Den origin. Falls back to `https://app.openworklabs.com`; set it explicitly on the Vercel project. |
+| `DEBUG_PROXY_DEFAULT_UPSTREAM` | Default Den origin. Falls back to `https://app.micxlabs.com`; set it explicitly on the Vercel project. |
 | `DEBUG_PROXY_ALLOWED_UPSTREAMS` | Comma-separated HTTPS hosts or origins that generated override links may target. The default upstream remains allowed independently. |
 | `DEBUG_PROXY_SLOW_MS` | Optional Agent endpoint delay, clamped to 5,000–10,000 ms; default 7,000 ms. |
 | `DEBUG_PROXY_FLAKY_WINDOW_MS` | Optional per-instance rolling window for `flaky-N`; default 60,000 ms. |
@@ -113,12 +113,12 @@ enabled. Preview deployments derive their OAuth and MCP resource URLs from the
 deployment-specific `VERCEL_URL`; production continues to require the fixed
 `NEXT_PUBLIC_DIAGNOSTICS_ORIGIN` allowlist hostname.
 
-Attach `diagnostic.openworklabs.com` in the project's Vercel **Domains**
+Attach `diagnostic.micxlabs.com` in the project's Vercel **Domains**
 settings, then create the CNAME value Vercel provides at the DNS provider. The
 stable customer allowlist entry is the same host; the MCP URL is:
 
 ```text
-https://diagnostic.openworklabs.com/mcp
+https://diagnostic.micxlabs.com/mcp
 ```
 
 Before enabling public DNS, add Vercel Firewall rate-limit rules for `/mcp`,
@@ -155,7 +155,7 @@ https://<deployment>/via/<scenario>/<DEBUG_PROXY_ACCESS_KEY>[/~<encoded-upstream
 This is a Den **control plane base URL**, not a manually configured MCP server
 URL. Saving it signs the desktop out of the previous control plane. Sign in
 again through the browser; the desktop will derive the `/api/den` API routes,
-mint its short-lived MCP token, and manage the hidden `openwork-cloud` MCP
+mint its short-lived MCP token, and manage the hidden `micx-cloud` MCP
 entry automatically.
 
 Browser sign-in uses root-relative Den web assets and API calls. The first HTML
@@ -163,7 +163,7 @@ response therefore sets a ten-minute, HTTP-only routing cookie that sends those
 browser requests back through the selected scenario. That cookie contains the
 same access-key path already present in the generated URL, is removed before
 forwarding to Den, and is cleared when the debug control page is opened. The
-one-time `openwork://den-auth` handoff also has its encoded Den base URL
+one-time `micx://den-auth` handoff also has its encoded Den base URL
 rewritten so the desktop exchanges the grant through the selected scenario
 instead of switching back to the upstream origin.
 
@@ -209,16 +209,16 @@ Before promoting a Vercel deployment, run the diagnostics test/build gate and
 the standalone smoke:
 
 ```bash
-pnpm --filter @openwork-ee/diagnostics test
-pnpm --filter @openwork-ee/diagnostics build
-pnpm --filter @openwork-ee/diagnostics smoke:debug-proxy
+pnpm --filter @micx-ee/diagnostics test
+pnpm --filter @micx-ee/diagnostics build
+pnpm --filter @micx-ee/diagnostics smoke:debug-proxy
 ```
 
 After the production deployment is promoted, verify all of the following
 before sharing the allowlist hostname:
 
-1. `GET https://diagnostic.openworklabs.com/health` returns HTTP 200 and
-   `{"service":"openwork-diagnostics","status":"ok"}`.
+1. `GET https://diagnostic.micxlabs.com/health` returns HTTP 200 and
+   `{"service":"micx-diagnostics","status":"ok"}`.
 2. The dashboard redirects to `/login` without a signed session, accepts the
    configured administrator credentials, and signs out by clearing the session.
 3. The Firewall rule returns HTTP 429 when its threshold is exceeded.
@@ -249,7 +249,7 @@ observations for seven days. Desktop reports contain only:
   attempt/event identifiers;
 - allowlisted DNS/TCP/TLS error class, HTTP status, retryability, duration, and
   consecutive-failure count;
-- app, OpenWork server, engine, and platform versions;
+- app, Micx server, engine, and platform versions;
 - an optional server request identifier for correlation.
 
 Den replaces the authenticated organization ID and the desktop's random
@@ -283,19 +283,19 @@ One run uses a UUID correlation header and stops at the first failed layer:
 Every reached endpoint returns a diagnostic reference and retains a redacted
 exchange under the run ID. If Den reports DNS, TLS, connection, or timeout
 failure and the public dashboard has no matching row, the request failed before
-HTTP reached OpenWork. If a row exists, its response status and next missing
+HTTP reached Micx. If a row exists, its response status and next missing
 step narrow the issue to proxy authentication, header stripping, redirects,
 OAuth, or MCP.
 
 For a customer-hosted Den, an organization admin enters the same synthetic
 secret in **Org settings → Den egress diagnostic**. Den encrypts it and never
-returns it to the browser. Den uses `https://diagnostic.openworklabs.com` by
+returns it to the browser. Den uses `https://diagnostic.micxlabs.com` by
 default; set `DEN_DIAGNOSTICS_ORIGIN` only to override that fixed destination.
 `DEN_DIAGNOSTICS_BEARER_TOKEN` remains an optional deployment bootstrap
 fallback:
 
 ```dotenv
-DEN_DIAGNOSTICS_ORIGIN=https://diagnostic.openworklabs.com
+DEN_DIAGNOSTICS_ORIGIN=https://diagnostic.micxlabs.com
 DEN_DIAGNOSTICS_BEARER_TOKEN=<same synthetic diagnostic token>
 ```
 

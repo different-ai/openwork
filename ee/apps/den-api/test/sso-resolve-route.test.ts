@@ -2,12 +2,12 @@ import { beforeAll, beforeEach, expect, mock, test } from "bun:test"
 import { Hono } from "hono"
 
 function seedRequiredEnv() {
-  process.env.DATABASE_URL = process.env.DATABASE_URL ?? "mysql://root:password@127.0.0.1:3306/openwork_test"
+  process.env.DATABASE_URL = process.env.DATABASE_URL ?? "mysql://root:password@127.0.0.1:3306/micx_test"
   process.env.DEN_DB_ENCRYPTION_KEY = process.env.DEN_DB_ENCRYPTION_KEY ?? "x".repeat(32)
   process.env.BETTER_AUTH_SECRET = process.env.BETTER_AUTH_SECRET ?? "y".repeat(32)
   process.env.BETTER_AUTH_URL = process.env.BETTER_AUTH_URL ?? "http://127.0.0.1:8790"
   process.env.DEN_ORG_MODE = "multi_org"
-  process.env.OPENWORK_DEV_MODE = "0"
+  process.env.MICX_DEV_MODE = "0"
 }
 
 type EnterpriseRequirement = {
@@ -77,7 +77,7 @@ test("SSO resolve returns a uniform 200 domain-routed SSO envelope", async () =>
     organizationId: "organization_sso_resolve_test",
     organizationSlug: "verified-sso",
     signInPath: "/sso/verified-sso",
-    ssoProviderId: "openwork-sso-organization_sso_resolve_test",
+    ssoProviderId: "micx-sso-organization_sso_resolve_test",
     hasSso: true,
   }
 
@@ -161,7 +161,7 @@ test("login-options returns SSO as the first step for verified SSO domains", asy
     organizationId: "organization_sso_invite_test",
     organizationSlug: "invite-sso",
     signInPath: "/sso/invite-sso",
-    ssoProviderId: "openwork-sso-organization_sso_invite_test",
+    ssoProviderId: "micx-sso-organization_sso_invite_test",
     hasSso: true,
   }
 

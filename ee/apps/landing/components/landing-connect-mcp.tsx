@@ -22,14 +22,14 @@ import {
   OPENCODE_RECONNECT_COMMAND,
   OPENCODE_SNIPPET,
   VS_CODE_COMMAND,
-} from "./openwork-connect-installer-config";
-import type { OpenWorkConnectClientId } from "./openwork-connect-installer-config";
+} from "./micx-connect-installer-config";
+import type { MicxConnectClientId } from "./micx-connect-installer-config";
 
-const DOCS_URL = "https://openworklabs.com/docs/cloud/run-in-the-cloud/cloud-mcp#connect-mcp-install-opencode";
-const SIGNUP_URL = "https://app.openworklabs.com?mode=sign-up";
+const DOCS_URL = "https://micxlabs.com/docs/cloud/run-in-the-cloud/cloud-mcp#connect-mcp-install-opencode";
+const SIGNUP_URL = "https://app.micxlabs.com?mode=sign-up";
 
 type CopyMethod = "clipboard" | "execCommand" | "none";
-type ClientId = OpenWorkConnectClientId;
+type ClientId = MicxConnectClientId;
 
 type ClientInstall = {
   id: ClientId;
@@ -70,7 +70,7 @@ const CLIENT_INSTALLS: Record<ClientId, ClientInstall> = {
     label: "Codex",
     eyebrow: "Codex desktop, CLI, and IDE",
     copyText: CODEX_COMMAND,
-    helper: "Add OpenWork once, then sign in with Codex's MCP login command.",
+    helper: "Add Micx once, then sign in with Codex's MCP login command.",
     authText: CODEX_LOGIN_COMMAND,
     reconnectText: CODEX_RECONNECT_COMMAND
   },
@@ -234,14 +234,14 @@ export function LandingConnectMcp() {
       <div className="mb-10">
         <div className="mb-4 flex items-center gap-2.5 text-[11px] font-semibold uppercase tracking-[0.2em] text-gray-400">
           <Plug size={18} />
-          OpenWork Connect
+          Micx Connect
         </div>
         <h2 className="max-w-3xl text-3xl font-medium leading-[1.15] tracking-tight md:text-4xl lg:text-5xl">
-          Already doing it in your agent?<br />Add it to OpenWork. Share it with everyone.
+          Already doing it in your agent?<br />Add it to Micx. Share it with everyone.
         </h2>
         <p className="mt-5 max-w-3xl text-[16px] leading-7 text-gray-600 md:text-lg md:leading-8">
           Skills and MCPs move in as-is — same SKILL.md format, same server URLs. Share once,
-          and your whole team runs them in OpenWork — or from their own agent.
+          and your whole team runs them in Micx — or from their own agent.
         </p>
       </div>
 
@@ -261,7 +261,7 @@ export function LandingConnectMcp() {
 
           <div className="flex flex-1 flex-col gap-4 p-4 font-mono text-[12px] leading-6 text-gray-100 md:p-5">
             <div>
-              <span className="text-cyan-300">❯</span> share my skills and MCPs with my OpenWork org
+              <span className="text-cyan-300">❯</span> share my skills and MCPs with my Micx org
             </div>
 
             <div className="space-y-2">
@@ -302,7 +302,7 @@ export function LandingConnectMcp() {
                 <div className="h-2.5 w-2.5 rounded-full bg-yellow-400/70" />
                 <div className="h-2.5 w-2.5 rounded-full bg-green-400/70" />
               </div>
-              <div className="text-[12px] font-medium text-gray-500">OpenWork</div>
+              <div className="text-[12px] font-medium text-gray-500">Micx</div>
             </div>
             <div className="text-[11px] text-gray-400">Your teammate&apos;s view</div>
           </div>
@@ -359,7 +359,7 @@ export function LandingConnectMcp() {
         <div className="min-w-0">
           <div
             role="tablist"
-            aria-label="OpenWork MCP client install options"
+            aria-label="Micx MCP client install options"
             className="landing-chip mb-4 flex flex-nowrap gap-1 overflow-x-auto rounded-full p-1"
           >
             {CLIENT_ORDER.map((clientId) => {
@@ -489,7 +489,7 @@ export function LandingConnectMcp() {
                       ) : null}
                       <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                         <p className="text-[12px] leading-5 text-gray-500">
-                          Works with your OpenWork account —{" "}
+                          Works with your Micx account —{" "}
                           <a
                             href={SIGNUP_URL}
                             target="_blank"
@@ -502,7 +502,7 @@ export function LandingConnectMcp() {
                         </p>
                         <button
                           type="button"
-                          aria-label="Copy the OpenWork MCP install command"
+                          aria-label="Copy the Micx MCP install command"
                           onClick={() => {
                             void copyInstall(install);
                           }}
@@ -592,7 +592,7 @@ export function LandingConnectMcp() {
             </code>
             <button
               type="button"
-              aria-label="Copy the OpenWork MCP server URL"
+              aria-label="Copy the Micx MCP server URL"
               onClick={() => {
                 void copyServerUrl();
               }}
@@ -607,7 +607,7 @@ export function LandingConnectMcp() {
       <div className="mt-8 flex flex-col gap-3 border-t border-gray-100 pt-5 text-[13px] leading-6 text-gray-600 sm:flex-row sm:items-center sm:justify-between">
         <p>
           Verified in OpenCode. Codex and other setup guides require remote Streamable HTTP MCP and OAuth
-          support — your agent signs in with your OpenWork account, and access is scoped by org membership, roles, policies, and exposure allowlists.
+          support — your agent signs in with your Micx account, and access is scoped by org membership, roles, policies, and exposure allowlists.
         </p>
         <a
           href={DOCS_URL}

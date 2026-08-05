@@ -1,12 +1,12 @@
 import Link from "next/link";
 import { AppFeedbackForm, type AppFeedbackPrefill } from "../../components/app-feedback-form";
-import { OpenWorkMark } from "../../components/openwork-mark";
+import { MicxMark } from "../../components/micx-mark";
 import { SiteFooter } from "../../components/site-footer";
 import { baseOpenGraph } from "../../lib/seo";
 
 export const metadata = {
-  title: "OpenWork — Feedback",
-  description: "Send app feedback to the OpenWork team with prefilled runtime context.",
+  title: "Micx — Feedback",
+  description: "Send app feedback to the Micx team with prefilled runtime context.",
   alternates: {
     canonical: "/feedback"
   },
@@ -16,7 +16,7 @@ export const metadata = {
   },
   openGraph: {
     ...baseOpenGraph,
-    url: "https://openworklabs.com/feedback"
+    url: "https://micxlabs.com/feedback"
   }
 };
 
@@ -38,11 +38,11 @@ function readSearchParam(
 export default async function FeedbackPage({ searchParams }: PageProps) {
   const resolvedSearchParams = await searchParams;
   const prefill: AppFeedbackPrefill = {
-    source: readSearchParam(resolvedSearchParams, "source") || "openwork-app",
+    source: readSearchParam(resolvedSearchParams, "source") || "micx-app",
     entrypoint: readSearchParam(resolvedSearchParams, "entrypoint") || "unknown",
     deployment: readSearchParam(resolvedSearchParams, "deployment") || "desktop",
     appVersion: readSearchParam(resolvedSearchParams, "appVersion"),
-    openworkServerVersion: readSearchParam(resolvedSearchParams, "openworkServerVersion"),
+    micxServerVersion: readSearchParam(resolvedSearchParams, "micxServerVersion"),
     opencodeVersion: readSearchParam(resolvedSearchParams, "opencodeVersion"),
     osName: readSearchParam(resolvedSearchParams, "osName"),
     osVersion: readSearchParam(resolvedSearchParams, "osVersion"),
@@ -54,9 +54,9 @@ export default async function FeedbackPage({ searchParams }: PageProps) {
       <div className="mx-auto max-w-5xl px-6 pb-20 pt-6 md:px-8 md:pt-8">
         <header className="mb-10 flex items-center justify-between gap-4">
           <Link href="/" className="inline-flex items-center gap-3 text-[#011627]">
-            <OpenWorkMark className="h-[30px] w-[38px]" />
+            <MicxMark className="h-[30px] w-[38px]" />
             <span className="text-[1.2rem] font-semibold tracking-tight lowercase">
-              OpenWork
+              Micx
             </span>
           </Link>
           <Link

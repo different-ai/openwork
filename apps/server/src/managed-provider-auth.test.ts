@@ -58,7 +58,7 @@ describe("managed provider auth delivery", () => {
 
   beforeEach(async () => {
     resetManagedProviderAuthCache();
-    dir = await mkdtemp(join(tmpdir(), "openwork-provider-auth-"));
+    dir = await mkdtemp(join(tmpdir(), "micx-provider-auth-"));
   });
 
   test("delivers a stored credential to the engine auth API", async () => {

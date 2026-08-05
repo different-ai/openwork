@@ -1,11 +1,11 @@
-import { createDenTypeId } from "@openwork-ee/utils/typeid"
+import { createDenTypeId } from "@micx-ee/utils/typeid"
 import { afterAll, beforeAll, expect, test } from "bun:test"
 
 // TASK-2 [B4]: the cross-user access regression test — the merge gate. Requires a local
-// MySQL with the memory schema pushed (pnpm --filter @openwork-ee/den-db db:push).
+// MySQL with the memory schema pushed (pnpm --filter @micx-ee/den-db db:push).
 
 function seedRequiredEnv() {
-  process.env.DATABASE_URL = process.env.DATABASE_URL ?? "mysql://root:password@127.0.0.1:3306/openwork_test"
+  process.env.DATABASE_URL = process.env.DATABASE_URL ?? "mysql://root:password@127.0.0.1:3306/micx_test"
   process.env.DEN_DB_ENCRYPTION_KEY = process.env.DEN_DB_ENCRYPTION_KEY ?? "x".repeat(32)
   process.env.BETTER_AUTH_SECRET = process.env.BETTER_AUTH_SECRET ?? "y".repeat(32)
   process.env.BETTER_AUTH_URL = process.env.BETTER_AUTH_URL ?? "http://127.0.0.1:8790"
@@ -13,8 +13,8 @@ function seedRequiredEnv() {
 
 let app: typeof import("../src/app.js").default
 let db: typeof import("../src/db.js").db
-let schema: typeof import("@openwork-ee/den-db/schema")
-let drizzle: typeof import("@openwork-ee/den-db/drizzle")
+let schema: typeof import("@micx-ee/den-db/schema")
+let drizzle: typeof import("@micx-ee/den-db/drizzle")
 let session: typeof import("../src/session.js")
 
 const alice = createDenTypeId("user")
@@ -27,8 +27,8 @@ beforeAll(async () => {
   const [appMod, dbMod, schemaMod, drizzleMod, sessionMod] = await Promise.all([
     import("../src/app.js"),
     import("../src/db.js"),
-    import("@openwork-ee/den-db/schema"),
-    import("@openwork-ee/den-db/drizzle"),
+    import("@micx-ee/den-db/schema"),
+    import("@micx-ee/den-db/drizzle"),
     import("../src/session.js"),
   ])
   app = appMod.default

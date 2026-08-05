@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto"
-import { and, desc, eq, gt, isNull } from "@openwork-ee/den-db/drizzle"
-import { AuthSessionTable, AuthUserTable, DaytonaSandboxTable, DesktopHandoffGrantTable, WorkerTable } from "@openwork-ee/den-db/schema"
-import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
+import { and, desc, eq, gt, isNull } from "@micx-ee/den-db/drizzle"
+import { AuthSessionTable, AuthUserTable, DaytonaSandboxTable, DesktopHandoffGrantTable, WorkerTable } from "@micx-ee/den-db/schema"
+import { normalizeDenTypeId } from "@micx-ee/utils/typeid"
 import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
@@ -16,8 +16,8 @@ import { CLOUD_INSTANCE_BACKEND } from "../../workers/cloud-constants.js"
 
 const createGrantSchema = z.object({
   next: z.string().trim().max(128).optional().describe("Optional continuation hint for handoff clients."),
-  desktopScheme: z.string().trim().max(32).optional().describe("Optional desktop URL scheme to use when building the OpenWork deep link."),
-  returnUrl: z.string().trim().max(2048).optional().describe("Optional HTTPS OpenWork Cloud web return URL. Accepted only for multi-organization Cloud instances after server-side origin validation."),
+  desktopScheme: z.string().trim().max(32).optional().describe("Optional desktop URL scheme to use when building the Micx deep link."),
+  returnUrl: z.string().trim().max(2048).optional().describe("Optional HTTPS Micx Cloud web return URL. Accepted only for multi-organization Cloud instances after server-side origin validation."),
 }).meta({ ref: "DesktopHandoffGrantCreateBody" })
 
 const exchangeGrantSchema = z.object({
@@ -31,7 +31,7 @@ const statusGrantSchema = z.object({
 const desktopHandoffGrantResponseSchema = z.object({
   grant: z.string(),
   expiresAt: z.string().datetime(),
-  openworkUrl: z.string().url(),
+  micxUrl: z.string().url(),
   returnUrl: z.string().url().optional(),
 }).meta({ ref: "DesktopHandoffGrantResponse" })
 
@@ -120,8 +120,8 @@ function isWebAppHost(hostname: string) {
     return true
   }
 
-  return normalized === "app.openworklabs.com"
-    || normalized === "app.openwork.software"
+  return normalized === "app.micxlabs.com"
+    || normalized === "app.micx.software"
     || normalized.startsWith("app.")
     // Cloud Run hostnames serve the den-web frontend, which only exposes the
     // Den API behind its /api/den proxy path (see #1807).
@@ -183,15 +183,15 @@ export function resolveDesktopDenBaseUrl(request: Request) {
   return origin
 }
 
-function buildOpenworkDeepLink(input: {
+function buildMicxDeepLink(input: {
   scheme?: string | null
   grant: string
   denBaseUrl: string
 }) {
-  const requestedScheme = input.scheme?.trim() || "openwork"
+  const requestedScheme = input.scheme?.trim() || "micx"
   const scheme = /^[a-z][a-z0-9+.-]*$/i.test(requestedScheme)
     ? requestedScheme
-    : "openwork"
+    : "micx"
   const url = new URL(`${scheme}://den-auth`)
   url.searchParams.set("grant", input.grant)
   url.searchParams.set("denBaseUrl", input.denBaseUrl)
@@ -400,7 +400,7 @@ export function registerDesktopAuthRoutes<T extends { Variables: AuthContextVari
       hide: true,
       tags: ["Authentication"],
       summary: "Create desktop handoff grant",
-      description: "Creates a short-lived handoff grant for a signed-in web user. Desktop clients receive an OpenWork deep link; approved Cloud web clients also receive a validated return URL.",
+      description: "Creates a short-lived handoff grant for a signed-in web user. Desktop clients receive an Micx deep link; approved Cloud web clients also receive a validated return URL.",
       responses: {
         200: jsonResponse("Desktop handoff grant created successfully.", desktopHandoffGrantResponseSchema),
         400: jsonResponse("The handoff request body or Cloud web return URL was invalid.", createGrantBadRequestSchema),
@@ -446,8 +446,8 @@ export function registerDesktopAuthRoutes<T extends { Variables: AuthContextVari
     return c.json({
       grant,
       expiresAt: expiresAt.toISOString(),
-      openworkUrl: buildOpenworkDeepLink({
-        scheme: input.desktopScheme || "openwork",
+      micxUrl: buildMicxDeepLink({
+        scheme: input.desktopScheme || "micx",
         grant,
         denBaseUrl,
       }),

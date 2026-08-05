@@ -1,10 +1,10 @@
 import { StreamableHTTPTransport } from "@hono/mcp"
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
-import { createDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
+import { createDenTypeId, type DenTypeId } from "@micx-ee/utils/typeid"
 import { afterAll, beforeAll, describe, expect, mock, test } from "bun:test"
 import { Hono } from "hono"
 
-process.env.DATABASE_URL = process.env.DATABASE_URL ?? "mysql://root:password@127.0.0.1:3306/openwork_test_mcp_edit"
+process.env.DATABASE_URL = process.env.DATABASE_URL ?? "mysql://root:password@127.0.0.1:3306/micx_test_mcp_edit"
 process.env.DEN_DB_ENCRYPTION_KEY = process.env.DEN_DB_ENCRYPTION_KEY ?? "local-dev-db-encryption-key-please-change-1234567890"
 process.env.BETTER_AUTH_SECRET = process.env.BETTER_AUTH_SECRET ?? "local-dev-secret-not-for-production-use!!"
 process.env.BETTER_AUTH_URL = process.env.BETTER_AUTH_URL ?? "http://127.0.0.1:8790"
@@ -13,8 +13,8 @@ process.env.DEN_ALLOW_PRIVATE_MCP_URLS = "1"
 
 let app: typeof import("../src/app.js").default
 let db: typeof import("../src/db.js").db
-let schema: typeof import("@openwork-ee/den-db/schema")
-let drizzle: typeof import("@openwork-ee/den-db/drizzle")
+let schema: typeof import("@micx-ee/den-db/schema")
+let drizzle: typeof import("@micx-ee/den-db/drizzle")
 let session: typeof import("../src/session.js")
 let connections: typeof import("../src/capability-sources/external-mcp-connections.js")
 let genericOAuth: typeof import("../src/capability-sources/generic-oauth.js")
@@ -62,7 +62,7 @@ beforeAll(async () => {
   })
   fakeServer = Bun.serve({ port: 0, fetch: fakeMcp.fetch })
 
-  const realDb = (await import("@openwork-ee/den-db")).createDenDb({
+  const realDb = (await import("@micx-ee/den-db")).createDenDb({
     databaseUrl: process.env.DATABASE_URL ?? "",
     mode: "mysql",
   }).db
@@ -71,8 +71,8 @@ beforeAll(async () => {
   const [appMod, dbMod, schemaMod, drizzleMod, sessionMod, connectionsMod, genericOAuthMod, oauthCredentialsMod, enterprisePersistenceMod] = await Promise.all([
     import("../src/app.js"),
     import("../src/db.js"),
-    import("@openwork-ee/den-db/schema"),
-    import("@openwork-ee/den-db/drizzle"),
+    import("@micx-ee/den-db/schema"),
+    import("@micx-ee/den-db/drizzle"),
     import("../src/session.js"),
     import("../src/capability-sources/external-mcp-connections.js"),
     import("../src/capability-sources/generic-oauth.js"),

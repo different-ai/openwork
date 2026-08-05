@@ -1,8 +1,8 @@
 import { LegalPage } from "../../components/legal-page";
 
 export const metadata = {
-  title: "OpenWork — Terms of Use",
-  description: "Terms of use for Different AI, doing business as OpenWork.",
+  title: "Micx — Terms of Use",
+  description: "Terms of use for Different AI, doing business as Micx.",
   alternates: {
     canonical: "/terms"
   }

@@ -1,80 +1,80 @@
 import { z } from "zod"
 
-export const OPENWORK_AFFORDANCE_SCHEMA_VERSION = 1
+export const MICX_AFFORDANCE_SCHEMA_VERSION = 1
 
-export const openworkAffordanceKindSchema = z.enum(["query", "command", "guidance"])
-export type OpenworkAffordanceKind = z.infer<typeof openworkAffordanceKindSchema>
+export const micxAffordanceKindSchema = z.enum(["query", "command", "guidance"])
+export type MicxAffordanceKind = z.infer<typeof micxAffordanceKindSchema>
 
-export const openworkProviderKindSchema = z.enum(["builtin", "extension", "mcp", "connect"])
-export type OpenworkProviderKind = z.infer<typeof openworkProviderKindSchema>
+export const micxProviderKindSchema = z.enum(["builtin", "extension", "mcp", "connect"])
+export type MicxProviderKind = z.infer<typeof micxProviderKindSchema>
 
-export const openworkProviderRefSchema = z.object({
+export const micxProviderRefSchema = z.object({
   id: z.string().trim().min(1),
-  kind: openworkProviderKindSchema,
+  kind: micxProviderKindSchema,
 })
-export type OpenworkProviderRef = z.infer<typeof openworkProviderRefSchema>
+export type MicxProviderRef = z.infer<typeof micxProviderRefSchema>
 
-export const openworkAffordanceArgumentSchema = z.object({
+export const micxAffordanceArgumentSchema = z.object({
   name: z.string().trim().min(1),
   type: z.enum(["string", "number", "boolean", "object", "array", "unknown"]),
   required: z.boolean(),
   description: z.string().trim().min(1).optional(),
 })
-export type OpenworkAffordanceArgument = z.infer<typeof openworkAffordanceArgumentSchema>
+export type MicxAffordanceArgument = z.infer<typeof micxAffordanceArgumentSchema>
 
-export const openworkAffordanceEffectsSchema = z.object({
+export const micxAffordanceEffectsSchema = z.object({
   data: z.enum(["none", "read", "write"]),
   ui: z.enum(["none", "focus", "navigate", "layout", "dialog"]),
   external: z.boolean(),
 })
-export type OpenworkAffordanceEffects = z.infer<typeof openworkAffordanceEffectsSchema>
+export type MicxAffordanceEffects = z.infer<typeof micxAffordanceEffectsSchema>
 
-export const openworkAffordanceAvailabilitySchema = z.object({
+export const micxAffordanceAvailabilitySchema = z.object({
   enabled: z.boolean(),
   reason: z.string().trim().min(1).optional(),
 })
-export type OpenworkAffordanceAvailability = z.infer<typeof openworkAffordanceAvailabilitySchema>
+export type MicxAffordanceAvailability = z.infer<typeof micxAffordanceAvailabilitySchema>
 
-export const openworkAffordanceExecutorSchema = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("openwork") }),
+export const micxAffordanceExecutorSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("micx") }),
   z.object({
     kind: z.literal("tool"),
     tool: z.string().trim().min(1),
   }),
 ])
-export type OpenworkAffordanceExecutor = z.infer<typeof openworkAffordanceExecutorSchema>
+export type MicxAffordanceExecutor = z.infer<typeof micxAffordanceExecutorSchema>
 
-export const openworkAffordanceDescriptorSchema = z.object({
+export const micxAffordanceDescriptorSchema = z.object({
   id: z.string().trim().min(1),
-  kind: openworkAffordanceKindSchema,
+  kind: micxAffordanceKindSchema,
   title: z.string().trim().min(1),
   description: z.string().trim().min(1),
-  provider: openworkProviderRefSchema,
-  arguments: z.array(openworkAffordanceArgumentSchema),
-  effects: openworkAffordanceEffectsSchema,
+  provider: micxProviderRefSchema,
+  arguments: z.array(micxAffordanceArgumentSchema),
+  effects: micxAffordanceEffectsSchema,
   confirmation: z.enum(["never", "destructive", "always"]),
-  availability: openworkAffordanceAvailabilitySchema,
-  executor: openworkAffordanceExecutorSchema,
+  availability: micxAffordanceAvailabilitySchema,
+  executor: micxAffordanceExecutorSchema,
 })
-export type OpenworkAffordanceDescriptor = z.infer<typeof openworkAffordanceDescriptorSchema>
+export type MicxAffordanceDescriptor = z.infer<typeof micxAffordanceDescriptorSchema>
 
-export const openworkAffordanceRequestSchema = z.object({
+export const micxAffordanceRequestSchema = z.object({
   id: z.string().trim().min(1),
   args: z.record(z.string(), z.unknown()).optional(),
   expectedRevision: z.number().int().nonnegative().optional(),
   actor: z.string().trim().min(1).optional(),
 })
-export type OpenworkAffordanceRequest = z.infer<typeof openworkAffordanceRequestSchema>
+export type MicxAffordanceRequest = z.infer<typeof micxAffordanceRequestSchema>
 
-const openworkAffordanceSuccessSchema = z.object({
+const micxAffordanceSuccessSchema = z.object({
   ok: z.literal(true),
   id: z.string(),
   result: z.unknown().optional(),
   revision: z.number().int().nonnegative().optional(),
-  effects: openworkAffordanceEffectsSchema,
+  effects: micxAffordanceEffectsSchema,
 })
 
-const openworkAffordanceFailureSchema = z.object({
+const micxAffordanceFailureSchema = z.object({
   ok: z.literal(false),
   id: z.string(),
   error: z.string(),
@@ -82,8 +82,8 @@ const openworkAffordanceFailureSchema = z.object({
   revision: z.number().int().nonnegative().optional(),
 })
 
-export const openworkAffordanceResultSchema = z.discriminatedUnion("ok", [
-  openworkAffordanceSuccessSchema,
-  openworkAffordanceFailureSchema,
+export const micxAffordanceResultSchema = z.discriminatedUnion("ok", [
+  micxAffordanceSuccessSchema,
+  micxAffordanceFailureSchema,
 ])
-export type OpenworkAffordanceResult = z.infer<typeof openworkAffordanceResultSchema>
+export type MicxAffordanceResult = z.infer<typeof micxAffordanceResultSchema>

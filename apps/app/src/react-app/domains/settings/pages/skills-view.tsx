@@ -34,7 +34,7 @@ import {
 } from "@/react-app/domains/workspace/modal-styles";
 import { Button } from "@/components/ui/button";
 import { ConfirmModal } from "@/react-app/design-system/modals/confirm-modal";
-import { isOpenworkProvidedSkill } from "../extension-items";
+import { isMicxProvidedSkill } from "../extension-items";
 
 type InstallResult = { ok: boolean; message: string };
 type SkillsFilter = "all" | "installed";
@@ -385,7 +385,7 @@ export function SkillsView(props: SkillsViewProps) {
                       <div className="min-w-0 flex-1">
                         <div className="flex flex-wrap items-center gap-2">
                           <h4 className="truncate text-[14px] font-semibold text-dls-text">{skill.name}</h4>
-                          {isOpenworkProvidedSkill(skill) ? <span className={tagClass}>OpenWork</span> : null}
+                          {isMicxProvidedSkill(skill) ? <span className={tagClass}>Micx</span> : null}
                         </div>
                         <p className="mt-2 line-clamp-2 text-[13px] leading-relaxed text-dls-secondary">
                           {skill.description || t("skills.no_description")}

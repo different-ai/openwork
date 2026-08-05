@@ -1,19 +1,19 @@
 {
-  "name": "@openwork-ee/enterprise-mock-lab",
+  "name": "@micx-ee/enterprise-mock-lab",
   "private": true,
   "type": "module",
   "scripts": {
     "build": "pnpm run mock-server:build && tsc -p tsconfig.json",
     "check": "pnpm run build && pnpm run test:unit",
     "dev": "NODE_OPTIONS=--conditions=development tsx watch --include '../../../packages/enterprise-mcp-mock-server/src/**/*.ts' src/server.ts",
-    "mock-server:build": "pnpm --filter @openwork/enterprise-mcp-mock-server build",
+    "mock-server:build": "pnpm --filter @micx/enterprise-mcp-mock-server build",
     "start": "node dist/server.js",
     "test": "pnpm run mock-server:build && pnpm run test:unit",
     "test:unit": "bun test"
   },
   "dependencies": {
     "@hono/node-server": "^1.13.8",
-    "@openwork/enterprise-mcp-mock-server": "workspace:*",
+    "@micx/enterprise-mcp-mock-server": "workspace:*",
     "hono": "4.12.27",
     "zod": "^4.3.6"
   },

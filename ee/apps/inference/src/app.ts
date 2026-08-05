@@ -2,7 +2,7 @@ import "./load-env.js";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { sql } from "@openwork-ee/den-db/drizzle";
+import { sql } from "@micx-ee/den-db/drizzle";
 import { sentry } from "@sentry/hono/node";
 import { cors } from "hono/cors";
 import { Hono } from "hono";
@@ -18,7 +18,7 @@ import { registerWebhookRoutes } from "./webhooks.js";
 const srcDir = path.dirname(fileURLToPath(import.meta.url));
 const modelsApiJsonPath = path.resolve(srcDir, "..", "models-site", "models", "api.json");
 const isVercelRuntime = Boolean(process.env.VERCEL || process.env.VERCEL_ENV || process.env.VERCEL_URL);
-const shouldServeLocalModelCatalog = !isVercelRuntime && (process.env.NODE_ENV !== "production" || process.env.OPENWORK_DEV_MODE === "1");
+const shouldServeLocalModelCatalog = !isVercelRuntime && (process.env.NODE_ENV !== "production" || process.env.MICX_DEV_MODE === "1");
 
 const app = new Hono();
 

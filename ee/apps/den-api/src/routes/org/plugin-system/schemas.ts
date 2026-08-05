@@ -14,7 +14,7 @@ import {
   marketplaceStatusValues,
   membershipSourceValues,
   pluginStatusValues,
-} from "@openwork-ee/den-db/schema"
+} from "@micx-ee/den-db/schema"
 import { z } from "zod"
 import { denTypeIdSchema } from "../../../openapi.js"
 import { idParamSchema } from "../shared.js"
@@ -72,8 +72,8 @@ export const connectorSyncStatusSchema = z.enum(connectorSyncStatusValues)
 export const connectorSyncEventTypeSchema = z.enum(connectorSyncEventTypeValues)
 export const githubWebhookEventSchema = z.enum(githubWebhookEventValues)
 export const extensionSourceFormatSchema = z.enum([
-  "openwork-builtin",
-  "openwork-extension-manifest",
+  "micx-builtin",
+  "micx-extension-manifest",
   "claude-plugin",
   "opencode-plugin",
   "mcp-directory",
@@ -617,7 +617,7 @@ export const extensionManifestSchema = z.object({
   contributions: z.array(jsonObjectSchema).optional(),
   setup: jsonObjectSchema.optional(),
   lifecycle: jsonObjectSchema.optional(),
-}).passthrough().meta({ ref: "OpenWorkExtensionManifest" })
+}).passthrough().meta({ ref: "MicxExtensionManifest" })
 
 export const pluginExtensionSchema = z.object({
   id: pluginIdSchema,

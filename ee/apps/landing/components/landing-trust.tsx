@@ -69,7 +69,7 @@ export function LandingTrustOverview(props: SharedProps) {
               Security &amp; Data Privacy
             </h1>
             <Prose>
-              OpenWork enterprise runs on your servers. We don&apos;t see your code, your API
+              Micx enterprise runs on your servers. We don&apos;t see your code, your API
               keys, or your prompts. There is no hosted control plane and no
               phone-home telemetry.
             </Prose>
@@ -120,7 +120,7 @@ export function LandingTrustOverview(props: SharedProps) {
           <section className="mt-14">
             <SectionHeading id="deployment">Deployment model</SectionHeading>
             <Prose>
-              OpenWork ships as a desktop app that you host on your own servers. You
+              Micx ships as a desktop app that you host on your own servers. You
               bring your own LLM gateway and your own auth stack. Traffic between
               your users and their LLM provider goes direct; we don&apos;t sit in the
               middle.
@@ -133,7 +133,7 @@ export function LandingTrustOverview(props: SharedProps) {
               </Bullet>
               <Bullet>
                 <strong>LLM gateway</strong> is your choice (LiteLLM, Cloudflare AI
-                Gateway, etc.). OpenWork doesn&apos;t proxy, store, or log API
+                Gateway, etc.). Micx doesn&apos;t proxy, store, or log API
                 traffic.
               </Bullet>
               <Bullet>
@@ -193,7 +193,7 @@ export function LandingTrustOverview(props: SharedProps) {
             </Prose>
             <ul className="mt-4 space-y-2.5 text-[14px] leading-relaxed text-slate-600">
               <Bullet>
-                OpenWork doesn&apos;t impose a data region. You decide where things
+                Micx doesn&apos;t impose a data region. You decide where things
                 live.
               </Bullet>
               <Bullet>
@@ -207,7 +207,7 @@ export function LandingTrustOverview(props: SharedProps) {
           <section className="mt-14">
             <SectionHeading id="subprocessors">Subprocessors</SectionHeading>
             <Prose>
-              These vendors apply to the OpenWork website and cloud service only.
+              These vendors apply to the Micx website and cloud service only.
               If you self-host, none of them touch your environment.
             </Prose>
             <div className="mt-4 overflow-x-auto rounded-xl border border-slate-200/70">
@@ -276,7 +276,7 @@ export function LandingTrustOverview(props: SharedProps) {
             <div className="mt-4 text-[13px] text-slate-500">
               See our{" "}
               <a
-                href="https://github.com/different-ai/openwork/blob/dev/SECURITY.md"
+                href="https://github.com/different-ai/micx/blob/dev/SECURITY.md"
                 target="_blank"
                 rel="noreferrer"
                 className="underline decoration-slate-300 underline-offset-2 hover:text-[#011627]"

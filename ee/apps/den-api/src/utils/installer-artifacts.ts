@@ -8,7 +8,7 @@ export type ConfiguredInstallerArtifact = {
   size: number
 }
 
-export const DEFAULT_INSTALLER_RELEASE_REPO = "different-ai/openwork"
+export const DEFAULT_INSTALLER_RELEASE_REPO = "different-ai/micx"
 
 export function installerReleaseAssetUrl(
   fileName: string,
@@ -32,28 +32,28 @@ export function installerLatestReleaseAssetUrl(
 export function desktopReleaseAssetName(platform: string, releaseTag: string) {
   const version = releaseTag.startsWith("v") ? releaseTag.slice(1) : releaseTag
   if (platform === "mac-arm64" || platform === "mac-x64") {
-    return `openwork-${platform}-${version}.dmg`
+    return `micx-${platform}-${version}.dmg`
   }
   if (platform === "win-x64") {
-    return `openwork-${platform}-${version}.exe`
+    return `micx-${platform}-${version}.exe`
   }
   if (platform === "linux-x64") {
-    return `openwork-linux-x86_64-${version}.AppImage`
+    return `micx-linux-x86_64-${version}.AppImage`
   }
   if (platform === "linux-arm64") {
-    return `openwork-linux-arm64-${version}.AppImage`
+    return `micx-linux-arm64-${version}.AppImage`
   }
   return null
 }
 
 export function enterpriseDesktopReleaseAssetName(platform: string, releaseTag: string) {
   const publicName = desktopReleaseAssetName(platform, releaseTag)
-  return publicName?.replace(/^openwork-/, "openwork-enterprise-") ?? null
+  return publicName?.replace(/^micx-/, "micx-enterprise-") ?? null
 }
 
 export function cloudDesktopReleaseAssetName(platform: string, releaseTag: string) {
   const publicName = desktopReleaseAssetName(platform, releaseTag)
-  return publicName?.replace(/^openwork-/, "openwork-cloud-") ?? null
+  return publicName?.replace(/^micx-/, "micx-cloud-") ?? null
 }
 
 /**

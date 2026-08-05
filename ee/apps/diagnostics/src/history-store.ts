@@ -1,19 +1,19 @@
 import type { WireExchange } from "./contracts"
 import { diagnosticsRedisConfig } from "./config"
 
-const historyKey = "openwork:diagnostics:wire-history:v1"
-const historyRunsKey = "openwork:diagnostics:wire-history-runs:v1"
+const historyKey = "micx:diagnostics:wire-history:v1"
+const historyRunsKey = "micx:diagnostics:wire-history-runs:v1"
 const maximumHistory = 200
 const maximumRunHistory = 50
 const retentionSeconds = 86_400
 
 declare global {
-  var __openworkDiagnosticsLocalHistory: WireExchange[] | undefined
-  var __openworkDiagnosticsLocalRunHistory: Map<string, WireExchange[]> | undefined
+  var __micxDiagnosticsLocalHistory: WireExchange[] | undefined
+  var __micxDiagnosticsLocalRunHistory: Map<string, WireExchange[]> | undefined
 }
 
-const localHistory = globalThis.__openworkDiagnosticsLocalHistory ??= []
-const localRunHistory = globalThis.__openworkDiagnosticsLocalRunHistory ??= new Map()
+const localHistory = globalThis.__micxDiagnosticsLocalHistory ??= []
+const localRunHistory = globalThis.__micxDiagnosticsLocalRunHistory ??= new Map()
 
 function runHistoryKey(runId: string): string {
   return `${historyKey}:run:${runId}`

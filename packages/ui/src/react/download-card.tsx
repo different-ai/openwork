@@ -21,7 +21,7 @@ export type DownloadPlatformGroup = {
   options: DownloadPlatformOption[]
 }
 
-const FALLBACK_RELEASE = "https://github.com/different-ai/openwork/releases"
+const FALLBACK_RELEASE = "https://github.com/different-ai/micx/releases"
 
 const FALLBACK_INSTALLERS: DownloadCardInstallers = {
   macos: { appleSilicon: FALLBACK_RELEASE, intel: FALLBACK_RELEASE },
@@ -141,8 +141,8 @@ function DownloadLink({
       href={href}
       target={openInNewTab ? "_blank" : undefined}
       rel={openInNewTab ? "noreferrer" : undefined}
-      data-testid={testId ?? "download-openwork-link"}
-      data-download-openwork-link="true"
+      data-testid={testId ?? "download-micx-link"}
+      data-download-micx-link="true"
       data-recommended={recommended ? "true" : undefined}
       onClick={onDownload}
       className={
@@ -301,7 +301,7 @@ function groupsForInstallers(installers: DownloadCardInstallers): DownloadPlatfo
   ]
 }
 
-export function DownloadOpenWorkCard({
+export function DownloadMicxCard({
   installers,
   releaseTag,
 }: {
@@ -314,7 +314,7 @@ export function DownloadOpenWorkCard({
 
   return (
     <section
-      data-testid="download-openwork-card"
+      data-testid="download-micx-card"
       data-detected-os={detected?.os}
       data-detected-arch={detected ? detected.arch ?? "unknown" : undefined}
       data-detected-os-version={detected ? detected.osVersion ?? "unknown" : undefined}
@@ -324,7 +324,7 @@ export function DownloadOpenWorkCard({
       <div className="bg-gradient-to-b from-[#FAFBFE] to-white px-6 py-5">
         <div className="flex items-center gap-2.5">
           <DownloadIcon className="h-5 w-5 text-[#07192C]/70" />
-          <span className="text-[16px] font-semibold text-[#07192C]">Download OpenWork</span>
+          <span className="text-[16px] font-semibold text-[#07192C]">Download Micx</span>
           {tag ? (
             <span className="rounded-full bg-[#F1F4F9] px-2 py-0.5 text-[11px] font-medium text-[#5A6886]">{tag}</span>
           ) : null}

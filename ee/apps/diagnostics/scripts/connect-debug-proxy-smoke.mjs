@@ -55,10 +55,10 @@ const upstream = createServer(async (request, response) => {
   }
   if (url.pathname === "/api/den/v1/auth/desktop-handoff" && request.method === "POST") {
     observedBrowserCookie = request.headers.cookie ?? ""
-    const openworkUrl = new URL("openwork://den-auth")
-    openworkUrl.searchParams.set("grant", "one-time-smoke-grant")
-    openworkUrl.searchParams.set("denBaseUrl", `${upstreamOrigin}/api/den`)
-    return json(response, 200, { openworkUrl: openworkUrl.toString() })
+    const micxUrl = new URL("micx://den-auth")
+    micxUrl.searchParams.set("grant", "one-time-smoke-grant")
+    micxUrl.searchParams.set("denBaseUrl", `${upstreamOrigin}/api/den`)
+    return json(response, 200, { micxUrl: micxUrl.toString() })
   }
   if (url.pathname !== "/api/den/mcp/agent" || request.method !== "POST") return json(response, 404, { error: "not_found" })
   if (request.headers.authorization !== "Bearer fake-smoke-token") return json(response, 401, { error: "invalid_token" })
@@ -151,7 +151,7 @@ try {
 
   const browserPage = await fetch(`${defaultBase}?desktopAuth=1`, { headers: { accept: "text/html" } })
   const browserCookies = browserPage.headers.getSetCookie()
-  const routeCookie = browserCookies.find((cookie) => cookie.startsWith("openwork_connect_debug_route="))?.split(";", 1)[0]
+  const routeCookie = browserCookies.find((cookie) => cookie.startsWith("micx_connect_debug_route="))?.split(";", 1)[0]
   const denCookie = browserCookies.find((cookie) => cookie.startsWith("den-session="))?.split(";", 1)[0]
   assert(browserPage.ok && routeCookie && denCookie, "Browser sign-in bootstrap did not return Den HTML and both routing/session cookies.")
   const browserCookie = `${routeCookie}; ${denCookie}`
@@ -163,7 +163,7 @@ try {
     method: "POST",
   })
   const handoffPayload = await handoff.json()
-  const handoffDenBaseUrl = new URL(handoffPayload.openworkUrl).searchParams.get("denBaseUrl")
+  const handoffDenBaseUrl = new URL(handoffPayload.micxUrl).searchParams.get("denBaseUrl")
   const handoffDenUrl = new URL(handoffDenBaseUrl)
   assert(
     handoff.ok

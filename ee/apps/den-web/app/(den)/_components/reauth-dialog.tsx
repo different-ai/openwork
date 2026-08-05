@@ -28,7 +28,7 @@ function getReauthCompleteUrl(nonce: string, error = false) {
 }
 
 type ReauthCompleteMessage = {
-  type: "openwork:reauth-complete";
+  type: "micx:reauth-complete";
   nonce: string;
   error: string | null;
 };
@@ -37,7 +37,7 @@ function getReauthCompleteMessage(data: unknown): ReauthCompleteMessage | null {
   if (!data || typeof data !== "object") {
     return null;
   }
-  if (!("type" in data) || data.type !== "openwork:reauth-complete") {
+  if (!("type" in data) || data.type !== "micx:reauth-complete") {
     return null;
   }
   if (!("nonce" in data) || typeof data.nonce !== "string") {
@@ -47,7 +47,7 @@ function getReauthCompleteMessage(data: unknown): ReauthCompleteMessage | null {
   if (error !== null && typeof error !== "string") {
     return null;
   }
-  return { type: "openwork:reauth-complete", nonce: data.nonce, error };
+  return { type: "micx:reauth-complete", nonce: data.nonce, error };
 }
 
 const REAUTH_SOCIAL_PROVIDERS: readonly SocialAuthProvider[] = ["google", "github"];
@@ -239,9 +239,9 @@ export function ReauthDialog({
   }
 
   async function continueSocial(provider: SocialAuthProvider) {
-    const popup = window.open("", "openwork-reauth", "popup,width=480,height=640");
+    const popup = window.open("", "micx-reauth", "popup,width=480,height=640");
     if (!popup) {
-      setError("OpenWork could not open the sign-in window. Allow popups for OpenWork, then try again.");
+      setError("Micx could not open the sign-in window. Allow popups for Micx, then try again.");
       return;
     }
 
@@ -284,9 +284,9 @@ export function ReauthDialog({
       return;
     }
 
-    const popup = window.open("", "openwork-reauth", "popup,width=480,height=640");
+    const popup = window.open("", "micx-reauth", "popup,width=480,height=640");
     if (!popup) {
-      setError("OpenWork could not open the sign-in window. Allow popups for OpenWork, then try again.");
+      setError("Micx could not open the sign-in window. Allow popups for Micx, then try again.");
       return;
     }
 
@@ -339,7 +339,7 @@ export function ReauthDialog({
               {WORKSPACE_REAUTH_SECURITY_MESSAGE}
             </h2>
             <p className="text-[14px] leading-6 text-slate-600">
-              OpenWork retries the pending action automatically after you confirm.
+              Micx retries the pending action automatically after you confirm.
             </p>
           </div>
         </div>

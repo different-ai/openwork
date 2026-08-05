@@ -8,11 +8,11 @@ import {
 } from "../../../app/lib/den";
 import { recordInspectorEvent } from "../../../app/lib/app-inspector";
 import type {
-  OpenworkCloudMcpFailure,
-  OpenworkCloudMcpHealth,
-  OpenworkCloudMcpProviderModelContext,
-  OpenworkServerClient,
-} from "../../../app/lib/openwork-server";
+  MicxCloudMcpFailure,
+  MicxCloudMcpHealth,
+  MicxCloudMcpProviderModelContext,
+  MicxServerClient,
+} from "../../../app/lib/micx-server";
 import { unwrap } from "../../../app/lib/opencode";
 import type { Client, McpServerEntry, McpStatusMap } from "../../../app/types";
 import { attemptSilentMcpReauth } from "./mcp-silent-reauth";
@@ -22,7 +22,7 @@ import {
   readCloudMcpUserState,
 } from "./cloud-mcp-user-state";
 import {
-  runOpenworkCloudMcpReconciler,
+  runMicxCloudMcpReconciler,
   type CloudMcpClient,
 } from "./cloud-mcp-reconciler";
 
@@ -31,12 +31,12 @@ export const SESSION_MCP_MAINTENANCE_TIMEOUT_MS = 2 * 60 * 1000;
 export const CLOUD_MCP_REFRESH_MARGIN_MS = 24 * 60 * 60 * 1000;
 export const CLOUD_MCP_MAINTENANCE_RETRY_DELAYS_MS = [1_000, 3_000];
 
-type CloudMcpMaintenanceClient = CloudMcpClient & Pick<OpenworkServerClient, "listMcp">;
+type CloudMcpMaintenanceClient = CloudMcpClient & Pick<MicxServerClient, "listMcp">;
 
 const maintenanceInFlight = new Map<string, symbol>();
 
 export type CloudMcpMaintenanceIssue = Pick<
-  OpenworkCloudMcpFailure,
+  MicxCloudMcpFailure,
   "code" | "stage" | "retryable" | "recommendedAction" | "message"
 >;
 
@@ -44,7 +44,7 @@ export type CloudMcpBackgroundSyncResult =
   | {
       outcome: "ready";
       status: "synced" | "unchanged";
-      health: OpenworkCloudMcpHealth;
+      health: MicxCloudMcpHealth;
     }
   | {
       outcome: "skipped";
@@ -56,7 +56,7 @@ export type CloudMcpBackgroundSyncResult =
       outcome: "failed";
       status: "failed";
       issue: CloudMcpMaintenanceIssue;
-      health: OpenworkCloudMcpHealth | null;
+      health: MicxCloudMcpHealth | null;
     };
 
 export type SessionCloudMcpMaintenanceState = {
@@ -83,12 +83,12 @@ function genericCloudMcpMaintenanceIssue(input?: {
     stage: "engine_delivery",
     retryable: input?.retryable ?? true,
     recommendedAction: "Retry, then open Settings → Connect if the problem continues.",
-    message: input?.message ?? "OpenWork could not verify connected service tools for this workspace.",
+    message: input?.message ?? "Micx could not verify connected service tools for this workspace.",
   };
 }
 
 function failedCloudMcpBackgroundSync(input: {
-  health: OpenworkCloudMcpHealth | null;
+  health: MicxCloudMcpHealth | null;
   issue?: CloudMcpMaintenanceIssue;
   code?: string;
   message?: string;
@@ -102,12 +102,12 @@ function failedCloudMcpBackgroundSync(input: {
 }
 
 export function getSessionMcpMaintenanceTargetKey(input: {
-  client: Pick<OpenworkServerClient, "baseUrl">;
+  client: Pick<MicxServerClient, "baseUrl">;
   cloudSignedIn: boolean;
   denBaseUrl?: string | null;
   orgId?: string | null;
   workspaceId: string;
-  providerModel?: OpenworkCloudMcpProviderModelContext;
+  providerModel?: MicxCloudMcpProviderModelContext;
 }): string {
   return JSON.stringify([
     input.denBaseUrl?.trim().replace(/\/+$/, "") ?? "",
@@ -178,7 +178,7 @@ export async function syncCloudControlMcpInBackground(input: {
   now?: number;
   settings?: DenSettings;
   mintToken?: () => Promise<DenMcpToken | null>;
-  providerModel?: OpenworkCloudMcpProviderModelContext;
+  providerModel?: MicxCloudMcpProviderModelContext;
 }): Promise<CloudMcpBackgroundSyncResult> {
   const workspaceId = input.workspaceId.trim();
   const settings = input.settings ?? readDenSettings();
@@ -214,7 +214,7 @@ export async function syncCloudControlMcpInBackground(input: {
   }
   const configuredUrl = typeof configured?.config.url === "string" ? configured.config.url : null;
 
-  const result = await runOpenworkCloudMcpReconciler({
+  const result = await runMicxCloudMcpReconciler({
     mode: "repair",
     client: input.client,
     context: {
@@ -258,7 +258,7 @@ export async function syncCloudControlMcpInBackground(input: {
       return failedCloudMcpBackgroundSync({
         health: result.health,
         code: "cloud_mcp_token_mint_failed",
-        message: "OpenWork could not refresh Cloud authentication for connected service tools.",
+        message: "Micx could not refresh Cloud authentication for connected service tools.",
       });
     }
   }
@@ -329,12 +329,12 @@ export async function healWorkspaceMcpInBackground(input: {
 
 export function useSessionMcpMaintenance(input: {
   cloudSignedIn: boolean;
-  client: OpenworkServerClient | null;
+  client: MicxServerClient | null;
   workspaceId: string | null;
   opencodeClient: Client | null;
   directory: string;
   engineReloadBusy?: boolean;
-  providerModel?: OpenworkCloudMcpProviderModelContext;
+  providerModel?: MicxCloudMcpProviderModelContext;
 }): SessionCloudMcpMaintenanceState {
   const [cloudMcpState, setCloudMcpState] = useState<SessionCloudMcpMaintenanceState>(
     IDLE_CLOUD_MCP_MAINTENANCE_STATE,

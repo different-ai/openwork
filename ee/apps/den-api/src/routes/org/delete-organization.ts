@@ -1,4 +1,4 @@
-import { eq, inArray } from "@openwork-ee/den-db/drizzle"
+import { eq, inArray } from "@micx-ee/den-db/drizzle"
 import {
   AuthApiKeyTable,
   AuthSessionTable,
@@ -70,8 +70,8 @@ import {
   WorkerTokenTable,
   WorkspaceBootstrapTable,
   WorkspaceClaimTable,
-} from "@openwork-ee/den-db/schema"
-import { createDenTypeId } from "@openwork-ee/utils/typeid"
+} from "@micx-ee/den-db/schema"
+import { createDenTypeId } from "@micx-ee/utils/typeid"
 import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { MICROSOFT_365_DEFAULT_FEATURES } from "@openwork/types/den/microsoft-365";
+import { MICROSOFT_365_DEFAULT_FEATURES } from "@micx/types/den/microsoft-365";
 import {
   MICROSOFT_365_DISPLAY_SCOPES,
   MICROSOFT_365_PERMISSION_GROUPS,

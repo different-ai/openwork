@@ -7,7 +7,7 @@ import {
   type ReactNode,
 } from "react";
 
-import type { ConnectLinkClaims, ConnectLinkTransport, ConnectLinkVerifyErrorCode } from "@openwork/types/connect-link";
+import type { ConnectLinkClaims, ConnectLinkTransport, ConnectLinkVerifyErrorCode } from "@micx/types/connect-link";
 
 import { refreshDenBootstrapConfigFromShell } from "../../../app/lib/den";
 import { connectLinkAccept, connectLinkVerify } from "../../../app/lib/desktop";
@@ -16,7 +16,7 @@ import {
   drainPendingDeepLinks,
   type DeepLinkBridgeDetail,
 } from "../../../app/lib/deep-link-bridge";
-import { parseConnectDeepLink } from "../../../app/lib/openwork-links";
+import { parseConnectDeepLink } from "../../../app/lib/micx-links";
 import { isDesktopRuntime } from "../../../app/utils";
 import { ConnectConfirmDialog, type ConnectConfirmPhase } from "./connect-confirm-dialog";
 

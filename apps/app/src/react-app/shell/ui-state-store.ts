@@ -1,10 +1,10 @@
 import { create } from "zustand";
 
-export const PERSISTED_UI_STATE_KEY = "openwork:ui-state:v1";
+export const PERSISTED_UI_STATE_KEY = "micx:ui-state:v1";
 const SIDEBAR_COOKIE_NAME = "sidebar_state";
-const LEGACY_WORKSPACE_LEFT_SIDEBAR_WIDTH_KEY = "openwork.workspace-shell.left-width.v1";
-const LEGACY_WORKSPACE_RIGHT_SIDEBAR_EXPANDED_KEY = "openwork.workspace-shell.right-expanded.v3";
-const LEGACY_WORKSPACE_RIGHT_SIDEBAR_WIDTH_KEY = "openwork.workspace-shell.right-width.v1";
+const LEGACY_WORKSPACE_LEFT_SIDEBAR_WIDTH_KEY = "micx.workspace-shell.left-width.v1";
+const LEGACY_WORKSPACE_RIGHT_SIDEBAR_EXPANDED_KEY = "micx.workspace-shell.right-expanded.v3";
+const LEGACY_WORKSPACE_RIGHT_SIDEBAR_WIDTH_KEY = "micx.workspace-shell.right-width.v1";
 
 export const DEFAULT_WORKSPACE_LEFT_SIDEBAR_WIDTH = 260;
 export const MIN_WORKSPACE_LEFT_SIDEBAR_WIDTH = 220;
@@ -290,7 +290,7 @@ export function toggleWorkspaceRightSidebar(state: UiState): UiState {
 }
 
 function syncApplicationMenuVisible(visible: boolean): void {
-  void globalThis.window?.__OPENWORK_ELECTRON__?.invokeDesktop?.("__setApplicationMenuVisible", visible);
+  void globalThis.window?.__MICX_ELECTRON__?.invokeDesktop?.("__setApplicationMenuVisible", visible);
 }
 
 type UiStateStore = UiState & {

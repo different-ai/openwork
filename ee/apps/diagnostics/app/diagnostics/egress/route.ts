@@ -35,7 +35,7 @@ async function handle(request: Request): Promise<{ handled: HandledResponse; req
   }
   try {
     const body: unknown = JSON.parse(bounded.body)
-    if (!body || typeof body !== "object" || Array.isArray(body) || !("probe" in body) || body.probe !== "openwork-egress-diagnostic") {
+    if (!body || typeof body !== "object" || Array.isArray(body) || !("probe" in body) || body.probe !== "micx-egress-diagnostic") {
       return { handled: jsonResponse(400, { error: "invalid_probe" }), requestBody: bounded.body }
     }
   } catch {

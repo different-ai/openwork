@@ -22,11 +22,11 @@ export type EmailTemplateProps = {
 export type EmailTemplate = keyof EmailTemplateProps
 
 export const emailSubjects: { [Template in EmailTemplate]: (props: EmailTemplateProps[Template]) => string } = {
-  verification: ({ verificationCode }) => `Your OpenWork verification code is ${verificationCode}`,
-  passwordReset: () => "Reset your OpenWork password",
-  organizationInvite: ({ organizationName }) => `You're invited to join ${organizationName} on OpenWork`,
-  downloadLink: () => "Your OpenWork download link",
-  feedback: ({ name, source }) => `OpenWork feedback from ${name}${source ? ` (${source})` : ""}`,
+  verification: ({ verificationCode }) => `Your Micx verification code is ${verificationCode}`,
+  passwordReset: () => "Reset your Micx password",
+  organizationInvite: ({ organizationName }) => `You're invited to join ${organizationName} on Micx`,
+  downloadLink: () => "Your Micx download link",
+  feedback: ({ name, source }) => `Micx feedback from ${name}${source ? ` (${source})` : ""}`,
 }
 
 export const emailReplyTo: { [Template in EmailTemplate]: (props: EmailTemplateProps[Template]) => string | undefined } = {

@@ -14,9 +14,9 @@ import { readWorkspaceCloudImports, type CloudImportedPlugin } from "@/app/cloud
 import { createDenClient, readDenSettings } from "@/app/lib/den";
 import { denSettingsChangedEvent } from "@/app/lib/den-session-events";
 import type {
-  OpenworkServerClient,
-  OpenworkSessionSnapshot,
-} from "@/app/lib/openwork-server";
+  MicxServerClient,
+  MicxSessionSnapshot,
+} from "@/app/lib/micx-server";
 import type {
   ComposerAttachment,
   ComposerDraft,
@@ -33,7 +33,7 @@ import {
   publishInspectorSlice,
   recordInspectorEvent,
 } from "@/app/lib/app-inspector";
-import { useControlAction, type OpenworkControlAction } from "@/react-app/shell/control/control-provider";
+import { useControlAction, type MicxControlAction } from "@/react-app/shell/control/control-provider";
 import { attemptSilentMcpReauth } from "@/react-app/domains/connections/mcp-silent-reauth";
 import type {
   CloudMcpSubmissionGateState,
@@ -48,7 +48,7 @@ import { parseSlashCommandInvocation } from "./composer/slash-command";
 import { connectSkillPrompt, parseConnectSkillToken } from "./composer/connect-skill-token";
 import { createPastedTextChip, resolvePastedTextPlaceholders } from "./composer/pasted-text";
 import { DevProfiler } from "@/react-app/shell/dev-profiler";
-import { PaperGrainGradient } from "@openwork/ui/react";
+import { PaperGrainGradient } from "@micx/ui/react";
 import { useShellConfig } from "@/react-app/shell/shell-config";
 import { useReactRenderWatchdog } from "@/react-app/shell/react-render-watchdog";
 import { SessionDebugPanel } from "./debug-panel";
@@ -113,11 +113,11 @@ import { consumeComposerAutoSend } from "./composer-auto-send";
 
 const EMPTY_TRANSCRIPT: UIMessage[] = [];
 const IDLE_STATUS: SessionStatus = { type: "idle" };
-const DEFAULT_COMPOSER_CONTROL_TEXT = "Help me outline the next OpenWork task.";
+const DEFAULT_COMPOSER_CONTROL_TEXT = "Help me outline the next Micx task.";
 const SESSION_SURFACE_SELECTOR = "[data-session-surface-id]";
 const MARKDOWN_PRIMITIVE_EVAL_TEXT = `# Markdown proof heading
 
-This shared renderer keeps **bold proof text**, inline \`renderMarkdownHtml\`, and [OpenWork link](https://openworklabs.com) readable in one message.
+This shared renderer keeps **bold proof text**, inline \`renderMarkdownHtml\`, and [Micx link](https://micxlabs.com) readable in one message.
 
 \`\`\`ts
 const pipeline = "shared markdown primitive";
@@ -231,7 +231,7 @@ function createChatTranscriptEvalMessages(sessionId: string) {
         },
         {
           type: "dynamic-tool",
-          toolName: "openwork-cloud_execute_capability",
+          toolName: "micx-cloud_execute_capability",
           toolCallId: "eval-transcript-capability",
           state: "output-available",
           input: { name: "getCapabilitiesGoogleWorkspaceCalendarEvents", body: {} },
@@ -258,7 +258,7 @@ function createChatTranscriptEvalMessages(sessionId: string) {
           toolName: "edit",
           toolCallId: "eval-transcript-edit-1",
           state: "output-available",
-          input: { filePath: "/tmp/openwork-eval/plan-tomorrow.md", oldString: "", newString: "" },
+          input: { filePath: "/tmp/micx-eval/plan-tomorrow.md", oldString: "", newString: "" },
           output: "",
         },
         {
@@ -266,7 +266,7 @@ function createChatTranscriptEvalMessages(sessionId: string) {
           toolName: "read",
           toolCallId: "eval-transcript-read-1",
           state: "output-available",
-          input: { filePath: "/tmp/openwork-eval/meeting-notes.md" },
+          input: { filePath: "/tmp/micx-eval/meeting-notes.md" },
           output: "",
         },
         {
@@ -279,7 +279,7 @@ function createChatTranscriptEvalMessages(sessionId: string) {
         },
         {
           type: "text",
-          text: "Your plan is drafted — details in [OpenWork](https://openworklabs.com). Search token: chat-transcript-proof.",
+          text: "Your plan is drafted — details in [Micx](https://micxlabs.com). Search token: chat-transcript-proof.",
         },
       ],
       // `completed` makes the finished turn fold behind a real
@@ -292,14 +292,14 @@ function createChatTranscriptEvalMessages(sessionId: string) {
 }
 
 export type SessionSurfaceProps = {
-  client: OpenworkServerClient;
-  environmentClient?: OpenworkServerClient | null;
+  client: MicxServerClient;
+  environmentClient?: MicxServerClient | null;
   workspaceId: string;
   workspaceRoot: string;
   sessionId: string;
   isControlTarget: boolean;
   opencodeBaseUrl: string;
-  openworkToken: string;
+  micxToken: string;
   developerMode: boolean;
   modelLabel: string;
   onModelClick: (sessionId?: string) => void;
@@ -310,7 +310,7 @@ export type SessionSurfaceProps = {
   selectedModel: ModelRef;
   /** providerID → modelID → provider model, for per-session variant options. */
   providerCatalog?: ProviderCatalog;
-  /** Den/import includes OpenWork Models for this org member (not just local sync). */
+  /** Den/import includes Micx Models for this org member (not just local sync). */
   openWorkModelsEntitled?: boolean;
   onRefreshOrganizationModels?: () => void | Promise<void>;
   onModelPickerOpenChange: (open: boolean) => void;
@@ -354,7 +354,7 @@ export type SessionSurfaceProps = {
 };
 
 function messageToReadableText(message: UIMessage) {
-  const header = message.role === "user" ? "You" : message.role === "assistant" ? "OpenWork" : message.role;
+  const header = message.role === "user" ? "You" : message.role === "assistant" ? "Micx" : message.role;
   const body = message.parts
     .flatMap((part) => {
       if (part.type === "text") return [part.text];
@@ -410,7 +410,7 @@ function resolveFindOwnerSessionId() {
   return firstMountedSessionSurfaceId();
 }
 
-function statusLabel(snapshot: OpenworkSessionSnapshot | undefined, busy: boolean) {
+function statusLabel(snapshot: MicxSessionSnapshot | undefined, busy: boolean) {
   if (busy) return "Running...";
   if (snapshot?.status.type === "busy") return "Running...";
   if (snapshot?.status.type === "retry") return `Retrying: ${snapshot.status.message}`;
@@ -704,7 +704,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const [error, setError] = useState<SessionError | null>(null);
   const [showDelayedLoading, setShowDelayedLoading] = useState(false);
   const [awaitingAssistantBaseline, setAwaitingAssistantBaseline] = useState<number | null>(null);
-  const [rendered, setRendered] = useState<{ sessionId: string; snapshot: OpenworkSessionSnapshot } | null>(null);
+  const [rendered, setRendered] = useState<{ sessionId: string; snapshot: MicxSessionSnapshot } | null>(null);
   const [toolSkills, setToolSkills] = useState<SkillCard[]>([]);
   const [toolMcpServers, setToolMcpServers] = useState<McpServerEntry[]>([]);
   const [toolMcpStatus, setToolMcpStatus] = useState<string | null>(null);
@@ -724,8 +724,8 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const autoOpenedTargetRef = useRef<string | null>(null);
   const initializedAutoOpenSessionRef = useRef<string | null>(null);
   const opencodeClient = useMemo(
-    () => createClient(props.opencodeBaseUrl, undefined, { token: props.openworkToken, mode: "openwork" }),
-    [props.opencodeBaseUrl, props.openworkToken],
+    () => createClient(props.opencodeBaseUrl, undefined, { token: props.micxToken, mode: "micx" }),
+    [props.opencodeBaseUrl, props.micxToken],
   );
 
   const snapshotQueryKey = useMemo(
@@ -740,7 +740,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
     () => reactStatusKey(props.workspaceId, props.sessionId),
     [props.workspaceId, props.sessionId],
   );
-  const snapshotQuery = useQuery<OpenworkSessionSnapshot>({
+  const snapshotQuery = useQuery<MicxSessionSnapshot>({
     queryKey: snapshotQueryKey,
     queryFn: async () => {
       const startedAt = Date.now();
@@ -879,7 +879,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
 
     return [...baseRenderedMessages, ...evalMarkdownMessages];
   }, [baseRenderedMessages, evalMarkdownMessages]);
-  const seedMarkdownPrimitiveControlAction = useMemo<OpenworkControlAction | null>(() => {
+  const seedMarkdownPrimitiveControlAction = useMemo<MicxControlAction | null>(() => {
     if (!import.meta.env.DEV) return null;
 
     return {
@@ -900,7 +900,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
     };
   }, [props.sessionId]);
   useControlAction(props.isControlTarget ? seedMarkdownPrimitiveControlAction : null);
-  const seedMarkdownMathControlAction = useMemo<OpenworkControlAction | null>(() => {
+  const seedMarkdownMathControlAction = useMemo<MicxControlAction | null>(() => {
     if (!import.meta.env.DEV) return null;
 
     return {
@@ -924,7 +924,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
     };
   }, [props.sessionId]);
   useControlAction(props.isControlTarget ? seedMarkdownMathControlAction : null);
-  const seedChatTranscriptControlAction = useMemo<OpenworkControlAction | null>(() => {
+  const seedChatTranscriptControlAction = useMemo<MicxControlAction | null>(() => {
     if (!import.meta.env.DEV) return null;
 
     return {
@@ -1429,7 +1429,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
   };
 
   const typeComposerText = useCallback(async (text: string) => {
-    window.dispatchEvent(new Event("openwork:focusPrompt"));
+    window.dispatchEvent(new Event("micx:focusPrompt"));
     setComposerDraft(props.sessionId, text);
     await waitForControl(40);
   }, [props.sessionId, setComposerDraft]);
@@ -1448,11 +1448,11 @@ export function SessionSurface(props: SessionSurfaceProps) {
         length: text.length,
       });
     };
-    window.addEventListener("openwork:voice-transcript", handleVoiceTranscript);
-    return () => window.removeEventListener("openwork:voice-transcript", handleVoiceTranscript);
+    window.addEventListener("micx:voice-transcript", handleVoiceTranscript);
+    return () => window.removeEventListener("micx:voice-transcript", handleVoiceTranscript);
   }, [attachments, buildDraft, props.onDraftChange, props.sessionId, props.workspaceId, typeComposerText]);
 
-  const composerSetTextControlAction = useMemo<OpenworkControlAction>(() => ({
+  const composerSetTextControlAction = useMemo<MicxControlAction>(() => ({
     id: "composer.set_text",
     label: "Type into the composer",
     description: "Replace the current session draft and type the supplied text visibly.",
@@ -1472,7 +1472,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
   }), [attachments, buildDraft, props.onDraftChange, typeComposerText]);
   useControlAction(props.isControlTarget ? composerSetTextControlAction : null);
 
-  const composerSendControlAction = useMemo<OpenworkControlAction>(() => ({
+  const composerSendControlAction = useMemo<MicxControlAction>(() => ({
     id: "composer.send",
     label: "Send the composer prompt",
     description: "Send the currently visible composer draft to the active session.",
@@ -1486,7 +1486,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
   }), [attachments.length, draft, handleSend, model.transitionState, props.modelUnavailable]);
   useControlAction(props.isControlTarget ? composerSendControlAction : null);
 
-  const composerStopControlAction = useMemo<OpenworkControlAction>(() => ({
+  const composerStopControlAction = useMemo<MicxControlAction>(() => ({
     id: "composer.stop",
     label: "Stop the current run",
     description: "Stop the current streaming session run.",
@@ -1545,7 +1545,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
       name: entry.name,
       config: entry.config as McpServerEntry["config"],
       source: entry.source,
-      origin: entry.name === "openwork-cloud" ? "openwork-connect" : "local",
+      origin: entry.name === "micx-cloud" ? "micx-connect" : "local",
     } satisfies McpServerEntry));
 
     void connectPromise.then((connect) => {
@@ -1592,7 +1592,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
 
   const listImportedPlugins = async (): Promise<CloudImportedPlugin[]> => {
     const response = await props.client.getConfig(props.workspaceId);
-    const plugins = Object.values(readWorkspaceCloudImports(response.openwork).plugins)
+    const plugins = Object.values(readWorkspaceCloudImports(response.micx).plugins)
       .sort((left, right) => left.name.localeCompare(right.name));
     setToolImportedPlugins(plugins);
     return plugins;
@@ -1676,10 +1676,10 @@ export function SessionSurface(props: SessionSurfaceProps) {
     const resetReconnectState = () => {
       useChatMcpReconnectStore.getState().reset();
       clearCloudInventoryCache();
-      setToolSkills((current) => current.filter((skill) => skill.origin !== "openwork-connect"));
-      setToolMcpServers((current) => current.filter((server) => server.origin !== "openwork-connect"));
+      setToolSkills((current) => current.filter((skill) => skill.origin !== "micx-connect"));
+      setToolMcpServers((current) => current.filter((server) => server.origin !== "micx-connect"));
       setToolMcpStatuses((current) => Object.fromEntries(
-        Object.entries(current).filter(([key]) => !key.startsWith("openwork-connect:")),
+        Object.entries(current).filter(([key]) => !key.startsWith("micx-connect:")),
       ));
     };
     window.addEventListener(denSettingsChangedEvent, resetReconnectState);
@@ -1695,7 +1695,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
     const organizationId = settings.activeOrgId?.trim() ?? "";
     if (!token || !organizationId) {
       props.onOpenConnect();
-      throw new Error("Sign in to OpenWork Cloud, then try reconnecting again.");
+      throw new Error("Sign in to Micx Cloud, then try reconnecting again.");
     }
 
     const scope: ChatMcpReconnectScope = {
@@ -1807,7 +1807,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
     })();
   }, [props.onRevertToMessage, props.sessionId, typeComposerText]);
 
-  const sessionScrollTopControlAction = useMemo<OpenworkControlAction>(() => ({
+  const sessionScrollTopControlAction = useMemo<MicxControlAction>(() => ({
     id: "session.scroll_top",
     label: "Go to the top of the session",
     description: "Scroll the visible session transcript to the first messages.",
@@ -1822,7 +1822,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
   }), []);
   useControlAction(props.isControlTarget ? sessionScrollTopControlAction : null);
 
-  const sessionScrollBottomControlAction = useMemo<OpenworkControlAction>(() => ({
+  const sessionScrollBottomControlAction = useMemo<MicxControlAction>(() => ({
     id: "session.scroll_bottom",
     label: "Go to the bottom of the session",
     description: "Scroll the visible session transcript to the newest messages and composer area.",
@@ -1835,7 +1835,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
   }), [sessionScroll.jumpToLatest]);
   useControlAction(props.isControlTarget ? sessionScrollBottomControlAction : null);
 
-  const sessionLatestMessageControlAction = useMemo<OpenworkControlAction>(() => ({
+  const sessionLatestMessageControlAction = useMemo<MicxControlAction>(() => ({
     id: "session.latest_message",
     label: "Read the latest session message",
     description: "Return the latest visible message in the current session transcript.",
@@ -1856,7 +1856,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
   }), [props.sessionId, renderedMessages]);
   useControlAction(props.isControlTarget ? sessionLatestMessageControlAction : null);
 
-  const sessionReadTranscriptControlAction = useMemo<OpenworkControlAction>(() => ({
+  const sessionReadTranscriptControlAction = useMemo<MicxControlAction>(() => ({
     id: "session.read_transcript",
     label: "Read the current session transcript",
     description: "Return the last messages from the current session transcript as readable text, including the session ID, title, and message count.",

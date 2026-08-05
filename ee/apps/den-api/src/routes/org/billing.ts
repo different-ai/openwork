@@ -33,7 +33,7 @@ function billingReturnUrl(c: { req: { raw: Request } }) {
 }
 
 function checkoutSuccessUrl(c: { req: { raw: Request } }) {
-  // `return=models` sends the user back to the OpenWork Models page after a
+  // `return=models` sends the user back to the Micx Models page after a
   // successful inference checkout — that's where they subscribed from and
   // where the unlocked value (the model lineup) is visible. The billing page
   // remains the status/portal view.
@@ -120,7 +120,7 @@ export function registerOrgBillingRoutes<T extends { Variables: OrgRouteVariable
     describeRoute({
       tags: ["Organizations"],
       hide: true,
-      summary: "Create Stripe Checkout session for OpenWork Models",
+      summary: "Create Stripe Checkout session for Micx Models",
       responses: {
         200: jsonResponse("Stripe Checkout session created successfully.", stripeCheckoutResponseSchema),
         401: jsonResponse("The caller must be signed in to start billing.", unauthorizedSchema),
@@ -163,7 +163,7 @@ export function registerOrgBillingRoutes<T extends { Variables: OrgRouteVariable
     describeRoute({
       tags: ["Organizations"],
       hide: true,
-      summary: "Create Stripe billing portal session for OpenWork Models",
+      summary: "Create Stripe billing portal session for Micx Models",
       responses: {
         200: jsonResponse("Stripe billing portal session created successfully.", stripePortalResponseSchema),
         401: jsonResponse("The caller must be signed in to manage billing.", unauthorizedSchema),

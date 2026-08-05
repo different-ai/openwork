@@ -65,7 +65,7 @@ export function UserProfileDialog({
         aria-describedby={descriptor ? "user-profile-description" : undefined}
       >
         <div className="mb-6">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">OpenWork</p>
+          <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">Micx</p>
           <h2 id="user-profile-title" className="mt-2 text-2xl font-semibold tracking-[-0.04em] text-gray-950">
             {title}
           </h2>

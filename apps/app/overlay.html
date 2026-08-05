@@ -4,11 +4,11 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="color-scheme" content="light dark" />
-    <title>OpenWork Overlay</title>
+    <title>Micx Overlay</title>
     <script>
       (function () {
         try {
-          var mode = localStorage.getItem("openwork.themePref") || "system";
+          var mode = localStorage.getItem("micx.themePref") || "system";
           var prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
           var resolved = mode === "dark" || (mode === "system" && prefersDark) ? "dark" : "light";
           document.documentElement.dataset.theme = resolved;

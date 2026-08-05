@@ -7,7 +7,7 @@ let fromTable: unknown = null
 let joinedTables: unknown[] = []
 let findEnterpriseAuthRequirementForEmailDomain: typeof import("../src/enterprise-auth-requirement.js").findEnterpriseAuthRequirementForEmailDomain
 let resolveNonSsoSignInMethodForEmail: typeof import("../src/enterprise-auth-requirement.js").resolveNonSsoSignInMethodForEmail
-let schema: typeof import("@openwork-ee/den-db/schema")
+let schema: typeof import("@micx-ee/den-db/schema")
 
 function createQueryBuilder() {
   const builder = {
@@ -40,7 +40,7 @@ mock.module("../src/db.js", () => ({
 
 beforeAll(async () => {
   const [schemaModule, requirementModule] = await Promise.all([
-    import("@openwork-ee/den-db/schema"),
+    import("@micx-ee/den-db/schema"),
     import("../src/enterprise-auth-requirement.js"),
   ])
   schema = schemaModule
@@ -59,7 +59,7 @@ test("domain-based SSO resolution does not query through users or members", asyn
     organizationId: "organization_sso_domain",
     organizationSlug: "verified-sso",
     signInPath: "/sso/verified-sso",
-    ssoProviderId: "openwork-sso-organization_sso_domain",
+    ssoProviderId: "micx-sso-organization_sso_domain",
   }]
 
   const realMember = await findEnterpriseAuthRequirementForEmailDomain("real-user@verified.example.test")
@@ -70,7 +70,7 @@ test("domain-based SSO resolution does not query through users or members", asyn
     organizationId: "organization_sso_domain",
     organizationSlug: "verified-sso",
     signInPath: "/sso/verified-sso",
-    ssoProviderId: "openwork-sso-organization_sso_domain",
+    ssoProviderId: "micx-sso-organization_sso_domain",
     hasSso: true,
   })
   expect(fromTable).toBe(schema.OrganizationTable)

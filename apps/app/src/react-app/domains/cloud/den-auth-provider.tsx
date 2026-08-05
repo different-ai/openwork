@@ -34,7 +34,7 @@ import {
   deepLinkBridgeEvent,
   drainPendingDeepLinks,
 } from "../../../app/lib/deep-link-bridge";
-import { parseDenAuthDeepLink } from "../../../app/lib/openwork-links";
+import { parseDenAuthDeepLink } from "../../../app/lib/micx-links";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -143,7 +143,7 @@ function pendingServerSwitchForDeepLink(input: {
   const bootstrap = readDenBootstrapConfig();
   // An enterprise activation permanently binds the installation to the issuing
   // Den, so confirm a control-plane change even when no bootstrap file
-  // provisioned one. Otherwise any openwork://den-auth link can repoint the
+  // provisioned one. Otherwise any micx://den-auth link can repoint the
   // control plane and activate the app in a single unattended step.
   if (bootstrap.source !== "file" && !input.isEnterpriseActivation) return null;
 
@@ -239,7 +239,7 @@ export function DenAuthProvider({ children }: DenAuthProviderProps) {
       setError(
         nextError instanceof Error
           ? nextError.message
-          : "Failed to restore OpenWork Cloud session.",
+          : "Failed to restore Micx Cloud session.",
       );
       updateStatus(failureStatus);
     }

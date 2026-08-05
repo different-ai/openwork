@@ -168,7 +168,7 @@ describe("OpenCode transport timeouts", () => {
   }, 15_000);
 
   test("leaves desktop OpenCode event streams untimed", async () => {
-    installWindow({ __OPENWORK_ELECTRON__: {} });
+    installWindow({ __MICX_ELECTRON__: {} });
     const { cancel, observedSignal } = installControllableFetch();
     const fetchImpl = createCapturedFetch();
 

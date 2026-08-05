@@ -4,7 +4,7 @@
 // provenance only — never authentication.
 
 export const CONNECT_LINK_ROUTE = "connect";
-export const CONNECT_LINK_AUDIENCE = "openwork-desktop-connect";
+export const CONNECT_LINK_AUDIENCE = "micx-desktop-connect";
 export const CONNECT_LINK_VERSION = 1;
 export const CONNECT_LINK_ALGORITHM = "EdDSA";
 export const CONNECT_LINK_DEFAULT_TTL_HOURS = 72;

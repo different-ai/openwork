@@ -95,7 +95,7 @@ export async function sendTelegramText(input: {
   const chunks = allChunks.slice(0, maxChunks)
   if (allChunks.length > maxChunks) {
     const lastIndex = chunks.length - 1
-    const suffix = "\n\n[Response truncated in Telegram. Open the worker session in OpenWork for the full answer.]"
+    const suffix = "\n\n[Response truncated in Telegram. Open the worker session in Micx for the full answer.]"
     const last = chunks[lastIndex] ?? ""
     chunks[lastIndex] = `${last.slice(0, TELEGRAM_MESSAGE_LIMIT - suffix.length)}${suffix}`
   }

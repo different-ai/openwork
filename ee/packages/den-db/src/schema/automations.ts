@@ -6,7 +6,7 @@ import type {
   AutomationRunEventType,
   AutomationSchedule,
   AutomationUsage,
-} from "@openwork/types/automations"
+} from "@micx/types/automations"
 import { compatJsonColumn, denTypeIdColumn, encryptedMediumTextColumn, timestamps } from "../columns"
 
 const automationStates = ["active", "inactive", "needs_attention", "archived"] as const

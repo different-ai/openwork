@@ -1,6 +1,6 @@
 // Local UI-control HTTP bridge: a loopback server exposing the legacy
 // /snapshot, /actions and /execute routes plus the semantic /context, /query
-// and /command surface. Dispatched to the renderer's window.__openworkControl.
+// and /command surface. Dispatched to the renderer's window.__micxControl.
 // Extracted from main.mjs; state and lifecycle live in this factory
 // (createRuntimeManager pattern).
 import { randomBytes } from "node:crypto";
@@ -58,7 +58,7 @@ export function createUiControlServer({ appName, appIdentifier, getWindow }) {
     return JSON.stringify(JSON.stringify(value ?? {}));
   }
 
-  async function evaluateOpenworkControl(expression) {
+  async function evaluateMicxControl(expression) {
     const win = await getWindow();
     // Commands mutate renderer state directly and do not require the desktop
     // window to become active. Foreground activation must be an explicit
@@ -66,55 +66,55 @@ export function createUiControlServer({ appName, appIdentifier, getWindow }) {
     return win.webContents.executeJavaScript(expression, true);
   }
 
-  async function runOpenworkControlCommand(command, args = {}) {
+  async function runMicxControlCommand(command, args = {}) {
     const argsJsonLiteral = jsonForJavaScript(args);
     if (command === "snapshot") {
-      return evaluateOpenworkControl(`(async () => {
-        const control = window.__openworkControl;
-        if (!control) return { ok: false, error: "OpenWork control surface is not available yet." };
+      return evaluateMicxControl(`(async () => {
+        const control = window.__micxControl;
+        if (!control) return { ok: false, error: "Micx control surface is not available yet." };
         control.setEnabled?.(true);
         return { ok: true, ...control.snapshot() };
       })()`);
     }
     if (command === "actions") {
-      return evaluateOpenworkControl(`(async () => {
-        const control = window.__openworkControl;
-        if (!control) return { ok: false, error: "OpenWork control surface is not available yet." };
+      return evaluateMicxControl(`(async () => {
+        const control = window.__micxControl;
+        if (!control) return { ok: false, error: "Micx control surface is not available yet." };
         control.setEnabled?.(true);
         return { ok: true, actions: control.listActions() };
       })()`);
     }
     if (command === "context") {
-      return evaluateOpenworkControl(`(async () => {
-        const control = window.__openworkControl;
-        if (!control) return { ok: false, error: "OpenWork control surface is not available yet." };
+      return evaluateMicxControl(`(async () => {
+        const control = window.__micxControl;
+        if (!control) return { ok: false, error: "Micx control surface is not available yet." };
         return { ok: true, context: control.context() };
       })()`);
     }
     if (command === "query" || command === "command") {
-      return evaluateOpenworkControl(`(async () => {
-        const control = window.__openworkControl;
+      return evaluateMicxControl(`(async () => {
+        const control = window.__micxControl;
         const input = JSON.parse(${argsJsonLiteral});
-        if (!control) return { ok: false, error: "OpenWork control surface is not available yet." };
+        if (!control) return { ok: false, error: "Micx control surface is not available yet." };
         if (!input || typeof input.id !== "string" || !input.id.trim()) {
-          return { ok: false, error: "Missing OpenWork affordance id." };
+          return { ok: false, error: "Missing Micx affordance id." };
         }
         return control[${JSON.stringify(command)}](input);
       })()`);
     }
     if (command === "execute") {
-      return evaluateOpenworkControl(`(async () => {
-        const control = window.__openworkControl;
+      return evaluateMicxControl(`(async () => {
+        const control = window.__micxControl;
         const input = JSON.parse(${argsJsonLiteral});
-        if (!control) return { ok: false, error: "OpenWork control surface is not available yet." };
+        if (!control) return { ok: false, error: "Micx control surface is not available yet." };
         if (!input || typeof input.actionId !== "string" || !input.actionId.trim()) {
-          return { ok: false, error: "Missing OpenWork actionId." };
+          return { ok: false, error: "Missing Micx actionId." };
         }
         control.setEnabled?.(true);
         return control.execute(input.actionId, input.args ?? {});
       })()`);
     }
-    return { ok: false, error: `Unknown OpenWork control command: ${command}` };
+    return { ok: false, error: `Unknown Micx control command: ${command}` };
   }
 
   async function start() {
@@ -131,27 +131,27 @@ export function createUiControlServer({ appName, appIdentifier, getWindow }) {
           return;
         }
         if (request.method === "GET" && url.pathname === "/snapshot") {
-          sendJsonResponse(response, 200, await runOpenworkControlCommand("snapshot"));
+          sendJsonResponse(response, 200, await runMicxControlCommand("snapshot"));
           return;
         }
         if (request.method === "GET" && url.pathname === "/actions") {
-          sendJsonResponse(response, 200, await runOpenworkControlCommand("actions"));
+          sendJsonResponse(response, 200, await runMicxControlCommand("actions"));
           return;
         }
         if (request.method === "GET" && url.pathname === "/context") {
-          sendJsonResponse(response, 200, await runOpenworkControlCommand("context"));
+          sendJsonResponse(response, 200, await runMicxControlCommand("context"));
           return;
         }
         if (request.method === "POST" && url.pathname === "/query") {
-          sendJsonResponse(response, 200, await runOpenworkControlCommand("query", await readJsonRequestBody(request)));
+          sendJsonResponse(response, 200, await runMicxControlCommand("query", await readJsonRequestBody(request)));
           return;
         }
         if (request.method === "POST" && url.pathname === "/command") {
-          sendJsonResponse(response, 200, await runOpenworkControlCommand("command", await readJsonRequestBody(request)));
+          sendJsonResponse(response, 200, await runMicxControlCommand("command", await readJsonRequestBody(request)));
           return;
         }
         if (request.method === "POST" && url.pathname === "/execute") {
-          sendJsonResponse(response, 200, await runOpenworkControlCommand("execute", await readJsonRequestBody(request)));
+          sendJsonResponse(response, 200, await runMicxControlCommand("execute", await readJsonRequestBody(request)));
           return;
         }
         sendJsonResponse(response, 404, { ok: false, error: "Not found" });
@@ -165,15 +165,15 @@ export function createUiControlServer({ appName, appIdentifier, getWindow }) {
     });
     const address = uiControlServer.address();
     const port = typeof address === "object" && address ? address.port : null;
-    if (!port) throw new Error("Could not start OpenWork UI control bridge.");
-    uiControlDiscoveryPath = path.join(app.getPath("userData"), "openwork-ui-control.json");
+    if (!port) throw new Error("Could not start Micx UI control bridge.");
+    uiControlDiscoveryPath = path.join(app.getPath("userData"), "micx-ui-control.json");
     await writeFile(
       uiControlDiscoveryPath,
       `${JSON.stringify({ version: 2, app: appName, identifier: appIdentifier, platform: process.platform, baseUrl: `http://127.0.0.1:${port}`, token: uiControlToken }, null, 2)}\n`,
       "utf8",
     );
     // Make the discovery path available to child processes (server → managed OpenCode → plugin).
-    process.env.OPENWORK_UI_CONTROL_DISCOVERY = uiControlDiscoveryPath;
+    process.env.MICX_UI_CONTROL_DISCOVERY = uiControlDiscoveryPath;
   }
 
   async function stop() {

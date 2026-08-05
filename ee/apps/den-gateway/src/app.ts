@@ -2,7 +2,7 @@ import "./load-env.js"
 import { createHash } from "node:crypto"
 import { readFile, realpath, stat } from "node:fs/promises"
 import { extname, resolve, sep } from "node:path"
-import { createJsonStdoutLogger, type JsonObject, type JsonStdoutLogger } from "@openwork-ee/utils/observability"
+import { createJsonStdoutLogger, type JsonObject, type JsonStdoutLogger } from "@micx-ee/utils/observability"
 import { Hono } from "hono"
 import { env } from "./env.js"
 
@@ -52,7 +52,7 @@ type GatewayConfig = {
 
 const ASSET_CACHE = "public, max-age=31536000, immutable"
 const INDEX_CACHE = "no-cache"
-const gatewayKeyHeader = "X-OpenWork-Gateway-Key"
+const gatewayKeyHeader = "X-Micx-Gateway-Key"
 const resolvePath = "/v1/cloud/gateway/resolve"
 const denApiRoutePrefix = "/api/den"
 const hopByHopHeaders = new Set([
@@ -216,7 +216,7 @@ export function shouldProxyToInstance(request: Request) {
     return true
   }
 
-  // /workspace/ is ambiguous: openwork-server owns API routes here, while the
+  // /workspace/ is ambiguous: micx-server owns API routes here, while the
   // BrowserRouter SPA owns reloadable session/settings deep links under it.
   return pathname.startsWith(workspacePathPrefix) && !isDocumentNavigation(request)
 }
@@ -317,7 +317,7 @@ function escapeScriptJson(json: string) {
 function injectGatewayMarker(html: string, buildVersion: string | undefined) {
   const gatewayMarker = { version: 1, ...(buildVersion ? { build: buildVersion } : {}) }
   const marker = escapeScriptJson(JSON.stringify(gatewayMarker))
-  const script = `<script>window.__OPENWORK_GATEWAY__ = ${marker}</script>`
+  const script = `<script>window.__MICX_GATEWAY__ = ${marker}</script>`
   const headCloseIndex = html.toLowerCase().indexOf("</head>")
   if (headCloseIndex < 0) {
     return `${script}${html}`
@@ -496,7 +496,7 @@ async function requestBody(request: Request) {
 function upstreamRequestHeaders(headers: Headers, clientToken: string, hostToken: string) {
   const upstream = new Headers(headers)
   upstream.delete("authorization")
-  upstream.delete("x-openwork-host-token")
+  upstream.delete("x-micx-host-token")
   upstream.delete("cookie")
   upstream.delete("host")
   upstream.delete("connection")
@@ -504,7 +504,7 @@ function upstreamRequestHeaders(headers: Headers, clientToken: string, hostToken
   upstream.delete("transfer-encoding")
   upstream.delete(gatewayKeyHeader)
   upstream.set("Authorization", `Bearer ${clientToken}`)
-  upstream.set("x-openwork-host-token", hostToken)
+  upstream.set("x-micx-host-token", hostToken)
   return upstream
 }
 
@@ -516,7 +516,7 @@ function denApiRequestHeaders(request: Request) {
     if (normalized === "host" || normalized === "content-length" || normalized === "cookie") return
     if (spoofableForwardingHeaders.has(normalized)) return
     if (normalized === gatewayKeyHeader.toLowerCase()) return
-    if (normalized === "x-openwork-host-token") return
+    if (normalized === "x-micx-host-token") return
     upstream.append(name, value)
   })
 

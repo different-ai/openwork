@@ -29,12 +29,12 @@ const publicKeys = { [KID]: publicKeyPem };
 
 /**
  * @param {Record<string, unknown>} [overrides]
- * @returns {import("@openwork/types/connect-link").ConnectLinkClaims}
+ * @returns {import("@micx/types/connect-link").ConnectLinkClaims}
  */
 function claims(overrides = {}) {
   return {
-    iss: "https://api.openwork.acme.example.com",
-    aud: "openwork-desktop-connect",
+    iss: "https://api.micx.acme.example.com",
+    aud: "micx-desktop-connect",
     iat: NOW,
     exp: NOW + 72 * 3600,
     jti: "test-jti-0001",
@@ -42,8 +42,8 @@ function claims(overrides = {}) {
     org: { name: "Acme Robotics" },
     brand: { appName: "Acme Work", logoUrl: null, iconUrl: null },
     den: {
-      baseUrl: "https://openwork.acme.example.com",
-      apiBaseUrl: "https://api.openwork.acme.example.com",
+      baseUrl: "https://micx.acme.example.com",
+      apiBaseUrl: "https://api.micx.acme.example.com",
     },
     requireSignin: true,
     ...overrides,
@@ -65,7 +65,7 @@ function verifyAt(token, nowEpochSeconds = NOW, extra = {}) {
   return verifyConnectLinkToken({ token, publicKeys, nowEpochSeconds, ...extra });
 }
 
-/** @param {import("@openwork/types/connect-link").ConnectLinkVerifyResult} result */
+/** @param {import("@micx/types/connect-link").ConnectLinkVerifyResult} result */
 function failureOf(result) {
   assert.equal(result.ok, false);
   if (result.ok !== false) throw new Error("expected a failure result");
@@ -73,10 +73,10 @@ function failureOf(result) {
 }
 
 test("extracts only dedicated desktop connect links", () => {
-  assert.equal(extractConnectLinkToken("openwork://connect?token=a.b.c"), "a.b.c");
-  assert.equal(extractConnectLinkToken("openwork-dev://connect?token=a.b.c"), "a.b.c");
-  assert.equal(extractConnectLinkToken("openwork:///connect?token=a.b.c"), "a.b.c");
-  assert.equal(extractConnectLinkToken("openwork://den-auth?grant=x"), null);
+  assert.equal(extractConnectLinkToken("micx://connect?token=a.b.c"), "a.b.c");
+  assert.equal(extractConnectLinkToken("micx-dev://connect?token=a.b.c"), "a.b.c");
+  assert.equal(extractConnectLinkToken("micx:///connect?token=a.b.c"), "a.b.c");
+  assert.equal(extractConnectLinkToken("micx://den-auth?grant=x"), null);
   assert.equal(extractConnectLinkToken("https://connect?token=a.b.c"), null);
 });
 
@@ -84,7 +84,7 @@ test("verifies an exact signed organization target end to end", () => {
   const expected = claims();
   const token = mint(expected);
   const result = verifyConnectLinkUrl(
-    `openwork://connect?token=${encodeURIComponent(token)}`,
+    `micx://connect?token=${encodeURIComponent(token)}`,
     { publicKeys, nowEpochSeconds: NOW },
   );
   assert.equal(result.ok, true);
@@ -95,7 +95,7 @@ test("verifies an exact signed organization target end to end", () => {
 
 test("resolves a keyless exchange through the exact HTTPS Den endpoint", async () => {
   const code = "abcdefghijklmnopqrstuvwxyz123456";
-  const apiBaseUrl = "https://api.openwork.acme.example.com/api/den";
+  const apiBaseUrl = "https://api.micx.acme.example.com/api/den";
   const expected = claims({
     iss: apiBaseUrl,
     brand: {
@@ -104,11 +104,11 @@ test("resolves a keyless exchange through the exact HTTPS Den endpoint", async (
       iconUrl: "https://assets.acme.example.com/icon.png",
     },
     den: {
-      baseUrl: "https://openwork.acme.example.com",
+      baseUrl: "https://micx.acme.example.com",
       apiBaseUrl,
     },
   });
-  const rawUrl = `openwork://connect?code=${code}&apiBaseUrl=${encodeURIComponent(apiBaseUrl)}`;
+  const rawUrl = `micx://connect?code=${code}&apiBaseUrl=${encodeURIComponent(apiBaseUrl)}`;
   assert.deepEqual(extractConnectExchange(rawUrl), { code, apiBaseUrl });
 
   const calls = [];
@@ -130,7 +130,7 @@ test("resolves a keyless exchange through the exact HTTPS Den endpoint", async (
   assert.deepEqual(JSON.parse(calls[0].init.body), { code });
   assert.equal(calls[0].init.redirect, "error");
   assert.deepEqual(desktopBootstrapFromConnectClaims(result.claims), {
-    baseUrl: "https://openwork.acme.example.com",
+    baseUrl: "https://micx.acme.example.com",
     apiBaseUrl,
     requireSignin: true,
     brandAppName: "Acme Work",
@@ -192,11 +192,11 @@ test("startup branding applies a saved icon and skips an absent one", async () =
 
 test("fails closed for ambiguous, insecure, mismatched, expired, and replayed exchanges", async () => {
   const code = "abcdefghijklmnopqrstuvwxyz123456";
-  const apiBaseUrl = "https://api.openwork.acme.example.com";
-  const rawUrl = `openwork://connect?code=${code}&apiBaseUrl=${encodeURIComponent(apiBaseUrl)}`;
+  const apiBaseUrl = "https://api.micx.acme.example.com";
+  const rawUrl = `micx://connect?code=${code}&apiBaseUrl=${encodeURIComponent(apiBaseUrl)}`;
   assert.equal(extractConnectExchange(`${rawUrl}&token=a.b.c`), null);
 
-  const insecure = `openwork://connect?code=${code}&apiBaseUrl=${encodeURIComponent("http://den.example.com")}`;
+  const insecure = `micx://connect?code=${code}&apiBaseUrl=${encodeURIComponent("http://den.example.com")}`;
   assert.equal(failureOf(await resolveConnectExchangeUrl(insecure, {
     mode: "preview",
     fetcher: () => Promise.reject(new Error("must not fetch")),
@@ -208,7 +208,7 @@ test("fails closed for ambiguous, insecure, mismatched, expired, and replayed ex
     fetcher: () => Promise.resolve(Response.json({ claims: claims({
       iss: "https://other.example.com",
       den: {
-        baseUrl: "https://openwork.acme.example.com",
+        baseUrl: "https://micx.acme.example.com",
         apiBaseUrl: "https://other.example.com",
       },
     }) })),

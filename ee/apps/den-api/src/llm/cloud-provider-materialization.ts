@@ -1,11 +1,11 @@
 import { createHash } from "node:crypto"
-import { and, asc, eq, inArray, isNull } from "@openwork-ee/den-db/drizzle"
+import { and, asc, eq, inArray, isNull } from "@micx-ee/den-db/drizzle"
 import {
   LlmProviderModelTable,
   LlmProviderTable,
   WorkerTable,
   WorkerTokenTable,
-} from "@openwork-ee/den-db/schema"
+} from "@micx-ee/den-db/schema"
 import { db } from "../db.js"
 import { appLogger } from "../observability/logger.js"
 import { decodeProviderCredential, readProviderEnvNames } from "./provider-credentials.js"
@@ -223,11 +223,11 @@ function readStringList(value: unknown): string[] {
 }
 
 function runtimeProviderId(provider: Pick<CloudProviderMaterializationProvider, "id" | "source">) {
-  return provider.source === "openwork" ? "openwork" : provider.id.trim()
+  return provider.source === "micx" ? "micx" : provider.id.trim()
 }
 
 function isCloudManagedProviderKey(providerId: string) {
-  return /^lpr_/i.test(providerId) || providerId.trim() === "openwork"
+  return /^lpr_/i.test(providerId) || providerId.trim() === "micx"
 }
 
 function upsertEnvEntry(entries: EnvEntry[], key: string, value: string) {
@@ -246,7 +246,7 @@ function upsertEnvEntry(entries: EnvEntry[], key: string, value: string) {
   entries.push({ key: trimmedKey, value: trimmedValue })
 }
 
-function readOpenWorkInferenceBaseUrl(providerConfig: JsonRecord) {
+function readMicxInferenceBaseUrl(providerConfig: JsonRecord) {
   const options = providerConfig.options
   if (isRecord(options)) {
     const baseUrl = readString(options.baseURL)
@@ -280,11 +280,11 @@ function providerEnvEntries(provider: CloudProviderMaterializationProvider): Env
   }
 
   const primaryCredential = credential.apiKey?.trim() || entries[0]?.value || ""
-  if (provider.source === "openwork" && primaryCredential) {
-    upsertEnvEntry(entries, "OPENWORK_API_KEY", primaryCredential)
-    const baseUrl = readOpenWorkInferenceBaseUrl(provider.providerConfig)
+  if (provider.source === "micx" && primaryCredential) {
+    upsertEnvEntry(entries, "MICX_API_KEY", primaryCredential)
+    const baseUrl = readMicxInferenceBaseUrl(provider.providerConfig)
     if (baseUrl) {
-      upsertEnvEntry(entries, "OPENWORK_INFERENCE_BASE_URL", baseUrl)
+      upsertEnvEntry(entries, "MICX_INFERENCE_BASE_URL", baseUrl)
     }
   }
 
@@ -320,7 +320,7 @@ function buildProviderConfig(provider: CloudProviderMaterializationProvider) {
     env: readProviderEnvNames(provider.providerConfig),
   }
 
-  if (Object.keys(models).length > 0 || provider.source !== "openwork") {
+  if (Object.keys(models).length > 0 || provider.source !== "micx") {
     config.models = models
   }
 
@@ -440,7 +440,7 @@ function hostTokenHeaders(hostToken: string) {
   return {
     Accept: "application/json",
     "Content-Type": "application/json",
-    "X-OpenWork-Host-Token": hostToken,
+    "X-Micx-Host-Token": hostToken,
   }
 }
 
@@ -528,7 +528,7 @@ function readRuntimeSnapshotVersion(payload: JsonRecord) {
 
     fallback = fallback ?? version
     const serviceName = readString(service.name)?.toLowerCase()
-    if (serviceName?.includes("openwork") || serviceName?.includes("server")) {
+    if (serviceName?.includes("micx") || serviceName?.includes("server")) {
       return version
     }
   }
@@ -736,7 +736,7 @@ async function patchRuntimeProviders(input: {
 
   // An instance older than this route answers 200 with the SPA index.html
   // instead of 404, because the web root is the catch-all. Observed on a real
-  // worker still running openwork-server 0.18.3: the patch "succeeded", the
+  // worker still running micx-server 0.18.3: the patch "succeeded", the
   // engine ended up with zero providers, and the org saw an opaque failure
   // instead of "this workspace needs an update". Treat a non-JSON body as an
   // unsupported route so the caller can degrade honestly.

@@ -1,24 +1,24 @@
 import {
-  getOpenworkGatewayOrigin,
-  readOpenworkGatewayDenToken,
+  getMicxGatewayOrigin,
+  readMicxGatewayDenToken,
 } from "../../app/lib/gateway-runtime";
 import {
-  isLoopbackOpenworkServerUrl,
-  normalizeOpenworkServerUrl,
-  readOpenworkServerSettings,
-} from "../../app/lib/openwork-server";
-import { isWebDeployment } from "../../app/lib/openwork-deployment";
-import { openworkServerInfo, type OpenworkServerInfo } from "../../app/lib/desktop";
+  isLoopbackMicxServerUrl,
+  normalizeMicxServerUrl,
+  readMicxServerSettings,
+} from "../../app/lib/micx-server";
+import { isWebDeployment } from "../../app/lib/micx-deployment";
+import { micxServerInfo, type MicxServerInfo } from "../../app/lib/desktop";
 import { isDesktopRuntime } from "../../app/utils";
 
-export type OpenworkConnectionSource = "desktop-runtime" | "stored-settings" | "same-origin" | "gateway" | "empty";
+export type MicxConnectionSource = "desktop-runtime" | "stored-settings" | "same-origin" | "gateway" | "empty";
 
-export type ResolvedOpenworkConnection = {
+export type ResolvedMicxConnection = {
   normalizedBaseUrl: string;
   resolvedToken: string;
   resolvedHostToken: string;
-  hostInfo: OpenworkServerInfo | null;
-  source: OpenworkConnectionSource;
+  hostInfo: MicxServerInfo | null;
+  source: MicxConnectionSource;
 };
 
 function hasUsableConnection(url: string, token: string) {
@@ -26,19 +26,19 @@ function hasUsableConnection(url: string, token: string) {
 }
 
 /**
- * Resolve the OpenWork server connection for routes that consume the server API.
+ * Resolve the Micx server connection for routes that consume the server API.
  *
  * Local desktop-hosted servers expose ephemeral loopback ports and freshly
  * minted tokens on every boot, so live runtime info is the source of truth
  * there. Stored settings remain the fallback for remote/manual server
  * connections and for desktop cases where the runtime bridge is unavailable.
  */
-export async function resolveOpenworkConnection(): Promise<ResolvedOpenworkConnection> {
-  const gatewayOrigin = getOpenworkGatewayOrigin();
+export async function resolveMicxConnection(): Promise<ResolvedMicxConnection> {
+  const gatewayOrigin = getMicxGatewayOrigin();
   if (gatewayOrigin) {
     return {
-      normalizedBaseUrl: normalizeOpenworkServerUrl(gatewayOrigin) ?? "",
-      resolvedToken: readOpenworkGatewayDenToken(),
+      normalizedBaseUrl: normalizeMicxServerUrl(gatewayOrigin) ?? "",
+      resolvedToken: readMicxGatewayDenToken(),
       resolvedHostToken: "",
       hostInfo: null,
       source: "gateway",
@@ -49,9 +49,9 @@ export async function resolveOpenworkConnection(): Promise<ResolvedOpenworkConne
 
   if (isDesktopRuntime()) {
     try {
-      const info = await openworkServerInfo() as OpenworkServerInfo;
+      const info = await micxServerInfo() as MicxServerInfo;
       const normalizedBaseUrl =
-        normalizeOpenworkServerUrl(info.baseUrl ?? info.connectUrl ?? info.lanUrl ?? info.mdnsUrl ?? "") ??
+        normalizeMicxServerUrl(info.baseUrl ?? info.connectUrl ?? info.lanUrl ?? info.mdnsUrl ?? "") ??
         "";
       const resolvedToken = info.ownerToken?.trim() || info.clientToken?.trim() || "";
       if (info.running === true && hasUsableConnection(normalizedBaseUrl, resolvedToken)) {
@@ -69,15 +69,15 @@ export async function resolveOpenworkConnection(): Promise<ResolvedOpenworkConne
     }
   }
 
-  const settings = readOpenworkServerSettings();
-  const normalizedBaseUrl = normalizeOpenworkServerUrl(settings.urlOverride ?? "") ?? "";
+  const settings = readMicxServerSettings();
+  const normalizedBaseUrl = normalizeMicxServerUrl(settings.urlOverride ?? "") ?? "";
   const sameOriginBaseUrl =
     !normalizedBaseUrl && !isDesktopRuntime() && isWebDeployment() && typeof window !== "undefined"
-      ? normalizeOpenworkServerUrl(window.location.origin) ?? ""
+      ? normalizeMicxServerUrl(window.location.origin) ?? ""
       : "";
   const resolvedToken = settings.token?.trim() ?? "";
   const resolvedHostToken =
-    normalizedBaseUrl && isLoopbackOpenworkServerUrl(normalizedBaseUrl)
+    normalizedBaseUrl && isLoopbackMicxServerUrl(normalizedBaseUrl)
       ? settings.hostToken?.trim() ?? ""
       : "";
   const storedConnectionIsStaleDesktopRuntime = Boolean(

@@ -283,7 +283,7 @@ const faults = deepFreeze(faultDefinitionSchema.array().parse([
   {
     id: "redirect-uri-whitelist",
     displayName: "Redirect URI whitelist rejection",
-    description: "Rejects an otherwise valid OAuth authorization request because the provider has not allowlisted the exact OpenWork callback URI.",
+    description: "Rejects an otherwise valid OAuth authorization request because the provider has not allowlisted the exact Micx callback URI.",
     phase: "AUTH_USER_OR_WORKLOAD",
     category: "oauth_redirect_uri_whitelist",
     retryable: false,
@@ -294,7 +294,7 @@ const faults = deepFreeze(faultDefinitionSchema.array().parse([
   {
     id: "per-connector-redirect",
     displayName: "Per-connector redirect required",
-    description: "Rejects the authorization-code token exchange with the same safe evidence OpenWork surfaces when a provider expects a per-connector callback instead of the shared callback.",
+    description: "Rejects the authorization-code token exchange with the same safe evidence Micx surfaces when a provider expects a per-connector callback instead of the shared callback.",
     phase: "AUTH_TOKEN_ACQUISITION",
     category: "oauth_token",
     retryable: false,
@@ -305,7 +305,7 @@ const faults = deepFreeze(faultDefinitionSchema.array().parse([
   {
     id: "dcr-required",
     displayName: "Dynamic client registration required",
-    description: "Rejects manual OAuth authorization so OpenWork can prove the gateway requires DCR before a connection can proceed.",
+    description: "Rejects manual OAuth authorization so Micx can prove the gateway requires DCR before a connection can proceed.",
     phase: "AUTH_USER_OR_WORKLOAD",
     category: "oauth_dynamic_registration_required",
     retryable: false,

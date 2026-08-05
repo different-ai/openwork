@@ -101,7 +101,7 @@ describe("workspace route list merging", () => {
   const desktopWorkspaces = [{
     id: "workspace-desktop",
     name: "Desktop workspace",
-    path: "/tmp/openwork",
+    path: "/tmp/micx",
     workspaceType: "local",
     displayNameResolved: "Desktop workspace",
   }];

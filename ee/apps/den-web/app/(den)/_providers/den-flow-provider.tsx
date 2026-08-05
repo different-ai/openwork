@@ -23,8 +23,8 @@ import {
   type WorkerRuntimeSnapshot,
   type WorkerSummary,
   type WorkerStatusBucket,
-  buildOpenworkAppConnectUrl,
-  buildOpenworkDeepLink,
+  buildMicxAppConnectUrl,
+  buildMicxDeepLink,
   deriveOnboardingWorkerName,
   getAuthInfoForMode,
   getBillingSummary,
@@ -52,13 +52,13 @@ import {
   parseWorkspaceIdFromUrl,
   requestJson,
   resetPosthogUser,
-  resolveOpenworkWorkspaceUrl,
+  resolveMicxWorkspaceUrl,
   trackPosthogEvent
 } from "../_lib/den-flow";
 import { EMPTY_RUNTIME_CONFIG, getRuntimeConfig, type DenWebRuntimeConfig } from "../_lib/runtime-config";
 import {
   getDesktopHandoffGrant,
-  getDesktopHandoffOpenworkUrl,
+  getDesktopHandoffMicxUrl,
   rememberDesktopHandoffGrant,
 } from "../_lib/desktop-handoff";
 import {
@@ -144,8 +144,8 @@ type DenFlowContextValue = {
   events: LaunchEvent[];
   runtimeConfig: DenWebRuntimeConfig;
   runtimeConfigLoaded: boolean;
-  openworkDeepLink: string | null;
-  openworkAppConnectUrl: string | null;
+  micxDeepLink: string | null;
+  micxAppConnectUrl: string | null;
   hasWorkspaceScopedUrl: boolean;
   additionalWorkerNeedsPlan: boolean;
   selectedStatusMeta: { label: string; bucket: WorkerStatusBucket };
@@ -222,7 +222,7 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
   });
   const [sessionHydrated, setSessionHydrated] = useState(false);
   const [desktopAuthRequested, setDesktopAuthRequested] = useState(false);
-  const [desktopAuthScheme, setDesktopAuthScheme] = useState("openwork");
+  const [desktopAuthScheme, setDesktopAuthScheme] = useState("micx");
   const [webAuthRequested, setWebAuthRequested] = useState(false);
   const [webAuthReturnUrl, setWebAuthReturnUrl] = useState<string | null>(null);
   const [desktopRedirectBusy, setDesktopRedirectBusy] = useState(false);
@@ -276,19 +276,19 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
       : selectedWorker
         ? listItemToWorker(selectedWorker, worker)
         : worker;
-  const openworkConnectUrl = activeWorker?.openworkUrl ?? activeWorker?.instanceUrl ?? null;
-  const preferredOpenworkToken = activeWorker?.clientToken ?? activeWorker?.ownerToken ?? null;
-  const hasWorkspaceScopedUrl = Boolean(openworkConnectUrl && /\/w\/[^/?#]+/.test(openworkConnectUrl));
-  const openworkDeepLink = buildOpenworkDeepLink(
-    openworkConnectUrl,
-    preferredOpenworkToken,
+  const micxConnectUrl = activeWorker?.micxUrl ?? activeWorker?.instanceUrl ?? null;
+  const preferredMicxToken = activeWorker?.clientToken ?? activeWorker?.ownerToken ?? null;
+  const hasWorkspaceScopedUrl = Boolean(micxConnectUrl && /\/w\/[^/?#]+/.test(micxConnectUrl));
+  const micxDeepLink = buildMicxDeepLink(
+    micxConnectUrl,
+    preferredMicxToken,
     activeWorker?.workerId ?? null,
     activeWorker?.workerName ?? null
   );
-  const openworkAppConnectUrl = buildOpenworkAppConnectUrl(
-    runtimeConfig.openworkAppConnectUrl,
-    openworkConnectUrl,
-    preferredOpenworkToken,
+  const micxAppConnectUrl = buildMicxAppConnectUrl(
+    runtimeConfig.micxAppConnectUrl,
+    micxConnectUrl,
+    preferredMicxToken,
     activeWorker?.workerId ?? null,
     activeWorker?.workerName ?? null,
     { autoConnect: true }
@@ -487,12 +487,12 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
     }
 
     if (desktopAuthRequested) {
-      setAuthInfo("Signed in. Returning to OpenWork...");
+      setAuthInfo("Signed in. Returning to Micx...");
       return null;
     }
 
     if (webAuthRequested) {
-      setAuthInfo("Signed in. Returning to OpenWork...");
+      setAuthInfo("Signed in. Returning to Micx...");
       return null;
     }
 
@@ -603,13 +603,13 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
     }
   }
 
-  async function withResolvedOpenworkCredentials(candidate: WorkerLaunch, options: { quiet?: boolean } = {}) {
-    const existingConnectUrl = candidate.openworkUrl?.trim() ?? "";
+  async function withResolvedMicxCredentials(candidate: WorkerLaunch, options: { quiet?: boolean } = {}) {
+    const existingConnectUrl = candidate.micxUrl?.trim() ?? "";
     const existingWorkspaceId = candidate.workspaceId?.trim() ?? "";
     if (existingConnectUrl && existingWorkspaceId) {
       return {
         ...candidate,
-        openworkUrl: existingConnectUrl,
+        micxUrl: existingConnectUrl,
         workspaceId: existingWorkspaceId
       };
     }
@@ -618,7 +618,7 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
     if (!instanceUrl) {
       return {
         ...candidate,
-        openworkUrl: null,
+        micxUrl: null,
         workspaceId: null
       };
     }
@@ -628,17 +628,17 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
       const mountedWorkspaceId = parseWorkspaceIdFromUrl(instanceUrl);
       return {
         ...candidate,
-        openworkUrl: instanceUrl.trim().replace(/\/+$/, ""),
+        micxUrl: instanceUrl.trim().replace(/\/+$/, ""),
         workspaceId: mountedWorkspaceId
       };
     }
 
     try {
-      const resolved = await resolveOpenworkWorkspaceUrl(instanceUrl, accessToken);
+      const resolved = await resolveMicxWorkspaceUrl(instanceUrl, accessToken);
       if (resolved) {
         return {
           ...candidate,
-          openworkUrl: resolved.openworkUrl,
+          micxUrl: resolved.micxUrl,
           workspaceId: resolved.workspaceId
         };
       }
@@ -650,7 +650,7 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
 
     return {
       ...candidate,
-      openworkUrl: instanceUrl.trim().replace(/\/+$/, ""),
+      micxUrl: instanceUrl.trim().replace(/\/+$/, ""),
       workspaceId: parseWorkspaceIdFromUrl(instanceUrl)
     };
   }
@@ -821,7 +821,7 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
         {
           method: "POST",
           headers: authToken ? { Authorization: `Bearer ${authToken}` } : undefined,
-          body: JSON.stringify({ services: ["openwork-server", "opencode"] })
+          body: JSON.stringify({ services: ["micx-server", "opencode"] })
         },
         12000
       );
@@ -1019,17 +1019,17 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
         return;
       }
 
-      const openworkUrl = getDesktopHandoffOpenworkUrl(payload) ?? "";
-      if (!openworkUrl) {
-        setAuthError("Desktop handoff succeeded, but no OpenWork redirect URL was returned.");
+      const micxUrl = getDesktopHandoffMicxUrl(payload) ?? "";
+      if (!micxUrl) {
+        setAuthError("Desktop handoff succeeded, but no Micx redirect URL was returned.");
         return;
       }
 
-      rememberDesktopHandoffGrant(getDesktopHandoffGrant(payload, openworkUrl));
-      setDesktopRedirectUrl(openworkUrl);
-      window.location.assign(openworkUrl);
+      rememberDesktopHandoffGrant(getDesktopHandoffGrant(payload, micxUrl));
+      setDesktopRedirectUrl(micxUrl);
+      window.location.assign(micxUrl);
     } catch (error) {
-      setAuthError(error instanceof Error ? error.message : "Failed to open OpenWork.");
+      setAuthError(error instanceof Error ? error.message : "Failed to open Micx.");
     } finally {
       setDesktopRedirectBusy(false);
     }
@@ -1086,7 +1086,7 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
       redirectUrl.searchParams.set("grant", grant);
       window.location.replace(redirectUrl.toString());
     } catch (error) {
-      setAuthError(error instanceof Error ? error.message : "Failed to return to OpenWork Cloud.");
+      setAuthError(error instanceof Error ? error.message : "Failed to return to Micx Cloud.");
     } finally {
       setWebRedirectBusy(false);
     }
@@ -1236,7 +1236,7 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
       }
       const latestRuntimeConfig = await getRuntimeConfig();
       setRuntimeConfig(latestRuntimeConfig);
-      const callbackURL = getSocialCallbackUrl(latestRuntimeConfig.openworkAuthCallbackUrl);
+      const callbackURL = getSocialCallbackUrl(latestRuntimeConfig.micxAuthCallbackUrl);
       const { response, payload } = await requestJson("/api/auth/sign-in/social", {
         method: "POST",
         body: JSON.stringify({
@@ -1442,7 +1442,7 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
         return "error" as const;
       }
 
-      const resolvedWorker = await withResolvedOpenworkCredentials(parsedWorker);
+      const resolvedWorker = await withResolvedMicxCredentials(parsedWorker);
       setWorker(resolvedWorker);
       setWorkerLookupId(parsedWorker.workerId);
       setPendingRestoredWorkerId(null);
@@ -1548,7 +1548,7 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
               status: summary.status,
               provider: summary.provider,
               instanceUrl: summary.instanceUrl,
-              openworkUrl: summary.instanceUrl,
+              micxUrl: summary.instanceUrl,
               workspaceId: null,
               clientToken: null,
               ownerToken: null,
@@ -1557,7 +1557,7 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
 
       const shouldUpdateActiveWorker = worker?.workerId === summary.workerId || (!background && workerLookupId === summary.workerId);
       if (shouldUpdateActiveWorker) {
-        const resolvedWorker = await withResolvedOpenworkCredentials(nextWorker, { quiet: true });
+        const resolvedWorker = await withResolvedMicxCredentials(nextWorker, { quiet: true });
         setWorker(resolvedWorker);
         setPendingRestoredWorkerId(null);
         if (!background) {
@@ -1633,7 +1633,7 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
         worker && worker.workerId === id
           ? {
               ...worker,
-              openworkUrl: tokens.openworkUrl ?? worker.openworkUrl,
+              micxUrl: tokens.micxUrl ?? worker.micxUrl,
               workspaceId: tokens.workspaceId ?? worker.workspaceId,
               clientToken: tokens.clientToken,
               ownerToken: tokens.ownerToken,
@@ -1645,14 +1645,14 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
               status: "unknown",
               provider: null,
               instanceUrl: null,
-              openworkUrl: tokens.openworkUrl,
+              micxUrl: tokens.micxUrl,
               workspaceId: tokens.workspaceId,
               clientToken: tokens.clientToken,
               ownerToken: tokens.ownerToken,
               hostToken: tokens.hostToken
             };
 
-      const resolvedWorker = await withResolvedOpenworkCredentials(nextWorker, { quiet: true });
+      const resolvedWorker = await withResolvedMicxCredentials(nextWorker, { quiet: true });
       setWorker(resolvedWorker);
       setPendingRestoredWorkerId(null);
       setLaunchStatus("Worker is ready to connect.");
@@ -1970,7 +1970,7 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
 
       const restored: WorkerLaunch = {
         ...parsed,
-        openworkUrl: parsed.openworkUrl ?? parsed.instanceUrl,
+        micxUrl: parsed.micxUrl ?? parsed.instanceUrl,
         workspaceId: parsed.workspaceId ?? parseWorkspaceIdFromUrl(parsed.instanceUrl ?? ""),
         clientToken: null,
         ownerToken: null,
@@ -2214,8 +2214,8 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
     events,
     runtimeConfig,
     runtimeConfigLoaded,
-    openworkDeepLink,
-    openworkAppConnectUrl,
+    micxDeepLink,
+    micxAppConnectUrl,
     hasWorkspaceScopedUrl,
     additionalWorkerNeedsPlan,
     selectedStatusMeta,

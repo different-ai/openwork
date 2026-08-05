@@ -1,6 +1,6 @@
 /** @jsxImportSource react */
 
-import type { ConnectLinkClaims, ConnectLinkTransport, ConnectLinkVerifyErrorCode } from "@openwork/types/connect-link";
+import type { ConnectLinkClaims, ConnectLinkTransport, ConnectLinkVerifyErrorCode } from "@micx/types/connect-link";
 
 import { t } from "../../../i18n";
 import { Button } from "../../../components/ui/button";

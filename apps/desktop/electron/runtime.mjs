@@ -8,7 +8,7 @@ import path from "node:path";
 import tls from "node:tls";
 import { fileURLToPath } from "node:url";
 import { pathToFileURL } from "node:url";
-import { desktopBootstrapPath, openworkEnvStorePath, openworkServerConfigPath, resolveWorkspaceOpencodeConfigPath } from "@openwork/paths";
+import { desktopBootstrapPath, micxEnvStorePath, micxServerConfigPath, resolveWorkspaceOpencodeConfigPath } from "@micx/paths";
 import {
   dedupeCertificates,
   resolveSystemCaBundle,
@@ -19,8 +19,8 @@ import {
 const __runtimeDir = path.dirname(fileURLToPath(import.meta.url));
 
 const DIRECT_RUNTIME = "direct";
-const OPENWORK_SERVER_PORT_RANGE_START = 48_000;
-const OPENWORK_SERVER_PORT_RANGE_END = 51_000;
+const MICX_SERVER_PORT_RANGE_START = 48_000;
+const MICX_SERVER_PORT_RANGE_END = 51_000;
 const MAX_BOOTSTRAP_BYTES = 256 * 1024;
 const MAX_CHAIN_REPAIR_BODY_BYTES = 64 * 1024;
 const MAX_CHAIN_REPAIR_ORIGINS = 3;
@@ -62,15 +62,15 @@ export function prioritizeWorkspacePaths(preferredPath, workspacePaths = []) {
   return paths;
 }
 
-export function resolveOpenworkServerConfigPath(env = process.env) {
-  return openworkServerConfigPath({ env });
+export function resolveMicxServerConfigPath(env = process.env) {
+  return micxServerConfigPath({ env });
 }
 
 export function seedWorkspacePathsForEmbeddedServer(workspacePaths, serverConfigExists) {
   return serverConfigExists ? [] : workspacePaths;
 }
 
-export function selectStickyOpenworkPortWorkspace(requestedWorkspacePaths = [], serverWorkspacePaths = []) {
+export function selectStickyMicxPortWorkspace(requestedWorkspacePaths = [], serverWorkspacePaths = []) {
   for (const value of [...requestedWorkspacePaths, ...serverWorkspacePaths]) {
     const workspacePath = String(value ?? "").trim();
     if (workspacePath) return workspacePath;
@@ -79,7 +79,7 @@ export function selectStickyOpenworkPortWorkspace(requestedWorkspacePaths = [], 
 }
 
 export function resolveEvalLocalServerDelayMs(env = process.env) {
-  const delayMs = Number(env.OPENWORK_EVAL_LOCAL_SERVER_DELAY_MS);
+  const delayMs = Number(env.MICX_EVAL_LOCAL_SERVER_DELAY_MS);
   return Number.isFinite(delayMs) && delayMs > 0 ? delayMs : 0;
 }
 
@@ -159,7 +159,7 @@ export function snapshotEngineState(state) {
   };
 }
 
-function createOpenworkServerState() {
+function createMicxServerState() {
   return {
     child: null,
     childExited: true,
@@ -182,7 +182,7 @@ function createOpenworkServerState() {
   };
 }
 
-function snapshotOpenworkServerState(state) {
+function snapshotMicxServerState(state) {
   const child = state.childExited ? null : state.child;
   const running = state.inProcess || Boolean(child && child.exitCode === null && !child.killed);
   return {
@@ -206,15 +206,15 @@ function snapshotOpenworkServerState(state) {
   };
 }
 
-function assertOpenworkServerReady(snapshot) {
+function assertMicxServerReady(snapshot) {
   if (!snapshot?.running) {
-    throw new Error("OpenWork server did not stay running after startup.");
+    throw new Error("Micx server did not stay running after startup.");
   }
   if (!snapshot.baseUrl) {
-    throw new Error("OpenWork server did not report a base URL after startup.");
+    throw new Error("Micx server did not report a base URL after startup.");
   }
   if (!snapshot.ownerToken && !snapshot.clientToken) {
-    throw new Error("OpenWork server did not report an access token after startup.");
+    throw new Error("Micx server did not report an access token after startup.");
   }
   return snapshot;
 }
@@ -430,14 +430,14 @@ async function fetchJson(url, options = {}, timeoutMs = 3000) {
 }
 
 function resolveUserEnvFilePath() {
-  return openworkEnvStorePath();
+  return micxEnvStorePath();
 }
 
 const USER_ENV_KEY_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
-const USER_ENV_RESERVED_PREFIXES = ["OPENWORK_", "OPENCODE_"];
+const USER_ENV_RESERVED_PREFIXES = ["MICX_", "OPENCODE_"];
 
 // Synchronous, best-effort; absent or malformed returns {}. Reserved prefixes
-// are stripped so a tampered file can never shadow OPENWORK_* / OPENCODE_*.
+// are stripped so a tampered file can never shadow MICX_* / OPENCODE_*.
 function loadUserEnvFile() {
   try {
     const raw = readFileSync(resolveUserEnvFilePath(), "utf8");
@@ -857,7 +857,7 @@ async function resolveChainRepairOrigins(options) {
   const env = options.parentEnv ?? {};
   const chainRepair = options.chainRepair ?? {};
   if (chainRepair.origins) return normalizeRepairOrigins(chainRepair.origins);
-  const envOrigins = typeof env.OPENWORK_CHAIN_REPAIR_ORIGINS === "string" ? env.OPENWORK_CHAIN_REPAIR_ORIGINS : "";
+  const envOrigins = typeof env.MICX_CHAIN_REPAIR_ORIGINS === "string" ? env.MICX_CHAIN_REPAIR_ORIGINS : "";
   if (envOrigins.trim()) return normalizeRepairOrigins(envOrigins.split(","));
   const bootstrapPath = chainRepair.bootstrapPath ?? desktopBootstrapPath({ env });
   const origin = await readActivatedEnterpriseOrigin(bootstrapPath);
@@ -872,15 +872,15 @@ async function repairIncompleteChains(options) {
   const env = options.parentEnv ?? {};
   const chainRepair = options.chainRepair ?? {};
   const logInfo = options.logInfo;
-  if (chainRepair.disabled === true || String(env.OPENWORK_DISABLE_CHAIN_REPAIR ?? "").trim() === "1") {
-    if (typeof logInfo === "function") logInfo("OpenWork runtime: chain repair disabled by OPENWORK_DISABLE_CHAIN_REPAIR.");
+  if (chainRepair.disabled === true || String(env.MICX_DISABLE_CHAIN_REPAIR ?? "").trim() === "1") {
+    if (typeof logInfo === "function") logInfo("Micx runtime: chain repair disabled by MICX_DISABLE_CHAIN_REPAIR.");
     return { pems: [], timedOut: false };
   }
 
   const origins = await resolveChainRepairOrigins(options);
   if (origins.length === 0) {
-    if (!chainRepair.origins && !String(env.OPENWORK_CHAIN_REPAIR_ORIGINS ?? "").trim() && typeof logInfo === "function") {
-      logInfo("OpenWork runtime: chain repair skipped: no activation record.");
+    if (!chainRepair.origins && !String(env.MICX_CHAIN_REPAIR_ORIGINS ?? "").trim() && typeof logInfo === "function") {
+      logInfo("Micx runtime: chain repair skipped: no activation record.");
     }
     return { pems: [], timedOut: false };
   }
@@ -888,7 +888,7 @@ async function repairIncompleteChains(options) {
   const fetchImpl = chainRepair.fetchImpl ?? globalThis.fetch;
   const tlsModule = options.tlsModule ?? tls;
   const tlsConnectImpl = chainRepair.tlsConnectImpl ?? tls.connect;
-  const totalTimeoutValue = Number(env.OPENWORK_CHAIN_REPAIR_TIMEOUT_MS);
+  const totalTimeoutValue = Number(env.MICX_CHAIN_REPAIR_TIMEOUT_MS);
   const totalTimeoutMs =
     Number.isFinite(totalTimeoutValue) && totalTimeoutValue >= 1000 && totalTimeoutValue <= 120000
       ? totalTimeoutValue
@@ -901,7 +901,7 @@ async function repairIncompleteChains(options) {
 
   if (typeof fetchImpl !== "function") {
     if (typeof logInfo === "function") {
-      for (const origin of origins) logInfo(`OpenWork runtime: chain repair skipped for ${origin}: fetch unavailable`);
+      for (const origin of origins) logInfo(`Micx runtime: chain repair skipped for ${origin}: fetch unavailable`);
     }
     return { pems: [], timedOut: false };
   }
@@ -911,27 +911,27 @@ async function repairIncompleteChains(options) {
     for (const origin of origins) {
       const strictError = await strictProbeChainRepair(origin, tlsConnectImpl);
       if (strictError === null) {
-        if (typeof logInfo === "function") logInfo(`OpenWork runtime: chain ok for ${origin}`);
+        if (typeof logInfo === "function") logInfo(`Micx runtime: chain ok for ${origin}`);
         continue;
       }
       if (strictError !== "UNABLE_TO_VERIFY_LEAF_SIGNATURE") {
-        if (typeof logInfo === "function") logInfo(`OpenWork runtime: chain repair skipped for ${origin}: ${strictError}`);
+        if (typeof logInfo === "function") logInfo(`Micx runtime: chain repair skipped for ${origin}: ${strictError}`);
         continue;
       }
 
       const leafState = await introspectLeafCertificate(origin, tlsConnectImpl);
       if (!leafState) {
-        if (typeof logInfo === "function") logInfo(`OpenWork runtime: chain repair skipped for ${origin}: certificate introspection failed`);
+        if (typeof logInfo === "function") logInfo(`Micx runtime: chain repair skipped for ${origin}: certificate introspection failed`);
         continue;
       }
       if (!leafState.leafOnly) {
-        if (typeof logInfo === "function") logInfo(`OpenWork runtime: chain repair skipped for ${origin}: served chain includes an intermediate`);
+        if (typeof logInfo === "function") logInfo(`Micx runtime: chain repair skipped for ${origin}: served chain includes an intermediate`);
         continue;
       }
 
       const issuerUrls = caIssuerUrls(leafState.leaf);
       if (issuerUrls.length === 0) {
-        if (typeof logInfo === "function") logInfo(`OpenWork runtime: chain repair skipped for ${origin}: no CA Issuers AIA URL`);
+        if (typeof logInfo === "function") logInfo(`Micx runtime: chain repair skipped for ${origin}: no CA Issuers AIA URL`);
         continue;
       }
 
@@ -946,18 +946,18 @@ async function repairIncompleteChains(options) {
         if (!intermediate) continue;
         const reason = refusalReason(leafState.leaf, intermediate, rootsProvider);
         if (reason) {
-          if (typeof logInfo === "function") logInfo(`OpenWork runtime: chain repair refused for ${origin}: ${reason}`);
+          if (typeof logInfo === "function") logInfo(`Micx runtime: chain repair refused for ${origin}: ${reason}`);
           continue;
         }
         pems.push(intermediate.toString());
         repaired = true;
         if (typeof logInfo === "function") {
-          logInfo(`OpenWork runtime: chain repaired for ${origin}: added "${certificateCommonName(intermediate)}"`);
+          logInfo(`Micx runtime: chain repaired for ${origin}: added "${certificateCommonName(intermediate)}"`);
         }
         break;
       }
       if (!repaired && typeof logInfo === "function") {
-        logInfo(`OpenWork runtime: chain repair skipped for ${origin}: no usable AIA issuer certificate`);
+        logInfo(`Micx runtime: chain repair skipped for ${origin}: no usable AIA issuer certificate`);
       }
     }
     return { pems, timedOut: false };
@@ -992,7 +992,7 @@ export async function resolveSystemCaEnv({
   const env = parentEnv ?? {};
   if (Object.prototype.hasOwnProperty.call(env, "NODE_EXTRA_CA_CERTS")) {
     if (typeof logInfo === "function") {
-      logInfo("OpenWork runtime: NODE_EXTRA_CA_CERTS is already set; skipping system CA bundle export.");
+      logInfo("Micx runtime: NODE_EXTRA_CA_CERTS is already set; skipping system CA bundle export.");
     }
     return {};
   }
@@ -1010,7 +1010,7 @@ export async function resolveSystemCaEnv({
       platform: platformLoader,
     });
     if (typeof logInfo === "function") {
-      logInfo(`OpenWork runtime: system CA bundle sources ${summarizeSystemCaSources(bundle.sources)}`);
+      logInfo(`Micx runtime: system CA bundle sources ${summarizeSystemCaSources(bundle.sources)}`);
     }
     let repairedPems = [];
     try {
@@ -1026,7 +1026,7 @@ export async function resolveSystemCaEnv({
       });
       repairedPems = repaired.pems;
       if (repaired.timedOut && typeof logInfo === "function") {
-        logInfo("OpenWork runtime: chain repair skipped: timed out");
+        logInfo("Micx runtime: chain repair skipped: timed out");
       }
     } catch {
       repairedPems = [];
@@ -1068,7 +1068,7 @@ export function mergeSystemCaChildEnv(baseEnv = {}, caEnv = {}, extra = {}) {
 
 export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths }) {
   const engineState = createEngineState();
-  const openworkServerState = createOpenworkServerState();
+  const micxServerState = createMicxServerState();
 
   // Serialize engine lifecycle operations. Without this, concurrent renderer
   // invocations of engineStart/engineStop/engineRestart race: each call's
@@ -1104,12 +1104,12 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     return systemCaEnvPromise;
   }
 
-  function openworkServerTokenStorePath() {
-    return path.join(userDataDir, "openwork-server-tokens.json");
+  function micxServerTokenStorePath() {
+    return path.join(userDataDir, "micx-server-tokens.json");
   }
 
-  function openworkServerStatePath() {
-    return path.join(userDataDir, "openwork-server-state.json");
+  function micxServerStatePath() {
+    return path.join(userDataDir, "micx-server-state.json");
   }
 
   function managedOpencodeWorkdir() {
@@ -1117,17 +1117,17 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
   }
 
   async function loadTokenStore() {
-    return readJsonFile(openworkServerTokenStorePath(), { version: 1, workspaces: {} });
+    return readJsonFile(micxServerTokenStorePath(), { version: 1, workspaces: {} });
   }
 
   async function saveTokenStore(store) {
-    const filePath = openworkServerTokenStorePath();
+    const filePath = micxServerTokenStorePath();
     await mkdir(path.dirname(filePath), { recursive: true });
     await writeFile(filePath, `${JSON.stringify(store, null, 2)}\n`, "utf8");
   }
 
   async function loadPortState() {
-    return readJsonFile(openworkServerStatePath(), {
+    return readJsonFile(micxServerStatePath(), {
       version: 3,
       workspacePorts: {},
       preferredPort: null,
@@ -1135,7 +1135,7 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
   }
 
   async function savePortState(state) {
-    const filePath = openworkServerStatePath();
+    const filePath = micxServerStatePath();
     await mkdir(path.dirname(filePath), { recursive: true });
     await writeFile(filePath, `${JSON.stringify(state, null, 2)}\n`, "utf8");
   }
@@ -1167,7 +1167,7 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     await saveTokenStore(store);
   }
 
-  async function readPreferredOpenworkPort(workspaceKey) {
+  async function readPreferredMicxPort(workspaceKey) {
     const state = await loadPortState();
     const normalized = normalizeWorkspaceKey(workspaceKey);
     if (normalized && state.workspacePorts?.[normalized]) {
@@ -1176,7 +1176,7 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     return state.preferredPort ?? null;
   }
 
-  async function persistPreferredOpenworkPort(workspaceKey, port) {
+  async function persistPreferredMicxPort(workspaceKey, port) {
     const state = await loadPortState();
     const normalized = normalizeWorkspaceKey(workspaceKey);
     state.version = 3;
@@ -1199,8 +1199,8 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     return portAvailable(host, port);
   }
 
-  async function resolveOpenworkPort(host, workspaceKey, currentPort = null) {
-    const preferredPort = await readPreferredOpenworkPort(workspaceKey);
+  async function resolveMicxPort(host, workspaceKey, currentPort = null) {
+    const preferredPort = await readPreferredMicxPort(workspaceKey);
     if (currentPort && (await waitForPortAvailable(host, currentPort))) {
       return { port: currentPort, preferredPort };
     }
@@ -1211,7 +1211,7 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
   }
 
   async function ensureDevModePaths() {
-    const root = path.join(userDataDir, "openwork-dev-data");
+    const root = path.join(userDataDir, "micx-dev-data");
     const paths = {
       homeDir: path.join(root, "home"),
       xdgConfigHome: path.join(root, "xdg", "config"),
@@ -1251,9 +1251,9 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     if (pathEnv) {
       env[pathKey] = pathEnv;
     }
-    if (process.env.OPENWORK_DEV_MODE === "1") {
+    if (process.env.MICX_DEV_MODE === "1") {
       const devPaths = await ensureDevModePaths();
-      env.OPENWORK_DEV_MODE = "1";
+      env.MICX_DEV_MODE = "1";
       env.HOME = devPaths.homeDir;
       env.USERPROFILE = devPaths.homeDir;
       env.XDG_CONFIG_HOME = devPaths.xdgConfigHome;
@@ -1317,7 +1317,7 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     const candidates = [];
     const seen = new Set();
 
-    for (const key of ["OPENWORK_DOCKER_BIN", "OPENWRK_DOCKER_BIN", "DOCKER_BIN"]) {
+    for (const key of ["MICX_DOCKER_BIN", "OPENWRK_DOCKER_BIN", "DOCKER_BIN"]) {
       const value = process.env[key]?.trim();
       if (value && !seen.has(value)) {
         seen.add(value);
@@ -1370,13 +1370,13 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     }
 
     throw new Error(
-      `Failed to run docker: ${errors.join("; ")} (Set OPENWORK_DOCKER_BIN to your docker binary if needed)`,
+      `Failed to run docker: ${errors.join("; ")} (Set MICX_DOCKER_BIN to your docker binary if needed)`,
     );
   }
 
-  const legacyOpenworkContainerPrefix = `${["openwork", "orchestrator"].join("-")}-`;
+  const legacyMicxContainerPrefix = `${["micx", "orchestrator"].join("-")}-`;
 
-  async function listOpenworkManagedContainers() {
+  async function listMicxManagedContainers() {
     const result = runDockerCommandDetailed(["ps", "-a", "--format", "{{.Names}}"], 8000);
     if (result.status !== 0) {
       const combined = `${result.stdout.trim()}\n${result.stderr.trim()}`.trim();
@@ -1385,7 +1385,7 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     return result.stdout
       .split(/\r?\n/)
       .map((line) => line.trim())
-      .filter((name) => name && (name.startsWith(legacyOpenworkContainerPrefix) || name.startsWith("openwork-dev-") || name.startsWith("openwrk-")))
+      .filter((name) => name && (name.startsWith(legacyMicxContainerPrefix) || name.startsWith("micx-dev-") || name.startsWith("openwrk-")))
       .sort();
   }
 
@@ -1536,9 +1536,9 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "X-OpenWork-Host-Token": hostToken,
+          "X-Micx-Host-Token": hostToken,
         },
-        body: JSON.stringify({ scope: "owner", label: "OpenWork desktop owner token" }),
+        body: JSON.stringify({ scope: "owner", label: "Micx desktop owner token" }),
       },
       5000,
     );
@@ -1549,24 +1549,24 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
   // In-process server handle. Kept alive across restarts so we can stop it.
   let inProcessServer = null;
 
-  async function startOpenworkServer(options) {
+  async function startMicxServer(options) {
     const evalDelayMs = resolveEvalLocalServerDelayMs();
     if (evalDelayMs > 0) {
       await new Promise((resolve) => setTimeout(resolve, evalDelayMs));
     }
-    const currentPort = openworkServerState.port;
+    const currentPort = micxServerState.port;
     // Stop any previously running in-process server
     if (inProcessServer) {
       try { await inProcessServer.stop(); } catch { /* ignore */ }
       inProcessServer = null;
     }
-    await stopChild(openworkServerState);
+    await stopChild(micxServerState);
 
     const host = options.remoteAccessEnabled ? "0.0.0.0" : "127.0.0.1";
 
     const managedOpencode = options.manageOpencode ? resolveOpencodeBinary(options.opencodeBinPath) : null;
-    openworkServerState.managedOpencodeBinPath = managedOpencode?.path ?? null;
-    openworkServerState.managedOpencodeBinSource = managedOpencode?.source ?? null;
+    micxServerState.managedOpencodeBinPath = managedOpencode?.path ?? null;
+    micxServerState.managedOpencodeBinSource = managedOpencode?.source ?? null;
     if (options.manageOpencode) {
       engineState.opencodeBinPath = managedOpencode?.path ?? null;
       engineState.opencodeBinSource = managedOpencode?.source ?? null;
@@ -1580,14 +1580,14 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     // truth. Do not pass Electron's legacy workspace list as CLI workspaces or
     // the server config loader will ignore server.json and lose server-created
     // workspaces after restart.
-    const serverConfigPath = resolveOpenworkServerConfigPath(process.env);
+    const serverConfigPath = resolveMicxServerConfigPath(process.env);
     const requestedWorkspacePaths = (options.workspacePaths ?? []).filter((value) => value.trim().length > 0);
     const workspacePaths = seedWorkspacePathsForEmbeddedServer(
       requestedWorkspacePaths,
       existsSync(serverConfigPath),
     );
-    const activeWorkspace = selectStickyOpenworkPortWorkspace(requestedWorkspacePaths, workspacePaths);
-    const portSelection = await resolveOpenworkPort(host, activeWorkspace, currentPort);
+    const activeWorkspace = selectStickyMicxPortWorkspace(requestedWorkspacePaths, workspacePaths);
+    const portSelection = await resolveMicxPort(host, activeWorkspace, currentPort);
     const tokens = await loadOrCreateWorkspaceTokens(activeWorkspace);
 
     // One call: resolve config, spawn managed OpenCode, start HTTP server.
@@ -1598,12 +1598,12 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
       path.resolve(__runtimeDir, "..", "server", "dist", "embedded.js"),
       ...(process.resourcesPath ? [path.resolve(process.resourcesPath, "server", "dist", "embedded.js")] : []),
     ];
-    const candidates = process.env.OPENWORK_DEV_MODE === "1"
+    const candidates = process.env.MICX_DEV_MODE === "1"
       ? [devPath, ...packagedPaths]
       : [...packagedPaths, devPath];
     const embeddedPath = candidates.find((candidate) => existsSync(candidate));
     if (!embeddedPath) {
-      throw new Error(`Cannot find OpenWork embedded server bundle. Checked: ${candidates.join(", ")}`);
+      throw new Error(`Cannot find Micx embedded server bundle. Checked: ${candidates.join(", ")}`);
     }
     const { startEmbeddedServer } = await import(embeddedServerImportUrl(embeddedPath));
     // startEmbeddedServer falls back to an OS-assigned port if `port` races
@@ -1625,7 +1625,7 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
       opencodeCwd: managedOpencodeWorkdir(),
     });
     inProcessServer = handle;
-    openworkServerState.managedOpencodeExecution = handle.managedOpencodeExecution ?? null;
+    micxServerState.managedOpencodeExecution = handle.managedOpencodeExecution ?? null;
     engineState.managedByServer = Boolean(handle.managedOpencode);
     engineState.managedPid = handle.managedOpencode?.pid ?? null;
     engineState.managedIsAlive = handle.managedOpencode?.isAlive ?? null;
@@ -1633,18 +1633,18 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     const boundPort = handle.port;
     const baseUrl = handle.url;
 
-    openworkServerState.inProcess = true;
-    openworkServerState.remoteAccessEnabled = options.remoteAccessEnabled;
-    openworkServerState.host = host;
-    openworkServerState.port = boundPort;
-    openworkServerState.baseUrl = baseUrl;
-    openworkServerState.clientToken = tokens.clientToken;
-    openworkServerState.hostToken = tokens.hostToken;
+    micxServerState.inProcess = true;
+    micxServerState.remoteAccessEnabled = options.remoteAccessEnabled;
+    micxServerState.host = host;
+    micxServerState.port = boundPort;
+    micxServerState.baseUrl = baseUrl;
+    micxServerState.clientToken = tokens.clientToken;
+    micxServerState.hostToken = tokens.hostToken;
 
     const connectUrls = options.remoteAccessEnabled ? buildConnectUrls(boundPort) : { connectUrl: null, mdnsUrl: null, lanUrl: null };
-    openworkServerState.connectUrl = connectUrls.connectUrl;
-    openworkServerState.mdnsUrl = connectUrls.mdnsUrl;
-    openworkServerState.lanUrl = connectUrls.lanUrl;
+    micxServerState.connectUrl = connectUrls.connectUrl;
+    micxServerState.mdnsUrl = connectUrls.mdnsUrl;
+    micxServerState.lanUrl = connectUrls.lanUrl;
 
     // No health check needed -- startServer() resolves only after the listener is bound.
     let workspaceList = null;
@@ -1659,7 +1659,7 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
       }
     }
     ownerToken ||= await issueOwnerToken(baseUrl, tokens.hostToken);
-    openworkServerState.ownerToken = ownerToken;
+    micxServerState.ownerToken = ownerToken;
     if (ownerToken) {
       await persistWorkspaceOwnerToken(activeWorkspace, ownerToken);
     }
@@ -1683,13 +1683,13 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
           engineState.childExited = false;
         }
       } catch (error) {
-        appendOutput(openworkServerState, "lastStderr", `OpenWork server workspace probe: ${error instanceof Error ? error.message : String(error)}\n`);
+        appendOutput(micxServerState, "lastStderr", `Micx server workspace probe: ${error instanceof Error ? error.message : String(error)}\n`);
       }
     }
     if (!portSelection.preferredPort || boundPort === portSelection.preferredPort) {
-      await persistPreferredOpenworkPort(activeWorkspace, boundPort);
+      await persistPreferredMicxPort(activeWorkspace, boundPort);
     }
-    return snapshotOpenworkServerState(openworkServerState);
+    return snapshotMicxServerState(micxServerState);
   }
 
   async function stopAllRuntimeChildren() {
@@ -1698,11 +1698,11 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
       try { await inProcessServer.stop(); } catch { /* ignore */ }
       inProcessServer = null;
     }
-    await stopChild(openworkServerState);
+    await stopChild(micxServerState);
     await stopChild(engineState);
 
     Object.assign(engineState, createEngineState());
-    Object.assign(openworkServerState, createOpenworkServerState());
+    Object.assign(micxServerState, createMicxServerState());
   }
 
   async function prepareFreshRuntime() {
@@ -1712,10 +1712,10 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     lifecycleState = "idle";
   }
 
-  async function ensureOpenwork(options) {
-    let openworkServer;
+  async function ensureMicx(options) {
+    let micxServer;
     try {
-      openworkServer = await startOpenworkServer({
+      micxServer = await startMicxServer({
         workspacePaths: options.workspacePaths,
         opencodeBaseUrl: engineState.baseUrl,
         opencodeUsername: engineState.opencodeUsername,
@@ -1725,11 +1725,11 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
         opencodeBinPath: options.opencodeBinPath,
       });
     } catch (error) {
-      appendOutput(engineState, "lastStderr", `OpenWork server: ${error instanceof Error ? error.message : String(error)}\n`);
+      appendOutput(engineState, "lastStderr", `Micx server: ${error instanceof Error ? error.message : String(error)}\n`);
       throw error;
     }
 
-    assertOpenworkServerReady(openworkServer);
+    assertMicxServerReady(micxServer);
   }
 
   async function engineStart(projectDir, options = {}) {
@@ -1740,20 +1740,20 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
 
     // Reuse a healthy server instead of tearing it down. During boot the
     // main process kicks off bootRuntimeForSelectedWorkspace while renderer
-    // routes independently call ensureDesktopLocalOpenworkConnection. Both go
+    // routes independently call ensureDesktopLocalMicxConnection. Both go
     // through this serialized path; without this guard the second call runs
     // prepareFreshRuntime (killing the freshly bound server) and then rebinds
     // the sticky preferred port, racing the not-yet-released socket into
     // EADDRINUSE and leaving the runtime in error -> boot screen.
-    const requestedRemoteAccess = options.openworkRemoteAccess === true;
+    const requestedRemoteAccess = options.micxRemoteAccess === true;
     if (
       options.forceRestart !== true &&
-      openworkServerState.inProcess &&
+      micxServerState.inProcess &&
       lifecycleState === "healthy" &&
       normalizeWorkspaceKey(engineState.projectDir) === normalizeWorkspaceKey(safeProjectDir) &&
-      openworkServerState.remoteAccessEnabled === requestedRemoteAccess
+      micxServerState.remoteAccessEnabled === requestedRemoteAccess
     ) {
-      const existing = snapshotOpenworkServerState(openworkServerState);
+      const existing = snapshotMicxServerState(micxServerState);
       if (existing.running && existing.baseUrl && (existing.ownerToken || existing.clientToken)) {
         return snapshotEngineState(engineState);
       }
@@ -1775,10 +1775,10 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
       engineState.child = null;
       engineState.childExited = true;
 
-      await ensureOpenwork({
+      await ensureMicx({
         projectDir: safeProjectDir,
         workspacePaths,
-        remoteAccessEnabled: options.openworkRemoteAccess === true,
+        remoteAccessEnabled: options.micxRemoteAccess === true,
         manageOpencode: true,
         opencodeBinPath: options.opencodeBinPath,
       });
@@ -1803,14 +1803,14 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     if (!projectDir) {
       throw new Error("OpenCode is not configured for a local workspace");
     }
-    const openworkRemoteAccess = typeof options.openworkRemoteAccess === "boolean"
-      ? options.openworkRemoteAccess
-      : openworkServerState.remoteAccessEnabled;
+    const micxRemoteAccess = typeof options.micxRemoteAccess === "boolean"
+      ? options.micxRemoteAccess
+      : micxServerState.remoteAccessEnabled;
     return engineStart(projectDir, {
       runtime: engineState.runtime,
       workspacePaths: [projectDir],
       opencodeEnableExa: options.opencodeEnableExa,
-      openworkRemoteAccess,
+      micxRemoteAccess,
       forceRestart: true,
     });
   }
@@ -1823,27 +1823,27 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     return {
       lifecycleState,
       engine: await engineInfo(),
-      openworkServer: snapshotOpenworkServerState(openworkServerState),
+      micxServer: snapshotMicxServerState(micxServerState),
     };
   }
 
-  async function openworkServerInfo() {
-    return snapshotOpenworkServerState(openworkServerState);
+  async function micxServerInfo() {
+    return snapshotMicxServerState(micxServerState);
   }
 
-  async function openworkServerRestart(options = {}) {
+  async function micxServerRestart(options = {}) {
     const workspacePaths = prioritizeWorkspacePaths(engineState.projectDir, await listLocalWorkspacePaths());
     const shouldManageOpencode = Boolean(
-      openworkServerState.managedOpencodeBinPath || engineState.opencodeBinPath || !engineState.baseUrl,
+      micxServerState.managedOpencodeBinPath || engineState.opencodeBinPath || !engineState.baseUrl,
     );
-    return startOpenworkServer({
+    return startMicxServer({
       workspacePaths,
       opencodeBaseUrl: shouldManageOpencode ? null : engineState.baseUrl,
       opencodeUsername: shouldManageOpencode ? null : engineState.opencodeUsername,
       opencodePassword: shouldManageOpencode ? null : engineState.opencodePassword,
       remoteAccessEnabled: options.remoteAccessEnabled === true,
       manageOpencode: shouldManageOpencode,
-      opencodeBinPath: engineState.opencodeBinPath ?? openworkServerState.managedOpencodeBinPath,
+      opencodeBinPath: engineState.opencodeBinPath ?? micxServerState.managedOpencodeBinPath,
     });
   }
 
@@ -1854,7 +1854,7 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
         status: -1,
         stdout: "",
         stderr:
-          "Guided install is not supported on Windows yet. Install the OpenWork-pinned OpenCode version manually, then restart OpenWork.",
+          "Guided install is not supported on Windows yet. Install the Micx-pinned OpenCode version manually, then restart Micx.",
       };
     }
 
@@ -1900,8 +1900,8 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     };
   }
 
-  async function sandboxCleanupOpenworkContainers() {
-    const candidates = await listOpenworkManagedContainers().catch((error) => {
+  async function sandboxCleanupMicxContainers() {
+    const candidates = await listMicxManagedContainers().catch((error) => {
       throw error;
     });
     const removed = [];
@@ -1933,9 +1933,9 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     engineInfo,
     engineDoctor,
     engineInstall,
-    openworkServerInfo,
-    openworkServerRestart: (options) => withRuntimeLifecycle(() => openworkServerRestart(options)),
+    micxServerInfo,
+    micxServerRestart: (options) => withRuntimeLifecycle(() => micxServerRestart(options)),
     opencodeMcpAuth,
-    sandboxCleanupOpenworkContainers,
+    sandboxCleanupMicxContainers,
   };
 }

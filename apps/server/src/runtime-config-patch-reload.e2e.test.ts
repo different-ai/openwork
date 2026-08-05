@@ -32,12 +32,12 @@ function auth(token: string) {
 }
 
 async function createWorkspaceRoot() {
-  const root = await mkdtemp(join(tmpdir(), "openwork-runtime-patch-reload-"));
+  const root = await mkdtemp(join(tmpdir(), "micx-runtime-patch-reload-"));
   roots.push(root);
   return root;
 }
 
-async function startOpenworkServer(workspaceRoot: string) {
+async function startMicxServer(workspaceRoot: string) {
   const config: ServerConfig = {
     host: "127.0.0.1",
     port: 0,
@@ -86,7 +86,7 @@ async function sleep(ms: number): Promise<void> {
 describe("workspace config patch reload events", () => {
   test("identical runtime provider patches do not emit another config reload event", async () => {
     const root = await createWorkspaceRoot();
-    const { base, token } = await startOpenworkServer(root);
+    const { base, token } = await startMicxServer(root);
     const payload = {
       opencode: {
         provider: {

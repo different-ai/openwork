@@ -15,7 +15,7 @@ export const OPENAI_IMAGE_GENERATION_EXTENSION_ACTIONS = [
     extensionId: OPENAI_IMAGE_GENERATION_EXTENSION_ID,
     action: "status",
     title: "OpenAI image generation status",
-    description: "Check whether OpenAI image generation is configured and ready for OpenWork extension actions.",
+    description: "Check whether OpenAI image generation is configured and ready for Micx extension actions.",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
   },
   {
@@ -50,14 +50,14 @@ function slugifyImageArtifactName(value: string) {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "")
-    .slice(0, 48) || "openwork-image";
+    .slice(0, 48) || "micx-image";
 }
 
 async function resolveOpenAiImageApiKey(env: EnvService): Promise<string> {
   const records = await env.list();
-  return records.find((entry) => entry.key === "OPENWORK_OPENAI_IMAGE_API_KEY")?.value.trim() ||
+  return records.find((entry) => entry.key === "MICX_OPENAI_IMAGE_API_KEY")?.value.trim() ||
     records.find((entry) => entry.key === "OPENAI_API_KEY")?.value.trim() ||
-    process.env.OPENWORK_OPENAI_IMAGE_API_KEY?.trim() ||
+    process.env.MICX_OPENAI_IMAGE_API_KEY?.trim() ||
     process.env.OPENAI_API_KEY?.trim() ||
     "";
 }
@@ -158,7 +158,7 @@ async function generateOpenAiImageArtifact(config: ServerConfig, env: EnvService
 
   const apiKey = await resolveOpenAiImageApiKey(env);
   if (!apiKey) {
-    throw new ApiError(400, "openai_api_key_missing", "OpenAI API key missing. Save OPENAI_API_KEY in OpenWork Environment Variables or configure the OpenAI Image Gen extension.");
+    throw new ApiError(400, "openai_api_key_missing", "OpenAI API key missing. Save OPENAI_API_KEY in Micx Environment Variables or configure the OpenAI Image Gen extension.");
   }
 
   const workspace = workspaceForContext(config, context);

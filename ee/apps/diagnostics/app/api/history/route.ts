@@ -1,5 +1,5 @@
 import { clearWireHistory, listWireHistory } from "../../../src/history-store"
-import { egressDiagnosticRunSchema } from "@openwork/types/den/egress-diagnostics"
+import { egressDiagnosticRunSchema } from "@micx/types/den/egress-diagnostics"
 
 export const dynamic = "force-dynamic"
 

@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 const packageRoot = fileURLToPath(new URL("..", import.meta.url));
 const args = process.argv.slice(2);
 
-const binaryName = process.platform === "win32" ? "openwork-server.exe" : "openwork-server";
+const binaryName = process.platform === "win32" ? "micx-server.exe" : "micx-server";
 const compiledBinary = fileURLToPath(new URL(`./dist/bin/${binaryName}`, `${new URL("../", import.meta.url)}`));
 const builtCli = fileURLToPath(new URL("./dist/cli.js", `${new URL("../", import.meta.url)}`));
 const sourceCli = fileURLToPath(new URL("./src/cli.ts", `${new URL("../", import.meta.url)}`));
@@ -38,6 +38,6 @@ if (existsSync(sourceCli)) {
 }
 
 console.error(
-  `Unable to find an OpenWork server entrypoint in ${basename(packageRoot)}. Build the package or run it from a source checkout with Bun available.`,
+  `Unable to find an Micx server entrypoint in ${basename(packageRoot)}. Build the package or run it from a source checkout with Bun available.`,
 );
 process.exit(1);

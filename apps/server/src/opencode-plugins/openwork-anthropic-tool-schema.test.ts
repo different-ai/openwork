@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { OpenWorkAnthropicToolSchema } from "./openwork-anthropic-tool-schema.js";
+import { MicxAnthropicToolSchema } from "./micx-anthropic-tool-schema.js";
 
 const calls: { input: Parameters<typeof fetch>[0]; init?: RequestInit }[] = [];
 const fakeBase = Object.assign(
@@ -15,7 +15,7 @@ let patchedFetch: typeof fetch;
 
 beforeAll(async () => {
   globalThis.fetch = fakeBase;
-  await OpenWorkAnthropicToolSchema();
+  await MicxAnthropicToolSchema();
   patchedFetch = globalThis.fetch;
   globalThis.fetch = originalFetch;
 });
@@ -57,7 +57,7 @@ async function send(body: unknown, headers: Record<string, string> = ANTHROPIC_H
   return JSON.parse(sent);
 }
 
-describe("OpenWorkAnthropicToolSchema fetch patch", () => {
+describe("MicxAnthropicToolSchema fetch patch", () => {
   test("flattens a top-level anyOf into a plain object schema", async () => {
     const body = await send({
       model: "claude-fable-5",
@@ -119,7 +119,7 @@ describe("OpenWorkAnthropicToolSchema fetch patch", () => {
   });
 
   test("module exposes only the plugin factory", async () => {
-    const mod = await import("./openwork-anthropic-tool-schema.js");
-    expect(Object.keys(mod)).toEqual(["OpenWorkAnthropicToolSchema"]);
+    const mod = await import("./micx-anthropic-tool-schema.js");
+    expect(Object.keys(mod)).toEqual(["MicxAnthropicToolSchema"]);
   });
 });

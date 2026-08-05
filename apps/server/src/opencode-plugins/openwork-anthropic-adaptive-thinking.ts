@@ -1,5 +1,5 @@
 /**
- * OpenWork Anthropic Adaptive Thinking Plugin
+ * Micx Anthropic Adaptive Thinking Plugin
  *
  * Newer Anthropic models (Claude 5 family, e.g. "claude-fable-5") reject the
  * legacy extended-thinking payload `thinking: { type: "enabled", budgetTokens }`
@@ -49,7 +49,7 @@ function rewriteLegacyThinkingOptions(apiId: string, options: Record<string, unk
 
 // Single export: the OpenCode plugin loader treats every export of a plugin
 // module as a plugin factory, so helpers must stay module-private.
-export const OpenWorkAnthropicAdaptiveThinking = async () => ({
+export const MicxAnthropicAdaptiveThinking = async () => ({
   "chat.params": async (
     input: { model: { id: string; api?: { id?: string } } },
     output: { options: Record<string, unknown> },

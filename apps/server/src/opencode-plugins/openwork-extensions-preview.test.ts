@@ -1,16 +1,16 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { z } from "zod";
 
-import { OpenWorkExtensionsPreview } from "./openwork-extensions-preview.js";
-import * as OpenWorkExtensionsPreviewEntry from "./openwork-extensions-preview.js";
+import { MicxExtensionsPreview } from "./micx-extensions-preview.js";
+import * as MicxExtensionsPreviewEntry from "./micx-extensions-preview.js";
 import {
-  OPENWORK_CLOUD_SKILL_AUTHORING_INSTRUCTION,
-  OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION,
-  OPENWORK_LOCAL_SKILL_AUTHORING_INSTRUCTION,
-} from "./openwork-extensions-preview-steering.js";
+  MICX_CLOUD_SKILL_AUTHORING_INSTRUCTION,
+  MICX_EXTENSION_DISCOVERY_INSTRUCTION,
+  MICX_LOCAL_SKILL_AUTHORING_INSTRUCTION,
+} from "./micx-extensions-preview-steering.js";
 
-const originalServerUrl = process.env.OPENWORK_SERVER_URL;
-const originalServerToken = process.env.OPENWORK_SERVER_TOKEN;
+const originalServerUrl = process.env.MICX_SERVER_URL;
+const originalServerToken = process.env.MICX_SERVER_TOKEN;
 const stops: Array<() => void> = [];
 
 const searchResultSchema = z.object({
@@ -64,19 +64,19 @@ const affordanceResultSchema = <T extends z.ZodTypeAny>(id: string, result: T) =
 
 afterEach(() => {
   while (stops.length) stops.pop()?.();
-  if (originalServerUrl === undefined) delete process.env.OPENWORK_SERVER_URL;
-  else process.env.OPENWORK_SERVER_URL = originalServerUrl;
-  if (originalServerToken === undefined) delete process.env.OPENWORK_SERVER_TOKEN;
-  else process.env.OPENWORK_SERVER_TOKEN = originalServerToken;
+  if (originalServerUrl === undefined) delete process.env.MICX_SERVER_URL;
+  else process.env.MICX_SERVER_URL = originalServerUrl;
+  if (originalServerToken === undefined) delete process.env.MICX_SERVER_TOKEN;
+  else process.env.MICX_SERVER_TOKEN = originalServerToken;
 });
 
-async function transformedSystem(plugin: Awaited<ReturnType<typeof OpenWorkExtensionsPreview>>): Promise<string> {
+async function transformedSystem(plugin: Awaited<ReturnType<typeof MicxExtensionsPreview>>): Promise<string> {
   const output: { system: string[] } = { system: [] };
   await plugin["experimental.chat.system.transform"]({}, output);
   return output.system.join("\n");
 }
 
-function startFakeOpenWorkServer() {
+function startFakeMicxServer() {
   const requests: Array<{ pathname: string; search: string; authorization: string | null; method: string; body?: unknown }> = [];
 
   const workspaceOne = { id: "ws_1", name: "Main", path: "/tmp/main" };
@@ -199,32 +199,32 @@ function startFakeOpenWorkServer() {
     },
   });
   stops.push(() => server.stop(true));
-  process.env.OPENWORK_SERVER_URL = `http://127.0.0.1:${server.port}`;
-  process.env.OPENWORK_SERVER_TOKEN = "test-token";
+  process.env.MICX_SERVER_URL = `http://127.0.0.1:${server.port}`;
+  process.env.MICX_SERVER_TOKEN = "test-token";
   return { requests };
 }
 
-describe("OpenWorkExtensionsPreview session tools", () => {
+describe("MicxExtensionsPreview session tools", () => {
   test("plugin entry exposes only the factory export for the OpenCode loader", () => {
-    expect(Object.keys(OpenWorkExtensionsPreviewEntry)).toEqual(["OpenWorkExtensionsPreview"]);
+    expect(Object.keys(MicxExtensionsPreviewEntry)).toEqual(["MicxExtensionsPreview"]);
   });
 
   test("projects built-in, extension, and Connect providers into one agent context", async () => {
-    startFakeOpenWorkServer();
-    const plugin = await OpenWorkExtensionsPreview({
+    startFakeMicxServer();
+    const plugin = await MicxExtensionsPreview({
       client: {
         mcp: {
           status: async () => ({
             data: {
               notion: { status: "connected" },
-              "openwork-cloud": { status: "connected" },
+              "micx-cloud": { status: "connected" },
             },
           }),
         },
       },
     });
 
-    const output = await plugin.tool.openwork_context.execute();
+    const output = await plugin.tool.micx_context.execute();
     const parsed = z.object({
       context: z.object({
         contributions: z.array(z.object({
@@ -264,15 +264,15 @@ describe("OpenWorkExtensionsPreview session tools", () => {
         .find((affordance) => affordance.id === "connect.capability.execute")?.executor,
     ).toEqual({
       kind: "tool",
-      tool: "openwork-cloud_execute_capability",
+      tool: "micx-cloud_execute_capability",
     });
   });
 
   test("routes semantic session queries without navigating the UI", async () => {
-    startFakeOpenWorkServer();
-    const plugin = await OpenWorkExtensionsPreview();
+    startFakeMicxServer();
+    const plugin = await MicxExtensionsPreview();
 
-    const output = await plugin.tool.openwork_query.execute({
+    const output = await plugin.tool.micx_query.execute({
       id: "session.read",
       args: { sessionId: "ses_archive", count: 2 },
     });
@@ -292,10 +292,10 @@ describe("OpenWorkExtensionsPreview session tools", () => {
   });
 
   test("searches past chat transcript text and prefers the user's matching message", async () => {
-    const fake = startFakeOpenWorkServer();
-    const plugin = await OpenWorkExtensionsPreview();
+    const fake = startFakeMicxServer();
+    const plugin = await MicxExtensionsPreview();
 
-    const output = await plugin.tool.openwork_query.execute({
+    const output = await plugin.tool.micx_query.execute({
       id: "session.search",
       args: {
         query: "raven launch",
@@ -317,8 +317,8 @@ describe("OpenWorkExtensionsPreview session tools", () => {
   });
 
   test("merges factory directory into transform steering when hook input omits it", async () => {
-    const fake = startFakeOpenWorkServer();
-    const plugin = await OpenWorkExtensionsPreview({ directory: "/tmp/archive" });
+    const fake = startFakeMicxServer();
+    const plugin = await MicxExtensionsPreview({ directory: "/tmp/archive" });
     const output: { system: string[] } = { system: [] };
 
     await plugin["experimental.chat.system.transform"]({
@@ -331,59 +331,59 @@ describe("OpenWorkExtensionsPreview session tools", () => {
     expect(connectStateRequest?.search).toBe("?directory=%2Ftmp%2Farchive&provider=anthropic&model=claude-sonnet-4");
     expect(connectSkillsRequest?.search).toBe("");
     expect(output.system.join("\n")).toContain("verified ready for this exact workspace/model");
-    expect(output.system.join("\n")).toContain(OPENWORK_CLOUD_SKILL_AUTHORING_INSTRUCTION);
-    expect(output.system.join("\n")).not.toContain(OPENWORK_LOCAL_SKILL_AUTHORING_INSTRUCTION);
+    expect(output.system.join("\n")).toContain(MICX_CLOUD_SKILL_AUTHORING_INSTRUCTION);
+    expect(output.system.join("\n")).not.toContain(MICX_LOCAL_SKILL_AUTHORING_INSTRUCTION);
     expect(output.system.join("\n")).toContain("<name>customer-briefing</name>");
   });
 
   test("uses the factory engine client as transform steering source of truth", async () => {
     const requests: unknown[] = [];
     const mcp = {
-      result: { data: { "openwork-cloud": { status: "connected" } } },
+      result: { data: { "micx-cloud": { status: "connected" } } },
       async status(request: unknown) {
         requests.push(request);
         return this.result;
       },
     };
-    const plugin = await OpenWorkExtensionsPreview({ client: { mcp }, directory: "/tmp/archive" });
+    const plugin = await MicxExtensionsPreview({ client: { mcp }, directory: "/tmp/archive" });
     const output: { system: string[] } = { system: [] };
 
     await plugin["experimental.chat.system.transform"]({}, output);
 
     expect(requests).toEqual([{ query: { directory: "/tmp/archive" } }]);
     expect(output.system.join("\n")).toContain("verified ready for this exact workspace/model");
-    expect(output.system.join("\n")).toContain(OPENWORK_CLOUD_SKILL_AUTHORING_INSTRUCTION);
-    expect(output.system.join("\n")).not.toContain(OPENWORK_LOCAL_SKILL_AUTHORING_INSTRUCTION);
+    expect(output.system.join("\n")).toContain(MICX_CLOUD_SKILL_AUTHORING_INSTRUCTION);
+    expect(output.system.join("\n")).not.toContain(MICX_LOCAL_SKILL_AUTHORING_INSTRUCTION);
   });
 
   test("uses neutral transform steering when the engine reports failed Cloud status", async () => {
     const requests: unknown[] = [];
     const mcp = {
-      result: { data: { "openwork-cloud": { status: "failed" } } },
+      result: { data: { "micx-cloud": { status: "failed" } } },
       async status(request: unknown) {
         requests.push(request);
         return this.result;
       },
     };
-    const plugin = await OpenWorkExtensionsPreview({ client: { mcp }, directory: "/tmp/archive" });
+    const plugin = await MicxExtensionsPreview({ client: { mcp }, directory: "/tmp/archive" });
     const output: { system: string[] } = { system: [] };
 
     await plugin["experimental.chat.system.transform"]({}, output);
 
     expect(requests).toEqual([{ query: { directory: "/tmp/archive" } }]);
-    expect(output.system[0]).toBe(OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION);
-    expect(output.system.join("\n")).toContain(OPENWORK_LOCAL_SKILL_AUTHORING_INSTRUCTION);
-    expect(output.system.join("\n")).not.toContain(OPENWORK_CLOUD_SKILL_AUTHORING_INSTRUCTION);
+    expect(output.system[0]).toBe(MICX_EXTENSION_DISCOVERY_INSTRUCTION);
+    expect(output.system.join("\n")).toContain(MICX_LOCAL_SKILL_AUTHORING_INSTRUCTION);
+    expect(output.system.join("\n")).not.toContain(MICX_CLOUD_SKILL_AUTHORING_INSTRUCTION);
     expect(output.system[0]).not.toContain("not ready");
     expect(output.system[0]).not.toContain("Repair and test");
-    expect(output.system[0]).not.toContain("Do not use OpenWork documentation tools");
+    expect(output.system[0]).not.toContain("Do not use Micx documentation tools");
   });
 
   test("reads a transcript by session id without opening the UI", async () => {
-    startFakeOpenWorkServer();
-    const plugin = await OpenWorkExtensionsPreview();
+    startFakeMicxServer();
+    const plugin = await MicxExtensionsPreview();
 
-    const output = await plugin.tool.openwork_query.execute({
+    const output = await plugin.tool.micx_query.execute({
       id: "session.read",
       args: { sessionId: "ses_archive", count: 2 },
     });
@@ -404,11 +404,11 @@ describe("OpenWorkExtensionsPreview session tools", () => {
     ]);
   });
 
-  test("creates and starts multiple sessions through the OpenWork backend", async () => {
-    const fake = startFakeOpenWorkServer();
-    const plugin = await OpenWorkExtensionsPreview({ directory: "/tmp/archive" });
+  test("creates and starts multiple sessions through the Micx backend", async () => {
+    const fake = startFakeMicxServer();
+    const plugin = await MicxExtensionsPreview({ directory: "/tmp/archive" });
 
-    const output = await plugin.tool.openwork_execute.execute({
+    const output = await plugin.tool.micx_execute.execute({
       id: "session.create",
       args: {
         sessions: [
@@ -446,14 +446,14 @@ describe("OpenWorkExtensionsPreview session tools", () => {
   });
 
   test("creates more than twenty sessions in one tool call", async () => {
-    const fake = startFakeOpenWorkServer();
-    const plugin = await OpenWorkExtensionsPreview({ directory: "/tmp/archive" });
+    const fake = startFakeMicxServer();
+    const plugin = await MicxExtensionsPreview({ directory: "/tmp/archive" });
     const sessions = Array.from({ length: 21 }, (_, index) => ({
       title: `Research topic ${index + 1}`,
       prompt: `Research topic ${index + 1}.`,
     }));
 
-    const output = await plugin.tool.openwork_execute.execute({
+    const output = await plugin.tool.micx_execute.execute({
       id: "session.create",
       args: { sessions },
     }, { sessionID: "ses_origin" });
@@ -466,21 +466,21 @@ describe("OpenWorkExtensionsPreview session tools", () => {
   });
 });
 
-describe("OpenWorkExtensionsPreview semantic tool surface", () => {
+describe("MicxExtensionsPreview semantic tool surface", () => {
   test("exposes only the three semantic tools", async () => {
-    const plugin = await OpenWorkExtensionsPreview();
+    const plugin = await MicxExtensionsPreview();
     const tools = Object.keys(plugin.tool).sort();
 
-    expect(tools).toEqual(["openwork_context", "openwork_execute", "openwork_query"]);
+    expect(tools).toEqual(["micx_context", "micx_execute", "micx_query"]);
 
     const system = await transformedSystem(plugin);
     expect(system).not.toContain("## Default Skill: skill-creator");
-    expect(system).not.toContain("<openwork_default_skill");
-    expect(system).not.toContain("openwork_ui_");
-    expect(system).not.toContain("openwork_session_");
-    expect(system).not.toContain("openwork_extension_");
-    expect(system).not.toContain("openwork_browser_");
-    expect(system).toContain("Use openwork_context");
+    expect(system).not.toContain("<micx_default_skill");
+    expect(system).not.toContain("micx_ui_");
+    expect(system).not.toContain("micx_session_");
+    expect(system).not.toContain("micx_extension_");
+    expect(system).not.toContain("micx_browser_");
+    expect(system).toContain("Use micx_context");
     expect(system).toContain("session.search");
     expect(system).toContain("browser.open_url");
   });

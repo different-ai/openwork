@@ -9,16 +9,16 @@ import {
   resolveDenBaseUrls,
 } from "../src/app/lib/den";
 import {
-  hydrateOpenworkServerSettingsFromEnv,
-  readOpenworkServerSettings,
-} from "../src/app/lib/openwork-server";
-import { createOpenworkServerStore } from "../src/react-app/domains/connections/openwork-server-store";
-import { buildOpenworkHealthHeaders } from "../src/react-app/kernel/server-provider";
-import { resolveOpenworkConnection } from "../src/react-app/shell/openwork-connection";
+  hydrateMicxServerSettingsFromEnv,
+  readMicxServerSettings,
+} from "../src/app/lib/micx-server";
+import { createMicxServerStore } from "../src/react-app/domains/connections/micx-server-store";
+import { buildMicxHealthHeaders } from "../src/react-app/kernel/server-provider";
+import { resolveMicxConnection } from "../src/react-app/shell/micx-connection";
 
 const originalWindow = globalThis.window;
 const originalFetch = globalThis.fetch;
-const originalDeployment = process.env.VITE_OPENWORK_DEPLOYMENT;
+const originalDeployment = process.env.VITE_MICX_DEPLOYMENT;
 
 function memoryStorage(): Storage {
   const map = new Map<string, string>();
@@ -50,8 +50,8 @@ function getRequestUrl(input: RequestInfo | URL): string {
   return input.url;
 }
 
-function createTestOpenworkServerStore() {
-  return createOpenworkServerStore({
+function createTestMicxServerStore() {
+  return createMicxServerStore({
     startupPreference: () => "server",
     documentVisible: () => true,
     developerMode: () => false,
@@ -86,12 +86,12 @@ function installWindow(options: {
       localStorage,
       dispatchEvent: () => true,
       location: { origin: options.origin },
-      __OPENWORK_GATEWAY__: options.gateway ? { version: 1 } : undefined,
-      __OPENWORK_BOOTSTRAP__: options.bootstrapToken ? { token: options.bootstrapToken } : undefined,
-      __OPENWORK_ELECTRON__: options.electronInfo
+      __MICX_GATEWAY__: options.gateway ? { version: 1 } : undefined,
+      __MICX_BOOTSTRAP__: options.bootstrapToken ? { token: options.bootstrapToken } : undefined,
+      __MICX_ELECTRON__: options.electronInfo
         ? {
             invokeDesktop: async (command: string) => {
-              if (command !== "openworkServerInfo") {
+              if (command !== "micxServerInfo") {
                 throw new Error(`Unexpected desktop command: ${command}`);
               }
               return {
@@ -110,7 +110,7 @@ function installWindow(options: {
 
 describe("gateway runtime mode", () => {
   beforeEach(() => {
-    process.env.VITE_OPENWORK_DEPLOYMENT = "web";
+    process.env.VITE_MICX_DEPLOYMENT = "web";
   });
 
   afterEach(() => {
@@ -123,22 +123,22 @@ describe("gateway runtime mode", () => {
       value: originalFetch,
     });
     if (originalDeployment === undefined) {
-      delete process.env.VITE_OPENWORK_DEPLOYMENT;
+      delete process.env.VITE_MICX_DEPLOYMENT;
     } else {
-      process.env.VITE_OPENWORK_DEPLOYMENT = originalDeployment;
+      process.env.VITE_MICX_DEPLOYMENT = originalDeployment;
     }
   });
 
-  test("resolves OpenWork server traffic through the gateway origin with the Den session token", async () => {
-    const storage = installWindow({ origin: "https://web.openworklabs.com", gateway: true });
-    storage.setItem("openwork.den.authToken", "den-session-token");
-    storage.setItem("openwork.server.urlOverride", "https://direct-instance.example.com");
-    storage.setItem("openwork.server.token", "stale-instance-token");
+  test("resolves Micx server traffic through the gateway origin with the Den session token", async () => {
+    const storage = installWindow({ origin: "https://web.micxlabs.com", gateway: true });
+    storage.setItem("micx.den.authToken", "den-session-token");
+    storage.setItem("micx.server.urlOverride", "https://direct-instance.example.com");
+    storage.setItem("micx.server.token", "stale-instance-token");
 
-    const connection = await resolveOpenworkConnection();
+    const connection = await resolveMicxConnection();
 
     expect(connection).toEqual({
-      normalizedBaseUrl: "https://web.openworklabs.com",
+      normalizedBaseUrl: "https://web.micxlabs.com",
       resolvedToken: "den-session-token",
       resolvedHostToken: "",
       hostInfo: null,
@@ -148,14 +148,14 @@ describe("gateway runtime mode", () => {
 
   test("keeps Den web on the configured origin and Den API calls on the gateway origin", () => {
     const storage = installWindow({ origin: "https://gw.example", gateway: true });
-    storage.setItem("openwork.den.baseUrl", "https://app.openworklabs.com");
-    storage.setItem("openwork.den.authToken", "den-session-token");
+    storage.setItem("micx.den.baseUrl", "https://app.micxlabs.com");
+    storage.setItem("micx.den.authToken", "den-session-token");
 
     expect(resolveDenBaseUrls("https://gw.example")).toEqual({
-      baseUrl: "https://app.openworklabs.com",
+      baseUrl: "https://app.micxlabs.com",
       apiBaseUrl: "https://gw.example/api/den",
     });
-    expect(readDenSettings().baseUrl).toBe("https://app.openworklabs.com");
+    expect(readDenSettings().baseUrl).toBe("https://app.micxlabs.com");
     expect(readDenSettings().apiBaseUrl).toBe("https://gw.example/api/den");
     expect(readDenSettings().authToken).toBe("den-session-token");
   });
@@ -165,7 +165,7 @@ describe("gateway runtime mode", () => {
 
     const authUrl = new URL(buildDenAuthUrl(readDenSettings().baseUrl, "sign-up"));
 
-    expect(authUrl.origin).toBe("https://app.openworklabs.com");
+    expect(authUrl.origin).toBe("https://app.micxlabs.com");
     expect(authUrl.searchParams.get("mode")).toBe("sign-up");
     expect(authUrl.searchParams.get("webAuth")).toBe("1");
     expect(authUrl.searchParams.get("webAuthReturn")).toBe("https://gw.example");
@@ -193,7 +193,7 @@ describe("gateway runtime mode", () => {
     await client.getSession();
 
     expect(requestedUrls).toEqual([
-      "https://app.openworklabs.com/api/auth/sign-in/email",
+      "https://app.micxlabs.com/api/auth/sign-in/email",
       "https://gw.example/api/den/v1/me",
     ]);
   });
@@ -205,35 +205,35 @@ describe("gateway runtime mode", () => {
   });
 
   test("returns a stable gateway bootstrap snapshot for React external stores", () => {
-    installWindow({ origin: "https://web.openworklabs.com", gateway: true });
+    installWindow({ origin: "https://web.micxlabs.com", gateway: true });
 
     const first = readDenBootstrapConfig();
     const second = readDenBootstrapConfig();
 
     expect(second).toBe(first);
-    expect(first.baseUrl).toBe("https://app.openworklabs.com");
-    expect(first.apiBaseUrl).toBe("https://web.openworklabs.com/api/den");
+    expect(first.baseUrl).toBe("https://app.micxlabs.com");
+    expect(first.apiBaseUrl).toBe("https://web.micxlabs.com/api/den");
   });
 
   test("does not hydrate an instance bootstrap token into server storage behind the gateway", () => {
     const storage = installWindow({
-      origin: "https://web.openworklabs.com",
+      origin: "https://web.micxlabs.com",
       gateway: true,
       bootstrapToken: "instance-token-must-not-store",
     });
 
-    hydrateOpenworkServerSettingsFromEnv();
+    hydrateMicxServerSettingsFromEnv();
 
-    expect(storage.getItem("openwork.server.token")).toBeNull();
-    expect(readOpenworkServerSettings().token).toBeUndefined();
+    expect(storage.getItem("micx.server.token")).toBeNull();
+    expect(readMicxServerSettings().token).toBeUndefined();
   });
 
-  test("uses same-origin and the Den bearer for OpenWork server store env calls behind the gateway", async () => {
+  test("uses same-origin and the Den bearer for Micx server store env calls behind the gateway", async () => {
     const storage = installWindow({ origin: "https://gw.example", gateway: true });
-    storage.setItem("openwork.den.authToken", "den-session-token");
-    storage.setItem("openwork.server.urlOverride", "https://direct-instance.example.com");
-    storage.setItem("openwork.server.token", "stale-instance-token");
-    storage.setItem("openwork.server.hostToken", "stale-host-token");
+    storage.setItem("micx.den.authToken", "den-session-token");
+    storage.setItem("micx.server.urlOverride", "https://direct-instance.example.com");
+    storage.setItem("micx.server.token", "stale-instance-token");
+    storage.setItem("micx.server.hostToken", "stale-host-token");
     const requests: Array<{ url: string; authorization: string | null; hostToken: string | null }> = [];
     Object.defineProperty(globalThis, "fetch", {
       configurable: true,
@@ -242,7 +242,7 @@ describe("gateway runtime mode", () => {
         requests.push({
           url: getRequestUrl(input),
           authorization: headers.get("authorization"),
-          hostToken: headers.get("x-openwork-host-token"),
+          hostToken: headers.get("x-micx-host-token"),
         });
         return new Response(JSON.stringify({ runtimeKey: "runtime-a", pendingChanges: false, ok: true, count: 1 }), {
           status: 200,
@@ -251,14 +251,14 @@ describe("gateway runtime mode", () => {
       },
     });
 
-    const store = createTestOpenworkServerStore();
+    const store = createTestMicxServerStore();
     const snapshot = store.getSnapshot();
-    const client = snapshot.openworkServerClient;
-    if (!client) throw new Error("Expected a gateway OpenWork server client");
+    const client = snapshot.micxServerClient;
+    if (!client) throw new Error("Expected a gateway Micx server client");
 
-    expect(snapshot.openworkServerBaseUrl).toBe("https://gw.example");
-    expect(snapshot.openworkServerAuth.token).toBe("den-session-token");
-    expect(snapshot.openworkServerAuth.hostToken).toBeUndefined();
+    expect(snapshot.micxServerBaseUrl).toBe("https://gw.example");
+    expect(snapshot.micxServerAuth.token).toBe("den-session-token");
+    expect(snapshot.micxServerAuth.hostToken).toBeUndefined();
     expect(client.baseUrl).toBe("https://gw.example");
     expect(client.token).toBe("den-session-token");
 
@@ -281,10 +281,10 @@ describe("gateway runtime mode", () => {
 
   test("uses the Den bearer for same-origin OpenCode health polling behind the gateway", () => {
     const storage = installWindow({ origin: "https://gw.example", gateway: true });
-    storage.setItem("openwork.den.authToken", "den-session-token");
-    storage.setItem("openwork.server.token", "stale-instance-token");
+    storage.setItem("micx.den.authToken", "den-session-token");
+    storage.setItem("micx.server.token", "stale-instance-token");
 
-    expect(buildOpenworkHealthHeaders("https://gw.example/opencode")).toEqual({
+    expect(buildMicxHealthHeaders("https://gw.example/opencode")).toEqual({
       Authorization: "Bearer den-session-token",
     });
   });
@@ -292,7 +292,7 @@ describe("gateway runtime mode", () => {
 
 describe("non-gateway connection modes", () => {
   beforeEach(() => {
-    process.env.VITE_OPENWORK_DEPLOYMENT = "web";
+    process.env.VITE_MICX_DEPLOYMENT = "web";
   });
 
   afterEach(() => {
@@ -305,19 +305,19 @@ describe("non-gateway connection modes", () => {
       value: originalFetch,
     });
     if (originalDeployment === undefined) {
-      delete process.env.VITE_OPENWORK_DEPLOYMENT;
+      delete process.env.VITE_MICX_DEPLOYMENT;
     } else {
-      process.env.VITE_OPENWORK_DEPLOYMENT = originalDeployment;
+      process.env.VITE_MICX_DEPLOYMENT = originalDeployment;
     }
   });
 
   test("direct instance bootstrap hydration and same-origin resolution are unchanged without the marker", async () => {
     installWindow({ origin: "https://instance.example.com", bootstrapToken: "instance-token" });
 
-    hydrateOpenworkServerSettingsFromEnv();
-    const connection = await resolveOpenworkConnection();
+    hydrateMicxServerSettingsFromEnv();
+    const connection = await resolveMicxConnection();
 
-    expect(readOpenworkServerSettings().token).toBe("instance-token");
+    expect(readMicxServerSettings().token).toBe("instance-token");
     expect(connection.normalizedBaseUrl).toBe("https://instance.example.com");
     expect(connection.resolvedToken).toBe("instance-token");
     expect(connection.source).toBe("same-origin");
@@ -325,39 +325,39 @@ describe("non-gateway connection modes", () => {
 
   test("stored server settings still win without the marker", async () => {
     const storage = installWindow({ origin: "https://instance.example.com" });
-    storage.setItem("openwork.server.urlOverride", "https://manual.example.com");
-    storage.setItem("openwork.server.token", "manual-token");
-    storage.setItem("openwork.server.hostToken", "host-token");
+    storage.setItem("micx.server.urlOverride", "https://manual.example.com");
+    storage.setItem("micx.server.token", "manual-token");
+    storage.setItem("micx.server.hostToken", "host-token");
 
-    const connection = await resolveOpenworkConnection();
+    const connection = await resolveMicxConnection();
 
     expect(connection.normalizedBaseUrl).toBe("https://manual.example.com");
     expect(connection.resolvedToken).toBe("manual-token");
     expect(connection.resolvedHostToken).toBe("");
     expect(connection.source).toBe("stored-settings");
 
-    const store = createTestOpenworkServerStore();
+    const store = createTestMicxServerStore();
     const snapshot = store.getSnapshot();
 
-    expect(snapshot.openworkServerBaseUrl).toBe("https://manual.example.com");
-    expect(snapshot.openworkServerAuth.token).toBe("manual-token");
-    expect(snapshot.openworkServerAuth.hostToken).toBeUndefined();
-    expect(snapshot.openworkServerClient?.baseUrl).toBe("https://manual.example.com");
-    expect(snapshot.openworkServerClient?.token).toBe("manual-token");
+    expect(snapshot.micxServerBaseUrl).toBe("https://manual.example.com");
+    expect(snapshot.micxServerAuth.token).toBe("manual-token");
+    expect(snapshot.micxServerAuth.hostToken).toBeUndefined();
+    expect(snapshot.micxServerClient?.baseUrl).toBe("https://manual.example.com");
+    expect(snapshot.micxServerClient?.token).toBe("manual-token");
   });
 
   test("OpenCode health polling still uses the stored instance token without the gateway marker", () => {
     const storage = installWindow({ origin: "https://instance.example.com" });
-    storage.setItem("openwork.server.token", "instance-token");
+    storage.setItem("micx.server.token", "instance-token");
 
-    expect(buildOpenworkHealthHeaders("https://instance.example.com/opencode")).toEqual({
+    expect(buildMicxHealthHeaders("https://instance.example.com/opencode")).toEqual({
       Authorization: "Bearer instance-token",
     });
   });
 
   test("plain web Den settings still use a stored custom base URL without the marker", () => {
     const storage = installWindow({ origin: "https://instance.example.com" });
-    storage.setItem("openwork.den.baseUrl", "https://den.self-hosted.example.com");
+    storage.setItem("micx.den.baseUrl", "https://den.self-hosted.example.com");
 
     expect(readDenSettings().baseUrl).toBe("https://den.self-hosted.example.com");
     expect(readDenSettings().apiBaseUrl).toBe("https://den.self-hosted.example.com/api/den");
@@ -373,7 +373,7 @@ describe("non-gateway connection modes", () => {
       },
     });
 
-    const connection = await resolveOpenworkConnection();
+    const connection = await resolveMicxConnection();
 
     expect(connection.normalizedBaseUrl).toBe("http://127.0.0.1:8787");
     expect(connection.resolvedToken).toBe("owner-token");

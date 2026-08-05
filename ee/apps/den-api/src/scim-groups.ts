@@ -1,4 +1,4 @@
-import { and, eq, inArray, isNull, or } from "@openwork-ee/den-db/drizzle"
+import { and, eq, inArray, isNull, or } from "@micx-ee/den-db/drizzle"
 import {
   AuthUserTable,
   MemberTable,
@@ -7,8 +7,8 @@ import {
   ScimProviderTable,
   TeamMemberTable,
   TeamTable,
-} from "@openwork-ee/den-db/schema"
-import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
+} from "@micx-ee/den-db/schema"
+import { createDenTypeId, normalizeDenTypeId } from "@micx-ee/utils/typeid"
 import { db } from "./db.js"
 
 export const SCIM_GROUP_SCHEMA = "urn:ietf:params:scim:schemas:core:2.0:Group"

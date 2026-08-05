@@ -1,11 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { openworkFeatureContributionSchema } from "@openwork/types/openwork-provider";
+import { micxFeatureContributionSchema } from "@micx/types/micx-provider";
 
-import { buildOpenworkProviderContributions } from "./openwork-provider-adapters.js";
+import { buildMicxProviderContributions } from "./micx-provider-adapters.js";
 
-describe("OpenWork provider adapters", () => {
+describe("Micx provider adapters", () => {
   test("normalizes sessions and extensions into semantic contributions", () => {
-    const contributions = buildOpenworkProviderContributions([]);
+    const contributions = buildMicxProviderContributions([]);
 
     expect(contributions.map((contribution) => contribution.featureId)).toEqual([
       "sessions",
@@ -17,15 +17,15 @@ describe("OpenWork provider adapters", () => {
     ).toMatchObject({
       kind: "query",
       effects: { data: "read", ui: "none", external: false },
-      executor: { kind: "openwork" },
+      executor: { kind: "micx" },
     });
     for (const contribution of contributions) {
-      expect(openworkFeatureContributionSchema.safeParse(contribution).success).toBe(true);
+      expect(micxFeatureContributionSchema.safeParse(contribution).success).toBe(true);
     }
   });
 
   test("keeps known Connect skills direct and search available for unknown capabilities", () => {
-    const contributions = buildOpenworkProviderContributions([{
+    const contributions = buildMicxProviderContributions([{
       name: "customer-briefing",
       title: "Customer briefing",
       description: "Prepare a customer briefing from connected sources.",
@@ -37,7 +37,7 @@ describe("OpenWork provider adapters", () => {
       ref: "skill:skl_customer_briefing",
       title: "Customer briefing",
       description: "Prepare a customer briefing from connected sources.",
-      provider: { id: "openwork-cloud", kind: "connect" },
+      provider: { id: "micx-cloud", kind: "connect" },
       loading: "catalog",
     }]);
     expect(connect?.affordances.map((affordance) => ({
@@ -46,11 +46,11 @@ describe("OpenWork provider adapters", () => {
     }))).toEqual([
       {
         id: "connect.capabilities.search",
-        executor: { kind: "tool", tool: "openwork-cloud_search_capabilities" },
+        executor: { kind: "tool", tool: "micx-cloud_search_capabilities" },
       },
       {
         id: "connect.capability.execute",
-        executor: { kind: "tool", tool: "openwork-cloud_execute_capability" },
+        executor: { kind: "tool", tool: "micx-cloud_execute_capability" },
       },
     ]);
     expect(
@@ -60,9 +60,9 @@ describe("OpenWork provider adapters", () => {
   });
 
   test("includes only MCP providers observed from the engine", () => {
-    const contributions = buildOpenworkProviderContributions([], [
+    const contributions = buildMicxProviderContributions([], [
       { name: "notion", status: "connected" },
-      { name: "openwork-cloud", status: "connected" },
+      { name: "micx-cloud", status: "connected" },
     ]);
 
     expect(contributions.map((contribution) => contribution.featureId)).toEqual([

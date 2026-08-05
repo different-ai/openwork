@@ -174,7 +174,7 @@ describe("observability env contract", () => {
         DEN_OBSERVABILITY_BACKEND: "sentry",
         SENTRY_DSN: "https://public@sentry.example.test/123",
         SENTRY_TRACES_SAMPLE_RATE: "0.75",
-        SENTRY_ORG: "openwork",
+        SENTRY_ORG: "micx",
         SENTRY_PROJECT: "den-api",
         SENTRY_URL: "https://sentry.example.test",
         SENTRY_RELEASE: "2026.07.11",
@@ -194,7 +194,7 @@ describe("observability env contract", () => {
     })
     expect(config.sentryBuild).toEqual({
       values: {
-        SENTRY_ORG: "openwork",
+        SENTRY_ORG: "micx",
         SENTRY_PROJECT: "den-api",
         SENTRY_URL: "https://sentry.example.test",
         SENTRY_RELEASE: "2026.07.11",

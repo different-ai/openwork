@@ -1,10 +1,10 @@
-import { and, eq, inArray, isNull } from "@openwork-ee/den-db/drizzle"
+import { and, eq, inArray, isNull } from "@micx-ee/den-db/drizzle"
 import {
   AuthSessionTable,
   MemberTable,
   OAuthAccessTokenTable,
   OAuthRefreshTokenTable,
-} from "@openwork-ee/den-db/schema"
+} from "@micx-ee/den-db/schema"
 import { db } from "./db.js"
 
 type OrganizationId = typeof MemberTable.$inferSelect.organizationId

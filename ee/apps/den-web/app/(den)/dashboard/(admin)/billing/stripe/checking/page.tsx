@@ -26,7 +26,7 @@ export default function StripeCheckingPage() {
   const [failed, setFailed] = useState(false);
   const attemptsRef = useRef(0);
   const intervalRef = useRef<number | null>(null);
-  // Inference checkouts started from the OpenWork Models page carry
+  // Inference checkouts started from the Micx Models page carry
   // `return=models` so the user lands back where they subscribed from and
   // sees the value unlocked, not the billing status page. Read from
   // window.location instead of useSearchParams to avoid the Suspense
@@ -91,7 +91,7 @@ export default function StripeCheckingPage() {
             <p className="text-[17px] font-medium text-gray-950">We couldn&apos;t confirm the subscription yet</p>
             <p className="max-w-[480px] text-[14px] leading-6 text-gray-600">
               If your payment went through, refresh the billing page or contact{" "}
-              <a className="font-medium text-blue-600 hover:underline" href="mailto:team@openworklabs.com">team@openworklabs.com</a>.
+              <a className="font-medium text-blue-600 hover:underline" href="mailto:team@micxlabs.com">team@micxlabs.com</a>.
             </p>
             <DenButton onClick={() => router.replace(billingRoute)}>Return to Billing</DenButton>
           </>

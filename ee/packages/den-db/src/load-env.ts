@@ -65,7 +65,7 @@ for (const filePath of [
 }
 
 const explicitEnvPath =
-  process.env.OPENWORK_DEN_DB_ENV_PATH?.trim() ||
+  process.env.MICX_DEN_DB_ENV_PATH?.trim() ||
   process.env.DATABASE_ENV_FILE?.trim()
 const detectedRootEnvPath = findUpwards(path.resolve(packageDir, "..", ".."), ".env")
 const envPath = explicitEnvPath || detectedRootEnvPath

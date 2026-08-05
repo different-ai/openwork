@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
-import { createOpenworkServerClient } from "../src/app/lib/openwork-server";
+import { createMicxServerClient } from "../src/app/lib/micx-server";
 import { createClient } from "../src/app/lib/opencode";
 import type { ProviderListItem, WorkspaceDisplay } from "../src/app/types";
 import { createProviderAuthStore } from "../src/react-app/domains/connections/provider-auth/store";
@@ -8,7 +8,7 @@ import { createProviderAuthStore } from "../src/react-app/domains/connections/pr
 const originalWindow = globalThis.window;
 const originalFetch = globalThis.fetch;
 const originalConsoleInfo = console.info;
-const originalDeployment = process.env.VITE_OPENWORK_DEPLOYMENT;
+const originalDeployment = process.env.VITE_MICX_DEPLOYMENT;
 
 type RecordedRequest = {
   url: string;
@@ -50,7 +50,7 @@ function installWindow(options: { origin: string; gateway?: boolean }) {
       dispatchEvent: () => true,
       localStorage,
       location: { origin: options.origin },
-      __OPENWORK_GATEWAY__: options.gateway ? { version: 1 } : undefined,
+      __MICX_GATEWAY__: options.gateway ? { version: 1 } : undefined,
     },
   });
   return localStorage;
@@ -102,17 +102,17 @@ function cloudProviderPayload() {
 }
 
 function installCloudSession(storage: Storage) {
-  storage.setItem("openwork.den.baseUrl", "https://den.example");
-  storage.setItem("openwork.den.authToken", "den-token");
-  storage.setItem("openwork.den.activeOrgId", "org_test");
+  storage.setItem("micx.den.baseUrl", "https://den.example");
+  storage.setItem("micx.den.authToken", "den-token");
+  storage.setItem("micx.den.activeOrgId", "org_test");
 }
 
 function createProviderAuthTestStore() {
   const opencodeClient = createClient("https://engine.example", "/tmp/workspace_test", {
     token: "engine-token",
-    mode: "openwork",
+    mode: "micx",
   });
-  const openworkClient = createOpenworkServerClient({
+  const micxClient = createMicxServerClient({
     baseUrl: "https://server.example",
     token: "server-token",
   });
@@ -140,11 +140,11 @@ function createProviderAuthTestStore() {
     providerBaseUrl: () => "https://engine.example",
     selectedWorkspaceRoot: () => "/tmp/workspace_test",
     runtimeWorkspaceId: () => "ws_1",
-    openworkServer: {
+    micxServer: {
       getSnapshot: () => ({
-        openworkServerStatus: "connected",
-        openworkServerClient: openworkClient,
-        openworkServerCapabilities: { config: { read: true, write: true } },
+        micxServerStatus: "connected",
+        micxServerClient: micxClient,
+        micxServerCapabilities: { config: { read: true, write: true } },
       }),
     },
     setProviders: (value) => {
@@ -189,7 +189,7 @@ function installProviderSyncFetch(requests: RecordedRequest[]) {
         return jsonResponse({ llmProvider: cloudProviderPayload() });
       }
       if (url.origin === "https://server.example" && url.pathname === "/workspace/ws_1/config" && method === "GET") {
-        return jsonResponse({ opencode: {}, openwork: {} });
+        return jsonResponse({ opencode: {}, micx: {} });
       }
       if (url.origin === "https://server.example" && url.pathname === "/workspace/ws_1/config" && method === "PATCH") {
         return jsonResponse({ updatedAt: 1 });
@@ -232,7 +232,7 @@ function installProviderSyncFetch(requests: RecordedRequest[]) {
 
 describe("cloud provider sync in gateway mode", () => {
   beforeEach(() => {
-    process.env.VITE_OPENWORK_DEPLOYMENT = "web";
+    process.env.VITE_MICX_DEPLOYMENT = "web";
     console.info = () => undefined;
   });
 
@@ -247,14 +247,14 @@ describe("cloud provider sync in gateway mode", () => {
     });
     console.info = originalConsoleInfo;
     if (originalDeployment === undefined) {
-      delete process.env.VITE_OPENWORK_DEPLOYMENT;
+      delete process.env.VITE_MICX_DEPLOYMENT;
     } else {
-      process.env.VITE_OPENWORK_DEPLOYMENT = originalDeployment;
+      process.env.VITE_MICX_DEPLOYMENT = originalDeployment;
     }
   });
 
   test("returns a server-handled outcome without network calls or error state behind the gateway", async () => {
-    const storage = installWindow({ origin: "https://web.openworklabs.com", gateway: true });
+    const storage = installWindow({ origin: "https://web.micxlabs.com", gateway: true });
     installCloudSession(storage);
     const requests: RecordedRequest[] = [];
     installProviderSyncFetch(requests);

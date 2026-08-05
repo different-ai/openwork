@@ -1,8 +1,8 @@
-# `@openwork/enterprise-mcp-mock-server`
+# `@micx/enterprise-mcp-mock-server`
 
 A reusable, deterministic TypeScript package for developing and testing enterprise OAuth and remote MCP integrations without customer tenants, provider credentials, or outbound provider calls.
 
-This package owns the mock **data plane**. It deliberately does not import Den, an OpenWork client, or the Enterprise Mock Lab. The lab consumes this public API and supplies the protected control plane.
+This package owns the mock **data plane**. It deliberately does not import Den, an Micx client, or the Enterprise Mock Lab. The lab consumes this public API and supplies the protected control plane.
 
 ## Design boundaries
 
@@ -28,7 +28,7 @@ import {
   listFaultDefinitions,
   listProviderProfiles,
   probeEnterpriseMcpMockServer,
-} from "@openwork/enterprise-mcp-mock-server"
+} from "@micx/enterprise-mcp-mock-server"
 
 const clientSecret = process.env.MOCK_OAUTH_CLIENT_SECRET ?? ""
 
@@ -126,7 +126,7 @@ The probe bounds every response body to 1 MiB, applies a 30-second overall deadl
 ## Validation
 
 ```bash
-pnpm --filter @openwork/enterprise-mcp-mock-server check
+pnpm --filter @micx/enterprise-mcp-mock-server check
 ```
 
 The suite contains independent wire tests in addition to the package probe, including OAuth topology/PKCE/rotation, DCR modes, hostile Origin, cross-token session isolation, JSON-RPC/transport validation, argument schemas, mutation reconciliation, state bounds/redaction, active-request shutdown, all advertised faults, and an adversarial test proving expected fault metadata cannot manufacture a passing diagnosis.

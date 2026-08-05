@@ -5,8 +5,8 @@ import path from "node:path";
 import { afterEach, describe, it } from "node:test";
 
 import {
-  OPENWORK_DESKTOP_ID,
-  buildOpenworkDesktopEntry,
+  MICX_DESKTOP_ID,
+  buildMicxDesktopEntry,
   createLinuxDesktopIntegration,
   quoteDesktopExec,
 } from "./linux-desktop-integration.mjs";
@@ -15,13 +15,13 @@ const temporaryRoots = [];
 const iconSizes = [16, 24, 32, 48, 64, 96, 128, 256, 512];
 
 async function createHarness(options = {}) {
-  const root = await mkdtemp(path.join(os.tmpdir(), "openwork-appimage-integration-"));
+  const root = await mkdtemp(path.join(os.tmpdir(), "micx-appimage-integration-"));
   temporaryRoots.push(root);
   const homeDir = path.join(root, "home");
   const dataHome = path.join(root, "data");
   const configHome = path.join(root, "config");
   const resourcesPath = path.join(root, "resources");
-  const appImagePath = options.appImagePath ?? path.join(root, "OpenWork AppImage");
+  const appImagePath = options.appImagePath ?? path.join(root, "Micx AppImage");
   await mkdir(path.join(resourcesPath, "icons", "linux"), { recursive: true });
   await Promise.all(iconSizes.map((size) => (
     writeFile(path.join(resourcesPath, "icons", "linux", `${size}x${size}.png`), String(size))
@@ -55,7 +55,7 @@ async function createHarness(options = {}) {
   const integration = createLinuxDesktopIntegration({
     app,
     dialog,
-    appName: "OpenWork",
+    appName: "Micx",
     distribution: "public",
     env: {
       APPIMAGE: appImagePath,
@@ -83,7 +83,7 @@ async function createHarness(options = {}) {
 // Simulates the next launch of the same install: same XDG dirs and state, but a
 // possibly different AppImage path and app version.
 function relaunchAt(harness, appImagePath, options = {}) {
-  let defaultHandler = options.defaultHandler ?? OPENWORK_DESKTOP_ID;
+  let defaultHandler = options.defaultHandler ?? MICX_DESKTOP_ID;
   const dialogs = [];
   const integration = createLinuxDesktopIntegration({
     app: { isPackaged: true, getVersion: () => options.version ?? "0.18.7" },
@@ -93,7 +93,7 @@ function relaunchAt(harness, appImagePath, options = {}) {
         return { response: 0, checkboxChecked: false };
       },
     },
-    appName: "OpenWork",
+    appName: "Micx",
     distribution: "public",
     env: {
       APPIMAGE: appImagePath,
@@ -125,15 +125,15 @@ describe("Linux AppImage desktop integration", () => {
       quoteDesktopExec(appImagePath),
       String.raw`"/home/alice/Applications/Open Work \\"daily\\"\\$%%draft\\\\archive"`,
     );
-    const entry = buildOpenworkDesktopEntry({
+    const entry = buildMicxDesktopEntry({
       appImagePath,
-      appName: "OpenWork",
+      appName: "Micx",
       appVersion: "0.18.7",
       distribution: "public",
     });
     assert.match(entry, /^Exec=".*" %U$/m);
-    assert.match(entry, /^MimeType=x-scheme-handler\/openwork;$/m);
-    assert.match(entry, /^StartupWMClass=com\.differentai\.openwork$/m);
+    assert.match(entry, /^MimeType=x-scheme-handler\/micx;$/m);
+    assert.match(entry, /^StartupWMClass=com\.differentai\.micx$/m);
   });
 
   it("is unavailable outside a packaged Linux AppImage", async () => {
@@ -143,16 +143,16 @@ describe("Linux AppImage desktop integration", () => {
     assert.equal(status.state, "unsupported");
   });
 
-  it("installs its launcher, icons, and openwork handler", async () => {
+  it("installs its launcher, icons, and micx handler", async () => {
     const harness = await createHarness();
     const result = await harness.integration.install();
     assert.equal(result.ok, true);
     assert.equal(result.status.state, "integrated");
-    assert.equal(harness.getDefaultHandler(), OPENWORK_DESKTOP_ID);
+    assert.equal(harness.getDefaultHandler(), MICX_DESKTOP_ID);
 
     const desktopEntry = await readFile(harness.integration.paths.desktopEntryPath, "utf8");
     assert.match(desktopEntry, new RegExp(`^Exec=${quoteDesktopExec(harness.appImagePath)} %U$`, "m"));
-    assert.match(desktopEntry, /^X-OpenWork-Managed=true$/m);
+    assert.match(desktopEntry, /^X-Micx-Managed=true$/m);
     for (const size of iconSizes) {
       assert.equal(await readFile(harness.integration.paths.iconPaths[size], "utf8"), String(size));
     }
@@ -161,14 +161,14 @@ describe("Linux AppImage desktop integration", () => {
   it("detects a moved AppImage and repairs the launcher for the new path", async () => {
     const first = await createHarness();
     assert.equal((await first.integration.install()).ok, true);
-    const movedPath = path.join(first.root, "Applications", "OpenWork.AppImage");
+    const movedPath = path.join(first.root, "Applications", "Micx.AppImage");
     await mkdir(path.dirname(movedPath), { recursive: true });
     await rename(first.appImagePath, movedPath);
 
     const moved = createLinuxDesktopIntegration({
       app: { isPackaged: true, getVersion: () => "0.18.7" },
       dialog: { showMessageBox: async () => ({ response: 0, checkboxChecked: false }) },
-      appName: "OpenWork",
+      appName: "Micx",
       distribution: "public",
       env: {
         APPIMAGE: movedPath,
@@ -180,7 +180,7 @@ describe("Linux AppImage desktop integration", () => {
       resourcesPath: path.join(first.root, "resources"),
       runCommand: async (command, args) => {
         if (command === "xdg-mime" && args[0] === "query") {
-          return { ok: true, stdout: `${OPENWORK_DESKTOP_ID}\n`, stderr: "" };
+          return { ok: true, stdout: `${MICX_DESKTOP_ID}\n`, stderr: "" };
         }
         return { ok: true, stdout: "", stderr: "" };
       },
@@ -201,7 +201,7 @@ describe("Linux AppImage desktop integration", () => {
 
     // Linux artifacts carry the version in their filename, so electron-updater
     // installs each release at a new path and stales the launcher.
-    const updatedPath = path.join(harness.root, "openwork-linux-x86_64-0.18.8.AppImage");
+    const updatedPath = path.join(harness.root, "micx-linux-x86_64-0.18.8.AppImage");
     await rename(harness.appImagePath, updatedPath);
     const relaunched = relaunchAt(harness, updatedPath, { version: "0.18.8" });
     assert.equal((await relaunched.integration.getStatus()).state, "needs_repair");
@@ -211,7 +211,7 @@ describe("Linux AppImage desktop integration", () => {
     assert.equal(relaunched.dialogs.length, 0);
     const entry = await readFile(relaunched.integration.paths.desktopEntryPath, "utf8");
     assert.match(entry, new RegExp(`^TryExec=${updatedPath}$`, "m"));
-    assert.match(entry, /^X-OpenWork-Version=0\.18\.8$/m);
+    assert.match(entry, /^X-Micx-Version=0\.18\.8$/m);
   });
 
   it("silently refreshes an owned launcher when only the version changed", async () => {
@@ -230,7 +230,7 @@ describe("Linux AppImage desktop integration", () => {
     const harness = await createHarness();
     assert.equal((await harness.integration.install()).ok, true);
 
-    const movedPath = path.join(harness.root, "openwork-linux-x86_64-0.18.8.AppImage");
+    const movedPath = path.join(harness.root, "micx-linux-x86_64-0.18.8.AppImage");
     await rename(harness.appImagePath, movedPath);
     const relaunched = relaunchAt(harness, movedPath, { version: "0.18.8" });
     await rm(path.join(harness.root, "resources"), { recursive: true, force: true });
@@ -261,16 +261,16 @@ describe("Linux AppImage desktop integration", () => {
   });
 
   it("recognizes an external manager and does not duplicate its integration", async () => {
-    const managerDesktopId = "it.mijorus.gearlever.openwork.desktop";
+    const managerDesktopId = "it.mijorus.gearlever.micx.desktop";
     const harness = await createHarness({ defaultHandler: managerDesktopId });
     const applications = path.join(harness.dataHome, "applications");
     await mkdir(applications, { recursive: true });
     await writeFile(path.join(applications, managerDesktopId), `[Desktop Entry]
 Type=Application
-Name=OpenWork
+Name=Micx
 Exec=${quoteDesktopExec(harness.appImagePath)} %U
 TryExec=${harness.appImagePath}
-MimeType=x-scheme-handler/openwork;
+MimeType=x-scheme-handler/micx;
 `);
 
     const status = await harness.integration.getStatus();
@@ -282,14 +282,14 @@ MimeType=x-scheme-handler/openwork;
   });
 
   it("registers an externally managed canonical launcher without rewriting it", async () => {
-    const harness = await createHarness({ defaultHandler: OPENWORK_DESKTOP_ID });
+    const harness = await createHarness({ defaultHandler: MICX_DESKTOP_ID });
     await mkdir(path.dirname(harness.integration.paths.desktopEntryPath), { recursive: true });
     const original = `[Desktop Entry]
 Type=Application
-Name=Manager-owned OpenWork
+Name=Manager-owned Micx
 Exec=${quoteDesktopExec(harness.appImagePath)} %U
 TryExec=${harness.appImagePath}
-MimeType=x-scheme-handler/openwork;
+MimeType=x-scheme-handler/micx;
 `;
     await writeFile(harness.integration.paths.desktopEntryPath, original);
     const result = await harness.integration.install({ useExternalLauncher: true });
@@ -309,16 +309,16 @@ MimeType=x-scheme-handler/openwork;
   });
 
   it("registers an existing manager launcher without creating a duplicate", async () => {
-    const managerDesktopId = "appimagelauncher-openwork.desktop";
+    const managerDesktopId = "appimagelauncher-micx.desktop";
     const harness = await createHarness({ defaultHandler: "firefox.desktop" });
     const managerPath = path.join(harness.dataHome, "applications", managerDesktopId);
     await mkdir(path.dirname(managerPath), { recursive: true });
     const managerEntry = `[Desktop Entry]
 Type=Application
-Name=OpenWork
+Name=Micx
 Exec=${quoteDesktopExec(harness.appImagePath)} %U
 TryExec=${harness.appImagePath}
-MimeType=x-scheme-handler/openwork;
+MimeType=x-scheme-handler/micx;
 `;
     await writeFile(managerPath, managerEntry);
 

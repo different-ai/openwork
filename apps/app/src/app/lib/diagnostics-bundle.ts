@@ -2,19 +2,19 @@ import { readDevLogs, type DevLogRecord } from "./dev-log";
 import {
   appBuildInfo,
   engineInfo,
-  openworkServerInfo,
+  micxServerInfo,
   type AppBuildInfo,
   type EngineInfo,
   type OpencodeExecutionSnapshot,
-  type OpenworkServerInfo,
+  type MicxServerInfo,
 } from "./desktop";
 import { readPerfLogs, type PerfLogRecord } from "./perf-log";
 import { sanitizeCloudMcpHealthDiagnostic } from "./diagnostic-sanitizer";
 import {
-  readOpenworkServerSettings,
-  type OpenworkServerSettings,
-  type OpenworkServerStatus,
-} from "./openwork-server";
+  readMicxServerSettings,
+  type MicxServerSettings,
+  type MicxServerStatus,
+} from "./micx-server";
 import { isDesktopRuntime } from "../utils";
 
 export type DiagnosticsBundleContext = {
@@ -24,9 +24,9 @@ export type DiagnosticsBundleContext = {
   developerMode?: boolean;
   hostConnectUrl?: string;
   hostConnectUrlUsesMdns?: boolean;
-  hostInfo?: OpenworkServerInfo | null;
-  openworkServerStatus?: OpenworkServerStatus;
-  openworkServerUrl?: string;
+  hostInfo?: MicxServerInfo | null;
+  micxServerStatus?: MicxServerStatus;
+  micxServerUrl?: string;
   runtimeWorkspaceId?: string | null;
   cloudMcpHealth?: unknown;
 };
@@ -36,8 +36,8 @@ export type DiagnosticsBundleInputs = {
   desktopRuntime: boolean;
   appInfo: AppBuildInfo | null;
   engineInfo: EngineInfo | null;
-  openworkServerSettings: OpenworkServerSettings;
-  hostInfo: OpenworkServerInfo | null;
+  micxServerSettings: MicxServerSettings;
+  hostInfo: MicxServerInfo | null;
   developerLogs: DevLogRecord[];
   perfLogs: PerfLogRecord[];
   context?: DiagnosticsBundleContext;
@@ -61,7 +61,7 @@ function pickAppInfo(info: AppBuildInfo | null) {
     version: info.version,
     gitSha: info.gitSha ?? null,
     buildEpoch: info.buildEpoch ?? null,
-    openworkDevMode: info.openworkDevMode ?? null,
+    micxDevMode: info.micxDevMode ?? null,
   };
 }
 
@@ -98,7 +98,7 @@ function pickEngineInfo(info: EngineInfo | null) {
   };
 }
 
-function pickHostInfo(info: OpenworkServerInfo | null) {
+function pickHostInfo(info: MicxServerInfo | null) {
   if (!info) return null;
   return {
     running: Boolean(info.running),
@@ -112,7 +112,7 @@ function pickHostInfo(info: OpenworkServerInfo | null) {
   };
 }
 
-function defaultHostConnectUrl(hostInfo: OpenworkServerInfo | null) {
+function defaultHostConnectUrl(hostInfo: MicxServerInfo | null) {
   return hostInfo?.connectUrl ?? hostInfo?.mdnsUrl ?? hostInfo?.lanUrl ?? hostInfo?.baseUrl ?? "";
 }
 
@@ -124,8 +124,8 @@ function addSecretValue(secrets: string[], value: string | null | undefined) {
 
 function collectSecretValues(input: DiagnosticsBundleInputs) {
   const secrets: string[] = [];
-  addSecretValue(secrets, input.openworkServerSettings.token);
-  addSecretValue(secrets, input.openworkServerSettings.hostToken);
+  addSecretValue(secrets, input.micxServerSettings.token);
+  addSecretValue(secrets, input.micxServerSettings.hostToken);
   addSecretValue(secrets, input.hostInfo?.clientToken);
   addSecretValue(secrets, input.hostInfo?.ownerToken);
   addSecretValue(secrets, input.hostInfo?.hostToken);
@@ -143,8 +143,8 @@ function scrubKnownSecretValues(value: string, secrets: string[]) {
 
 export function composeDiagnosticsBundleJson(input: DiagnosticsBundleInputs): string {
   const context = input.context;
-  const urlOverride = input.openworkServerSettings.urlOverride?.trim() ?? "";
-  const token = input.openworkServerSettings.token?.trim() ?? "";
+  const urlOverride = input.micxServerSettings.urlOverride?.trim() ?? "";
+  const token = input.micxServerSettings.token?.trim() ?? "";
   const hostConnectUrl = context?.hostConnectUrl ?? defaultHostConnectUrl(input.hostInfo);
   const hostConnectUrlUsesMdns = context?.hostConnectUrlUsesMdns ?? hostConnectUrl.includes(".local");
   const clientConnected = context?.clientConnected === true;
@@ -161,9 +161,9 @@ export function composeDiagnosticsBundleJson(input: DiagnosticsBundleInputs): st
       clientConnected,
       anyActiveRuns: context?.anyActiveRuns === true,
     },
-    openworkServer: {
-      status: context?.openworkServerStatus ?? (clientConnected ? "connected" : "disconnected"),
-      url: context?.openworkServerUrl ?? "",
+    micxServer: {
+      status: context?.micxServerStatus ?? (clientConnected ? "connected" : "disconnected"),
+      url: context?.micxServerUrl ?? "",
       settings: {
         urlOverride: urlOverride || null,
         tokenPresent: Boolean(token),
@@ -211,7 +211,7 @@ async function readEngineInfo(desktopRuntime: boolean) {
 async function readHostInfo(desktopRuntime: boolean) {
   if (!desktopRuntime) return null;
   try {
-    return await openworkServerInfo();
+    return await micxServerInfo();
   } catch {
     return null;
   }
@@ -229,7 +229,7 @@ export async function buildDiagnosticsBundleJson(context?: DiagnosticsBundleCont
     desktopRuntime,
     appInfo,
     engineInfo: engine,
-    openworkServerSettings: readOpenworkServerSettings(),
+    micxServerSettings: readMicxServerSettings(),
     hostInfo,
     developerLogs: readDevLogs(80),
     perfLogs: readPerfLogs(80),

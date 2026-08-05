@@ -2,15 +2,15 @@ import { StreamableHTTPTransport } from "@hono/mcp"
 import { Client } from "@modelcontextprotocol/sdk/client/index.js"
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import type { RequestOptions } from "@modelcontextprotocol/sdk/shared/protocol.js"
-import { eq } from "@openwork-ee/den-db/drizzle"
-import { createDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
+import { eq } from "@micx-ee/den-db/drizzle"
+import { createDenTypeId, type DenTypeId } from "@micx-ee/utils/typeid"
 import { afterAll, beforeAll, expect, mock, test } from "bun:test"
 import { Hono } from "hono"
 import { z } from "zod"
 import type { ExternalMcpConnectionRow } from "../src/capability-sources/external-mcp-connections.js"
 
 function seedRequiredEnv() {
-  process.env.DATABASE_URL = process.env.DATABASE_URL ?? "mysql://root:password@127.0.0.1:3306/openwork_test_searchdiv"
+  process.env.DATABASE_URL = process.env.DATABASE_URL ?? "mysql://root:password@127.0.0.1:3306/micx_test_searchdiv"
   process.env.DEN_DB_ENCRYPTION_KEY = process.env.DEN_DB_ENCRYPTION_KEY ?? "local-dev-db-encryption-key-please-change-1234567890"
   process.env.BETTER_AUTH_SECRET = process.env.BETTER_AUTH_SECRET ?? "local-dev-secret-not-for-production-use!!"
   process.env.BETTER_AUTH_URL = process.env.BETTER_AUTH_URL ?? "http://127.0.0.1:8790"
@@ -55,7 +55,7 @@ type ConnectionInput = {
 }
 
 let db: typeof import("../src/db.js").db
-let schema: typeof import("@openwork-ee/den-db/schema")
+let schema: typeof import("@micx-ee/den-db/schema")
 let listExternalMcpTools: typeof import("../src/capability-sources/external-mcp-client.js").listExternalMcpTools
 let createExternalMcpConnection: typeof import("../src/capability-sources/external-mcp-connections.js").createExternalMcpConnection
 let getExternalMcpConnection: typeof import("../src/capability-sources/external-mcp-connections.js").getExternalMcpConnection
@@ -466,7 +466,7 @@ function toolNames(tools: { name: string }[]): string[] {
 beforeAll(async () => {
   seedRequiredEnv()
   mock.restore()
-  const realDb = (await import("@openwork-ee/den-db")).createDenDb({
+  const realDb = (await import("@micx-ee/den-db")).createDenDb({
     databaseUrl: process.env.DATABASE_URL,
     mode: "mysql",
   }).db
@@ -474,7 +474,7 @@ beforeAll(async () => {
 
   const [dbMod, schemaMod, clientMod, connectionsMod, capabilitiesMod, envMod] = await Promise.all([
     import("../src/db.js"),
-    import("@openwork-ee/den-db/schema"),
+    import("@micx-ee/den-db/schema"),
     import("../src/capability-sources/external-mcp-client.js"),
     import("../src/capability-sources/external-mcp-connections.js"),
     import("../src/mcp/external-capabilities.js"),
@@ -542,7 +542,7 @@ test("control-healthy: Connections list and search_capabilities both see Slack t
   for (const match of matches) {
     expect(match.score).toBeGreaterThanOrEqual(7)
   }
-  if (process.env.OPENWORK_EVAL_VERBOSE === "1") {
+  if (process.env.MICX_EVAL_VERBOSE === "1") {
     console.log("E2E_HEALTHY_DISCOVERY", JSON.stringify({ connectionName: "Slack", toolCount: matches.length, status: "available" }))
   }
 })
@@ -764,7 +764,7 @@ test("shared-oauth-never-connected: Connections list sees Slack and search retur
     actor: "organization_admin",
     action: {
       type: "connect",
-      surface: "openwork_organization_connections",
+      surface: "micx_organization_connections",
       retry: "search_capabilities",
     },
   })
@@ -1126,7 +1126,7 @@ test("downstream provider authorization links are relayed as needs_connection", 
         actor: "member",
         action: {
           type: "connect",
-          surface: "openwork_your_connections",
+          surface: "micx_your_connections",
           retry: "search_capabilities",
           url: providerAuthServer.connectUrl,
         },
@@ -1180,7 +1180,7 @@ test("foreign-origin downstream authorization links are dropped but still surfac
       connectionStatus: {
         layer: "downstream_provider",
         state: "needs_connection",
-        action: { type: "connect", surface: "openwork_your_connections" },
+        action: { type: "connect", surface: "micx_your_connections" },
       },
     })
     expect(typeof result.referenceId).toBe("string")
@@ -1294,7 +1294,7 @@ test("JSON-RPC initialize errors are not mislabeled as OAuth refresh failures", 
   expect("diagnostic" in matches[0].connectionStatus).toBe(false)
   expect(matches[0]?.hint).toContain("Diagnostic reference")
   expect(matches[0]?.hint).not.toContain("Reconnect")
-  if (process.env.OPENWORK_EVAL_VERBOSE === "1") {
+  if (process.env.MICX_EVAL_VERBOSE === "1") {
     console.log("E2E_CONNECTION_STATUS", JSON.stringify(matches[0]?.connectionStatus))
   }
 })
@@ -1323,7 +1323,7 @@ test("repairing a connector credential makes its live tools discoverable on retr
 
   expect(afterRepair.some((match) => match.kind === "connection_status")).toBe(false)
   expect(toolNames(afterRepair)).toEqual(slackTools.map((tool) => `mcp:${connection.id}:${tool.name}`).sort())
-  if (process.env.OPENWORK_EVAL_VERBOSE === "1") {
+  if (process.env.MICX_EVAL_VERBOSE === "1") {
     console.log("E2E_RECOVERED_DISCOVERY", JSON.stringify({ connectionName: "Team Chat", toolCount: afterRepair.length, status: "available" }))
   }
 })

@@ -12,7 +12,7 @@ const oauthClientSecret = "synthetic-test-client-secret-32-bytes"
 const hostileGatewayCases = [
   { faultId: "redirect-uri-whitelist", snippet: "redirect URI is not an allowed destination" },
   { faultId: "per-connector-redirect", snippet: "External MCP connect callback token exchange failed" },
-  { faultId: "dcr-required", snippet: "The MCP connection failed before OpenWork could complete the protocol lifecycle" },
+  { faultId: "dcr-required", snippet: "The MCP connection failed before Micx could complete the protocol lifecycle" },
   { faultId: "method-405", snippet: "HTTP 405" },
   { faultId: "duplicate-amplification", snippet: "duplicate requests" },
   { faultId: "refresh-expired", snippet: "refresh token expired" },

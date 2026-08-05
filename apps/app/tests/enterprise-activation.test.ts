@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 
 import { enterpriseActivationRequired } from "../src/app/lib/enterprise-activation";
-import { parseDenAuthDeepLink } from "../src/app/lib/openwork-links";
+import { parseDenAuthDeepLink } from "../src/app/lib/micx-links";
 
 const appRootSource = readFileSync(
   new URL("../src/react-app/shell/app-root.tsx", import.meta.url),
@@ -31,18 +31,18 @@ const connectConfirmDialogSource = readFileSync(
 
 const publicDistribution = {
   flavor: "public" as const,
-  appName: "OpenWork",
-  appIdentifier: "com.differentai.openwork",
-  protocolScheme: "openwork",
+  appName: "Micx",
+  appIdentifier: "com.differentai.micx",
+  protocolScheme: "micx",
   requireSignin: false,
   requireActivation: false,
 };
 
 const enterpriseDistribution = {
   flavor: "enterprise" as const,
-  appName: "OpenWork Enterprise",
-  appIdentifier: "com.differentai.openwork",
-  protocolScheme: "openwork",
+  appName: "Micx Enterprise",
+  appIdentifier: "com.differentai.micx",
+  protocolScheme: "micx",
   requireSignin: true,
   requireActivation: true,
 };
@@ -57,7 +57,7 @@ describe("enterprise desktop activation", () => {
     expect(enterpriseActivationRequired(enterpriseDistribution, {
       enterpriseActivation: {
         activatedAt: "2026-07-27T12:00:00.000Z",
-        denBaseUrl: "https://app.openworklabs.com",
+        denBaseUrl: "https://app.micxlabs.com",
       },
     })).toBe(false);
   });
@@ -76,10 +76,10 @@ describe("enterprise desktop activation", () => {
 
   test("uses the standard Den auth deep-link shape", () => {
     expect(parseDenAuthDeepLink(
-      "openwork://den-auth?grant=one-time-grant&denBaseUrl=https%3A%2F%2Fapp.openworklabs.com",
+      "micx://den-auth?grant=one-time-grant&denBaseUrl=https%3A%2F%2Fapp.micxlabs.com",
     )).toEqual({
       grant: "one-time-grant",
-      denBaseUrl: "https://app.openworklabs.com",
+      denBaseUrl: "https://app.micxlabs.com",
     });
   });
 

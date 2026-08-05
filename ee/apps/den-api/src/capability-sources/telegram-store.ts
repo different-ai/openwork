@@ -1,13 +1,13 @@
 import { randomBytes } from "node:crypto"
-import { and, asc, eq, gt, gte, inArray, isNull, lt, lte, or, sql } from "@openwork-ee/den-db/drizzle"
-import { WorkerTable } from "@openwork-ee/den-db/schema"
+import { and, asc, eq, gt, gte, inArray, isNull, lt, lte, or, sql } from "@micx-ee/den-db/drizzle"
+import { WorkerTable } from "@micx-ee/den-db/schema"
 import {
   TelegramChatBindingTable,
   TelegramConnectionTable,
   TelegramPairingTable,
   TelegramUpdateTable,
-} from "@openwork-ee/den-db/schema/telegram"
-import { createDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
+} from "@micx-ee/den-db/schema/telegram"
+import { createDenTypeId, type DenTypeId } from "@micx-ee/utils/typeid"
 import { db } from "../db.js"
 import { loadTelegramWorkerAccess } from "./telegram-worker.js"
 

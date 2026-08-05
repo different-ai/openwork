@@ -16,7 +16,7 @@ afterEach(async () => {
 });
 
 async function makeWorkspace(): Promise<string> {
-  const dir = await mkdtemp(join(tmpdir(), "openwork-portable-files-"));
+  const dir = await mkdtemp(join(tmpdir(), "micx-portable-files-"));
   tempDirs.push(dir);
   await mkdir(join(dir, ".opencode"), { recursive: true });
   return dir;
@@ -32,20 +32,20 @@ describe("portable files", () => {
     await mkdir(join(workspaceRoot, ".opencode", "skills", "demo"), { recursive: true });
     await mkdir(join(workspaceRoot, ".opencode", "commands"), { recursive: true });
 
-    await writeFile(join(workspaceRoot, ".opencode", "agents", "openwork.md"), "# agent\n", "utf8");
+    await writeFile(join(workspaceRoot, ".opencode", "agents", "micx.md"), "# agent\n", "utf8");
     await writeFile(join(workspaceRoot, ".opencode", "plugins", "router.json"), '{"enabled":true}\n', "utf8");
     await writeFile(join(workspaceRoot, ".opencode", "tools", "database.ts"), "export default {};\n", "utf8");
     await writeFile(join(workspaceRoot, ".opencode", "node_modules", "demo", "index.js"), "export default 1;\n", "utf8");
     await writeFile(join(workspaceRoot, ".opencode", "skills", "demo", "SKILL.md"), "# skill\n", "utf8");
     await writeFile(join(workspaceRoot, ".opencode", "commands", "demo.md"), "# command\n", "utf8");
-    await writeFile(join(workspaceRoot, ".opencode", "openwork.json"), '{"version":1}\n', "utf8");
+    await writeFile(join(workspaceRoot, ".opencode", "micx.json"), '{"version":1}\n', "utf8");
     await writeFile(join(workspaceRoot, ".opencode", "opencode.db"), "sqlite-bytes", "utf8");
     await writeFile(join(workspaceRoot, ".opencode", ".env"), "SECRET=value\n", "utf8");
 
     const files = await listPortableFiles(workspaceRoot);
 
     expect(files).toEqual([
-      { path: ".opencode/agents/openwork.md", content: "# agent\n" },
+      { path: ".opencode/agents/micx.md", content: "# agent\n" },
       { path: ".opencode/plugins/router.json", content: '{"enabled":true}\n' },
       { path: ".opencode/tools/database.ts", content: "export default {};\n" },
     ]);
@@ -84,7 +84,7 @@ describe("portable files", () => {
     ).toThrow(/not allowed/i);
 
     expect(() =>
-      planPortableFiles(workspaceRoot, [{ path: ".opencode/openwork.json", content: "{}" }]),
+      planPortableFiles(workspaceRoot, [{ path: ".opencode/micx.json", content: "{}" }]),
     ).toThrow(/not allowed/i);
 
     expect(() =>

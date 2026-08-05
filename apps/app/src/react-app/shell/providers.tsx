@@ -3,8 +3,8 @@ import { useEffect, type ReactNode } from "react";
 
 import { Toaster } from "@/components/ui/sonner";
 
-import { isWebDeployment } from "@/app/lib/openwork-deployment";
-import { hydrateOpenworkServerSettingsFromEnv } from "@/app/lib/openwork-server";
+import { isWebDeployment } from "@/app/lib/micx-deployment";
+import { hydrateMicxServerSettingsFromEnv } from "@/app/lib/micx-server";
 import { isDesktopRuntime } from "@/app/utils";
 import { ConnectLinkProvider } from "@/react-app/domains/cloud/connect-link-provider";
 import { DenAuthProvider } from "@/react-app/domains/cloud/den-auth-provider";
@@ -19,18 +19,18 @@ import { BootStateProvider } from "./boot-state";
 import { DesktopRuntimeBoot } from "./desktop-runtime-boot";
 import { useEnterpriseActivationRequired } from "@/react-app/domains/cloud/enterprise-activation-gate";
 import { startDebugLogger, stopDebugLogger } from "./debug-logger";
-import { resolveOpenworkConnection } from "./openwork-connection";
+import { resolveMicxConnection } from "./micx-connection";
 import { ReloadCoordinatorProvider } from "./reload-coordinator";
 
 function resolveDefaultServerUrl(): string {
   if (isDesktopRuntime()) return "http://127.0.0.1:4096";
 
-  const openworkUrl =
-    typeof import.meta.env?.VITE_OPENWORK_URL === "string"
-      ? import.meta.env.VITE_OPENWORK_URL.trim()
+  const micxUrl =
+    typeof import.meta.env?.VITE_MICX_URL === "string"
+      ? import.meta.env.VITE_MICX_URL.trim()
       : "";
-  if (openworkUrl) {
-    return `${openworkUrl.replace(/\/+$/, "")}/opencode`;
+  if (micxUrl) {
+    return `${micxUrl.replace(/\/+$/, "")}/opencode`;
   }
 
   if (isWebDeployment() && import.meta.env.PROD && typeof window !== "undefined") {
@@ -79,14 +79,14 @@ function EnterpriseAwareAppProviders({ children }: AppProvidersProps) {
 }
 
 export function AppProviders({ children }: AppProvidersProps) {
-  hydrateOpenworkServerSettingsFromEnv();
+  hydrateMicxServerSettingsFromEnv();
 
   useEffect(() => {
-    // Start the dev observability forwarder. Reads the current openwork-server
+    // Start the dev observability forwarder. Reads the current micx-server
     // URL on every flush so reconnects after port changes still work. In prod
     // builds `startDebugLogger` is a no-op.
     startDebugLogger({
-      serverUrl: async () => (await resolveOpenworkConnection()).normalizedBaseUrl,
+      serverUrl: async () => (await resolveMicxConnection()).normalizedBaseUrl,
     });
     return () => {
       stopDebugLogger();

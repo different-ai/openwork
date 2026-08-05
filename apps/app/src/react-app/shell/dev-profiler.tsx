@@ -9,12 +9,12 @@
  *
  * <DevProfilerOverlay /> renders a small floating card in the bottom-right
  * that shows the hottest zones. Toggle with Cmd+Shift+P or set
- * localStorage.openwork.debug.profilerOverlay = "1" / "0".
+ * localStorage.micx.debug.profilerOverlay = "1" / "0".
  *
  * In prod builds the wrapper is a pass-through (no Profiler overhead) and
  * the overlay renders null.
  *
- * Findings also land on window.__openwork.slice("profiler") so external
+ * Findings also land on window.__micx.slice("profiler") so external
  * tools can read them.
  */
 
@@ -67,21 +67,21 @@ type ProfilerState = {
 // produces 2 words then the app blocks" symptom.
 //
 // Explicit opt-ins:
-//   - VITE_OPENWORK_PROFILER=1 at `pnpm dev`
-//   - window.localStorage.setItem("openwork.debug.profiler", "1")
+//   - VITE_MICX_PROFILER=1 at `pnpm dev`
+//   - window.localStorage.setItem("micx.debug.profiler", "1")
 // When off, <DevProfiler> is a pure pass-through (no <Profiler> mounted) and
 // the overlay renders null.
 const PROFILER_ENABLED = (() => {
   if (typeof window === "undefined") return false;
   try {
     const env = (import.meta as unknown as { env?: Record<string, unknown> }).env ?? {};
-    const flag = env.VITE_OPENWORK_PROFILER;
+    const flag = env.VITE_MICX_PROFILER;
     if (flag === "1" || flag === "true" || flag === true) return true;
   } catch {
     // ignore
   }
   try {
-    if (window.localStorage.getItem("openwork.debug.profiler") === "1") return true;
+    if (window.localStorage.getItem("micx.debug.profiler") === "1") return true;
   } catch {
     // ignore
   }
@@ -120,7 +120,7 @@ function readSnapshot() {
 }
 
 // Register a top-level inspector slice so the snapshot is accessible via
-// window.__openwork.slice("profiler") — even for operators who aren't
+// window.__micx.slice("profiler") — even for operators who aren't
 // looking at the overlay.
 if (typeof window !== "undefined") {
   publishInspectorSlice("profiler", readSnapshot);
@@ -217,7 +217,7 @@ export function DevProfiler({
 function readOverlayStoredPreference(): boolean | null {
   if (typeof window === "undefined") return null;
   try {
-    const raw = window.localStorage.getItem("openwork.debug.profilerOverlay");
+    const raw = window.localStorage.getItem("micx.debug.profilerOverlay");
     if (raw === "1") return true;
     if (raw === "0") return false;
     return null;
@@ -229,7 +229,7 @@ function readOverlayStoredPreference(): boolean | null {
 function writeOverlayStoredPreference(value: boolean) {
   if (typeof window === "undefined") return;
   try {
-    window.localStorage.setItem("openwork.debug.profilerOverlay", value ? "1" : "0");
+    window.localStorage.setItem("micx.debug.profilerOverlay", value ? "1" : "0");
   } catch {
     // ignore
   }

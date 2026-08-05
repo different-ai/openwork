@@ -1,4 +1,4 @@
-// Live e2e fraimz for the script-installable OpenWork bootstrap CLI.
+// Live e2e fraimz for the script-installable Micx bootstrap CLI.
 //
 // This proof installs the CLI into a temp bin directory, runs doctor, then uses
 // the installed command to drive real Den API onboarding over HTTP: sign up,
@@ -7,8 +7,8 @@
 // Required:
 //   DEN_API_E2E_BASE_URL=http://127.0.0.1:18990
 //
-// Run from packages/openwork-bootstrap:
-//   DEN_API_E2E_BASE_URL=... node evals/agent-fraimz-openwork-bootstrap.mjs
+// Run from packages/micx-bootstrap:
+//   DEN_API_E2E_BASE_URL=... node evals/agent-fraimz-micx-bootstrap.mjs
 
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
@@ -24,12 +24,12 @@ if (!baseUrl) {
 const here = dirname(fileURLToPath(import.meta.url))
 const packageRoot = resolve(here, "..")
 const repoRoot = resolve(packageRoot, "..", "..")
-const cli = join(packageRoot, "bin", "openwork.mjs")
-const temp = mkdtempSync(join(tmpdir(), "openwork-bootstrap-e2e-"))
+const cli = join(packageRoot, "bin", "micx.mjs")
+const temp = mkdtempSync(join(tmpdir(), "micx-bootstrap-e2e-"))
 const installDir = join(temp, "install")
 const binDir = join(temp, "bin")
-const installedOpenwork = join(binDir, process.platform === "win32" ? "openwork-bootstrap.cmd" : "openwork-bootstrap")
-const outDir = join(repoRoot, "evals", "results", "openwork-bootstrap-cli")
+const installedMicx = join(binDir, process.platform === "win32" ? "micx-bootstrap.cmd" : "micx-bootstrap")
+const outDir = join(repoRoot, "evals", "results", "micx-bootstrap-cli")
 mkdirSync(outDir, { recursive: true })
 
 const frames = []
@@ -80,15 +80,15 @@ try {
   }, health.status === 200 && health.body?.ok === true)
 
   const install = run(process.execPath, [cli, "install", "--install-dir", installDir, "--bin-dir", binDir, "--json"])
-  prove("A bootstrap script can install the openwork CLI", {
-    action: "node bin/openwork.mjs install --install-dir <tmp> --bin-dir <tmp>/bin --json",
+  prove("A bootstrap script can install the micx CLI", {
+    action: "node bin/micx.mjs install --install-dir <tmp> --bin-dir <tmp>/bin --json",
     assert: "exit 0 and installed executable path returned",
     evidence: { status: install.status, body: install.json },
-  }, install.status === 0 && install.json?.ok === true && install.json?.install?.executable === installedOpenwork)
+  }, install.status === 0 && install.json?.ok === true && install.json?.install?.executable === installedMicx)
 
-  const doctor = run(installedOpenwork, ["doctor", "--install-dir", installDir, "--bin-dir", binDir, "--base-url", baseUrl, "--json"])
+  const doctor = run(installedMicx, ["doctor", "--install-dir", installDir, "--bin-dir", binDir, "--base-url", baseUrl, "--json"])
   prove("The installed CLI can doctor itself and the Den API", {
-    action: "openwork doctor --base-url <live-den-api> --json",
+    action: "micx doctor --base-url <live-den-api> --json",
     assert: "exit 0, local install checks pass, and Den API health passes",
     evidence: { status: doctor.status, body: doctor.json },
   }, doctor.status === 0 && doctor.json?.ok === true && doctor.json?.checks?.some((check) => check.name === "denApiHealth" && check.ok === true))
@@ -97,7 +97,7 @@ try {
   const inviteEmail = `teammate-${runId}@example.com`
   const orgName = `Bootstrap CLI Org ${runId}`
   const skillName = `Bootstrap Skill ${runId}`
-  const onboard = run(installedOpenwork, [
+  const onboard = run(installedMicx, [
     "cloud",
     "onboard",
     "--base-url",
@@ -111,12 +111,12 @@ try {
     "--skill-name",
     skillName,
     "--json",
-  ], { env: { ...process.env, OPENWORK_OWNER_PASSWORD: randomPassword() }, timeout: 30_000 })
+  ], { env: { ...process.env, MICX_OWNER_PASSWORD: randomPassword() }, timeout: 30_000 })
   prove("The installed CLI can onboard a user, org, invite, and skill end-to-end", {
-    action: "openwork cloud onboard --base-url <live-den-api> --owner-email ... --org-name ... --invite-email ... --skill-name ... --json",
+    action: "micx cloud onboard --base-url <live-den-api> --owner-email ... --org-name ... --invite-email ... --skill-name ... --json",
     assert: "exit 0 with user, organization, invitation, and skill ids from live API responses",
     evidence: { status: onboard.status, body: onboard.json, stderr: onboard.stderr },
-  }, onboard.status === 0 && onboard.json?.ok === true && onboard.json?.organization?.id && onboard.json?.invitation?.invitationId && onboard.json?.skill?.id && onboard.json?.skill?.title === skillName && onboard.json?.skillRun?.triggered === true && onboard.json?.skillRun?.output === "OPENWORK_BOOTSTRAP_SKILL_TRIGGERED")
+  }, onboard.status === 0 && onboard.json?.ok === true && onboard.json?.organization?.id && onboard.json?.invitation?.invitationId && onboard.json?.skill?.id && onboard.json?.skill?.title === skillName && onboard.json?.skillRun?.triggered === true && onboard.json?.skillRun?.output === "MICX_BOOTSTRAP_SKILL_TRIGGERED")
 } finally {
   rmSync(temp, { recursive: true, force: true })
 }
@@ -141,15 +141,15 @@ const frameFiles = frames.map((frame, index) => {
 
 const allOk = frames.every((frame) => frame.ok)
 writeFileSync(join(outDir, "fraimz.html"), `<!doctype html><html lang="en"><head><meta charset="utf-8" />
-<title>OpenWork Bootstrap CLI — live e2e fraimz</title>
+<title>Micx Bootstrap CLI — live e2e fraimz</title>
 <style>body{margin:0;background:#f3f4f6;color:#111827;font-family:system-ui,sans-serif}main{max-width:1180px;margin:0 auto;padding:32px}h1{margin-bottom:4px}.meta{color:#4b5563;margin-bottom:24px}section{margin:20px 0;padding:16px;border:1px solid #d1d5db;border-radius:16px;background:white}iframe{width:100%;min-height:360px;border:1px solid #e5e7eb;border-radius:12px;background:white}code{background:#e5e7eb;padding:2px 5px;border-radius:5px}</style>
 </head><body><main>
-<h1>OpenWork Bootstrap CLI — live e2e fraimz</h1>
+<h1>Micx Bootstrap CLI — live e2e fraimz</h1>
 <div class="meta">Result: <code>${allOk ? "passed" : "failed"}</code> · Live Den API: <code>${esc(baseUrl)}</code> · Frames: ${frames.length}</div>
 ${frameFiles.map((entry) => `<section><h2>${esc(entry.frame.claim)}</h2><iframe src="${entry.name}" title="${esc(entry.frame.claim)}"></iframe><p><a href="${entry.name}">Open frame</a></p></section>`).join("\n")}
 </main></body></html>`)
 writeFileSync(join(outDir, "report.json"), JSON.stringify({
-  flow: "openwork-bootstrap-cli",
+  flow: "micx-bootstrap-cli",
   result: allOk ? "passed" : "failed",
   liveBaseUrl: baseUrl,
   frames: frames.map((frame) => ({ claim: frame.claim, action: frame.action, assert: frame.assert, ok: frame.ok })),

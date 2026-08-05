@@ -1,12 +1,12 @@
 {
-  "name": "openwork-ui-mcp",
+  "name": "micx-ui-mcp",
   "version": "0.2.0",
-  "description": "MCP server for OpenWork app context and semantic UI control",
-  "author": "OpenWork <support@openworklabs.com>",
+  "description": "MCP server for Micx app context and semantic UI control",
+  "author": "Micx <support@micxlabs.com>",
   "license": "MIT",
   "type": "module",
   "bin": {
-    "openwork-ui-mcp": "index.mjs"
+    "micx-ui-mcp": "index.mjs"
   },
   "files": [
     "index.mjs"
@@ -17,8 +17,8 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/different-ai/openwork.git",
-    "directory": "packages/openwork-ui-mcp"
+    "url": "git+https://github.com/different-ai/micx.git",
+    "directory": "packages/micx-ui-mcp"
   },
   "publishConfig": {
     "access": "public"

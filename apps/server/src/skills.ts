@@ -135,11 +135,11 @@ export async function listSkills(workspaceRoot: string, includeGlobal: boolean):
   }
 
   if (includeGlobal) {
-    const globalOpenWork = join(homedir(), ".config", "opencode", "skills");
+    const globalMicx = join(homedir(), ".config", "opencode", "skills");
     const globalClaude = join(homedir(), ".claude", "skills");
     const globalAgents = join(homedir(), ".agents", "skills");
     const globalAgentLegacy = join(homedir(), ".agent", "skills");
-    dirs.push({ dir: globalOpenWork, scope: "global" });
+    dirs.push({ dir: globalMicx, scope: "global" });
     dirs.push({ dir: globalClaude, scope: "global" });
     dirs.push({ dir: globalAgents, scope: "global" });
     dirs.push({ dir: globalAgentLegacy, scope: "global" });

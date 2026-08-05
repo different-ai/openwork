@@ -66,8 +66,8 @@ describe("computePolicyProviderReconcilePlan", () => {
   test("never disables cloud-managed providers under the custom-provider restriction", () => {
     expect(
       computePolicyProviderReconcilePlan({
-        allProviders: [provider("lpr_team"), provider("openwork"), provider("openai")],
-        connectedProviderIds: ["lpr_team", "openwork", "openai"],
+        allProviders: [provider("lpr_team"), provider("micx"), provider("openai")],
+        connectedProviderIds: ["lpr_team", "micx", "openai"],
         disabledProviderIds: [],
         markedDisabledProviderIds: [],
         checkRestriction: restrictionChecker(["allowCustomProviders"]),

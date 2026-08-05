@@ -1,5 +1,5 @@
 {
-  "name": "@openwork-ee/utils",
+  "name": "@micx-ee/utils",
   "private": true,
   "type": "module",
   "main": "./dist/index.js",

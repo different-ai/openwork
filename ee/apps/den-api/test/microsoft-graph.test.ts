@@ -58,7 +58,7 @@ describe("Microsoft Graph response mapping", () => {
         start: { dateTime: "2026-07-10T09:00:00", timeZone: "America/Los_Angeles" },
         end: { dateTime: "2026-07-10T09:30:00", timeZone: "America/Los_Angeles" },
         isAllDay: false,
-        location: { displayName: "OpenWork Room" },
+        location: { displayName: "Micx Room" },
         organizer: { emailAddress: { name: "Ada", address: "ada@example.com" } },
         attendees: [{ emailAddress: { name: "Ben", address: "ben@example.com" } }],
         webLink: "https://outlook.office.com/calendar/event_1",
@@ -73,7 +73,7 @@ describe("Microsoft Graph response mapping", () => {
       end: "2026-07-10T09:30:00",
       endTimeZone: "America/Los_Angeles",
       isAllDay: false,
-      location: "OpenWork Room",
+      location: "Micx Room",
       organizer: { name: "Ada", address: "ada@example.com" },
       attendees: [{ name: "Ben", address: "ben@example.com" }],
       webLink: "https://outlook.office.com/calendar/event_1",
@@ -227,7 +227,7 @@ describe("MicrosoftGraphClient", () => {
           end: { dateTime: "2026-07-13T10:30:00Z", timeZone: "UTC" },
         }, 201)
       }
-      if (decodeURIComponent(url.pathname).endsWith("/me/drive/root:/OpenWork/Review notes.txt:/content")) {
+      if (decodeURIComponent(url.pathname).endsWith("/me/drive/root:/Micx/Review notes.txt:/content")) {
         return json({ id: "file_1", name: "Review notes.txt", file: { mimeType: "text/plain" } }, 201)
       }
       if (url.pathname.endsWith("/me/chats")) {
@@ -254,7 +254,7 @@ describe("MicrosoftGraphClient", () => {
       end: "2026-07-13T10:30:00Z",
       timeZone: "UTC",
     })).id).toBe("event_1")
-    expect((await client.putDriveTextFile({ path: "OpenWork/Review notes.txt", content: "Notes" })).id).toBe("file_1")
+    expect((await client.putDriveTextFile({ path: "Micx/Review notes.txt", content: "Notes" })).id).toBe("file_1")
     expect((await client.listTeamsChats(10))[0]?.id).toBe("chat_1")
     expect((await client.listTeamsMessages("chat_1", 10))[0]?.id).toBe("message_1")
     expect((await client.sendTeamsMessage("chat_1", "Ship it")).id).toBe("message_2")
@@ -326,5 +326,5 @@ describe("MicrosoftGraphClient", () => {
 
 test("OneDrive path search escapes OData apostrophes", () => {
   expect(escapeOneDriveSearchPath("Q3's plan")).toBe("Q3''s plan")
-  expect(encodeOneDrivePath("OpenWork/Review notes.txt")).toBe("OpenWork/Review%20notes.txt")
+  expect(encodeOneDrivePath("Micx/Review notes.txt")).toBe("Micx/Review%20notes.txt")
 })

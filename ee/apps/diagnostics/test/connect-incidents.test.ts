@@ -20,7 +20,7 @@ const clientId = randomUUID()
 
 function pseudonym(kind: "organization" | "client", value: string): string {
   return createHmac("sha256", bearerToken)
-    .update("openwork-connect-diagnostics-v1\0")
+    .update("micx-connect-diagnostics-v1\0")
     .update(kind)
     .update("\0")
     .update(value)

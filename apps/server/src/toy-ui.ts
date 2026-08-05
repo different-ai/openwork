@@ -310,16 +310,16 @@ export const TOY_UI_HTML = `<!doctype html>
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>OpenWork Toy UI</title>
-    <link rel="icon" type="image/svg+xml" href="/ui/assets/openwork-mark.svg" />
+    <title>Micx Toy UI</title>
+    <link rel="icon" type="image/svg+xml" href="/ui/assets/micx-mark.svg" />
     <link rel="stylesheet" href="/ui/assets/toy.css" />
   </head>
   <body>
     <div class="wrap">
       <div class="top">
         <div class="title">
-          <h1>OpenWork Toy UI</h1>
-          <div class="sub">Local-first host contract harness (served by openwork-server)</div>
+          <h1>Micx Toy UI</h1>
+          <div class="sub">Local-first host contract harness (served by micx-server)</div>
         </div>
         <div class="row">
           <span class="pill" id="pill-conn">disconnected</span>
@@ -460,13 +460,13 @@ export const TOY_UI_HTML = `<!doctype html>
                 <input id="file" type="file" />
                 <button class="btn" id="btn-upload">Upload to inbox</button>
               </div>
-              <div class="small">Uploads go to <span class="mono">.opencode/openwork/inbox/</span> inside the workspace.</div>
+              <div class="small">Uploads go to <span class="mono">.opencode/micx/inbox/</span> inside the workspace.</div>
 
               <div class="hr"></div>
 
               <div class="row">
                 <button class="btn" id="btn-artifacts">List artifacts</button>
-                <span class="small">Downloads read from <span class="mono">.opencode/openwork/outbox/</span>.</span>
+                <span class="small">Downloads read from <span class="mono">.opencode/micx/outbox/</span>.</span>
               </div>
               <div class="list" id="artifacts"></div>
 
@@ -520,8 +520,8 @@ const shareScopeEl = qs("#share-scope");
 const shareLabelEl = qs("#share-label");
 const tabsEl = qs("#tabs");
 
-const STORAGE_TOKEN = "openwork.toy.token";
-const STORAGE_SESSION_PREFIX = "openwork.toy.session.";
+const STORAGE_TOKEN = "micx.toy.token";
+const STORAGE_SESSION_PREFIX = "micx.toy.session.";
 
 function setPill(el, label, kind) {
   el.textContent = label;
@@ -742,7 +742,7 @@ async function ensureSession(workspaceId) {
   if (existing) return existing;
   const created = await apiFetch("/w/" + encodeURIComponent(workspaceId) + "/opencode/session", {
     method: "POST",
-    body: JSON.stringify({ title: "OpenWork Toy UI" }),
+    body: JSON.stringify({ title: "Micx Toy UI" }),
   });
   const id = created && created.id ? String(created.id) : "";
   if (!id) throw new Error("session_create_failed");
@@ -1011,7 +1011,7 @@ function renderConnectArtifact(workspaceId, token, scope) {
   const hostUrl = location.origin;
   const workspaceUrl = hostUrl + "/w/" + encodeURIComponent(workspaceId);
   const payload = {
-    kind: "openwork.connect.v1",
+    kind: "micx.connect.v1",
     hostUrl: hostUrl,
     workspaceId: workspaceId,
     workspaceUrl: workspaceUrl,
@@ -1495,7 +1495,7 @@ async function main() {
   };
 
   qs("#btn-delete-workspace").onclick = async () => {
-    if (!confirm("Delete this workspace from the host's OpenWork server config?")) return;
+    if (!confirm("Delete this workspace from the host's Micx server config?")) return;
     try {
       await apiFetch("/workspaces/" + encodeURIComponent(workspaceId), { method: "DELETE" });
       setStatus("Workspace deleted (refresh workspaces)", "ok");

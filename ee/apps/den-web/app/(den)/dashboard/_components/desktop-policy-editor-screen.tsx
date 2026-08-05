@@ -9,7 +9,7 @@ import {
   desktopPolicyKeys,
   type DesktopPolicyDocumentWrite,
   type DesktopPolicyValue,
-} from "@openwork/types/den/desktop-policies";
+} from "@micx/types/den/desktop-policies";
 import { DashboardPageTemplate } from "../../_components/ui/dashboard-page-template";
 import { DenButton } from "../../_components/ui/button";
 import { DenInput } from "../../_components/ui/input";
@@ -171,8 +171,8 @@ function getPromptDescriptionErrorId(index: number) {
 
 function getDisabledPromptCopy(isDefault: boolean) {
   return isDefault
-    ? "When organization prompts are off, OpenWork defaults are used."
-    : "When organization prompts are off, members inherit prompts from another matching policy or the default policy; if none apply, OpenWork defaults are used.";
+    ? "When organization prompts are off, Micx defaults are used."
+    : "When organization prompts are off, members inherit prompts from another matching policy or the default policy; if none apply, Micx defaults are used.";
 }
 
 function policyDocumentFromDraft(draft: PolicyDraft): DesktopPolicyDocumentWrite {

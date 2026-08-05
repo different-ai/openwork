@@ -1,7 +1,7 @@
 import {
   MICROSOFT_365_DEFAULT_FEATURES,
   type Microsoft365Feature,
-} from "@openwork/types/den/microsoft-365";
+} from "@micx/types/den/microsoft-365";
 
 export { MICROSOFT_365_DEFAULT_FEATURES };
 
@@ -59,7 +59,7 @@ export const MICROSOFT_365_PERMISSION_GROUPS: readonly Microsoft365PermissionGro
         key: "teamsChatSend",
         label: "Send Teams chat messages",
         scope: "Chat.Read + ChatMessage.Send",
-        detail: "Includes chat read access so OpenWork can find an existing chat; it cannot create a new chat.",
+        detail: "Includes chat read access so Micx can find an existing chat; it cannot create a new chat.",
       },
     ],
   },

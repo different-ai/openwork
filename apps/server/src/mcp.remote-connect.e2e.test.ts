@@ -31,9 +31,9 @@ function serverConfig(workspaceRoot: string): ServerConfig {
 
 describe("mcp remote connect flow", () => {
   test("adds, lists, and removes a remote MCP without OAuth", async () => {
-    const workspaceRoot = await mkdtemp(join(tmpdir(), "openwork-mcp-remote-e2e-"));
-    const previousDb = process.env.OPENWORK_RUNTIME_DB;
-    process.env.OPENWORK_RUNTIME_DB = join(workspaceRoot, "runtime.sqlite");
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "micx-mcp-remote-e2e-"));
+    const previousDb = process.env.MICX_RUNTIME_DB;
+    process.env.MICX_RUNTIME_DB = join(workspaceRoot, "runtime.sqlite");
     const config = serverConfig(workspaceRoot);
 
     try {
@@ -55,7 +55,7 @@ describe("mcp remote connect flow", () => {
       expect(item?.source).toBe("config.remote");
 
       await expect(readFile(join(workspaceRoot, "opencode.jsonc"), "utf8")).rejects.toThrow();
-      await expect(stat(join(workspaceRoot, ".opencode", "openwork.json"))).rejects.toThrow();
+      await expect(stat(join(workspaceRoot, ".opencode", "micx.json"))).rejects.toThrow();
       expect((await readRuntimeOpencodeConfig(config, WORKSPACE_ID)).mcp?.["simple-remote"]?.url).toBe("https://example.com/mcp");
 
       const removed = await removeMcp(config, WORKSPACE_ID, "simple-remote");
@@ -64,8 +64,8 @@ describe("mcp remote connect flow", () => {
       const listedAfterRemove = await listMcp(config, WORKSPACE_ID, workspaceRoot);
       expect(listedAfterRemove.some((entry) => entry.name === "simple-remote")).toBe(false);
     } finally {
-      if (previousDb === undefined) delete process.env.OPENWORK_RUNTIME_DB;
-      else process.env.OPENWORK_RUNTIME_DB = previousDb;
+      if (previousDb === undefined) delete process.env.MICX_RUNTIME_DB;
+      else process.env.MICX_RUNTIME_DB = previousDb;
       await rm(workspaceRoot, { recursive: true, force: true });
     }
   });

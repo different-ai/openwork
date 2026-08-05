@@ -2,20 +2,20 @@ import type { ModelRef, SuggestedPlugin } from "./types";
 import { t } from "../i18n";
 import { getDenMcpUrl } from "./lib/den";
 import {
-  BUILT_IN_OPENWORK_EXTENSION_MANIFESTS,
+  BUILT_IN_MICX_EXTENSION_MANIFESTS,
   extensionContribution,
   extensionResource,
   isTrustedBuiltInExtension,
-  type OpenWorkExtensionManifest,
-  type OpenWorkExtensionPlatform,
+  type MicxExtensionManifest,
+  type MicxExtensionPlatform,
 } from "./extensions";
 
-export const MODEL_PREF_KEY = "openwork.defaultModel";
-export const SESSION_MODEL_PREF_KEY = "openwork.sessionModels";
-export const THINKING_PREF_KEY = "openwork.showThinking";
-export const VARIANT_PREF_KEY = "openwork.modelVariant";
+export const MODEL_PREF_KEY = "micx.defaultModel";
+export const SESSION_MODEL_PREF_KEY = "micx.sessionModels";
+export const THINKING_PREF_KEY = "micx.showThinking";
+export const VARIANT_PREF_KEY = "micx.modelVariant";
 export { LANGUAGE_PREF_KEY } from "../i18n";
-export const HIDE_TITLEBAR_PREF_KEY = "openwork.hideTitlebar";
+export const HIDE_TITLEBAR_PREF_KEY = "micx.hideTitlebar";
 
 export const DEFAULT_MODEL: ModelRef = {
   providerID: "opencode",
@@ -50,17 +50,17 @@ export type McpDirectoryInfo = {
   iconSrc?: string;
   /** Prompt inserted from the composer extension picker. */
   composerPrompt?: string;
-  /** Whether OpenWork should show this extension as enabled before user setup. */
+  /** Whether Micx should show this extension as enabled before user setup. */
   defaultEnabled?: boolean;
-  /** Whether OpenWork should hide this extension from the default catalog view. */
+  /** Whether Micx should hide this extension from the default catalog view. */
   defaultHidden?: boolean;
   /** Whether this extension is still in preview. */
   preview?: boolean;
   /** Normalized extension manifest backing this catalog entry. */
-  extensionManifest?: OpenWorkExtensionManifest;
+  extensionManifest?: MicxExtensionManifest;
 };
 
-function extensionManifestToDirectoryInfo(manifest: OpenWorkExtensionManifest): McpDirectoryInfo {
+function extensionManifestToDirectoryInfo(manifest: MicxExtensionManifest): McpDirectoryInfo {
   const mcpResource = extensionResource(manifest, "mcp");
   return {
     id: manifest.id,
@@ -81,7 +81,7 @@ function extensionManifestToDirectoryInfo(manifest: OpenWorkExtensionManifest): 
   };
 }
 
-export function isBuiltInOpenWorkExtension(entry: Pick<McpDirectoryInfo, "kind" | "extensionManifest">): boolean {
+export function isBuiltInMicxExtension(entry: Pick<McpDirectoryInfo, "kind" | "extensionManifest">): boolean {
   return entry.kind === "extension" && isTrustedBuiltInExtension(entry.extensionManifest);
 }
 
@@ -152,9 +152,9 @@ export const MCP_QUICK_CONNECT: McpDirectoryInfo[] = [
     iconSrc: "/ext-context7.svg",
   },
   {
-    get name() { return t("mcp.quick_connect_openwork_cloud_title"); },
-    serverName: "openwork-cloud",
-    get description() { return t("mcp.quick_connect_openwork_cloud_desc"); },
+    get name() { return t("mcp.quick_connect_micx_cloud_title"); },
+    serverName: "micx-cloud",
+    get description() { return t("mcp.quick_connect_micx_cloud_desc"); },
     get url() {
       // The desktop app connects to the minimal, harness-facing surface
       // (/mcp/agent: search_capabilities + execute_capability only), not the
@@ -164,50 +164,50 @@ export const MCP_QUICK_CONNECT: McpDirectoryInfo[] = [
       try {
         return `${getDenMcpUrl()}/agent`;
       } catch {
-        return "https://app.openworklabs.com/api/den/mcp/agent";
+        return "https://app.micxlabs.com/api/den/mcp/agent";
       }
     },
     type: "remote",
     oauth: true,
     kind: "mcp",
-    iconSrc: "/openwork-mark.svg",
+    iconSrc: "/micx-mark.svg",
     // Auto-managed by the signed-in cloud reconciler (syncCloudControlMcp):
-    // configured + enabled while signed in to OpenWork Cloud. Hidden from the
+    // configured + enabled while signed in to Micx Cloud. Hidden from the
     // default catalog; "Show hidden" reveals it.
     defaultHidden: true,
   },
   {
-    get name() { return t("mcp.quick_connect_openwork_ui_title"); },
-    serverName: "openwork-ui",
-    get description() { return t("mcp.quick_connect_openwork_ui_desc"); },
+    get name() { return t("mcp.quick_connect_micx_ui_title"); },
+    serverName: "micx-ui",
+    get description() { return t("mcp.quick_connect_micx_ui_desc"); },
     type: "local",
     // Dev builds replace this with the local checkout path before writing config.
-    command: ["npx", "-y", "openwork-ui-mcp"],
+    command: ["npx", "-y", "micx-ui-mcp"],
     oauth: false,
     kind: "ui-control",
-    iconSrc: "/openwork-mark.svg",
+    iconSrc: "/micx-mark.svg",
     // Internal UI-control surface for agents driving the desktop app. Hidden
     // from the default catalog; "Show hidden" reveals it.
     defaultHidden: true,
   },
-  ...BUILT_IN_OPENWORK_EXTENSION_MANIFESTS.map(extensionManifestToDirectoryInfo),
+  ...BUILT_IN_MICX_EXTENSION_MANIFESTS.map(extensionManifestToDirectoryInfo),
 ];
 
-export const OPENWORK_EXTENSION_CATALOG = MCP_QUICK_CONNECT.filter((entry) => entry.kind === "extension");
+export const MICX_EXTENSION_CATALOG = MCP_QUICK_CONNECT.filter((entry) => entry.kind === "extension");
 
-export function resolveOpenWorkExtensionCatalogPlatform(
+export function resolveMicxExtensionCatalogPlatform(
   platform: "web" | "desktop",
   os?: "macos" | "windows" | "linux",
-): OpenWorkExtensionPlatform {
+): MicxExtensionPlatform {
   if (platform === "web") return "web";
   if (os === "macos") return "darwin";
   if (os === "windows") return "windows";
   return "linux";
 }
 
-export function filterOpenWorkExtensionCatalogForPlatform<TEntry extends Pick<McpDirectoryInfo, "extensionManifest">>(
+export function filterMicxExtensionCatalogForPlatform<TEntry extends Pick<McpDirectoryInfo, "extensionManifest">>(
   entries: TEntry[],
-  platform: OpenWorkExtensionPlatform,
+  platform: MicxExtensionPlatform,
 ): TEntry[] {
   return entries.filter((entry) => {
     const platforms = entry.extensionManifest?.platform;

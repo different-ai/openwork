@@ -8,9 +8,9 @@ export default function OrganizationInvitePreview(props: OrganizationInviteEmail
 }
 
 OrganizationInvitePreview.PreviewProps = {
-  inviteLink: "https://app.openworklabs.com/join-org?invite=invitation_preview",
+  inviteLink: "https://app.micxlabs.com/join-org?invite=invitation_preview",
   invitedByName: "Ada Lovelace",
   invitedByEmail: "ada@example.com",
-  organizationName: "OpenWork Preview",
+  organizationName: "Micx Preview",
   role: "admin",
 } satisfies OrganizationInviteEmailProps

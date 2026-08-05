@@ -114,11 +114,11 @@ export function useSessionProviderAuth(input: UseSessionProviderAuthInput) {
             : emptyWorkspaceDisplay,
         selectedWorkspaceRoot: () => stateRef.current.selectedWorkspaceRoot,
         runtimeWorkspaceId: () => stateRef.current.selectedWorkspaceEndpoint?.workspaceId ?? null,
-        openworkServer: {
+        micxServer: {
           getSnapshot: () => ({
-            openworkServerStatus: stateRef.current.selectedWorkspaceEndpoint ? "connected" : "disconnected",
-            openworkServerClient: stateRef.current.selectedWorkspaceEndpoint?.client ?? null,
-            openworkServerCapabilities: stateRef.current.selectedWorkspaceEndpoint
+            micxServerStatus: stateRef.current.selectedWorkspaceEndpoint ? "connected" : "disconnected",
+            micxServerClient: stateRef.current.selectedWorkspaceEndpoint?.client ?? null,
+            micxServerCapabilities: stateRef.current.selectedWorkspaceEndpoint
               ? {
                   config: { read: true, write: true },
                 }
@@ -200,7 +200,7 @@ export function useSessionProviderAuth(input: UseSessionProviderAuthInput) {
     policyProviderReconcileInFlightRef.current = true;
     void reconcilePolicyDisabledProviders({
       opencodeClient,
-      openworkClient: selectedWorkspaceEndpoint?.client ?? null,
+      micxClient: selectedWorkspaceEndpoint?.client ?? null,
       workspaceId: selectedWorkspaceEndpoint?.workspaceId ?? null,
       workspaceType: selectedWorkspace?.workspaceType ?? null,
       allProviders: providers,

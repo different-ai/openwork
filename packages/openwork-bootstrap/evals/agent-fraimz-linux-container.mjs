@@ -1,15 +1,15 @@
-// Linux e2e fraimz for OpenWork bootstrap without shipping to production.
+// Linux e2e fraimz for Micx bootstrap without shipping to production.
 //
 // This runs inside a real Linux container and proves:
 // - the bootstrap CLI installs on Linux,
-// - `openwork install app` installs a Linux tar.gz app artifact from a manifest,
-// - `openwork doctor --app` verifies the installed app,
-// - `openwork cloud onboard` can hit a live Den API from inside Linux.
+// - `micx install app` installs a Linux tar.gz app artifact from a manifest,
+// - `micx doctor --app` verifies the installed app,
+// - `micx cloud onboard` can hit a live Den API from inside Linux.
 //
 // Required host setup:
 //   DEN_API_E2E_BASE_URL=http://host.docker.internal:<den-api-port>
 //
-// Run from packages/openwork-bootstrap:
+// Run from packages/micx-bootstrap:
 //   DEN_API_E2E_BASE_URL=http://host.docker.internal:18995 node evals/agent-fraimz-linux-container.mjs
 
 import { createHash } from "node:crypto"
@@ -26,11 +26,11 @@ if (!denBaseUrl) {
 const here = dirname(fileURLToPath(import.meta.url))
 const packageRoot = resolve(here, "..")
 const repoRoot = resolve(packageRoot, "..", "..")
-const outDir = join(repoRoot, "evals", "results", "openwork-linux-container")
+const outDir = join(repoRoot, "evals", "results", "micx-linux-container")
 const temp = join(outDir, `_tmp-${Date.now()}-${Math.random().toString(36).slice(2)}`)
 const fixtureDir = join(temp, "fixture")
 const artifactRoot = join(temp, "artifact-root")
-const artifactPath = join(fixtureDir, "openwork-linux.tar.gz")
+const artifactPath = join(fixtureDir, "micx-linux.tar.gz")
 const manifestPath = join(fixtureDir, "install-manifest.json")
 mkdirSync(outDir, { recursive: true })
 mkdirSync(fixtureDir, { recursive: true })
@@ -64,7 +64,7 @@ function run(command, args, options = {}) {
 }
 
 function redactSecrets(value) {
-  return value.replace(/OPENWORK_OWNER_PASSWORD=[^\s]+/g, "OPENWORK_OWNER_PASSWORD=[redacted]")
+  return value.replace(/MICX_OWNER_PASSWORD=[^\s]+/g, "MICX_OWNER_PASSWORD=[redacted]")
 }
 
 function prove(claim, { action, assert, evidence }, ok) {
@@ -103,22 +103,22 @@ function randomPassword() {
 }
 
 try {
-  const appBinary = join(artifactRoot, "openwork")
-  writeFileSync(appBinary, "#!/usr/bin/env sh\necho OpenWork Linux fixture\n")
+  const appBinary = join(artifactRoot, "micx")
+  writeFileSync(appBinary, "#!/usr/bin/env sh\necho Micx Linux fixture\n")
   chmodSync(appBinary, 0o755)
-  execFileSync("tar", ["-czf", artifactPath, "-C", artifactRoot, "openwork"])
+  execFileSync("tar", ["-czf", artifactPath, "-C", artifactRoot, "micx"])
   const digest = sha256(artifactPath)
   writeFileSync(manifestPath, JSON.stringify({
     version: "0.0.0-linux-fixture",
     artifacts: {
       linux: {
-        x64: { type: "tar.gz", url: "file:///fixture/openwork-linux.tar.gz", sha256: digest, appName: "openwork" },
-        arm64: { type: "tar.gz", url: "file:///fixture/openwork-linux.tar.gz", sha256: digest, appName: "openwork" },
+        x64: { type: "tar.gz", url: "file:///fixture/micx-linux.tar.gz", sha256: digest, appName: "micx" },
+        arm64: { type: "tar.gz", url: "file:///fixture/micx-linux.tar.gz", sha256: digest, appName: "micx" },
       },
     },
   }, null, 2))
   prove("A Linux app artifact manifest is available without shipping to production", {
-    action: "Create local openwork tar.gz artifact and manifest with SHA-256",
+    action: "Create local micx tar.gz artifact and manifest with SHA-256",
     assert: "manifest and tar.gz exist on the host and are mounted into Linux container",
     evidence: { manifestPath, artifactPath, sha256: digest },
   }, existsSync(manifestPath) && existsSync(artifactPath) && digest.length === 64)
@@ -132,12 +132,12 @@ try {
 
   const installAndDoctor = dockerRun([
     "set -euo pipefail",
-    "node /package/bin/openwork.mjs install --install-dir /tmp/openwork/install --bin-dir /tmp/openwork/bin --json >/tmp/install.json",
-    "/tmp/openwork/bin/openwork-bootstrap install app --manifest /fixture/install-manifest.json --app-dir /tmp/openwork/apps --json >/tmp/app-install.json",
-    "/tmp/openwork/bin/openwork-bootstrap doctor --install-dir /tmp/openwork/install --bin-dir /tmp/openwork/bin --app --app-dir /tmp/openwork/apps --json",
+    "node /package/bin/micx.mjs install --install-dir /tmp/micx/install --bin-dir /tmp/micx/bin --json >/tmp/install.json",
+    "/tmp/micx/bin/micx-bootstrap install app --manifest /fixture/install-manifest.json --app-dir /tmp/micx/apps --json >/tmp/app-install.json",
+    "/tmp/micx/bin/micx-bootstrap doctor --install-dir /tmp/micx/install --bin-dir /tmp/micx/bin --app --app-dir /tmp/micx/apps --json",
   ].join(" && "), { timeout: 60_000 })
   prove("Linux can install the CLI and app artifact, then doctor the app", {
-    action: "Run openwork install, openwork install app, and openwork doctor --app inside Linux",
+    action: "Run micx install, micx install app, and micx doctor --app inside Linux",
     assert: "all commands exit 0; final doctor JSON returns ok true",
     evidence: installAndDoctor,
   }, installAndDoctor.status === 0 && installAndDoctor.json?.ok === true)
@@ -147,19 +147,19 @@ try {
   const skillName = `Linux Bootstrap Skill ${runId}`
   const onboard = dockerRun([
     "set -euo pipefail",
-    "node /package/bin/openwork.mjs install --install-dir /tmp/openwork/install --bin-dir /tmp/openwork/bin --json >/tmp/install.json",
-    `/tmp/openwork/bin/openwork-bootstrap cloud onboard --base-url "$DEN_API_E2E_BASE_URL" --owner-email ${JSON.stringify(ownerEmail)} --org-name ${JSON.stringify(`Linux CLI Org ${runId}`)} --invite-email ${JSON.stringify(inviteEmail)} --skill-name ${JSON.stringify(skillName)} --prepare-desktop --desktop-bootstrap-path /tmp/openwork/desktop-bootstrap.json --skills-dir /tmp/openwork/skills --json >/tmp/onboard.json`,
-    "/tmp/openwork/bin/openwork-bootstrap doctor --install-dir /tmp/openwork/install --bin-dir /tmp/openwork/bin --desktop-bootstrap --desktop-bootstrap-path /tmp/openwork/desktop-bootstrap.json --json >/tmp/doctor.json",
+    "node /package/bin/micx.mjs install --install-dir /tmp/micx/install --bin-dir /tmp/micx/bin --json >/tmp/install.json",
+    `/tmp/micx/bin/micx-bootstrap cloud onboard --base-url "$DEN_API_E2E_BASE_URL" --owner-email ${JSON.stringify(ownerEmail)} --org-name ${JSON.stringify(`Linux CLI Org ${runId}`)} --invite-email ${JSON.stringify(inviteEmail)} --skill-name ${JSON.stringify(skillName)} --prepare-desktop --desktop-bootstrap-path /tmp/micx/desktop-bootstrap.json --skills-dir /tmp/micx/skills --json >/tmp/onboard.json`,
+    "/tmp/micx/bin/micx-bootstrap doctor --install-dir /tmp/micx/install --bin-dir /tmp/micx/bin --desktop-bootstrap --desktop-bootstrap-path /tmp/micx/desktop-bootstrap.json --json >/tmp/doctor.json",
     "node -e \"const fs=require('fs'); console.log(JSON.stringify({onboard:JSON.parse(fs.readFileSync('/tmp/onboard.json','utf8')),doctor:JSON.parse(fs.readFileSync('/tmp/doctor.json','utf8'))}, null, 2))\"",
   ].join(" && "), {
-    env: ["-e", `OPENWORK_OWNER_PASSWORD=${randomPassword()}`],
+    env: ["-e", `MICX_OWNER_PASSWORD=${randomPassword()}`],
     timeout: 90_000,
   })
   prove("Linux installed CLI can complete live cloud onboarding", {
-    action: "Run openwork cloud onboard from inside Linux against live Den API",
+    action: "Run micx cloud onboard from inside Linux against live Den API",
     assert: "exit 0 and returns prepared desktop bootstrap with user, organization, invitation, skill, and triggered skill output from live API",
     evidence: onboard,
-  }, onboard.status === 0 && onboard.json?.onboard?.ok === true && onboard.json?.onboard?.organization?.id && onboard.json?.onboard?.invitation?.invitationId && onboard.json?.onboard?.skill?.id && onboard.json?.onboard?.skill?.title === skillName && onboard.json?.onboard?.skillRun?.triggered === true && onboard.json?.onboard?.skillRun?.output === "OPENWORK_BOOTSTRAP_SKILL_TRIGGERED" && onboard.json?.onboard?.desktop?.prepared === true && onboard.json?.onboard?.desktop?.bootstrapPath && onboard.json?.onboard?.desktop?.skillPath && onboard.json?.doctor?.ok === true && onboard.json?.doctor?.checks?.some((check) => check.name === "desktopBootstrap" && check.ok === true) && onboard.json?.doctor?.checks?.some((check) => check.name === "desktopBootstrapHandoff" && check.ok === true))
+  }, onboard.status === 0 && onboard.json?.onboard?.ok === true && onboard.json?.onboard?.organization?.id && onboard.json?.onboard?.invitation?.invitationId && onboard.json?.onboard?.skill?.id && onboard.json?.onboard?.skill?.title === skillName && onboard.json?.onboard?.skillRun?.triggered === true && onboard.json?.onboard?.skillRun?.output === "MICX_BOOTSTRAP_SKILL_TRIGGERED" && onboard.json?.onboard?.desktop?.prepared === true && onboard.json?.onboard?.desktop?.bootstrapPath && onboard.json?.onboard?.desktop?.skillPath && onboard.json?.doctor?.ok === true && onboard.json?.doctor?.checks?.some((check) => check.name === "desktopBootstrap" && check.ok === true) && onboard.json?.doctor?.checks?.some((check) => check.name === "desktopBootstrapHandoff" && check.ok === true))
 } finally {
   rmSync(temp, { recursive: true, force: true })
 }
@@ -180,13 +180,13 @@ const frameFiles = frames.map((frame, index) => {
 
 const allOk = frames.every((frame) => frame.ok)
 writeFileSync(join(outDir, "fraimz.html"), `<!doctype html><html lang="en"><head><meta charset="utf-8" />
-<title>OpenWork Linux Bootstrap — fraimz</title>
+<title>Micx Linux Bootstrap — fraimz</title>
 <style>body{margin:0;background:#f3f4f6;color:#111827;font-family:system-ui,sans-serif}main{max-width:1180px;margin:0 auto;padding:32px}.meta{color:#4b5563;margin-bottom:24px}section{margin:20px 0;padding:16px;border:1px solid #d1d5db;border-radius:16px;background:white}iframe{width:100%;min-height:360px;border:1px solid #e5e7eb;border-radius:12px;background:white}code{background:#e5e7eb;padding:2px 5px;border-radius:5px}</style>
-</head><body><main><h1>OpenWork Linux Bootstrap — fraimz</h1><div class="meta">Result: <code>${allOk ? "passed" : "failed"}</code> · Live Den API: <code>${esc(denBaseUrl)}</code> · Frames: ${frames.length}</div>
+</head><body><main><h1>Micx Linux Bootstrap — fraimz</h1><div class="meta">Result: <code>${allOk ? "passed" : "failed"}</code> · Live Den API: <code>${esc(denBaseUrl)}</code> · Frames: ${frames.length}</div>
 ${frameFiles.map((entry) => `<section><h2>${esc(entry.frame.claim)}</h2><iframe src="${entry.name}" title="${esc(entry.frame.claim)}"></iframe><p><a href="${entry.name}">Open frame</a></p></section>`).join("\n")}
 </main></body></html>`)
 writeFileSync(join(outDir, "report.json"), JSON.stringify({
-  flow: "openwork-linux-container",
+  flow: "micx-linux-container",
   result: allOk ? "passed" : "failed",
   liveBaseUrl: denBaseUrl,
   frames: frames.map((frame) => ({ claim: frame.claim, action: frame.action, assert: frame.assert, ok: frame.ok })),

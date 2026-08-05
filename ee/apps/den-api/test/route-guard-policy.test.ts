@@ -14,8 +14,8 @@ const routeGuardExceptions = new Map<string, string>([
   ["GET /docs", "public API documentation"],
   ["GET /v1/app-version", "public desktop update metadata"],
   ["GET /v1/brand-assets/:organizationId/:kind/:version", "signed public brand asset URL"],
-  ["GET /v1/dev/emails", "dev-only email outbox guarded by OPENWORK_DEV_MODE"],
-  ["GET /v1/dev/emails/last", "dev-only email preview guarded by OPENWORK_DEV_MODE"],
+  ["GET /v1/dev/emails", "dev-only email outbox guarded by MICX_DEV_MODE"],
+  ["GET /v1/dev/emails/last", "dev-only email preview guarded by MICX_DEV_MODE"],
   ["GET /api/auth/.well-known/oauth-authorization-server", "public OAuth metadata"],
   ["GET /api/auth/.well-known/openid-configuration", "public OIDC metadata"],
   ["GET /.well-known/oauth-authorization-server/api/auth", "public OAuth metadata"],
@@ -96,7 +96,7 @@ function routeKey(input: { method: string; path: string }) {
 }
 
 function seedRequiredEnv() {
-  process.env.DATABASE_URL = process.env.DATABASE_URL ?? "mysql://root:password@127.0.0.1:3306/openwork_test"
+  process.env.DATABASE_URL = process.env.DATABASE_URL ?? "mysql://root:password@127.0.0.1:3306/micx_test"
   process.env.DEN_DB_ENCRYPTION_KEY = process.env.DEN_DB_ENCRYPTION_KEY ?? "x".repeat(32)
   process.env.BETTER_AUTH_SECRET = process.env.BETTER_AUTH_SECRET ?? "y".repeat(32)
   process.env.BETTER_AUTH_URL = process.env.BETTER_AUTH_URL ?? "http://127.0.0.1:8790"

@@ -4,8 +4,8 @@ import type { UIMessage } from "ai";
 import { canOpenArtifact, getArtifactsFromMessages } from "../src/lib/artifacts";
 import { deriveOpenTargets, filePathFromFileUrl, type OpenTarget } from "../src/react-app/domains/session/artifacts/open-target";
 
-const ATTACHMENT_URL = "file:///workspaces/Worker%20Root/.opencode/openwork/inbox/chat-attachments/ses_1/nonce-pge_natural_gas_billing_billing_data_service%202_2_2025-02-20_to_2025-12-05.csv";
-const ATTACHMENT_PATH = "/workspaces/Worker Root/.opencode/openwork/inbox/chat-attachments/ses_1/nonce-pge_natural_gas_billing_billing_data_service 2_2_2025-02-20_to_2025-12-05.csv";
+const ATTACHMENT_URL = "file:///workspaces/Worker%20Root/.opencode/micx/inbox/chat-attachments/ses_1/nonce-pge_natural_gas_billing_billing_data_service%202_2_2025-02-20_to_2025-12-05.csv";
+const ATTACHMENT_PATH = "/workspaces/Worker Root/.opencode/micx/inbox/chat-attachments/ses_1/nonce-pge_natural_gas_billing_billing_data_service 2_2_2025-02-20_to_2025-12-05.csv";
 
 function userMessageWithAttachment(): UIMessage {
   return {

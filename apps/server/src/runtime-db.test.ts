@@ -4,7 +4,7 @@ import { mkdtemp, rm, stat } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { installCloudPlugin, readInstalledCloudPlugins } from "./cloud-plugins.js";
-import { readOpenworkWorkspaceConfig, writeOpenworkWorkspaceConfig } from "./openwork-workspace-config-store.js";
+import { readMicxWorkspaceConfig, writeMicxWorkspaceConfig } from "./micx-workspace-config-store.js";
 import { openRuntimeSqliteDatabase, runtimeDbPath, runtimeStorageDir } from "./runtime-db.js";
 import { readRuntimeOpencodeConfig, writeRuntimeOpencodeConfig } from "./runtime-opencode-config-store.js";
 import { readSessionGroupState, writeSessionGroupState } from "./session-groups.js";
@@ -13,15 +13,15 @@ import type { ServerConfig } from "./types.js";
 const WORKSPACE_ID = "ws_runtime_db_primitive";
 
 const roots: string[] = [];
-const previousRuntimeDb = process.env.OPENWORK_RUNTIME_DB;
+const previousRuntimeDb = process.env.MICX_RUNTIME_DB;
 
 afterEach(async () => {
   while (roots.length) {
     const root = roots.pop();
     if (root) await rm(root, { recursive: true, force: true });
   }
-  if (previousRuntimeDb === undefined) delete process.env.OPENWORK_RUNTIME_DB;
-  else process.env.OPENWORK_RUNTIME_DB = previousRuntimeDb;
+  if (previousRuntimeDb === undefined) delete process.env.MICX_RUNTIME_DB;
+  else process.env.MICX_RUNTIME_DB = previousRuntimeDb;
 });
 
 function serverConfig(root: string, configPath: string | null = join(root, "server.json")): ServerConfig {
@@ -46,7 +46,7 @@ function serverConfig(root: string, configPath: string | null = join(root, "serv
 }
 
 async function tempRoot(): Promise<string> {
-  const root = await mkdtemp(join(tmpdir(), "openwork-runtime-db-primitive-"));
+  const root = await mkdtemp(join(tmpdir(), "micx-runtime-db-primitive-"));
   roots.push(root);
   return root;
 }
@@ -67,21 +67,21 @@ function rowCount(db: Database, tableName: string): number {
 describe("runtime DB primitive", () => {
   test("resolves default and env-overridden runtime database paths", async () => {
     const root = await tempRoot();
-    delete process.env.OPENWORK_RUNTIME_DB;
+    delete process.env.MICX_RUNTIME_DB;
 
     const config = serverConfig(root);
     expect(runtimeDbPath(config)).toBe(join(root, "runtime.sqlite"));
     expect(runtimeStorageDir(config)).toBe(root);
 
     const configWithoutPath = serverConfig(root, null);
-    expect(runtimeDbPath(configWithoutPath)).toBe(join(homedir(), ".config", "openwork", "runtime.sqlite"));
+    expect(runtimeDbPath(configWithoutPath)).toBe(join(homedir(), ".config", "micx", "runtime.sqlite"));
 
     const overridePath = join(root, "state", "override.sqlite");
-    process.env.OPENWORK_RUNTIME_DB = ` ${overridePath} `;
+    process.env.MICX_RUNTIME_DB = ` ${overridePath} `;
     expect(runtimeDbPath(configWithoutPath)).toBe(resolve(overridePath));
     expect(runtimeStorageDir(configWithoutPath)).toBe(join(root, "state"));
 
-    process.env.OPENWORK_RUNTIME_DB = "   ";
+    process.env.MICX_RUNTIME_DB = "   ";
     expect(runtimeDbPath(config)).toBe(join(root, "runtime.sqlite"));
   });
 
@@ -106,14 +106,14 @@ describe("runtime DB primitive", () => {
   test("keeps each migrated store in its own runtime DB table", async () => {
     const root = await tempRoot();
     const dbPath = join(root, "runtime.sqlite");
-    process.env.OPENWORK_RUNTIME_DB = dbPath;
+    process.env.MICX_RUNTIME_DB = dbPath;
     const config = serverConfig(root);
 
     await writeSessionGroupState(config, WORKSPACE_ID, {
       groups: [{ id: "grp_runtime", label: "Runtime" }],
       assignments: { ses_runtime: "grp_runtime" },
     });
-    await writeOpenworkWorkspaceConfig(config, WORKSPACE_ID, (current) => ({
+    await writeMicxWorkspaceConfig(config, WORKSPACE_ID, (current) => ({
       ...current,
       workspace: { label: "Workspace config" },
     }));
@@ -137,7 +137,7 @@ describe("runtime DB primitive", () => {
       groups: [{ id: "grp_runtime", label: "Runtime" }],
       assignments: { ses_runtime: "grp_runtime" },
     });
-    expect((await readOpenworkWorkspaceConfig(config, WORKSPACE_ID)).workspace).toEqual({ label: "Workspace config" });
+    expect((await readMicxWorkspaceConfig(config, WORKSPACE_ID)).workspace).toEqual({ label: "Workspace config" });
     expect((await readRuntimeOpencodeConfig(config, WORKSPACE_ID)).plugin).toEqual(["runtime-plugin"]);
     expect((await readInstalledCloudPlugins(config, WORKSPACE_ID)).plugins.plugin_runtime?.name).toBe("Runtime Primitive Plugin");
 
@@ -146,7 +146,7 @@ describe("runtime DB primitive", () => {
       const tables = rowNames(sqlite.query("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name").all());
       expect(tables).toEqual([
         "cloud_plugin_install_configs",
-        "openwork_workspace_configs",
+        "micx_workspace_configs",
         "runtime_opencode_configs",
         "session_group_states",
       ]);

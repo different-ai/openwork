@@ -148,7 +148,7 @@ export function PluginImportScreen() {
         <div>
           <h1 className="text-[28px] font-semibold text-gray-900">Import from GitHub</h1>
           <p className="mt-1 text-[15px] text-gray-500">
-            Preview a public plugin, choose what to bring in, then finish creating it in OpenWork.
+            Preview a public plugin, choose what to bring in, then finish creating it in Micx.
           </p>
         </div>
       </div>

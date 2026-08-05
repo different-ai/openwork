@@ -1,11 +1,11 @@
-import { createDenTypeId } from "@openwork-ee/utils/typeid"
+import { createDenTypeId } from "@micx-ee/utils/typeid"
 import { beforeAll, describe, expect, test } from "bun:test"
 import { Hono, type MiddlewareHandler } from "hono"
 import type { OrganizationContext } from "../src/orgs.js"
 import type { OrgRouteVariables } from "../src/routes/org/shared.js"
 
 function seedRequiredEnv() {
-  process.env.DATABASE_URL = process.env.DATABASE_URL ?? "mysql://root:password@127.0.0.1:3306/openwork_test"
+  process.env.DATABASE_URL = process.env.DATABASE_URL ?? "mysql://root:password@127.0.0.1:3306/micx_test"
   process.env.DEN_DB_ENCRYPTION_KEY = process.env.DEN_DB_ENCRYPTION_KEY ?? "x".repeat(32)
   process.env.BETTER_AUTH_SECRET = process.env.BETTER_AUTH_SECRET ?? "y".repeat(32)
   process.env.BETTER_AUTH_URL = process.env.BETTER_AUTH_URL ?? "http://127.0.0.1:8790"
@@ -148,7 +148,7 @@ describe("Microsoft 365 injected routes", () => {
     expect(missingScopeResponse.status).toBe(409)
     expect(await missingScopeResponse.json()).toEqual({
       error: "needs_connection",
-      message: "Your connected Microsoft account is missing the Outlook mail read permission. An admin can enable it on the Microsoft 365 connector in OpenWork Cloud -> Connectors; then reconnect your account.",
+      message: "Your connected Microsoft account is missing the Outlook mail read permission. An admin can enable it on the Microsoft 365 connector in Micx Cloud -> Connectors; then reconnect your account.",
     })
     expect(graphCalls).toBe(1)
 
@@ -201,7 +201,7 @@ describe("Microsoft 365 injected routes", () => {
           end: { dateTime: "2026-07-13T10:30:00Z", timeZone: "UTC" },
         }, { status: 201 })
       }
-      if (decodeURIComponent(url.pathname).endsWith("/me/drive/root:/OpenWork/notes.txt:/content")) {
+      if (decodeURIComponent(url.pathname).endsWith("/me/drive/root:/Micx/notes.txt:/content")) {
         return Response.json({ id: "file_1", name: "notes.txt", file: { mimeType: "text/plain" } }, { status: 201 })
       }
       if (url.pathname.endsWith("/me/chats")) {
@@ -253,7 +253,7 @@ describe("Microsoft 365 injected routes", () => {
     const fileResponse = await app.request("http://den-api.local/v1/capabilities/microsoft-365/drive-files", {
       method: "PUT",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ path: "OpenWork/notes.txt", content: "Notes" }),
+      body: JSON.stringify({ path: "Micx/notes.txt", content: "Notes" }),
     })
     expect(fileResponse.status).toBe(200)
     expect(await fileResponse.json()).toMatchObject({ file: { id: "file_1" } })
@@ -315,7 +315,7 @@ describe("Microsoft 365 injected routes", () => {
     expect(denied.status).toBe(409)
     expect(await denied.json()).toEqual({
       error: "needs_connection",
-      message: "Your connected Microsoft account is missing the Outlook mail read/write permission. An admin can enable it on the Microsoft 365 connector in OpenWork Cloud -> Connectors; then reconnect your account.",
+      message: "Your connected Microsoft account is missing the Outlook mail read/write permission. An admin can enable it on the Microsoft 365 connector in Micx Cloud -> Connectors; then reconnect your account.",
     })
     expect(graphCalls).toBe(1)
   })

@@ -1,10 +1,10 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import { ErrorCode, McpError, type ToolAnnotations } from "@modelcontextprotocol/sdk/types.js"
 import { StreamableHTTPTransport } from "@hono/mcp"
-import { eq } from "@openwork-ee/den-db/drizzle"
-import { OrganizationTable } from "@openwork-ee/den-db/schema"
-import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
-import { openworkCloudMcpConnectionActionSchema } from "@openwork/types/den/mcp-connection-action"
+import { eq } from "@micx-ee/den-db/drizzle"
+import { OrganizationTable } from "@micx-ee/den-db/schema"
+import { normalizeDenTypeId } from "@micx-ee/utils/typeid"
+import { micxCloudMcpConnectionActionSchema } from "@micx/types/den/mcp-connection-action"
 import type { Hono } from "hono"
 import type { RequestIdVariables } from "hono/request-id"
 import { z } from "zod"
@@ -55,14 +55,14 @@ const externalMcpProviderErrorOutputSchema = z.object({
   data: z.string().optional(),
 })
 
-const connectionStatusOutputSchema = openworkCloudMcpConnectionActionSchema.extend({
+const connectionStatusOutputSchema = micxCloudMcpConnectionActionSchema.extend({
   layer: z.enum(["mcp_connection", "downstream_provider"]),
   errorCode: z.enum(["not_connected", "invalid_refresh_token", "invalid_grant", "unauthorized", "provider_error"]),
   message: z.string(),
   action: z.object({
-    type: z.enum(["connect", "reconnect", "update_credentials", "inspect_connection", "fix_provider", "fix_network", "contact_openwork"]),
+    type: z.enum(["connect", "reconnect", "update_credentials", "inspect_connection", "fix_provider", "fix_network", "contact_micx"]),
     label: z.string(),
-    surface: z.enum(["openwork_your_connections", "openwork_organization_connections", "provider_admin_console", "network_infrastructure", "openwork_support"]),
+    surface: z.enum(["micx_your_connections", "micx_organization_connections", "provider_admin_console", "network_infrastructure", "micx_support"]),
     retry: z.literal("search_capabilities"),
     url: z.string().url().optional(),
   }),
@@ -115,18 +115,18 @@ const externalCapabilityErrorPayloadSchema = z.object({
 })
 
 export const AGENT_MCP_INSTRUCTIONS = [
-  "This OpenWork Cloud connection intentionally exposes exactly two tools: search_capabilities and execute_capability.",
+  "This Micx Cloud connection intentionally exposes exactly two tools: search_capabilities and execute_capability.",
   "Capabilities include native Google Workspace operations (Gmail read/search, Calendar list/create, Drive search/read, and Gmail draft creation) executed with the signed-in member's organization credentials, plus any MCP connections the organization has added.",
-  "Allowlisted platform admins can also discover namespaced OpenWork Admin capabilities through this same connection; other members cannot discover or execute them.",
+  "Allowlisted platform admins can also discover namespaced Micx Admin capabilities through this same connection; other members cannot discover or execute them.",
   "Always call search_capabilities first with 2-4 keyword variants before concluding something is unavailable. Use execute_capability only with exact names returned by search_capabilities.",
   "Built-in remote skills create-skill, share-plugin, add-to-marketplace, and add-user-to-marketplace are always listed in the skill index. Retrieve and follow the matching one by executing its exact capability; do not invent a local copy to access them.",
   "For a request to add a public GitHub plugin to an organization marketplace, search for the marketplace list, GitHub plugin import preview, GitHub plugin marketplace import, and resolved marketplace detail capabilities. Preview first; do not recreate the plugin by hand.",
   "Before importing, confirm the target marketplace, selected skill/server keys, and who can use them. Do not choose one authentication type for every server: the import route resolves known presets and plugin declarations, while the request authType is only a fallback for unknown servers.",
   "After importing, retrieve the resolved marketplace detail and report each plugin's cloudReadiness. An import or plugin binding is not proof that an MCP connection is usable. Relay needs_admin_setup or needs_signin as the next human action instead of claiming the connection is ready.",
-  "Do not invent OAuth-client, credential, or local-extension setup. Organization connections are managed in the OpenWork Cloud dashboard / Settings > Connect. When a returned connection or marketplace readiness state requires administrator setup or member sign-in, relay that exact action.",
-  "A successful search_capabilities call proves this OpenWork Cloud MCP connection is authorized. Never tell the user to reconnect OpenWork Cloud because a downstream connector failed.",
+  "Do not invent OAuth-client, credential, or local-extension setup. Organization connections are managed in the Micx Cloud dashboard / Settings > Connect. When a returned connection or marketplace readiness state requires administrator setup or member sign-in, relay that exact action.",
+  "A successful search_capabilities call proves this Micx Cloud MCP connection is authorized. Never tell the user to reconnect Micx Cloud because a downstream connector failed.",
   "External MCP matches include the provider-advertised argumentsSchema, schemaDigest, and invocation.argumentsField. Put an object matching argumentsSchema in execute_capability.body and copy schemaDigest into execute_capability.schemaDigest.",
-  "OpenWork always attempts the downstream provider call when local schema checks find a mismatch. schemaGuidance is advisory and appears alongside the provider result: if the provider succeeded, accept that result and do not retry solely because of the warning; if it failed, use the warning to correct the arguments or search again.",
+  "Micx always attempts the downstream provider call when local schema checks find a mismatch. schemaGuidance is advisory and appears alongside the provider result: if the provider succeeded, accept that result and do not retry solely because of the warning; if it failed, use the warning to correct the arguments or search again.",
   "If the provider returns invalid_capability_arguments, correct the listed issues and retry once with changed arguments; never retry the same arguments unchanged. If it returns unknown_capability, call search_capabilities again before retrying.",
   "When a match has kind connection_status, name connectionStatus.connectionName and relay connectionStatus.action exactly. Distinguish the member's Your Connections page, the organization Connections dashboard, and the provider's own admin console.",
   "Connection probes are live. After the requested human fixes that connector, search again in the same task; otherwise do not retry unchanged or improvise workarounds through other tools.",
@@ -279,7 +279,7 @@ export async function executeCapabilityWithBudget<T extends ExecuteCapabilityToo
 
 export function createAgentMcpServer(): McpServer {
   return new McpServer({
-    name: "openwork-den-api-agent",
+    name: "micx-den-api-agent",
     version: "1.0.0",
   }, {
     instructions: AGENT_MCP_INSTRUCTIONS,
@@ -295,7 +295,7 @@ export function registerAgentSkillResources(input: {
 }) {
   input.server.registerResource("agent-skills-index", AGENT_SKILL_INDEX_URI, {
     title: "Available Agent Skills",
-    description: "Authorized Agent Skills discovery index for this OpenWork member.",
+    description: "Authorized Agent Skills discovery index for this Micx member.",
     mimeType: "application/json",
   }, async () => ({
     contents: [{
@@ -344,7 +344,7 @@ export function registerAgentSkillResources(input: {
  * name directly.
  *
  * `/mcp/agent` is a *different* endpoint for a *different* consumer: the
- * desktop app's "OpenWork Cloud Control" connection, which is what an
+ * desktop app's "Micx Cloud Control" connection, which is what an
  * OpenCode/Claude Code/Codex-style harness actually sees. It registers only
  * `search_capabilities` and `execute_capability`, both backed by the exact
  * same catalog and the exact same `invokeMcpOperation` execute path used by
@@ -428,7 +428,7 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
         description: [
           "Search for a capability by keyword. This connection only exposes this tool and execute_capability —",
           "there is no list of individually-named tools to browse. Always search first.",
-          "Search covers native Google Workspace capabilities (Gmail, Calendar, Drive, Gmail drafts), org-connected external MCPs, and namespaced OpenWork Admin tools for allowlisted platform admins.",
+          "Search covers native Google Workspace capabilities (Gmail, Calendar, Drive, Gmail drafts), org-connected external MCPs, and namespaced Micx Admin tools for allowlisted platform admins.",
           "Try 2-4 keyword variants before deciding a capability is unavailable.",
           "Native API matches include a connector-namespaced name, pathParams, queryParams, hasBody, and bodySchema. External MCP matches include argumentsSchema, schemaDigest, and invocation.argumentsField.",
           "Built-in and marketplace skill matches return SKILL.md content when executed.",

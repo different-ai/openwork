@@ -209,7 +209,7 @@ export type WorkspaceConnectionState = {
   checkedAt?: number | null;
 };
 
-export type ResetOpenworkMode = "onboarding" | "all";
+export type ResetMicxMode = "onboarding" | "all";
 
 export type WorkspaceBlueprintStarterKind = "prompt" | "session" | "action";
 
@@ -262,7 +262,7 @@ export type WorkspaceBlueprint = {
   } | null;
 };
 
-export type WorkspaceOpenworkConfig = {
+export type WorkspaceMicxConfig = {
   version: number;
   workspace?: {
     name?: string | null;
@@ -277,7 +277,7 @@ export type WorkspaceOpenworkConfig = {
   } | null;
 };
 
-export type CapabilityOrigin = "local" | "openwork-connect";
+export type CapabilityOrigin = "local" | "micx-connect";
 
 export type SkillCard = {
   name: string;

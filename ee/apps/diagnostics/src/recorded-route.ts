@@ -1,4 +1,4 @@
-import { EGRESS_DIAGNOSTIC_ID_HEADER } from "@openwork/types/den/egress-diagnostics"
+import { EGRESS_DIAGNOSTIC_ID_HEADER } from "@micx/types/den/egress-diagnostics"
 import { diagnosticsConfig } from "./config"
 import { recordWireExchange } from "./history-store"
 import { createWireExchange } from "./wire"

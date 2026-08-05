@@ -11,29 +11,29 @@ export const metadata = {
   },
   openGraph: {
     ...baseOpenGraph,
-    url: "https://openworklabs.com"
+    url: "https://micxlabs.com"
   }
 };
 
 const softwareApplicationSchema = {
   "@context": "https://schema.org",
   "@type": "SoftwareApplication",
-  name: "OpenWork",
+  name: "Micx",
   description:
     "Open source Claude Cowork alternative. Desktop app that lets teams use 50+ LLMs, bring their own provider keys, and ship reusable agent setups with guardrails.",
-  url: "https://openworklabs.com",
+  url: "https://micxlabs.com",
   applicationCategory: "BusinessApplication",
   operatingSystem: "macOS, Windows, Linux",
   offers: {
     "@type": "Offer",
     price: "0",
     priceCurrency: "USD",
-    url: "https://openworklabs.com/pricing"
+    url: "https://micxlabs.com/pricing"
   },
   publisher: {
     "@type": "Organization",
-    name: "OpenWork",
-    url: "https://openworklabs.com"
+    name: "Micx",
+    url: "https://micxlabs.com"
   }
 };
 

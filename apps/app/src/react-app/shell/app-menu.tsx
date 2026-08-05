@@ -5,9 +5,9 @@ import { useNavigate } from "react-router-dom";
 import { useUpdateCheckRequestStore } from "../domains/settings/state/update-check-request";
 import { useUiStateStore } from "./ui-state-store";
 
-const NATIVE_MENU_OPEN_SETTINGS_EVENT = "openwork:native-menu:open-settings";
-const NATIVE_MENU_TOGGLE_SIDEBAR_EVENT = "openwork:native-menu:toggle-sidebar";
-const NATIVE_MENU_CHECK_UPDATES_EVENT = "openwork:native-menu:check-updates";
+const NATIVE_MENU_OPEN_SETTINGS_EVENT = "micx:native-menu:open-settings";
+const NATIVE_MENU_TOGGLE_SIDEBAR_EVENT = "micx:native-menu:toggle-sidebar";
+const NATIVE_MENU_CHECK_UPDATES_EVENT = "micx:native-menu:check-updates";
 
 export function AppMenuProvider({ children }: { children: ReactNode }) {
   const navigate = useNavigate();

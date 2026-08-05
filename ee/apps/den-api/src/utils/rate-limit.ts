@@ -1,6 +1,6 @@
-import { and, eq, lt, or, sql } from "@openwork-ee/den-db/drizzle"
-import { RateLimitTable } from "@openwork-ee/den-db/schema"
-import { createDenTypeId } from "@openwork-ee/utils/typeid"
+import { and, eq, lt, or, sql } from "@micx-ee/den-db/drizzle"
+import { RateLimitTable } from "@micx-ee/den-db/schema"
+import { createDenTypeId } from "@micx-ee/utils/typeid"
 import { db } from "../db.js"
 
 type RateLimitRow = {

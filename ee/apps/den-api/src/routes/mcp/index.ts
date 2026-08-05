@@ -1,6 +1,6 @@
 import * as crypto from "node:crypto"
-import { OAuthAccessTokenTable } from "@openwork-ee/den-db/schema"
-import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
+import { OAuthAccessTokenTable } from "@micx-ee/den-db/schema"
+import { createDenTypeId, normalizeDenTypeId } from "@micx-ee/utils/typeid"
 import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"

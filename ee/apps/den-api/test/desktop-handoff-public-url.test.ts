@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 
 function seedRequiredEnv() {
-  process.env.DATABASE_URL = process.env.DATABASE_URL ?? "mysql://root:password@127.0.0.1:3306/openwork_test"
+  process.env.DATABASE_URL = process.env.DATABASE_URL ?? "mysql://root:password@127.0.0.1:3306/micx_test"
   process.env.DEN_DB_ENCRYPTION_KEY = process.env.DEN_DB_ENCRYPTION_KEY ?? "x".repeat(32)
   process.env.BETTER_AUTH_SECRET = process.env.BETTER_AUTH_SECRET ?? "y".repeat(32)
   process.env.BETTER_AUTH_URL = "https://public.example.test"
@@ -67,10 +67,10 @@ describe("desktop handoff public URL", () => {
 
     expect(approveWebHandoffReturnUrlForSignedPreviews({
       orgMode: "multi_org",
-      gatewayOrigin: "https://web.openworklabs.com",
+      gatewayOrigin: "https://web.micxlabs.com",
       signedPreviewUrls: [],
-      returnUrl: "https://web.openworklabs.com/",
-    })).toBe("https://web.openworklabs.com/signin")
+      returnUrl: "https://web.micxlabs.com/",
+    })).toBe("https://web.micxlabs.com/signin")
   })
 
   test("rejects a gateway web returnUrl when the gateway origin is unset", async () => {
@@ -79,7 +79,7 @@ describe("desktop handoff public URL", () => {
     expect(approveWebHandoffReturnUrlForSignedPreviews({
       orgMode: "multi_org",
       signedPreviewUrls: ["https://8787-active.daytonaproxy01.net/signed"],
-      returnUrl: "https://web.openworklabs.com/signin",
+      returnUrl: "https://web.micxlabs.com/signin",
     })).toBeNull()
   })
 
@@ -88,29 +88,29 @@ describe("desktop handoff public URL", () => {
 
     expect(approveWebHandoffReturnUrlForSignedPreviews({
       orgMode: "multi_org",
-      gatewayOrigin: "https://web.openworklabs.com",
+      gatewayOrigin: "https://web.micxlabs.com",
       signedPreviewUrls: [],
-      returnUrl: "https://app.openworklabs.com/signin",
+      returnUrl: "https://app.micxlabs.com/signin",
     })).toBeNull()
   })
 
   test("approves the configured gateway web returnUrl without an active organization", async () => {
     const { resolveApprovedWebHandoffReturnUrl } = await loadDesktopHandoffRoutes()
-    await configureDesktopHandoffEnv({ gatewayOrigin: "https://web.openworklabs.com" })
+    await configureDesktopHandoffEnv({ gatewayOrigin: "https://web.micxlabs.com" })
 
     expect(await resolveApprovedWebHandoffReturnUrl({
       activeOrganizationId: null,
-      returnUrl: "https://web.openworklabs.com/",
-    })).toBe("https://web.openworklabs.com/signin")
+      returnUrl: "https://web.micxlabs.com/",
+    })).toBe("https://web.micxlabs.com/signin")
   })
 
   test("rejects a different web returnUrl origin without an active organization", async () => {
     const { resolveApprovedWebHandoffReturnUrl } = await loadDesktopHandoffRoutes()
-    await configureDesktopHandoffEnv({ gatewayOrigin: "https://web.openworklabs.com" })
+    await configureDesktopHandoffEnv({ gatewayOrigin: "https://web.micxlabs.com" })
 
     expect(await resolveApprovedWebHandoffReturnUrl({
       activeOrganizationId: null,
-      returnUrl: "https://app.openworklabs.com/signin",
+      returnUrl: "https://app.micxlabs.com/signin",
     })).toBeNull()
   })
 
@@ -120,7 +120,7 @@ describe("desktop handoff public URL", () => {
 
     expect(await resolveApprovedWebHandoffReturnUrl({
       activeOrganizationId: null,
-      returnUrl: "https://web.openworklabs.com/signin",
+      returnUrl: "https://web.micxlabs.com/signin",
     })).toBeNull()
   })
 
@@ -139,9 +139,9 @@ describe("desktop handoff public URL", () => {
 
     expect(approveWebHandoffReturnUrlForSignedPreviews({
       orgMode: "multi_org",
-      gatewayOrigin: "https://web.openworklabs.com",
+      gatewayOrigin: "https://web.micxlabs.com",
       signedPreviewUrls: [],
-      returnUrl: "http://web.openworklabs.com/signin",
+      returnUrl: "http://web.micxlabs.com/signin",
     })).toBeNull()
   })
 

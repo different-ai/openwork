@@ -1,7 +1,7 @@
 import { loopbackFetch } from "./server-fetch.js";
 
 const LOCAL_MODELS_URL = "http://localhost:8791/models";
-const PRODUCTION_MODELS_URL = "https://models.openworklabs.com/";
+const PRODUCTION_MODELS_URL = "https://models.micxlabs.com/";
 
 type ResolveOpencodeModelsUrlOptions = {
   env?: NodeJS.ProcessEnv;
@@ -14,7 +14,7 @@ export async function resolveOpencodeModelsUrl(
   const env = options.env ?? process.env;
   const override = env.OPENCODE_MODELS_URL?.trim();
   if (override) return override;
-  if (env.OPENWORK_DEV_MODE !== "1") return PRODUCTION_MODELS_URL;
+  if (env.MICX_DEV_MODE !== "1") return PRODUCTION_MODELS_URL;
 
   try {
     const response = await (options.fetchModels ?? loopbackFetch)(`${LOCAL_MODELS_URL}/api.json`, {

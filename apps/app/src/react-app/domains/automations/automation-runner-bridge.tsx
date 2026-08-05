@@ -7,7 +7,7 @@ import { isDesktopRuntime } from "@/app/utils"
 import { useDenAuth } from "@/react-app/domains/cloud/den-auth-provider"
 
 const RUNNER_TOKEN_REFRESH_MS = 5 * 60_000
-const RUNNER_ID_KEY = "openwork.automations.desktop-runner-id"
+const RUNNER_ID_KEY = "micx.automations.desktop-runner-id"
 
 function desktopRunnerId() {
   const existing = localStorage.getItem(RUNNER_ID_KEY)?.trim()
@@ -22,11 +22,11 @@ export function AutomationRunnerBridge({ enabled }: { enabled: boolean }) {
   const { status } = useDenAuth()
 
   useEffect(() => {
-    if (!isDesktopRuntime() || !window.__OPENWORK_ELECTRON__?.invokeDesktop) return
+    if (!isDesktopRuntime() || !window.__MICX_ELECTRON__?.invokeDesktop) return
     let disposed = false
     let timer: ReturnType<typeof setTimeout> | undefined
 
-    const disconnect = () => window.__OPENWORK_ELECTRON__?.invokeDesktop?.("automationRunnerConfigure", null)
+    const disconnect = () => window.__MICX_ELECTRON__?.invokeDesktop?.("automationRunnerConfigure", null)
       .catch(() => undefined)
     const connect = async () => {
       if (timer) {
@@ -47,7 +47,7 @@ export function AutomationRunnerBridge({ enabled }: { enabled: boolean }) {
       try {
         const client = createDenClient({ baseUrl: settings.baseUrl, token: authToken })
         const runnerId = desktopRunnerId()
-        const build = await window.__OPENWORK_ELECTRON__?.invokeDesktop?.("appBuildInfo")
+        const build = await window.__MICX_ELECTRON__?.invokeDesktop?.("appBuildInfo")
         const agent = navigator.userAgent
         const platform = /Mac/i.test(agent) ? "darwin" : /Win/i.test(agent) ? "win32" : "linux"
         const runner = await client.mintAutomationRunnerToken(organizationId, {
@@ -59,7 +59,7 @@ export function AutomationRunnerBridge({ enabled }: { enabled: boolean }) {
           concurrency: 1,
         })
         if (disposed) return
-        await window.__OPENWORK_ELECTRON__?.invokeDesktop?.("automationRunnerConfigure", {
+        await window.__MICX_ELECTRON__?.invokeDesktop?.("automationRunnerConfigure", {
           baseUrl: client.baseUrls.apiBaseUrl,
           token: runner.token,
           runnerId,

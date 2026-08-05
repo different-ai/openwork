@@ -1,7 +1,7 @@
 {
   "$schema": "https://mintlify.com/docs.json",
   "theme": "mint",
-  "name": "OpenWork Docs",
+  "name": "Micx Docs",
   "favicon": "/logo/light.svg",
   "logo": {
     "light": "/logo/light.svg",
@@ -53,7 +53,7 @@
             ]
           },
           {
-            "group": "Help improve OpenWork",
+            "group": "Help improve Micx",
             "pages": [
               "start-here/missing-docs",
               "start-here/missing-languages"
@@ -132,7 +132,7 @@
               "model-context-protocol/windsurf",
               "model-context-protocol/zed",
               "model-context-protocol/gemini-cli",
-              "cloud/run-in-the-cloud/connect-openwork-mcp-remote-machine"
+              "cloud/run-in-the-cloud/connect-micx-mcp-remote-machine"
             ]
           },
           "cloud/members-and-rbac",
@@ -190,14 +190,14 @@
     "404": {
       "redirect": false,
       "title": "Missing Documentation?",
-      "description": "If you're technical and want to use a specific part of the app that is not documented well yet, [send us a quick email](mailto:team@openworklabs.com?subject=missing%20documentation&body=hey%20my%20github%20is%20%7Busername%7D%2C%20I%27m%20interested%20in%20%7Bfeature%7D%20from%20openwork%20but%20I%27m%20missing%20documentation%20on%20it%2C%20could%20you%20create%20it%3F%0A%0AThanks) and tell us what you're missing."
+      "description": "If you're technical and want to use a specific part of the app that is not documented well yet, [send us a quick email](mailto:team@micxlabs.com?subject=missing%20documentation&body=hey%20my%20github%20is%20%7Busername%7D%2C%20I%27m%20interested%20in%20%7Bfeature%7D%20from%20micx%20but%20I%27m%20missing%20documentation%20on%20it%2C%20could%20you%20create%20it%3F%0A%0AThanks) and tell us what you're missing."
     }
   },
   "navbar": {
     "primary": {
       "type": "button",
-      "label": "Download OpenWork",
-      "href": "https://openworklabs.com/download"
+      "label": "Download Micx",
+      "href": "https://micxlabs.com/download"
     }
   }
 }

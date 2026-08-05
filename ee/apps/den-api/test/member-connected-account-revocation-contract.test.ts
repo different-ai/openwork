@@ -76,7 +76,7 @@ test("OAuth callback token persistence locks and requires an active membership",
   expect(callbackSource).toContain("completeConnectedAccountForActiveMember({")
   expect(callbackSource).toContain("expectedAccountId: pending.id")
   expect(callbackSource).toContain("expectedPendingCodeVerifier: pending.pendingCodeVerifier")
-  expect(callbackSource).toContain("This OpenWork connection request is no longer active.")
+  expect(callbackSource).toContain("This Micx connection request is no longer active.")
 })
 
 test("OAuth refresh persistence is update-only and tied to the exact active grant", async () => {

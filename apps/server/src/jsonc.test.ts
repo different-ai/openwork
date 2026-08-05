@@ -7,7 +7,7 @@ import { readBoundedRegularTextFile, updateJsoncPath } from "./jsonc.js";
 
 describe("readBoundedRegularTextFile", () => {
   test("rejects files that exceed the byte budget", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "openwork-bounded-read-"));
+    const dir = await mkdtemp(join(tmpdir(), "micx-bounded-read-"));
     try {
       const file = join(dir, "config.jsonc");
       await writeFile(file, "x".repeat(65), "utf8");
@@ -21,7 +21,7 @@ describe("readBoundedRegularTextFile", () => {
   });
 
   test("rejects non-regular paths", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "openwork-bounded-read-"));
+    const dir = await mkdtemp(join(tmpdir(), "micx-bounded-read-"));
     try {
       const directoryPath = join(dir, "config.jsonc");
       await mkdir(directoryPath);
@@ -36,7 +36,7 @@ describe("readBoundedRegularTextFile", () => {
 
   test("rejects a FIFO without waiting for a writer", async () => {
     if (process.platform === "win32") return;
-    const dir = await mkdtemp(join(tmpdir(), "openwork-bounded-read-"));
+    const dir = await mkdtemp(join(tmpdir(), "micx-bounded-read-"));
     try {
       const fifo = join(dir, "config.jsonc");
       const created = spawnSync("mkfifo", [fifo]);
@@ -52,7 +52,7 @@ describe("readBoundedRegularTextFile", () => {
   });
 
   test("honors an already-aborted diagnostics deadline", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "openwork-bounded-read-"));
+    const dir = await mkdtemp(join(tmpdir(), "micx-bounded-read-"));
     try {
       const file = join(dir, "config.jsonc");
       await writeFile(file, "{}", "utf8");
@@ -71,7 +71,7 @@ describe("readBoundedRegularTextFile", () => {
 
 describe("updateJsoncPath", () => {
   test("patches nested values without replacing sibling config", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "openwork-jsonc-"));
+    const dir = await mkdtemp(join(tmpdir(), "micx-jsonc-"));
     const file = join(dir, "opencode.jsonc");
     await writeFile(
       file,
@@ -101,7 +101,7 @@ describe("updateJsoncPath", () => {
   });
 
   test("removes parent object when nested property was the only entry", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "openwork-jsonc-"));
+    const dir = await mkdtemp(join(tmpdir(), "micx-jsonc-"));
     const file = join(dir, "opencode.jsonc");
     await writeFile(
       file,
@@ -123,7 +123,7 @@ describe("updateJsoncPath", () => {
   });
 
   test("adds a nested provider without replacing existing providers", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "openwork-jsonc-"));
+    const dir = await mkdtemp(join(tmpdir(), "micx-jsonc-"));
     const file = join(dir, "opencode.jsonc");
     await writeFile(
       file,

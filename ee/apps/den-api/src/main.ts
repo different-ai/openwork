@@ -1,4 +1,4 @@
-const DEVELOPMENT_CONDITIONS_REEXEC = "OPENWORK_DEN_DEVELOPMENT_CONDITIONS_REEXEC"
+const DEVELOPMENT_CONDITIONS_REEXEC = "MICX_DEN_DEVELOPMENT_CONDITIONS_REEXEC"
 
 export {}
 
@@ -26,7 +26,7 @@ async function runWithDevelopmentConditions() {
   for (const signal of signals) process.off(signal, forwardSignal)
 }
 
-if (process.env.OPENWORK_DEV_MODE === "1" && process.env[DEVELOPMENT_CONDITIONS_REEXEC] !== "1") {
+if (process.env.MICX_DEV_MODE === "1" && process.env[DEVELOPMENT_CONDITIONS_REEXEC] !== "1") {
   await runWithDevelopmentConditions()
 } else {
   await import("./observability/preload.js")

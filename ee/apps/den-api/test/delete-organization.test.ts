@@ -1,9 +1,9 @@
-import { createDenTypeId } from "@openwork-ee/utils/typeid"
+import { createDenTypeId } from "@micx-ee/utils/typeid"
 import { afterAll, beforeAll, beforeEach, expect, mock, test } from "bun:test"
 import { Hono } from "hono"
 
 function seedRequiredEnv() {
-  process.env.DATABASE_URL = process.env.DATABASE_URL ?? "mysql://root:password@127.0.0.1:3306/openwork_test"
+  process.env.DATABASE_URL = process.env.DATABASE_URL ?? "mysql://root:password@127.0.0.1:3306/micx_test"
   process.env.DEN_DB_ENCRYPTION_KEY = process.env.DEN_DB_ENCRYPTION_KEY ?? "x".repeat(32)
   process.env.BETTER_AUTH_SECRET = process.env.BETTER_AUTH_SECRET ?? "y".repeat(32)
   process.env.BETTER_AUTH_URL = process.env.BETTER_AUTH_URL ?? "http://127.0.0.1:8790"
@@ -169,7 +169,7 @@ beforeAll(async () => {
     createLinearIssue: (input: { title: string; description: string }) => {
       callOrder.push("linear:create")
       linearCreatedIssues.push(input)
-      return Promise.resolve({ id: linearIssueId, identifier: "DEL-1", url: "https://linear.app/openwork/issue/DEL-1" })
+      return Promise.resolve({ id: linearIssueId, identifier: "DEL-1", url: "https://linear.app/micx/issue/DEL-1" })
     },
     completeLinearIssue: (input: { issueId: string }) => {
       callOrder.push("linear:complete")

@@ -1,4 +1,4 @@
-import { EmailSendError, emailSubjects, renderEmailHtml, sendEmail as sendSharedEmail, type EmailTemplate, type SendEmailInput } from "@openwork/email"
+import { EmailSendError, emailSubjects, renderEmailHtml, sendEmail as sendSharedEmail, type EmailTemplate, type SendEmailInput } from "@micx/email"
 import { env } from "../../env.js"
 import { appLogger } from "../../observability/logger.js"
 
@@ -18,7 +18,7 @@ const DEV_EMAIL_OUTBOX_MAX = 20
 const devEmailOutbox: DevEmailOutboxEntry[] = []
 const logger = appLogger.child({ component: "email" })
 
-// Dev/eval-only affordance: when OPENWORK_DEV_MODE=1, keep the last few
+// Dev/eval-only affordance: when MICX_DEV_MODE=1, keep the last few
 // rendered emails in memory so UI evals can inspect real HTML without a mail
 // provider. Never expose or populate this buffer outside dev mode.
 function recordDevEmail(input: DevEmailOutboxEntry) {

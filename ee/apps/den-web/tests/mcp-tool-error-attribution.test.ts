@@ -41,10 +41,10 @@ describe("browser-to-Den timeout", () => {
     expect(error.timeoutMs).toBe(5);
     expect(error.outcome).toBe("unknown");
     expect(error.message).toBe(
-      "OpenWork stopped waiting after 5 milliseconds. The operation’s outcome is unknown.",
+      "Micx stopped waiting after 5 milliseconds. The operation’s outcome is unknown.",
     );
     expect(new DenRequestTimeoutError(160_000).message).toBe(
-      "OpenWork stopped waiting after 160 seconds. The operation’s outcome is unknown.",
+      "Micx stopped waiting after 160 seconds. The operation’s outcome is unknown.",
     );
   });
 
@@ -83,8 +83,8 @@ describe("MCP failure attribution", () => {
     });
 
     expect(attribution).toMatchObject({
-      summary: "OpenWork sent the request, but the remote MCP did not respond before OpenWork’s deadline.",
-      lastConfirmedBoundary: "OpenWork started the outbound tools/call",
+      summary: "Micx sent the request, but the remote MCP did not respond before Micx’s deadline.",
+      lastConfirmedBoundary: "Micx started the outbound tools/call",
       likelySource: "Network or remote MCP",
       confidence: "Inferred",
       outcome: "unknown",
@@ -163,7 +163,7 @@ describe("MCP failure attribution", () => {
     });
   });
 
-  test("attributes an OpenWork block before send as confirmed", () => {
+  test("attributes an Micx block before send as confirmed", () => {
     const attribution = attributeExternalMcpToolFailure({
       diagnostic: {
         referenceId: "req_blocked",
@@ -181,9 +181,9 @@ describe("MCP failure attribution", () => {
     });
 
     expect(attribution).toMatchObject({
-      summary: "OpenWork blocked the request before it was sent.",
-      lastConfirmedBoundary: "OpenWork evaluated the outbound request",
-      likelySource: "OpenWork",
+      summary: "Micx blocked the request before it was sent.",
+      lastConfirmedBoundary: "Micx evaluated the outbound request",
+      likelySource: "Micx",
       confidence: "Confirmed",
       outcome: "failed",
     });
@@ -198,7 +198,7 @@ describe("MCP failure attribution", () => {
     });
 
     expect(attribution.summary).toBe(
-      "OpenWork stopped waiting after 160 seconds. The operation’s outcome is unknown.",
+      "Micx stopped waiting after 160 seconds. The operation’s outcome is unknown.",
     );
     expect(attribution.retryGuidance).toContain("Do not retry immediately");
     expect(attribution.retryGuidance).toContain("may have changed external data");
@@ -247,7 +247,7 @@ describe("MCP failure attribution", () => {
           status: 504,
           headers: [{ name: "x-request-id", value: "wire-request-789", redacted: false }],
         },
-        diagnosis: { layer: "remote_http", summary: "Older OpenWork failure shape." },
+        diagnosis: { layer: "remote_http", summary: "Older Micx failure shape." },
       },
       browserTimeout: null,
       mayHaveSideEffects: false,

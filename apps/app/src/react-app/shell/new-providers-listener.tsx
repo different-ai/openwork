@@ -11,14 +11,14 @@ import { useNotificationStore } from "@/react-app/kernel/notification-store";
 import { notifyEvent } from "./notifications";
 import { orgOnboardingVisibilityEvent } from "./reload-coordinator";
 
-const SEEN_KEY = "openwork.seenProviderIds";
-const PENDING_MODEL_PICKER_KEY = "openwork.pendingModelPickerProviderIds";
+const SEEN_KEY = "micx.seenProviderIds";
+const PENDING_MODEL_PICKER_KEY = "micx.pendingModelPickerProviderIds";
 const NEW_PROVIDERS_DEDUPE_KEY = "new-providers";
 
 /** Custom event to request the model picker to open. */
-export const openModelPickerEvent = "openwork-open-model-picker";
+export const openModelPickerEvent = "micx-open-model-picker";
 /** Custom event to request the provider auth (connect API keys) modal to open. */
-export const openProviderAuthEvent = "openwork-open-provider-auth";
+export const openProviderAuthEvent = "micx-open-provider-auth";
 export const pendingModelPickerProviderIdsKey = PENDING_MODEL_PICKER_KEY;
 
 function readSeenProviderIds(): Set<string> {

@@ -41,7 +41,7 @@ const openAiImageGenConfigFactory = (ctx: ExtensionConfigContext) => (
   />
 );
 
-registerExtensionConfig("openwork.imageGen.settings", openAiImageGenConfigFactory);
+registerExtensionConfig("micx.imageGen.settings", openAiImageGenConfigFactory);
 registerExtensionConfig("openai-image-gen", openAiImageGenConfigFactory);
 
 const DEFAULT_PROMPT =

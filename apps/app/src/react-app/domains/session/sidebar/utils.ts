@@ -196,7 +196,7 @@ const EMPTY_ARRAY: string[] = [];
 
 export const workspaceLabel = (workspace: WorkspaceInfo) =>
   workspace.displayName?.trim() ||
-  workspace.openworkWorkspaceName?.trim() ||
+  workspace.micxWorkspaceName?.trim() ||
   workspace.name?.trim() ||
   workspace.path?.trim() ||
   t("workspace_list.workspace_fallback");

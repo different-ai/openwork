@@ -2,7 +2,7 @@
 import type { UIMessage } from "ai";
 import type { FilePart, Part, ToolPart } from "@opencode-ai/sdk/v2/client";
 
-import type { OpenworkSessionSnapshot } from "../../../../app/lib/openwork-server";
+import type { MicxSessionSnapshot } from "../../../../app/lib/micx-server";
 import { safeStringify } from "../../../../app/utils";
 import { SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX } from "../../../../app/types";
 import {
@@ -56,7 +56,7 @@ function withAttachmentRecoveryHint(text: string) {
 
 /**
  * OpenCode Codex/ChatGPT OAuth refresh failures surface as a raw engine string.
- * Narrowly rewrite the 401 case so users reconnect OpenAI — not OpenWork Cloud.
+ * Narrowly rewrite the 401 case so users reconnect OpenAI — not Micx Cloud.
  */
 function withOpenAiTokenRefreshHint(text: string) {
   if (!/Token refresh failed:\s*401/i.test(text)) return text;
@@ -198,7 +198,7 @@ function mapSnapshotToolParts(part: ToolPart): UIMessage["parts"] {
   return [mapped];
 }
 
-export function snapshotToUIMessages(snapshot: OpenworkSessionSnapshot): UIMessage[] {
+export function snapshotToUIMessages(snapshot: MicxSessionSnapshot): UIMessage[] {
   return snapshot.messages.flatMap((message) => {
     const created = message.info.time?.created;
     const time = message.info.time;

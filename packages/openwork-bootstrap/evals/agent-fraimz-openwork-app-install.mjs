@@ -1,9 +1,9 @@
-// Live local e2e fraimz for `openwork install app` using a real macOS DMG.
+// Live local e2e fraimz for `micx install app` using a real macOS DMG.
 //
-// The flow creates a tiny OpenWork.app fixture, packages it as a .dmg, writes an
+// The flow creates a tiny Micx.app fixture, packages it as a .dmg, writes an
 // install manifest with a SHA-256 digest, installs the bootstrap CLI into a temp
-// bin dir, then runs the installed `openwork install app` command against the
-// manifest and verifies it with `openwork doctor --app`.
+// bin dir, then runs the installed `micx install app` command against the
+// manifest and verifies it with `micx doctor --app`.
 
 import { createHash } from "node:crypto"
 import { execFileSync, spawnSync } from "node:child_process"
@@ -13,23 +13,23 @@ import { dirname, join, resolve } from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
 
 if (process.platform !== "darwin") {
-  throw new Error("openwork install app DMG fraimz requires macOS")
+  throw new Error("micx install app DMG fraimz requires macOS")
 }
 
 const here = dirname(fileURLToPath(import.meta.url))
 const packageRoot = resolve(here, "..")
 const repoRoot = resolve(packageRoot, "..", "..")
-const cli = join(packageRoot, "bin", "openwork.mjs")
-const outDir = join(repoRoot, "evals", "results", "openwork-app-install-dmg")
-const temp = join(tmpdir(), `openwork-app-install-dmg-${Date.now()}-${Math.random().toString(36).slice(2)}`)
+const cli = join(packageRoot, "bin", "micx.mjs")
+const outDir = join(repoRoot, "evals", "results", "micx-app-install-dmg")
+const temp = join(tmpdir(), `micx-app-install-dmg-${Date.now()}-${Math.random().toString(36).slice(2)}`)
 const sourceDir = join(temp, "source")
-const appFixture = join(sourceDir, "OpenWork.app")
+const appFixture = join(sourceDir, "Micx.app")
 const installDir = join(temp, "install")
 const binDir = join(temp, "bin")
 const appDir = join(temp, "Applications")
-const dmgPath = join(temp, "OpenWork.dmg")
-const manifestPath = join(temp, "openwork-install-manifest.json")
-const installedOpenwork = join(binDir, "openwork-bootstrap")
+const dmgPath = join(temp, "Micx.dmg")
+const manifestPath = join(temp, "micx-install-manifest.json")
+const installedMicx = join(binDir, "micx-bootstrap")
 mkdirSync(outDir, { recursive: true })
 
 const frames = []
@@ -72,59 +72,59 @@ try {
   writeFileSync(join(appFixture, "Contents", "Info.plist"), `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
-<key>CFBundleExecutable</key><string>OpenWork</string>
-<key>CFBundleIdentifier</key><string>com.openwork.fixture</string>
-<key>CFBundleName</key><string>OpenWork</string>
+<key>CFBundleExecutable</key><string>Micx</string>
+<key>CFBundleIdentifier</key><string>com.micx.fixture</string>
+<key>CFBundleName</key><string>Micx</string>
 <key>CFBundlePackageType</key><string>APPL</string>
 <key>CFBundleShortVersionString</key><string>0.0.0-fixture</string>
 </dict></plist>
 `)
-  writeFileSync(join(appFixture, "Contents", "MacOS", "OpenWork"), "#!/usr/bin/env sh\necho OpenWork fixture\n")
-  chmodSync(join(appFixture, "Contents", "MacOS", "OpenWork"), 0o755)
+  writeFileSync(join(appFixture, "Contents", "MacOS", "Micx"), "#!/usr/bin/env sh\necho Micx fixture\n")
+  chmodSync(join(appFixture, "Contents", "MacOS", "Micx"), 0o755)
 
-  execFileSync("hdiutil", ["create", "-quiet", "-volname", "OpenWork", "-srcfolder", sourceDir, "-ov", "-format", "UDZO", dmgPath])
+  execFileSync("hdiutil", ["create", "-quiet", "-volname", "Micx", "-srcfolder", sourceDir, "-ov", "-format", "UDZO", dmgPath])
   const digest = sha256(dmgPath)
   writeFileSync(manifestPath, JSON.stringify({
     version: "0.0.0-fixture",
-    appName: "OpenWork.app",
+    appName: "Micx.app",
     artifacts: {
       darwin: {
         [process.arch]: {
           type: "dmg",
           url: pathToFileURL(dmgPath).toString(),
           sha256: digest,
-          appName: "OpenWork.app",
+          appName: "Micx.app",
         },
       },
     },
   }, null, 2))
   prove("A real macOS DMG install manifest is available", {
-    action: "Create OpenWork.app fixture, package it with hdiutil, and write manifest JSON",
+    action: "Create Micx.app fixture, package it with hdiutil, and write manifest JSON",
     assert: "manifest references a .dmg with SHA-256 for this macOS architecture",
     evidence: { manifestPath, dmgPath, sha256: digest, arch: process.arch },
   }, existsSync(dmgPath) && existsSync(manifestPath) && digest.length === 64)
 
   const installCli = run(process.execPath, [cli, "install", "--install-dir", installDir, "--bin-dir", binDir, "--json"])
   prove("The bootstrap CLI can be installed from a script", {
-    action: "node bin/openwork.mjs install --install-dir <tmp> --bin-dir <tmp>/bin --json",
-    assert: "exit 0 and an openwork executable exists",
+    action: "node bin/micx.mjs install --install-dir <tmp> --bin-dir <tmp>/bin --json",
+    assert: "exit 0 and an micx executable exists",
     evidence: { status: installCli.status, body: installCli.json },
-  }, installCli.status === 0 && existsSync(installedOpenwork))
+  }, installCli.status === 0 && existsSync(installedMicx))
 
-  const installApp = run(installedOpenwork, ["install", "app", "--manifest", manifestPath, "--app-dir", appDir, "--json"], { timeout: 30_000 })
-  const appPath = join(appDir, "OpenWork.app")
-  prove("The installed CLI can download, verify, mount, and install OpenWork.app from a DMG", {
-    action: "openwork install app --manifest <fixture-manifest> --app-dir <tmp>/Applications --json",
-    assert: "exit 0, checksum recorded, and OpenWork.app copied into app dir",
+  const installApp = run(installedMicx, ["install", "app", "--manifest", manifestPath, "--app-dir", appDir, "--json"], { timeout: 30_000 })
+  const appPath = join(appDir, "Micx.app")
+  prove("The installed CLI can download, verify, mount, and install Micx.app from a DMG", {
+    action: "micx install app --manifest <fixture-manifest> --app-dir <tmp>/Applications --json",
+    assert: "exit 0, checksum recorded, and Micx.app copied into app dir",
     evidence: { status: installApp.status, body: installApp.json, appExists: existsSync(appPath), stderr: installApp.stderr },
   }, installApp.status === 0 && installApp.json?.ok === true && installApp.json?.install?.artifact?.sha256 === digest && existsSync(appPath))
 
-  const doctor = run(installedOpenwork, ["doctor", "--install-dir", installDir, "--bin-dir", binDir, "--app", "--app-dir", appDir, "--json"])
+  const doctor = run(installedMicx, ["doctor", "--install-dir", installDir, "--bin-dir", binDir, "--app", "--app-dir", appDir, "--json"])
   prove("doctor verifies the installed desktop app", {
-    action: "openwork doctor --app --app-dir <tmp>/Applications --json",
-    assert: "exit 0 with openworkApp and appInstallManifest checks passing",
+    action: "micx doctor --app --app-dir <tmp>/Applications --json",
+    assert: "exit 0 with micxApp and appInstallManifest checks passing",
     evidence: { status: doctor.status, body: doctor.json, stderr: doctor.stderr },
-  }, doctor.status === 0 && doctor.json?.ok === true && doctor.json?.checks?.some((check) => check.name === "openworkApp" && check.ok) && doctor.json?.checks?.some((check) => check.name === "appInstallManifest" && check.ok))
+  }, doctor.status === 0 && doctor.json?.ok === true && doctor.json?.checks?.some((check) => check.name === "micxApp" && check.ok) && doctor.json?.checks?.some((check) => check.name === "appInstallManifest" && check.ok))
 } finally {
   rmSync(temp, { recursive: true, force: true })
 }
@@ -145,13 +145,13 @@ const frameFiles = frames.map((frame, index) => {
 
 const allOk = frames.every((frame) => frame.ok)
 writeFileSync(join(outDir, "fraimz.html"), `<!doctype html><html lang="en"><head><meta charset="utf-8" />
-<title>OpenWork App DMG Install — fraimz</title>
+<title>Micx App DMG Install — fraimz</title>
 <style>body{margin:0;background:#f3f4f6;color:#111827;font-family:system-ui,sans-serif}main{max-width:1180px;margin:0 auto;padding:32px}.meta{color:#4b5563;margin-bottom:24px}section{margin:20px 0;padding:16px;border:1px solid #d1d5db;border-radius:16px;background:white}iframe{width:100%;min-height:360px;border:1px solid #e5e7eb;border-radius:12px;background:white}code{background:#e5e7eb;padding:2px 5px;border-radius:5px}</style>
-</head><body><main><h1>OpenWork App DMG Install — fraimz</h1><div class="meta">Result: <code>${allOk ? "passed" : "failed"}</code> · Frames: ${frames.length}</div>
+</head><body><main><h1>Micx App DMG Install — fraimz</h1><div class="meta">Result: <code>${allOk ? "passed" : "failed"}</code> · Frames: ${frames.length}</div>
 ${frameFiles.map((entry) => `<section><h2>${esc(entry.frame.claim)}</h2><iframe src="${entry.name}" title="${esc(entry.frame.claim)}"></iframe><p><a href="${entry.name}">Open frame</a></p></section>`).join("\n")}
 </main></body></html>`)
 writeFileSync(join(outDir, "report.json"), JSON.stringify({
-  flow: "openwork-app-install-dmg",
+  flow: "micx-app-install-dmg",
   result: allOk ? "passed" : "failed",
   frames: frames.map((frame) => ({ claim: frame.claim, action: frame.action, assert: frame.assert, ok: frame.ok })),
 }, null, 2))

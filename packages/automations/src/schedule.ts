@@ -1,7 +1,7 @@
 import {
   automationScheduleSchema,
   type AutomationSchedule,
-} from "@openwork/types/automations"
+} from "@micx/types/automations"
 
 const DAY_MS = 24 * 60 * 60 * 1_000
 const SEARCH_WINDOW_HOURS = 18

@@ -18,7 +18,7 @@ export type SessionModelSelection = {
   variant: string | null;
 };
 
-const STORAGE_KEY = "openwork.sessionModels.v1";
+const STORAGE_KEY = "micx.sessionModels.v1";
 const MAX_REMEMBERED_SESSIONS = 200;
 
 function readStoredSelections(): Record<string, SessionModelSelection> {

@@ -15,7 +15,7 @@ import {
 import { compareCapabilityMatches, type CapabilityMatch } from "../src/mcp/search.js"
 
 function seedRequiredEnv() {
-  process.env.DATABASE_URL = process.env.DATABASE_URL ?? "mysql://root:password@127.0.0.1:3306/openwork_test"
+  process.env.DATABASE_URL = process.env.DATABASE_URL ?? "mysql://root:password@127.0.0.1:3306/micx_test"
   process.env.DEN_DB_ENCRYPTION_KEY = process.env.DEN_DB_ENCRYPTION_KEY ?? "x".repeat(32)
   process.env.BETTER_AUTH_SECRET = process.env.BETTER_AUTH_SECRET ?? "y".repeat(32)
   process.env.BETTER_AUTH_URL = process.env.BETTER_AUTH_URL ?? "http://127.0.0.1:8790"
@@ -128,7 +128,7 @@ test("agent MCP server exposes steering instructions during initialize", async (
   expect(client.getInstructions()).toContain("cloudReadiness")
   expect(client.getInstructions()).toContain("Gmail read/search")
   expect(client.getInstructions()).toContain("Settings > Connect")
-  expect(client.getInstructions()).toContain("Never tell the user to reconnect OpenWork Cloud")
+  expect(client.getInstructions()).toContain("Never tell the user to reconnect Micx Cloud")
   expect(client.getInstructions()).toContain("connectionStatus.connectionName")
   expect(client.getInstructions()).toContain("schemaGuidance is advisory")
   expect(client.getInstructions()).toContain("always attempts the downstream provider call")
@@ -175,7 +175,7 @@ test("built-in cloud skills are searchable and executable as skill capabilities"
   expect(createSkill).toMatchObject({
     kind: "skill",
     name: "Create Skill",
-    provenance: "Built into OpenWork Cloud.",
+    provenance: "Built into Micx Cloud.",
   })
   expect(createSkill?.content).toContain("name: create-skill")
   expect(createSkill?.content).toContain("postPlugins")
@@ -317,7 +317,7 @@ test("external capability failures preserve the slim agent-facing MCP error enve
     connectionStatus: {
       version: 1,
       kind: "connection_action",
-      source: "openwork-cloud",
+      source: "micx-cloud",
       layer: "mcp_connection",
       connectionId: "emc_test",
       connectionName: "Knowledge Hub",
@@ -330,7 +330,7 @@ test("external capability failures preserve the slim agent-facing MCP error enve
       action: {
         type: "reconnect",
         label: "Reconnect Knowledge Hub",
-        surface: "openwork_your_connections",
+        surface: "micx_your_connections",
         retry: "search_capabilities",
       },
     },
@@ -399,7 +399,7 @@ test("successful provider output preserves advisory schema guidance as additiona
     schemaGuidance: {
       advisory: true,
       providerCallAttempted: true,
-      message: "OpenWork forwarded the call to the provider. Use the provider result as the source of truth.",
+      message: "Micx forwarded the call to the provider. Use the provider result as the source of truth.",
       warnings: [{
         code: "arguments_schema_mismatch",
         message: "The arguments did not match the advertised schema.",

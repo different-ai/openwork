@@ -1,6 +1,6 @@
 "use client";
 
-import { PaperGrainGradient } from "@openwork/ui/react";
+import { PaperGrainGradient } from "@micx/ui/react";
 
 export function LandingBackground({ fadeOnScroll = true }: { fadeOnScroll?: boolean }) {
   return (

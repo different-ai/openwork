@@ -37,7 +37,7 @@ const connectStateResponseSchema = z.object({
 
 const gatedCallSchema = z.object({
   ok: z.literal(false),
-  error: z.literal("use_openwork_cloud"),
+  error: z.literal("use_micx_cloud"),
   message: z.string(),
 }).passthrough();
 
@@ -62,10 +62,10 @@ const googleWorkspaceStatusActionSchema = z.object({
 type ActionItem = z.infer<typeof actionSchema>;
 
 const previousEnv = {
-  runtimeDb: process.env.OPENWORK_RUNTIME_DB,
+  runtimeDb: process.env.MICX_RUNTIME_DB,
   googleClientSecret: process.env.GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET,
-  legacyGoogleClientSecret: process.env.OPENWORK_GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET,
-  tokenBrokerUrl: process.env.OPENWORK_GOOGLE_WORKSPACE_TOKEN_BROKER_URL,
+  legacyGoogleClientSecret: process.env.MICX_GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET,
+  tokenBrokerUrl: process.env.MICX_GOOGLE_WORKSPACE_TOKEN_BROKER_URL,
   legacyTokenBrokerUrl: process.env.GOOGLE_WORKSPACE_TOKEN_BROKER_URL,
 };
 
@@ -79,8 +79,8 @@ function restoreEnv(key: string, value: string | undefined) {
 
 function clearLegacyGoogleWorkspaceEnv() {
   delete process.env.GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET;
-  delete process.env.OPENWORK_GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET;
-  delete process.env.OPENWORK_GOOGLE_WORKSPACE_TOKEN_BROKER_URL;
+  delete process.env.MICX_GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET;
+  delete process.env.MICX_GOOGLE_WORKSPACE_TOKEN_BROKER_URL;
   delete process.env.GOOGLE_WORKSPACE_TOKEN_BROKER_URL;
 }
 
@@ -105,9 +105,9 @@ function serverConfig(root: string): ServerConfig {
 }
 
 async function boot() {
-  const root = await mkdtemp(join(tmpdir(), "openwork-connect-gating-"));
+  const root = await mkdtemp(join(tmpdir(), "micx-connect-gating-"));
   dirs.push(root);
-  process.env.OPENWORK_RUNTIME_DB = join(root, "runtime.sqlite");
+  process.env.MICX_RUNTIME_DB = join(root, "runtime.sqlite");
   const config = serverConfig(root);
   const server = await startServer(config);
   stops.push(() => server.stop());
@@ -123,7 +123,7 @@ function clientJsonHeaders() {
 }
 
 function hostJsonHeaders() {
-  return { "x-openwork-host-token": HOST_TOKEN, "content-type": "application/json" };
+  return { "x-micx-host-token": HOST_TOKEN, "content-type": "application/json" };
 }
 
 async function readSchema<T>(response: Response, schema: z.ZodType<T>): Promise<T> {
@@ -189,7 +189,7 @@ function expectAllActions(actions: ActionItem[]) {
   expect(actions).toHaveLength(18);
   expect(actions.filter((action) => action.extensionId === "google-workspace")).toHaveLength(14);
   expect(actions.filter((action) => action.extensionId === "openai-image-generation")).toHaveLength(2);
-  expect(actions.filter((action) => action.extensionId === "openwork-cloud-uploads")).toHaveLength(2);
+  expect(actions.filter((action) => action.extensionId === "micx-cloud-uploads")).toHaveLength(2);
 }
 
 beforeEach(() => {
@@ -204,10 +204,10 @@ afterEach(async () => {
     const dir = dirs.pop();
     if (dir) await rm(dir, { recursive: true, force: true });
   }
-  restoreEnv("OPENWORK_RUNTIME_DB", previousEnv.runtimeDb);
+  restoreEnv("MICX_RUNTIME_DB", previousEnv.runtimeDb);
   restoreEnv("GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET", previousEnv.googleClientSecret);
-  restoreEnv("OPENWORK_GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET", previousEnv.legacyGoogleClientSecret);
-  restoreEnv("OPENWORK_GOOGLE_WORKSPACE_TOKEN_BROKER_URL", previousEnv.tokenBrokerUrl);
+  restoreEnv("MICX_GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET", previousEnv.legacyGoogleClientSecret);
+  restoreEnv("MICX_GOOGLE_WORKSPACE_TOKEN_BROKER_URL", previousEnv.tokenBrokerUrl);
   restoreEnv("GOOGLE_WORKSPACE_TOKEN_BROKER_URL", previousEnv.legacyTokenBrokerUrl);
 });
 
@@ -263,8 +263,8 @@ describe("Connect-aware legacy extension gating", () => {
       "google-workspace/status",
       "openai-image-generation/image_generate",
       "openai-image-generation/status",
-      "openwork-cloud-uploads/drive_upload_file",
-      "openwork-cloud-uploads/gmail_create_draft_with_attachments",
+      "micx-cloud-uploads/drive_upload_file",
+      "micx-cloud-uploads/gmail_create_draft_with_attachments",
     ]);
 
     const gated = await callCalendarListEvents(base);
@@ -290,7 +290,7 @@ describe("Connect-aware legacy extension gating", () => {
       ...current,
       mcp: {
         ...current.mcp,
-        "openwork-cloud": { type: "remote", url: "https://cloud.example/mcp" },
+        "micx-cloud": { type: "remote", url: "https://cloud.example/mcp" },
       },
     }));
 

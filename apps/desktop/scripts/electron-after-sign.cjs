@@ -3,7 +3,7 @@ const { existsSync, mkdtempSync, rmSync } = require("node:fs");
 const { tmpdir } = require("node:os");
 const path = require("node:path");
 
-const computerUseHelperAppName = "OpenWork Computer Use.app";
+const computerUseHelperAppName = "Micx Computer Use.app";
 
 function run(command, args) {
   const result = spawnSync(command, args, { stdio: "inherit" });
@@ -70,7 +70,7 @@ async function afterSign(context) {
   const appPath = path.join(context.appOutDir, appName);
   verifyComputerUseHelper(appPath, process.env.MACOS_NOTARIZE === "true");
 
-  const notaryTempDir = mkdtempSync(path.join(tmpdir(), "openwork-electron-notary-"));
+  const notaryTempDir = mkdtempSync(path.join(tmpdir(), "micx-electron-notary-"));
   const notaryZipPath = path.join(notaryTempDir, `${context.packager.appInfo.productFilename}-notary.zip`);
   const keyPath = requireEnv("APPLE_API_KEY_PATH");
   const keyId = requireEnv("APPLE_API_KEY");

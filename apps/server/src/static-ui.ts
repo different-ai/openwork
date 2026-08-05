@@ -5,8 +5,8 @@ import { resolveWithinRoot } from "./paths.js";
 import { cssResponse, htmlResponse, jsResponse, svgResponse } from "./toy-ui.js";
 import type { ServerConfig } from "./types.js";
 
-const WEB_ROOT_ENV = "OPENWORK_WEB_ROOT";
-const WEB_BOOTSTRAP_TOKEN_ENV = "OPENWORK_WEB_BOOTSTRAP_TOKEN";
+const WEB_ROOT_ENV = "MICX_WEB_ROOT";
+const WEB_BOOTSTRAP_TOKEN_ENV = "MICX_WEB_BOOTSTRAP_TOKEN";
 const ASSET_CACHE = "public, max-age=31536000, immutable";
 const INDEX_CACHE = "no-cache";
 
@@ -127,7 +127,7 @@ function injectBootstrap(html: string, token: string): string {
   if (!clientToken) return html;
 
   const bootstrap = escapeScriptJson(JSON.stringify({ token: clientToken }));
-  const script = `<script>window.__OPENWORK_BOOTSTRAP__ = ${bootstrap}</script>`;
+  const script = `<script>window.__MICX_BOOTSTRAP__ = ${bootstrap}</script>`;
   const headCloseIndex = html.toLowerCase().indexOf("</head>");
   if (headCloseIndex < 0) return `${script}${html}`;
   return `${html.slice(0, headCloseIndex)}${script}${html.slice(headCloseIndex)}`;

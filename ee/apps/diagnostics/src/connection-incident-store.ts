@@ -3,18 +3,18 @@ import {
   storedConnectDiagnosticIncidentSchema,
   type ConnectDiagnosticIncident,
   type StoredConnectDiagnosticIncident,
-} from "@openwork/types/den/connect-diagnostics"
+} from "@micx/types/den/connect-diagnostics"
 import { diagnosticsRedisConfig } from "./config"
 
-const incidentHistoryKey = "openwork:diagnostics:connect-incidents:v1"
+const incidentHistoryKey = "micx:diagnostics:connect-incidents:v1"
 const maximumIncidentHistory = 10_000
 const retentionMs = CONNECT_DIAGNOSTIC_RETENTION_SECONDS * 1_000
 
 declare global {
-  var __openworkDiagnosticsConnectIncidents: StoredConnectDiagnosticIncident[] | undefined
+  var __micxDiagnosticsConnectIncidents: StoredConnectDiagnosticIncident[] | undefined
 }
 
-const localIncidents = globalThis.__openworkDiagnosticsConnectIncidents ??= []
+const localIncidents = globalThis.__micxDiagnosticsConnectIncidents ??= []
 
 type RedisReply = { result?: unknown; error?: string }
 

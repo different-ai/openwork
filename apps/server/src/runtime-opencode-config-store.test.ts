@@ -3,8 +3,8 @@ import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { addMcp, listMcp, setMcpEnabled } from "./mcp.js";
-import { buildOpenworkRuntimeConfig } from "./openwork-runtime-config.js";
-import { readOpenworkWorkspaceConfig } from "./openwork-workspace-config-store.js";
+import { buildMicxRuntimeConfig } from "./micx-runtime-config.js";
+import { readMicxWorkspaceConfig } from "./micx-workspace-config-store.js";
 import { addPlugin, listPlugins, removePlugin } from "./plugins.js";
 import {
   onRuntimeOpencodeConfigWrite,
@@ -42,11 +42,11 @@ function serverConfig(root: string, dbPath: string): ServerConfig {
 }
 
 async function withWorkspace(fn: (input: { root: string; config: ServerConfig }) => Promise<void>) {
-  const root = await mkdtemp(join(tmpdir(), "openwork-runtime-config-"));
-  const previousDb = process.env.OPENWORK_RUNTIME_DB;
+  const root = await mkdtemp(join(tmpdir(), "micx-runtime-config-"));
+  const previousDb = process.env.MICX_RUNTIME_DB;
   const previousOpencodeConfigDir = process.env.OPENCODE_CONFIG_DIR;
   const dbPath = join(root, "runtime.sqlite");
-  process.env.OPENWORK_RUNTIME_DB = dbPath;
+  process.env.MICX_RUNTIME_DB = dbPath;
   // MCP listings merge the global OpenCode config layer, so point it at an
   // empty directory inside the fixture. Without this the assertions observe
   // whatever MCP servers the developer happens to have in ~/.config/opencode.
@@ -55,8 +55,8 @@ async function withWorkspace(fn: (input: { root: string; config: ServerConfig })
   try {
     await fn({ root, config: serverConfig(root, dbPath) });
   } finally {
-    if (previousDb === undefined) delete process.env.OPENWORK_RUNTIME_DB;
-    else process.env.OPENWORK_RUNTIME_DB = previousDb;
+    if (previousDb === undefined) delete process.env.MICX_RUNTIME_DB;
+    else process.env.MICX_RUNTIME_DB = previousDb;
     if (previousOpencodeConfigDir === undefined) delete process.env.OPENCODE_CONFIG_DIR;
     else process.env.OPENCODE_CONFIG_DIR = previousOpencodeConfigDir;
     await rm(root, { recursive: true, force: true });
@@ -105,7 +105,7 @@ describe("runtime OpenCode config store", () => {
     });
   });
 
-  test("stores MCP changes in the OpenWork runtime DB without rewriting workspace files", async () => {
+  test("stores MCP changes in the Micx runtime DB without rewriting workspace files", async () => {
     await withWorkspace(async ({ root, config }) => {
       const opencodePath = join(root, "opencode.jsonc");
       const opencode = '{\n  "mcp": {\n    "project": { "type": "remote", "url": "https://project.example/mcp" }\n  }\n}\n';
@@ -115,7 +115,7 @@ describe("runtime OpenCode config store", () => {
       await setMcpEnabled(config, WORKSPACE_ID, "runtime", false);
 
       expect(await readFile(opencodePath, "utf8")).toBe(opencode);
-      await expectMissing(join(root, ".opencode", "openwork.json"));
+      await expectMissing(join(root, ".opencode", "micx.json"));
       expect((await readRuntimeOpencodeConfig(config, WORKSPACE_ID)).mcp?.runtime?.enabled).toBe(false);
 
       const items = await listMcp(config, WORKSPACE_ID, root);
@@ -124,7 +124,7 @@ describe("runtime OpenCode config store", () => {
     });
   });
 
-  test("stores plugin changes in the OpenWork runtime DB without rewriting workspace files", async () => {
+  test("stores plugin changes in the Micx runtime DB without rewriting workspace files", async () => {
     await withWorkspace(async ({ root, config }) => {
       const opencodePath = join(root, "opencode.jsonc");
       const opencode = '{\n  "plugin": ["project-plugin"]\n}\n';
@@ -135,14 +135,14 @@ describe("runtime OpenCode config store", () => {
       expect(await addPlugin(config, WORKSPACE_ID, "runtime-plugin")).toBe(true);
 
       expect(await readFile(opencodePath, "utf8")).toBe(opencode);
-      await expectMissing(join(root, ".opencode", "openwork.json"));
+      await expectMissing(join(root, ".opencode", "micx.json"));
       expect((await readRuntimeOpencodeConfig(config, WORKSPACE_ID)).plugin).toEqual(["runtime-plugin"]);
 
       const result = await listPlugins(config, WORKSPACE_ID, root, false);
       expect(result.items.map((item) => item.spec)).toEqual(["project-plugin", "runtime-plugin"]);
 
       await addMcp(config, WORKSPACE_ID, "runtime", { type: "remote", url: "https://runtime.example/mcp", enabled: true });
-      const runtimeConfig = JSON.parse(await buildOpenworkRuntimeConfig(config, WORKSPACE_ID)) as {
+      const runtimeConfig = JSON.parse(await buildMicxRuntimeConfig(config, WORKSPACE_ID)) as {
         plugin?: string[];
         mcp?: Record<string, Record<string, unknown>>;
       };
@@ -165,7 +165,7 @@ describe("runtime OpenCode config store", () => {
     });
   });
 
-  test("stores OpenWork-owned workspace config in the runtime DB without writing legacy files", async () => {
+  test("stores Micx-owned workspace config in the runtime DB without writing legacy files", async () => {
     await withWorkspace(async ({ root, config }) => {
       const server = await startServer(config) as Served;
       try {
@@ -173,7 +173,7 @@ describe("runtime OpenCode config store", () => {
           method: "PATCH",
           headers: { authorization: `Bearer ${config.token}`, "content-type": "application/json" },
           body: JSON.stringify({
-            openwork: {
+            micx: {
               cloudImports: {
                 plugins: {
                   plugin_1: { pluginId: "plugin_1", name: "productivity", files: [] },
@@ -184,11 +184,11 @@ describe("runtime OpenCode config store", () => {
         });
         expect(response.status).toBe(200);
 
-        const legacyOpenworkPath = join(root, ".opencode", "openwork.json");
-        const legacyOpenwork = await readFile(legacyOpenworkPath, "utf8").catch(() => "");
-        expect(legacyOpenwork).not.toContain("productivity");
-        expect(legacyOpenwork).not.toContain("cloudImports");
-        expect((await readOpenworkWorkspaceConfig(config, WORKSPACE_ID)).cloudImports).toEqual({
+        const legacyMicxPath = join(root, ".opencode", "micx.json");
+        const legacyMicx = await readFile(legacyMicxPath, "utf8").catch(() => "");
+        expect(legacyMicx).not.toContain("productivity");
+        expect(legacyMicx).not.toContain("cloudImports");
+        expect((await readMicxWorkspaceConfig(config, WORKSPACE_ID)).cloudImports).toEqual({
           plugins: {
             plugin_1: { pluginId: "plugin_1", name: "productivity", files: [] },
           },
@@ -199,7 +199,7 @@ describe("runtime OpenCode config store", () => {
         });
         expect(configResponse.status).toBe(200);
         expect(await configResponse.json()).toMatchObject({
-          openwork: {
+          micx: {
             cloudImports: {
               plugins: {
                 plugin_1: { pluginId: "plugin_1", name: "productivity", files: [] },
@@ -213,11 +213,11 @@ describe("runtime OpenCode config store", () => {
     });
   });
 
-  test("explicitly migrates legacy OpenWork runtime config into the runtime DB", async () => {
+  test("explicitly migrates legacy Micx runtime config into the runtime DB", async () => {
     await withWorkspace(async ({ root, config }) => {
       await mkdir(join(root, ".opencode"), { recursive: true });
-      const openworkPath = join(root, ".opencode", "openwork.json");
-      await writeFile(openworkPath, JSON.stringify({
+      const micxPath = join(root, ".opencode", "micx.json");
+      await writeFile(micxPath, JSON.stringify({
         version: 1,
         workspace: { name: "Test" },
         plugin: ["legacy-plugin"],
@@ -246,14 +246,14 @@ describe("runtime OpenCode config store", () => {
 
         // The legacy file is migrated into the runtime DB and never rewritten.
         // The cleaned config (legacy runtime keys stripped, metadata kept)
-        // now lives in the DB-backed openwork config.
-        const openwork = await readOpenworkWorkspaceConfig(config, WORKSPACE_ID);
-        expect(openwork.version).toBe(1);
-        expect(openwork.workspace).toEqual({ name: "Test" });
-        expect(openwork.plugin).toBeUndefined();
-        expect(openwork.mcp).toBeUndefined();
-        expect(openwork.permission).toBeUndefined();
-        expect(openwork.provider).toBeUndefined();
+        // now lives in the DB-backed micx config.
+        const micx = await readMicxWorkspaceConfig(config, WORKSPACE_ID);
+        expect(micx.version).toBe(1);
+        expect(micx.workspace).toEqual({ name: "Test" });
+        expect(micx.plugin).toBeUndefined();
+        expect(micx.mcp).toBeUndefined();
+        expect(micx.permission).toBeUndefined();
+        expect(micx.provider).toBeUndefined();
 
         const statusResponse = await fetch(`http://127.0.0.1:${server.port}/workspace/${WORKSPACE_ID}/runtime-config`, {
           headers: { authorization: `Bearer ${config.token}` },
@@ -269,13 +269,13 @@ describe("runtime OpenCode config store", () => {
             projectOpencode: { exists: false, keys: [] },
             runtimeDatabase: { keys: ["plugin", "mcp", "permission", "provider"] },
           },
-          legacyOpenwork: { keys: [] },
+          legacyMicx: { keys: [] },
           userOpencode: { exists: false, keys: [] },
         });
-        expect(status.effectiveRuntime.default_agent).toBe("openwork");
-        expect(status.effectiveRuntime.agent).toMatchObject({ openwork: { mode: "primary" } });
+        expect(status.effectiveRuntime.default_agent).toBe("micx");
+        expect(status.effectiveRuntime.agent).toMatchObject({ micx: { mode: "primary" } });
         expect(status.effectiveRuntime.provider).toMatchObject({ legacy: { npm: "legacy-provider" } });
-        expect(status.sources.injected.config?.agent).toMatchObject({ openwork: { mode: "primary" } });
+        expect(status.sources.injected.config?.agent).toMatchObject({ micx: { mode: "primary" } });
         expect(status.sources.injected.keys).toContain("provider");
         expect(status.sources.globalOpencode).toHaveProperty("path");
       } finally {
@@ -284,10 +284,10 @@ describe("runtime OpenCode config store", () => {
     });
   });
 
-  test("runtime config status tolerates malformed legacy OpenWork metadata", async () => {
+  test("runtime config status tolerates malformed legacy Micx metadata", async () => {
     await withWorkspace(async ({ root, config }) => {
       await mkdir(join(root, ".opencode"), { recursive: true });
-      await writeFile(join(root, ".opencode", "openwork.json"), "{ invalid\n", "utf8");
+      await writeFile(join(root, ".opencode", "micx.json"), "{ invalid\n", "utf8");
       await addMcp(config, WORKSPACE_ID, "runtime", { type: "remote", url: "https://runtime.example/mcp" });
 
       const server = await startServer(config) as Served;
@@ -298,7 +298,7 @@ describe("runtime OpenCode config store", () => {
         expect(response.status).toBe(200);
         expect(await response.json()).toMatchObject({
           runtimeKeys: ["mcp"],
-          legacyOpenwork: { keys: [], error: "Failed to parse openwork.json" },
+          legacyMicx: { keys: [], error: "Failed to parse micx.json" },
         });
       } finally {
         await server.stop(true);
@@ -306,12 +306,12 @@ describe("runtime OpenCode config store", () => {
     });
   });
 
-  test("explicitly migrates safe OpenWork-managed keys from user opencode config", async () => {
+  test("explicitly migrates safe Micx-managed keys from user opencode config", async () => {
     await withWorkspace(async ({ root, config }) => {
       const opencodePath = join(root, "opencode.jsonc");
       await writeFile(opencodePath, JSON.stringify({
         $schema: "https://opencode.ai/config.json",
-        default_agent: "openwork",
+        default_agent: "micx",
         plugin: ["opencode-chrome-devtools", "user-plugin"],
         provider: { local: { npm: "@ai-sdk/openai-compatible" } },
         disabled_providers: ["old-provider"],
@@ -331,7 +331,7 @@ describe("runtime OpenCode config store", () => {
         });
 
         const runtime = await readRuntimeOpencodeConfig(config, WORKSPACE_ID);
-        expect(runtime.default_agent).toBe("openwork");
+        expect(runtime.default_agent).toBe("micx");
         expect(runtime.plugin).toEqual(["opencode-chrome-devtools", "user-plugin"]);
         expect(runtime.provider?.local).toEqual({ npm: "@ai-sdk/openai-compatible" });
         expect(runtime.disabled_providers).toEqual(["old-provider"]);

@@ -1,12 +1,12 @@
 import { buildResponseHeaders, jsonResponse, rateLimitFormRequest, validateAntiSpamFields, validateTrustedOrigin, verifyFormBotProtection } from "../_lib/security";
-import { EmailSendError, sendEmail, type FeedbackEmailProps } from "@openwork/email";
+import { EmailSendError, sendEmail, type FeedbackEmailProps } from "@micx/email";
 
 type FeedbackContext = {
   source?: string;
   entrypoint?: string;
   deployment?: string;
   appVersion?: string;
-  openworkServerVersion?: string;
+  micxServerVersion?: string;
   opencodeVersion?: string;
   osName?: string;
   osVersion?: string;
@@ -23,7 +23,7 @@ type FeedbackPayload = {
   context?: FeedbackContext;
 };
 
-const DEFAULT_INTERNAL_FEEDBACK_EMAIL = "team@openworklabs.com";
+const DEFAULT_INTERNAL_FEEDBACK_EMAIL = "team@micxlabs.com";
 
 function sanitizeValue(value: unknown, maxLength = 240) {
   return typeof value === "string" ? value.trim().slice(0, maxLength) : "";
@@ -35,7 +35,7 @@ function sanitizeContext(input: FeedbackContext | undefined) {
     entrypoint: sanitizeValue(input?.entrypoint),
     deployment: sanitizeValue(input?.deployment),
     appVersion: sanitizeValue(input?.appVersion),
-    openworkServerVersion: sanitizeValue(input?.openworkServerVersion),
+    micxServerVersion: sanitizeValue(input?.micxServerVersion),
     opencodeVersion: sanitizeValue(input?.opencodeVersion),
     osName: sanitizeValue(input?.osName),
     osVersion: sanitizeValue(input?.osVersion),
@@ -50,7 +50,7 @@ function formatDiagnosticsSummary(context: ReturnType<typeof sanitizeContext>) {
     ["Entrypoint", context.entrypoint],
     ["Deployment", context.deployment],
     ["App version", context.appVersion],
-    ["OpenWork server", context.openworkServerVersion],
+    ["Micx server", context.micxServerVersion],
     ["OpenCode", context.opencodeVersion],
     ["OS", osLabel],
     ["Platform", context.platform],
@@ -82,7 +82,7 @@ export async function POST(request: Request) {
   }
 
   const internalEmail =
-    process.env.OPENWORK_FEEDBACK_EMAIL?.trim() ||
+    process.env.MICX_FEEDBACK_EMAIL?.trim() ||
     process.env.LOOPS_INTERNAL_FEEDBACK_EMAIL?.trim() ||
     DEFAULT_INTERNAL_FEEDBACK_EMAIL;
 
@@ -140,11 +140,11 @@ export async function POST(request: Request) {
     email,
     message,
     mode,
-    source: context.source || "openwork-app",
+    source: context.source || "micx-app",
     entrypoint: context.entrypoint || "unknown",
     deployment: context.deployment || "desktop",
     appVersion: context.appVersion || "unknown",
-    openworkServerVersion: context.openworkServerVersion || "unknown",
+    micxServerVersion: context.micxServerVersion || "unknown",
     opencodeVersion: context.opencodeVersion || "unknown",
     osName: context.osName || "unknown",
     osVersion: context.osVersion || "",

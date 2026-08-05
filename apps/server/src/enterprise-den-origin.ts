@@ -1,4 +1,4 @@
-import { desktopBootstrapPath } from "@openwork/paths";
+import { desktopBootstrapPath } from "@micx/paths";
 
 import { readJsoncFile } from "./jsonc.js";
 

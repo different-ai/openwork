@@ -1,4 +1,4 @@
-export const LAST_DESKTOP_HANDOFF_GRANT_STORAGE_KEY = "openwork.den.lastHandoffGrant";
+export const LAST_DESKTOP_HANDOFF_GRANT_STORAGE_KEY = "micx.den.lastHandoffGrant";
 
 const LAST_DESKTOP_HANDOFF_GRANT_MAX_AGE_MS = 15 * 60 * 1000;
 
@@ -22,21 +22,21 @@ export function getDesktopGrant(url: string | null): string | null {
   }
 }
 
-export function getDesktopHandoffOpenworkUrl(payload: unknown): string | null {
+export function getDesktopHandoffMicxUrl(payload: unknown): string | null {
   if (!isRecord(payload)) {
     return null;
   }
 
-  const openworkUrl = payload.openworkUrl;
-  return typeof openworkUrl === "string" && openworkUrl.trim() ? openworkUrl.trim() : null;
+  const micxUrl = payload.micxUrl;
+  return typeof micxUrl === "string" && micxUrl.trim() ? micxUrl.trim() : null;
 }
 
-export function getDesktopHandoffGrant(payload: unknown, openworkUrl: string | null): string | null {
+export function getDesktopHandoffGrant(payload: unknown, micxUrl: string | null): string | null {
   if (isRecord(payload) && typeof payload.grant === "string" && payload.grant.trim()) {
     return payload.grant.trim();
   }
 
-  return getDesktopGrant(openworkUrl);
+  return getDesktopGrant(micxUrl);
 }
 
 export function rememberDesktopHandoffGrant(grant: string | null) {

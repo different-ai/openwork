@@ -1,8 +1,8 @@
 /**
- * Library entry point for the OpenWork server.
+ * Library entry point for the Micx server.
  *
  * ```ts
- * import { startEmbeddedServer } from "openwork-server";
+ * import { startEmbeddedServer } from "micx-server";
  *
  * const handle = await startEmbeddedServer({
  *   host: "127.0.0.1",

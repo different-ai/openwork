@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import { app, WebContentsView, clipboard, session, shell } from "electron";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const BROWSER_SESSION_PARTITION = "persist:openwork-browser";
+const BROWSER_SESSION_PARTITION = "persist:micx-browser";
 const BROWSER_DEFAULT_URL = "about:blank";
 // URL a user-initiated new tab (the "+" button / opening the browser panel)
 // lands on. The agent's programmatic path keeps BROWSER_DEFAULT_URL.
@@ -115,8 +115,8 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink }) {
   }
 
   function browserTargetMarkerUrl(tabId) {
-    const marker = `openwork-browser-tab:${tabId}`;
-    const html = `<!doctype html><title>${marker}</title><meta name="openwork-browser-tab" content="${tabId}"><body>${marker}</body>`;
+    const marker = `micx-browser-tab:${tabId}`;
+    const html = `<!doctype html><title>${marker}</title><meta name="micx-browser-tab" content="${tabId}"><body>${marker}</body>`;
     return `data:text/html;charset=utf-8,${encodeURIComponent(html)}`;
   }
 
@@ -130,7 +130,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink }) {
   }
 
   async function resolveBrowserCdpTargetId(tabId) {
-    const marker = encodeURIComponent(`openwork-browser-tab:${tabId}`);
+    const marker = encodeURIComponent(`micx-browser-tab:${tabId}`);
     const deadline = Date.now() + BROWSER_TARGET_RESOLVE_TIMEOUT_MS;
     while (Date.now() < deadline) {
       const targets = await listCdpTargets().catch(() => []);
@@ -380,7 +380,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink }) {
     if (!ready) {
       console.warn("[menu-overlay] renderer did not signal readiness before show");
     }
-    view.webContents.send("openwork:menu-overlay:show", {
+    view.webContents.send("micx:menu-overlay:show", {
       id: request.id,
       source: request.source,
       items: request.items,
@@ -414,7 +414,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink }) {
     const raw = String(input ?? "").trim();
     const envMatch = raw.match(/^env:([A-Za-z0-9_]+)$/i);
     if (!envMatch) return raw;
-    const key = `OPENWORK_BROWSER_PROXY_${envMatch[1].toUpperCase()}`;
+    const key = `MICX_BROWSER_PROXY_${envMatch[1].toUpperCase()}`;
     const value = String(process.env[key] ?? "").trim();
     if (!value) throw new Error(`No proxy configured: set the ${key} environment variable to a proxy URL.`);
     return value;
@@ -497,9 +497,9 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink }) {
       // data: loads are internal plumbing (CDP target-marker pages), not
       // user-visible navigations — don't surface the panel for them.
       if (target === "about:blank" || target.startsWith("data:")) return;
-      // Intercept openwork:// deep links (e.g. den-auth handoff grants) so
+      // Intercept micx:// deep links (e.g. den-auth handoff grants) so
       // in-app browser auth works without the system protocol handler.
-      if (target.startsWith("openwork://") || target.startsWith("openwork-dev://")) {
+      if (target.startsWith("micx://") || target.startsWith("micx-dev://")) {
         if (typeof onDeepLink === "function") {
           onDeepLink([target]);
         }
@@ -526,7 +526,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink }) {
           // The tab may be mid-close; the panel-opened event below still fires.
         }
       }
-      sendToRenderer("openwork:browser:panel-opened");
+      sendToRenderer("micx:browser:panel-opened");
     });
     view.webContents.on("did-navigate", () => sendBrowserState());
     view.webContents.on("did-navigate-in-page", () => sendBrowserState());
@@ -646,7 +646,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink }) {
         attachActiveBrowserView();
       } else {
         hideBrowserView();
-        sendToRenderer("openwork:browser:panel-closed");
+        sendToRenderer("micx:browser:panel-closed");
       }
     }
     try { tab.view.webContents.close(); } catch { /* already destroyed */ }
@@ -668,7 +668,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink }) {
     for (const tab of tabsToClose) {
       try { tab.view.webContents.close(); } catch { /* already destroyed */ }
     }
-    sendToRenderer("openwork:browser:panel-closed");
+    sendToRenderer("micx:browser:panel-closed");
     sendBrowserState();
     return closedTabIds;
   }
@@ -691,7 +691,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink }) {
   }
 
   function sendBrowserState() {
-    sendToRenderer("openwork:browser:state", browserStatePayload());
+    sendToRenderer("micx:browser:state", browserStatePayload());
   }
 
   /**
@@ -744,58 +744,58 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink }) {
   }
 
   function registerIpc(ipcMain) {
-    ipcMain.handle("openwork:browser:show", (_event, bounds) => attachBrowserView(bounds));
-    ipcMain.handle("openwork:browser:hide", () => hideBrowserView());
-    ipcMain.handle("openwork:browser:openUrl", (_event, url, provider) => openBrowserUrlForAutomation(url, provider));
-    ipcMain.handle("openwork:browser:navigate", (_event, url) => {
+    ipcMain.handle("micx:browser:show", (_event, bounds) => attachBrowserView(bounds));
+    ipcMain.handle("micx:browser:hide", () => hideBrowserView());
+    ipcMain.handle("micx:browser:openUrl", (_event, url, provider) => openBrowserUrlForAutomation(url, provider));
+    ipcMain.handle("micx:browser:navigate", (_event, url) => {
       const view = getActiveBrowserView() ?? createBrowserTab("about:blank", { select: true }).view;
       view.webContents.loadURL(normalizeBrowserUrl(url));
     });
-    ipcMain.handle("openwork:browser:back", () => {
+    ipcMain.handle("micx:browser:back", () => {
       const webContents = getActiveWebContents();
       if (webContents?.canGoBack()) webContents.goBack();
     });
-    ipcMain.handle("openwork:browser:forward", () => {
+    ipcMain.handle("micx:browser:forward", () => {
       const webContents = getActiveWebContents();
       if (webContents?.canGoForward()) webContents.goForward();
     });
-    ipcMain.handle("openwork:browser:reload", () => getActiveWebContents()?.reload());
-    ipcMain.handle("openwork:browser:bounds", (_event, bounds) => {
+    ipcMain.handle("micx:browser:reload", () => getActiveWebContents()?.reload());
+    ipcMain.handle("micx:browser:bounds", (_event, bounds) => {
       lastBrowserBounds = bounds;
       const view = getActiveBrowserView();
       if (view && browserViewVisible && bounds.width > 0 && bounds.height > 0) {
         view.setBounds(scaleRendererBounds(bounds));
       }
     });
-    ipcMain.handle("openwork:browser:state", () => browserStatePayload());
-    ipcMain.handle("openwork:browser:createTab", (_event, url) => {
+    ipcMain.handle("micx:browser:state", () => browserStatePayload());
+    ipcMain.handle("micx:browser:createTab", (_event, url) => {
       const target = typeof url === "string" && url.trim() ? url : BROWSER_NEW_TAB_URL;
       const tab = createBrowserTab(target, { select: true });
       return { tabId: tab.tabId };
     });
-    ipcMain.handle("openwork:browser:closeTab", (_event, tabId) => closeBrowserTab(tabId == null ? undefined : String(tabId)));
-    ipcMain.handle("openwork:browser:closeAllTabs", () => closeAllBrowserTabs());
-    ipcMain.handle("openwork:browser:selectTab", (_event, tabId) => selectBrowserTab(String(tabId ?? "")).tabId);
-    ipcMain.handle("openwork:browser:reorderTabs", (_event, tabIds) => reorderBrowserTabs(tabIds));
-    ipcMain.handle("openwork:browser:listTabs", () => listBrowserTabs());
-    ipcMain.handle("openwork:browser:setProxy", (_event, proxy) => setBrowserProxy(proxy));
-    ipcMain.handle("openwork:browser:getProxy", () => browserProxyState());
-    ipcMain.handle("openwork:browser:tabContextMenu", (_event, tabId, point) => showBrowserTabContextMenu(tabId, point));
-    ipcMain.handle("openwork:browser:destroy", () => destroyBrowserView());
-    ipcMain.on("openwork:menu-overlay:ready", (event) => {
+    ipcMain.handle("micx:browser:closeTab", (_event, tabId) => closeBrowserTab(tabId == null ? undefined : String(tabId)));
+    ipcMain.handle("micx:browser:closeAllTabs", () => closeAllBrowserTabs());
+    ipcMain.handle("micx:browser:selectTab", (_event, tabId) => selectBrowserTab(String(tabId ?? "")).tabId);
+    ipcMain.handle("micx:browser:reorderTabs", (_event, tabIds) => reorderBrowserTabs(tabIds));
+    ipcMain.handle("micx:browser:listTabs", () => listBrowserTabs());
+    ipcMain.handle("micx:browser:setProxy", (_event, proxy) => setBrowserProxy(proxy));
+    ipcMain.handle("micx:browser:getProxy", () => browserProxyState());
+    ipcMain.handle("micx:browser:tabContextMenu", (_event, tabId, point) => showBrowserTabContextMenu(tabId, point));
+    ipcMain.handle("micx:browser:destroy", () => destroyBrowserView());
+    ipcMain.on("micx:menu-overlay:ready", (event) => {
       if (event.sender !== menuOverlayView?.webContents) return;
       markMenuOverlayReady(menuOverlayView);
     });
-    ipcMain.on("openwork:menu-overlay:choose", (event, payload) => {
+    ipcMain.on("micx:menu-overlay:choose", (event, payload) => {
       if (event.sender !== menuOverlayView?.webContents) return;
       handleMenuOverlayChoice(payload);
     });
-    ipcMain.on("openwork:menu-overlay:close", (event, payload) => {
+    ipcMain.on("micx:menu-overlay:close", (event, payload) => {
       if (event.sender !== menuOverlayView?.webContents) return;
       if (payload?.requestId && payload.requestId !== menuOverlayRequest?.id) return;
       hideMenuOverlay();
     });
-    ipcMain.on("openwork:menu-overlay:dismiss", (event) => {
+    ipcMain.on("micx:menu-overlay:dismiss", (event) => {
       if (event.sender === menuOverlayView?.webContents) return;
       hideMenuOverlay();
     });

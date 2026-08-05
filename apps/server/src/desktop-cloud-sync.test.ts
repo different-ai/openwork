@@ -20,7 +20,7 @@ const baseSnapshot: ResourceSnapshot = {
 
 describe("desktop cloud sync", () => {
   test("queues provider update and remove changes", () => {
-    const openwork = {
+    const micx = {
       cloudImports: {
         providers: {
           lpr_existing: {
@@ -35,7 +35,7 @@ describe("desktop cloud sync", () => {
       },
     };
 
-    const result = syncDesktopCloudResources({ now: 1780442400000, openwork, snapshot: baseSnapshot });
+    const result = syncDesktopCloudResources({ now: 1780442400000, micx, snapshot: baseSnapshot });
 
     expect(result.changes).toEqual([
       {
@@ -56,7 +56,7 @@ describe("desktop cloud sync", () => {
       },
     ]);
 
-    const state = readDesktopCloudSyncState(result.openwork);
+    const state = readDesktopCloudSyncState(result.micx);
     expect(state.entries["org_1::member_1"]?.pendingChanges).toHaveLength(2);
   });
 
@@ -83,10 +83,10 @@ describe("desktop cloud sync", () => {
       teamIds: [],
       resources: { llmProviders, marketplaces: {} },
     };
-    const openwork = { cloudImports: { providers: importedProviders } };
+    const micx = { cloudImports: { providers: importedProviders } };
 
     const start = performance.now();
-    const result = syncDesktopCloudResources({ now: 1780442400000, openwork, snapshot });
+    const result = syncDesktopCloudResources({ now: 1780442400000, micx, snapshot });
     const elapsedMs = performance.now() - start;
 
     expect(result.changes).toHaveLength(providerCount / 2);

@@ -117,7 +117,7 @@ export function LandingEnterprise(props: Props) {
             </div>
 
             <figure
-              aria-label="OpenWork enterprise dashboard showing AI adoption, spend, and tool penetration by department"
+              aria-label="Micx enterprise dashboard showing AI adoption, spend, and tool penetration by department"
               className="mt-12 overflow-hidden rounded-xl border border-gray-200 bg-white shadow-[0_24px_60px_-30px_rgba(1,22,39,0.25)] md:mt-16 lg:-mx-16 xl:-mx-32"
             >
               <LandingEnterpriseHero />
@@ -144,7 +144,7 @@ export function LandingEnterprise(props: Props) {
                                 <div className="h-2 w-2 rounded-full bg-[#27c93f]"></div>
                               </div>
                               <div className="absolute left-1/2 -translate-x-1/2 text-[10px] font-medium tracking-wide text-gray-500">
-                                OpenWork
+                                Micx
                               </div>
                             </div>
                             <div className="h-[calc(100%-1.75rem)] overflow-hidden">
@@ -200,7 +200,7 @@ export function LandingEnterprise(props: Props) {
                   Compliance-ready agentic workflows
                 </h3>
                 <p className="max-w-3xl text-[15px] leading-relaxed text-slate-600">
-                  OpenWork helps organizations run agentic workflows with a
+                  Micx helps organizations run agentic workflows with a
                   local-first, permission-aware architecture built for privacy,
                   access control, and deployment flexibility across HIPAA, SOC 2
                   Type II, ISO 27001, CCPA, and GDPR-sensitive environments.

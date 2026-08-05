@@ -1,6 +1,6 @@
-import { and, eq, gt, lt, lte } from "@openwork-ee/den-db/drizzle"
-import { AuthSessionTable, OAuthAccessTokenTable, OAuthRefreshTokenTable } from "@openwork-ee/den-db/schema"
-import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
+import { and, eq, gt, lt, lte } from "@micx-ee/den-db/drizzle"
+import { AuthSessionTable, OAuthAccessTokenTable, OAuthRefreshTokenTable } from "@micx-ee/den-db/schema"
+import { normalizeDenTypeId } from "@micx-ee/utils/typeid"
 import { db } from "../db.js"
 import { getDenSessionExpiresAt, getDenSessionRefreshCutoff } from "../session-lifetime.js"
 

@@ -4,7 +4,7 @@ import {
   listAssignedConnectCapabilities,
 } from "../src/react-app/domains/session/surface/connect-capability-inventory";
 
-describe("assigned OpenWork Connect capability inventory", () => {
+describe("assigned Micx Connect capability inventory", () => {
   test("returns active marketplace skills and MCPs with Connect provenance", async () => {
     const inventory = await listAssignedConnectCapabilities({
       organizationId: "org_1",
@@ -134,7 +134,7 @@ describe("assigned OpenWork Connect capability inventory", () => {
       expect.objectContaining({
         name: "Escalate ticket",
         trigger: "escalate-ticket",
-        origin: "openwork-connect",
+        origin: "micx-connect",
         marketplaceName: "Team tools",
         pluginName: "Support kit",
         connectCapabilityName: "plugin:plugin_1:skill_1",
@@ -143,7 +143,7 @@ describe("assigned OpenWork Connect capability inventory", () => {
     expect(inventory.mcpServers).toEqual([
       expect.objectContaining({
         name: "Support MCP",
-        origin: "openwork-connect",
+        origin: "micx-connect",
         marketplaceName: "Team tools",
         pluginName: "Support kit",
         config: {

@@ -1,4 +1,4 @@
-import type { JsonObject, JsonValue } from "@openwork-ee/utils/observability"
+import type { JsonObject, JsonValue } from "@micx-ee/utils/observability"
 
 const REDACTED = "[redacted]"
 const MAX_STRING_LENGTH = 2_000

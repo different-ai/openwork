@@ -3,7 +3,7 @@ import { z } from "zod"
 export const DESKTOP_BOOTSTRAP_FILENAME = "desktop-bootstrap.json"
 
 export const installConfigSchema = z.object({
-  appName: z.string().trim().min(1).max(64).default("OpenWork"),
+  appName: z.string().trim().min(1).max(64).default("Micx"),
   clientName: z.string().trim().min(1),
   webUrl: z.string().trim().url(),
   apiUrl: z.string().trim().url(),

@@ -1,7 +1,7 @@
 /**
  * Derivation of the Den MCP resource URL from the auth origin.
  *
- * Hosted web-app origins (app.openworklabs.com, app.openwork.software,
+ * Hosted web-app origins (app.micxlabs.com, app.micx.software,
  * app.*, *.run.app, configured DEN_WEB_APP_HOSTS) serve the den-web
  * frontend at their root and expose den-api only behind the `/api/den`
  * proxy path. Nothing serves MCP at `<origin>/mcp` on those hosts, so
@@ -28,7 +28,7 @@ export function isHostedWebAppHost(hostname: string, webAppHosts: readonly strin
 
 /**
  * Default MCP resource for a deployment. Web-app origins route through the
- * `/api/den` proxy; direct API origins (api.openworklabs.com, loopback dev
+ * `/api/den` proxy; direct API origins (api.micxlabs.com, loopback dev
  * den-api) keep the bare `<origin>/mcp` form.
  */
 export function deriveDenMcpResource(betterAuthUrl: string, webAppHosts: readonly string[]): string {

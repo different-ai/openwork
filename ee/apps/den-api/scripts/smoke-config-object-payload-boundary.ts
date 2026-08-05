@@ -3,15 +3,15 @@
  * Smoke test for the config-object version payload boundary against a deployed Den API.
  *
  * Required env (env only; never hardcode secrets):
- *   DEN_API_BASE_URL       Den API root that serves /v1, e.g. https://app.openworklabs.com/api/den
+ *   DEN_API_BASE_URL       Den API root that serves /v1, e.g. https://app.micxlabs.com/api/den
  *   DEN_API_BEARER_TOKEN   Bearer token from an authenticated Den session with config-object edit access
  *   DEN_CONFIG_OBJECT_ID   Explicit target configObjectId (cob_...) to receive new immutable versions
  *
  * Usage:
- *   DEN_API_BASE_URL=https://app.openworklabs.com/api/den \
+ *   DEN_API_BASE_URL=https://app.micxlabs.com/api/den \
  *   DEN_API_BEARER_TOKEN=<session bearer token> \
  *   DEN_CONFIG_OBJECT_ID=cob_... \
- *   pnpm --filter @openwork-ee/den-api run smoke:config-object-payload-boundary -- --dry-run
+ *   pnpm --filter @micx-ee/den-api run smoke:config-object-payload-boundary -- --dry-run
  *
  * Safety: this script only creates new versions for the named config object. It does not delete,
  * mutate schema, or modify other config objects. Use --dry-run to print the probe plan without writes.
@@ -66,7 +66,7 @@ const SMOKE_REASON = "smoke: config object payload boundary check"
 const requiredEnv: EnvDoc[] = [
   {
     name: "DEN_API_BASE_URL",
-    description: "Use the deployed Den API root that serves /v1, for example https://app.openworklabs.com/api/den.",
+    description: "Use the deployed Den API root that serves /v1, for example https://app.micxlabs.com/api/den.",
   },
   {
     name: "DEN_API_BEARER_TOKEN",
@@ -231,7 +231,7 @@ function usageLines() {
     "  DEN_API_BASE_URL=<deployed Den API root> \\",
     "  DEN_API_BEARER_TOKEN=<session bearer token> \\",
     "  DEN_CONFIG_OBJECT_ID=cob_... \\",
-    "  pnpm --filter @openwork-ee/den-api run smoke:config-object-payload-boundary -- [--dry-run]",
+    "  pnpm --filter @micx-ee/den-api run smoke:config-object-payload-boundary -- [--dry-run]",
   ]
 }
 

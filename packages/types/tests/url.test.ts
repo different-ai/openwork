@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { hostLabel, joinBaseUrl, normalizeBaseUrl, readBaseUrlEnv } from "@openwork/types/url";
+import { hostLabel, joinBaseUrl, normalizeBaseUrl, readBaseUrlEnv } from "@micx/types/url";
 
 describe("url primitives", () => {
   test("normalizes trailing slashes canonically", () => {

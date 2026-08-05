@@ -11,7 +11,7 @@ type ContactPayload = {
 const LOOPS_CONTACTS_API_URL = "https://app.loops.so/api/v1/contacts/update";
 const LOOPS_EVENTS_API_URL = "https://app.loops.so/api/v1/events/send";
 const ENTERPRISE_EVENT_NAME = "enterpriseContactSubmitted";
-const ENTERPRISE_SOURCE = "OpenWork Enterprise Contact Form";
+const ENTERPRISE_SOURCE = "Micx Enterprise Contact Form";
 const ENTERPRISE_GROUP = "Enterprise Leads";
 
 function splitName(fullName: string) {

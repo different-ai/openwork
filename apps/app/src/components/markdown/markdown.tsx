@@ -200,22 +200,22 @@ function MarkdownBlockInner({
     const handleClick = (event: MouseEvent) => {
       if (!(event.target instanceof Element)) return;
 
-      const copyButton = event.target.closest("[data-openwork-code-copy]");
+      const copyButton = event.target.closest("[data-micx-code-copy]");
       if (copyButton instanceof HTMLButtonElement) {
         event.preventDefault();
         event.stopPropagation();
 
-        const codeBlock = copyButton.closest("[data-openwork-code-block]");
+        const codeBlock = copyButton.closest("[data-micx-code-block]");
         const code = codeBlock?.querySelector("code");
         void handleCodeBlockCopy(copyButton, code?.textContent ?? "");
         return;
       }
 
-      const chevron = event.target.closest("[data-openwork-link-chevron]");
+      const chevron = event.target.closest("[data-micx-link-chevron]");
       if (chevron instanceof HTMLElement) {
         event.preventDefault();
         event.stopPropagation();
-        const href = chevron.dataset.openworkLinkChevron ?? "";
+        const href = chevron.dataset.micxLinkChevron ?? "";
         const target = openTargetForHref(href, openTargets);
         if (target) {
           setLinkMenu({ target, rect: chevron.getBoundingClientRect() });
@@ -223,9 +223,9 @@ function MarkdownBlockInner({
         return;
       }
 
-      const link = event.target.closest("a[data-openwork-link-href]");
+      const link = event.target.closest("a[data-micx-link-href]");
       if (link instanceof HTMLAnchorElement) {
-        const href = link.dataset.openworkLinkHref ?? link.getAttribute("href") ?? "";
+        const href = link.dataset.micxLinkHref ?? link.getAttribute("href") ?? "";
         const target = openTargetForHref(href, openTargets);
 
         if (target && onOpenTarget) {
@@ -235,7 +235,7 @@ function MarkdownBlockInner({
         }
       }
 
-      const preview = event.target.closest("[data-openwork-image-preview]");
+      const preview = event.target.closest("[data-micx-image-preview]");
       if (!(preview instanceof HTMLElement)) return;
 
       event.preventDefault();

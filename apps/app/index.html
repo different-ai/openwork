@@ -3,16 +3,16 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>OpenWork</title>
+    <title>Micx</title>
 
-    <link rel="icon" type="image/svg+xml" href="/openwork-mark.svg" />
+    <link rel="icon" type="image/svg+xml" href="/micx-mark.svg" />
     <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png" />
     <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png" />
     <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
     <script>
       (function () {
         try {
-          var mode = localStorage.getItem("openwork.themePref") || "system";
+          var mode = localStorage.getItem("micx.themePref") || "system";
           var prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
           var resolved = mode === "dark" || (mode === "system" && prefersDark) ? "dark" : "light";
           document.documentElement.dataset.theme = resolved;

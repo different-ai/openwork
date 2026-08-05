@@ -1,5 +1,5 @@
 import { DaytonaConflictError } from "@daytonaio/sdk"
-import { createDenTypeId } from "@openwork-ee/utils/typeid"
+import { createDenTypeId } from "@micx-ee/utils/typeid"
 import { beforeAll, describe, expect, test } from "bun:test"
 import type { DaytonaProvisioningRuntime, DaytonaSandboxRuntime } from "../src/workers/daytona.js"
 
@@ -9,14 +9,14 @@ type UpsertInput = Parameters<DaytonaProvisioningRuntime["upsertSandbox"]>[0]
 type CreateInput = Parameters<DaytonaProvisioningRuntime["createSandbox"]>[0]
 
 function seedRequiredEnv() {
-  process.env.DATABASE_URL = process.env.DATABASE_URL ?? "mysql://root:password@127.0.0.1:3306/openwork_test"
+  process.env.DATABASE_URL = process.env.DATABASE_URL ?? "mysql://root:password@127.0.0.1:3306/micx_test"
   process.env.DEN_DB_ENCRYPTION_KEY = process.env.DEN_DB_ENCRYPTION_KEY ?? "x".repeat(32)
   process.env.BETTER_AUTH_SECRET = process.env.BETTER_AUTH_SECRET ?? "y".repeat(32)
   process.env.BETTER_AUTH_URL = process.env.BETTER_AUTH_URL ?? "http://127.0.0.1:8790"
   process.env.CORS_ORIGINS = process.env.CORS_ORIGINS ?? "http://127.0.0.1:8790"
   process.env.DAYTONA_API_KEY = "daytona-test-key"
   process.env.DAYTONA_WORKER_PROXY_BASE_URL = "https://workers.example.test"
-  process.env.DAYTONA_SNAPSHOT = "openwork-0.18.8"
+  process.env.DAYTONA_SNAPSHOT = "micx-0.18.8"
 }
 
 let daytona: DaytonaModule
@@ -206,7 +206,7 @@ describe("Daytona Cloud provisioning adoption", () => {
     const result = await daytona.provisionWorkerOnDaytonaWithRuntime(input, runtime.runtime)
 
     expect(result.status).toBe("healthy")
-    expect(result.imageVersion).toBe("openwork-0.18.8")
+    expect(result.imageVersion).toBe("micx-0.18.8")
     expect(result.url).toBe(`https://workers.example.test/${encodeURIComponent(input.workerId)}`)
     expect(runtime.createCalls).toBe(1)
     expect(existing.startCalls).toBe(1)
@@ -229,7 +229,7 @@ describe("Daytona Cloud provisioning adoption", () => {
     const result = await daytona.provisionWorkerOnDaytonaWithRuntime(input, runtime.runtime)
 
     expect(result.status).toBe("healthy")
-    expect(result.imageVersion).toBe("openwork-0.18.8")
+    expect(result.imageVersion).toBe("micx-0.18.8")
     expect(runtime.createCalls).toBe(1)
     expect(created.startCalls).toBe(0)
     expect(created.deleteCalls).toBe(0)
@@ -271,13 +271,13 @@ describe("Daytona Cloud version-aware recycle", () => {
       input,
       runtime.runtime,
       { sandbox_id: "sbx_old", workspace_volume_id: "vol_shared", data_volume_id: "vol_shared" },
-      "openwork-0.18.7",
+      "micx-0.18.7",
     )
 
     expect(result.status).toBe("healthy")
-    expect(result.imageVersion).toBe("openwork-0.18.8")
+    expect(result.imageVersion).toBe("micx-0.18.8")
     expect(runtime.createCalls).toBe(1)
-    expect(runtime.createInputs[0]?.name).toBe(daytona.daytonaSandboxNameForSnapshot(input, "openwork-0.18.8"))
+    expect(runtime.createInputs[0]?.name).toBe(daytona.daytonaSandboxNameForSnapshot(input, "micx-0.18.8"))
     expect(runtime.checkpointChecks).toBe(1)
     expect(runtime.restoreMarkerChecks).toBe(1)
     expect(runtime.upserts).toHaveLength(1)
@@ -300,11 +300,11 @@ describe("Daytona Cloud version-aware recycle", () => {
       input,
       runtime.runtime,
       { sandbox_id: "sbx_running", workspace_volume_id: "vol_shared", data_volume_id: "vol_shared" },
-      "openwork-0.18.7",
+      "micx-0.18.7",
     )
 
     expect(result.status).toBe("healthy")
-    expect(result.imageVersion).toBe("openwork-0.18.7")
+    expect(result.imageVersion).toBe("micx-0.18.7")
     expect(runtime.createCalls).toBe(0)
     expect(runtime.checkpointChecks).toBe(0)
     expect(old.deleteCalls).toBe(0)
@@ -323,11 +323,11 @@ describe("Daytona Cloud version-aware recycle", () => {
       input,
       runtime.runtime,
       { sandbox_id: "sbx_no_checkpoint", workspace_volume_id: "vol_shared", data_volume_id: "vol_shared" },
-      "openwork-0.18.7",
+      "micx-0.18.7",
     )
 
     expect(result.status).toBe("healthy")
-    expect(result.imageVersion).toBe("openwork-0.18.7")
+    expect(result.imageVersion).toBe("micx-0.18.7")
     expect(runtime.createCalls).toBe(0)
     expect(runtime.checkpointChecks).toBe(1)
     expect(old.startCalls).toBe(1)
@@ -350,11 +350,11 @@ describe("Daytona Cloud version-aware recycle", () => {
       input,
       runtime.runtime,
       { sandbox_id: "sbx_old_safe", workspace_volume_id: "vol_shared", data_volume_id: "vol_shared" },
-      "openwork-0.18.7",
+      "micx-0.18.7",
     )
 
     expect(result.status).toBe("healthy")
-    expect(result.imageVersion).toBe("openwork-0.18.7")
+    expect(result.imageVersion).toBe("micx-0.18.7")
     expect(runtime.createCalls).toBe(1)
     expect(runtime.restoreMarkerChecks).toBe(1)
     expect(runtime.healthChecks).toBe(2)
@@ -377,11 +377,11 @@ describe("Daytona Cloud version-aware recycle", () => {
       input,
       runtime.runtime,
       { sandbox_id: "sbx_current", workspace_volume_id: "vol_shared", data_volume_id: "vol_shared" },
-      "openwork-0.18.8",
+      "micx-0.18.8",
     )
 
     expect(result.status).toBe("healthy")
-    expect(result.imageVersion).toBe("openwork-0.18.8")
+    expect(result.imageVersion).toBe("micx-0.18.8")
     expect(runtime.createCalls).toBe(0)
     expect(runtime.checkpointChecks).toBe(0)
     expect(old.startCalls).toBe(1)
@@ -407,7 +407,7 @@ describe("Daytona Cloud wake start convergence", () => {
       input,
       runtime.runtime,
       { sandbox_id: "sbx_conflict_start", workspace_volume_id: "vol_shared", data_volume_id: "vol_shared" },
-      "openwork-0.18.8",
+      "micx-0.18.8",
     )
 
     expect(result.status).toBe("healthy")
@@ -432,7 +432,7 @@ describe("Daytona Cloud wake start convergence", () => {
       input,
       runtime.runtime,
       { sandbox_id: "sbx_transient_start", workspace_volume_id: "vol_shared", data_volume_id: "vol_shared" },
-      "openwork-0.18.8",
+      "micx-0.18.8",
     )
 
     expect(result.status).toBe("healthy")
@@ -456,7 +456,7 @@ describe("Daytona Cloud wake start convergence", () => {
       input,
       runtime.runtime,
       { sandbox_id: "sbx_persistent_start_failure", workspace_volume_id: "vol_shared", data_volume_id: "vol_shared" },
-      "openwork-0.18.8",
+      "micx-0.18.8",
     )).rejects.toThrow("Request failed with status code 502")
 
     expect(sandbox.startCalls).toBe(3)
@@ -468,7 +468,7 @@ describe("Daytona Cloud wake start convergence", () => {
 describe("Daytona Cloud sandbox name lookup", () => {
   test("checks the current version-qualified sandbox name before the legacy base name", async () => {
     const input = provisionInput()
-    const currentName = daytona.daytonaSandboxNameForSnapshot(input, "openwork-0.18.8")
+    const currentName = daytona.daytonaSandboxNameForSnapshot(input, "micx-0.18.8")
     const legacyName = daytona.daytonaSandboxName(input)
     const current = makeSandbox({ id: "sbx_current_name", state: "stopped" })
     const legacy = makeSandbox({ id: "sbx_legacy_name", state: "stopped" })
@@ -489,7 +489,7 @@ describe("Daytona Cloud sandbox name lookup", () => {
 
   test("falls back to the legacy base name when no current version-qualified sandbox exists", async () => {
     const input = provisionInput()
-    const currentName = daytona.daytonaSandboxNameForSnapshot(input, "openwork-0.18.8")
+    const currentName = daytona.daytonaSandboxNameForSnapshot(input, "micx-0.18.8")
     const legacyName = daytona.daytonaSandboxName(input)
     const legacy = makeSandbox({ id: "sbx_legacy_fallback", state: "stopped" })
     const runtime = makeRuntime({

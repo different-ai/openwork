@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import type { AutomationExecutionThread } from "@openwork/types/automations"
+import type { AutomationExecutionThread } from "@micx/types/automations"
 import {
   automationExecutionThreadRoute,
   automationExecutionIdentity,
@@ -18,7 +18,7 @@ function desktopThread(engineKind: string): AutomationExecutionThread {
 
 describe("Automation execution thread UI", () => {
   test("uses Den's persisted thread identity for receipt navigation", () => {
-    expect(automationExecutionThreadRoute(desktopThread("openwork-desktop-runner-v1"))).toBe(
+    expect(automationExecutionThreadRoute(desktopThread("micx-desktop-runner-v1"))).toBe(
       "/automations?automation=aut_test&run=arun_test&thread=ath_test",
     )
   })

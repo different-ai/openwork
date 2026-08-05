@@ -1,5 +1,5 @@
 {
-  "name": "@openwork/paths",
+  "name": "@micx/paths",
   "private": true,
   "type": "module",
   "exports": {

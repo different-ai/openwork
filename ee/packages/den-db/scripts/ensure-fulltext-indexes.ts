@@ -7,7 +7,7 @@
  * absent (memory-bank-architecture.md §3, B2).
  *
  * Usage:
- *   DATABASE_URL=mysql://root:password@127.0.0.1:3306/openwork_den \
+ *   DATABASE_URL=mysql://root:password@127.0.0.1:3306/micx_den \
  *     node --import tsx scripts/ensure-fulltext-indexes.ts
  */
 import "../src/load-env.ts"

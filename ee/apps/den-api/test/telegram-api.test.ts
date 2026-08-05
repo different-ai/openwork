@@ -47,9 +47,9 @@ function fakeBotApi() {
           result: {
             id: 123456,
             is_bot: true,
-            first_name: "OpenWork",
+            first_name: "Micx",
             last_name: "Cloud",
-            username: "openwork_test_bot",
+            username: "micx_test_bot",
           },
         })
       }
@@ -92,14 +92,14 @@ describe("Telegram Bot API client", () => {
 
     await expect(validateTelegramBot(botToken, { apiRoot: fake.apiRoot })).resolves.toEqual({
       id: "123456",
-      username: "openwork_test_bot",
-      displayName: "OpenWork Cloud",
+      username: "micx_test_bot",
+      displayName: "Micx Cloud",
     })
     await registerTelegramWebhook({
       apiRoot: fake.apiRoot,
       botToken,
       secret: "webhook-secret",
-      url: "https://openwork.example/v1/webhooks/telegram/tgc_test",
+      url: "https://micx.example/v1/webhooks/telegram/tgc_test",
     })
     await expect(sendTelegramText({
       apiRoot: fake.apiRoot,
@@ -119,7 +119,7 @@ describe("Telegram Bot API client", () => {
     expect(fake.calls[1]?.body).toMatchObject({
       allowed_updates: ["message"],
       secret_token: "webhook-secret",
-      url: "https://openwork.example/v1/webhooks/telegram/tgc_test",
+      url: "https://micx.example/v1/webhooks/telegram/tgc_test",
     })
     expect(fake.calls[4]?.body).toMatchObject({ drop_pending_updates: true })
   })

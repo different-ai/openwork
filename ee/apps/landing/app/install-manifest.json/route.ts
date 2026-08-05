@@ -1,14 +1,14 @@
 // GET /install-manifest.json
 //
-// Resolves the latest OpenWork desktop release on GitHub and returns an install
-// manifest in the shape the `openwork-bootstrap install app` command expects:
+// Resolves the latest Micx desktop release on GitHub and returns an install
+// manifest in the shape the `micx-bootstrap install app` command expects:
 //
 //   { version, artifacts: { <platform>: { <arch>: { type, url, appName } } } }
 //
 // Platforms/arches are only included when a matching release asset exists, so
 // the manifest is always current without manual maintenance.
 
-const GITHUB_REPO = "different-ai/openwork";
+const GITHUB_REPO = "different-ai/micx";
 const RELEASES_API = `https://api.github.com/repos/${GITHUB_REPO}/releases?per_page=20`;
 
 type GithubAsset = { name: string; browser_download_url: string };
@@ -26,18 +26,18 @@ type ManifestArtifact = {
   appName?: string;
 };
 
-// Only treat OpenWork desktop-app installers as artifacts. Historical sidecar
+// Only treat Micx desktop-app installers as artifacts. Historical sidecar
 // and CLI release assets must NOT be treated as the desktop app, so we
-// positively require the desktop app's OS-tagged naming (openwork-mac /
-// openwork-linux / openwork-win + an installer extension).
+// positively require the desktop app's OS-tagged naming (micx-mac /
+// micx-linux / micx-win + an installer extension).
 const SIDECAR_HINTS = ["orchestrator", "server", "bun-", "sidecar", "opencode"];
 
 function isDesktopAppAsset(name: string): boolean {
   const lower = name.toLowerCase();
-  if (!lower.startsWith("openwork")) return false;
+  if (!lower.startsWith("micx")) return false;
   // exclude update metadata / checksums
   if (/\.(blockmap|yml|yaml|json|txt|sig|sha256)$/i.test(lower)) return false;
-  // exclude any sidecar/CLI binary that also happens to start with "openwork".
+  // exclude any sidecar/CLI binary that also happens to start with "micx".
   if (SIDECAR_HINTS.some((hint) => lower.includes(hint))) return false;
   // require a desktop OS tag so we never pick up a stray asset.
   return /(mac|darwin|osx|linux|win)/.test(lower);
@@ -113,7 +113,7 @@ function buildManifest(release: GithubRelease) {
         _pref: pref,
         type,
         url: asset.browser_download_url,
-        ...(type === "dmg" ? { appName: "OpenWork.app" } : {}),
+        ...(type === "dmg" ? { appName: "Micx.app" } : {}),
       };
     }
   }
@@ -141,7 +141,7 @@ export async function GET() {
     const response = await fetch(RELEASES_API, {
       headers: {
         accept: "application/vnd.github+json",
-        "user-agent": "openwork-install-manifest",
+        "user-agent": "micx-install-manifest",
       },
       next: { revalidate: 300 },
     });
@@ -154,7 +154,7 @@ export async function GET() {
 
     const releases = (await response.json()) as GithubRelease[];
     // Prefer the newest release (incl. prereleases/alpha) that ships an actual
-    // OpenWork desktop installer, not sidecar or CLI bundles.
+    // Micx desktop installer, not sidecar or CLI bundles.
     const release = releases
       .filter((r) => !r.draft)
       .find((r) =>

@@ -74,7 +74,7 @@ export function validateExternalMcpToolArguments(
     return {
       ok: false,
       error: "invalid_schema",
-      message: "The remote MCP tool advertised an input schema that OpenWork could not compile.",
+      message: "The remote MCP tool advertised an input schema that Micx could not compile.",
     }
   }
 }

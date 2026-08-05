@@ -5,7 +5,7 @@ import { describe, expect, spyOn, test } from "bun:test";
 
 import { startEmbeddedServer, type EmbeddedServerHandle, type EmbeddedServerOptions } from "./embedded.js";
 import * as managedOpencodeModule from "./managed-opencode.js";
-import { writeOpenworkRuntimeConfigFile } from "./openwork-runtime-config.js";
+import { writeMicxRuntimeConfigFile } from "./micx-runtime-config.js";
 import { writeRuntimeOpencodeConfig } from "./runtime-opencode-config-store.js";
 import * as serverModule from "./server.js";
 import type { ServerConfig } from "./types.js";
@@ -17,10 +17,10 @@ const PROVIDER_ID = "lifecycle_anthropic";
 const PROVIDER = { id: "anthropic", name: "Anthropic", env: ["ANTHROPIC_API_KEY"] };
 const ENV_NAMES: string[] = [
   "HOME",
-  "OPENWORK_DEV_MODE",
-  "OPENWORK_RUNTIME_DB",
-  "OPENWORK_OPENCODE_BASE_URL",
-  "OPENWORK_LIFECYCLE_LOG",
+  "MICX_DEV_MODE",
+  "MICX_RUNTIME_DB",
+  "MICX_OPENCODE_BASE_URL",
+  "MICX_LIFECYCLE_LOG",
   "OPENCODE_MODELS_URL",
 ];
 
@@ -47,7 +47,7 @@ async function writeFakeOpencodeBin(root: string): Promise<string> {
     "import { appendFileSync } from 'node:fs';",
     "const portIndex = process.argv.indexOf('--port');",
     "const requestedPort = Number(process.argv[portIndex + 1] ?? 0);",
-    "const logPath = process.env.OPENWORK_LIFECYCLE_LOG;",
+    "const logPath = process.env.MICX_LIFECYCLE_LOG;",
     "const append = (line) => { if (logPath) appendFileSync(logPath, `${line}\\n`); };",
     "const server = Bun.serve({",
     "  hostname: '127.0.0.1',",
@@ -66,7 +66,7 @@ async function writeUnreadyOpencodeBin(root: string): Promise<string> {
   await writeFile(binPath, [
     "#!/usr/bin/env bun",
     "import { appendFileSync } from 'node:fs';",
-    "const logPath = process.env.OPENWORK_LIFECYCLE_LOG;",
+    "const logPath = process.env.MICX_LIFECYCLE_LOG;",
     "process.on('SIGTERM', () => { if (logPath) appendFileSync(logPath, 'SIGTERM\\n'); process.exit(0); });",
     "if (logPath) appendFileSync(logPath, 'READY\\n');",
     "setInterval(() => undefined, 1000);",
@@ -76,18 +76,18 @@ async function writeUnreadyOpencodeBin(root: string): Promise<string> {
 }
 
 async function createFixture(): Promise<Fixture> {
-  const root = await mkdtemp(join(tmpdir(), "openwork-embedded-lifecycle-"));
+  const root = await mkdtemp(join(tmpdir(), "micx-embedded-lifecycle-"));
   const previousEnv = new Map(ENV_NAMES.map((name) => [name, process.env[name]]));
   const logPath = join(root, "managed-opencode.log");
   const opencodeBin = await writeFakeOpencodeBin(root);
   const handles: EmbeddedServerHandle[] = [];
 
   process.env.HOME = join(root, "home");
-  process.env.OPENWORK_DEV_MODE = "1";
-  process.env.OPENWORK_RUNTIME_DB = join(root, "runtime.sqlite");
-  process.env.OPENWORK_LIFECYCLE_LOG = logPath;
+  process.env.MICX_DEV_MODE = "1";
+  process.env.MICX_RUNTIME_DB = join(root, "runtime.sqlite");
+  process.env.MICX_LIFECYCLE_LOG = logPath;
   process.env.OPENCODE_MODELS_URL = "https://catalog.example.test/models";
-  delete process.env.OPENWORK_OPENCODE_BASE_URL;
+  delete process.env.MICX_OPENCODE_BASE_URL;
 
   return {
     root,
@@ -167,7 +167,7 @@ async function patchProviders(handle: EmbeddedServerHandle): Promise<Record<stri
     method: "PATCH",
     headers: {
       "content-type": "application/json",
-      "x-openwork-host-token": HOST_TOKEN,
+      "x-micx-host-token": HOST_TOKEN,
     },
     body: JSON.stringify({ provider: { [PROVIDER_ID]: PROVIDER } }),
   });
@@ -197,7 +197,7 @@ describe("embedded server lifecycle", () => {
         bin,
         cwd: fixture.root,
         timeoutMs: 500,
-        env: { OPENWORK_LIFECYCLE_LOG: fixture.logPath },
+        env: { MICX_LIFECYCLE_LOG: fixture.logPath },
       })).rejects.toThrow("Timeout waiting for OpenCode server");
       expect(await logLines(fixture.logPath)).toContain("READY");
       expect((await logLines(fixture.logPath)).filter((line) => line === "SIGTERM")).toHaveLength(1);
@@ -214,7 +214,7 @@ describe("embedded server lifecycle", () => {
       await serverA.stop();
 
       await mutateWorkspace(serverA.config, id, "stopped-server");
-      const barrier = await writeOpenworkRuntimeConfigFile(serverA.config, id);
+      const barrier = await writeMicxRuntimeConfigFile(serverA.config, id);
 
       // The explicit barrier is the first writer only when the stopped
       // server's subscription did not enqueue a write ahead of it.
@@ -234,11 +234,11 @@ describe("embedded server lifecycle", () => {
       const serverBWorkspace = workspaceId(serverB.config);
 
       await mutateWorkspace(serverA.config, serverAWorkspace, "stale-server");
-      const afterStoppedServerMutation = await writeOpenworkRuntimeConfigFile(serverB.config, serverBWorkspace);
+      const afterStoppedServerMutation = await writeMicxRuntimeConfigFile(serverB.config, serverBWorkspace);
       expect(afterStoppedServerMutation.changed).toBe(false);
 
       await mutateWorkspace(serverB.config, serverBWorkspace, "active-server");
-      const afterActiveServerMutation = await writeOpenworkRuntimeConfigFile(serverB.config, serverBWorkspace);
+      const afterActiveServerMutation = await writeMicxRuntimeConfigFile(serverB.config, serverBWorkspace);
       expect(afterActiveServerMutation.changed).toBe(false);
     } finally {
       await fixture.restore();
@@ -324,7 +324,7 @@ describe("embedded server lifecycle", () => {
       const config = failedConfig;
       const id = workspaceId(config);
       await mutateWorkspace(config, id, "after-startup-failure");
-      const barrier = await writeOpenworkRuntimeConfigFile(config, id);
+      const barrier = await writeMicxRuntimeConfigFile(config, id);
 
       expect(barrier.changed).toBe(true);
       expect(clearTrustedSpy).toHaveBeenCalledTimes(1);
@@ -385,7 +385,7 @@ describe("embedded server lifecycle", () => {
       expect(observed.errors).toEqual([managedError, httpError]);
 
       await mutateWorkspace(handle.config, id, "after-shutdown-failure");
-      const barrier = await writeOpenworkRuntimeConfigFile(handle.config, id);
+      const barrier = await writeMicxRuntimeConfigFile(handle.config, id);
       expect(barrier.changed).toBe(true);
       expect(managedCloseCalls).toBe(1);
       expect(httpStopCalls).toBe(1);

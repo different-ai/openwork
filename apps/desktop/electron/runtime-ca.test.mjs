@@ -18,7 +18,7 @@ const CERT_TWO = "-----BEGIN CERTIFICATE-----\ntwo\n-----END CERTIFICATE-----";
 const CERT_THREE = "-----BEGIN CERTIFICATE-----\nthree\n-----END CERTIFICATE-----";
 
 function windowsPowerShellCertBlock(base64) {
-  return `-----OPENWORK-CERTIFICATE-----\n${base64}\n-----END-OPENWORK-CERTIFICATE-----`;
+  return `-----MICX-CERTIFICATE-----\n${base64}\n-----END-MICX-CERTIFICATE-----`;
 }
 
 function pemForBase64(base64) {
@@ -30,7 +30,7 @@ function pemForBase64(base64) {
 }
 
 test("writes system CA bundle when certificates are available", async () => {
-  const userDataDir = await mkdtemp(path.join(tmpdir(), "openwork-runtime-ca-"));
+  const userDataDir = await mkdtemp(path.join(tmpdir(), "micx-runtime-ca-"));
   const bundlePath = path.join(userDataDir, "system-ca-bundle.pem");
 
   const env = await resolveSystemCaEnv({
@@ -51,7 +51,7 @@ test("writes system CA bundle when certificates are available", async () => {
 });
 
 test("sets NODE_EXTRA_CA_CERTS for a child env merge", async () => {
-  const userDataDir = await mkdtemp(path.join(tmpdir(), "openwork-runtime-ca-"));
+  const userDataDir = await mkdtemp(path.join(tmpdir(), "micx-runtime-ca-"));
   const caEnv = await resolveSystemCaEnv({
     tlsModule: { getCACertificates: () => [CERT_ONE] },
     userDataDir,
@@ -79,7 +79,7 @@ test("keeps NODE_EXTRA_CA_CERTS from user env file over generated bundle", () =>
 });
 
 test("respects user-set NODE_EXTRA_CA_CERTS", async () => {
-  const userDataDir = await mkdtemp(path.join(tmpdir(), "openwork-runtime-ca-"));
+  const userDataDir = await mkdtemp(path.join(tmpdir(), "micx-runtime-ca-"));
   let called = false;
   let logged = false;
 
@@ -107,7 +107,7 @@ test("respects user-set NODE_EXTRA_CA_CERTS", async () => {
 });
 
 test("no-ops when tls.getCACertificates is unavailable", async () => {
-  const userDataDir = await mkdtemp(path.join(tmpdir(), "openwork-runtime-ca-"));
+  const userDataDir = await mkdtemp(path.join(tmpdir(), "micx-runtime-ca-"));
 
   const env = await resolveSystemCaEnv({
     tlsModule: {},
@@ -122,7 +122,7 @@ test("no-ops when tls.getCACertificates is unavailable", async () => {
 });
 
 test("incident case: macOS runtime returns no certs but platform keychains produce a bundle", async () => {
-  const userDataDir = await mkdtemp(path.join(tmpdir(), "openwork-runtime-ca-"));
+  const userDataDir = await mkdtemp(path.join(tmpdir(), "micx-runtime-ca-"));
   const bundlePath = path.join(userDataDir, "system-ca-bundle.pem");
   const logs = [];
   const setDefaultCalls = [];
@@ -154,7 +154,7 @@ test("incident case: macOS runtime returns no certs but platform keychains produ
 });
 
 test("dedupes certificates across runtime and platform sources", async () => {
-  const userDataDir = await mkdtemp(path.join(tmpdir(), "openwork-runtime-ca-"));
+  const userDataDir = await mkdtemp(path.join(tmpdir(), "micx-runtime-ca-"));
   const bundlePath = path.join(userDataDir, "system-ca-bundle.pem");
 
   const env = await resolveSystemCaEnv({
@@ -171,7 +171,7 @@ test("dedupes certificates across runtime and platform sources", async () => {
 });
 
 test("does not set main-process defaults when no additions are available", async () => {
-  const userDataDir = await mkdtemp(path.join(tmpdir(), "openwork-runtime-ca-"));
+  const userDataDir = await mkdtemp(path.join(tmpdir(), "micx-runtime-ca-"));
   let setDefaultCalled = false;
 
   const env = await resolveSystemCaEnv({
@@ -192,7 +192,7 @@ test("does not set main-process defaults when no additions are available", async
 });
 
 test("main-process default extension is optional", async () => {
-  const userDataDir = await mkdtemp(path.join(tmpdir(), "openwork-runtime-ca-"));
+  const userDataDir = await mkdtemp(path.join(tmpdir(), "micx-runtime-ca-"));
   const bundlePath = path.join(userDataDir, "system-ca-bundle.pem");
 
   const env = await resolveSystemCaEnv({

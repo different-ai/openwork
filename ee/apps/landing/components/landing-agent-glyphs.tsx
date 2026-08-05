@@ -8,7 +8,7 @@
  * licensed under the Apache License, Version 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
  *
- * MODIFIED by OpenWork from the original Flue source:
+ * MODIFIED by Micx from the original Flue source:
  *  - converted Astro markup to a React component
  *  - kept the four glyph SVGs and hover animations
  */

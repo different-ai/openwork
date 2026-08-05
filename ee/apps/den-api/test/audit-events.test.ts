@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test"
-import { createDenTypeId } from "@openwork-ee/utils/typeid"
+import { createDenTypeId } from "@micx-ee/utils/typeid"
 import {
   buildOrganizationAuditAlertLogLine,
   buildOrganizationAuditEvent,
@@ -141,14 +141,14 @@ test("organization audit events support SCIM management actions", () => {
     action: ORGANIZATION_AUDIT_ACTIONS.scimTokenRotated,
     payload: {
       scimProviderId,
-      providerId: "openwork-scim-org_id",
+      providerId: "micx-scim-org_id",
     },
   })
 
   expect(event.action).toBe("organization.scim.token_rotated")
   expect(event.payload).toEqual({
     scimProviderId,
-    providerId: "openwork-scim-org_id",
+    providerId: "micx-scim-org_id",
   })
 
   const reconciliationEvent = buildOrganizationAuditEvent({
@@ -179,7 +179,7 @@ test("organization audit events support SSO management actions", () => {
     action: ORGANIZATION_AUDIT_ACTIONS.ssoConnectionRegistered,
     payload: {
       ssoConnectionId,
-      providerId: "openwork-sso-org_id",
+      providerId: "micx-sso-org_id",
       kind: "saml",
       issuer: "https://idp.example.com",
       domain: "example.com",
@@ -189,7 +189,7 @@ test("organization audit events support SSO management actions", () => {
   expect(event.action).toBe("organization.sso.connection_registered")
   expect(event.payload).toEqual({
     ssoConnectionId,
-    providerId: "openwork-sso-org_id",
+    providerId: "micx-sso-org_id",
     kind: "saml",
     issuer: "https://idp.example.com",
     domain: "example.com",
@@ -213,7 +213,7 @@ test("organization audit alert log line is structured and secret-free", () => {
     action: ORGANIZATION_AUDIT_ACTIONS.ssoConnectionDeleted,
     payload: {
       ssoConnectionId: createDenTypeId("ssoConnection"),
-      providerId: "openwork-sso-org_id",
+      providerId: "micx-sso-org_id",
       domain: "example.com",
     },
   })

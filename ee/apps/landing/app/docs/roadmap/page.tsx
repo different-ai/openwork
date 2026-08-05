@@ -3,18 +3,18 @@ import { getGithubData } from "../../../lib/github";
 import { baseOpenGraph } from "../../../lib/seo";
 
 export const metadata = {
-  title: "OpenWork Roadmap",
+  title: "Micx Roadmap",
   description:
-    "What OpenWork supports today and what is coming next across desktop, hosted workspaces, external agents, and new surfaces.",
+    "What Micx supports today and what is coming next across desktop, hosted workspaces, external agents, and new surfaces.",
   alternates: {
     canonical: "/roadmap"
   },
   openGraph: {
     ...baseOpenGraph,
-    title: "OpenWork Roadmap | Your workspace, on every surface",
+    title: "Micx Roadmap | Your workspace, on every surface",
     description:
-      "The roadmap for the OpenWork desktop app, portable agent capabilities, hosted workspaces, and every surface where work happens.",
-    url: "https://openworklabs.com/roadmap"
+      "The roadmap for the Micx desktop app, portable agent capabilities, hosted workspaces, and every surface where work happens.",
+    url: "https://micxlabs.com/roadmap"
   }
 };
 

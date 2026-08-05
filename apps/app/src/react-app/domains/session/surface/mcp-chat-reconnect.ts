@@ -47,17 +47,17 @@ export async function waitForFreshMcpAuthorization(input: {
 
   while (now() - startedAt < timeoutMs) {
     if (!input.isScopeCurrent()) {
-      throw new Error("The active OpenWork Cloud account changed while reconnecting. Try again in this workspace.")
+      throw new Error("The active Micx Cloud account changed while reconnecting. Try again in this workspace.")
     }
     try {
       const connections = await input.listConnections()
       if (!input.isScopeCurrent()) {
-        throw new Error("The active OpenWork Cloud account changed while reconnecting. Try again in this workspace.")
+        throw new Error("The active Micx Cloud account changed while reconnecting. Try again in this workspace.")
       }
       const connection = connections.find((entry) => entry.id === input.connectionId)
       if (connection && hasFreshMcpAuthorization(connection, input.previousConnectedAt)) return connection
     } catch (error) {
-      if (error instanceof Error && error.message.startsWith("The active OpenWork Cloud account changed")) throw error
+      if (error instanceof Error && error.message.startsWith("The active Micx Cloud account changed")) throw error
       // A transient list failure should not turn a successful browser callback
       // into a false failure. Keep polling until the bounded timeout.
     }

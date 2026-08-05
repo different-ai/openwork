@@ -1,19 +1,19 @@
 import { dirname, join } from "node:path";
 import { appendFile, readFile } from "node:fs/promises";
-import { openworkServerDataDir } from "@openwork/paths";
+import { micxServerDataDir } from "@micx/paths";
 import type { AuditEntry } from "./types.js";
 import { ensureDir, exists } from "./utils.js";
 
-function resolveOpenworkDataDir(): string {
-  return openworkServerDataDir();
+function resolveMicxDataDir(): string {
+  return micxServerDataDir();
 }
 
 export function auditLogPath(workspaceId: string): string {
-  return join(resolveOpenworkDataDir(), "audit", `${workspaceId}.jsonl`);
+  return join(resolveMicxDataDir(), "audit", `${workspaceId}.jsonl`);
 }
 
 export function legacyAuditLogPath(workspaceRoot: string): string {
-  return join(workspaceRoot, ".opencode", "openwork", "audit.jsonl");
+  return join(workspaceRoot, ".opencode", "micx", "audit.jsonl");
 }
 
 async function resolveReadableAuditPath(workspaceRoot: string, workspaceId: string): Promise<string | null> {

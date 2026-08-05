@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto"
-import { OrganizationBrandAssetTable } from "@openwork-ee/den-db/schema"
-import { eq } from "@openwork-ee/den-db/drizzle"
+import { OrganizationBrandAssetTable } from "@micx-ee/den-db/schema"
+import { eq } from "@micx-ee/den-db/drizzle"
 import type { BrandAssetStorage, BrandAssetStorageKey } from "./brand-assets.js"
 import { db } from "./db.js"
 

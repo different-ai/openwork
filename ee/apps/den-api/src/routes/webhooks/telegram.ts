@@ -1,7 +1,7 @@
 import type { Env, Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
-import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
+import { normalizeDenTypeId } from "@micx-ee/utils/typeid"
 import {
   isRetryableTelegramApiError,
   sendTelegramText,
@@ -162,8 +162,8 @@ async function sendPairingResult(input: {
         dispatchToken: input.dispatchToken,
         generation: input.generation,
         text: pairing.paired
-          ? "Connected. Messages in this private chat will now go to your selected OpenWork worker."
-          : "This pairing link is invalid, expired, or already used. Create a new link in OpenWork Connect.",
+          ? "Connected. Messages in this private chat will now go to your selected Micx worker."
+          : "This pairing link is invalid, expired, or already used. Create a new link in Micx Connect.",
       })
     },
   })
@@ -223,7 +223,7 @@ async function processTelegramUpdate(input: {
       connectionId: input.connection.id,
       dispatchToken: input.dispatchToken,
       generation: input.generation,
-      text: "Open OpenWork Connect and create a pairing link for this bot, then use that link here.",
+      text: "Open Micx Connect and create a pairing link for this bot, then use that link here.",
     })
     await updateStatus("completed")
     return
@@ -236,7 +236,7 @@ async function processTelegramUpdate(input: {
       connectionId: input.connection.id,
       dispatchToken: input.dispatchToken,
       generation: input.generation,
-      text: "This private chat is not paired with OpenWork. Create a new pairing link in OpenWork Connect.",
+      text: "This private chat is not paired with Micx. Create a new pairing link in Micx Connect.",
     })
     await updateStatus("ignored")
     return
@@ -301,8 +301,8 @@ async function processTelegramUpdate(input: {
     if (error instanceof RetryableTelegramUpdateError) throw error
     if (isRetryableTelegramWorkerError(error)) throw new RetryableTelegramUpdateError(error)
     const notice = error instanceof TelegramWorkerTimeoutError
-      ? "The worker is still waiting. Check OpenWork for a permission or question, then try again."
-      : "I couldn't reach the selected OpenWork worker. Check its status in OpenWork and try again."
+      ? "The worker is still waiting. Check Micx for a permission or question, then try again."
+      : "I couldn't reach the selected Micx worker. Check its status in Micx and try again."
     try {
       await sendForCurrentConnection({
         chatId,

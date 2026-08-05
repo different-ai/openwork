@@ -18,8 +18,8 @@ import {
 import { DenInput } from "../../_components/ui/input";
 import { DashboardPageTemplate } from "../../_components/ui/dashboard-page-template";
 import {
-  buildOpenworkAppConnectUrl,
-  buildOpenworkDeepLink,
+  buildMicxAppConnectUrl,
+  buildMicxDeepLink,
   getErrorMessage,
   getWorkerStatusMeta,
   getWorkerTokens,
@@ -29,11 +29,11 @@ import {
 import { useDenFlow } from "../../_providers/den-flow-provider";
 
 type ConnectionDetails = {
-  openworkUrl: string | null;
+  micxUrl: string | null;
   ownerToken: string | null;
   clientToken: string | null;
-  openworkAppConnectUrl: string | null;
-  openworkDeepLink: string | null;
+  micxAppConnectUrl: string | null;
+  micxDeepLink: string | null;
 };
 
 function getStatusBadgeClass(bucket: ReturnType<typeof getWorkerStatusMeta>["bucket"]) {
@@ -108,11 +108,11 @@ function SandboxCard({
   const [copiedField, setCopiedField] = useState<string | null>(null);
   const meta = getWorkerStatusMeta(sandbox.status);
   const canConnect = meta.bucket === "ready";
-  const connectionUrl = details?.openworkUrl ?? sandbox.instanceUrl ?? null;
+  const connectionUrl = details?.micxUrl ?? sandbox.instanceUrl ?? null;
   const ownerToken = details?.ownerToken ?? null;
   const clientToken = details?.clientToken ?? null;
-  const openWebUrl = details?.openworkAppConnectUrl ?? null;
-  const openDesktopUrl = details?.openworkDeepLink ?? null;
+  const openWebUrl = details?.micxAppConnectUrl ?? null;
+  const openDesktopUrl = details?.micxDeepLink ?? null;
 
   async function handleCopy(field: string, text: string) {
     await navigator.clipboard.writeText(text);
@@ -329,19 +329,19 @@ export function BackgroundAgentsScreen() {
       }
 
       const nextDetails: ConnectionDetails = {
-        openworkUrl: tokens.openworkUrl,
+        micxUrl: tokens.micxUrl,
         ownerToken: tokens.ownerToken,
         clientToken: tokens.clientToken,
-        openworkAppConnectUrl: buildOpenworkAppConnectUrl(
-          runtimeConfig.openworkAppConnectUrl,
-          tokens.openworkUrl,
+        micxAppConnectUrl: buildMicxAppConnectUrl(
+          runtimeConfig.micxAppConnectUrl,
+          tokens.micxUrl,
           tokens.clientToken,
           workerId,
           workerName,
           { autoConnect: true },
         ),
-        openworkDeepLink: buildOpenworkDeepLink(
-          tokens.openworkUrl,
+        micxDeepLink: buildMicxDeepLink(
+          tokens.micxUrl,
           tokens.clientToken,
           workerId,
           workerName,

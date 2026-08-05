@@ -1,4 +1,4 @@
-import { and, eq, inArray } from "@openwork-ee/den-db/drizzle"
+import { and, eq, inArray } from "@micx-ee/den-db/drizzle"
 import {
   AuthUserTable,
   ConfigObjectAccessGrantTable,
@@ -16,8 +16,8 @@ import {
   PluginTable,
   TeamMemberTable,
   TeamTable,
-} from "@openwork-ee/den-db/schema"
-import { createDenTypeId } from "@openwork-ee/utils/typeid"
+} from "@micx-ee/den-db/schema"
+import { createDenTypeId } from "@micx-ee/utils/typeid"
 import { auth } from "../src/auth.js"
 import { db } from "../src/db.js"
 import { ensureDefaultDesktopPolicyForOrganization } from "../src/desktop-policies.js"
@@ -70,7 +70,7 @@ const DEMO_ORG_NAME = process.env.DEN_DEMO_ORG_NAME?.trim() || "Acme Robotics"
 const DEMO_ORG_SLUG = process.env.DEN_DEMO_ORG_SLUG?.trim() || "acme-robotics-demo"
 const DEMO_EMAIL_DOMAIN = process.env.DEN_DEMO_EMAIL_DOMAIN?.trim() || "acme.test"
 const DEMO_OWNER_EMAIL = process.env.DEN_DEMO_OWNER_EMAIL?.trim() || `alex@${DEMO_EMAIL_DOMAIN}`
-const DEMO_OWNER_PASSWORD = process.env.DEN_DEMO_OWNER_PASSWORD?.trim() || "OpenWorkDemo123!"
+const DEMO_OWNER_PASSWORD = process.env.DEN_DEMO_OWNER_PASSWORD?.trim() || "MicxDemo123!"
 const SHOULD_FETCH_GITHUB = (process.env.DEN_DEMO_SEED_FETCH_GITHUB ?? "1").trim() !== "0"
 const GITHUB_TOKEN = process.env.GITHUB_TOKEN?.trim()
 const GITHUB_REPO = "anthropics/knowledge-work-plugins"
@@ -183,7 +183,7 @@ const demoPlugins: DemoPlugin[] = [
 
 function assertSafeDevTarget() {
   if (!env.devMode) {
-    throw new Error("Refusing to seed demo data unless OPENWORK_DEV_MODE=1.")
+    throw new Error("Refusing to seed demo data unless MICX_DEV_MODE=1.")
   }
   if (env.dbMode !== "mysql") {
     throw new Error(`Refusing to seed demo data into DB_MODE=${env.dbMode}; use local MySQL dev mode.`)
@@ -201,7 +201,7 @@ function assertSafeDevTarget() {
 function githubHeaders() {
   return {
     Accept: "application/vnd.github+json",
-    "User-Agent": "openwork-den-demo-seed",
+    "User-Agent": "micx-den-demo-seed",
     ...(GITHUB_TOKEN ? { Authorization: `Bearer ${GITHUB_TOKEN}` } : {}),
   }
 }

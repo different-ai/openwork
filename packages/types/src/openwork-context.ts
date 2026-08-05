@@ -1,21 +1,21 @@
 import { z } from "zod"
 
 import {
-  openworkAffordanceDescriptorSchema,
-  openworkProviderRefSchema,
-} from "./openwork-affordance.js"
-import { openworkFeatureContributionSchema } from "./openwork-provider.js"
+  micxAffordanceDescriptorSchema,
+  micxProviderRefSchema,
+} from "./micx-affordance.js"
+import { micxFeatureContributionSchema } from "./micx-provider.js"
 
-export const OPENWORK_CONTEXT_SCHEMA_VERSION = 1
+export const MICX_CONTEXT_SCHEMA_VERSION = 1
 
-export const openworkSessionRefSchema = z.object({
+export const micxSessionRefSchema = z.object({
   workspaceId: z.string().trim().min(1),
   sessionId: z.string().trim().min(1),
   title: z.string().optional(),
 })
-export type OpenworkSessionRef = z.infer<typeof openworkSessionRefSchema>
+export type MicxSessionRef = z.infer<typeof micxSessionRefSchema>
 
-export const openworkScreenSchema = z.discriminatedUnion("kind", [
+export const micxScreenSchema = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("conversation"),
     route: z.string(),
@@ -33,9 +33,9 @@ export const openworkScreenSchema = z.discriminatedUnion("kind", [
     route: z.string(),
   }),
 ])
-export type OpenworkScreen = z.infer<typeof openworkScreenSchema>
+export type MicxScreen = z.infer<typeof micxScreenSchema>
 
-export const openworkConversationLayoutSchema = z.discriminatedUnion("kind", [
+export const micxConversationLayoutSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("empty") }),
   z.object({
     kind: z.literal("single"),
@@ -48,34 +48,34 @@ export const openworkConversationLayoutSchema = z.discriminatedUnion("kind", [
     focused: z.enum(["primary", "secondary"]),
   }),
 ])
-export type OpenworkConversationLayout = z.infer<typeof openworkConversationLayoutSchema>
+export type MicxConversationLayout = z.infer<typeof micxConversationLayoutSchema>
 
-export const openworkPanelTabSchema = z.object({
+export const micxPanelTabSchema = z.object({
   id: z.string(),
   kind: z.enum(["browser", "artifact"]),
   label: z.string(),
   url: z.string().optional(),
   status: z.enum(["loading", "ready"]).optional(),
 })
-export type OpenworkPanelTab = z.infer<typeof openworkPanelTabSchema>
+export type MicxPanelTab = z.infer<typeof micxPanelTabSchema>
 
-export const openworkResourceDescriptorSchema = z.object({
+export const micxResourceDescriptorSchema = z.object({
   ref: z.string().trim().min(1),
   kind: z.enum(["workspace", "session", "screen", "side-panel", "settings"]),
   title: z.string(),
-  provider: openworkProviderRefSchema,
+  provider: micxProviderRefSchema,
   state: z.record(z.string(), z.unknown()),
 })
-export type OpenworkResourceDescriptor = z.infer<typeof openworkResourceDescriptorSchema>
+export type MicxResourceDescriptor = z.infer<typeof micxResourceDescriptorSchema>
 
-export const openworkContextSnapshotSchema = z.object({
-  schemaVersion: z.literal(OPENWORK_CONTEXT_SCHEMA_VERSION),
+export const micxContextSnapshotSchema = z.object({
+  schemaVersion: z.literal(MICX_CONTEXT_SCHEMA_VERSION),
   revision: z.number().int().nonnegative(),
   capturedAt: z.string(),
-  screen: openworkScreenSchema,
+  screen: micxScreenSchema,
   conversations: z.object({
-    tabs: z.array(openworkSessionRefSchema),
-    layout: openworkConversationLayoutSchema,
+    tabs: z.array(micxSessionRefSchema),
+    layout: micxConversationLayoutSchema,
   }),
   chrome: z.object({
     sidebarOpen: z.boolean(),
@@ -92,11 +92,11 @@ export const openworkContextSnapshotSchema = z.object({
     open: z.boolean(),
     ownerSessionId: z.string().nullable(),
     kind: z.enum(["panel", "extensions", "voice"]).nullable(),
-    tabs: z.array(openworkPanelTabSchema),
+    tabs: z.array(micxPanelTabSchema),
     activeTabId: z.string().nullable(),
   }),
-  resources: z.array(openworkResourceDescriptorSchema),
-  availableAffordances: z.array(openworkAffordanceDescriptorSchema),
-  contributions: z.array(openworkFeatureContributionSchema),
+  resources: z.array(micxResourceDescriptorSchema),
+  availableAffordances: z.array(micxAffordanceDescriptorSchema),
+  contributions: z.array(micxFeatureContributionSchema),
 })
-export type OpenworkContextSnapshot = z.infer<typeof openworkContextSnapshotSchema>
+export type MicxContextSnapshot = z.infer<typeof micxContextSnapshotSchema>

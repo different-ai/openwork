@@ -36,7 +36,7 @@ export type PluginImportDraft = {
   selectedSkillKeys: string[];
 };
 
-const STORAGE_KEY = "openwork.plugin-import-draft.v1";
+const STORAGE_KEY = "micx.plugin-import-draft.v1";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;

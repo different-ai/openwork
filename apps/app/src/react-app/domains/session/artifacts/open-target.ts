@@ -38,7 +38,7 @@ const SIDEBAR_ARTIFACT_FILE_PREVIEWS = new Set<OpenTargetPreview>(["markdown", "
 const MARKDOWN_LINK_PATTERN = /\[([^\]\n]+)\]\(([^)\s]+)\)/g;
 const ASSISTANT_ARTIFACT_MENTION_PATTERN = /\b(?:artifact|created|deck|deliverable|exported|file|generated|opened|presentation|saved|slides?|updated|wrote)\b/i;
 const DISCOVERY_TOOL_NAMES = new Set(["glob", "grep", "search", "find"]);
-const ARTIFACT_METADATA_TOOL_NAMES = new Set(["openwork_extension_call"]);
+const ARTIFACT_METADATA_TOOL_NAMES = new Set(["micx_extension_call"]);
 const WRITE_TOOL_NAMES = new Set([
   "apply_patch",
   "edit",

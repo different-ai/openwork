@@ -4,24 +4,24 @@ import { useEffect } from "react";
 import {
   engineInfo,
   engineStart,
-  openworkServerInfo,
-  openworkServerRestart,
+  micxServerInfo,
+  micxServerRestart,
   resolveWorkspaceListSelectedId,
   runtimeBootstrap,
   workspaceBootstrap,
   workspaceSetRuntimeActive,
   workspaceSetSelected,
   type EngineInfo,
-  type OpenworkServerInfo,
+  type MicxServerInfo,
   type WorkspaceInfo,
   type WorkspaceList,
 } from "../../app/lib/desktop";
 import { ingestMigrationSnapshotOnElectronBoot } from "../../app/lib/migration";
 import {
-  hydrateOpenworkServerSettingsFromEnv,
-  readOpenworkServerSettings,
-  writeOpenworkServerSettings,
-} from "../../app/lib/openwork-server";
+  hydrateMicxServerSettingsFromEnv,
+  readMicxServerSettings,
+  writeMicxServerSettings,
+} from "../../app/lib/micx-server";
 import { isDesktopRuntime, isElectronRuntime, safeStringify } from "../../app/utils";
 import { useServer } from "../kernel/server-provider";
 import { useBootState } from "./boot-state";
@@ -31,7 +31,7 @@ import { useBootState } from "./boot-state";
 // keeps running across the transient unmount.
 let BOOT_STARTED = false;
 
-type BootOpenworkServerInfo = {
+type BootMicxServerInfo = {
   running?: boolean | null;
   baseUrl?: string | null;
   ownerToken?: string | null;
@@ -41,11 +41,11 @@ type BootOpenworkServerInfo = {
   remoteAccessEnabled?: boolean;
 };
 
-function isOpenworkServerInfoLike(info: unknown): info is BootOpenworkServerInfo {
+function isMicxServerInfoLike(info: unknown): info is BootMicxServerInfo {
   return typeof info === "object" && info !== null;
 }
 
-function isOpenworkServerReady(info?: BootOpenworkServerInfo) {
+function isMicxServerReady(info?: BootMicxServerInfo) {
   return Boolean(
     info?.running === true &&
       info.baseUrl?.trim() &&
@@ -56,12 +56,12 @@ function isOpenworkServerReady(info?: BootOpenworkServerInfo) {
 /**
  * On desktop (Tauri) startup:
  *   1) bootstrap the workspace list
- *   2) if a local workspace is selected, restart the embedded OpenWork server
+ *   2) if a local workspace is selected, restart the embedded Micx server
  *   3) start the OpenCode engine pointed at the workspace
- *   4) activate the workspace on the running OpenWork server
+ *   4) activate the workspace on the running Micx server
  *   5) notify React routes that fresh desktop runtime info is available. Electron
  *      routes read live runtime info directly instead of persisting ephemeral
- *      localhost ports/tokens into OpenWork settings.
+ *      localhost ports/tokens into Micx settings.
  *
  * Safe to call multiple times — gated by a `didBoot` ref so it runs once per mount.
  */
@@ -92,12 +92,12 @@ export function useDesktopRuntimeBoot() {
             console.info(`[migration] hydrated ${hydrated} localStorage keys from Tauri snapshot`);
           }
         }
-        hydrateOpenworkServerSettingsFromEnv();
-        const preferredRemoteAccess = readOpenworkServerSettings().remoteAccessEnabled === true;
+        hydrateMicxServerSettingsFromEnv();
+        const preferredRemoteAccess = readMicxServerSettings().remoteAccessEnabled === true;
 
-        const publishOpenworkServerInfo = (serverInfo: BootOpenworkServerInfo | null | undefined) => {
+        const publishMicxServerInfo = (serverInfo: BootMicxServerInfo | null | undefined) => {
           if (!serverInfo?.baseUrl) return;
-          writeOpenworkServerSettings({
+          writeMicxServerSettings({
             urlOverride: serverInfo.baseUrl,
             token:
               serverInfo.ownerToken?.trim() ||
@@ -108,23 +108,23 @@ export function useDesktopRuntimeBoot() {
             remoteAccessEnabled: serverInfo.remoteAccessEnabled === true,
           });
           try {
-            window.dispatchEvent(new CustomEvent("openwork-server-settings-changed"));
+            window.dispatchEvent(new CustomEvent("micx-server-settings-changed"));
           } catch {
             /* ignore */
           }
         };
 
         const startServerWithoutDesktopWorkspace = async () => {
-          setPhase("starting-engine", "Starting OpenWork server");
-          const serverInfo = await openworkServerRestart({ remoteAccessEnabled: preferredRemoteAccess }).catch((error) => {
-            console.warn("[desktop-boot] openworkServerRestart failed:", error);
+          setPhase("starting-engine", "Starting Micx server");
+          const serverInfo = await micxServerRestart({ remoteAccessEnabled: preferredRemoteAccess }).catch((error) => {
+            console.warn("[desktop-boot] micxServerRestart failed:", error);
             return null;
           });
-          if (!isOpenworkServerInfoLike(serverInfo) || !isOpenworkServerReady(serverInfo)) {
-            setError("OpenWork server did not finish starting. Please restart OpenWork.");
+          if (!isMicxServerInfoLike(serverInfo) || !isMicxServerReady(serverInfo)) {
+            setError("Micx server did not finish starting. Please restart Micx.");
             return;
           }
-          publishOpenworkServerInfo(serverInfo);
+          publishMicxServerInfo(serverInfo);
           markReady();
         };
 
@@ -160,47 +160,47 @@ export function useDesktopRuntimeBoot() {
             skipped?: boolean;
             error?: string;
             engine?: { baseUrl?: string | null };
-            openworkServer?: BootOpenworkServerInfo;
+            micxServer?: BootMicxServerInfo;
           };
 
           if (boot.ok === false) {
-            setError(boot.error || "Failed to start OpenWork runtime");
+            setError(boot.error || "Failed to start Micx runtime");
             return;
           }
 
-          if (!boot.skipped && !isOpenworkServerReady(boot.openworkServer)) {
-            setError("OpenWork server did not finish starting. Please restart OpenWork.");
+          if (!boot.skipped && !isMicxServerReady(boot.micxServer)) {
+            setError("Micx server did not finish starting. Please restart Micx.");
             return;
           }
 
           if (boot.engine?.baseUrl) {
             setActive(boot.engine.baseUrl);
           }
-          let serverInfo = boot.openworkServer;
+          let serverInfo = boot.micxServer;
           if (preferredRemoteAccess && serverInfo?.remoteAccessEnabled !== true) {
-            const restarted = await openworkServerRestart({ remoteAccessEnabled: true }).catch((error) => {
-              console.warn("[desktop-boot] openworkServerRestart failed:", error);
+            const restarted = await micxServerRestart({ remoteAccessEnabled: true }).catch((error) => {
+              console.warn("[desktop-boot] micxServerRestart failed:", error);
               return null;
             });
-            if (isOpenworkServerInfoLike(restarted)) serverInfo = restarted;
+            if (isMicxServerInfoLike(restarted)) serverInfo = restarted;
           }
-          publishOpenworkServerInfo(serverInfo);
+          publishMicxServerInfo(serverInfo);
           markReady();
           return;
         }
 
         // FAST PATH ─────────────────────────────────────────────────────
         // Cheap status probe: if engine is already running just publish the
-        // current openwork-server base URL + token and finish in <1s.
+        // current micx-server base URL + token and finish in <1s.
         // This mirrors Solid's bootstrap at context/workspace.ts:3883-3907
         // ("localAttachExisting"), which never restarts a running stack.
         try {
           const engine = await engineInfo() as EngineInfo | null;
           if (engine?.running && engine.baseUrl) {
             setActive(engine.baseUrl);
-            const fresh = await openworkServerInfo().catch(() => null) as OpenworkServerInfo | null;
+            const fresh = await micxServerInfo().catch(() => null) as MicxServerInfo | null;
             if (fresh?.baseUrl) {
-              writeOpenworkServerSettings({
+              writeMicxServerSettings({
                 urlOverride: fresh.baseUrl,
                 token:
                   fresh.ownerToken?.trim() ||
@@ -212,7 +212,7 @@ export function useDesktopRuntimeBoot() {
               });
               try {
                 window.dispatchEvent(
-                  new CustomEvent("openwork-server-settings-changed"),
+                  new CustomEvent("micx-server-settings-changed"),
                 );
               } catch {
                 /* ignore */
@@ -227,7 +227,7 @@ export function useDesktopRuntimeBoot() {
 
         // SLOW PATH ─────────────────────────────────────────────────────
         // No running engine. Tauri now mirrors Electron: engine_start boots
-        // openwork-server and lets that server manage OpenCode.
+        // micx-server and lets that server manage OpenCode.
         const localPaths = list.workspaces.flatMap((entry: WorkspaceInfo) => {
           const path = entry.workspaceType !== "remote" ? entry.path?.trim() ?? "" : "";
           return path ? [path] : [];
@@ -247,7 +247,7 @@ export function useDesktopRuntimeBoot() {
         let engineStartResult = await engineStart(workspaceRoot, {
           runtime: "direct",
           workspacePaths: workspacePathsFor(workspaceRoot),
-          openworkRemoteAccess: readOpenworkServerSettings().remoteAccessEnabled === true,
+          micxRemoteAccess: readMicxServerSettings().remoteAccessEnabled === true,
         }).catch((error) => {
           console.warn("[desktop-boot] engineStart failed:", error);
           return null;
@@ -268,7 +268,7 @@ export function useDesktopRuntimeBoot() {
             engineStartResult = await engineStart(fallbackRoot, {
               runtime: "direct",
               workspacePaths: workspacePathsFor(fallbackRoot).filter((path) => path !== workspaceRoot),
-              openworkRemoteAccess: readOpenworkServerSettings().remoteAccessEnabled === true,
+              micxRemoteAccess: readMicxServerSettings().remoteAccessEnabled === true,
             }).catch((error) => {
               console.warn("[desktop-boot] fallback engineStart failed:", error);
               setError(error instanceof Error ? error.message : safeStringify(error));
@@ -288,9 +288,9 @@ export function useDesktopRuntimeBoot() {
             setActive(engineStartResult.baseUrl);
           }
           try {
-            const freshInfo = await openworkServerInfo() as OpenworkServerInfo | null;
+            const freshInfo = await micxServerInfo() as MicxServerInfo | null;
             if (freshInfo?.baseUrl) {
-              writeOpenworkServerSettings({
+              writeMicxServerSettings({
                 urlOverride: freshInfo.baseUrl,
                 token:
                   freshInfo.ownerToken?.trim() ||
@@ -301,13 +301,13 @@ export function useDesktopRuntimeBoot() {
                 remoteAccessEnabled: freshInfo.remoteAccessEnabled === true,
               });
               try {
-                window.dispatchEvent(new CustomEvent("openwork-server-settings-changed"));
+                window.dispatchEvent(new CustomEvent("micx-server-settings-changed"));
               } catch {
                 /* ignore */
               }
             }
           } catch (error) {
-            console.warn("[desktop-boot] post-engineStart openworkServerInfo failed:", error);
+            console.warn("[desktop-boot] post-engineStart micxServerInfo failed:", error);
           }
         }
 

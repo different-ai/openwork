@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto"
 import { isDeepStrictEqual } from "node:util"
-import { and, desc, eq, inArray, isNull, or } from "@openwork-ee/den-db/drizzle"
+import { and, desc, eq, inArray, isNull, or } from "@micx-ee/den-db/drizzle"
 import {
   ConnectedAccountTable,
   ConfigObjectAccessGrantTable,
@@ -18,8 +18,8 @@ import {
   PluginConfigObjectTable,
   PluginMcpRequirementBindingTable,
   PluginTable,
-} from "@openwork-ee/den-db/schema"
-import { createDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
+} from "@micx-ee/den-db/schema"
+import { createDenTypeId, type DenTypeId } from "@micx-ee/utils/typeid"
 import { db } from "../db.js"
 import { declaredPluginMcpAuthType, requiredPluginMcpAuthType } from "./external-mcp-auth-policy.js"
 import { normalizeConnectedAccountScopes, normalizeOAuthClientExtra } from "./oauth-credentials.js"

@@ -16,7 +16,7 @@ export type RuntimeOpencodeConfig = {
   provider?: Record<string, unknown>;
 };
 
-export const ENGINE_GLOBAL_RUNTIME_CONFIG_ID = "__openwork_engine_global__";
+export const ENGINE_GLOBAL_RUNTIME_CONFIG_ID = "__micx_engine_global__";
 
 export function isEngineGlobalRuntimeConfigId(workspaceId: string): boolean {
   return workspaceId === ENGINE_GLOBAL_RUNTIME_CONFIG_ID;

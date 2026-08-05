@@ -16,7 +16,7 @@ function configureHostedEnvironment(): void {
   process.env.DIAGNOSTICS_SIGNING_SECRET = "diagnostics-signing-secret-that-is-unique"
   process.env.DIAGNOSTICS_MCP_BEARER_TOKEN = "diagnostics-bearer-token-unique"
   process.env.DIAGNOSTICS_PROFILE = "servicenow"
-  process.env.NEXT_PUBLIC_DIAGNOSTICS_ORIGIN = "https://diagnostic.openworklabs.com"
+  process.env.NEXT_PUBLIC_DIAGNOSTICS_ORIGIN = "https://diagnostic.micxlabs.com"
   process.env.UPSTASH_REDIS_REST_URL = "https://synthetic-redis.example"
   process.env.UPSTASH_REDIS_REST_TOKEN = "synthetic-redis-token"
   delete process.env.KV_REST_API_URL
@@ -42,16 +42,16 @@ describe("Diagnostics deployment configuration", () => {
   test("uses the deployment-specific Vercel URL for previews", () => {
     configureHostedEnvironment()
     process.env.VERCEL_ENV = "preview"
-    process.env.VERCEL_URL = "openwork-diagnostics-git-feature.vercel.app"
+    process.env.VERCEL_URL = "micx-diagnostics-git-feature.vercel.app"
 
     expect(validateProductionConfig()).toEqual([])
-    expect(diagnosticsConfig().publicOrigin).toBe("https://openwork-diagnostics-git-feature.vercel.app")
+    expect(diagnosticsConfig().publicOrigin).toBe("https://micx-diagnostics-git-feature.vercel.app")
   })
 
   test("fails closed when a preview deployment URL is malformed", () => {
     configureHostedEnvironment()
     process.env.VERCEL_ENV = "preview"
-    process.env.VERCEL_URL = "openwork-diagnostics.vercel.app/not-a-root"
+    process.env.VERCEL_URL = "micx-diagnostics.vercel.app/not-a-root"
 
     expect(validateProductionConfig()).toContain("VERCEL_URL")
   })

@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto"
-import { and, asc, desc, eq, inArray, isNull } from "@openwork-ee/den-db/drizzle"
+import { and, asc, desc, eq, inArray, isNull } from "@micx-ee/den-db/drizzle"
 import {
   AuditEventTable,
   AuthUserTable,
@@ -9,8 +9,8 @@ import {
   WorkerInstanceTable,
   WorkerTable,
   WorkerTokenTable,
-} from "@openwork-ee/den-db/schema"
-import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
+} from "@micx-ee/den-db/schema"
+import { createDenTypeId, normalizeDenTypeId } from "@micx-ee/utils/typeid"
 import { z } from "zod"
 import { requireCloudWorkerAccess } from "../../billing/polar.js"
 import { db } from "../../db.js"
@@ -130,7 +130,7 @@ function normalizeUrl(value: string): string {
   return value.trim().replace(/\/+$/, "")
 }
 
-function parseWorkspaceSelection(payload: unknown): { workspaceId: string; openworkUrl: string } | null {
+function parseWorkspaceSelection(payload: unknown): { workspaceId: string; micxUrl: string } | null {
   if (!isRecord(payload) || !Array.isArray(payload.items)) {
     return null
   }
@@ -154,7 +154,7 @@ function parseWorkspaceSelection(payload: unknown): { workspaceId: string; openw
 
   return {
     workspaceId,
-    openworkUrl: `${baseUrl}/w/${encodeURIComponent(workspaceId)}`,
+    micxUrl: `${baseUrl}/w/${encodeURIComponent(workspaceId)}`,
   }
 }
 
@@ -294,7 +294,7 @@ export async function fetchWorkerRuntimeJson(input: {
         headers: {
           Accept: "application/json",
           "Content-Type": "application/json",
-          "X-OpenWork-Host-Token": access.hostToken,
+          "X-Micx-Host-Token": access.hostToken,
         },
         body: input.body === undefined ? undefined : JSON.stringify(input.body),
       })
@@ -493,7 +493,7 @@ export async function getWorkerTokensAndConnect(worker: WorkerRow) {
       host: hostToken,
       client: clientToken,
     },
-    connect: connect ?? (instance?.url ? { openworkUrl: instance.url, workspaceId: null } : null),
+    connect: connect ?? (instance?.url ? { micxUrl: instance.url, workspaceId: null } : null),
   }
 }
 

@@ -1,7 +1,7 @@
 import { createHash, timingSafeEqual } from "node:crypto"
 
 export const CONNECT_DEBUG_PROXY_KEY_HEADER = "x-connect-debug-proxy-key"
-export const CONNECT_DEBUG_PROXY_DEFAULT_UPSTREAM = "https://app.openworklabs.com"
+export const CONNECT_DEBUG_PROXY_DEFAULT_UPSTREAM = "https://app.micxlabs.com"
 export const CONNECT_DEBUG_PROXY_LOCAL_ACCESS_KEY = "local-connect-debug-proxy"
 
 export type ConnectDebugProxyConfig = {

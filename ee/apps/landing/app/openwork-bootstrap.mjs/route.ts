@@ -4,7 +4,7 @@ import { join } from "node:path";
 export const dynamic = "force-static";
 
 function readBootstrapCli() {
-  return readFileSync(join(process.cwd(), "..", "..", "..", "packages", "openwork-bootstrap", "bin", "openwork.mjs"), "utf8");
+  return readFileSync(join(process.cwd(), "..", "..", "..", "packages", "micx-bootstrap", "bin", "micx.mjs"), "utf8");
 }
 
 export function GET() {

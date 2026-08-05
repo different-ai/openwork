@@ -28,7 +28,7 @@ try {
 
   // Create a session that asks for tool permission.
   const session = await client.session.create({
-    title: "OpenWork permission test",
+    title: "Micx permission test",
     permission: [
       {
         permission: "bash",
@@ -75,8 +75,8 @@ try {
   }
 
   // Try to trigger an external-directory permission request deterministically.
-  const externalPath = "/tmp/openwork-permission-test.txt";
-  await writeFile(externalPath, "openwork permission test\n", "utf8");
+  const externalPath = "/tmp/micx-permission-test.txt";
+  await writeFile(externalPath, "micx permission test\n", "utf8");
 
   try {
     await client.file.read({ path: externalPath });

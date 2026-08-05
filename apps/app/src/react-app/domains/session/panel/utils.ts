@@ -5,7 +5,7 @@ export function getElectronBrowser() {
     return null;
   }
 
-  return window.__OPENWORK_ELECTRON__?.browser ?? null;
+  return window.__MICX_ELECTRON__?.browser ?? null;
 }
 
 // Bounds and points are sent in renderer CSS pixels. The Electron main process

@@ -1,6 +1,6 @@
 import { relations, sql } from "drizzle-orm"
 import { boolean, index, int, json, mysqlTable, timestamp, uniqueIndex, varchar } from "drizzle-orm/mysql-core"
-import type { DesktopPolicyDocument } from "@openwork/types/den/desktop-policies"
+import type { DesktopPolicyDocument } from "@micx/types/den/desktop-policies"
 import { denTypeIdColumn } from "../columns"
 import { MemberTable, OrganizationTable } from "./org"
 import { TeamTable } from "./teams"

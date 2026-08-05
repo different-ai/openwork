@@ -10,7 +10,7 @@ import {
 
 describe("passive MCP layer inspection", () => {
   test("resolves safe OPENCODE_CONFIG_DIR before XDG_CONFIG_HOME", async () => {
-    const root = await mkdtemp(join(tmpdir(), "openwork-passive-mcp-xdg-"));
+    const root = await mkdtemp(join(tmpdir(), "micx-passive-mcp-xdg-"));
     const xdgConfigHome = join(root, "xdg-config");
     const opencodeConfigDir = join(root, "explicit-opencode-config");
     const homeDir = join(root, "home");
@@ -44,7 +44,7 @@ describe("passive MCP layer inspection", () => {
   });
 
   test("reports the bounded selected sources and ordered collisions without claiming complete resolution", async () => {
-    const root = await mkdtemp(join(tmpdir(), "openwork-passive-mcp-layers-"));
+    const root = await mkdtemp(join(tmpdir(), "micx-passive-mcp-layers-"));
     const globalConfigPath = join(root, "global-opencode.jsonc");
     try {
       await writeFile(globalConfigPath, JSON.stringify({
@@ -102,17 +102,17 @@ describe("passive MCP layer inspection", () => {
   });
 
   test("evaluates ordered current permissions for exact flat MCP tool IDs", async () => {
-    const root = await mkdtemp(join(tmpdir(), "openwork-passive-mcp-policy-"));
+    const root = await mkdtemp(join(tmpdir(), "micx-passive-mcp-policy-"));
     const globalConfigPath = join(root, "global-opencode.jsonc");
     try {
       await writeFile(globalConfigPath, JSON.stringify({
         permission: {
-          "openwork-cloud_search_capabilities": "deny",
+          "micx-cloud_search_capabilities": "deny",
         },
         mode: {
-          openwork: {
+          micx: {
             permission: {
-              "openwork-cloud_execute_capability": "deny",
+              "micx-cloud_execute_capability": "deny",
             },
           },
         },
@@ -121,12 +121,12 @@ describe("passive MCP layer inspection", () => {
         // Current permission rules outrank the deprecated top-level tools map
         // even when the legacy value comes from a later project layer.
         tools: {
-          "openwork-cloud_search_capabilities": true,
+          "micx-cloud_search_capabilities": true,
         },
         agent: {
-          openwork: {
+          micx: {
             permission: {
-              "openwork-cloud_execute_capability": "allow",
+              "micx-cloud_execute_capability": "allow",
             },
           },
         },
@@ -134,16 +134,16 @@ describe("passive MCP layer inspection", () => {
 
       const inspection = await inspectMcpLayersFromRuntimeSnapshot(root, {
         mcp: {
-          "openwork-cloud": { type: "remote", url: "https://cloud.example/mcp" },
+          "micx-cloud": { type: "remote", url: "https://cloud.example/mcp" },
         },
       }, {
         globalConfigPath,
         toolPolicy: {
-          agentName: "openwork",
-          mcpName: "openwork-cloud",
+          agentName: "micx",
+          mcpName: "micx-cloud",
           toolIds: [
-            "openwork-cloud_search_capabilities",
-            "openwork-cloud_execute_capability",
+            "micx-cloud_search_capabilities",
+            "micx-cloud_execute_capability",
           ],
         },
       });
@@ -152,12 +152,12 @@ describe("passive MCP layer inspection", () => {
         scope: "passive-static-subset",
         status: "available",
         inspectedToolIds: [
-          "openwork-cloud_search_capabilities",
-          "openwork-cloud_execute_capability",
+          "micx-cloud_search_capabilities",
+          "micx-cloud_execute_capability",
         ],
         deniedToolIds: [
-          "openwork-cloud_search_capabilities",
-          "openwork-cloud_execute_capability",
+          "micx-cloud_search_capabilities",
+          "micx-cloud_execute_capability",
         ],
       });
       expect(inspection.items[0]?.disabledByTools).toBe(true);
@@ -167,13 +167,13 @@ describe("passive MCP layer inspection", () => {
   });
 
   test("does not hide a tool for a resource-scoped permission rule", async () => {
-    const root = await mkdtemp(join(tmpdir(), "openwork-passive-mcp-resource-policy-"));
+    const root = await mkdtemp(join(tmpdir(), "micx-passive-mcp-resource-policy-"));
     const globalConfigPath = join(root, "global-opencode.jsonc");
     try {
       await writeFile(globalConfigPath, "{}", "utf8");
       await writeFile(join(root, "opencode.jsonc"), JSON.stringify({
         permission: {
-          "openwork-cloud_search_capabilities": {
+          "micx-cloud_search_capabilities": {
             "restricted-resource": "deny",
           },
         },
@@ -181,16 +181,16 @@ describe("passive MCP layer inspection", () => {
 
       const inspection = await inspectMcpLayersFromRuntimeSnapshot(root, {
         mcp: {
-          "openwork-cloud": { type: "remote", url: "https://cloud.example/mcp" },
+          "micx-cloud": { type: "remote", url: "https://cloud.example/mcp" },
         },
       }, {
         globalConfigPath,
         toolPolicy: {
-          agentName: "openwork",
-          mcpName: "openwork-cloud",
+          agentName: "micx",
+          mcpName: "micx-cloud",
           toolIds: [
-            "openwork-cloud_search_capabilities",
-            "openwork-cloud_execute_capability",
+            "micx-cloud_search_capabilities",
+            "micx-cloud_execute_capability",
           ],
         },
       });
@@ -206,7 +206,7 @@ describe("passive MCP layer inspection", () => {
   });
 
   test("marks malformed static MCP layers invalid and omits unsafe entries", async () => {
-    const root = await mkdtemp(join(tmpdir(), "openwork-passive-mcp-invalid-"));
+    const root = await mkdtemp(join(tmpdir(), "micx-passive-mcp-invalid-"));
     const globalConfigPath = join(root, "missing-global-opencode.jsonc");
     try {
       await writeFile(join(root, "opencode.jsonc"), JSON.stringify({
@@ -231,7 +231,7 @@ describe("passive MCP layer inspection", () => {
   });
 
   test("marks non-regular and oversized static layers unreadable without dropping runtime entries", async () => {
-    const root = await mkdtemp(join(tmpdir(), "openwork-passive-mcp-bounded-"));
+    const root = await mkdtemp(join(tmpdir(), "micx-passive-mcp-bounded-"));
     const globalConfigPath = join(root, "global-opencode.jsonc");
     try {
       await mkdir(join(root, "opencode.jsonc"));
@@ -249,7 +249,7 @@ describe("passive MCP layer inspection", () => {
         globalConfigPath,
         maxConfigBytes: 32,
         toolPolicy: {
-          agentName: "openwork",
+          agentName: "micx",
           mcpName: "runtime",
           toolIds: ["runtime_search"],
         },
@@ -269,7 +269,7 @@ describe("passive MCP layer inspection", () => {
   });
 
   test("propagates an aborted diagnostics deadline", async () => {
-    const root = await mkdtemp(join(tmpdir(), "openwork-passive-mcp-abort-"));
+    const root = await mkdtemp(join(tmpdir(), "micx-passive-mcp-abort-"));
     try {
       const controller = new AbortController();
       controller.abort(new Error("diagnostics deadline exceeded"));

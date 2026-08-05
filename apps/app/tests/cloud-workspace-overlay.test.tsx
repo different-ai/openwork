@@ -28,9 +28,9 @@ function instance(input: Partial<DenCloudInstance> = {}): DenCloudInstance {
   return {
     status: input.status ?? "ready",
     url: input.url ?? "https://workspace.example.test",
-    imageVersion: "imageVersion" in input ? input.imageVersion ?? null : "openwork-0.18.8",
+    imageVersion: "imageVersion" in input ? input.imageVersion ?? null : "micx-0.18.8",
     ...(typeof input.instanceName === "string" ? { instanceName: input.instanceName } : {}),
-    latestVersion: "latestVersion" in input ? input.latestVersion ?? null : "openwork-0.18.8",
+    latestVersion: "latestVersion" in input ? input.latestVersion ?? null : "micx-0.18.8",
   };
 }
 
@@ -56,10 +56,10 @@ describe("cloud workspace overlay state", () => {
 
   test("maps stale and legacy workers to Update available", () => {
     const stale = mapCloudWorkspaceState({
-      instance: instance({ imageVersion: "openwork-0.18.2", latestVersion: "openwork-0.18.8" }),
+      instance: instance({ imageVersion: "micx-0.18.2", latestVersion: "micx-0.18.8" }),
       updating: false,
     });
-    const legacyInstance = instance({ imageVersion: null, latestVersion: "openwork-0.18.8" });
+    const legacyInstance = instance({ imageVersion: null, latestVersion: "micx-0.18.8" });
     const legacy = mapCloudWorkspaceState({
       instance: legacyInstance,
       updating: false,
@@ -91,7 +91,7 @@ describe("cloud workspace overlay state", () => {
 
   test("keeps the pill in updating state after the user clicks update", () => {
     const state = mapCloudWorkspaceState({
-      instance: instance({ imageVersion: "openwork-0.18.2", latestVersion: "openwork-0.18.8" }),
+      instance: instance({ imageVersion: "micx-0.18.2", latestVersion: "micx-0.18.8" }),
       updating: true,
     });
 

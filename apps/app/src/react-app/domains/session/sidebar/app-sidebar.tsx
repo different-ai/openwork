@@ -31,7 +31,7 @@ import { LazyMotion, Reorder, domMax, m, useDragControls } from "motion/react";
 
 import { getDisplaySessionTitle } from "../../../../app/lib/session-title";
 import type { WorkspaceInfo } from "../../../../app/lib/desktop";
-import { OpenWorkDenHelpLink } from "../../workspace/openwork-den-help-link";
+import { MicxDenHelpLink } from "../../workspace/micx-den-help-link";
 import { NotificationBell } from "../../../shell/notification-center";
 import type {
   WorkspaceConnectionState,
@@ -678,7 +678,7 @@ function RemoteConnectionIssueCard(props: {
             >
               {props.message}
             </div>
-            <OpenWorkDenHelpLink />
+            <MicxDenHelpLink />
             <div className="mt-2 flex flex-wrap gap-1.5">
               {props.canRecover ? (
                 <Button
@@ -1746,9 +1746,9 @@ function WorkspaceSidebarGroup({
   );
 }
 
-const SESSION_DRAG_TYPE = "application/x-openwork-session-id";
+const SESSION_DRAG_TYPE = "application/x-micx-session-id";
 const EMPTY_PINNED_IDS = new Set<string>();
-const UNGROUPED_GROUP_ID = "__openwork_ungrouped";
+const UNGROUPED_GROUP_ID = "__micx_ungrouped";
 
 function SessionGroupActions({ group, groups, workspaceId, count }: {
   group: SessionGroupDefinition;

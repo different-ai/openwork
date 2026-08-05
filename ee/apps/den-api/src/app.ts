@@ -1,7 +1,7 @@
 import "./load-env.js"
-import { createDenTypeId } from "@openwork-ee/utils/typeid"
+import { createDenTypeId } from "@micx-ee/utils/typeid"
 import { swaggerUI } from "@hono/swagger-ui"
-import { sql } from "@openwork-ee/den-db/drizzle"
+import { sql } from "@micx-ee/den-db/drizzle"
 import { cors } from "hono/cors"
 import { Hono } from "hono"
 import type { RequestIdVariables } from "hono/request-id"
@@ -112,7 +112,7 @@ if (env.corsOrigins.length > 0) {
       cors({
         origin: env.corsOrigins,
         credentials: true,
-        allowHeaders: ["Content-Type", "Authorization", "X-Api-Key", "X-Request-Id", "X-OpenWork-Legacy-Org-Id"],
+        allowHeaders: ["Content-Type", "Authorization", "X-Api-Key", "X-Request-Id", "X-Micx-Legacy-Org-Id"],
         allowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
         exposeHeaders: ["Content-Length", "X-Request-Id"],
         maxAge: 600,

@@ -1,16 +1,16 @@
 #!/usr/bin/env node
-// den-admin-mcp — read-only admin analytics MCP server for the OpenWork Den database.
+// den-admin-mcp — read-only admin analytics MCP server for the Micx Den database.
 //
 // Tools: den_overview, den_growth, den_retention, den_company_users,
 //        den_users_search, den_org_overview, den_query
 //
-// Config: DATABASE_URL (mysql://user:pass@host:3306/openwork_den).
+// Config: DATABASE_URL (mysql://user:pass@host:3306/micx_den).
 // Only SELECT statements are ever issued. For defense in depth, point it at a
 // read-only MySQL user. Activity definitions match den-api /v1/admin/overview:
 // a user is "active" on a day if they have a sign-in session day or a
 // `session.active` telemetry event that day.
 //
-// Register in OpenWork (opencode.json):
+// Register in Micx (opencode.json):
 //   { "mcp": { "den-admin": { "type": "local",
 //       "command": ["node", "/path/to/ee/packages/den-admin-mcp/index.mjs"],
 //       "environment": { "DATABASE_URL": "mysql://..." }, "enabled": true } } }
@@ -28,7 +28,7 @@ function getPool() {
     const url = process.env.DATABASE_URL;
     if (!url) {
       throw new Error(
-        "DATABASE_URL is required (e.g. mysql://root:password@127.0.0.1:3306/openwork_den)",
+        "DATABASE_URL is required (e.g. mysql://root:password@127.0.0.1:3306/micx_den)",
       );
     }
     pool = mysql.createPool({ uri: url, connectionLimit: 4, dateStrings: true });

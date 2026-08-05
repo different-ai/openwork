@@ -23,8 +23,8 @@ import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(__dirname, "../../../..");
-const HELPER_APP = process.env.OPENWORK_COMPUTER_USE_HELPER
-  ?? join(repoRoot, "apps/desktop/resources/helpers/OpenWork Computer Use.app");
+const HELPER_APP = process.env.MICX_COMPUTER_USE_HELPER
+  ?? join(repoRoot, "apps/desktop/resources/helpers/Micx Computer Use.app");
 const PAGE = `file://${join(__dirname, "bench.html")}`;
 const CDP_PORT = Number(process.env.CU_BENCH_CDP_PORT ?? 9224);
 const CHROME_APP = "Google Chrome";
@@ -40,7 +40,7 @@ const fifoDir = mkdtempSync(join(tmpdir(), "cu-e2e-"));
 const IN = join(fifoDir, "in.fifo");
 const OUT = join(fifoDir, "out.fifo");
 execSync(`mkfifo ${IN} ${OUT}`);
-try { execSync(`pkill -f 'OpenWork Computer Use.app'`); } catch {}
+try { execSync(`pkill -f 'Micx Computer Use.app'`); } catch {}
 spawn("open", ["--stdin", IN, "--stdout", OUT, HELPER_APP, "--args", "mcp"], { stdio: "ignore" });
 
 const mcpOut = createReadStream(OUT, { encoding: "utf8" });
@@ -215,7 +215,7 @@ for (const [k, v] of Object.entries(results.paths)) console.log(`${k.padEnd(24)}
 
 // --- cleanup ---
 try { execSync(`pkill -f "user-data-dir=${profileDir}"`); } catch {}
-try { execSync(`pkill -f 'OpenWork Computer Use.app'`); } catch {}
+try { execSync(`pkill -f 'Micx Computer Use.app'`); } catch {}
 await sleep(1000);
 try { rmSync(fifoDir, { recursive: true, force: true }); } catch {}
 try { rmSync(profileDir, { recursive: true, force: true }); } catch {}

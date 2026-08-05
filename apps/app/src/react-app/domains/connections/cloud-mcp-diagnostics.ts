@@ -1,9 +1,9 @@
 import { sanitizeCloudMcpHealthDiagnostic } from "../../../app/lib/diagnostic-sanitizer";
 import type {
-  OpenworkCloudMcpEngineRefresh,
-  OpenworkCloudMcpHealth,
-  OpenworkCloudMcpProbeTrace,
-} from "../../../app/lib/openwork-server";
+  MicxCloudMcpEngineRefresh,
+  MicxCloudMcpHealth,
+  MicxCloudMcpProbeTrace,
+} from "../../../app/lib/micx-server";
 
 export type CloudMcpAdvancedRow = {
   label: string;
@@ -40,7 +40,7 @@ export function describeCloudMcpErrorDetail(error: unknown): string | null {
  * network/TLS failure surfaces as the bare "fetch failed"), so the raw string
  * matters on a support call even when it looks unhelpfully short.
  */
-export function cloudMcpEngineErrorText(health: OpenworkCloudMcpHealth | null): string | null {
+export function cloudMcpEngineErrorText(health: MicxCloudMcpHealth | null): string | null {
   return describeCloudMcpErrorDetail(health?.engine.error);
 }
 
@@ -79,7 +79,7 @@ function shortRevision(revision: string | null | undefined): string {
   return trimmed.length > 12 ? trimmed.slice(0, 12) : trimmed;
 }
 
-export function cloudMcpProbeTraceLines(trace: OpenworkCloudMcpProbeTrace | null | undefined): string[] {
+export function cloudMcpProbeTraceLines(trace: MicxCloudMcpProbeTrace | null | undefined): string[] {
   if (!trace) return [];
   return trace.steps.map((step) => {
     const parts = [
@@ -93,7 +93,7 @@ export function cloudMcpProbeTraceLines(trace: OpenworkCloudMcpProbeTrace | null
   });
 }
 
-export function cloudMcpEngineRefreshLines(refresh: OpenworkCloudMcpEngineRefresh | null | undefined): string[] {
+export function cloudMcpEngineRefreshLines(refresh: MicxCloudMcpEngineRefresh | null | undefined): string[] {
   if (!refresh) return [];
   const lines = refresh.steps.map((step) => {
     const label = step.step === "engine_disconnect" ? "engine disconnect" : step.step === "reapply" ? "re-register and verify" : step.step;
@@ -110,7 +110,7 @@ export function cloudMcpEngineRefreshLines(refresh: OpenworkCloudMcpEngineRefres
  * Support-call rows for the card's Advanced section. Everything here is
  * derived from the already-sanitized health payload; no secrets are present.
  */
-export function cloudMcpAdvancedRows(health: OpenworkCloudMcpHealth | null): CloudMcpAdvancedRow[] {
+export function cloudMcpAdvancedRows(health: MicxCloudMcpHealth | null): CloudMcpAdvancedRow[] {
   if (!health) return [];
   const rows: CloudMcpAdvancedRow[] = [];
   const failure = health.firstFailure;
@@ -138,7 +138,7 @@ export function cloudMcpAdvancedRows(health: OpenworkCloudMcpHealth | null): Clo
     if (inspection.cloudPresent === false) {
       rows.push({
         label: "Engine registration",
-        value: "openwork-cloud is not registered in the engine (the dynamic entry is lost after an engine restart) — use Refresh engine connection",
+        value: "micx-cloud is not registered in the engine (the dynamic entry is lost after an engine restart) — use Refresh engine connection",
         tone: "error",
       });
     }
@@ -202,7 +202,7 @@ export function cloudMcpAdvancedRows(health: OpenworkCloudMcpHealth | null): Clo
   const compatibility = health.compatibility;
   rows.push({
     label: "Versions",
-    value: `app ${describeCloudMcpErrorDetail(compatibility.openwork.app?.version) ?? "unknown"} · server ${compatibility.openwork.serverVersion ?? "unknown"} · engine ${compatibility.opencode.actualVersion ?? "unknown"}${compatibility.opencode.expectedVersion ? ` (expected ${compatibility.opencode.expectedVersion})` : ""}`,
+    value: `app ${describeCloudMcpErrorDetail(compatibility.micx.app?.version) ?? "unknown"} · server ${compatibility.micx.serverVersion ?? "unknown"} · engine ${compatibility.opencode.actualVersion ?? "unknown"}${compatibility.opencode.expectedVersion ? ` (expected ${compatibility.opencode.expectedVersion})` : ""}`,
     tone: "muted",
   });
   rows.push({
@@ -218,8 +218,8 @@ export function cloudMcpAdvancedRows(health: OpenworkCloudMcpHealth | null): Clo
  * support engineer needs to line the report up with Den/server logs.
  */
 export function buildCloudMcpSupportBundle(input: {
-  health: OpenworkCloudMcpHealth | null;
-  refresh?: OpenworkCloudMcpEngineRefresh | null;
+  health: MicxCloudMcpHealth | null;
+  refresh?: MicxCloudMcpEngineRefresh | null;
   context?: {
     workspaceId?: string | null;
     orgId?: string | null;
@@ -229,7 +229,7 @@ export function buildCloudMcpSupportBundle(input: {
   capturedAt?: string;
 }): string {
   const bundle = {
-    kind: "openwork-cloud-mcp-diagnostic",
+    kind: "micx-cloud-mcp-diagnostic",
     capturedAt: input.capturedAt ?? new Date().toISOString(),
     context: {
       workspaceId: input.context?.workspaceId ?? null,

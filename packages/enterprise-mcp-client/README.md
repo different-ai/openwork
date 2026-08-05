@@ -1,6 +1,6 @@
-# `@openwork/enterprise-mcp-client`
+# `@micx/enterprise-mcp-client`
 
-Reference implementation for server-side remote MCP consumption in OpenWork.
+Reference implementation for server-side remote MCP consumption in Micx.
 
 The package owns the provider-neutral MCP/OAuth lifecycle. A composition root
 supplies networking, persistence, tenancy/authorization, diagnostics, and the
@@ -93,7 +93,7 @@ package.
 ## Runtime boundary
 
 The package covers Den's outbound server-side remote MCP client only. It does
-not change local/direct engine MCP, the incoming OpenWork Cloud meta-MCP,
+not change local/direct engine MCP, the incoming Micx Cloud meta-MCP,
 desktop UI, or provider-specific tenant administration.
 
 Den uses this package as its only remote MCP OAuth runtime. New connections use

@@ -1,9 +1,9 @@
 import { z } from "zod"
 
-export const EGRESS_DIAGNOSTIC_RUN_HEADER = "x-openwork-diagnostic-run-id"
-export const EGRESS_DIAGNOSTIC_STEP_HEADER = "x-openwork-diagnostic-step"
-export const EGRESS_DIAGNOSTIC_SIGNATURE_HEADER = "x-openwork-diagnostic-signature"
-export const EGRESS_DIAGNOSTIC_ID_HEADER = "x-openwork-diagnostic-id"
+export const EGRESS_DIAGNOSTIC_RUN_HEADER = "x-micx-diagnostic-run-id"
+export const EGRESS_DIAGNOSTIC_STEP_HEADER = "x-micx-diagnostic-step"
+export const EGRESS_DIAGNOSTIC_SIGNATURE_HEADER = "x-micx-diagnostic-signature"
+export const EGRESS_DIAGNOSTIC_ID_HEADER = "x-micx-diagnostic-id"
 
 export const EGRESS_DIAGNOSTIC_STEP_IDS = [
   "reachability",
@@ -31,7 +31,7 @@ export type EgressDiagnosticCategory = z.infer<typeof egressDiagnosticCategorySc
 export const egressDiagnosticOwnerSchema = z.enum([
   "den-operator",
   "network-administrator",
-  "openwork-support",
+  "micx-support",
 ])
 export type EgressDiagnosticOwner = z.infer<typeof egressDiagnosticOwnerSchema>
 

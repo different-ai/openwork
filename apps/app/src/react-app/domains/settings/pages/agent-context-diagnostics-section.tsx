@@ -1,7 +1,7 @@
 /** @jsxImportSource react */
 import { useEffect, useRef, useState } from "react";
 import { Activity } from "lucide-react";
-import type { AgentContextDiagnosticsReport } from "@openwork/types/agent-context-diagnostics";
+import type { AgentContextDiagnosticsReport } from "@micx/types/agent-context-diagnostics";
 
 import { serializeAgentContextDiagnosticsReport } from "@/app/lib/agent-context-diagnostics";
 import { Button } from "@/components/ui/button";

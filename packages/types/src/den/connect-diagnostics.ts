@@ -1,6 +1,6 @@
 import { z } from "zod"
 
-export const CONNECT_DIAGNOSTIC_CLIENT_HEADER = "x-openwork-connect-client"
+export const CONNECT_DIAGNOSTIC_CLIENT_HEADER = "x-micx-connect-client"
 export const CONNECT_DIAGNOSTIC_RETENTION_SECONDS = 7 * 24 * 60 * 60
 export const CONNECT_DIAGNOSTIC_CLIENT_RETENTION_MS = 24 * 60 * 60 * 1_000
 

@@ -17,12 +17,12 @@ import {
 } from "@/react-app/kernel/notification-store";
 
 /** Window event that asks the notification bell to open its panel. */
-export const openNotificationCenterEvent = "openwork-open-notification-center";
+export const openNotificationCenterEvent = "micx-open-notification-center";
 
 /** Window event that asks the marketplace view to highlight a plugin. */
-export const openMarketplacePluginEvent = "openwork-open-marketplace-plugin";
+export const openMarketplacePluginEvent = "micx-open-marketplace-plugin";
 
-const PENDING_MARKETPLACE_PLUGIN_KEY = "openwork:pending-marketplace-plugin";
+const PENDING_MARKETPLACE_PLUGIN_KEY = "micx:pending-marketplace-plugin";
 
 export type OpenMarketplacePluginDetail = {
   pluginName: string;
@@ -62,7 +62,7 @@ export function notifyEvent(input: NotificationInput): void {
   useNotificationStore.getState().add(input);
 }
 
-const ALERT_TOAST_ID = "openwork-notification-alert";
+const ALERT_TOAST_ID = "micx-notification-alert";
 const ALERT_BURST_WINDOW_MS = 8000;
 
 let lastAlertAt = 0;

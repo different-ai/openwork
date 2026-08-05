@@ -4,12 +4,12 @@ import {
   automationOccurrenceIdentity,
   automationRevisionDigest,
   nextAutomationOccurrence,
-} from "@openwork/automations"
+} from "@micx/automations"
 import type {
   AutomationClaimResult,
   AutomationListItem,
   AutomationRepository,
-} from "@openwork/automations"
+} from "@micx/automations"
 import type {
   Automation,
   AutomationRevision,
@@ -17,8 +17,8 @@ import type {
   AutomationRunEvent,
   AutomationRunEventType,
   AutomationUsage,
-} from "@openwork/types/automations"
-import { and, asc, desc, eq, gt, inArray, lt, lte, sql } from "@openwork-ee/den-db/drizzle"
+} from "@micx/types/automations"
+import { and, asc, desc, eq, gt, inArray, lt, lte, sql } from "@micx-ee/den-db/drizzle"
 import {
   AutomationRevisionTable,
   AutomationRunnerTable,
@@ -26,8 +26,8 @@ import {
   AutomationRunEventTable,
   AutomationRunTable,
   AutomationTable,
-} from "@openwork-ee/den-db/schema"
-import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
+} from "@micx-ee/den-db/schema"
+import { createDenTypeId, normalizeDenTypeId } from "@micx-ee/utils/typeid"
 import { db } from "../db.js"
 import { automationUpdateChangedRows } from "./update-result.js"
 
@@ -635,7 +635,7 @@ export class DenAutomationRepository implements AutomationRepository {
           lease_expires_at: new Date(input.now + input.leaseMs),
           heartbeat_at: new Date(input.now),
           attempt_count: selected.run.attempt_count + 1,
-          engine_kind: "openwork-desktop-runner-v1",
+          engine_kind: "micx-desktop-runner-v1",
           started_at: selected.run.started_at ?? new Date(input.now),
           updated_at: new Date(input.now),
         }).where(and(eq(AutomationRunTable.id, selected.run.id), eq(AutomationRunTable.status, "queued")))

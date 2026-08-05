@@ -1,4 +1,4 @@
-export const DEFAULT_OPENWORK_DOWNLOAD_URL = "https://openworklabs.com/download"
+export const DEFAULT_MICX_DOWNLOAD_URL = "https://micxlabs.com/download"
 
 export type DesktopCapability = {
   title: string

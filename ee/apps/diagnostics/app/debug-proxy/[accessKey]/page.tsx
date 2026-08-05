@@ -38,7 +38,7 @@ export default async function ConnectDebugProxyPage(input: {
     <meta httpEquiv="refresh" content="5" />
     <header className="hero debug-proxy-hero">
       <div>
-        <p className="eyebrow">OpenWork Connect</p>
+        <p className="eyebrow">Micx Connect</p>
         <h1>Connect debug proxy</h1>
         <p>Copy one scenario base URL into the desktop Den base URL field, then use the diagnostics trace to inspect the controlled failure.</p>
       </div>

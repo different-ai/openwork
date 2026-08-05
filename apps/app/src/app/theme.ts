@@ -1,8 +1,8 @@
 export type ThemeMode = "light" | "dark" | "system";
 export type ResolvedThemeMode = "light" | "dark";
 
-const THEME_PREF_KEY = "openwork.react.settings.theme-mode";
-const LEGACY_THEME_PREF_KEYS = ["openwork.themePref"];
+const THEME_PREF_KEY = "micx.react.settings.theme-mode";
+const LEGACY_THEME_PREF_KEYS = ["micx.themePref"];
 
 const mediaQuery = "(prefers-color-scheme: dark)";
 const listeners = new Set<() => void>();
@@ -58,7 +58,7 @@ const emitThemeChange = () => {
 
 const syncNativeTheme = (mode: ThemeMode) => {
   if (typeof window === "undefined") return;
-  void window.__OPENWORK_ELECTRON__?.invokeDesktop?.("__setNativeTheme", mode);
+  void window.__MICX_ELECTRON__?.invokeDesktop?.("__setNativeTheme", mode);
 };
 
 const getCurrentMode = () => {

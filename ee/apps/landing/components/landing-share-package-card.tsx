@@ -53,7 +53,7 @@ export function LandingSharePackageCard(props: Props) {
           <div className="h-2.5 w-2.5 rounded-full bg-yellow-400/70" />
           <div className="h-2.5 w-2.5 rounded-full bg-green-400/70" />
         </div>
-        <div className="text-[12px] font-medium text-gray-500">OpenWork</div>
+        <div className="text-[12px] font-medium text-gray-500">Micx</div>
       </div>
 
       <div className="flex flex-1 flex-col gap-3 p-4 text-left md:p-5">

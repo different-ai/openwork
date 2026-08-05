@@ -113,7 +113,7 @@ function hangingSocket() {
 
 test("repairs a leaf-only TLS chain from an AIA intermediate", async () => {
   await withTlsServer({ cert: leafPem, key: leafKey }, async (port) => {
-    const userDataDir = await mkdtemp(path.join(tmpdir(), "openwork-chain-repair-"));
+    const userDataDir = await mkdtemp(path.join(tmpdir(), "micx-chain-repair-"));
     const bundlePath = path.join(userDataDir, "system-ca-bundle.pem");
     const logs = [];
 
@@ -144,7 +144,7 @@ test("repairs a leaf-only TLS chain from an AIA intermediate", async () => {
 
 test("refuses repair when the failure is not leaf-only", async () => {
   await withTlsServer({ cert: `${leafPem}\n${intermediatePem}`, key: leafKey }, async (port) => {
-    const userDataDir = await mkdtemp(path.join(tmpdir(), "openwork-chain-repair-"));
+    const userDataDir = await mkdtemp(path.join(tmpdir(), "micx-chain-repair-"));
     const logs = [];
     let fetchCalled = false;
 
@@ -174,7 +174,7 @@ test("refuses repair when the failure is not leaf-only", async () => {
 
 test("refuses repair when the fetched certificate did not issue the leaf", async () => {
   await withTlsServer({ cert: leafPem, key: leafKey }, async (port) => {
-    const userDataDir = await mkdtemp(path.join(tmpdir(), "openwork-chain-repair-"));
+    const userDataDir = await mkdtemp(path.join(tmpdir(), "micx-chain-repair-"));
     const logs = [];
 
     const env = await resolveSystemCaEnv({
@@ -198,7 +198,7 @@ test("refuses repair when the fetched certificate did not issue the leaf", async
 });
 
 test("chain repair kill switch preserves system CA export", async () => {
-  const userDataDir = await mkdtemp(path.join(tmpdir(), "openwork-chain-repair-"));
+  const userDataDir = await mkdtemp(path.join(tmpdir(), "micx-chain-repair-"));
   const bundlePath = path.join(userDataDir, "system-ca-bundle.pem");
   let fetchCalled = false;
   let probeCalled = false;
@@ -206,7 +206,7 @@ test("chain repair kill switch preserves system CA export", async () => {
   const env = await resolveSystemCaEnv({
     tlsModule: { getCACertificates: () => [systemCert] },
     userDataDir,
-    parentEnv: { OPENWORK_DISABLE_CHAIN_REPAIR: " 1 " },
+    parentEnv: { MICX_DISABLE_CHAIN_REPAIR: " 1 " },
     logInfo: () => {},
     loadPlatformCertificates: async () => [],
     chainRepair: {
@@ -230,7 +230,7 @@ test("chain repair kill switch preserves system CA export", async () => {
 });
 
 test("user NODE_EXTRA_CA_CERTS disables repair", async () => {
-  const userDataDir = await mkdtemp(path.join(tmpdir(), "openwork-chain-repair-"));
+  const userDataDir = await mkdtemp(path.join(tmpdir(), "micx-chain-repair-"));
   let fetchCalled = false;
   let probeCalled = false;
   let logged = false;
@@ -263,14 +263,14 @@ test("user NODE_EXTRA_CA_CERTS disables repair", async () => {
 });
 
 test("chain repair total timeout can be shortened by env", async () => {
-  const userDataDir = await mkdtemp(path.join(tmpdir(), "openwork-chain-repair-"));
+  const userDataDir = await mkdtemp(path.join(tmpdir(), "micx-chain-repair-"));
   const logs = [];
   const startTime = Date.now();
 
   const env = await resolveSystemCaEnv({
     tlsModule: { getCACertificates: () => [] },
     userDataDir,
-    parentEnv: { OPENWORK_CHAIN_REPAIR_TIMEOUT_MS: "1500" },
+    parentEnv: { MICX_CHAIN_REPAIR_TIMEOUT_MS: "1500" },
     logInfo(message) {
       logs.push(String(message));
     },
@@ -301,7 +301,7 @@ test("activation bootstrap origin parsing is strict", async () => {
   ];
 
   for (const testCase of cases) {
-    const userDataDir = await mkdtemp(path.join(tmpdir(), "openwork-chain-repair-"));
+    const userDataDir = await mkdtemp(path.join(tmpdir(), "micx-chain-repair-"));
     const calls = [];
     const env = await resolveSystemCaEnv({
       tlsModule: { getCACertificates: () => [] },

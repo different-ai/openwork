@@ -1,9 +1,9 @@
-import { createDenTypeId } from "@openwork-ee/utils/typeid"
+import { createDenTypeId } from "@micx-ee/utils/typeid"
 import { afterAll, beforeAll, beforeEach, expect, mock, test } from "bun:test"
 import type { OpenApiOperation } from "../src/mcp/policy.js"
 
 function seedRequiredEnv() {
-  process.env.DATABASE_URL = process.env.DATABASE_URL ?? "mysql://root:password@127.0.0.1:3306/openwork_test_gwscaps"
+  process.env.DATABASE_URL = process.env.DATABASE_URL ?? "mysql://root:password@127.0.0.1:3306/micx_test_gwscaps"
   process.env.DEN_DB_ENCRYPTION_KEY = process.env.DEN_DB_ENCRYPTION_KEY ?? "local-dev-db-encryption-key-please-change-1234567890"
   process.env.BETTER_AUTH_SECRET = process.env.BETTER_AUTH_SECRET ?? "local-dev-secret-not-for-production-use!!"
   process.env.BETTER_AUTH_URL = process.env.BETTER_AUTH_URL ?? "http://127.0.0.1:8790"
@@ -384,8 +384,8 @@ process.env.DEN_GOOGLE_API_BASE_URL = fakeGoogleServer.url.origin
 
 let app: typeof import("../src/app.js").default
 let db: typeof import("../src/db.js").db
-let schema: typeof import("@openwork-ee/den-db/schema")
-let drizzle: typeof import("@openwork-ee/den-db/drizzle")
+let schema: typeof import("@micx-ee/den-db/schema")
+let drizzle: typeof import("@micx-ee/den-db/drizzle")
 let session: typeof import("../src/session.js")
 let upsertConnectedAccount: typeof import("../src/capability-sources/oauth-credentials.js").upsertConnectedAccount
 let buildMcpCatalog: typeof import("../src/mcp/catalog.js").buildMcpCatalog
@@ -443,7 +443,7 @@ function requestForm(path: string, form: FormData) {
 
 beforeAll(async () => {
   mock.restore()
-  const realDb = (await import("@openwork-ee/den-db")).createDenDb({
+  const realDb = (await import("@micx-ee/den-db")).createDenDb({
     databaseUrl: process.env.DATABASE_URL,
     mode: "mysql",
   }).db
@@ -452,8 +452,8 @@ beforeAll(async () => {
   const [appMod, dbMod, schemaMod, drizzleMod, sessionMod, credentialsMod, catalogMod, searchMod] = await Promise.all([
     import("../src/app.js"),
     import("../src/db.js"),
-    import("@openwork-ee/den-db/schema"),
-    import("@openwork-ee/den-db/drizzle"),
+    import("@micx-ee/den-db/schema"),
+    import("@micx-ee/den-db/drizzle"),
     import("../src/session.js"),
     import("../src/capability-sources/oauth-credentials.js"),
     import("../src/mcp/catalog.js"),
@@ -587,7 +587,7 @@ test("calendar create requests a Google Meet link when asked", async () => {
   if (typeof requestId !== "string") {
     throw new Error("Expected calendar create requestId to be a string")
   }
-  expect(requestId.startsWith("openwork-")).toBe(true)
+  expect(requestId.startsWith("micx-")).toBe(true)
   const solutionKey = expectRecord(createRequest.conferenceSolutionKey, "calendar create conferenceSolutionKey")
   expect(solutionKey.type).toBe("hangoutsMeet")
 
@@ -625,7 +625,7 @@ test("calendar patch adds a Google Meet link without creating a duplicate", asyn
   if (typeof requestId !== "string") {
     throw new Error("Expected calendar update requestId to be a string")
   }
-  expect(requestId.startsWith("openwork-")).toBe(true)
+  expect(requestId.startsWith("micx-")).toBe(true)
   const solutionKey = expectRecord(createRequest.conferenceSolutionKey, "calendar update conferenceSolutionKey")
   expect(solutionKey.type).toBe("hangoutsMeet")
 
@@ -1029,10 +1029,10 @@ test("drive share grants user access and sends notification by default", async (
   resetFakeGoogle()
   const response = await request("/v1/capabilities/google-workspace/drive-file-share/file_1", {
     method: "POST",
-    body: { type: "user", emailAddress: "raghav@openworklabs.com" },
+    body: { type: "user", emailAddress: "raghav@micxlabs.com" },
   })
   expect(response.status).toBe(200)
-  expect(lastDriveSharePayload).toEqual({ type: "user", role: "reader", emailAddress: "raghav@openworklabs.com" })
+  expect(lastDriveSharePayload).toEqual({ type: "user", role: "reader", emailAddress: "raghav@micxlabs.com" })
   const url = new URL(expectString(lastDriveShareUrl, "drive share URL"))
   expect(url.pathname).toBe("/drive/v3/files/file_1/permissions")
   expect(url.searchParams.get("sendNotificationEmail")).toBe("true")
@@ -1046,10 +1046,10 @@ test("drive share grants domain access", async () => {
   resetFakeGoogle()
   const response = await request("/v1/capabilities/google-workspace/drive-file-share/file_1", {
     method: "POST",
-    body: { type: "domain", domain: "openworklabs.com", sendNotificationEmail: false },
+    body: { type: "domain", domain: "micxlabs.com", sendNotificationEmail: false },
   })
   expect(response.status).toBe(200)
-  expect(lastDriveSharePayload).toEqual({ type: "domain", role: "reader", domain: "openworklabs.com" })
+  expect(lastDriveSharePayload).toEqual({ type: "domain", role: "reader", domain: "micxlabs.com" })
   const url = new URL(expectString(lastDriveShareUrl, "drive share URL"))
   expect(url.searchParams.get("sendNotificationEmail")).toBe("false")
   const body: unknown = await response.json()
@@ -1091,7 +1091,7 @@ test("no connected account returns needs_connection", async () => {
   const body: unknown = await response.json()
   expect(body).toEqual({
     error: "needs_connection",
-    message: "Connect your Google account first: open Settings > Connect and use Connect your account on the Google Workspace row, or connect from the OpenWork Cloud dashboard.",
+    message: "Connect your Google account first: open Settings > Connect and use Connect your account on the Google Workspace row, or connect from the Micx Cloud dashboard.",
   })
 })
 

@@ -1,4 +1,4 @@
-import { EGRESS_DIAGNOSTIC_RUN_HEADER } from "@openwork/types/den/egress-diagnostics"
+import { EGRESS_DIAGNOSTIC_RUN_HEADER } from "@micx/types/den/egress-diagnostics"
 import { diagnosticsConfig, validateProductionConfig } from "./config"
 import { mcpAuthorizationSubject } from "./auth"
 import {
@@ -135,9 +135,9 @@ export async function handleMcpRequest(request: Request, rawBody: string): Promi
     const version = negotiatedVersion(value)
     return json(200, rpcResult(id, {
       capabilities: { tools: { listChanged: false } },
-      instructions: "Synthetic OpenWork Diagnostics endpoint. No customer content is returned or retained.",
+      instructions: "Synthetic Micx Diagnostics endpoint. No customer content is returned or retained.",
       protocolVersion: version,
-      serverInfo: { name: "openwork-diagnostics", version: "1.0.0" },
+      serverInfo: { name: "micx-diagnostics", version: "1.0.0" },
     }), {
       "mcp-protocol-version": version,
       "mcp-session-id": createSessionToken(config.signingSecret),
@@ -198,7 +198,7 @@ export async function handleMcpRequest(request: Request, rawBody: string): Promi
         })
         return json(200, rpcError(id, -32001, "Authorization required. Open the mock verification link, authorize this diagnostics tool for five minutes, then retry.", {
           connect_url: connectUrl,
-          provider: "openwork-diagnostics",
+          provider: "micx-diagnostics",
         }))
       }
       return json(200, rpcResult(id, {

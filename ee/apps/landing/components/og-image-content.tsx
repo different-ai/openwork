@@ -19,7 +19,7 @@ const demoData = {
   ]
 };
 
-export function OpenWorkLogo(props: { size?: number; titleSize?: number }) {
+export function MicxLogo(props: { size?: number; titleSize?: number }) {
   const size = props.size ?? 48;
   const titleSize = props.titleSize ?? 36;
 
@@ -34,7 +34,7 @@ export function OpenWorkLogo(props: { size?: number; titleSize?: number }) {
         <path fill="#ffffff" transform="scale(0.723958 0.723958)" d="M667.193 44.1094C680.449 43.5092 692.49 44.9422 704.362 51.1416C737.072 68.2222 768.804 87.7213 801.453 104.917C775.143 117.607 742.995 136.732 717.098 151.114L582.343 225.05C566.476 233.888 550.541 242.604 534.541 251.197C507.787 265.651 485.812 276.356 462.96 297.099C433.115 324.436 411.878 359.872 401.844 399.08C394.466 427.889 395.661 449.011 395.673 478.449L395.706 538.159L395.686 710.557L395.74 799.307C395.768 801.943 396.645 819.624 396.045 820.843L395.165 820.538L324.394 780.635C284.71 758.335 254.533 747.018 255.521 694.363C255.857 676.496 255.46 656.444 255.473 638.345L255.501 519.039L255.481 406.593C255.475 383.399 254.214 349.449 258.574 327.533C264.527 298.517 277.805 271.506 297.144 249.069C307.058 237.556 318.555 227.507 331.293 219.225C349.031 207.589 375.141 194.437 394.449 183.918L494.962 128.661L589.084 76.9263C604.628 68.3986 620.309 59.3498 636.171 51.4434C645.64 46.7238 656.691 44.9119 667.193 44.1094Z" />
       </svg>
       <span style={{ fontSize: titleSize, fontWeight: 600, letterSpacing: -0.7, lineHeight: 1, textTransform: "lowercase" }}>
-        OpenWork
+        Micx
       </span>
     </div>
   );
@@ -57,7 +57,7 @@ export function OGImageContent() {
       }}
     >
       <div style={{ width: 500, display: "flex", flexDirection: "column", gap: 32, paddingLeft: 32 }}>
-        <OpenWorkLogo />
+        <MicxLogo />
 
         <div
           style={{
@@ -148,7 +148,7 @@ export function OGImageContent() {
             <div style={{ width: 12, height: 12, borderRadius: 9999, background: "rgba(39, 201, 63, 0.9)", border: "1px solid rgba(26, 171, 41, 0.2)" }} />
           </div>
           <div style={{ position: "absolute", left: "50%", transform: "translateX(-50%)", fontSize: 12, fontWeight: 500, color: "#6b7280", letterSpacing: 0.5 }}>
-            OpenWork
+            Micx
           </div>
         </div>
 

@@ -7,7 +7,7 @@ import {
   automationRunnerHeartbeatResponseSchema,
   automationRunnerNotificationSchema,
   automationRunnerUnavailableOutcomeSchema,
-} from "@openwork/types/automations"
+} from "@micx/types/automations"
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
 import { automationUpdateChangedRows } from "../src/automations/update-result.js"

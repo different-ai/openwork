@@ -5,7 +5,7 @@ const { withObservabilityNextConfig } = require("./observability/next-config-obs
 const nextConfig = {
   reactStrictMode: true,
   skipTrailingSlashRedirect: true,
-  transpilePackages: ["@openwork/ui", "@openwork-ee/utils"],
+  transpilePackages: ["@micx/ui", "@micx-ee/utils"],
   outputFileTracingRoot: path.join(__dirname, "../../.."),
 };
 

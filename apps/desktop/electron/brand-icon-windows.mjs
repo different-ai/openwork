@@ -67,16 +67,16 @@ export function windowsBrandAppUserModelId(baseAppId, sourceUrl) {
 }
 
 export function windowsBrandShortcutFileName(appName) {
-  const safeName = String(appName ?? "OpenWork")
+  const safeName = String(appName ?? "Micx")
     .replace(/[<>:"/\\|?*]/g, "-")
-    .trim() || "OpenWork";
+    .trim() || "Micx";
   return `${safeName}.lnk`;
 }
 
 export function windowsInstalledShortcutFileName(appName) {
-  const safeName = String(appName ?? "OpenWork")
+  const safeName = String(appName ?? "Micx")
     .replace(/[<>:"/\\|?*]/g, "-")
-    .trim() || "OpenWork";
+    .trim() || "Micx";
   return `${safeName}.lnk`;
 }
 

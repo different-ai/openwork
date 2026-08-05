@@ -1,20 +1,20 @@
 import type {
-  OpenworkAffordanceDescriptor,
-  OpenworkProviderRef,
-} from "@openwork/types/openwork-affordance";
+  MicxAffordanceDescriptor,
+  MicxProviderRef,
+} from "@micx/types/micx-affordance";
 import type {
-  OpenworkConversationLayout,
-  OpenworkContextSnapshot,
-  OpenworkPanelTab,
-  OpenworkResourceDescriptor,
-  OpenworkScreen,
-} from "@openwork/types/openwork-context";
+  MicxConversationLayout,
+  MicxContextSnapshot,
+  MicxPanelTab,
+  MicxResourceDescriptor,
+  MicxScreen,
+} from "@micx/types/micx-context";
 
 import type { PanelTabStore } from "../domains/session/panel/panel-tab-store";
 import type { WorkbenchSnapshot } from "../domains/session/chat/workbench-store";
 import type { UiState } from "./ui-state-store";
 
-type OpenworkContextProjectorInput = {
+type MicxContextProjectorInput = {
   route: string;
   revision: number;
   capturedAt: string;
@@ -24,7 +24,7 @@ type OpenworkContextProjectorInput = {
     "sidebarOpen" | "sidePanelState" | "applicationMenuVisible" | "workspaceRightSidebarExpanded"
   >;
   panelSessions: PanelTabStore["sessions"];
-  availableAffordances: OpenworkAffordanceDescriptor[];
+  availableAffordances: MicxAffordanceDescriptor[];
 };
 
 function decoded(value: string | undefined) {
@@ -36,7 +36,7 @@ function decoded(value: string | undefined) {
   }
 }
 
-export function screenFromRoute(route: string): OpenworkScreen {
+export function screenFromRoute(route: string): MicxScreen {
   const workspaceSettings = route.match(/^\/workspace\/([^/]+)\/settings(?:\/([^/?#]+))?/);
   if (workspaceSettings) {
     return {
@@ -78,7 +78,7 @@ export function screenFromRoute(route: string): OpenworkScreen {
   return { kind: "other", route };
 }
 
-function panelTab(tab: PanelTabStore["sessions"][string]["tabs"][number]): OpenworkPanelTab {
+function panelTab(tab: PanelTabStore["sessions"][string]["tabs"][number]): MicxPanelTab {
   if (tab.type === "browser") {
     return {
       id: tab.id,
@@ -95,12 +95,12 @@ function panelTab(tab: PanelTabStore["sessions"][string]["tabs"][number]): Openw
   };
 }
 
-export function buildOpenworkContext(
-  input: OpenworkContextProjectorInput,
-): OpenworkContextSnapshot {
+export function buildMicxContext(
+  input: MicxContextProjectorInput,
+): MicxContextSnapshot {
   const primarySessionId = input.workbench.primarySessionId;
   const splitSessionId = input.workbench.splitSessionId;
-  const layout: OpenworkConversationLayout = primarySessionId && splitSessionId
+  const layout: MicxConversationLayout = primarySessionId && splitSessionId
     ? {
         kind: "split",
         primarySessionId,
@@ -125,11 +125,11 @@ export function buildOpenworkContext(
   const ownerSessionId = sidePanelKind === "voice" ? null : panelOwnerSessionId;
   const sessionPanel = ownerSessionId ? input.panelSessions[ownerSessionId] : undefined;
   const screen = screenFromRoute(input.route);
-  const provider: OpenworkProviderRef = { id: "openwork-ui", kind: "builtin" };
-  const resources: OpenworkResourceDescriptor[] = [{
+  const provider: MicxProviderRef = { id: "micx-ui", kind: "builtin" };
+  const resources: MicxResourceDescriptor[] = [{
     ref: `screen:${input.route}`,
     kind: "screen",
-    title: screen.kind === "settings" ? `${screen.panel} settings` : "OpenWork",
+    title: screen.kind === "settings" ? `${screen.panel} settings` : "Micx",
     provider,
     state: { kind: screen.kind, route: input.route },
   }];

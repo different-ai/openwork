@@ -441,7 +441,7 @@ export function ScimScreen() {
                   </span>
                 </div>
                 <p className="mt-1 text-[14px] leading-6 text-gray-500">
-                  Create matching OpenWork teams and keep their memberships synchronized from your identity provider. Manually managed teams remain unchanged.
+                  Create matching Micx teams and keep their memberships synchronized from your identity provider. Manually managed teams remain unchanged.
                 </p>
               </div>
               <DenButton
@@ -513,7 +513,7 @@ export function ScimScreen() {
             </div>
 
             <div className="mt-5 rounded-[24px] border border-gray-200 bg-gray-50 p-4 text-[13px] leading-6 text-gray-600">
-              OpenWork records failed SCIM lifecycle work for retry, runs periodic reconciliation for local SCIM drift, and surfaces unresolved issues here so deprovisioning failures are not silent.
+              Micx records failed SCIM lifecycle work for retry, runs periodic reconciliation for local SCIM drift, and surfaces unresolved issues here so deprovisioning failures are not silent.
               <div className="mt-3">
                 <DenButton variant="secondary" icon={RefreshCw} onClick={() => void handleRunReconciliation()} loading={reconciling} disabled={!access.canManageScim}>
                   Run reconciliation

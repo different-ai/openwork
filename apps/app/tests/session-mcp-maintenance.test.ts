@@ -1,13 +1,13 @@
 import { afterAll, beforeEach, describe, expect, test } from "bun:test";
 
 import type { DenMcpToken, DenSettings } from "../src/app/lib/den";
-import type { OpenworkCloudMcpHealth, OpenworkCloudMcpReconcilePayload } from "../src/app/lib/openwork-server";
+import type { MicxCloudMcpHealth, MicxCloudMcpReconcilePayload } from "../src/app/lib/micx-server";
 import {
   __setCloudMcpUserStateStorageForTest,
   readCloudMcpSyncMarker,
   writeCloudMcpUserState,
 } from "../src/react-app/domains/connections/cloud-mcp-user-state";
-import { cleanupOpenworkCloudMcpAfterSignOut } from "../src/react-app/domains/connections/cloud-mcp-reconciler";
+import { cleanupMicxCloudMcpAfterSignOut } from "../src/react-app/domains/connections/cloud-mcp-reconciler";
 import {
   getSessionMcpMaintenanceTargetKey,
   runCloudMcpMaintenanceWithRetry,
@@ -18,7 +18,7 @@ import {
 const NOW = Date.parse("2026-07-09T12:00:00.000Z");
 const WORKSPACE_ID = "workspace_1";
 const SETTINGS: DenSettings = {
-  baseUrl: "https://app.openwork.test",
+  baseUrl: "https://app.micx.test",
   authToken: "session-token",
   activeOrgId: "organization_1",
 };
@@ -27,10 +27,10 @@ const MINTED: DenMcpToken = {
   expiresAt: new Date(NOW + 7 * 24 * 60 * 60 * 1000).toISOString(),
   organizationId: "organization_1",
   scopes: ["mcp:read", "mcp:write"],
-  resource: "https://api.openwork.test/mcp",
+  resource: "https://api.micx.test/mcp",
 };
 
-function cloudHealth(usable: boolean): OpenworkCloudMcpHealth {
+function cloudHealth(usable: boolean): MicxCloudMcpHealth {
   return {
     schemaVersion: 1,
     phase: usable ? "ready" : "missing_desired",
@@ -40,7 +40,7 @@ function cloudHealth(usable: boolean): OpenworkCloudMcpHealth {
     workspace: { id: WORKSPACE_ID, type: "local", directory: "/workspace", path: "/workspace" },
     desired: {
       present: usable,
-      name: "openwork-cloud",
+      name: "micx-cloud",
       revision: usable ? "rev_ready" : null,
       config: null,
       token: { present: usable, metadata: {} },
@@ -55,14 +55,14 @@ function cloudHealth(usable: boolean): OpenworkCloudMcpHealth {
     },
     engine: { status: usable ? "connected" : "not_checked" },
     tools: {
-      expected: ["openwork-cloud_search_capabilities", "openwork-cloud_execute_capability"],
-      present: usable ? ["openwork-cloud_search_capabilities", "openwork-cloud_execute_capability"] : [],
-      missing: usable ? [] : ["openwork-cloud_search_capabilities", "openwork-cloud_execute_capability"],
+      expected: ["micx-cloud_search_capabilities", "micx-cloud_execute_capability"],
+      present: usable ? ["micx-cloud_search_capabilities", "micx-cloud_execute_capability"] : [],
+      missing: usable ? [] : ["micx-cloud_search_capabilities", "micx-cloud_execute_capability"],
       providerProjection: {
         checked: usable,
-        provider: "openwork",
+        provider: "micx",
         model: "gpt-5",
-        present: usable ? ["openwork-cloud_search_capabilities", "openwork-cloud_execute_capability"] : [],
+        present: usable ? ["micx-cloud_search_capabilities", "micx-cloud_execute_capability"] : [],
         missing: [],
       },
     },
@@ -72,14 +72,14 @@ function cloudHealth(usable: boolean): OpenworkCloudMcpHealth {
       code: "cloud_desired_missing",
       stage: "desired",
       retryable: false,
-      recommendedAction: "Connect OpenWork Cloud",
+      recommendedAction: "Connect Micx Cloud",
       message: "missing",
     },
     checkedAt: new Date(NOW).toISOString(),
   };
 }
 
-function retryableCloudHealth(): OpenworkCloudMcpHealth {
+function retryableCloudHealth(): MicxCloudMcpHealth {
   const health = cloudHealth(false);
   return {
     ...health,
@@ -106,12 +106,12 @@ describe("session MCP maintenance", () => {
   beforeEach(() => installStorageStub());
 
   test("mints and hot-updates the Cloud MCP without opening Settings", async () => {
-    const writes: Array<{ workspaceId: string; payload: OpenworkCloudMcpReconcilePayload }> = [];
+    const writes: Array<{ workspaceId: string; payload: MicxCloudMcpReconcilePayload }> = [];
     const client = {
-      baseUrl: "https://worker.openwork.test",
+      baseUrl: "https://worker.micx.test",
       listMcp: async () => ({ items: [] }),
-      getOpenworkCloudMcpHealth: async () => cloudHealth(false),
-      reconcileOpenworkCloudMcp: async (workspaceId: string, payload: OpenworkCloudMcpReconcilePayload) => {
+      getMicxCloudMcpHealth: async () => cloudHealth(false),
+      reconcileMicxCloudMcp: async (workspaceId: string, payload: MicxCloudMcpReconcilePayload) => {
         writes.push({ workspaceId, payload });
         return cloudHealth(true);
       },
@@ -129,18 +129,18 @@ describe("session MCP maintenance", () => {
       workspaceId: WORKSPACE_ID,
       payload: {
         workspaceId: WORKSPACE_ID,
-        name: "openwork-cloud",
+        name: "micx-cloud",
         config: {
           type: "remote",
           enabled: true,
-          url: "https://api.openwork.test/mcp/agent",
+          url: "https://api.micx.test/mcp/agent",
           headers: { Authorization: "Bearer mcp-token" },
           oauth: false,
         },
         tokenMetadata: {
           organizationId: "organization_1",
           expiresAt: MINTED.expiresAt,
-          resource: "https://api.openwork.test/mcp",
+          resource: "https://api.micx.test/mcp",
           scopes: "mcp:read mcp:write",
         },
         org: { id: "organization_1", slug: null, name: null },
@@ -167,15 +167,15 @@ describe("session MCP maintenance", () => {
     const waits: number[] = [];
     const attempts: Array<{ outcome: string; attempt: number; willRetry: boolean }> = [];
     const client = {
-      baseUrl: "https://worker.openwork.test",
+      baseUrl: "https://worker.micx.test",
       listMcp: async () => ({
         items: [{
-          name: "openwork-cloud",
-          config: { type: "remote", enabled: true, url: "https://api.openwork.test/mcp/agent" },
+          name: "micx-cloud",
+          config: { type: "remote", enabled: true, url: "https://api.micx.test/mcp/agent" },
         }],
       }),
-      getOpenworkCloudMcpHealth: async () => retryableCloudHealth(),
-      reconcileOpenworkCloudMcp: async () => {
+      getMicxCloudMcpHealth: async () => retryableCloudHealth(),
+      reconcileMicxCloudMcp: async () => {
         reconcileCount += 1;
         return reconcileCount === 3 ? cloudHealth(true) : retryableCloudHealth();
       },
@@ -217,15 +217,15 @@ describe("session MCP maintenance", () => {
     let writeCount = 0;
     let healthReady = false;
     const client = {
-      baseUrl: "https://worker.openwork.test",
+      baseUrl: "https://worker.micx.test",
       listMcp: async () => ({
         items: [{
-          name: "openwork-cloud",
-          config: { type: "remote", enabled: true, url: "https://api.openwork.test/mcp/agent" },
+          name: "micx-cloud",
+          config: { type: "remote", enabled: true, url: "https://api.micx.test/mcp/agent" },
         }],
       }),
-      getOpenworkCloudMcpHealth: async () => cloudHealth(healthReady),
-      reconcileOpenworkCloudMcp: async () => {
+      getMicxCloudMcpHealth: async () => cloudHealth(healthReady),
+      reconcileMicxCloudMcp: async () => {
         writeCount += 1;
         healthReady = true;
         return cloudHealth(true);
@@ -261,19 +261,19 @@ describe("session MCP maintenance", () => {
     const writes: string[] = [];
     const readyWorkspaces = new Set<string>();
     const client = {
-      baseUrl: "https://worker.openwork.test",
+      baseUrl: "https://worker.micx.test",
       listMcp: async () => ({
         items: [{
-          name: "openwork-cloud",
-          config: { type: "remote", enabled: true, url: "https://api.openwork.test/mcp/agent" },
+          name: "micx-cloud",
+          config: { type: "remote", enabled: true, url: "https://api.micx.test/mcp/agent" },
         }],
       }),
       addMcp: async (workspaceId: string) => {
         writes.push(workspaceId);
         return { items: [] };
       },
-      getOpenworkCloudMcpHealth: async (workspaceId: string) => cloudHealth(readyWorkspaces.has(workspaceId)),
-      reconcileOpenworkCloudMcp: async (workspaceId: string) => {
+      getMicxCloudMcpHealth: async (workspaceId: string) => cloudHealth(readyWorkspaces.has(workspaceId)),
+      reconcileMicxCloudMcp: async (workspaceId: string) => {
         writes.push(workspaceId);
         readyWorkspaces.add(workspaceId);
         return cloudHealth(true);
@@ -318,23 +318,23 @@ describe("session MCP maintenance", () => {
       baseUrl,
       listMcp: async () => ({
         items: [{
-          name: "openwork-cloud",
-          config: { type: "remote", enabled: true, url: "https://api.openwork.test/mcp/agent" },
+          name: "micx-cloud",
+          config: { type: "remote", enabled: true, url: "https://api.micx.test/mcp/agent" },
         }],
       }),
       addMcp: async () => {
         writes.push(baseUrl);
         return { items: [] };
       },
-      getOpenworkCloudMcpHealth: async () => cloudHealth(readyWorkers.has(baseUrl)),
-      reconcileOpenworkCloudMcp: async () => {
+      getMicxCloudMcpHealth: async () => cloudHealth(readyWorkers.has(baseUrl)),
+      reconcileMicxCloudMcp: async () => {
         writes.push(baseUrl);
         readyWorkers.add(baseUrl);
         return cloudHealth(true);
       },
     });
-    const workerA = makeClient("https://worker-a.openwork.test");
-    const workerB = makeClient("https://worker-b.openwork.test");
+    const workerA = makeClient("https://worker-a.micx.test");
+    const workerB = makeClient("https://worker-b.micx.test");
     const mintToken = async () => {
       mintCount += 1;
       return MINTED;
@@ -357,7 +357,7 @@ describe("session MCP maintenance", () => {
   test("explicit removal keeps background maintenance disabled", async () => {
     writeCloudMcpUserState("removed", {
       denBaseUrl: SETTINGS.baseUrl,
-      serverBaseUrl: "https://worker.openwork.test",
+      serverBaseUrl: "https://worker.micx.test",
       orgId: SETTINGS.activeOrgId ?? "",
       workspaceId: WORKSPACE_ID,
     });
@@ -366,13 +366,13 @@ describe("session MCP maintenance", () => {
 
     await expect(syncCloudControlMcpInBackground({
       client: {
-        baseUrl: "https://worker.openwork.test",
+        baseUrl: "https://worker.micx.test",
         // The engine list is consulted (an existing enabled entry must stay
         // maintained even under recorded intent), but with no entry present
         // the recorded removal keeps provisioning skipped.
         listMcp: async () => ({ items: [] }),
-        getOpenworkCloudMcpHealth: async () => cloudHealth(false),
-        reconcileOpenworkCloudMcp: async () => {
+        getMicxCloudMcpHealth: async () => cloudHealth(false),
+        reconcileMicxCloudMcp: async () => {
           reconciled = true;
           return cloudHealth(true);
         },
@@ -390,15 +390,15 @@ describe("session MCP maintenance", () => {
 
   test("pre-signout cleanup removes runtime MCP and disconnects the exact active workspace before resolving", async () => {
     const events: string[] = [];
-    await cleanupOpenworkCloudMcpAfterSignOut({
+    await cleanupMicxCloudMcpAfterSignOut({
       context: {
         denBaseUrl: SETTINGS.baseUrl,
-        serverBaseUrl: "https://worker.openwork.test",
+        serverBaseUrl: "https://worker.micx.test",
         orgId: SETTINGS.activeOrgId ?? "",
         workspaceId: WORKSPACE_ID,
       },
-      openworkClient: {
-        baseUrl: "https://worker.openwork.test",
+      micxClient: {
+        baseUrl: "https://worker.micx.test",
         removeMcp: async (workspaceId, name) => {
           events.push(`remove:${workspaceId}:${name}`);
         },
@@ -415,15 +415,15 @@ describe("session MCP maintenance", () => {
     events.push("auth-cleared");
 
     expect(events.slice(0, 2).sort()).toEqual([
-      "disconnect:/workspace/exact:openwork-cloud",
-      `remove:${WORKSPACE_ID}:openwork-cloud`,
+      "disconnect:/workspace/exact:micx-cloud",
+      `remove:${WORKSPACE_ID}:micx-cloud`,
     ].sort());
     expect(events[2]).toBe("auth-cleared");
   });
 
   test("deduplicates the same target without blocking another workspace", async () => {
-    const firstClient = { baseUrl: "https://worker.openwork.test" };
-    const recreatedClient = { baseUrl: "https://worker.openwork.test/" };
+    const firstClient = { baseUrl: "https://worker.micx.test" };
+    const recreatedClient = { baseUrl: "https://worker.micx.test/" };
     const targetA = getSessionMcpMaintenanceTargetKey({
       client: firstClient,
       cloudSignedIn: true,

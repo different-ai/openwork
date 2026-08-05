@@ -18,7 +18,7 @@ function setEnvDefault(name: string, value: string) {
 
 function seedSnapshotEnv() {
   setEnvDefault("DB_MODE", "mysql")
-  setEnvDefault("DATABASE_URL", "mysql://root:password@127.0.0.1:3306/openwork_den")
+  setEnvDefault("DATABASE_URL", "mysql://root:password@127.0.0.1:3306/micx_den")
   setEnvDefault("DEN_DB_ENCRYPTION_KEY", "local-dev-db-encryption-key-please-change-1234567890")
   setEnvDefault("BETTER_AUTH_SECRET", "local-dev-secret-not-for-production-use!!")
   setEnvDefault("BETTER_AUTH_URL", "http://den.local")

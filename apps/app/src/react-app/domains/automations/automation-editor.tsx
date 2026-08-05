@@ -1,6 +1,6 @@
 /** @jsxImportSource react */
 import { useEffect, useMemo, useRef, useState } from "react"
-import { AUTOMATION_FREE_MODEL, type AutomationSchedule, type CreateAutomation } from "@openwork/types/automations"
+import { AUTOMATION_FREE_MODEL, type AutomationSchedule, type CreateAutomation } from "@micx/types/automations"
 
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"

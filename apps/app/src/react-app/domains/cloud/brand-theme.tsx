@@ -1,6 +1,6 @@
 /** @jsxImportSource react */
 import { useEffect, useRef, type ReactNode } from "react";
-import { desktopPolicyKeys, type BrandAccentColor } from "@openwork/types/den/desktop-policies";
+import { desktopPolicyKeys, type BrandAccentColor } from "@micx/types/den/desktop-policies";
 
 import { useNotificationStore } from "../../kernel/notification-store";
 import { useOrgRestrictions } from "./desktop-config-provider";
@@ -86,7 +86,7 @@ export function useBrandLogoUrl(): string | undefined {
 
 /** Organization-managed display name. It does not change the signed app identity. */
 export function useBrandAppName(): string {
-  return useOrgRestrictions().brandAppName ?? "OpenWork";
+  return useOrgRestrictions().brandAppName ?? "Micx";
 }
 
 const POLICY_NOTIFICATION_DEDUPE = "desktop-policy-active";

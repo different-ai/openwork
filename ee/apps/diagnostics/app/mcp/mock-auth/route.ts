@@ -36,11 +36,11 @@ export async function GET(request: Request): Promise<Response> {
   const config = diagnosticsConfig()
   const challenge = new URL(request.url).searchParams.get("challenge") ?? ""
   const subject = verifyMockAuthorizationChallenge(challenge, config.signingSecret)
-  if (!subject) return html(400, "Verification link expired", "Return to OpenWork and run the diagnostics authorization check again to receive a fresh link.")
+  if (!subject) return html(400, "Verification link expired", "Return to Micx and run the diagnostics authorization check again to receive a fresh link.")
   try {
     await authorizeMockSubject(subject)
   } catch {
     return html(503, "Verification unavailable", "The diagnostics authorization store is unavailable. Try again later.")
   }
-  return html(200, "Diagnostics authorization complete", "Return to OpenWork and ask the agent to retry the diagnostics authorization check. This mock authorization resets automatically after five minutes.")
+  return html(200, "Diagnostics authorization complete", "Return to Micx and ask the agent to retry the diagnostics authorization check. This mock authorization resets automatically after five minutes.")
 }

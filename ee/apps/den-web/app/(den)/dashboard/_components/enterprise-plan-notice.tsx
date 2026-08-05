@@ -3,7 +3,7 @@
 import { buttonVariants } from "../../_components/ui/button";
 
 const ENTERPRISE_CONTACT_URL =
-  process.env.NEXT_PUBLIC_ENTERPRISE_CONTACT_URL || "https://openworklabs.com/enterprise#book";
+  process.env.NEXT_PUBLIC_ENTERPRISE_CONTACT_URL || "https://micxlabs.com/enterprise#book";
 
 type Props = {
   feature: string;

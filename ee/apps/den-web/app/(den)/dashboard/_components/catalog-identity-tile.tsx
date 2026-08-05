@@ -25,7 +25,7 @@ export type CatalogIdentityTileProps = {
   name: string;
   /** Real logo when the API has one. Marketplaces do; plugins do not. */
   logoUrl?: string | null;
-  /** Marks an entry that ships with OpenWork rather than being added. */
+  /** Marks an entry that ships with Micx rather than being added. */
   builtIn?: boolean;
   /** Glyph for built-in entries, which have no logo and no useful monogram. */
   builtInIcon?: LucideIcon;

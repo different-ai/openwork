@@ -37,7 +37,7 @@ try {
   })();
 
   // Trigger something that should emit events.
-  const created = await client.session.create({ title: "OpenWork events test" });
+  const created = await client.session.create({ title: "Micx events test" });
 
   // Wait briefly to collect events.
   await new Promise((r) => setTimeout(r, 1200));

@@ -4,21 +4,21 @@ import {
   agentContextDiagnosticsRequestSchema,
   type AgentContextDiagnosticsReport,
   type AgentContextDiagnosticsRequest,
-} from "@openwork/types/agent-context-diagnostics";
-import { normalizeBaseUrl } from "@openwork/types/url";
+} from "@micx/types/agent-context-diagnostics";
+import { normalizeBaseUrl } from "@micx/types/url";
 import {
   AGENT_CONTEXT_DIAGNOSTICS_REQUEST_TIMEOUT_MS,
   requestAgentContextDiagnosticsPayload,
 } from "./agent-context-diagnostics-transport";
 import { desktopFetch, desktopFetchAgentContextDiagnostics } from "./desktop";
-import { isOpenworkGatewayRuntime } from "./gateway-runtime";
+import { isMicxGatewayRuntime } from "./gateway-runtime";
 import { isDesktopRuntime } from "./runtime-env";
 import type { ExecResult, OpencodeConfigFile, WorkspaceInfo, WorkspaceList } from "./desktop";
 import type { DenOrgMarketplace, DenOrgPluginResolved, DenResourceSnapshot } from "./den-types";
 import type { CloudImportedMarketplace, CloudImportedPlugin } from "../cloud/import-state";
 
-export type OpenworkServerCapabilities = {
-  skills: { read: boolean; write: boolean; source: "openwork" | "opencode" };
+export type MicxServerCapabilities = {
+  skills: { read: boolean; write: boolean; source: "micx" | "opencode" };
   plugins: { read: boolean; write: boolean };
   mcp: { read: boolean; write: boolean };
   commands: { read: boolean; write: boolean };
@@ -41,9 +41,9 @@ export type OpenworkServerCapabilities = {
   };
 };
 
-export type OpenworkServerStatus = "connected" | "disconnected" | "limited";
+export type MicxServerStatus = "connected" | "disconnected" | "limited";
 
-export type OpenworkServerDiagnostics = {
+export type MicxServerDiagnostics = {
   ok: boolean;
   version: string;
   uptimeMs: number;
@@ -53,16 +53,16 @@ export type OpenworkServerDiagnostics = {
   workspaceCount: number;
   activeWorkspaceId?: string | null;
   selectedWorkspaceId?: string | null;
-  workspace: OpenworkWorkspaceInfo | null;
+  workspace: MicxWorkspaceInfo | null;
   authorizedRoots: string[];
   server: { host: string; port: number; configPath?: string | null };
   tokenSource: { client: string; host: string };
 };
 
-export type OpenworkRuntimeServiceName = "openwork-server" | "opencode";
+export type MicxRuntimeServiceName = "micx-server" | "opencode";
 
-export type OpenworkRuntimeServiceSnapshot = {
-  name: OpenworkRuntimeServiceName;
+export type MicxRuntimeServiceSnapshot = {
+  name: MicxRuntimeServiceName;
   enabled: boolean;
   running: boolean;
   targetVersion: string | null;
@@ -70,7 +70,7 @@ export type OpenworkRuntimeServiceSnapshot = {
   upgradeAvailable: boolean;
 };
 
-export type OpenworkRuntimeSnapshot = {
+export type MicxRuntimeSnapshot = {
   ok: boolean;
   worker?: {
     workspace: string;
@@ -82,12 +82,12 @@ export type OpenworkRuntimeSnapshot = {
     finishedAt: number | null;
     error: string | null;
     operationId: string | null;
-    services: OpenworkRuntimeServiceName[];
+    services: MicxRuntimeServiceName[];
   };
-  services: OpenworkRuntimeServiceSnapshot[];
+  services: MicxRuntimeServiceSnapshot[];
 };
 
-export type OpenworkServerSettings = {
+export type MicxServerSettings = {
   urlOverride?: string;
   portOverride?: number;
   token?: string;
@@ -97,22 +97,22 @@ export type OpenworkServerSettings = {
 
 // The shared WorkspaceWire contract now carries the opencode block; keep the
 // historical name as an alias for the many existing imports.
-export type OpenworkWorkspaceInfo = WorkspaceInfo;
+export type MicxWorkspaceInfo = WorkspaceInfo;
 
-export type OpenworkWorkspaceList = {
-  items: OpenworkWorkspaceInfo[];
+export type MicxWorkspaceList = {
+  items: MicxWorkspaceInfo[];
   workspaces?: WorkspaceInfo[];
   activeId?: string | null;
 };
 
-export type OpenworkSessionMessage = {
+export type MicxSessionMessage = {
   info: Message;
   parts: Part[];
 };
 
-export type OpenworkSessionSnapshot = {
+export type MicxSessionSnapshot = {
   session: Session;
-  messages: OpenworkSessionMessage[];
+  messages: MicxSessionMessage[];
   todos: Todo[];
   status:
     | { type: "idle" }
@@ -120,14 +120,14 @@ export type OpenworkSessionSnapshot = {
     | { type: "retry"; attempt: number; message: string; next: number };
 };
 
-export type OpenworkPluginItem = {
+export type MicxPluginItem = {
   spec: string;
   source: "config" | "dir.project" | "dir.global";
   scope: "project" | "global";
   path?: string;
 };
 
-export type OpenworkSkillItem = {
+export type MicxSkillItem = {
   name: string;
   path: string;
   description: string;
@@ -135,19 +135,19 @@ export type OpenworkSkillItem = {
   trigger?: string;
 };
 
-export type OpenworkSkillContent = {
-  item: OpenworkSkillItem;
+export type MicxSkillContent = {
+  item: MicxSkillItem;
   content: string;
 };
 
-export type OpenworkWorkspaceFileContent = {
+export type MicxWorkspaceFileContent = {
   path: string;
   content: string;
   bytes: number;
   updatedAt: number;
 };
 
-export type OpenworkWorkspaceFileWriteResult = {
+export type MicxWorkspaceFileWriteResult = {
   ok: boolean;
   path: string;
   bytes: number;
@@ -155,25 +155,25 @@ export type OpenworkWorkspaceFileWriteResult = {
   revision?: string;
 };
 
-export type OpenworkWorkspaceFileDeleteResult = {
+export type MicxWorkspaceFileDeleteResult = {
   ok: boolean;
   path: string;
   code?: string;
 };
 
-export type OpenworkAuthorizedFoldersResponse = {
+export type MicxAuthorizedFoldersResponse = {
   folders: string[];
   hiddenCount: number;
   workspaceRoot: string;
 };
 
-export type OpenworkAuthorizedFoldersUpdateResponse = {
+export type MicxAuthorizedFoldersUpdateResponse = {
   folders: string[];
   hiddenCount: number;
   updatedAt: number;
 };
 
-export type OpenworkRuntimeConfigMigrationResult = {
+export type MicxRuntimeConfigMigrationResult = {
   migrated: boolean;
   keys: string[];
   legacyKeys: string[];
@@ -182,12 +182,12 @@ export type OpenworkRuntimeConfigMigrationResult = {
   legacyError?: string | null;
 };
 
-export type OpenworkRuntimeDisabledProvidersResult = {
+export type MicxRuntimeDisabledProvidersResult = {
   ok: true;
   disabledProviders: string[];
 };
 
-export type OpenworkLegacyConfigSweepState = {
+export type MicxLegacyConfigSweepState = {
   version: 1;
   sweptAt: string;
   files: Array<{
@@ -198,21 +198,21 @@ export type OpenworkLegacyConfigSweepState = {
   error?: string;
 };
 
-export type OpenworkRuntimeConfigStatus = {
+export type MicxRuntimeConfigStatus = {
   runtime: Record<string, unknown>;
   runtimeKeys: string[];
   effectiveRuntime: Record<string, unknown>;
   managedFilePath: string;
   managedFileRebuiltAt: number | null;
   managedFileContentRedacted: string | null;
-  sweep: OpenworkLegacyConfigSweepState | null;
+  sweep: MicxLegacyConfigSweepState | null;
   sources?: {
     projectOpencode: { path: string; exists: boolean; keys: string[]; config: Record<string, unknown> };
     globalOpencode: { path: string; exists: boolean; keys: string[]; config: Record<string, unknown> };
     runtimeDatabase: { keys: string[]; config: Record<string, unknown> };
     injected: { keys: string[]; config: Record<string, unknown> };
   };
-  legacyOpenwork: {
+  legacyMicx: {
     path: string;
     keys: string[];
     error: string | null;
@@ -225,7 +225,7 @@ export type OpenworkRuntimeConfigStatus = {
   };
 };
 
-export type OpenworkDesktopCloudSyncChange = {
+export type MicxDesktopCloudSyncChange = {
   id: string;
   kind: "new" | "modified" | "removed";
   resourceKind: "llmProvider" | "marketplace" | "plugin" | "configItem";
@@ -236,40 +236,40 @@ export type OpenworkDesktopCloudSyncChange = {
   queuedAt: number;
 };
 
-export type OpenworkDesktopCloudSyncState = {
+export type MicxDesktopCloudSyncState = {
   entries: Record<string, unknown>;
   updatedAt: number;
   version: 1;
 };
 
-export type OpenworkDesktopCloudSyncResult = {
-  changes: OpenworkDesktopCloudSyncChange[];
-  state: OpenworkDesktopCloudSyncState;
+export type MicxDesktopCloudSyncResult = {
+  changes: MicxDesktopCloudSyncChange[];
+  state: MicxDesktopCloudSyncState;
 };
 
-export type OpenworkCloudPluginInstallResult = {
+export type MicxCloudPluginInstallResult = {
   item: CloudImportedPlugin;
   warnings: string[];
 };
 
-export type OpenworkCloudPluginsResult = {
+export type MicxCloudPluginsResult = {
   marketplaces: Record<string, CloudImportedMarketplace>;
   plugins: Record<string, CloudImportedPlugin>;
 };
 
-export type OpenworkClaudePluginComponent = {
+export type MicxClaudePluginComponent = {
   type: "mcp" | "skill" | "command" | "agent";
   name: string;
   description: string | null;
 };
 
-export type OpenworkClaudePluginPreview = {
+export type MicxClaudePluginPreview = {
   pluginId: string;
   name: string;
   description: string | null;
   version: string | null;
   source: { owner: string; repo: string; ref: string; dir: string | null };
-  components: OpenworkClaudePluginComponent[];
+  components: MicxClaudePluginComponent[];
   warnings: string[];
 };
 
@@ -283,7 +283,7 @@ function arrayBufferToBase64(data: ArrayBuffer): string {
   return btoa(binary);
 }
 
-export type OpenworkCommandItem = {
+export type MicxCommandItem = {
   name: string;
   description?: string;
   template: string;
@@ -293,25 +293,25 @@ export type OpenworkCommandItem = {
   scope: "workspace" | "global";
 };
 
-export type OpenworkMcpItem = {
+export type MicxMcpItem = {
   name: string;
   config: Record<string, unknown>;
   source: "config.project" | "config.global" | "config.remote";
   disabledByTools?: boolean;
 };
 
-export type OpenworkMcpEngineSync = {
+export type MicxMcpEngineSync = {
   status: "ok" | "failed";
   at: number;
   failures: Array<{ name: string; status?: number; message?: string }>;
 };
 
-export type OpenworkCloudMcpProviderModelContext = {
+export type MicxCloudMcpProviderModelContext = {
   provider: string;
   model: string;
 };
 
-export type OpenworkCloudMcpFailureStage =
+export type MicxCloudMcpFailureStage =
   | "prerequisites"
   | "token_mint"
   | "desired_config"
@@ -329,7 +329,7 @@ export type OpenworkCloudMcpFailureStage =
   | "tool_ids"
   | "plugin_canary";
 
-export type OpenworkCloudMcpFailureCode =
+export type MicxCloudMcpFailureCode =
   | "cloud_desired_missing"
   | "cloud_mcp_missing"
   | "cloud_mcp_disabled"
@@ -347,14 +347,14 @@ export type OpenworkCloudMcpFailureCode =
   | "opencode_unreachable"
   | "cloud_status_missing"
   | "cloud_disabled"
-  | "openwork_cloud_auth_required"
-  | "openwork_cloud_auth_invalid"
-  | "openwork_cloud_token_expired"
-  | "openwork_cloud_membership_required"
-  | "openwork_cloud_scope_missing"
-  | "openwork_cloud_resource_forbidden"
-  | "openwork_cloud_resource_not_found"
-  | "openwork_cloud_client_registration_required"
+  | "micx_cloud_auth_required"
+  | "micx_cloud_auth_invalid"
+  | "micx_cloud_token_expired"
+  | "micx_cloud_membership_required"
+  | "micx_cloud_scope_missing"
+  | "micx_cloud_resource_forbidden"
+  | "micx_cloud_resource_not_found"
+  | "micx_cloud_client_registration_required"
   | "cloud_connection_failed"
   | "cloud_registration_failed"
   | "cloud_tools_denied"
@@ -366,9 +366,9 @@ export type OpenworkCloudMcpFailureCode =
   | "extensions_plugin_missing"
   | string;
 
-export type OpenworkCloudMcpFailure = {
-  code: OpenworkCloudMcpFailureCode;
-  stage: OpenworkCloudMcpFailureStage | string;
+export type MicxCloudMcpFailure = {
+  code: MicxCloudMcpFailureCode;
+  stage: MicxCloudMcpFailureStage | string;
   retryable: boolean;
   recommendedAction: string;
   message: string;
@@ -378,8 +378,8 @@ export type OpenworkCloudMcpFailure = {
   details?: unknown;
 };
 
-export type OpenworkCloudMcpCompatibility = {
-  openwork: {
+export type MicxCloudMcpCompatibility = {
+  micx: {
     serverVersion: string | null;
     app: Record<string, string | number | boolean | null> | null;
   };
@@ -423,7 +423,7 @@ export type OpenworkCloudMcpCompatibility = {
   };
 };
 
-export type OpenworkCloudMcpHealthPhase =
+export type MicxCloudMcpHealthPhase =
   | "missing_desired"
   | "workspace_ambiguous"
   | "engine_unconfigured"
@@ -442,7 +442,7 @@ export type OpenworkCloudMcpHealthPhase =
   | "ready"
   | string;
 
-export type OpenworkCloudMcpDeliverySnapshot = {
+export type MicxCloudMcpDeliverySnapshot = {
   state: "not_desired" | "pending" | "registering" | "ready" | "failed" | "stale" | string;
   desiredRevision: string | null;
   appliedRevision: string | null;
@@ -450,10 +450,10 @@ export type OpenworkCloudMcpDeliverySnapshot = {
   appliedAt: number | null;
   lastAttemptAt: number | null;
   trigger?: string;
-  failure?: OpenworkCloudMcpFailure;
+  failure?: MicxCloudMcpFailure;
 };
 
-export type OpenworkCloudMcpProbeStep = {
+export type MicxCloudMcpProbeStep = {
   step: "initialize" | "initialized_notice" | "tools_list" | string;
   ok: boolean;
   httpStatus?: number;
@@ -461,39 +461,39 @@ export type OpenworkCloudMcpProbeStep = {
   error?: unknown;
 };
 
-export type OpenworkCloudMcpProbeTrace = {
+export type MicxCloudMcpProbeTrace = {
   endpoint: string | null;
   startedAt: string;
   latencyMs: number;
   protocolVersion: string | null;
   serverInfo: { name: string | null; version: string | null } | null;
-  steps: OpenworkCloudMcpProbeStep[];
+  steps: MicxCloudMcpProbeStep[];
 };
 
-export type OpenworkCloudMcpEngineRefreshStep = {
+export type MicxCloudMcpEngineRefreshStep = {
   step: "engine_disconnect" | "reapply" | string;
   ok: boolean;
   latencyMs: number;
   detail?: unknown;
 };
 
-export type OpenworkCloudMcpEngineRefresh = {
+export type MicxCloudMcpEngineRefresh = {
   performed: boolean;
   reason?: "desired_missing" | string;
   trigger: string;
   startedAt: string;
   finishedAt: string;
-  steps: OpenworkCloudMcpEngineRefreshStep[];
+  steps: MicxCloudMcpEngineRefreshStep[];
 };
 
-export type OpenworkCloudMcpEngineRefreshResult = {
-  refresh: OpenworkCloudMcpEngineRefresh;
-  health: OpenworkCloudMcpHealth;
+export type MicxCloudMcpEngineRefreshResult = {
+  refresh: MicxCloudMcpEngineRefresh;
+  health: MicxCloudMcpHealth;
 };
 
-export type OpenworkCloudMcpHealth = {
+export type MicxCloudMcpHealth = {
   schemaVersion: 1;
-  phase: OpenworkCloudMcpHealthPhase;
+  phase: MicxCloudMcpHealthPhase;
   usable: boolean;
   usableByCurrentModel: boolean | null;
   connectCatalogEnabled: boolean;
@@ -505,7 +505,7 @@ export type OpenworkCloudMcpHealth = {
   };
   desired: {
     present: boolean;
-    name: "openwork-cloud";
+    name: "micx-cloud";
     revision: string | null;
     config: Record<string, unknown> | null;
     token: {
@@ -516,7 +516,7 @@ export type OpenworkCloudMcpHealth = {
     app?: Record<string, string | number | boolean | null>;
     updatedAt?: number;
   };
-  delivery: OpenworkCloudMcpDeliverySnapshot;
+  delivery: MicxCloudMcpDeliverySnapshot;
   engine: {
     status: "not_checked" | "missing" | "connected" | "disabled" | "failed" | "needs_auth" | "needs_client_registration" | "unreachable" | "unknown" | string;
     error?: unknown;
@@ -538,9 +538,9 @@ export type OpenworkCloudMcpHealth = {
       expected: string[];
       present: string[];
       missing: string[];
-      trace?: OpenworkCloudMcpProbeTrace;
+      trace?: MicxCloudMcpProbeTrace;
       error?: unknown;
-      failure?: OpenworkCloudMcpFailure;
+      failure?: MicxCloudMcpFailure;
     };
     providerProjection: {
       checked: boolean;
@@ -560,16 +560,16 @@ export type OpenworkCloudMcpHealth = {
     present: string[];
     missing: string[];
   };
-  compatibility: OpenworkCloudMcpCompatibility;
+  compatibility: MicxCloudMcpCompatibility;
   toolDenies: unknown[];
-  firstFailure: OpenworkCloudMcpFailure | null;
+  firstFailure: MicxCloudMcpFailure | null;
   checkedAt: string;
   durationMs?: number;
 };
 
-export type OpenworkCloudMcpReconcilePayload = {
+export type MicxCloudMcpReconcilePayload = {
   workspaceId: string;
-  name: "openwork-cloud";
+  name: "micx-cloud";
   config: Record<string, unknown>;
   tokenMetadata?: Record<string, string | number | boolean | null>;
   org?: Record<string, string | number | boolean | null>;
@@ -582,24 +582,24 @@ export type OpenworkCloudMcpReconcilePayload = {
   model?: string;
 };
 
-export type OpenworkWorkspaceExport = {
+export type MicxWorkspaceExport = {
   workspaceId: string;
   exportedAt: number;
   opencode?: Record<string, unknown>;
-  openwork?: Record<string, unknown>;
+  micx?: Record<string, unknown>;
   skills?: Array<{ name: string; description?: string; trigger?: string; content: string }>;
   commands?: Array<{ name: string; description?: string; template?: string }>;
   files?: Array<{ path: string; content: string }>;
 };
 
-export type OpenworkWorkspaceImportChange = {
-  kind: "opencode" | "openwork" | "skill" | "command" | "file";
+export type MicxWorkspaceImportChange = {
+  kind: "opencode" | "micx" | "skill" | "command" | "file";
   action: "create" | "update" | "replace" | "delete" | "unchanged";
   label: string;
   path: string;
 };
 
-export type OpenworkWorkspaceImportPreview = {
+export type MicxWorkspaceImportPreview = {
   fingerprint: string;
   summary: {
     total: number;
@@ -609,25 +609,25 @@ export type OpenworkWorkspaceImportPreview = {
     delete: number;
     unchanged: number;
   };
-  changes: OpenworkWorkspaceImportChange[];
+  changes: MicxWorkspaceImportChange[];
 };
 
-export type OpenworkWorkspaceExportSensitiveMode = "auto" | "include" | "exclude";
+export type MicxWorkspaceExportSensitiveMode = "auto" | "include" | "exclude";
 
-export type OpenworkWorkspaceExportWarning = {
+export type MicxWorkspaceExportWarning = {
   id: string;
   label: string;
   detail: string;
 };
 
-export type OpenworkBlueprintSessionsMaterializeResult = {
+export type MicxBlueprintSessionsMaterializeResult = {
   ok: boolean;
   created: Array<{ templateId: string; sessionId: string; title: string }>;
   existing: Array<{ templateId: string; sessionId: string }>;
   openSessionId: string | null;
 };
 
-export type OpenworkArtifactItem = {
+export type MicxArtifactItem = {
   id: string;
   name?: string;
   path?: string;
@@ -637,11 +637,11 @@ export type OpenworkArtifactItem = {
   mime?: string;
 };
 
-export type OpenworkArtifactList = {
-  items: OpenworkArtifactItem[];
+export type MicxArtifactList = {
+  items: MicxArtifactItem[];
 };
 
-export type OpenworkConnectState = {
+export type MicxConnectState = {
   ok: true;
   schemaVersion: 1;
   connectEnabled: boolean;
@@ -649,14 +649,14 @@ export type OpenworkConnectState = {
   googleWorkspace: { legacyConfigured: boolean };
 };
 
-export type OpenworkExtensionActionCall = {
+export type MicxExtensionActionCall = {
   extensionId: string;
   action: string;
   args?: Record<string, unknown>;
   context?: Record<string, unknown>;
 };
 
-export type OpenworkExtensionActionResult =
+export type MicxExtensionActionResult =
   | {
     ok: true;
     extensionId: string;
@@ -670,7 +670,7 @@ export type OpenworkExtensionActionResult =
     message: string;
   };
 
-export type OpenworkResolvedArtifactTarget = {
+export type MicxResolvedArtifactTarget = {
   id: string;
   kind: "file" | "url";
   value: string;
@@ -684,7 +684,7 @@ export type OpenworkResolvedArtifactTarget = {
   contentType?: string;
 };
 
-export type OpenworkWorkspaceFileStat = {
+export type MicxWorkspaceFileStat = {
   ok: boolean;
   path: string;
   exists: boolean;
@@ -693,7 +693,7 @@ export type OpenworkWorkspaceFileStat = {
   updatedAt?: number;
 };
 
-export type OpenworkInboxItem = {
+export type MicxInboxItem = {
   id: string;
   name?: string;
   path?: string;
@@ -701,66 +701,66 @@ export type OpenworkInboxItem = {
   updatedAt?: number;
 };
 
-export type OpenworkInboxList = {
-  items: OpenworkInboxItem[];
+export type MicxInboxList = {
+  items: MicxInboxItem[];
 };
 
-export type OpenworkInboxUploadResult = {
+export type MicxInboxUploadResult = {
   ok: boolean;
   path: string;
   bytes: number;
 };
 
-export type OpenworkUserEnvItem = {
+export type MicxUserEnvItem = {
   key: string;
   updatedAt: number;
   hasValue: boolean;
   value?: string;
 };
 
-export type OpenworkActor = {
+export type MicxActor = {
   type: "remote" | "host";
   clientId?: string;
   tokenHash?: string;
 };
 
-export type OpenworkAuditEntry = {
+export type MicxAuditEntry = {
   id: string;
   workspaceId: string;
-  actor: OpenworkActor;
+  actor: MicxActor;
   action: string;
   target: string;
   summary: string;
   timestamp: number;
 };
 
-export type OpenworkReloadTrigger = {
+export type MicxReloadTrigger = {
   type: "skill" | "plugin" | "config" | "mcp" | "agent" | "command";
   name?: string;
   action?: "added" | "removed" | "updated";
   path?: string;
 };
 
-export type OpenworkReloadEvent = {
+export type MicxReloadEvent = {
   id: string;
   seq: number;
   workspaceId: string;
   reason: "plugins" | "skills" | "mcp" | "config" | "agents" | "commands";
-  trigger?: OpenworkReloadTrigger;
+  trigger?: MicxReloadTrigger;
   timestamp: number;
 };
 
-export type OpenworkSessionGroupDefinition = {
+export type MicxSessionGroupDefinition = {
   id: string;
   label: string;
 };
 
-export type OpenworkSessionGroupState = {
-  groups: OpenworkSessionGroupDefinition[];
+export type MicxSessionGroupState = {
+  groups: MicxSessionGroupDefinition[];
   assignments: Record<string, string>;
 };
 
-export type OpenworkSessionGroupEvent = {
+export type MicxSessionGroupEvent = {
   id: string;
   seq: number;
   workspaceId: string;
@@ -773,33 +773,33 @@ export type OpenworkSessionGroupEvent = {
 
 // Fallback for explicit server-mode URL derivation. Desktop local workers replace this
 // with the persisted runtime-discovered port once the host reports it.
-export const DEFAULT_OPENWORK_SERVER_PORT = 8787;
+export const DEFAULT_MICX_SERVER_PORT = 8787;
 
-const STORAGE_URL_OVERRIDE = "openwork.server.urlOverride";
-const STORAGE_PORT_OVERRIDE = "openwork.server.port";
-const STORAGE_TOKEN = "openwork.server.token";
-const STORAGE_HOST_AUTH_KEY = "openwork.server.hostToken";
-const STORAGE_REMOTE_ACCESS = "openwork.server.remoteAccessEnabled";
+const STORAGE_URL_OVERRIDE = "micx.server.urlOverride";
+const STORAGE_PORT_OVERRIDE = "micx.server.port";
+const STORAGE_TOKEN = "micx.server.token";
+const STORAGE_HOST_AUTH_KEY = "micx.server.hostToken";
+const STORAGE_REMOTE_ACCESS = "micx.server.remoteAccessEnabled";
 
-type OpenworkBootstrap = {
+type MicxBootstrap = {
   token?: string;
 };
 
 declare global {
   interface Window {
-    __OPENWORK_BOOTSTRAP__?: OpenworkBootstrap;
+    __MICX_BOOTSTRAP__?: MicxBootstrap;
   }
 }
 
-export function normalizeOpenworkServerUrl(input: string) {
+export function normalizeMicxServerUrl(input: string) {
   const trimmed = input.trim();
   if (!trimmed) return null;
   const withProtocol = /^https?:\/\//.test(trimmed) ? trimmed : `http://${trimmed}`;
   return normalizeBaseUrl(withProtocol);
 }
 
-export function isLoopbackOpenworkServerUrl(input: string) {
-  const normalized = normalizeOpenworkServerUrl(input) ?? "";
+export function isLoopbackMicxServerUrl(input: string) {
+  const normalized = normalizeMicxServerUrl(input) ?? "";
   if (!normalized) return false;
   try {
     const hostname = new URL(normalized).hostname.toLowerCase();
@@ -809,8 +809,8 @@ export function isLoopbackOpenworkServerUrl(input: string) {
   }
 }
 
-export function parseOpenworkWorkspaceIdFromUrl(input: string) {
-  const normalized = normalizeOpenworkServerUrl(input) ?? "";
+export function parseMicxWorkspaceIdFromUrl(input: string) {
+  const normalized = normalizeMicxServerUrl(input) ?? "";
   if (!normalized) return null;
 
   try {
@@ -836,8 +836,8 @@ export function parseOpenworkWorkspaceIdFromUrl(input: string) {
   }
 }
 
-export function buildOpenworkWorkspaceBaseUrl(hostUrl: string, workspaceId?: string | null) {
-  const normalized = normalizeOpenworkServerUrl(hostUrl) ?? "";
+export function buildMicxWorkspaceBaseUrl(hostUrl: string, workspaceId?: string | null) {
+  const normalized = normalizeMicxServerUrl(hostUrl) ?? "";
   if (!normalized) return null;
 
   try {
@@ -867,58 +867,58 @@ export function buildOpenworkWorkspaceBaseUrl(hostUrl: string, workspaceId?: str
   }
 }
 
-const OPENWORK_INVITE_PARAM_URL = "ow_url";
-const OPENWORK_INVITE_PARAM_TOKEN = "ow_token";
-const OPENWORK_INVITE_PARAM_STARTUP = "ow_startup";
-const OPENWORK_INVITE_PARAM_AUTO_CONNECT = "ow_auto_connect";
+const MICX_INVITE_PARAM_URL = "ow_url";
+const MICX_INVITE_PARAM_TOKEN = "ow_token";
+const MICX_INVITE_PARAM_STARTUP = "ow_startup";
+const MICX_INVITE_PARAM_AUTO_CONNECT = "ow_auto_connect";
 
-export type OpenworkConnectInvite = {
+export type MicxConnectInvite = {
   url: string;
   token?: string;
   startup?: "server";
   autoConnect?: boolean;
 };
 
-export function readOpenworkConnectInviteFromSearch(input: string | URLSearchParams) {
+export function readMicxConnectInviteFromSearch(input: string | URLSearchParams) {
   const search =
     typeof input === "string"
       ? new URLSearchParams(input.startsWith("?") ? input.slice(1) : input)
       : input;
 
-  const rawUrl = search.get(OPENWORK_INVITE_PARAM_URL)?.trim() ?? "";
-  const url = normalizeOpenworkServerUrl(rawUrl);
+  const rawUrl = search.get(MICX_INVITE_PARAM_URL)?.trim() ?? "";
+  const url = normalizeMicxServerUrl(rawUrl);
   if (!url) return null;
 
-  const token = search.get(OPENWORK_INVITE_PARAM_TOKEN)?.trim() ?? "";
-  const startupRaw = search.get(OPENWORK_INVITE_PARAM_STARTUP)?.trim() ?? "";
+  const token = search.get(MICX_INVITE_PARAM_TOKEN)?.trim() ?? "";
+  const startupRaw = search.get(MICX_INVITE_PARAM_STARTUP)?.trim() ?? "";
   const startup = startupRaw === "server" ? "server" : undefined;
-  const autoConnect = search.get(OPENWORK_INVITE_PARAM_AUTO_CONNECT)?.trim() === "1";
+  const autoConnect = search.get(MICX_INVITE_PARAM_AUTO_CONNECT)?.trim() === "1";
 
   return {
     url,
     token: token || undefined,
     startup,
     autoConnect: autoConnect || undefined,
-  } satisfies OpenworkConnectInvite;
+  } satisfies MicxConnectInvite;
 }
 
-export function stripOpenworkConnectInviteFromUrl(input: string) {
+export function stripMicxConnectInviteFromUrl(input: string) {
   try {
     const url = new URL(input);
-    url.searchParams.delete(OPENWORK_INVITE_PARAM_URL);
-    url.searchParams.delete(OPENWORK_INVITE_PARAM_TOKEN);
-    url.searchParams.delete(OPENWORK_INVITE_PARAM_STARTUP);
-    url.searchParams.delete(OPENWORK_INVITE_PARAM_AUTO_CONNECT);
+    url.searchParams.delete(MICX_INVITE_PARAM_URL);
+    url.searchParams.delete(MICX_INVITE_PARAM_TOKEN);
+    url.searchParams.delete(MICX_INVITE_PARAM_STARTUP);
+    url.searchParams.delete(MICX_INVITE_PARAM_AUTO_CONNECT);
     return url.toString();
   } catch {
     return input;
   }
 }
 
-export function readOpenworkServerSettings(): OpenworkServerSettings {
+export function readMicxServerSettings(): MicxServerSettings {
   if (typeof window === "undefined") return {};
   try {
-    const urlOverride = normalizeOpenworkServerUrl(
+    const urlOverride = normalizeMicxServerUrl(
       window.localStorage.getItem(STORAGE_URL_OVERRIDE) ?? "",
     );
     const portRaw = window.localStorage.getItem(STORAGE_PORT_OVERRIDE) ?? "";
@@ -938,10 +938,10 @@ export function readOpenworkServerSettings(): OpenworkServerSettings {
   }
 }
 
-export function writeOpenworkServerSettings(next: OpenworkServerSettings): OpenworkServerSettings {
+export function writeMicxServerSettings(next: MicxServerSettings): MicxServerSettings {
   if (typeof window === "undefined") return next;
   try {
-    const urlOverride = normalizeOpenworkServerUrl(next.urlOverride ?? "");
+    const urlOverride = normalizeMicxServerUrl(next.urlOverride ?? "");
     const portOverride = typeof next.portOverride === "number" ? next.portOverride : undefined;
     const token = next.token?.trim() || undefined;
     const hostToken = next.hostToken?.trim() || undefined;
@@ -977,41 +977,41 @@ export function writeOpenworkServerSettings(next: OpenworkServerSettings): Openw
       window.localStorage.removeItem(STORAGE_REMOTE_ACCESS);
     }
 
-    return readOpenworkServerSettings();
+    return readMicxServerSettings();
   } catch {
     return next;
   }
 }
 
-export function hydrateOpenworkServerSettingsFromEnv() {
+export function hydrateMicxServerSettingsFromEnv() {
   if (typeof window === "undefined") return;
-  if (isOpenworkGatewayRuntime()) return;
+  if (isMicxGatewayRuntime()) return;
 
-  const envUrl = typeof import.meta.env?.VITE_OPENWORK_URL === "string"
-    ? import.meta.env.VITE_OPENWORK_URL.trim()
+  const envUrl = typeof import.meta.env?.VITE_MICX_URL === "string"
+    ? import.meta.env.VITE_MICX_URL.trim()
     : "";
-  const envPort = typeof import.meta.env?.VITE_OPENWORK_PORT === "string"
-    ? import.meta.env.VITE_OPENWORK_PORT.trim()
+  const envPort = typeof import.meta.env?.VITE_MICX_PORT === "string"
+    ? import.meta.env.VITE_MICX_PORT.trim()
     : "";
-  const envToken = typeof import.meta.env?.VITE_OPENWORK_TOKEN === "string"
-    ? import.meta.env.VITE_OPENWORK_TOKEN.trim()
+  const envToken = typeof import.meta.env?.VITE_MICX_TOKEN === "string"
+    ? import.meta.env.VITE_MICX_TOKEN.trim()
     : "";
-  const envHostToken = typeof import.meta.env?.VITE_OPENWORK_HOST_TOKEN === "string"
-    ? import.meta.env.VITE_OPENWORK_HOST_TOKEN.trim()
+  const envHostToken = typeof import.meta.env?.VITE_MICX_HOST_TOKEN === "string"
+    ? import.meta.env.VITE_MICX_HOST_TOKEN.trim()
     : "";
-  const bootstrapToken = typeof window.__OPENWORK_BOOTSTRAP__?.token === "string"
-    ? window.__OPENWORK_BOOTSTRAP__.token.trim()
+  const bootstrapToken = typeof window.__MICX_BOOTSTRAP__?.token === "string"
+    ? window.__MICX_BOOTSTRAP__.token.trim()
     : "";
 
   if (!envUrl && !envPort && !envToken && !envHostToken && !bootstrapToken) return;
 
   try {
-    const current = readOpenworkServerSettings();
-    const next: OpenworkServerSettings = { ...current };
+    const current = readMicxServerSettings();
+    const next: MicxServerSettings = { ...current };
     let changed = false;
 
     if (!current.urlOverride && envUrl) {
-      next.urlOverride = normalizeOpenworkServerUrl(envUrl) ?? undefined;
+      next.urlOverride = normalizeMicxServerUrl(envUrl) ?? undefined;
       changed = true;
     }
 
@@ -1037,14 +1037,14 @@ export function hydrateOpenworkServerSettingsFromEnv() {
     }
 
     if (changed) {
-      writeOpenworkServerSettings(next);
+      writeMicxServerSettings(next);
     }
   } catch {
     // ignore
   }
 }
 
-export function clearOpenworkServerSettings() {
+export function clearMicxServerSettings() {
   if (typeof window === "undefined") return;
   try {
     window.localStorage.removeItem(STORAGE_URL_OVERRIDE);
@@ -1057,7 +1057,7 @@ export function clearOpenworkServerSettings() {
   }
 }
 
-export class OpenworkServerError extends Error {
+export class MicxServerError extends Error {
   status: number;
   code: string;
   details?: unknown;
@@ -1080,7 +1080,7 @@ function buildHeaders(
     headers.Authorization = `Bearer ${token}`;
   }
   if (hostToken) {
-    headers["X-OpenWork-Host-Token"] = hostToken;
+    headers["X-Micx-Host-Token"] = hostToken;
   }
   if (extra) {
     Object.assign(headers, extra);
@@ -1094,7 +1094,7 @@ function buildAuthHeaders(token?: string, hostToken?: string, extra?: Record<str
     headers.Authorization = `Bearer ${token}`;
   }
   if (hostToken) {
-    headers["X-OpenWork-Host-Token"] = hostToken;
+    headers["X-Micx-Host-Token"] = hostToken;
   }
   if (extra) {
     Object.assign(headers, extra);
@@ -1105,10 +1105,10 @@ function buildAuthHeaders(token?: string, hostToken?: string, extra?: Record<str
 // Use Tauri's fetch when running in the desktop app to avoid CORS issues.
 // Stream URLs (SSE) bypass the plugin because its `fetch_read_body` IPC call
 // blocks until the body closes — that freezes the webview for infinite bodies.
-const OPENWORK_STREAM_URL_RE = /\/events(\b|\?)|\/event-stream\b|\/stream\b/;
+const MICX_STREAM_URL_RE = /\/events(\b|\?)|\/event-stream\b|\/stream\b/;
 
 function isStreamUrl(url: string): boolean {
-  return OPENWORK_STREAM_URL_RE.test(url);
+  return MICX_STREAM_URL_RE.test(url);
 }
 
 const resolveFetch = (url?: string) => {
@@ -1119,7 +1119,7 @@ const resolveFetch = (url?: string) => {
   return desktopFetch;
 };
 
-const DEFAULT_OPENWORK_SERVER_TIMEOUT_MS = 10_000;
+const DEFAULT_MICX_SERVER_TIMEOUT_MS = 10_000;
 const ENGINE_RELOAD_TIMEOUT_MS = 60_000;
 
 type FetchLike = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
@@ -1178,7 +1178,7 @@ async function requestJson<T>(
       headers: buildHeaders(options.token, options.hostToken),
       body: options.body ? JSON.stringify(options.body) : undefined,
     },
-    options.timeoutMs ?? DEFAULT_OPENWORK_SERVER_TIMEOUT_MS,
+    options.timeoutMs ?? DEFAULT_MICX_SERVER_TIMEOUT_MS,
   );
 
   const text = await response.text();
@@ -1187,7 +1187,7 @@ async function requestJson<T>(
   if (!response.ok) {
     const code = typeof json?.code === "string" ? json.code : "request_failed";
     const message = typeof json?.message === "string" ? json.message : response.statusText;
-    throw new OpenworkServerError(response.status, code, message, json?.details);
+    throw new MicxServerError(response.status, code, message, json?.details);
   }
 
   return json as T;
@@ -1228,7 +1228,7 @@ async function requestAgentContextDiagnosticsJson(
     const details = payload && typeof payload === "object" && "details" in payload
       ? payload.details
       : undefined;
-    throw new OpenworkServerError(result.response.status, code, message, details);
+    throw new MicxServerError(result.response.status, code, message, details);
   }
 
   return result.payload;
@@ -1249,7 +1249,7 @@ async function requestMultipartRaw(
       headers: buildAuthHeaders(options.token, options.hostToken),
       body: options.body,
     },
-    options.timeoutMs ?? DEFAULT_OPENWORK_SERVER_TIMEOUT_MS,
+    options.timeoutMs ?? DEFAULT_MICX_SERVER_TIMEOUT_MS,
   );
   const text = await response.text();
   return { ok: response.ok, status: response.status, text };
@@ -1269,7 +1269,7 @@ async function requestBinary(
       method: options.method ?? "GET",
       headers: buildAuthHeaders(options.token, options.hostToken),
     },
-    options.timeoutMs ?? DEFAULT_OPENWORK_SERVER_TIMEOUT_MS,
+    options.timeoutMs ?? DEFAULT_MICX_SERVER_TIMEOUT_MS,
   );
 
   if (!response.ok) {
@@ -1282,7 +1282,7 @@ async function requestBinary(
     }
     const code = typeof json?.code === "string" ? json.code : "request_failed";
     const message = typeof json?.message === "string" ? json.message : response.statusText;
-    throw new OpenworkServerError(response.status, code, message, json?.details);
+    throw new MicxServerError(response.status, code, message, json?.details);
   }
 
   const contentType = response.headers.get("content-type");
@@ -1294,7 +1294,7 @@ async function requestBinary(
   return { data, contentType, filename };
 }
 
-export function createOpenworkServerClient(options: { baseUrl: string; token?: string; hostToken?: string }) {
+export function createMicxServerClient(options: { baseUrl: string; token?: string; hostToken?: string }) {
   const baseUrl = options.baseUrl.replace(/\/+$/, "");
   const token = options.token;
   const hostToken = options.hostToken;
@@ -1324,19 +1324,19 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
     health: () =>
       requestJson<{ ok: boolean; version: string; uptimeMs: number }>(baseUrl, "/health", { token, hostToken, timeoutMs: timeouts.health }),
     runtimeVersions: () =>
-      requestJson<OpenworkRuntimeSnapshot>(baseUrl, "/runtime/versions", { token, hostToken, timeoutMs: timeouts.status }),
-    status: () => requestJson<OpenworkServerDiagnostics>(baseUrl, "/status", { token, hostToken, timeoutMs: timeouts.status }),
-    capabilities: () => requestJson<OpenworkServerCapabilities>(baseUrl, "/capabilities", { token, hostToken, timeoutMs: timeouts.capabilities }),
-    setConnectState: (connectEnabled: boolean) => requestJson<OpenworkConnectState>(baseUrl, "/experimental/connect/state", { token, hostToken, method: "PUT", body: { connectEnabled }, timeoutMs: timeouts.config }),
-    callExtensionAction: (payload: OpenworkExtensionActionCall) =>
-      requestJson<OpenworkExtensionActionResult>(baseUrl, "/experimental/extensions/call", {
+      requestJson<MicxRuntimeSnapshot>(baseUrl, "/runtime/versions", { token, hostToken, timeoutMs: timeouts.status }),
+    status: () => requestJson<MicxServerDiagnostics>(baseUrl, "/status", { token, hostToken, timeoutMs: timeouts.status }),
+    capabilities: () => requestJson<MicxServerCapabilities>(baseUrl, "/capabilities", { token, hostToken, timeoutMs: timeouts.capabilities }),
+    setConnectState: (connectEnabled: boolean) => requestJson<MicxConnectState>(baseUrl, "/experimental/connect/state", { token, hostToken, method: "PUT", body: { connectEnabled }, timeoutMs: timeouts.config }),
+    callExtensionAction: (payload: MicxExtensionActionCall) =>
+      requestJson<MicxExtensionActionResult>(baseUrl, "/experimental/extensions/call", {
         token,
         hostToken,
         method: "POST",
         body: payload,
         timeoutMs: timeouts.binary,
       }),
-    listWorkspaces: () => requestJson<OpenworkWorkspaceList>(baseUrl, "/workspaces", { token, hostToken, timeoutMs: timeouts.listWorkspaces }),
+    listWorkspaces: () => requestJson<MicxWorkspaceList>(baseUrl, "/workspaces", { token, hostToken, timeoutMs: timeouts.listWorkspaces }),
     createLocalWorkspace: (payload: { folderPath: string; name: string; preset: string }) =>
       requestJson<WorkspaceList>(baseUrl, "/workspaces/local", {
         token,
@@ -1347,13 +1347,13 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
       }),
     createRemoteWorkspace: (payload: {
       baseUrl: string;
-      openworkHostUrl?: string | null;
-      openworkToken?: string | null;
-      openworkWorkspaceId?: string | null;
-      openworkWorkspaceName?: string | null;
+      micxHostUrl?: string | null;
+      micxToken?: string | null;
+      micxWorkspaceId?: string | null;
+      micxWorkspaceName?: string | null;
       displayName?: string | null;
       directory?: string | null;
-      remoteType?: "openwork" | "opencode";
+      remoteType?: "micx" | "opencode";
       sandboxBackend?: string | null;
       sandboxRunId?: string | null;
       sandboxContainerName?: string | null;
@@ -1375,14 +1375,14 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
       }),
     activateWorkspace: (workspaceId: string, options?: { persist?: boolean }) => {
       const query = options?.persist ? "?persist=true" : "";
-      return requestJson<{ activeId: string; workspace: OpenworkWorkspaceInfo; persisted: boolean }>(
+      return requestJson<{ activeId: string; workspace: MicxWorkspaceInfo; persisted: boolean }>(
         baseUrl,
         `/workspaces/${encodeURIComponent(workspaceId)}/activate${query}`,
         { token, hostToken, method: "POST", timeoutMs: timeouts.activateWorkspace },
       );
     },
     deleteWorkspace: (workspaceId: string) =>
-      requestJson<{ ok: boolean; deleted: boolean; persisted: boolean; activeId: string | null; items: OpenworkWorkspaceInfo[]; workspaces?: WorkspaceInfo[] }>(
+      requestJson<{ ok: boolean; deleted: boolean; persisted: boolean; activeId: string | null; items: MicxWorkspaceInfo[]; workspaces?: WorkspaceInfo[] }>(
         baseUrl,
         `/workspaces/${encodeURIComponent(workspaceId)}`,
         { token, hostToken, method: "DELETE", timeoutMs: timeouts.deleteWorkspace },
@@ -1410,50 +1410,50 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
       );
     },
     getSessionGroups: (workspaceId: string) =>
-      requestJson<{ state: OpenworkSessionGroupState; updatedAt: number | null }>(
+      requestJson<{ state: MicxSessionGroupState; updatedAt: number | null }>(
         baseUrl,
         `/workspace/${encodeURIComponent(workspaceId)}/session-groups`,
         { token, hostToken, timeoutMs: timeouts.sessionRead },
       ),
-    putSessionGroups: (workspaceId: string, state: OpenworkSessionGroupState) =>
-      requestJson<{ state: OpenworkSessionGroupState; updatedAt: number }>(
+    putSessionGroups: (workspaceId: string, state: MicxSessionGroupState) =>
+      requestJson<{ state: MicxSessionGroupState; updatedAt: number }>(
         baseUrl,
         `/workspace/${encodeURIComponent(workspaceId)}/session-groups`,
         { token, hostToken, method: "PUT", body: { state }, timeoutMs: timeouts.config },
       ),
     createSessionGroup: (workspaceId: string, input: { id?: string; label: string }) =>
-      requestJson<{ state: OpenworkSessionGroupState; updatedAt: number }>(
+      requestJson<{ state: MicxSessionGroupState; updatedAt: number }>(
         baseUrl,
         `/workspace/${encodeURIComponent(workspaceId)}/session-groups`,
         { token, hostToken, method: "POST", body: input, timeoutMs: timeouts.config },
       ),
     reorderSessionGroups: (workspaceId: string, groupIds: string[]) =>
-      requestJson<{ state: OpenworkSessionGroupState; updatedAt: number }>(
+      requestJson<{ state: MicxSessionGroupState; updatedAt: number }>(
         baseUrl,
         `/workspace/${encodeURIComponent(workspaceId)}/session-groups/reorder`,
         { token, hostToken, method: "PATCH", body: { groupIds }, timeoutMs: timeouts.config },
       ),
     assignSessionGroup: (workspaceId: string, sessionId: string, groupId: string | null) =>
-      requestJson<{ state: OpenworkSessionGroupState; updatedAt: number }>(
+      requestJson<{ state: MicxSessionGroupState; updatedAt: number }>(
         baseUrl,
         `/workspace/${encodeURIComponent(workspaceId)}/session-groups/assignments/${encodeURIComponent(sessionId)}`,
         { token, hostToken, method: "PATCH", body: { groupId }, timeoutMs: timeouts.config },
       ),
     renameSessionGroup: (workspaceId: string, groupId: string, label: string) =>
-      requestJson<{ state: OpenworkSessionGroupState; updatedAt: number }>(
+      requestJson<{ state: MicxSessionGroupState; updatedAt: number }>(
         baseUrl,
         `/workspace/${encodeURIComponent(workspaceId)}/session-groups/${encodeURIComponent(groupId)}`,
         { token, hostToken, method: "PATCH", body: { label }, timeoutMs: timeouts.config },
       ),
     removeSessionGroup: (workspaceId: string, groupId: string, destinationGroupId: string | null = null) =>
-      requestJson<{ state: OpenworkSessionGroupState; updatedAt: number }>(
+      requestJson<{ state: MicxSessionGroupState; updatedAt: number }>(
         baseUrl,
         `/workspace/${encodeURIComponent(workspaceId)}/session-groups/${encodeURIComponent(groupId)}${destinationGroupId ? `?destinationGroupId=${encodeURIComponent(destinationGroupId)}` : ""}`,
         { token, hostToken, method: "DELETE", timeoutMs: timeouts.config },
       ),
     listSessionGroupEvents: (workspaceId: string, options?: { since?: number }) => {
       const query = typeof options?.since === "number" ? `?since=${options.since}` : "";
-      return requestJson<{ items: OpenworkSessionGroupEvent[]; cursor?: number }>(
+      return requestJson<{ items: MicxSessionGroupEvent[]; cursor?: number }>(
         baseUrl,
         `/workspace/${encodeURIComponent(workspaceId)}/session-groups/events${query}`,
         { token, hostToken },
@@ -1469,7 +1469,7 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
       const query = new URLSearchParams();
       if (typeof options?.limit === "number") query.set("limit", String(options.limit));
       const suffix = query.size ? `?${query.toString()}` : "";
-      return requestJson<{ items: OpenworkSessionMessage[] }>(
+      return requestJson<{ items: MicxSessionMessage[] }>(
         baseUrl,
         `/workspace/${encodeURIComponent(workspaceId)}/sessions/${encodeURIComponent(sessionId)}/messages${suffix}`,
         { token, hostToken, timeoutMs: timeouts.sessionRead },
@@ -1479,7 +1479,7 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
       const query = new URLSearchParams();
       if (typeof options?.limit === "number") query.set("limit", String(options.limit));
       const suffix = query.size ? `?${query.toString()}` : "";
-      return requestJson<{ item: OpenworkSessionSnapshot }>(
+      return requestJson<{ item: MicxSessionSnapshot }>(
         baseUrl,
         `/workspace/${encodeURIComponent(workspaceId)}/sessions/${encodeURIComponent(sessionId)}/snapshot${suffix}`,
         { token, hostToken, timeoutMs: timeouts.sessionRead },
@@ -1487,21 +1487,21 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
     },
     exportWorkspace: (
       workspaceId: string,
-      options?: { sensitiveMode?: OpenworkWorkspaceExportSensitiveMode },
+      options?: { sensitiveMode?: MicxWorkspaceExportSensitiveMode },
     ) => {
       const query = new URLSearchParams();
       if (options?.sensitiveMode) {
         query.set("sensitive", options.sensitiveMode);
       }
       const suffix = query.size ? `?${query.toString()}` : "";
-      return requestJson<OpenworkWorkspaceExport>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/export${suffix}`, {
+      return requestJson<MicxWorkspaceExport>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/export${suffix}`, {
         token,
         hostToken,
         timeoutMs: timeouts.workspaceExport,
       });
     },
     importWorkspace: (workspaceId: string, payload: Record<string, unknown>) =>
-      requestJson<{ ok: boolean; preview?: OpenworkWorkspaceImportPreview }>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/import`, {
+      requestJson<{ ok: boolean; preview?: MicxWorkspaceImportPreview }>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/import`, {
         token,
         hostToken,
         method: "POST",
@@ -1509,7 +1509,7 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         timeoutMs: timeouts.workspaceImport,
       }),
     previewWorkspaceImport: (workspaceId: string, payload: Record<string, unknown>) =>
-      requestJson<OpenworkWorkspaceImportPreview>(
+      requestJson<MicxWorkspaceImportPreview>(
         baseUrl,
         `/workspace/${encodeURIComponent(workspaceId)}/import/preview`,
         {
@@ -1521,7 +1521,7 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         },
       ),
     materializeBlueprintSessions: (workspaceId: string) =>
-      requestJson<OpenworkBlueprintSessionsMaterializeResult>(
+      requestJson<MicxBlueprintSessionsMaterializeResult>(
         baseUrl,
         `/workspace/${encodeURIComponent(workspaceId)}/blueprint/sessions/materialize`,
         {
@@ -1532,19 +1532,19 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         },
       ),
     getConfig: (workspaceId: string) =>
-      requestJson<{ opencode: Record<string, unknown>; openwork: Record<string, unknown>; updatedAt?: number | null }>(
+      requestJson<{ opencode: Record<string, unknown>; micx: Record<string, unknown>; updatedAt?: number | null }>(
         baseUrl,
         `/workspace/${workspaceId}/config`,
         { token, hostToken, timeoutMs: timeouts.config },
       ),
     listAuthorizedFolders: (workspaceId: string) =>
-      requestJson<OpenworkAuthorizedFoldersResponse>(
+      requestJson<MicxAuthorizedFoldersResponse>(
         baseUrl,
         `/workspace/${encodeURIComponent(workspaceId)}/authorized-folders`,
         { token, hostToken, timeoutMs: timeouts.config },
       ),
     setAuthorizedFolders: (workspaceId: string, folders: string[]) =>
-      requestJson<OpenworkAuthorizedFoldersUpdateResponse>(
+      requestJson<MicxAuthorizedFoldersUpdateResponse>(
         baseUrl,
         `/workspace/${encodeURIComponent(workspaceId)}/authorized-folders`,
         {
@@ -1556,7 +1556,7 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         },
       ),
     migrateRuntimeConfig: (workspaceId: string) =>
-      requestJson<OpenworkRuntimeConfigMigrationResult>(
+      requestJson<MicxRuntimeConfigMigrationResult>(
         baseUrl,
         `/workspace/${encodeURIComponent(workspaceId)}/runtime-config/migrate`,
         {
@@ -1567,7 +1567,7 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         },
       ),
     setRuntimeDisabledProviders: (workspaceId: string, providers: string[]) =>
-      requestJson<OpenworkRuntimeDisabledProvidersResult>(
+      requestJson<MicxRuntimeDisabledProvidersResult>(
         baseUrl,
         `/workspace/${encodeURIComponent(workspaceId)}/runtime-config/disabled-providers`,
         {
@@ -1579,12 +1579,12 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         },
       ),
     getRuntimeConfigStatus: (workspaceId: string) =>
-      requestJson<OpenworkRuntimeConfigStatus>(
+      requestJson<MicxRuntimeConfigStatus>(
         baseUrl,
         `/workspace/${encodeURIComponent(workspaceId)}/runtime-config`,
         { token, hostToken, timeoutMs: timeouts.config },
       ),
-    patchConfig: (workspaceId: string, payload: { opencode?: Record<string, unknown>; openwork?: Record<string, unknown> }) =>
+    patchConfig: (workspaceId: string, payload: { opencode?: Record<string, unknown>; micx?: Record<string, unknown> }) =>
       requestJson<{ updatedAt?: number | null }>(baseUrl, `/workspace/${workspaceId}/config`, {
         token,
         hostToken,
@@ -1592,13 +1592,13 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         body: payload,
       }),
     getDesktopCloudSync: (workspaceId: string) =>
-      requestJson<OpenworkDesktopCloudSyncState>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/desktop-cloud-sync`, {
+      requestJson<MicxDesktopCloudSyncState>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/desktop-cloud-sync`, {
         token,
         hostToken,
         timeoutMs: timeouts.config,
       }),
     syncDesktopCloud: (workspaceId: string, snapshot: DenResourceSnapshot) =>
-      requestJson<OpenworkDesktopCloudSyncResult>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/desktop-cloud-sync`, {
+      requestJson<MicxDesktopCloudSyncResult>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/desktop-cloud-sync`, {
         token,
         hostToken,
         method: "POST",
@@ -1606,13 +1606,13 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         timeoutMs: timeouts.config,
       }),
     listCloudPlugins: (workspaceId: string) =>
-      requestJson<OpenworkCloudPluginsResult>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/cloud-plugins`, {
+      requestJson<MicxCloudPluginsResult>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/cloud-plugins`, {
         token,
         hostToken,
         timeoutMs: timeouts.config,
       }),
     installCloudPlugin: (workspaceId: string, payload: { marketplaceId: string | null; marketplace?: DenOrgMarketplace | null; resolved: DenOrgPluginResolved }) =>
-      requestJson<OpenworkCloudPluginInstallResult>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/cloud-plugins`, {
+      requestJson<MicxCloudPluginInstallResult>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/cloud-plugins`, {
         token,
         hostToken,
         method: "POST",
@@ -1620,14 +1620,14 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         timeoutMs: timeouts.config,
       }),
     removeCloudPlugin: (workspaceId: string, pluginId: string) =>
-      requestJson<OpenworkCloudPluginInstallResult>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/cloud-plugins/${encodeURIComponent(pluginId)}`, {
+      requestJson<MicxCloudPluginInstallResult>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/cloud-plugins/${encodeURIComponent(pluginId)}`, {
         token,
         hostToken,
         method: "DELETE",
         timeoutMs: timeouts.config,
       }),
     previewClaudePlugin: (workspaceId: string, payload: { url: string; ref?: string }) =>
-      requestJson<{ preview: OpenworkClaudePluginPreview }>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/claude-plugins`, {
+      requestJson<{ preview: MicxClaudePluginPreview }>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/claude-plugins`, {
         token,
         hostToken,
         method: "POST",
@@ -1635,7 +1635,7 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         timeoutMs: timeouts.config,
       }),
     installClaudePlugin: (workspaceId: string, payload: { url: string; ref?: string }) =>
-      requestJson<OpenworkCloudPluginInstallResult & { preview: OpenworkClaudePluginPreview }>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/claude-plugins`, {
+      requestJson<MicxCloudPluginInstallResult & { preview: MicxClaudePluginPreview }>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/claude-plugins`, {
         token,
         hostToken,
         method: "POST",
@@ -1658,7 +1658,7 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
       }),
     listReloadEvents: (workspaceId: string, options?: { since?: number }) => {
       const query = typeof options?.since === "number" ? `?since=${options.since}` : "";
-      return requestJson<{ items: OpenworkReloadEvent[]; cursor?: number }>(
+      return requestJson<{ items: MicxReloadEvent[]; cursor?: number }>(
         baseUrl,
         `/workspace/${workspaceId}/events${query}`,
         { token, hostToken },
@@ -1673,27 +1673,27 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
       }),
     listPlugins: (workspaceId: string, options?: { includeGlobal?: boolean }) => {
       const query = options?.includeGlobal ? "?includeGlobal=true" : "";
-      return requestJson<{ items: OpenworkPluginItem[]; loadOrder: string[] }>(
+      return requestJson<{ items: MicxPluginItem[]; loadOrder: string[] }>(
         baseUrl,
         `/workspace/${workspaceId}/plugins${query}`,
         { token, hostToken },
       );
     },
     addPlugin: (workspaceId: string, spec: string) =>
-      requestJson<{ items: OpenworkPluginItem[]; loadOrder: string[] }>(
+      requestJson<{ items: MicxPluginItem[]; loadOrder: string[] }>(
         baseUrl,
         `/workspace/${workspaceId}/plugins`,
         { token, hostToken, method: "POST", body: { spec } },
       ),
     removePlugin: (workspaceId: string, name: string) =>
-      requestJson<{ items: OpenworkPluginItem[]; loadOrder: string[] }>(
+      requestJson<{ items: MicxPluginItem[]; loadOrder: string[] }>(
         baseUrl,
         `/workspace/${workspaceId}/plugins/${encodeURIComponent(name)}`,
         { token, hostToken, method: "DELETE" },
       ),
     listSkills: (workspaceId: string, options?: { includeGlobal?: boolean }) => {
       const query = options?.includeGlobal ? "?includeGlobal=true" : "";
-      return requestJson<{ items: OpenworkSkillItem[] }>(
+      return requestJson<{ items: MicxSkillItem[] }>(
         baseUrl,
         `/workspace/${workspaceId}/skills${query}`,
         { token, hostToken },
@@ -1701,14 +1701,14 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
     },
     getSkill: (workspaceId: string, name: string, options?: { includeGlobal?: boolean }) => {
       const query = options?.includeGlobal ? "?includeGlobal=true" : "";
-      return requestJson<OpenworkSkillContent>(
+      return requestJson<MicxSkillContent>(
         baseUrl,
         `/workspace/${workspaceId}/skills/${encodeURIComponent(name)}${query}`,
         { token, hostToken },
       );
     },
     upsertSkill: (workspaceId: string, payload: { name: string; content: string; description?: string }) =>
-      requestJson<OpenworkSkillItem>(baseUrl, `/workspace/${workspaceId}/skills`, {
+      requestJson<MicxSkillItem>(baseUrl, `/workspace/${workspaceId}/skills`, {
         token,
         hostToken,
         method: "POST",
@@ -1725,14 +1725,14 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         },
       ),
     listMcp: (workspaceId: string) =>
-      requestJson<{ items: OpenworkMcpItem[]; engineSync?: OpenworkMcpEngineSync | null }>(
+      requestJson<{ items: MicxMcpItem[]; engineSync?: MicxMcpEngineSync | null }>(
         baseUrl,
         `/workspace/${workspaceId}/mcp`,
         { token, hostToken },
       ),
-    getOpenworkCloudMcpHealth: (
+    getMicxCloudMcpHealth: (
       workspaceId: string,
-      providerModel?: OpenworkCloudMcpProviderModelContext,
+      providerModel?: MicxCloudMcpProviderModelContext,
       options?: { probe?: boolean },
     ) => {
       const query = new URLSearchParams();
@@ -1740,20 +1740,20 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         query.set("provider", providerModel.provider.trim());
         query.set("model", providerModel.model.trim());
       }
-      // probe=1 verifies the Cloud endpoint directly from the OpenWork server
+      // probe=1 verifies the Cloud endpoint directly from the Micx server
       // (initialize + tools/list), independent of the engine's own connection.
       if (options?.probe) query.set("probe", "1");
       const suffix = query.size ? `?${query.toString()}` : "";
-      return requestJson<OpenworkCloudMcpHealth>(
+      return requestJson<MicxCloudMcpHealth>(
         baseUrl,
-        `/workspace/${encodeURIComponent(workspaceId)}/mcp/openwork-cloud/health${suffix}`,
+        `/workspace/${encodeURIComponent(workspaceId)}/mcp/micx-cloud/health${suffix}`,
         { token, hostToken, timeoutMs: options?.probe ? timeouts.cloudMcpProbeHealth : timeouts.cloudMcpHealth },
       );
     },
-    reconcileOpenworkCloudMcp: (workspaceId: string, payload: OpenworkCloudMcpReconcilePayload) =>
-      requestJson<OpenworkCloudMcpHealth>(
+    reconcileMicxCloudMcp: (workspaceId: string, payload: MicxCloudMcpReconcilePayload) =>
+      requestJson<MicxCloudMcpHealth>(
         baseUrl,
-        `/workspace/${encodeURIComponent(workspaceId)}/mcp/openwork-cloud/reconcile`,
+        `/workspace/${encodeURIComponent(workspaceId)}/mcp/micx-cloud/reconcile`,
         {
           token,
           hostToken,
@@ -1762,13 +1762,13 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
           timeoutMs: timeouts.cloudMcpReconcile,
         },
       ),
-    refreshOpenworkCloudMcpEngine: (
+    refreshMicxCloudMcpEngine: (
       workspaceId: string,
       payload?: { provider?: string; model?: string; trigger?: string },
     ) =>
-      requestJson<OpenworkCloudMcpEngineRefreshResult>(
+      requestJson<MicxCloudMcpEngineRefreshResult>(
         baseUrl,
-        `/workspace/${encodeURIComponent(workspaceId)}/mcp/openwork-cloud/engine-refresh`,
+        `/workspace/${encodeURIComponent(workspaceId)}/mcp/micx-cloud/engine-refresh`,
         {
           token,
           hostToken,
@@ -1795,20 +1795,20 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
       return agentContextDiagnosticsReportSchema.parse(payload);
     },
     addMcp: (workspaceId: string, payload: { name: string; config: Record<string, unknown> }) =>
-      requestJson<{ items: OpenworkMcpItem[] }>(baseUrl, `/workspace/${workspaceId}/mcp`, {
+      requestJson<{ items: MicxMcpItem[] }>(baseUrl, `/workspace/${workspaceId}/mcp`, {
         token,
         hostToken,
         method: "POST",
         body: payload,
       }),
     removeMcp: (workspaceId: string, name: string) =>
-      requestJson<{ items: OpenworkMcpItem[] }>(baseUrl, `/workspace/${workspaceId}/mcp/${encodeURIComponent(name)}`, {
+      requestJson<{ items: MicxMcpItem[] }>(baseUrl, `/workspace/${workspaceId}/mcp/${encodeURIComponent(name)}`, {
         token,
         hostToken,
         method: "DELETE",
       }),
     setMcpEnabled: (workspaceId: string, name: string, enabled: boolean) =>
-      requestJson<{ items: OpenworkMcpItem[] }>(
+      requestJson<{ items: MicxMcpItem[] }>(
         baseUrl,
         `/workspace/${workspaceId}/mcp/${encodeURIComponent(name)}/enabled`,
         {
@@ -1827,13 +1827,13 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
       }),
 
     listCommands: (workspaceId: string, scope: "workspace" | "global" = "workspace") =>
-      requestJson<{ items: OpenworkCommandItem[] }>(
+      requestJson<{ items: MicxCommandItem[] }>(
         baseUrl,
         `/workspace/${workspaceId}/commands?scope=${scope}`,
         { token, hostToken },
       ),
     listAudit: (workspaceId: string, limit = 50) =>
-      requestJson<{ items: OpenworkAuditEntry[] }>(
+      requestJson<{ items: MicxAuditEntry[] }>(
         baseUrl,
         `/workspace/${workspaceId}/audit?limit=${limit}`,
         { token, hostToken },
@@ -1842,7 +1842,7 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
       workspaceId: string,
       payload: { name: string; description?: string; template: string; agent?: string; model?: string | null; subtask?: boolean },
     ) =>
-      requestJson<{ items: OpenworkCommandItem[] }>(baseUrl, `/workspace/${workspaceId}/commands`, {
+      requestJson<{ items: MicxCommandItem[] }>(baseUrl, `/workspace/${workspaceId}/commands`, {
         token,
         hostToken,
         method: "POST",
@@ -1882,7 +1882,7 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         } catch {
           // ignore
         }
-        throw new OpenworkServerError(
+        throw new MicxServerError(
           result.status,
           "request_failed",
           message || "Shared folder upload failed",
@@ -1892,13 +1892,13 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
       const body = result.text.trim();
       if (body) {
         try {
-          const parsed = JSON.parse(body) as Partial<OpenworkInboxUploadResult>;
+          const parsed = JSON.parse(body) as Partial<MicxInboxUploadResult>;
           if (typeof parsed.path === "string" && parsed.path.trim()) {
             return {
               ok: parsed.ok ?? true,
               path: parsed.path.trim(),
               bytes: typeof parsed.bytes === "number" ? parsed.bytes : file.size,
-            } satisfies OpenworkInboxUploadResult;
+            } satisfies MicxInboxUploadResult;
           }
         } catch {
           // ignore invalid JSON and fall back
@@ -1909,11 +1909,11 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         ok: true,
         path: options?.path?.trim() || file.name,
         bytes: file.size,
-      } satisfies OpenworkInboxUploadResult;
+      } satisfies MicxInboxUploadResult;
     },
 
     listInbox: (workspaceId: string) =>
-      requestJson<OpenworkInboxList>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/inbox`, {
+      requestJson<MicxInboxList>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/inbox`, {
         token,
         hostToken,
       }),
@@ -1926,14 +1926,14 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
       ),
 
     readWorkspaceFile: (workspaceId: string, path: string) =>
-      requestJson<OpenworkWorkspaceFileContent>(
+      requestJson<MicxWorkspaceFileContent>(
         baseUrl,
         `/workspace/${encodeURIComponent(workspaceId)}/files/content?path=${encodeURIComponent(path)}`,
         { token, hostToken },
       ),
 
     statWorkspaceFile: (workspaceId: string, path: string) =>
-      requestJson<OpenworkWorkspaceFileStat>(
+      requestJson<MicxWorkspaceFileStat>(
         baseUrl,
         `/workspace/${encodeURIComponent(workspaceId)}/files/stat?path=${encodeURIComponent(path)}`,
         { token, hostToken },
@@ -1943,7 +1943,7 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
       workspaceId: string,
       payload: { path: string; content: string; baseUpdatedAt?: number | null; force?: boolean },
     ) =>
-      requestJson<OpenworkWorkspaceFileWriteResult>(
+      requestJson<MicxWorkspaceFileWriteResult>(
         baseUrl,
         `/workspace/${encodeURIComponent(workspaceId)}/files/content`,
         {
@@ -1957,7 +1957,7 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
     deleteWorkspaceFiles: async (
       workspaceId: string,
       files: Array<{ path: string; recursive?: boolean }>,
-    ): Promise<OpenworkWorkspaceFileDeleteResult[]> => {
+    ): Promise<MicxWorkspaceFileDeleteResult[]> => {
       if (files.length === 0) return [];
       const created = await requestJson<{ session: { id: string } }>(
         baseUrl,
@@ -2000,7 +2000,7 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
       workspaceId: string,
       payload: { path: string; data: ArrayBuffer; baseUpdatedAt?: number | null; force?: boolean },
     ) =>
-      requestJson<OpenworkWorkspaceFileWriteResult>(
+      requestJson<MicxWorkspaceFileWriteResult>(
         baseUrl,
         `/workspace/${encodeURIComponent(workspaceId)}/files/raw`,
         {
@@ -2024,7 +2024,7 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
       ),
 
     listArtifacts: (workspaceId: string) =>
-      requestJson<OpenworkArtifactList>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/artifacts`, {
+      requestJson<MicxArtifactList>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/artifacts`, {
         token,
         hostToken,
       }),
@@ -2040,7 +2040,7 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         reason?: string;
       }>,
     ) =>
-      requestJson<{ items: OpenworkResolvedArtifactTarget[] }>(
+      requestJson<{ items: MicxResolvedArtifactTarget[] }>(
         baseUrl,
         `/workspace/${encodeURIComponent(workspaceId)}/artifacts/resolve`,
         { token, hostToken, method: "POST", body: { targets } },
@@ -2083,14 +2083,14 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
       }),
 
     listUserEnv: () =>
-      requestJson<{ items: OpenworkUserEnvItem[] }>(
+      requestJson<{ items: MicxUserEnvItem[] }>(
         baseUrl,
         "/env?includeValues=false",
         { token, hostToken, timeoutMs: timeouts.config },
       ),
 
     getUserEnv: (key: string) =>
-      requestJson<{ item: OpenworkUserEnvItem & { value: string } }>(
+      requestJson<{ item: MicxUserEnvItem & { value: string } }>(
         baseUrl,
         `/env/${encodeURIComponent(key)}`,
         { token, hostToken, timeoutMs: timeouts.config },
@@ -2132,4 +2132,4 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
   };
 }
 
-export type OpenworkServerClient = ReturnType<typeof createOpenworkServerClient>;
+export type MicxServerClient = ReturnType<typeof createMicxServerClient>;

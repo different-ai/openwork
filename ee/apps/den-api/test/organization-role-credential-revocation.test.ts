@@ -1,5 +1,5 @@
 import { beforeAll, expect, mock, test } from "bun:test"
-import { MemberTable } from "@openwork-ee/den-db/schema"
+import { MemberTable } from "@micx-ee/den-db/schema"
 
 const members = [
   { id: "member_one", role: "member,security-admin", userId: "user_one" },

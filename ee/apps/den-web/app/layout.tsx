@@ -43,24 +43,24 @@ export async function generateMetadata(): Promise<Metadata> {
 
   return {
     metadataBase: metadataBaseFromOrigin(metadataOrigin),
-    title: "OpenWork Cloud",
+    title: "Micx Cloud",
     description:
-      "Share your OpenWork setup with your team, manage billing, and use OpenWork Cloud from app.openworklabs.com.",
+      "Share your Micx setup with your team, manage billing, and use Micx Cloud from app.micxlabs.com.",
     openGraph: {
-      title: "OpenWork Cloud",
+      title: "Micx Cloud",
       description:
-        "Share your OpenWork setup with your team and keep selected workflows available in OpenWork Cloud.",
+        "Share your Micx setup with your team and keep selected workflows available in Micx Cloud.",
       images: ["/opengraph-image"]
     },
     twitter: {
       card: "summary_large_image",
-      title: "OpenWork Cloud",
+      title: "Micx Cloud",
       description:
-        "Share your OpenWork setup with your team and manage OpenWork Cloud from app.openworklabs.com.",
+        "Share your Micx setup with your team and manage Micx Cloud from app.micxlabs.com.",
       images: ["/opengraph-image"]
     },
     icons: {
-      icon: "/openwork-mark.svg"
+      icon: "/micx-mark.svg"
     }
   };
 }

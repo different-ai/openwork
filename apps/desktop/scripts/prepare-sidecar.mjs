@@ -28,14 +28,14 @@ const readArg = (name) => {
   return null;
 };
 
-const sidecarOverride = process.env.OPENWORK_SIDECAR_DIR?.trim() || readArg("--outdir");
+const sidecarOverride = process.env.MICX_SIDECAR_DIR?.trim() || readArg("--outdir");
 const sidecarDir = sidecarOverride ? resolve(sidecarOverride) : join(__dirname, "..", "resources", "sidecars");
 const constantsPath = resolve(__dirname, "..", "..", "..", "constants.json");
 
 const opencodeGithubRepo = (() => {
   const raw =
     process.env.OPENCODE_GITHUB_REPO?.trim() ||
-    process.env.OPENWORK_OPENCODE_GITHUB_REPO?.trim() ||
+    process.env.MICX_OPENCODE_GITHUB_REPO?.trim() ||
     "anomalyco/opencode";
   const normalized = raw
     .replace(/^https:\/\/github\.com\//i, "")
@@ -95,8 +95,8 @@ const opencodeTargetPath = opencodeTargetName ? join(sidecarDir, opencodeTargetN
 const opencodeCandidatePath = opencodeTargetPath ?? opencodePath;
 let existingOpencodeVersion = null;
 
-// openwork-server paths
-const openworkServerDir = resolve(__dirname, "..", "..", "server");
+// micx-server paths
+const micxServerDir = resolve(__dirname, "..", "..", "server");
 
 const readHeader = (filePath, length = 256) => {
   const fd = openSync(filePath, "r");
@@ -200,7 +200,7 @@ const adHocSignDarwinSidecars = (paths) => {
   }
 };
 
-// openwork-server is no longer compiled as a sidecar binary — it runs
+// micx-server is no longer compiled as a sidecar binary — it runs
 // in-process inside Electron via a direct import of the server library.
 // Server binary copy/sign skipped — runs in-process.
 
@@ -337,12 +337,12 @@ if (shouldDownloadOpencode) {
 adHocSignDarwinSidecars([
   opencodePath,
   opencodeTargetPath,
-  // openwork-server runs in-process — no binary to sign.
+  // micx-server runs in-process — no binary to sign.
 ]);
 
-const openworkServerVersion = (() => {
+const micxServerVersion = (() => {
   try {
-    const raw = readFileSync(resolve(openworkServerDir, "package.json"), "utf8");
+    const raw = readFileSync(resolve(micxServerDir, "package.json"), "utf8");
     return String(JSON.parse(raw).version ?? "").trim();
   } catch {
     return null;
@@ -354,8 +354,8 @@ const versions = {
     version: normalizedOpencodeVersion,
     sha256: opencodeCandidatePath && existsSync(opencodeCandidatePath) ? sha256File(opencodeCandidatePath) : null,
   },
-  "openwork-server": {
-    version: openworkServerVersion,
+  "micx-server": {
+    version: micxServerVersion,
     sha256: "in-process",
   },
 };

@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { Menu, X } from "lucide-react";
 import { useEffect, useState } from "react";
-import { OpenWorkMark } from "./openwork-mark";
+import { MicxMark } from "./micx-mark";
 
 type Props = {
   stars: string;
@@ -25,7 +25,7 @@ export function SiteNav(props: Props) {
     return () => window.removeEventListener("scroll", onScroll);
   }, []);
   const callHref = props.callUrl || "/enterprise#book";
-  const cloudSignupHref = "https://app.openworklabs.com?mode=sign-up";
+  const cloudSignupHref = "https://app.micxlabs.com?mode=sign-up";
   const mobilePrimaryHref = props.mobilePrimaryHref || cloudSignupHref;
   const mobilePrimaryLabel = props.mobilePrimaryLabel || "Get Started for free";
   const callExternal = /^https?:\/\//.test(callHref);
@@ -35,7 +35,7 @@ export function SiteNav(props: Props) {
     { href: "/roadmap", label: "Roadmap", key: "roadmap" },
     { href: "/pricing", label: "Pricing", key: "pricing" },
     { href: "/download", label: "Desktop", key: "download" },
-    { href: "https://app.openworklabs.com", label: "Cloud", key: "cloud" },
+    { href: "https://app.micxlabs.com", label: "Cloud", key: "cloud" },
     { href: "/enterprise", label: "Enterprise", key: "enterprise" }
   ] as const;
 
@@ -56,9 +56,9 @@ export function SiteNav(props: Props) {
             className="group inline-flex items-center gap-1.5"
             onClick={() => setMobileOpen(false)}
           >
-            <OpenWorkMark className="h-[30px] w-[38px] transition-opacity group-hover:opacity-80" />
+            <MicxMark className="h-[30px] w-[38px] transition-opacity group-hover:opacity-80" />
             <span className="text-[1.2rem] font-semibold tracking-tight text-[#011627] md:text-[1.3rem]">
-              OpenWork
+              Micx
             </span>
           </Link>
 
@@ -77,11 +77,11 @@ export function SiteNav(props: Props) {
 
           <div className="flex items-center gap-4">
             <a
-              href="https://github.com/different-ai/openwork"
+              href="https://github.com/different-ai/micx"
               className="hidden items-center gap-2 rounded-full border border-gray-100 bg-white px-3.5 py-2 text-sm font-medium text-gray-500 shadow-[0_1px_2px_rgba(17,24,39,0.06)] transition-colors hover:text-[#011627] sm:flex"
               rel="noreferrer"
               target="_blank"
-              aria-label="OpenWork GitHub stars"
+              aria-label="Micx GitHub stars"
             >
               <svg
                 className="h-4 w-4"
@@ -150,7 +150,7 @@ export function SiteNav(props: Props) {
                 Book a call
               </a>
               <a
-                href="https://github.com/different-ai/openwork"
+                href="https://github.com/different-ai/micx"
                 className="inline-flex items-center justify-center gap-2 rounded-lg border border-gray-100 bg-white px-4 py-2 text-sm font-medium text-gray-500 shadow-[0_1px_2px_rgba(17,24,39,0.06)] transition-colors hover:text-[#011627]"
                 rel="noreferrer"
                 target="_blank"

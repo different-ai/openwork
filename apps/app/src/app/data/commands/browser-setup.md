@@ -1,13 +1,13 @@
 ---
 name: browser-setup
-description: Use the built-in OpenWork browser
+description: Use the built-in Micx browser
 ---
 
-Try browser automation in OpenWork right away.
+Try browser automation in Micx right away.
 
 IMPORTANT:
-- Use the built-in OpenWork browser tools.
+- Use the built-in Micx browser tools.
 - In your first response, open `https://example.com` and tell the user the page title.
-- If browser tools are unavailable, tell the user browser control is not available in this workspace and ask them to retry after OpenWork reloads.
+- If browser tools are unavailable, tell the user browser control is not available in this workspace and ask them to retry after Micx reloads.
 
 Keep the response short and action-oriented.

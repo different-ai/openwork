@@ -1,17 +1,17 @@
 {
-  "name": "@openwork-ee/den-gateway",
+  "name": "@micx-ee/den-gateway",
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "NODE_OPTIONS=--conditions=development OPENWORK_DEV_MODE=1 tsx watch src/server.ts",
-    "dev:local": "NODE_OPTIONS=--conditions=development OPENWORK_DEV_MODE=1 PORT=${DEN_GATEWAY_PORT:-8788} tsx watch src/server.ts",
+    "dev": "NODE_OPTIONS=--conditions=development MICX_DEV_MODE=1 tsx watch src/server.ts",
+    "dev:local": "NODE_OPTIONS=--conditions=development MICX_DEV_MODE=1 PORT=${DEN_GATEWAY_PORT:-8788} tsx watch src/server.ts",
     "test": "bun test --conditions development test/*.test.mjs",
     "build": "tsc -p tsconfig.json",
     "start": "node dist/server.js"
   },
   "dependencies": {
     "@hono/node-server": "^1.13.8",
-    "@openwork-ee/utils": "workspace:*",
+    "@micx-ee/utils": "workspace:*",
     "dotenv": "^16.4.5",
     "hono": "4.12.27",
     "zod": "^4.3.6"

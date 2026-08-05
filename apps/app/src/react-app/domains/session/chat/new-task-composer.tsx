@@ -3,7 +3,7 @@ import { useRef, useState } from "react";
 import type { Agent } from "@opencode-ai/sdk/v2/client";
 
 import { createDenClient, readDenSettings } from "@/app/lib/den";
-import type { OpenworkServerClient } from "@/app/lib/openwork-server";
+import type { MicxServerClient } from "@/app/lib/micx-server";
 import type { ComposerAttachment, McpServerEntry, McpStatusMap, ModelRef, SkillCard, SlashCommandOption } from "@/app/types";
 import { t } from "@/i18n";
 import { ReactSessionComposer } from "@/react-app/domains/session/surface/composer/composer";
@@ -28,7 +28,7 @@ import { resolveAttachmentFileMetadata } from "@/react-app/domains/session/sync/
  * hero creates.
  */
 export type NewTaskComposerContext = {
-  client: OpenworkServerClient;
+  client: MicxServerClient;
   workspaceId: string | null;
   selectedModel: ModelRef;
   modelUnavailable?: boolean;
@@ -127,7 +127,7 @@ export function NewTaskComposer(props: NewTaskComposerProps) {
           name: entry.name,
           config: entry.config as McpServerEntry["config"],
           source: entry.source,
-          origin: entry.name === "openwork-cloud" ? "openwork-connect" : "local",
+          origin: entry.name === "micx-cloud" ? "micx-connect" : "local",
         } satisfies McpServerEntry));
         void connectPromise.then((connect) => {
           if (mcpConnectPushRef.current !== pushId) return;

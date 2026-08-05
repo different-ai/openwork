@@ -24,7 +24,7 @@ type EngineRequest = {
 };
 
 // Keep the engine sync retry backoff tiny so failure-path tests stay fast.
-process.env.OPENWORK_MCP_SYNC_RETRY_DELAY_MS = "10";
+process.env.MICX_MCP_SYNC_RETRY_DELAY_MS = "10";
 
 const stops: Array<() => void | Promise<void>> = [];
 const roots: string[] = [];
@@ -36,7 +36,7 @@ afterEach(async () => {
 });
 
 async function createWorkspaceRoot() {
-  const root = await mkdtemp(join(tmpdir(), "openwork-mcp-engine-sync-"));
+  const root = await mkdtemp(join(tmpdir(), "micx-mcp-engine-sync-"));
   roots.push(root);
   return root;
 }
@@ -84,7 +84,7 @@ function startMockOpencode(options?: {
   return { server, requests };
 }
 
-async function startOpenworkServer(
+async function startMicxServer(
   workspaceRoot: string,
   opencodeBaseUrl: string,
   options?: { trustedProcessIdentity?: string | null; isAlive?: () => boolean },
@@ -165,15 +165,15 @@ const POSTHOG_CONFIG = {
 describe("runtime MCP engine sync", () => {
   test("hot-adds a runtime MCP into the running engine when added", async () => {
     const workspaceRoot = await createWorkspaceRoot();
-    const previousDb = process.env.OPENWORK_RUNTIME_DB;
-    process.env.OPENWORK_RUNTIME_DB = join(workspaceRoot, "runtime.sqlite");
+    const previousDb = process.env.MICX_RUNTIME_DB;
+    process.env.MICX_RUNTIME_DB = join(workspaceRoot, "runtime.sqlite");
     try {
       const mock = startMockOpencode();
-      const openwork = await startOpenworkServer(workspaceRoot, `http://127.0.0.1:${mock.server.port}`);
+      const micx = await startMicxServer(workspaceRoot, `http://127.0.0.1:${mock.server.port}`);
 
-      const response = await fetch(`${openwork.base}/workspace/ws_1/mcp`, {
+      const response = await fetch(`${micx.base}/workspace/ws_1/mcp`, {
         method: "POST",
-        headers: auth(openwork.token),
+        headers: auth(micx.token),
         body: JSON.stringify({ name: "posthog", config: POSTHOG_CONFIG }),
       });
       expect(response.status).toBe(200);
@@ -183,46 +183,46 @@ describe("runtime MCP engine sync", () => {
       expect(addRequest?.body).toEqual({ name: "posthog", config: POSTHOG_CONFIG });
       expect(addRequest?.search).toContain(`directory=${encodeURIComponent(workspaceRoot)}`);
     } finally {
-      if (previousDb === undefined) delete process.env.OPENWORK_RUNTIME_DB;
-      else process.env.OPENWORK_RUNTIME_DB = previousDb;
+      if (previousDb === undefined) delete process.env.MICX_RUNTIME_DB;
+      else process.env.MICX_RUNTIME_DB = previousDb;
     }
   });
 
   test("hot-syncs an external engine without treating its response as trusted registration evidence", async () => {
     const workspaceRoot = await createWorkspaceRoot();
-    const previousDb = process.env.OPENWORK_RUNTIME_DB;
-    process.env.OPENWORK_RUNTIME_DB = join(workspaceRoot, "runtime.sqlite");
+    const previousDb = process.env.MICX_RUNTIME_DB;
+    process.env.MICX_RUNTIME_DB = join(workspaceRoot, "runtime.sqlite");
     try {
       const mock = startMockOpencode();
-      const openwork = await startOpenworkServer(
+      const micx = await startMicxServer(
         workspaceRoot,
         `http://127.0.0.1:${mock.server.port}`,
         { trustedProcessIdentity: null },
       );
 
-      const response = await fetch(`${openwork.base}/workspace/ws_1/mcp`, {
+      const response = await fetch(`${micx.base}/workspace/ws_1/mcp`, {
         method: "POST",
-        headers: auth(openwork.token),
+        headers: auth(micx.token),
         body: JSON.stringify({ name: "posthog", config: POSTHOG_CONFIG }),
       });
       expect(response.status).toBe(200);
       expect(mock.requests.some((entry) => entry.method === "POST" && entry.pathname === "/mcp")).toBe(true);
       expect(inspectEngineMcpRegistration(
-        openwork.config,
-        openwork.config.workspaces[0]!,
+        micx.config,
+        micx.config.workspaces[0]!,
         "posthog",
         POSTHOG_CONFIG,
       )).toBe("not-recorded");
     } finally {
-      if (previousDb === undefined) delete process.env.OPENWORK_RUNTIME_DB;
-      else process.env.OPENWORK_RUNTIME_DB = previousDb;
+      if (previousDb === undefined) delete process.env.MICX_RUNTIME_DB;
+      else process.env.MICX_RUNTIME_DB = previousDb;
     }
   });
 
   test("keeps accepted delivery separate from bounded normalized registration evidence", async () => {
     const workspaceRoot = await createWorkspaceRoot();
-    const previousDb = process.env.OPENWORK_RUNTIME_DB;
-    process.env.OPENWORK_RUNTIME_DB = join(workspaceRoot, "runtime.sqlite");
+    const previousDb = process.env.MICX_RUNTIME_DB;
+    process.env.MICX_RUNTIME_DB = join(workspaceRoot, "runtime.sqlite");
     const rawErrorCanary = "MCP_PROVIDER_RAW_ERROR_CANARY";
     const oversizedCanary = "MCP_OVERSIZED_RESPONSE_CANARY";
     try {
@@ -253,9 +253,9 @@ describe("runtime MCP engine sync", () => {
           return null;
         },
       });
-      const openwork = await startOpenworkServer(workspaceRoot, `http://127.0.0.1:${mock.server.port}`);
+      const micx = await startMicxServer(workspaceRoot, `http://127.0.0.1:${mock.server.port}`);
       const inspectRegistration = (name: string, config: Record<string, unknown>) =>
-        inspectEngineMcpRegistration(openwork.config, openwork.config.workspaces[0]!, name, config);
+        inspectEngineMcpRegistration(micx.config, micx.config.workspaces[0]!, name, config);
       const configs = new Map<string, Record<string, unknown>>([
         ["connected", POSTHOG_CONFIG],
         ["disabled", { ...POSTHOG_CONFIG, enabled: false }],
@@ -267,9 +267,9 @@ describe("runtime MCP engine sync", () => {
       ]);
 
       for (const [name, config] of configs) {
-        const response = await fetch(`${openwork.base}/workspace/ws_1/mcp`, {
+        const response = await fetch(`${micx.base}/workspace/ws_1/mcp`, {
           method: "POST",
-          headers: auth(openwork.token),
+          headers: auth(micx.token),
           body: JSON.stringify({ name, config }),
         });
         expect(response.status).toBe(200);
@@ -279,8 +279,8 @@ describe("runtime MCP engine sync", () => {
       expect(inspectRegistration("disabled", configs.get("disabled")!)).toBe("disabled");
       expect(inspectRegistration("failed", configs.get("failed")!)).toBe("failed");
       expect(inspectEngineMcpRegistrationDetails(
-        openwork.config,
-        openwork.config.workspaces[0]!,
+        micx.config,
+        micx.config.workspaces[0]!,
         "failed",
         configs.get("failed")!,
       )).toMatchObject({
@@ -295,28 +295,28 @@ describe("runtime MCP engine sync", () => {
       expect(inspectRegistration("invalid", configs.get("invalid")!)).toBe("not-recorded");
       expect(inspectRegistration("oversized", configs.get("oversized")!)).toBe("not-recorded");
       expect(refreshEngineMcpRegistrationFromLiveStatus(
-        openwork.config,
-        openwork.config.workspaces[0]!,
+        micx.config,
+        micx.config.workspaces[0]!,
         "failed",
         configs.get("failed")!,
         "connected",
       )).toBe(true);
       expect(inspectRegistration("failed", configs.get("failed")!)).toBe("connected");
       expect(inspectEngineMcpRegistrationDetails(
-        openwork.config,
-        openwork.config.workspaces[0]!,
+        micx.config,
+        micx.config.workspaces[0]!,
         "failed",
         configs.get("failed")!,
       ).errorSummary).toBeNull();
       expect(inspectEngineMcpRegistrationDetails(
-        openwork.config,
-        openwork.config.workspaces[0]!,
+        micx.config,
+        micx.config.workspaces[0]!,
         "failed",
         { ...POSTHOG_CONFIG, url: "https://changed.example/mcp" },
       )).toMatchObject({ status: "not-recorded", errorSummary: null });
 
-      const listResponse = await fetch(`${openwork.base}/workspace/ws_1/mcp`, {
-        headers: auth(openwork.token),
+      const listResponse = await fetch(`${micx.base}/workspace/ws_1/mcp`, {
+        headers: auth(micx.token),
       });
       const listText = await listResponse.text();
       expect(listResponse.status).toBe(200);
@@ -333,17 +333,17 @@ describe("runtime MCP engine sync", () => {
       // failures; Cloud readiness verifies the actual state with GET /mcp.
       expect(listBody.engineSync).toMatchObject({ status: "ok", failures: [] });
     } finally {
-      if (previousDb === undefined) delete process.env.OPENWORK_RUNTIME_DB;
-      else process.env.OPENWORK_RUNTIME_DB = previousDb;
+      if (previousDb === undefined) delete process.env.MICX_RUNTIME_DB;
+      else process.env.MICX_RUNTIME_DB = previousDb;
     }
   });
 
   test("records transport-failure provenance and performs one deferred re-sync", async () => {
     const workspaceRoot = await createWorkspaceRoot();
-    const previousDb = process.env.OPENWORK_RUNTIME_DB;
-    const previousDeferredDelay = process.env.OPENWORK_MCP_SYNC_DEFERRED_DELAY_MS;
-    process.env.OPENWORK_RUNTIME_DB = join(workspaceRoot, "runtime.sqlite");
-    process.env.OPENWORK_MCP_SYNC_DEFERRED_DELAY_MS = "50";
+    const previousDb = process.env.MICX_RUNTIME_DB;
+    const previousDeferredDelay = process.env.MICX_MCP_SYNC_DEFERRED_DELAY_MS;
+    process.env.MICX_RUNTIME_DB = join(workspaceRoot, "runtime.sqlite");
+    process.env.MICX_MCP_SYNC_DEFERRED_DELAY_MS = "50";
     let posthogPosts = 0;
     try {
       const mock = startMockOpencode({
@@ -355,43 +355,43 @@ describe("runtime MCP engine sync", () => {
             : null;
         },
       });
-      const openwork = await startOpenworkServer(workspaceRoot, `http://127.0.0.1:${mock.server.port}`);
-      const workspace = openwork.config.workspaces[0]!;
+      const micx = await startMicxServer(workspaceRoot, `http://127.0.0.1:${mock.server.port}`);
+      const workspace = micx.config.workspaces[0]!;
 
-      const response = await fetch(`${openwork.base}/workspace/ws_1/mcp`, {
+      const response = await fetch(`${micx.base}/workspace/ws_1/mcp`, {
         method: "POST",
-        headers: auth(openwork.token),
+        headers: auth(micx.token),
         body: JSON.stringify({ name: "posthog", config: POSTHOG_CONFIG }),
       });
       expect(response.status).toBe(200);
-      expect(inspectEngineMcpRegistration(openwork.config, workspace, "posthog", POSTHOG_CONFIG)).toBe("failed");
-      expect(inspectEngineMcpRegistrationDetails(openwork.config, workspace, "posthog", POSTHOG_CONFIG).source)
+      expect(inspectEngineMcpRegistration(micx.config, workspace, "posthog", POSTHOG_CONFIG)).toBe("failed");
+      expect(inspectEngineMcpRegistrationDetails(micx.config, workspace, "posthog", POSTHOG_CONFIG).source)
         .toBe("transport_failure");
 
       await waitForRegistration(
-        () => inspectEngineMcpRegistration(openwork.config, workspace, "posthog", POSTHOG_CONFIG),
+        () => inspectEngineMcpRegistration(micx.config, workspace, "posthog", POSTHOG_CONFIG),
         "connected",
       );
       expect(posthogPosts).toBe(3);
-      expect(inspectEngineMcpRegistrationDetails(openwork.config, workspace, "posthog", POSTHOG_CONFIG).source)
+      expect(inspectEngineMcpRegistrationDetails(micx.config, workspace, "posthog", POSTHOG_CONFIG).source)
         .toBe("engine_status");
     } finally {
-      if (previousDb === undefined) delete process.env.OPENWORK_RUNTIME_DB;
-      else process.env.OPENWORK_RUNTIME_DB = previousDb;
-      if (previousDeferredDelay === undefined) delete process.env.OPENWORK_MCP_SYNC_DEFERRED_DELAY_MS;
-      else process.env.OPENWORK_MCP_SYNC_DEFERRED_DELAY_MS = previousDeferredDelay;
+      if (previousDb === undefined) delete process.env.MICX_RUNTIME_DB;
+      else process.env.MICX_RUNTIME_DB = previousDb;
+      if (previousDeferredDelay === undefined) delete process.env.MICX_MCP_SYNC_DEFERRED_DELAY_MS;
+      else process.env.MICX_MCP_SYNC_DEFERRED_DELAY_MS = previousDeferredDelay;
     }
   });
 
-  test("scopes registration evidence to the concrete OpenWork server instance", async () => {
+  test("scopes registration evidence to the concrete Micx server instance", async () => {
     const workspaceRoot = await createWorkspaceRoot();
-    const previousDb = process.env.OPENWORK_RUNTIME_DB;
-    process.env.OPENWORK_RUNTIME_DB = join(workspaceRoot, "runtime.sqlite");
+    const previousDb = process.env.MICX_RUNTIME_DB;
+    process.env.MICX_RUNTIME_DB = join(workspaceRoot, "runtime.sqlite");
     try {
       const engineA = startMockOpencode();
       const engineB = startMockOpencode();
-      const serverA = await startOpenworkServer(workspaceRoot, `http://127.0.0.1:${engineA.server.port}`);
-      const serverB = await startOpenworkServer(workspaceRoot, `http://127.0.0.1:${engineB.server.port}`);
+      const serverA = await startMicxServer(workspaceRoot, `http://127.0.0.1:${engineA.server.port}`);
+      const serverB = await startMicxServer(workspaceRoot, `http://127.0.0.1:${engineB.server.port}`);
 
       const response = await fetch(`${serverA.base}/workspace/ws_1/mcp`, {
         method: "POST",
@@ -414,197 +414,197 @@ describe("runtime MCP engine sync", () => {
       )).toBe("not-recorded");
       expect(engineB.requests.some((entry) => entry.method === "POST" && entry.pathname === "/mcp")).toBe(false);
     } finally {
-      if (previousDb === undefined) delete process.env.OPENWORK_RUNTIME_DB;
-      else process.env.OPENWORK_RUNTIME_DB = previousDb;
+      if (previousDb === undefined) delete process.env.MICX_RUNTIME_DB;
+      else process.env.MICX_RUNTIME_DB = previousDb;
     }
   });
 
   test("invalidates registration evidence when the engine endpoint changes", async () => {
     const workspaceRoot = await createWorkspaceRoot();
-    const previousDb = process.env.OPENWORK_RUNTIME_DB;
-    process.env.OPENWORK_RUNTIME_DB = join(workspaceRoot, "runtime.sqlite");
+    const previousDb = process.env.MICX_RUNTIME_DB;
+    process.env.MICX_RUNTIME_DB = join(workspaceRoot, "runtime.sqlite");
     try {
       const engineA = startMockOpencode();
       const engineB = startMockOpencode();
-      const openwork = await startOpenworkServer(workspaceRoot, `http://127.0.0.1:${engineA.server.port}`);
-      const workspace = openwork.config.workspaces[0]!;
+      const micx = await startMicxServer(workspaceRoot, `http://127.0.0.1:${engineA.server.port}`);
+      const workspace = micx.config.workspaces[0]!;
 
-      const response = await fetch(`${openwork.base}/workspace/ws_1/mcp`, {
+      const response = await fetch(`${micx.base}/workspace/ws_1/mcp`, {
         method: "POST",
-        headers: auth(openwork.token),
+        headers: auth(micx.token),
         body: JSON.stringify({ name: "posthog", config: POSTHOG_CONFIG }),
       });
       expect(response.status).toBe(200);
-      expect(inspectEngineMcpRegistration(openwork.config, workspace, "posthog", POSTHOG_CONFIG)).toBe("connected");
+      expect(inspectEngineMcpRegistration(micx.config, workspace, "posthog", POSTHOG_CONFIG)).toBe("connected");
 
       workspace.baseUrl = `http://127.0.0.1:${engineB.server.port}`;
-      expect(inspectEngineMcpRegistration(openwork.config, workspace, "posthog", POSTHOG_CONFIG))
+      expect(inspectEngineMcpRegistration(micx.config, workspace, "posthog", POSTHOG_CONFIG))
         .toBe("not-recorded");
 
       // Switching back must not revive the record that belonged to the old
       // endpoint. A new successful registration is required.
       workspace.baseUrl = `http://127.0.0.1:${engineA.server.port}`;
-      expect(inspectEngineMcpRegistration(openwork.config, workspace, "posthog", POSTHOG_CONFIG))
+      expect(inspectEngineMcpRegistration(micx.config, workspace, "posthog", POSTHOG_CONFIG))
         .toBe("not-recorded");
     } finally {
-      if (previousDb === undefined) delete process.env.OPENWORK_RUNTIME_DB;
-      else process.env.OPENWORK_RUNTIME_DB = previousDb;
+      if (previousDb === undefined) delete process.env.MICX_RUNTIME_DB;
+      else process.env.MICX_RUNTIME_DB = previousDb;
     }
   });
 
   test("invalidates registration evidence when a managed engine restarts at the same endpoint", async () => {
     const workspaceRoot = await createWorkspaceRoot();
-    const previousDb = process.env.OPENWORK_RUNTIME_DB;
-    process.env.OPENWORK_RUNTIME_DB = join(workspaceRoot, "runtime.sqlite");
+    const previousDb = process.env.MICX_RUNTIME_DB;
+    process.env.MICX_RUNTIME_DB = join(workspaceRoot, "runtime.sqlite");
     try {
       const engine = startMockOpencode();
       const baseUrl = `http://127.0.0.1:${engine.server.port}`;
-      const openwork = await startOpenworkServer(workspaceRoot, baseUrl, {
+      const micx = await startMicxServer(workspaceRoot, baseUrl, {
         trustedProcessIdentity: "managed-process-a",
       });
-      const workspace = openwork.config.workspaces[0]!;
+      const workspace = micx.config.workspaces[0]!;
 
-      const response = await fetch(`${openwork.base}/workspace/ws_1/mcp`, {
+      const response = await fetch(`${micx.base}/workspace/ws_1/mcp`, {
         method: "POST",
-        headers: auth(openwork.token),
+        headers: auth(micx.token),
         body: JSON.stringify({ name: "posthog", config: POSTHOG_CONFIG }),
       });
       expect(response.status).toBe(200);
-      expect(inspectEngineMcpRegistration(openwork.config, workspace, "posthog", POSTHOG_CONFIG)).toBe("connected");
+      expect(inspectEngineMcpRegistration(micx.config, workspace, "posthog", POSTHOG_CONFIG)).toBe("connected");
 
-      registerTrustedOpencodeProcess(openwork.config, {
+      registerTrustedOpencodeProcess(micx.config, {
         baseUrl,
         identity: "managed-process-b",
         isAlive: () => true,
       });
-      expect(inspectEngineMcpRegistration(openwork.config, workspace, "posthog", POSTHOG_CONFIG))
+      expect(inspectEngineMcpRegistration(micx.config, workspace, "posthog", POSTHOG_CONFIG))
         .toBe("not-recorded");
 
-      await syncAllWorkspacesRuntimeMcpToEngine(openwork.config);
-      expect(inspectEngineMcpRegistration(openwork.config, workspace, "posthog", POSTHOG_CONFIG)).toBe("connected");
+      await syncAllWorkspacesRuntimeMcpToEngine(micx.config);
+      expect(inspectEngineMcpRegistration(micx.config, workspace, "posthog", POSTHOG_CONFIG)).toBe("connected");
 
       // Reusing an older opaque value starts another monotonic generation and
       // cannot revive evidence recorded for either prior process.
-      registerTrustedOpencodeProcess(openwork.config, {
+      registerTrustedOpencodeProcess(micx.config, {
         baseUrl,
         identity: "managed-process-a",
         isAlive: () => true,
       });
-      expect(inspectEngineMcpRegistration(openwork.config, workspace, "posthog", POSTHOG_CONFIG))
+      expect(inspectEngineMcpRegistration(micx.config, workspace, "posthog", POSTHOG_CONFIG))
         .toBe("not-recorded");
     } finally {
-      if (previousDb === undefined) delete process.env.OPENWORK_RUNTIME_DB;
-      else process.env.OPENWORK_RUNTIME_DB = previousDb;
+      if (previousDb === undefined) delete process.env.MICX_RUNTIME_DB;
+      else process.env.MICX_RUNTIME_DB = previousDb;
     }
   });
 
   test("revokes registration evidence when the managed engine is no longer alive", async () => {
     const workspaceRoot = await createWorkspaceRoot();
-    const previousDb = process.env.OPENWORK_RUNTIME_DB;
-    process.env.OPENWORK_RUNTIME_DB = join(workspaceRoot, "runtime.sqlite");
+    const previousDb = process.env.MICX_RUNTIME_DB;
+    process.env.MICX_RUNTIME_DB = join(workspaceRoot, "runtime.sqlite");
     let isAlive = true;
     try {
       const engine = startMockOpencode();
-      const openwork = await startOpenworkServer(
+      const micx = await startMicxServer(
         workspaceRoot,
         `http://127.0.0.1:${engine.server.port}`,
         { trustedProcessIdentity: "managed-live-process", isAlive: () => isAlive },
       );
-      const workspace = openwork.config.workspaces[0]!;
+      const workspace = micx.config.workspaces[0]!;
 
-      const response = await fetch(`${openwork.base}/workspace/ws_1/mcp`, {
+      const response = await fetch(`${micx.base}/workspace/ws_1/mcp`, {
         method: "POST",
-        headers: auth(openwork.token),
+        headers: auth(micx.token),
         body: JSON.stringify({ name: "posthog", config: POSTHOG_CONFIG }),
       });
       expect(response.status).toBe(200);
-      expect(inspectEngineMcpRegistration(openwork.config, workspace, "posthog", POSTHOG_CONFIG)).toBe("connected");
+      expect(inspectEngineMcpRegistration(micx.config, workspace, "posthog", POSTHOG_CONFIG)).toBe("connected");
 
       isAlive = false;
-      expect(inspectEngineMcpRegistration(openwork.config, workspace, "posthog", POSTHOG_CONFIG))
+      expect(inspectEngineMcpRegistration(micx.config, workspace, "posthog", POSTHOG_CONFIG))
         .toBe("not-recorded");
     } finally {
-      if (previousDb === undefined) delete process.env.OPENWORK_RUNTIME_DB;
-      else process.env.OPENWORK_RUNTIME_DB = previousDb;
+      if (previousDb === undefined) delete process.env.MICX_RUNTIME_DB;
+      else process.env.MICX_RUNTIME_DB = previousDb;
     }
   });
 
   test("invalidates registration evidence on stop and requires a new server generation", async () => {
     const workspaceRoot = await createWorkspaceRoot();
-    const previousDb = process.env.OPENWORK_RUNTIME_DB;
-    process.env.OPENWORK_RUNTIME_DB = join(workspaceRoot, "runtime.sqlite");
+    const previousDb = process.env.MICX_RUNTIME_DB;
+    process.env.MICX_RUNTIME_DB = join(workspaceRoot, "runtime.sqlite");
     try {
       const engine = startMockOpencode();
-      const openwork = await startOpenworkServer(workspaceRoot, `http://127.0.0.1:${engine.server.port}`);
-      const workspace = openwork.config.workspaces[0]!;
+      const micx = await startMicxServer(workspaceRoot, `http://127.0.0.1:${engine.server.port}`);
+      const workspace = micx.config.workspaces[0]!;
 
-      const response = await fetch(`${openwork.base}/workspace/ws_1/mcp`, {
+      const response = await fetch(`${micx.base}/workspace/ws_1/mcp`, {
         method: "POST",
-        headers: auth(openwork.token),
+        headers: auth(micx.token),
         body: JSON.stringify({ name: "posthog", config: POSTHOG_CONFIG }),
       });
       expect(response.status).toBe(200);
-      expect(inspectEngineMcpRegistration(openwork.config, workspace, "posthog", POSTHOG_CONFIG)).toBe("connected");
+      expect(inspectEngineMcpRegistration(micx.config, workspace, "posthog", POSTHOG_CONFIG)).toBe("connected");
 
-      await openwork.server.stop(true);
-      expect(inspectEngineMcpRegistration(openwork.config, workspace, "posthog", POSTHOG_CONFIG))
+      await micx.server.stop(true);
+      expect(inspectEngineMcpRegistration(micx.config, workspace, "posthog", POSTHOG_CONFIG))
         .toBe("not-recorded");
 
-      const restarted = await startServer(openwork.config) as Served;
+      const restarted = await startServer(micx.config) as Served;
       stops.push(() => restarted.stop(true));
-      expect(inspectEngineMcpRegistration(openwork.config, workspace, "posthog", POSTHOG_CONFIG))
+      expect(inspectEngineMcpRegistration(micx.config, workspace, "posthog", POSTHOG_CONFIG))
         .toBe("not-recorded");
 
-      await syncAllWorkspacesRuntimeMcpToEngine(openwork.config);
-      expect(inspectEngineMcpRegistration(openwork.config, workspace, "posthog", POSTHOG_CONFIG)).toBe("connected");
+      await syncAllWorkspacesRuntimeMcpToEngine(micx.config);
+      expect(inspectEngineMcpRegistration(micx.config, workspace, "posthog", POSTHOG_CONFIG)).toBe("connected");
     } finally {
-      if (previousDb === undefined) delete process.env.OPENWORK_RUNTIME_DB;
-      else process.env.OPENWORK_RUNTIME_DB = previousDb;
+      if (previousDb === undefined) delete process.env.MICX_RUNTIME_DB;
+      else process.env.MICX_RUNTIME_DB = previousDb;
     }
   });
 
   test("expires registration evidence after the bounded freshness window", async () => {
     const workspaceRoot = await createWorkspaceRoot();
-    const previousDb = process.env.OPENWORK_RUNTIME_DB;
-    const previousMaxAge = process.env.OPENWORK_MCP_REGISTRATION_MAX_AGE_MS;
-    process.env.OPENWORK_RUNTIME_DB = join(workspaceRoot, "runtime.sqlite");
-    process.env.OPENWORK_MCP_REGISTRATION_MAX_AGE_MS = "5";
+    const previousDb = process.env.MICX_RUNTIME_DB;
+    const previousMaxAge = process.env.MICX_MCP_REGISTRATION_MAX_AGE_MS;
+    process.env.MICX_RUNTIME_DB = join(workspaceRoot, "runtime.sqlite");
+    process.env.MICX_MCP_REGISTRATION_MAX_AGE_MS = "5";
     try {
       const engine = startMockOpencode({
         mcpResponseForName: (name) => name === "posthog"
           ? Response.json({ posthog: { status: "failed", error: "unable to verify the first certificate" } })
           : null,
       });
-      const openwork = await startOpenworkServer(workspaceRoot, `http://127.0.0.1:${engine.server.port}`);
-      const workspace = openwork.config.workspaces[0]!;
-      const response = await fetch(`${openwork.base}/workspace/ws_1/mcp`, {
+      const micx = await startMicxServer(workspaceRoot, `http://127.0.0.1:${engine.server.port}`);
+      const workspace = micx.config.workspaces[0]!;
+      const response = await fetch(`${micx.base}/workspace/ws_1/mcp`, {
         method: "POST",
-        headers: auth(openwork.token),
+        headers: auth(micx.token),
         body: JSON.stringify({ name: "posthog", config: POSTHOG_CONFIG }),
       });
       expect(response.status).toBe(200);
       expect(inspectEngineMcpRegistrationDetails(
-        openwork.config,
+        micx.config,
         workspace,
         "posthog",
         POSTHOG_CONFIG,
       )).toMatchObject({ status: "failed", errorSummary: "unable to verify the first certificate" });
 
       await Bun.sleep(10);
-      expect(inspectEngineMcpRegistrationDetails(openwork.config, workspace, "posthog", POSTHOG_CONFIG))
+      expect(inspectEngineMcpRegistrationDetails(micx.config, workspace, "posthog", POSTHOG_CONFIG))
         .toMatchObject({ status: "not-recorded", errorSummary: null });
     } finally {
-      if (previousDb === undefined) delete process.env.OPENWORK_RUNTIME_DB;
-      else process.env.OPENWORK_RUNTIME_DB = previousDb;
-      if (previousMaxAge === undefined) delete process.env.OPENWORK_MCP_REGISTRATION_MAX_AGE_MS;
-      else process.env.OPENWORK_MCP_REGISTRATION_MAX_AGE_MS = previousMaxAge;
+      if (previousDb === undefined) delete process.env.MICX_RUNTIME_DB;
+      else process.env.MICX_RUNTIME_DB = previousDb;
+      if (previousMaxAge === undefined) delete process.env.MICX_MCP_REGISTRATION_MAX_AGE_MS;
+      else process.env.MICX_MCP_REGISTRATION_MAX_AGE_MS = previousMaxAge;
     }
   });
 
   test("invalidates registration evidence before an engine reload attempt", async () => {
     const workspaceRoot = await createWorkspaceRoot();
-    const previousDb = process.env.OPENWORK_RUNTIME_DB;
-    process.env.OPENWORK_RUNTIME_DB = join(workspaceRoot, "runtime.sqlite");
+    const previousDb = process.env.MICX_RUNTIME_DB;
+    process.env.MICX_RUNTIME_DB = join(workspaceRoot, "runtime.sqlite");
     let rejectDispose = false;
     try {
       const engine = startMockOpencode({
@@ -612,41 +612,41 @@ describe("runtime MCP engine sync", () => {
           ? Response.json({ code: "reload_failed" }, { status: 500 })
           : null,
       });
-      const openwork = await startOpenworkServer(workspaceRoot, `http://127.0.0.1:${engine.server.port}`);
-      const workspace = openwork.config.workspaces[0]!;
-      const response = await fetch(`${openwork.base}/workspace/ws_1/mcp`, {
+      const micx = await startMicxServer(workspaceRoot, `http://127.0.0.1:${engine.server.port}`);
+      const workspace = micx.config.workspaces[0]!;
+      const response = await fetch(`${micx.base}/workspace/ws_1/mcp`, {
         method: "POST",
-        headers: auth(openwork.token),
+        headers: auth(micx.token),
         body: JSON.stringify({ name: "posthog", config: POSTHOG_CONFIG }),
       });
       expect(response.status).toBe(200);
-      expect(inspectEngineMcpRegistration(openwork.config, workspace, "posthog", POSTHOG_CONFIG)).toBe("connected");
+      expect(inspectEngineMcpRegistration(micx.config, workspace, "posthog", POSTHOG_CONFIG)).toBe("connected");
 
       rejectDispose = true;
-      const reload = await fetch(`${openwork.base}/workspace/ws_1/engine/reload`, {
+      const reload = await fetch(`${micx.base}/workspace/ws_1/engine/reload`, {
         method: "POST",
-        headers: auth(openwork.token),
+        headers: auth(micx.token),
       });
       expect(reload.status).toBe(502);
-      expect(inspectEngineMcpRegistration(openwork.config, workspace, "posthog", POSTHOG_CONFIG))
+      expect(inspectEngineMcpRegistration(micx.config, workspace, "posthog", POSTHOG_CONFIG))
         .toBe("not-recorded");
     } finally {
-      if (previousDb === undefined) delete process.env.OPENWORK_RUNTIME_DB;
-      else process.env.OPENWORK_RUNTIME_DB = previousDb;
+      if (previousDb === undefined) delete process.env.MICX_RUNTIME_DB;
+      else process.env.MICX_RUNTIME_DB = previousDb;
     }
   });
 
   test("cloud plugin install writes a remote MCP and hot-syncs it into the engine", async () => {
     const workspaceRoot = await createWorkspaceRoot();
-    const previousDb = process.env.OPENWORK_RUNTIME_DB;
-    process.env.OPENWORK_RUNTIME_DB = join(workspaceRoot, "runtime.sqlite");
+    const previousDb = process.env.MICX_RUNTIME_DB;
+    process.env.MICX_RUNTIME_DB = join(workspaceRoot, "runtime.sqlite");
     try {
       const mock = startMockOpencode();
-      const openwork = await startOpenworkServer(workspaceRoot, `http://127.0.0.1:${mock.server.port}`);
+      const micx = await startMicxServer(workspaceRoot, `http://127.0.0.1:${mock.server.port}`);
 
-      const response = await fetch(`${openwork.base}/workspace/ws_1/cloud-plugins`, {
+      const response = await fetch(`${micx.base}/workspace/ws_1/cloud-plugins`, {
         method: "POST",
-        headers: auth(openwork.token),
+        headers: auth(micx.token),
         body: JSON.stringify({
           marketplaceId: null,
           resolved: {
@@ -685,7 +685,7 @@ describe("runtime MCP engine sync", () => {
       expect(item.pluginId).toBe("plugin_cloud_mcp");
       expect(body.warnings).toEqual([]);
 
-      expect((await readRuntimeOpencodeConfig(openwork.config, "ws_1")).mcp?.brief).toMatchObject({
+      expect((await readRuntimeOpencodeConfig(micx.config, "ws_1")).mcp?.brief).toMatchObject({
         type: "remote",
         url: "https://example.com/mcp",
       });
@@ -696,22 +696,22 @@ describe("runtime MCP engine sync", () => {
         config: { type: "remote", url: "https://example.com/mcp", enabled: true },
       });
     } finally {
-      if (previousDb === undefined) delete process.env.OPENWORK_RUNTIME_DB;
-      else process.env.OPENWORK_RUNTIME_DB = previousDb;
+      if (previousDb === undefined) delete process.env.MICX_RUNTIME_DB;
+      else process.env.MICX_RUNTIME_DB = previousDb;
     }
   });
 
   test("cloud plugin install warns for dropped MCP payloads while still installing skills", async () => {
     const workspaceRoot = await createWorkspaceRoot();
-    const previousDb = process.env.OPENWORK_RUNTIME_DB;
-    process.env.OPENWORK_RUNTIME_DB = join(workspaceRoot, "runtime.sqlite");
+    const previousDb = process.env.MICX_RUNTIME_DB;
+    process.env.MICX_RUNTIME_DB = join(workspaceRoot, "runtime.sqlite");
     try {
       const mock = startMockOpencode();
-      const openwork = await startOpenworkServer(workspaceRoot, `http://127.0.0.1:${mock.server.port}`);
+      const micx = await startMicxServer(workspaceRoot, `http://127.0.0.1:${mock.server.port}`);
 
-      const response = await fetch(`${openwork.base}/workspace/ws_1/cloud-plugins`, {
+      const response = await fetch(`${micx.base}/workspace/ws_1/cloud-plugins`, {
         method: "POST",
-        headers: auth(openwork.token),
+        headers: auth(micx.token),
         body: JSON.stringify({
           marketplaceId: null,
           resolved: {
@@ -775,33 +775,33 @@ describe("runtime MCP engine sync", () => {
 
       const skillPath = join(workspaceRoot, ".opencode", "skills", "broken-plugin", "helpful-skill", "SKILL.md");
       expect(await readFile(skillPath, "utf8")).toContain("Installed skill body.");
-      expect((await readRuntimeOpencodeConfig(openwork.config, "ws_1")).mcp?.broken).toBeUndefined();
+      expect((await readRuntimeOpencodeConfig(micx.config, "ws_1")).mcp?.broken).toBeUndefined();
       expect(mock.requests.some((entry) => entry.method === "POST" && entry.pathname === "/mcp")).toBe(false);
     } finally {
-      if (previousDb === undefined) delete process.env.OPENWORK_RUNTIME_DB;
-      else process.env.OPENWORK_RUNTIME_DB = previousDb;
+      if (previousDb === undefined) delete process.env.MICX_RUNTIME_DB;
+      else process.env.MICX_RUNTIME_DB = previousDb;
     }
   });
 
   test("re-registers runtime MCPs with the engine after a reload", async () => {
     const workspaceRoot = await createWorkspaceRoot();
-    const previousDb = process.env.OPENWORK_RUNTIME_DB;
-    process.env.OPENWORK_RUNTIME_DB = join(workspaceRoot, "runtime.sqlite");
+    const previousDb = process.env.MICX_RUNTIME_DB;
+    process.env.MICX_RUNTIME_DB = join(workspaceRoot, "runtime.sqlite");
     try {
       const mock = startMockOpencode();
-      const openwork = await startOpenworkServer(workspaceRoot, `http://127.0.0.1:${mock.server.port}`);
+      const micx = await startMicxServer(workspaceRoot, `http://127.0.0.1:${mock.server.port}`);
 
-      const addResponse = await fetch(`${openwork.base}/workspace/ws_1/mcp`, {
+      const addResponse = await fetch(`${micx.base}/workspace/ws_1/mcp`, {
         method: "POST",
-        headers: auth(openwork.token),
+        headers: auth(micx.token),
         body: JSON.stringify({ name: "posthog", config: POSTHOG_CONFIG }),
       });
       expect(addResponse.status).toBe(200);
       mock.requests.length = 0;
 
-      const reloadResponse = await fetch(`${openwork.base}/workspace/ws_1/engine/reload`, {
+      const reloadResponse = await fetch(`${micx.base}/workspace/ws_1/engine/reload`, {
         method: "POST",
-        headers: auth(openwork.token),
+        headers: auth(micx.token),
       });
       expect(reloadResponse.status).toBe(200);
 
@@ -811,30 +811,30 @@ describe("runtime MCP engine sync", () => {
       expect(syncIndex).toBeGreaterThan(disposeIndex);
       expect(mock.requests[syncIndex]?.body).toEqual({ name: "posthog", config: POSTHOG_CONFIG });
     } finally {
-      if (previousDb === undefined) delete process.env.OPENWORK_RUNTIME_DB;
-      else process.env.OPENWORK_RUNTIME_DB = previousDb;
+      if (previousDb === undefined) delete process.env.MICX_RUNTIME_DB;
+      else process.env.MICX_RUNTIME_DB = previousDb;
     }
   });
 
   test("pushes toggled enabled state to the engine", async () => {
     const workspaceRoot = await createWorkspaceRoot();
-    const previousDb = process.env.OPENWORK_RUNTIME_DB;
-    process.env.OPENWORK_RUNTIME_DB = join(workspaceRoot, "runtime.sqlite");
+    const previousDb = process.env.MICX_RUNTIME_DB;
+    process.env.MICX_RUNTIME_DB = join(workspaceRoot, "runtime.sqlite");
     try {
       const mock = startMockOpencode();
-      const openwork = await startOpenworkServer(workspaceRoot, `http://127.0.0.1:${mock.server.port}`);
+      const micx = await startMicxServer(workspaceRoot, `http://127.0.0.1:${mock.server.port}`);
 
-      const addResponse = await fetch(`${openwork.base}/workspace/ws_1/mcp`, {
+      const addResponse = await fetch(`${micx.base}/workspace/ws_1/mcp`, {
         method: "POST",
-        headers: auth(openwork.token),
+        headers: auth(micx.token),
         body: JSON.stringify({ name: "posthog", config: POSTHOG_CONFIG }),
       });
       expect(addResponse.status).toBe(200);
       mock.requests.length = 0;
 
-      const toggleResponse = await fetch(`${openwork.base}/workspace/ws_1/mcp/posthog/enabled`, {
+      const toggleResponse = await fetch(`${micx.base}/workspace/ws_1/mcp/posthog/enabled`, {
         method: "POST",
-        headers: auth(openwork.token),
+        headers: auth(micx.token),
         body: JSON.stringify({ enabled: false }),
       });
       expect(toggleResponse.status).toBe(200);
@@ -843,30 +843,30 @@ describe("runtime MCP engine sync", () => {
       expect(syncRequest).toBeDefined();
       expect(syncRequest?.body).toEqual({ name: "posthog", config: { ...POSTHOG_CONFIG, enabled: false } });
     } finally {
-      if (previousDb === undefined) delete process.env.OPENWORK_RUNTIME_DB;
-      else process.env.OPENWORK_RUNTIME_DB = previousDb;
+      if (previousDb === undefined) delete process.env.MICX_RUNTIME_DB;
+      else process.env.MICX_RUNTIME_DB = previousDb;
     }
   });
 
   test("disconnects a removed MCP from the engine", async () => {
     const workspaceRoot = await createWorkspaceRoot();
-    const previousDb = process.env.OPENWORK_RUNTIME_DB;
-    process.env.OPENWORK_RUNTIME_DB = join(workspaceRoot, "runtime.sqlite");
+    const previousDb = process.env.MICX_RUNTIME_DB;
+    process.env.MICX_RUNTIME_DB = join(workspaceRoot, "runtime.sqlite");
     try {
       const mock = startMockOpencode();
-      const openwork = await startOpenworkServer(workspaceRoot, `http://127.0.0.1:${mock.server.port}`);
+      const micx = await startMicxServer(workspaceRoot, `http://127.0.0.1:${mock.server.port}`);
 
-      const addResponse = await fetch(`${openwork.base}/workspace/ws_1/mcp`, {
+      const addResponse = await fetch(`${micx.base}/workspace/ws_1/mcp`, {
         method: "POST",
-        headers: auth(openwork.token),
+        headers: auth(micx.token),
         body: JSON.stringify({ name: "posthog", config: POSTHOG_CONFIG }),
       });
       expect(addResponse.status).toBe(200);
       mock.requests.length = 0;
 
-      const removeResponse = await fetch(`${openwork.base}/workspace/ws_1/mcp/posthog`, {
+      const removeResponse = await fetch(`${micx.base}/workspace/ws_1/mcp/posthog`, {
         method: "DELETE",
-        headers: auth(openwork.token),
+        headers: auth(micx.token),
       });
       expect(removeResponse.status).toBe(200);
 
@@ -876,32 +876,32 @@ describe("runtime MCP engine sync", () => {
       expect(disconnectRequest).toBeDefined();
       expect(disconnectRequest?.search).toContain(`directory=${encodeURIComponent(workspaceRoot)}`);
     } finally {
-      if (previousDb === undefined) delete process.env.OPENWORK_RUNTIME_DB;
-      else process.env.OPENWORK_RUNTIME_DB = previousDb;
+      if (previousDb === undefined) delete process.env.MICX_RUNTIME_DB;
+      else process.env.MICX_RUNTIME_DB = previousDb;
     }
   });
 
   test("reload keeps registering remaining MCPs when one entry fails", async () => {
     const workspaceRoot = await createWorkspaceRoot();
-    const previousDb = process.env.OPENWORK_RUNTIME_DB;
-    process.env.OPENWORK_RUNTIME_DB = join(workspaceRoot, "runtime.sqlite");
+    const previousDb = process.env.MICX_RUNTIME_DB;
+    process.env.MICX_RUNTIME_DB = join(workspaceRoot, "runtime.sqlite");
     try {
       const mock = startMockOpencode({ failMcpNames: ["bad"] });
-      const openwork = await startOpenworkServer(workspaceRoot, `http://127.0.0.1:${mock.server.port}`);
+      const micx = await startMicxServer(workspaceRoot, `http://127.0.0.1:${mock.server.port}`);
 
       for (const [name, config] of [["bad", POSTHOG_CONFIG], ["posthog", POSTHOG_CONFIG]] as const) {
-        const response = await fetch(`${openwork.base}/workspace/ws_1/mcp`, {
+        const response = await fetch(`${micx.base}/workspace/ws_1/mcp`, {
           method: "POST",
-          headers: auth(openwork.token),
+          headers: auth(micx.token),
           body: JSON.stringify({ name, config }),
         });
         expect(response.status).toBe(200);
       }
       mock.requests.length = 0;
 
-      const reloadResponse = await fetch(`${openwork.base}/workspace/ws_1/engine/reload`, {
+      const reloadResponse = await fetch(`${micx.base}/workspace/ws_1/engine/reload`, {
         method: "POST",
-        headers: auth(openwork.token),
+        headers: auth(micx.token),
       });
       expect(reloadResponse.status).toBe(200);
 
@@ -916,8 +916,8 @@ describe("runtime MCP engine sync", () => {
 
       // The failure is surfaced on the MCP list endpoint instead of being
       // swallowed silently.
-      const listResponse = await fetch(`${openwork.base}/workspace/ws_1/mcp`, {
-        headers: auth(openwork.token),
+      const listResponse = await fetch(`${micx.base}/workspace/ws_1/mcp`, {
+        headers: auth(micx.token),
       });
       expect(listResponse.status).toBe(200);
       const listText = await listResponse.text();
@@ -929,16 +929,16 @@ describe("runtime MCP engine sync", () => {
       expect(listBody.engineSync?.failures.map((failure) => failure.name)).toContain("bad");
       expect(listBody.engineSync?.failures.map((failure) => failure.name)).not.toContain("posthog");
     } finally {
-      if (previousDb === undefined) delete process.env.OPENWORK_RUNTIME_DB;
-      else process.env.OPENWORK_RUNTIME_DB = previousDb;
+      if (previousDb === undefined) delete process.env.MICX_RUNTIME_DB;
+      else process.env.MICX_RUNTIME_DB = previousDb;
     }
   });
 
   test("startup sync pushes runtime MCPs for every workspace", async () => {
     const rootA = await createWorkspaceRoot();
     const rootB = await createWorkspaceRoot();
-    const previousDb = process.env.OPENWORK_RUNTIME_DB;
-    process.env.OPENWORK_RUNTIME_DB = join(rootA, "runtime.sqlite");
+    const previousDb = process.env.MICX_RUNTIME_DB;
+    process.env.MICX_RUNTIME_DB = join(rootA, "runtime.sqlite");
     try {
       const mock = startMockOpencode();
       const baseUrl = `http://127.0.0.1:${mock.server.port}`;
@@ -972,29 +972,29 @@ describe("runtime MCP engine sync", () => {
       expect(byName.get("posthog")).toContain(`directory=${encodeURIComponent(rootA)}`);
       expect(byName.get("stripe")).toContain(`directory=${encodeURIComponent(rootB)}`);
     } finally {
-      if (previousDb === undefined) delete process.env.OPENWORK_RUNTIME_DB;
-      else process.env.OPENWORK_RUNTIME_DB = previousDb;
+      if (previousDb === undefined) delete process.env.MICX_RUNTIME_DB;
+      else process.env.MICX_RUNTIME_DB = previousDb;
     }
   });
 
   test("MCP add still succeeds when the engine is unreachable", async () => {
     const workspaceRoot = await createWorkspaceRoot();
-    const previousDb = process.env.OPENWORK_RUNTIME_DB;
-    process.env.OPENWORK_RUNTIME_DB = join(workspaceRoot, "runtime.sqlite");
+    const previousDb = process.env.MICX_RUNTIME_DB;
+    process.env.MICX_RUNTIME_DB = join(workspaceRoot, "runtime.sqlite");
     try {
-      const openwork = await startOpenworkServer(workspaceRoot, "http://127.0.0.1:9");
+      const micx = await startMicxServer(workspaceRoot, "http://127.0.0.1:9");
 
-      const response = await fetch(`${openwork.base}/workspace/ws_1/mcp`, {
+      const response = await fetch(`${micx.base}/workspace/ws_1/mcp`, {
         method: "POST",
-        headers: auth(openwork.token),
+        headers: auth(micx.token),
         body: JSON.stringify({ name: "posthog", config: POSTHOG_CONFIG }),
       });
       expect(response.status).toBe(200);
       const body = await response.json() as { items: Array<{ name: string }> };
       expect(body.items.some((item) => item.name === "posthog")).toBe(true);
     } finally {
-      if (previousDb === undefined) delete process.env.OPENWORK_RUNTIME_DB;
-      else process.env.OPENWORK_RUNTIME_DB = previousDb;
+      if (previousDb === undefined) delete process.env.MICX_RUNTIME_DB;
+      else process.env.MICX_RUNTIME_DB = previousDb;
     }
   });
 
@@ -1006,21 +1006,21 @@ describe("runtime MCP engine sync", () => {
   // The desktop client uses this code to escalate to a full engine restart.
   test("engine reload reports engine-unreachable when the engine is down", async () => {
     const workspaceRoot = await createWorkspaceRoot();
-    const previousDb = process.env.OPENWORK_RUNTIME_DB;
-    process.env.OPENWORK_RUNTIME_DB = join(workspaceRoot, "runtime.sqlite");
+    const previousDb = process.env.MICX_RUNTIME_DB;
+    process.env.MICX_RUNTIME_DB = join(workspaceRoot, "runtime.sqlite");
     try {
-      const openwork = await startOpenworkServer(workspaceRoot, "http://127.0.0.1:9");
+      const micx = await startMicxServer(workspaceRoot, "http://127.0.0.1:9");
 
-      const response = await fetch(`${openwork.base}/workspace/ws_1/engine/reload`, {
+      const response = await fetch(`${micx.base}/workspace/ws_1/engine/reload`, {
         method: "POST",
-        headers: auth(openwork.token),
+        headers: auth(micx.token),
       });
       expect(response.status).toBe(503);
       const body = await response.json() as { code?: string };
       expect(body.code).toBe("opencode_engine_unreachable");
     } finally {
-      if (previousDb === undefined) delete process.env.OPENWORK_RUNTIME_DB;
-      else process.env.OPENWORK_RUNTIME_DB = previousDb;
+      if (previousDb === undefined) delete process.env.MICX_RUNTIME_DB;
+      else process.env.MICX_RUNTIME_DB = previousDb;
     }
   });
 });

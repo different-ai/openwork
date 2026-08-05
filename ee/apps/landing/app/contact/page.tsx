@@ -1,27 +1,27 @@
 import Link from "next/link";
 import { AppFeedbackForm, type AppFeedbackPrefill } from "../../components/app-feedback-form";
-import { OpenWorkMark } from "../../components/openwork-mark";
+import { MicxMark } from "../../components/micx-mark";
 import { SiteFooter } from "../../components/site-footer";
 import { baseOpenGraph } from "../../lib/seo";
 
 export const metadata = {
-  title: "OpenWork — Contact",
-  description: "Contact the OpenWork team for product, support, security, and sales questions.",
+  title: "Micx — Contact",
+  description: "Contact the Micx team for product, support, security, and sales questions.",
   alternates: {
     canonical: "/contact",
   },
   openGraph: {
     ...baseOpenGraph,
-    url: "https://openworklabs.com/contact",
+    url: "https://micxlabs.com/contact",
   },
 };
 
 const prefill: AppFeedbackPrefill = {
-  source: "openwork-contact-page",
+  source: "micx-contact-page",
   entrypoint: "/contact",
   deployment: "landing",
   appVersion: "",
-  openworkServerVersion: "",
+  micxServerVersion: "",
   opencodeVersion: "",
   osName: "",
   osVersion: "",
@@ -34,9 +34,9 @@ export default function ContactPage() {
       <div className="mx-auto max-w-5xl px-6 pb-20 pt-6 md:px-8 md:pt-8">
         <header className="mb-10 flex items-center justify-between gap-4">
           <Link href="/" className="inline-flex items-center gap-3 text-[#011627]">
-            <OpenWorkMark className="h-[30px] w-[38px]" />
+            <MicxMark className="h-[30px] w-[38px]" />
             <span className="text-[1.2rem] font-semibold tracking-tight lowercase">
-              OpenWork
+              Micx
             </span>
           </Link>
           <Link

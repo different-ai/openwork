@@ -1,7 +1,7 @@
 /**
  * Portable export of installed skills and MCP servers.
  *
- * Skills live as plain files, but MCP servers can be OpenWork-managed
+ * Skills live as plain files, but MCP servers can be Micx-managed
  * (stored in the runtime DB and injected into the engine via
  * OPENCODE_CONFIG), so the agent has no canonical way to read their
  * definitions back. This module exposes both in one portable shape so the

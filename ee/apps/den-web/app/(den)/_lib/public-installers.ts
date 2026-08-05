@@ -1,6 +1,6 @@
-import type { DownloadCardInstallers } from "@openwork/ui/react";
+import type { DownloadCardInstallers } from "@micx/ui/react";
 
-const FALLBACK_RELEASE = "https://github.com/different-ai/openwork/releases";
+const FALLBACK_RELEASE = "https://github.com/different-ai/micx/releases";
 
 type ReleaseAsset = {
   name?: string;
@@ -20,9 +20,9 @@ type Release = {
 // keywords below and sort ahead of the public asset, so exclude them here
 // exactly as the landing page does.
 function isNonPublicDesktopAsset(name: string) {
-  return name.startsWith("openwork-installer-")
-    || name.startsWith("openwork-cloud-")
-    || name.startsWith("openwork-enterprise-");
+  return name.startsWith("micx-installer-")
+    || name.startsWith("micx-cloud-")
+    || name.startsWith("micx-enterprise-");
 }
 
 function selectAsset(assets: ReleaseAsset[], extensions: string[], keywords: string[]) {
@@ -49,7 +49,7 @@ export async function getPublicInstallers(): Promise<{
   releaseTag: string;
 }> {
   try {
-    const response = await fetch("https://api.github.com/repos/different-ai/openwork/releases/latest", {
+    const response = await fetch("https://api.github.com/repos/different-ai/micx/releases/latest", {
       next: { revalidate: 3600 },
       headers: { Accept: "application/vnd.github+json" },
     });
@@ -59,7 +59,7 @@ export async function getPublicInstallers(): Promise<{
     const release = (await response.json()) as Release;
     const assets = Array.isArray(release.assets) ? release.assets : [];
     const releaseUrl = release.html_url || FALLBACK_RELEASE;
-    const dmg = selectAsset(assets, [".dmg"], ["openwork-mac-"]);
+    const dmg = selectAsset(assets, [".dmg"], ["micx-mac-"]);
     return {
       releaseTag: typeof release.tag_name === "string" ? release.tag_name : "",
       installers: {

@@ -1,13 +1,13 @@
 import Stripe from "stripe"
-import { and, eq, isNull, sql } from "@openwork-ee/den-db/drizzle"
+import { and, eq, isNull, sql } from "@micx-ee/den-db/drizzle"
 import {
   MemberTable,
   OrgSubscriptionStatus,
   OrgSubscriptionType,
   OrgSubscriptionTable,
   OrganizationTable,
-} from "@openwork-ee/den-db/schema"
-import { createDenTypeId } from "@openwork-ee/utils/typeid"
+} from "@micx-ee/den-db/schema"
+import { createDenTypeId } from "@micx-ee/utils/typeid"
 import { db } from "./db.js"
 import { env } from "./env.js"
 import type { DenOrgMode } from "./env.js"
@@ -473,11 +473,11 @@ export async function createOrgSubscriptionCheckoutSession(input: {
   cancelUrl: string
 }) {
   const priceId = requirePriceIdForSubscriptionType(input.subscriptionType)
-  const openworkProduct = input.subscriptionType === SEAT_SUBSCRIPTION_TYPE ? "openwork_seats" : "openwork_models"
+  const micxProduct = input.subscriptionType === SEAT_SUBSCRIPTION_TYPE ? "micx_seats" : "micx_models"
   const metadata = {
     org_id: input.organizationId,
     created_by_org_member_id: input.orgMemberId,
-    openwork_product: openworkProduct,
+    micx_product: micxProduct,
     subscription_type: input.subscriptionType,
   }
   const customer = await findOrCreateStripeCustomer({
@@ -487,7 +487,7 @@ export async function createOrgSubscriptionCheckoutSession(input: {
     metadata: {
       org_id: input.organizationId,
       created_by_org_member_id: input.orgMemberId,
-      openwork_product: openworkProduct,
+      micx_product: micxProduct,
     },
   })
 
@@ -669,11 +669,11 @@ async function createSeatSubscriptionFromSetupCheckoutSession(session: Stripe.Ch
       metadata: {
         org_id: metadata.organizationId,
         created_by_org_member_id: metadata.orgMemberId ?? "",
-        openwork_product: "openwork_seats",
+        micx_product: "micx_seats",
         subscription_type: SEAT_SUBSCRIPTION_TYPE,
       },
     },
-    { idempotencyKey: `openwork-seat-subscription-${session.id}` },
+    { idempotencyKey: `micx-seat-subscription-${session.id}` },
   )
 
   return upsertOrgSubscriptionFromStripe(subscription, eventId)

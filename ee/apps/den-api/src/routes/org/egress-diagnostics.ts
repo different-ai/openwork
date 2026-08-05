@@ -2,9 +2,9 @@ import {
   egressDiagnosticConfigurationSchema,
   egressDiagnosticRunSchema,
   type EgressDiagnosticConfiguration,
-} from "@openwork/types/den/egress-diagnostics"
-import { eq } from "@openwork-ee/den-db/drizzle"
-import { OrganizationDiagnosticCredentialTable } from "@openwork-ee/den-db/schema"
+} from "@micx/types/den/egress-diagnostics"
+import { eq } from "@micx-ee/den-db/drizzle"
+import { OrganizationDiagnosticCredentialTable } from "@micx-ee/den-db/schema"
 import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"

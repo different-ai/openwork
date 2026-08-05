@@ -17,7 +17,7 @@ export default async function LoginPage({
   return <main className="login-shell">
     <section className="login-card">
       <div>
-        <p className="eyebrow">OpenWork Enterprise</p>
+        <p className="eyebrow">Micx Enterprise</p>
         <h1>Diagnostics</h1>
         <p className="login-intro">Sign in to inspect safely redacted enterprise connectivity requests.</p>
       </div>

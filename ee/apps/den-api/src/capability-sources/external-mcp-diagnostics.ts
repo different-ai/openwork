@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto"
-import { isEnterpriseMcpLifecycleDeadline } from "@openwork/enterprise-mcp-client"
+import { isEnterpriseMcpLifecycleDeadline } from "@micx/enterprise-mcp-client"
 import { PrivateUrlError } from "./url-guard.js"
 
 export const EXTERNAL_MCP_DIAGNOSTIC_PHASES = [
@@ -44,7 +44,7 @@ export type ExternalMcpDiagnostic = {
   code: string
   highestPassed: ExternalMcpHealthLevel
   retryable: boolean
-  actionOwner: "openwork" | "network_admin" | "provider_admin" | "organization_admin" | "member"
+  actionOwner: "micx" | "network_admin" | "provider_admin" | "organization_admin" | "member"
   operatorAction: string
   message: string
   httpStatus?: number
@@ -650,8 +650,8 @@ function safeBaseMessageFor(input: {
 }): string {
   if (input.code === "MCP_LIFECYCLE_DEADLINE") {
     return input.phase === "MCP_TOOL_EXECUTION"
-      ? "The capability did not finish within the time OpenWork allows a single tool call."
-      : "The MCP lifecycle exceeded OpenWork's bounded diagnostic deadline."
+      ? "The capability did not finish within the time Micx allows a single tool call."
+      : "The MCP lifecycle exceeded Micx's bounded diagnostic deadline."
   }
   if (input.code === "MCP_REQUEST_TIMEOUT") {
     return "The MCP server did not answer the current protocol request within its bounded timeout."
@@ -664,17 +664,17 @@ function safeBaseMessageFor(input: {
   }
   if (input.code === "MCP_PROVIDER_DECLARED_ERROR") {
     const message = input.jsonRpcCode === undefined
-      ? "The provider answered with a JSON-RPC error OpenWork does not recognize."
-      : `The provider answered with a JSON-RPC error OpenWork does not recognize (code ${input.jsonRpcCode}).`
+      ? "The provider answered with a JSON-RPC error Micx does not recognize."
+      : `The provider answered with a JSON-RPC error Micx does not recognize (code ${input.jsonRpcCode}).`
     return input.providerErrorMessage
       ? `${message} Provider-declared message (untrusted): "${input.providerErrorMessage}".`
       : message
   }
   if (input.code === "MCP_RESPONSE_BODY_LIMIT") {
-    return "The MCP server returned a response body larger than OpenWork can safely process."
+    return "The MCP server returned a response body larger than Micx can safely process."
   }
   if (input.highestPassed && HEALTH_RANK[input.highestPassed] >= HEALTH_RANK.protocol_ready && isUninformativeClassification(input)) {
-    return "The MCP server answered, but OpenWork could not interpret its response for the current request."
+    return "The MCP server answered, but Micx could not interpret its response for the current request."
   }
   if (input.category === "security_blocked") {
     return "Den blocked the MCP URL because it violates the outbound network safety policy."
@@ -698,7 +698,7 @@ function safeBaseMessageFor(input: {
     return "The authorization server did not provide usable OAuth metadata."
   }
   if (input.phase === "AUTH_CLIENT_REGISTRATION") {
-    return "OpenWork could not register or identify its OAuth client with the authorization server."
+    return "Micx could not register or identify its OAuth client with the authorization server."
   }
   if (input.phase === "AUTH_TOKEN_ACQUISITION" || input.phase === "CONTINUITY_REFRESH") {
     return "The authorization server rejected the code or token refresh exchange."
@@ -719,8 +719,8 @@ function safeBaseMessageFor(input: {
   }
   if (input.phase === "MCP_TOOL_DISCOVERY") {
     return input.code === "MCP_CATALOG_CURSOR_LOOP"
-      ? "The MCP server repeated a tool-catalog cursor, so OpenWork stopped safely."
-      : "OpenWork could not retrieve a complete, valid MCP tool catalog."
+      ? "The MCP server repeated a tool-catalog cursor, so Micx stopped safely."
+      : "Micx could not retrieve a complete, valid MCP tool catalog."
   }
   if (input.phase === "MCP_TOOL_EXECUTION" || input.phase === "PROVIDER_EXECUTION") {
     return "The MCP connection is established, but the requested provider operation failed."
@@ -734,7 +734,7 @@ function safeBaseMessageFor(input: {
   if (input.phase === "HTTP_ROUTING") {
     return "Den reached the host, but the configured path did not behave like the intended MCP endpoint."
   }
-  return "The MCP connection failed before OpenWork could complete the protocol lifecycle."
+  return "The MCP connection failed before Micx could complete the protocol lifecycle."
 }
 
 type Classification = Omit<ExternalMcpDiagnostic, "referenceId" | "highestPassed" | "message">
@@ -783,7 +783,7 @@ function httpClassification(input: {
       category: "mcp_session_expired",
       code: "MCP_SESSION_NOT_FOUND",
       retryable: true,
-      actionOwner: "openwork",
+      actionOwner: "micx",
       operatorAction: "Reinitialize the MCP session, then retry the operation once.",
     }
   }
@@ -895,7 +895,7 @@ function classifyByCode(code: string): Classification | null {
       category: "oauth_authorization_transaction_invalid",
       code,
       retryable: false,
-      actionOwner: "openwork",
+      actionOwner: "micx",
       operatorAction: "Start OAuth through Den so the callback is bound to a signed, expiring authorization transaction.",
     }
   }
@@ -945,7 +945,7 @@ function classifyByCode(code: string): Classification | null {
       category: "oauth_credential_changed",
       code,
       retryable: true,
-      actionOwner: "openwork",
+      actionOwner: "micx",
       operatorAction: "Retry with the newer OAuth credential after the concurrent refresh completes.",
     }
   }
@@ -975,7 +975,7 @@ function classifyByCode(code: string): Classification | null {
       category: "oauth_persistence_invalid",
       code,
       retryable: false,
-      actionOwner: "openwork",
+      actionOwner: "micx",
       operatorAction: "Inspect the encrypted OAuth record and adapter validation using the diagnostic reference.",
     }
   }
@@ -1000,7 +1000,7 @@ function classifyByCode(code: string): Classification | null {
       category: "mcp_tool_input_invalid",
       code,
       retryable: false,
-      actionOwner: "openwork",
+      actionOwner: "micx",
       operatorAction: "Correct and bound the tool arguments before attempting the provider operation again.",
     }
   }
@@ -1119,7 +1119,7 @@ function classifyError(error: unknown, fallbackPhase: ExternalMcpDiagnosticPhase
       category: "mcp_tool_input_invalid",
       code: "MCP_INVALID_PARAMS",
       retryable: false,
-      actionOwner: "openwork",
+      actionOwner: "micx",
       operatorAction: "Correct the tool arguments using the latest advertised input schema; do not retry the same arguments unchanged.",
     }
   }
@@ -1257,7 +1257,7 @@ function classifyError(error: unknown, fallbackPhase: ExternalMcpDiagnosticPhase
       code: "MCP_UNSUPPORTED_VERSION",
       retryable: false,
       actionOwner: "provider_admin",
-      operatorAction: "Configure the provider to support an MCP protocol version compatible with OpenWork.",
+      operatorAction: "Configure the provider to support an MCP protocol version compatible with Micx.",
     }
   }
 
@@ -1422,7 +1422,7 @@ export class ExternalMcpDiagnosticTracker {
           category: "mcp_tool_input_invalid",
           code: "MCP_PROVIDER_INVALID_PARAMS",
           retryable: false,
-          actionOwner: "openwork",
+          actionOwner: "micx",
           operatorAction: "Correct the tool arguments using the latest advertised input schema; do not retry the same arguments unchanged.",
         }
       : providerPolicyDenied

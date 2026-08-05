@@ -55,9 +55,9 @@ function configuredPublicOrigin(hosted: boolean): string | undefined {
 export function diagnosticsConfig() {
   const hosted = Boolean(process.env.VERCEL)
   return {
-    adminPassword: process.env.DIAGNOSTICS_ADMIN_PASSWORD ?? (hosted ? "" : "OpenWorkDiagnosticsLocal!"),
+    adminPassword: process.env.DIAGNOSTICS_ADMIN_PASSWORD ?? (hosted ? "" : "MicxDiagnosticsLocal!"),
     adminUsername: process.env.DIAGNOSTICS_ADMIN_USERNAME ?? "diagnostics-admin",
-    bearerToken: process.env.DIAGNOSTICS_MCP_BEARER_TOKEN ?? (hosted ? "" : "OpenWorkDiagnosticsToken!"),
+    bearerToken: process.env.DIAGNOSTICS_MCP_BEARER_TOKEN ?? (hosted ? "" : "MicxDiagnosticsToken!"),
     profile: profile(process.env.DIAGNOSTICS_PROFILE),
     publicOrigin: publicOrigin(configuredPublicOrigin(hosted), hosted),
     signingSecret: process.env.DIAGNOSTICS_SIGNING_SECRET ?? (hosted ? "" : "local-diagnostics-signing-secret-change-me"),

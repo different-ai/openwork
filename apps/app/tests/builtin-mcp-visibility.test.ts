@@ -2,11 +2,11 @@ import { describe, expect, test } from "bun:test";
 
 import { MCP_QUICK_CONNECT } from "../src/app/constants";
 
-describe("built-in OpenWork MCP visibility", () => {
-  test("hides internal OpenWork MCPs and omits the retired admin connector", () => {
-    expect(MCP_QUICK_CONNECT.find((entry) => entry.serverName === "openwork-cloud")?.defaultHidden).toBe(true);
-    expect(MCP_QUICK_CONNECT.find((entry) => entry.serverName === "openwork-admin")).toBeUndefined();
-    expect(MCP_QUICK_CONNECT.find((entry) => entry.serverName === "openwork-ui")?.defaultHidden).toBe(true);
+describe("built-in Micx MCP visibility", () => {
+  test("hides internal Micx MCPs and omits the retired admin connector", () => {
+    expect(MCP_QUICK_CONNECT.find((entry) => entry.serverName === "micx-cloud")?.defaultHidden).toBe(true);
+    expect(MCP_QUICK_CONNECT.find((entry) => entry.serverName === "micx-admin")).toBeUndefined();
+    expect(MCP_QUICK_CONNECT.find((entry) => entry.serverName === "micx-ui")?.defaultHidden).toBe(true);
   });
 
   test("keeps directory apps visible by default", () => {

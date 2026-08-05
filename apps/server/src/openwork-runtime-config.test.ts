@@ -4,11 +4,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import {
-  buildOpenworkRuntimeConfig,
-  keepOpenworkRuntimeConfigFileFresh,
-  openworkRuntimeConfigFilePath,
-  writeOpenworkRuntimeConfigFile,
-} from "./openwork-runtime-config.js";
+  buildMicxRuntimeConfig,
+  keepMicxRuntimeConfigFileFresh,
+  micxRuntimeConfigFilePath,
+  writeMicxRuntimeConfigFile,
+} from "./micx-runtime-config.js";
 import { writeRuntimeOpencodeConfig } from "./runtime-opencode-config-store.js";
 import type { ServerConfig } from "./types.js";
 
@@ -19,15 +19,15 @@ let previousDb: string | undefined;
 afterEach(async () => {
   while (cleanups.length) cleanups.pop()?.();
   while (roots.length) await rm(roots.pop()!, { recursive: true, force: true });
-  if (previousDb === undefined) delete process.env.OPENWORK_RUNTIME_DB;
-  else process.env.OPENWORK_RUNTIME_DB = previousDb;
+  if (previousDb === undefined) delete process.env.MICX_RUNTIME_DB;
+  else process.env.MICX_RUNTIME_DB = previousDb;
 });
 
 async function setup() {
-  const root = await mkdtemp(join(tmpdir(), "openwork-runtime-config-file-"));
+  const root = await mkdtemp(join(tmpdir(), "micx-runtime-config-file-"));
   roots.push(root);
-  previousDb = process.env.OPENWORK_RUNTIME_DB;
-  process.env.OPENWORK_RUNTIME_DB = join(root, "runtime.sqlite");
+  previousDb = process.env.MICX_RUNTIME_DB;
+  process.env.MICX_RUNTIME_DB = join(root, "runtime.sqlite");
   const config: ServerConfig = {
     host: "127.0.0.1",
     port: 0,
@@ -50,28 +50,28 @@ async function setup() {
 }
 
 async function readConfigFile(config: ServerConfig): Promise<Record<string, unknown>> {
-  const raw = await readFile(openworkRuntimeConfigFilePath(config), "utf8");
+  const raw = await readFile(micxRuntimeConfigFilePath(config), "utf8");
   return JSON.parse(raw) as Record<string, unknown>;
 }
 
-describe("openwork runtime config file", () => {
-  test("writes runtime-DB MCPs and openwork defaults into the file", async () => {
+describe("micx runtime config file", () => {
+  test("writes runtime-DB MCPs and micx defaults into the file", async () => {
     const { config } = await setup();
     await writeRuntimeOpencodeConfig(config, "ws_1", (current) => ({
       ...current,
       mcp: { posthog: { type: "remote", url: "https://mcp.posthog.com/mcp", enabled: true } },
     }));
 
-    const { path } = await writeOpenworkRuntimeConfigFile(config, "ws_1");
-    expect(path).toBe(openworkRuntimeConfigFilePath(config));
+    const { path } = await writeMicxRuntimeConfigFile(config, "ws_1");
+    expect(path).toBe(micxRuntimeConfigFilePath(config));
 
     const parsed = await readConfigFile(config);
     const mcp = parsed.mcp as Record<string, Record<string, unknown>>;
     expect(mcp.posthog?.enabled).toBe(true);
-    expect(parsed.default_agent).toBe("openwork");
+    expect(parsed.default_agent).toBe("micx");
     expect(Array.isArray(parsed.plugin)).toBe(true);
     expect(parsed.agent).toMatchObject({
-      openwork: {
+      micx: {
         permission: {
           skill: {
             "customize-opencode": "deny",
@@ -85,13 +85,13 @@ describe("openwork runtime config file", () => {
     });
   });
 
-  test("openwork prompt has a static search-first Memory Bank section, distinct from ## Memory", async () => {
+  test("micx prompt has a static search-first Memory Bank section, distinct from ## Memory", async () => {
     const { config } = await setup();
-    await writeOpenworkRuntimeConfigFile(config, "ws_1");
+    await writeMicxRuntimeConfigFile(config, "ws_1");
 
     const parsed = await readConfigFile(config);
     const agent = parsed.agent as Record<string, { prompt?: string }>;
-    const prompt = agent.openwork?.prompt ?? "";
+    const prompt = agent.micx?.prompt ?? "";
 
     // The new Memory Bank section is present and distinct from the existing ## Memory section.
     expect(prompt).toContain("## Memory Bank");
@@ -105,10 +105,10 @@ describe("openwork runtime config file", () => {
     expect(prompt).toMatch(/secret|credential|API key|token|PII/i);
   });
 
-  test("keepOpenworkRuntimeConfigFileFresh rewrites the file on runtime-DB writes", async () => {
+  test("keepMicxRuntimeConfigFileFresh rewrites the file on runtime-DB writes", async () => {
     const { config } = await setup();
-    await writeOpenworkRuntimeConfigFile(config, "ws_1");
-    cleanups.push(keepOpenworkRuntimeConfigFileFresh(config, "ws_1"));
+    await writeMicxRuntimeConfigFile(config, "ws_1");
+    cleanups.push(keepMicxRuntimeConfigFileFresh(config, "ws_1"));
 
     await writeRuntimeOpencodeConfig(config, "ws_1", (current) => ({
       ...current,
@@ -128,8 +128,8 @@ describe("openwork runtime config file", () => {
 
   test("writes for other workspaces do not rewrite the primary file", async () => {
     const { config } = await setup();
-    await writeOpenworkRuntimeConfigFile(config, "ws_1");
-    cleanups.push(keepOpenworkRuntimeConfigFileFresh(config, "ws_1"));
+    await writeMicxRuntimeConfigFile(config, "ws_1");
+    cleanups.push(keepMicxRuntimeConfigFileFresh(config, "ws_1"));
 
     await writeRuntimeOpencodeConfig(config, "ws_other", (current) => ({
       ...current,
@@ -149,8 +149,8 @@ describe("openwork runtime config file", () => {
       mcp: { posthog: { type: "remote", url: "https://mcp.posthog.com/mcp" } },
     }));
 
-    const first = await buildOpenworkRuntimeConfig(config, "ws_1");
-    const second = await buildOpenworkRuntimeConfig(config, "ws_1");
+    const first = await buildMicxRuntimeConfig(config, "ws_1");
+    const second = await buildMicxRuntimeConfig(config, "ws_1");
 
     expect(second).toBe(first);
   });
@@ -167,7 +167,7 @@ describe("openwork runtime config file", () => {
         alpha: { name: "Alpha", npm: "@ai-sdk/openai-compatible" },
       },
     }));
-    const first = await buildOpenworkRuntimeConfig(config, "ws_1");
+    const first = await buildMicxRuntimeConfig(config, "ws_1");
 
     await writeRuntimeOpencodeConfig(config, "ws_1", () => ({
       provider: {
@@ -179,7 +179,7 @@ describe("openwork runtime config file", () => {
         zeta: { type: "remote", url: "https://z.example/mcp" },
       },
     }));
-    const second = await buildOpenworkRuntimeConfig(config, "ws_1");
+    const second = await buildMicxRuntimeConfig(config, "ws_1");
 
     expect(second).toBe(first);
   });

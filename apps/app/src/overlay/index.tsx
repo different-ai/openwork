@@ -32,7 +32,7 @@ const MENU_ITEM_SELECTOR = "button[data-slot='context-menu-item']:not(:disabled)
 
 declare global {
   interface Window {
-    __OPENWORK_MENU_OVERLAY__?: MenuOverlayApi;
+    __MICX_MENU_OVERLAY__?: MenuOverlayApi;
   }
 }
 
@@ -94,7 +94,7 @@ function ContextMenuSurface({
 
 function OverlayApp() {
   const [request, setRequest] = React.useState<ContextMenuRequest | null>(null);
-  const api = window.__OPENWORK_MENU_OVERLAY__;
+  const api = window.__MICX_MENU_OVERLAY__;
 
   React.useEffect(() => {
     if (!api) return;

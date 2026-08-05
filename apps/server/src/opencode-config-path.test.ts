@@ -13,7 +13,7 @@ function restoreEnv(name: string, value: string | undefined): void {
 
 describe("OpenCode config path resolution", () => {
   test("server global config path follows MCP when OPENCODE_CONFIG_DIR is set", async () => {
-    const root = await mkdtemp(join(tmpdir(), "openwork-opencode-config-path-"));
+    const root = await mkdtemp(join(tmpdir(), "micx-opencode-config-path-"));
     const previousOpencodeConfigDir = process.env.OPENCODE_CONFIG_DIR;
     const previousXdgConfigHome = process.env.XDG_CONFIG_HOME;
     try {

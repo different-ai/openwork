@@ -1,5 +1,5 @@
 {
-  "name": "@openwork/types",
+  "name": "@micx/types",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -14,20 +14,20 @@
       "development": "./src/agent-context-diagnostics.ts",
       "default": "./src/agent-context-diagnostics.ts"
     },
-    "./openwork-affordance": {
-      "types": "./src/openwork-affordance.ts",
-      "development": "./src/openwork-affordance.ts",
-      "default": "./src/openwork-affordance.ts"
+    "./micx-affordance": {
+      "types": "./src/micx-affordance.ts",
+      "development": "./src/micx-affordance.ts",
+      "default": "./src/micx-affordance.ts"
     },
-    "./openwork-context": {
-      "types": "./src/openwork-context.ts",
-      "development": "./src/openwork-context.ts",
-      "default": "./src/openwork-context.ts"
+    "./micx-context": {
+      "types": "./src/micx-context.ts",
+      "development": "./src/micx-context.ts",
+      "default": "./src/micx-context.ts"
     },
-    "./openwork-provider": {
-      "types": "./src/openwork-provider.ts",
-      "development": "./src/openwork-provider.ts",
-      "default": "./src/openwork-provider.ts"
+    "./micx-provider": {
+      "types": "./src/micx-provider.ts",
+      "development": "./src/micx-provider.ts",
+      "default": "./src/micx-provider.ts"
     },
     "./automations": {
       "types": "./src/automations.ts",

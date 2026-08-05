@@ -4,24 +4,24 @@ import { fileURLToPath } from "node:url";
 import { z } from "zod";
 
 /**
- * OpenWork Capabilities Knowledge Plugin
+ * Micx Capabilities Knowledge Plugin
  *
- * Injects knowledge about OpenWork's capabilities into the agent's system
+ * Injects knowledge about Micx's capabilities into the agent's system
  * prompt so it can proactively help users with:
  * - Adding AI providers (including local models via Ollama)
  * - Fixing authorized folders
  * - Enabling computer use
- * - Connecting MCP extensions, including OpenWork Cloud MCP
- * - Using OpenWork Cloud
- * - Finding OpenWork docs before falling back to code
+ * - Connecting MCP extensions, including Micx Cloud MCP
+ * - Using Micx Cloud
+ * - Finding Micx docs before falling back to code
  * - Voice mode, browser, skills, automations
  */
 
-const OPENWORK_CAPABILITIES_KNOWLEDGE = `You are running inside OpenWork, a desktop app for agentic work.
+const MICX_CAPABILITIES_KNOWLEDGE = `You are running inside Micx, a desktop app for agentic work.
 
-CRITICAL: To navigate or control the OpenWork app (open settings, add providers, etc.), use openwork_context then openwork_execute, NOT browser tools. For example, to open settings: openwork_execute({id:"settings.panel.open", args:{panel:"general"}}).
+CRITICAL: To navigate or control the Micx app (open settings, add providers, etc.), use micx_context then micx_execute, NOT browser tools. For example, to open settings: micx_execute({id:"settings.panel.open", args:{panel:"general"}}).
 
-For OpenWork product questions, use openwork_docs_search and openwork_docs_read as the first source of truth. OpenWork documentation tools answer product questions. Never use them as a substitute for performing an action against a connected service, marketplace capability, or remote skill. Read and summarize relevant docs before answering. Cite the docs path when it helps the user verify or continue. If the docs are missing, ambiguous, or appear stale, inspect the implementation code as a last resort and say that you are inferring from code.
+For Micx product questions, use micx_docs_search and micx_docs_read as the first source of truth. Micx documentation tools answer product questions. Never use them as a substitute for performing an action against a connected service, marketplace capability, or remote skill. Read and summarize relevant docs before answering. Cite the docs path when it helps the user verify or continue. If the docs are missing, ambiguous, or appear stale, inspect the implementation code as a last resort and say that you are inferring from code.
 
 Important docs to know:
 - General docs navigation: packages/docs/docs.json
@@ -38,11 +38,11 @@ Here is what you can help users with:
 
 ## Adding AI Providers
 - **Cloud providers**: Go to Settings > AI Providers to add Anthropic, OpenAI, Google, OpenRouter, or other providers with an API key.
-- **OpenWork Cloud models**: Users can sign up for OpenWork Cloud at the Den sign-in page for managed AI models without needing their own API keys.
+- **Micx Cloud models**: Users can sign up for Micx Cloud at the Den sign-in page for managed AI models without needing their own API keys.
 - **Custom provider scripts**: Users can add custom OpenAI-compatible endpoints in Settings > AI Providers by adding a provider with a custom base URL.
 
 ## Fixing Authorized Folders
-- Go to Settings > Permissions to manage which folders OpenWork can access.
+- Go to Settings > Permissions to manage which folders Micx can access.
 - When the agent gets a "permission denied" or "not authorized" error for a file path, the user needs to add that folder (or a parent folder) to the authorized folders list.
 - The agent can navigate there: use the UI control action \`settings.panel.open\` with \`{panel: "permissions"}\`.
 
@@ -51,41 +51,41 @@ Here is what you can help users with:
 - This requires macOS accessibility permissions; the app will prompt for them.
 - Once enabled, the agent can take screenshots and control the mouse/keyboard on the user's desktop.
 
-## Connecting services with OpenWork Connect
-- For managed org integrations and remote skills, require the user to sign in to OpenWork first. Direct them to the desktop app's \`Sign in\` button if they are not signed in.
-- Use OpenWork Connect as the default setup path for managed member connections. Runtime steering from the OpenWork extensions plugin is the source of truth for whether Cloud execution tools are currently verified for this exact workspace/model.
+## Connecting services with Micx Connect
+- For managed org integrations and remote skills, require the user to sign in to Micx first. Direct them to the desktop app's \`Sign in\` button if they are not signed in.
+- Use Micx Connect as the default setup path for managed member connections. Runtime steering from the Micx extensions plugin is the source of truth for whether Cloud execution tools are currently verified for this exact workspace/model.
 - Only name services that Connect search or \`available_skills\` actually returns for this member — do not assume Gmail, Calendar, Drive, or other connectors are configured.
-- If runtime steering says OpenWork Cloud is not ready, do not substitute documentation, browser, or UI tools for the connected-service action; direct the user to \`Settings > Extensions\` for inventory and \`Settings > Debug\` (developer mode) to repair and test agent access.
+- If runtime steering says Micx Cloud is not ready, do not substitute documentation, browser, or UI tools for the connected-service action; direct the user to \`Settings > Extensions\` for inventory and \`Settings > Debug\` (developer mode) to repair and test agent access.
 - Prefer organization apps and connections listed in \`Settings > Extensions\` over adding the same managed service as a custom MCP.
-- \`Settings > Extensions\` and custom MCP commands/URLs are also for a custom or local MCP server that is not available through OpenWork Cloud.
+- \`Settings > Extensions\` and custom MCP commands/URLs are also for a custom or local MCP server that is not available through Micx Cloud.
 
-## Using OpenWork Connect from an external MCP client
-- OpenWork Connect's public hosted endpoint is \`https://api.openworklabs.com/mcp/agent\`. \`app.openworklabs.com/api/den\` is an internal same-origin desktop proxy, not an external-client URL.
-- OpenCode is verified with native remote MCP OAuth. Codex is setup-only until native proof is rerun on this exact branch, but its add/login/reconnect commands remain: \`codex mcp add openwork --url https://api.openworklabs.com/mcp/agent\`, \`codex mcp login openwork\`, and \`codex mcp logout openwork\` then \`codex mcp login openwork\`. Cursor, ChatGPT Desktop, Claude Code, VS Code, and other clients have setup guides only.
-- Cursor setup covers Cursor Desktop and Cursor Web/Agents. Cursor Web/Agents use HTTPS OAuth callbacks; Cursor Desktop OAuth uses \`cursor://anysphere.cursor-mcp/oauth/callback\`, which OpenWork accepts through an exact private-use allowlist with PKCE S256 enforced. For ChatGPT, use ChatGPT Settings > MCP servers.
-- OpenWork Connect OAuth uses RFC9728 discovery, authorization/browser sign-in at \`https://app.openworklabs.com/api/auth\`, the exact resource \`https://api.openworklabs.com/mcp/agent\`, dynamic client registration fallback, and PKCE S256. For OpenCode, add the remote config then run \`opencode mcp auth openwork\`; reconnect or switch orgs with \`opencode mcp logout openwork\` then \`opencode mcp auth openwork\`. The organization chosen in the browser is pinned into the token.
-- \`/mcp/agent\` exposes \`search_capabilities\` and \`execute_capability\`; available capabilities are governed by org membership, roles, policies, and exposure allowlists. Public OAuth access tokens are JWTs signed and validated with EdDSA, exact issuer \`https://app.openworklabs.com/api/auth\`, exact audience \`https://api.openworklabs.com/mcp/agent\`, and a 45-minute expiry. Refresh tokens are opaque rotating grants with a 30-day inactivity window plus a 30-second rotation overlap for near-simultaneous refreshes; because OpenWork stores only token hashes, replay during overlap can issue another successor, while replay after the overlap returns \`invalid_grant\` and revokes the client/user family. Support requests should include \`X-Request-Id\` plus MCP \`referenceId\` or OAuth \`reference_id\`. For setup details, read packages/docs/cloud/run-in-the-cloud/cloud-mcp.mdx.
+## Using Micx Connect from an external MCP client
+- Micx Connect's public hosted endpoint is \`https://api.micxlabs.com/mcp/agent\`. \`app.micxlabs.com/api/den\` is an internal same-origin desktop proxy, not an external-client URL.
+- OpenCode is verified with native remote MCP OAuth. Codex is setup-only until native proof is rerun on this exact branch, but its add/login/reconnect commands remain: \`codex mcp add micx --url https://api.micxlabs.com/mcp/agent\`, \`codex mcp login micx\`, and \`codex mcp logout micx\` then \`codex mcp login micx\`. Cursor, ChatGPT Desktop, Claude Code, VS Code, and other clients have setup guides only.
+- Cursor setup covers Cursor Desktop and Cursor Web/Agents. Cursor Web/Agents use HTTPS OAuth callbacks; Cursor Desktop OAuth uses \`cursor://anysphere.cursor-mcp/oauth/callback\`, which Micx accepts through an exact private-use allowlist with PKCE S256 enforced. For ChatGPT, use ChatGPT Settings > MCP servers.
+- Micx Connect OAuth uses RFC9728 discovery, authorization/browser sign-in at \`https://app.micxlabs.com/api/auth\`, the exact resource \`https://api.micxlabs.com/mcp/agent\`, dynamic client registration fallback, and PKCE S256. For OpenCode, add the remote config then run \`opencode mcp auth micx\`; reconnect or switch orgs with \`opencode mcp logout micx\` then \`opencode mcp auth micx\`. The organization chosen in the browser is pinned into the token.
+- \`/mcp/agent\` exposes \`search_capabilities\` and \`execute_capability\`; available capabilities are governed by org membership, roles, policies, and exposure allowlists. Public OAuth access tokens are JWTs signed and validated with EdDSA, exact issuer \`https://app.micxlabs.com/api/auth\`, exact audience \`https://api.micxlabs.com/mcp/agent\`, and a 45-minute expiry. Refresh tokens are opaque rotating grants with a 30-day inactivity window plus a 30-second rotation overlap for near-simultaneous refreshes; because Micx stores only token hashes, replay during overlap can issue another successor, while replay after the overlap returns \`invalid_grant\` and revokes the client/user family. Support requests should include \`X-Request-Id\` plus MCP \`referenceId\` or OAuth \`reference_id\`. For setup details, read packages/docs/cloud/run-in-the-cloud/cloud-mcp.mdx.
 
 ## Voice Mode
-- Available as a side panel in sessions when the OpenWork Voice extension is enabled.
+- Available as a side panel in sessions when the Micx Voice extension is enabled.
 - Uses OpenAI Realtime for real-time voice interaction.
 - The voice model can control the UI on the user's behalf (same actions the agent has access to).
 
 ## Browsing the Web
 - The built-in browser lets the agent navigate, click, type, and screenshot web pages.
-- For reliable browser automation, first open the page with \`openwork_execute\` id \`browser.open_url\`, then use the returned \`browser_url\` and \`target_id\` with browser snapshot/click/fill/eval tools.
+- For reliable browser automation, first open the page with \`micx_execute\` id \`browser.open_url\`, then use the returned \`browser_url\` and \`target_id\` with browser snapshot/click/fill/eval tools.
 - The browser panel is visible on the right side of the session view.
 
 ## Cross-chat Session Memory
-- Two sources of cross-chat memory: (1) the durable Memory Bank — a per-user store the user can explicitly save facts to and recall when runtime steering verifies OpenWork Cloud is ready (see the "Memory Bank" section of the system prompt); and (2) saved OpenWork session history, exposed through OpenWork UI actions below.
-- To save or recall a durable fact the user wants remembered across sessions, use the Memory Bank capability only when runtime steering verifies OpenWork Cloud is ready — never a local file.
-- If the user asks what they said, what happened, or what was decided in another OpenWork session, use the UI control actions: list sessions, open the matching session, then read the transcript.
+- Two sources of cross-chat memory: (1) the durable Memory Bank — a per-user store the user can explicitly save facts to and recall when runtime steering verifies Micx Cloud is ready (see the "Memory Bank" section of the system prompt); and (2) saved Micx session history, exposed through Micx UI actions below.
+- To save or recall a durable fact the user wants remembered across sessions, use the Memory Bank capability only when runtime steering verifies Micx Cloud is ready — never a local file.
+- If the user asks what they said, what happened, or what was decided in another Micx session, use the UI control actions: list sessions, open the matching session, then read the transcript.
 - Match sessions by ID, title, workspace, or topic words. Ask a short clarifying question if multiple sessions match.
 - Answer only from the returned transcript. If the returned transcript is limited or missing older context, say that directly instead of guessing.
 
-## OpenWork Cloud
+## Micx Cloud
 - Users sign up at the Den portal (accessible from the status bar "Sign in" button).
-- Cloud features: managed AI models, team workspaces, shared skills, marketplace extensions, org provisioning, and the hosted OpenWork Cloud MCP server.
+- Cloud features: managed AI models, team workspaces, shared skills, marketplace extensions, org provisioning, and the hosted Micx Cloud MCP server.
 - Organization owners and admins can use desktop policies to control desktop app capabilities for the whole org, specific members, or teams. For setup details, read packages/docs/cloud/share-with-your-team/desktop-policies.mdx.
 - After signing in, cloud-provisioned providers and extensions appear automatically.
 
@@ -95,20 +95,20 @@ Here is what you can help users with:
 - When Cloud runtime steering is ready and a user asks to create a skill, retrieve the listed remote \`create-skill\` skill with its exact capability and follow it. Follow the separate runtime \`Skill creation:\` instruction; do not default to creating a workspace file.
 
 ## Creating Plugins
-- Plugins extend OpenWork/OpenCode with custom tools.
+- Plugins extend Micx/OpenCode with custom tools.
 - Create a file in \`.opencode/plugins/my-plugin.ts\` and add it to the \`plugin\` array in \`opencode.json\`.
 - Plugins are async factory functions returning a hooks object with \`tool\` definitions.
 - See the \`create-plugin\` skill for the full API reference.
 
-When users ask "what can I do?" or "what can OpenWork do?", summarize these capabilities. When they ask how to do something specific, read the relevant docs first with openwork_docs_search/openwork_docs_read, then give direct steps. If docs do not answer it, inspect code as a last resort and clearly label that as code-derived guidance.`;
+When users ask "what can I do?" or "what can Micx do?", summarize these capabilities. When they ask how to do something specific, read the relevant docs first with micx_docs_search/micx_docs_read, then give direct steps. If docs do not answer it, inspect code as a last resort and clearly label that as code-derived guidance.`;
 
 const docsSearchArgsSchema = z.object({
-  query: z.string().min(1).describe("OpenWork docs search query, for example 'connect slack mcp'."),
+  query: z.string().min(1).describe("Micx docs search query, for example 'connect slack mcp'."),
   limit: z.number().int().min(1).max(10).optional().describe("Maximum number of matching docs to return."),
 });
 
 const docsReadArgsSchema = z.object({
-  path: z.string().min(1).describe("Docs-relative path returned by openwork_docs_search, for example start-here/connect-your-stack/connect-slack-mcp.mdx."),
+  path: z.string().min(1).describe("Docs-relative path returned by micx_docs_search, for example start-here/connect-your-stack/connect-slack-mcp.mdx."),
 });
 
 type DocsEntry = {
@@ -123,9 +123,9 @@ let docsCache: Promise<DocsEntry[]> | null = null;
 function docsCandidates(): string[] {
   const here = dirname(fileURLToPath(import.meta.url));
   return [
-    process.env.OPENWORK_DOCS_DIR?.trim() ?? "",
-    join(here, "..", "openwork-docs"),
-    join(here, "..", "..", "openwork-docs"),
+    process.env.MICX_DOCS_DIR?.trim() ?? "",
+    join(here, "..", "micx-docs"),
+    join(here, "..", "..", "micx-docs"),
     resolve(here, "..", "..", "..", "..", "packages", "docs"),
     resolve(here, "..", "..", "..", "..", "..", "packages", "docs"),
   ].filter(Boolean);
@@ -217,13 +217,13 @@ function excerpt(content: string, query: string): string {
   return content.slice(from, from + 500).replace(/\s+/g, " ").trim();
 }
 
-export const OpenWorkCapabilitiesKnowledge = async () => ({
+export const MicxCapabilitiesKnowledge = async () => ({
   "experimental.chat.system.transform": async (_input: unknown, output: { system: string[] }) => {
-    output.system.push(OPENWORK_CAPABILITIES_KNOWLEDGE);
+    output.system.push(MICX_CAPABILITIES_KNOWLEDGE);
   },
   tool: {
-    openwork_docs_search: {
-      description: "Search the bundled OpenWork documentation. Use this first for OpenWork product questions before inspecting implementation code.",
+    micx_docs_search: {
+      description: "Search the bundled Micx documentation. Use this first for Micx product questions before inspecting implementation code.",
       args: docsSearchArgsSchema.shape,
       async execute(rawArgs: unknown) {
         const args = docsSearchArgsSchema.parse(rawArgs);
@@ -242,8 +242,8 @@ export const OpenWorkCapabilitiesKnowledge = async () => ({
         return JSON.stringify({ ok: true, matches }, null, 2);
       },
     },
-    openwork_docs_read: {
-      description: "Read a bundled OpenWork documentation page by docs-relative path returned from openwork_docs_search.",
+    micx_docs_read: {
+      description: "Read a bundled Micx documentation page by docs-relative path returned from micx_docs_search.",
       args: docsReadArgsSchema.shape,
       async execute(rawArgs: unknown) {
         const args = docsReadArgsSchema.parse(rawArgs);
@@ -251,7 +251,7 @@ export const OpenWorkCapabilitiesKnowledge = async () => ({
         if (normalized.split("/").includes("..")) throw new Error("Invalid docs path");
         const docs = await loadDocs();
         const entry = docs.find((doc) => doc.path === normalized);
-        if (!entry) throw new Error(`OpenWork docs page not found: ${normalized}`);
+        if (!entry) throw new Error(`Micx docs page not found: ${normalized}`);
         return JSON.stringify(entry, null, 2);
       },
     },

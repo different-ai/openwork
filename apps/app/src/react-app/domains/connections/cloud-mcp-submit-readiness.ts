@@ -1,8 +1,8 @@
 import type {
-  OpenworkCloudMcpFailure,
-  OpenworkCloudMcpHealth,
-  OpenworkCloudMcpProviderModelContext,
-} from "../../../app/lib/openwork-server";
+  MicxCloudMcpFailure,
+  MicxCloudMcpHealth,
+  MicxCloudMcpProviderModelContext,
+} from "../../../app/lib/micx-server";
 import type { CloudMcpUserState } from "./cloud-mcp-user-state";
 
 export const CLOUD_MCP_SUBMISSION_RETRY_DELAYS_MS = [1_000, 3_000];
@@ -11,12 +11,12 @@ export const CLOUD_MCP_AUTH_RESOLUTION_TIMEOUT_MS = 12_000;
 
 const REQUIRED_DIRECT_TOOL_IDS = ["search_capabilities", "execute_capability"];
 const REQUIRED_PROJECTED_TOOL_IDS = [
-  "openwork-cloud_search_capabilities",
-  "openwork-cloud_execute_capability",
+  "micx-cloud_search_capabilities",
+  "micx-cloud_execute_capability",
 ];
 
 export type CloudMcpSubmissionIssue = Pick<
-  OpenworkCloudMcpFailure,
+  MicxCloudMcpFailure,
   "code" | "stage" | "retryable" | "recommendedAction" | "message"
 >;
 
@@ -27,7 +27,7 @@ export type CloudMcpSubmissionGateContext = {
   serverBaseUrl: string;
   orgId: string | null;
   workspaceId: string;
-  providerModel?: OpenworkCloudMcpProviderModelContext;
+  providerModel?: MicxCloudMcpProviderModelContext;
   userState: CloudMcpUserState | null;
 };
 
@@ -41,13 +41,13 @@ export type CloudMcpSubmissionGateDecision =
     };
 
 export type CloudMcpSubmissionReadinessAssessment =
-  | { ready: true; health: OpenworkCloudMcpHealth }
-  | { ready: false; health: OpenworkCloudMcpHealth | null; issue: CloudMcpSubmissionIssue };
+  | { ready: true; health: MicxCloudMcpHealth }
+  | { ready: false; health: MicxCloudMcpHealth | null; issue: CloudMcpSubmissionIssue };
 
 export type CloudMcpSubmissionReadinessResult =
-  | { outcome: "ready"; health: OpenworkCloudMcpHealth; attempts: number }
-  | { outcome: "bypass"; health: OpenworkCloudMcpHealth; attempts: number; reason: "disabled" }
-  | { outcome: "failed"; health: OpenworkCloudMcpHealth | null; issue: CloudMcpSubmissionIssue; attempts: number };
+  | { outcome: "ready"; health: MicxCloudMcpHealth; attempts: number }
+  | { outcome: "bypass"; health: MicxCloudMcpHealth; attempts: number; reason: "disabled" }
+  | { outcome: "failed"; health: MicxCloudMcpHealth | null; issue: CloudMcpSubmissionIssue; attempts: number };
 
 export type CloudMcpSubmissionAttempt = {
   phase: "readiness" | "repair";
@@ -107,11 +107,11 @@ function genericSubmissionIssue(input?: {
     stage: input?.stage ?? "engine_delivery",
     retryable: input?.retryable ?? true,
     recommendedAction: input?.recommendedAction ?? "Retry, then open Settings → Connect if the problem continues.",
-    message: input?.message ?? "OpenWork could not verify connected service tools for the selected model.",
+    message: input?.message ?? "Micx could not verify connected service tools for the selected model.",
   };
 }
 
-function failureIssue(health: OpenworkCloudMcpHealth): CloudMcpSubmissionIssue {
+function failureIssue(health: MicxCloudMcpHealth): CloudMcpSubmissionIssue {
   const failure = health.firstFailure;
   if (!failure) return genericSubmissionIssue();
   return {
@@ -123,7 +123,7 @@ function failureIssue(health: OpenworkCloudMcpHealth): CloudMcpSubmissionIssue {
   };
 }
 
-function healthShowsExplicitDisable(health: OpenworkCloudMcpHealth): boolean {
+function healthShowsExplicitDisable(health: MicxCloudMcpHealth): boolean {
   const code = health.firstFailure?.code.trim().toLowerCase().replace(/[-.]/g, "_") ?? "";
   return health.desired.config?.enabled === false || code === "cloud_mcp_disabled" || code === "cloud_disabled";
 }
@@ -170,8 +170,8 @@ function authResolutionIssue(input?: { timedOut?: boolean }): CloudMcpSubmission
       ? "cloud_mcp_auth_resolution_timeout"
       : "cloud_mcp_auth_resolution_failed",
     message: input?.timedOut
-      ? "OpenWork timed out while restoring connected service access."
-      : "OpenWork could not finish restoring connected service access.",
+      ? "Micx timed out while restoring connected service access."
+      : "Micx could not finish restoring connected service access.",
     recommendedAction: "Retry or open Settings → Connect.",
   });
 }
@@ -209,8 +209,8 @@ export async function resolveCloudMcpSubmissionAuth(
  * experimental listing or be verified as tool-capable by its provider.
  */
 export function assessCloudMcpSubmissionReadiness(input: {
-  health: OpenworkCloudMcpHealth | null;
-  providerModel: OpenworkCloudMcpProviderModelContext;
+  health: MicxCloudMcpHealth | null;
+  providerModel: MicxCloudMcpProviderModelContext;
 }): CloudMcpSubmissionReadinessAssessment {
   const health = input.health;
   if (!health) {
@@ -231,7 +231,7 @@ export function assessCloudMcpSubmissionReadiness(input: {
       issue: genericSubmissionIssue({
         code: "cloud_mcp_direct_tools_unverified",
         stage: "tool_registration",
-        message: "OpenWork Cloud did not prove that search_capabilities and execute_capability are available.",
+        message: "Micx Cloud did not prove that search_capabilities and execute_capability are available.",
       }),
     };
   }
@@ -258,7 +258,7 @@ export function assessCloudMcpSubmissionReadiness(input: {
       issue: genericSubmissionIssue({
         code: "provider_tool_projection_unverified",
         stage: "provider_projection",
-        message: "OpenWork could not read tool capability information for the selected provider and model.",
+        message: "Micx could not read tool capability information for the selected provider and model.",
         recommendedAction: "Retry, or check Settings → Advanced → Agent access diagnostics if the problem continues.",
       }),
     };
@@ -278,7 +278,7 @@ export function assessCloudMcpSubmissionReadiness(input: {
           ? "The selected model was not found for this provider."
           : toolCallingUnavailable
             ? "The selected model does not support tool calling."
-            : "OpenWork could not confirm that the selected model supports tool calling.",
+            : "Micx could not confirm that the selected model supports tool calling.",
         recommendedAction: modelMissing
           ? "Choose a model available from this provider, or check Settings → Advanced → Agent access diagnostics."
           : "Choose a model with tool calling, or check Settings → Advanced → Agent access diagnostics.",
@@ -293,7 +293,7 @@ export function assessCloudMcpSubmissionReadiness(input: {
         code: "provider_tool_projection_unverified",
         stage: "provider_projection",
         retryable: false,
-        message: "OpenWork received an unsupported tool capability result for the selected provider and model.",
+        message: "Micx received an unsupported tool capability result for the selected provider and model.",
         recommendedAction: "Choose a model with tool calling, or check Settings → Advanced → Agent access diagnostics.",
       }),
     };
@@ -321,7 +321,7 @@ export function assessCloudMcpSubmissionReadiness(input: {
 function timeoutIssue(): CloudMcpSubmissionIssue {
   return genericSubmissionIssue({
     code: "cloud_mcp_submission_timeout",
-    message: "OpenWork timed out while preparing connected service tools.",
+    message: "Micx timed out while preparing connected service tools.",
   });
 }
 
@@ -347,15 +347,15 @@ function errorAssessment(error: unknown): CloudMcpSubmissionReadinessAssessment 
       ? timeoutIssue()
       : genericSubmissionIssue({
           code: "cloud_mcp_submission_check_failed",
-          message: "OpenWork could not check connected service tools before sending.",
+          message: "Micx could not check connected service tools before sending.",
         }),
   };
 }
 
 export async function ensureCloudMcpSubmissionReadiness(input: {
-  providerModel: OpenworkCloudMcpProviderModelContext;
-  check: () => Promise<OpenworkCloudMcpHealth | null>;
-  repair: () => Promise<OpenworkCloudMcpHealth | null>;
+  providerModel: MicxCloudMcpProviderModelContext;
+  check: () => Promise<MicxCloudMcpHealth | null>;
+  repair: () => Promise<MicxCloudMcpHealth | null>;
   retryDelaysMs?: number[];
   attemptTimeoutMs?: number;
   wait?: (delayMs: number) => Promise<void>;

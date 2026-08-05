@@ -29,9 +29,9 @@ function serverConfig(root: string): ServerConfig {
 
 describe("Connect state inspection", () => {
   test("treats server-scoped cloudMcp as present without scanning workspaces", async () => {
-    const root = await mkdtemp(join(tmpdir(), "openwork-connect-state-server-mcp-"));
-    const previousDb = process.env.OPENWORK_RUNTIME_DB;
-    process.env.OPENWORK_RUNTIME_DB = join(root, "runtime.sqlite");
+    const root = await mkdtemp(join(tmpdir(), "micx-connect-state-server-mcp-"));
+    const previousDb = process.env.MICX_RUNTIME_DB;
+    process.env.MICX_RUNTIME_DB = join(root, "runtime.sqlite");
     try {
       const config = serverConfig(root);
       await writeFile(join(root, "connect-state.json"), JSON.stringify({
@@ -52,14 +52,14 @@ describe("Connect state inspection", () => {
         },
       });
     } finally {
-      if (previousDb === undefined) delete process.env.OPENWORK_RUNTIME_DB;
-      else process.env.OPENWORK_RUNTIME_DB = previousDb;
+      if (previousDb === undefined) delete process.env.MICX_RUNTIME_DB;
+      else process.env.MICX_RUNTIME_DB = previousDb;
       await rm(root, { recursive: true, force: true });
     }
   });
 
   test("distinguishes a missing state file from bounded read failures", async () => {
-    const root = await mkdtemp(join(tmpdir(), "openwork-connect-state-inspect-"));
+    const root = await mkdtemp(join(tmpdir(), "micx-connect-state-inspect-"));
     const config = serverConfig(root);
     const path = join(root, "connect-state.json");
     try {
@@ -95,7 +95,7 @@ describe("Connect state inspection", () => {
   });
 
   test("propagates an aborted diagnostics deadline", async () => {
-    const root = await mkdtemp(join(tmpdir(), "openwork-connect-state-inspect-"));
+    const root = await mkdtemp(join(tmpdir(), "micx-connect-state-inspect-"));
     try {
       const controller = new AbortController();
       controller.abort(new Error("diagnostics deadline exceeded"));
@@ -109,10 +109,10 @@ describe("Connect state inspection", () => {
   });
 
   test("fails a snapshot closed when a runtime row exceeds the diagnostics byte limit", async () => {
-    const root = await mkdtemp(join(tmpdir(), "openwork-connect-snapshot-inspect-"));
+    const root = await mkdtemp(join(tmpdir(), "micx-connect-snapshot-inspect-"));
     const dbPath = join(root, "runtime.sqlite");
-    const previousDb = process.env.OPENWORK_RUNTIME_DB;
-    process.env.OPENWORK_RUNTIME_DB = dbPath;
+    const previousDb = process.env.MICX_RUNTIME_DB;
+    process.env.MICX_RUNTIME_DB = dbPath;
     try {
       const config = serverConfig(root);
       config.workspaces = [{
@@ -140,17 +140,17 @@ describe("Connect state inspection", () => {
         },
       });
     } finally {
-      if (previousDb === undefined) delete process.env.OPENWORK_RUNTIME_DB;
-      else process.env.OPENWORK_RUNTIME_DB = previousDb;
+      if (previousDb === undefined) delete process.env.MICX_RUNTIME_DB;
+      else process.env.MICX_RUNTIME_DB = previousDb;
       await rm(root, { recursive: true, force: true });
     }
   });
 
   test("bounds the number of local runtime rows inspected", async () => {
-    const root = await mkdtemp(join(tmpdir(), "openwork-connect-snapshot-inspect-"));
+    const root = await mkdtemp(join(tmpdir(), "micx-connect-snapshot-inspect-"));
     const dbPath = join(root, "runtime.sqlite");
-    const previousDb = process.env.OPENWORK_RUNTIME_DB;
-    process.env.OPENWORK_RUNTIME_DB = dbPath;
+    const previousDb = process.env.MICX_RUNTIME_DB;
+    process.env.MICX_RUNTIME_DB = dbPath;
     try {
       const config = serverConfig(root);
       config.workspaces = [
@@ -166,7 +166,7 @@ describe("Connect state inspection", () => {
       sqlite.query("INSERT INTO runtime_opencode_configs (workspace_id, config_json, updated_at) VALUES (?, ?, ?)")
         .run("first", JSON.stringify({ mcp: {} }), 1234);
       sqlite.query("INSERT INTO runtime_opencode_configs (workspace_id, config_json, updated_at) VALUES (?, ?, ?)")
-        .run("second", JSON.stringify({ mcp: { "openwork-cloud": { type: "remote" } } }), 1234);
+        .run("second", JSON.stringify({ mcp: { "micx-cloud": { type: "remote" } } }), 1234);
       sqlite.close();
 
       expect(await inspectConnectSnapshot(config, { maxRuntimeRows: 1 })).toMatchObject({
@@ -178,8 +178,8 @@ describe("Connect state inspection", () => {
         snapshot: { cloudMcpPresent: true },
       });
     } finally {
-      if (previousDb === undefined) delete process.env.OPENWORK_RUNTIME_DB;
-      else process.env.OPENWORK_RUNTIME_DB = previousDb;
+      if (previousDb === undefined) delete process.env.MICX_RUNTIME_DB;
+      else process.env.MICX_RUNTIME_DB = previousDb;
       await rm(root, { recursive: true, force: true });
     }
   });

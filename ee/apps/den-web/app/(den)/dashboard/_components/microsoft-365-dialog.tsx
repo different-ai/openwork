@@ -90,7 +90,7 @@ export function Microsoft365Dialog({
           {configured ? "Update Microsoft 365" : "Set up Microsoft 365"}
         </h2>
         <p className="mt-1 text-[13px] leading-6 text-gray-600">
-          Use one Entra web app for your organization. Each teammate then connects their own work account; OpenWork requests only the permissions your administrator enables below.
+          Use one Entra web app for your organization. Each teammate then connects their own work account; Micx requests only the permissions your administrator enables below.
         </p>
 
         <div className="mt-5 space-y-4">
@@ -161,7 +161,7 @@ export function Microsoft365Dialog({
           </div>
 
           <div className="rounded-2xl border border-blue-100 bg-blue-50 p-4 text-[12px] leading-5 text-blue-800">
-            Already using Entra OIDC SSO with a Web app registration you control? You can reuse that registration by adding this callback and the delegated Graph permissions. A SAML-only enterprise app may still need a separate app registration. SSO signs people into OpenWork; this separate consent grants only the Microsoft 365 capabilities selected above.
+            Already using Entra OIDC SSO with a Web app registration you control? You can reuse that registration by adding this callback and the delegated Graph permissions. A SAML-only enterprise app may still need a separate app registration. SSO signs people into Micx; this separate consent grants only the Microsoft 365 capabilities selected above.
           </div>
 
           {loadingConfig ? (
@@ -176,10 +176,10 @@ export function Microsoft365Dialog({
               </div>
               <p className="mt-1 text-[12px] leading-5 text-gray-500">Permission changes keep your encrypted client secret. Replace it only when rotating the Entra credential.</p>
               <div className="mt-3 rounded-xl border border-gray-100 bg-white px-3 py-2 text-[12px] text-gray-800">
-                Saved client ID: <span className="font-mono">{savedClientId ?? "stored in OpenWork"}</span>
+                Saved client ID: <span className="font-mono">{savedClientId ?? "stored in Micx"}</span>
               </div>
               <div className="mt-2 rounded-xl border border-gray-100 bg-white px-3 py-2 text-[12px] text-gray-800">
-                Tenant ID: <span className="font-mono">{savedTenantId ?? "stored in OpenWork"}</span>
+                Tenant ID: <span className="font-mono">{savedTenantId ?? "stored in Micx"}</span>
               </div>
               <DenButton
                 className="mt-3"

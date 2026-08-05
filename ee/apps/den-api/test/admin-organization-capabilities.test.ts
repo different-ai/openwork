@@ -1,4 +1,4 @@
-import { createDenTypeId } from "@openwork-ee/utils/typeid"
+import { createDenTypeId } from "@micx-ee/utils/typeid"
 import { afterAll, beforeAll, expect, test } from "bun:test"
 import { Hono } from "hono"
 import type { AuthContextVariables } from "../src/session.js"
@@ -10,7 +10,7 @@ const adminEmail = `admin-capabilities+${adminUserId}@test.local`
 const organizationSlug = `admin-capabilities-${organizationId}`
 
 function seedRequiredEnv() {
-  process.env.DATABASE_URL = "mysql://root:password@127.0.0.1:3306/openwork_test"
+  process.env.DATABASE_URL = "mysql://root:password@127.0.0.1:3306/micx_test"
   process.env.DEN_DB_ENCRYPTION_KEY = "x".repeat(32)
   process.env.BETTER_AUTH_SECRET = "y".repeat(32)
   process.env.BETTER_AUTH_URL = "http://127.0.0.1:8790"
@@ -24,8 +24,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 let app: Hono<{ Variables: AuthContextVariables }> | null = null
 let db: typeof import("../src/db.js").db | null = null
-let schema: typeof import("@openwork-ee/den-db/schema") | null = null
-let drizzle: typeof import("@openwork-ee/den-db/drizzle") | null = null
+let schema: typeof import("@micx-ee/den-db/schema") | null = null
+let drizzle: typeof import("@micx-ee/den-db/drizzle") | null = null
 let routeTestUnavailable: string | null = null
 
 function errorMessage(error: unknown) {
@@ -107,13 +107,13 @@ beforeAll(async () => {
   seedRequiredEnv()
   let adminRoutesModule: typeof import("../src/routes/admin/index.js")
   let dbModule: typeof import("../src/db.js")
-  let schemaModule: typeof import("@openwork-ee/den-db/schema")
-  let drizzleModule: typeof import("@openwork-ee/den-db/drizzle")
+  let schemaModule: typeof import("@micx-ee/den-db/schema")
+  let drizzleModule: typeof import("@micx-ee/den-db/drizzle")
   try {
     [dbModule, schemaModule, drizzleModule] = await Promise.all([
       import("../src/db.js"),
-      import("@openwork-ee/den-db/schema"),
-      import("@openwork-ee/den-db/drizzle"),
+      import("@micx-ee/den-db/schema"),
+      import("@micx-ee/den-db/drizzle"),
     ])
     if (!isRouteDatabase(dbModule.db)) {
       routeTestUnavailable = "aggregate suite run; db module is mocked by another route test"

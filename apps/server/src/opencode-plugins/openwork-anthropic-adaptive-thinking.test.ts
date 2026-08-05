@@ -1,14 +1,14 @@
 import { describe, expect, test } from "bun:test";
-import { OpenWorkAnthropicAdaptiveThinking } from "./openwork-anthropic-adaptive-thinking.js";
+import { MicxAnthropicAdaptiveThinking } from "./micx-anthropic-adaptive-thinking.js";
 
 async function runHook(apiId: string, options: Record<string, unknown>) {
-  const hooks = await OpenWorkAnthropicAdaptiveThinking();
+  const hooks = await MicxAnthropicAdaptiveThinking();
   const output: { options: Record<string, unknown> } = { options };
   await hooks["chat.params"]({ model: { id: apiId, api: { id: apiId } } }, output);
   return output.options;
 }
 
-describe("OpenWorkAnthropicAdaptiveThinking chat.params", () => {
+describe("MicxAnthropicAdaptiveThinking chat.params", () => {
   test("rewrites legacy enabled thinking to adaptive for Claude 5-family ids", async () => {
     expect(await runHook("claude-fable-5", { thinking: { type: "enabled", budgetTokens: 16000 } })).toEqual({
       thinking: { type: "adaptive" },
@@ -49,7 +49,7 @@ describe("OpenWorkAnthropicAdaptiveThinking chat.params", () => {
   });
 
   test("module exposes only the plugin factory", async () => {
-    const mod = await import("./openwork-anthropic-adaptive-thinking.js");
-    expect(Object.keys(mod)).toEqual(["OpenWorkAnthropicAdaptiveThinking"]);
+    const mod = await import("./micx-anthropic-adaptive-thinking.js");
+    expect(Object.keys(mod)).toEqual(["MicxAnthropicAdaptiveThinking"]);
   });
 });

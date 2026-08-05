@@ -297,7 +297,7 @@ export function AnalyticsScreen() {
 
       {/* Breadcrumb */}
       <div className="flex flex-wrap items-center gap-2.5 border-b border-[#e7e9f0] pb-3">
-        <span className="text-[14px] font-semibold tracking-[-0.01em] text-[#07192C]">{activeOrg?.name ?? "OpenWork Cloud"}</span>
+        <span className="text-[14px] font-semibold tracking-[-0.01em] text-[#07192C]">{activeOrg?.name ?? "Micx Cloud"}</span>
         <ChevronRight className="h-3.5 w-3.5 text-[#9AA5BA]" />
         <span className="text-[14px] font-medium tracking-[-0.01em] text-[#5A6886]">Analytics</span>
       </div>
@@ -310,7 +310,7 @@ export function AnalyticsScreen() {
         </span>
       </div>
       <p className="mt-1 text-[14px] leading-6 text-[#5A6886]">
-        See how your team is adopting OpenWork — active members, sessions, and task activity over time.
+        See how your team is adopting Micx — active members, sessions, and task activity over time.
         Only event metadata is collected — never prompts, code, or file contents.
       </p>
 
@@ -351,7 +351,7 @@ export function AnalyticsScreen() {
       <div className="mt-5 grid gap-3.5 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard
           icon={<Users className="h-5 w-5 text-[#6F3DFF]" />}
-          title="OpenWork users"
+          title="Micx users"
           value={isLoading ? "…" : `${data?.members ?? 0}`}
           sub={isProjectFiltered ? "Org total, not project-scoped" : `${data?.pendingInvites ?? 0} pending invites`}
           tone="violet"
@@ -435,7 +435,7 @@ export function AnalyticsScreen() {
       {/* Privacy note */}
       <p className="mt-5 text-[12px] leading-5 text-[#9AA5BA]">
         Telemetry never includes prompt contents, code, file contents, diffs, secrets, or terminal output.
-        Usage data appears here once members sign in to the OpenWork app and start running tasks.
+        Usage data appears here once members sign in to the Micx app and start running tasks.
       </p>
       </>
       )}

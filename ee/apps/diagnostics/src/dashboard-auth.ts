@@ -1,7 +1,7 @@
 import { createHmac, timingSafeEqual } from "node:crypto"
 import type { diagnosticsConfig } from "./config"
 
-export const DASHBOARD_SESSION_COOKIE = "openwork_diagnostics_admin"
+export const DASHBOARD_SESSION_COOKIE = "micx_diagnostics_admin"
 export const DASHBOARD_SESSION_LIFETIME_SECONDS = 60 * 60
 
 type DashboardAuthConfig = Pick<ReturnType<typeof diagnosticsConfig>, "adminPassword" | "adminUsername" | "signingSecret">
@@ -17,7 +17,7 @@ function constantTimeEqual(left: string, right: string): boolean {
 
 function dashboardSigningKey(config: DashboardAuthConfig): Buffer {
   return createHmac("sha256", config.signingSecret)
-    .update("openwork-diagnostics-dashboard-v1\0")
+    .update("micx-diagnostics-dashboard-v1\0")
     .update(config.adminUsername)
     .update("\0")
     .update(config.adminPassword)

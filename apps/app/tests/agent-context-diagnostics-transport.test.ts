@@ -20,7 +20,7 @@ describe("agent context diagnostics renderer transport", () => {
     const startedAtMs = Date.now();
 
     await expect(requestAgentContextDiagnosticsPayload({
-      url: "https://remote.openwork.test/workspace/test/diagnostics/agent-context",
+      url: "https://remote.micx.test/workspace/test/diagnostics/agent-context",
       init: { method: "POST", body: "{}" },
       timeoutMs: 40,
       fetchImpl: async (_input, _init, deadlineAtMs) => {
@@ -48,7 +48,7 @@ describe("agent context diagnostics renderer transport", () => {
     }), { status: 200 });
 
     await expect(requestAgentContextDiagnosticsPayload({
-      url: "https://remote.openwork.test/workspace/test/diagnostics/agent-context",
+      url: "https://remote.micx.test/workspace/test/diagnostics/agent-context",
       init: { method: "POST", body: "{}" },
       timeoutMs: 1_000,
       fetchImpl: async () => response,
@@ -66,7 +66,7 @@ describe("agent context diagnostics renderer transport", () => {
     });
 
     await expect(requestAgentContextDiagnosticsPayload({
-      url: "https://remote.openwork.test/workspace/test/diagnostics/agent-context",
+      url: "https://remote.micx.test/workspace/test/diagnostics/agent-context",
       init: { method: "POST", body: "{}" },
       timeoutMs: 1_000,
       fetchImpl: async () => response,
@@ -87,7 +87,7 @@ describe("agent context diagnostics renderer transport", () => {
       port: 0,
       fetch(request) {
         targetRequests += 1;
-        targetHostToken = request.headers.get("x-openwork-host-token");
+        targetHostToken = request.headers.get("x-micx-host-token");
         targetAuthorization = request.headers.get("authorization");
         return Response.json({ ok: true });
       },
@@ -97,7 +97,7 @@ describe("agent context diagnostics renderer transport", () => {
       hostname: "127.0.0.1",
       port: 0,
       fetch(request) {
-        redirectHostToken = request.headers.get("x-openwork-host-token");
+        redirectHostToken = request.headers.get("x-micx-host-token");
         return new Response(null, {
           status: 307,
           headers: { location: targetUrl },
@@ -112,7 +112,7 @@ describe("agent context diagnostics renderer transport", () => {
           method: "POST",
           headers: {
             Authorization: `Bearer ${bearerToken}`,
-            "X-OpenWork-Host-Token": hostToken,
+            "X-Micx-Host-Token": hostToken,
           },
           body: "{}",
         },

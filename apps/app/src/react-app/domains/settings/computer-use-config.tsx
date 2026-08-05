@@ -57,7 +57,7 @@ registerExtensionConfig("computer-use", (ctx) => (
 // ---------------------------------------------------------------------------
 
 function hasDesktopBridge() {
-  return typeof window !== "undefined" && Boolean(window.__OPENWORK_ELECTRON__?.invokeDesktop);
+  return typeof window !== "undefined" && Boolean(window.__MICX_ELECTRON__?.invokeDesktop);
 }
 
 function parsePermissionResult(value: unknown): PermissionResult {
@@ -110,7 +110,7 @@ export function ComputerUseConfig({
   } = useMutation({
     mutationFn: async () => {
       if (!hasDesktopBridge()) {
-        throw new Error("Computer Use is Mac only and requires the OpenWork desktop app on macOS.");
+        throw new Error("Computer Use is Mac only and requires the Micx desktop app on macOS.");
       }
 
       return parsePermissionResult(await desktopBridge.openComputerUsePermissionSetup());
@@ -185,7 +185,7 @@ export function ComputerUseConfig({
         {/* Step 2 — Permissions */}
         <SetupRow
           title="2. Grant macOS permissions"
-          description="Opens the OpenWork Computer Use helper. Grant both permissions there, then click Verify below."
+          description="Opens the Micx Computer Use helper. Grant both permissions there, then click Verify below."
           complete={allGranted}
         >
           <div className="flex w-full min-w-0 flex-col gap-3">

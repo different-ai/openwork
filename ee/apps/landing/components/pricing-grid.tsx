@@ -33,7 +33,7 @@ type PricingCard = {
   badge?: string;
 };
 
-const CLOUD_SIGNUP_URL = "https://app.openworklabs.com?mode=sign-up";
+const CLOUD_SIGNUP_URL = "https://app.micxlabs.com?mode=sign-up";
 
 function PricingCardView({ card }: { card: PricingCard }) {
   return (
@@ -127,7 +127,7 @@ export function PricingGrid(props: PricingGridProps) {
       price: "$10",
       priceSub: "per seat / month",
       ctaLabel: "Start team plan",
-      href: "https://app.openworklabs.com/dashboard/billing",
+      href: "https://app.micxlabs.com/dashboard/billing",
       external: true,
       badge: "Recommended",
       features: [

@@ -19,7 +19,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 async function createRoot() {
-  const root = await mkdtemp(join(tmpdir(), "openwork-legacy-config-sweep-"));
+  const root = await mkdtemp(join(tmpdir(), "micx-legacy-config-sweep-"));
   roots.push(root);
   return root;
 }
@@ -57,7 +57,7 @@ async function writeLegacyFile(root: string, name: string, content: string): Pro
 
 async function countBackups(root: string, name: string): Promise<number> {
   const entries = await readdir(legacyDir(root));
-  return entries.filter((entry) => entry.startsWith(`${name}.openwork-backup-`)).length;
+  return entries.filter((entry) => entry.startsWith(`${name}.micx-backup-`)).length;
 }
 
 function parseRecord(content: string): Record<string, unknown> {
@@ -73,24 +73,24 @@ afterEach(async () => {
 });
 
 describe("legacy OpenCode config sweep", () => {
-  test("removes only OpenWork-managed legacy keys and preserves user content", async () => {
+  test("removes only Micx-managed legacy keys and preserves user content", async () => {
     const root = await createRoot();
     const config = configFor(root);
     const original = `{
   // user MCP comment
   "mcp": {
     "my-notion": { "type": "remote", "url": "https://notion.example/mcp" },
-    "openwork-cloud": { "type": "remote", "url": "https://cloud.example/mcp" }
+    "micx-cloud": { "type": "remote", "url": "https://cloud.example/mcp" }
   },
   "agent": {
-    "openwork": { "mode": "primary" },
+    "micx": { "mode": "primary" },
     "user-agent": { "mode": "subagent" }
   },
-  "default_agent": "openwork",
+  "default_agent": "micx",
   "plugin": [
     "user-plugin",
-    "/tmp/opencode-plugins/openwork-office-attachments.js",
-    "openwork-capabilities-knowledge"
+    "/tmp/opencode-plugins/micx-office-attachments.js",
+    "micx-capabilities-knowledge"
   ],
   "userSetting": true
 }
@@ -106,15 +106,15 @@ describe("legacy OpenCode config sweep", () => {
 
     expect(after).toContain("// user MCP comment");
     expect(mcp["my-notion"]).toEqual({ type: "remote", url: "https://notion.example/mcp" });
-    expect(mcp["openwork-cloud"]).toBeUndefined();
+    expect(mcp["micx-cloud"]).toBeUndefined();
     expect(agent["user-agent"]).toEqual({ mode: "subagent" });
-    expect(agent.openwork).toBeUndefined();
+    expect(agent.micx).toBeUndefined();
     expect(parsed.default_agent).toBeUndefined();
     expect(plugin).toEqual(["user-plugin"]);
     expect(parsed.userSetting).toBe(true);
 
     const sweptFile = state.files.find((entry) => entry.path === path);
-    expect(sweptFile?.removedKeys).toEqual(["mcp.openwork-cloud", "agent.openwork", "default_agent", "plugin"]);
+    expect(sweptFile?.removedKeys).toEqual(["mcp.micx-cloud", "agent.micx", "default_agent", "plugin"]);
     expect(typeof sweptFile?.backupPath).toBe("string");
     if (sweptFile?.backupPath) {
       expect(await readFile(sweptFile.backupPath, "utf8")).toBe(original);
@@ -127,7 +127,7 @@ describe("legacy OpenCode config sweep", () => {
   test("skips after a successful first run", async () => {
     const root = await createRoot();
     const config = configFor(root);
-    const path = await writeLegacyFile(root, "config.json", `{ "default_agent": "openwork" }\n`);
+    const path = await writeLegacyFile(root, "config.json", `{ "default_agent": "micx" }\n`);
 
     await sweepLegacyOpenCodeConfig(config, { homeDir: root, now: NOW });
     const contentAfterFirstRun = await readFile(path, "utf8");
@@ -141,7 +141,7 @@ describe("legacy OpenCode config sweep", () => {
     expect(await readFile(legacySweepStatePath(config), "utf8")).toBe(stateAfterFirstRun);
   });
 
-  test("leaves files without OpenWork-managed keys untouched", async () => {
+  test("leaves files without Micx-managed keys untouched", async () => {
     const root = await createRoot();
     const config = configFor(root);
     const original = `{
@@ -163,16 +163,16 @@ describe("legacy OpenCode config sweep", () => {
     const root = await createRoot();
     const config = configFor(root);
     const safePath = await writeLegacyFile(root, "config.json", `{ "plugin": ["user-plugin"] }\n`);
-    const unwritablePath = await writeLegacyFile(root, "opencode.json", `{ "default_agent": "openwork" }\n`);
-    const remainingPath = await writeLegacyFile(root, "opencode.jsonc", `{ "default_agent": "openwork" }\n`);
+    const unwritablePath = await writeLegacyFile(root, "opencode.json", `{ "default_agent": "micx" }\n`);
+    const remainingPath = await writeLegacyFile(root, "opencode.jsonc", `{ "default_agent": "micx" }\n`);
     await chmod(unwritablePath, 0o444);
 
     const state = await sweepLegacyOpenCodeConfig(config, { homeDir: root, now: NOW });
 
     expect(state.error).toBeTruthy();
     expect(await readFile(safePath, "utf8")).toBe(`{ "plugin": ["user-plugin"] }\n`);
-    expect(await readFile(unwritablePath, "utf8")).toBe(`{ "default_agent": "openwork" }\n`);
-    expect(await readFile(remainingPath, "utf8")).toBe(`{ "default_agent": "openwork" }\n`);
+    expect(await readFile(unwritablePath, "utf8")).toBe(`{ "default_agent": "micx" }\n`);
+    expect(await readFile(remainingPath, "utf8")).toBe(`{ "default_agent": "micx" }\n`);
     expect((await readLegacyConfigSweepState(config))?.error).toBeTruthy();
   });
 });

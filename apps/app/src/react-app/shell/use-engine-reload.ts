@@ -1,14 +1,14 @@
 // Engine reload wiring for the session route: UI-triggered engine reload,
 // reload-coordinator registration, the post-org-onboarding reload latch,
 // server reload-event polling, and desktop engine info. Extracted verbatim
-// from session-route.tsx; reload events are now typed (OpenworkReloadEvent)
+// from session-route.tsx; reload events are now typed (MicxReloadEvent)
 // instead of `any`.
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { engineInfo, engineRestart } from "@/app/lib/desktop";
 import type { EngineInfo } from "@/app/lib/desktop-types";
 import { isDesktopRuntime } from "@/app/lib/runtime-env";
-import { OpenworkServerError, type OpenworkServerClient } from "@/app/lib/openwork-server";
+import { MicxServerError, type MicxServerClient } from "@/app/lib/micx-server";
 import type { ResolvedWorkspaceEndpoint } from "@/app/lib/workspace-endpoint";
 import { t } from "@/i18n";
 import { useReloadCoordinator } from "./reload-coordinator";
@@ -17,11 +17,11 @@ import { getReactQueryClient } from "@/react-app/infra/query-client";
 import type { RouteWorkspace } from "./route-workspaces";
 import { toast } from "@/components/ui/sonner";
 
-const reloadAfterOrgOnboardingKey = "openwork.reloadAfterOrgOnboarding";
+const reloadAfterOrgOnboardingKey = "micx.reloadAfterOrgOnboarding";
 
 function canRestartDesktopForReloadError(error: unknown) {
   return (
-    error instanceof OpenworkServerError &&
+    error instanceof MicxServerError &&
     (error.code === "opencode_engine_unreachable" || error.code === "opencode_unconfigured")
   );
 }
@@ -31,7 +31,7 @@ function taskCreateUnavailableToastId(workspaceId: string) {
 }
 
 export type UseEngineReloadInput = {
-  client: OpenworkServerClient | null;
+  client: MicxServerClient | null;
   workspaceId: string;
   workspace: RouteWorkspace | null | undefined;
   endpointForWorkspace: (
@@ -85,7 +85,7 @@ export function useEngineReload(input: UseEngineReloadInput) {
     }
     setEngineReloadVersion((v) => v + 1);
     try {
-      window.dispatchEvent(new CustomEvent("openwork-server-settings-changed"));
+      window.dispatchEvent(new CustomEvent("micx-server-settings-changed"));
     } catch {
       // ignore browser event dispatch failures
     }

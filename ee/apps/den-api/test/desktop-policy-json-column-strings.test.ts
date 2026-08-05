@@ -5,7 +5,7 @@ import {
   normalizeDesktopPolicyDocument,
   normalizeDesktopPolicyValue,
   resolveDesktopPolicyDocumentWrite,
-} from "@openwork/types/den/desktop-policies"
+} from "@micx/types/den/desktop-policies"
 
 describe("desktop policy JSON column strings", () => {
   test("normalizes policy value JSON strings", () => {

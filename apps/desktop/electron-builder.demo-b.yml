@@ -1,6 +1,6 @@
 extends: electron-builder.yml
-appId: com.differentai.openwork.demo.consumer
-productName: OpenWork Demo B
+appId: com.differentai.micx.demo.consumer
+productName: Micx Demo B
 protocols: []
 directories:
   output: dist-electron-demo-b

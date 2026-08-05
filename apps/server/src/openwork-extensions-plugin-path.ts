@@ -14,8 +14,8 @@ function resourcesPathFromAppAsarPath(path: string): string | null {
   return match ? path.slice(0, match.index) : null;
 }
 
-export function openworkPluginPath(name: string, here?: string): string {
-  const pluginDir = process.env.OPENWORK_EXTENSIONS_PLUGIN_DIR;
+export function micxPluginPath(name: string, here?: string): string {
+  const pluginDir = process.env.MICX_EXTENSIONS_PLUGIN_DIR;
   if (pluginDir) {
     return join(pluginDir, `${name}.js`);
   }
@@ -31,8 +31,8 @@ export function openworkPluginPath(name: string, here?: string): string {
   return join(here, "opencode-plugins", `${name}.${extension}`);
 }
 
-export const openworkExtensionsPreviewPluginPath = () => openworkPluginPath("openwork-extensions-preview");
-export const openworkCapabilitiesKnowledgePluginPath = () => openworkPluginPath("openwork-capabilities-knowledge");
-export const openworkAnthropicAdaptiveThinkingPluginPath = () => openworkPluginPath("openwork-anthropic-adaptive-thinking");
-export const openworkAnthropicToolSchemaPluginPath = () => openworkPluginPath("openwork-anthropic-tool-schema");
-export const openworkOfficeAttachmentsPluginPath = () => openworkPluginPath("openwork-office-attachments");
+export const micxExtensionsPreviewPluginPath = () => micxPluginPath("micx-extensions-preview");
+export const micxCapabilitiesKnowledgePluginPath = () => micxPluginPath("micx-capabilities-knowledge");
+export const micxAnthropicAdaptiveThinkingPluginPath = () => micxPluginPath("micx-anthropic-adaptive-thinking");
+export const micxAnthropicToolSchemaPluginPath = () => micxPluginPath("micx-anthropic-tool-schema");
+export const micxOfficeAttachmentsPluginPath = () => micxPluginPath("micx-office-attachments");

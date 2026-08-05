@@ -1,7 +1,7 @@
 import { Buffer } from "node:buffer"
-import { and, count, desc, eq, inArray, isNotNull, isNull, lt, lte, or, sql } from "@openwork-ee/den-db/drizzle"
-import { AuthAccountTable, AuthUserTable, ExternalIdentityTable, MemberTable, ScimGroupMemberTable, ScimGroupTable, ScimProviderTable, ScimSyncEventTable, ScimUserTombstoneTable } from "@openwork-ee/den-db/schema"
-import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
+import { and, count, desc, eq, inArray, isNotNull, isNull, lt, lte, or, sql } from "@micx-ee/den-db/drizzle"
+import { AuthAccountTable, AuthUserTable, ExternalIdentityTable, MemberTable, ScimGroupMemberTable, ScimGroupTable, ScimProviderTable, ScimSyncEventTable, ScimUserTombstoneTable } from "@micx-ee/den-db/schema"
+import { createDenTypeId, normalizeDenTypeId } from "@micx-ee/utils/typeid"
 import { auth } from "./auth.js"
 import { db } from "./db.js"
 import { env } from "./env.js"
@@ -41,7 +41,7 @@ function decodeBase64Url(value: string) {
 }
 
 export function buildOrganizationScimProviderId(organizationId: OrganizationId) {
-  return `openwork-scim-${organizationId}`
+  return `micx-scim-${organizationId}`
 }
 
 function maybeString(value: unknown) {

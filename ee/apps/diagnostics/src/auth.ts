@@ -33,7 +33,7 @@ export function oauthBasicAuthorized(request: Request, expectedSecret: string): 
     const decoded = Buffer.from(authorization.slice(6), "base64").toString("utf8")
     const separator = decoded.indexOf(":")
     if (separator < 0) return false
-    return constantTimeEqual(decoded.slice(0, separator), "openwork-diagnostics")
+    return constantTimeEqual(decoded.slice(0, separator), "micx-diagnostics")
       && constantTimeEqual(decoded.slice(separator + 1), expectedSecret)
   } catch {
     return false

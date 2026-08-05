@@ -5,8 +5,8 @@
  * Run inside the den-api container (or any environment where the package has
  * been built to `dist/`):
  *
- *   docker exec -e OPENWORK_DEV_MODE=0 \
- *     openwork-den-dev-<id>-den-1 \
+ *   docker exec -e MICX_DEV_MODE=0 \
+ *     micx-den-dev-<id>-den-1 \
  *     node ee/apps/den-api/scripts/smoke-email-failures.mjs
  *
  * Expected output:
@@ -34,7 +34,7 @@ try {
     role: "member",
   })
 
-  if (process.env.OPENWORK_DEV_MODE === "1" || !process.env.OPENWORK_DEV_MODE) {
+  if (process.env.MICX_DEV_MODE === "1" || !process.env.MICX_DEV_MODE) {
     console.log("[smoke] ok dev_mode_noop (no email sent, no throw — expected)")
     process.exit(0)
   }

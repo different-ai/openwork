@@ -110,7 +110,7 @@ export function DenMarketingRail({ compact = false }: DenMarketingRailProps) {
     <div className="grid gap-6 text-[#011627]">
       <div className="grid gap-5">
         <div className="inline-flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.24em] text-slate-500">
-          OpenWork hosted
+          Micx hosted
         </div>
         <div className="grid gap-4">
           <h1 className="max-w-[12ch] text-[2.7rem] font-medium leading-[0.95] tracking-[-0.055em] text-[#011627] md:text-[3.5rem]">

@@ -1,4 +1,4 @@
-import { and, eq, isNull, sql } from "@openwork-ee/den-db/drizzle"
+import { and, eq, isNull, sql } from "@micx-ee/den-db/drizzle"
 import {
   AuthAccountTable,
   AuthUserTable,
@@ -6,8 +6,8 @@ import {
   OrganizationTable,
   SsoConnectionTable,
   SsoProviderTable,
-} from "@openwork-ee/den-db/schema"
-import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
+} from "@micx-ee/den-db/schema"
+import { normalizeDenTypeId } from "@micx-ee/utils/typeid"
 import { db } from "./db.js"
 
 type EnterpriseAuthRequirementRow = {

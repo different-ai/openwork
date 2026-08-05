@@ -10,7 +10,7 @@ import {
   Users
 } from "lucide-react";
 import { useState } from "react";
-import { OpenWorkMark } from "./openwork-mark";
+import { MicxMark } from "./micx-mark";
 
 type Department = {
   name: string;
@@ -98,7 +98,7 @@ const departments: Department[] = [
 
 const toolRows: ToolRow[] = [
   {
-    tool: "OpenWork",
+    tool: "Micx",
     penetration: "41%",
     topDepartment: "Customer Support",
     topUsers: ["AL", "AC", "WB"],
@@ -183,7 +183,7 @@ const powerUsers: PowerUser[] = [
     name: "Marie Curie",
     initials: "MC",
     department: "Engineering",
-    topTool: "OpenWork",
+    topTool: "Micx",
     trend: [30, 70, 120, 180, 250, 330, 420, 520, 615, 680],
     trendNote: "Learning curve — compounding every week",
     requests: "680",
@@ -195,7 +195,7 @@ const powerUsers: PowerUser[] = [
     name: "Andrew Carnegie",
     initials: "AC",
     department: "Sales",
-    topTool: "OpenWork",
+    topTool: "Micx",
     trend: [15, 35, 60, 90, 130, 190, 265, 345, 430, 510],
     trendNote: "Late adopter — just caught the wave",
     requests: "510",
@@ -207,7 +207,7 @@ const powerUsers: PowerUser[] = [
     name: "Warren Buffett",
     initials: "WB",
     department: "Sales",
-    topTool: "OpenWork",
+    topTool: "Micx",
     trend: [40, 82, 125, 168, 210, 253, 297, 341, 386, 430],
     trendNote: "Patient, near-identical daily habit",
     requests: "430",
@@ -305,7 +305,7 @@ export function LandingEnterpriseHero({ standalone = false }: Props) {
             icon={<Gauge className="h-5 w-5 text-[#1D63FF]" />}
             title="Top-tool penetration"
             value="41%"
-            subvalue="OpenWork · 54 users"
+            subvalue="Micx · 54 users"
             tone="blue"
           />
         </div>
@@ -338,7 +338,7 @@ function HeaderBar({ crumb }: { crumb: string }) {
   return (
     <div className="relative z-10 flex flex-wrap items-center justify-between gap-3 border-b border-[#e7e9f0] pb-3">
       <div className="flex flex-wrap items-center gap-2.5 md:gap-3">
-        <OpenWorkMark className="h-[24px] w-[30px] md:h-[26px] md:w-[33px]" />
+        <MicxMark className="h-[24px] w-[30px] md:h-[26px] md:w-[33px]" />
         <span className="inline-flex items-center rounded-[8px] bg-[#F8E8D7] px-2.5 py-0.5 text-[11px] font-semibold text-[#E56A17] md:text-[12px]">
           Q2
         </span>
@@ -710,13 +710,13 @@ function ToolGlyph({ tool, small = false }: { tool: string; small?: boolean }) {
     ? "h-5 w-5 rounded-[6px]"
     : "h-6 w-6 rounded-[7px] md:h-7 md:w-7 md:rounded-[8px]";
 
-  if (tool === "OpenWork") {
+  if (tool === "Micx") {
     return (
       <div
         title={tool}
         className={`flex shrink-0 items-center justify-center border border-[#d9ddeb] bg-[#fbfbfa] p-0.5 text-[#011627] ${sizeClass}`}
       >
-        <OpenWorkMark
+        <MicxMark
           className={small ? "h-3 w-4" : "h-3.5 w-4 md:h-4 md:w-[18px]"}
         />
       </div>

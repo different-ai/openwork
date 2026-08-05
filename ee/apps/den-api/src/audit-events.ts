@@ -1,6 +1,6 @@
-import { AuditEventTable } from "@openwork-ee/den-db/schema"
-import type { DenTypeId } from "@openwork-ee/utils/typeid"
-import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
+import { AuditEventTable } from "@micx-ee/den-db/schema"
+import type { DenTypeId } from "@micx-ee/utils/typeid"
+import { createDenTypeId, normalizeDenTypeId } from "@micx-ee/utils/typeid"
 import { appLogger } from "./observability/logger.js"
 import { AUDIT_ALERT_OPERATIONAL_MARKER } from "./operational-log-markers.js"
 

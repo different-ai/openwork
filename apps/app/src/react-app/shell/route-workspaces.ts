@@ -5,7 +5,7 @@
 
 import type { Session } from "@opencode-ai/sdk/v2/client";
 
-import type { OpenworkWorkspaceInfo } from "@/app/lib/openwork-server";
+import type { MicxWorkspaceInfo } from "@/app/lib/micx-server";
 import type { WorkspaceInfo } from "@/app/lib/desktop-types";
 import type { WorkspaceSessionGroup } from "@/app/types";
 import {
@@ -15,13 +15,13 @@ import {
 } from "@/app/utils";
 import { t } from "@/i18n";
 
-export type RouteWorkspace = OpenworkWorkspaceInfo & {
+export type RouteWorkspace = MicxWorkspaceInfo & {
   displayNameResolved: string;
 };
 
 /**
  * Sessions as the routes handle them: SDK sessions from
- * openwork-server's listSessions, optionally enriched with run-status
+ * micx-server's listSessions, optionally enriched with run-status
  * fields that the sidebar probes defensively via getSessionStatus.
  */
 export type RouteSession = Session & {
@@ -42,19 +42,19 @@ export function mapDesktopWorkspace(workspace: WorkspaceInfo): RouteWorkspace {
   };
 }
 
-export function workspaceLabel(workspace: OpenworkWorkspaceInfo) {
+export function workspaceLabel(workspace: MicxWorkspaceInfo) {
   return (
     workspace.displayName?.trim() ||
-    workspace.openworkWorkspaceName?.trim() ||
+    workspace.micxWorkspaceName?.trim() ||
     workspace.name?.trim() ||
     workspace.path?.trim() ||
     t("session.workspace_fallback")
   );
 }
 
-export function workspaceExportFilename(workspace: OpenworkWorkspaceInfo) {
+export function workspaceExportFilename(workspace: MicxWorkspaceInfo) {
   const slug = workspaceLabel(workspace).replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
-  return `${slug || "workspace"}-openwork-export.json`;
+  return `${slug || "workspace"}-micx-export.json`;
 }
 
 export function downloadWorkspaceJson(filename: string, payload: unknown) {
@@ -112,7 +112,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
-function isOpenworkWorkspaceArray(value: unknown): value is OpenworkWorkspaceInfo[] {
+function isMicxWorkspaceArray(value: unknown): value is MicxWorkspaceInfo[] {
   return Array.isArray(value);
 }
 
@@ -134,7 +134,7 @@ export function resolveRouteWorkspaceListState(input: {
   previousWorkspaces: RouteWorkspace[];
   orderIds: string[];
 }): RouteWorkspaceListState {
-  const serverItems = isRecord(input.list) && isOpenworkWorkspaceArray(input.list.items) ? input.list.items : null;
+  const serverItems = isRecord(input.list) && isMicxWorkspaceArray(input.list.items) ? input.list.items : null;
   const workspaces = serverItems
     ? mergeRouteWorkspaces(serverItems, input.desktopWorkspaces)
     : input.previousWorkspaces.length > 0
@@ -197,7 +197,7 @@ export function describeWorkspaceCreateError(error: unknown) {
     lower.includes("os error 60") ||
     lower.includes("etimedout")
   ) {
-    return `${message}\n\nOpenWork could not read the workspace config before the filesystem timed out. This often happens when the folder is still syncing from iCloud Drive or another remote folder. Wait for the folder to finish downloading, move the workspace to a local folder, or try again.`;
+    return `${message}\n\nMicx could not read the workspace config before the filesystem timed out. This often happens when the folder is still syncing from iCloud Drive or another remote folder. Wait for the folder to finish downloading, move the workspace to a local folder, or try again.`;
   }
   return message;
 }
@@ -206,7 +206,7 @@ export function mergeRouteWorkspaces(
   serverWorkspaces: unknown,
   desktopWorkspaces: RouteWorkspace[],
 ): RouteWorkspace[] {
-  const serverWorkspaceList = isOpenworkWorkspaceArray(serverWorkspaces) ? serverWorkspaces : [];
+  const serverWorkspaceList = isMicxWorkspaceArray(serverWorkspaces) ? serverWorkspaces : [];
   const desktopById = new Map(desktopWorkspaces.map((workspace) => [workspace.id, workspace]));
   const desktopByPath = new Map(
     desktopWorkspaces.flatMap((workspace) => {
@@ -216,7 +216,7 @@ export function mergeRouteWorkspaces(
   );
 
   // If a server workspace's id matches a desktop workspace marked as remote,
-  // skip the server's view entirely. The local OpenWork server may have stale
+  // skip the server's view entirely. The local Micx server may have stale
   // registrations from earlier (buggy) activate calls that show up here as
   // `workspaceType: "local"`, which would otherwise clobber the desktop's
   // remote routing fields and send workspace-scoped requests back to the

@@ -49,8 +49,8 @@ async function makeWebRoot() {
   const root = await mkdtemp(join(tmpdir(), "den-gateway-web-"))
   tempDirs.push(root)
   await mkdir(join(root, "assets"), { recursive: true })
-  await writeFile(join(root, "index.html"), "<!doctype html><div id=\"root\">OpenWork App</div>")
-  await writeFile(join(root, "assets", "app.js"), "globalThis.__openworkTest = true;")
+  await writeFile(join(root, "index.html"), "<!doctype html><div id=\"root\">Micx App</div>")
+  await writeFile(join(root, "assets", "app.js"), "globalThis.__micxTest = true;")
   return root
 }
 
@@ -63,7 +63,7 @@ function startDenApi(resolvePayload) {
     }
     observed.calls += 1
     observed.authorization = request.headers.get("authorization")
-    observed.gatewayKey = request.headers.get("x-openwork-gateway-key")
+    observed.gatewayKey = request.headers.get("x-micx-gateway-key")
     return Response.json(resolvePayload())
   })
   return { server, observed }
@@ -87,9 +87,9 @@ function startPassthroughDenApi() {
       method: request.method,
       path: `${url.pathname}${url.search}`,
       authorization: request.headers.get("authorization"),
-      hostToken: request.headers.get("x-openwork-host-token"),
+      hostToken: request.headers.get("x-micx-host-token"),
       cookie: request.headers.get("cookie"),
-      gatewayKey: request.headers.get("x-openwork-gateway-key"),
+      gatewayKey: request.headers.get("x-micx-gateway-key"),
       forwardedPrefix: request.headers.get("x-forwarded-prefix"),
       body: await request.text(),
     })
@@ -133,7 +133,7 @@ function startUpstream() {
       method: request.method,
       path: `${url.pathname}${url.search}`,
       authorization: request.headers.get("authorization"),
-      hostToken: request.headers.get("x-openwork-host-token"),
+      hostToken: request.headers.get("x-micx-host-token"),
       cookie: request.headers.get("cookie"),
     })
 
@@ -169,7 +169,7 @@ function startUpstream() {
 
 describe("gateway build version", () => {
   test("prefers the explicit version and falls back to Render's commit", () => {
-    expect(resolveGatewayBuildVersion({ denGatewayVersion: " openwork-0.19.0 ", renderGitCommit: " render-sha " })).toBe("openwork-0.19.0")
+    expect(resolveGatewayBuildVersion({ denGatewayVersion: " micx-0.19.0 ", renderGitCommit: " render-sha " })).toBe("micx-0.19.0")
     expect(resolveGatewayBuildVersion({ renderGitCommit: " render-sha " })).toBe("render-sha")
     expect(resolveGatewayBuildVersion({ denGatewayVersion: "  ", renderGitCommit: " render-sha " })).toBe("render-sha")
     expect(resolveGatewayBuildVersion({ denGatewayVersion: "  ", renderGitCommit: "\t" })).toBeUndefined()
@@ -186,11 +186,11 @@ describe("den-gateway static UI", () => {
     const index = await fetch(`${base}/`)
     expect(index.status).toBe(200)
     expect(index.headers.get("cache-control")).toBe("no-cache")
-    expect(await index.text()).toContain("OpenWork App")
+    expect(await index.text()).toContain("Micx App")
 
     const deep = await fetch(`${base}/sessions/deep/link`)
     expect(deep.status).toBe(200)
-    expect(await deep.text()).toContain("OpenWork App")
+    expect(await deep.text()).toContain("Micx App")
 
     const asset = await fetch(`${base}/assets/app.js`)
     expect(asset.status).toBe(200)
@@ -199,7 +199,7 @@ describe("den-gateway static UI", () => {
     const missingAsset = await fetch(`${base}/assets/missing.js`)
     expect(missingAsset.status).toBe(404)
     expect(missingAsset.headers.get("content-type")).not.toContain("text/html")
-    expect(await missingAsset.text()).not.toContain("OpenWork App")
+    expect(await missingAsset.text()).not.toContain("Micx App")
 
     const traversal = await fetch(`${base}/%2e%2e%2fsecret.txt`)
     expect(traversal.status).toBe(400)
@@ -212,24 +212,24 @@ describe("den-gateway static UI", () => {
     const response = await fetch(`${serverBase(gateway)}/`)
     const html = await response.text()
 
-    expect(html).toContain("window.__OPENWORK_GATEWAY__ = {\"version\":1}")
-    expect(html).not.toContain("__OPENWORK_BOOTSTRAP__")
+    expect(html).toContain("window.__MICX_GATEWAY__ = {\"version\":1}")
+    expect(html).not.toContain("__MICX_BOOTSTRAP__")
     expect(html).not.toContain("client-token")
     expect(html).not.toContain("host-token")
   })
 
   test("identifies the configured gateway build in the runtime marker and status", async () => {
     const root = await makeWebRoot()
-    const gateway = startGateway({ webRoot: root, buildVersion: "openwork-0.19.0" })
+    const gateway = startGateway({ webRoot: root, buildVersion: "micx-0.19.0" })
     const base = serverBase(gateway)
 
     const index = await fetch(`${base}/`)
     const health = await fetch(`${base}/__gw/health`)
     const ready = await fetch(`${base}/__gw/ready`)
 
-    expect(await index.text()).toContain("window.__OPENWORK_GATEWAY__ = {\"version\":1,\"build\":\"openwork-0.19.0\"}")
-    await expect(health.json()).resolves.toEqual({ ok: true, service: "den-gateway", build: "openwork-0.19.0" })
-    await expect(ready.json()).resolves.toEqual({ ok: true, service: "den-gateway", build: "openwork-0.19.0" })
+    expect(await index.text()).toContain("window.__MICX_GATEWAY__ = {\"version\":1,\"build\":\"micx-0.19.0\"}")
+    await expect(health.json()).resolves.toEqual({ ok: true, service: "den-gateway", build: "micx-0.19.0" })
+    await expect(ready.json()).resolves.toEqual({ ok: true, service: "den-gateway", build: "micx-0.19.0" })
   })
 })
 
@@ -243,7 +243,7 @@ describe("den-gateway proxy", () => {
       method: "POST",
       headers: {
         Authorization: "Bearer den-session",
-        "X-OpenWork-Host-Token": "browser-host-token",
+        "X-Micx-Host-Token": "browser-host-token",
         Cookie: "ow_session=must_not_leak",
         "Content-Type": "application/json",
       },
@@ -319,7 +319,7 @@ describe("den-gateway proxy", () => {
     const response = await fetch(`${serverBase(gateway)}/status`, {
       headers: {
         Authorization: "Bearer den-bearer",
-        "X-OpenWork-Host-Token": "browser-host-token",
+        "X-Micx-Host-Token": "browser-host-token",
         Cookie: "ow_session=must_not_leak",
       },
     })
@@ -409,7 +409,7 @@ describe("den-gateway proxy", () => {
       headers: { "Sec-Fetch-Mode": "navigate" },
     })
     expect(navigation.status).toBe(200)
-    expect(await navigation.text()).toContain("OpenWork App")
+    expect(await navigation.text()).toContain("Micx App")
     expect(upstream.observed.requests).toHaveLength(0)
 
     const api = await fetch(`${base}/workspace/ws_1/sessions`, {
@@ -457,7 +457,7 @@ describe("den-gateway proxy", () => {
       headers: { "Sec-Fetch-Mode": "navigate" },
     })
     expect(settings.status).toBe(200)
-    expect(await settings.text()).toContain("OpenWork App")
+    expect(await settings.text()).toContain("Micx App")
     expect(upstream.observed.requests).toHaveLength(1)
   })
 

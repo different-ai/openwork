@@ -16,7 +16,7 @@ export class AutomationRunnerAuth {
 
   private sign(payload: string) {
     return createHmac("sha256", this.secret)
-      .update(`openwork-automation-runner-v1.${payload}`)
+      .update(`micx-automation-runner-v1.${payload}`)
       .digest("base64url")
   }
 

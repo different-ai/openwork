@@ -53,7 +53,7 @@ test("Electron diagnostics fetch keeps the absolute deadline through a stalled r
   await assert.rejects(
     fetchAgentContextDiagnosticsResponse(
       async () => response,
-      "https://remote.openwork.test/workspace/test/diagnostics/agent-context",
+      "https://remote.micx.test/workspace/test/diagnostics/agent-context",
       { method: "POST", body: "{}" },
       startedAtMs + 40,
     ),
@@ -82,7 +82,7 @@ test("Electron diagnostics fetch rejects a chunked oversized remote response", a
   await assert.rejects(
     fetchAgentContextDiagnosticsResponse(
       async () => response,
-      "https://remote.openwork.test/workspace/test/diagnostics/agent-context",
+      "https://remote.micx.test/workspace/test/diagnostics/agent-context",
       { method: "POST", body: "{}" },
       Date.now() + 1_000,
     ),
@@ -105,7 +105,7 @@ test("Electron diagnostics fetch rejects an oversized declared response before b
   await assert.rejects(
     fetchAgentContextDiagnosticsResponse(
       async () => response,
-      "https://remote.openwork.test/workspace/test/diagnostics/agent-context",
+      "https://remote.micx.test/workspace/test/diagnostics/agent-context",
       { method: "POST", body: "{}" },
       Date.now() + 1_000,
     ),
@@ -129,7 +129,7 @@ test("Electron diagnostics fetch does not forward credentials across a remote re
   let targetRequests = 0;
   const target = await listenServer((request, response) => {
     targetRequests += 1;
-    const receivedHostToken = request.headers["x-openwork-host-token"];
+    const receivedHostToken = request.headers["x-micx-host-token"];
     const receivedAuthorization = request.headers.authorization;
     targetHostToken = typeof receivedHostToken === "string" ? receivedHostToken : null;
     targetAuthorization = typeof receivedAuthorization === "string" ? receivedAuthorization : null;
@@ -137,7 +137,7 @@ test("Electron diagnostics fetch does not forward credentials across a remote re
     response.end("{}");
   });
   const redirector = await listenServer((request, response) => {
-    const receivedHostToken = request.headers["x-openwork-host-token"];
+    const receivedHostToken = request.headers["x-micx-host-token"];
     redirectHostToken = typeof receivedHostToken === "string" ? receivedHostToken : null;
     response.writeHead(307, { location: `${target.url}/capture` });
     response.end();
@@ -151,7 +151,7 @@ test("Electron diagnostics fetch does not forward credentials across a remote re
         method: "POST",
         headers: {
           Authorization: `Bearer ${bearerToken}`,
-          "X-OpenWork-Host-Token": hostToken,
+          "X-Micx-Host-Token": hostToken,
         },
         body: "{}",
       },

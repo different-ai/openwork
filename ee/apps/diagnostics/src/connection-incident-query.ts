@@ -2,7 +2,7 @@ import { createHmac } from "node:crypto"
 import {
   CONNECT_DIAGNOSTIC_PHASES,
   type StoredConnectDiagnosticIncident,
-} from "@openwork/types/den/connect-diagnostics"
+} from "@micx/types/den/connect-diagnostics"
 import { diagnosticsConfig } from "./config"
 
 export type ConnectionIncidentFilters = {
@@ -26,7 +26,7 @@ export function hashConnectionIncidentIdentity(
   value: string,
 ): string {
   return createHmac("sha256", diagnosticsConfig().bearerToken)
-    .update("openwork-connect-diagnostics-v1\0")
+    .update("micx-connect-diagnostics-v1\0")
     .update(kind)
     .update("\0")
     .update(value.trim())

@@ -1,42 +1,42 @@
 import { createHash } from "node:crypto"
-import { eq, sql } from "@openwork-ee/den-db/drizzle"
+import { eq, sql } from "@micx-ee/den-db/drizzle"
 import type { Hono } from "hono"
 import {
   InferenceOrgUsageBucketTable,
   InferenceUsageLedgerBucketChargeTable,
   InferenceUsageLedgerEntryTable,
-} from "@openwork-ee/den-db"
-import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
-import type { DenTypeId } from "@openwork-ee/utils/typeid"
+} from "@micx-ee/den-db"
+import { createDenTypeId, normalizeDenTypeId } from "@micx-ee/utils/typeid"
+import type { DenTypeId } from "@micx-ee/utils/typeid"
 import { env } from "./env.js"
 import { findActiveInferenceKey } from "./keys.js"
 import { ensureUsableBuckets } from "./limits.js"
 import { db } from "./db.js"
 
-const OPENWORK_VOICE_REALTIME_MODEL = "gpt-realtime-2"
-const OPENWORK_VOICE_TRANSCRIPTION_MODEL = "gpt-4o-transcribe"
+const MICX_VOICE_REALTIME_MODEL = "gpt-realtime-2"
+const MICX_VOICE_TRANSCRIPTION_MODEL = "gpt-4o-transcribe"
 
-const OPENWORK_VOICE_REALTIME_TOOLS = [
+const MICX_VOICE_REALTIME_TOOLS = [
   {
     type: "function",
-    name: "openwork_snapshot",
-    description: "Read the current OpenWork UI control snapshot: route, status, narration, and visible action metadata.",
+    name: "micx_snapshot",
+    description: "Read the current Micx UI control snapshot: route, status, narration, and visible action metadata.",
     parameters: { type: "object", properties: {}, additionalProperties: false },
   },
   {
     type: "function",
-    name: "openwork_list_actions",
-    description: "List semantic OpenWork UI actions. Call this before openwork_execute_action when you do not know the exact action id.",
+    name: "micx_list_actions",
+    description: "List semantic Micx UI actions. Call this before micx_execute_action when you do not know the exact action id.",
     parameters: { type: "object", properties: {}, additionalProperties: false },
   },
   {
     type: "function",
-    name: "openwork_execute_action",
-    description: "Execute a semantic OpenWork UI action by id. Prefer this over screen coordinates or DOM guessing.",
+    name: "micx_execute_action",
+    description: "Execute a semantic Micx UI action by id. Prefer this over screen coordinates or DOM guessing.",
     parameters: {
       type: "object",
       properties: {
-        actionId: { type: "string", description: "The action id from openwork_list_actions, such as composer.set_text or composer.send." },
+        actionId: { type: "string", description: "The action id from micx_list_actions, such as composer.set_text or composer.send." },
         args: { type: "object", description: "Optional JSON arguments for the action.", additionalProperties: true },
       },
       required: ["actionId"],
@@ -92,15 +92,15 @@ function formatResetMessage(windowEndAt: Date): string {
   return `It resets in ${Math.ceil(seconds / 3600)} hours.`
 }
 
-function openworkVoiceRealtimeInstructions() {
+function micxVoiceRealtimeInstructions() {
   return `# Role and Objective
 
-You are OpenWork Voice Mode, a voice-first control layer inside OpenWork.
-Help the user control OpenWork by using the semantic OpenWork UI tools.
+You are Micx Voice Mode, a voice-first control layer inside Micx.
+Help the user control Micx by using the semantic Micx UI tools.
 
 # Tool Policy
 
-- Prefer openwork_snapshot, openwork_list_actions, and openwork_execute_action over visual guessing.
+- Prefer micx_snapshot, micx_list_actions, and micx_execute_action over visual guessing.
 - If the user asks to write or draft something, use composer.set_text.
 - If the user asks to send or run the current prompt, use composer.send.
 - For navigation, settings, session, transcript, and composer work, inspect the action list first if the action id is unknown.
@@ -111,16 +111,16 @@ Help the user control OpenWork by using the semantic OpenWork UI tools.
 
 - Be concise, calm, and direct.
 - If audio is unclear, ask the user to repeat it instead of guessing.
-- Ignore background speech that is not addressed to OpenWork.
+- Ignore background speech that is not addressed to Micx.
 - Summarize tool results briefly and offer the next useful step.`
 }
 
-async function createOpenAiRealtimeClientSecret(input: unknown, openworkRequestId: string) {
+async function createOpenAiRealtimeClientSecret(input: unknown, micxRequestId: string) {
   if (!env.openAiRealtimeApiKey) {
     return Response.json({ error: { message: "Managed voice is not configured.", type: "invalid_request_error", code: "openai_realtime_key_missing" } }, { status: 503 })
   }
 
-  const model = readStringField(input, "model") || OPENWORK_VOICE_REALTIME_MODEL
+  const model = readStringField(input, "model") || MICX_VOICE_REALTIME_MODEL
   const response = await fetch("https://api.openai.com/v1/realtime/client_secrets", {
     method: "POST",
     headers: {
@@ -134,7 +134,7 @@ async function createOpenAiRealtimeClientSecret(input: unknown, openworkRequestI
         output_modalities: ["audio"],
         audio: {
           input: {
-            transcription: { model: OPENWORK_VOICE_TRANSCRIPTION_MODEL, language: "en" },
+            transcription: { model: MICX_VOICE_TRANSCRIPTION_MODEL, language: "en" },
             turn_detection: {
               type: "server_vad",
               threshold: 0.58,
@@ -145,9 +145,9 @@ async function createOpenAiRealtimeClientSecret(input: unknown, openworkRequestI
             },
           },
         },
-        instructions: openworkVoiceRealtimeInstructions(),
+        instructions: micxVoiceRealtimeInstructions(),
         tool_choice: "auto",
-        tools: OPENWORK_VOICE_REALTIME_TOOLS,
+        tools: MICX_VOICE_REALTIME_TOOLS,
       },
     }),
   })
@@ -176,16 +176,16 @@ async function createOpenAiRealtimeClientSecret(input: unknown, openworkRequestI
     clientSecret,
     expiresAt,
     model,
-    transcriptionModel: OPENWORK_VOICE_TRANSCRIPTION_MODEL,
-    tools: OPENWORK_VOICE_REALTIME_TOOLS.map((tool) => tool.name),
-    source: "openwork-models",
-    openworkRequestId,
+    transcriptionModel: MICX_VOICE_TRANSCRIPTION_MODEL,
+    tools: MICX_VOICE_REALTIME_TOOLS.map((tool) => tool.name),
+    source: "micx-models",
+    micxRequestId,
   })
 }
 
 async function chargeVoiceSession(input: {
   inferenceKey: { id: DenTypeId<"inferenceKey">; organization_id: DenTypeId<"organization">; org_membership_id: DenTypeId<"member"> }
-  openworkRequestId: string
+  micxRequestId: string
   limits: Awaited<ReturnType<typeof ensureUsableBuckets>>
 }) {
   const costAmount = env.voiceSessionCostUnits
@@ -197,7 +197,7 @@ async function chargeVoiceSession(input: {
       organization_id: input.inferenceKey.organization_id,
       org_membership_id: input.inferenceKey.org_membership_id,
       inference_key_id: input.inferenceKey.id,
-      external_job_id: input.openworkRequestId,
+      external_job_id: input.micxRequestId,
       external_event_id: null,
       cost_amount: costAmount,
       event_type: "voice_realtime_session",
@@ -228,12 +228,12 @@ export function registerVoiceRoutes(app: Hono) {
   app.post("/voice/realtime/session", async (c) => {
     const rawKey = readApiKey(c.req.raw)
     if (!rawKey) {
-      return c.json({ error: { message: "Missing OpenWork inference API key.", type: "authentication_error", code: "missing_api_key" } }, 401)
+      return c.json({ error: { message: "Missing Micx inference API key.", type: "authentication_error", code: "missing_api_key" } }, 401)
     }
 
     const inferenceKey = await findActiveInferenceKey(rawKey)
     if (!inferenceKey) {
-      return c.json({ error: { message: "Invalid OpenWork inference API key.", type: "authentication_error", code: "invalid_api_key" } }, 401)
+      return c.json({ error: { message: "Invalid Micx inference API key.", type: "authentication_error", code: "invalid_api_key" } }, 401)
     }
 
     const limits = await ensureUsableBuckets(inferenceKey.organization_id)
@@ -241,7 +241,7 @@ export function registerVoiceRoutes(app: Hono) {
       const limitedBucket = "limitedBucket" in limits ? limits.limitedBucket : null
       const resetMessage = limitedBucket ? ` ${formatResetMessage(limitedBucket.windowEndAt)}` : ""
       const retryAfter = limitedBucket ? secondsUntil(limitedBucket.windowEndAt) : undefined
-      c.header("x-openwork-limit-window-type", limits.windowType)
+      c.header("x-micx-limit-window-type", limits.windowType)
       if (retryAfter !== undefined) {
         c.header("retry-after", String(retryAfter))
         c.header("x-ratelimit-remaining-tokens", "0")
@@ -259,7 +259,7 @@ export function registerVoiceRoutes(app: Hono) {
       }, 429)
     }
 
-    const openworkRequestId = buildRequestId()
+    const micxRequestId = buildRequestId()
     let body: unknown = {}
     try {
       body = await c.req.json()
@@ -267,13 +267,13 @@ export function registerVoiceRoutes(app: Hono) {
       body = {}
     }
 
-    const response = await createOpenAiRealtimeClientSecret(body, openworkRequestId)
+    const response = await createOpenAiRealtimeClientSecret(body, micxRequestId)
 
     if (response.status === 200) {
       try {
-        await chargeVoiceSession({ inferenceKey, openworkRequestId, limits })
+        await chargeVoiceSession({ inferenceKey, micxRequestId, limits })
       } catch (error) {
-        console.error("[voice] failed to charge voice session", { openworkRequestId, error: error instanceof Error ? error.message : String(error) })
+        console.error("[voice] failed to charge voice session", { micxRequestId, error: error instanceof Error ? error.message : String(error) })
       }
     }
 

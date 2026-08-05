@@ -1,16 +1,16 @@
 /**
  * Single source of truth for "where does a workspace's server live?".
  *
- * Every workspace-scoped API call in the app must route to the OpenWork server
+ * Every workspace-scoped API call in the app must route to the Micx server
  * that actually owns that workspace. For local workspaces that's the user's
- * local OpenWork server. For workspaces hosted on a remote OpenWork worker
+ * local Micx server. For workspaces hosted on a remote Micx worker
  * (`id` starts with `rem_` and `workspaceType === "remote"`), it's the
- * `baseUrl`/`openworkHostUrl` and `openworkToken` saved on the workspace
+ * `baseUrl`/`micxHostUrl` and `micxToken` saved on the workspace
  * record, with the workspace addressed by its server-side id (the `rem_`
- * prefix is stripped, or `openworkWorkspaceId` is used when present).
+ * prefix is stripped, or `micxWorkspaceId` is used when present).
  *
  * Always go through {@link resolveWorkspaceEndpoint} when you need:
- *   - an `OpenworkServerClient` for a workspace
+ *   - an `MicxServerClient` for a workspace
  *   - a mounted `/workspace/<id>` URL prefix
  *   - the `/opencode` URL for the OpenCode SDK
  *
@@ -21,22 +21,22 @@
 
 import type { WorkspaceInfo } from "./desktop";
 import {
-  buildOpenworkWorkspaceBaseUrl,
-  createOpenworkServerClient,
-  type OpenworkServerClient,
-} from "./openwork-server";
+  buildMicxWorkspaceBaseUrl,
+  createMicxServerClient,
+  type MicxServerClient,
+} from "./micx-server";
 
 export type ResolvedWorkspaceEndpoint = {
-  /** Host URL of the OpenWork server that owns this workspace (no `/workspace` mount). */
+  /** Host URL of the Micx server that owns this workspace (no `/workspace` mount). */
   baseUrl: string;
   /** Auth token for that server. May be empty for unauthenticated local servers. */
   token: string;
   /** Workspace id as the owning server expects it in URL paths. No `rem_` prefix. */
   workspaceId: string;
-  /** True when the workspace lives on a remote OpenWork worker, not the user's local server. */
+  /** True when the workspace lives on a remote Micx worker, not the user's local server. */
   isRemote: boolean;
-  /** OpenworkServerClient bound to {@link baseUrl}/{@link token}. */
-  client: OpenworkServerClient;
+  /** MicxServerClient bound to {@link baseUrl}/{@link token}. */
+  client: MicxServerClient;
   /** Mounted base url: `<baseUrl>/workspace/<workspaceId>`. No trailing slash. */
   mountedBaseUrl: string;
   /** OpenCode SDK base url: `<mountedBaseUrl>/opencode`. */
@@ -53,11 +53,11 @@ type WorkspaceEndpointInput = Pick<
   | "id"
   | "workspaceType"
   | "baseUrl"
-  | "openworkHostUrl"
-  | "openworkToken"
-  | "openworkClientToken"
-  | "openworkHostToken"
-  | "openworkWorkspaceId"
+  | "micxHostUrl"
+  | "micxToken"
+  | "micxClientToken"
+  | "micxHostToken"
+  | "micxWorkspaceId"
 > | null | undefined;
 
 /**
@@ -80,22 +80,22 @@ export function workspaceServerId(workspace: WorkspaceEndpointInput): string {
   if (!workspace) return "";
   const id = workspace.id.trim();
   if (!isRemoteWorkspace(workspace)) return id;
-  const explicit = workspace.openworkWorkspaceId?.trim();
+  const explicit = workspace.micxWorkspaceId?.trim();
   if (explicit) return explicit;
   return id.startsWith("rem_") ? id.slice("rem_".length) : id;
 }
 
 function pickRemoteBaseUrl(workspace: WorkspaceEndpointInput): string {
   if (!workspace) return "";
-  return (workspace.baseUrl ?? workspace.openworkHostUrl ?? "").trim();
+  return (workspace.baseUrl ?? workspace.micxHostUrl ?? "").trim();
 }
 
 function pickRemoteToken(workspace: WorkspaceEndpointInput): string {
   if (!workspace) return "";
   return (
-    workspace.openworkToken ??
-    workspace.openworkClientToken ??
-    workspace.openworkHostToken ??
+    workspace.micxToken ??
+    workspace.micxClientToken ??
+    workspace.micxHostToken ??
     ""
   ).trim();
 }
@@ -117,12 +117,12 @@ export function resolveWorkspaceEndpoint(
     if (!baseUrl) return null;
     const token = pickRemoteToken(workspace);
     const workspaceId = workspaceServerId(workspace);
-    const client = createOpenworkServerClient({
+    const client = createMicxServerClient({
       baseUrl,
       token: token || undefined,
     });
     const mountedBaseUrl = (
-      buildOpenworkWorkspaceBaseUrl(baseUrl, workspaceId) ?? baseUrl
+      buildMicxWorkspaceBaseUrl(baseUrl, workspaceId) ?? baseUrl
     ).replace(/\/+$/, "");
     return {
       baseUrl,
@@ -139,12 +139,12 @@ export function resolveWorkspaceEndpoint(
   if (!localBaseUrl) return null;
   const localToken = (localServer.token ?? "").trim();
   const workspaceId = workspace.id.trim();
-  const client = createOpenworkServerClient({
+  const client = createMicxServerClient({
     baseUrl: localBaseUrl,
     token: localToken || undefined,
   });
   const mountedBaseUrl = (
-    buildOpenworkWorkspaceBaseUrl(localBaseUrl, workspaceId) ?? localBaseUrl
+    buildMicxWorkspaceBaseUrl(localBaseUrl, workspaceId) ?? localBaseUrl
   ).replace(/\/+$/, "");
   return {
     baseUrl: localBaseUrl,

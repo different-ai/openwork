@@ -20,7 +20,7 @@ import {
   AGENT_CONTEXT_DIAGNOSTIC_CHECK_IDS,
   agentContextDiagnosticsReportSchema,
   type AgentContextDiagnosticsRequest,
-} from "@openwork/types/agent-context-diagnostics";
+} from "@micx/types/agent-context-diagnostics";
 
 import {
   classifyEngineMcpTransportCause,
@@ -29,7 +29,7 @@ import {
 } from "./agent-context-diagnostics.js";
 import type { InspectAgentDiagnosticsEngine } from "./agent-context-engine-inspection.js";
 import type { ConnectSnapshot } from "./connect-state.js";
-import { buildOpenworkRuntimeConfigObjectFromSnapshot } from "./openwork-runtime-config.js";
+import { buildMicxRuntimeConfigObjectFromSnapshot } from "./micx-runtime-config.js";
 import { runtimeDbPath } from "./runtime-db.js";
 import {
   inspectEngineMcpRegistration,
@@ -85,10 +85,10 @@ function cloudConfig(): Record<string, unknown> {
 
 function diagnosticRuntimeConfig(): RuntimeOpencodeConfig {
   return {
-    default_agent: `openwork ${DYNAMIC_BEARER_CANARY}`,
+    default_agent: `micx ${DYNAMIC_BEARER_CANARY}`,
     plugin: [`audit-label ${DYNAMIC_SECRET_ASSIGNMENT_CANARY}`],
     mcp: {
-      "openwork-cloud": cloudConfig(),
+      "micx-cloud": cloudConfig(),
       "non-cloud-canary": {
         type: "remote",
         url: "https://non-cloud.invalid/mcp?token=CANARY_QUERY_SECRET",
@@ -128,31 +128,31 @@ function effectiveEngineInspection(
     hidden?: boolean;
     prompt?: string;
     pluginSpecs?: string[];
-    decisions?: Partial<Record<"openwork-cloud_search_capabilities" | "openwork-cloud_execute_capability", "allow" | "ask" | "deny">>;
+    decisions?: Partial<Record<"micx-cloud_search_capabilities" | "micx-cloud_execute_capability", "allow" | "ask" | "deny">>;
   },
 ): InspectAgentDiagnosticsEngine {
   const decisions = {
-    "openwork-cloud_search_capabilities": "allow" as const,
-    "openwork-cloud_execute_capability": "allow" as const,
+    "micx-cloud_search_capabilities": "allow" as const,
+    "micx-cloud_execute_capability": "allow" as const,
     ...options?.decisions,
   };
-  const canonicalConfig = buildOpenworkRuntimeConfigObjectFromSnapshot(runtime);
+  const canonicalConfig = buildMicxRuntimeConfigObjectFromSnapshot(runtime);
   const canonicalAgents = typeof canonicalConfig.agent === "object" && canonicalConfig.agent !== null
     && !Array.isArray(canonicalConfig.agent)
     ? canonicalConfig.agent as Record<string, unknown>
     : {};
-  const canonicalAgent = typeof canonicalAgents.openwork === "object" && canonicalAgents.openwork !== null
-    && !Array.isArray(canonicalAgents.openwork)
-    ? canonicalAgents.openwork as Record<string, unknown>
+  const canonicalAgent = typeof canonicalAgents.micx === "object" && canonicalAgents.micx !== null
+    && !Array.isArray(canonicalAgents.micx)
+    ? canonicalAgents.micx as Record<string, unknown>
     : {};
   return async () => ({
     config: {
-      default_agent: options?.defaultAgent === null ? undefined : options?.defaultAgent ?? "openwork",
+      default_agent: options?.defaultAgent === null ? undefined : options?.defaultAgent ?? "micx",
       plugin: options?.pluginSpecs ?? openCodeNormalizedPluginSpecs(canonicalConfig.plugin),
       mcp: canonicalConfig.mcp,
     },
     agents: [{
-      name: options?.agentName ?? "openwork",
+      name: options?.agentName ?? "micx",
       mode: options?.agentMode ?? "primary",
       hidden: options?.hidden,
       prompt: options?.prompt ?? String(canonicalAgent.prompt ?? ""),
@@ -166,7 +166,7 @@ function effectiveEngineInspection(
   });
 }
 
-async function createRoot(prefix = "openwork-agent-context-diagnostics-"): Promise<string> {
+async function createRoot(prefix = "micx-agent-context-diagnostics-"): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), prefix));
   roots.push(root);
   return root;
@@ -182,7 +182,7 @@ function closeTlsServer(server: tls.Server): Promise<void> {
 }
 
 async function selfSignedCertificate(): Promise<{ key: string; cert: string }> {
-  const root = await createRoot("openwork-agent-context-diagnostics-tls-");
+  const root = await createRoot("micx-agent-context-diagnostics-tls-");
   const keyPath = join(root, "key.pem");
   const certPath = join(root, "cert.pem");
   await execFileAsync("openssl", [
@@ -324,9 +324,9 @@ function checkById(
 
 function startRecordingServer() {
   const requests: Array<{ method: string; pathname: string; body: unknown }> = [];
-  const canonicalConfig = buildOpenworkRuntimeConfigObjectFromSnapshot({
+  const canonicalConfig = buildMicxRuntimeConfigObjectFromSnapshot({
     ...diagnosticRuntimeConfig(),
-    default_agent: "openwork",
+    default_agent: "micx",
   });
   const canonicalAgents = canonicalConfig.agent as Record<string, Record<string, unknown>>;
   const server = Bun.serve({
@@ -342,19 +342,19 @@ function startRecordingServer() {
       });
       if (request.method === "GET" && url.pathname === "/config") {
         return Response.json({
-          default_agent: "openwork",
+          default_agent: "micx",
           plugin: openCodeNormalizedPluginSpecs(canonicalConfig.plugin),
           mcp: canonicalConfig.mcp,
         });
       }
       if (request.method === "GET" && url.pathname === "/agent") {
         return Response.json([{
-          name: "openwork",
+          name: "micx",
           mode: "primary",
-          prompt: canonicalAgents.openwork?.prompt,
+          prompt: canonicalAgents.micx?.prompt,
           permission: [
-            { permission: "openwork-cloud_search_capabilities", pattern: "*", action: "allow" },
-            { permission: "openwork-cloud_execute_capability", pattern: "*", action: "allow" },
+            { permission: "micx-cloud_search_capabilities", pattern: "*", action: "allow" },
+            { permission: "micx-cloud_execute_capability", pattern: "*", action: "allow" },
           ],
           options: {},
         }]);
@@ -373,7 +373,7 @@ function startRecordingServer() {
   return { requests, baseUrl: `http://127.0.0.1:${server.port}` };
 }
 
-async function startOpenwork(config: ServerConfig) {
+async function startMicx(config: ServerConfig) {
   const baseUrl = config.workspaces[0]?.baseUrl ?? config.opencodeBaseUrl;
   if (baseUrl) {
     registerTrustedOpencodeProcess(config, {
@@ -457,7 +457,7 @@ function clientHeaders(token = CLIENT_TOKEN) {
 }
 
 function hostHeaders() {
-  return { "x-openwork-host-token": HOST_TOKEN, "Content-Type": "application/json" };
+  return { "x-micx-host-token": HOST_TOKEN, "Content-Type": "application/json" };
 }
 
 async function snapshotTree(root: string): Promise<Record<string, string>> {
@@ -551,7 +551,7 @@ describe("agent context diagnostics analyzer", () => {
     const opaqueUrlWithoutSlash = "mailto:OPAQUE_NO_SLASH_CANARY";
     const fixture = await createFixture({
       runtime: {
-        default_agent: "openwork",
+        default_agent: "micx",
         plugin: [signedUrl, malformedUrl, opaqueUrl, opaqueUrlWithoutSlash],
         mcp: {},
       },
@@ -605,12 +605,12 @@ describe("agent context diagnostics analyzer", () => {
     expect(report.overall).toBe("warning");
     expect(report.firstFailedCheck).toBeNull();
     expect(report.observedCloudToolIds).toEqual(["search_capabilities", "execute_capability"]);
-    expect(report.mcps.find((mcp) => mcp.name === "openwork-cloud")?.path).toBe("/private-prefix/mcp/agent");
+    expect(report.mcps.find((mcp) => mcp.name === "micx-cloud")?.path).toBe("/private-prefix/mcp/agent");
     expect(report.workspace.name).toBe("[redacted-sensitive-label]");
     expect(report.agent.evidenceSource).toBe("effective-engine");
-    expect(report.agent.defaultAgent).toBe("openwork");
+    expect(report.agent.defaultAgent).toBe("micx");
     expect(report.agent.pluginLabels).toContain("[redacted-sensitive-label]");
-    expect(report.agent.configuredOpenworkAgent.connectToolPermissions).toEqual({
+    expect(report.agent.configuredMicxAgent.connectToolPermissions).toEqual({
       searchCapabilities: "allowed",
       executeCapability: "allowed",
       deniedRelevantToolCount: 0,
@@ -627,14 +627,14 @@ describe("agent context diagnostics analyzer", () => {
       name: "[redacted-sensitive-label]",
     }));
     expect(report.mcps).toContainEqual(expect.objectContaining({
-      name: "openwork-cloud",
+      name: "micx-cloud",
       source: "config.remote",
       origin: "http://127.0.0.1:43123",
       path: "/private-prefix/mcp/agent",
       syncStatus: "connected",
     }));
     expect(report.mcps).toContainEqual(expect.objectContaining({
-      name: "openwork-cloud",
+      name: "micx-cloud",
       source: "engine.config",
       syncStatus: "not-applicable",
     }));
@@ -678,7 +678,7 @@ describe("agent context diagnostics analyzer", () => {
     expect(agentContextDiagnosticsReportSchema.safeParse({
       ...report,
       mcps: report.mcps.filter((mcp) =>
-        !(mcp.source === "config.remote" && mcp.name === "openwork-cloud"),
+        !(mcp.source === "config.remote" && mcp.name === "micx-cloud"),
       ),
     }).success).toBe(false);
     expect(fetchCalls).toHaveLength(4);
@@ -728,7 +728,7 @@ describe("agent context diagnostics analyzer", () => {
       dependencies: { fetchImpl: catalogFetch(["search_capabilities", "execute_capability"], fetchCalls) },
     });
 
-    expect(report.agent.configuredOpenworkAgent.connectToolPermissions).toEqual({
+    expect(report.agent.configuredMicxAgent.connectToolPermissions).toEqual({
       searchCapabilities: "unspecified",
       executeCapability: "unspecified",
       deniedRelevantToolCount: null,
@@ -766,7 +766,7 @@ describe("agent context diagnostics analyzer", () => {
         url: `https://bounded-${index}.invalid/mcp`,
       };
     }
-    manyMcps["openwork-cloud"] = cloudConfig();
+    manyMcps["micx-cloud"] = cloudConfig();
     runtime.mcp = manyMcps;
     const fixture = await createFixture({ runtime });
     const fetchCalls: CatalogFetchCall[] = [];
@@ -784,7 +784,7 @@ describe("agent context diagnostics analyzer", () => {
 
     expect(report.mcps).toHaveLength(200);
     expect(report.mcps).toContainEqual(expect.objectContaining({
-      name: "openwork-cloud",
+      name: "micx-cloud",
       source: "config.remote",
       path: "/private-prefix/mcp/agent",
       syncStatus: "connected",
@@ -813,13 +813,13 @@ describe("agent context diagnostics analyzer", () => {
       dependencies: {
         fetchImpl: catalogFetch(["search_capabilities", "execute_capability"], fetchCalls),
         inspectEffectiveEngine: effectiveEngineInspection(diagnosticRuntimeConfig(), {
-          decisions: { "openwork-cloud_search_capabilities": "deny" },
+          decisions: { "micx-cloud_search_capabilities": "deny" },
         }),
       },
     });
 
     expect(report.agent.evidenceSource).toBe("effective-engine");
-    expect(report.agent.configuredOpenworkAgent.connectToolPermissions).toEqual({
+    expect(report.agent.configuredMicxAgent.connectToolPermissions).toEqual({
       searchCapabilities: "denied",
       executeCapability: "allowed",
       deniedRelevantToolCount: 1,
@@ -837,7 +837,7 @@ describe("agent context diagnostics analyzer", () => {
       details: { requestPerformed: true },
     });
     expect(report.mcps.find(
-      (mcp) => mcp.name === "openwork-cloud" && mcp.source === "engine.config",
+      (mcp) => mcp.name === "micx-cloud" && mcp.source === "engine.config",
     )).toMatchObject({
       source: "engine.config",
       disabledByTools: true,
@@ -857,12 +857,12 @@ describe("agent context diagnostics analyzer", () => {
       dependencies: {
         fetchImpl: catalogFetch(["search_capabilities", "execute_capability"], fetchCalls),
         inspectEffectiveEngine: effectiveEngineInspection(diagnosticRuntimeConfig(), {
-          decisions: { "openwork-cloud_search_capabilities": "ask" },
+          decisions: { "micx-cloud_search_capabilities": "ask" },
         }),
       },
     }));
 
-    expect(report.agent.configuredOpenworkAgent.connectToolPermissions).toEqual({
+    expect(report.agent.configuredMicxAgent.connectToolPermissions).toEqual({
       searchCapabilities: "approval-required",
       executeCapability: "allowed",
       deniedRelevantToolCount: 0,
@@ -905,12 +905,12 @@ describe("agent context diagnostics analyzer", () => {
       status: "warning",
       evidenceKind: "unavailable",
       code: "connect_state_unavailable",
-      owner: "openwork-server",
+      owner: "micx-server",
       details: { connectStateStatus: "invalid" },
     });
   });
 
-  test("assigns missing and disabled client runtime cloud entries to the OpenWork client", async () => {
+  test("assigns missing and disabled client runtime cloud entries to the Micx client", async () => {
     const missing = await createFixture({ runtime: {} });
     const missingReport = await runAgentContextDiagnostics({
       config: missing.config,
@@ -920,12 +920,12 @@ describe("agent context diagnostics analyzer", () => {
     });
     expect(checkById(missingReport, "cloud-tool-catalog")).toMatchObject({
       code: "cloud_mcp_missing",
-      owner: "openwork-client",
+      owner: "micx-client",
     });
 
     const disabled = await createFixture({
       runtime: {
-        mcp: { "openwork-cloud": { ...cloudConfig(), enabled: false } },
+        mcp: { "micx-cloud": { ...cloudConfig(), enabled: false } },
       },
     });
     const disabledReport = await runAgentContextDiagnostics({
@@ -936,14 +936,14 @@ describe("agent context diagnostics analyzer", () => {
     });
     expect(checkById(disabledReport, "cloud-tool-catalog")).toMatchObject({
       code: "cloud_mcp_disabled",
-      owner: "openwork-client",
+      owner: "micx-client",
     });
   });
 
   test("names the trusted-origins environment variable for untrusted cloud endpoints", async () => {
     const runtime = diagnosticRuntimeConfig();
     if (!runtime.mcp) throw new Error("Expected the diagnostics MCP fixture.");
-    runtime.mcp["openwork-cloud"] = {
+    runtime.mcp["micx-cloud"] = {
       ...cloudConfig(),
       url: "https://den.customer.example/custom/mcp/agent",
     };
@@ -966,14 +966,14 @@ describe("agent context diagnostics analyzer", () => {
       status: "warning",
       evidenceKind: "unavailable",
       code: "untrusted_endpoint",
-      owner: "openwork-server",
+      owner: "micx-server",
       details: { requestPerformed: false, handshakePerformed: false, stage: "eligibility" },
     });
     // An untrusted origin means no request occurred; the report must describe
     // a trust-configuration state, never a network, TLS, or MCP failure.
     expect(check.message).toContain("not performed");
     expect(check.message).toContain("trust");
-    expect(check.action).toContain("OPENWORK_AGENT_DIAGNOSTICS_TRUSTED_ORIGINS");
+    expect(check.action).toContain("MICX_AGENT_DIAGNOSTICS_TRUSTED_ORIGINS");
     expect(checkById(report, "cloud-endpoint-differential")).toMatchObject({
       status: "skipped",
       code: "runtime_probe_not_performed",
@@ -986,7 +986,7 @@ describe("agent context diagnostics analyzer", () => {
   test("probes an on-prem endpoint this installation is activated against", async () => {
     const runtime = diagnosticRuntimeConfig();
     if (!runtime.mcp) throw new Error("Expected the diagnostics MCP fixture.");
-    runtime.mcp["openwork-cloud"] = {
+    runtime.mcp["micx-cloud"] = {
       ...cloudConfig(),
       url: "https://den.customer.example/custom/mcp/agent",
     };
@@ -1023,16 +1023,16 @@ describe("agent context diagnostics analyzer", () => {
     });
     expect(fetchCalls).toHaveLength(4);
     // The handshake must reach the operator's own Den deployment. Trusting an
-    // origin never redirects the probe to OpenWork-hosted Cloud.
+    // origin never redirects the probe to Micx-hosted Cloud.
     expect(fetchCalls.map((call) => call.url)).toEqual([
       "https://den.customer.example/custom/mcp/agent",
       "https://den.customer.example/custom/mcp/agent",
       "https://den.customer.example/custom/mcp/agent",
       "https://den.customer.example/custom/mcp/agent",
     ]);
-    expect(fetchCalls.some((call) => call.url.includes("openworklabs.com"))).toBe(false);
+    expect(fetchCalls.some((call) => call.url.includes("micxlabs.com"))).toBe(false);
     expect(report.mcps).toContainEqual(expect.objectContaining({
-      name: "openwork-cloud",
+      name: "micx-cloud",
       source: "config.remote",
       origin: "https://den.customer.example",
       path: "/custom/mcp/agent",
@@ -1042,7 +1042,7 @@ describe("agent context diagnostics analyzer", () => {
   test("distinguishes an activation origin that does not match the configured cloud MCP", async () => {
     const runtime = diagnosticRuntimeConfig();
     if (!runtime.mcp) throw new Error("Expected the diagnostics MCP fixture.");
-    runtime.mcp["openwork-cloud"] = {
+    runtime.mcp["micx-cloud"] = {
       ...cloudConfig(),
       url: "https://den.customer.example/custom/mcp/agent",
     };
@@ -1076,7 +1076,7 @@ describe("agent context diagnostics analyzer", () => {
     const fixture = await createFixture();
     const fetchCalls: CatalogFetchCall[] = [];
     const inspectors: InspectAgentDiagnosticsEngine[] = [
-      async () => ({ config: { default_agent: "openwork" }, agents: "not-an-array" }),
+      async () => ({ config: { default_agent: "micx" }, agents: "not-an-array" }),
       async () => {
         throw new Error("RAW_ENGINE_ERROR_CANARY");
       },
@@ -1115,7 +1115,7 @@ describe("agent context diagnostics analyzer", () => {
     expect(fetchCalls).toHaveLength(8);
   });
 
-  test("fails closed when the effective engine does not resolve the OpenWork agent", async () => {
+  test("fails closed when the effective engine does not resolve the Micx agent", async () => {
     const fixture = await createFixture();
     const fetchCalls: CatalogFetchCall[] = [];
     const report = await runAgentContextDiagnostics({
@@ -1130,10 +1130,10 @@ describe("agent context diagnostics analyzer", () => {
     });
 
     expect(checkById(report, "engine-config")).toMatchObject({ status: "passed", evidenceKind: "observed" });
-    expect(checkById(report, "engine-agent")).toMatchObject({ status: "failed", code: "effective_openwork_agent_missing" });
+    expect(checkById(report, "engine-agent")).toMatchObject({ status: "failed", code: "effective_micx_agent_missing" });
     expect(checkById(report, "agent-connect-tool-permissions")).toMatchObject({
       status: "warning",
-      details: { policyUnavailableReasons: ["effective_openwork_agent_missing"] },
+      details: { policyUnavailableReasons: ["effective_micx_agent_missing"] },
     });
     expect(checkById(report, "cloud-tool-catalog")).toMatchObject({
       status: "passed",
@@ -1143,16 +1143,16 @@ describe("agent context diagnostics analyzer", () => {
     expect(fetchCalls).toHaveLength(4);
   });
 
-  test("rejects hidden and subagent-only OpenWork defaults before cloud egress", async () => {
+  test("rejects hidden and subagent-only Micx defaults before cloud egress", async () => {
     const fixture = await createFixture();
     const cases = [
       {
         options: { hidden: true, agentMode: "primary" as const },
-        code: "effective_openwork_agent_hidden",
+        code: "effective_micx_agent_hidden",
       },
       {
         options: { hidden: false, agentMode: "subagent" as const },
-        code: "effective_openwork_agent_not_primary",
+        code: "effective_micx_agent_not_primary",
       },
     ];
 
@@ -1220,12 +1220,12 @@ describe("agent context diagnostics analyzer", () => {
       dependencies: {
         fetchImpl: catalogFetch(["search_capabilities", "execute_capability"], []),
         inspectEffectiveEngine: effectiveEngineInspection(diagnosticRuntimeConfig(), {
-          pluginSpecs: ["https://plugins.invalid/spoof/openwork-extensions-preview.ts"],
+          pluginSpecs: ["https://plugins.invalid/spoof/micx-extensions-preview.ts"],
         }),
       },
     });
 
-    expect(report.agent.pluginLabels).toContain("openwork-extensions-preview");
+    expect(report.agent.pluginLabels).toContain("micx-extensions-preview");
     expect(checkById(report, "plugin-registration")).toMatchObject({
       status: "failed",
       code: "connect_steering_plugin_missing",
@@ -1236,9 +1236,9 @@ describe("agent context diagnostics analyzer", () => {
 
   test("matches the canonical Connect plugin after OpenCode normalizes its absolute path to a file URL", async () => {
     const fixture = await createFixture();
-    const canonicalConfig = buildOpenworkRuntimeConfigObjectFromSnapshot(diagnosticRuntimeConfig());
+    const canonicalConfig = buildMicxRuntimeConfigObjectFromSnapshot(diagnosticRuntimeConfig());
     const normalizedPlugins = openCodeNormalizedPluginSpecs(canonicalConfig.plugin);
-    const canonicalConnectPlugin = normalizedPlugins.find((spec) => spec.includes("openwork-extensions-preview"));
+    const canonicalConnectPlugin = normalizedPlugins.find((spec) => spec.includes("micx-extensions-preview"));
     if (!canonicalConnectPlugin) throw new Error("Expected the canonical Connect plugin fixture.");
     expect(canonicalConnectPlugin.startsWith("file://")).toBe(true);
 
@@ -1255,7 +1255,7 @@ describe("agent context diagnostics analyzer", () => {
       },
     });
 
-    expect(report.agent.pluginLabels).toContain("openwork-extensions-preview");
+    expect(report.agent.pluginLabels).toContain("micx-extensions-preview");
     expect(checkById(report, "plugin-registration")).toMatchObject({
       status: "passed",
       code: "connect_steering_plugin_effective",
@@ -1437,14 +1437,14 @@ describe("agent context diagnostics analyzer", () => {
   test("scrubs endpoint-bearing registration errors without losing TLS transport cause", async () => {
     const fixture = await createFixture();
     const fetchCalls: CatalogFetchCall[] = [];
-    const endpointError = "failed to connect to https://openwork-poc.blueyonder.com/api/den/mcp/agent: unable to verify the first certificate";
+    const endpointError = "failed to connect to https://micx-poc.blueyonder.com/api/den/mcp/agent: unable to verify the first certificate";
     const pathError = "request to /api/den/mcp/agent failed: self signed certificate in certificate chain";
     const report = agentContextDiagnosticsReportSchema.parse(await runAgentContextDiagnostics({
       config: fixture.config,
       workspace: fixture.workspace,
       request: emptyObservedRequest,
       inspectRegistration: (name) => {
-        if (name === "openwork-cloud") {
+        if (name === "micx-cloud") {
           return { status: "failed", source: "engine_status", recordAgeMs: 1_000, errorSummary: endpointError };
         }
         if (name === "non-cloud-canary") {
@@ -1461,7 +1461,7 @@ describe("agent context diagnostics analyzer", () => {
     const failedRegistrations = checkById(report, "engine-mcp-sync").details.failedRegistrations;
     expect(failedRegistrations).toEqual([
       expect.objectContaining({
-        name: "openwork-cloud",
+        name: "micx-cloud",
         errorSummary: "failed to connect to [url] unable to verify the first certificate",
         transportCause: "tls_incomplete_chain",
       }),
@@ -1479,7 +1479,7 @@ describe("agent context diagnostics analyzer", () => {
     const port = await startSelfSignedTlsServer();
     const runtime = diagnosticRuntimeConfig();
     if (!runtime.mcp) throw new Error("Expected the diagnostics MCP fixture.");
-    runtime.mcp["openwork-cloud"] = {
+    runtime.mcp["micx-cloud"] = {
       ...cloudConfig(),
       url: `https://127.0.0.1:${port}/mcp/agent`,
     };
@@ -1546,7 +1546,7 @@ describe("agent context diagnostics analyzer", () => {
         status: "failed",
         source: "transport_failure",
         recordAgeMs: 61_000,
-        errorSummary: name === "openwork-cloud" ? "unable to verify the first certificate" : null,
+        errorSummary: name === "micx-cloud" ? "unable to verify the first certificate" : null,
       }),
       dependencies: {
         fetchImpl: catalogFetch(["search_capabilities", "execute_capability"], fetchCalls),
@@ -1562,7 +1562,7 @@ describe("agent context diagnostics analyzer", () => {
     });
     expect(check.details.failedRegistrations).toEqual([
       {
-        name: "openwork-cloud",
+        name: "micx-cloud",
         status: "failed",
         source: "transport_failure",
         recordAgeMs: 61_000,
@@ -1632,7 +1632,7 @@ describe("agent context diagnostics analyzer", () => {
   test("reports a missing credential without putting authorization-shaped text in the report", async () => {
     const runtime = diagnosticRuntimeConfig();
     if (!runtime.mcp) throw new Error("Expected the diagnostics MCP fixture.");
-    runtime.mcp["openwork-cloud"] = { ...cloudConfig(), headers: {} };
+    runtime.mcp["micx-cloud"] = { ...cloudConfig(), headers: {} };
     const fixture = await createFixture({ runtime });
     const fetchCalls: CatalogFetchCall[] = [];
 
@@ -1650,7 +1650,7 @@ describe("agent context diagnostics analyzer", () => {
     expect(checkById(report, "cloud-tool-catalog")).toMatchObject({
       status: "failed",
       code: "credential_missing",
-      message: "The managed OpenWork Cloud entry does not contain one unambiguous authentication value.",
+      message: "The managed Micx Cloud entry does not contain one unambiguous authentication value.",
     });
     expect(fetchCalls).toEqual([]);
   });
@@ -1659,12 +1659,12 @@ describe("agent context diagnostics analyzer", () => {
     const fixture = await createFixture();
     await writeFile(join(fixture.workspaceRoot, "opencode.jsonc"), JSON.stringify({
       permission: {
-        "openwork-cloud_*": "allow",
+        "micx-cloud_*": "allow",
       },
       agent: {
-        openwork: {
+        micx: {
           permission: {
-            "openwork-cloud_search_capabilities": "deny",
+            "micx-cloud_search_capabilities": "deny",
           },
         },
       },
@@ -1681,7 +1681,7 @@ describe("agent context diagnostics analyzer", () => {
 
     expect(report.overall).toBe("failed");
     expect(report.firstFailedCheck).toBe("agent-connect-tool-permissions");
-    expect(report.agent.configuredOpenworkAgent.connectToolPermissions).toEqual({
+    expect(report.agent.configuredMicxAgent.connectToolPermissions).toEqual({
       searchCapabilities: "denied",
       executeCapability: "unspecified",
       deniedRelevantToolCount: 1,
@@ -1703,7 +1703,7 @@ describe("agent context diagnostics analyzer", () => {
       details: { requestPerformed: true },
     });
     expect(report.mcps.find((mcp) => (
-      mcp.name === "openwork-cloud" && mcp.source === "config.remote"
+      mcp.name === "micx-cloud" && mcp.source === "config.remote"
     ))?.disabledByTools).toBe(true);
     expect(report.safety.cloudCatalogToolsListPerformed).toBe(true);
     expect(fetchCalls).toHaveLength(4);
@@ -1713,7 +1713,7 @@ describe("agent context diagnostics analyzer", () => {
     const fixture = await createFixture();
     await writeFile(join(fixture.workspaceRoot, "opencode.jsonc"), JSON.stringify({
       permission: {
-        "openwork-cloud_*": ["deny"],
+        "micx-cloud_*": ["deny"],
       },
     }), "utf8");
     const fetchCalls: CatalogFetchCall[] = [];
@@ -1726,7 +1726,7 @@ describe("agent context diagnostics analyzer", () => {
       dependencies: { fetchImpl: catalogFetch(["search_capabilities", "execute_capability"], fetchCalls) },
     }));
 
-    expect(report.agent.configuredOpenworkAgent.connectToolPermissions).toEqual({
+    expect(report.agent.configuredMicxAgent.connectToolPermissions).toEqual({
       searchCapabilities: "unspecified",
       executeCapability: "unspecified",
       deniedRelevantToolCount: null,
@@ -1757,9 +1757,9 @@ describe("agent context diagnostics analyzer", () => {
       workspace: {
         path: "",
         workspaceType: "remote",
-        remoteType: "openwork",
-        baseUrl: "https://remote-openwork.invalid",
-        openworkHostUrl: "https://remote-openwork.invalid",
+        remoteType: "micx",
+        baseUrl: "https://remote-micx.invalid",
+        micxHostUrl: "https://remote-micx.invalid",
       },
     });
     const fetchCalls: CatalogFetchCall[] = [];
@@ -1911,17 +1911,17 @@ describe("agent context diagnostics analyzer", () => {
     const fixture = await createFixture({ workspace: { baseUrl: engine.baseUrl } });
     const exact = cloudConfig();
 
-    await startOpenwork(fixture.config);
+    await startMicx(fixture.config);
     await syncAllWorkspacesRuntimeMcpToEngine(fixture.config);
 
-    expect(inspectEngineMcpRegistration(fixture.config, fixture.workspace, "openwork-cloud", exact)).toBe("connected");
-    expect(inspectEngineMcpRegistration(fixture.config, fixture.workspace, "openwork-cloud", {
+    expect(inspectEngineMcpRegistration(fixture.config, fixture.workspace, "micx-cloud", exact)).toBe("connected");
+    expect(inspectEngineMcpRegistration(fixture.config, fixture.workspace, "micx-cloud", {
       headers: { Authorization: CLOUD_BEARER },
       enabled: true,
       url: CLOUD_ENDPOINT,
       type: "remote",
     })).toBe("connected");
-    expect(inspectEngineMcpRegistration(fixture.config, fixture.workspace, "openwork-cloud", {
+    expect(inspectEngineMcpRegistration(fixture.config, fixture.workspace, "micx-cloud", {
       ...exact,
       headers: { Authorization: "Bearer CHANGED_TOKEN" },
     })).toBe("not-recorded");
@@ -1949,12 +1949,12 @@ describe("agent context diagnostics route", () => {
       if (url === CLOUD_ENDPOINT) return runCatalogFetch(input, init);
       throw new Error("Diagnostics attempted an unexpected downstream endpoint");
     }) as unknown as typeof fetch;
-    const base = await startOpenwork(fixture.config);
+    const base = await startMicx(fixture.config);
     await syncAllWorkspacesRuntimeMcpToEngine(fixture.config);
     expect(inspectEngineMcpRegistration(
       fixture.config,
       fixture.workspace,
-      "openwork-cloud",
+      "micx-cloud",
       cloudConfig(),
     )).toBe("connected");
     const engineRequestCountBeforeDiagnostics = engine.requests.length;
@@ -2003,7 +2003,7 @@ describe("agent context diagnostics route", () => {
       downstreamFetches.push({ input: input instanceof Request ? input.url : String(input) });
       throw new Error("Selected engine is unavailable");
     }) as unknown as typeof fetch;
-    const base = await startOpenwork(fixture.config);
+    const base = await startMicx(fixture.config);
     const before = await snapshotTree(fixture.root);
 
     const response = await nativeFetch(`${base}/workspace/${fixture.workspace.id}/diagnostics/agent-context`, {
@@ -2039,7 +2039,7 @@ describe("agent context diagnostics route", () => {
       downstreamFetches.push(String(input));
       throw new Error("Viewer request unexpectedly performed downstream fetch");
     }) as unknown as typeof fetch;
-    const base = await startOpenwork(fixture.config);
+    const base = await startMicx(fixture.config);
     const issued = await nativeFetch(`${base}/tokens`, {
       method: "POST",
       headers: hostHeaders(),
@@ -2066,7 +2066,7 @@ describe("agent context diagnostics route", () => {
       downstreamFetches.push(String(input));
       throw new Error("Invalid request unexpectedly performed downstream fetch");
     }) as unknown as typeof fetch;
-    const base = await startOpenwork(fixture.config);
+    const base = await startMicx(fixture.config);
 
     const response = await nativeFetch(`${base}/workspace/${fixture.workspace.id}/diagnostics/agent-context`, {
       method: "POST",
@@ -2084,7 +2084,7 @@ describe("agent context diagnostics route", () => {
       withRuntime: false,
       workspace: { id: "ws_agent_diagnostics_invalid_body_cooldown" },
     });
-    const base = await startOpenwork(fixture.config);
+    const base = await startMicx(fixture.config);
 
     const invalid = await nativeFetch(`${base}/workspace/${fixture.workspace.id}/diagnostics/agent-context`, {
       method: "POST",
@@ -2108,7 +2108,7 @@ describe("agent context diagnostics route", () => {
       withRuntime: false,
       workspace: { id: "ws_agent_diagnostics_oversized_body_cooldown" },
     });
-    const base = await startOpenwork(fixture.config);
+    const base = await startMicx(fixture.config);
     const oversizedBody = JSON.stringify({
       ...emptyObservedRequest,
       padding: "x".repeat(300 * 1024),
@@ -2137,7 +2137,7 @@ describe("agent context diagnostics route", () => {
       withRuntime: false,
       workspace: { id: "ws_agent_diagnostics_chunked_body_cap" },
     });
-    const base = await startOpenwork(fixture.config);
+    const base = await startMicx(fixture.config);
     const bodyBytes = new TextEncoder().encode(JSON.stringify({
       ...emptyObservedRequest,
       padding: "x".repeat(300 * 1024),
@@ -2166,7 +2166,7 @@ describe("agent context diagnostics route", () => {
       withRuntime: false,
       workspace: { id: "ws_agent_diagnostics_slow_body_cooldown" },
     });
-    const base = await startOpenwork(fixture.config);
+    const base = await startMicx(fixture.config);
     const slowSocket = await openSlowDiagnosticsRequest(base, fixture.workspace.id);
     try {
       // Let Bun dispatch the header-complete request while its declared body
@@ -2186,13 +2186,13 @@ describe("agent context diagnostics route", () => {
   });
 
   test("terminates an incomplete dripping body at the server's absolute deadline", async () => {
-    const previousDeadline = process.env.OPENWORK_AGENT_DIAGNOSTICS_BODY_TIMEOUT_MS;
-    process.env.OPENWORK_AGENT_DIAGNOSTICS_BODY_TIMEOUT_MS = "120";
+    const previousDeadline = process.env.MICX_AGENT_DIAGNOSTICS_BODY_TIMEOUT_MS;
+    process.env.MICX_AGENT_DIAGNOSTICS_BODY_TIMEOUT_MS = "120";
     const fixture = await createFixture({
       withRuntime: false,
       workspace: { id: "ws_agent_diagnostics_body_deadline" },
     });
-    const base = await startOpenwork(fixture.config);
+    const base = await startMicx(fixture.config);
     const socket = await openSlowDiagnosticsRequest(base, fixture.workspace.id);
     const drip = setInterval(() => {
       if (!socket.destroyed && socket.writable) socket.write(" ");
@@ -2211,21 +2211,21 @@ describe("agent context diagnostics route", () => {
     } finally {
       clearInterval(drip);
       socket.destroy();
-      if (previousDeadline === undefined) delete process.env.OPENWORK_AGENT_DIAGNOSTICS_BODY_TIMEOUT_MS;
-      else process.env.OPENWORK_AGENT_DIAGNOSTICS_BODY_TIMEOUT_MS = previousDeadline;
+      if (previousDeadline === undefined) delete process.env.MICX_AGENT_DIAGNOSTICS_BODY_TIMEOUT_MS;
+      else process.env.MICX_AGENT_DIAGNOSTICS_BODY_TIMEOUT_MS = previousDeadline;
     }
   });
 
   test("rejects a concurrent incomplete request and releases its reservation after timeout", async () => {
-    const previousCooldown = process.env.OPENWORK_AGENT_DIAGNOSTICS_COOLDOWN_MS;
-    const previousDeadline = process.env.OPENWORK_AGENT_DIAGNOSTICS_BODY_TIMEOUT_MS;
-    process.env.OPENWORK_AGENT_DIAGNOSTICS_COOLDOWN_MS = "0";
-    process.env.OPENWORK_AGENT_DIAGNOSTICS_BODY_TIMEOUT_MS = "150";
+    const previousCooldown = process.env.MICX_AGENT_DIAGNOSTICS_COOLDOWN_MS;
+    const previousDeadline = process.env.MICX_AGENT_DIAGNOSTICS_BODY_TIMEOUT_MS;
+    process.env.MICX_AGENT_DIAGNOSTICS_COOLDOWN_MS = "0";
+    process.env.MICX_AGENT_DIAGNOSTICS_BODY_TIMEOUT_MS = "150";
     const fixture = await createFixture({
       withRuntime: false,
       workspace: { id: "ws_agent_diagnostics_in_flight_reservation" },
     });
-    const base = await startOpenwork(fixture.config);
+    const base = await startMicx(fixture.config);
     const incomplete = await openSlowDiagnosticsRequest(base, fixture.workspace.id);
     let concurrentIncomplete: Socket | undefined;
     try {
@@ -2250,18 +2250,18 @@ describe("agent context diagnostics route", () => {
     } finally {
       incomplete.destroy();
       concurrentIncomplete?.destroy();
-      if (previousCooldown === undefined) delete process.env.OPENWORK_AGENT_DIAGNOSTICS_COOLDOWN_MS;
-      else process.env.OPENWORK_AGENT_DIAGNOSTICS_COOLDOWN_MS = previousCooldown;
-      if (previousDeadline === undefined) delete process.env.OPENWORK_AGENT_DIAGNOSTICS_BODY_TIMEOUT_MS;
-      else process.env.OPENWORK_AGENT_DIAGNOSTICS_BODY_TIMEOUT_MS = previousDeadline;
+      if (previousCooldown === undefined) delete process.env.MICX_AGENT_DIAGNOSTICS_COOLDOWN_MS;
+      else process.env.MICX_AGENT_DIAGNOSTICS_COOLDOWN_MS = previousCooldown;
+      if (previousDeadline === undefined) delete process.env.MICX_AGENT_DIAGNOSTICS_BODY_TIMEOUT_MS;
+      else process.env.MICX_AGENT_DIAGNOSTICS_BODY_TIMEOUT_MS = previousDeadline;
     }
   });
 
   test("caps incomplete diagnostics bodies across workspaces for one server", async () => {
-    const previousCooldown = process.env.OPENWORK_AGENT_DIAGNOSTICS_COOLDOWN_MS;
-    const previousDeadline = process.env.OPENWORK_AGENT_DIAGNOSTICS_BODY_TIMEOUT_MS;
-    process.env.OPENWORK_AGENT_DIAGNOSTICS_COOLDOWN_MS = "0";
-    process.env.OPENWORK_AGENT_DIAGNOSTICS_BODY_TIMEOUT_MS = "10000";
+    const previousCooldown = process.env.MICX_AGENT_DIAGNOSTICS_COOLDOWN_MS;
+    const previousDeadline = process.env.MICX_AGENT_DIAGNOSTICS_BODY_TIMEOUT_MS;
+    process.env.MICX_AGENT_DIAGNOSTICS_COOLDOWN_MS = "0";
+    process.env.MICX_AGENT_DIAGNOSTICS_BODY_TIMEOUT_MS = "10000";
     const fixture = await createFixture({
       withRuntime: false,
       workspace: { id: "ws_agent_diagnostics_capacity_0" },
@@ -2271,7 +2271,7 @@ describe("agent context diagnostics route", () => {
       id: `ws_agent_diagnostics_capacity_${index}`,
       name: `Diagnostics capacity ${index}`,
     }));
-    const base = await startOpenwork(fixture.config);
+    const base = await startMicx(fixture.config);
     const held: Socket[] = [];
     let rejected: Socket | undefined;
     try {
@@ -2287,10 +2287,10 @@ describe("agent context diagnostics route", () => {
     } finally {
       for (const socket of held) socket.destroy();
       rejected?.destroy();
-      if (previousCooldown === undefined) delete process.env.OPENWORK_AGENT_DIAGNOSTICS_COOLDOWN_MS;
-      else process.env.OPENWORK_AGENT_DIAGNOSTICS_COOLDOWN_MS = previousCooldown;
-      if (previousDeadline === undefined) delete process.env.OPENWORK_AGENT_DIAGNOSTICS_BODY_TIMEOUT_MS;
-      else process.env.OPENWORK_AGENT_DIAGNOSTICS_BODY_TIMEOUT_MS = previousDeadline;
+      if (previousCooldown === undefined) delete process.env.MICX_AGENT_DIAGNOSTICS_COOLDOWN_MS;
+      else process.env.MICX_AGENT_DIAGNOSTICS_COOLDOWN_MS = previousCooldown;
+      if (previousDeadline === undefined) delete process.env.MICX_AGENT_DIAGNOSTICS_BODY_TIMEOUT_MS;
+      else process.env.MICX_AGENT_DIAGNOSTICS_BODY_TIMEOUT_MS = previousDeadline;
     }
   });
 
@@ -2299,7 +2299,7 @@ describe("agent context diagnostics route", () => {
       withRuntime: false,
       workspace: { id: "ws_agent_diagnostics_rate_limit" },
     });
-    const base = await startOpenwork(fixture.config);
+    const base = await startMicx(fixture.config);
     const request = () => nativeFetch(`${base}/workspace/${fixture.workspace.id}/diagnostics/agent-context`, {
       method: "POST",
       headers: clientHeaders(),
@@ -2328,7 +2328,7 @@ describe("agent context diagnostics route", () => {
       downstreamFetches.push(String(input));
       throw new Error("Remote OpenCode diagnostics unexpectedly performed downstream fetch");
     }) as unknown as typeof fetch;
-    const base = await startOpenwork(fixture.config);
+    const base = await startMicx(fixture.config);
 
     const response = await nativeFetch(`${base}/workspace/${fixture.workspace.id}/diagnostics/agent-context`, {
       method: "POST",
@@ -2341,24 +2341,24 @@ describe("agent context diagnostics route", () => {
     expect(downstreamFetches).toEqual([]);
   });
 
-  test("rejects remote OpenWork shells so diagnostics run on the owning server", async () => {
+  test("rejects remote Micx shells so diagnostics run on the owning server", async () => {
     const fixture = await createFixture({
       withRuntime: false,
       workspace: {
-        id: "ws_agent_diagnostics_remote_openwork",
+        id: "ws_agent_diagnostics_remote_micx",
         path: "",
         workspaceType: "remote",
-        remoteType: "openwork",
-        baseUrl: "https://remote-openwork.invalid",
-        openworkHostUrl: "https://remote-openwork.invalid",
+        remoteType: "micx",
+        baseUrl: "https://remote-micx.invalid",
+        micxHostUrl: "https://remote-micx.invalid",
       },
     });
     const downstreamFetches: string[] = [];
     globalThis.fetch = (async (input: Parameters<typeof fetch>[0]) => {
       downstreamFetches.push(String(input));
-      throw new Error("Remote OpenWork shell unexpectedly performed downstream fetch");
+      throw new Error("Remote Micx shell unexpectedly performed downstream fetch");
     }) as unknown as typeof fetch;
-    const base = await startOpenwork(fixture.config);
+    const base = await startMicx(fixture.config);
 
     const response = await nativeFetch(`${base}/workspace/${fixture.workspace.id}/diagnostics/agent-context`, {
       method: "POST",

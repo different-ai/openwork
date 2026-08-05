@@ -1,4 +1,4 @@
-import { connectDiagnosticIncidentBatchSchema } from "@openwork/types/den/connect-diagnostics"
+import { connectDiagnosticIncidentBatchSchema } from "@micx/types/den/connect-diagnostics"
 import { bearerAuthorized } from "../../../../src/auth"
 import { diagnosticsConfig } from "../../../../src/config"
 import {

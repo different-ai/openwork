@@ -1,10 +1,10 @@
 extends: ./electron-builder.base.yml
-appId: com.differentai.openwork
-productName: OpenWork
+appId: com.differentai.micx
+productName: Micx
 protocols:
-  - name: OpenWork
+  - name: Micx
     schemes:
-      - openwork
+      - micx
 linux:
-  executableName: openwork
-artifactName: openwork-${os}-${arch}-${version}.${ext}
+  executableName: micx
+artifactName: micx-${os}-${arch}-${version}.${ext}

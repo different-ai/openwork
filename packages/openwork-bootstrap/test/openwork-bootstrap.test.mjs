@@ -6,8 +6,8 @@ import { spawn, spawnSync } from "node:child_process"
 import assert from "node:assert/strict"
 
 const root = resolve(new URL("..", import.meta.url).pathname)
-const cli = join(root, "bin", "openwork.mjs")
-const temp = mkdtempSync(join(tmpdir(), "openwork-bootstrap-test-"))
+const cli = join(root, "bin", "micx.mjs")
+const temp = mkdtempSync(join(tmpdir(), "micx-bootstrap-test-"))
 
 // spawnSync blocks this process's event loop entirely, so it cannot be used
 // when the CLI subprocess needs to call back into an HTTP server hosted in
@@ -66,7 +66,7 @@ try {
   assert.equal(install.status, 0, install.stderr)
   const installJson = JSON.parse(install.stdout)
   assert.equal(installJson.ok, true)
-  const executableName = process.platform === "win32" ? "openwork-bootstrap.cmd" : "openwork-bootstrap"
+  const executableName = process.platform === "win32" ? "micx-bootstrap.cmd" : "micx-bootstrap"
   assert.equal(installJson.install.executable, join(binDir, executableName))
 
   const doctor = spawnSync(join(binDir, executableName), ["doctor", "--install-dir", installDir, "--bin-dir", binDir, "--json"], {
@@ -83,13 +83,13 @@ try {
   writeFileSync(
     bootstrapPath,
     JSON.stringify({
-      baseUrl: "https://api.openworklabs.com",
-      apiBaseUrl: "https://api.openworklabs.com",
+      baseUrl: "https://api.micxlabs.com",
+      apiBaseUrl: "https://api.micxlabs.com",
       requireSignin: false,
       prepared: { orgId: "org_test", orgName: "Test Org", skillId: "cob_test", skillTitle: "Test Skill", skillPath: "/tmp/skill.md" },
       claimLinks: [
-        { id: "wcl_owner", role: "owner", token: "test-owner-token", url: "https://app.openworklabs.com/workspace-claim?token=test-owner-token", expiresAt: "2030-01-01T00:00:00.000Z" },
-        { id: "wcl_member", role: "member", token: "test-member-token", url: "https://app.openworklabs.com/workspace-claim?token=test-member-token", expiresAt: "2030-01-01T00:00:00.000Z" },
+        { id: "wcl_owner", role: "owner", token: "test-owner-token", url: "https://app.micxlabs.com/workspace-claim?token=test-owner-token", expiresAt: "2030-01-01T00:00:00.000Z" },
+        { id: "wcl_member", role: "member", token: "test-member-token", url: "https://app.micxlabs.com/workspace-claim?token=test-member-token", expiresAt: "2030-01-01T00:00:00.000Z" },
       ],
     }),
     "utf8",
@@ -110,7 +110,7 @@ try {
   const claimLinkByRoleJson = JSON.parse(claimLinkByRole.stdout)
   assert.equal(claimLinkByRoleJson.claimLinks.length, 1)
   assert.equal(claimLinkByRoleJson.claimLinks[0].role, "owner")
-  assert.equal(claimLinkByRoleJson.claimLinks[0].url, "https://app.openworklabs.com/workspace-claim?token=test-owner-token")
+  assert.equal(claimLinkByRoleJson.claimLinks[0].url, "https://app.micxlabs.com/workspace-claim?token=test-owner-token")
 
   const claimLinkMissingRole = spawnSync(process.execPath, [cli, "cloud", "claim-link", "--desktop-bootstrap-path", bootstrapPath, "--role", "admin"], {
     encoding: "utf8",
@@ -132,7 +132,7 @@ try {
       ok: true,
       organization: { id: "org_test", name: "Stub Org", slug: "org_test", status: "provisional" },
       setup: { id: "wbt_test", expiresAt: "2030-01-01T00:00:00.000Z" },
-      skill: { id: "cob_test", title: "First OpenWork Skill", output: "OPENWORK_BOOTSTRAP_SKILL_TRIGGERED" },
+      skill: { id: "cob_test", title: "First Micx Skill", output: "MICX_BOOTSTRAP_SKILL_TRIGGERED" },
       claimLinks: [{ id: "wcl_test", role: "owner", token: "stub-token", url: "https://example.test/workspace-claim?token=stub-token", expiresAt: "2030-01-01T00:00:00.000Z" }],
     }),
     async (baseUrl, getRequestBody) => {
@@ -161,7 +161,7 @@ try {
       ok: true,
       organization: { id: "org_test", name: "Stub Org", slug: "org_test", status: "provisional" },
       setup: { id: "wbt_test", expiresAt: "2030-01-01T00:00:00.000Z" },
-      skill: { id: "cob_test", title: "First OpenWork Skill", output: "OPENWORK_BOOTSTRAP_SKILL_TRIGGERED" },
+      skill: { id: "cob_test", title: "First Micx Skill", output: "MICX_BOOTSTRAP_SKILL_TRIGGERED" },
       claimLinks: [{ id: "wcl_test", role: "owner", token: "stub-token", url: "https://example.test/workspace-claim?token=stub-token", expiresAt: "2030-01-01T00:00:00.000Z" }],
     }),
     async (baseUrl, getRequestBody) => {
@@ -185,22 +185,22 @@ try {
   // browser-facing web origin (used by the app's Sign In button / claim
   // links). It must NOT silently become the API origin. Previously
   // --prepare-desktop wrote the same `--base-url` value into both `baseUrl`
-  // and `apiBaseUrl`, so a normal `--base-url https://api.openworklabs.com`
+  // and `apiBaseUrl`, so a normal `--base-url https://api.micxlabs.com`
   // run broke the desktop app's Sign In flow (it opened
-  // `https://api.openworklabs.com/?mode=sign-in...` and showed raw API JSON).
+  // `https://api.micxlabs.com/?mode=sign-in...` and showed raw API JSON).
   await withStubDenApi(
     () => ({
       ok: true,
       organization: { id: "org_test", name: "Stub Org", slug: "org_test", status: "provisional" },
       setup: { id: "wbt_test", expiresAt: "2030-01-01T00:00:00.000Z" },
-      skill: { id: "cob_test", title: "First OpenWork Skill", output: "OPENWORK_BOOTSTRAP_SKILL_TRIGGERED" },
+      skill: { id: "cob_test", title: "First Micx Skill", output: "MICX_BOOTSTRAP_SKILL_TRIGGERED" },
       claimLinks: [{ id: "wcl_test", role: "owner", token: "stub-token", url: "https://example.test/workspace-claim?token=stub-token", expiresAt: "2030-01-01T00:00:00.000Z" }],
     }),
     async (baseUrl) => {
       const explicitWebBaseUrlPath = join(temp, "desktop-bootstrap-explicit-web.json")
       writeFileSync(
         explicitWebBaseUrlPath,
-        `${JSON.stringify({ brandAppName: "OpenWork Demo A" })}\n`,
+        `${JSON.stringify({ brandAppName: "Micx Demo A" })}\n`,
         "utf8",
       )
       const withExplicitWebBaseUrl = await spawnAsync(
@@ -222,7 +222,7 @@ try {
       assert.equal(writtenExplicit.baseUrl, "https://app.example.test", "an explicit --web-base-url must be written as baseUrl")
       assert.equal(writtenExplicit.apiBaseUrl, baseUrl, "apiBaseUrl must stay the real API origin, independent of the web base URL")
       assert.notEqual(writtenExplicit.baseUrl, writtenExplicit.apiBaseUrl, "baseUrl and apiBaseUrl must not collapse into the same value")
-      assert.equal(writtenExplicit.brandAppName, "OpenWork Demo A", "prepared desktop setup must preserve its profile identity")
+      assert.equal(writtenExplicit.brandAppName, "Micx Demo A", "prepared desktop setup must preserve its profile identity")
     },
   )
 

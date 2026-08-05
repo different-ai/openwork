@@ -115,14 +115,14 @@ function startMockOpencode() {
   return { server, requests };
 }
 
-async function startOpenwork(options?: { branch?: string }) {
-  const workspaceRoot = await mkdtemp(join(tmpdir(), "openwork-claude-plugin-"));
+async function startMicx(options?: { branch?: string }) {
+  const workspaceRoot = await mkdtemp(join(tmpdir(), "micx-claude-plugin-"));
   roots.push(workspaceRoot);
-  setEnv("OPENWORK_RUNTIME_DB", join(workspaceRoot, "runtime.sqlite"));
+  setEnv("MICX_RUNTIME_DB", join(workspaceRoot, "runtime.sqlite"));
 
   const github = startMockGithub(options);
-  setEnv("OPENWORK_GITHUB_API_BASE", `http://127.0.0.1:${github.port}`);
-  setEnv("OPENWORK_GITHUB_RAW_BASE", `http://127.0.0.1:${github.port}`);
+  setEnv("MICX_GITHUB_API_BASE", `http://127.0.0.1:${github.port}`);
+  setEnv("MICX_GITHUB_RAW_BASE", `http://127.0.0.1:${github.port}`);
 
   const engine = startMockOpencode();
   const config: ServerConfig = {
@@ -205,11 +205,11 @@ describe("parseClaudePluginSource", () => {
 
 describe("claude plugin bundles", () => {
   test("dryRun returns the Will-install preview with warnings", async () => {
-    const openwork = await startOpenwork();
+    const micx = await startMicx();
 
-    const response = await fetch(`${openwork.base}/workspace/ws_1/claude-plugins`, {
+    const response = await fetch(`${micx.base}/workspace/ws_1/claude-plugins`, {
       method: "POST",
-      headers: openwork.headers,
+      headers: micx.headers,
       body: JSON.stringify({ url: "https://github.com/slackapi/slack-mcp-plugin", dryRun: true }),
     });
     expect(response.status).toBe(200);
@@ -224,15 +224,15 @@ describe("claude plugin bundles", () => {
     // local-helper uses ${CLAUDE_PLUGIN_ROOT} and must be skipped with a warning.
     expect(body.preview.warnings.some((warning) => warning.includes("local-helper"))).toBe(true);
     // Nothing installed on dryRun.
-    expect(existsSync(join(openwork.workspaceRoot, ".opencode/skills/slack-plugin"))).toBe(false);
+    expect(existsSync(join(micx.workspaceRoot, ".opencode/skills/slack-plugin"))).toBe(false);
   });
 
   test("resolves branch names containing slashes in /tree/ URLs", async () => {
-    const openwork = await startOpenwork({ branch: "release/v1" });
+    const micx = await startMicx({ branch: "release/v1" });
 
-    const response = await fetch(`${openwork.base}/workspace/ws_1/claude-plugins`, {
+    const response = await fetch(`${micx.base}/workspace/ws_1/claude-plugins`, {
       method: "POST",
-      headers: openwork.headers,
+      headers: micx.headers,
       body: JSON.stringify({
         url: "https://github.com/slackapi/slack-mcp-plugin/tree/release/v1",
         dryRun: true,
@@ -247,11 +247,11 @@ describe("claude plugin bundles", () => {
   });
 
   test("installs skills, commands, and MCP servers; uninstall cleans up", async () => {
-    const openwork = await startOpenwork();
+    const micx = await startMicx();
 
-    const installResponse = await fetch(`${openwork.base}/workspace/ws_1/claude-plugins`, {
+    const installResponse = await fetch(`${micx.base}/workspace/ws_1/claude-plugins`, {
       method: "POST",
-      headers: openwork.headers,
+      headers: micx.headers,
       body: JSON.stringify({ url: "https://github.com/slackapi/slack-mcp-plugin" }),
     });
     expect(installResponse.status).toBe(200);
@@ -259,28 +259,28 @@ describe("claude plugin bundles", () => {
     expect(installBody.item.pluginId).toBe("github:slackapi/slack-mcp-plugin");
 
     // Skill and command land namespaced under .opencode/.
-    const skillPath = join(openwork.workspaceRoot, ".opencode/skills/slack-plugin/slack-search/SKILL.md");
-    const commandPath = join(openwork.workspaceRoot, ".opencode/commands/slack-plugin/standup.md");
+    const skillPath = join(micx.workspaceRoot, ".opencode/skills/slack-plugin/slack-search/SKILL.md");
+    const commandPath = join(micx.workspaceRoot, ".opencode/commands/slack-plugin/standup.md");
     expect(existsSync(skillPath)).toBe(true);
     expect(existsSync(commandPath)).toBe(true);
     expect(await readFile(skillPath, "utf8")).toContain("Search Slack messages effectively");
 
     // MCP registered in the runtime DB and pushed to the engine.
-    const listResponse = await fetch(`${openwork.base}/workspace/ws_1/mcp`, { headers: openwork.headers });
+    const listResponse = await fetch(`${micx.base}/workspace/ws_1/mcp`, { headers: micx.headers });
     const listBody = await listResponse.json() as { items: Array<{ name: string; source: string }> };
     const slackEntry = listBody.items.find((entry) => entry.name === "slack");
     expect(slackEntry?.source).toBe("config.remote");
-    expect(openwork.engine.requests.some((entry) => entry.method === "POST" && entry.pathname === "/mcp")).toBe(true);
+    expect(micx.engine.requests.some((entry) => entry.method === "POST" && entry.pathname === "/mcp")).toBe(true);
 
     // Uninstall through the shared cloud-plugins route.
     const removeResponse = await fetch(
-      `${openwork.base}/workspace/ws_1/cloud-plugins/${encodeURIComponent(installBody.item.pluginId)}`,
-      { method: "DELETE", headers: openwork.headers },
+      `${micx.base}/workspace/ws_1/cloud-plugins/${encodeURIComponent(installBody.item.pluginId)}`,
+      { method: "DELETE", headers: micx.headers },
     );
     expect(removeResponse.status).toBe(200);
     expect(existsSync(skillPath)).toBe(false);
     expect(existsSync(commandPath)).toBe(false);
-    const afterRemove = await fetch(`${openwork.base}/workspace/ws_1/mcp`, { headers: openwork.headers });
+    const afterRemove = await fetch(`${micx.base}/workspace/ws_1/mcp`, { headers: micx.headers });
     const afterRemoveBody = await afterRemove.json() as { items: Array<{ name: string }> };
     expect(afterRemoveBody.items.some((entry) => entry.name === "slack")).toBe(false);
   });

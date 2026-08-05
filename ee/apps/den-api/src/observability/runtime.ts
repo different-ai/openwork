@@ -1,5 +1,5 @@
 import type { Context, Env, Hono, MiddlewareHandler } from "hono"
-import type { JsonObject, ObservabilityBackend, ObservabilityConfig, StructuredLogLevel } from "@openwork-ee/utils/observability"
+import type { JsonObject, ObservabilityBackend, ObservabilityConfig, StructuredLogLevel } from "@micx-ee/utils/observability"
 import { observabilityConfig } from "./config.js"
 import { normalizedHonoRoute } from "./hono-route.js"
 import { sanitizeExceptionForTelemetry, sanitizeFields, sanitizeText, stripUrlQuery } from "./safe-fields.js"

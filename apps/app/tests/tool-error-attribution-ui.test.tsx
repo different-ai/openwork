@@ -7,7 +7,7 @@ import { Tool } from "../src/components/ui/tool"
 test("renders compact MCP attribution in a failed chat tool row", () => {
   const toolPart: DynamicToolUIPart = {
     type: "dynamic-tool",
-    toolName: "openwork-cloud_execute_capability",
+    toolName: "micx-cloud_execute_capability",
     toolCallId: "call-1",
     state: "output-error",
     input: {},
@@ -27,7 +27,7 @@ test("renders compact MCP attribution in a failed chat tool row", () => {
 test("renders an inline reconnect button when Cloud capability discovery finds expired credentials", () => {
   const toolPart: DynamicToolUIPart = {
     type: "dynamic-tool",
-    toolName: "openwork-cloud_search_capabilities",
+    toolName: "micx-cloud_search_capabilities",
     toolCallId: "call-reconnect",
     state: "output-available",
     input: {},
@@ -37,7 +37,7 @@ test("renders an inline reconnect button when Cloud capability discovery finds e
         connectionStatus: {
           version: 1,
           kind: "connection_action",
-          source: "openwork-cloud",
+          source: "micx-cloud",
           connectionId: "emc_knowledge",
           connectionName: "Knowledge Hub",
           authType: "oauth",
@@ -46,7 +46,7 @@ test("renders an inline reconnect button when Cloud capability discovery finds e
           actor: "member",
           action: {
             type: "reconnect",
-            surface: "openwork_your_connections",
+            surface: "micx_your_connections",
             retry: "search_capabilities",
           },
         },
@@ -68,7 +68,7 @@ test("renders an inline reconnect button when Cloud capability discovery finds e
 test("renders a copy action inside the expanded tool result", () => {
   const toolPart: DynamicToolUIPart = {
     type: "dynamic-tool",
-    toolName: "openwork-cloud_search_capabilities",
+    toolName: "micx-cloud_search_capabilities",
     toolCallId: "call-copy",
     state: "output-available",
     input: { query: "Notion pages" },
@@ -87,7 +87,7 @@ test("renders a copy action inside the expanded tool result", () => {
 test("does not render a copy action before a tool has a result", () => {
   const toolPart: DynamicToolUIPart = {
     type: "dynamic-tool",
-    toolName: "openwork-cloud_search_capabilities",
+    toolName: "micx-cloud_search_capabilities",
     toolCallId: "call-running",
     state: "input-available",
     input: { query: "Notion pages" },

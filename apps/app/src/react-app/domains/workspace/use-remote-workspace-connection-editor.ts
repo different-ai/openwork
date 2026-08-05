@@ -5,7 +5,7 @@ import {
   workspaceUpdateRemote,
   type WorkspaceInfo,
 } from "../../../app/lib/desktop";
-import { buildOpenworkWorkspaceBaseUrl, type OpenworkServerClient } from "../../../app/lib/openwork-server";
+import { buildMicxWorkspaceBaseUrl, type MicxServerClient } from "../../../app/lib/micx-server";
 import { isDesktopRuntime } from "../../../app/lib/runtime-env";
 import { t } from "../../../i18n";
 import type { RemoteWorkspaceInput } from "./types";
@@ -23,7 +23,7 @@ function describeEditorError(error: unknown) {
 
 export function useRemoteWorkspaceConnectionEditor<TWorkspace extends WorkspaceInfo>(input: {
   workspaces: TWorkspace[];
-  client: OpenworkServerClient | null;
+  client: MicxServerClient | null;
   onSaved: (workspaceId: string) => void | Promise<void>;
 }) {
   const { client, onSaved, workspaces } = input;
@@ -44,16 +44,16 @@ export function useRemoteWorkspaceConnectionEditor<TWorkspace extends WorkspaceI
 
   const initialValues = useMemo(
     () => {
-      const hostUrl = workspace?.openworkHostUrl ?? workspace?.baseUrl ?? "";
-      const mountedUrl = workspace?.remoteType === "openwork"
-        ? buildOpenworkWorkspaceBaseUrl(hostUrl, workspace.openworkWorkspaceId) ?? hostUrl
+      const hostUrl = workspace?.micxHostUrl ?? workspace?.baseUrl ?? "";
+      const mountedUrl = workspace?.remoteType === "micx"
+        ? buildMicxWorkspaceBaseUrl(hostUrl, workspace.micxWorkspaceId) ?? hostUrl
         : hostUrl;
       return {
-        openworkHostUrl: mountedUrl,
-        openworkToken:
-          workspace?.openworkToken ??
-          workspace?.openworkClientToken ??
-          workspace?.openworkHostToken ??
+        micxHostUrl: mountedUrl,
+        micxToken:
+          workspace?.micxToken ??
+          workspace?.micxClientToken ??
+          workspace?.micxHostToken ??
           "",
         directory: workspace?.directory ?? workspace?.path ?? "",
         displayName: workspace?.displayName ?? workspace?.name ?? "",
@@ -81,7 +81,7 @@ export function useRemoteWorkspaceConnectionEditor<TWorkspace extends WorkspaceI
   const save = useCallback(
     async (fields: RemoteWorkspaceInput) => {
       const id = workspaceId?.trim() ?? "";
-      const baseUrl = fields.openworkHostUrl?.trim() ?? "";
+      const baseUrl = fields.micxHostUrl?.trim() ?? "";
       if (!id || !baseUrl) {
         setError(t("dashboard.remote_base_url_required"));
         return;
@@ -92,33 +92,33 @@ export function useRemoteWorkspaceConnectionEditor<TWorkspace extends WorkspaceI
       try {
         const displayName = fields.displayName?.trim() || null;
         const directory = fields.directory?.trim() || null;
-        const openworkToken = fields.openworkToken?.trim() ?? "";
+        const micxToken = fields.micxToken?.trim() ?? "";
         if (isDesktopRuntime()) {
           await workspaceUpdateRemote({
             workspaceId: id,
             baseUrl,
-            openworkHostUrl: baseUrl,
-            openworkToken,
-            openworkClientToken: "",
-            openworkHostToken: "",
+            micxHostUrl: baseUrl,
+            micxToken,
+            micxClientToken: "",
+            micxHostToken: "",
             displayName,
             directory,
-            remoteType: "openwork",
+            remoteType: "micx",
           });
           await onSaved(id);
         } else {
           if (!client) throw new Error(t("app.error_connect_first"));
-          const connectionChanged = baseUrl !== (initialValues.openworkHostUrl?.trim() ?? "") ||
-            openworkToken !== (initialValues.openworkToken?.trim() ?? "") ||
+          const connectionChanged = baseUrl !== (initialValues.micxHostUrl?.trim() ?? "") ||
+            micxToken !== (initialValues.micxToken?.trim() ?? "") ||
             directory !== (initialValues.directory?.trim() || null);
           if (connectionChanged) {
             const result = await client.createRemoteWorkspace({
               baseUrl,
-              openworkHostUrl: baseUrl,
-              openworkToken: openworkToken || null,
+              micxHostUrl: baseUrl,
+              micxToken: micxToken || null,
               displayName,
               directory,
-              remoteType: "openwork",
+              remoteType: "micx",
             });
             await onSaved(result.activeId ?? id);
           } else {
@@ -133,7 +133,7 @@ export function useRemoteWorkspaceConnectionEditor<TWorkspace extends WorkspaceI
         setBusy(false);
       }
     },
-    [client, initialValues.directory, initialValues.openworkHostUrl, initialValues.openworkToken, onSaved, workspaceId],
+    [client, initialValues.directory, initialValues.micxHostUrl, initialValues.micxToken, onSaved, workspaceId],
   );
 
   return {

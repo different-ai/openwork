@@ -1,10 +1,10 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
 import {
-  buildOpenworkEnvRuntimeKey,
-  readOpenworkEnvPendingChanges,
-  writeOpenworkEnvPendingChanges,
-} from "../src/app/lib/openwork-env-runtime";
+  buildMicxEnvRuntimeKey,
+  readMicxEnvPendingChanges,
+  writeMicxEnvPendingChanges,
+} from "../src/app/lib/micx-env-runtime";
 
 const originalWindow = globalThis.window;
 
@@ -32,7 +32,7 @@ function memoryStorage(): Storage {
   };
 }
 
-describe("openwork env runtime", () => {
+describe("micx env runtime", () => {
   beforeEach(() => {
     Object.defineProperty(globalThis, "window", {
       configurable: true,
@@ -52,39 +52,39 @@ describe("openwork env runtime", () => {
 
   test("persists pending changes across browser sessions", () => {
     const runtimeKey = "http://127.0.0.1:8787::pid:123";
-    writeOpenworkEnvPendingChanges(true, runtimeKey);
-    expect(readOpenworkEnvPendingChanges(runtimeKey)).toBe(true);
+    writeMicxEnvPendingChanges(true, runtimeKey);
+    expect(readMicxEnvPendingChanges(runtimeKey)).toBe(true);
 
     window.sessionStorage.clear();
-    expect(readOpenworkEnvPendingChanges(runtimeKey)).toBe(true);
+    expect(readMicxEnvPendingChanges(runtimeKey)).toBe(true);
 
-    writeOpenworkEnvPendingChanges(false);
-    expect(readOpenworkEnvPendingChanges(runtimeKey)).toBe(false);
+    writeMicxEnvPendingChanges(false);
+    expect(readMicxEnvPendingChanges(runtimeKey)).toBe(false);
   });
 
   test("reads legacy sessionStorage pending state", () => {
-    window.sessionStorage.setItem("openwork.settings.environment.pendingChanges", "1");
+    window.sessionStorage.setItem("micx.settings.environment.pendingChanges", "1");
 
-    expect(readOpenworkEnvPendingChanges()).toBe(true);
+    expect(readMicxEnvPendingChanges()).toBe(true);
   });
 
   test("clears pending changes after the runtime changes", () => {
-    writeOpenworkEnvPendingChanges(true, "http://127.0.0.1:8787::pid:123");
+    writeMicxEnvPendingChanges(true, "http://127.0.0.1:8787::pid:123");
 
-    expect(readOpenworkEnvPendingChanges("http://127.0.0.1:8787::pid:456")).toBe(false);
-    expect(readOpenworkEnvPendingChanges("http://127.0.0.1:8787::pid:456")).toBe(false);
+    expect(readMicxEnvPendingChanges("http://127.0.0.1:8787::pid:456")).toBe(false);
+    expect(readMicxEnvPendingChanges("http://127.0.0.1:8787::pid:456")).toBe(false);
   });
 
   test("builds a stable runtime key from server identity", () => {
-    expect(buildOpenworkEnvRuntimeKey({
+    expect(buildMicxEnvRuntimeKey({
       baseUrl: "http://127.0.0.1:8787/",
       pid: 123,
       port: 8787,
     })).toBe("http://127.0.0.1:8787::pid:123");
-    expect(buildOpenworkEnvRuntimeKey({
+    expect(buildMicxEnvRuntimeKey({
       baseUrl: "http://127.0.0.1:8787",
       port: 8787,
     })).toBe("http://127.0.0.1:8787::port:8787");
-    expect(buildOpenworkEnvRuntimeKey({})).toBeUndefined();
+    expect(buildMicxEnvRuntimeKey({})).toBeUndefined();
   });
 });

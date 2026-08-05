@@ -184,7 +184,7 @@ describe("Drive helpers", () => {
   })
 
   test("buildDriveMultipartUpload frames metadata and preserves binary bytes", () => {
-    const boundary = "openwork-test-boundary"
+    const boundary = "micx-test-boundary"
     const content = Buffer.from([0x00, 0xfb, 0xef, 0xbe, 0xff, 0x61])
     const metadata = { name: "Résumé.txt", parents: ["folder_1"] }
     const body = buildDriveMultipartUpload({ metadata, content, mimeType: "text/plain", boundary })

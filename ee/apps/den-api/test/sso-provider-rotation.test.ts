@@ -1,8 +1,8 @@
 import { afterAll, beforeAll, expect, mock, test } from "bun:test"
-import { createDenTypeId } from "@openwork-ee/utils/typeid"
+import { createDenTypeId } from "@micx-ee/utils/typeid"
 
 function seedRequiredEnv() {
-  process.env.DATABASE_URL = process.env.DATABASE_URL ?? "mysql://root:password@127.0.0.1:3306/openwork_test_sso_provider_rotation"
+  process.env.DATABASE_URL = process.env.DATABASE_URL ?? "mysql://root:password@127.0.0.1:3306/micx_test_sso_provider_rotation"
   process.env.DEN_DB_ENCRYPTION_KEY = process.env.DEN_DB_ENCRYPTION_KEY ?? "local-dev-db-encryption-key-please-change-1234567890"
   process.env.BETTER_AUTH_SECRET = process.env.BETTER_AUTH_SECRET ?? "y".repeat(32)
   process.env.BETTER_AUTH_URL = process.env.BETTER_AUTH_URL ?? "http://127.0.0.1:8790"
@@ -19,13 +19,13 @@ const legacyProviderIds = {
   recovery: `legacy-sso-${recoveryOrganizationId}`,
 }
 const canonicalProviderIds = {
-  first: `openwork-sso-${firstOrganizationId}`,
-  recovery: `openwork-sso-${recoveryOrganizationId}`,
+  first: `micx-sso-${firstOrganizationId}`,
+  recovery: `micx-sso-${recoveryOrganizationId}`,
 }
 
 let db: typeof import("../src/db.js").db
-let schema: typeof import("@openwork-ee/den-db/schema")
-let drizzle: typeof import("@openwork-ee/den-db/drizzle")
+let schema: typeof import("@micx-ee/den-db/schema")
+let drizzle: typeof import("@micx-ee/den-db/drizzle")
 let registerOrganizationSsoConnection: typeof import("../src/sso.js").registerOrganizationSsoConnection
 
 async function cleanup() {
@@ -41,7 +41,7 @@ beforeAll(async () => {
   seedRequiredEnv()
   mock.restore()
 
-  const realDb = (await import("@openwork-ee/den-db")).createDenDb({
+  const realDb = (await import("@micx-ee/den-db")).createDenDb({
     databaseUrl: process.env.DATABASE_URL,
     mode: "mysql",
   }).db
@@ -75,8 +75,8 @@ beforeAll(async () => {
 
   const [dbModule, schemaModule, drizzleModule, ssoModule] = await Promise.all([
     import("../src/db.js"),
-    import("@openwork-ee/den-db/schema"),
-    import("@openwork-ee/den-db/drizzle"),
+    import("@micx-ee/den-db/schema"),
+    import("@micx-ee/den-db/drizzle"),
     import("../src/sso.js"),
   ])
   db = dbModule.db

@@ -1,9 +1,9 @@
-import { createDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
+import { createDenTypeId, type DenTypeId } from "@micx-ee/utils/typeid"
 import { afterAll, beforeAll, describe, expect, test } from "bun:test"
 import type { OpenApiOperation } from "../src/mcp/policy.js"
 
 function seedRequiredEnv() {
-  process.env.DATABASE_URL = process.env.DATABASE_URL ?? "mysql://root:password@127.0.0.1:3306/openwork_test_nativecaps"
+  process.env.DATABASE_URL = process.env.DATABASE_URL ?? "mysql://root:password@127.0.0.1:3306/micx_test_nativecaps"
   process.env.DEN_DB_ENCRYPTION_KEY = process.env.DEN_DB_ENCRYPTION_KEY ?? "local-dev-db-encryption-key-please-change-1234567890"
   process.env.BETTER_AUTH_SECRET = process.env.BETTER_AUTH_SECRET ?? "local-dev-secret-not-for-production-use!!"
   process.env.BETTER_AUTH_URL = process.env.BETTER_AUTH_URL ?? "http://127.0.0.1:8790"
@@ -43,8 +43,8 @@ function isOpenApiDocument(value: unknown): value is TestOpenApiDocument {
 
 let app: typeof import("../src/app.js").default
 let db: typeof import("../src/db.js").db
-let schema: typeof import("@openwork-ee/den-db/schema")
-let drizzle: typeof import("@openwork-ee/den-db/drizzle")
+let schema: typeof import("@micx-ee/den-db/schema")
+let drizzle: typeof import("@micx-ee/den-db/drizzle")
 let catalog: ReturnType<typeof import("../src/mcp/catalog.js").buildMcpCatalog>
 let nativeCapabilities: typeof import("../src/mcp/native-capabilities.js")
 let session: typeof import("../src/session.js")
@@ -94,8 +94,8 @@ beforeAll(async () => {
   const [appImport, dbImport, schemaImport, drizzleImport, catalogImport, nativeImport, sessionImport, oauthImport, connectionsImport] = await Promise.all([
     import("../src/app.js"),
     import("../src/db.js"),
-    import("@openwork-ee/den-db/schema"),
-    import("@openwork-ee/den-db/drizzle"),
+    import("@micx-ee/den-db/schema"),
+    import("@micx-ee/den-db/drizzle"),
     import("../src/mcp/catalog.js"),
     import("../src/mcp/native-capabilities.js"),
     import("../src/session.js"),

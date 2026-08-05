@@ -2,7 +2,7 @@
  * Runtime OpenCode configuration injected via a server-managed config file
  * passed to the engine as OPENCODE_CONFIG.
  *
- * This is the single source of truth for the openwork agent definition,
+ * This is the single source of truth for the micx agent definition,
  * plugins, and any other config that should be injected at runtime rather
  * than written to the user's own config files. Both cli.ts and embedded.ts
  * use this.
@@ -16,12 +16,12 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import {
-  openworkExtensionsPreviewPluginPath,
-  openworkCapabilitiesKnowledgePluginPath,
-  openworkAnthropicAdaptiveThinkingPluginPath,
-  openworkAnthropicToolSchemaPluginPath,
-  openworkOfficeAttachmentsPluginPath,
-} from "./openwork-extensions-plugin-path.js";
+  micxExtensionsPreviewPluginPath,
+  micxCapabilitiesKnowledgePluginPath,
+  micxAnthropicAdaptiveThinkingPluginPath,
+  micxAnthropicToolSchemaPluginPath,
+  micxOfficeAttachmentsPluginPath,
+} from "./micx-extensions-plugin-path.js";
 import type { ServerConfig } from "./types.js";
 import { runtimeStorageDir } from "./runtime-db.js";
 import {
@@ -35,9 +35,9 @@ import {
   type RuntimeOpencodeConfig,
 } from "./runtime-opencode-config-store.js";
 
-const OPENWORK_AGENT_PROMPT = `You are OpenWork.
+const MICX_AGENT_PROMPT = `You are Micx.
 
-When the user refers to "you", they mean the OpenWork app and the current workspace.
+When the user refers to "you", they mean the Micx app and the current workspace.
 
 Your job:
 - Help the user work on files safely.
@@ -59,9 +59,9 @@ Hard rule: never copy private memory into repo files. Store only redacted summar
 - If steps repeat, factor them into a skill.
 - Prefer clear, practical steps over abstract explanations.
 
-## OpenWork Artifacts
+## Micx Artifacts
 
-OpenWork can preview, edit, and download standard artifacts when you create or update them in the workspace.
+Micx can preview, edit, and download standard artifacts when you create or update them in the workspace.
 
 - Prefer standard output files for user-visible deliverables: Markdown (.md), CSV (.csv), Excel workbooks (.xlsx), PowerPoint decks (.pptx), and browser previews (index.html or a local http://localhost:<port> URL).
 - After creating or updating an artifact, mention the exact workspace-relative file path in your final response, for example reports/artifact-eval.md or reports/artifact-eval.xlsx.
@@ -86,31 +86,31 @@ Manage: to show what is saved, discover and execute the list capability (getMemo
 
 Never persist secrets, credentials, API keys, tokens, or sensitive PII into a memory. This applies to both the content sentence and any cited snippets — redact secrets from a snippet before saving it.`;
 
-export async function buildOpenworkRuntimeConfigObject(
+export async function buildMicxRuntimeConfigObject(
   config?: ServerConfig,
   workspaceId?: string,
 ): Promise<Record<string, unknown>> {
   const runtimeConfig = config && workspaceId ? await readEffectiveRuntimeOpencodeConfig(config, workspaceId) : {};
-  return buildOpenworkRuntimeConfigObjectFromSnapshot(runtimeConfig);
+  return buildMicxRuntimeConfigObjectFromSnapshot(runtimeConfig);
 }
 
-export function buildOpenworkRuntimeConfigObjectFromSnapshot(
+export function buildMicxRuntimeConfigObjectFromSnapshot(
   runtimeConfig: RuntimeOpencodeConfig,
 ): Record<string, unknown> {
   const disabledProviders = runtimeDisabledProviderList(runtimeConfig);
   const provider = runtimeProviderMap(runtimeConfig);
   return {
     ...runtimeConfig,
-    default_agent: runtimeConfig.default_agent ?? "openwork",
+    default_agent: runtimeConfig.default_agent ?? "micx",
     agent: {
-      openwork: {
-        description: "OpenWork default agent",
+      micx: {
+        description: "Micx default agent",
         mode: "primary",
         temperature: 0.2,
-        prompt: OPENWORK_AGENT_PROMPT,
+        prompt: MICX_AGENT_PROMPT,
         permission: {
           skill: {
-            // OpenWork supplies its own current skill routing and no longer
+            // Micx supplies its own current skill routing and no longer
             // supports these engine or legacy workspace skills.
             "customize-opencode": "deny",
             "get-started": "deny",
@@ -123,11 +123,11 @@ export function buildOpenworkRuntimeConfigObjectFromSnapshot(
     },
     plugin: [
       "opencode-chrome-devtools",
-      openworkExtensionsPreviewPluginPath(),
-      openworkCapabilitiesKnowledgePluginPath(),
-      openworkOfficeAttachmentsPluginPath(),
-      openworkAnthropicAdaptiveThinkingPluginPath(),
-      openworkAnthropicToolSchemaPluginPath(),
+      micxExtensionsPreviewPluginPath(),
+      micxCapabilitiesKnowledgePluginPath(),
+      micxOfficeAttachmentsPluginPath(),
+      micxAnthropicAdaptiveThinkingPluginPath(),
+      micxAnthropicToolSchemaPluginPath(),
       ...runtimePluginList(runtimeConfig),
     ],
     ...(disabledProviders.length ? { disabled_providers: disabledProviders } : {}),
@@ -154,36 +154,36 @@ function stableStringify(value: unknown): string {
   return JSON.stringify(stableJsonValue(value));
 }
 
-export async function buildOpenworkRuntimeConfig(config?: ServerConfig, workspaceId?: string): Promise<string> {
-  return stableStringify(await buildOpenworkRuntimeConfigObject(config, workspaceId));
+export async function buildMicxRuntimeConfig(config?: ServerConfig, workspaceId?: string): Promise<string> {
+  return stableStringify(await buildMicxRuntimeConfigObject(config, workspaceId));
 }
 
-export function openworkRuntimeConfigFilePath(config: ServerConfig): string {
+export function micxRuntimeConfigFilePath(config: ServerConfig): string {
   return join(runtimeStorageDir(config), "runtime-opencode-config.json");
 }
 
 // Serialize file writes per path so a slow older write can never land after
 // (and clobber) a newer one. Content is built inside the queued job so each
 // job reads the latest runtime-DB state.
-export interface OpenworkRuntimeConfigWriteResult {
+export interface MicxRuntimeConfigWriteResult {
   path: string;
   changed: boolean;
 }
 
-const fileWriteQueue = new Map<string, Promise<OpenworkRuntimeConfigWriteResult>>();
+const fileWriteQueue = new Map<string, Promise<MicxRuntimeConfigWriteResult>>();
 
 /**
  * Rebuild the engine-visible runtime config file from the runtime DB.
  * Atomic (temp file + rename) so the engine never reads a partial file
  * mid-dispose.
  */
-export async function writeOpenworkRuntimeConfigFile(
+export async function writeMicxRuntimeConfigFile(
   config: ServerConfig,
   workspaceId: string,
-): Promise<OpenworkRuntimeConfigWriteResult> {
-  const path = openworkRuntimeConfigFilePath(config);
+): Promise<MicxRuntimeConfigWriteResult> {
+  const path = micxRuntimeConfigFilePath(config);
   const job = async () => {
-    const content = await buildOpenworkRuntimeConfig(config, workspaceId);
+    const content = await buildMicxRuntimeConfig(config, workspaceId);
     const current = await readFile(path, "utf8").catch(() => undefined);
     if (current === content) return { path, changed: false };
     await mkdir(runtimeStorageDir(config), { recursive: true });
@@ -203,9 +203,9 @@ export async function writeOpenworkRuntimeConfigFile(
  * instance rebuild reads fresh state instead of a spawn-time snapshot.
  * Returns an unsubscribe function.
  */
-export function keepOpenworkRuntimeConfigFileFresh(config: ServerConfig, workspaceId: string): () => void {
+export function keepMicxRuntimeConfigFileFresh(config: ServerConfig, workspaceId: string): () => void {
   return onRuntimeOpencodeConfigWrite((writeConfig, writtenWorkspaceId) => {
     if (writtenWorkspaceId !== workspaceId && !isEngineGlobalRuntimeConfigId(writtenWorkspaceId)) return;
-    void writeOpenworkRuntimeConfigFile(writeConfig, workspaceId).catch(() => undefined);
+    void writeMicxRuntimeConfigFile(writeConfig, workspaceId).catch(() => undefined);
   });
 }

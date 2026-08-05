@@ -87,7 +87,7 @@ export function InspectionBody({ body }: { body: ExternalMcpInspectionBody }) {
 }
 
 export function diagnosisLayerLabel(layer: ExternalMcpToolCallInspection["diagnosis"]["layer"]): string {
-  if (layer === "openwork") return "OpenWork before send";
+  if (layer === "micx") return "Micx before send";
   if (layer === "network") return "Network / no response";
   if (layer === "mcp_connection") return "MCP connection / setup";
   if (layer === "remote_http") return "Remote MCP HTTP";
@@ -108,14 +108,14 @@ type HopState = "succeeded" | "failed" | "unreached";
 
 function transportLabel(inspection: ExternalMcpToolCallInspection | null): string {
   if (inspection?.response) return `HTTP ${inspection.response.status}`;
-  if (inspection?.request && inspection.diagnosis.layer !== "openwork") return "No response";
+  if (inspection?.request && inspection.diagnosis.layer !== "micx") return "No response";
   return "Not sent";
 }
 
 function traceStates(outcome: McpToolCallOutcome): [HopState, HopState, HopState] {
   if (outcome.status === "completed") return ["succeeded", "succeeded", "succeeded"];
   const inspection = outcome.inspection;
-  if (!inspection || inspection.diagnosis.layer === "openwork") return ["failed", "unreached", "unreached"];
+  if (!inspection || inspection.diagnosis.layer === "micx") return ["failed", "unreached", "unreached"];
   if (inspection.diagnosis.layer === "mcp_tool") return ["succeeded", "succeeded", "failed"];
   if (inspection.diagnosis.layer === "mcp_connection" && !inspection.request) return ["failed", "unreached", "unreached"];
   return ["succeeded", "failed", "unreached"];
@@ -147,7 +147,7 @@ function DetailsUnavailable() {
 function RedactionNotice() {
   return (
     <div className="rounded-lg border border-amber-100 bg-amber-50/70 px-3 py-2 text-[10px] leading-4 text-amber-800">
-      Credential and session headers are redacted. Bodies may contain sensitive provider data; this inspection is returned only for this run and is not stored in OpenWork logs.
+      Credential and session headers are redacted. Bodies may contain sensitive provider data; this inspection is returned only for this run and is not stored in Micx logs.
     </div>
   );
 }
@@ -164,7 +164,7 @@ function RequestInspection({ inspection }: { inspection: ExternalMcpToolCallInsp
             <span className="font-semibold text-blue-300">{inspection.request.method}</span> <span className="break-all">{inspection.request.url}</span>
           </div>
         ) : (
-          <p className="mt-2 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-[11px] text-gray-500">No tools/call request left OpenWork.</p>
+          <p className="mt-2 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-[11px] text-gray-500">No tools/call request left Micx.</p>
         )}
       </div>
       {inspection.request ? (
@@ -227,7 +227,7 @@ export function McpToolCallInspector({ outcome }: { outcome: McpToolCallOutcome 
       </div>
 
       <div className="flex flex-wrap items-center px-4 py-3">
-        <TracePill label="OpenWork" state={states[0]} />
+        <TracePill label="Micx" state={states[0]} />
         <span className="h-px w-6 bg-gray-200" aria-hidden="true" />
         <TracePill label={transportLabel(outcome.inspection)} state={states[1]} />
         <span className="h-px w-6 bg-gray-200" aria-hidden="true" />
@@ -249,7 +249,7 @@ export function McpToolCallInspector({ outcome }: { outcome: McpToolCallOutcome 
           <div className="space-y-2">
             <pre className="max-h-80 overflow-auto rounded-xl bg-gray-950 p-3 text-[11px] leading-[18px] text-gray-100">{formatJson(outcome.result)}</pre>
             <p className="inline-flex items-center gap-1.5 text-[10px] text-gray-500">
-              <LockKeyhole className="h-3 w-3" aria-hidden="true" /> Credential headers redacted. Returned only for this run — never stored in OpenWork logs.
+              <LockKeyhole className="h-3 w-3" aria-hidden="true" /> Credential headers redacted. Returned only for this run — never stored in Micx logs.
             </p>
           </div>
         ) : activeTab === "request" ? (

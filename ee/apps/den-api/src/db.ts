@@ -1,4 +1,4 @@
-import { createDenDb } from "@openwork-ee/den-db"
+import { createDenDb } from "@micx-ee/den-db"
 import { env } from "./env.js"
 
 export const { db } = createDenDb({

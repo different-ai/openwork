@@ -1,4 +1,4 @@
-const MODELS_DEV_API_URL = "https://models.openworklabs.com/api.json"
+const MODELS_DEV_API_URL = "https://models.micxlabs.com/api.json"
 const MODELS_DEV_CACHE_TTL_MS = 1000 * 60 * 10
 
 type JsonRecord = Record<string, unknown>
@@ -60,7 +60,7 @@ async function loadModelsDevCatalog() {
   const response = await fetch(MODELS_DEV_API_URL, {
     headers: {
       Accept: "application/json",
-      "User-Agent": "OpenWork Den API",
+      "User-Agent": "Micx Den API",
     },
   })
 

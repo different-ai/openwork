@@ -1,16 +1,16 @@
-# OpenWork Bootstrap CLI
+# Micx Bootstrap CLI
 
-Script-installable `openwork-bootstrap` command for agent-first onboarding.
+Script-installable `micx-bootstrap` command for agent-first onboarding.
 
 This package is intentionally small and does not assume npm is the install
-channel. A bootstrap script can place `bin/openwork.mjs` on disk, then run:
+channel. A bootstrap script can place `bin/micx.mjs` on disk, then run:
 
 ```bash
-openwork-bootstrap install --bin-dir ~/.local/bin --install-dir ~/.openwork/bootstrap
-openwork-bootstrap doctor --json
-openwork-bootstrap install app --manifest https://example.com/openwork-install-manifest.json
-openwork-bootstrap doctor --app --json
-OPENWORK_OWNER_PASSWORD='<generated-password>' openwork-bootstrap cloud onboard --base-url https://den.example.com --owner-email ada@example.com --org-name 'Ada Workspace' --invite-email teammate@example.com --skill-name 'First skill' --json
+micx-bootstrap install --bin-dir ~/.local/bin --install-dir ~/.micx/bootstrap
+micx-bootstrap doctor --json
+micx-bootstrap install app --manifest https://example.com/micx-install-manifest.json
+micx-bootstrap doctor --app --json
+MICX_OWNER_PASSWORD='<generated-password>' micx-bootstrap cloud onboard --base-url https://den.example.com --owner-email ada@example.com --org-name 'Ada Workspace' --invite-email teammate@example.com --skill-name 'First skill' --json
 ```
 
 Current scope:
@@ -24,4 +24,4 @@ Current scope:
 - `cloud onboard` drives the headless REST onboarding flow: sign up, sign in,
   create an org, invite a teammate, and create a starter skill.
 
-This is a bootstrap layer for install and Cloud onboarding; runtime hosting uses the desktop app, OpenWork Cloud, or `openwork-server`.
+This is a bootstrap layer for install and Cloud onboarding; runtime hosting uses the desktop app, Micx Cloud, or `micx-server`.

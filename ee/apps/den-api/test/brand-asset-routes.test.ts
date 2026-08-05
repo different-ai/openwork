@@ -1,4 +1,4 @@
-import { createDenTypeId } from "@openwork-ee/utils/typeid"
+import { createDenTypeId } from "@micx-ee/utils/typeid"
 import { beforeAll, beforeEach, expect, mock, test } from "bun:test"
 import { Hono } from "hono"
 import sharp from "sharp"

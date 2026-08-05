@@ -1,6 +1,6 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
-import { eq, or, sql, type SQL } from "@openwork-ee/den-db/drizzle"
-import { OrganizationTable } from "@openwork-ee/den-db/schema"
+import { eq, or, sql, type SQL } from "@micx-ee/den-db/drizzle"
+import { OrganizationTable } from "@micx-ee/den-db/schema"
 import { z } from "zod"
 import { organizationCloudEnabled } from "../capability-sources/cloud-rollout.js"
 import { db } from "../db.js"

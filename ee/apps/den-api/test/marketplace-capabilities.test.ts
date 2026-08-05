@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeAll, describe, expect, mock, test } from "bun:test"
-import { and, eq, inArray } from "@openwork-ee/den-db/drizzle"
+import { and, eq, inArray } from "@micx-ee/den-db/drizzle"
 import {
   AuthUserTable,
   ConfigObjectAccessGrantTable,
@@ -18,13 +18,13 @@ import {
   PluginTable,
   OrganizationTable,
   TeamTable,
-} from "@openwork-ee/den-db/schema"
-import { createDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
+} from "@micx-ee/den-db/schema"
+import { createDenTypeId, type DenTypeId } from "@micx-ee/utils/typeid"
 import { memberFacingMcpConnectionsEnabled } from "../src/capability-sources/external-mcp-rollout.js"
 import type { McpMemberIdentity } from "../src/mcp/external-capabilities.js"
 
 function seedRequiredEnv() {
-  process.env.DATABASE_URL = process.env.DATABASE_URL ?? "mysql://root:password@127.0.0.1:3306/openwork_test_pr3"
+  process.env.DATABASE_URL = process.env.DATABASE_URL ?? "mysql://root:password@127.0.0.1:3306/micx_test_pr3"
   process.env.DEN_DB_ENCRYPTION_KEY = process.env.DEN_DB_ENCRYPTION_KEY ?? "x".repeat(32)
   process.env.BETTER_AUTH_SECRET = process.env.BETTER_AUTH_SECRET ?? "y".repeat(32)
   process.env.BETTER_AUTH_URL = process.env.BETTER_AUTH_URL ?? "http://127.0.0.1:8790"
@@ -59,7 +59,7 @@ const createdUserIds: DenTypeId<"user">[] = []
 beforeAll(async () => {
   seedRequiredEnv()
   mock.restore()
-  db = (await import("@openwork-ee/den-db")).createDenDb({
+  db = (await import("@micx-ee/den-db")).createDenDb({
     databaseUrl: process.env.DATABASE_URL,
     mode: "mysql",
   }).db
@@ -672,7 +672,7 @@ describe("marketplace capabilities source", () => {
     if (!missingConnection.ok) throw new Error(missingConnection.message)
     expect(missingConnection.result.serverSpec).toEqual(serverSpec)
     expect(missingConnection.result.status).toBe("needs_connection")
-    expect(missingConnection.result.hint).toContain("OpenWork Cloud -> Connectors")
+    expect(missingConnection.result.hint).toContain("Micx Cloud -> Connectors")
 
     const connectionId = createDenTypeId("externalMcpConnection")
     await db.insert(ExternalMcpConnectionTable).values({
@@ -861,13 +861,13 @@ describe("marketplace capabilities source", () => {
     expect(match?.mcpRequirements?.map((requirement) => requirement.serverName)).toEqual(["alpha", "slack"])
     expect(match?.mcpRequirements?.every((requirement) => requirement.pluginName === "Revenue Ops Plugin")).toBe(true)
     expect(match?.mcpRequirements?.every((requirement) => requirement.state === "needs_admin_setup")).toBe(true)
-    expect(match?.action?.surface).toBe("openwork_organization_connections")
+    expect(match?.action?.surface).toBe("micx_organization_connections")
     expectOrganizationConnectionsUrl(match?.action?.url)
 
     const result = await execute(teamMember, seeded)
     if (!result.ok) throw new Error(result.message)
     expect(result.result.status).toBe("needs_admin_setup")
-    expect(result.result.action?.surface).toBe("openwork_organization_connections")
+    expect(result.result.action?.surface).toBe("micx_organization_connections")
     expect(result.result.mcpRequirements?.map((requirement) => requirement.serverName)).toEqual(["alpha", "slack"])
   })
 

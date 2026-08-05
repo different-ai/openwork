@@ -11,78 +11,78 @@ import {
 } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import type {
-  OpenworkAffordanceDescriptor,
-  OpenworkAffordanceEffects,
-  OpenworkAffordanceRequest,
-  OpenworkAffordanceResult,
-} from "@openwork/types/openwork-affordance";
-import type { OpenworkContextSnapshot } from "@openwork/types/openwork-context";
+  MicxAffordanceDescriptor,
+  MicxAffordanceEffects,
+  MicxAffordanceRequest,
+  MicxAffordanceResult,
+} from "@micx/types/micx-affordance";
+import type { MicxContextSnapshot } from "@micx/types/micx-context";
 
-export type OpenworkControlSideEffect = "none" | "navigation" | "mutation" | "external";
+export type MicxControlSideEffect = "none" | "navigation" | "mutation" | "external";
 
-export type OpenworkControlActionArg = {
+export type MicxControlActionArg = {
   name: string;
   type?: "string" | "number" | "boolean" | "object" | "array" | "unknown";
   required?: boolean;
   description?: string;
 };
 
-export type OpenworkControlActionMetadata = {
+export type MicxControlActionMetadata = {
   id: string;
   label: string;
   description?: string;
   kind: "query" | "command";
-  effects: OpenworkAffordanceEffects;
-  sideEffect: OpenworkControlSideEffect;
+  effects: MicxAffordanceEffects;
+  sideEffect: MicxControlSideEffect;
   requiresConfirmation: boolean;
   requiresArgs: boolean;
   hasPreviewArgs: boolean;
   previewArgs?: unknown;
-  args?: OpenworkControlActionArg[];
+  args?: MicxControlActionArg[];
   disabled: boolean;
   busy: boolean;
 };
 
-export type OpenworkControlSnapshot = {
+export type MicxControlSnapshot = {
   version: number;
   enabled: boolean;
   route: string;
   status: "off" | "ready" | "acting";
   busyActionId: string | null;
   narration: string;
-  actions: OpenworkControlActionMetadata[];
+  actions: MicxControlActionMetadata[];
 };
 
-export type OpenworkControlResult =
+export type MicxControlResult =
   | { ok: true; actionId: string; result?: unknown }
   | { ok: false; actionId: string; error: string };
 
-export type OpenworkControlHelpers = {
+export type MicxControlHelpers = {
   setNarration: (text: string) => void;
 };
 
-export type OpenworkControlTargetRef = {
+export type MicxControlTargetRef = {
   readonly current: HTMLElement | null;
 };
 
-export type OpenworkControlAction = {
+export type MicxControlAction = {
   id: string;
   label: string;
   description?: string;
   kind?: "query" | "command";
-  effects?: OpenworkAffordanceEffects;
-  sideEffect?: OpenworkControlSideEffect;
+  effects?: MicxAffordanceEffects;
+  sideEffect?: MicxControlSideEffect;
   requiresConfirmation?: boolean;
   requiresArgs?: boolean;
-  args?: OpenworkControlActionArg[];
+  args?: MicxControlActionArg[];
   previewArgs?: unknown;
   disabled?: boolean;
-  targetRef?: OpenworkControlTargetRef;
-  execute: (args: unknown, helpers: OpenworkControlHelpers) => unknown | Promise<unknown>;
+  targetRef?: MicxControlTargetRef;
+  execute: (args: unknown, helpers: MicxControlHelpers) => unknown | Promise<unknown>;
 };
 
 type ControlActionRef = {
-  readonly current: OpenworkControlAction | null;
+  readonly current: MicxControlAction | null;
 };
 
 type RegisteredAction = {
@@ -98,39 +98,39 @@ type SpotlightState = {
   rect: { x: number; y: number; width: number; height: number } | null;
 };
 
-type OpenworkControlContextValue = {
+type MicxControlContextValue = {
   enabled: boolean;
   setEnabled: (enabled: boolean) => void;
   route: string;
   narration: string;
   busyActionId: string | null;
-  actions: OpenworkControlActionMetadata[];
+  actions: MicxControlActionMetadata[];
   registerAction: (actionId: string, actionRef: ControlActionRef) => () => void;
-  executeAction: (actionId: string, args?: unknown) => Promise<OpenworkControlResult>;
-  publishContext: (context: OpenworkContextSnapshot) => void;
-  snapshot: () => OpenworkControlSnapshot;
+  executeAction: (actionId: string, args?: unknown) => Promise<MicxControlResult>;
+  publishContext: (context: MicxContextSnapshot) => void;
+  snapshot: () => MicxControlSnapshot;
 };
 
-type OpenworkControlAPI = {
+type MicxControlAPI = {
   version: number;
-  snapshot: () => OpenworkControlSnapshot;
-  listActions: () => OpenworkControlActionMetadata[];
-  execute: (actionId: string, args?: unknown) => Promise<OpenworkControlResult>;
-  context: () => OpenworkContextSnapshot;
-  query: (request: OpenworkAffordanceRequest) => Promise<OpenworkAffordanceResult>;
-  command: (request: OpenworkAffordanceRequest) => Promise<OpenworkAffordanceResult>;
+  snapshot: () => MicxControlSnapshot;
+  listActions: () => MicxControlActionMetadata[];
+  execute: (actionId: string, args?: unknown) => Promise<MicxControlResult>;
+  context: () => MicxContextSnapshot;
+  query: (request: MicxAffordanceRequest) => Promise<MicxAffordanceResult>;
+  command: (request: MicxAffordanceRequest) => Promise<MicxAffordanceResult>;
   setEnabled: (enabled: boolean) => void;
-  subscribe: (listener: (snapshot: OpenworkControlSnapshot) => void) => () => void;
+  subscribe: (listener: (snapshot: MicxControlSnapshot) => void) => () => void;
 };
 
 declare global {
   interface Window {
-    __openworkControl?: OpenworkControlAPI;
+    __micxControl?: MicxControlAPI;
   }
 }
 
 const CONTROL_API_VERSION = 2;
-const OpenworkControlContext = createContext<OpenworkControlContextValue | null>(null);
+const MicxControlContext = createContext<MicxControlContextValue | null>(null);
 const SPOTLIGHT_TIMING_MS = Object.freeze({
   missingTarget: 80,
   scrollIntoView: 180,
@@ -159,7 +159,7 @@ function isBrowser() {
   return typeof window !== "undefined" && typeof document !== "undefined";
 }
 
-function effectsForSideEffect(sideEffect: OpenworkControlSideEffect): OpenworkAffordanceEffects {
+function effectsForSideEffect(sideEffect: MicxControlSideEffect): MicxAffordanceEffects {
   if (sideEffect === "navigation") {
     return { data: "none", ui: "navigate", external: false };
   }
@@ -172,7 +172,7 @@ function effectsForSideEffect(sideEffect: OpenworkControlSideEffect): OpenworkAf
   return { data: "none", ui: "none", external: false };
 }
 
-function metadataForAction(registered: RegisteredAction, busyActionId: string | null): OpenworkControlActionMetadata {
+function metadataForAction(registered: RegisteredAction, busyActionId: string | null): MicxControlActionMetadata {
   const action = registered.ref.current;
   const sideEffect = action?.sideEffect ?? "none";
   return {
@@ -192,13 +192,13 @@ function metadataForAction(registered: RegisteredAction, busyActionId: string | 
   };
 }
 
-function affordanceForAction(action: OpenworkControlActionMetadata): OpenworkAffordanceDescriptor {
+function affordanceForAction(action: MicxControlActionMetadata): MicxAffordanceDescriptor {
   return {
     id: action.id,
     kind: action.kind,
     title: action.label,
     description: action.description ?? action.label,
-    provider: { id: "openwork-ui", kind: "builtin" },
+    provider: { id: "micx-ui", kind: "builtin" },
     arguments: (action.args ?? []).map((argument) => ({
       name: argument.name,
       type: argument.type ?? "unknown",
@@ -211,7 +211,7 @@ function affordanceForAction(action: OpenworkControlActionMetadata): OpenworkAff
       enabled: !action.disabled && !action.busy,
       ...(action.disabled ? { reason: "This action is not available in the current app state." } : {}),
     },
-    executor: { kind: "openwork" },
+    executor: { kind: "micx" },
   };
 }
 
@@ -234,11 +234,11 @@ function ControlModeSpotlight({ spotlight }: { spotlight: SpotlightState }) {
   );
 }
 
-export function OpenworkControlProvider({ children }: { children: ReactNode }) {
+export function MicxControlProvider({ children }: { children: ReactNode }) {
   const location = useLocation();
   const actionsRef = useRef(new Map<string, RegisteredAction>());
-  const listenersRef = useRef(new Set<(snapshot: OpenworkControlSnapshot) => void>());
-  const contextRef = useRef<OpenworkContextSnapshot | null>(null);
+  const listenersRef = useRef(new Set<(snapshot: MicxControlSnapshot) => void>());
+  const contextRef = useRef<MicxContextSnapshot | null>(null);
   const contextRevisionRef = useRef(0);
   const nextOrderRef = useRef(1);
   const [version, setVersion] = useState(0);
@@ -252,7 +252,7 @@ export function OpenworkControlProvider({ children }: { children: ReactNode }) {
 
   const route = `${location.pathname}${location.search}${location.hash}`;
   const enabled = enabledState;
-  const status: OpenworkControlSnapshot["status"] = !enabled ? "off" : busyActionId ? "acting" : "ready";
+  const status: MicxControlSnapshot["status"] = !enabled ? "off" : busyActionId ? "acting" : "ready";
 
   const setEnabled = useCallback((nextEnabled: boolean) => {
     setEnabledState(nextEnabled);
@@ -268,7 +268,7 @@ export function OpenworkControlProvider({ children }: { children: ReactNode }) {
     return listActionMetadata();
   }, [listActionMetadata]);
 
-  const snapshot = useCallback((): OpenworkControlSnapshot => ({
+  const snapshot = useCallback((): MicxControlSnapshot => ({
     version: CONTROL_API_VERSION,
     enabled,
     route,
@@ -278,13 +278,13 @@ export function OpenworkControlProvider({ children }: { children: ReactNode }) {
     actions: listActionMetadata(),
   }), [busyActionId, enabled, listActionMetadata, narration, route, status]);
 
-  const publishContext = useCallback((context: OpenworkContextSnapshot) => {
+  const publishContext = useCallback((context: MicxContextSnapshot) => {
     if (contextRef.current === context) return;
     contextRef.current = context;
     contextRevisionRef.current += 1;
   }, []);
 
-  const contextSnapshot = useCallback((): OpenworkContextSnapshot => {
+  const contextSnapshot = useCallback((): MicxContextSnapshot => {
     const availableAffordances = listActionMetadata().map(affordanceForAction);
     const published = contextRef.current;
     const revision = contextRevisionRef.current;
@@ -328,8 +328,8 @@ export function OpenworkControlProvider({ children }: { children: ReactNode }) {
       resources: [{
         ref: `screen:${route}`,
         kind: "screen",
-        title: "OpenWork",
-        provider: { id: "openwork-ui", kind: "builtin" },
+        title: "Micx",
+        provider: { id: "micx-ui", kind: "builtin" },
         state: { kind: "other", route },
       }],
       availableAffordances,
@@ -359,7 +359,7 @@ export function OpenworkControlProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
-  const playTargetChoreography = useCallback(async (action: OpenworkControlAction, runId: number) => {
+  const playTargetChoreography = useCallback(async (action: MicxControlAction, runId: number) => {
     if (!isBrowser()) return;
     const stillCurrent = () => spotlightRunRef.current === runId;
     const target = action.targetRef?.current;
@@ -391,7 +391,7 @@ export function OpenworkControlProvider({ children }: { children: ReactNode }) {
     await wait(SPOTLIGHT_TIMING_MS.release);
   }, []);
 
-  const executeAction = useCallback(async (actionId: string, args?: unknown): Promise<OpenworkControlResult> => {
+  const executeAction = useCallback(async (actionId: string, args?: unknown): Promise<MicxControlResult> => {
     const registered = actionsRef.current.get(actionId);
     const action = registered?.ref.current;
     if (!registered || !action) return { ok: false, actionId, error: `Unknown action: ${actionId}` };
@@ -448,8 +448,8 @@ export function OpenworkControlProvider({ children }: { children: ReactNode }) {
   }, [playTargetChoreography, setEnabled]);
 
   const queryAffordance = useCallback(async (
-    request: OpenworkAffordanceRequest,
-  ): Promise<OpenworkAffordanceResult> => {
+    request: MicxAffordanceRequest,
+  ): Promise<MicxAffordanceResult> => {
     const action = actionsRef.current.get(request.id)?.ref.current;
     const revision = contextRevisionRef.current;
     if (!action || action.kind !== "query") {
@@ -502,8 +502,8 @@ export function OpenworkControlProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const executeCommand = useCallback(async (
-    request: OpenworkAffordanceRequest,
-  ): Promise<OpenworkAffordanceResult> => {
+    request: MicxAffordanceRequest,
+  ): Promise<MicxAffordanceResult> => {
     const action = actionsRef.current.get(request.id)?.ref.current;
     const revision = contextRevisionRef.current;
     if (!action || action.kind === "query") {
@@ -529,7 +529,7 @@ export function OpenworkControlProvider({ children }: { children: ReactNode }) {
       return {
         ok: false,
         id: request.id,
-        error: `OpenWork context changed from revision ${request.expectedRevision} to ${revision}.`,
+        error: `Micx context changed from revision ${request.expectedRevision} to ${revision}.`,
         code: "conflict",
         revision,
       };
@@ -556,7 +556,7 @@ export function OpenworkControlProvider({ children }: { children: ReactNode }) {
     };
   }, [executeAction]);
 
-  const value = useMemo<OpenworkControlContextValue>(() => ({
+  const value = useMemo<MicxControlContextValue>(() => ({
     enabled,
     setEnabled,
     route,
@@ -591,7 +591,7 @@ export function OpenworkControlProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!isBrowser()) return;
 
-    const api: OpenworkControlAPI = {
+    const api: MicxControlAPI = {
       version: CONTROL_API_VERSION,
       snapshot,
       listActions: () => snapshot().actions,
@@ -609,10 +609,10 @@ export function OpenworkControlProvider({ children }: { children: ReactNode }) {
       },
     };
 
-    window.__openworkControl = api;
+    window.__micxControl = api;
     return () => {
-      if (window.__openworkControl === api) {
-        delete window.__openworkControl;
+      if (window.__micxControl === api) {
+        delete window.__micxControl;
       }
     };
   }, [contextSnapshot, executeAction, executeCommand, queryAffordance, setEnabled, snapshot]);
@@ -627,19 +627,19 @@ export function OpenworkControlProvider({ children }: { children: ReactNode }) {
   }, [snapshot, version]);
 
   return (
-    <OpenworkControlContext.Provider value={value}>
+    <MicxControlContext.Provider value={value}>
       {children}
       <ControlModeSpotlight spotlight={spotlight} />
-    </OpenworkControlContext.Provider>
+    </MicxControlContext.Provider>
   );
 }
 
-export function useOpenworkControl() {
-  return use(OpenworkControlContext);
+export function useMicxControl() {
+  return use(MicxControlContext);
 }
 
-export function usePublishOpenworkContext(context: OpenworkContextSnapshot) {
-  const control = useOpenworkControl();
+export function usePublishMicxContext(context: MicxContextSnapshot) {
+  const control = useMicxControl();
   const publishContext = control?.publishContext;
 
   useEffect(() => {
@@ -647,10 +647,10 @@ export function usePublishOpenworkContext(context: OpenworkContextSnapshot) {
   }, [context, publishContext]);
 }
 
-export function useControlAction(action: OpenworkControlAction | null | false | undefined) {
-  const control = useOpenworkControl();
+export function useControlAction(action: MicxControlAction | null | false | undefined) {
+  const control = useMicxControl();
   const registerAction = control?.registerAction;
-  const latestActionRef = useRef<OpenworkControlAction | null>(action || null);
+  const latestActionRef = useRef<MicxControlAction | null>(action || null);
   latestActionRef.current = action || null;
   const actionId = action ? action.id : null;
 
@@ -666,12 +666,12 @@ export function useControlAction(action: OpenworkControlAction | null | false | 
  * violating the rules of hooks. Each action is tracked by its stable id; the
  * latest closure for that id is always used, and removed ids are unregistered.
  */
-export function useControlActions(actions: readonly OpenworkControlAction[]) {
-  const control = useOpenworkControl();
+export function useControlActions(actions: readonly MicxControlAction[]) {
+  const control = useMicxControl();
   const registerAction = control?.registerAction;
 
   // One ref per action id, so executeAction always sees the freshest closure.
-  const refsById = useRef<Map<string, { current: OpenworkControlAction | null }>>(new Map());
+  const refsById = useRef<Map<string, { current: MicxControlAction | null }>>(new Map());
   for (const action of actions) {
     const existing = refsById.current.get(action.id);
     if (existing) {
@@ -707,10 +707,10 @@ const SETTINGS_TABS: ReadonlySet<string> = new Set<string>(
   SETTINGS_TAB_VALUES.filter((tab) => tab !== "extensions"),
 );
 
-export function OpenworkRouteControlActions() {
+export function MicxRouteControlActions() {
   const navigate = useNavigate();
 
-  const actions = useMemo<OpenworkControlAction[]>(() => [
+  const actions = useMemo<MicxControlAction[]>(() => [
     {
       id: "route.session",
       label: "Open sessions",
@@ -798,8 +798,8 @@ export function OpenworkRouteControlActions() {
     },
     {
       id: "help.capabilities",
-      label: "What can OpenWork do?",
-      description: "List the main capabilities of OpenWork.",
+      label: "What can Micx do?",
+      description: "List the main capabilities of Micx.",
       kind: "query",
       effects: { data: "read", ui: "none", external: false },
       sideEffect: "none",
@@ -808,13 +808,13 @@ export function OpenworkRouteControlActions() {
           { id: "browse", label: "Browse the web", description: "Control a browser to navigate, scrape, and automate web tasks." },
           { id: "providers", label: "AI model providers", description: "Connect Anthropic, OpenAI, Google, OpenRouter, Ollama, or other LLM providers." },
           { id: "extensions", label: "Library", description: "Skills, connections, and tools your agent can use." },
-          { id: "voice", label: "Voice mode", description: "Talk to OpenWork with real-time voice using OpenAI Realtime." },
+          { id: "voice", label: "Voice mode", description: "Talk to Micx with real-time voice using OpenAI Realtime." },
           { id: "files", label: "File management", description: "Read, write, and organize files in your workspace." },
           { id: "code", label: "Write and run code", description: "Generate, edit, and execute code with full tool access." },
           { id: "computer-use", label: "Computer use", description: "Control your computer with screenshots and mouse/keyboard actions." },
           { id: "skills", label: "Skills", description: "Install specialized skill packs for specific workflows." },
           { id: "automations", label: "Automations", description: "Schedule recurring tasks and background agents." },
-          { id: "sharing", label: "Share sessions", description: "Share workspace sessions with collaborators via OpenWork Cloud." },
+          { id: "sharing", label: "Share sessions", description: "Share workspace sessions with collaborators via Micx Cloud." },
         ],
         hint: "Use settings.panel.open for settings such as AI providers, and route.extensions.skills to browse Library.",
       }),

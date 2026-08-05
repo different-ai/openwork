@@ -1,5 +1,5 @@
 import { NextRequest } from "next/server";
-import { joinBaseUrl, readBaseUrlEnv } from "@openwork/types/url";
+import { joinBaseUrl, readBaseUrlEnv } from "@micx/types/url";
 
 import { denWebLogger } from "../../../observability/runtime-logger";
 
@@ -19,14 +19,14 @@ const RESPONSE_ONLY_HEADERS = new Set(["content-length", "content-encoding"]);
 const SPOOFABLE_FORWARDING_HEADERS = new Set(["forwarded", "x-forwarded-host", "x-forwarded-prefix", "x-forwarded-proto"]);
 
 /**
- * OpenWork Cloud instances are served from Daytona preview origins that are
+ * Micx Cloud instances are served from Daytona preview origins that are
  * re-signed (and therefore renamed) on every wake, so they can never appear in
  * a static CORS allowlist. The signed-in SPA running there has to reach Den for
  * /v1/me, /v1/me/orgs, MCP tokens and org connections.
  *
  * We reflect those origins, and make that safe by stripping the cookie header
  * from the forwarded request: an instance-origin call is authenticated by its
- * bearer token alone and can never ride the viewer's app.openworklabs.com
+ * bearer token alone and can never ride the viewer's app.micxlabs.com
  * session. A hostile page on some other origin therefore gains nothing from the
  * reflection - it has no bearer token and its cookies are discarded.
  *
@@ -35,7 +35,7 @@ const SPOOFABLE_FORWARDING_HEADERS = new Set(["forwarded", "x-forwarded-host", "
  */
 const DEN_API_ROUTE_PREFIX = "/api/den";
 const DEFAULT_CLOUD_INSTANCE_ORIGIN_SUFFIXES = [".daytonaproxy01.net"];
-const CORS_ALLOW_HEADERS = "authorization,content-type,x-openwork-org-id,x-request-id,accept";
+const CORS_ALLOW_HEADERS = "authorization,content-type,x-micx-org-id,x-request-id,accept";
 const CORS_ALLOW_METHODS = "GET,HEAD,POST,PUT,PATCH,DELETE,OPTIONS";
 
 function cloudInstanceOriginSuffixes(): string[] {

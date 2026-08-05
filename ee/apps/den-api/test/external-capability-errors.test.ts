@@ -2,7 +2,7 @@ import { StreamableHTTPError } from "@modelcontextprotocol/sdk/client/streamable
 import { beforeAll, expect, test } from "bun:test"
 
 function seedRequiredEnv() {
-  process.env.DATABASE_URL = process.env.DATABASE_URL ?? "mysql://root:password@127.0.0.1:3306/openwork_test"
+  process.env.DATABASE_URL = process.env.DATABASE_URL ?? "mysql://root:password@127.0.0.1:3306/micx_test"
   process.env.DEN_DB_ENCRYPTION_KEY = process.env.DEN_DB_ENCRYPTION_KEY ?? "x".repeat(32)
   process.env.BETTER_AUTH_SECRET = process.env.BETTER_AUTH_SECRET ?? "y".repeat(32)
   process.env.BETTER_AUTH_URL = process.env.BETTER_AUTH_URL ?? "http://127.0.0.1:8790"
@@ -51,7 +51,7 @@ test("externalConnectionErrorHint gives reconnect guidance for HTTP auth errors"
 
   expect(hint).toContain('The stored credential for "Acme MCP" is invalid or expired')
   expect(hint).toContain('Reconnect "Acme MCP"')
-  expect(hint).toContain("OpenWork Cloud itself is still connected")
+  expect(hint).toContain("Micx Cloud itself is still connected")
   expect(hint).toContain("This is a live probe, not a cached result")
 })
 
@@ -63,8 +63,8 @@ test("JSON-RPC refresh failures are classified as downstream connector reauthori
   expect(externalCapabilities.externalMcpAuthErrorCode(error, message)).toBe("invalid_refresh_token")
   expect(externalCapabilities.isExternalMcpAuthError(error)).toBe(true)
   expect(hint).toContain('Reconnect "Knowledge Hub"')
-  expect(hint).toContain("OpenWork Cloud -> Your Connections")
-  expect(hint).toContain("OpenWork Cloud itself is still connected")
+  expect(hint).toContain("Micx Cloud -> Your Connections")
+  expect(hint).toContain("Micx Cloud itself is still connected")
 })
 
 test("invalid_grant is classified without connector-specific special casing", () => {
@@ -97,17 +97,17 @@ test("generic connector recovery routes members and organization admins without 
     layer: "downstream_provider",
     connectionName: "Knowledge Hub",
     actor: "member",
-    action: { type: "reconnect", surface: "openwork_your_connections" },
+    action: { type: "reconnect", surface: "micx_your_connections" },
   })
   expect(networkStatus).toMatchObject({
     connectionName: "Ticketing",
     actor: "organization_admin",
-    action: { type: "inspect_connection", surface: "openwork_organization_connections" },
+    action: { type: "inspect_connection", surface: "micx_organization_connections" },
   })
   expect(apiKeyStatus).toMatchObject({
     authType: "apikey",
     actor: "organization_admin",
-    action: { type: "update_credentials", surface: "openwork_organization_connections" },
+    action: { type: "update_credentials", surface: "micx_organization_connections" },
   })
 })
 
@@ -137,7 +137,7 @@ test("reauth-required overrides generic provider ownership from a refresh diagno
     action: {
       type: "reconnect",
       label: "Reconnect Research Vault",
-      surface: "openwork_your_connections",
+      surface: "micx_your_connections",
     },
   })
   expect("diagnostic" in status).toBe(false)
@@ -189,8 +189,8 @@ test("generic provider failures route to connector inspection instead of cloud r
 
   expect(hint).toContain('inspect "Ticketing"')
   expect(hint).toContain("dashboard -> Connections")
-  expect(hint).toContain("OpenWork Cloud itself is still connected")
-  expect(hint).not.toContain("Reconnect OpenWork Cloud")
+  expect(hint).toContain("Micx Cloud itself is still connected")
+  expect(hint).not.toContain("Reconnect Micx Cloud")
 })
 
 test("externalConnectionErrorHint gives provider-admin guidance for JSON-RPC rejections", () => {

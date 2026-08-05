@@ -18,7 +18,7 @@ import {
   automationRunnerWorkResponseSchema,
   createAutomationSchema,
   updateAutomationSchema,
-} from "@openwork/types/automations"
+} from "@micx/types/automations"
 import {
   jsonValidator,
   orgMemberRoute,
@@ -66,7 +66,7 @@ function failure(error: unknown): { status: 400 | 403 | 404 | 409; body: { error
 const routeDescription = [
   "Den schedules Automations and keeps durable run history; execution is dispatched to the owner's connected desktop app.",
   "If no desktop runner is connected when an occurrence is due, that occurrence is recorded as missed.",
-  "Creation makes an Automation active immediately and uses the owner's current OpenWork Connect integrations.",
+  "Creation makes an Automation active immediately and uses the owner's current Micx Connect integrations.",
   "Deactivation stops future runs but does not cancel a run already in progress.",
 ].join(" ")
 

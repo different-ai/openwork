@@ -8,7 +8,7 @@ export type SessionDraftSnapshot = {
   mode: PromptMode;
 };
 
-const STORAGE_KEY = "openwork.session-drafts.v1";
+const STORAGE_KEY = "micx.session-drafts.v1";
 const MAX_DRAFT_COUNT = 100;
 
 let draftCache: Map<string, SessionDraftSnapshot> | null = null;

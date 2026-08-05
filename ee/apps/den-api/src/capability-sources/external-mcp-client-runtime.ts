@@ -29,7 +29,7 @@ const enterpriseMcpClient: ExternalMcpClientRuntime = {
   inspectExternalMcpToolCall: inspectWithEnterpriseClient,
 }
 
-export const externalMcpClientRuntimeName = "@openwork/enterprise-mcp-client"
+export const externalMcpClientRuntimeName = "@micx/enterprise-mcp-client"
 
 export const {
   connectExternalMcp,

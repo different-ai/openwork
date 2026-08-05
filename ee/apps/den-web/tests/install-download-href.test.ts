@@ -11,26 +11,26 @@ test("organization installer downloads preserve a prefixed public API path", () 
 
 test("enterprise download filenames match release artifacts", () => {
   expect(installerFileName("mac-arm64", "0.18.3")).toBe(
-    "openwork-enterprise-mac-arm64-0.18.3.dmg",
+    "micx-enterprise-mac-arm64-0.18.3.dmg",
   );
   expect(installerFileName("win-x64", "0.18.3")).toBe(
-    "openwork-enterprise-win-x64-0.18.3.exe",
+    "micx-enterprise-win-x64-0.18.3.exe",
   );
   expect(installerFileName("linux-x64", "0.18.3")).toBe(
-    "openwork-enterprise-linux-x86_64-0.18.3.AppImage",
+    "micx-enterprise-linux-x86_64-0.18.3.AppImage",
   );
 });
 
 test("organization installer downloads still support a root API origin", () => {
   expect(buildInstallDownloadHref(
-    "https://api.openwork.example.test",
+    "https://api.micx.example.test",
     "mac-arm64",
     "opaque-token",
-  )).toBe("https://api.openwork.example.test/v1/install/mac-arm64?token=opaque-token");
+  )).toBe("https://api.micx.example.test/v1/install/mac-arm64?token=opaque-token");
 });
 
 test("Cloud installer filenames match release artifacts without a hardcoded version", () => {
   expect(cloudInstallerFileName("mac-arm64", "0.18.4")).toBe(
-    "openwork-cloud-mac-arm64-0.18.4.dmg",
+    "micx-cloud-mac-arm64-0.18.4.dmg",
   );
 });

@@ -201,7 +201,7 @@ export async function discoverConnectionRequirements(
   let authenticationRequired = false
   let client: Client | undefined
   try {
-    client = new Client({ name: "OpenWork requirements discovery", version: "1.0.0" }, { capabilities: {} })
+    client = new Client({ name: "Micx requirements discovery", version: "1.0.0" }, { capabilities: {} })
     const transport = new StreamableHTTPClientTransport(serverUrl, { fetch })
     await client.connect(transport, { signal: controller.signal })
     initialize = "succeeded"

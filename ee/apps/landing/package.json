@@ -1,9 +1,9 @@
 {
-  "name": "@openwork-ee/landing",
+  "name": "@micx-ee/landing",
   "private": true,
   "version": "0.0.0",
   "scripts": {
-    "dev": "OPENWORK_DEV_MODE=1 next dev --hostname 0.0.0.0",
+    "dev": "MICX_DEV_MODE=1 next dev --hostname 0.0.0.0",
     "test": "bun test --isolate test/",
     "prebuild": "pnpm --dir ../../../packages/email build && pnpm --dir ../../../packages/ui build && node ../../../scripts/check-connect-installer-parity.mjs && node scripts/copy-bootstrap-cli.mjs",
     "build": "next build",
@@ -11,8 +11,8 @@
     "lint": "next lint"
   },
   "dependencies": {
-    "@openwork/email": "workspace:*",
-    "@openwork/ui": "workspace:*",
+    "@micx/email": "workspace:*",
+    "@micx/ui": "workspace:*",
     "botid": "^1.5.11",
     "framer-motion": "^12.35.1",
     "lucide-react": "^0.577.0",

@@ -106,7 +106,7 @@ export function checkEntitlement(
     response: {
       error: "enterprise_plan_required",
       feature: key,
-      message: `${ENTITLEMENT_FEATURE_LABELS[key]} requires an Enterprise plan. Talk to us at openworklabs.com/enterprise.`,
+      message: `${ENTITLEMENT_FEATURE_LABELS[key]} requires an Enterprise plan. Talk to us at micxlabs.com/enterprise.`,
     },
   }
 }

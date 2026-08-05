@@ -1,5 +1,5 @@
 {
-  "name": "@openwork/connect-link",
+  "name": "@micx/connect-link",
   "private": true,
   "type": "module",
   "exports": {
@@ -24,7 +24,7 @@
     "test": "bun test"
   },
   "dependencies": {
-    "@openwork/types": "workspace:*",
+    "@micx/types": "workspace:*",
     "zod": "4.3.6"
   },
   "devDependencies": {

@@ -9,7 +9,7 @@ import {
 function readStoredPreference(): boolean {
   if (typeof window === "undefined") return false;
   try {
-    return window.localStorage.getItem("openwork.debug.renderOverlay") === "1";
+    return window.localStorage.getItem("micx.debug.renderOverlay") === "1";
   } catch {
     return false;
   }
@@ -18,7 +18,7 @@ function readStoredPreference(): boolean {
 function writeStoredPreference(value: boolean) {
   if (typeof window === "undefined") return;
   try {
-    window.localStorage.setItem("openwork.debug.renderOverlay", value ? "1" : "0");
+    window.localStorage.setItem("micx.debug.renderOverlay", value ? "1" : "0");
   } catch {
     // ignore
   }
@@ -163,7 +163,7 @@ export function ReactRenderWatchdogOverlay() {
         </div>
       )}
       <div className="border-t border-dls-border px-2.5 py-1 text-[10px] text-dls-secondary">
-        Cmd+Shift+L toggles. Also available in window.__openwork.slice("reactRenderWatchdog").
+        Cmd+Shift+L toggles. Also available in window.__micx.slice("reactRenderWatchdog").
       </div>
     </div>
   );

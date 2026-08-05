@@ -11,7 +11,7 @@ import {
 } from "lucide-react";
 import { useDragControls } from "motion/react";
 
-import type { OpenworkServerClient } from "@/app/lib/openwork-server";
+import type { MicxServerClient } from "@/app/lib/micx-server";
 import { PanelTab, PanelTabClose, PanelTabItem, PanelTabList } from "@/components/panel-tabs";
 import { Button } from "@/components/ui/button";
 import {
@@ -30,7 +30,7 @@ import {
   useActivePanelTab,
   useSessionPanelState,
 } from "./panel-tab-store";
-import { useControlAction, type OpenworkControlAction } from "../../../shell/control/control-provider";
+import { useControlAction, type MicxControlAction } from "../../../shell/control/control-provider";
 import type { OpenTarget } from "../artifacts/open-target";
 import { useSidePanelTabs } from "./use-side-panel-tabs";
 import { handlePanelEscape, PanelEmpty } from "./panel-empty";
@@ -44,7 +44,7 @@ import {
 
 type SidePanelProps = {
   sessionId: string;
-  client: OpenworkServerClient | null;
+  client: MicxServerClient | null;
   workspaceId: string | null;
   workspaceRoot: string;
   isRemoteWorkspace?: boolean;
@@ -63,7 +63,7 @@ if (import.meta.hot) {
 
 const MARKDOWN_PRIMITIVE_ARTIFACT_CONTENT = `# Artifact Markdown Proof
 
-The artifact preview keeps **outside-chat Markdown** readable with inline \`surface renderer\`, a fenced code block, and [OpenWork](https://openworklabs.com).
+The artifact preview keeps **outside-chat Markdown** readable with inline \`surface renderer\`, a fenced code block, and [Micx](https://micxlabs.com).
 
 \`\`\`ts
 const surface = "shared markdown primitive";
@@ -415,7 +415,7 @@ export function SidePanel({
 
   const { createTab, closeTab, selectTab, reorderTabs } = useSidePanelTabs(sessionId);
 
-  const seedArtifactOverflowControlAction = React.useMemo<OpenworkControlAction | null>(() => {
+  const seedArtifactOverflowControlAction = React.useMemo<MicxControlAction | null>(() => {
     if (!import.meta.env.DEV) return null;
 
     return {
@@ -444,7 +444,7 @@ export function SidePanel({
         for (let index = 1; index <= count; index += 1) {
           const padded = String(index).padStart(2, "0");
           const baseName = longNameLast && index === count
-            ? `openwork-self-managed-subscription-and-licensing-overview-very-long-${padded}`
+            ? `micx-self-managed-subscription-and-licensing-overview-very-long-${padded}`
             : `overflow-tab-${padded}`;
           const value = `artifacts/${baseName}.md`;
           const label = `${baseName}.md`;
@@ -482,7 +482,7 @@ export function SidePanel({
   }, [client, sessionId, workspaceId]);
   useControlAction(seedArtifactOverflowControlAction);
 
-  const seedMarkdownPrimitiveArtifactControlAction = React.useMemo<OpenworkControlAction | null>(() => {
+  const seedMarkdownPrimitiveArtifactControlAction = React.useMemo<MicxControlAction | null>(() => {
     if (!import.meta.env.DEV) return null;
 
     return {
@@ -524,7 +524,7 @@ export function SidePanel({
   }, [client, sessionId, workspaceId]);
   useControlAction(seedMarkdownPrimitiveArtifactControlAction);
 
-  const seedPdfArtifactControlAction = React.useMemo<OpenworkControlAction | null>(() => {
+  const seedPdfArtifactControlAction = React.useMemo<MicxControlAction | null>(() => {
     if (!import.meta.env.DEV) return null;
 
     return {
@@ -536,7 +536,7 @@ export function SidePanel({
       execute: async () => {
         if (!client || !workspaceId) return { ok: false, error: "Workspace client is not ready." };
 
-        // Minimal single-page PDF that draws "OpenWork PDF" — base64 encoded.
+        // Minimal single-page PDF that draws "Micx PDF" — base64 encoded.
         const pdfBase64 =
           "JVBERi0xLjQKMSAwIG9iago8PC9UeXBlL0NhdGFsb2cvUGFnZXMgMiAwIFI+PgplbmRvYmoKMiAwIG9iago8PC9UeXBlL1BhZ2VzL0tpZHNbMyAwIFJdL0NvdW50IDE+PgplbmRvYmoKMyAwIG9iago8PC9UeXBlL1BhZ2UvUGFyZW50IDIgMCBSL01lZGlhQm94WzAgMCAzMDAgMTQ0XS9SZXNvdXJjZXM8PC9Gb250PDwvRjEgNCAwIFI+Pj4+L0NvbnRlbnRzIDUgMCBSPj4KZW5kb2JqCjQgMCBvYmoKPDwvVHlwZS9Gb250L1N1YnR5cGUvVHlwZTEvQmFzZUZvbnQvSGVsdmV0aWNhPj4KZW5kb2JqCjUgMCBvYmoKPDwvTGVuZ3RoIDQ0Pj4Kc3RyZWFtCkJUCi9GMSAyNCBUZgo3MiA3MCBUZAooT3BlbldvcmsgUERGKSBUagpFVAplbmRzdHJlYW0KZW5kb2JqCnhyZWYKMCA2CjAwMDAwMDAwMDAgNjU1MzUgZiAKMDAwMDAwMDAwOSAwMDAwMCBuIAowMDAwMDAwMDU4IDAwMDAwIG4gCjAwMDAwMDAxMTUgMDAwMDAgbiAKMDAwMDAwMDI0MSAwMDAwMCBuIAowMDAwMDAwMzEyIDAwMDAwIG4gCnRyYWlsZXIKPDwvU2l6ZSA2L1Jvb3QgMSAwIFI+PgpzdGFydHhyZWYKNDA2CiUlRU9G";
         const binary = atob(pdfBase64);

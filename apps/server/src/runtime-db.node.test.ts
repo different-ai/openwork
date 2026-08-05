@@ -11,7 +11,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 if (typeof process.versions.bun !== "string") {
   test("opens and closes the runtime SQLite database with Node's driver", async () => {
-    const root = await mkdtemp(join(tmpdir(), "openwork-runtime-db-node-"));
+    const root = await mkdtemp(join(tmpdir(), "micx-runtime-db-node-"));
     try {
       const dbPath = join(root, "nested", "runtime.sqlite");
       const runtimeDb = await openRuntimeSqliteDatabase(dbPath);

@@ -1,5 +1,5 @@
 import "./load-env.js";
-import type { DenDbMode, PlanetScaleCredentials } from "@openwork-ee/den-db";
+import type { DenDbMode, PlanetScaleCredentials } from "@micx-ee/den-db";
 import { z } from "zod";
 
 const EnvSchema = z
@@ -48,14 +48,14 @@ const EnvSchema = z
     }
   });
 
-export const isDevMode = process.env.OPENWORK_DEV_MODE === "1";
+export const isDevMode = process.env.MICX_DEV_MODE === "1";
 
 const parsed = EnvSchema.parse({
   ...process.env,
   DATABASE_URL:
     process.env.DATABASE_URL ??
     (isDevMode
-      ? "mysql://root:password@127.0.0.1:3306/openwork_den"
+      ? "mysql://root:password@127.0.0.1:3306/micx_den"
       : undefined),
   DB_MODE: process.env.DB_MODE ?? (isDevMode ? "mysql" : undefined),
   DEN_DB_ENCRYPTION_KEY:

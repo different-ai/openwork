@@ -1,5 +1,5 @@
 // Desktop workspace persistence and bootstrap configuration. This module owns
-// on-disk workspace state, per-workspace openwork.json files, remote workspace
+// on-disk workspace state, per-workspace micx.json files, remote workspace
 // normalization/discovery, and the workspace-facing command operations.
 import { createHash, randomBytes } from "node:crypto";
 import { existsSync, readFileSync, statSync } from "node:fs";
@@ -9,10 +9,10 @@ import path from "node:path";
 import {
   desktopBootstrapPath as resolveDesktopBootstrapPath,
   legacyDesktopBootstrapPath as resolveLegacyDesktopBootstrapPath,
-  openworkServerConfigPath as resolveOpenworkServerConfigPath,
-} from "@openwork/paths";
+  micxServerConfigPath as resolveMicxServerConfigPath,
+} from "@micx/paths";
 
-import { openworkWorkspaceDisplayName, selectOpenworkWorkspaceForConnection } from "./remote-workspace.mjs";
+import { micxWorkspaceDisplayName, selectMicxWorkspaceForConnection } from "./remote-workspace.mjs";
 import { exportWorkspaceConfig, importWorkspaceConfig } from "./workspace-archive.mjs";
 
 const EMPTY_WORKSPACE_LIST = Object.freeze({
@@ -116,9 +116,9 @@ const DEFAULT_DESKTOP_BOOTSTRAP_PATH = resolveDesktopBootstrapPath({ homeDir: os
 // is missing so existing installs keep their deployment config.
 const LEGACY_DESKTOP_BOOTSTRAP_PATH = resolveLegacyDesktopBootstrapPath({ homeDir: os.homedir() });
 const DESKTOP_BOOTSTRAP_FILENAME = "desktop-bootstrap.json";
-const STANDARD_DESKTOP_INSTALLER_PATTERN = /^openwork-(?:mac-(?:arm64|x64)-.+\.dmg|win-x64-.+\.exe)$/i;
-const HOSTED_DESKTOP_WEB_URL = "https://app.openworklabs.com";
-const HOSTED_DESKTOP_API_URL = "https://api.openworklabs.com";
+const STANDARD_DESKTOP_INSTALLER_PATTERN = /^micx-(?:mac-(?:arm64|x64)-.+\.dmg|win-x64-.+\.exe)$/i;
+const HOSTED_DESKTOP_WEB_URL = "https://app.micxlabs.com";
+const HOSTED_DESKTOP_API_URL = "https://api.micxlabs.com";
 
 function bootstrapUrlOrigin(value) {
   if (typeof value !== "string" || !value.trim()) return "";
@@ -141,14 +141,14 @@ export function createWorkspaceStore({
   forceRequireSignin,
 }) {
   function desktopBootstrapPath() {
-    if (process.env.OPENWORK_DESKTOP_BOOTSTRAP_PATH?.trim()) {
+    if (process.env.MICX_DESKTOP_BOOTSTRAP_PATH?.trim()) {
       return resolveDesktopBootstrapPath({ env: process.env, homeDir: os.homedir(), userDataDir: app.getPath("userData") });
     }
     // Dev mode swaps process.env.HOME to the sandboxed dev-data home midway
     // through startup (runtime.mjs buildChildEnv -> Object.assign(process.env)),
     // which changes what os.homedir() returns. Resolve the dev-data home
     // deterministically so early and late IPC reads target the same file.
-    if (process.env.OPENWORK_DEV_MODE === "1") {
+    if (process.env.MICX_DEV_MODE === "1") {
       return resolveDesktopBootstrapPath({ env: process.env, homeDir: os.homedir(), userDataDir: app.getPath("userData") });
     }
     return DEFAULT_DESKTOP_BOOTSTRAP_PATH;
@@ -158,7 +158,7 @@ export function createWorkspaceStore({
     // An explicit bootstrap path defines an isolated installation boundary.
     // Never let a legacy global config cross that boundary: it may contain a
     // completed activation from another distribution or deployment.
-    if (process.env.OPENWORK_DESKTOP_BOOTSTRAP_PATH?.trim()) return null;
+    if (process.env.MICX_DESKTOP_BOOTSTRAP_PATH?.trim()) return null;
     const primary = desktopBootstrapPath();
     if (primary === DEFAULT_DESKTOP_BOOTSTRAP_PATH && LEGACY_DESKTOP_BOOTSTRAP_PATH !== primary) {
       return LEGACY_DESKTOP_BOOTSTRAP_PATH;
@@ -167,20 +167,20 @@ export function createWorkspaceStore({
   }
 
   function workspaceStatePath() {
-    return path.join(app.getPath("userData"), "openwork-workspaces.json");
+    return path.join(app.getPath("userData"), "micx-workspaces.json");
   }
 
-  function openworkServerTokenStorePath() {
-    return path.join(app.getPath("userData"), "openwork-server-tokens.json");
+  function micxServerTokenStorePath() {
+    return path.join(app.getPath("userData"), "micx-server-tokens.json");
   }
 
-  function openworkServerConfigPath() {
-    return resolveOpenworkServerConfigPath({ env: process.env, homeDir: os.homedir() });
+  function micxServerConfigPath() {
+    return resolveMicxServerConfigPath({ env: process.env, homeDir: os.homedir() });
   }
 
-  // Earlier Electron alpha builds copied Tauri's openwork-workspaces.json into
+  // Earlier Electron alpha builds copied Tauri's micx-workspaces.json into
   // an Electron-only workspace-state.json. Keep importing that file when the
-  // shared canonical file is missing, but write openwork-workspaces.json going
+  // shared canonical file is missing, but write micx-workspaces.json going
   // forward so Tauri rollback and Electron both read the same desktop state.
   function legacyElectronWorkspaceStatePath() {
     return path.join(app.getPath("userData"), "workspace-state.json");
@@ -195,7 +195,7 @@ export function createWorkspaceStore({
       await mkdir(path.dirname(current), { recursive: true });
       const raw = await readFile(legacy, "utf8");
       await writeFile(current, raw, "utf8");
-      console.info("[migration] copied workspace-state.json to openwork-workspaces.json");
+      console.info("[migration] copied workspace-state.json to micx-workspaces.json");
       return true;
     } catch (error) {
       console.warn("[migration] legacy Electron workspace-state copy failed", error);
@@ -402,7 +402,7 @@ export function createWorkspaceStore({
 
   function bundleSearchRoots() {
     const roots = [];
-    const override = process.env.OPENWORK_BOOTSTRAP_BUNDLE_DIR?.trim();
+    const override = process.env.MICX_BOOTSTRAP_BUNDLE_DIR?.trim();
     if (override) roots.push(path.resolve(override));
     for (const name of ["downloads", "desktop"]) {
       try {
@@ -539,7 +539,7 @@ export function createWorkspaceStore({
       legacyExists: legacyPath ? existsSync(legacyPath) : false,
       home: os.homedir(),
       envHome: process.env.HOME ?? null,
-      envOverride: process.env.OPENWORK_DESKTOP_BOOTSTRAP_PATH ?? null,
+      envOverride: process.env.MICX_DESKTOP_BOOTSTRAP_PATH ?? null,
       exists: existsSync(configPath),
       raw: null,
       parsed: null,
@@ -579,7 +579,7 @@ export function createWorkspaceStore({
     return undefined;
   }
 
-  function defaultWorkspaceOpenworkConfig(workspacePath, preset = null) {
+  function defaultWorkspaceMicxConfig(workspacePath, preset = null) {
     return {
       version: 1,
       workspace: workspacePath
@@ -628,7 +628,7 @@ export function createWorkspaceStore({
   }
 
   async function recoverWorkspacesFromTokenStore() {
-    const store = await readJsonFile(openworkServerTokenStorePath(), null);
+    const store = await readJsonFile(micxServerTokenStorePath(), null);
     if (!isRecord(store) || !isRecord(store.workspaces)) return [];
 
     const candidates = [];
@@ -664,7 +664,7 @@ export function createWorkspaceStore({
     const workspaceKey = normalizeWorkspacePathKey(workspacePath);
     if (!workspaceKey) return;
 
-    const store = await readJsonFile(openworkServerTokenStorePath(), null);
+    const store = await readJsonFile(micxServerTokenStorePath(), null);
     if (!isRecord(store) || !isRecord(store.workspaces)) return;
 
     const workspaces = { ...store.workspaces };
@@ -675,12 +675,12 @@ export function createWorkspaceStore({
       changed = true;
     }
     if (changed) {
-      await writeJsonFileAtomic(openworkServerTokenStorePath(), { ...store, workspaces });
+      await writeJsonFileAtomic(micxServerTokenStorePath(), { ...store, workspaces });
     }
   }
 
   async function recoverWorkspacesFromServerConfig() {
-    const config = await readJsonFile(openworkServerConfigPath(), null);
+    const config = await readJsonFile(micxServerConfigPath(), null);
     if (!isRecord(config) || !Array.isArray(config.workspaces)) return [];
 
     const seen = new Set();
@@ -696,13 +696,13 @@ export function createWorkspaceStore({
 
       const baseUrl = typeof entry.baseUrl === "string" ? entry.baseUrl.trim() : "";
       const directory = typeof entry.directory === "string" && entry.directory.trim() ? entry.directory.trim() : null;
-      const remoteType = entry.remoteType === "opencode" ? "opencode" : "openwork";
-      const openworkWorkspaceId = typeof entry.openworkWorkspaceId === "string" ? entry.openworkWorkspaceId.trim() : "";
+      const remoteType = entry.remoteType === "opencode" ? "opencode" : "micx";
+      const micxWorkspaceId = typeof entry.micxWorkspaceId === "string" ? entry.micxWorkspaceId.trim() : "";
       const id = typeof entry.id === "string" && entry.id.trim()
         ? entry.id.trim()
         : workspaceType === "remote"
-          ? remoteType === "openwork"
-            ? openworkRemoteWorkspaceId(baseUrl, openworkWorkspaceId)
+          ? remoteType === "micx"
+            ? micxRemoteWorkspaceId(baseUrl, micxWorkspaceId)
             : remoteWorkspaceId(baseUrl, directory)
           : localWorkspaceId(normalizedPath);
       const key = workspaceType === "remote" ? id : normalizeWorkspacePathKey(normalizedPath);
@@ -745,7 +745,7 @@ export function createWorkspaceStore({
     return stableWorkspaceId(key);
   }
 
-  function parseOpenworkWorkspaceIdFromUrl(input) {
+  function parseMicxWorkspaceIdFromUrl(input) {
     const raw = String(input ?? "").trim();
     if (!raw) return null;
     try {
@@ -768,7 +768,7 @@ export function createWorkspaceStore({
     }
   }
 
-  function stripOpenworkWorkspaceMount(input) {
+  function stripMicxWorkspaceMount(input) {
     const raw = String(input ?? "").trim();
     if (!raw) return null;
     try {
@@ -787,13 +787,13 @@ export function createWorkspaceStore({
     }
   }
 
-  function openworkRemoteWorkspaceId(hostUrl, workspaceId) {
-    const remoteWorkspaceId = String(workspaceId ?? "").trim() || parseOpenworkWorkspaceIdFromUrl(hostUrl);
+  function micxRemoteWorkspaceId(hostUrl, workspaceId) {
+    const remoteWorkspaceId = String(workspaceId ?? "").trim() || parseMicxWorkspaceIdFromUrl(hostUrl);
     if (remoteWorkspaceId) return `rem_${remoteWorkspaceId}`;
-    return `rem_${createHash("sha256").update(`openwork::${hostUrl}`).digest("hex").slice(0, 12)}`;
+    return `rem_${createHash("sha256").update(`micx::${hostUrl}`).digest("hex").slice(0, 12)}`;
   }
 
-  async function fetchOpenworkWorkspaceList(hostUrl, token, hostToken) {
+  async function fetchMicxWorkspaceList(hostUrl, token, hostToken) {
     const url = `${String(hostUrl ?? "").replace(/\/+$/, "")}/workspaces`;
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 8_000);
@@ -801,7 +801,7 @@ export function createWorkspaceStore({
     const bearerToken = String(token ?? "").trim();
     const hostAuthToken = String(hostToken ?? "").trim();
     if (bearerToken) headers.set("Authorization", `Bearer ${bearerToken}`);
-    if (hostAuthToken) headers.set("X-OpenWork-Host-Token", hostAuthToken);
+    if (hostAuthToken) headers.set("X-Micx-Host-Token", hostAuthToken);
 
     try {
       const electron = await import("electron").catch(() => null);
@@ -813,7 +813,7 @@ export function createWorkspaceStore({
         cache: "no-store",
       });
       if (!response.ok) {
-        throw new Error(`OpenWork workspace discovery failed (${response.status} ${response.statusText || "HTTP error"})`);
+        throw new Error(`Micx workspace discovery failed (${response.status} ${response.statusText || "HTTP error"})`);
       }
       return await response.json();
     } finally {
@@ -821,9 +821,9 @@ export function createWorkspaceStore({
     }
   }
 
-  async function discoverOpenworkWorkspace({ hostUrl, token, hostToken, directory }) {
-    const list = await fetchOpenworkWorkspaceList(hostUrl, token, hostToken);
-    return selectOpenworkWorkspaceForConnection(list, directory);
+  async function discoverMicxWorkspace({ hostUrl, token, hostToken, directory }) {
+    const list = await fetchMicxWorkspaceList(hostUrl, token, hostToken);
+    return selectMicxWorkspaceForConnection(list, directory);
   }
 
   function normalizeWorkspaceEntry(input) {
@@ -837,32 +837,32 @@ export function createWorkspaceStore({
       baseUrl: input.baseUrl ?? null,
       directory: input.directory ?? null,
       displayName: input.displayName ?? null,
-      openworkHostUrl: input.openworkHostUrl ?? null,
-      openworkToken: input.openworkToken ?? null,
-      openworkClientToken: input.openworkClientToken ?? null,
-      openworkHostToken: input.openworkHostToken ?? null,
-      openworkWorkspaceId: input.openworkWorkspaceId ?? null,
-      openworkWorkspaceName: input.openworkWorkspaceName ?? null,
+      micxHostUrl: input.micxHostUrl ?? null,
+      micxToken: input.micxToken ?? null,
+      micxClientToken: input.micxClientToken ?? null,
+      micxHostToken: input.micxHostToken ?? null,
+      micxWorkspaceId: input.micxWorkspaceId ?? null,
+      micxWorkspaceName: input.micxWorkspaceName ?? null,
       sandboxBackend: input.sandboxBackend ?? null,
       sandboxRunId: input.sandboxRunId ?? null,
       sandboxContainerName: input.sandboxContainerName ?? null,
     };
   }
 
-  async function readWorkspaceOpenworkConfig(workspacePath) {
-    const openworkPath = path.join(workspacePath, ".opencode", "openwork.json");
-    if (!(await pathExists(openworkPath))) {
-      return defaultWorkspaceOpenworkConfig(workspacePath);
+  async function readWorkspaceMicxConfig(workspacePath) {
+    const micxPath = path.join(workspacePath, ".opencode", "micx.json");
+    if (!(await pathExists(micxPath))) {
+      return defaultWorkspaceMicxConfig(workspacePath);
     }
-    const raw = await readFile(openworkPath, "utf8");
+    const raw = await readFile(micxPath, "utf8");
     return JSON.parse(raw);
   }
 
-  async function writeWorkspaceOpenworkConfig(workspacePath, config) {
-    const openworkPath = path.join(workspacePath, ".opencode", "openwork.json");
-    await mkdir(path.dirname(openworkPath), { recursive: true });
-    await writeFile(openworkPath, `${JSON.stringify(config, null, 2)}\n`, "utf8");
-    return execResult(true, `Wrote ${openworkPath}`);
+  async function writeWorkspaceMicxConfig(workspacePath, config) {
+    const micxPath = path.join(workspacePath, ".opencode", "micx.json");
+    await mkdir(path.dirname(micxPath), { recursive: true });
+    await writeFile(micxPath, `${JSON.stringify(config, null, 2)}\n`, "utf8");
+    return execResult(true, `Wrote ${micxPath}`);
   }
 
   async function writeWorkspaceState(nextState) {
@@ -904,11 +904,11 @@ export function createWorkspaceStore({
     let activeId = typeof state?.activeId === "string" ? state.activeId : null;
     let workspaces = Array.isArray(state?.workspaces) ? state.workspaces : [];
     let changed = false;
-    if (!workspaceStateExists && process.env.OPENWORK_DESKTOP_DISABLE_WORKSPACE_RECOVERY !== "1") {
+    if (!workspaceStateExists && process.env.MICX_DESKTOP_DISABLE_WORKSPACE_RECOVERY !== "1") {
       const recoveredWorkspaces = await recoverWorkspacesFromKnownState();
       if (recoveredWorkspaces.length > 0) {
         const selectedWorkspace = recoveredWorkspaces[0];
-        console.info("[migration] recovered desktop workspaces from persisted OpenWork state", {
+        console.info("[migration] recovered desktop workspaces from persisted Micx state", {
           count: recoveredWorkspaces.length,
           selectedWorkspaceId: selectedWorkspace.id,
         });
@@ -922,29 +922,29 @@ export function createWorkspaceStore({
     const idMap = new Map();
     const migratedWorkspaces = workspaces.map((entry) => {
       const workspace = entry && typeof entry === "object" ? entry : normalizeWorkspaceEntry(entry ?? {});
-      if (workspace.workspaceType !== "remote" || workspace.remoteType !== "openwork") return workspace;
+      if (workspace.workspaceType !== "remote" || workspace.remoteType !== "micx") return workspace;
 
-      const remoteWorkspaceId = String(workspace.openworkWorkspaceId ?? "").trim()
-        || parseOpenworkWorkspaceIdFromUrl(workspace.openworkHostUrl)
-        || parseOpenworkWorkspaceIdFromUrl(workspace.baseUrl);
+      const remoteWorkspaceId = String(workspace.micxWorkspaceId ?? "").trim()
+        || parseMicxWorkspaceIdFromUrl(workspace.micxHostUrl)
+        || parseMicxWorkspaceIdFromUrl(workspace.baseUrl);
       if (!remoteWorkspaceId) return workspace;
 
-      const hostUrl = stripOpenworkWorkspaceMount(workspace.openworkHostUrl) || stripOpenworkWorkspaceMount(workspace.baseUrl);
-      const nextId = openworkRemoteWorkspaceId(hostUrl ?? workspace.baseUrl, remoteWorkspaceId);
+      const hostUrl = stripMicxWorkspaceMount(workspace.micxHostUrl) || stripMicxWorkspaceMount(workspace.baseUrl);
+      const nextId = micxRemoteWorkspaceId(hostUrl ?? workspace.baseUrl, remoteWorkspaceId);
       idMap.set(workspace.id, nextId);
       const nextWorkspace = {
         ...workspace,
         id: nextId,
         baseUrl: hostUrl,
-        openworkWorkspaceId: remoteWorkspaceId,
-        openworkHostUrl: hostUrl,
+        micxWorkspaceId: remoteWorkspaceId,
+        micxHostUrl: hostUrl,
       };
-      if (workspace.id !== nextWorkspace.id || workspace.baseUrl !== nextWorkspace.baseUrl || workspace.openworkWorkspaceId !== nextWorkspace.openworkWorkspaceId || workspace.openworkHostUrl !== nextWorkspace.openworkHostUrl) {
+      if (workspace.id !== nextWorkspace.id || workspace.baseUrl !== nextWorkspace.baseUrl || workspace.micxWorkspaceId !== nextWorkspace.micxWorkspaceId || workspace.micxHostUrl !== nextWorkspace.micxHostUrl) {
         changed = true;
       }
       return nextWorkspace;
     });
-    // Older desktop state can contain multiple OpenWork remote entries that
+    // Older desktop state can contain multiple Micx remote entries that
     // normalize to the same rem_<workspaceId> after stripping worker mounts.
     // Collapse them here so React never receives duplicate workspace keys.
     const workspaceIndexById = new Map();
@@ -1033,7 +1033,7 @@ export function createWorkspaceStore({
       workspaceType: "local",
     });
     await mkdir(path.join(folderPath, ".opencode"), { recursive: true });
-    await writeWorkspaceOpenworkConfig(folderPath, defaultWorkspaceOpenworkConfig(folderPath, preset));
+    await writeWorkspaceMicxConfig(folderPath, defaultWorkspaceMicxConfig(folderPath, preset));
 
     return mutateWorkspaceState((state) => {
       const key = workspacePathKey(workspace);
@@ -1054,57 +1054,57 @@ export function createWorkspaceStore({
     if (!baseUrl.startsWith("http://") && !baseUrl.startsWith("https://")) {
       throw new Error("baseUrl must start with http:// or https://");
     }
-    const remoteType = input.remoteType === "opencode" ? "opencode" : "openwork";
+    const remoteType = input.remoteType === "opencode" ? "opencode" : "micx";
     const directory = typeof input.directory === "string" && input.directory.trim() ? input.directory.trim() : null;
-    const rawOpenworkHostUrl = typeof input.openworkHostUrl === "string" && input.openworkHostUrl.trim()
-      ? input.openworkHostUrl.trim()
+    const rawMicxHostUrl = typeof input.micxHostUrl === "string" && input.micxHostUrl.trim()
+      ? input.micxHostUrl.trim()
       : null;
-    const openworkHostUrl = remoteType === "openwork"
-      ? stripOpenworkWorkspaceMount(rawOpenworkHostUrl ?? baseUrl)
-      : rawOpenworkHostUrl;
-    const openworkWorkspaceId = typeof input.openworkWorkspaceId === "string" && input.openworkWorkspaceId.trim()
-      ? input.openworkWorkspaceId.trim()
-      : remoteType === "openwork"
-        ? parseOpenworkWorkspaceIdFromUrl(rawOpenworkHostUrl) || parseOpenworkWorkspaceIdFromUrl(baseUrl)
+    const micxHostUrl = remoteType === "micx"
+      ? stripMicxWorkspaceMount(rawMicxHostUrl ?? baseUrl)
+      : rawMicxHostUrl;
+    const micxWorkspaceId = typeof input.micxWorkspaceId === "string" && input.micxWorkspaceId.trim()
+      ? input.micxWorkspaceId.trim()
+      : remoteType === "micx"
+        ? parseMicxWorkspaceIdFromUrl(rawMicxHostUrl) || parseMicxWorkspaceIdFromUrl(baseUrl)
         : null;
-    let resolvedOpenworkWorkspaceId = openworkWorkspaceId;
-    let resolvedOpenworkWorkspaceName = input.openworkWorkspaceName ?? null;
-    if (remoteType === "openwork" && !resolvedOpenworkWorkspaceId) {
-      const discovered = await discoverOpenworkWorkspace({
-        hostUrl: openworkHostUrl ?? baseUrl,
-        token: input.openworkToken,
-        hostToken: input.openworkHostToken,
+    let resolvedMicxWorkspaceId = micxWorkspaceId;
+    let resolvedMicxWorkspaceName = input.micxWorkspaceName ?? null;
+    if (remoteType === "micx" && !resolvedMicxWorkspaceId) {
+      const discovered = await discoverMicxWorkspace({
+        hostUrl: micxHostUrl ?? baseUrl,
+        token: input.micxToken,
+        hostToken: input.micxHostToken,
         directory,
       });
       if (!discovered?.id) {
         throw new Error(
           directory
-            ? `OpenWork server has no workspace matching ${directory}.`
-            : "OpenWork server returned no workspaces.",
+            ? `Micx server has no workspace matching ${directory}.`
+            : "Micx server returned no workspaces.",
         );
       }
-      resolvedOpenworkWorkspaceId = String(discovered.id).trim();
-      resolvedOpenworkWorkspaceName = openworkWorkspaceDisplayName(discovered);
+      resolvedMicxWorkspaceId = String(discovered.id).trim();
+      resolvedMicxWorkspaceName = micxWorkspaceDisplayName(discovered);
     }
-    const id = remoteType === "openwork"
-      ? openworkRemoteWorkspaceId(openworkHostUrl ?? baseUrl, resolvedOpenworkWorkspaceId)
+    const id = remoteType === "micx"
+      ? micxRemoteWorkspaceId(micxHostUrl ?? baseUrl, resolvedMicxWorkspaceId)
       : remoteWorkspaceId(baseUrl, directory);
     const workspace = normalizeWorkspaceEntry({
       id,
-      name: String(input.displayName ?? resolvedOpenworkWorkspaceName ?? "Remote workspace"),
+      name: String(input.displayName ?? resolvedMicxWorkspaceName ?? "Remote workspace"),
       displayName: input.displayName ?? null,
       path: directory ?? "",
       preset: "remote",
       workspaceType: "remote",
       remoteType,
-      baseUrl: remoteType === "openwork" ? (openworkHostUrl ?? baseUrl) : baseUrl,
+      baseUrl: remoteType === "micx" ? (micxHostUrl ?? baseUrl) : baseUrl,
       directory,
-      openworkHostUrl,
-      openworkToken: input.openworkToken ?? null,
-      openworkClientToken: input.openworkClientToken ?? null,
-      openworkHostToken: input.openworkHostToken ?? null,
-      openworkWorkspaceId: resolvedOpenworkWorkspaceId,
-      openworkWorkspaceName: resolvedOpenworkWorkspaceName,
+      micxHostUrl,
+      micxToken: input.micxToken ?? null,
+      micxClientToken: input.micxClientToken ?? null,
+      micxHostToken: input.micxHostToken ?? null,
+      micxWorkspaceId: resolvedMicxWorkspaceId,
+      micxWorkspaceName: resolvedMicxWorkspaceName,
       sandboxBackend: input.sandboxBackend ?? null,
       sandboxRunId: input.sandboxRunId ?? null,
       sandboxContainerName: input.sandboxContainerName ?? null,
@@ -1127,50 +1127,50 @@ export function createWorkspaceStore({
       if (!existing) return state;
 
       let nextWorkspace = { ...existing, ...patch };
-      const nextRemoteType = nextWorkspace.remoteType === "opencode" ? "opencode" : "openwork";
-      if (nextRemoteType === "openwork") {
-        const rawHostUrl = typeof nextWorkspace.openworkHostUrl === "string" && nextWorkspace.openworkHostUrl.trim()
-          ? nextWorkspace.openworkHostUrl.trim()
+      const nextRemoteType = nextWorkspace.remoteType === "opencode" ? "opencode" : "micx";
+      if (nextRemoteType === "micx") {
+        const rawHostUrl = typeof nextWorkspace.micxHostUrl === "string" && nextWorkspace.micxHostUrl.trim()
+          ? nextWorkspace.micxHostUrl.trim()
           : null;
         const nextBaseUrl = String(nextWorkspace.baseUrl ?? "").trim();
-        const hostUrl = stripOpenworkWorkspaceMount(rawHostUrl ?? nextBaseUrl);
+        const hostUrl = stripMicxWorkspaceMount(rawHostUrl ?? nextBaseUrl);
         const directory = typeof nextWorkspace.directory === "string" && nextWorkspace.directory.trim()
           ? nextWorkspace.directory.trim()
           : null;
-        const parsedWorkspaceId = parseOpenworkWorkspaceIdFromUrl(rawHostUrl) || parseOpenworkWorkspaceIdFromUrl(nextBaseUrl);
+        const parsedWorkspaceId = parseMicxWorkspaceIdFromUrl(rawHostUrl) || parseMicxWorkspaceIdFromUrl(nextBaseUrl);
         let remoteWorkspaceId = parsedWorkspaceId || (
-          typeof nextWorkspace.openworkWorkspaceId === "string" && nextWorkspace.openworkWorkspaceId.trim()
-            ? nextWorkspace.openworkWorkspaceId.trim()
+          typeof nextWorkspace.micxWorkspaceId === "string" && nextWorkspace.micxWorkspaceId.trim()
+            ? nextWorkspace.micxWorkspaceId.trim()
             : null
         );
-        let remoteWorkspaceName = nextWorkspace.openworkWorkspaceName ?? null;
+        let remoteWorkspaceName = nextWorkspace.micxWorkspaceName ?? null;
         if (!remoteWorkspaceId) {
-          const discovered = await discoverOpenworkWorkspace({
+          const discovered = await discoverMicxWorkspace({
             hostUrl: hostUrl ?? nextBaseUrl,
-            token: nextWorkspace.openworkToken,
-            hostToken: nextWorkspace.openworkHostToken,
+            token: nextWorkspace.micxToken,
+            hostToken: nextWorkspace.micxHostToken,
             directory,
           });
           if (!discovered?.id) {
             throw new Error(
               directory
-                ? `OpenWork server has no workspace matching ${directory}.`
-                : "OpenWork server returned no workspaces.",
+                ? `Micx server has no workspace matching ${directory}.`
+                : "Micx server returned no workspaces.",
             );
           }
           remoteWorkspaceId = String(discovered.id).trim();
-          remoteWorkspaceName = openworkWorkspaceDisplayName(discovered);
+          remoteWorkspaceName = micxWorkspaceDisplayName(discovered);
         }
-        const nextId = openworkRemoteWorkspaceId(hostUrl ?? nextBaseUrl, remoteWorkspaceId);
+        const nextId = micxRemoteWorkspaceId(hostUrl ?? nextBaseUrl, remoteWorkspaceId);
         nextWorkspace = normalizeWorkspaceEntry({
           ...nextWorkspace,
           id: nextId,
           baseUrl: hostUrl ?? nextBaseUrl,
-          openworkHostUrl: hostUrl,
+          micxHostUrl: hostUrl,
           directory,
-          remoteType: "openwork",
-          openworkWorkspaceId: remoteWorkspaceId,
-          openworkWorkspaceName: remoteWorkspaceName,
+          remoteType: "micx",
+          micxWorkspaceId: remoteWorkspaceId,
+          micxWorkspaceName: remoteWorkspaceName,
         });
         if (nextId !== workspaceId) {
           if (state.selectedId === workspaceId) state.selectedId = nextId;
@@ -1219,14 +1219,14 @@ export function createWorkspaceStore({
     if (!workspacePath || !authorizedRoot) {
       throw new Error("workspacePath and folderPath are required");
     }
-    const config = await readWorkspaceOpenworkConfig(workspacePath);
+    const config = await readWorkspaceMicxConfig(workspacePath);
     if (!Array.isArray(config.authorizedRoots)) {
       config.authorizedRoots = [];
     }
     if (!config.authorizedRoots.includes(authorizedRoot)) {
       config.authorizedRoots.push(authorizedRoot);
     }
-    return writeWorkspaceOpenworkConfig(workspacePath, config);
+    return writeWorkspaceMicxConfig(workspacePath, config);
   }
 
   async function exportConfig(input = {}) {
@@ -1272,7 +1272,7 @@ export function createWorkspaceStore({
     });
   }
 
-  async function resetOpenworkState() {
+  async function resetMicxState() {
     await rm(workspaceStatePath(), { force: true });
     await clearDesktopBootstrapFiles();
     return undefined;
@@ -1284,7 +1284,7 @@ export function createWorkspaceStore({
     createWorkspace,
     clearDesktopBootstrapConfig,
     debugDesktopBootstrapConfig,
-    defaultWorkspaceOpenworkConfig,
+    defaultWorkspaceMicxConfig,
     exportConfig,
     forgetWorkspace,
     getDesktopBootstrapConfig,
@@ -1293,15 +1293,15 @@ export function createWorkspaceStore({
     listLocalWorkspacePaths,
     migrateLegacyElectronWorkspaceStateIfNeeded,
     readDesktopBootstrapConfigSync,
-    readWorkspaceOpenworkConfig,
+    readWorkspaceMicxConfig,
     readWorkspaceState,
-    resetOpenworkState,
+    resetMicxState,
     setDesktopBootstrapConfig,
     setRuntimeActiveWorkspace,
     setSelectedWorkspace,
     updateRemoteWorkspace,
     updateWorkspaceDisplayName,
-    writeWorkspaceOpenworkConfig,
+    writeWorkspaceMicxConfig,
     writeWorkspaceState,
   };
 }

@@ -71,7 +71,7 @@ export function runtimeDiagnosticTransportInfo(): RuntimeDiagnosticTransportInfo
  * on the embedding JavaScript runtime's own fetch stack (Node/undici inside
  * Electron main and standalone Node, Bun's fetch in the compiled binary) and
  * must never route through Chromium's electronNet or the OpenCode engine —
- * that independence is what lets diagnostics compare the OpenWork runtime's
+ * that independence is what lets diagnostics compare the Micx runtime's
  * network path against the engine's report. Pair every use with
  * runtimeDiagnosticTransportInfo so reports state which stack actually ran.
  */

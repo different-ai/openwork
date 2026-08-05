@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, type FormEvent } from "react"
-import { CONNECT_DIAGNOSTIC_PHASES } from "@openwork/types/den/connect-diagnostics"
+import { CONNECT_DIAGNOSTIC_PHASES } from "@micx/types/den/connect-diagnostics"
 
 type IncidentFiltersProps = {
   client: string

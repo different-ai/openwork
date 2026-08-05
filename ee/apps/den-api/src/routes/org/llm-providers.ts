@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, isNotNull, isNull } from "@openwork-ee/den-db/drizzle"
+import { and, desc, eq, inArray, isNotNull, isNull } from "@micx-ee/den-db/drizzle"
 import {
   AuthUserTable,
   InvitationTable,
@@ -7,8 +7,8 @@ import {
   LlmProviderTable,
   MemberTable,
   TeamTable,
-} from "@openwork-ee/den-db/schema"
-import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
+} from "@micx-ee/den-db/schema"
+import { createDenTypeId, normalizeDenTypeId } from "@micx-ee/utils/typeid"
 import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
@@ -667,7 +667,7 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
       const memberTeams = c.get("memberTeams") ?? []
 
       // Desktop entitlement is based on this list. If org inference is enabled
-      // but this member's OpenWork provider/key was deleted, re-provision before
+      // but this member's Micx provider/key was deleted, re-provision before
       // listing so Subscribe CTAs don't lie about an already-enabled org.
       if (query.scope === "usable") {
         try {
@@ -676,7 +676,7 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
             memberId: payload.currentMember.id,
           })
         } catch {
-          // Keep listing other providers even if OpenWork re-provision fails.
+          // Keep listing other providers even if Micx re-provision fails.
         }
       }
 

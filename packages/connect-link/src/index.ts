@@ -4,7 +4,7 @@ import {
   CONNECT_LINK_ROUTE,
   CONNECT_LINK_VERSION,
   type ConnectLinkClaims,
-} from "@openwork/types/connect-link"
+} from "@micx/types/connect-link"
 
 export {
   CONNECT_LINK_ALGORITHM,
@@ -14,7 +14,7 @@ export {
   CONNECT_LINK_MAX_TTL_HOURS,
   CONNECT_LINK_ROUTE,
   CONNECT_LINK_VERSION,
-} from "@openwork/types/connect-link"
+} from "@micx/types/connect-link"
 export type {
   ConnectLinkBrand,
   ConnectLinkClaims,
@@ -25,7 +25,7 @@ export type {
   ConnectLinkVerifyFailure,
   ConnectLinkVerifyResult,
   ConnectLinkVerifySuccess,
-} from "@openwork/types/connect-link"
+} from "@micx/types/connect-link"
 
 export const connectLinkClaimsSchema = z.object({
   iss: z.string().trim().url(),
@@ -90,11 +90,11 @@ export function findInsecureConnectLinkUrl(claims: ConnectLinkClaims): string | 
   return findRefusedConnectLinkUrl(claims)
 }
 
-export function buildConnectDeepLink(token: string, scheme = "openwork"): string {
+export function buildConnectDeepLink(token: string, scheme = "micx"): string {
   return `${scheme}://${CONNECT_LINK_ROUTE}?token=${encodeURIComponent(token)}`
 }
 
-export function buildConnectExchangeDeepLink(code: string, apiBaseUrl: string, scheme = "openwork"): string {
+export function buildConnectExchangeDeepLink(code: string, apiBaseUrl: string, scheme = "micx"): string {
   const url = new URL(`${scheme}://${CONNECT_LINK_ROUTE}`)
   url.searchParams.set("code", code)
   url.searchParams.set("apiBaseUrl", apiBaseUrl)

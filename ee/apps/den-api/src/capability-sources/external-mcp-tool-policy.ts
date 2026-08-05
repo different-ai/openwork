@@ -1,4 +1,4 @@
-import type { ExternalMcpToolPolicy } from "@openwork-ee/den-db"
+import type { ExternalMcpToolPolicy } from "@micx-ee/den-db"
 
 export type ToolPolicyDecision = {
   blocked: boolean

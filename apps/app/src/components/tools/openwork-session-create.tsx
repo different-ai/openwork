@@ -21,7 +21,7 @@ type FailedSession = {
   error: string
 }
 
-export type OpenWorkSessionCreateResult = {
+export type MicxSessionCreateResult = {
   ok: boolean
   workspaceId: string | null
   workspace: string | null
@@ -48,7 +48,7 @@ function parseOutputValue(output: unknown): unknown {
   }
 }
 
-export function parseOpenWorkSessionCreateResult(output: unknown): OpenWorkSessionCreateResult | null {
+export function parseMicxSessionCreateResult(output: unknown): MicxSessionCreateResult | null {
   const record = objectValue(parseOutputValue(output))
   if (!record || !Array.isArray(record.created) || !Array.isArray(record.failures)) return null
 
@@ -90,7 +90,7 @@ function resultHeading(createdCount: number, failureCount: number) {
   return `${created} · ${failureCount} failed`
 }
 
-export function OpenWorkSessionCreateTool({ part }: { part: DynamicToolUIPart }) {
+export function MicxSessionCreateTool({ part }: { part: DynamicToolUIPart }) {
   const navigate = useNavigate()
   const { workspaceId: currentWorkspaceId } = useMessageList()
 
@@ -98,7 +98,7 @@ export function OpenWorkSessionCreateTool({ part }: { part: DynamicToolUIPart })
     return <Tool toolPart={part} title="Creating new chats" />
   }
 
-  const result = parseOpenWorkSessionCreateResult(part.output)
+  const result = parseMicxSessionCreateResult(part.output)
   if (!result) {
     return <Tool toolPart={part} title="Created new chats" />
   }
@@ -115,7 +115,7 @@ export function OpenWorkSessionCreateTool({ part }: { part: DynamicToolUIPart })
   return (
     <div
       className="not-prose w-full max-w-2xl overflow-hidden rounded-2xl border border-dls-border bg-dls-surface/95 shadow-sm"
-      data-openwork-session-create-card
+      data-micx-session-create-card
       data-created-session-count={result.created.length}
     >
       <div className="flex items-start gap-3 border-b border-dls-border px-4 py-3">

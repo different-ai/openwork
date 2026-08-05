@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto"
-import { eq } from "@openwork-ee/den-db/drizzle"
-import { RateLimitTable } from "@openwork-ee/den-db/schema"
-import { createDenTypeId } from "@openwork-ee/utils/typeid"
+import { eq } from "@micx-ee/den-db/drizzle"
+import { RateLimitTable } from "@micx-ee/den-db/schema"
+import { createDenTypeId } from "@micx-ee/utils/typeid"
 import { db } from "./db.js"
 import { env } from "./env.js"
 
@@ -212,7 +212,7 @@ export async function isPasswordCompromised(password: string, fetchPasswordRange
   const response = await fetchPasswordRange(`https://api.pwnedpasswords.com/range/${prefix}`, {
     headers: {
       "add-padding": "true",
-      "user-agent": "OpenWork den-api password screening",
+      "user-agent": "Micx den-api password screening",
     },
   })
 

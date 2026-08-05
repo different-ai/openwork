@@ -1,1 +1,1 @@
-export const LOCAL_PREFERENCES_KEY = "openwork.preferences";
+export const LOCAL_PREFERENCES_KEY = "micx.preferences";

@@ -1,9 +1,9 @@
-import { createDenTypeId } from "@openwork-ee/utils/typeid"
+import { createDenTypeId } from "@micx-ee/utils/typeid"
 import { beforeAll, expect, mock, test } from "bun:test"
 import { Hono } from "hono"
 
 function seedRequiredEnv() {
-  process.env.DATABASE_URL = process.env.DATABASE_URL ?? "mysql://root:password@127.0.0.1:3306/openwork_test"
+  process.env.DATABASE_URL = process.env.DATABASE_URL ?? "mysql://root:password@127.0.0.1:3306/micx_test"
   process.env.DEN_DB_ENCRYPTION_KEY = process.env.DEN_DB_ENCRYPTION_KEY ?? "x".repeat(32)
   process.env.BETTER_AUTH_SECRET = process.env.BETTER_AUTH_SECRET ?? "y".repeat(32)
   process.env.BETTER_AUTH_URL = process.env.BETTER_AUTH_URL ?? "http://127.0.0.1:8790"
@@ -168,7 +168,7 @@ test("canonical organization scope header wins over a different active session o
   const app = createOrgContextApp(state, { sessionActiveOrganizationId: sessionOrg.id })
 
   const response = await app.request("http://den.local/v1/org", {
-    headers: { "x-openwork-org-id": headerOrg.id },
+    headers: { "x-micx-org-id": headerOrg.id },
   })
 
   expect(response.status).toBe(200)
@@ -188,7 +188,7 @@ test("legacy organization scope header remains an alias", async () => {
   const app = createOrgContextApp(state, { sessionActiveOrganizationId: sessionOrg.id })
 
   const response = await app.request("http://den.local/v1/org", {
-    headers: { "x-openwork-legacy-org-id": headerOrg.id },
+    headers: { "x-micx-legacy-org-id": headerOrg.id },
   })
 
   expect(response.status).toBe(200)
@@ -225,7 +225,7 @@ test("an explicit header for a non-member org hard fails instead of falling back
   const app = createOrgContextApp(state, { sessionActiveOrganizationId: sessionOrg.id })
 
   const response = await app.request("http://den.local/v1/org", {
-    headers: { "x-openwork-org-id": nonMemberOrgId },
+    headers: { "x-micx-org-id": nonMemberOrgId },
   })
 
   expect(response.status).toBe(404)
@@ -278,7 +278,7 @@ test("a canonical header fixes a stale session even when the user has multiple o
   const app = createOrgContextApp(state, { sessionActiveOrganizationId: staleOrgId })
 
   const response = await app.request("http://den.local/v1/org", {
-    headers: { "x-openwork-org-id": headerOrg.id },
+    headers: { "x-micx-org-id": headerOrg.id },
   })
 
   expect(response.status).toBe(200)
@@ -299,7 +299,7 @@ test("an API-key scoped org wins over a conflicting request header", async () =>
   const app = createOrgContextApp(state, { apiKey, sessionActiveOrganizationId: headerOrg.id })
 
   const response = await app.request("http://den.local/v1/org", {
-    headers: { "x-openwork-org-id": headerOrg.id },
+    headers: { "x-micx-org-id": headerOrg.id },
   })
 
   expect(response.status).toBe(200)

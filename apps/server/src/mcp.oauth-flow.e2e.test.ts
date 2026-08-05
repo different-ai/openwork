@@ -16,7 +16,7 @@ import { join, resolve } from "node:path";
  *
  * The test plays the role of the user's browser by following the
  * authorization URL and the resulting redirect to the engine's loopback
- * callback. This is the same flow the OpenWork desktop app drives through
+ * callback. This is the same flow the Micx desktop app drives through
  * the OAuth modal (apps/app .../connections/mcp-auth-modal.tsx).
  *
  * Skipped automatically when the opencode sidecar binary is not present

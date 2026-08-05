@@ -1,11 +1,11 @@
 import {
   engineInfo,
   engineStart,
-  openworkServerInfo,
+  micxServerInfo,
   type EngineInfo,
-  type OpenworkServerInfo,
+  type MicxServerInfo,
 } from "../../app/lib/desktop";
-import { readOpenworkServerSettings, writeOpenworkServerSettings } from "../../app/lib/openwork-server";
+import { readMicxServerSettings, writeMicxServerSettings } from "../../app/lib/micx-server";
 import { safeStringify } from "../../app/utils";
 import { recordInspectorEvent } from "../../app/lib/app-inspector";
 
@@ -17,15 +17,15 @@ type LocalWorkspaceLike = {
   workspaceType?: "local" | "remote" | string | null;
 };
 
-type EnsureDesktopLocalOpenworkOptions = {
+type EnsureDesktopLocalMicxOptions = {
   route: "session" | "settings";
   workspace: LocalWorkspaceLike | null | undefined;
   allWorkspaces: LocalWorkspaceLike[];
 };
 
-function emitOpenworkSettingsChanged() {
+function emitMicxSettingsChanged() {
   try {
-    window.dispatchEvent(new CustomEvent("openwork-server-settings-changed"));
+    window.dispatchEvent(new CustomEvent("micx-server-settings-changed"));
   } catch {
     // ignore browser event dispatch failures
   }
@@ -37,8 +37,8 @@ function describeError(error: unknown) {
   return serialized && serialized !== "{}" ? serialized : "Unknown error";
 }
 
-export async function ensureDesktopLocalOpenworkConnection(
-  options: EnsureDesktopLocalOpenworkOptions,
+export async function ensureDesktopLocalMicxConnection(
+  options: EnsureDesktopLocalMicxOptions,
 ) {
   const workspace = options.workspace;
   const workspaceRoot = workspace?.path?.trim() ?? "";
@@ -58,7 +58,7 @@ export async function ensureDesktopLocalOpenworkConnection(
     workspacePaths.unshift(workspaceRoot);
   }
 
-  recordInspectorEvent("route.local_openwork.ensure.start", {
+  recordInspectorEvent("route.local_micx.ensure.start", {
     route: options.route,
     workspaceId: workspace.id,
     workspaceRoot,
@@ -70,25 +70,25 @@ export async function ensureDesktopLocalOpenworkConnection(
       await engineStart(workspaceRoot, {
         runtime: "direct",
         workspacePaths,
-        openworkRemoteAccess: readOpenworkServerSettings().remoteAccessEnabled === true,
+        micxRemoteAccess: readMicxServerSettings().remoteAccessEnabled === true,
       });
     }
 
-    const info = await openworkServerInfo() as OpenworkServerInfo | null;
+    const info = await micxServerInfo() as MicxServerInfo | null;
     if (!info?.baseUrl) {
-      throw new Error("OpenWork server did not report a base URL after activation.");
+      throw new Error("Micx server did not report a base URL after activation.");
     }
 
-    writeOpenworkServerSettings({
+    writeMicxServerSettings({
       urlOverride: info.baseUrl,
       token: info.ownerToken?.trim() || info.clientToken?.trim() || undefined,
       hostToken: info.hostToken?.trim() || undefined,
       portOverride: info.port ?? undefined,
       remoteAccessEnabled: info.remoteAccessEnabled === true,
     });
-    emitOpenworkSettingsChanged();
+    emitMicxSettingsChanged();
 
-    recordInspectorEvent("route.local_openwork.ensure.success", {
+    recordInspectorEvent("route.local_micx.ensure.success", {
       route: options.route,
       workspaceId: workspace.id,
       workspaceRoot,
@@ -99,7 +99,7 @@ export async function ensureDesktopLocalOpenworkConnection(
   } catch (error) {
     const message = describeError(error);
     console.error(`[${options.route}-route] local workspace reconnect failed`, error);
-    recordInspectorEvent("route.local_openwork.ensure.error", {
+    recordInspectorEvent("route.local_micx.ensure.error", {
       route: options.route,
       workspaceId: workspace.id,
       workspaceRoot,

@@ -1,14 +1,14 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { INFERENCE_MODEL_ALIASES } from "@openwork/types/den/inference";
+import { INFERENCE_MODEL_ALIASES } from "@micx/types/den/inference";
 
 const screen = readFileSync(
   join(import.meta.dir, "..", "app", "(den)", "dashboard", "_components", "inference-screen.tsx"),
   "utf8",
 );
 
-describe("OpenWork Models page", () => {
+describe("Micx Models page", () => {
   test("leads with the flat page header instead of the gradient hero", () => {
     expect(screen).toContain("DenPageHeader");
     expect(screen).toContain("Reliable, hand-picked models for knowledge work.");

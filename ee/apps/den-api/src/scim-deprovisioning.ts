@@ -1,5 +1,5 @@
-import { and, eq, isNotNull, or } from "@openwork-ee/den-db/drizzle"
-import { AuthUserTable, ExternalIdentityTable, MemberTable, ScimUserTombstoneTable } from "@openwork-ee/den-db/schema"
+import { and, eq, isNotNull, or } from "@micx-ee/den-db/drizzle"
+import { AuthUserTable, ExternalIdentityTable, MemberTable, ScimUserTombstoneTable } from "@micx-ee/den-db/schema"
 import { db } from "./db.js"
 
 type OrganizationId = typeof MemberTable.$inferSelect.organizationId

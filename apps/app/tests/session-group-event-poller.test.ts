@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test";
 
-import type { OpenworkSessionGroupEvent } from "../src/app/lib/openwork-server";
+import type { MicxSessionGroupEvent } from "../src/app/lib/micx-server";
 import { SessionGroupEventPoller } from "../src/react-app/shell/session-group-event-poller";
 
-function event(seq: number, workspaceId = "workspace-a"): OpenworkSessionGroupEvent {
+function event(seq: number, workspaceId = "workspace-a"): MicxSessionGroupEvent {
   return {
     id: `event-${seq}`,
     seq,
@@ -78,7 +78,7 @@ describe("session group event poller", () => {
     const request = async ({ since }: { since: number }) => ({
       items: events.filter((item) => item.seq > since),
     });
-    const apply = async (items: OpenworkSessionGroupEvent[]) => {
+    const apply = async (items: MicxSessionGroupEvent[]) => {
       applied.push(...items.map((item) => item.id));
     };
 

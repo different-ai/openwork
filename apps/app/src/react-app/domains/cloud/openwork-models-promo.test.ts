@@ -7,43 +7,43 @@ declare const expect: (value: unknown) => {
 
 import { DEFAULT_DEN_BASE_URL, HOSTED_DEFAULT_DEN_BASE_URL, setDenBootstrapConfig } from "../../../app/lib/den";
 import {
-  hasOpenWorkModelsAvailable,
-  isOpenWorkModelsPromoEligible,
-  isOpenWorkModelsPromoEligibleForDenBaseUrl,
-  shouldShowOpenWorkModelsPromo,
-  wasOpenWorkModelsStartupPromoShown,
-} from "./openwork-models-promo";
+  hasMicxModelsAvailable,
+  isMicxModelsPromoEligible,
+  isMicxModelsPromoEligibleForDenBaseUrl,
+  shouldShowMicxModelsPromo,
+  wasMicxModelsStartupPromoShown,
+} from "./micx-models-promo";
 
 afterEach(async () => {
   await setDenBootstrapConfig({ baseUrl: DEFAULT_DEN_BASE_URL, requireSignin: false });
 });
 
-describe("OpenWork Models promo eligibility", () => {
+describe("Micx Models promo eligibility", () => {
   test("allows promotions on the default Den URL after normalization", () => {
-    expect(isOpenWorkModelsPromoEligibleForDenBaseUrl(`${HOSTED_DEFAULT_DEN_BASE_URL}/api/den/`)).toBe(true);
+    expect(isMicxModelsPromoEligibleForDenBaseUrl(`${HOSTED_DEFAULT_DEN_BASE_URL}/api/den/`)).toBe(true);
   });
 
   test("suppresses promotions for custom configured Den URLs", async () => {
     await setDenBootstrapConfig({ baseUrl: "https://custom-den.example.com", requireSignin: false });
 
-    expect(isOpenWorkModelsPromoEligible()).toBe(false);
-    expect(shouldShowOpenWorkModelsPromo()).toBe(false);
-    expect(wasOpenWorkModelsStartupPromoShown()).toBe(true);
+    expect(isMicxModelsPromoEligible()).toBe(false);
+    expect(shouldShowMicxModelsPromo()).toBe(false);
+    expect(wasMicxModelsStartupPromoShown()).toBe(true);
   });
 });
 
-describe("hasOpenWorkModelsAvailable", () => {
-  test("requires a connected openwork provider with at least one model", () => {
+describe("hasMicxModelsAvailable", () => {
+  test("requires a connected micx provider with at least one model", () => {
     expect(
-      hasOpenWorkModelsAvailable({
-        providerConnectedIds: ["openwork"],
-        providers: [{ id: "openwork", models: {} }],
+      hasMicxModelsAvailable({
+        providerConnectedIds: ["micx"],
+        providers: [{ id: "micx", models: {} }],
       }),
     ).toBe(false);
     expect(
-      hasOpenWorkModelsAvailable({
-        providerConnectedIds: ["openwork"],
-        providers: [{ id: "openwork", models: { "gpt-5": {} } }],
+      hasMicxModelsAvailable({
+        providerConnectedIds: ["micx"],
+        providers: [{ id: "micx", models: { "gpt-5": {} } }],
       }),
     ).toBe(true);
   });

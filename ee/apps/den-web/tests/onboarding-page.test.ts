@@ -14,25 +14,25 @@ const publicInstallers = read("_lib", "public-installers.ts");
 
 describe("Marketplace onboarding page", () => {
   test("reuses the landing download card and den choice cards", () => {
-    expect(screen).toContain("DownloadOpenWorkCard");
+    expect(screen).toContain("DownloadMicxCard");
     expect(screen).toContain("DenChoiceCard");
     expect(screen).toContain("DenSectionHeader");
     expect(screen).toContain("DenBadge");
     expect(page).toContain("getPublicInstallers");
-    expect(publicInstallers).toContain('name.startsWith("openwork-cloud-")');
-    expect(publicInstallers).toContain('name.startsWith("openwork-enterprise-")');
+    expect(publicInstallers).toContain('name.startsWith("micx-cloud-")');
+    expect(publicInstallers).toContain('name.startsWith("micx-enterprise-")');
   });
 
-  test("offers OpenWork Models and Bring your Own Keys as the model path", () => {
-    expect(screen).toContain("onboarding-choice-openwork-models");
+  test("offers Micx Models and Bring your Own Keys as the model path", () => {
+    expect(screen).toContain("onboarding-choice-micx-models");
     expect(screen).toContain("onboarding-choice-byok");
     expect(screen).toContain("Turn on models");
     expect(screen).toContain("Bring your Own Keys");
-    expect(screen).toContain("/openwork-mark.svg");
+    expect(screen).toContain("/micx-mark.svg");
   });
 
   test("keeps the installed flag and inference check", () => {
-    expect(screen).toContain("openwork:onboarding:app-installed");
+    expect(screen).toContain("micx:onboarding:app-installed");
     expect(screen).toContain("/v1/inference");
     expect(screen).toContain("onboarding-app-installed");
   });

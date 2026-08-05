@@ -17,20 +17,20 @@ async function writeBootstrapConfig(targetPath, config) {
 }
 
 async function withIsolatedBootstrapStore(callback) {
-  const root = await mkdtemp(path.join(tmpdir(), "openwork-bootstrap-store-"));
+  const root = await mkdtemp(path.join(tmpdir(), "micx-bootstrap-store-"));
   const home = path.join(root, "home");
   const xdg = path.join(root, "xdg");
   const previousHome = process.env.HOME;
   const previousXdg = process.env.XDG_CONFIG_HOME;
-  const previousOverride = process.env.OPENWORK_DESKTOP_BOOTSTRAP_PATH;
-  const previousBundleDir = process.env.OPENWORK_BOOTSTRAP_BUNDLE_DIR;
-  const previousDevMode = process.env.OPENWORK_DEV_MODE;
+  const previousOverride = process.env.MICX_DESKTOP_BOOTSTRAP_PATH;
+  const previousBundleDir = process.env.MICX_BOOTSTRAP_BUNDLE_DIR;
+  const previousDevMode = process.env.MICX_DEV_MODE;
 
   process.env.HOME = home;
   process.env.XDG_CONFIG_HOME = xdg;
-  delete process.env.OPENWORK_DESKTOP_BOOTSTRAP_PATH;
-  delete process.env.OPENWORK_BOOTSTRAP_BUNDLE_DIR;
-  delete process.env.OPENWORK_DEV_MODE;
+  delete process.env.MICX_DESKTOP_BOOTSTRAP_PATH;
+  delete process.env.MICX_BOOTSTRAP_BUNDLE_DIR;
+  delete process.env.MICX_DEV_MODE;
 
   try {
     const module = await import(`./workspace-store.mjs?bootstrap-test=${Date.now()}-${Math.random()}`);
@@ -45,22 +45,22 @@ async function withIsolatedBootstrapStore(callback) {
     return await callback({
       store,
       createStore,
-      canonicalPath: path.join(xdg, "openwork", "desktop-bootstrap.json"),
-      legacyPath: path.join(home, ".config", "openwork", "desktop-bootstrap.json"),
+      canonicalPath: path.join(xdg, "micx", "desktop-bootstrap.json"),
+      legacyPath: path.join(home, ".config", "micx", "desktop-bootstrap.json"),
       root,
       userDataPath: path.join(root, "userData"),
     });
   } finally {
     restoreEnv("HOME", previousHome);
     restoreEnv("XDG_CONFIG_HOME", previousXdg);
-    restoreEnv("OPENWORK_DESKTOP_BOOTSTRAP_PATH", previousOverride);
-    restoreEnv("OPENWORK_BOOTSTRAP_BUNDLE_DIR", previousBundleDir);
-    restoreEnv("OPENWORK_DEV_MODE", previousDevMode);
+    restoreEnv("MICX_DESKTOP_BOOTSTRAP_PATH", previousOverride);
+    restoreEnv("MICX_BOOTSTRAP_BUNDLE_DIR", previousBundleDir);
+    restoreEnv("MICX_DEV_MODE", previousDevMode);
   }
 }
 
 test("recovers missing desktop workspace state from token store paths", async () => {
-  const root = await mkdtemp(path.join(tmpdir(), "openwork-workspace-store-"));
+  const root = await mkdtemp(path.join(tmpdir(), "micx-workspace-store-"));
   const userData = path.join(root, "userData");
   const oldWorkspace = path.join(root, "old-workspace");
   await mkdir(oldWorkspace, { recursive: true });
@@ -68,7 +68,7 @@ test("recovers missing desktop workspace state from token store paths", async ()
   await mkdir(userData, { recursive: true });
 
   await writeFile(
-    path.join(userData, "openwork-server-tokens.json"),
+    path.join(userData, "micx-server-tokens.json"),
     JSON.stringify({
       version: 1,
       workspaces: {
@@ -80,8 +80,8 @@ test("recovers missing desktop workspace state from token store paths", async ()
     "utf8",
   );
 
-  const previous = process.env.OPENWORK_SERVER_CONFIG;
-  process.env.OPENWORK_SERVER_CONFIG = path.join(root, "missing-server.json");
+  const previous = process.env.MICX_SERVER_CONFIG;
+  process.env.MICX_SERVER_CONFIG = path.join(root, "missing-server.json");
   try {
     const store = createWorkspaceStore({
       app: { getPath: (name) => name === "userData" ? userData : root },
@@ -96,35 +96,35 @@ test("recovers missing desktop workspace state from token store paths", async ()
     assert.equal(state.selectedId, state.workspaces[0].id);
     assert.equal(state.watchedId, state.workspaces[0].id);
 
-    const persisted = JSON.parse(await readFile(path.join(userData, "openwork-workspaces.json"), "utf8"));
+    const persisted = JSON.parse(await readFile(path.join(userData, "micx-workspaces.json"), "utf8"));
     assert.equal(persisted.workspaces.length, 1);
     assert.equal(persisted.selectedWorkspaceId, state.workspaces[0].id);
   } finally {
-    if (previous === undefined) delete process.env.OPENWORK_SERVER_CONFIG;
-    else process.env.OPENWORK_SERVER_CONFIG = previous;
+    if (previous === undefined) delete process.env.MICX_SERVER_CONFIG;
+    else process.env.MICX_SERVER_CONFIG = previous;
   }
 });
 
 test("keeps persisted empty desktop workspace state authoritative", async () => {
-  const root = await mkdtemp(path.join(tmpdir(), "openwork-workspace-store-"));
+  const root = await mkdtemp(path.join(tmpdir(), "micx-workspace-store-"));
   const userData = path.join(root, "userData");
   const oldWorkspace = path.join(root, "old-workspace");
   await mkdir(oldWorkspace, { recursive: true });
   await mkdir(userData, { recursive: true });
 
   await writeFile(
-    path.join(userData, "openwork-workspaces.json"),
+    path.join(userData, "micx-workspaces.json"),
     JSON.stringify({ selectedId: "", activeId: null, watchedId: null, workspaces: [] }),
     "utf8",
   );
   await writeFile(
-    path.join(userData, "openwork-server-tokens.json"),
+    path.join(userData, "micx-server-tokens.json"),
     JSON.stringify({ version: 1, workspaces: { [oldWorkspace]: { updatedAt: 2 } } }),
     "utf8",
   );
 
-  const previous = process.env.OPENWORK_SERVER_CONFIG;
-  process.env.OPENWORK_SERVER_CONFIG = path.join(root, "missing-server.json");
+  const previous = process.env.MICX_SERVER_CONFIG;
+  process.env.MICX_SERVER_CONFIG = path.join(root, "missing-server.json");
   try {
     const store = createWorkspaceStore({
       app: { getPath: (name) => name === "userData" ? userData : root },
@@ -137,12 +137,12 @@ test("keeps persisted empty desktop workspace state authoritative", async () => 
     assert.deepEqual(state.workspaces, []);
     assert.equal(state.selectedId, "");
   } finally {
-    restoreEnv("OPENWORK_SERVER_CONFIG", previous);
+    restoreEnv("MICX_SERVER_CONFIG", previous);
   }
 });
 
 test("prefers server config workspaces when desktop state is missing", async () => {
-  const root = await mkdtemp(path.join(tmpdir(), "openwork-workspace-store-"));
+  const root = await mkdtemp(path.join(tmpdir(), "micx-workspace-store-"));
   const userData = path.join(root, "userData");
   const oldWorkspace = path.join(root, "server-workspace");
   const serverConfig = path.join(root, "server.json");
@@ -156,13 +156,13 @@ test("prefers server config workspaces when desktop state is missing", async () 
     "utf8",
   );
   await writeFile(
-    path.join(userData, "openwork-server-tokens.json"),
+    path.join(userData, "micx-server-tokens.json"),
     JSON.stringify({ version: 1, workspaces: { [path.join(root, "other")]: { updatedAt: 9 } } }),
     "utf8",
   );
 
-  const previous = process.env.OPENWORK_SERVER_CONFIG;
-  process.env.OPENWORK_SERVER_CONFIG = serverConfig;
+  const previous = process.env.MICX_SERVER_CONFIG;
+  process.env.MICX_SERVER_CONFIG = serverConfig;
   try {
     const store = createWorkspaceStore({
       app: { getPath: (name) => name === "userData" ? userData : root },
@@ -176,18 +176,18 @@ test("prefers server config workspaces when desktop state is missing", async () 
     assert.equal(state.workspaces[0].path, oldWorkspaceReal);
     assert.equal(state.workspaces[0].name, "From Server");
   } finally {
-    if (previous === undefined) delete process.env.OPENWORK_SERVER_CONFIG;
-    else process.env.OPENWORK_SERVER_CONFIG = previous;
+    if (previous === undefined) delete process.env.MICX_SERVER_CONFIG;
+    else process.env.MICX_SERVER_CONFIG = previous;
   }
 });
 
 test("does not create a default workspace when desktop state is absent", async () => {
-  const root = await mkdtemp(path.join(tmpdir(), "openwork-workspace-store-"));
+  const root = await mkdtemp(path.join(tmpdir(), "micx-workspace-store-"));
   const userData = path.join(root, "userData");
-  const previousDevMode = process.env.OPENWORK_DEV_MODE;
-  const previousServerConfig = process.env.OPENWORK_SERVER_CONFIG;
-  process.env.OPENWORK_DEV_MODE = "1";
-  process.env.OPENWORK_SERVER_CONFIG = path.join(root, "missing-server.json");
+  const previousDevMode = process.env.MICX_DEV_MODE;
+  const previousServerConfig = process.env.MICX_SERVER_CONFIG;
+  process.env.MICX_DEV_MODE = "1";
+  process.env.MICX_SERVER_CONFIG = path.join(root, "missing-server.json");
   try {
     const store = createWorkspaceStore({
       app: { getPath: (name) => name === "userData" ? userData : root },
@@ -198,15 +198,15 @@ test("does not create a default workspace when desktop state is absent", async (
 
     const state = await store.readWorkspaceState();
     assert.equal(state.workspaces.length, 0);
-    await assert.rejects(readFile(path.join(userData, "openwork-dev-data", "home", "OpenWork", ".opencode", "openwork.json"), "utf8"));
+    await assert.rejects(readFile(path.join(userData, "micx-dev-data", "home", "Micx", ".opencode", "micx.json"), "utf8"));
   } finally {
-    restoreEnv("OPENWORK_DEV_MODE", previousDevMode);
-    restoreEnv("OPENWORK_SERVER_CONFIG", previousServerConfig);
+    restoreEnv("MICX_DEV_MODE", previousDevMode);
+    restoreEnv("MICX_SERVER_CONFIG", previousServerConfig);
   }
 });
 
-test("normalizes recovered remote OpenWork entries before persisting", async () => {
-  const root = await mkdtemp(path.join(tmpdir(), "openwork-workspace-store-"));
+test("normalizes recovered remote Micx entries before persisting", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "micx-workspace-store-"));
   const userData = path.join(root, "userData");
   const serverConfig = path.join(root, "server.json");
   await mkdir(userData, { recursive: true });
@@ -219,14 +219,14 @@ test("normalizes recovered remote OpenWork entries before persisting", async () 
           id: "legacy_one",
           path: "/workspace",
           workspaceType: "remote",
-          remoteType: "openwork",
+          remoteType: "micx",
           baseUrl: "https://worker.example.com/workspace/ws_remote",
         },
         {
           id: "legacy_two",
           path: "/workspace",
           workspaceType: "remote",
-          remoteType: "openwork",
+          remoteType: "micx",
           baseUrl: "https://worker.example.com/w/ws_remote",
         },
       ],
@@ -234,8 +234,8 @@ test("normalizes recovered remote OpenWork entries before persisting", async () 
     "utf8",
   );
 
-  const previous = process.env.OPENWORK_SERVER_CONFIG;
-  process.env.OPENWORK_SERVER_CONFIG = serverConfig;
+  const previous = process.env.MICX_SERVER_CONFIG;
+  process.env.MICX_SERVER_CONFIG = serverConfig;
   try {
     const store = createWorkspaceStore({
       app: { getPath: (name) => name === "userData" ? userData : root },
@@ -248,16 +248,16 @@ test("normalizes recovered remote OpenWork entries before persisting", async () 
     assert.equal(state.workspaces.length, 1);
     assert.equal(state.workspaces[0].id, "rem_ws_remote");
     assert.equal(state.workspaces[0].baseUrl, "https://worker.example.com");
-    assert.equal(state.workspaces[0].openworkWorkspaceId, "ws_remote");
+    assert.equal(state.workspaces[0].micxWorkspaceId, "ws_remote");
     assert.equal(state.selectedId, "rem_ws_remote");
   } finally {
-    if (previous === undefined) delete process.env.OPENWORK_SERVER_CONFIG;
-    else process.env.OPENWORK_SERVER_CONFIG = previous;
+    if (previous === undefined) delete process.env.MICX_SERVER_CONFIG;
+    else process.env.MICX_SERVER_CONFIG = previous;
   }
 });
 
 test("forgetting a local workspace removes its recovery token", async () => {
-  const root = await mkdtemp(path.join(tmpdir(), "openwork-workspace-store-"));
+  const root = await mkdtemp(path.join(tmpdir(), "micx-workspace-store-"));
   const userData = path.join(root, "userData");
   const forgottenWorkspace = path.join(root, "forgotten-workspace");
   const retainedWorkspace = path.join(root, "retained-workspace");
@@ -266,7 +266,7 @@ test("forgetting a local workspace removes its recovery token", async () => {
   await mkdir(userData, { recursive: true });
 
   await writeFile(
-    path.join(userData, "openwork-workspaces.json"),
+    path.join(userData, "micx-workspaces.json"),
     JSON.stringify({
       selectedId: "ws_forgotten",
       activeId: "ws_forgotten",
@@ -279,7 +279,7 @@ test("forgetting a local workspace removes its recovery token", async () => {
     "utf8",
   );
   await writeFile(
-    path.join(userData, "openwork-server-tokens.json"),
+    path.join(userData, "micx-server-tokens.json"),
     JSON.stringify({
       version: 1,
       workspaces: {
@@ -303,7 +303,7 @@ test("forgetting a local workspace removes its recovery token", async () => {
   assert.equal(state.activeId, null);
   assert.equal(state.watchedId, null);
 
-  const tokens = JSON.parse(await readFile(path.join(userData, "openwork-server-tokens.json"), "utf8"));
+  const tokens = JSON.parse(await readFile(path.join(userData, "micx-server-tokens.json"), "utf8"));
   assert.deepEqual(Object.keys(tokens.workspaces), [retainedWorkspace]);
   assert.equal(tokens.workspaces[retainedWorkspace].token, "retained");
 });
@@ -356,13 +356,13 @@ test("desktop bootstrap migrates a newer legacy writtenAt to canonical", async (
 test("explicit desktop bootstrap path never inherits legacy activation state", async () => {
   await withIsolatedBootstrapStore(async ({ store, legacyPath, root }) => {
     const explicitPath = path.join(root, "isolated", "desktop-bootstrap.json");
-    process.env.OPENWORK_DESKTOP_BOOTSTRAP_PATH = explicitPath;
+    process.env.MICX_DESKTOP_BOOTSTRAP_PATH = explicitPath;
     await writeBootstrapConfig(legacyPath, {
-      baseUrl: "https://app.openworklabs.com",
+      baseUrl: "https://app.micxlabs.com",
       requireSignin: true,
       enterpriseActivation: {
         activatedAt: "2026-07-27T13:30:23.342Z",
-        denBaseUrl: "https://app.openworklabs.com/api/den",
+        denBaseUrl: "https://app.micxlabs.com/api/den",
       },
     });
 
@@ -376,7 +376,7 @@ test("explicit desktop bootstrap path never inherits legacy activation state", a
 test("explicit desktop bootstrap path still reads its configured bootstrap", async () => {
   await withIsolatedBootstrapStore(async ({ store, root }) => {
     const explicitPath = path.join(root, "isolated", "desktop-bootstrap.json");
-    process.env.OPENWORK_DESKTOP_BOOTSTRAP_PATH = explicitPath;
+    process.env.MICX_DESKTOP_BOOTSTRAP_PATH = explicitPath;
     await writeBootstrapConfig(explicitPath, {
       baseUrl: "https://enterprise.example.com",
       requireSignin: true,
@@ -392,46 +392,46 @@ test("explicit desktop bootstrap path still reads its configured bootstrap", asy
 test("desktop bootstrap prefers an older legacy organization config over a newer canonical hosted default", async () => {
   await withIsolatedBootstrapStore(async ({ store, canonicalPath, legacyPath }) => {
     await writeBootstrapConfig(canonicalPath, {
-      baseUrl: "https://app.openworklabs.com/api/den/",
+      baseUrl: "https://app.micxlabs.com/api/den/",
       apiBaseUrl: "https://api.unrelated.example",
       requireSignin: false,
       writtenAt: "2026-07-10T13:00:00.000Z",
     });
     await writeBootstrapConfig(legacyPath, {
-      baseUrl: "https://openwork.organization.internal.example",
+      baseUrl: "https://micx.organization.internal.example",
       apiBaseUrl: "https://api.organization.internal.example",
       requireSignin: true,
       writtenAt: "2026-07-09T12:00:00.000Z",
     });
 
     const config = await store.getDesktopBootstrapConfig();
-    assert.equal(config.baseUrl, "https://openwork.organization.internal.example");
+    assert.equal(config.baseUrl, "https://micx.organization.internal.example");
     assert.equal(config.fromFile, true);
     const migrated = JSON.parse(await readFile(canonicalPath, "utf8"));
-    assert.equal(migrated.baseUrl, "https://openwork.organization.internal.example");
+    assert.equal(migrated.baseUrl, "https://micx.organization.internal.example");
   });
 });
 
 test("desktop bootstrap keeps an older canonical organization config over a newer legacy hosted default", async () => {
   await withIsolatedBootstrapStore(async ({ store, canonicalPath, legacyPath }) => {
     await writeBootstrapConfig(canonicalPath, {
-      baseUrl: "https://openwork.organization.internal.example",
+      baseUrl: "https://micx.organization.internal.example",
       apiBaseUrl: "https://api.organization.internal.example",
       requireSignin: true,
       writtenAt: "2026-07-09T12:00:00.000Z",
     });
     await writeBootstrapConfig(legacyPath, {
-      baseUrl: "https://api.openworklabs.com/v1/",
+      baseUrl: "https://api.micxlabs.com/v1/",
       apiBaseUrl: "https://api.unrelated.example",
       requireSignin: false,
       writtenAt: "2026-07-10T13:00:00.000Z",
     });
 
     const config = await store.getDesktopBootstrapConfig();
-    assert.equal(config.baseUrl, "https://openwork.organization.internal.example");
+    assert.equal(config.baseUrl, "https://micx.organization.internal.example");
     assert.equal(config.fromFile, true);
     const persisted = JSON.parse(await readFile(canonicalPath, "utf8"));
-    assert.equal(persisted.baseUrl, "https://openwork.organization.internal.example");
+    assert.equal(persisted.baseUrl, "https://micx.organization.internal.example");
   });
 });
 
@@ -541,12 +541,12 @@ test("enterprise activation is preserved, required activation is overrideable, a
       forceRequireSignin: true,
     });
     await store.setDesktopBootstrapConfig({
-      baseUrl: "https://app.openworklabs.com",
+      baseUrl: "https://app.micxlabs.com",
       requireSignin: false,
       requireActivation: false,
       enterpriseActivation: {
         activatedAt: "2026-07-27T12:00:00.000Z",
-        denBaseUrl: "https://app.openworklabs.com",
+        denBaseUrl: "https://app.micxlabs.com",
       },
     });
 
@@ -555,7 +555,7 @@ test("enterprise activation is preserved, required activation is overrideable, a
     assert.equal(config.requireActivation, false);
     assert.deepEqual(config.enterpriseActivation, {
       activatedAt: "2026-07-27T12:00:00.000Z",
-      denBaseUrl: "https://app.openworklabs.com",
+      denBaseUrl: "https://app.micxlabs.com",
     });
     const persisted = JSON.parse(await readFile(canonicalPath, "utf8"));
     assert.equal(persisted.requireSignin, true);
@@ -569,7 +569,7 @@ test("enterprise activation is preserved, required activation is overrideable, a
 test("an omitted requireActivation is never materialized into the shared bootstrap file", async () => {
   await withIsolatedBootstrapStore(async ({ store, canonicalPath }) => {
     await store.setDesktopBootstrapConfig({
-      baseUrl: "https://app.openworklabs.com",
+      baseUrl: "https://app.micxlabs.com",
       requireSignin: true,
     });
 
@@ -581,57 +581,57 @@ test("an omitted requireActivation is never materialized into the shared bootstr
 
 test("imports the newest organization bootstrap beside a Windows installer when config is absent", async () => {
   await withIsolatedBootstrapStore(async ({ store, canonicalPath, root }) => {
-    const bundleDir = path.join(root, "downloads", "OpenWork-example-org");
+    const bundleDir = path.join(root, "downloads", "Micx-example-org");
     const olderBundleDir = path.join(bundleDir, "older");
     const newerBundleDir = path.join(bundleDir, "latest");
-    process.env.OPENWORK_BOOTSTRAP_BUNDLE_DIR = bundleDir;
+    process.env.MICX_BOOTSTRAP_BUNDLE_DIR = bundleDir;
     await mkdir(olderBundleDir, { recursive: true });
     await mkdir(newerBundleDir, { recursive: true });
-    await writeFile(path.join(bundleDir, "openwork-win-x64-10.0.0.exe"), "signed installer", "utf8");
+    await writeFile(path.join(bundleDir, "micx-win-x64-10.0.0.exe"), "signed installer", "utf8");
     await writeBootstrapConfig(path.join(bundleDir, "desktop-bootstrap.json"), {
-      baseUrl: "https://app.openworklabs.com/",
-      apiBaseUrl: "https://api.openworklabs.com/",
+      baseUrl: "https://app.micxlabs.com/",
+      apiBaseUrl: "https://api.micxlabs.com/",
       requireSignin: false,
       writtenAt: "2026-07-10T13:00:00.000Z",
     });
-    await writeFile(path.join(olderBundleDir, "openwork-win-x64-9.9.8.exe"), "signed installer", "utf8");
+    await writeFile(path.join(olderBundleDir, "micx-win-x64-9.9.8.exe"), "signed installer", "utf8");
     await writeBootstrapConfig(path.join(olderBundleDir, "desktop-bootstrap.json"), {
       baseUrl: "https://older.internal.example",
       requireSignin: true,
       writtenAt: "2026-07-10T11:00:00.000Z",
     });
-    await writeFile(path.join(newerBundleDir, "openwork-win-x64-9.9.9.exe"), "signed installer", "utf8");
+    await writeFile(path.join(newerBundleDir, "micx-win-x64-9.9.9.exe"), "signed installer", "utf8");
     await writeBootstrapConfig(path.join(newerBundleDir, "desktop-bootstrap.json"), {
-      baseUrl: "https://openwork.internal.example",
-      apiBaseUrl: "https://api.openwork.internal.example",
+      baseUrl: "https://micx.internal.example",
+      apiBaseUrl: "https://api.micx.internal.example",
       requireSignin: true,
       brandAppName: "Example Org Work",
-      brandLogoUrl: "https://openwork.internal.example/logo.png",
-      brandIconUrl: "https://openwork.internal.example/icon.png",
+      brandLogoUrl: "https://micx.internal.example/logo.png",
+      brandIconUrl: "https://micx.internal.example/icon.png",
       writtenAt: "2026-07-10T12:00:00.000Z",
     });
 
     assert.equal(await store.importBundledDesktopBootstrapConfigIfPreferred(), true);
     const config = await store.getDesktopBootstrapConfig();
     assert.deepEqual(config, {
-      baseUrl: "https://openwork.internal.example",
-      apiBaseUrl: "https://api.openwork.internal.example",
+      baseUrl: "https://micx.internal.example",
+      apiBaseUrl: "https://api.micx.internal.example",
       requireSignin: true,
       brandAppName: "Example Org Work",
-      brandLogoUrl: "https://openwork.internal.example/logo.png",
-      brandIconUrl: "https://openwork.internal.example/icon.png",
+      brandLogoUrl: "https://micx.internal.example/logo.png",
+      brandIconUrl: "https://micx.internal.example/icon.png",
       writtenAt: "2026-07-10T12:00:00.000Z",
       fromFile: true,
     });
     const persisted = JSON.parse(await readFile(canonicalPath, "utf8"));
-    assert.equal(persisted.baseUrl, "https://openwork.internal.example");
+    assert.equal(persisted.baseUrl, "https://micx.internal.example");
   });
 });
 
 test("ignores a downloaded bootstrap that is not beside a standard installer", async () => {
   await withIsolatedBootstrapStore(async ({ store, canonicalPath, root }) => {
     const bundleDir = path.join(root, "downloads");
-    process.env.OPENWORK_BOOTSTRAP_BUNDLE_DIR = bundleDir;
+    process.env.MICX_BOOTSTRAP_BUNDLE_DIR = bundleDir;
     await writeBootstrapConfig(path.join(bundleDir, "desktop-bootstrap.json"), {
       baseUrl: "https://untrusted.example.com",
       requireSignin: true,
@@ -646,48 +646,48 @@ test("ignores a downloaded bootstrap that is not beside a standard installer", a
 test("keeps an installed organization bootstrap across a newer Windows installer bundle and restart", async () => {
   await withIsolatedBootstrapStore(async ({ store, createStore, canonicalPath, root }) => {
     const bundleDir = path.join(root, "downloads");
-    process.env.OPENWORK_BOOTSTRAP_BUNDLE_DIR = bundleDir;
+    process.env.MICX_BOOTSTRAP_BUNDLE_DIR = bundleDir;
     await writeBootstrapConfig(canonicalPath, {
-      baseUrl: "https://openwork.organization.internal.example",
+      baseUrl: "https://micx.organization.internal.example",
       requireSignin: true,
       writtenAt: "2026-07-09T12:00:00.000Z",
     });
     await mkdir(bundleDir, { recursive: true });
-    await writeFile(path.join(bundleDir, "openwork-win-x64-9.9.9.exe"), "signed installer", "utf8");
+    await writeFile(path.join(bundleDir, "micx-win-x64-9.9.9.exe"), "signed installer", "utf8");
     await writeBootstrapConfig(path.join(bundleDir, "desktop-bootstrap.json"), {
-      baseUrl: "https://app.openworklabs.com/",
-      apiBaseUrl: "https://api.openworklabs.com/",
+      baseUrl: "https://app.micxlabs.com/",
+      apiBaseUrl: "https://api.micxlabs.com/",
       requireSignin: false,
       writtenAt: "2026-07-10T12:00:00.000Z",
     });
 
     assert.equal(await store.importBundledDesktopBootstrapConfigIfPreferred(), false);
     const config = await store.getDesktopBootstrapConfig();
-    assert.equal(config.baseUrl, "https://openwork.organization.internal.example");
+    assert.equal(config.baseUrl, "https://micx.organization.internal.example");
 
     const restartedStore = createStore();
     assert.equal(await restartedStore.importBundledDesktopBootstrapConfigIfPreferred(), false);
     const restartedConfig = await restartedStore.getDesktopBootstrapConfig();
-    assert.equal(restartedConfig.baseUrl, "https://openwork.organization.internal.example");
+    assert.equal(restartedConfig.baseUrl, "https://micx.organization.internal.example");
     const persisted = JSON.parse(await readFile(canonicalPath, "utf8"));
-    assert.equal(persisted.baseUrl, "https://openwork.organization.internal.example");
+    assert.equal(persisted.baseUrl, "https://micx.organization.internal.example");
   });
 });
 
 test("keeps and migrates an installed legacy bootstrap beside a newer Windows installer bundle", async () => {
   await withIsolatedBootstrapStore(async ({ store, canonicalPath, legacyPath, root }) => {
     const bundleDir = path.join(root, "downloads");
-    process.env.OPENWORK_BOOTSTRAP_BUNDLE_DIR = bundleDir;
+    process.env.MICX_BOOTSTRAP_BUNDLE_DIR = bundleDir;
     await writeBootstrapConfig(legacyPath, {
       baseUrl: "https://legacy.organization.internal.example",
       requireSignin: true,
       writtenAt: "2026-07-09T12:00:00.000Z",
     });
     await mkdir(bundleDir, { recursive: true });
-    await writeFile(path.join(bundleDir, "openwork-win-x64-9.9.9.exe"), "signed installer", "utf8");
+    await writeFile(path.join(bundleDir, "micx-win-x64-9.9.9.exe"), "signed installer", "utf8");
     await writeBootstrapConfig(path.join(bundleDir, "desktop-bootstrap.json"), {
-      baseUrl: "https://app.openworklabs.com/",
-      apiBaseUrl: "https://api.openworklabs.com/",
+      baseUrl: "https://app.micxlabs.com/",
+      apiBaseUrl: "https://api.micxlabs.com/",
       requireSignin: false,
       writtenAt: "2026-07-10T12:00:00.000Z",
     });
@@ -703,15 +703,15 @@ test("keeps and migrates an installed legacy bootstrap beside a newer Windows in
 test("replaces an installed hosted default with a custom organization Windows bundle", async () => {
   await withIsolatedBootstrapStore(async ({ store, canonicalPath, root }) => {
     const bundleDir = path.join(root, "downloads");
-    process.env.OPENWORK_BOOTSTRAP_BUNDLE_DIR = bundleDir;
+    process.env.MICX_BOOTSTRAP_BUNDLE_DIR = bundleDir;
     await writeBootstrapConfig(canonicalPath, {
-      baseUrl: "https://app.openworklabs.com/",
-      apiBaseUrl: "https://api.openworklabs.com/",
+      baseUrl: "https://app.micxlabs.com/",
+      apiBaseUrl: "https://api.micxlabs.com/",
       requireSignin: false,
       writtenAt: "2026-07-10T13:00:00.000Z",
     });
     await mkdir(bundleDir, { recursive: true });
-    await writeFile(path.join(bundleDir, "openwork-win-x64-9.9.9.exe"), "signed installer", "utf8");
+    await writeFile(path.join(bundleDir, "micx-win-x64-9.9.9.exe"), "signed installer", "utf8");
     await writeBootstrapConfig(path.join(bundleDir, "desktop-bootstrap.json"), {
       baseUrl: "https://custom.organization.internal.example",
       apiBaseUrl: "https://api.custom.organization.internal.example",
@@ -729,7 +729,7 @@ test("replaces an installed hosted default with a custom organization Windows bu
 
 test("clearDesktopBootstrapConfig removes bootstrap files without deleting workspace state", async () => {
   await withIsolatedBootstrapStore(async ({ store, canonicalPath, legacyPath, userDataPath }) => {
-    const workspaceStatePath = path.join(userDataPath, "openwork-workspaces.json");
+    const workspaceStatePath = path.join(userDataPath, "micx-workspaces.json");
     await writeBootstrapConfig(canonicalPath, {
       baseUrl: "https://canonical.example.com",
       requireSignin: false,

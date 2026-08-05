@@ -1,4 +1,4 @@
-import { and, eq, inArray, isNull } from "@openwork-ee/den-db/drizzle"
+import { and, eq, inArray, isNull } from "@micx-ee/den-db/drizzle"
 import {
   ConfigObjectAccessGrantTable,
   ConfigObjectTable,
@@ -10,7 +10,7 @@ import {
   PluginAccessGrantTable,
   PluginConfigObjectTable,
   PluginTable,
-} from "@openwork-ee/den-db/schema"
+} from "@micx-ee/den-db/schema"
 import type { MemberTeamSummary, OrganizationContext } from "../../../orgs.js"
 import { db } from "../../../db.js"
 import { getFreshPrivilegedSessionRequiredResponse, hasFreshPrivilegedSession, memberHasRole } from "../shared.js"

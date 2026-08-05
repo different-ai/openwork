@@ -1,26 +1,26 @@
 export const PUBLIC_DESKTOP_DISTRIBUTION = Object.freeze({
   flavor: "public",
-  appName: "OpenWork",
-  appIdentifier: "com.differentai.openwork",
-  protocolScheme: "openwork",
+  appName: "Micx",
+  appIdentifier: "com.differentai.micx",
+  protocolScheme: "micx",
   requireSignin: false,
   requireActivation: false,
 });
 
 export const CLOUD_DESKTOP_DISTRIBUTION = Object.freeze({
   flavor: "cloud",
-  appName: "OpenWork Cloud",
-  appIdentifier: "com.differentai.openwork",
-  protocolScheme: "openwork",
+  appName: "Micx Cloud",
+  appIdentifier: "com.differentai.micx",
+  protocolScheme: "micx",
   requireSignin: true,
   requireActivation: false,
 });
 
 export const ENTERPRISE_DESKTOP_DISTRIBUTION = Object.freeze({
   flavor: "enterprise",
-  appName: "OpenWork Enterprise",
-  appIdentifier: "com.differentai.openwork",
-  protocolScheme: "openwork",
+  appName: "Micx Enterprise",
+  appIdentifier: "com.differentai.micx",
+  protocolScheme: "micx",
   requireSignin: true,
   requireActivation: true,
 });

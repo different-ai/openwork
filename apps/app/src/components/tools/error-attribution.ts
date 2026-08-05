@@ -1,4 +1,4 @@
-import { openworkCloudMcpInlineReconnectSchema } from "@openwork/types/den/mcp-connection-action"
+import { micxCloudMcpInlineReconnectSchema } from "@micx/types/den/mcp-connection-action"
 
 export type ToolErrorAttribution = {
   label: string
@@ -17,9 +17,9 @@ export type ChatToolReconnectProgress =
   | { phase: "authorization_opened"; authorizeUrl: string }
 export type ChatToolReconnectResult = "connected"
 
-const OPENWORK_CLOUD_CAPABILITY_TOOLS = new Set([
-  "openwork-cloud_search_capabilities",
-  "openwork-cloud_execute_capability",
+const MICX_CLOUD_CAPABILITY_TOOLS = new Set([
+  "micx-cloud_search_capabilities",
+  "micx-cloud_execute_capability",
 ])
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -74,11 +74,11 @@ export function reconnectActionFromChatToolResult(
   toolName: string,
   result: unknown,
 ): ChatToolReconnectAction | null {
-  // Tool output is otherwise untrusted. Only the two canonical OpenWork Cloud
+  // Tool output is otherwise untrusted. Only the two canonical Micx Cloud
   // capability tools may turn a structured Den response into a UI action.
   // Discovery is included because it performs a live connection probe before
   // the agent can safely proceed to execution.
-  if (!OPENWORK_CLOUD_CAPABILITY_TOOLS.has(toolName)) return null
+  if (!MICX_CLOUD_CAPABILITY_TOOLS.has(toolName)) return null
 
   const parsed = parseResultRecord(result)
   if (!parsed) return null
@@ -94,7 +94,7 @@ export function reconnectActionFromChatToolResult(
   ]
   const reconnectTargets = new Map<string, { connectionId: string; connectionName: string }>()
   for (const connectionStatus of candidates) {
-    const parsedStatus = openworkCloudMcpInlineReconnectSchema.safeParse(connectionStatus)
+    const parsedStatus = micxCloudMcpInlineReconnectSchema.safeParse(connectionStatus)
     if (!parsedStatus.success) continue
     const { connectionId, connectionName } = parsedStatus.data
     reconnectTargets.set(connectionId, { connectionId, connectionName })
@@ -121,15 +121,15 @@ export function attributeChatToolError(errorText: string): ToolErrorAttribution 
   const providerCode = stringValue(diagnostic, "providerCode")
 
   if (
-    errorText.includes("OpenWork stopped waiting after")
+    errorText.includes("Micx stopped waiting after")
     || /The capability call exceeded \d+(?:\.\d+)?s\b/.test(errorText)
     || code === "MCP_LIFECYCLE_DEADLINE"
     || code === "MCP_REQUEST_TIMEOUT"
     || category === "lifecycle_deadline"
   ) {
     return confirmed(
-      "OpenWork timeout",
-      "OpenWork created this deadline. The external operation may still have completed, so verify its state before retrying.",
+      "Micx timeout",
+      "Micx created this deadline. The external operation may still have completed, so verify its state before retrying.",
     )
   }
 
@@ -138,7 +138,7 @@ export function attributeChatToolError(errorText: string): ToolErrorAttribution 
     || code === "MCP_URL_BLOCKED"
     || code === "MCP_FETCH_FORBIDDEN_PORT"
   ) {
-    return confirmed("Blocked by OpenWork", "OpenWork blocked the request before it was sent.")
+    return confirmed("Blocked by Micx", "Micx blocked the request before it was sent.")
   }
 
   if (httpStatus !== undefined && (httpStatus < 200 || httpStatus >= 300)) {

@@ -34,8 +34,8 @@ function normalizeMessage(value: unknown): BlueprintSessionMessage | null {
   return { role, text };
 }
 
-export function normalizeBlueprintSessionTemplates(openwork: Record<string, unknown> | null | undefined): BlueprintSessionTemplate[] {
-  const blueprint = readRecord(openwork?.blueprint);
+export function normalizeBlueprintSessionTemplates(micx: Record<string, unknown> | null | undefined): BlueprintSessionTemplate[] {
+  const blueprint = readRecord(micx?.blueprint);
   const sessions = Array.isArray(blueprint?.sessions) ? blueprint?.sessions : [];
   return sessions
     .map((value, index) => {
@@ -57,8 +57,8 @@ export function normalizeBlueprintSessionTemplates(openwork: Record<string, unkn
     .filter((item): item is BlueprintSessionTemplate => Boolean(item));
 }
 
-export function readMaterializedBlueprintSessions(openwork: Record<string, unknown> | null | undefined): MaterializedBlueprintSession[] {
-  const blueprint = readRecord(openwork?.blueprint);
+export function readMaterializedBlueprintSessions(micx: Record<string, unknown> | null | undefined): MaterializedBlueprintSession[] {
+  const blueprint = readRecord(micx?.blueprint);
   const materialized = readRecord(blueprint?.materialized);
   const sessions = readRecord(materialized?.sessions);
   const items = Array.isArray(sessions?.items) ? sessions.items : [];
@@ -74,8 +74,8 @@ export function readMaterializedBlueprintSessions(openwork: Record<string, unkno
     .filter((item): item is MaterializedBlueprintSession => Boolean(item));
 }
 
-export function sanitizeOpenworkTemplateConfig(openwork: Record<string, unknown> | null | undefined): Record<string, unknown> {
-  const next = cloneRecord(openwork ?? {});
+export function sanitizeMicxTemplateConfig(micx: Record<string, unknown> | null | undefined): Record<string, unknown> {
+  const next = cloneRecord(micx ?? {});
   const blueprint = readRecord(next.blueprint);
   if (!blueprint) return next;
 
@@ -94,11 +94,11 @@ export function sanitizeOpenworkTemplateConfig(openwork: Record<string, unknown>
 }
 
 export function applyMaterializedBlueprintSessions(
-  openwork: Record<string, unknown> | null | undefined,
+  micx: Record<string, unknown> | null | undefined,
   items: MaterializedBlueprintSession[],
   hydratedAt: number,
 ): Record<string, unknown> {
-  const next = sanitizeOpenworkTemplateConfig(openwork);
+  const next = sanitizeMicxTemplateConfig(micx);
   const blueprint = readRecord(next.blueprint) ?? {};
   const materialized = readRecord(blueprint.materialized) ?? {};
   materialized.sessions = {

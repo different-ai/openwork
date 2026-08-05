@@ -1,8 +1,8 @@
 // Seed realistic 12-week telemetry for the demo org so analytics charts populate.
 // Run like seed-demo-org: tsx scripts/seed-telemetry.ts
-import { eq } from "@openwork-ee/den-db/drizzle"
-import { MemberTable, OrganizationTable, TelemetryEventTable } from "@openwork-ee/den-db/schema"
-import { createDenTypeId } from "@openwork-ee/utils/typeid"
+import { eq } from "@micx-ee/den-db/drizzle"
+import { MemberTable, OrganizationTable, TelemetryEventTable } from "@micx-ee/den-db/schema"
+import { createDenTypeId } from "@micx-ee/utils/typeid"
 import { db } from "../src/db.js"
 
 const org = (await db.select().from(OrganizationTable).limit(1))[0]

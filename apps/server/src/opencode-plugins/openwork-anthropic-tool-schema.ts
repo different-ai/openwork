@@ -1,5 +1,5 @@
 /**
- * OpenWork Anthropic Tool Schema Plugin
+ * Micx Anthropic Tool Schema Plugin
  *
  * The Anthropic Messages API rejects tool input schemas that use `anyOf`,
  * `oneOf`, or `allOf` at the top level:
@@ -121,7 +121,7 @@ function installAnthropicFetchPatch(): void {
 
 // Single export: the OpenCode plugin loader treats every export of a plugin
 // module as a plugin factory, so helpers must stay module-private.
-export const OpenWorkAnthropicToolSchema = async () => {
+export const MicxAnthropicToolSchema = async () => {
   installAnthropicFetchPatch();
   return {};
 };

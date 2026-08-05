@@ -16,8 +16,8 @@ const CLIENT_TOKEN = "owt_runtime_migrate_client";
 const HOST_TOKEN = "owt_runtime_migrate_host";
 const stops: Array<() => void | Promise<void>> = [];
 const roots: string[] = [];
-const priorDataDir = process.env.OPENWORK_DATA_DIR;
-const priorTokenStore = process.env.OPENWORK_TOKEN_STORE;
+const priorDataDir = process.env.MICX_DATA_DIR;
+const priorTokenStore = process.env.MICX_TOKEN_STORE;
 
 function asRecord(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
@@ -34,7 +34,7 @@ async function createTempRoot(prefix: string) {
   return root;
 }
 
-async function startOpenworkServer(workspaceRoot: string) {
+async function startMicxServer(workspaceRoot: string) {
   const config: ServerConfig = {
     host: "127.0.0.1",
     port: 0,
@@ -58,9 +58,9 @@ async function startOpenworkServer(workspaceRoot: string) {
 }
 
 beforeEach(async () => {
-  const envRoot = await createTempRoot("openwork-runtime-migrate-env-");
-  process.env.OPENWORK_DATA_DIR = join(envRoot, "data");
-  process.env.OPENWORK_TOKEN_STORE = join(envRoot, "tokens.json");
+  const envRoot = await createTempRoot("micx-runtime-migrate-env-");
+  process.env.MICX_DATA_DIR = join(envRoot, "data");
+  process.env.MICX_TOKEN_STORE = join(envRoot, "tokens.json");
 });
 
 afterEach(async () => {
@@ -71,20 +71,20 @@ afterEach(async () => {
     await rm(roots.pop()!, { recursive: true, force: true });
   }
   if (priorDataDir === undefined) {
-    delete process.env.OPENWORK_DATA_DIR;
+    delete process.env.MICX_DATA_DIR;
   } else {
-    process.env.OPENWORK_DATA_DIR = priorDataDir;
+    process.env.MICX_DATA_DIR = priorDataDir;
   }
   if (priorTokenStore === undefined) {
-    delete process.env.OPENWORK_TOKEN_STORE;
+    delete process.env.MICX_TOKEN_STORE;
   } else {
-    process.env.OPENWORK_TOKEN_STORE = priorTokenStore;
+    process.env.MICX_TOKEN_STORE = priorTokenStore;
   }
 });
 
 describe("runtime-config migrate route", () => {
   test("lifts MCP entries from project opencode.jsonc into the runtime store", async () => {
-    const workspaceRoot = await createTempRoot("openwork-runtime-migrate-");
+    const workspaceRoot = await createTempRoot("micx-runtime-migrate-");
     await writeFile(
       join(workspaceRoot, "opencode.jsonc"),
       JSON.stringify({
@@ -96,7 +96,7 @@ describe("runtime-config migrate route", () => {
       "utf8",
     );
 
-    const { base, config } = await startOpenworkServer(workspaceRoot);
+    const { base, config } = await startMicxServer(workspaceRoot);
 
     const response = await fetch(`${base}/workspace/ws_1/runtime-config/migrate`, {
       method: "POST",

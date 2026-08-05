@@ -1,7 +1,7 @@
 import { timingSafeEqual } from "node:crypto"
-import { and, asc, eq, inArray, isNull } from "@openwork-ee/den-db/drizzle"
-import { WorkerTable, WorkerTokenTable } from "@openwork-ee/den-db/schema"
-import { createDenTypeId } from "@openwork-ee/utils/typeid"
+import { and, asc, eq, inArray, isNull } from "@micx-ee/den-db/drizzle"
+import { WorkerTable, WorkerTokenTable } from "@micx-ee/den-db/schema"
+import { createDenTypeId } from "@micx-ee/utils/typeid"
 import type { Hono, MiddlewareHandler } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
@@ -140,7 +140,7 @@ const cloudWorkerNameMaxLength = 255
 const failedHealCooldownMs = 60_000
 const signedPreviewProbeTimeoutMs = 2_500
 const signedPreviewHealthCacheMs = 15_000
-const gatewayKeyHeader = "X-OpenWork-Gateway-Key"
+const gatewayKeyHeader = "X-Micx-Gateway-Key"
 const ensureCloudWorkerInFlight = new Map<string, Promise<CloudWorker>>()
 const failedHealAttempts = new Map<WorkerId, number>()
 const signedPreviewHealthCache = new Map<WorkerId, { url: string; healthyUntilMs: number }>()
@@ -263,7 +263,7 @@ const databaseCloudWorkerStore: CloudWorkerStore = {
       org_id: input.orgId,
       created_by_user_id: input.userId,
       name: input.name,
-      description: "OpenWork Cloud browser instance",
+      description: "Micx Cloud browser instance",
       destination: "cloud",
       status: "provisioning",
       sandbox_backend: CLOUD_INSTANCE_BACKEND,
@@ -945,7 +945,7 @@ export function registerCloudRoutes<T extends { Variables: OrgRouteVariables }>(
     describeRoute({
       tags: ["Cloud"],
       summary: "Get the active organization's Cloud instance",
-      description: "Starts the active organization's OpenWork Cloud browser instance when needed and returns its browser URL once ready.",
+      description: "Starts the active organization's Micx Cloud browser instance when needed and returns its browser URL once ready.",
       responses: {
         200: jsonResponse("Cloud instance status returned successfully.", cloudInstanceResponseSchema),
         401: jsonResponse("The caller must be signed in to open Cloud.", unauthorizedSchema),
@@ -1025,7 +1025,7 @@ export function registerCloudRoutes<T extends { Variables: OrgRouteVariables }>(
     describeRoute({
       tags: ["Cloud"],
       summary: "Resolve the caller's Cloud instance for the browser gateway",
-      description: "Starts or wakes the caller's own OpenWork Cloud browser instance when needed and returns the collaborator token only to the trusted gateway.",
+      description: "Starts or wakes the caller's own Micx Cloud browser instance when needed and returns the collaborator token only to the trusted gateway.",
       responses: {
         200: jsonResponse("Cloud instance status returned successfully for the gateway.", cloudGatewayInstanceResponseSchema),
         401: jsonResponse("The caller must be signed in to open Cloud.", unauthorizedSchema),

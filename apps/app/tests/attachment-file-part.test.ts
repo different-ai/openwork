@@ -288,7 +288,7 @@ describe("composer attachment file parts", () => {
     });
 
     expect(inboxPath).toBe("chat-attachments/ses_123/nonce-abc-scan one 李.pdf");
-    expect(workspaceInboxPath(inboxPath)).toBe(".opencode/openwork/inbox/chat-attachments/ses_123/nonce-abc-scan one 李.pdf");
+    expect(workspaceInboxPath(inboxPath)).toBe(".opencode/micx/inbox/chat-attachments/ses_123/nonce-abc-scan one 李.pdf");
   });
 
   test("uploads exact bytes to the endpoint workspace id and exposes a worker file URL plus path note", async () => {
@@ -314,9 +314,9 @@ describe("composer attachment file parts", () => {
       synthetic: true,
     });
     expect(textPartText(parts).startsWith("Attached files were copied")).toBe(true);
-    expect(textPartText(parts)).toContain(".opencode/openwork/inbox/chat-attachments/ses_abc/nonce-a-image-only scan.pdf");
+    expect(textPartText(parts)).toContain(".opencode/micx/inbox/chat-attachments/ses_abc/nonce-a-image-only scan.pdf");
     expect(textPartText(parts)).toContain("Read/Bash/MCP/Docling");
-    expect(filePartUrl(parts, 1)).toBe("file:///workspaces/Worker%20Root/.opencode/openwork/inbox/chat-attachments/ses_abc/nonce-a-image-only%20scan.pdf");
+    expect(filePartUrl(parts, 1)).toBe("file:///workspaces/Worker%20Root/.opencode/micx/inbox/chat-attachments/ses_abc/nonce-a-image-only%20scan.pdf");
     expect(parts[1]).toMatchObject({
       type: "file",
       filename: "image-only scan.pdf",
@@ -343,8 +343,8 @@ describe("composer attachment file parts", () => {
       bytes: Array.from(JPEG_BYTES),
     }]);
     expect(textPart(parts)).toMatchObject({ type: "text", synthetic: true });
-    expect(textPartText(parts)).toContain(".opencode/openwork/inbox/chat-attachments/ses_img/nonce-img-shot.png");
-    expect(textPartText(parts)).toContain("file:///workspaces/Worker%20Root/.opencode/openwork/inbox/chat-attachments/ses_img/nonce-img-shot.png");
+    expect(textPartText(parts)).toContain(".opencode/micx/inbox/chat-attachments/ses_img/nonce-img-shot.png");
+    expect(textPartText(parts)).toContain("file:///workspaces/Worker%20Root/.opencode/micx/inbox/chat-attachments/ses_img/nonce-img-shot.png");
     expect(filePartUrl(parts, 1).startsWith("data:image/png;base64,")).toBe(true);
     expect(Array.from(decodedDataUrlBytes(filePartUrl(parts, 1)))).toEqual(Array.from(JPEG_BYTES));
     expect(parts[1]).toMatchObject({
@@ -367,7 +367,7 @@ describe("composer attachment file parts", () => {
     });
 
     expect(calls).toHaveLength(1);
-    expect(filePartUrl(parts, 1)).toBe("file:///workspaces/Worker%20Root/.opencode/openwork/inbox/chat-attachments/ses_xml/nonce-xml-sitemap.xml");
+    expect(filePartUrl(parts, 1)).toBe("file:///workspaces/Worker%20Root/.opencode/micx/inbox/chat-attachments/ses_xml/nonce-xml-sitemap.xml");
     expect(parts[1]).toMatchObject({
       type: "file",
       filename: "sitemap.xml",
@@ -394,11 +394,11 @@ describe("composer attachment file parts", () => {
       bytes: Array.from(PPTX_BYTES),
     }]);
     expect(textPart(parts)).toMatchObject({ type: "text", synthetic: true });
-    expect(textPartText(parts)).toContain(".opencode/openwork/inbox/chat-attachments/ses_bin/nonce-bin-recording.zip");
+    expect(textPartText(parts)).toContain(".opencode/micx/inbox/chat-attachments/ses_bin/nonce-bin-recording.zip");
     expect(textPartText(parts)).toContain("Read/Bash/MCP/Docling");
     // text/plain file parts never reach the provider (opencode expands them
     // through the Read tool), so binaries keep a transcript badge safely.
-    expect(filePartUrl(parts, 1)).toBe("file:///workspaces/Worker%20Root/.opencode/openwork/inbox/chat-attachments/ses_bin/nonce-bin-recording.zip");
+    expect(filePartUrl(parts, 1)).toBe("file:///workspaces/Worker%20Root/.opencode/micx/inbox/chat-attachments/ses_bin/nonce-bin-recording.zip");
     expect(parts[1]).toMatchObject({
       type: "file",
       filename: "recording.zip",
@@ -429,8 +429,8 @@ describe("composer attachment file parts", () => {
       "chat-attachments/ses_dupes/nonce-b-scan.pdf",
     ]);
     expect(new Set(calls.map((call) => call.path)).size).toBe(2);
-    expect(filePartUrl(parts, 1)).toBe("file:///C:/Users/Ada%20Lovelace/%E5%B7%A5%E4%BD%9C%E5%8C%BA/.opencode/openwork/inbox/chat-attachments/ses_dupes/nonce-a-scan.pdf");
-    expect(filePartUrl(parts, 2)).toBe("file:///C:/Users/Ada%20Lovelace/%E5%B7%A5%E4%BD%9C%E5%8C%BA/.opencode/openwork/inbox/chat-attachments/ses_dupes/nonce-b-scan.pdf");
+    expect(filePartUrl(parts, 1)).toBe("file:///C:/Users/Ada%20Lovelace/%E5%B7%A5%E4%BD%9C%E5%8C%BA/.opencode/micx/inbox/chat-attachments/ses_dupes/nonce-a-scan.pdf");
+    expect(filePartUrl(parts, 2)).toBe("file:///C:/Users/Ada%20Lovelace/%E5%B7%A5%E4%BD%9C%E5%8C%BA/.opencode/micx/inbox/chat-attachments/ses_dupes/nonce-b-scan.pdf");
   });
 
   test("fails before producing prompt parts when workspace upload fails", async () => {

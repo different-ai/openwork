@@ -1,7 +1,7 @@
 import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
-import { normalizeDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
+import { normalizeDenTypeId, type DenTypeId } from "@micx-ee/utils/typeid"
 import { env } from "../../env.js"
 import {
   jsonValidator,
@@ -302,7 +302,7 @@ export function registerOAuthProviderRoutes<T extends { Variables: OrgRouteVaria
     describeRoute({
       tags: ["Authentication"],
       summary: "Save an org's OAuth client for a provider",
-      description: "Admin-only. Lets an org bring its own OAuth app (client id + secret) for a native provider such as google-workspace, instead of relying on an OpenWork-owned client.",
+      description: "Admin-only. Lets an org bring its own OAuth app (client id + secret) for a native provider such as google-workspace, instead of relying on an Micx-owned client.",
       responses: {
         200: jsonResponse("OAuth client saved.", clientConfigResponseSchema),
         400: jsonResponse("The request body or providerId was invalid.", invalidRequestSchema),
@@ -562,7 +562,7 @@ export function registerOAuthProviderRoutes<T extends { Variables: OrgRouteVaria
     describeRoute({
       tags: ["Authentication"],
       summary: "OAuth callback for a provider",
-      description: "The provider redirects here with code+state after the member consents. Identity is carried entirely by the signed state token, not a session cookie, since the redirect may arrive in a fresh browser context. Serves a small static HTML page that deep-links back to OpenWork.",
+      description: "The provider redirects here with code+state after the member consents. Identity is carried entirely by the signed state token, not a session cookie, since the redirect may arrive in a fresh browser context. Serves a small static HTML page that deep-links back to Micx.",
       responses: {
         200: htmlResponse("Connected — a static success page."),
         400: jsonResponse("Missing or invalid code/state.", invalidRequestSchema),
@@ -650,7 +650,7 @@ export function registerOAuthProviderRoutes<T extends { Variables: OrgRouteVaria
           return c.html(connectCallbackPage({
             ok: false,
             name: provider.displayName,
-            message: "This OpenWork connection request is no longer active.",
+            message: "This Micx connection request is no longer active.",
           }), 400)
         }
       } catch (error) {
@@ -683,7 +683,7 @@ export function registerOAuthProviderRoutes<T extends { Variables: OrgRouteVaria
         return c.html(connectCallbackPage({
           ok: false,
           name: provider.displayName,
-          message: "OpenWork could not finish the OAuth connection. Try Connect again; if it still fails, contact support with the diagnostic reference.",
+          message: "Micx could not finish the OAuth connection. Try Connect again; if it still fails, contact support with the diagnostic reference.",
           referenceId: requestId,
         }), 400)
       }

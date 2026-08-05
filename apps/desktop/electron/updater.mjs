@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 const ELECTRON_UPDATER_CHANNEL_FILENAME = "electron-updater-channel.v1.json";
 
 // In dev mode, app.getVersion() returns the Electron framework version
-// (e.g. "35.7.5") instead of the OpenWork app version. Read from
+// (e.g. "35.7.5") instead of the Micx app version. Read from
 // package.json so the UI always shows the correct version.
 const __updater_dirname = path.dirname(fileURLToPath(import.meta.url));
 let _cachedAppVersion = null;
@@ -30,8 +30,8 @@ function resolveAppVersion(app) {
   return _cachedAppVersion;
 }
 const ELECTRON_UPDATER_FEEDS = Object.freeze({
-  stable: "https://github.com/different-ai/openwork/releases/latest/download",
-  alpha: "https://github.com/different-ai/openwork/releases/download/alpha-macos-latest",
+  stable: "https://github.com/different-ai/micx/releases/latest/download",
+  alpha: "https://github.com/different-ai/micx/releases/download/alpha-macos-latest",
 });
 
 function normalizeElectronUpdaterChannel(value, manifestChannel = "latest") {
@@ -160,7 +160,7 @@ export function targetedStableUpdaterFeed(currentVersion, targetVersion) {
   if (comparison <= 0) {
     throw new Error("Target update version must be newer than the installed version.");
   }
-  return `https://github.com/different-ai/openwork/releases/download/v${normalizedTarget}`;
+  return `https://github.com/different-ai/micx/releases/download/v${normalizedTarget}`;
 }
 
 function updaterChannelState(app, channel, targetVersion = null, manifestChannel = "latest") {
@@ -213,7 +213,7 @@ function runDefaults(args) {
 
 // Squirrel.Mac's `ShipIt` helper (which swaps the .app on macOS) reads its
 // options from this NSUserDefaults domain.
-const SHIP_IT_DEFAULTS_DOMAIN = "com.differentai.openwork.ShipIt";
+const SHIP_IT_DEFAULTS_DOMAIN = "com.differentai.micx.ShipIt";
 
 // Squirrel.Mac defaults to moving the *entire* app bundle through a temp
 // directory. On repeat installs that move can leave the staged bundle missing,
@@ -314,7 +314,7 @@ export function registerUpdaterIpc({
         // Forward download progress to the renderer so the UI can show
         // incremental bytes instead of staying stuck at 0.
         autoUpdaterInstance.on("download-progress", (info) => {
-          sendToRenderer("openwork:updater:download-progress", {
+          sendToRenderer("micx:updater:download-progress", {
             bytesPerSecond: info.bytesPerSecond ?? 0,
             percent: info.percent ?? 0,
             transferred: info.transferred ?? 0,
@@ -331,12 +331,12 @@ export function registerUpdaterIpc({
     return autoUpdaterInstance;
   }
 
-  ipcMain.handle("openwork:updater:getChannel", async () => {
+  ipcMain.handle("micx:updater:getChannel", async () => {
     const channel = await readElectronUpdaterChannel(app, manifestChannel);
     return updaterChannelState(app, channel, null, manifestChannel);
   });
 
-  ipcMain.handle("openwork:updater:setChannel", async (_event, rawChannel) => {
+  ipcMain.handle("micx:updater:setChannel", async (_event, rawChannel) => {
     const channel = await writeElectronUpdaterChannel(app, rawChannel, manifestChannel);
     checkedUpdateVersion = null;
     checkedUpdateTargetVersion = null;
@@ -352,7 +352,7 @@ export function registerUpdaterIpc({
     return updaterChannelState(app, channel, null, manifestChannel);
   });
 
-  ipcMain.handle("openwork:updater:check", async (_event, rawChannel, rawTargetVersion) => {
+  ipcMain.handle("micx:updater:check", async (_event, rawChannel, rawTargetVersion) => {
     if (rawChannel !== undefined) {
       await writeElectronUpdaterChannel(app, rawChannel, manifestChannel);
     }
@@ -409,7 +409,7 @@ export function registerUpdaterIpc({
     }
   });
 
-  ipcMain.handle("openwork:updater:download", async () => {
+  ipcMain.handle("micx:updater:download", async () => {
     const updater = await ensureAutoUpdater();
     if (!updater) return { ok: false, reason: "unavailable" };
     try {
@@ -449,7 +449,7 @@ export function registerUpdaterIpc({
     }
   });
 
-  ipcMain.handle("openwork:updater:installAndRestart", async () => {
+  ipcMain.handle("micx:updater:installAndRestart", async () => {
     if (!updateDownloaded) return { ok: false, reason: "update-not-downloaded" };
     const updater = await ensureAutoUpdater();
     if (!updater) return { ok: false, reason: "unavailable" };

@@ -81,7 +81,7 @@ const GITHUB_API_VERSION = "2022-11-28"
 const GITHUB_REPOSITORY_MAX_PAGES = 30
 const GITHUB_REPOSITORY_PAGE_SIZE = 100
 
-// Overridable so @openwork/testkit specs can point the connector at a mock GitHub witness.
+// Overridable so @micx/testkit specs can point the connector at a mock GitHub witness.
 function githubApiBase(): string {
   const override = process.env.GITHUB_CONNECTOR_API_BASE?.trim()
   return override ? override.replace(/\/+$/, "") : "https://api.github.com"
@@ -222,7 +222,7 @@ async function requestGithubJson<TResponse>(input: {
   const response = await fetchFn(`${githubApiBase()}${input.path}`, {
     headers: {
       Accept: "application/vnd.github+json",
-      "User-Agent": "openwork-den-api",
+      "User-Agent": "micx-den-api",
       "X-GitHub-Api-Version": GITHUB_API_VERSION,
       ...input.headers,
     },

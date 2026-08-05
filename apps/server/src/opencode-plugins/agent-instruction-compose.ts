@@ -1,5 +1,5 @@
 /**
- * Kent-style instruction primitives for OpenWork system-prompt composition.
+ * Kent-style instruction primitives for Micx system-prompt composition.
  *
  * create  — build one named section
  * combine — merge sections in order, one id wins (first non-empty)

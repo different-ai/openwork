@@ -136,8 +136,8 @@ async function startMockBroker() {
         expiresAt: 987654321,
         model: "gpt-realtime-2",
         transcriptionModel: "gpt-4o-transcribe",
-        tools: ["openwork_snapshot", "openwork_list_actions", "openwork_execute_action"],
-        source: "openwork-models",
+        tools: ["micx_snapshot", "micx_list_actions", "micx_execute_action"],
+        source: "micx-models",
       }));
     });
   });
@@ -150,7 +150,7 @@ async function startMockBroker() {
   };
 }
 
-async function startOpenWorkServer({ directory, port, env }) {
+async function startMicxServer({ directory, port, env }) {
   const token = "owt_managed_voice_client";
   const hostToken = "owt_managed_voice_host";
   const child = spawn("bun", [
@@ -165,7 +165,7 @@ async function startOpenWorkServer({ directory, port, env }) {
   ], {
     cwd: resolve(join(import.meta.dirname, "..", "..", "..")),
     stdio: ["ignore", "pipe", "pipe"],
-    env: { ...process.env, ...env, OPENWORK_DEV_MODE: "1" },
+    env: { ...process.env, ...env, MICX_DEV_MODE: "1" },
   });
   let stdout = "";
   let stderr = "";
@@ -206,22 +206,22 @@ async function waitForServerHealthy(baseUrl) {
     }
     await new Promise((resolvePoll) => setTimeout(resolvePoll, 250));
   }
-  throw new Error(`Timed out waiting for OpenWork server health: ${lastError}`);
+  throw new Error(`Timed out waiting for Micx server health: ${lastError}`);
 }
 
 await rm(outDir, { recursive: true, force: true });
 await mkdir(outDir, { recursive: true });
-const envDir = await mkdtemp(join(tmpdir(), "openwork-managed-voice-e2e-"));
+const envDir = await mkdtemp(join(tmpdir(), "micx-managed-voice-e2e-"));
 const mockBroker = await startMockBroker();
 const port = await findFreePort();
-const server = await startOpenWorkServer({
+const server = await startMicxServer({
   directory,
   port,
   env: {
-    OPENWORK_ENV_STORE: join(envDir, "env.json"),
-    OPENWORK_TOKEN_STORE: join(envDir, "tokens.json"),
-    OPENWORK_API_KEY: "ow_inf_e2e",
-    OPENWORK_INFERENCE_BASE_URL: mockBroker.baseUrl,
+    MICX_ENV_STORE: join(envDir, "env.json"),
+    MICX_TOKEN_STORE: join(envDir, "tokens.json"),
+    MICX_API_KEY: "ow_inf_e2e",
+    MICX_INFERENCE_BASE_URL: mockBroker.baseUrl,
   },
 });
 
@@ -231,7 +231,7 @@ try {
   const owner = await step("owner token", async () => {
     const response = await fetch(`${server.baseUrl}/tokens`, {
       method: "POST",
-      headers: { "x-openwork-host-token": server.hostToken, "content-type": "application/json" },
+      headers: { "x-micx-host-token": server.hostToken, "content-type": "application/json" },
       body: JSON.stringify({ scope: "owner", label: "managed voice e2e" }),
     });
     assert.equal(response.status, 201);
@@ -250,7 +250,7 @@ try {
     const body = await response.json();
     assert.equal(body.ok, true);
     assert.equal(body.clientSecret, "managed-e2e-client-secret");
-    assert.equal(body.source, "openwork-models");
+    assert.equal(body.source, "micx-models");
     return body;
   });
 

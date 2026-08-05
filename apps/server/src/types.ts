@@ -1,8 +1,8 @@
-import type { WorkspaceWire } from "@openwork/types/workspace";
+import type { WorkspaceWire } from "@micx/types/workspace";
 
 export type WorkspaceType = "local" | "remote";
 
-export type RemoteType = "opencode" | "openwork";
+export type RemoteType = "opencode" | "micx";
 
 export type ApprovalMode = "manual" | "auto";
 
@@ -24,10 +24,10 @@ export interface WorkspaceConfig {
   baseUrl?: string;
   directory?: string;
   displayName?: string;
-  openworkHostUrl?: string;
-  openworkToken?: string;
-  openworkWorkspaceId?: string;
-  openworkWorkspaceName?: string;
+  micxHostUrl?: string;
+  micxToken?: string;
+  micxWorkspaceId?: string;
+  micxWorkspaceName?: string;
   sandboxBackend?: string;
   sandboxRunId?: string;
   sandboxContainerName?: string;
@@ -45,10 +45,10 @@ export interface WorkspaceInfo {
   baseUrl?: string;
   directory?: string;
   displayName?: string;
-  openworkHostUrl?: string;
-  openworkToken?: string;
-  openworkWorkspaceId?: string;
-  openworkWorkspaceName?: string;
+  micxHostUrl?: string;
+  micxToken?: string;
+  micxWorkspaceId?: string;
+  micxWorkspaceName?: string;
   sandboxBackend?: string;
   sandboxRunId?: string;
   sandboxContainerName?: string;
@@ -107,7 +107,7 @@ export interface Capabilities {
   schemaVersion: number;
   serverVersion: string;
   opencodeVersion: string;
-  skills: { read: boolean; write: boolean; source: "openwork" | "opencode" };
+  skills: { read: boolean; write: boolean; source: "micx" | "opencode" };
   plugins: { read: boolean; write: boolean };
   mcp: { read: boolean; write: boolean };
   commands: { read: boolean; write: boolean };

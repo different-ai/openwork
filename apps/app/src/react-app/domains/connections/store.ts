@@ -26,7 +26,7 @@ import {
   removeMcpFromConfig,
   validateMcpServerName,
 } from "../../../app/mcp";
-import { buildOpenworkWorkspaceBaseUrl } from "../../../app/lib/openwork-server";
+import { buildMicxWorkspaceBaseUrl } from "../../../app/lib/micx-server";
 import type {
   Client,
   McpServerEntry,
@@ -36,7 +36,7 @@ import type {
 } from "../../../app/types";
 import { isDesktopRuntime, normalizeDirectoryPath, safeStringify } from "../../../app/utils";
 
-import type { OpenworkServerStore } from "./openwork-server-store";
+import type { MicxServerStore } from "./micx-server-store";
 import { attemptSilentMcpReauth } from "./mcp-silent-reauth";
 import {
   CLOUD_MCP_SERVER_NAME,
@@ -46,7 +46,7 @@ import {
   clearCloudMcpDisabledIntent,
   cloudMcpDisplaySummary,
   recordCloudMcpDisabledIntent,
-  runOpenworkCloudMcpReconciler,
+  runMicxCloudMcpReconciler,
   type CloudMcpOperationContext,
 } from "./cloud-mcp-reconciler";
 
@@ -81,7 +81,7 @@ export function createConnectionsStore(options: {
   selectedWorkspaceId: () => string;
   selectedWorkspaceRoot: () => string;
   workspaceType: () => "local" | "remote";
-  openworkServer: OpenworkServerStore;
+  micxServer: MicxServerStore;
   runtimeWorkspaceId: () => string | null;
   ensureRuntimeWorkspaceId?: () => Promise<string | null | undefined>;
   setProjectDir?: (value: string) => void;
@@ -148,13 +148,13 @@ export function createConnectionsStore(options: {
     return `${workspaceType}:${workspaceId}:${root}:${runtimeWorkspaceId}`;
   };
 
-  const getOpenworkSnapshot = () => options.openworkServer.getSnapshot();
+  const getMicxSnapshot = () => options.micxServer.getSnapshot();
 
-  const resolveOpenworkWorkspaceId = async () => {
+  const resolveMicxWorkspaceId = async () => {
     const current = options.runtimeWorkspaceId()?.trim();
     if (current) return current;
-    const openworkSnapshot = getOpenworkSnapshot();
-    if (openworkSnapshot.openworkServerStatus !== "connected" || !openworkSnapshot.openworkServerClient) {
+    const micxSnapshot = getMicxSnapshot();
+    if (micxSnapshot.micxServerStatus !== "connected" || !micxSnapshot.micxServerClient) {
       return null;
     }
     const ensured = (await options.ensureRuntimeWorkspaceId?.())?.trim();
@@ -162,39 +162,39 @@ export function createConnectionsStore(options: {
     return options.workspaceType() === "local" ? options.selectedWorkspaceId().trim() || null : null;
   };
 
-  const resolveConfigOpenworkTarget = async (mode: "read" | "write") => {
-    const openworkSnapshot = getOpenworkSnapshot();
-    const openworkClient = openworkSnapshot.openworkServerClient;
-    const openworkWorkspaceId = await resolveOpenworkWorkspaceId();
-    const hasOpenworkTarget =
-      openworkSnapshot.openworkServerStatus === "connected" &&
-      Boolean(openworkClient && openworkWorkspaceId);
-    const canUseOpenworkServer =
-      hasOpenworkTarget &&
-      openworkSnapshot.openworkServerCapabilities?.config?.[mode] !== false;
+  const resolveConfigMicxTarget = async (mode: "read" | "write") => {
+    const micxSnapshot = getMicxSnapshot();
+    const micxClient = micxSnapshot.micxServerClient;
+    const micxWorkspaceId = await resolveMicxWorkspaceId();
+    const hasMicxTarget =
+      micxSnapshot.micxServerStatus === "connected" &&
+      Boolean(micxClient && micxWorkspaceId);
+    const canUseMicxServer =
+      hasMicxTarget &&
+      micxSnapshot.micxServerCapabilities?.config?.[mode] !== false;
     return {
-      openworkClient,
-      openworkWorkspaceId,
-      hasOpenworkTarget,
-      canUseOpenworkServer,
+      micxClient,
+      micxWorkspaceId,
+      hasMicxTarget,
+      canUseMicxServer,
     };
   };
 
-  const resolveMcpOpenworkTarget = async (mode: "read" | "write") => {
-    const openworkSnapshot = getOpenworkSnapshot();
-    const openworkClient = openworkSnapshot.openworkServerClient;
-    const openworkWorkspaceId = await resolveOpenworkWorkspaceId();
-    const hasOpenworkTarget =
-      openworkSnapshot.openworkServerStatus === "connected" &&
-      Boolean(openworkClient && openworkWorkspaceId);
-    const canUseOpenworkServer =
-      hasOpenworkTarget &&
-      openworkSnapshot.openworkServerCapabilities?.mcp?.[mode] !== false;
+  const resolveMcpMicxTarget = async (mode: "read" | "write") => {
+    const micxSnapshot = getMicxSnapshot();
+    const micxClient = micxSnapshot.micxServerClient;
+    const micxWorkspaceId = await resolveMicxWorkspaceId();
+    const hasMicxTarget =
+      micxSnapshot.micxServerStatus === "connected" &&
+      Boolean(micxClient && micxWorkspaceId);
+    const canUseMicxServer =
+      hasMicxTarget &&
+      micxSnapshot.micxServerCapabilities?.mcp?.[mode] !== false;
     return {
-      openworkClient,
-      openworkWorkspaceId,
-      hasOpenworkTarget,
-      canUseOpenworkServer,
+      micxClient,
+      micxWorkspaceId,
+      hasMicxTarget,
+      canUseMicxServer,
     };
   };
 
@@ -207,14 +207,14 @@ export function createConnectionsStore(options: {
 
   const readMcpConfigFile = async (scope: "project" | "global"): Promise<OpencodeConfigFile | null> => {
     const projectDir = options.projectDir().trim();
-    const { openworkClient, openworkWorkspaceId, hasOpenworkTarget, canUseOpenworkServer } =
-      await resolveConfigOpenworkTarget("read");
+    const { micxClient, micxWorkspaceId, hasMicxTarget, canUseMicxServer } =
+      await resolveConfigMicxTarget("read");
 
-    if (canUseOpenworkServer && openworkClient && openworkWorkspaceId) {
-      return openworkClient.readOpencodeConfigFile(openworkWorkspaceId, scope);
+    if (canUseMicxServer && micxClient && micxWorkspaceId) {
+      return micxClient.readOpencodeConfigFile(micxWorkspaceId, scope);
     }
 
-    if (hasOpenworkTarget) {
+    if (hasMicxTarget) {
       return null;
     }
 
@@ -231,31 +231,31 @@ export function createConnectionsStore(options: {
       return activeClient;
     }
 
-    const openworkSnapshot = getOpenworkSnapshot();
-    const openworkBaseUrl = openworkSnapshot.openworkServerBaseUrl.trim();
-    const token = openworkSnapshot.openworkServerAuth.token?.trim();
-    if (!openworkBaseUrl || !token) {
+    const micxSnapshot = getMicxSnapshot();
+    const micxBaseUrl = micxSnapshot.micxServerBaseUrl.trim();
+    const token = micxSnapshot.micxServerAuth.token?.trim();
+    if (!micxBaseUrl || !token) {
       return null;
     }
 
     const mountedBaseUrl =
-      buildOpenworkWorkspaceBaseUrl(openworkBaseUrl, await resolveOpenworkWorkspaceId()) ?? openworkBaseUrl;
+      buildMicxWorkspaceBaseUrl(micxBaseUrl, await resolveMicxWorkspaceId()) ?? micxBaseUrl;
     activeClient = createClient(`${mountedBaseUrl.replace(/\/+$/, "")}/opencode`, undefined, {
       token,
-      mode: "openwork",
+      mode: "micx",
     });
     options.setClient(activeClient);
     return activeClient;
   };
 
-  const resolveWritableOpenworkTarget = async () => {
-    return resolveMcpOpenworkTarget("write");
+  const resolveWritableMicxTarget = async () => {
+    return resolveMcpMicxTarget("write");
   };
 
   const resolveCloudMcpOperationContext = async (fallbackUrl?: string | null): Promise<CloudMcpOperationContext | null> => {
     const settings = readDenSettings();
-    const workspaceId = await resolveOpenworkWorkspaceId();
-    const serverBaseUrl = getOpenworkSnapshot().openworkServerClient?.baseUrl.trim() ?? "";
+    const workspaceId = await resolveMicxWorkspaceId();
+    const serverBaseUrl = getMicxSnapshot().micxServerClient?.baseUrl.trim() ?? "";
     const orgId = settings.activeOrgId?.trim() ?? "";
     if (!workspaceId || !serverBaseUrl || !orgId) return null;
     return {
@@ -289,29 +289,29 @@ export function createConnectionsStore(options: {
     return resolvedProjectDir;
   };
 
-  const listMcpFromOpenworkServer = async (projectDir: string) => {
-    const openworkSnapshot = getOpenworkSnapshot();
-    const { openworkClient, openworkWorkspaceId, hasOpenworkTarget, canUseOpenworkServer } =
-      await resolveMcpOpenworkTarget("read");
-    const canTryOpenworkServer = canUseOpenworkServer;
+  const listMcpFromMicxServer = async (projectDir: string) => {
+    const micxSnapshot = getMicxSnapshot();
+    const { micxClient, micxWorkspaceId, hasMicxTarget, canUseMicxServer } =
+      await resolveMcpMicxTarget("read");
+    const canTryMicxServer = canUseMicxServer;
 
     recordPerfLog(options.developerMode(), "mcp.refresh", "server-path-check", {
       workspaceType: options.workspaceType(),
       projectDir: projectDir || null,
-      openworkStatus: openworkSnapshot.openworkServerStatus,
-      hasOpenworkClient: Boolean(openworkClient),
-      openworkWorkspaceId: openworkWorkspaceId ?? null,
-      canReadMcp: openworkSnapshot.openworkServerCapabilities?.mcp?.read ?? null,
-      canTryOpenworkServer,
+      micxStatus: micxSnapshot.micxServerStatus,
+      hasMicxClient: Boolean(micxClient),
+      micxWorkspaceId: micxWorkspaceId ?? null,
+      canReadMcp: micxSnapshot.micxServerCapabilities?.mcp?.read ?? null,
+      canTryMicxServer,
     });
 
-    if (hasOpenworkTarget && !canTryOpenworkServer) {
-      throw new Error("OpenWork server cannot read MCP config for this workspace.");
+    if (hasMicxTarget && !canTryMicxServer) {
+      throw new Error("Micx server cannot read MCP config for this workspace.");
     }
 
-    if (!canTryOpenworkServer || !openworkClient || !openworkWorkspaceId) return null;
+    if (!canTryMicxServer || !micxClient || !micxWorkspaceId) return null;
 
-    const response = await openworkClient.listMcp(openworkWorkspaceId);
+    const response = await micxClient.listMcp(micxWorkspaceId);
     const next = response.items.map((entry) => ({
       name: entry.name,
       config: entry.config as McpServerEntry["config"],
@@ -340,9 +340,9 @@ export function createConnectionsStore(options: {
     return { next, nextStatuses, engineSync };
   };
 
-  const resolveDesktopCommand = async (commandName: "getComputerUseMcpCommand" | "getOpenworkUiMcpCommand", fallbackOnError = true) => {
+  const resolveDesktopCommand = async (commandName: "getComputerUseMcpCommand" | "getMicxUiMcpCommand", fallbackOnError = true) => {
     try {
-      const command = await window.__OPENWORK_ELECTRON__?.invokeDesktop?.(commandName);
+      const command = await window.__MICX_ELECTRON__?.invokeDesktop?.(commandName);
       if (Array.isArray(command) && command.every((part) => typeof part === "string") && command.length > 0) {
         return command;
       }
@@ -350,7 +350,7 @@ export function createConnectionsStore(options: {
       if (!fallbackOnError) {
         throw error instanceof Error
           ? error
-          : new Error("Computer Use helper app is unavailable. Restart OpenWork or reinstall the app.");
+          : new Error("Computer Use helper app is unavailable. Restart Micx or reinstall the app.");
       }
       // Fall through to the published package command in the manifest/catalog.
     }
@@ -359,21 +359,21 @@ export function createConnectionsStore(options: {
 
   const resolveLocalMcpCommand = async (entry: McpDirectoryInfo) => {
     const mcpResource = extensionResource(entry.extensionManifest, "mcp");
-    if (mcpResource?.localCommandRef === "openwork.computerUseMcp") {
+    if (mcpResource?.localCommandRef === "micx.computerUseMcp") {
       const command = await resolveDesktopCommand("getComputerUseMcpCommand", false);
       return command ?? entry.command;
     }
-    if (mcpResource?.localCommandRef === "openwork.uiMcp" || entry.serverName === "openwork-ui") {
-      const command = await resolveDesktopCommand("getOpenworkUiMcpCommand");
+    if (mcpResource?.localCommandRef === "micx.uiMcp" || entry.serverName === "micx-ui") {
+      const command = await resolveDesktopCommand("getMicxUiMcpCommand");
       return command ?? entry.command;
     }
     return entry.command;
   };
 
   const resolveLocalMcpEnvironment = async (entry: McpDirectoryInfo) => {
-    if (entry.serverName !== "openwork-ui") return undefined;
+    if (entry.serverName !== "micx-ui") return undefined;
     try {
-      const environment = await window.__OPENWORK_ELECTRON__?.invokeDesktop?.("getOpenworkUiMcpEnvironment");
+      const environment = await window.__MICX_ELECTRON__?.invokeDesktop?.("getMicxUiMcpEnvironment");
       if (environment && typeof environment === "object" && !Array.isArray(environment)) {
         return Object.fromEntries(
           Object.entries(environment).filter((entry): entry is [string, string] =>
@@ -382,7 +382,7 @@ export function createConnectionsStore(options: {
         );
       }
     } catch {
-      // Discovery fallback in openwork-ui-mcp still handles normal launches.
+      // Discovery fallback in micx-ui-mcp still handles normal launches.
     }
     return undefined;
   };
@@ -426,7 +426,7 @@ export function createConnectionsStore(options: {
 
     try {
       setStateField("mcpStatus", null);
-      const serverResult = await listMcpFromOpenworkServer(projectDir);
+      const serverResult = await listMcpFromMicxServer(projectDir);
       if (serverResult) {
         // Surface engine registration failures instead of leaving users
         // staring at an MCP that silently shows as disconnected.
@@ -449,8 +449,8 @@ export function createConnectionsStore(options: {
       recordPerfLog(options.developerMode(), "mcp.refresh", "server-path-error", {
         message: error instanceof Error ? error.message : String(error),
       });
-      const serverTarget = await resolveMcpOpenworkTarget("read").catch(() => null);
-      if (isRemoteWorkspace || serverTarget?.hasOpenworkTarget) {
+      const serverTarget = await resolveMcpMicxTarget("read").catch(() => null);
+      if (isRemoteWorkspace || serverTarget?.hasMicxTarget) {
         mutateState((current) => ({
           ...current,
           mcpServers: [],
@@ -464,7 +464,7 @@ export function createConnectionsStore(options: {
     if (isRemoteWorkspace) {
       mutateState((current) => ({
         ...current,
-        mcpStatus: "OpenWork server unavailable. MCP config is read-only.",
+        mcpStatus: "Micx server unavailable. MCP config is read-only.",
         mcpServers: [],
         mcpStatuses: {},
       }));
@@ -514,10 +514,10 @@ export function createConnectionsStore(options: {
         ...globalServers.filter((entry) => !projectNames.has(entry.name)),
         ...projectServers,
       ];
-      // Runtime-DB MCPs (source "config.remote") only exist on the OpenWork
+      // Runtime-DB MCPs (source "config.remote") only exist on the Micx
       // server. Keep the last-known entries instead of silently dropping them
       // while the server is briefly unreachable (startup race) — otherwise
-      // enabled MCPs like openwork-ui render as "off".
+      // enabled MCPs like micx-ui render as "off".
       const fileNames = new Set(fileServers.map((entry) => entry.name));
       const runtimeServers = state.mcpServers.filter(
         (entry) => entry.source === "config.remote" && !fileNames.has(entry.name),
@@ -573,10 +573,10 @@ export function createConnectionsStore(options: {
 
   async function connectMcp(entry: McpDirectoryInfo): Promise<boolean> {
     const startedAt = perfNow();
-    const openworkSnapshot = getOpenworkSnapshot();
+    const micxSnapshot = getMicxSnapshot();
     const isRemoteWorkspace =
       options.workspaceType() === "remote" ||
-      (!isDesktopRuntime() && openworkSnapshot.openworkServerStatus === "connected");
+      (!isDesktopRuntime() && micxSnapshot.micxServerStatus === "connected");
     const projectDir = options.projectDir().trim();
     const entryType = entry.type ?? "remote";
 
@@ -587,26 +587,26 @@ export function createConnectionsStore(options: {
       projectDir: projectDir || null,
     });
 
-    const { openworkClient, openworkWorkspaceId, hasOpenworkTarget, canUseOpenworkServer } =
-      await resolveWritableOpenworkTarget();
+    const { micxClient, micxWorkspaceId, hasMicxTarget, canUseMicxServer } =
+      await resolveWritableMicxTarget();
 
-    if (isRemoteWorkspace && !canUseOpenworkServer) {
-      setStateField("mcpStatus", "OpenWork server unavailable. MCP config is read-only.");
+    if (isRemoteWorkspace && !canUseMicxServer) {
+      setStateField("mcpStatus", "Micx server unavailable. MCP config is read-only.");
       finishPerf(options.developerMode(), "mcp.connect", "blocked", startedAt, {
-        reason: "openwork-server-unavailable",
+        reason: "micx-server-unavailable",
       });
       return false;
     }
 
-    if (hasOpenworkTarget && !canUseOpenworkServer) {
-      setStateField("mcpStatus", "OpenWork server MCP config is read-only.");
+    if (hasMicxTarget && !canUseMicxServer) {
+      setStateField("mcpStatus", "Micx server MCP config is read-only.");
       finishPerf(options.developerMode(), "mcp.connect", "blocked", startedAt, {
-        reason: "openwork-server-read-only",
+        reason: "micx-server-read-only",
       });
       return false;
     }
 
-    if (!canUseOpenworkServer && !isDesktopRuntime()) {
+    if (!canUseMicxServer && !isDesktopRuntime()) {
       setStateField("mcpStatus", t("mcp.desktop_required"));
       finishPerf(options.developerMode(), "mcp.connect", "blocked", startedAt, {
         reason: "desktop-required",
@@ -614,7 +614,7 @@ export function createConnectionsStore(options: {
       return false;
     }
 
-    if (!isRemoteWorkspace && !projectDir && !canUseOpenworkServer) {
+    if (!isRemoteWorkspace && !projectDir && !canUseMicxServer) {
       setStateField("mcpStatus", t("mcp.pick_workspace_first"));
       finishPerf(options.developerMode(), "mcp.connect", "blocked", startedAt, {
         reason: "missing-workspace",
@@ -622,8 +622,8 @@ export function createConnectionsStore(options: {
       return false;
     }
 
-    const activeClient = canUseOpenworkServer ? options.client() ?? await ensureActiveClient().catch(() => null) : await ensureActiveClient();
-    if (!activeClient && !canUseOpenworkServer) {
+    const activeClient = canUseMicxServer ? options.client() ?? await ensureActiveClient().catch(() => null) : await ensureActiveClient();
+    if (!activeClient && !canUseMicxServer) {
       setStateField("mcpStatus", t("mcp.connect_server_first"));
       finishPerf(options.developerMode(), "mcp.connect", "blocked", startedAt, {
         reason: "no-active-client",
@@ -632,7 +632,7 @@ export function createConnectionsStore(options: {
     }
 
     const resolvedProjectDir = activeClient ? await resolveProjectDir(activeClient, projectDir) : projectDir;
-    if (!resolvedProjectDir && !canUseOpenworkServer) {
+    if (!resolvedProjectDir && !canUseMicxServer) {
       setStateField("mcpStatus", t("mcp.pick_workspace_first"));
       finishPerf(options.developerMode(), "mcp.connect", "blocked", startedAt, {
         reason: "missing-workspace-after-discovery",
@@ -647,17 +647,17 @@ export function createConnectionsStore(options: {
       mutateState((current) => ({ ...current, mcpStatus: null, mcpConnectingName: entry.name }));
 
       if (entry.serverName === CLOUD_MCP_SERVER_NAME) {
-        if (!canUseOpenworkServer || !openworkClient || !openworkWorkspaceId) {
-          throw new Error("OpenWork server is required to repair agent access to connected services.");
+        if (!canUseMicxServer || !micxClient || !micxWorkspaceId) {
+          throw new Error("Micx server is required to repair agent access to connected services.");
         }
         const context = await resolveCloudMcpOperationContext(entry.url);
         if (!context) {
-          throw new Error("Sign in to OpenWork Cloud and choose an organization first.");
+          throw new Error("Sign in to Micx Cloud and choose an organization first.");
         }
         clearCloudMcpDisabledIntent(context);
-        const result = await runOpenworkCloudMcpReconciler({
+        const result = await runMicxCloudMcpReconciler({
           mode: "repair",
-          client: openworkClient,
+          client: micxClient,
           context: { ...context, trigger: "desktop-explicit-connect" },
           mintToken: mintCloudControlMcpToken,
           force: true,
@@ -691,9 +691,9 @@ export function createConnectionsStore(options: {
       // Resolve dynamic URLs for built-in MCPs
       let resolvedUrl = entry.url;
       let resolvedHeaders: Record<string, string> | undefined;
-      if (!resolvedUrl && entry.serverName === "openwork-ui") {
+      if (!resolvedUrl && entry.serverName === "micx-ui") {
         try {
-          const bridgeInfo = await window.__OPENWORK_ELECTRON__?.invokeDesktop?.("getUiControlBridgeInfo");
+          const bridgeInfo = await window.__MICX_ELECTRON__?.invokeDesktop?.("getUiControlBridgeInfo");
           if (bridgeInfo?.baseUrl) {
             resolvedUrl = `${bridgeInfo.baseUrl}/mcp`;
             if (bridgeInfo.token) {
@@ -712,7 +712,7 @@ export function createConnectionsStore(options: {
 
       if (entryType === "remote") {
         if (!resolvedUrl) {
-          throw new Error("Missing MCP URL. Is the OpenWork desktop app running?");
+          throw new Error("Missing MCP URL. Is the Micx desktop app running?");
         }
         mcpEntryConfig["url"] = resolvedUrl;
         if (resolvedHeaders) {
@@ -741,8 +741,8 @@ export function createConnectionsStore(options: {
         }
       }
 
-      if (canUseOpenworkServer && openworkClient && openworkWorkspaceId) {
-        await openworkClient.addMcp(openworkWorkspaceId, {
+      if (canUseMicxServer && micxClient && micxWorkspaceId) {
+        await micxClient.addMcp(micxWorkspaceId, {
           name: slug,
           config: mcpEntryConfig,
         });
@@ -786,12 +786,12 @@ export function createConnectionsStore(options: {
         }
       }
 
-      if (canUseOpenworkServer && openworkClient && openworkWorkspaceId) {
-        // The OpenWork server is the source of truth for workspace-scoped MCP
+      if (canUseMicxServer && micxClient && micxWorkspaceId) {
+        // The Micx server is the source of truth for workspace-scoped MCP
         // config in the React port. Avoid also calling the OpenCode SDK's MCP
         // hot-add endpoint here: when the SDK client is rooted at the aggregate
         // `/opencode` route it can resolve to an internal `local_*` workspace
-        // id that the OpenWork server does not expose, producing a confusing
+        // id that the Micx server does not expose, producing a confusing
         // `workspace_not_found` after the config write already succeeded.
         setStateField("mcpStatuses", filterConfiguredStatuses(snapshot.mcpStatuses, snapshot.mcpServers));
       } else {
@@ -882,8 +882,8 @@ export function createConnectionsStore(options: {
 
   /**
    * Background reconciliation for the Den cloud MCP: when the desktop is
-   * signed in to OpenWork Cloud with an active org, keep the
-   * `openwork-cloud` MCP entry configured with a fresh first-party token.
+   * signed in to Micx Cloud with an active org, keep the
+   * `micx-cloud` MCP entry configured with a fresh first-party token.
    * Quiet by design — a failed mint never opens the OAuth modal.
    *
    * `force` bypasses the freshness marker: used by the user-facing Refresh
@@ -895,11 +895,11 @@ export function createConnectionsStore(options: {
     const settings = readDenSettings();
     const orgId = settings.activeOrgId?.trim() ?? "";
     if (!orgId || !settings.authToken?.trim()) return "skipped";
-    const workspaceId = await resolveOpenworkWorkspaceId();
+    const workspaceId = await resolveMicxWorkspaceId();
     if (!workspaceId) return "skipped";
-    const openworkClient = getOpenworkSnapshot().openworkServerClient;
-    const serverBaseUrl = openworkClient?.baseUrl.trim() ?? "";
-    if (!openworkClient || !serverBaseUrl) return "skipped";
+    const micxClient = getMicxSnapshot().micxServerClient;
+    const serverBaseUrl = micxClient?.baseUrl.trim() ?? "";
+    if (!micxClient || !serverBaseUrl) return "skipped";
 
     const entry = MCP_QUICK_CONNECT.find((candidate) => candidate.serverName === CLOUD_MCP_SERVER_NAME);
     if (!entry) return "skipped";
@@ -910,9 +910,9 @@ export function createConnectionsStore(options: {
     const configuredEntry = snapshot.mcpServers.find((server) => server.name === CLOUD_MCP_SERVER_NAME);
     if (configuredEntry?.config.enabled === false) return "skipped";
 
-    const result = await runOpenworkCloudMcpReconciler({
+    const result = await runMicxCloudMcpReconciler({
       mode: "repair",
-      client: openworkClient,
+      client: micxClient,
       context: {
         ...scope,
         denAuthToken: settings.authToken,
@@ -960,38 +960,38 @@ export function createConnectionsStore(options: {
   }
 
   async function logoutMcpAuth(name: string) {
-    const openworkSnapshot = getOpenworkSnapshot();
+    const micxSnapshot = getMicxSnapshot();
     const isRemoteWorkspace =
       options.workspaceType() === "remote" ||
-      (!isDesktopRuntime() && openworkSnapshot.openworkServerStatus === "connected");
+      (!isDesktopRuntime() && micxSnapshot.micxServerStatus === "connected");
     const projectDir = options.projectDir().trim();
 
-    const { openworkClient, openworkWorkspaceId, hasOpenworkTarget, canUseOpenworkServer } =
-      await resolveWritableOpenworkTarget();
+    const { micxClient, micxWorkspaceId, hasMicxTarget, canUseMicxServer } =
+      await resolveWritableMicxTarget();
 
-    if (isRemoteWorkspace && !canUseOpenworkServer) {
-      setStateField("mcpStatus", "OpenWork server unavailable. MCP auth is read-only.");
+    if (isRemoteWorkspace && !canUseMicxServer) {
+      setStateField("mcpStatus", "Micx server unavailable. MCP auth is read-only.");
       return;
     }
 
-    if (hasOpenworkTarget && !canUseOpenworkServer) {
-      setStateField("mcpStatus", "OpenWork server MCP auth is read-only.");
+    if (hasMicxTarget && !canUseMicxServer) {
+      setStateField("mcpStatus", "Micx server MCP auth is read-only.");
       return;
     }
 
-    if (!canUseOpenworkServer && !isDesktopRuntime()) {
+    if (!canUseMicxServer && !isDesktopRuntime()) {
       setStateField("mcpStatus", t("mcp.desktop_required"));
       return;
     }
 
-    const activeClient = canUseOpenworkServer ? options.client() : await ensureActiveClient();
-    if (!activeClient && !canUseOpenworkServer) {
+    const activeClient = canUseMicxServer ? options.client() : await ensureActiveClient();
+    if (!activeClient && !canUseMicxServer) {
       setStateField("mcpStatus", t("mcp.connect_server_first"));
       return;
     }
 
     const resolvedProjectDir = activeClient ? await resolveProjectDir(activeClient, projectDir) : projectDir;
-    if (!resolvedProjectDir && !canUseOpenworkServer) {
+    if (!resolvedProjectDir && !canUseMicxServer) {
       setStateField("mcpStatus", t("mcp.pick_workspace_first"));
       return;
     }
@@ -1000,8 +1000,8 @@ export function createConnectionsStore(options: {
     setStateField("mcpStatus", null);
 
     try {
-      if (canUseOpenworkServer && openworkClient && openworkWorkspaceId) {
-        await openworkClient.logoutMcpAuth(openworkWorkspaceId, safeName);
+      if (canUseMicxServer && micxClient && micxWorkspaceId) {
+        await micxClient.logoutMcpAuth(micxWorkspaceId, safeName);
       } else {
         if (!activeClient || !resolvedProjectDir) {
           throw new Error(t("mcp.connect_server_first"));
@@ -1037,14 +1037,14 @@ export function createConnectionsStore(options: {
     try {
       setStateField("mcpStatus", null);
 
-      const { openworkClient, openworkWorkspaceId, hasOpenworkTarget, canUseOpenworkServer } =
-        await resolveWritableOpenworkTarget();
+      const { micxClient, micxWorkspaceId, hasMicxTarget, canUseMicxServer } =
+        await resolveWritableMicxTarget();
 
-      if (canUseOpenworkServer && openworkClient && openworkWorkspaceId) {
-        await openworkClient.removeMcp(openworkWorkspaceId, name);
+      if (canUseMicxServer && micxClient && micxWorkspaceId) {
+        await micxClient.removeMcp(micxWorkspaceId, name);
       } else {
-        if (hasOpenworkTarget) {
-          setStateField("mcpStatus", "OpenWork server MCP config is read-only.");
+        if (hasMicxTarget) {
+          setStateField("mcpStatus", "Micx server MCP config is read-only.");
           return;
         }
         const projectDir = options.projectDir().trim();
@@ -1117,15 +1117,15 @@ export function createConnectionsStore(options: {
   // from the existing reload-required popup; no extra banner here.
   async function setMcpEnabled(name: string, enabled: boolean) {
     try {
-      const { openworkClient, openworkWorkspaceId, canUseOpenworkServer } =
-        await resolveWritableOpenworkTarget();
+      const { micxClient, micxWorkspaceId, canUseMicxServer } =
+        await resolveWritableMicxTarget();
 
-      if (!canUseOpenworkServer || !openworkClient || !openworkWorkspaceId) {
+      if (!canUseMicxServer || !micxClient || !micxWorkspaceId) {
         setStateField("mcpStatus", t("mcp.toggle_requires_server"));
         return;
       }
 
-      await openworkClient.setMcpEnabled(openworkWorkspaceId, name, enabled);
+      await micxClient.setMcpEnabled(micxWorkspaceId, name, enabled);
       if (name === CLOUD_MCP_SERVER_NAME) {
         const context = await resolveCloudMcpOperationContext(null);
         if (enabled) {
@@ -1171,7 +1171,7 @@ export function createConnectionsStore(options: {
       return;
     }
 
-    if (!isDesktopRuntime() && getOpenworkSnapshot().openworkServerStatus !== "connected") {
+    if (!isDesktopRuntime() && getMicxSnapshot().micxServerStatus !== "connected") {
       return;
     }
 

@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { existsSync, readdirSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
-import { opencodeDataDirs as defaultOpencodeDataDirs } from "@openwork/paths";
+import { opencodeDataDirs as defaultOpencodeDataDirs } from "@micx/paths";
 
 import Database from "better-sqlite3";
 
@@ -10,10 +10,10 @@ type SeedMessage = {
   text: string;
 };
 
-const DEFAULT_AGENT = "openwork";
+const DEFAULT_AGENT = "micx";
 const DEFAULT_PROVIDER = "openai";
 const DEFAULT_MODEL = "gpt-5.4";
-const OPENWORK_DEV_DATA_DIRS = ["openwork-dev-data", "opencode-dev"];
+const MICX_DEV_DATA_DIRS = ["micx-dev-data", "opencode-dev"];
 
 function truthy(value: string | undefined): boolean {
   if (!value) return false;
@@ -21,8 +21,8 @@ function truthy(value: string | undefined): boolean {
   return normalized === "1" || normalized === "true" || normalized === "yes" || normalized === "on";
 }
 
-function opencodeOpenworkDataDirs(): string[] {
-  const root = process.env.OPENWORK_DATA_DIR?.trim();
+function opencodeMicxDataDirs(): string[] {
+  const root = process.env.MICX_DATA_DIR?.trim();
   if (!root) return [];
 
   const dirs: string[] = [];
@@ -30,7 +30,7 @@ function opencodeOpenworkDataDirs(): string[] {
     if (existsSync(dir)) dirs.push(dir);
   };
 
-  for (const name of OPENWORK_DEV_DATA_DIRS) {
+  for (const name of MICX_DEV_DATA_DIRS) {
     const base = join(root, name);
     pushIfExists(join(base, "xdg", "data", "opencode"));
     if (!existsSync(base)) continue;
@@ -45,7 +45,7 @@ function opencodeOpenworkDataDirs(): string[] {
 }
 
 function opencodeDataDirs(): string[] {
-  const dirs = [...opencodeOpenworkDataDirs(), ...defaultOpencodeDataDirs()];
+  const dirs = [...opencodeMicxDataDirs(), ...defaultOpencodeDataDirs()];
   return Array.from(new Set(dirs));
 }
 

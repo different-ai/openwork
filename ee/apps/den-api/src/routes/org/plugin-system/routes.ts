@@ -1,7 +1,7 @@
 import type { Context, Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
-import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
+import { normalizeDenTypeId } from "@micx-ee/utils/typeid"
 import { queryValidator, jsonValidator, orgMemberRoute, paramValidator, resolveMemberTeamsMiddleware } from "../../../middleware/index.js"
 import { emptyResponse, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../../openapi.js"
 import type { OrgRouteVariables } from "../shared.js"
@@ -246,7 +246,7 @@ async function configurePluginMcpConnectionResponse(c: OrgContext) {
     const params = validParam<z.infer<typeof pluginParamsSchema>>(c)
     const body = validJson<z.infer<typeof pluginMcpRequirementConfigureSchema>>(c)
     if (isAgentPluginMcpSecretSetup({ apiKey: body.apiKey, oauthClient: body.oauthClient, sessionId: c.get("session")?.id })) {
-      return c.json({ error: "invalid_request", message: "Plugin MCP credentials cannot be set from the agent. Add them in the OpenWork Cloud dashboard under Connections." }, 400)
+      return c.json({ error: "invalid_request", message: "Plugin MCP credentials cannot be set from the agent. Add them in the Micx Cloud dashboard under Connections." }, 400)
     }
     const admin = ensureOrganizationAdmin(c, "Only workspace owners and admins can configure plugin MCP requirements.")
     if (!admin.ok) return c.json(admin.response, orgAccessFailureStatus(admin.response))
@@ -1771,7 +1771,7 @@ export function registerPluginArchRoutes<T extends { Variables: OrgRouteVariable
     describeRoute({
       tags: ["GitHub"],
       summary: "Apply GitHub discovery selection",
-      description: "Creates OpenWork plugins and connector mappings from selected discovery candidates.",
+      description: "Creates Micx plugins and connector mappings from selected discovery candidates.",
       responses: {
         200: jsonResponse("GitHub discovery selection applied successfully.", githubDiscoveryApplyResponseSchema),
         400: jsonResponse("The discovery apply request was invalid.", invalidRequestSchema),

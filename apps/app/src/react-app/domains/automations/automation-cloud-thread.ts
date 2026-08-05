@@ -1,4 +1,4 @@
-import type { AutomationExecutionThread } from "@openwork/types/automations"
+import type { AutomationExecutionThread } from "@micx/types/automations"
 
 export type AutomationExecutionIdentity = {
   icon: "desktop"

@@ -29,7 +29,7 @@ describe("Den dashboard sidebar brand icon", () => {
     expect(markup).not.toContain("<svg");
   });
 
-  test("renders the canonical managed square icon without first rendering the OpenWork mark", () => {
+  test("renders the canonical managed square icon without first rendering the Micx mark", () => {
     const markup = renderToStaticMarkup(
       <SidebarBrandMark metadata={managedIconMetadata} organizationName="Acme" />,
     );
@@ -43,13 +43,13 @@ describe("Den dashboard sidebar brand icon", () => {
     expect(markup).not.toContain("<svg");
   });
 
-  test("uses the OpenWork mark when no managed square icon exists", () => {
+  test("uses the Micx mark when no managed square icon exists", () => {
     const markup = renderToStaticMarkup(
       <SidebarBrandMark metadata={null} organizationName="Acme" />,
     );
 
     expect(markup).toContain("<svg");
-    expect(markup).toContain('aria-label="OpenWork"');
+    expect(markup).toContain('aria-label="Micx"');
     expect(markup).toContain('data-sidebar-brand-icon="fallback"');
     expect(markup).not.toContain("<img");
   });

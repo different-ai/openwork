@@ -1,5 +1,5 @@
 {
-  "name": "@openwork-ee/den-db",
+  "name": "@micx-ee/den-db",
   "private": true,
   "type": "module",
   "main": "./dist/index.js",
@@ -85,8 +85,8 @@
     "benchmark:admin-scale:mysql": "node --import tsx scripts/admin-scale-benchmark.ts"
   },
   "dependencies": {
-    "@openwork/types": "workspace:*",
-    "@openwork-ee/utils": "workspace:*",
+    "@micx/types": "workspace:*",
+    "@micx-ee/utils": "workspace:*",
     "@planetscale/database": "^1.19.0",
     "drizzle-orm": "^0.45.1",
     "mysql2": "^3.11.3"

@@ -3,22 +3,22 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { OPENWORK_CLOUD_EXPECTED_TOOLS, OPENWORK_CLOUD_PLUGIN_CANARIES } from "./cloud-mcp-health.js";
+import { MICX_CLOUD_EXPECTED_TOOLS, MICX_CLOUD_PLUGIN_CANARIES } from "./cloud-mcp-health.js";
 import { writeRuntimeOpencodeConfig } from "./runtime-opencode-config-store.js";
 import { startServer } from "./server.js";
 import type { ServerConfig, WorkspaceInfo } from "./types.js";
 
 const CLIENT_TOKEN = "owt_connect_state_client";
 const HOST_TOKEN = "owt_connect_state_host";
-const previousRuntimeDb = process.env.OPENWORK_RUNTIME_DB;
+const previousRuntimeDb = process.env.MICX_RUNTIME_DB;
 const stops: Array<() => void | Promise<void>> = [];
 const roots: string[] = [];
 
 afterEach(async () => {
   while (stops.length) await stops.pop()?.();
   while (roots.length) await rm(roots.pop() ?? "", { recursive: true, force: true });
-  if (previousRuntimeDb === undefined) delete process.env.OPENWORK_RUNTIME_DB;
-  else process.env.OPENWORK_RUNTIME_DB = previousRuntimeDb;
+  if (previousRuntimeDb === undefined) delete process.env.MICX_RUNTIME_DB;
+  else process.env.MICX_RUNTIME_DB = previousRuntimeDb;
 });
 
 async function createRoot(prefix: string): Promise<string> {
@@ -34,7 +34,7 @@ function startMockOpencode() {
     async fetch(request) {
       const url = new URL(request.url);
       if (url.pathname === "/global/health") return Response.json({ healthy: true, version: "1.17.11" });
-      if (url.pathname === "/mcp" && request.method === "GET") return Response.json({ "openwork-cloud": { status: "connected" } });
+      if (url.pathname === "/mcp" && request.method === "GET") return Response.json({ "micx-cloud": { status: "connected" } });
       if ((url.pathname === "/cloud-mcp" || url.pathname === "/cloud-mcp/mcp/agent") && request.method === "POST") {
         const body: unknown = await request.json();
         const id = isRecord(body) && (typeof body.id === "string" || typeof body.id === "number" || body.id === null) ? body.id : 1;
@@ -46,7 +46,7 @@ function startMockOpencode() {
             result: {
               capabilities: { tools: {} },
               protocolVersion: "2025-06-18",
-              serverInfo: { name: "openwork-cloud-test", version: "1.0.0" },
+              serverInfo: { name: "micx-cloud-test", version: "1.0.0" },
             },
           });
         }
@@ -64,7 +64,7 @@ function startMockOpencode() {
         }
         return Response.json({ id, jsonrpc: "2.0", result: {} });
       }
-      if (url.pathname === "/experimental/tool/ids") return Response.json([...OPENWORK_CLOUD_EXPECTED_TOOLS, ...OPENWORK_CLOUD_PLUGIN_CANARIES]);
+      if (url.pathname === "/experimental/tool/ids") return Response.json([...MICX_CLOUD_EXPECTED_TOOLS, ...MICX_CLOUD_PLUGIN_CANARIES]);
       return Response.json({ code: "not_found" }, { status: 404 });
     },
   });
@@ -76,8 +76,8 @@ function workspace(id: string, path: string, baseUrl: string): WorkspaceInfo {
   return { id, name: id, path, preset: "starter", workspaceType: "local", baseUrl };
 }
 
-async function startOpenwork(workspaces: WorkspaceInfo[], runtimeRoot: string): Promise<{ base: string; config: ServerConfig }> {
-  process.env.OPENWORK_RUNTIME_DB = join(runtimeRoot, "runtime.sqlite");
+async function startMicx(workspaces: WorkspaceInfo[], runtimeRoot: string): Promise<{ base: string; config: ServerConfig }> {
+  process.env.MICX_RUNTIME_DB = join(runtimeRoot, "runtime.sqlite");
   const config: ServerConfig = {
     host: "127.0.0.1",
     port: 0,
@@ -105,7 +105,7 @@ function clientHeaders(): Record<string, string> {
 }
 
 function hostHeaders(): Record<string, string> {
-  return { "X-OpenWork-Host-Token": HOST_TOKEN, "Content-Type": "application/json" };
+  return { "X-Micx-Host-Token": HOST_TOKEN, "Content-Type": "application/json" };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -125,25 +125,25 @@ function requireRecord(value: unknown, label: string): Record<string, unknown> {
 
 describe("connect state Cloud health scoping", () => {
   test("uses verified health for the exact requested directory without borrowing another workspace", async () => {
-    const rootA = await createRoot("openwork-connect-state-a-");
-    const rootB = await createRoot("openwork-connect-state-b-");
+    const rootA = await createRoot("micx-connect-state-a-");
+    const rootB = await createRoot("micx-connect-state-b-");
     const engine = startMockOpencode();
     const baseUrl = `http://127.0.0.1:${engine.port}`;
-    const openwork = await startOpenwork([
+    const micx = await startMicx([
       workspace("ws_a", rootA, baseUrl),
       workspace("ws_b", rootB, baseUrl),
     ], rootA);
 
-    await fetch(`${openwork.base}/experimental/connect/state`, {
+    await fetch(`${micx.base}/experimental/connect/state`, {
       method: "PUT",
       headers: hostHeaders(),
       body: JSON.stringify({ connectEnabled: true }),
     });
-    await writeRuntimeOpencodeConfig(openwork.config, "ws_b", (current) => ({
+    await writeRuntimeOpencodeConfig(micx.config, "ws_b", (current) => ({
       ...current,
       mcp: {
         ...current.mcp,
-        "openwork-cloud": {
+        "micx-cloud": {
           type: "remote",
           url: `${baseUrl}/cloud-mcp/mcp/agent`,
           enabled: true,
@@ -153,17 +153,17 @@ describe("connect state Cloud health scoping", () => {
       },
     }));
 
-    const first = await responseRecord(await fetch(`${openwork.base}/experimental/connect/state?directory=${encodeURIComponent(rootA)}`, { headers: clientHeaders() }));
+    const first = await responseRecord(await fetch(`${micx.base}/experimental/connect/state?directory=${encodeURIComponent(rootA)}`, { headers: clientHeaders() }));
     expect(first.cloudMcpPresent).toBe(false);
     expect(requireRecord(first.workspace, "workspace").id).toBe("ws_a");
     expect(requireRecord(requireRecord(first.cloudHealth, "cloudHealth").desired, "desired").present).toBe(false);
 
-    const second = await responseRecord(await fetch(`${openwork.base}/experimental/connect/state?directory=${encodeURIComponent(rootB)}`, { headers: clientHeaders() }));
+    const second = await responseRecord(await fetch(`${micx.base}/experimental/connect/state?directory=${encodeURIComponent(rootB)}`, { headers: clientHeaders() }));
     expect(second.cloudMcpPresent).toBe(true);
     expect(requireRecord(second.workspace, "workspace").id).toBe("ws_b");
     expect(requireRecord(second.cloudHealth, "cloudHealth").usable).toBe(true);
 
-    const unknown = await responseRecord(await fetch(`${openwork.base}/experimental/connect/state?directory=${encodeURIComponent(join(rootA, "other"))}`, { headers: clientHeaders() }));
+    const unknown = await responseRecord(await fetch(`${micx.base}/experimental/connect/state?directory=${encodeURIComponent(join(rootA, "other"))}`, { headers: clientHeaders() }));
     expect(unknown.cloudMcpPresent).toBe(false);
     expect(unknown.cloudHealth).toBeNull();
     expect(requireRecord(unknown.workspace, "workspace").resolution).toBe("unknown");

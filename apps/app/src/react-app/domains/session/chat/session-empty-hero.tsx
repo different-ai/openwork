@@ -8,12 +8,12 @@ import { resolveOrganizationPromptCardContent } from "@/components/chat/task-sug
 import { useCheckDesktopRestriction, useOrgRestrictions } from "@/react-app/domains/cloud/desktop-config-provider";
 import { useDenAuth } from "@/react-app/domains/cloud/den-auth-provider";
 import {
-  getOpenWorkModelsActionUrl,
-  hideOpenWorkModelsPromo,
-  isOpenWorkModelsPromoHidden,
+  getMicxModelsActionUrl,
+  hideMicxModelsPromo,
+  isMicxModelsPromoHidden,
   openWorkModelsPromoChangedEvent,
-  useOpenWorkModelsPromoEligibility,
-} from "@/react-app/domains/cloud/openwork-models-promo";
+  useMicxModelsPromoEligibility,
+} from "@/react-app/domains/cloud/micx-models-promo";
 import { usePlatform } from "@/react-app/kernel/platform";
 import { NewTaskComposer, type NewTaskComposerContext } from "./new-task-composer";
 
@@ -70,16 +70,16 @@ export function SessionEmptyHero(props: SessionEmptyHeroProps) {
   const canAddProviders = !checkDesktopRestriction({ restriction: "allowCustomProviders" });
   const platform = usePlatform();
   const denAuth = useDenAuth();
-  const openWorkModelsPromoEligible = useOpenWorkModelsPromoEligibility();
-  const [modelsPromoHidden, setModelsPromoHidden] = useState(isOpenWorkModelsPromoHidden);
+  const openWorkModelsPromoEligible = useMicxModelsPromoEligibility();
+  const [modelsPromoHidden, setModelsPromoHidden] = useState(isMicxModelsPromoHidden);
 
   useEffect(() => {
-    const handlePromoChanged = () => setModelsPromoHidden(isOpenWorkModelsPromoHidden());
+    const handlePromoChanged = () => setModelsPromoHidden(isMicxModelsPromoHidden());
     window.addEventListener(openWorkModelsPromoChangedEvent, handlePromoChanged);
     return () => window.removeEventListener(openWorkModelsPromoChangedEvent, handlePromoChanged);
   }, []);
 
-  // Quiet inline lead to OpenWork Models: replaces the old startup dialog
+  // Quiet inline lead to Micx Models: replaces the old startup dialog
   // interrupt. Shown only while the session runs on the free starter model
   // (the built-in `opencode` provider) and the hosted offering applies.
   const onFreeStarterModel = props.composer?.selectedModel.providerID === DEFAULT_MODEL.providerID;
@@ -109,7 +109,7 @@ export function SessionEmptyHero(props: SessionEmptyHeroProps) {
 
   const fillPrompt = (value: string) => {
     setPrompt(value);
-    window.dispatchEvent(new Event("openwork:focusPrompt"));
+    window.dispatchEvent(new Event("micx:focusPrompt"));
   };
 
   return (
@@ -132,13 +132,13 @@ export function SessionEmptyHero(props: SessionEmptyHeroProps) {
       {showModelsHint ? (
         <div
           className="flex items-center justify-center gap-2 text-[12px] text-muted-foreground"
-          data-testid="openwork-models-hint"
+          data-testid="micx-models-hint"
         >
           <span>Using the free starter model.</span>
           <button
             type="button"
             className="flex items-center gap-1 font-medium text-blue-10 transition-colors hover:text-blue-11"
-            onClick={() => platform.openLink(getOpenWorkModelsActionUrl(denAuth.isSignedIn, "sign-up"))}
+            onClick={() => platform.openLink(getMicxModelsActionUrl(denAuth.isSignedIn, "sign-up"))}
           >
             Get frontier models with no API keys
             <ArrowRight className="size-3" />
@@ -146,8 +146,8 @@ export function SessionEmptyHero(props: SessionEmptyHeroProps) {
           <button
             type="button"
             className="flex size-5 items-center justify-center rounded text-muted-foreground/70 transition-colors hover:text-foreground"
-            onClick={hideOpenWorkModelsPromo}
-            aria-label="Hide OpenWork Models hint"
+            onClick={hideMicxModelsPromo}
+            aria-label="Hide Micx Models hint"
           >
             <X className="size-3" />
           </button>

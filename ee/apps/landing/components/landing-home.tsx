@@ -34,7 +34,7 @@ const externalLinkProps = (href: string) =>
 
 // Mobile visitors can't install a desktop app, so the primary CTA points them to
 // the cloud sign-up screen instead of the download page.
-const CLOUD_SIGNUP_URL = "https://app.openworklabs.com?mode=sign-up";
+const CLOUD_SIGNUP_URL = "https://app.micxlabs.com?mode=sign-up";
 
 export function LandingHome(props: Props) {
   const [activeDemoId, setActiveDemoId] = useState(defaultLandingDemoFlowId);
@@ -80,7 +80,7 @@ export function LandingHome(props: Props) {
               </span>
             </h1>
             <p className="mb-6 max-w-4xl text-lg leading-relaxed text-gray-700 md:mb-7 md:text-xl">
-              OpenWork is the desktop app that lets you use 50+ LLMs, bring your
+              Micx is the desktop app that lets you use 50+ LLMs, bring your
               own keys, and share your setups seamlessly with your team.
             </p>
 
@@ -140,7 +140,7 @@ export function LandingHome(props: Props) {
                 Start on mobile. Continue on desktop.
               </h2>
               <p className="mb-5 text-[15px] leading-7 text-gray-600">
-                OpenWork is a desktop app. Sign up here from your phone and keep the
+                Micx is a desktop app. Sign up here from your phone and keep the
                 desktop install flow handy for when you switch to your computer.
               </p>
               <WaitlistForm contactHref={props.callHref} />
@@ -159,7 +159,7 @@ export function LandingHome(props: Props) {
                   <div className="h-3 w-3 rounded-full border border-[#1aab29]/20 bg-[#27c93f]/90 shadow-sm"></div>
                 </div>
                 <div className="absolute left-1/2 -translate-x-1/2 text-[12px] font-medium tracking-wide text-gray-500">
-                  OpenWork
+                  Micx
                 </div>
               </div>
  
@@ -341,7 +341,7 @@ export function LandingHome(props: Props) {
                               <div className="h-2.5 w-2.5 rounded-full bg-yellow-400/70" />
                               <div className="h-2.5 w-2.5 rounded-full bg-green-400/70" />
                             </div>
-                            <div className="text-[12px] font-medium text-gray-500">OpenWork</div>
+                            <div className="text-[12px] font-medium text-gray-500">Micx</div>
                           </div>
 
                           <div className="flex flex-1">

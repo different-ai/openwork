@@ -2,12 +2,12 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { buildDiagnosticsBundleJson } from "../../../../app/lib/diagnostics-bundle";
 import {
-  buildOpenworkWorkspaceBaseUrl,
-  parseOpenworkWorkspaceIdFromUrl,
-  type OpenworkServerSettings,
-  type OpenworkServerStatus,
-} from "../../../../app/lib/openwork-server";
-import type { OpenworkServerInfo } from "../../../../app/lib/desktop";
+  buildMicxWorkspaceBaseUrl,
+  parseMicxWorkspaceIdFromUrl,
+  type MicxServerSettings,
+  type MicxServerStatus,
+} from "../../../../app/lib/micx-server";
+import type { MicxServerInfo } from "../../../../app/lib/desktop";
 import { isDesktopRuntime } from "../../../../app/utils";
 import { t } from "../../../../i18n";
 import {
@@ -24,16 +24,16 @@ export type ConfigViewProps = {
   clientConnected: boolean;
   anyActiveRuns: boolean;
 
-  openworkServerStatus: OpenworkServerStatus;
-  openworkServerUrl: string;
-  openworkServerSettings: OpenworkServerSettings;
-  openworkServerHostInfo: OpenworkServerInfo | null;
+  micxServerStatus: MicxServerStatus;
+  micxServerUrl: string;
+  micxServerSettings: MicxServerSettings;
+  micxServerHostInfo: MicxServerInfo | null;
   runtimeWorkspaceId: string | null;
 
-  updateOpenworkServerSettings: (next: OpenworkServerSettings) => void;
-  resetOpenworkServerSettings: () => void;
-  testOpenworkServerConnection: (
-    next: OpenworkServerSettings,
+  updateMicxServerSettings: (next: MicxServerSettings) => void;
+  resetMicxServerSettings: () => void;
+  testMicxServerConnection: (
+    next: MicxServerSettings,
   ) => Promise<boolean>;
 
   canReloadWorkspace: boolean;
@@ -48,11 +48,11 @@ export function ConfigView(props: ConfigViewProps) {
     configLocalReducer,
     initialConfigLocalState,
   );
-  const { openworkConnection, tokenVisible, copyingField } = localState;
-  const openworkUrl = openworkConnection.url;
-  const openworkToken = openworkConnection.token;
-  const openworkTestState = openworkConnection.testState;
-  const openworkTestMessage = openworkConnection.testMessage;
+  const { micxConnection, tokenVisible, copyingField } = localState;
+  const micxUrl = micxConnection.url;
+  const micxToken = micxConnection.token;
+  const micxTestState = micxConnection.testState;
+  const micxTestMessage = micxConnection.testMessage;
   const copyTimeoutRef = useRef<number | undefined>(undefined);
   const [diagnosticsBundleJson, setDiagnosticsBundleJson] = useState("");
 
@@ -60,13 +60,13 @@ export function ConfigView(props: ConfigViewProps) {
     dispatchLocal({
       type: "serverSettings",
       connection: {
-        url: props.openworkServerSettings.urlOverride ?? "",
-        token: props.openworkServerSettings.token ?? "",
+        url: props.micxServerSettings.urlOverride ?? "",
+        token: props.micxServerSettings.token ?? "",
         testState: "idle",
         testMessage: null,
       },
     });
-  }, [props.openworkServerSettings]);
+  }, [props.micxServerSettings]);
 
   useEffect(() => {
     return () => {
@@ -76,8 +76,8 @@ export function ConfigView(props: ConfigViewProps) {
     };
   }, []);
 
-  const openworkStatusLabel = (() => {
-    switch (props.openworkServerStatus) {
+  const micxStatusLabel = (() => {
+    switch (props.micxServerStatus) {
       case "connected":
         return t("config.status_connected");
       case "limited":
@@ -87,8 +87,8 @@ export function ConfigView(props: ConfigViewProps) {
     }
   })();
 
-  const openworkStatusStyle = (() => {
-    switch (props.openworkServerStatus) {
+  const micxStatusStyle = (() => {
+    switch (props.micxServerStatus) {
       case "connected":
         return "bg-green-7/10 text-green-11 border-green-7/20";
       case "limited":
@@ -113,33 +113,33 @@ export function ConfigView(props: ConfigViewProps) {
   const reloadButtonDisabled =
     props.reloadBusy || Boolean(reloadAvailabilityReason);
 
-  const buildOpenworkSettings = (): OpenworkServerSettings => ({
-    ...props.openworkServerSettings,
-    urlOverride: openworkUrl.trim() || undefined,
-    token: openworkToken.trim() || undefined,
+  const buildMicxSettings = (): MicxServerSettings => ({
+    ...props.micxServerSettings,
+    urlOverride: micxUrl.trim() || undefined,
+    token: micxToken.trim() || undefined,
   });
 
-  const hasOpenworkChanges = (() => {
-    const currentUrl = props.openworkServerSettings.urlOverride ?? "";
-    const currentToken = props.openworkServerSettings.token ?? "";
+  const hasMicxChanges = (() => {
+    const currentUrl = props.micxServerSettings.urlOverride ?? "";
+    const currentToken = props.micxServerSettings.token ?? "";
     return (
-      openworkUrl.trim() !== currentUrl || openworkToken.trim() !== currentToken
+      micxUrl.trim() !== currentUrl || micxToken.trim() !== currentToken
     );
   })();
 
   const resolvedWorkspaceId = (() => {
     const explicitId = props.runtimeWorkspaceId?.trim() ?? "";
     if (explicitId) return explicitId;
-    return parseOpenworkWorkspaceIdFromUrl(openworkUrl) ?? "";
+    return parseMicxWorkspaceIdFromUrl(micxUrl) ?? "";
   })();
 
   const resolvedWorkspaceUrl = (() => {
-    const baseUrl = openworkUrl.trim();
+    const baseUrl = micxUrl.trim();
     if (!baseUrl) return "";
-    return buildOpenworkWorkspaceBaseUrl(baseUrl, resolvedWorkspaceId) ?? baseUrl;
+    return buildMicxWorkspaceBaseUrl(baseUrl, resolvedWorkspaceId) ?? baseUrl;
   })();
 
-  const hostInfo = props.openworkServerHostInfo;
+  const hostInfo = props.micxServerHostInfo;
   const hostRemoteAccessEnabled = hostInfo?.remoteAccessEnabled === true;
   const hostStatusLabel = !hostInfo?.running
     ? t("config.host_offline")
@@ -166,8 +166,8 @@ export function ConfigView(props: ConfigViewProps) {
       hostConnectUrl,
       hostConnectUrlUsesMdns,
       hostInfo,
-      openworkServerStatus: props.openworkServerStatus,
-      openworkServerUrl: props.openworkServerUrl,
+      micxServerStatus: props.micxServerStatus,
+      micxServerUrl: props.micxServerUrl,
       runtimeWorkspaceId: props.runtimeWorkspaceId,
     });
   }, [
@@ -178,11 +178,11 @@ export function ConfigView(props: ConfigViewProps) {
     props.canReloadWorkspace,
     props.clientConnected,
     props.developerMode,
-    props.openworkServerSettings.hostToken,
-    props.openworkServerSettings.token,
-    props.openworkServerSettings.urlOverride,
-    props.openworkServerStatus,
-    props.openworkServerUrl,
+    props.micxServerSettings.hostToken,
+    props.micxServerSettings.token,
+    props.micxServerSettings.urlOverride,
+    props.micxServerStatus,
+    props.micxServerUrl,
     props.runtimeWorkspaceId,
   ]);
 
@@ -222,16 +222,16 @@ export function ConfigView(props: ConfigViewProps) {
   };
 
   const handleTestConnection = async () => {
-    if (openworkTestState === "testing") return;
-    const next = buildOpenworkSettings();
-    props.updateOpenworkServerSettings(next);
+    if (micxTestState === "testing") return;
+    const next = buildMicxSettings();
+    props.updateMicxServerSettings(next);
     dispatchLocal({
       type: "testState",
       testState: "testing",
       testMessage: null,
     });
     try {
-      const ok = await props.testOpenworkServerConnection(next);
+      const ok = await props.testMicxServerConnection(next);
       dispatchLocal({
         type: "testState",
         testState: ok ? "success" : "error",
@@ -288,22 +288,22 @@ export function ConfigView(props: ConfigViewProps) {
       ) : null}
       <ConfigServerConnectionSection
         busy={props.busy}
-        openworkUrl={openworkUrl}
-        openworkToken={openworkToken}
-        tokenVisible={tokenVisible.openwork}
-        openworkStatusLabel={openworkStatusLabel}
-        openworkStatusStyle={openworkStatusStyle}
+        micxUrl={micxUrl}
+        micxToken={micxToken}
+        tokenVisible={tokenVisible.micx}
+        micxStatusLabel={micxStatusLabel}
+        micxStatusStyle={micxStatusStyle}
         resolvedWorkspaceUrl={resolvedWorkspaceUrl}
         resolvedWorkspaceId={resolvedWorkspaceId}
-        openworkTestState={openworkTestState}
-        openworkTestMessage={openworkTestMessage}
-        hasOpenworkChanges={hasOpenworkChanges}
+        micxTestState={micxTestState}
+        micxTestMessage={micxTestMessage}
+        hasMicxChanges={hasMicxChanges}
         onUrlChange={(url) => dispatchLocal({ type: "url", url })}
         onTokenChange={(token) => dispatchLocal({ type: "token", token })}
-        onToggleToken={() => dispatchLocal({ type: "toggleToken", key: "openwork" })}
+        onToggleToken={() => dispatchLocal({ type: "toggleToken", key: "micx" })}
         onTestConnection={handleTestConnection}
-        onSave={() => props.updateOpenworkServerSettings(buildOpenworkSettings())}
-        onReset={props.resetOpenworkServerSettings}
+        onSave={() => props.updateMicxServerSettings(buildMicxSettings())}
+        onReset={props.resetMicxServerSettings}
       />
       {!isDesktopRuntime() ? <div className="text-xs text-gray-9">{t("config.desktop_only_hint")}</div> : null}
     </section>

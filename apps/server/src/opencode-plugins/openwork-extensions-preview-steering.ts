@@ -10,11 +10,11 @@ export type OpenCodeContext = {
   workspaceID?: string;
 };
 
-export type OpenWorkExtensionConnectState = {
+export type MicxExtensionConnectState = {
   connectEnabled: boolean;
   connectCatalogEnabled: boolean;
   cloudMcpPresent: boolean;
-  cloudHealth: OpenWorkCloudHealthSummary | null;
+  cloudHealth: MicxCloudHealthSummary | null;
   workspace?: {
     resolution?: string;
     id?: string | null;
@@ -26,7 +26,7 @@ export type OpenWorkExtensionConnectState = {
   };
 };
 
-export type OpenWorkCloudHealthSummary = {
+export type MicxCloudHealthSummary = {
   usable: boolean;
   usableByCurrentModel: boolean | null;
   phase: string;
@@ -53,7 +53,7 @@ export type OpenWorkCloudHealthSummary = {
   } | null;
 };
 
-type OpenWorkFetch = (url: string, init?: RequestInit) => Promise<Response>;
+type MicxFetch = (url: string, init?: RequestInit) => Promise<Response>;
 
 type EngineMcpStatusRequest = {
   query?: {
@@ -61,14 +61,14 @@ type EngineMcpStatusRequest = {
   };
 };
 
-export type OpenWorkEngineMcpStatusClient = {
+export type MicxEngineMcpStatusClient = {
   mcp: {
     status: (request?: EngineMcpStatusRequest) => Promise<unknown>;
   };
 };
 
-export type OpenWorkEngineMcpStatusSource = {
-  client?: OpenWorkEngineMcpStatusClient;
+export type MicxEngineMcpStatusSource = {
+  client?: MicxEngineMcpStatusClient;
   directory?: string;
 };
 
@@ -134,25 +134,25 @@ const connectSkillsResponseSchema = z.object({
   instruction: z.string(),
 }).passthrough();
 
-export const OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION =
-  "If the user asks for something you cannot do with obvious built-in tools, check OpenWork extensions before saying the capability is unavailable. Use openwork_query with id extension.actions to inspect available extension actions, then openwork_execute with id extension.call for the matching action.";
+export const MICX_EXTENSION_DISCOVERY_INSTRUCTION =
+  "If the user asks for something you cannot do with obvious built-in tools, check Micx extensions before saying the capability is unavailable. Use micx_query with id extension.actions to inspect available extension actions, then micx_execute with id extension.call for the matching action.";
 
-export const OPENWORK_CLOUD_SKILL_AUTHORING_INSTRUCTION =
-  "Skill creation: Cloud. When the user asks to create a skill, retrieve and follow the listed create-skill remote skill by calling openwork-cloud_execute_capability with its exact <capability>. Create the skill in OpenWork Cloud as a private plugin, not in the workspace. For later steps, use share-plugin when the user wants a specific person or team to use a skill, and use add-to-marketplace or add-user-to-marketplace only when the user asks. Use a workspace-local skill only when the user explicitly requests one. Do not create both copies.";
+export const MICX_CLOUD_SKILL_AUTHORING_INSTRUCTION =
+  "Skill creation: Cloud. When the user asks to create a skill, retrieve and follow the listed create-skill remote skill by calling micx-cloud_execute_capability with its exact <capability>. Create the skill in Micx Cloud as a private plugin, not in the workspace. For later steps, use share-plugin when the user wants a specific person or team to use a skill, and use add-to-marketplace or add-user-to-marketplace only when the user asks. Use a workspace-local skill only when the user explicitly requests one. Do not create both copies.";
 
-export const OPENWORK_LOCAL_SKILL_AUTHORING_INSTRUCTION =
+export const MICX_LOCAL_SKILL_AUTHORING_INSTRUCTION =
   "Skill creation: Local. Create or update a workspace-local skill only when the user requests one. Keep one skill in .opencode/skills/<skill-name>/SKILL.md, validate it, and re-read it after writing. Do not create a Cloud copy.";
 
-export const OPENWORK_CLOUD_CONNECTION_INSTRUCTION =
-  "The OpenWork Cloud connection is verified ready for this exact workspace/model. For org-connected services, use openwork-cloud_search_capabilities with 2-4 keyword variants, then openwork-cloud_execute_capability with an exact returned name — and only mention services that search (or available_skills) actually returns. When a remote skill is listed under available_skills, call openwork-cloud_execute_capability with that skill's <capability> directly; do not treat the local OpenCode skill list as the full inventory. Local OpenWork extensions remain available through openwork_query/openwork_execute with extension.actions and extension.call. Settings > Extensions is the member inventory surface for org and local apps. A successful search proves OpenWork Cloud itself is authorized, so a downstream connector failure does not mean OpenWork Cloud needs to be reconnected. If a result has kind connection_status, name connectionStatus.connectionName and relay connectionStatus.action exactly: use Your Connections for the member, the organization Connections dashboard for an org admin, or the provider admin console for a provider-side failure. After the requested human fixes that connector, search again in the same task because results are live, not cached, so unchanged retries return the same error.";
+export const MICX_CLOUD_CONNECTION_INSTRUCTION =
+  "The Micx Cloud connection is verified ready for this exact workspace/model. For org-connected services, use micx-cloud_search_capabilities with 2-4 keyword variants, then micx-cloud_execute_capability with an exact returned name — and only mention services that search (or available_skills) actually returns. When a remote skill is listed under available_skills, call micx-cloud_execute_capability with that skill's <capability> directly; do not treat the local OpenCode skill list as the full inventory. Local Micx extensions remain available through micx_query/micx_execute with extension.actions and extension.call. Settings > Extensions is the member inventory surface for org and local apps. A successful search proves Micx Cloud itself is authorized, so a downstream connector failure does not mean Micx Cloud needs to be reconnected. If a result has kind connection_status, name connectionStatus.connectionName and relay connectionStatus.action exactly: use Your Connections for the member, the organization Connections dashboard for an org admin, or the provider admin console for a provider-side failure. After the requested human fixes that connector, search again in the same task because results are live, not cached, so unchanged retries return the same error.";
 
-export const OPENWORK_CONNECT_SIGN_IN_INSTRUCTION =
-  `${OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION} OpenWork Cloud is not signed in or no desired agent access configuration exists for this workspace. Direct the user to sign in to OpenWork and connect the service in Settings → Connect.`;
+export const MICX_CONNECT_SIGN_IN_INSTRUCTION =
+  `${MICX_EXTENSION_DISCOVERY_INSTRUCTION} Micx Cloud is not signed in or no desired agent access configuration exists for this workspace. Direct the user to sign in to Micx and connect the service in Settings → Connect.`;
 
-export const OPENWORK_CONNECT_DISABLED_INSTRUCTION =
-  `${OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION} OpenWork Cloud agent access is explicitly disabled for this workspace. Explain that the user can enable agent access in Settings → Connect.`;
+export const MICX_CONNECT_DISABLED_INSTRUCTION =
+  `${MICX_EXTENSION_DISCOVERY_INSTRUCTION} Micx Cloud agent access is explicitly disabled for this workspace. Explain that the user can enable agent access in Settings → Connect.`;
 
-const OPENWORK_CLOUD_MCP_NAME = "openwork-cloud";
+const MICX_CLOUD_MCP_NAME = "micx-cloud";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -200,18 +200,18 @@ function readProviderModel(input: unknown): ProviderModel | undefined {
 }
 
 function serverUrl(): string {
-  return String(process.env.OPENWORK_SERVER_URL || "").replace(/\/$/, "");
+  return String(process.env.MICX_SERVER_URL || "").replace(/\/$/, "");
 }
 
 function serverToken(): string {
-  return String(process.env.OPENWORK_SERVER_TOKEN || "");
+  return String(process.env.MICX_SERVER_TOKEN || "");
 }
 
-function requireOpenWorkServer(): { url: string; token: string } {
+function requireMicxServer(): { url: string; token: string } {
   const url = serverUrl();
   const token = serverToken();
   if (!url || !token) {
-    throw new Error("OpenWork extension tools are only available when OpenCode is launched by OpenWork.");
+    throw new Error("Micx extension tools are only available when OpenCode is launched by Micx.");
   }
   return { url, token };
 }
@@ -252,21 +252,21 @@ function engineStatusPayload(result: unknown): unknown {
 }
 
 function readEngineMcpStatus(result: unknown): EngineMcpStatusResult {
-  const entry = getRecordProperty(engineStatusPayload(result), OPENWORK_CLOUD_MCP_NAME);
+  const entry = getRecordProperty(engineStatusPayload(result), MICX_CLOUD_MCP_NAME);
   if (entry === undefined) return { found: false };
   if (typeof entry === "string") return { found: true, status: readString(entry) };
   return { found: true, status: readNestedString(entry, ["status"]) };
 }
 
-async function fetchEngineMcpStatus(input: unknown, engine: OpenWorkEngineMcpStatusSource): Promise<EngineMcpStatusResult> {
+async function fetchEngineMcpStatus(input: unknown, engine: MicxEngineMcpStatusSource): Promise<EngineMcpStatusResult> {
   if (!engine.client) return { found: false };
   const directory = readEngineDirectory(input, engine.directory);
   const request = directory ? { query: { directory } } : undefined;
   return readEngineMcpStatus(await engine.client.mcp.status(request));
 }
 
-async function fetchOpenWorkConnectState(input: unknown, fetcher: OpenWorkFetch): Promise<OpenWorkExtensionConnectState> {
-  const { url, token } = requireOpenWorkServer();
+async function fetchMicxConnectState(input: unknown, fetcher: MicxFetch): Promise<MicxExtensionConnectState> {
+  const { url, token } = requireMicxServer();
   const context = readContext(input);
   const providerModel = readProviderModel(input);
   const query = new URLSearchParams();
@@ -283,7 +283,7 @@ async function fetchOpenWorkConnectState(input: unknown, fetcher: OpenWorkFetch)
     headers: { Authorization: `Bearer ${token}` },
   });
   const payload = await parseResponse(response);
-  if (!response.ok) throw new Error(errorMessage(payload, "OpenWork connect state request failed"));
+  if (!response.ok) throw new Error(errorMessage(payload, "Micx connect state request failed"));
   const parsed = connectStateResponseSchema.parse(payload);
   return {
     connectEnabled: parsed.connectEnabled,
@@ -297,9 +297,9 @@ async function fetchOpenWorkConnectState(input: unknown, fetcher: OpenWorkFetch)
   };
 }
 
-export async function resolveOpenWorkConnectSkillInstruction(_input?: unknown, fetcher: OpenWorkFetch = fetch): Promise<string> {
+export async function resolveMicxConnectSkillInstruction(_input?: unknown, fetcher: MicxFetch = fetch): Promise<string> {
   try {
-    const { url, token } = requireOpenWorkServer();
+    const { url, token } = requireMicxServer();
     // Connect skills are server-scoped; workspace/directory query params are unused.
     const response = await fetcher(`${url}/experimental/connect/skills`, {
       headers: { Authorization: `Bearer ${token}` },
@@ -311,45 +311,45 @@ export async function resolveOpenWorkConnectSkillInstruction(_input?: unknown, f
   }
 }
 
-export function composeOpenWorkExtensionDiscoveryInstruction(state: OpenWorkExtensionConnectState | null): string {
-  if (!state) return OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION;
-  if (state.workspace?.resolution && state.workspace.resolution !== "resolved") return OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION;
+export function composeMicxExtensionDiscoveryInstruction(state: MicxExtensionConnectState | null): string {
+  if (!state) return MICX_EXTENSION_DISCOVERY_INSTRUCTION;
+  if (state.workspace?.resolution && state.workspace.resolution !== "resolved") return MICX_EXTENSION_DISCOVERY_INSTRUCTION;
   const health = state.cloudHealth;
-  if (health?.usable === true && health.usableByCurrentModel !== false) return OPENWORK_CLOUD_CONNECTION_INSTRUCTION;
-  if (health?.phase === "engine_disabled" || health?.firstFailure?.code === "engine_disabled" || health?.firstFailure?.code === "cloud_mcp_disabled") return OPENWORK_CONNECT_DISABLED_INSTRUCTION;
+  if (health?.usable === true && health.usableByCurrentModel !== false) return MICX_CLOUD_CONNECTION_INSTRUCTION;
+  if (health?.phase === "engine_disabled" || health?.firstFailure?.code === "engine_disabled" || health?.firstFailure?.code === "cloud_mcp_disabled") return MICX_CONNECT_DISABLED_INSTRUCTION;
   if (health) {
-    if (!health.desired.present || health.firstFailure?.code === "cloud_mcp_missing") return OPENWORK_CONNECT_SIGN_IN_INSTRUCTION;
-    return OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION;
+    if (!health.desired.present || health.firstFailure?.code === "cloud_mcp_missing") return MICX_CONNECT_SIGN_IN_INSTRUCTION;
+    return MICX_EXTENSION_DISCOVERY_INSTRUCTION;
   }
-  if (!state.connectCatalogEnabled || state.googleWorkspace.legacyConfigured) return OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION;
-  return OPENWORK_CONNECT_SIGN_IN_INSTRUCTION;
+  if (!state.connectCatalogEnabled || state.googleWorkspace.legacyConfigured) return MICX_EXTENSION_DISCOVERY_INSTRUCTION;
+  return MICX_CONNECT_SIGN_IN_INSTRUCTION;
 }
 
 export function composeSteeringFromEngineMcpStatus(status: string | undefined): string {
-  if (status === "connected") return OPENWORK_CLOUD_CONNECTION_INSTRUCTION;
-  if (status === "disabled") return OPENWORK_CONNECT_DISABLED_INSTRUCTION;
-  if (status === "needs_auth" || status === "needs_client_registration") return OPENWORK_CONNECT_SIGN_IN_INSTRUCTION;
-  return OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION;
+  if (status === "connected") return MICX_CLOUD_CONNECTION_INSTRUCTION;
+  if (status === "disabled") return MICX_CONNECT_DISABLED_INSTRUCTION;
+  if (status === "needs_auth" || status === "needs_client_registration") return MICX_CONNECT_SIGN_IN_INSTRUCTION;
+  return MICX_EXTENSION_DISCOVERY_INSTRUCTION;
 }
 
 export function composeSkillAuthoringInstruction(extensionInstruction: string): {
   mode: "cloud" | "local";
   prompt: string;
 } {
-  if (extensionInstruction === OPENWORK_CLOUD_CONNECTION_INSTRUCTION) {
-    return { mode: "cloud", prompt: OPENWORK_CLOUD_SKILL_AUTHORING_INSTRUCTION };
+  if (extensionInstruction === MICX_CLOUD_CONNECTION_INSTRUCTION) {
+    return { mode: "cloud", prompt: MICX_CLOUD_SKILL_AUTHORING_INSTRUCTION };
   }
-  return { mode: "local", prompt: OPENWORK_LOCAL_SKILL_AUTHORING_INSTRUCTION };
+  return { mode: "local", prompt: MICX_LOCAL_SKILL_AUTHORING_INSTRUCTION };
 }
 
-export function resetOpenWorkExtensionDiscoveryInstructionCacheForTests(): void {
+export function resetMicxExtensionDiscoveryInstructionCacheForTests(): void {
   // Retained for older tests; steering is deliberately uncached so repair is observed immediately.
 }
 
-export async function resolveOpenWorkExtensionDiscoveryInstruction(
+export async function resolveMicxExtensionDiscoveryInstruction(
   input?: unknown,
-  fetcher: OpenWorkFetch = fetch,
-  engine: OpenWorkEngineMcpStatusSource = {},
+  fetcher: MicxFetch = fetch,
+  engine: MicxEngineMcpStatusSource = {},
 ): Promise<string> {
   if (engine.client) {
     try {
@@ -360,12 +360,12 @@ export async function resolveOpenWorkExtensionDiscoveryInstruction(
       const engineStatus = await fetchEngineMcpStatus(input, engine);
       if (engineStatus.found) return composeSteeringFromEngineMcpStatus(engineStatus.status);
     } catch {
-      return OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION;
+      return MICX_EXTENSION_DISCOVERY_INSTRUCTION;
     }
   }
   try {
-    return composeOpenWorkExtensionDiscoveryInstruction(await fetchOpenWorkConnectState(input, fetcher));
+    return composeMicxExtensionDiscoveryInstruction(await fetchMicxConnectState(input, fetcher));
   } catch {
-    return OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION;
+    return MICX_EXTENSION_DISCOVERY_INSTRUCTION;
   }
 }

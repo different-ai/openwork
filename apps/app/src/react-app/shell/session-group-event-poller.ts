@@ -1,7 +1,7 @@
-import type { OpenworkSessionGroupEvent } from "@/app/lib/openwork-server";
+import type { MicxSessionGroupEvent } from "@/app/lib/micx-server";
 
 export type SessionGroupEventResponse = {
-  items: OpenworkSessionGroupEvent[];
+  items: MicxSessionGroupEvent[];
   gap?: boolean;
   reset?: boolean;
 };
@@ -19,7 +19,7 @@ export class SessionGroupEventPoller {
   async poll(
     key: string,
     request: (options: { since: number }) => Promise<SessionGroupEventResponse>,
-    apply: (items: OpenworkSessionGroupEvent[]) => Promise<void>,
+    apply: (items: MicxSessionGroupEvent[]) => Promise<void>,
   ): Promise<void> {
     const currentCursor = this.cursorByWorkspace.get(key) ?? 0;
     try {

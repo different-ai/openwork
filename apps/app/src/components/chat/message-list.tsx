@@ -15,7 +15,7 @@ import {
   Split,
   Undo2,
 } from "lucide-react"
-import { PaperGrainGradient } from "@openwork/ui/react"
+import { PaperGrainGradient } from "@micx/ui/react"
 import {
   DynamicToolUIPart,
   isFileUIPart,
@@ -35,7 +35,7 @@ import { ReadFileTool, WriteFileTool } from "@/components/tools/file"
 import { GlobTool } from "@/components/tools/glob"
 import { GrepTool } from "@/components/tools/grep"
 import { LspTool } from "@/components/tools/lsp"
-import { OpenWorkSessionCreateTool } from "@/components/tools/openwork-session-create"
+import { MicxSessionCreateTool } from "@/components/tools/micx-session-create"
 import { QuestionTool } from "@/components/tools/question"
 import { SkillTool } from "@/components/tools/skill"
 import { TodoWriteTool } from "@/components/tools/todowrite"
@@ -222,8 +222,8 @@ const ToolMessageInner = ({ part }: ToolMessageProps) => {
     return <EnvVarRequestTool part={part} />
   }
 
-  if (part.type === "dynamic-tool" && part.toolName === "openwork_session_create") {
-    return <OpenWorkSessionCreateTool part={part} />
+  if (part.type === "dynamic-tool" && part.toolName === "micx_session_create") {
+    return <MicxSessionCreateTool part={part} />
   }
 
   if (isTaskToolPart(part)) {

@@ -1,5 +1,5 @@
-import { createJsonStdoutLogger } from "@openwork-ee/utils/observability";
-import type { JsonObject, JsonStdoutLogger, StructuredLogLevel } from "@openwork-ee/utils/observability";
+import { createJsonStdoutLogger } from "@micx-ee/utils/observability";
+import type { JsonObject, JsonStdoutLogger, StructuredLogLevel } from "@micx-ee/utils/observability";
 
 import { getDenWebServiceName } from "./server-config";
 import { scrubLogFields, scrubText } from "./scrub";

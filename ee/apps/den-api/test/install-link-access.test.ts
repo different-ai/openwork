@@ -1,5 +1,5 @@
-import { createDenTypeId } from "@openwork-ee/utils/typeid"
-import { generateConnectLinkKeyPair, verifyConnectLinkToken } from "@openwork/connect-link/node"
+import { createDenTypeId } from "@micx-ee/utils/typeid"
+import { generateConnectLinkKeyPair, verifyConnectLinkToken } from "@micx/connect-link/node"
 import { afterAll, beforeAll, beforeEach, expect, mock, test } from "bun:test"
 import { Hono } from "hono"
 import { mkdtempSync, writeFileSync } from "node:fs"
@@ -9,7 +9,7 @@ import path from "node:path"
 type InstallExperienceDependencies = import("../src/routes/org/install-links.js").InstallExperienceDependencies
 
 function seedRequiredEnv() {
-  process.env.DATABASE_URL = process.env.DATABASE_URL ?? "mysql://root:password@127.0.0.1:3306/openwork_test"
+  process.env.DATABASE_URL = process.env.DATABASE_URL ?? "mysql://root:password@127.0.0.1:3306/micx_test"
   process.env.DEN_DB_ENCRYPTION_KEY = process.env.DEN_DB_ENCRYPTION_KEY ?? "x".repeat(32)
   process.env.BETTER_AUTH_SECRET = process.env.BETTER_AUTH_SECRET ?? "y".repeat(32)
   process.env.BETTER_AUTH_URL = process.env.BETTER_AUTH_URL ?? "http://127.0.0.1:8790"
@@ -22,8 +22,8 @@ const organizationId = createDenTypeId("organization")
 const installLinkId = createDenTypeId("installLink")
 const insertedRows: unknown[] = []
 const revokedRows: unknown[] = []
-const officialWindowsDesktopUrl = "https://github.com/different-ai/openwork/releases/download/v9.9.9/openwork-enterprise-win-x64-9.9.9.exe"
-const officialWindowsCloudDesktopUrl = "https://github.com/different-ai/openwork/releases/download/v9.9.9/openwork-cloud-win-x64-9.9.9.exe"
+const officialWindowsDesktopUrl = "https://github.com/different-ai/micx/releases/download/v9.9.9/micx-enterprise-win-x64-9.9.9.exe"
+const officialWindowsCloudDesktopUrl = "https://github.com/different-ai/micx/releases/download/v9.9.9/micx-cloud-win-x64-9.9.9.exe"
 const connectKeyPair = generateConnectLinkKeyPair()
 const connectKeyId = "owc-route-test"
 
@@ -158,7 +158,7 @@ beforeEach(() => {
   envModule.env.connectLink = null
   envModule.env.devMode = true
   envModule.env.installerArtifactsDir = undefined
-  envModule.env.installerReleaseRepo = "different-ai/openwork"
+  envModule.env.installerReleaseRepo = "different-ai/micx"
   envModule.env.installerReleaseTag = "v9.9.9"
   envModule.env.installerReleaseTagExplicit = true
   envModule.env.orgMode = "single_org"
@@ -313,7 +313,7 @@ test("invitation downloads keep the generic URL when install links are disabled"
     metadata: { capabilities: { installLinks: false } },
   })
 
-  expect(downloadUrl).toBe("https://openworklabs.com/download")
+  expect(downloadUrl).toBe("https://micxlabs.com/download")
   expect(insertedInstallLinks()).toHaveLength(0)
 })
 
@@ -326,7 +326,7 @@ test("invitation delivery can fall back when install-link storage fails", async 
     metadata: { capabilities: { installLinks: true } },
   })
 
-  expect(downloadUrl).toBe("https://openworklabs.com/download")
+  expect(downloadUrl).toBe("https://micxlabs.com/download")
   expect(insertedInstallLinks()).toHaveLength(0)
 })
 
@@ -371,7 +371,7 @@ test("mounted artifact lookup uses the resolved enterprise desktop filename", as
   }
   const artifactFileNames: string[] = []
   const installer = Buffer.from("signed-enterprise-windows-installer", "utf8")
-  const artifactPath = path.join(mkdtempSync(path.join(os.tmpdir(), "openwork-install-route-")), "installer.exe")
+  const artifactPath = path.join(mkdtempSync(path.join(os.tmpdir(), "micx-install-route-")), "installer.exe")
   writeFileSync(artifactPath, installer)
 
   const response = await createApp({
@@ -380,9 +380,9 @@ test("mounted artifact lookup uses the resolved enterprise desktop filename", as
   }).request("http://den.local/v1/install/win-x64?token=opaque-token")
 
   expect(response.status).toBe(200)
-  expect(artifactFileNames).toEqual(["openwork-enterprise-win-x64-0.17.27.exe"])
+  expect(artifactFileNames).toEqual(["micx-enterprise-win-x64-0.17.27.exe"])
   expect(response.headers.get("content-type")).toBe("application/vnd.microsoft.portable-executable")
-  expect(response.headers.get("content-disposition")).toContain("openwork-enterprise-win-x64-0.17.27.exe")
+  expect(response.headers.get("content-disposition")).toContain("micx-enterprise-win-x64-0.17.27.exe")
   expect(response.headers.get("content-disposition")).not.toContain("opaque-token")
   expect(Buffer.from(await response.arrayBuffer())).toEqual(installer)
 })
@@ -391,7 +391,7 @@ test("hosted Cloud mounted artifact lookup uses the resolved Cloud desktop filen
   envModule.env.orgMode = "multi_org"
   const artifactFileNames: string[] = []
   const installer = Buffer.from("signed-cloud-mac-installer", "utf8")
-  const artifactPath = path.join(mkdtempSync(path.join(os.tmpdir(), "openwork-install-route-")), "installer.dmg")
+  const artifactPath = path.join(mkdtempSync(path.join(os.tmpdir(), "micx-install-route-")), "installer.dmg")
   writeFileSync(artifactPath, installer)
 
   const response = await createApp({
@@ -400,9 +400,9 @@ test("hosted Cloud mounted artifact lookup uses the resolved Cloud desktop filen
   }).request("http://den.local/v1/install/mac-arm64?token=opaque-token")
 
   expect(response.status).toBe(200)
-  expect(artifactFileNames).toEqual(["openwork-cloud-mac-arm64-9.9.9.dmg"])
+  expect(artifactFileNames).toEqual(["micx-cloud-mac-arm64-9.9.9.dmg"])
   expect(response.headers.get("content-type")).toBe("application/x-apple-diskimage")
-  expect(response.headers.get("content-disposition")).toContain("openwork-cloud-mac-arm64-9.9.9.dmg")
+  expect(response.headers.get("content-disposition")).toContain("micx-cloud-mac-arm64-9.9.9.dmg")
   expect(response.headers.get("content-disposition")).not.toContain("opaque-token")
   expect(Buffer.from(await response.arrayBuffer())).toEqual(installer)
 })
@@ -418,7 +418,7 @@ test("unordered organization allowed desktop versions select the maximum direct 
   })
 
   expect(response.status).toBe(302)
-  expect(response.headers.get("location")).toBe("https://github.com/different-ai/openwork/releases/download/v0.18.6/openwork-enterprise-win-x64-0.18.6.exe")
+  expect(response.headers.get("location")).toBe("https://github.com/different-ai/micx/releases/download/v0.18.6/micx-enterprise-win-x64-0.18.6.exe")
   expect(response.headers.get("location")).not.toContain("v9.9.9")
   expect(response.headers.get("location")).not.toContain("opaque-token")
 })
@@ -434,7 +434,7 @@ test("older allowed desktop versions keep their matching release tag", async () 
   })
 
   expect(response.status).toBe(302)
-  expect(response.headers.get("location")).toBe("https://github.com/different-ai/openwork/releases/download/v0.17.27/openwork-enterprise-win-x64-0.17.27.exe")
+  expect(response.headers.get("location")).toBe("https://github.com/different-ai/micx/releases/download/v0.17.27/micx-enterprise-win-x64-0.17.27.exe")
   expect(response.headers.get("location")).not.toContain("opaque-token")
 })
 
@@ -481,14 +481,14 @@ test("organization version pins stay tag-pinned even without an explicit install
   })
 
   expect(response.status).toBe(302)
-  expect(response.headers.get("location")).toBe("https://github.com/different-ai/openwork/releases/download/v0.18.6/openwork-enterprise-win-x64-0.18.6.exe")
+  expect(response.headers.get("location")).toBe("https://github.com/different-ai/micx/releases/download/v0.18.6/micx-enterprise-win-x64-0.18.6.exe")
   expect(response.headers.get("location")).not.toContain("/releases/latest/")
   expect(response.headers.get("location")).not.toContain("opaque-token")
 })
 
 test("custom release repos never use the latest-release URL", async () => {
   envModule.env.installerReleaseTagExplicit = false
-  envModule.env.installerReleaseRepo = "acme/openwork"
+  envModule.env.installerReleaseRepo = "acme/micx"
   organizationMetadata = {
     ...defaultOrganizationMetadata(),
     allowedDesktopVersions: [],
@@ -499,7 +499,7 @@ test("custom release repos never use the latest-release URL", async () => {
   })
 
   expect(response.status).toBe(302)
-  expect(response.headers.get("location")).toBe("https://github.com/acme/openwork/releases/download/v9.9.9/openwork-enterprise-win-x64-9.9.9.exe")
+  expect(response.headers.get("location")).toBe("https://github.com/acme/micx/releases/download/v9.9.9/micx-enterprise-win-x64-9.9.9.exe")
   expect(response.headers.get("location")).not.toContain("/releases/latest/")
   expect(response.headers.get("location")).not.toContain("opaque-token")
 })
@@ -509,7 +509,7 @@ test("install token organization policy applies to member and admin downloads", 
     ...defaultOrganizationMetadata(),
     allowedDesktopVersions: ["0.18.4", "0.18.6"],
   }
-  const expectedUrl = "https://github.com/different-ai/openwork/releases/download/v0.18.6/openwork-enterprise-win-x64-0.18.6.exe"
+  const expectedUrl = "https://github.com/different-ai/micx/releases/download/v0.18.6/micx-enterprise-win-x64-0.18.6.exe"
 
   for (const nextRole of ["member", "admin"]) {
     role = nextRole
@@ -535,12 +535,12 @@ test("explicit configured desktop release tags are used verbatim", async () => {
   })
 
   expect(response.status).toBe(302)
-  expect(response.headers.get("location")).toBe("https://github.com/different-ai/openwork/releases/download/v0.17.27/openwork-enterprise-win-x64-0.17.27.exe")
+  expect(response.headers.get("location")).toBe("https://github.com/different-ai/micx/releases/download/v0.17.27/micx-enterprise-win-x64-0.17.27.exe")
   expect(response.headers.get("location")).not.toContain("opaque-token")
 })
 
 test("custom desktop release repos use the organization-approved version", async () => {
-  envModule.env.installerReleaseRepo = "acme/openwork"
+  envModule.env.installerReleaseRepo = "acme/micx"
   organizationMetadata = {
     ...defaultOrganizationMetadata(),
     allowedDesktopVersions: ["0.17.26", "0.17.27"],
@@ -551,20 +551,20 @@ test("custom desktop release repos use the organization-approved version", async
   })
 
   expect(response.status).toBe(302)
-  expect(response.headers.get("location")).toBe("https://github.com/acme/openwork/releases/download/v0.17.27/openwork-enterprise-win-x64-0.17.27.exe")
+  expect(response.headers.get("location")).toBe("https://github.com/acme/micx/releases/download/v0.17.27/micx-enterprise-win-x64-0.17.27.exe")
   expect(response.headers.get("location")).not.toContain("opaque-token")
 })
 
 test.each([
-  { platform: "mac-arm64", assetName: "openwork-enterprise-mac-arm64-9.9.9.dmg" },
-  { platform: "mac-x64", assetName: "openwork-enterprise-mac-x64-9.9.9.dmg" },
-  { platform: "win-x64", assetName: "openwork-enterprise-win-x64-9.9.9.exe" },
-  { platform: "linux-x64", assetName: "openwork-enterprise-linux-x86_64-9.9.9.AppImage" },
-  { platform: "linux-arm64", assetName: "openwork-enterprise-linux-arm64-9.9.9.AppImage" },
+  { platform: "mac-arm64", assetName: "micx-enterprise-mac-arm64-9.9.9.dmg" },
+  { platform: "mac-x64", assetName: "micx-enterprise-mac-x64-9.9.9.dmg" },
+  { platform: "win-x64", assetName: "micx-enterprise-win-x64-9.9.9.exe" },
+  { platform: "linux-x64", assetName: "micx-enterprise-linux-x86_64-9.9.9.AppImage" },
+  { platform: "linux-arm64", assetName: "micx-enterprise-linux-arm64-9.9.9.AppImage" },
 ])(
   "zero-config $platform downloads redirect to the enterprise desktop asset without forwarding the token",
   async ({ platform, assetName }) => {
-    const directUrl = `https://github.com/different-ai/openwork/releases/download/v9.9.9/${assetName}`
+    const directUrl = `https://github.com/different-ai/micx/releases/download/v9.9.9/${assetName}`
     const response = await createApp().request(
       `http://den.local/v1/install/${platform}?token=opaque-token`,
       { redirect: "manual" },
@@ -581,7 +581,7 @@ test("zero-config install config mints a short-lived exchange without storing th
 
   expect(response.status).toBe(200)
   const body = await response.json()
-  expect(body.connectUrl).toStartWith("openwork://connect?code=")
+  expect(body.connectUrl).toStartWith("micx://connect?code=")
   expect(body.activationUrl).toStartWith("http://127.0.0.1:8790/activate?code=")
   expect(body.requireSignin).toBe(true)
   expect(body.desktopVersion).toBe("9.9.9")
@@ -629,13 +629,13 @@ test("keyless preview is read-only and exchange consumes the grant once", async 
   const code = "abcdefghijklmnopqrstuvwxyz123456"
   const claims = {
     iss: "http://127.0.0.1:8790",
-    aud: "openwork-desktop-connect",
+    aud: "micx-desktop-connect",
     iat: Math.floor(Date.now() / 1000),
     exp: Math.floor(Date.now() / 1000) + 300,
     jti: "grant-jti-123456",
     v: 1,
     org: { name: "Acme Robotics" },
-    brand: { appName: "OpenWork", logoUrl: null, iconUrl: null },
+    brand: { appName: "Micx", logoUrl: null, iconUrl: null },
     den: { baseUrl: "http://127.0.0.1:8790", apiBaseUrl: "http://127.0.0.1:8790" },
     requireSignin: true,
   }
@@ -706,7 +706,7 @@ test("install config includes a fresh signed organization handoff while preservi
 
   expect(response.status).toBe(200)
   const body = await response.json()
-  expect(body.connectUrl).toStartWith("openwork://connect?token=")
+  expect(body.connectUrl).toStartWith("micx://connect?token=")
   expect(body.activationUrl).toStartWith("http://127.0.0.1:8790/activate?code=")
   expect(body.requireSignin).toBe(true)
   expect(body.desktopVersion).toBe("9.9.9")

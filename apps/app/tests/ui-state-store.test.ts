@@ -2,7 +2,7 @@ import { afterAll, describe, expect, test } from "bun:test";
 
 import type { UiState } from "../src/react-app/shell/ui-state-store";
 
-const PERSISTED_UI_STATE_KEY = "openwork:ui-state:v1";
+const PERSISTED_UI_STATE_KEY = "micx:ui-state:v1";
 const originalWindow = globalThis.window;
 const originalLocalStorage = globalThis.localStorage;
 

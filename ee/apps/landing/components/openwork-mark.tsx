@@ -4,10 +4,10 @@ type Props = {
   className?: string;
 };
 
-export function OpenWorkMark(props: Props) {
+export function MicxMark(props: Props) {
   return (
     <Image
-      src="/openwork-mark.svg"
+      src="/micx-mark.svg"
       alt=""
       aria-hidden="true"
       className={props.className}

@@ -1,43 +1,43 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
 import {
-  composeOpenWorkExtensionDiscoveryInstruction,
+  composeMicxExtensionDiscoveryInstruction,
   composeSkillAuthoringInstruction,
   composeSteeringFromEngineMcpStatus,
-  OPENWORK_CLOUD_CONNECTION_INSTRUCTION,
-  OPENWORK_CLOUD_SKILL_AUTHORING_INSTRUCTION,
-  OPENWORK_CONNECT_DISABLED_INSTRUCTION,
-  OPENWORK_CONNECT_SIGN_IN_INSTRUCTION,
-  OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION,
-  OPENWORK_LOCAL_SKILL_AUTHORING_INSTRUCTION,
-  resetOpenWorkExtensionDiscoveryInstructionCacheForTests,
-  resolveOpenWorkExtensionDiscoveryInstruction,
-  type OpenWorkEngineMcpStatusClient,
-  type OpenWorkExtensionConnectState,
-} from "./openwork-extensions-preview-steering.js";
+  MICX_CLOUD_CONNECTION_INSTRUCTION,
+  MICX_CLOUD_SKILL_AUTHORING_INSTRUCTION,
+  MICX_CONNECT_DISABLED_INSTRUCTION,
+  MICX_CONNECT_SIGN_IN_INSTRUCTION,
+  MICX_EXTENSION_DISCOVERY_INSTRUCTION,
+  MICX_LOCAL_SKILL_AUTHORING_INSTRUCTION,
+  resetMicxExtensionDiscoveryInstructionCacheForTests,
+  resolveMicxExtensionDiscoveryInstruction,
+  type MicxEngineMcpStatusClient,
+  type MicxExtensionConnectState,
+} from "./micx-extensions-preview-steering.js";
 
-type CloudHealth = NonNullable<OpenWorkExtensionConnectState["cloudHealth"]>;
+type CloudHealth = NonNullable<MicxExtensionConnectState["cloudHealth"]>;
 type CloudFailure = NonNullable<CloudHealth["firstFailure"]>;
 
-const originalServerUrl = process.env.OPENWORK_SERVER_URL;
-const originalServerToken = process.env.OPENWORK_SERVER_TOKEN;
+const originalServerUrl = process.env.MICX_SERVER_URL;
+const originalServerToken = process.env.MICX_SERVER_TOKEN;
 
 const UNCHANGED_EXTENSION_DISCOVERY_INSTRUCTION =
-  "If the user asks for something you cannot do with obvious built-in tools, check OpenWork extensions before saying the capability is unavailable. Use openwork_query with id extension.actions to inspect available extension actions, then openwork_execute with id extension.call for the matching action.";
+  "If the user asks for something you cannot do with obvious built-in tools, check Micx extensions before saying the capability is unavailable. Use micx_query with id extension.actions to inspect available extension actions, then micx_execute with id extension.call for the matching action.";
 
 beforeEach(() => {
-  resetOpenWorkExtensionDiscoveryInstructionCacheForTests();
+  resetMicxExtensionDiscoveryInstructionCacheForTests();
 });
 
 afterEach(() => {
-  resetOpenWorkExtensionDiscoveryInstructionCacheForTests();
-  if (originalServerUrl === undefined) delete process.env.OPENWORK_SERVER_URL;
-  else process.env.OPENWORK_SERVER_URL = originalServerUrl;
-  if (originalServerToken === undefined) delete process.env.OPENWORK_SERVER_TOKEN;
-  else process.env.OPENWORK_SERVER_TOKEN = originalServerToken;
+  resetMicxExtensionDiscoveryInstructionCacheForTests();
+  if (originalServerUrl === undefined) delete process.env.MICX_SERVER_URL;
+  else process.env.MICX_SERVER_URL = originalServerUrl;
+  if (originalServerToken === undefined) delete process.env.MICX_SERVER_TOKEN;
+  else process.env.MICX_SERVER_TOKEN = originalServerToken;
 });
 
-function health(overrides: Partial<NonNullable<OpenWorkExtensionConnectState["cloudHealth"]>> = {}): NonNullable<OpenWorkExtensionConnectState["cloudHealth"]> {
+function health(overrides: Partial<NonNullable<MicxExtensionConnectState["cloudHealth"]>> = {}): NonNullable<MicxExtensionConnectState["cloudHealth"]> {
   return {
     usable: true,
     usableByCurrentModel: true,
@@ -61,14 +61,14 @@ function failure(code: string, overrides: Partial<CloudFailure> = {}): CloudFail
 function expectNoDegradedSteering(instruction: string): void {
   expect(instruction).not.toMatch(/not ready/i);
   expect(instruction).not.toContain("Repair and test");
-  expect(instruction).not.toContain("Do not use OpenWork documentation tools");
+  expect(instruction).not.toContain("Do not use Micx documentation tools");
   expect(instruction).not.toContain("Do not substitute docs");
   expect(instruction).not.toContain("as a substitute for performing an action against a connected service");
   expect(instruction).not.toMatch(/do NOT use/i);
   expect(instruction).not.toMatch(/Do not try/);
 }
 
-function state(cloudHealth: OpenWorkExtensionConnectState["cloudHealth"]): OpenWorkExtensionConnectState {
+function state(cloudHealth: MicxExtensionConnectState["cloudHealth"]): MicxExtensionConnectState {
   return {
     connectEnabled: true,
     connectCatalogEnabled: true,
@@ -79,7 +79,7 @@ function state(cloudHealth: OpenWorkExtensionConnectState["cloudHealth"]): OpenW
   };
 }
 
-function engineMcpClient(result: unknown, requests: unknown[] = []): OpenWorkEngineMcpStatusClient {
+function engineMcpClient(result: unknown, requests: unknown[] = []): MicxEngineMcpStatusClient {
   return {
     mcp: {
       status: async (request) => {
@@ -92,92 +92,92 @@ function engineMcpClient(result: unknown, requests: unknown[] = []): OpenWorkEng
 
 describe("composeSteeringFromEngineMcpStatus", () => {
   test("maps engine MCP statuses to steering instructions", () => {
-    expect(composeSteeringFromEngineMcpStatus("connected")).toBe(OPENWORK_CLOUD_CONNECTION_INSTRUCTION);
-    expect(composeSteeringFromEngineMcpStatus("disabled")).toBe(OPENWORK_CONNECT_DISABLED_INSTRUCTION);
-    expect(composeSteeringFromEngineMcpStatus("needs_auth")).toBe(OPENWORK_CONNECT_SIGN_IN_INSTRUCTION);
-    expect(composeSteeringFromEngineMcpStatus("needs_client_registration")).toBe(OPENWORK_CONNECT_SIGN_IN_INSTRUCTION);
-    expect(composeSteeringFromEngineMcpStatus("failed")).toBe(OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION);
-    expect(composeSteeringFromEngineMcpStatus("starting")).toBe(OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION);
-    expect(composeSteeringFromEngineMcpStatus(undefined)).toBe(OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION);
+    expect(composeSteeringFromEngineMcpStatus("connected")).toBe(MICX_CLOUD_CONNECTION_INSTRUCTION);
+    expect(composeSteeringFromEngineMcpStatus("disabled")).toBe(MICX_CONNECT_DISABLED_INSTRUCTION);
+    expect(composeSteeringFromEngineMcpStatus("needs_auth")).toBe(MICX_CONNECT_SIGN_IN_INSTRUCTION);
+    expect(composeSteeringFromEngineMcpStatus("needs_client_registration")).toBe(MICX_CONNECT_SIGN_IN_INSTRUCTION);
+    expect(composeSteeringFromEngineMcpStatus("failed")).toBe(MICX_EXTENSION_DISCOVERY_INSTRUCTION);
+    expect(composeSteeringFromEngineMcpStatus("starting")).toBe(MICX_EXTENSION_DISCOVERY_INSTRUCTION);
+    expect(composeSteeringFromEngineMcpStatus(undefined)).toBe(MICX_EXTENSION_DISCOVERY_INSTRUCTION);
   });
 });
 
-describe("composeOpenWorkExtensionDiscoveryInstruction", () => {
+describe("composeMicxExtensionDiscoveryInstruction", () => {
   test("keeps the fallback instruction byte-identical when state is unavailable or generic discovery is gated", () => {
-    expect(OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION).toBe(UNCHANGED_EXTENSION_DISCOVERY_INSTRUCTION);
-    expect(composeOpenWorkExtensionDiscoveryInstruction(null)).toBe(UNCHANGED_EXTENSION_DISCOVERY_INSTRUCTION);
-    expect(composeOpenWorkExtensionDiscoveryInstruction({ ...state(null), connectCatalogEnabled: false })).toBe(UNCHANGED_EXTENSION_DISCOVERY_INSTRUCTION);
+    expect(MICX_EXTENSION_DISCOVERY_INSTRUCTION).toBe(UNCHANGED_EXTENSION_DISCOVERY_INSTRUCTION);
+    expect(composeMicxExtensionDiscoveryInstruction(null)).toBe(UNCHANGED_EXTENSION_DISCOVERY_INSTRUCTION);
+    expect(composeMicxExtensionDiscoveryInstruction({ ...state(null), connectCatalogEnabled: false })).toBe(UNCHANGED_EXTENSION_DISCOVERY_INSTRUCTION);
   });
 
   test("keeps fallback when only legacy Google Workspace is configured", () => {
-    expect(composeOpenWorkExtensionDiscoveryInstruction({ ...state(null), googleWorkspace: { legacyConfigured: true } })).toBe(UNCHANGED_EXTENSION_DISCOVERY_INSTRUCTION);
+    expect(composeMicxExtensionDiscoveryInstruction({ ...state(null), googleWorkspace: { legacyConfigured: true } })).toBe(UNCHANGED_EXTENSION_DISCOVERY_INSTRUCTION);
   });
 
-  test("steers ready Connect users to verified openwork-cloud capabilities first", () => {
-    expect(OPENWORK_CLOUD_CONNECTION_INSTRUCTION).toContain("verified ready for this exact workspace/model");
-    expect(OPENWORK_CLOUD_CONNECTION_INSTRUCTION).toContain("use openwork-cloud_search_capabilities");
-    expect(OPENWORK_CLOUD_CONNECTION_INSTRUCTION).toContain("available_skills");
-    expect(OPENWORK_CLOUD_CONNECTION_INSTRUCTION).not.toContain("Skill creation:");
-    expect(OPENWORK_CLOUD_CONNECTION_INSTRUCTION).not.toContain("Gmail");
-    expect(OPENWORK_CLOUD_CONNECTION_INSTRUCTION).not.toContain("image generation");
-    expect(OPENWORK_CLOUD_CONNECTION_INSTRUCTION).toContain("relay connectionStatus.action exactly");
-    expect(OPENWORK_CLOUD_CONNECTION_INSTRUCTION).toContain("results are live, not cached");
-    expect(composeOpenWorkExtensionDiscoveryInstruction(state(health()))).toBe(OPENWORK_CLOUD_CONNECTION_INSTRUCTION);
-    expect(composeOpenWorkExtensionDiscoveryInstruction({ ...state(health()), connectCatalogEnabled: false })).toBe(OPENWORK_CLOUD_CONNECTION_INSTRUCTION);
-    expect(composeOpenWorkExtensionDiscoveryInstruction({ ...state(health()), googleWorkspace: { legacyConfigured: true } })).toBe(OPENWORK_CLOUD_CONNECTION_INSTRUCTION);
+  test("steers ready Connect users to verified micx-cloud capabilities first", () => {
+    expect(MICX_CLOUD_CONNECTION_INSTRUCTION).toContain("verified ready for this exact workspace/model");
+    expect(MICX_CLOUD_CONNECTION_INSTRUCTION).toContain("use micx-cloud_search_capabilities");
+    expect(MICX_CLOUD_CONNECTION_INSTRUCTION).toContain("available_skills");
+    expect(MICX_CLOUD_CONNECTION_INSTRUCTION).not.toContain("Skill creation:");
+    expect(MICX_CLOUD_CONNECTION_INSTRUCTION).not.toContain("Gmail");
+    expect(MICX_CLOUD_CONNECTION_INSTRUCTION).not.toContain("image generation");
+    expect(MICX_CLOUD_CONNECTION_INSTRUCTION).toContain("relay connectionStatus.action exactly");
+    expect(MICX_CLOUD_CONNECTION_INSTRUCTION).toContain("results are live, not cached");
+    expect(composeMicxExtensionDiscoveryInstruction(state(health()))).toBe(MICX_CLOUD_CONNECTION_INSTRUCTION);
+    expect(composeMicxExtensionDiscoveryInstruction({ ...state(health()), connectCatalogEnabled: false })).toBe(MICX_CLOUD_CONNECTION_INSTRUCTION);
+    expect(composeMicxExtensionDiscoveryInstruction({ ...state(health()), googleWorkspace: { legacyConfigured: true } })).toBe(MICX_CLOUD_CONNECTION_INSTRUCTION);
   });
 
   test("selects one compact skill-authoring prompt from verified Cloud access", () => {
-    expect(composeSkillAuthoringInstruction(OPENWORK_CLOUD_CONNECTION_INSTRUCTION)).toEqual({
+    expect(composeSkillAuthoringInstruction(MICX_CLOUD_CONNECTION_INSTRUCTION)).toEqual({
       mode: "cloud",
-      prompt: OPENWORK_CLOUD_SKILL_AUTHORING_INSTRUCTION,
+      prompt: MICX_CLOUD_SKILL_AUTHORING_INSTRUCTION,
     });
-    expect(OPENWORK_CLOUD_SKILL_AUTHORING_INSTRUCTION).toContain("Skill creation: Cloud");
-    expect(OPENWORK_CLOUD_SKILL_AUTHORING_INSTRUCTION).toContain("retrieve and follow the listed create-skill remote skill");
-    expect(OPENWORK_CLOUD_SKILL_AUTHORING_INSTRUCTION).toContain("openwork-cloud_execute_capability");
-    expect(OPENWORK_CLOUD_SKILL_AUTHORING_INSTRUCTION).toContain("exact <capability>");
-    expect(OPENWORK_CLOUD_SKILL_AUTHORING_INSTRUCTION).toContain("OpenWork Cloud as a private plugin");
-    expect(OPENWORK_CLOUD_SKILL_AUTHORING_INSTRUCTION).toContain("use share-plugin when the user wants a specific person or team to use a skill");
-    expect(OPENWORK_CLOUD_SKILL_AUTHORING_INSTRUCTION).toContain("add-to-marketplace");
-    expect(OPENWORK_CLOUD_SKILL_AUTHORING_INSTRUCTION).toContain("add-user-to-marketplace");
-    expect(OPENWORK_CLOUD_SKILL_AUTHORING_INSTRUCTION).toContain("workspace-local skill");
-    expect(OPENWORK_CLOUD_SKILL_AUTHORING_INSTRUCTION).toContain("Do not create both copies");
-    expect(OPENWORK_CLOUD_SKILL_AUTHORING_INSTRUCTION).not.toContain("Skill creation: Local");
+    expect(MICX_CLOUD_SKILL_AUTHORING_INSTRUCTION).toContain("Skill creation: Cloud");
+    expect(MICX_CLOUD_SKILL_AUTHORING_INSTRUCTION).toContain("retrieve and follow the listed create-skill remote skill");
+    expect(MICX_CLOUD_SKILL_AUTHORING_INSTRUCTION).toContain("micx-cloud_execute_capability");
+    expect(MICX_CLOUD_SKILL_AUTHORING_INSTRUCTION).toContain("exact <capability>");
+    expect(MICX_CLOUD_SKILL_AUTHORING_INSTRUCTION).toContain("Micx Cloud as a private plugin");
+    expect(MICX_CLOUD_SKILL_AUTHORING_INSTRUCTION).toContain("use share-plugin when the user wants a specific person or team to use a skill");
+    expect(MICX_CLOUD_SKILL_AUTHORING_INSTRUCTION).toContain("add-to-marketplace");
+    expect(MICX_CLOUD_SKILL_AUTHORING_INSTRUCTION).toContain("add-user-to-marketplace");
+    expect(MICX_CLOUD_SKILL_AUTHORING_INSTRUCTION).toContain("workspace-local skill");
+    expect(MICX_CLOUD_SKILL_AUTHORING_INSTRUCTION).toContain("Do not create both copies");
+    expect(MICX_CLOUD_SKILL_AUTHORING_INSTRUCTION).not.toContain("Skill creation: Local");
 
     for (const instruction of [
-      OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION,
-      OPENWORK_CONNECT_SIGN_IN_INSTRUCTION,
-      OPENWORK_CONNECT_DISABLED_INSTRUCTION,
+      MICX_EXTENSION_DISCOVERY_INSTRUCTION,
+      MICX_CONNECT_SIGN_IN_INSTRUCTION,
+      MICX_CONNECT_DISABLED_INSTRUCTION,
     ]) {
       expect(composeSkillAuthoringInstruction(instruction)).toEqual({
         mode: "local",
-        prompt: OPENWORK_LOCAL_SKILL_AUTHORING_INSTRUCTION,
+        prompt: MICX_LOCAL_SKILL_AUTHORING_INSTRUCTION,
       });
     }
-    expect(OPENWORK_LOCAL_SKILL_AUTHORING_INSTRUCTION).toContain("Skill creation: Local");
-    expect(OPENWORK_LOCAL_SKILL_AUTHORING_INSTRUCTION).toContain("only when the user requests one");
-    expect(OPENWORK_LOCAL_SKILL_AUTHORING_INSTRUCTION).toContain(".opencode/skills/<skill-name>/SKILL.md");
-    expect(OPENWORK_LOCAL_SKILL_AUTHORING_INSTRUCTION).not.toContain("Skill creation: Cloud");
+    expect(MICX_LOCAL_SKILL_AUTHORING_INSTRUCTION).toContain("Skill creation: Local");
+    expect(MICX_LOCAL_SKILL_AUTHORING_INSTRUCTION).toContain("only when the user requests one");
+    expect(MICX_LOCAL_SKILL_AUTHORING_INSTRUCTION).toContain(".opencode/skills/<skill-name>/SKILL.md");
+    expect(MICX_LOCAL_SKILL_AUTHORING_INSTRUCTION).not.toContain("Skill creation: Cloud");
   });
 
   test("keeps neutral steering when provider projection is missing", () => {
-    const instruction = composeOpenWorkExtensionDiscoveryInstruction(state(health({
+    const instruction = composeMicxExtensionDiscoveryInstruction(state(health({
       usable: true,
       usableByCurrentModel: false,
       phase: "provider_projection_missing",
       firstFailure: {
         code: "provider_tool_projection_missing",
         stage: "provider_projection",
-        recommendedAction: "Update OpenWork",
+        recommendedAction: "Update Micx",
         message: "missing",
       },
     })));
 
-    expect(instruction).toBe(OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION);
+    expect(instruction).toBe(MICX_EXTENSION_DISCOVERY_INSTRUCTION);
   });
 
   test("uses neutral, signed-out, and disabled branches", () => {
-    const neutral = composeOpenWorkExtensionDiscoveryInstruction({ ...state(health({
+    const neutral = composeMicxExtensionDiscoveryInstruction({ ...state(health({
       usable: false,
       phase: "cloud_tools_missing",
       firstFailure: {
@@ -187,21 +187,21 @@ describe("composeOpenWorkExtensionDiscoveryInstruction", () => {
         message: "missing",
       },
     })), connectCatalogEnabled: false });
-    expect(neutral).toBe(OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION);
+    expect(neutral).toBe(MICX_EXTENSION_DISCOVERY_INSTRUCTION);
 
-    expect(composeOpenWorkExtensionDiscoveryInstruction({ ...state(health({
+    expect(composeMicxExtensionDiscoveryInstruction({ ...state(health({
       usable: false,
       phase: "missing_desired",
       desired: { present: false, revision: null },
       firstFailure: {
         code: "cloud_mcp_missing",
         stage: "desired_config",
-        recommendedAction: "Connect OpenWork Cloud",
+        recommendedAction: "Connect Micx Cloud",
         message: "missing",
       },
-    })), connectCatalogEnabled: false })).toBe(OPENWORK_CONNECT_SIGN_IN_INSTRUCTION);
+    })), connectCatalogEnabled: false })).toBe(MICX_CONNECT_SIGN_IN_INSTRUCTION);
 
-    expect(composeOpenWorkExtensionDiscoveryInstruction({ ...state(health({
+    expect(composeMicxExtensionDiscoveryInstruction({ ...state(health({
       usable: false,
       phase: "engine_disabled",
       firstFailure: {
@@ -210,11 +210,11 @@ describe("composeOpenWorkExtensionDiscoveryInstruction", () => {
         recommendedAction: "Enable",
         message: "disabled",
       },
-    })), connectCatalogEnabled: false })).toBe(OPENWORK_CONNECT_DISABLED_INSTRUCTION);
+    })), connectCatalogEnabled: false })).toBe(MICX_CONNECT_DISABLED_INSTRUCTION);
   });
 
   test("keeps neutral steering for probe-side server failures", () => {
-    expect(composeOpenWorkExtensionDiscoveryInstruction(state(health({
+    expect(composeMicxExtensionDiscoveryInstruction(state(health({
       usable: false,
       phase: "ready",
       engine: { status: "connected" },
@@ -224,9 +224,9 @@ describe("composeOpenWorkExtensionDiscoveryInstruction", () => {
         recommendedAction: "Check network",
         message: "probe failed",
       },
-    })))).toBe(OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION);
+    })))).toBe(MICX_EXTENSION_DISCOVERY_INSTRUCTION);
 
-    expect(composeOpenWorkExtensionDiscoveryInstruction(state(health({
+    expect(composeMicxExtensionDiscoveryInstruction(state(health({
       usable: false,
       phase: "cloud_tools_missing",
       engine: { status: "connected" },
@@ -236,11 +236,11 @@ describe("composeOpenWorkExtensionDiscoveryInstruction", () => {
         recommendedAction: "Run reconcile",
         message: "missing",
       },
-    })))).toBe(OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION);
+    })))).toBe(MICX_EXTENSION_DISCOVERY_INSTRUCTION);
   });
 
   test("keeps neutral steering for cloud_tools_missing regardless of server engine health", () => {
-    const withoutEngine = composeOpenWorkExtensionDiscoveryInstruction(state(health({
+    const withoutEngine = composeMicxExtensionDiscoveryInstruction(state(health({
       usable: false,
       phase: "cloud_tools_missing",
       firstFailure: {
@@ -250,7 +250,7 @@ describe("composeOpenWorkExtensionDiscoveryInstruction", () => {
         message: "missing",
       },
     })));
-    const failedEngine = composeOpenWorkExtensionDiscoveryInstruction(state(health({
+    const failedEngine = composeMicxExtensionDiscoveryInstruction(state(health({
       usable: false,
       phase: "cloud_tools_missing",
       engine: { status: "failed" },
@@ -262,16 +262,16 @@ describe("composeOpenWorkExtensionDiscoveryInstruction", () => {
       },
     })));
 
-    expect(withoutEngine).toBe(OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION);
-    expect(failedEngine).toBe(OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION);
+    expect(withoutEngine).toBe(MICX_EXTENSION_DISCOVERY_INSTRUCTION);
+    expect(failedEngine).toBe(MICX_EXTENSION_DISCOVERY_INSTRUCTION);
   });
 
   test("treats unknown workspace as neutral instead of borrowing another workspace", () => {
-    const instruction = composeOpenWorkExtensionDiscoveryInstruction({
+    const instruction = composeMicxExtensionDiscoveryInstruction({
       ...state(null),
       workspace: { resolution: "unknown", id: null, directory: "/tmp/unknown", reason: "No workspace has this exact OpenCode directory" },
     });
-    expect(instruction).toBe(OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION);
+    expect(instruction).toBe(MICX_EXTENSION_DISCOVERY_INSTRUCTION);
   });
 
   test("never emits degraded wording or no-tool-use guidance", () => {
@@ -288,7 +288,7 @@ describe("composeOpenWorkExtensionDiscoveryInstruction", () => {
       expectNoDegradedSteering(composeSteeringFromEngineMcpStatus(status));
     }
 
-    const fallbackStates: OpenWorkExtensionConnectState[] = [
+    const fallbackStates: MicxExtensionConnectState[] = [
       state(health()),
       state(health({ usableByCurrentModel: null })),
       state(health({
@@ -328,46 +328,46 @@ describe("composeOpenWorkExtensionDiscoveryInstruction", () => {
       state(null),
     ];
     for (const fallbackState of fallbackStates) {
-      expectNoDegradedSteering(composeOpenWorkExtensionDiscoveryInstruction(fallbackState));
+      expectNoDegradedSteering(composeMicxExtensionDiscoveryInstruction(fallbackState));
     }
   });
 });
 
-describe("resolveOpenWorkExtensionDiscoveryInstruction", () => {
+describe("resolveMicxExtensionDiscoveryInstruction", () => {
   test("uses engine connected status without fetching server connect state", async () => {
     const requests: unknown[] = [];
-    const client = engineMcpClient({ data: { "openwork-cloud": { status: "connected" } } }, requests);
+    const client = engineMcpClient({ data: { "micx-cloud": { status: "connected" } } }, requests);
     let serverFetchCalls = 0;
     const serverFetch = async (): Promise<Response> => {
       serverFetchCalls += 1;
       return Response.json({ message: "unexpected" }, { status: 500 });
     };
 
-    const instruction = await resolveOpenWorkExtensionDiscoveryInstruction(
+    const instruction = await resolveMicxExtensionDiscoveryInstruction(
       { context: { directory: "/tmp/ws_1" } },
       serverFetch,
       { client, directory: "/tmp/factory" },
     );
 
-    expect(instruction).toBe(OPENWORK_CLOUD_CONNECTION_INSTRUCTION);
+    expect(instruction).toBe(MICX_CLOUD_CONNECTION_INSTRUCTION);
     expect(requests).toEqual([{ query: { directory: "/tmp/ws_1" } }]);
     expect(serverFetchCalls).toBe(0);
   });
 
   test("uses engine auth-needed status without fetching server connect state", async () => {
-    const client = engineMcpClient({ data: { "openwork-cloud": { status: "needs_auth" } } });
+    const client = engineMcpClient({ data: { "micx-cloud": { status: "needs_auth" } } });
     let serverFetchCalls = 0;
     const serverFetch = async (): Promise<Response> => {
       serverFetchCalls += 1;
       return Response.json({ message: "unexpected" }, { status: 500 });
     };
 
-    expect(await resolveOpenWorkExtensionDiscoveryInstruction({}, serverFetch, { client })).toBe(OPENWORK_CONNECT_SIGN_IN_INSTRUCTION);
+    expect(await resolveMicxExtensionDiscoveryInstruction({}, serverFetch, { client })).toBe(MICX_CONNECT_SIGN_IN_INSTRUCTION);
     expect(serverFetchCalls).toBe(0);
   });
 
   test("fails open without server fetch when engine status lookup errors", async () => {
-    const client: OpenWorkEngineMcpStatusClient = {
+    const client: MicxEngineMcpStatusClient = {
       mcp: {
         status: async () => {
           throw new Error("engine unavailable");
@@ -380,25 +380,25 @@ describe("resolveOpenWorkExtensionDiscoveryInstruction", () => {
       return Response.json({ message: "unexpected" }, { status: 500 });
     };
 
-    expect(await resolveOpenWorkExtensionDiscoveryInstruction({}, serverFetch, { client })).toBe(UNCHANGED_EXTENSION_DISCOVERY_INSTRUCTION);
+    expect(await resolveMicxExtensionDiscoveryInstruction({}, serverFetch, { client })).toBe(UNCHANGED_EXTENSION_DISCOVERY_INSTRUCTION);
     expect(serverFetchCalls).toBe(0);
   });
 
-  test("fails open without server fetch when engine has an unknown openwork-cloud status", async () => {
-    const client = engineMcpClient({ data: { "openwork-cloud": { status: "starting" } } });
+  test("fails open without server fetch when engine has an unknown micx-cloud status", async () => {
+    const client = engineMcpClient({ data: { "micx-cloud": { status: "starting" } } });
     let serverFetchCalls = 0;
     const serverFetch = async (): Promise<Response> => {
       serverFetchCalls += 1;
       return Response.json({ message: "unexpected" }, { status: 500 });
     };
 
-    expect(await resolveOpenWorkExtensionDiscoveryInstruction({}, serverFetch, { client })).toBe(UNCHANGED_EXTENSION_DISCOVERY_INSTRUCTION);
+    expect(await resolveMicxExtensionDiscoveryInstruction({}, serverFetch, { client })).toBe(UNCHANGED_EXTENSION_DISCOVERY_INSTRUCTION);
     expect(serverFetchCalls).toBe(0);
   });
 
-  test("falls back to server connect state when engine has no openwork-cloud entry", async () => {
-    process.env.OPENWORK_SERVER_URL = "http://openwork.test";
-    process.env.OPENWORK_SERVER_TOKEN = "test-token";
+  test("falls back to server connect state when engine has no micx-cloud entry", async () => {
+    process.env.MICX_SERVER_URL = "http://micx.test";
+    process.env.MICX_SERVER_TOKEN = "test-token";
     const client = engineMcpClient({ data: { other: { status: "connected" } } });
     let serverFetchCalls = 0;
     const serverFetch = async (): Promise<Response> => {
@@ -415,13 +415,13 @@ describe("resolveOpenWorkExtensionDiscoveryInstruction", () => {
       });
     };
 
-    expect(await resolveOpenWorkExtensionDiscoveryInstruction({ context: { directory: "/tmp/ws_1" } }, serverFetch, { client })).toBe(OPENWORK_CLOUD_CONNECTION_INSTRUCTION);
+    expect(await resolveMicxExtensionDiscoveryInstruction({ context: { directory: "/tmp/ws_1" } }, serverFetch, { client })).toBe(MICX_CLOUD_CONNECTION_INSTRUCTION);
     expect(serverFetchCalls).toBe(1);
   });
 
   test("fetches verified health for the current directory/model without caching stale failures", async () => {
-    process.env.OPENWORK_SERVER_URL = "http://openwork.test/";
-    process.env.OPENWORK_SERVER_TOKEN = "test-token";
+    process.env.MICX_SERVER_URL = "http://micx.test/";
+    process.env.MICX_SERVER_TOKEN = "test-token";
     const urls: string[] = [];
     const authorizations: Array<string | null> = [];
     let calls = 0;
@@ -454,19 +454,19 @@ describe("resolveOpenWorkExtensionDiscoveryInstruction", () => {
       context: { directory: "/tmp/ws_1" },
       model: { providerID: "anthropic", modelID: "claude-sonnet-4" },
     };
-    expect(await resolveOpenWorkExtensionDiscoveryInstruction(input, fakeFetch)).toBe(UNCHANGED_EXTENSION_DISCOVERY_INSTRUCTION);
-    expect(await resolveOpenWorkExtensionDiscoveryInstruction(input, fakeFetch)).toBe(OPENWORK_CLOUD_CONNECTION_INSTRUCTION);
+    expect(await resolveMicxExtensionDiscoveryInstruction(input, fakeFetch)).toBe(UNCHANGED_EXTENSION_DISCOVERY_INSTRUCTION);
+    expect(await resolveMicxExtensionDiscoveryInstruction(input, fakeFetch)).toBe(MICX_CLOUD_CONNECTION_INSTRUCTION);
     expect(calls).toBe(2);
     expect(urls).toEqual([
-      "http://openwork.test/experimental/connect/state?directory=%2Ftmp%2Fws_1&provider=anthropic&model=claude-sonnet-4",
-      "http://openwork.test/experimental/connect/state?directory=%2Ftmp%2Fws_1&provider=anthropic&model=claude-sonnet-4",
+      "http://micx.test/experimental/connect/state?directory=%2Ftmp%2Fws_1&provider=anthropic&model=claude-sonnet-4",
+      "http://micx.test/experimental/connect/state?directory=%2Ftmp%2Fws_1&provider=anthropic&model=claude-sonnet-4",
     ]);
     expect(authorizations).toEqual(["Bearer test-token", "Bearer test-token"]);
   });
 
   test("passes workspace id and worktree from plugin context", async () => {
-    process.env.OPENWORK_SERVER_URL = "http://openwork.test";
-    process.env.OPENWORK_SERVER_TOKEN = "test-token";
+    process.env.MICX_SERVER_URL = "http://micx.test";
+    process.env.MICX_SERVER_TOKEN = "test-token";
     let requested = "";
     const fakeFetch = async (url: string): Promise<Response> => {
       requested = url;
@@ -482,19 +482,19 @@ describe("resolveOpenWorkExtensionDiscoveryInstruction", () => {
       });
     };
 
-    await resolveOpenWorkExtensionDiscoveryInstruction({ context: { workspaceId: "ws_2", worktree: "/tmp/worktree" } }, fakeFetch);
-    expect(requested).toBe("http://openwork.test/experimental/connect/state?workspaceId=ws_2&directory=%2Ftmp%2Fworktree");
+    await resolveMicxExtensionDiscoveryInstruction({ context: { workspaceId: "ws_2", worktree: "/tmp/worktree" } }, fakeFetch);
+    expect(requested).toBe("http://micx.test/experimental/connect/state?workspaceId=ws_2&directory=%2Ftmp%2Fworktree");
   });
 
   test("fails open when connect state fetching or parsing fails", async () => {
-    process.env.OPENWORK_SERVER_URL = "http://openwork.test";
-    process.env.OPENWORK_SERVER_TOKEN = "test-token";
+    process.env.MICX_SERVER_URL = "http://micx.test";
+    process.env.MICX_SERVER_TOKEN = "test-token";
     const failingFetch = async (): Promise<Response> => {
       throw new Error("network unavailable");
     };
     const invalidFetch = async (): Promise<Response> => Response.json({ ok: true });
 
-    expect(await resolveOpenWorkExtensionDiscoveryInstruction({}, failingFetch)).toBe(UNCHANGED_EXTENSION_DISCOVERY_INSTRUCTION);
-    expect(await resolveOpenWorkExtensionDiscoveryInstruction({}, invalidFetch)).toBe(UNCHANGED_EXTENSION_DISCOVERY_INSTRUCTION);
+    expect(await resolveMicxExtensionDiscoveryInstruction({}, failingFetch)).toBe(UNCHANGED_EXTENSION_DISCOVERY_INSTRUCTION);
+    expect(await resolveMicxExtensionDiscoveryInstruction({}, invalidFetch)).toBe(UNCHANGED_EXTENSION_DISCOVERY_INSTRUCTION);
   });
 });

@@ -81,7 +81,7 @@ describe("markdown math", () => {
     const html = await renderHighlightedMarkdownHtml("$E = mc^2$\n\n```ts\nconst a = 1;\n```");
 
     expect(html).toContain('class="katex"');
-    expect(html).toContain("data-openwork-shiki");
+    expect(html).toContain("data-micx-shiki");
   });
 
   test("renders math on the surface presentation as well", () => {

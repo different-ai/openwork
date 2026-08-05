@@ -1,26 +1,26 @@
 import { describe, expect, test } from "bun:test";
 
-import type { OpenworkServerClient } from "../src/app/lib/openwork-server";
+import type { MicxServerClient } from "../src/app/lib/micx-server";
 import {
-  buildOpenworkEnvSystemContext,
-  clearOpenworkEnvSystemContextCache,
+  buildMicxEnvSystemContext,
+  clearMicxEnvSystemContextCache,
 } from "../src/react-app/domains/session/sync/env-context";
 
-function client(keys: string[], calls: { count: number }): OpenworkServerClient {
+function client(keys: string[], calls: { count: number }): MicxServerClient {
   return {
     baseUrl: "http://127.0.0.1:3000",
     listUserEnvKeys: async () => {
       calls.count += 1;
       return { keys };
     },
-  } as OpenworkServerClient;
+  } as MicxServerClient;
 }
 
-describe("buildOpenworkEnvSystemContext", () => {
+describe("buildMicxEnvSystemContext", () => {
   test("lists configured key names without inventing secret values", async () => {
-    clearOpenworkEnvSystemContextCache();
+    clearMicxEnvSystemContextCache();
     const calls = { count: 0 };
-    const context = await buildOpenworkEnvSystemContext(
+    const context = await buildMicxEnvSystemContext(
       client(["NBA_LIVE_KEY", "bad-key", "ANTHROPIC_API_KEY", "NBA_LIVE_KEY"], calls),
       {
         cacheKey: "session-a",
@@ -36,19 +36,19 @@ describe("buildOpenworkEnvSystemContext", () => {
   });
 
   test("caches key context per session", async () => {
-    clearOpenworkEnvSystemContextCache();
+    clearMicxEnvSystemContextCache();
     const calls = { count: 0 };
     const server = client(["OPENROUTER_API_KEY"], calls);
 
-    await buildOpenworkEnvSystemContext(server, {
+    await buildMicxEnvSystemContext(server, {
       cacheKey: "session-a",
       readPendingChanges: () => false,
     });
-    await buildOpenworkEnvSystemContext(server, {
+    await buildMicxEnvSystemContext(server, {
       cacheKey: "session-a",
       readPendingChanges: () => false,
     });
-    await buildOpenworkEnvSystemContext(server, {
+    await buildMicxEnvSystemContext(server, {
       cacheKey: "session-b",
       readPendingChanges: () => false,
     });
@@ -57,10 +57,10 @@ describe("buildOpenworkEnvSystemContext", () => {
   });
 
   test("does not truncate long key lists", async () => {
-    clearOpenworkEnvSystemContextCache();
+    clearMicxEnvSystemContextCache();
     const calls = { count: 0 };
     const keys = Array.from({ length: 90 }, (_, index) => `KEY_${index}`);
-    const context = await buildOpenworkEnvSystemContext(client(keys, calls), {
+    const context = await buildMicxEnvSystemContext(client(keys, calls), {
       cacheKey: "session-a",
       readPendingChanges: () => false,
     });
@@ -71,9 +71,9 @@ describe("buildOpenworkEnvSystemContext", () => {
   });
 
   test("skips context while environment changes are pending", async () => {
-    clearOpenworkEnvSystemContextCache();
+    clearMicxEnvSystemContextCache();
     const calls = { count: 0 };
-    const context = await buildOpenworkEnvSystemContext(client(["ANTHROPIC_API_KEY"], calls), {
+    const context = await buildMicxEnvSystemContext(client(["ANTHROPIC_API_KEY"], calls), {
       cacheKey: "session-a",
       readPendingChanges: () => true,
     });

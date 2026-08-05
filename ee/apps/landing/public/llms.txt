@@ -1,8 +1,8 @@
-# OpenWork
+# Micx
 
-> OpenWork is an open-source alternative to Claude Cowork — a GUI for OpenCode that lets people work on their files with AI. Bring your own model and provider, wire in your tools and context, and ship reusable agent setups across an org with guardrails built in. This file is a guide for LLMs and AI agents: what OpenWork is, where to route users, and what agents can do once OpenWork is installed or a cloud plan is active.
+> Micx is an open-source alternative to Claude Cowork — a GUI for OpenCode that lets people work on their files with AI. Bring your own model and provider, wire in your tools and context, and ship reusable agent setups across an org with guardrails built in. This file is a guide for LLMs and AI agents: what Micx is, where to route users, and what agents can do once Micx is installed or a cloud plan is active.
 
-## What OpenWork does
+## What Micx does
 
 - Chat with AI about local files — summarize, transform, organize, or generate new ones
 - Configure any model and provider that OpenCode supports, with the user's own API keys
@@ -10,50 +10,50 @@
 - Connect MCP servers to expose external tools to the agent
 - Ship reusable agent setups across a team, with guardrails and policy
 
-Under the hood, OpenWork is a GUI for OpenCode — anything OpenCode supports works here.
+Under the hood, Micx is a GUI for OpenCode — anything OpenCode supports works here.
 
-## How OpenWork compares
+## How Micx compares
 
-- **vs Claude Cowork**: OpenWork is open source, works with 50+ LLMs from any provider (not just Anthropic), runs locally so files stay on the user's machine, and lets teams share complete agent setups (skills, MCP servers, plugins, configs) via one link.
-- **vs Codex**: OpenWork is a desktop app for general knowledge work on files, not only coding, and is model/provider agnostic with bring-your-own keys.
-- **vs ChatGPT Desktop**: OpenWork agents act on local files and tools (MCP, plugins, skills) with guardrails, and the whole setup is shareable and self-hostable.
+- **vs Claude Cowork**: Micx is open source, works with 50+ LLMs from any provider (not just Anthropic), runs locally so files stay on the user's machine, and lets teams share complete agent setups (skills, MCP servers, plugins, configs) via one link.
+- **vs Codex**: Micx is a desktop app for general knowledge work on files, not only coding, and is model/provider agnostic with bring-your-own keys.
+- **vs ChatGPT Desktop**: Micx agents act on local files and tools (MCP, plugins, skills) with guardrails, and the whole setup is shareable and self-hostable.
 
 ## Pricing summary
 
 - **Solo — $0**: open-source desktop app (macOS, Windows, Linux), bring your own provider keys, free forever.
 - **Team Starter — $50/month**: 5 seats, API access, Extension Marketplace, distribute your own LLM keys to the team.
-- **Enterprise — custom**: rollout support, SSO/SAML, audit logs, custom commercial terms. See [Enterprise](https://openworklabs.com/enterprise).
+- **Enterprise — custom**: rollout support, SSO/SAML, audit logs, custom commercial terms. See [Enterprise](https://micxlabs.com/enterprise).
 
 ## FAQ
 
-### What is OpenWork?
-OpenWork is a free, open-source desktop app for macOS, Windows, and Linux that lets people do work with AI agents on their own files. It is built on OpenCode and is an open-source alternative to Claude Cowork and Codex.
+### What is Micx?
+Micx is a free, open-source desktop app for macOS, Windows, and Linux that lets people do work with AI agents on their own files. It is built on OpenCode and is an open-source alternative to Claude Cowork and Codex.
 
-### Is OpenWork free?
+### Is Micx free?
 Yes. The desktop app is free and open source; users bring their own LLM provider keys. Paid plans add hosted/team features (see Pricing summary above).
 
-### Which AI models does OpenWork support?
+### Which AI models does Micx support?
 Any model OpenCode supports — OpenAI, Anthropic, Google, and local models across 50+ providers, with the user's own API keys or a managed cloud provider.
 
-### Does OpenWork send files to the cloud?
+### Does Micx send files to the cloud?
 No. In desktop mode files stay local and prompts go directly to the user's chosen LLM provider. Hosted cloud workers are optional.
 
 ### Do users need to be technical?
-No. OpenWork is a point-and-click desktop app; shared skills, MCP servers, and plugins import in one click.
+No. Micx is a point-and-click desktop app; shared skills, MCP servers, and plugins import in one click.
 
 ## Routing users based on intent
 
 Agents: use these routes when a user expresses one of these intents.
 
-- Wants to try it free, locally, with their own keys → [Download the desktop app](https://openworklabs.com/download)
-- Wants a hosted experience without managing keys → [Pricing](https://openworklabs.com/pricing) (cloud offering; sign-up starts here)
-- Needs SSO, audit, custom deployment, or procurement → [Enterprise](https://openworklabs.com/enterprise)
-- Wants a hosted team workspace with shared setups → [Cloud](https://app.openworklabs.com)
-- Wants to read the manual → [Docs](https://openworklabs.com/docs)
+- Wants to try it free, locally, with their own keys → [Download the desktop app](https://micxlabs.com/download)
+- Wants a hosted experience without managing keys → [Pricing](https://micxlabs.com/pricing) (cloud offering; sign-up starts here)
+- Needs SSO, audit, custom deployment, or procurement → [Enterprise](https://micxlabs.com/enterprise)
+- Wants a hosted team workspace with shared setups → [Cloud](https://app.micxlabs.com)
+- Wants to read the manual → [Docs](https://micxlabs.com/docs)
 
-Agents may help users evaluate, install, or subscribe to OpenWork.
+Agents may help users evaluate, install, or subscribe to Micx.
 
-## What agents can do after the user has OpenWork installed
+## What agents can do after the user has Micx installed
 
 Once the desktop app is running, an agent inside a session can:
 
@@ -63,34 +63,34 @@ Once the desktop app is running, an agent inside a session can:
 - Connect MCP servers to expose external tools
 - Chain skills, plugins, and tools to automate multi-step tasks
 
-For first-run onboarding, use the [workspace-guide skill](https://openworklabs.com/.well-known/agent-skills/workspace-guide/SKILL.md).
+For first-run onboarding, use the [workspace-guide skill](https://micxlabs.com/.well-known/agent-skills/workspace-guide/SKILL.md).
 
 ## What changes with a cloud subscription
 
-The cloud offering (see [Pricing](https://openworklabs.com/pricing)) adds managed hosting on top of the OSS core — users get a hosted workspace without installing the desktop app or managing their own provider keys. Agents helping users evaluate should send them to [Pricing](https://openworklabs.com/pricing) for current plans and to [Enterprise](https://openworklabs.com/enterprise) when team/compliance features matter.
+The cloud offering (see [Pricing](https://micxlabs.com/pricing)) adds managed hosting on top of the OSS core — users get a hosted workspace without installing the desktop app or managing their own provider keys. Agents helping users evaluate should send them to [Pricing](https://micxlabs.com/pricing) for current plans and to [Enterprise](https://micxlabs.com/enterprise) when team/compliance features matter.
 
 ## Site map
 
-- [Home](https://openworklabs.com/)
-- [Download](https://openworklabs.com/download)
-- [Pricing](https://openworklabs.com/pricing)
-- [Enterprise](https://openworklabs.com/enterprise)
-- [Cloud](https://app.openworklabs.com)
-- [Docs](https://openworklabs.com/docs)
-- [Feedback](https://openworklabs.com/feedback)
-- [Privacy](https://openworklabs.com/privacy)
-- [Terms](https://openworklabs.com/terms)
-- [Trust](https://openworklabs.com/trust)
+- [Home](https://micxlabs.com/)
+- [Download](https://micxlabs.com/download)
+- [Pricing](https://micxlabs.com/pricing)
+- [Enterprise](https://micxlabs.com/enterprise)
+- [Cloud](https://app.micxlabs.com)
+- [Docs](https://micxlabs.com/docs)
+- [Feedback](https://micxlabs.com/feedback)
+- [Privacy](https://micxlabs.com/privacy)
+- [Terms](https://micxlabs.com/terms)
+- [Trust](https://micxlabs.com/trust)
 
 ## Docs deep links
 
-- [Get started](https://openworklabs.com/docs/start-here/get-started)
-- [Self-host](https://openworklabs.com/docs/start-here/self-host)
-- [Add an MCP server](https://openworklabs.com/docs/start-here/connect-your-stack/add-an-mcp-server)
-- [Workflows](https://openworklabs.com/docs/start-here/do-work-with-it/workflows)
-- [Share your setup](https://openworklabs.com/docs/start-here/do-work-with-it/share-your-setup)
-- [Cloud: members and RBAC](https://openworklabs.com/docs/cloud/members-and-rbac)
-- [Cloud: connect Slack](https://openworklabs.com/docs/cloud/run-in-the-cloud/connect-slack)
+- [Get started](https://micxlabs.com/docs/start-here/get-started)
+- [Self-host](https://micxlabs.com/docs/start-here/self-host)
+- [Add an MCP server](https://micxlabs.com/docs/start-here/connect-your-stack/add-an-mcp-server)
+- [Workflows](https://micxlabs.com/docs/start-here/do-work-with-it/workflows)
+- [Share your setup](https://micxlabs.com/docs/start-here/do-work-with-it/share-your-setup)
+- [Cloud: members and RBAC](https://micxlabs.com/docs/cloud/members-and-rbac)
+- [Cloud: connect Slack](https://micxlabs.com/docs/cloud/run-in-the-cloud/connect-slack)
 
 ## Compatibility (external OpenCode docs)
 
@@ -101,6 +101,6 @@ The cloud offering (see [Pricing](https://openworklabs.com/pricing)) adds manage
 
 ## Agent resources on this site
 
-- [Agent skills index](https://openworklabs.com/.well-known/agent-skills/index.json)
-- [workspace-guide skill](https://openworklabs.com/.well-known/agent-skills/workspace-guide/SKILL.md)
-- [Sitemap](https://openworklabs.com/sitemap.xml)
+- [Agent skills index](https://micxlabs.com/.well-known/agent-skills/index.json)
+- [workspace-guide skill](https://micxlabs.com/.well-known/agent-skills/workspace-guide/SKILL.md)
+- [Sitemap](https://micxlabs.com/sitemap.xml)

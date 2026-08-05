@@ -1,10 +1,10 @@
 // Den wire types shared across module boundaries (den.ts, den-session-events,
-// openwork-server, desktop cloud sync). Extracted from den.ts so that modules
+// micx-server, desktop cloud sync). Extracted from den.ts so that modules
 // needing only the shapes do not import the 2k-line client implementation —
 // den.ts re-exports everything here, so existing imports keep working.
 import type {
-  OpenWorkExtensionManifest,
-  OpenWorkExtensionSourceFormat,
+  MicxExtensionManifest,
+  MicxExtensionSourceFormat,
 } from "../extensions";
 
 export type DenSettings = {
@@ -64,8 +64,8 @@ export type DenOrgExtensionProjection = {
   id: string;
   name: string;
   description: string | null;
-  sourceFormat: OpenWorkExtensionSourceFormat;
-  manifest: OpenWorkExtensionManifest | null;
+  sourceFormat: MicxExtensionSourceFormat;
+  manifest: MicxExtensionManifest | null;
 };
 
 export type DenPluginCloudReadinessState = "ready" | "needs_signin" | "needs_admin_setup" | "desktop_only" | "not_synced";
@@ -94,7 +94,7 @@ export type DenOrgPlugin = {
   memberCount: number;
   updatedAt: string | null;
   componentCounts: Record<string, number>;
-  /** Preferred Den surface: plugins are normalized into OpenWork extensions. */
+  /** Preferred Den surface: plugins are normalized into Micx extensions. */
   extension?: DenOrgExtensionProjection | null;
   cloudReadiness?: DenPluginCloudReadiness;
 };

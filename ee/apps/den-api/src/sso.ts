@@ -1,6 +1,6 @@
-import { and, eq, isNotNull, isNull } from "@openwork-ee/den-db/drizzle"
-import { AuthAccountTable, ExternalIdentityTable, SsoConnectionTable, SsoProviderTable } from "@openwork-ee/den-db/schema"
-import { createDenTypeId } from "@openwork-ee/utils/typeid"
+import { and, eq, isNotNull, isNull } from "@micx-ee/den-db/drizzle"
+import { AuthAccountTable, ExternalIdentityTable, SsoConnectionTable, SsoProviderTable } from "@micx-ee/den-db/schema"
+import { createDenTypeId } from "@micx-ee/utils/typeid"
 import { z } from "zod"
 import { auth } from "./auth.js"
 import { db } from "./db.js"
@@ -53,7 +53,7 @@ const oidcDiscoverySchema = z.object({
 })
 
 export function buildOrganizationSsoProviderId(organizationId: OrganizationId) {
-  return `openwork-sso-${organizationId}`
+  return `micx-sso-${organizationId}`
 }
 
 export function getOrganizationSsoSignInPath(organizationSlug: string) {

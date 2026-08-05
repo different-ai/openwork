@@ -20,12 +20,12 @@ try {
   const client = makeClient({ baseUrl: server.baseUrl, directory: server.cwd });
   await waitForHealthy(client);
 
-  const root = ".openwork/test-engine";
+  const root = ".micx/test-engine";
   const nestedDir = path.join(root, "nested");
   const filePath = path.join(root, "hello.txt");
 
   await mkdir(path.join(directory, nestedDir), { recursive: true });
-  await writeFile(path.join(directory, filePath), "openwork engine test\n", "utf8");
+  await writeFile(path.join(directory, filePath), "micx engine test\n", "utf8");
 
   const entries = await client.file.list({ directory, path: root });
   assert.ok(entries.some((entry) => entry.name === "nested" && entry.type === "directory"));
@@ -33,7 +33,7 @@ try {
 
   const read = await client.file.read({ directory, path: filePath });
   assert.equal(read.type, "text");
-  assert.ok(read.content.includes("openwork engine test"));
+  assert.ok(read.content.includes("micx engine test"));
 
   await rm(path.join(directory, root), { recursive: true, force: true });
 

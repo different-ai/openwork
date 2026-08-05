@@ -9,7 +9,7 @@ import type {
   AutomationUsage,
   CreateAutomation,
   UpdateAutomation,
-} from "@openwork/types/automations"
+} from "@micx/types/automations"
 
 export type Awaitable<T> = T | Promise<T>
 

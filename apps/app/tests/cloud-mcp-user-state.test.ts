@@ -15,8 +15,8 @@ import {
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const scope = {
-  denBaseUrl: "https://cloud.openwork.test",
-  serverBaseUrl: "https://worker.openwork.test",
+  denBaseUrl: "https://cloud.micx.test",
+  serverBaseUrl: "https://worker.micx.test",
   orgId: "organization_1",
   workspaceId: "workspace_1",
 };
@@ -63,13 +63,13 @@ describe("cloud MCP user state", () => {
 
   test("ignores corrupt stored values", () => {
     const backing = installStorageStub();
-    backing.set("openwork.den.mcp.cloudControlUserState", "banana");
+    backing.set("micx.den.mcp.cloudControlUserState", "banana");
     expect(readCloudMcpUserState(scope)).toBeNull();
   });
 
   test("migrates legacy global intent to only the active scope", () => {
     const backing = installStorageStub();
-    backing.set("openwork.den.mcp.cloudControlUserState", "disabled");
+    backing.set("micx.den.mcp.cloudControlUserState", "disabled");
     expect(readCloudMcpUserState(scope)).toBe("disabled");
     expect(readCloudMcpUserState(otherScope)).toBeNull();
   });
@@ -77,19 +77,19 @@ describe("cloud MCP user state", () => {
   test("rejects ambiguous legacy sync markers", () => {
     const backing = installStorageStub();
     const scope = {
-      denBaseUrl: "https://cloud.openwork.test",
-      serverBaseUrl: "https://worker.openwork.test",
+      denBaseUrl: "https://cloud.micx.test",
+      serverBaseUrl: "https://worker.micx.test",
       orgId: "organization_1",
       workspaceId: "workspace_1",
     };
 
-    backing.set("openwork.den.mcp.sync", JSON.stringify({
+    backing.set("micx.den.mcp.sync", JSON.stringify({
       orgId: scope.orgId,
       expiresAt: "2026-07-20T00:00:00.000Z",
     }));
     expect(readCloudMcpSyncMarker(scope)).toBeNull();
 
-    backing.set("openwork.den.mcp.sync", JSON.stringify({
+    backing.set("micx.den.mcp.sync", JSON.stringify({
       orgId: scope.orgId,
       workspaceId: scope.workspaceId,
       expiresAt: "2026-07-20T00:00:00.000Z",
@@ -99,8 +99,8 @@ describe("cloud MCP user state", () => {
 
   test("round-trips a fully scoped versioned sync marker", () => {
     const marker = {
-      denBaseUrl: "https://cloud.openwork.test",
-      serverBaseUrl: "https://worker.openwork.test",
+      denBaseUrl: "https://cloud.micx.test",
+      serverBaseUrl: "https://worker.micx.test",
       orgId: "organization_1",
       workspaceId: "workspace_1",
       expiresAt: "2026-07-20T00:00:00.000Z",

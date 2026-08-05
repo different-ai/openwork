@@ -115,7 +115,7 @@ function launchApp(payload, deps) {
   const spawnApp = deps.spawnApp ?? spawn;
   const env = { ...(deps.env ?? process.env) };
   delete env.ELECTRON_RUN_AS_NODE;
-  delete env["OPENWORK_ELECTRON_REMOTE_DEBUG_PORT"];
+  delete env["MICX_ELECTRON_REMOTE_DEBUG_PORT"];
   const child = spawnApp(payload.appExecutablePath, payload.appArgv, {
     detached: true,
     env,

@@ -12,7 +12,7 @@ try {
   const client = makeClient({ baseUrl: server.baseUrl, directory: server.cwd });
   await waitForHealthy(client);
 
-  const session = await client.session.create({ title: "OpenWork todos test" });
+  const session = await client.session.create({ title: "Micx todos test" });
 
   const todos = await client.session.todo({ sessionID: session.id });
   assert.ok(Array.isArray(todos));

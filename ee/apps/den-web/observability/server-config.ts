@@ -1,5 +1,5 @@
-import { parseObservabilityEnv } from "@openwork-ee/utils/observability";
-import type { ObservabilityBackend, ObservabilityConfig, ObservabilityEnv } from "@openwork-ee/utils/observability";
+import { parseObservabilityEnv } from "@micx-ee/utils/observability";
+import type { ObservabilityBackend, ObservabilityConfig, ObservabilityEnv } from "@micx-ee/utils/observability";
 
 export const denWebServiceName = "den-web";
 

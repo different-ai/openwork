@@ -8,7 +8,7 @@ export type AppFeedbackPrefill = {
   entrypoint: string;
   deployment: string;
   appVersion: string;
-  openworkServerVersion: string;
+  micxServerVersion: string;
   opencodeVersion: string;
   osName: string;
   osVersion: string;
@@ -23,7 +23,7 @@ type Props = {
 type SubmitState = "idle" | "loading" | "success" | "error";
 
 const INITIAL_MESSAGE = "";
-const TEAM_EMAIL = "team@openworklabs.com";
+const TEAM_EMAIL = "team@micxlabs.com";
 
 export function AppFeedbackForm(props: Props) {
   const mode = props.mode ?? "feedback";
@@ -39,7 +39,7 @@ export function AppFeedbackForm(props: Props) {
   const contextItems = useMemo(
     () => [
       { label: "App version", value: props.prefill.appVersion },
-      { label: "OpenWork server", value: props.prefill.openworkServerVersion },
+      { label: "Micx server", value: props.prefill.micxServerVersion },
       { label: "OpenCode", value: props.prefill.opencodeVersion },
       {
         label: "OS",
@@ -148,13 +148,13 @@ export function AppFeedbackForm(props: Props) {
           </div>
           <h1 className="max-w-2xl text-3xl font-semibold tracking-tight text-[#011627] md:text-4xl">
             {mode === "contact"
-              ? "Have questions about OpenWork?"
+              ? "Have questions about Micx?"
               : "Tell us what broke, felt rough, or needs polish."}
           </h1>
           <p className="mt-3 max-w-2xl text-[15px] leading-relaxed text-slate-600">
             {mode === "contact"
-              ? "Send the OpenWork team a note about sales, security, support, or anything else you want to ask."
-              : "Your note goes to the OpenWork team with your contact details, app version, and runtime context already attached."}
+              ? "Send the Micx team a note about sales, security, support, or anything else you want to ask."
+              : "Your note goes to the Micx team with your contact details, app version, and runtime context already attached."}
           </p>
 
           {state === "success" ? (

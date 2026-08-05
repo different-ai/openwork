@@ -85,7 +85,7 @@ export function WelcomePage({
             <div className="relative z-10 w-full max-w-[720px] rounded-3xl border border-border bg-background px-8 pb-12 pt-10 sm:px-16 sm:pb-16 sm:pt-14">
               <div className="flex items-center gap-2.5">
                 <img
-                  src={resolveExtensionIconSrc("/openwork-mark.svg")}
+                  src={resolveExtensionIconSrc("/micx-mark.svg")}
                   alt=""
                   width={26}
                   height={26}

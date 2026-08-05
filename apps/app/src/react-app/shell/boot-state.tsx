@@ -13,7 +13,7 @@ import {
 export type BootPhaseId =
   | "idle"
   | "bootstrapping-workspaces"
-  | "starting-openwork-server"
+  | "starting-micx-server"
   | "starting-engine"
   | "activating-workspace"
   | "ready"
@@ -48,7 +48,7 @@ const DEFAULT_STATE: BootStateSnapshot = {
 const PHASE_MESSAGES: Record<BootPhaseId, string> = {
   idle: "",
   "bootstrapping-workspaces": "Loading your workspaces",
-  "starting-openwork-server": "Starting the OpenWork server",
+  "starting-micx-server": "Starting the Micx server",
   "starting-engine": "Preparing workspace",
   "activating-workspace": "Activating your workspace",
   ready: "Ready",

@@ -1,5 +1,5 @@
 {
-  "name": "@openwork/install-config",
+  "name": "@micx/install-config",
   "private": true,
   "type": "module",
   "exports": {

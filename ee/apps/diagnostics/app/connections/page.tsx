@@ -1,4 +1,4 @@
-import type { StoredConnectDiagnosticIncident } from "@openwork/types/den/connect-diagnostics"
+import type { StoredConnectDiagnosticIncident } from "@micx/types/den/connect-diagnostics"
 import {
   connectionIncidentFilters,
   filterConnectionIncidents,
@@ -40,7 +40,7 @@ function Incident({ incident }: { incident: StoredConnectDiagnosticIncident }) {
         <div><dt>Attempt</dt><dd><code>{incident.attemptId ?? "server observation"}</code></dd></div>
         <div><dt>Server request</dt><dd><code>{incident.serverRequestId ?? "not observed"}</code></dd></div>
         <div><dt>App</dt><dd>{incident.appVersion ?? "not observed"}</dd></div>
-        <div><dt>OpenWork server</dt><dd>{incident.serverVersion ?? "not observed"}</dd></div>
+        <div><dt>Micx server</dt><dd>{incident.serverVersion ?? "not observed"}</dd></div>
         <div><dt>Engine</dt><dd>{incident.engineVersion ?? "not observed"}</dd></div>
         <div><dt>Platform</dt><dd>{incident.platform ?? "not observed"}</dd></div>
         <div><dt>Received</dt><dd>{incident.receivedAt}</dd></div>
@@ -70,9 +70,9 @@ export default async function ConnectionsPage({
   return <main>
     <header className="hero">
       <div>
-        <p className="eyebrow">OpenWork Enterprise</p>
+        <p className="eyebrow">Micx Enterprise</p>
         <h1>Connect incidents</h1>
-        <p>Correlate desktop and Den observations for the OpenWork Cloud MCP connection without email, member identity, URLs, tokens, or customer content.</p>
+        <p>Correlate desktop and Den observations for the Micx Cloud MCP connection without email, member identity, URLs, tokens, or customer content.</p>
       </div>
       <div className="hero-actions">
         <nav className="diagnostic-nav"><a className="active" href="/connections">Connections</a><a href="/">Wire traces</a></nav>

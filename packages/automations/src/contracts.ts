@@ -1,4 +1,4 @@
-import type { AutomationRevision } from "@openwork/types/automations"
+import type { AutomationRevision } from "@micx/types/automations"
 
 function canonical(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`

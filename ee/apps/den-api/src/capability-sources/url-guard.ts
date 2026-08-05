@@ -23,7 +23,7 @@ import { isIP } from "node:net"
  *
  * Self-hosted deployments whose MCP servers legitimately live on a private
  * network disable this with DEN_ALLOW_PRIVATE_MCP_URLS=1 (see env.ts);
- * local dev is exempt via OPENWORK_DEV_MODE=1.
+ * local dev is exempt via MICX_DEV_MODE=1.
  */
 
 export class PrivateUrlError extends Error {

@@ -35,7 +35,7 @@ test("a renderer-supplied non-https base URL never receives the runner token", a
   assert.deepEqual(attempted, [])
 })
 
-test("desktop Automation execution creates a normal visible local OpenWork thread", async () => {
+test("desktop Automation execution creates a normal visible local Micx thread", async () => {
   const requests = []
   let snapshots = 0
   const fetchImpl = async (url, options = {}) => {

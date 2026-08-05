@@ -1,12 +1,12 @@
 import { platform } from "node:os";
 import { chmod, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
-import { openworkEnvStorePath } from "@openwork/paths";
+import { micxEnvStorePath } from "@micx/paths";
 
 import { ensureDir, exists } from "./utils.js";
 
 // User-level environment variables, persisted so the desktop shell can inject
-// them into every spawned child (OpenCode and OpenWork server).
+// them into every spawned child (OpenCode and Micx server).
 // Motivation: Linux GUI launches don't inherit shell env, so users set
 // ANTHROPIC_API_KEY / GCLOUD_* / GCP_* in .bashrc and hit silent auth failures.
 // Scope: user/machine, not workspace. Not synced to the cloud.
@@ -14,17 +14,17 @@ import { ensureDir, exists } from "./utils.js";
 const ENV_KEY_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
 // Keys reserved for internal wiring by the desktop shell and server. This UI
-// is for service credentials, not OpenWork/OpenCode runtime knobs; users who
+// is for service credentials, not Micx/OpenCode runtime knobs; users who
 // need OPENCODE_* process settings should set them from the launching shell.
 // We refuse writes to these and strip them when reading for injection, so a
 // tampered file cannot shadow auth credentials, token paths, or process
 // identity.
-const RESERVED_PREFIXES = ["OPENWORK_", "OPENCODE_"] as const;
+const RESERVED_PREFIXES = ["MICX_", "OPENCODE_"] as const;
 const PERSISTABLE_INTERNAL_KEYS = new Set([
-  "OPENWORK_API_KEY",
-  "OPENWORK_MODELS_API_KEY",
-  "OPENWORK_INFERENCE_BASE_URL",
-  "OPENWORK_MODELS_BASE_URL",
+  "MICX_API_KEY",
+  "MICX_MODELS_API_KEY",
+  "MICX_INFERENCE_BASE_URL",
+  "MICX_MODELS_BASE_URL",
 ]);
 
 export type EnvRecord = {
@@ -52,7 +52,7 @@ function isInternalEnvKey(key: string): boolean {
 }
 
 export function resolveDefaultEnvStorePath(): string {
-  return openworkEnvStorePath();
+  return micxEnvStorePath();
 }
 
 function parseRecord(raw: unknown): EnvRecord | null {
@@ -248,7 +248,7 @@ export class InvalidEnvKeyError extends Error {
   constructor(key: string, code: "invalid_env_key" | "reserved_env_key") {
     super(
       code === "reserved_env_key"
-        ? `Environment variable name is reserved for OpenWork internals: ${key}`
+        ? `Environment variable name is reserved for Micx internals: ${key}`
         : `Invalid environment variable name: ${key}`,
     );
     this.code = code;

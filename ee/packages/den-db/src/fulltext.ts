@@ -118,7 +118,7 @@ export async function assertMemoryFulltextIndexExists(
   if (!(await memoryFulltextIndexExists(executor))) {
     throw new Error(
       `Missing FULLTEXT index '${MEMORY_CONTENT_FULLTEXT_INDEX}' on '${MEMORY_TABLE}.content'. ` +
-        "Run `pnpm --filter @openwork-ee/den-db db:bootstrap` (or call ensureMemoryFulltextIndex) to create it.",
+        "Run `pnpm --filter @micx-ee/den-db db:bootstrap` (or call ensureMemoryFulltextIndex) to create it.",
     )
   }
 }

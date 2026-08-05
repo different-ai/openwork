@@ -2,19 +2,19 @@ import { afterEach, describe, expect, test } from "bun:test";
 
 import {
   differentialCloudVerdict,
-  probeOpenworkCloudCatalog,
+  probeMicxCloudCatalog,
   type CloudCatalogProbe,
   type CloudCatalogProbeCode,
   type CloudCatalogProbeFetch,
-  type ProbeOpenworkCloudCatalogInput,
+  type ProbeMicxCloudCatalogInput,
 } from "./agent-context-cloud-probe.js";
 
 const TOKEN = "Bearer ow_diagnostics_token_abcdefghijklmnopqrstuvwxyz";
-const ENDPOINT = "https://app.openworklabs.com/api/den/mcp/agent";
+const ENDPOINT = "https://app.micxlabs.com/api/den/mcp/agent";
 const SESSION_ID = "diagnostics-session-id";
 const PROTOCOL_VERSION = "2025-06-18";
 
-function input(overrides: Partial<ProbeOpenworkCloudCatalogInput> = {}): ProbeOpenworkCloudCatalogInput {
+function input(overrides: Partial<ProbeMicxCloudCatalogInput> = {}): ProbeMicxCloudCatalogInput {
   const { fetchImpl, ...values } = overrides;
   return {
     workspaceId: "ws_diagnostics",
@@ -75,7 +75,7 @@ function requestPayload(init?: RequestInit): Record<string, unknown> {
 function initializeResponse(extraHeaders: Record<string, string> = {}): Response {
   return new Response(JSON.stringify({
     jsonrpc: "2.0",
-    id: "openwork-agent-diagnostics-initialize",
+    id: "micx-agent-diagnostics-initialize",
     result: {
       capabilities: {},
       protocolVersion: PROTOCOL_VERSION,
@@ -112,10 +112,10 @@ async function waitUntil(predicate: () => boolean): Promise<void> {
 }
 
 afterEach(() => {
-  delete process.env.OPENWORK_AGENT_DIAGNOSTICS_TRUSTED_ORIGINS;
+  delete process.env.MICX_AGENT_DIAGNOSTICS_TRUSTED_ORIGINS;
 });
 
-describe("OpenWork Cloud catalog probe", () => {
+describe("Micx Cloud catalog probe", () => {
   test("performs initialize, initialized notification, bounded tools/list, and session cleanup with allowlisted headers", async () => {
     let calls = 0;
     let deleteCalls = 0;
@@ -150,11 +150,11 @@ describe("OpenWork Cloud catalog probe", () => {
       if (isInitialize) {
         expect(body).toEqual({
           jsonrpc: "2.0",
-          id: "openwork-agent-diagnostics-initialize",
+          id: "micx-agent-diagnostics-initialize",
           method: "initialize",
           params: {
             capabilities: {},
-            clientInfo: { name: "openwork-server-agent-context-diagnostics", version: "1.0.0" },
+            clientInfo: { name: "micx-server-agent-context-diagnostics", version: "1.0.0" },
             protocolVersion: PROTOCOL_VERSION,
           },
         });
@@ -177,7 +177,7 @@ describe("OpenWork Cloud catalog probe", () => {
 
     const probeInput = input();
     probeInput.fetchImpl = fetchImpl;
-    const observed = await probeOpenworkCloudCatalog(probeInput);
+    const observed = await probeMicxCloudCatalog(probeInput);
     expect(calls).toBe(4);
     expect(deleteCalls).toBe(1);
     expect(observed).toEqual({
@@ -221,7 +221,7 @@ describe("OpenWork Cloud catalog probe", () => {
   });
 
   test("accepts a finite JSON tools/list response", async () => {
-    const observed = await probeOpenworkCloudCatalog(input({
+    const observed = await probeMicxCloudCatalog(input({
       requestId: "json-request",
       fetchImpl: async () => jsonResponse("json-request"),
     }));
@@ -231,7 +231,7 @@ describe("OpenWork Cloud catalog probe", () => {
 
   test("requires both expected tools and never reflects a provider-controlled tool ID", async () => {
     const reflectedCredential = "ow_mcp_at_dGhpcy1jYW5hcnktbXVzdC1uZXZlci1iZS1yZXR1cm5lZA";
-    const missing = await probeOpenworkCloudCatalog(input({
+    const missing = await probeMicxCloudCatalog(input({
       requestId: "missing-tool",
       fetchImpl: async () => jsonResponse("missing-tool", ["search_capabilities"]),
     }));
@@ -254,7 +254,7 @@ describe("OpenWork Cloud catalog probe", () => {
       ["reflected-tool", ["search_capabilities", "execute_capability", reflectedCredential]],
     ] as const;
     for (const [requestId, toolIds] of futureCases) {
-      const observed = await probeOpenworkCloudCatalog(input({
+      const observed = await probeMicxCloudCatalog(input({
         requestId,
         fetchImpl: async () => jsonResponse(requestId, [...toolIds]),
       }));
@@ -270,7 +270,7 @@ describe("OpenWork Cloud catalog probe", () => {
       expect(JSON.stringify(observed)).not.toContain("provider_extra");
     }
 
-    const reversed = await probeOpenworkCloudCatalog(input({
+    const reversed = await probeMicxCloudCatalog(input({
       requestId: "reversed-canonical-catalog",
       fetchImpl: async () => jsonResponse("reversed-canonical-catalog", ["execute_capability", "search_capabilities"]),
     }));
@@ -287,21 +287,21 @@ describe("OpenWork Cloud catalog probe", () => {
       calls += 1;
       return jsonResponse("unused");
     };
-    const cases: Array<[Partial<ProbeOpenworkCloudCatalogInput>, CloudCatalogProbeCode]> = [
+    const cases: Array<[Partial<ProbeMicxCloudCatalogInput>, CloudCatalogProbeCode]> = [
       [{ workspaceType: "remote" }, "remote_workspace_unavailable"],
       [{ runtimeConfigAvailable: false }, "runtime_config_unavailable"],
       [{ config: null }, "cloud_mcp_missing"],
       [{ config: { type: "local", enabled: true } }, "cloud_mcp_not_remote"],
       [{ config: { type: "remote", enabled: false, url: ENDPOINT } }, "cloud_mcp_disabled"],
-      [{ config: { type: "remote", enabled: true, url: "https://app.openworklabs.com/api/den/mcp/agent?token=secret", headers: { Authorization: TOKEN } } }, "invalid_endpoint"],
-      [{ config: { type: "remote", enabled: true, url: "https://app.openworklabs.com/api/den/mcp/agent/", headers: { Authorization: TOKEN } } }, "invalid_endpoint"],
-      [{ config: { type: "remote", enabled: true, url: "https://app.openworklabs.com/api/den/mcp/agent/status", headers: { Authorization: TOKEN } } }, "invalid_endpoint"],
-      [{ config: { type: "remote", enabled: true, url: "https://app.openworklabs.com/api/den/mcp/agentish", headers: { Authorization: TOKEN } } }, "invalid_endpoint"],
-      [{ config: { type: "remote", enabled: true, url: "http://app.openworklabs.com/mcp/agent", headers: { Authorization: TOKEN } } }, "invalid_endpoint"],
+      [{ config: { type: "remote", enabled: true, url: "https://app.micxlabs.com/api/den/mcp/agent?token=secret", headers: { Authorization: TOKEN } } }, "invalid_endpoint"],
+      [{ config: { type: "remote", enabled: true, url: "https://app.micxlabs.com/api/den/mcp/agent/", headers: { Authorization: TOKEN } } }, "invalid_endpoint"],
+      [{ config: { type: "remote", enabled: true, url: "https://app.micxlabs.com/api/den/mcp/agent/status", headers: { Authorization: TOKEN } } }, "invalid_endpoint"],
+      [{ config: { type: "remote", enabled: true, url: "https://app.micxlabs.com/api/den/mcp/agentish", headers: { Authorization: TOKEN } } }, "invalid_endpoint"],
+      [{ config: { type: "remote", enabled: true, url: "http://app.micxlabs.com/mcp/agent", headers: { Authorization: TOKEN } } }, "invalid_endpoint"],
       [{ config: { type: "remote", enabled: true, url: "https://localhost.evil/mcp/agent", headers: { Authorization: TOKEN } } }, "untrusted_endpoint"],
     ];
     for (const [overrides, code] of cases) {
-      const blocked = await probeOpenworkCloudCatalog(input({ ...overrides, fetchImpl }));
+      const blocked = await probeMicxCloudCatalog(input({ ...overrides, fetchImpl }));
       expect(blocked.performed).toBe(false);
       expect(blocked.status).toBe("not-performed");
       expect(blocked.stage).toBe("eligibility");
@@ -315,7 +315,7 @@ describe("OpenWork Cloud catalog probe", () => {
     const statuses = ["failed", "disabled", "needs-auth", "needs-client-registration", "not-recorded"] as const;
     for (const status of statuses) {
       let calls = 0;
-      const observed = await probeOpenworkCloudCatalog(input({
+      const observed = await probeMicxCloudCatalog(input({
         requestId: `despite-${status}`,
         engineRegistration: { status, source: "engine_status", recordAgeMs: 2_000 },
         fetchImpl: async () => {
@@ -337,7 +337,7 @@ describe("OpenWork Cloud catalog probe", () => {
 
   test("allows exact loopback and explicitly configured HTTPS origins only", async () => {
     let blockedCalls = 0;
-    const blocked = await probeOpenworkCloudCatalog(input({
+    const blocked = await probeMicxCloudCatalog(input({
       config: {
         type: "remote",
         enabled: true,
@@ -356,7 +356,7 @@ describe("OpenWork Cloud catalog probe", () => {
     });
     expect(blockedCalls).toBe(0);
 
-    const loopback = await probeOpenworkCloudCatalog(input({
+    const loopback = await probeMicxCloudCatalog(input({
       config: {
         type: "remote",
         enabled: true,
@@ -368,8 +368,8 @@ describe("OpenWork Cloud catalog probe", () => {
     }));
     expect(loopback.status).toBe("observed");
 
-    process.env.OPENWORK_AGENT_DIAGNOSTICS_TRUSTED_ORIGINS = "https://den.customer.example";
-    const trusted = await probeOpenworkCloudCatalog(input({
+    process.env.MICX_AGENT_DIAGNOSTICS_TRUSTED_ORIGINS = "https://den.customer.example";
+    const trusted = await probeMicxCloudCatalog(input({
       config: {
         type: "remote",
         enabled: true,
@@ -388,7 +388,7 @@ describe("OpenWork Cloud catalog probe", () => {
       calls += 1;
       return jsonResponse("unused");
     };
-    const duplicate = await probeOpenworkCloudCatalog(input({
+    const duplicate = await probeMicxCloudCatalog(input({
       config: {
         type: "remote",
         enabled: true,
@@ -399,7 +399,7 @@ describe("OpenWork Cloud catalog probe", () => {
     }));
     expect(duplicate.code).toBe("duplicate_authorization");
 
-    const injected = await probeOpenworkCloudCatalog(input({
+    const injected = await probeMicxCloudCatalog(input({
       config: {
         type: "remote",
         enabled: true,
@@ -413,7 +413,7 @@ describe("OpenWork Cloud catalog probe", () => {
   });
 
   test("rejects redirects and cancels a response that exceeds 64 KiB", async () => {
-    const redirected = await probeOpenworkCloudCatalog(input({
+    const redirected = await probeMicxCloudCatalog(input({
       requestId: "redirect-request",
       fetchImpl: async () => new Response(null, { status: 302, headers: { location: "https://evil.example/mcp/agent" } }),
     }));
@@ -431,7 +431,7 @@ describe("OpenWork Cloud catalog probe", () => {
         cancelled = true;
       },
     });
-    const tooLarge = await probeOpenworkCloudCatalog(input({
+    const tooLarge = await probeMicxCloudCatalog(input({
       requestId: "large-request",
       fetchImpl: async () => new Response(oversized, { headers: { "content-type": "text/event-stream" } }),
     }));
@@ -459,7 +459,7 @@ describe("OpenWork Cloud catalog probe", () => {
     });
     redirectTarget = `http://127.0.0.1:${server.port}/redirect-target/mcp/agent`;
     try {
-      const redirected = await probeOpenworkCloudCatalog(input({
+      const redirected = await probeMicxCloudCatalog(input({
         workspaceId: "ws_real_redirect",
         requestId: "real-redirect",
         config: {
@@ -493,7 +493,7 @@ describe("OpenWork Cloud catalog probe", () => {
       },
     });
     const startedAt = Date.now();
-    const timedOut = await probeOpenworkCloudCatalog(input({
+    const timedOut = await probeMicxCloudCatalog(input({
       requestId: "stalled-body-request",
       timeoutMs: 15,
       fetchImpl: async () => new Response(stalled, {
@@ -512,7 +512,7 @@ describe("OpenWork Cloud catalog probe", () => {
   });
 
   test("classifies abort-aware fetch and body failures as deadline timeouts", async () => {
-    const fetchTimedOut = await probeOpenworkCloudCatalog(input({
+    const fetchTimedOut = await probeMicxCloudCatalog(input({
       workspaceId: "ws_abort_aware_fetch",
       requestId: "abort-aware-fetch",
       timeoutMs: 15,
@@ -529,7 +529,7 @@ describe("OpenWork Cloud catalog probe", () => {
       httpStatus: null,
     });
 
-    const bodyTimedOut = await probeOpenworkCloudCatalog(input({
+    const bodyTimedOut = await probeMicxCloudCatalog(input({
       workspaceId: "ws_abort_aware_body",
       requestId: "abort-aware-body",
       timeoutMs: 15,
@@ -562,7 +562,7 @@ describe("OpenWork Cloud catalog probe", () => {
     const controller = new AbortController();
     controller.abort();
     let calls = 0;
-    const cancelled = await probeOpenworkCloudCatalog(input({
+    const cancelled = await probeMicxCloudCatalog(input({
       signal: controller.signal,
       fetchImpl: async () => {
         calls += 1;
@@ -585,7 +585,7 @@ describe("OpenWork Cloud catalog probe", () => {
     const fetchStarted = new Promise<void>((resolve) => {
       markFetchStarted = resolve;
     });
-    const pending = probeOpenworkCloudCatalog(input({
+    const pending = probeMicxCloudCatalog(input({
       workspaceId: "ws_parent_abort_fetch",
       requestId: "parent-abort-fetch",
       signal: controller.signal,
@@ -623,7 +623,7 @@ describe("OpenWork Cloud catalog probe", () => {
         cancelled = true;
       },
     }, { highWaterMark: 0 });
-    const pending = probeOpenworkCloudCatalog(input({
+    const pending = probeMicxCloudCatalog(input({
       workspaceId: "ws_parent_abort_body",
       requestId: "parent-abort-body",
       signal: controller.signal,
@@ -654,7 +654,7 @@ describe("OpenWork Cloud catalog probe", () => {
       ["unsafe", payload("unsafe", ["search_capabilities\r\nspoof"]), "invalid_catalog", "catalog_validation"],
     ];
     for (const [requestId, body, code, stage] of cases) {
-      const observed = await probeOpenworkCloudCatalog(input({
+      const observed = await probeMicxCloudCatalog(input({
         workspaceId: `ws_${requestId}`,
         requestId,
         fetchImpl: async () => new Response(JSON.stringify(body), { headers: { "content-type": "application/json" } }),
@@ -675,8 +675,8 @@ describe("OpenWork Cloud catalog probe", () => {
       const requestId = JSON.parse(String(init?.body)).id as string;
       return new Promise<Response>((resolve) => deferred.push({ requestId, release: resolve }));
     };
-    const first = probeOpenworkCloudCatalog(input({ requestId: "single-flight-one", fetchImpl }));
-    const joined = probeOpenworkCloudCatalog(input({ requestId: "single-flight-two", fetchImpl }));
+    const first = probeMicxCloudCatalog(input({ requestId: "single-flight-one", fetchImpl }));
+    const joined = probeMicxCloudCatalog(input({ requestId: "single-flight-two", fetchImpl }));
     await waitUntil(() => calls === 2 && deferred.length === 2);
     expect(calls).toBe(2);
     expect(deferred).toHaveLength(2);
@@ -684,7 +684,7 @@ describe("OpenWork Cloud catalog probe", () => {
     expect((await first).status).toBe("observed");
     expect((await joined).status).toBe("observed");
 
-    const afterSettlement = await probeOpenworkCloudCatalog(input({
+    const afterSettlement = await probeMicxCloudCatalog(input({
       requestId: "single-flight-three",
       fetchImpl: async () => {
         calls += 1;
@@ -701,19 +701,19 @@ describe("OpenWork Cloud catalog probe", () => {
       const requestId = JSON.parse(String(init?.body)).id as string;
       return new Promise<Response>((resolve) => pending.push({ requestId, resolve }));
     };
-    const active = Array.from({ length: 16 }, (_, index) => probeOpenworkCloudCatalog(input({
+    const active = Array.from({ length: 16 }, (_, index) => probeMicxCloudCatalog(input({
       workspaceId: `ws_busy_${index}`,
       requestId: `busy-${index}`,
       fetchImpl,
     })));
     await waitUntil(() => pending.length === 16);
     expect(pending).toHaveLength(16);
-    const sameFingerprintBusy = await probeOpenworkCloudCatalog(input({
+    const sameFingerprintBusy = await probeMicxCloudCatalog(input({
       workspaceId: "ws_busy_0",
       requestId: "busy-joined",
       fetchImpl,
     }));
-    const busy = await probeOpenworkCloudCatalog(input({
+    const busy = await probeMicxCloudCatalog(input({
       workspaceId: "ws_busy_overflow",
       requestId: "busy-overflow",
       fetchImpl,
@@ -725,7 +725,7 @@ describe("OpenWork Cloud catalog probe", () => {
   });
 
   test("returns only a safe network code when fetch throws a secret-bearing error", async () => {
-    const failed = await probeOpenworkCloudCatalog(input({
+    const failed = await probeMicxCloudCatalog(input({
       fetchImpl: async () => { throw new Error(`Bearer hidden ${ENDPOINT}?token=private /Users/private/file`); },
     }));
     expect(failed).toMatchObject({ performed: true, status: "failed", code: "network_error", httpStatus: null });
@@ -752,7 +752,7 @@ describe("OpenWork Cloud catalog probe", () => {
       ["EUNKNOWNISH", "network_error", "UNKNOWN_NETWORK_ERROR", "tools_list_request", false],
     ];
     for (const [causeCode, expectedCode, expectedNetworkCode, expectedStage, expectedRetryable] of cases) {
-      const failed = await probeOpenworkCloudCatalog(input({
+      const failed = await probeMicxCloudCatalog(input({
         requestId: `network-${causeCode}`,
         fetchImpl: async () => {
           throw new Error("RAW_NETWORK_SECRET", { cause: { code: causeCode } });
@@ -782,7 +782,7 @@ describe("OpenWork Cloud catalog probe", () => {
       [500, "http_error", false],
     ];
     for (const [status, expectedCode, expectedRetryable] of cases) {
-      const failed = await probeOpenworkCloudCatalog(input({
+      const failed = await probeMicxCloudCatalog(input({
         requestId: `http-${status}`,
         fetchImpl: async () => new Response(null, { status }),
       }));
@@ -802,7 +802,7 @@ describe("OpenWork Cloud catalog probe", () => {
     const initFails: CloudCatalogProbeFetch = async () => new Response(null, { status: 401 });
     const probeInput = input();
     probeInput.fetchImpl = initFails;
-    const failed = await probeOpenworkCloudCatalog(probeInput);
+    const failed = await probeMicxCloudCatalog(probeInput);
     expect(failed).toMatchObject({
       performed: true,
       status: "failed",
@@ -836,7 +836,7 @@ describe("OpenWork Cloud catalog probe", () => {
     const probeInput = input({ requestId: "retry-transient-401" });
     probeInput.fetchImpl = fetchImpl;
 
-    const observed = await probeOpenworkCloudCatalog(probeInput);
+    const observed = await probeMicxCloudCatalog(probeInput);
 
     expect(initializeCalls).toBe(2);
     expect(observed.status).toBe("observed");
@@ -856,13 +856,13 @@ describe("OpenWork Cloud catalog probe", () => {
       if (body.method !== "initialize") throw new Error("Unexpected JSON-RPC method");
       return new Response(JSON.stringify({
         jsonrpc: "2.0",
-        id: "openwork-agent-diagnostics-initialize",
+        id: "micx-agent-diagnostics-initialize",
         result: { capabilities: {}, protocolVersion: "2024-11-05", serverInfo: { name: "old", version: "0.1.0" } },
       }), { status: 200, headers: { "content-type": "application/json" } });
     };
     const probeInput = input();
     probeInput.fetchImpl = fetchImpl;
-    const failed = await probeOpenworkCloudCatalog(probeInput);
+    const failed = await probeMicxCloudCatalog(probeInput);
     expect(failed).toMatchObject({
       performed: true,
       status: "failed",
@@ -874,7 +874,7 @@ describe("OpenWork Cloud catalog probe", () => {
   });
 
   test("splits invalid UTF-8, invalid JSON, and malformed envelopes into distinct codes", async () => {
-    const utf8 = await probeOpenworkCloudCatalog(input({
+    const utf8 = await probeMicxCloudCatalog(input({
       requestId: "bad-utf8",
       fetchImpl: async () => new Response(new Uint8Array([0xff, 0xfe, 0xfd]), {
         status: 200,
@@ -883,13 +883,13 @@ describe("OpenWork Cloud catalog probe", () => {
     }));
     expect(utf8).toMatchObject({ code: "invalid_utf8", stage: "tools_list_protocol" });
 
-    const json = await probeOpenworkCloudCatalog(input({
+    const json = await probeMicxCloudCatalog(input({
       requestId: "bad-json",
       fetchImpl: async () => new Response("{not json", { status: 200, headers: { "content-type": "application/json" } }),
     }));
     expect(json).toMatchObject({ code: "invalid_json", stage: "tools_list_protocol" });
 
-    const envelope = await probeOpenworkCloudCatalog(input({
+    const envelope = await probeMicxCloudCatalog(input({
       requestId: "bad-envelope",
       fetchImpl: async () => new Response(JSON.stringify({ jsonrpc: "1.0", id: "bad-envelope", result: {} }), {
         status: 200,
@@ -913,7 +913,7 @@ describe("OpenWork Cloud catalog probe", () => {
     };
     const probeInput = input({ requestId: "cleanup-fails" });
     probeInput.fetchImpl = fetchImpl;
-    const observed = await probeOpenworkCloudCatalog(probeInput);
+    const observed = await probeMicxCloudCatalog(probeInput);
     expect(deleteCalls).toBe(1);
     expect(observed).toMatchObject({
       status: "observed",
@@ -935,7 +935,7 @@ describe("OpenWork Cloud catalog probe", () => {
       if (body.method === "initialize") {
         return new Response(JSON.stringify({
           jsonrpc: "2.0",
-          id: "openwork-agent-diagnostics-initialize",
+          id: "micx-agent-diagnostics-initialize",
           result: { capabilities: {}, protocolVersion: PROTOCOL_VERSION, serverInfo: { name: "t", version: "1" } },
         }), { status: 200, headers: { "content-type": "application/json" } });
       }
@@ -944,7 +944,7 @@ describe("OpenWork Cloud catalog probe", () => {
     };
     const probeInput = input({ requestId: "no-session" });
     probeInput.fetchImpl = fetchImpl;
-    const observed = await probeOpenworkCloudCatalog(probeInput);
+    const observed = await probeMicxCloudCatalog(probeInput);
     expect(deleteCalls).toBe(0);
     expect(observed).toMatchObject({
       status: "observed",
@@ -955,7 +955,7 @@ describe("OpenWork Cloud catalog probe", () => {
   });
 
   test("exports a reference ID only from a strictly validated safe header", async () => {
-    const safe = await probeOpenworkCloudCatalog(input({
+    const safe = await probeMicxCloudCatalog(input({
       requestId: "with-reference",
       fetchImpl: async () => {
         const response = jsonResponse("with-reference");
@@ -965,7 +965,7 @@ describe("OpenWork Cloud catalog probe", () => {
     }));
     expect(safe.referenceId).toBe("req-1234.abc:z");
 
-    const unsafe = await probeOpenworkCloudCatalog(input({
+    const unsafe = await probeMicxCloudCatalog(input({
       requestId: "with-unsafe-reference",
       fetchImpl: async () => {
         const response = jsonResponse("with-unsafe-reference");
@@ -978,7 +978,7 @@ describe("OpenWork Cloud catalog probe", () => {
   });
 
   test("reports boolean-only proxy and extra-CA posture from the environment seam", async () => {
-    const configured = await probeOpenworkCloudCatalog(input({
+    const configured = await probeMicxCloudCatalog(input({
       requestId: "env-posture",
       env: {
         HTTPS_PROXY: "http://proxy.corp.example:8080",
@@ -1056,7 +1056,7 @@ describe("OpenWork Cloud catalog probe", () => {
 
     // Every request must go to the operator's own configured Den endpoint.
     // The built-in origins are a membership allowlist, never a destination,
-    // so an on-prem probe must never contact OpenWork-hosted Cloud.
+    // so an on-prem probe must never contact Micx-hosted Cloud.
     const requestedUrls: string[] = [];
     const activatedInput = input({
       requestId: "enterprise-activated",
@@ -1071,14 +1071,14 @@ describe("OpenWork Cloud catalog probe", () => {
       if (body.method === "notifications/initialized") return new Response(null, { status: 202 });
       return jsonResponse("enterprise-activated");
     };
-    const activated = await probeOpenworkCloudCatalog(activatedInput);
+    const activated = await probeMicxCloudCatalog(activatedInput);
     expect(requestedUrls).toEqual([
       enterpriseEndpoint,
       enterpriseEndpoint,
       enterpriseEndpoint,
       enterpriseEndpoint,
     ]);
-    expect(requestedUrls.some((url) => url.includes("openworklabs.com"))).toBe(false);
+    expect(requestedUrls.some((url) => url.includes("micxlabs.com"))).toBe(false);
     expect(activated).toMatchObject({
       performed: true,
       status: "observed",
@@ -1090,7 +1090,7 @@ describe("OpenWork Cloud catalog probe", () => {
     // Activated against a different control plane than the configured MCP:
     // the mismatch must stay fail-closed but remain distinguishable.
     let mismatchCalls = 0;
-    const mismatch = await probeOpenworkCloudCatalog(input({
+    const mismatch = await probeMicxCloudCatalog(input({
       requestId: "enterprise-mismatch",
       config: enterpriseConfig,
       activatedEnterpriseOrigin: "https://den.other.example",
@@ -1108,7 +1108,7 @@ describe("OpenWork Cloud catalog probe", () => {
     });
 
     let unactivatedCalls = 0;
-    const unactivated = await probeOpenworkCloudCatalog(input({
+    const unactivated = await probeMicxCloudCatalog(input({
       requestId: "enterprise-absent",
       config: enterpriseConfig,
       fetchImpl: async () => {

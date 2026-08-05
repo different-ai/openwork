@@ -143,7 +143,7 @@ if (
 }
 
 const assetName = resolveAssetName();
-const downloadUrl = process.env.OPENWORK_OPENCODE_DOWNLOAD_URL?.trim()
+const downloadUrl = process.env.MICX_OPENCODE_DOWNLOAD_URL?.trim()
   || (version
     ? `https://github.com/anomalyco/opencode/releases/download/v${version}/${assetName}`
     : null);

@@ -1,6 +1,6 @@
 # Reconciliation with earlier MCP diagnostic work
 
-Reviewed 2026-07-12 against OpenWork PRs #2669, #2670, #2672, #2674, #2675,
+Reviewed 2026-07-12 against Micx PRs #2669, #2670, #2672, #2674, #2675,
 and this package branch. The table distinguishes package behavior from Den
 policy so the package does not absorb database, environment, or UI opinions.
 

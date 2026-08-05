@@ -1,4 +1,4 @@
-import type { Automation } from "@openwork/types/automations"
+import type { Automation } from "@micx/types/automations"
 import type { AutomationListItem } from "./ports.js"
 
 export function selectDueAutomations(

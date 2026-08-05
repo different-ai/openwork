@@ -13,16 +13,16 @@ import {
   type DenOrgLlmProvider,
   type DenOrgLlmProviderConnection,
 } from "../../../../app/lib/den";
-import { getOpenworkGatewayOrigin } from "../../../../app/lib/gateway-runtime";
+import { getMicxGatewayOrigin } from "../../../../app/lib/gateway-runtime";
 import { unwrap, waitForHealthy } from "../../../../app/lib/opencode";
 import {
   readOpencodeConfig,
   writeOpencodeConfig,
   engineRestart,
-  workspaceOpenworkRead,
-  workspaceOpenworkWrite,
+  workspaceMicxRead,
+  workspaceMicxWrite,
 } from "../../../../app/lib/desktop";
-import { OpenworkServerError } from "../../../../app/lib/openwork-server";
+import { MicxServerError } from "../../../../app/lib/micx-server";
 import type {
   Client,
   ProviderListItem,
@@ -38,19 +38,19 @@ import {
   ensureProviderListQuery,
   getConnectedProviderItems,
 } from "../../../infra/provider-list-query";
-import type { OpenworkServerStoreSnapshot } from "../openwork-server-store";
+import type { MicxServerStoreSnapshot } from "../micx-server-store";
 
 /**
- * The slice of the openwork-server store this store actually consumes.
+ * The slice of the micx-server store this store actually consumes.
  * The settings route passes the full store; the session route passes a
  * lightweight endpoint-backed adapter (previously forced through `as never`).
  */
-export type ProviderAuthOpenworkServer = {
+export type ProviderAuthMicxServer = {
   getSnapshot: () => Pick<
-    OpenworkServerStoreSnapshot,
-    "openworkServerStatus" | "openworkServerClient"
+    MicxServerStoreSnapshot,
+    "micxServerStatus" | "micxServerClient"
   > & {
-    openworkServerCapabilities: { config?: { read?: boolean; write?: boolean } } | null;
+    micxServerCapabilities: { config?: { read?: boolean; write?: boolean } } | null;
   };
 };
 import {
@@ -202,7 +202,7 @@ type CreateProviderAuthStoreOptions = {
   selectedWorkspaceRoot: () => string;
   runtimeWorkspaceId: () => string | null;
   ensureRuntimeWorkspaceId?: () => Promise<string | null | undefined>;
-  openworkServer: ProviderAuthOpenworkServer;
+  micxServer: ProviderAuthMicxServer;
   setProviders: (value: ProviderListItem[]) => void;
   setProviderDefaults: (value: Record<string, string>) => void;
   setProviderConnectedIds: (value: string[]) => void;
@@ -313,24 +313,24 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     return Array.from(merged.values()).toSorted(compareProviders);
   };
 
-  const resolveOpenworkConfigTarget = async (mode: "read" | "write") => {
-    const openworkSnapshot = options.openworkServer.getSnapshot();
-    const openworkClient = openworkSnapshot.openworkServerClient;
-    let openworkWorkspaceId = options.runtimeWorkspaceId()?.trim() || null;
-    if (!openworkWorkspaceId && openworkSnapshot.openworkServerStatus === "connected" && openworkClient) {
-      openworkWorkspaceId = (await options.ensureRuntimeWorkspaceId?.())?.trim() || null;
+  const resolveMicxConfigTarget = async (mode: "read" | "write") => {
+    const micxSnapshot = options.micxServer.getSnapshot();
+    const micxClient = micxSnapshot.micxServerClient;
+    let micxWorkspaceId = options.runtimeWorkspaceId()?.trim() || null;
+    if (!micxWorkspaceId && micxSnapshot.micxServerStatus === "connected" && micxClient) {
+      micxWorkspaceId = (await options.ensureRuntimeWorkspaceId?.())?.trim() || null;
     }
-    const hasOpenworkTarget =
-      openworkSnapshot.openworkServerStatus === "connected" &&
-      Boolean(openworkClient && openworkWorkspaceId);
-    const canUseOpenworkServer =
-      hasOpenworkTarget &&
-      openworkSnapshot.openworkServerCapabilities?.config?.[mode] !== false;
+    const hasMicxTarget =
+      micxSnapshot.micxServerStatus === "connected" &&
+      Boolean(micxClient && micxWorkspaceId);
+    const canUseMicxServer =
+      hasMicxTarget &&
+      micxSnapshot.micxServerCapabilities?.config?.[mode] !== false;
     return {
-      openworkClient,
-      openworkWorkspaceId,
-      hasOpenworkTarget,
-      canUseOpenworkServer,
+      micxClient,
+      micxWorkspaceId,
+      hasMicxTarget,
+      canUseMicxServer,
     };
   };
 
@@ -393,45 +393,45 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     return "";
   };
 
-  const mirrorOpenWorkModelsVoiceEnv = async (provider: DenOrgLlmProviderConnection, apiKey: string) => {
+  const mirrorMicxModelsVoiceEnv = async (provider: DenOrgLlmProviderConnection, apiKey: string) => {
     const trimmedKey = apiKey.trim();
     if (!trimmedKey) return;
-    const openworkClient = options.openworkServer.getSnapshot().openworkServerClient;
-    if (!openworkClient) return;
+    const micxClient = options.micxServer.getSnapshot().micxServerClient;
+    if (!micxClient) return;
     const entries = getCloudProviderEnv(provider.providerConfig)
       .slice(0, 1)
       .map((key) => ({ key, value: trimmedKey }));
-    if (provider.source === "openwork") {
-      if (!entries.some((entry) => entry.key === "OPENWORK_API_KEY")) {
-        entries.unshift({ key: "OPENWORK_API_KEY", value: trimmedKey });
+    if (provider.source === "micx") {
+      if (!entries.some((entry) => entry.key === "MICX_API_KEY")) {
+        entries.unshift({ key: "MICX_API_KEY", value: trimmedKey });
       }
       const baseUrl = readCloudProviderBaseUrl(provider);
-      if (baseUrl) entries.push({ key: "OPENWORK_INFERENCE_BASE_URL", value: baseUrl });
+      if (baseUrl) entries.push({ key: "MICX_INFERENCE_BASE_URL", value: baseUrl });
     }
     if (entries.length === 0) return;
-    await openworkClient.upsertUserEnv(entries);
+    await micxClient.upsertUserEnv(entries);
   };
 
-  const readWorkspaceOpenworkConfigRecord = async (): Promise<
+  const readWorkspaceMicxConfigRecord = async (): Promise<
     Record<string, unknown>
   > => {
     const root = options.selectedWorkspaceRoot().trim();
     const isLocalWorkspace =
       options.selectedWorkspaceDisplay().workspaceType === "local";
-    const { openworkClient, openworkWorkspaceId, hasOpenworkTarget, canUseOpenworkServer } =
-      await resolveOpenworkConfigTarget("read");
+    const { micxClient, micxWorkspaceId, hasMicxTarget, canUseMicxServer } =
+      await resolveMicxConfigTarget("read");
 
-    if (canUseOpenworkServer && openworkClient && openworkWorkspaceId) {
-      const config = await openworkClient.getConfig(openworkWorkspaceId);
-      return config.openwork ?? {};
+    if (canUseMicxServer && micxClient && micxWorkspaceId) {
+      const config = await micxClient.getConfig(micxWorkspaceId);
+      return config.micx ?? {};
     }
 
-    if (hasOpenworkTarget) {
+    if (hasMicxTarget) {
       return {};
     }
 
     if (isLocalWorkspace && isDesktopRuntime() && root) {
-      return (await workspaceOpenworkRead({
+      return (await workspaceMicxRead({
         workspacePath: root,
       })) as unknown as Record<string, unknown>;
     }
@@ -439,33 +439,33 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     return {};
   };
 
-  const writeWorkspaceOpenworkConfigRecord = async (
+  const writeWorkspaceMicxConfigRecord = async (
     config: Record<string, unknown>,
   ) => {
     const root = options.selectedWorkspaceRoot().trim();
     const isLocalWorkspace =
       options.selectedWorkspaceDisplay().workspaceType === "local";
-    const { openworkClient, openworkWorkspaceId, hasOpenworkTarget, canUseOpenworkServer } =
-      await resolveOpenworkConfigTarget("write");
+    const { micxClient, micxWorkspaceId, hasMicxTarget, canUseMicxServer } =
+      await resolveMicxConfigTarget("write");
 
-    if (canUseOpenworkServer && openworkClient && openworkWorkspaceId) {
-      await openworkClient.patchConfig(openworkWorkspaceId, { openwork: config });
+    if (canUseMicxServer && micxClient && micxWorkspaceId) {
+      await micxClient.patchConfig(micxWorkspaceId, { micx: config });
       return true;
     }
 
-    if (hasOpenworkTarget) {
+    if (hasMicxTarget) {
       return false;
     }
 
     if (isLocalWorkspace && isDesktopRuntime() && root) {
-      const result = await workspaceOpenworkWrite({
+      const result = await workspaceMicxWrite({
         workspacePath: root,
         config: config as never,
       });
       const typed = result as { ok: boolean; stderr?: string; stdout?: string };
       if (!typed.ok) {
         throw new Error(
-          typed.stderr || typed.stdout || "Failed to write .opencode/openwork.json",
+          typed.stderr || typed.stdout || "Failed to write .opencode/micx.json",
         );
       }
       return true;
@@ -476,7 +476,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
 
   const refreshImportedCloudProviders = async (refreshOptions?: { strict?: boolean }) => {
     try {
-      const config = await readWorkspaceOpenworkConfigRecord();
+      const config = await readWorkspaceMicxConfigRecord();
       const cloudImports = readWorkspaceCloudImports(config);
       const next = cloudImports.providers;
       // Guard: don't overwrite non-empty import state with an empty read.
@@ -500,7 +500,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
   const persistImportedCloudProviders = async (
     nextProviders: Record<string, CloudImportedProvider>,
   ) => {
-    const config = await readWorkspaceOpenworkConfigRecord();
+    const config = await readWorkspaceMicxConfigRecord();
     const cloudImports = readWorkspaceCloudImports(config);
     const nextCloudImports = {
       ...cloudImports,
@@ -509,10 +509,10 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     const nextConfig = withWorkspaceCloudImports(config, {
       ...nextCloudImports,
     });
-    const persisted = await writeWorkspaceOpenworkConfigRecord(nextConfig);
+    const persisted = await writeWorkspaceMicxConfigRecord(nextConfig);
     if (!persisted) {
       throw new Error(
-        "OpenWork server unavailable. Connect to manage imported cloud providers.",
+        "Micx server unavailable. Connect to manage imported cloud providers.",
       );
     }
     setStateField("importedCloudProviders", nextProviders);
@@ -522,15 +522,15 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     const root = options.selectedWorkspaceRoot().trim();
     const isLocalWorkspace =
       options.selectedWorkspaceDisplay().workspaceType === "local";
-    const { openworkClient, openworkWorkspaceId, hasOpenworkTarget, canUseOpenworkServer } =
-      await resolveOpenworkConfigTarget("read");
+    const { micxClient, micxWorkspaceId, hasMicxTarget, canUseMicxServer } =
+      await resolveMicxConfigTarget("read");
 
-    if (canUseOpenworkServer && openworkClient && openworkWorkspaceId) {
-      return await openworkClient.readOpencodeConfigFile(openworkWorkspaceId, "project");
+    if (canUseMicxServer && micxClient && micxWorkspaceId) {
+      return await micxClient.readOpencodeConfigFile(micxWorkspaceId, "project");
     }
 
-    if (hasOpenworkTarget) {
-      throw new Error("OpenWork server config API is unavailable for this workspace.");
+    if (hasMicxTarget) {
+      throw new Error("Micx server config API is unavailable for this workspace.");
     }
 
     if (isLocalWorkspace && isDesktopRuntime() && root) {
@@ -544,12 +544,12 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     const root = options.selectedWorkspaceRoot().trim();
     const isLocalWorkspace =
       options.selectedWorkspaceDisplay().workspaceType === "local";
-    const { openworkClient, openworkWorkspaceId, hasOpenworkTarget, canUseOpenworkServer } =
-      await resolveOpenworkConfigTarget("write");
+    const { micxClient, micxWorkspaceId, hasMicxTarget, canUseMicxServer } =
+      await resolveMicxConfigTarget("write");
 
-    if (canUseOpenworkServer && openworkClient && openworkWorkspaceId) {
-      const result = await openworkClient.writeOpencodeConfigFile(
-        openworkWorkspaceId,
+    if (canUseMicxServer && micxClient && micxWorkspaceId) {
+      const result = await micxClient.writeOpencodeConfigFile(
+        micxWorkspaceId,
         "project",
         content,
       ) as { ok: boolean; stderr?: string; stdout?: string };
@@ -559,8 +559,8 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       return true;
     }
 
-    if (hasOpenworkTarget) {
-      throw new Error("OpenWork server config API is unavailable for this workspace.");
+    if (hasMicxTarget) {
+      throw new Error("Micx server config API is unavailable for this workspace.");
     }
 
     if (isLocalWorkspace && isDesktopRuntime() && root) {
@@ -581,12 +581,12 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
    * is no read-modify-write race and no edit of the user's opencode.jsonc.
    */
   const patchRuntimeProviders = async (update: Record<string, unknown>) => {
-    const { openworkClient, openworkWorkspaceId, canUseOpenworkServer } =
-      await resolveOpenworkConfigTarget("write");
-    if (!canUseOpenworkServer || !openworkClient || !openworkWorkspaceId) {
-      throw new Error("OpenWork server unavailable. Connect to manage cloud providers.");
+    const { micxClient, micxWorkspaceId, canUseMicxServer } =
+      await resolveMicxConfigTarget("write");
+    if (!canUseMicxServer || !micxClient || !micxWorkspaceId) {
+      throw new Error("Micx server unavailable. Connect to manage cloud providers.");
     }
-    await openworkClient.patchConfig(openworkWorkspaceId, {
+    await micxClient.patchConfig(micxWorkspaceId, {
       opencode: { provider: update },
     });
   };
@@ -595,20 +595,20 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     providerUpdate: Record<string, unknown>,
     nextProviders: Record<string, CloudImportedProvider>,
   ) => {
-    const { openworkClient, openworkWorkspaceId, canUseOpenworkServer } =
-      await resolveOpenworkConfigTarget("write");
-    if (!canUseOpenworkServer || !openworkClient || !openworkWorkspaceId) {
-      throw new Error("OpenWork server unavailable. Connect to manage cloud providers.");
+    const { micxClient, micxWorkspaceId, canUseMicxServer } =
+      await resolveMicxConfigTarget("write");
+    if (!canUseMicxServer || !micxClient || !micxWorkspaceId) {
+      throw new Error("Micx server unavailable. Connect to manage cloud providers.");
     }
-    const config = await readWorkspaceOpenworkConfigRecord();
+    const config = await readWorkspaceMicxConfigRecord();
     const cloudImports = readWorkspaceCloudImports(config);
     const nextConfig = withWorkspaceCloudImports(config, {
       ...cloudImports,
       providers: nextProviders,
     });
-    await openworkClient.patchConfig(openworkWorkspaceId, {
+    await micxClient.patchConfig(micxWorkspaceId, {
       opencode: { provider: providerUpdate },
-      openwork: nextConfig,
+      micx: nextConfig,
     });
     setStateField("importedCloudProviders", nextProviders);
   };
@@ -656,10 +656,10 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     }
 
     const c = options.client();
-    const openworkSnapshot = options.openworkServer.getSnapshot();
+    const micxSnapshot = options.micxServer.getSnapshot();
     const workspaceId = options.runtimeWorkspaceId();
     const workspaceType = options.selectedWorkspaceDisplay().workspaceType;
-    const canUseManagedRuntime = Boolean(openworkSnapshot.openworkServerClient && workspaceId?.trim() && workspaceType === "local");
+    const canUseManagedRuntime = Boolean(micxSnapshot.micxServerClient && workspaceId?.trim() && workspaceType === "local");
     if (!c && !canUseManagedRuntime) {
       throw new Error(t("providers.not_connected"));
     }
@@ -667,7 +667,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     const next = fallbackUpdate(config);
     await updateManagedDisabledProviders({
       opencodeClient: c,
-      openworkClient: openworkSnapshot.openworkServerClient,
+      micxClient: micxSnapshot.micxServerClient,
       workspaceId,
       workspaceType,
       disabledProviders: next.disabled_providers,
@@ -740,17 +740,17 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     // the user's opencode.jsonc. Fall back to project config only when the
     // managed runtime endpoint is unavailable.
     const c = options.client();
-    const openworkSnapshot = options.openworkServer.getSnapshot();
+    const micxSnapshot = options.micxServer.getSnapshot();
     const workspaceId = options.runtimeWorkspaceId();
     const workspaceType = options.selectedWorkspaceDisplay().workspaceType;
     const canUseManagedRuntime = Boolean(
-      openworkSnapshot.openworkServerClient && workspaceId?.trim() && workspaceType === "local",
+      micxSnapshot.micxServerClient && workspaceId?.trim() && workspaceType === "local",
     );
 
     if (canUseManagedRuntime || c) {
       const result = await updateManagedDisabledProviders({
         opencodeClient: c,
-        openworkClient: openworkSnapshot.openworkServerClient,
+        micxClient: micxSnapshot.micxServerClient,
         workspaceId,
         workspaceType,
         disabledProviders: nextDisabled,
@@ -818,10 +818,10 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
 
     // Runtime-managed orphans (`lpr_*` keys in the workspace runtime config).
     try {
-      const { openworkClient, openworkWorkspaceId, canUseOpenworkServer } =
-        await resolveOpenworkConfigTarget("write");
-      if (canUseOpenworkServer && openworkClient && openworkWorkspaceId) {
-        const merged = await openworkClient.getConfig(openworkWorkspaceId);
+      const { micxClient, micxWorkspaceId, canUseMicxServer } =
+        await resolveMicxConfigTarget("write");
+      if (canUseMicxServer && micxClient && micxWorkspaceId) {
+        const merged = await micxClient.getConfig(micxWorkspaceId);
         const runtimeProvider = isRecord(merged.opencode) ? merged.opencode.provider : null;
         const runtimeOrphans = isRecord(runtimeProvider)
           ? Object.keys(runtimeProvider).filter((key) => /^lpr_/i.test(key))
@@ -869,7 +869,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
   ) => {
     const localProviderId = getCloudManagedProviderId(provider);
     const existingImported = state.importedCloudProviders[provider.id] ?? null;
-    // `lpr_*` / `openwork` keys are owned by the cloud-import system. When the
+    // `lpr_*` / `micx` keys are owned by the cloud-import system. When the
     // import baseline was lost or diverged (e.g. it lives in a different file
     // than the provider block, or a prior reconcile failed mid-flight), an
     // existing cloud-managed block must be treated as a re-import to reconcile,
@@ -1328,7 +1328,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       const shouldUseServerReload = !(
         isDesktopRuntime() && options.selectedWorkspaceDisplay().workspaceType === "local"
       );
-      // Prefer the OpenWork server engine reload: it disposes the engine AND
+      // Prefer the Micx server engine reload: it disposes the engine AND
       // re-registers runtime-DB MCPs, so non-primary workspaces and pending
       // changes are picked up instead of silently dropping (toggles "turn
       // off").
@@ -1337,19 +1337,19 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
         lastGlobalProviderDisposeRefreshAt = now;
         if (shouldUseServerReload) {
           try {
-            const openworkSnapshot = options.openworkServer.getSnapshot();
-            const openworkClient = openworkSnapshot.openworkServerClient;
-            if (openworkSnapshot.openworkServerStatus === "connected" && openworkClient) {
+            const micxSnapshot = options.micxServer.getSnapshot();
+            const micxClient = micxSnapshot.micxServerClient;
+            if (micxSnapshot.micxServerStatus === "connected" && micxClient) {
               const workspaceId =
                 options.runtimeWorkspaceId()?.trim() ||
                 (await options.ensureRuntimeWorkspaceId?.())?.trim() ||
                 "";
               if (workspaceId) {
                 try {
-                  await openworkClient.reloadEngine(workspaceId);
+                  await micxClient.reloadEngine(workspaceId);
                 } catch (error) {
                   const unreachable =
-                    error instanceof OpenworkServerError && error.code === "opencode_engine_unreachable";
+                    error instanceof MicxServerError && error.code === "opencode_engine_unreachable";
                   if (!unreachable || !isDesktopRuntime()) {
                     throw error;
                   }
@@ -1538,7 +1538,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     const token = settings.authToken?.trim() ?? "";
     const orgId = settings.activeOrgId?.trim() ?? "";
     if (!token || !orgId) {
-      throw new Error("Sign in to OpenWork Cloud and choose an organization first.");
+      throw new Error("Sign in to Micx Cloud and choose an organization first.");
     }
 
     try {
@@ -1559,22 +1559,22 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       await assertCloudProviderImportSafe(provider);
 
       if (envEntries.length > 0) {
-        const openworkClient = options.openworkServer.getSnapshot().openworkServerClient;
-        if (!openworkClient) {
+        const micxClient = options.micxServer.getSnapshot().micxServerClient;
+        if (!micxClient) {
           throw new Error(
             `${provider.name} needs environment variables (${envEntries
               .map((entry) => entry.key)
-              .join(", ")}) but the OpenWork server is not available.`,
+              .join(", ")}) but the Micx server is not available.`,
           );
         }
-        await openworkClient.upsertUserEnv(envEntries);
+        await micxClient.upsertUserEnv(envEntries);
       }
       if (primaryApiKey) {
         await c.auth.set({
           providerID: localProviderId,
           auth: { type: "api", key: primaryApiKey },
         });
-        await mirrorOpenWorkModelsVoiceEnv(provider, primaryApiKey);
+        await mirrorMicxModelsVoiceEnv(provider, primaryApiKey);
       }
       if (existingImported?.providerId && existingImported.providerId !== localProviderId) {
         try {
@@ -1736,12 +1736,12 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       return;
     }
 
-    // Imports, baseline reads, and persistence all go through the OpenWork
+    // Imports, baseline reads, and persistence all go through the Micx
     // server target (patchRuntimeProviders throws without it). Running before
     // the target resolves made the baseline read fall back to an empty source
     // and re-import every org provider — engine dispose churn on settings open.
-    const target = await resolveOpenworkConfigTarget("write");
-    if (!target.canUseOpenworkServer || !target.openworkClient || !target.openworkWorkspaceId) {
+    const target = await resolveMicxConfigTarget("write");
+    if (!target.canUseMicxServer || !target.micxClient || !target.micxWorkspaceId) {
       return;
     }
 
@@ -1837,7 +1837,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
   }
 
   async function runCloudProviderSync(reason: CloudProviderSyncReason) {
-    if (getOpenworkGatewayOrigin()) {
+    if (getMicxGatewayOrigin()) {
       if (!loggedGatewayCloudProviderSyncSkip) {
         loggedGatewayCloudProviderSyncSkip = true;
         console.info(

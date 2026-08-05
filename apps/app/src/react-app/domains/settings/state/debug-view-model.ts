@@ -7,21 +7,21 @@ import {
   engineStart as engineStartCmd,
   getDesktopBootstrapConfig,
   debugDesktopBootstrapConfig,
-  nukeOpenworkAndOpencodeConfigPreview,
-  nukeOpenworkAndOpencodeConfigAndExit,
+  nukeMicxAndOpencodeConfigPreview,
+  nukeMicxAndOpencodeConfigAndExit,
   openDesktopUrl,
-  openworkServerInfo as openworkServerInfoCmd,
-  openworkServerRestart as openworkServerRestartCmd,
+  micxServerInfo as micxServerInfoCmd,
+  micxServerRestart as micxServerRestartCmd,
   pickFile,
   revealDesktopItemInDir,
-  resetOpenworkState,
+  resetMicxState,
   updaterEnvironment as updaterEnvironmentCmd,
   workspaceBootstrap as workspaceBootstrapCmd,
   type AppBuildInfo,
   type DesktopBootstrapConfig,
   type EngineInfo,
   type NukeManifestPreview,
-  type OpenworkServerInfo,
+  type MicxServerInfo,
 } from "../../../../app/lib/desktop";
 import { createDenClient, readDenSettings } from "../../../../app/lib/den";
 import {
@@ -31,9 +31,9 @@ import {
 import { downloadTextAsFile } from "../../../../app/lib/download";
 
 import {
-  writeOpenworkServerSettings,
-  type OpenworkRuntimeConfigStatus,
-} from "../../../../app/lib/openwork-server";
+  writeMicxServerSettings,
+  type MicxRuntimeConfigStatus,
+} from "../../../../app/lib/micx-server";
 import {
   clearStartupPreference,
   isDesktopRuntime,
@@ -44,30 +44,30 @@ import {
 import { t } from "../../../../i18n";
 import type { DebugViewProps } from "../pages/debug-view";
 import type { ReleaseChannel } from "../../../../app/types";
-import type { OpenworkServerStore, OpenworkServerStoreSnapshot } from "../../connections/openwork-server-store";
+import type { MicxServerStore, MicxServerStoreSnapshot } from "../../connections/micx-server-store";
 
 type DebugViewModelProps = Omit<DebugViewProps, "agentContextDiagnostics">;
 
-const STARTUP_PREFERENCE_KEY = "openwork.startupPreference";
-const ENGINE_SOURCE_KEY = "openwork.engineSource";
-const ENGINE_CUSTOM_BIN_KEY = "openwork.engineCustomBinPath";
-const OPENCODE_ENABLE_EXA_KEY = "openwork.opencodeEnableExa";
+const STARTUP_PREFERENCE_KEY = "micx.startupPreference";
+const ENGINE_SOURCE_KEY = "micx.engineSource";
+const ENGINE_CUSTOM_BIN_KEY = "micx.engineCustomBinPath";
+const OPENCODE_ENABLE_EXA_KEY = "micx.opencodeEnableExa";
 const NUKE_CONFIRMATION_WORD = "NUKE";
 const NUKE_SIGN_OUT_TIMEOUT_MS = 5000;
 
 type ResetModalMode = "onboarding" | "all";
 
 const ONBOARDING_LOCAL_STORAGE_KEYS = [
-  "openwork.acknowledgedProviders",
-  "openwork.orgOnboardingSeen",
-  "openwork.reloadAfterOrgOnboarding",
-  "openwork.seenProviderIds",
+  "micx.acknowledgedProviders",
+  "micx.orgOnboardingSeen",
+  "micx.reloadAfterOrgOnboarding",
+  "micx.seenProviderIds",
 ];
 
 type UseDebugViewModelOptions = {
   developerMode: boolean;
-  openworkServerStore: OpenworkServerStore;
-  openworkServerSnapshot: OpenworkServerStoreSnapshot;
+  micxServerStore: MicxServerStore;
+  micxServerSnapshot: MicxServerStoreSnapshot;
   runtimeWorkspaceId: string | null;
   selectedWorkspaceRoot: string;
   setRouteError: (value: string | null) => void;
@@ -100,7 +100,7 @@ function clearStoredString(key: string): void {
   }
 }
 
-function clearOpenworkLocalStorageForReset(mode: ResetModalMode): void {
+function clearMicxLocalStorageForReset(mode: ResetModalMode): void {
   if (typeof window === "undefined") return;
   try {
     if (mode === "all") {
@@ -110,11 +110,11 @@ function clearOpenworkLocalStorageForReset(mode: ResetModalMode): void {
     for (const key of ONBOARDING_LOCAL_STORAGE_KEYS) {
       window.localStorage.removeItem(key);
     }
-    const raw = window.localStorage.getItem("openwork.preferences");
+    const raw = window.localStorage.getItem("micx.preferences");
     if (raw) {
       const prefs = JSON.parse(raw);
       prefs.hasCompletedOnboarding = false;
-      window.localStorage.setItem("openwork.preferences", JSON.stringify(prefs));
+      window.localStorage.setItem("micx.preferences", JSON.stringify(prefs));
     }
   } catch {
     // ignore persistence failures
@@ -205,7 +205,7 @@ function formatOpencodeBinary(info: EngineInfo | null) {
   return formatBinaryWithSource(info?.opencodeBinPath, info?.opencodeBinSource);
 }
 
-function formatManagedOpencodeBinary(info: OpenworkServerInfo | null) {
+function formatManagedOpencodeBinary(info: MicxServerInfo | null) {
   return formatBinaryWithSource(
     info?.managedOpencodeBinPath,
     info?.managedOpencodeBinSource,
@@ -219,7 +219,7 @@ function formatBinaryWithSource(path: string | null | undefined, source: string 
   return sourceLabel ? `${binary} (${sourceLabel})` : binary;
 }
 
-function describeOpenworkServer(info: OpenworkServerInfo | null) {
+function describeMicxServer(info: MicxServerInfo | null) {
   const running = Boolean(info?.running);
   return {
     ...statusPill(running),
@@ -258,8 +258,8 @@ function describeOpencodeConnect(engine: EngineInfo | null) {
 export function useDebugViewModel(options: UseDebugViewModelOptions) {
   const {
     developerMode,
-    openworkServerStore,
-    openworkServerSnapshot,
+    micxServerStore,
+    micxServerSnapshot,
     runtimeWorkspaceId,
     selectedWorkspaceRoot,
     setRouteError,
@@ -272,21 +272,21 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
   const [appBuild, setAppBuild] = useState<AppBuildInfo | null>(null);
   const [bootstrapPrepared, setBootstrapPrepared] = useState<DesktopBootstrapConfig["prepared"]>(null);
   const [bootstrapConfigDebug, setBootstrapConfigDebug] = useState<unknown>(null);
-  const [runtimeConfigStatus, setRuntimeConfigStatus] = useState<OpenworkRuntimeConfigStatus | null>(null);
+  const [runtimeConfigStatus, setRuntimeConfigStatus] = useState<MicxRuntimeConfigStatus | null>(null);
   const [runtimeConfigStatusError, setRuntimeConfigStatusError] = useState<string | null>(null);
   const [runtimeDebugStatus, setRuntimeDebugStatus] = useState<string | null>(null);
   const [opencodeRestarting, setOpencodeRestarting] = useState(false);
-  const [openworkServerRestarting, setOpenworkServerRestarting] = useState(false);
+  const [micxServerRestarting, setMicxServerRestarting] = useState(false);
   const [opencodeServiceStatus, setOpencodeServiceStatus] = useState<{
     tone: "success" | "error";
     message: string;
   } | null>(null);
-  const [openworkServiceStatus, setOpenworkServiceStatus] = useState<{
+  const [micxServiceStatus, setMicxServiceStatus] = useState<{
     tone: "success" | "error";
     message: string;
   } | null>(null);
   const [opencodeLogStatus, setOpencodeLogStatus] = useState<string | null>(null);
-  const [openworkLogStatus, setOpenworkLogStatus] = useState<string | null>(null);
+  const [micxLogStatus, setMicxLogStatus] = useState<string | null>(null);
   const [serviceRestartError, setServiceRestartError] = useState<string | null>(null);
   const [resetModalBusy, setResetModalBusy] = useState(false);
   const [nukeConfigBusy, setNukeConfigBusy] = useState(false);
@@ -364,7 +364,7 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
 
   useEffect(() => {
     if (!developerMode) return;
-    const client = openworkServerSnapshot.openworkServerClient;
+    const client = micxServerSnapshot.micxServerClient;
     const workspaceId = runtimeWorkspaceId?.trim();
     if (!client || !workspaceId) {
       setRuntimeConfigStatus(null);
@@ -388,7 +388,7 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
     return () => {
       cancelled = true;
     };
-  }, [developerMode, openworkServerSnapshot.openworkServerClient, runtimeWorkspaceId]);
+  }, [developerMode, micxServerSnapshot.micxServerClient, runtimeWorkspaceId]);
 
   useEffect(() => {
     if (!developerMode || !isDesktopRuntime()) return;
@@ -422,13 +422,13 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
       appVersionLabel: appBuild?.version ?? "—",
       appCommitLabel: appBuild?.gitSha ?? "—",
       opencodeVersionLabel: engineInfoState?.baseUrl ? "managed" : "—",
-      openworkServerVersionLabel: openworkServerSnapshot.openworkServerDiagnostics?.version ?? "—",
+      micxServerVersionLabel: micxServerSnapshot.micxServerDiagnostics?.version ?? "—",
     }),
     [
       appBuild?.gitSha,
       appBuild?.version,
       engineInfoState?.baseUrl,
-      openworkServerSnapshot.openworkServerDiagnostics?.version,
+      micxServerSnapshot.micxServerDiagnostics?.version,
     ],
   );
 
@@ -437,13 +437,13 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
       collectedAt: new Date().toISOString(),
       app: appBuild ?? null,
       engine: engineInfoState,
-      openworkServer: {
-        hostInfo: openworkServerSnapshot.openworkServerHostInfo,
-        diagnostics: openworkServerSnapshot.openworkServerDiagnostics,
-        capabilities: openworkServerSnapshot.openworkServerCapabilities,
-        settings: openworkServerSnapshot.openworkServerSettings,
-        status: openworkServerSnapshot.openworkServerStatus,
-        url: openworkServerSnapshot.openworkServerUrl,
+      micxServer: {
+        hostInfo: micxServerSnapshot.micxServerHostInfo,
+        diagnostics: micxServerSnapshot.micxServerDiagnostics,
+        capabilities: micxServerSnapshot.micxServerCapabilities,
+        settings: micxServerSnapshot.micxServerSettings,
+        status: micxServerSnapshot.micxServerStatus,
+        url: micxServerSnapshot.micxServerUrl,
       },
       runtimeWorkspaceId,
       selectedWorkspaceRoot,
@@ -453,12 +453,12 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
     appBuild,
     bootstrapPrepared,
     engineInfoState,
-    openworkServerSnapshot.openworkServerCapabilities,
-    openworkServerSnapshot.openworkServerDiagnostics,
-    openworkServerSnapshot.openworkServerHostInfo,
-    openworkServerSnapshot.openworkServerSettings,
-    openworkServerSnapshot.openworkServerStatus,
-    openworkServerSnapshot.openworkServerUrl,
+    micxServerSnapshot.micxServerCapabilities,
+    micxServerSnapshot.micxServerDiagnostics,
+    micxServerSnapshot.micxServerHostInfo,
+    micxServerSnapshot.micxServerSettings,
+    micxServerSnapshot.micxServerStatus,
+    micxServerSnapshot.micxServerUrl,
     runtimeWorkspaceId,
     selectedWorkspaceRoot,
   ]);
@@ -473,9 +473,9 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
   );
 
   const engineCard = useMemo(() => describeEngine(engineInfoState), [engineInfoState]);
-  const openworkCard = useMemo(
-    () => describeOpenworkServer(openworkServerSnapshot.openworkServerHostInfo),
-    [openworkServerSnapshot.openworkServerHostInfo],
+  const micxCard = useMemo(
+    () => describeMicxServer(micxServerSnapshot.micxServerHostInfo),
+    [micxServerSnapshot.micxServerHostInfo],
   );
   const opencodeConnectCard = useMemo(
     () => describeOpencodeConnect(engineInfoState),
@@ -494,7 +494,7 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
   const onExportRuntimeDebugReport = useCallback(async () => {
     try {
       downloadTextAsFile(
-        `openwork-runtime-${new Date().toISOString().replace(/[:.]/g, "-")}.json`,
+        `micx-runtime-${new Date().toISOString().replace(/[:.]/g, "-")}.json`,
         runtimeDebugReportJson,
         "application/json",
       );
@@ -521,7 +521,7 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
   const onExportDeveloperLog = useCallback(async () => {
     try {
       downloadTextAsFile(
-        `openwork-developer-${new Date().toISOString().replace(/[:.]/g, "-")}.log`,
+        `micx-developer-${new Date().toISOString().replace(/[:.]/g, "-")}.log`,
         developerLog.join("\n"),
         "text/plain",
       );
@@ -568,11 +568,11 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
       const env = await updaterEnvironmentCmd() as { appBundlePath?: string };
       const appBundlePath = env.appBundlePath?.trim();
       if (!appBundlePath) {
-        setElectronMigrationStatus("Could not resolve the current OpenWork.app bundle path.");
+        setElectronMigrationStatus("Could not resolve the current Micx.app bundle path.");
         return;
       }
       await revealDesktopItemInDir(`${appBundlePath}.migrate-bak`);
-      setElectronMigrationStatus("Requested Finder reveal for OpenWork.app.migrate-bak. The backup exists after an install handoff completes.");
+      setElectronMigrationStatus("Requested Finder reveal for Micx.app.migrate-bak. The backup exists after an install handoff completes.");
     } catch (error) {
       setElectronMigrationStatus(error instanceof Error ? error.message : safeStringify(error));
     }
@@ -588,7 +588,7 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
 
   useEffect(() => {
     if (!developerMode || !isElectronRuntime()) return;
-    const bridge = window.__OPENWORK_ELECTRON__?.updater;
+    const bridge = window.__MICX_ELECTRON__?.updater;
     if (!bridge?.getChannel) return;
     let cancelled = false;
     void bridge.getChannel()
@@ -611,7 +611,7 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
       setElectronAlphaUpdaterStatus("Electron alpha updates are macOS-only for now.");
       return;
     }
-    const bridge = window.__OPENWORK_ELECTRON__?.updater;
+    const bridge = window.__MICX_ELECTRON__?.updater;
     if (!bridge?.setChannel) {
       setElectronAlphaUpdaterStatus("Electron updater bridge is unavailable.");
       return;
@@ -637,7 +637,7 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
       setElectronAlphaUpdaterStatus("Electron update checks are available only in the Electron desktop app.");
       return;
     }
-    const bridge = window.__OPENWORK_ELECTRON__?.updater;
+    const bridge = window.__MICX_ELECTRON__?.updater;
     if (!bridge?.check) {
       setElectronAlphaUpdaterStatus("Electron updater bridge is unavailable.");
       return;
@@ -713,7 +713,7 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
       );
     }
 
-    // Collect ALL local workspace paths so openwork-server is started with
+    // Collect ALL local workspace paths so micx-server is started with
     // --workspace <path> for every registered local workspace. Mirrors the
     // Solid reference (context/workspace.ts::resolveWorkspacePaths) so that
     // `client.listWorkspaces()` later returns the full set, not just the
@@ -738,15 +738,15 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
       runtime: "direct",
       workspacePaths,
       opencodeEnableExa: readOpencodeEnableExa(),
-      openworkRemoteAccess:
-        optionsRef.current.openworkServerSnapshot.openworkServerSettings
+      micxRemoteAccess:
+        optionsRef.current.micxServerSnapshot.micxServerSettings
           .remoteAccessEnabled === true,
     });
 
-    // engine_start restarts openwork-server on a NEW port and lets that server
+    // engine_start restarts micx-server on a NEW port and lets that server
     // manage OpenCode. Re-read host info and persist the fresh URL/token.
     try {
-      const hostInfo = (await openworkServerInfoCmd()) as {
+      const hostInfo = (await micxServerInfoCmd()) as {
         baseUrl?: string;
         ownerToken?: string;
         clientToken?: string;
@@ -755,7 +755,7 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
         remoteAccessEnabled?: boolean;
       } | null;
       if (hostInfo?.baseUrl) {
-        writeOpenworkServerSettings({
+        writeMicxServerSettings({
           urlOverride: hostInfo.baseUrl,
           token: hostInfo.ownerToken?.trim() || hostInfo.clientToken?.trim() || undefined,
           hostToken: hostInfo.hostToken?.trim() || undefined,
@@ -763,17 +763,17 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
           remoteAccessEnabled: hostInfo.remoteAccessEnabled === true,
         });
         if (typeof window !== "undefined") {
-          window.dispatchEvent(new CustomEvent("openwork-server-settings-changed"));
+          window.dispatchEvent(new CustomEvent("micx-server-settings-changed"));
         }
       }
     } catch {
       // best-effort: if this fails, the host-info poller will catch up in ~10s.
     }
 
-    await openworkServerStore.reconnectOpenworkServer();
+    await micxServerStore.reconnectMicxServer();
     await refreshEngineInfo();
     return info;
-  }, [openworkServerStore, refreshEngineInfo]);
+  }, [micxServerStore, refreshEngineInfo]);
 
   const onRestartOpencode = useCallback(async () => {
     if (!isDesktopRuntime()) return;
@@ -799,34 +799,34 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
     }
   }, [bootFullEngineStack, pushDeveloperLog]);
 
-  const onRestartOpenworkServer = useCallback(async () => {
+  const onRestartMicxServer = useCallback(async () => {
     if (!isDesktopRuntime()) return;
-    setOpenworkServerRestarting(true);
-    setOpenworkServiceStatus(null);
+    setMicxServerRestarting(true);
+    setMicxServiceStatus(null);
     setServiceRestartError(null);
     try {
-      await openworkServerRestartCmd({
-        remoteAccessEnabled: openworkServerSnapshot.openworkServerSettings.remoteAccessEnabled === true,
+      await micxServerRestartCmd({
+        remoteAccessEnabled: micxServerSnapshot.micxServerSettings.remoteAccessEnabled === true,
       });
-      setOpenworkServiceStatus({
+      setMicxServiceStatus({
         tone: "success",
-        message: t("settings.restart_succeeded_template", { service: "OpenWork server" }),
+        message: t("settings.restart_succeeded_template", { service: "Micx server" }),
       });
-      pushDeveloperLog("Restarted openwork-server");
-      await openworkServerStore.reconnectOpenworkServer();
+      pushDeveloperLog("Restarted micx-server");
+      await micxServerStore.reconnectMicxServer();
     } catch (error) {
       const message = error instanceof Error ? error.message : safeStringify(error);
-      setOpenworkServiceStatus({
+      setMicxServiceStatus({
         tone: "error",
-        message: `${t("settings.restart_failed_template", { service: "OpenWork server" })} ${message}`,
+        message: `${t("settings.restart_failed_template", { service: "Micx server" })} ${message}`,
       });
       setServiceRestartError(message);
     } finally {
-      setOpenworkServerRestarting(false);
+      setMicxServerRestarting(false);
     }
   }, [
-    openworkServerSnapshot.openworkServerSettings.remoteAccessEnabled,
-    openworkServerStore,
+    micxServerSnapshot.micxServerSettings.remoteAccessEnabled,
+    micxServerStore,
     pushDeveloperLog,
   ]);
 
@@ -864,7 +864,7 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
     }
     try {
       downloadTextAsFile(
-        `openwork-opencode-${new Date().toISOString().replace(/[:.]/g, "-")}.log`,
+        `micx-opencode-${new Date().toISOString().replace(/[:.]/g, "-")}.log`,
         text,
         "text/plain",
       );
@@ -874,39 +874,39 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
     }
   }, [engineInfoState?.lastStderr, engineInfoState?.lastStdout, formatServiceLogs]);
 
-  const onCopyOpenworkLogs = useCallback(async () => {
-    const info = openworkServerSnapshot.openworkServerHostInfo;
+  const onCopyMicxLogs = useCallback(async () => {
+    const info = micxServerSnapshot.micxServerHostInfo;
     const text = formatServiceLogs(info?.lastStdout, info?.lastStderr);
     if (!text) {
-      setOpenworkLogStatus(t("settings.no_logs_captured"));
+      setMicxLogStatus(t("settings.no_logs_captured"));
       return;
     }
     try {
       await navigator.clipboard.writeText(text);
-      setOpenworkLogStatus(t("settings.copied_service_logs", { service: "OpenWork server" }));
+      setMicxLogStatus(t("settings.copied_service_logs", { service: "Micx server" }));
     } catch (error) {
-      setOpenworkLogStatus(error instanceof Error ? error.message : safeStringify(error));
+      setMicxLogStatus(error instanceof Error ? error.message : safeStringify(error));
     }
-  }, [formatServiceLogs, openworkServerSnapshot.openworkServerHostInfo]);
+  }, [formatServiceLogs, micxServerSnapshot.micxServerHostInfo]);
 
-  const onExportOpenworkLogs = useCallback(async () => {
-    const info = openworkServerSnapshot.openworkServerHostInfo;
+  const onExportMicxLogs = useCallback(async () => {
+    const info = micxServerSnapshot.micxServerHostInfo;
     const text = formatServiceLogs(info?.lastStdout, info?.lastStderr);
     if (!text) {
-      setOpenworkLogStatus(t("settings.no_logs_captured"));
+      setMicxLogStatus(t("settings.no_logs_captured"));
       return;
     }
     try {
       downloadTextAsFile(
-        `openwork-server-${new Date().toISOString().replace(/[:.]/g, "-")}.log`,
+        `micx-server-${new Date().toISOString().replace(/[:.]/g, "-")}.log`,
         text,
         "text/plain",
       );
-      setOpenworkLogStatus(t("settings.exported_developer_log"));
+      setMicxLogStatus(t("settings.exported_developer_log"));
     } catch (error) {
-      setOpenworkLogStatus(error instanceof Error ? error.message : safeStringify(error));
+      setMicxLogStatus(error instanceof Error ? error.message : safeStringify(error));
     }
-  }, [formatServiceLogs, openworkServerSnapshot.openworkServerHostInfo]);
+  }, [formatServiceLogs, micxServerSnapshot.micxServerHostInfo]);
 
   const [resetStatus, setResetStatus] = useState<string | null>(null);
 
@@ -915,22 +915,22 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
       if (!isDesktopRuntime()) return;
       const message =
         mode === "all"
-          ? "Reset ALL OpenWork app data? Open sessions and workspaces will be removed."
+          ? "Reset ALL Micx app data? Open sessions and workspaces will be removed."
           : "Reset onboarding state only?";
       if (typeof window !== "undefined" && !window.confirm(message)) {
         return;
       }
       setResetModalBusy(true);
       setResetStatus(null);
-      void resetOpenworkState(mode)
+      void resetMicxState(mode)
         .then(async () => {
-          clearOpenworkLocalStorageForReset(mode);
+          clearMicxLocalStorageForReset(mode);
           setResetStatus(
             mode === "all"
-              ? "Reset OpenWork state. Restart the app to see changes."
+              ? "Reset Micx state. Restart the app to see changes."
               : "Reset onboarding state. Restart the app to see changes.",
           );
-          pushDeveloperLog(`reset_openwork_state mode=${mode}`);
+          pushDeveloperLog(`reset_micx_state mode=${mode}`);
         })
         .catch((error) => {
           setRouteError(error instanceof Error ? error.message : safeStringify(error));
@@ -947,7 +947,7 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
     setNukePreviewBusy(true);
     setNukeConfigStatus(null);
     try {
-      const preview = await nukeOpenworkAndOpencodeConfigPreview({ preserveBootstrap: true });
+      const preview = await nukeMicxAndOpencodeConfigPreview({ preserveBootstrap: true });
       setNukeManifestPreview(preview);
       setNukeConfirmationText("");
       setNukeDeleteBootstrap(false);
@@ -965,7 +965,7 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
     setNukePreviewBusy(true);
     setNukeConfigStatus(null);
     try {
-      const preview = await nukeOpenworkAndOpencodeConfigPreview({ preserveBootstrap: !deleteBootstrap });
+      const preview = await nukeMicxAndOpencodeConfigPreview({ preserveBootstrap: !deleteBootstrap });
       setNukeManifestPreview(preview);
     } catch (error) {
       setNukeDeleteBootstrap(!deleteBootstrap);
@@ -980,13 +980,13 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
     setNukeDialogOpen(false);
   }, [nukeConfigBusy]);
 
-  const onConfirmNukeOpenworkAndOpencodeConfig = useCallback(async () => {
+  const onConfirmNukeMicxAndOpencodeConfig = useCallback(async () => {
     if (!isDesktopRuntime() || nukeConfirmationText.trim().toUpperCase() !== NUKE_CONFIRMATION_WORD) return;
     setNukeConfigBusy(true);
     setNukeConfigStatus(null);
     try {
       await revokeDenSessionBeforeNuke();
-      await nukeOpenworkAndOpencodeConfigAndExit({ preserveBootstrap: !nukeDeleteBootstrap });
+      await nukeMicxAndOpencodeConfigAndExit({ preserveBootstrap: !nukeDeleteBootstrap });
     } catch (error) {
       setNukeConfigStatus(error instanceof Error ? error.message : safeStringify(error));
       setNukeConfigBusy(false);
@@ -1008,8 +1008,8 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
       anyActiveRuns: false,
       startupPreference: "server",
       startupLabel:
-        openworkServerSnapshot.openworkServerStatus === "connected"
-          ? t("settings.openwork_server_label")
+        micxServerSnapshot.micxServerStatus === "connected"
+          ? t("settings.micx_server_label")
           : t("status.disconnected_label"),
       runtimeSummary,
       runtimeDebugReportJson,
@@ -1061,34 +1061,34 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
       startupStatus,
       workspaceDebugEventsStatus,
       opencodeRestarting,
-      openworkServerRestarting,
+      micxServerRestarting,
       opencodeServiceStatus,
-      openworkServiceStatus,
+      micxServiceStatus,
       opencodeLogStatus,
-      openworkLogStatus,
+      micxLogStatus,
       onCopyOpencodeLogs,
       onExportOpencodeLogs,
-      onCopyOpenworkLogs,
-      onExportOpenworkLogs,
+      onCopyMicxLogs,
+      onExportMicxLogs,
       serviceRestartError,
       onRestartOpencode,
-      onRestartOpenworkServer,
+      onRestartMicxServer,
       engineCard,
       opencodeConnectCard,
-      openworkCard,
-      openworkServerDiagnostics: openworkServerSnapshot.openworkServerDiagnostics,
+      micxCard,
+      micxServerDiagnostics: micxServerSnapshot.micxServerDiagnostics,
       runtimeWorkspaceId,
-      openworkServerCapabilities: openworkServerSnapshot.openworkServerCapabilities,
+      micxServerCapabilities: micxServerSnapshot.micxServerCapabilities,
       pendingPermissions: {},
       events: [],
       workspaceDebugEvents: [],
       safeStringify,
       onClearWorkspaceDebugEvents,
-      openworkAuditEntries: openworkServerSnapshot.openworkAuditEntries,
-      openworkAuditStatus: auditStatusPill(openworkServerSnapshot.openworkAuditStatus),
-      openworkAuditError: openworkServerSnapshot.openworkAuditError,
+      micxAuditEntries: micxServerSnapshot.micxAuditEntries,
+      micxAuditStatus: auditStatusPill(micxServerSnapshot.micxAuditStatus),
+      micxAuditError: micxServerSnapshot.micxAuditError,
       opencodeConnectStatus: null,
-      opencodeDevModeEnabled: appBuild?.openworkDevMode === true,
+      opencodeDevModeEnabled: appBuild?.micxDevMode === true,
       nukeConfigBusy,
       nukeConfigStatus,
       nukePreviewBusy,
@@ -1100,10 +1100,10 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
       onCloseNukeDialog,
       onSetNukeConfirmationText: setNukeConfirmationText,
       onSetNukeDeleteBootstrap,
-      onConfirmNukeOpenworkAndOpencodeConfig,
+      onConfirmNukeMicxAndOpencodeConfig,
     }),
     [
-      appBuild?.openworkDevMode,
+      appBuild?.micxDevMode,
       developerLog,
       developerLogStatus,
       developerMode,
@@ -1138,7 +1138,7 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
       onExportRuntimeDebugReport,
       onInstallElectronPreviewFromTauri,
       onCheckElectronAlphaUpdates,
-      onConfirmNukeOpenworkAndOpencodeConfig,
+      onConfirmNukeMicxAndOpencodeConfig,
       onOpenElectronPreviewRelease,
       onOpenNukeDialog,
       onOpenResetModal,
@@ -1148,33 +1148,33 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
       onRevealElectronMigrationBackup,
       onResetStartupPreference,
       onRestartOpencode,
-      onRestartOpenworkServer,
+      onRestartMicxServer,
       onSetElectronAlphaUpdaterChannel,
       onSetElectronMigrationSha512,
       onSetElectronMigrationUrl,
       onSetEngineSource,
       onStopHost,
       onCopyOpencodeLogs,
-      onCopyOpenworkLogs,
+      onCopyMicxLogs,
       onExportOpencodeLogs,
-      onExportOpenworkLogs,
+      onExportMicxLogs,
       opencodeConnectCard,
       opencodeLogStatus,
       opencodeRestarting,
       opencodeServiceStatus,
-      openworkCard,
-      openworkLogStatus,
-      openworkServiceStatus,
-      openworkServerRestarting,
+      micxCard,
+      micxLogStatus,
+      micxServiceStatus,
+      micxServerRestarting,
       resetStatus,
       startupStatus,
       workspaceDebugEventsStatus,
-      openworkServerSnapshot.openworkAuditEntries,
-      openworkServerSnapshot.openworkAuditError,
-      openworkServerSnapshot.openworkAuditStatus,
-      openworkServerSnapshot.openworkServerCapabilities,
-      openworkServerSnapshot.openworkServerDiagnostics,
-      openworkServerSnapshot.openworkServerStatus,
+      micxServerSnapshot.micxAuditEntries,
+      micxServerSnapshot.micxAuditError,
+      micxServerSnapshot.micxAuditStatus,
+      micxServerSnapshot.micxServerCapabilities,
+      micxServerSnapshot.micxServerDiagnostics,
+      micxServerSnapshot.micxServerStatus,
       resetModalBusy,
       runtimeConfigStatus,
       runtimeConfigStatusError,

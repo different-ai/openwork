@@ -1,7 +1,7 @@
 import { describeRoute } from "hono-openapi"
 import type { Hono } from "hono"
 import { resolver } from "hono-openapi"
-import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
+import { normalizeDenTypeId } from "@micx-ee/utils/typeid"
 import { z } from "zod"
 import { auth } from "../../auth.js"
 import { deleteScimProvisionedAccessForProvider, recordScimSyncFailure, recordScimSyncFailureFromBearerToken, resolveScimProviderFromBearerToken, syncExternalIdentityFromScimResource, syncExternalIdentityFromScimUserId } from "../../scim.js"

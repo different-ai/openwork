@@ -13,7 +13,7 @@ describe("resolveModelPickerEmptyState", () => {
       query: "",
       organizationModelsEmpty: true,
       restrictToCloud: true,
-      organizationModelsSettingsUrl: "https://app.openworklabs.com/dashboard/custom-llm-providers",
+      organizationModelsSettingsUrl: "https://app.micxlabs.com/dashboard/custom-llm-providers",
     });
 
     expect(state?.messageKey).toBe("models.organization_models_empty");

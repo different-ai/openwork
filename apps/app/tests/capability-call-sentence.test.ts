@@ -6,7 +6,7 @@ import { getCapabilityCallQuote, getCapabilityCallSentence } from "@/lib/capabil
 function executeCapability(input: unknown): DynamicToolUIPart {
   return {
     type: "dynamic-tool",
-    toolName: "openwork-cloud_execute_capability",
+    toolName: "micx-cloud_execute_capability",
     toolCallId: "call_test",
     state: "output-error",
     input,

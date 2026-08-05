@@ -94,7 +94,7 @@ export function SsoScreen() {
   function getOrgScopedHeaders() {
     const headers = new Headers();
     if (orgId) {
-      headers.set("x-openwork-legacy-org-id", orgId);
+      headers.set("x-micx-legacy-org-id", orgId);
     }
     return headers;
   }
@@ -356,7 +356,7 @@ export function SsoScreen() {
                     </label>
                     <label className="block text-[14px] text-gray-700 md:col-span-2">
                       <span className="mb-2 block font-medium">Audience URL</span>
-                      <input className="w-full rounded-[18px] border border-gray-200 px-4 py-3" value={audience} onChange={(event) => setAudience(event.target.value)} placeholder="Defaults to the OpenWork auth URL" disabled={ssoFormDisabled} />
+                      <input className="w-full rounded-[18px] border border-gray-200 px-4 py-3" value={audience} onChange={(event) => setAudience(event.target.value)} placeholder="Defaults to the Micx auth URL" disabled={ssoFormDisabled} />
                     </label>
                     <label className="block text-[14px] text-gray-700 md:col-span-2">
                       <span className="mb-2 block font-medium">IdP Certificate</span>
@@ -364,7 +364,7 @@ export function SsoScreen() {
                       <span className="mt-1 block text-[12px] text-gray-500">Certificates are not returned after save; enter a replacement only when editing.</span>
                     </label>
                     <div className="rounded-[18px] border border-gray-200 px-4 py-3 text-[14px] leading-6 text-gray-600 md:col-span-2">
-                      OpenWork always requires signed SAML assertions, timestamps, and SP-initiated responses for organization SAML connections.
+                      Micx always requires signed SAML assertions, timestamps, and SP-initiated responses for organization SAML connections.
                     </div>
                   </>
                 ) : (

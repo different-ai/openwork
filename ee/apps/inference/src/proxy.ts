@@ -149,17 +149,17 @@ function validateModelSelection(json: JsonObject) {
   return null
 }
 
-function sanitizeHeaders(request: Request, apiKey: string, openworkRequestId: string) {
+function sanitizeHeaders(request: Request, apiKey: string, micxRequestId: string) {
   const headers = new Headers()
   const accept = request.headers.get("accept")
   if (accept) headers.set("accept", accept)
   headers.set("authorization", `Bearer ${apiKey}`)
   headers.set("content-type", "application/json")
-  headers.set("x-openwork-request-id", openworkRequestId)
+  headers.set("x-micx-request-id", micxRequestId)
   if (env.proxyBaseUrl) {
     headers.set("http-referer", env.proxyBaseUrl)
   }
-  headers.set("x-title", "OpenWork Inference")
+  headers.set("x-title", "Micx Inference")
   return headers
 }
 
@@ -174,7 +174,7 @@ function logProxyError(message: string, details: Record<string, unknown>) {
 async function logUpstreamError(input: {
   upstream: Response
   upstreamUrl: URL
-  openworkRequestId: string
+  micxRequestId: string
   organizationId: string
   orgMembershipId: string
   inferenceKeyId: string
@@ -195,7 +195,7 @@ async function logUpstreamError(input: {
   }
 
   logProxyError("Upstream OpenRouter request failed", {
-    openworkRequestId: input.openworkRequestId,
+    micxRequestId: input.micxRequestId,
     organizationId: input.organizationId,
     orgMembershipId: input.orgMembershipId,
     inferenceKeyId: input.inferenceKeyId,
@@ -211,7 +211,7 @@ async function logUpstreamError(input: {
     organizationId: input.organizationId,
     orgMembershipId: input.orgMembershipId,
     inferenceKeyId: input.inferenceKeyId,
-    openworkRequestId: input.openworkRequestId,
+    micxRequestId: input.micxRequestId,
     route: input.route,
     method: input.method,
     headers: input.headers,
@@ -260,7 +260,7 @@ async function prepareBody(request: Request, input: {
   organizationId: string
   orgMembershipId: string
   inferenceKeyId: string
-  openworkRequestId: string
+  micxRequestId: string
   route: string
   method: string
   headers: Record<string, string>
@@ -272,7 +272,7 @@ async function prepareBody(request: Request, input: {
       organizationId: input.organizationId,
       orgMembershipId: input.orgMembershipId,
       inferenceKeyId: input.inferenceKeyId,
-      openworkRequestId: input.openworkRequestId,
+      micxRequestId: input.micxRequestId,
       route: input.route,
       method: input.method,
       headers: input.headers,
@@ -286,7 +286,7 @@ async function prepareBody(request: Request, input: {
       organizationId: input.organizationId,
       orgMembershipId: input.orgMembershipId,
       inferenceKeyId: input.inferenceKeyId,
-      openworkRequestId: input.openworkRequestId,
+      micxRequestId: input.micxRequestId,
       route: input.route,
       method: input.method,
       headers: input.headers,
@@ -307,7 +307,7 @@ async function prepareBody(request: Request, input: {
       organizationId: input.organizationId,
       orgMembershipId: input.orgMembershipId,
       inferenceKeyId: input.inferenceKeyId,
-      openworkRequestId: input.openworkRequestId,
+      micxRequestId: input.micxRequestId,
       route: input.route,
       method: input.method,
       headers: input.headers,
@@ -317,7 +317,7 @@ async function prepareBody(request: Request, input: {
       payload: payloadLog.payload,
     })
     logProxyError("Invalid JSON inference request body", {
-      openworkRequestId: input.openworkRequestId,
+      micxRequestId: input.micxRequestId,
       organizationId: input.organizationId,
       orgMembershipId: input.orgMembershipId,
       inferenceKeyId: input.inferenceKeyId,
@@ -328,7 +328,7 @@ async function prepareBody(request: Request, input: {
       organizationId: input.organizationId,
       orgMembershipId: input.orgMembershipId,
       inferenceKeyId: input.inferenceKeyId,
-      openworkRequestId: input.openworkRequestId,
+      micxRequestId: input.micxRequestId,
       route: input.route,
       method: input.method,
       headers: input.headers,
@@ -346,7 +346,7 @@ async function prepareBody(request: Request, input: {
     organizationId: input.organizationId,
     orgMembershipId: input.orgMembershipId,
     inferenceKeyId: input.inferenceKeyId,
-    openworkRequestId: input.openworkRequestId,
+    micxRequestId: input.micxRequestId,
     route: input.route,
     method: input.method,
     headers: input.headers,
@@ -358,7 +358,7 @@ async function prepareBody(request: Request, input: {
 
   if (!isJsonObject(json)) {
     logProxyError("Missing model in JSON request body", {
-      openworkRequestId: input.openworkRequestId,
+      micxRequestId: input.micxRequestId,
       organizationId: input.organizationId,
       orgMembershipId: input.orgMembershipId,
       inferenceKeyId: input.inferenceKeyId,
@@ -368,7 +368,7 @@ async function prepareBody(request: Request, input: {
       organizationId: input.organizationId,
       orgMembershipId: input.orgMembershipId,
       inferenceKeyId: input.inferenceKeyId,
-      openworkRequestId: input.openworkRequestId,
+      micxRequestId: input.micxRequestId,
       route: input.route,
       method: input.method,
       headers: input.headers,
@@ -382,7 +382,7 @@ async function prepareBody(request: Request, input: {
   const blockedSelection = validateModelSelection(json)
   if (blockedSelection) {
     logProxyError("Unsupported OpenRouter model selection feature", {
-      openworkRequestId: input.openworkRequestId,
+      micxRequestId: input.micxRequestId,
       organizationId: input.organizationId,
       orgMembershipId: input.orgMembershipId,
       blockedSelection,
@@ -392,7 +392,7 @@ async function prepareBody(request: Request, input: {
       organizationId: input.organizationId,
       orgMembershipId: input.orgMembershipId,
       inferenceKeyId: input.inferenceKeyId,
-      openworkRequestId: input.openworkRequestId,
+      micxRequestId: input.micxRequestId,
       route: input.route,
       method: input.method,
       headers: input.headers,
@@ -400,12 +400,12 @@ async function prepareBody(request: Request, input: {
       resolvedUpstreamModel: model ? model.upstreamModel : null,
       status: 400,
     })
-    return { error: openAiError(400, "unsupported_model_selection", `OpenWork inference does not allow alternate model selection (${blockedSelection}).`), incomingModel: requestedModel, upstreamModel: model ? model.upstreamModel : null }
+    return { error: openAiError(400, "unsupported_model_selection", `Micx inference does not allow alternate model selection (${blockedSelection}).`), incomingModel: requestedModel, upstreamModel: model ? model.upstreamModel : null }
   }
 
   if (requestedModel === null) {
     logProxyError("Missing model in JSON request body", {
-      openworkRequestId: input.openworkRequestId,
+      micxRequestId: input.micxRequestId,
       organizationId: input.organizationId,
       orgMembershipId: input.orgMembershipId,
       inferenceKeyId: input.inferenceKeyId,
@@ -415,7 +415,7 @@ async function prepareBody(request: Request, input: {
       organizationId: input.organizationId,
       orgMembershipId: input.orgMembershipId,
       inferenceKeyId: input.inferenceKeyId,
-      openworkRequestId: input.openworkRequestId,
+      micxRequestId: input.micxRequestId,
       route: input.route,
       method: input.method,
       headers: input.headers,
@@ -428,8 +428,8 @@ async function prepareBody(request: Request, input: {
 
   const body = json
   if (!model) {
-    logProxyError("Unknown OpenWork model alias", {
-      openworkRequestId: input.openworkRequestId,
+    logProxyError("Unknown Micx model alias", {
+      micxRequestId: input.micxRequestId,
       organizationId: input.organizationId,
       orgMembershipId: input.orgMembershipId,
       inferenceKeyId: input.inferenceKeyId,
@@ -440,7 +440,7 @@ async function prepareBody(request: Request, input: {
       organizationId: input.organizationId,
       orgMembershipId: input.orgMembershipId,
       inferenceKeyId: input.inferenceKeyId,
-      openworkRequestId: input.openworkRequestId,
+      micxRequestId: input.micxRequestId,
       route: input.route,
       method: input.method,
       headers: input.headers,
@@ -448,19 +448,19 @@ async function prepareBody(request: Request, input: {
       resolvedUpstreamModel: null,
       status: 404,
     })
-    return { error: openAiError(404, "model_not_found", `Unknown OpenWork model alias: ${requestedModel}`), incomingModel: requestedModel, upstreamModel: null }
+    return { error: openAiError(404, "model_not_found", `Unknown Micx model alias: ${requestedModel}`), incomingModel: requestedModel, upstreamModel: null }
   }
 
   body.model = model.upstreamModel
   body.user = input.orgMembershipId
-  body.session_id = input.openworkRequestId
+  body.session_id = input.micxRequestId
   body.trace = {
-    trace_id: input.openworkRequestId,
-    trace_name: "OpenWork Inference",
+    trace_id: input.micxRequestId,
+    trace_name: "Micx Inference",
     generation_name: model.alias,
     org_membership_id: input.orgMembershipId,
     inference_key_id: input.inferenceKeyId,
-    openwork_request_id: input.openworkRequestId,
+    micx_request_id: input.micxRequestId,
   }
 
   return {
@@ -478,7 +478,7 @@ function listOpenAiModels() {
       id: model.alias,
       object: "model",
       created: 0,
-      owned_by: "openwork",
+      owned_by: "micx",
     })),
   }
 }
@@ -490,7 +490,7 @@ function localRouteRejection(path: string, method: string) {
   if (path === modelsPath) {
     return openAiError(405, "method_not_allowed", `Method ${method} is not allowed for ${path}. Use GET.`)
   }
-  return openAiError(404, "not_found", `Unsupported OpenWork inference route: ${method} ${path}.`)
+  return openAiError(404, "not_found", `Unsupported Micx inference route: ${method} ${path}.`)
 }
 
 export function registerProxyRoutes(app: Hono, dependencies: ProxyDependencies = defaultProxyDependencies) {
@@ -500,13 +500,13 @@ export function registerProxyRoutes(app: Hono, dependencies: ProxyDependencies =
     const rawKey = readApiKey(c.req.raw)
     if (!rawKey) {
       logProxyError("Missing inference API key", { path: c.req.path, method: c.req.method })
-      return c.json({ error: { message: "Missing OpenWork inference API key.", type: "authentication_error", code: "missing_api_key" } }, 401)
+      return c.json({ error: { message: "Missing Micx inference API key.", type: "authentication_error", code: "missing_api_key" } }, 401)
     }
 
     const inferenceKey = await dependencies.findActiveInferenceKey(rawKey)
     if (!inferenceKey) {
       logProxyError("Invalid inference API key", { path: c.req.path, method: c.req.method })
-      return c.json({ error: { message: "Invalid OpenWork inference API key.", type: "authentication_error", code: "invalid_api_key" } }, 401)
+      return c.json({ error: { message: "Invalid Micx inference API key.", type: "authentication_error", code: "invalid_api_key" } }, 401)
     }
 
     if (c.req.path === modelsPath && c.req.method === "GET") {
@@ -517,7 +517,7 @@ export function registerProxyRoutes(app: Hono, dependencies: ProxyDependencies =
       return localRouteRejection(c.req.path, c.req.method)
     }
 
-    const openworkRequestId = buildRequestId()
+    const micxRequestId = buildRequestId()
     const incomingHeaders = sanitizeIncomingHeaders(c.req.raw.headers)
 
     if (new URL(c.req.url).search) {
@@ -526,7 +526,7 @@ export function registerProxyRoutes(app: Hono, dependencies: ProxyDependencies =
         organizationId: inferenceKey.organization_id,
         orgMembershipId: inferenceKey.org_membership_id,
         inferenceKeyId: inferenceKey.id,
-        openworkRequestId,
+        micxRequestId,
         route: c.req.path,
         method: c.req.method,
         headers: incomingHeaders,
@@ -540,7 +540,7 @@ export function registerProxyRoutes(app: Hono, dependencies: ProxyDependencies =
         organizationId: inferenceKey.organization_id,
         orgMembershipId: inferenceKey.org_membership_id,
         inferenceKeyId: inferenceKey.id,
-        openworkRequestId,
+        micxRequestId,
         route: c.req.path,
         method: c.req.method,
         headers: incomingHeaders,
@@ -548,14 +548,14 @@ export function registerProxyRoutes(app: Hono, dependencies: ProxyDependencies =
         resolvedUpstreamModel: null,
         status: 400,
       })
-      return openAiError(400, "unsupported_query_parameters", "OpenWork chat completions does not accept query parameters.")
+      return openAiError(400, "unsupported_query_parameters", "Micx chat completions does not accept query parameters.")
     }
 
     const prepared = await prepareBody(c.req.raw, {
       organizationId: inferenceKey.organization_id,
       orgMembershipId: inferenceKey.org_membership_id,
       inferenceKeyId: inferenceKey.id,
-      openworkRequestId,
+      micxRequestId,
       route: c.req.path,
       method: c.req.method,
       headers: incomingHeaders,
@@ -563,7 +563,7 @@ export function registerProxyRoutes(app: Hono, dependencies: ProxyDependencies =
     })
     if ("error" in prepared) {
       logProxyError("Invalid inference proxy request", {
-        openworkRequestId,
+        micxRequestId,
         path: c.req.path,
         organizationId: inferenceKey.organization_id,
         orgMembershipId: inferenceKey.org_membership_id,
@@ -573,8 +573,8 @@ export function registerProxyRoutes(app: Hono, dependencies: ProxyDependencies =
 
     const limits = await dependencies.ensureUsableBuckets(inferenceKey.organization_id)
     if (!limits.ok) {
-      c.header("x-openwork-limit-bucket-id", limits.limitedBy)
-      c.header("x-openwork-limit-window-type", limits.windowType)
+      c.header("x-micx-limit-bucket-id", limits.limitedBy)
+      c.header("x-micx-limit-window-type", limits.windowType)
       const limitedBucket = "limitedBucket" in limits ? limits.limitedBucket : null
       if (limitedBucket) {
         const retryAfter = secondsUntil(limitedBucket.windowEndAt)
@@ -600,14 +600,14 @@ export function registerProxyRoutes(app: Hono, dependencies: ProxyDependencies =
         organizationId: inferenceKey.organization_id,
         orgMembershipId: inferenceKey.org_membership_id,
         inferenceKeyId: inferenceKey.id,
-        openworkRequestId,
+        micxRequestId,
       })
       reporter.handledError({
         reason: "missing_provider_key",
         organizationId: inferenceKey.organization_id,
         orgMembershipId: inferenceKey.org_membership_id,
         inferenceKeyId: inferenceKey.id,
-        openworkRequestId,
+        micxRequestId,
         route: c.req.path,
         method: c.req.method,
         headers: incomingHeaders,
@@ -624,14 +624,14 @@ export function registerProxyRoutes(app: Hono, dependencies: ProxyDependencies =
     try {
       const upstreamInit: ProxyRequestInit = {
         method: c.req.method,
-        headers: sanitizeHeaders(c.req.raw, providerKey.encrypted_api_key, openworkRequestId),
+        headers: sanitizeHeaders(c.req.raw, providerKey.encrypted_api_key, micxRequestId),
         body: prepared.body,
         duplex: "half",
       }
       upstream = await dependencies.fetch(upstreamUrl, upstreamInit)
     } catch (error) {
       logProxyError("Failed to reach OpenRouter upstream", {
-        openworkRequestId,
+        micxRequestId,
         organizationId: inferenceKey.organization_id,
         orgMembershipId: inferenceKey.org_membership_id,
         inferenceKeyId: inferenceKey.id,
@@ -645,7 +645,7 @@ export function registerProxyRoutes(app: Hono, dependencies: ProxyDependencies =
         organizationId: inferenceKey.organization_id,
         orgMembershipId: inferenceKey.org_membership_id,
         inferenceKeyId: inferenceKey.id,
-        openworkRequestId,
+        micxRequestId,
         route: c.req.path,
         method: c.req.method,
         headers: incomingHeaders,
@@ -663,7 +663,7 @@ export function registerProxyRoutes(app: Hono, dependencies: ProxyDependencies =
       await logUpstreamError({
         upstream,
         upstreamUrl,
-        openworkRequestId,
+        micxRequestId,
         organizationId: inferenceKey.organization_id,
         orgMembershipId: inferenceKey.org_membership_id,
         inferenceKeyId: inferenceKey.id,
@@ -678,7 +678,7 @@ export function registerProxyRoutes(app: Hono, dependencies: ProxyDependencies =
     }
 
     const headers = new Headers(upstream.headers)
-    headers.set("x-openwork-request-id", openworkRequestId)
+    headers.set("x-micx-request-id", micxRequestId)
     return new Response(trackStream(
       upstream.body,
       async () => {},

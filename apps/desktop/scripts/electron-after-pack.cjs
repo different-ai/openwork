@@ -2,7 +2,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { spawnSync } = require("node:child_process");
 
-const computerUseHelperAppName = "OpenWork Computer Use.app";
+const computerUseHelperAppName = "Micx Computer Use.app";
 
 const sidecarBases = [
   "opencode",
@@ -53,7 +53,7 @@ function signComputerUseHelper(context) {
     throw new Error(`Missing Computer Use helper app at ${helperPath}`);
   }
 
-  const identity = process.env.OPENWORK_COMPUTER_USE_CODESIGN_IDENTITY
+  const identity = process.env.MICX_COMPUTER_USE_CODESIGN_IDENTITY
     || process.env.CSC_NAME
     || process.env.APPLE_CODESIGN_IDENTITY
     || "-";

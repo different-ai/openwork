@@ -1,34 +1,34 @@
 import { z } from "zod"
 
 import {
-  openworkAffordanceDescriptorSchema,
-  openworkProviderRefSchema,
-} from "./openwork-affordance.js"
+  micxAffordanceDescriptorSchema,
+  micxProviderRefSchema,
+} from "./micx-affordance.js"
 
-export const openworkGuidanceDescriptorSchema = z.object({
+export const micxGuidanceDescriptorSchema = z.object({
   ref: z.string().trim().min(1),
   title: z.string().trim().min(1),
   description: z.string().trim().min(1),
-  provider: openworkProviderRefSchema,
+  provider: micxProviderRefSchema,
   loading: z.enum(["eager", "catalog", "on-demand"]),
 })
-export type OpenworkGuidanceDescriptor = z.infer<typeof openworkGuidanceDescriptorSchema>
+export type MicxGuidanceDescriptor = z.infer<typeof micxGuidanceDescriptorSchema>
 
-export const openworkFeatureContributionSchema = z.object({
+export const micxFeatureContributionSchema = z.object({
   featureId: z.string().trim().min(1),
-  provider: openworkProviderRefSchema,
-  affordances: z.array(openworkAffordanceDescriptorSchema),
-  guidance: z.array(openworkGuidanceDescriptorSchema),
+  provider: micxProviderRefSchema,
+  affordances: z.array(micxAffordanceDescriptorSchema),
+  guidance: z.array(micxGuidanceDescriptorSchema),
 })
-export type OpenworkFeatureContribution = z.infer<typeof openworkFeatureContributionSchema>
+export type MicxFeatureContribution = z.infer<typeof micxFeatureContributionSchema>
 
-export const openworkProviderCatalogSchema = z.object({
+export const micxProviderCatalogSchema = z.object({
   schemaVersion: z.literal(1),
-  contributions: z.array(openworkFeatureContributionSchema),
+  contributions: z.array(micxFeatureContributionSchema),
 })
-export type OpenworkProviderCatalog = z.infer<typeof openworkProviderCatalogSchema>
+export type MicxProviderCatalog = z.infer<typeof micxProviderCatalogSchema>
 
-export const openworkCapabilityResultSchema = z.discriminatedUnion("status", [
+export const micxCapabilityResultSchema = z.discriminatedUnion("status", [
   z.object({
     status: z.literal("completed"),
     data: z.unknown(),
@@ -49,4 +49,4 @@ export const openworkCapabilityResultSchema = z.discriminatedUnion("status", [
     retryable: z.boolean(),
   }),
 ])
-export type OpenworkCapabilityResult = z.infer<typeof openworkCapabilityResultSchema>
+export type MicxCapabilityResult = z.infer<typeof micxCapabilityResultSchema>

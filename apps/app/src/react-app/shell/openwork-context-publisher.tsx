@@ -4,11 +4,11 @@ import { useLocation } from "react-router-dom";
 
 import { usePanelTabStore } from "../domains/session/panel/panel-tab-store";
 import { useWorkbenchStore } from "../domains/session/chat/workbench-store";
-import { usePublishOpenworkContext } from "./control/control-provider";
-import { buildOpenworkContext } from "./openwork-context-projector";
+import { usePublishMicxContext } from "./control/control-provider";
+import { buildMicxContext } from "./micx-context-projector";
 import { useUiStateStore } from "./ui-state-store";
 
-export function OpenworkContextPublisher() {
+export function MicxContextPublisher() {
   const location = useLocation();
   const revision = useWorkbenchStore((state) => state.revision);
   const workspaceId = useWorkbenchStore((state) => state.workspaceId);
@@ -24,7 +24,7 @@ export function OpenworkContextPublisher() {
   const panelSessions = usePanelTabStore((state) => state.sessions);
   const route = `${location.pathname}${location.search}${location.hash}`;
 
-  const context = useMemo(() => buildOpenworkContext({
+  const context = useMemo(() => buildMicxContext({
     route,
     revision,
     capturedAt: new Date().toISOString(),
@@ -61,6 +61,6 @@ export function OpenworkContextPublisher() {
     workspaceRightSidebarExpanded,
   ]);
 
-  usePublishOpenworkContext(context);
+  usePublishMicxContext(context);
   return null;
 }

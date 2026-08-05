@@ -1,5 +1,5 @@
-import { and, eq, isNull } from "@openwork-ee/den-db/drizzle"
-import { MemberTable } from "@openwork-ee/den-db/schema"
+import { and, eq, isNull } from "@micx-ee/den-db/drizzle"
+import { MemberTable } from "@micx-ee/den-db/schema"
 import { revokeOrganizationApiKeysForMember } from "./api-keys.js"
 import { revokeMembershipSessionCredentials } from "./credential-revocation.js"
 import { db } from "./db.js"

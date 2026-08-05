@@ -2,8 +2,8 @@ import { spawn } from "node:child_process";
 
 const COMMAND_TIMEOUT_MS = 10_000;
 const OUTPUT_LIMIT_CHARS = 8 * 1024 * 1024;
-const WINDOWS_CERT_BEGIN = "-----OPENWORK-CERTIFICATE-----";
-const WINDOWS_CERT_END = "-----END-OPENWORK-CERTIFICATE-----";
+const WINDOWS_CERT_BEGIN = "-----MICX-CERTIFICATE-----";
+const WINDOWS_CERT_END = "-----END-MICX-CERTIFICATE-----";
 const PEM_CERT_PATTERN = /-----BEGIN CERTIFICATE-----[\s\S]+?-----END CERTIFICATE-----/g;
 
 /**

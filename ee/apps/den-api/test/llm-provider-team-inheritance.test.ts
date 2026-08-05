@@ -1,11 +1,11 @@
 import { afterAll, beforeAll, expect, mock, test } from "bun:test"
-import { createDenTypeId } from "@openwork-ee/utils/typeid"
+import { createDenTypeId } from "@micx-ee/utils/typeid"
 import { serializeSignedCookie } from "better-call"
 
 const API_ORIGIN = "http://127.0.0.1:8790"
 
 function seedRequiredEnv() {
-  process.env.DATABASE_URL = process.env.DATABASE_URL ?? "mysql://root:password@127.0.0.1:3306/openwork_test_model_team_inheritance"
+  process.env.DATABASE_URL = process.env.DATABASE_URL ?? "mysql://root:password@127.0.0.1:3306/micx_test_model_team_inheritance"
   process.env.DEN_DB_ENCRYPTION_KEY = process.env.DEN_DB_ENCRYPTION_KEY ?? "local-dev-db-encryption-key-please-change-1234567890"
   process.env.BETTER_AUTH_SECRET = process.env.BETTER_AUTH_SECRET ?? "y".repeat(32)
   process.env.BETTER_AUTH_URL = process.env.BETTER_AUTH_URL ?? API_ORIGIN
@@ -40,8 +40,8 @@ function providerId(payload: unknown) {
 
 let app: typeof import("../src/app.js").default
 let db: typeof import("../src/db.js").db
-let schema: typeof import("@openwork-ee/den-db/schema")
-let drizzle: typeof import("@openwork-ee/den-db/drizzle")
+let schema: typeof import("@micx-ee/den-db/schema")
+let drizzle: typeof import("@micx-ee/den-db/drizzle")
 
 const ownerUserId = createDenTypeId("user")
 const futureUserId = createDenTypeId("user")
@@ -64,7 +64,7 @@ beforeAll(async () => {
   seedRequiredEnv()
   mock.restore()
 
-  const realDb = (await import("@openwork-ee/den-db")).createDenDb({
+  const realDb = (await import("@micx-ee/den-db")).createDenDb({
     databaseUrl: process.env.DATABASE_URL,
     mode: "mysql",
   }).db
@@ -73,8 +73,8 @@ beforeAll(async () => {
   const [appModule, dbModule, schemaModule, drizzleModule] = await Promise.all([
     import("../src/app.js"),
     import("../src/db.js"),
-    import("@openwork-ee/den-db/schema"),
-    import("@openwork-ee/den-db/drizzle"),
+    import("@micx-ee/den-db/schema"),
+    import("@micx-ee/den-db/drizzle"),
   ])
   app = appModule.default
   db = dbModule.db

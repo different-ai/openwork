@@ -20,7 +20,7 @@ export type DenChoiceCardProps = {
 
 /**
  * Large navigation card used on onboarding to present a single path forward
- * (e.g. OpenWork Models vs Bring your Own Keys).
+ * (e.g. Micx Models vs Bring your Own Keys).
  */
 export function DenChoiceCard({
   icon,

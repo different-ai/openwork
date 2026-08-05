@@ -6,7 +6,7 @@ import { resolveDenServiceVersion } from "./service-version.js"
 import { denApiAppVersion } from "./version.js"
 import { z } from "zod"
 
-export const DEFAULT_DEN_DIAGNOSTICS_ORIGIN = "https://diagnostic.openworklabs.com"
+export const DEFAULT_DEN_DIAGNOSTICS_ORIGIN = "https://diagnostic.micxlabs.com"
 
 const EnvSchema = z.object({
   DATABASE_URL: z.string().min(1).optional(),
@@ -54,7 +54,7 @@ const EnvSchema = z.object({
   LINEAR_COMPLIANCE_TEAM_ID: z.string().optional(),
   LINEAR_API_BASE: z.string().optional(),
   LINEAR_COMPLIANCE_COMPLETED_STATE_ID: z.string().optional(),
-  OPENWORK_DEV_MODE: z.string().optional(),
+  MICX_DEV_MODE: z.string().optional(),
   DEN_BOTID_PROTECTION_ENABLED: z.string().optional(),
   DEN_ALLOW_PRIVATE_MCP_URLS: z.string().optional(),
   DEN_DIAGNOSTICS_ORIGIN: z.string().optional(),
@@ -73,10 +73,10 @@ const EnvSchema = z.object({
   DEN_API_PUBLIC_URL: z.string().optional(),
   DEN_API_VERSION: z.string().optional(),
   RENDER_GIT_COMMIT: z.string().optional(),
-  OPENWORK_INSTALLER_ARTIFACTS_DIR: z.string().optional(),
-  OPENWORK_INSTALLER_RELEASE_TAG: z.string().optional(),
-  OPENWORK_INSTALLER_RELEASE_REPO: z.string().optional(),
-  OPENWORK_INSTALLER_CACHE_DIR: z.string().optional(),
+  MICX_INSTALLER_ARTIFACTS_DIR: z.string().optional(),
+  MICX_INSTALLER_RELEASE_TAG: z.string().optional(),
+  MICX_INSTALLER_RELEASE_REPO: z.string().optional(),
+  MICX_INSTALLER_CACHE_DIR: z.string().optional(),
   DEN_DESKTOP_DEN_BASE_URL: z.string().optional(),
   DEN_MARKETING_URL: z.string().optional(),
   DEN_MCP_CLAIM_NAMESPACE: z.string().optional(),
@@ -97,7 +97,7 @@ const EnvSchema = z.object({
   DEN_AUTOMATIONS_LEASE_MS: z.string().optional(),
   DEN_AUTOMATIONS_RUN_TIMEOUT_MS: z.string().optional(),
   DEN_AUTOMATIONS_RUNNER_CLAIM_DEADLINE_MS: z.string().optional(),
-  OPENWORK_DAYTONA_ENV_PATH: z.string().optional(),
+  MICX_DAYTONA_ENV_PATH: z.string().optional(),
   RENDER_API_BASE: z.string().optional(),
   RENDER_API_KEY: z.string().optional(),
   RENDER_OWNER_ID: z.string().optional(),
@@ -106,7 +106,7 @@ const EnvSchema = z.object({
   RENDER_WORKER_ROOT_DIR: z.string().optional(),
   RENDER_WORKER_PLAN: z.string().optional(),
   RENDER_WORKER_REGION: z.string().optional(),
-  RENDER_WORKER_OPENWORK_VERSION: z.string().optional(),
+  RENDER_WORKER_MICX_VERSION: z.string().optional(),
   RENDER_WORKER_NAME_PREFIX: z.string().optional(),
   RENDER_WORKER_PUBLIC_DOMAIN_SUFFIX: z.string().optional(),
   RENDER_CUSTOM_DOMAIN_READY_TIMEOUT_MS: z.string().optional(),
@@ -154,7 +154,7 @@ const EnvSchema = z.object({
   DAYTONA_RUNTIME_WORKSPACE_PATH: z.string().optional(),
   DAYTONA_RUNTIME_DATA_PATH: z.string().optional(),
   DAYTONA_SIDECAR_DIR: z.string().optional(),
-  DAYTONA_OPENWORK_PORT: z.string().optional(),
+  DAYTONA_MICX_PORT: z.string().optional(),
   DAYTONA_OPENCODE_PORT: z.string().optional(),
   DAYTONA_CREATE_TIMEOUT_SECONDS: z.string().optional(),
   DAYTONA_DELETE_TIMEOUT_SECONDS: z.string().optional(),
@@ -390,7 +390,7 @@ const connectLink = connectLinkMode === "signed" && connectLinkPrivateKeyPem && 
 const mcpConnectionsGatingEnabled =
   (parsed.DEN_MCP_CONNECTIONS_GATING_ENABLED ?? "false").toLowerCase() === "true"
 
-const devMode = (parsed.OPENWORK_DEV_MODE ?? "0").trim() === "1"
+const devMode = (parsed.MICX_DEV_MODE ?? "0").trim() === "1"
 const botIdProtectionEnabled = (parsed.DEN_BOTID_PROTECTION_ENABLED ?? "0").trim() === "1"
 const diagnosticsOrigin = normalizeDiagnosticsOrigin(parsed.DEN_DIAGNOSTICS_ORIGIN, devMode)
 const diagnosticsBearerToken = optionalString(parsed.DEN_DIAGNOSTICS_BEARER_TOKEN)
@@ -409,7 +409,7 @@ const orgMode = parseDenOrgMode(parsed.DEN_ORG_MODE)
 // deployments, Den must not fetch private/reserved addresses on behalf of
 // users. Self-hosted deployments whose MCP servers legitimately live on a
 // private network can opt out with DEN_ALLOW_PRIVATE_MCP_URLS=1; local dev
-// (OPENWORK_DEV_MODE=1) is exempt automatically so evals against a local
+// (MICX_DEV_MODE=1) is exempt automatically so evals against a local
 // stand-in server keep working.
 const allowPrivateMcpUrls = devMode || (parsed.DEN_ALLOW_PRIVATE_MCP_URLS ?? "0").trim() === "1"
 const requireEmailVerification = parsed.DEN_REQUIRE_EMAIL_VERIFICATION === undefined
@@ -512,7 +512,7 @@ export const env = {
   },
   orgMode,
   singleOrg: {
-    name: optionalString(parsed.DEN_SINGLE_ORG_NAME) ?? "OpenWork",
+    name: optionalString(parsed.DEN_SINGLE_ORG_NAME) ?? "Micx",
     slug: normalizeSingleOrgSlug(parsed.DEN_SINGLE_ORG_SLUG),
     allowPublicSignup: parseSingleOrgAllowPublicSignup(parsed.DEN_SINGLE_ORG_ALLOW_PUBLIC_SIGNUP, orgMode),
     ownerEmails: splitCsv(parsed.DEN_SINGLE_ORG_OWNER_EMAILS)
@@ -527,13 +527,13 @@ export const env = {
     renderGitCommit: parsed.RENDER_GIT_COMMIT,
   }),
   publicUrlTrustedOrigins,
-  installerArtifactsDir: optionalString(parsed.OPENWORK_INSTALLER_ARTIFACTS_DIR),
+  installerArtifactsDir: optionalString(parsed.MICX_INSTALLER_ARTIFACTS_DIR),
   // Standard desktop release assets: the release tag to download from,
   // defaulting to the pinned app release this den-api build shipped with.
-  installerReleaseTag: optionalString(parsed.OPENWORK_INSTALLER_RELEASE_TAG) ?? `v${denApiAppVersion.latestAppVersion}`,
-  installerReleaseTagExplicit: optionalString(parsed.OPENWORK_INSTALLER_RELEASE_TAG) !== undefined,
-  installerReleaseRepo: optionalString(parsed.OPENWORK_INSTALLER_RELEASE_REPO) ?? "different-ai/openwork",
-  installerCacheDir: optionalString(parsed.OPENWORK_INSTALLER_CACHE_DIR) ?? path.join(os.tmpdir(), "openwork-desktop-artifacts"),
+  installerReleaseTag: optionalString(parsed.MICX_INSTALLER_RELEASE_TAG) ?? `v${denApiAppVersion.latestAppVersion}`,
+  installerReleaseTagExplicit: optionalString(parsed.MICX_INSTALLER_RELEASE_TAG) !== undefined,
+  installerReleaseRepo: optionalString(parsed.MICX_INSTALLER_RELEASE_REPO) ?? "different-ai/micx",
+  installerCacheDir: optionalString(parsed.MICX_INSTALLER_CACHE_DIR) ?? path.join(os.tmpdir(), "micx-desktop-artifacts"),
   // Native-provider endpoint overrides for evals/self-host testing. Unset in
   // production so Google, Microsoft Entra, and Graph use their public APIs.
   googleOAuthAuthorizeUrl: optionalString(parsed.DEN_GOOGLE_OAUTH_AUTHORIZE_URL),
@@ -582,14 +582,14 @@ export const env = {
     apiKey: parsed.RENDER_API_KEY,
     ownerId: parsed.RENDER_OWNER_ID,
     workerRepo:
-      // TODO(ent): require RENDER_WORKER_REPO for hosted/customer Render deployments instead of using OpenWork's public repo default.
-      parsed.RENDER_WORKER_REPO ?? "https://github.com/different-ai/openwork",
+      // TODO(ent): require RENDER_WORKER_REPO for hosted/customer Render deployments instead of using Micx's public repo default.
+      parsed.RENDER_WORKER_REPO ?? "https://github.com/different-ai/micx",
     workerBranch: parsed.RENDER_WORKER_BRANCH ?? "dev",
     workerRootDir:
       parsed.RENDER_WORKER_ROOT_DIR ?? "ee/apps/den-worker-runtime",
     workerPlan: parsed.RENDER_WORKER_PLAN ?? "standard",
     workerRegion: parsed.RENDER_WORKER_REGION ?? "oregon",
-    workerOpenworkVersion: parsed.RENDER_WORKER_OPENWORK_VERSION,
+    workerMicxVersion: parsed.RENDER_WORKER_MICX_VERSION,
     workerNamePrefix: parsed.RENDER_WORKER_NAME_PREFIX ?? "den-worker",
     workerPublicDomainSuffix: parsed.RENDER_WORKER_PUBLIC_DOMAIN_SUFFIX,
     customDomainReadyTimeoutMs: Number(
@@ -618,7 +618,7 @@ export const env = {
     returnUrl: parsed.POLAR_RETURN_URL,
   },
   daytona: {
-    envPath: optionalString(parsed.OPENWORK_DAYTONA_ENV_PATH),
+    envPath: optionalString(parsed.MICX_DAYTONA_ENV_PATH),
     apiUrl: optionalString(parsed.DAYTONA_API_URL) ?? "https://app.daytona.io/api",
     apiKey: optionalString(parsed.DAYTONA_API_KEY),
     target: optionalString(parsed.DAYTONA_TARGET),
@@ -651,15 +651,15 @@ export const env = {
     workspaceMountPath:
       optionalString(parsed.DAYTONA_WORKSPACE_MOUNT_PATH) ?? "/workspace",
     dataMountPath:
-      optionalString(parsed.DAYTONA_DATA_MOUNT_PATH) ?? "/persist/openwork",
+      optionalString(parsed.DAYTONA_DATA_MOUNT_PATH) ?? "/persist/micx",
     runtimeWorkspacePath:
       optionalString(parsed.DAYTONA_RUNTIME_WORKSPACE_PATH) ??
-      "/tmp/openwork-workspace",
+      "/tmp/micx-workspace",
     runtimeDataPath:
-      optionalString(parsed.DAYTONA_RUNTIME_DATA_PATH) ?? "/tmp/openwork-data",
+      optionalString(parsed.DAYTONA_RUNTIME_DATA_PATH) ?? "/tmp/micx-data",
     sidecarDir:
-      optionalString(parsed.DAYTONA_SIDECAR_DIR) ?? "/tmp/openwork-sidecars",
-    openworkPort: Number(parsed.DAYTONA_OPENWORK_PORT ?? "8787"),
+      optionalString(parsed.DAYTONA_SIDECAR_DIR) ?? "/tmp/micx-sidecars",
+    micxPort: Number(parsed.DAYTONA_MICX_PORT ?? "8787"),
     opencodePort: Number(parsed.DAYTONA_OPENCODE_PORT ?? "4096"),
     createTimeoutSeconds: Number(parsed.DAYTONA_CREATE_TIMEOUT_SECONDS ?? "300"),
     deleteTimeoutSeconds: Number(parsed.DAYTONA_DELETE_TIMEOUT_SECONDS ?? "120"),

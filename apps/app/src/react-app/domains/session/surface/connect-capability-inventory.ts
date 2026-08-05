@@ -105,7 +105,7 @@ function remoteMcpStatus(
       ? "Organization setup is required."
       : plugin.cloudReadiness?.state === "not_synced"
         ? "Marketplace content has not synced yet."
-        : "This OpenWork Connect capability is not ready.",
+        : "This Micx Connect capability is not ready.",
   };
 }
 
@@ -116,11 +116,11 @@ function toSkill(
 ): ConnectSkillCard {
   return {
     name: object.title,
-    path: `openwork-connect://${marketplace.id}/${plugin.id}/${object.id}`,
+    path: `micx-connect://${marketplace.id}/${plugin.id}/${object.id}`,
     description: object.description ?? undefined,
     content: object.latestVersion?.rawSourceText ?? undefined,
     trigger: skillTrigger(object),
-    origin: "openwork-connect",
+    origin: "micx-connect",
     marketplaceName: marketplace.name,
     pluginName: plugin.name,
     connectCapabilityName: marketplaceCapabilityName(plugin.id, object.id),
@@ -134,14 +134,14 @@ function toMcpEntries(
 ): Array<{ entry: McpServerEntry; status: McpStatus }> {
   const specs = remoteMcpSpecs(object);
   return specs.map((spec) => {
-    const id = `openwork-connect:${plugin.id}:${object.id}:${spec.name}`;
+    const id = `micx-connect:${plugin.id}:${object.id}:${spec.name}`;
     const displayName = specs.length === 1 ? object.title : `${object.title} · ${spec.name}`;
     return {
       entry: {
         id,
         name: displayName,
         config: { type: "remote", url: spec.url },
-        origin: "openwork-connect",
+        origin: "micx-connect",
         marketplaceName: marketplace.name,
         pluginName: plugin.name,
         connectCapabilityName: marketplaceCapabilityName(plugin.id, object.id),

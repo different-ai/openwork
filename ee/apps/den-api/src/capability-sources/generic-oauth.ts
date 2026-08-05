@@ -1,5 +1,5 @@
 import { createHash, createHmac, randomBytes, randomUUID, timingSafeEqual } from "node:crypto"
-import type { DenTypeId } from "@openwork-ee/utils/typeid"
+import type { DenTypeId } from "@micx-ee/utils/typeid"
 import { z } from "zod"
 import { env } from "../env.js"
 import { publicRequestUrl } from "../request-url.js"

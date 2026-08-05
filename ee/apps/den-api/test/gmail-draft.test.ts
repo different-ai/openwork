@@ -1,7 +1,7 @@
 import { beforeAll, describe, expect, test } from "bun:test"
 
 function seedRequiredEnv() {
-  process.env.DATABASE_URL = process.env.DATABASE_URL ?? "mysql://root:password@127.0.0.1:3306/openwork_test"
+  process.env.DATABASE_URL = process.env.DATABASE_URL ?? "mysql://root:password@127.0.0.1:3306/micx_test"
   process.env.DEN_DB_ENCRYPTION_KEY = process.env.DEN_DB_ENCRYPTION_KEY ?? "x".repeat(32)
   process.env.BETTER_AUTH_SECRET = process.env.BETTER_AUTH_SECRET ?? "y".repeat(32)
   process.env.BETTER_AUTH_URL = process.env.BETTER_AUTH_URL ?? "http://127.0.0.1:8790"
@@ -138,7 +138,7 @@ describe("buildGmailDraftRaw", () => {
     const raw = gmail.buildGmailDraftRaw({ to: "sam@acme.test", subject: "Follow up", body: "Hello Sam" })
     const decoded = decodeRaw(raw)
     const boundary = decoded.match(/Content-Type: multipart\/alternative; boundary="([^"]+)"/)?.[1]
-    expect(boundary).toStartWith("openwork-alternative-")
+    expect(boundary).toStartWith("micx-alternative-")
     expect(decoded).toEndWith(`--${boundary}--\r\n`)
   })
 
@@ -202,9 +202,9 @@ describe("buildGmailDraftRaw", () => {
       }],
     }))
     const boundary = decoded.match(/boundary="([^"]+)"/)?.[1]
-    expect(boundary).toStartWith("openwork-mixed-")
+    expect(boundary).toStartWith("micx-mixed-")
     expect(decoded).toContain("Content-Type: multipart/mixed;")
-    expect(decoded).toMatch(/Content-Type: multipart\/mixed;[^]*?\r\n\r\n--openwork-mixed-[^\r\n]+\r\nContent-Type: multipart\/alternative;/)
+    expect(decoded).toMatch(/Content-Type: multipart\/mixed;[^]*?\r\n\r\n--micx-mixed-[^\r\n]+\r\nContent-Type: multipart\/alternative;/)
     expect(decoded.indexOf('Content-Type: text/plain; charset="UTF-8"')).toBeLessThan(decoded.indexOf('Content-Type: text/html; charset="UTF-8"'))
     expect(decoded).toContain('Content-Type: application/pdf; name="invoice \\"final\\".pdf"')
     expect(decoded).toContain('Content-Disposition: attachment; filename="invoice \\"final\\".pdf"')

@@ -1,14 +1,14 @@
-const ENV_FEEDBACK_URL = String(import.meta.env.VITE_OPENWORK_FEEDBACK_URL ?? "").trim();
-const ENV_APP_VERSION = String(import.meta.env.VITE_OPENWORK_APP_VERSION ?? "").trim();
+const ENV_FEEDBACK_URL = String(import.meta.env.VITE_MICX_FEEDBACK_URL ?? "").trim();
+const ENV_APP_VERSION = String(import.meta.env.VITE_MICX_APP_VERSION ?? "").trim();
 
 export const DEFAULT_FEEDBACK_URL =
-  ENV_FEEDBACK_URL || "https://openworklabs.com/feedback";
+  ENV_FEEDBACK_URL || "https://micxlabs.com/feedback";
 
 type FeedbackUrlOptions = {
   entrypoint: string;
   deployment?: string | null;
   appVersion?: string | null;
-  openworkServerVersion?: string | null;
+  micxServerVersion?: string | null;
   opencodeVersion?: string | null;
 };
 
@@ -84,13 +84,13 @@ export function buildFeedbackUrl(options: FeedbackUrlOptions): string {
   const url = new URL(DEFAULT_FEEDBACK_URL);
   const osContext = parseClientOsContext();
 
-  url.searchParams.set("source", "openwork-app");
+  url.searchParams.set("source", "micx-app");
   url.searchParams.set("entrypoint", options.entrypoint);
 
   const entries = {
     deployment: options.deployment?.trim() ?? "",
     appVersion: options.appVersion?.trim() || ENV_APP_VERSION,
-    openworkServerVersion: options.openworkServerVersion?.trim() ?? "",
+    micxServerVersion: options.micxServerVersion?.trim() ?? "",
     opencodeVersion: options.opencodeVersion?.trim() ?? "",
     osName: osContext.osName?.trim() ?? "",
     osVersion: osContext.osVersion?.trim() ?? "",

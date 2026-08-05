@@ -6,7 +6,7 @@ import { applyBrandAppName } from "./brand-app-name.mjs";
 test("updates the macOS process and Electron application name before rebuilding the native menu", () => {
   const calls = [];
   const appName = applyBrandAppName("  Acme Work  ", {
-    fallbackName: "OpenWork",
+    fallbackName: "Micx",
     platform: "darwin",
     updateElectronAppName: true,
     runtimeProcess: {
@@ -30,7 +30,7 @@ test("updates the macOS process and Electron application name before rebuilding 
 test("preserves the existing Windows live-update behavior", () => {
   const calls = [];
   const appName = applyBrandAppName("Acme Work", {
-    fallbackName: "OpenWork",
+    fallbackName: "Micx",
     platform: "win32",
     updateElectronAppName: false,
     runtimeProcess: {
@@ -52,7 +52,7 @@ test("preserves the existing Windows live-update behavior", () => {
 test("keeps the startup fallback and branded-name limit on every platform", () => {
   const appliedNames = [];
   const dependencies = {
-    fallbackName: "OpenWork",
+    fallbackName: "Micx",
     platform: "win32",
     updateElectronAppName: true,
     runtimeProcess: {
@@ -63,7 +63,7 @@ test("keeps the startup fallback and branded-name limit on every platform", () =
     applicationMenu: { setAppName: () => undefined },
   };
 
-  assert.equal(applyBrandAppName(null, dependencies), "OpenWork");
+  assert.equal(applyBrandAppName(null, dependencies), "Micx");
   assert.equal(applyBrandAppName("A".repeat(80), dependencies), "A".repeat(64));
-  assert.deepEqual(appliedNames, ["OpenWork", "A".repeat(64)]);
+  assert.deepEqual(appliedNames, ["Micx", "A".repeat(64)]);
 });

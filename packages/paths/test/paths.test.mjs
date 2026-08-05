@@ -8,15 +8,15 @@ import {
   globalOpencodeConfigDir,
   legacyDesktopBootstrapPath,
   MAX_CONFIG_ROOT_LENGTH,
-  openworkEnvStorePath,
-  openworkServerConfigPath,
+  micxEnvStorePath,
+  micxServerConfigPath,
   resolveGlobalOpencodeConfigPath,
   resolveWorkspaceOpencodeConfigPath,
   workspaceOpencodeConfigCandidates,
 } from "../index.mjs";
 
 async function withTempDir(callback) {
-  const root = await mkdtemp(path.join(tmpdir(), "openwork-paths-"));
+  const root = await mkdtemp(path.join(tmpdir(), "micx-paths-"));
   try {
     await callback(root);
   } finally {
@@ -24,57 +24,57 @@ async function withTempDir(callback) {
   }
 }
 
-describe("openwork server config paths", () => {
+describe("micx server config paths", () => {
   test("uses APPDATA on Windows", () => {
-    expect(openworkServerConfigPath({
+    expect(micxServerConfigPath({
       env: { APPDATA: "C:\\Users\\Ada\\AppData\\Roaming" },
       homeDir: "C:\\Users\\Ada",
       platform: "win32",
-    })).toBe("C:\\Users\\Ada\\AppData\\Roaming\\openwork\\server.json");
+    })).toBe("C:\\Users\\Ada\\AppData\\Roaming\\micx\\server.json");
   });
 
   test("uses XDG_CONFIG_HOME on Unix", () => {
-    expect(openworkServerConfigPath({
+    expect(micxServerConfigPath({
       env: { XDG_CONFIG_HOME: "/tmp/xdg" },
       homeDir: "/home/ada",
       platform: "linux",
-    })).toBe("/tmp/xdg/openwork/server.json");
+    })).toBe("/tmp/xdg/micx/server.json");
   });
 
   test("falls back to ~/.config", () => {
-    expect(openworkServerConfigPath({ env: {}, homeDir: "/home/ada", platform: "linux" }))
-      .toBe("/home/ada/.config/openwork/server.json");
+    expect(micxServerConfigPath({ env: {}, homeDir: "/home/ada", platform: "linux" }))
+      .toBe("/home/ada/.config/micx/server.json");
   });
 
-  test("honors OPENWORK_SERVER_CONFIG", () => {
-    expect(openworkServerConfigPath({
-      env: { OPENWORK_SERVER_CONFIG: "/tmp/openwork/server.json" },
+  test("honors MICX_SERVER_CONFIG", () => {
+    expect(micxServerConfigPath({
+      env: { MICX_SERVER_CONFIG: "/tmp/micx/server.json" },
       homeDir: "/home/ada",
       platform: "linux",
-    })).toBe("/tmp/openwork/server.json");
+    })).toBe("/tmp/micx/server.json");
   });
 });
 
-describe("openwork env store and desktop bootstrap paths", () => {
-  test("honors OPENWORK_ENV_STORE", () => {
-    expect(openworkEnvStorePath({
-      env: { OPENWORK_ENV_STORE: "/tmp/openwork/env.json" },
+describe("micx env store and desktop bootstrap paths", () => {
+  test("honors MICX_ENV_STORE", () => {
+    expect(micxEnvStorePath({
+      env: { MICX_ENV_STORE: "/tmp/micx/env.json" },
       homeDir: "/home/ada",
       platform: "linux",
-    })).toBe("/tmp/openwork/env.json");
+    })).toBe("/tmp/micx/env.json");
   });
 
-  test("uses the same openwork config layout for env.json", () => {
-    expect(openworkEnvStorePath({
+  test("uses the same micx config layout for env.json", () => {
+    expect(micxEnvStorePath({
       env: { XDG_CONFIG_HOME: "/tmp/xdg" },
       homeDir: "/home/ada",
       platform: "linux",
-    })).toBe("/tmp/xdg/openwork/env.json");
+    })).toBe("/tmp/xdg/micx/env.json");
   });
 
-  test("honors OPENWORK_DESKTOP_BOOTSTRAP_PATH", () => {
+  test("honors MICX_DESKTOP_BOOTSTRAP_PATH", () => {
     expect(desktopBootstrapPath({
-      env: { OPENWORK_DESKTOP_BOOTSTRAP_PATH: "/tmp/bootstrap.json" },
+      env: { MICX_DESKTOP_BOOTSTRAP_PATH: "/tmp/bootstrap.json" },
       homeDir: "/home/ada",
       platform: "linux",
     })).toBe("/tmp/bootstrap.json");
@@ -82,16 +82,16 @@ describe("openwork env store and desktop bootstrap paths", () => {
 
   test("preserves dev-data desktop bootstrap path when userDataDir is injected", () => {
     expect(desktopBootstrapPath({
-      env: { OPENWORK_DEV_MODE: "1" },
+      env: { MICX_DEV_MODE: "1" },
       homeDir: "/Users/ada",
       platform: "darwin",
-      userDataDir: "/tmp/openwork-userdata",
-    })).toBe("/tmp/openwork-userdata/openwork-dev-data/home/.config/openwork/desktop-bootstrap.json");
+      userDataDir: "/tmp/micx-userdata",
+    })).toBe("/tmp/micx-userdata/micx-dev-data/home/.config/micx/desktop-bootstrap.json");
   });
 
   test("resolves the legacy desktop bootstrap path from the chosen home", () => {
     expect(legacyDesktopBootstrapPath({ env: {}, homeDir: "/Users/ada", platform: "darwin" }))
-      .toBe("/Users/ada/.config/openwork/desktop-bootstrap.json");
+      .toBe("/Users/ada/.config/micx/desktop-bootstrap.json");
   });
 });
 

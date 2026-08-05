@@ -11,7 +11,7 @@ let stopServer: (() => void) | null = null
 let workerModule: typeof import("../src/capability-sources/telegram-worker.js")
 
 beforeAll(async () => {
-  process.env.DATABASE_URL = process.env.DATABASE_URL ?? "mysql://root:password@127.0.0.1:3306/openwork_test_telegram"
+  process.env.DATABASE_URL = process.env.DATABASE_URL ?? "mysql://root:password@127.0.0.1:3306/micx_test_telegram"
   process.env.DEN_DB_ENCRYPTION_KEY = process.env.DEN_DB_ENCRYPTION_KEY ?? "x".repeat(32)
   process.env.BETTER_AUTH_SECRET = process.env.BETTER_AUTH_SECRET ?? "y".repeat(32)
   process.env.BETTER_AUTH_URL = process.env.BETTER_AUTH_URL ?? "http://127.0.0.1:8790"
@@ -40,7 +40,7 @@ function fakeWorker() {
       const url = new URL(request.url)
       requests.push({
         authorization: request.headers.get("authorization"),
-        hostToken: request.headers.get("x-openwork-host-token"),
+        hostToken: request.headers.get("x-micx-host-token"),
         method: request.method,
         pathname: url.pathname,
       })

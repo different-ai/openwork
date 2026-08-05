@@ -1,23 +1,23 @@
 #!/usr/bin/env node
 
 /**
- * openwork-ui-mcp
+ * micx-ui-mcp
  *
- * MCP server that exposes OpenWork's semantic app context and UI control
+ * MCP server that exposes Micx's semantic app context and UI control
  * surface as an MCP resource and tools.
- * Speaks MCP stdio and proxies to the OpenWork desktop bridge HTTP API.
+ * Speaks MCP stdio and proxies to the Micx desktop bridge HTTP API.
  *
- * Requires OpenWork desktop running with the local UI control bridge active.
+ * Requires Micx desktop running with the local UI control bridge active.
  *
  * Usage:
- *   npx openwork-ui-mcp
+ *   npx micx-ui-mcp
  *
  * MCP config (OpenCode / Claude Desktop / Cursor / etc.):
  *   {
  *     "mcpServers": {
- *       "openwork-ui": {
+ *       "micx-ui": {
  *         "command": "npx",
- *         "args": ["-y", "openwork-ui-mcp"]
+ *         "args": ["-y", "micx-ui-mcp"]
  *       }
  *     }
  *   }
@@ -32,7 +32,7 @@ import { z } from "zod";
 
 // ── Bridge discovery ──
 
-const DISCOVERY_FILE = "openwork-ui-control.json";
+const DISCOVERY_FILE = "micx-ui-control.json";
 const BRIDGE_CACHE_MS = 2_000;
 const BRIDGE_TIMEOUT_MS = 5_000;
 let cachedBridge = null;
@@ -46,9 +46,9 @@ function userAppDataDir() {
 
 function discoveryPaths() {
   return [
-    process.env.OPENWORK_UI_CONTROL_DISCOVERY?.trim(),
-    join(userAppDataDir(), "com.differentai.openwork", DISCOVERY_FILE),
-    join(userAppDataDir(), "com.differentai.openwork.dev", DISCOVERY_FILE),
+    process.env.MICX_UI_CONTROL_DISCOVERY?.trim(),
+    join(userAppDataDir(), "com.differentai.micx", DISCOVERY_FILE),
+    join(userAppDataDir(), "com.differentai.micx.dev", DISCOVERY_FILE),
   ].filter(Boolean);
 }
 
@@ -81,8 +81,8 @@ async function bridgeRequest(path, options = {}) {
   if (!bridge) {
     return {
       ok: false,
-      error: "OpenWork is not running. Launch the OpenWork desktop app first.",
-      hint: "The MCP server connects to a running OpenWork instance via its local bridge.",
+      error: "Micx is not running. Launch the Micx desktop app first.",
+      hint: "The MCP server connects to a running Micx instance via its local bridge.",
     };
   }
   const url = `${bridge.baseUrl}${path}`;
@@ -156,14 +156,14 @@ function formatExecutionResult(actionId, result) {
 // ── MCP Server ──
 
 const server = new McpServer({
-  name: "openwork-ui",
+  name: "micx-ui",
   version: "0.2.0",
 });
 
-// ── openwork://context/current ──
+// ── micx://context/current ──
 server.resource(
-  "current_openwork_context",
-  "openwork://context/current",
+  "current_micx_context",
+  "micx://context/current",
   async (uri) => {
     const result = await bridgeRequest("/context");
     const context = result.context ?? result;
@@ -180,7 +180,7 @@ server.resource(
 // ── ui.context ──
 server.tool(
   "ui_context",
-  "Read OpenWork's semantic app context: current screen, all open conversation tabs, split-screen layout, focused pane, sidebar, side panel, settings, and currently available queries and commands. Reads app state without focusing the window.",
+  "Read Micx's semantic app context: current screen, all open conversation tabs, split-screen layout, focused pane, sidebar, side panel, settings, and currently available queries and commands. Reads app state without focusing the window.",
   {},
   async () => {
     const result = await bridgeRequest("/context");
@@ -194,7 +194,7 @@ server.tool(
 // ── ui.snapshot ──
 server.tool(
   "ui_snapshot",
-  "Get a snapshot of the current OpenWork UI state: active route, narration, visible actions, and status. Use this before taking action to understand what the user sees.",
+  "Get a snapshot of the current Micx UI state: active route, narration, visible actions, and status. Use this before taking action to understand what the user sees.",
   {},
   async () => {
     const result = await bridgeRequest("/snapshot");
@@ -214,14 +214,14 @@ server.tool(
         lines.push(`  ${action.id} — ${action.label || action.description || ""}${args}`);
       }
     }
-    return { content: [{ type: "text", text: lines.join("\n") || "OpenWork is reachable, but it did not return visible UI state." }] };
+    return { content: [{ type: "text", text: lines.join("\n") || "Micx is reachable, but it did not return visible UI state." }] };
   }
 );
 
 // ── ui.list_actions ──
 server.tool(
   "ui_list_actions",
-  "List all UI control actions currently available in OpenWork: session navigation, composer control, transcript access, and more. Each action has an id you can pass to ui_execute_action.",
+  "List all UI control actions currently available in Micx: session navigation, composer control, transcript access, and more. Each action has an id you can pass to ui_execute_action.",
   {},
   async () => {
     const result = await bridgeRequest("/actions");
@@ -229,7 +229,7 @@ server.tool(
       return { content: [{ type: "text", text: `Error: ${result.error}` }], isError: true };
     }
     if (!Array.isArray(result.actions) || result.actions.length === 0) {
-      return { content: [{ type: "text", text: "No actions available. Is OpenWork on the main screen?" }] };
+      return { content: [{ type: "text", text: "No actions available. Is Micx on the main screen?" }] };
     }
     const text = result.actions.map(formatActionLine).join("\n\n");
     return { content: [{ type: "text", text: `${result.actions.length} actions:\n\n${text}` }] };
@@ -239,7 +239,7 @@ server.tool(
 // ── ui.execute_action ──
 server.tool(
   "ui_execute_action",
-  "Execute an OpenWork UI action by its id without activating the desktop window. Use ui_list_actions first to see available actions and their required arguments.",
+  "Execute an Micx UI action by its id without activating the desktop window. Use ui_list_actions first to see available actions and their required arguments.",
   {
     actionId: z.string().describe("The action id from ui_list_actions, e.g. 'session.create_task' or 'composer.set_text'"),
     args: z.record(z.unknown()).optional().describe("JSON arguments for the action, if required"),
@@ -259,7 +259,7 @@ server.tool(
 // ── ui.query ──
 server.tool(
   "ui_query",
-  "Run a side-effect-free OpenWork query by id. Use ui_context to inspect currently available queries. Queries never focus or navigate the app.",
+  "Run a side-effect-free Micx query by id. Use ui_context to inspect currently available queries. Queries never focus or navigate the app.",
   {
     id: z.string().describe("Query id from ui_context, such as 'session.list_sessions' or 'notifications.list'"),
     args: z.record(z.unknown()).optional().describe("JSON arguments for the query, if required"),
@@ -279,7 +279,7 @@ server.tool(
 // ── ui.command ──
 server.tool(
   "ui_command",
-  "Execute a semantic OpenWork command by id while OpenWork remains in the background. Use ui_context first and pass its revision to prevent acting on stale UI state.",
+  "Execute a semantic Micx command by id while Micx remains in the background. Use ui_context first and pass its revision to prevent acting on stale UI state.",
   {
     id: z.string().describe("Command id from ui_context"),
     args: z.record(z.unknown()).optional().describe("JSON arguments for the command, if required"),
@@ -301,20 +301,20 @@ server.tool(
 // ── ui.status ──
 server.tool(
   "ui_status",
-  "Check if OpenWork is running and the bridge is reachable. Returns connection status and app info.",
+  "Check if Micx is running and the bridge is reachable. Returns connection status and app info.",
   {},
   async () => {
     const bridge = await discoverBridge();
     if (!bridge) {
-      return { content: [{ type: "text", text: "OpenWork is not running.\nLaunch the OpenWork desktop app to enable UI control." }], isError: true };
+      return { content: [{ type: "text", text: "Micx is not running.\nLaunch the Micx desktop app to enable UI control." }], isError: true };
     }
     try {
       const response = await fetch(`${bridge.baseUrl}/health`, { signal: AbortSignal.timeout(3000) });
       const data = await response.json();
-      return { content: [{ type: "text", text: `Connected to ${data.app || "OpenWork"}\nBridge: ${bridge.baseUrl}\nVersion: ${data.version ?? "?"}` }] };
+      return { content: [{ type: "text", text: `Connected to ${data.app || "Micx"}\nBridge: ${bridge.baseUrl}\nVersion: ${data.version ?? "?"}` }] };
     } catch (error) {
       clearBridgeCache();
-      return { content: [{ type: "text", text: `Bridge file found but not reachable: ${error.message}\nOpenWork may have quit. Relaunch it.` }], isError: true };
+      return { content: [{ type: "text", text: `Bridge file found but not reachable: ${error.message}\nMicx may have quit. Relaunch it.` }], isError: true };
     }
   }
 );

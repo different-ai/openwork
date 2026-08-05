@@ -42,14 +42,14 @@ export const agentContextDiagnosticEvidenceKindSchema = z.enum([
 export type AgentContextDiagnosticEvidenceKind = z.infer<typeof agentContextDiagnosticEvidenceKindSchema>
 
 export const agentContextDiagnosticOwnerSchema = z.enum([
-  "openwork-client",
-  "openwork-server",
+  "micx-client",
+  "micx-server",
   "opencode-engine",
   "network-admin",
   "organization-admin",
   "member",
   "member-and-organization-admin",
-  "openwork-support",
+  "micx-support",
 ])
 export type AgentContextDiagnosticOwner = z.infer<typeof agentContextDiagnosticOwnerSchema>
 
@@ -413,7 +413,7 @@ export type AgentContextPromptEvidence = z.infer<typeof agentContextPromptEviden
 export const agentContextAgentEvidenceSchema = z.object({
   evidenceSource: z.enum(["effective-engine", "configured-intent"]),
   defaultAgent: safeTextSchema.max(160).nullable(),
-  configuredOpenworkAgent: z.object({
+  configuredMicxAgent: z.object({
     state: z.enum(["present", "missing", "configured-disabled"]),
     mode: z.enum(["subagent", "primary", "all"]).nullable(),
     prompt: agentContextPromptEvidenceSchema,
@@ -472,7 +472,7 @@ export const agentContextDiagnosticsReportSchema = z.object({
     id: safeTextSchema.min(1).max(160),
     name: safeTextSchema.min(1).max(240),
     type: z.enum(["local", "remote"]),
-    remoteType: z.enum(["opencode", "openwork"]).nullable(),
+    remoteType: z.enum(["opencode", "micx"]).nullable(),
     engineConfigured: z.boolean(),
   }).strict(),
   checks: z.array(agentContextDiagnosticCheckSchema).length(AGENT_CONTEXT_DIAGNOSTIC_CHECK_IDS.length),
@@ -643,13 +643,13 @@ export const agentContextDiagnosticsReportSchema = z.object({
   ) {
     const runtimeCloudMcp = value.mcps.find((mcp) =>
       mcp.source === "config.remote"
-      && mcp.name === "openwork-cloud"
+      && mcp.name === "micx-cloud"
       && mcp.path !== null
     )
     if (!runtimeCloudMcp) {
       context.addIssue({
         code: "custom",
-        message: "cloud handshake evidence requires the retained runtime OpenWork Cloud entry",
+        message: "cloud handshake evidence requires the retained runtime Micx Cloud entry",
         path: ["mcps"],
       })
     }

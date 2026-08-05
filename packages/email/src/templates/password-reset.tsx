@@ -8,12 +8,12 @@ export function PasswordResetEmail({ resetLink }: PasswordResetEmailProps) {
   return (
     <Html>
       <Head />
-      <Preview>Reset your OpenWork password</Preview>
+      <Preview>Reset your Micx password</Preview>
       <Body style={styles.body}>
         <Container style={styles.container}>
-          <Text style={styles.eyebrow}>OpenWork account</Text>
+          <Text style={styles.eyebrow}>Micx account</Text>
           <Heading style={styles.heading}>Reset your password</Heading>
-          <Text style={styles.text}>Use this secure link to choose a new password for your OpenWork account.</Text>
+          <Text style={styles.text}>Use this secure link to choose a new password for your Micx account.</Text>
           <Button href={resetLink} style={styles.button}>Reset password</Button>
           <Text style={styles.footer}>This link expires in 1 hour. If you did not request a password reset, you can ignore this email.</Text>
           <Hr style={styles.hr} />

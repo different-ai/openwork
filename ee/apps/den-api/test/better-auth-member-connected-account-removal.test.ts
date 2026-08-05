@@ -1,17 +1,17 @@
 import { afterAll, beforeAll, expect, test } from "bun:test"
-import { createDenTypeId, normalizeDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
+import { createDenTypeId, normalizeDenTypeId, type DenTypeId } from "@micx-ee/utils/typeid"
 
 const cleanupOrganizationIds: DenTypeId<"organization">[] = []
 const cleanupUserIds: DenTypeId<"user">[] = []
 
 let authModule: typeof import("../src/auth.js")
 let dbModule: typeof import("../src/db.js")
-let drizzle: typeof import("@openwork-ee/den-db/drizzle")
+let drizzle: typeof import("@micx-ee/den-db/drizzle")
 let oauthCredentials: typeof import("../src/capability-sources/oauth-credentials.js")
-let schema: typeof import("@openwork-ee/den-db/schema")
+let schema: typeof import("@micx-ee/den-db/schema")
 
 beforeAll(async () => {
-  process.env.DATABASE_URL = process.env.DATABASE_URL ?? "mysql://root:password@127.0.0.1:3306/openwork_test_gwsreconnect"
+  process.env.DATABASE_URL = process.env.DATABASE_URL ?? "mysql://root:password@127.0.0.1:3306/micx_test_gwsreconnect"
   process.env.DEN_DB_ENCRYPTION_KEY = process.env.DEN_DB_ENCRYPTION_KEY ?? "x".repeat(32)
   process.env.BETTER_AUTH_SECRET = process.env.BETTER_AUTH_SECRET ?? "y".repeat(32)
   process.env.BETTER_AUTH_URL = process.env.BETTER_AUTH_URL ?? "http://127.0.0.1:8790"
@@ -19,9 +19,9 @@ beforeAll(async () => {
 
   authModule = await import("../src/auth.js")
   dbModule = await import("../src/db.js")
-  drizzle = await import("@openwork-ee/den-db/drizzle")
+  drizzle = await import("@micx-ee/den-db/drizzle")
   oauthCredentials = await import("../src/capability-sources/oauth-credentials.js")
-  schema = await import("@openwork-ee/den-db/schema")
+  schema = await import("@micx-ee/den-db/schema")
 })
 
 afterAll(async () => {
@@ -51,7 +51,7 @@ test("Better Auth's native remove and leave routes delete the member's connected
   const { db } = dbModule
   const suffix = crypto.randomUUID()
   const ownerEmail = `native-removal-owner+${suffix}@test.local`
-  const password = "OpenWork-test-password-123!"
+  const password = "Micx-test-password-123!"
 
   const signup = await auth.api.signUpEmail({
     body: { email: ownerEmail, name: "Native Removal Owner", password },

@@ -1,6 +1,6 @@
 # Enterprise Mock Lab
 
-The Enterprise Mock Lab is a loopback-only development control plane for reusable enterprise simulation packages. Its first module is `@openwork/enterprise-mcp-mock-server`.
+The Enterprise Mock Lab is a loopback-only development control plane for reusable enterprise simulation packages. Its first module is `@micx/enterprise-mcp-mock-server`.
 
 It intentionally keeps two trust boundaries separate:
 
@@ -17,7 +17,7 @@ Create a development-only admin secret and start the app:
 
 ```bash
 export ENTERPRISE_MOCK_LAB_ADMIN_SECRET="$(openssl rand -base64 32)"
-pnpm --filter @openwork-ee/enterprise-mock-lab dev
+pnpm --filter @micx-ee/enterprise-mock-lab dev
 ```
 
 Open `http://127.0.0.1:8794`. The control plane rejects non-loopback bind addresses and secrets shorter than 32 characters.

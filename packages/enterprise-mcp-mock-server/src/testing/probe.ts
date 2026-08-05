@@ -600,7 +600,7 @@ export async function probeEnterpriseMcpMockServer(options: ProbeEnterpriseMcpMo
           body: JSON.stringify({
             redirect_uris: scenario.oauth.redirectUris,
             token_endpoint_auth_method: tokenAuthMethod,
-            client_name: "OpenWork enterprise MCP probe",
+            client_name: "Micx enterprise MCP probe",
           }),
         }, "AUTH_CLIENT_REGISTRATION", overallDeadline),
         "AUTH_CLIENT_REGISTRATION",

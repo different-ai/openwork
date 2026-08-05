@@ -18,7 +18,7 @@ function migrationSnapshotPath(app, done = false) {
 // renders the workspace list / session-by-workspace preferences from it on
 // first boot and then marks it .done so subsequent boots don't re-import.
 export function registerMigrationIpc({ app, ipcMain }) {
-  ipcMain.handle("openwork:migration:read", async () => {
+  ipcMain.handle("micx:migration:read", async () => {
     const snapshotPath = migrationSnapshotPath(app);
     if (!existsSync(snapshotPath)) return null;
     try {
@@ -34,7 +34,7 @@ export function registerMigrationIpc({ app, ipcMain }) {
     }
   });
 
-  ipcMain.handle("openwork:migration:ack", async () => {
+  ipcMain.handle("micx:migration:ack", async () => {
     const snapshotPath = migrationSnapshotPath(app);
     const donePath = migrationSnapshotPath(app, true);
     if (!existsSync(snapshotPath)) return { ok: true, moved: false };

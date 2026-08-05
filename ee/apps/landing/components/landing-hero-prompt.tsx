@@ -12,7 +12,7 @@ import { capturePosthogEvent } from "../lib/posthog-client";
 import { LandingAgentGlyphs } from "./landing-agent-glyphs";
 
 const PROMPT_VARIANT = "hero";
-const AGENT_START_PROMPT = `Install OpenWork on my computer, set up my first workspace, and open it ready to use. Follow the steps in https://openworklabs.com/start.md?v=${PROMPT_VARIANT}`;
+const AGENT_START_PROMPT = `Install Micx on my computer, set up my first workspace, and open it ready to use. Follow the steps in https://micxlabs.com/start.md?v=${PROMPT_VARIANT}`;
 
 type CopyMethod = "clipboard" | "execCommand" | "none";
 
@@ -20,7 +20,7 @@ type Props = {
   className?: string;
 };
 
-const steps = ["Installs OpenWork", "Creates your workspace", "Opens ready to run"];
+const steps = ["Installs Micx", "Creates your workspace", "Opens ready to run"];
 
 export function LandingHeroPrompt({ className }: Props) {
   const [feedback, setFeedback] = useState(false);
@@ -83,13 +83,13 @@ export function LandingHeroPrompt({ className }: Props) {
         className="group cursor-pointer rounded-xl border border-gray-100 bg-white p-4 shadow-sm transition-shadow hover:shadow-md"
       >
         <div className="mb-2 text-[13px] text-gray-500">
-          Already use an AI agent? Paste this prompt — it installs OpenWork for you.
+          Already use an AI agent? Paste this prompt — it installs Micx for you.
         </div>
         <p className="text-[15px] leading-relaxed text-[#011627]">
-          Install OpenWork on my computer, set up my first workspace, and open it
+          Install Micx on my computer, set up my first workspace, and open it
           ready to use. Follow the steps in{" "}
           <span className="text-gray-500">
-            https://openworklabs.com/start.md?v={PROMPT_VARIANT}
+            https://micxlabs.com/start.md?v={PROMPT_VARIANT}
           </span>
           <span
             className="hero-prompt-caret ml-0.5 inline-block h-[1.1em] w-[2px] translate-y-[2px] bg-[#011627]"

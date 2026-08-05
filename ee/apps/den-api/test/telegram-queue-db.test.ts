@@ -1,19 +1,19 @@
-import { createDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
-import { WorkerInstanceTable, WorkerTable, WorkerTokenTable } from "@openwork-ee/den-db/schema"
+import { createDenTypeId, type DenTypeId } from "@micx-ee/utils/typeid"
+import { WorkerInstanceTable, WorkerTable, WorkerTokenTable } from "@micx-ee/den-db/schema"
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test"
 
 // Requires local MySQL plus the current schema:
-// DATABASE_URL=mysql://root:password@127.0.0.1:3306/openwork_test_telegram \
+// DATABASE_URL=mysql://root:password@127.0.0.1:3306/micx_test_telegram \
 //   DEN_DB_ENCRYPTION_KEY=telegram-test-encryption-key-1234567890 \
-//   pnpm --filter @openwork-ee/den-db db:push
+//   pnpm --filter @micx-ee/den-db db:push
 
 let db: typeof import("../src/db.js").db
-let drizzle: typeof import("@openwork-ee/den-db/drizzle")
-let schema: typeof import("@openwork-ee/den-db/schema/telegram")
+let drizzle: typeof import("@micx-ee/den-db/drizzle")
+let schema: typeof import("@micx-ee/den-db/schema/telegram")
 let store: typeof import("../src/capability-sources/telegram-store.js")
 
 function seedEnv() {
-  process.env.DATABASE_URL = "mysql://root:password@127.0.0.1:3306/openwork_test_telegram"
+  process.env.DATABASE_URL = "mysql://root:password@127.0.0.1:3306/micx_test_telegram"
   process.env.DB_MODE = "mysql"
   process.env.DEN_DB_ENCRYPTION_KEY = "telegram-test-encryption-key-1234567890"
   process.env.BETTER_AUTH_SECRET = "telegram-test-better-auth-secret-123456"
@@ -34,8 +34,8 @@ beforeAll(async () => {
   seedEnv()
   const [dbModule, drizzleModule, schemaModule, storeModule] = await Promise.all([
     import("../src/db.js"),
-    import("@openwork-ee/den-db/drizzle"),
-    import("@openwork-ee/den-db/schema/telegram"),
+    import("@micx-ee/den-db/drizzle"),
+    import("@micx-ee/den-db/schema/telegram"),
     import("../src/capability-sources/telegram-store.js"),
   ])
   db = dbModule.db

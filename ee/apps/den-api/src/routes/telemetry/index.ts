@@ -1,12 +1,12 @@
-import { and, desc, eq, gte, isNull, sql, type SQL } from "@openwork-ee/den-db/drizzle"
+import { and, desc, eq, gte, isNull, sql, type SQL } from "@micx-ee/den-db/drizzle"
 import {
   TelemetryEventTable,
   TelemetryEventType,
   TelemetrySessionDimensionTable,
   MemberTable,
   InvitationTable,
-} from "@openwork-ee/den-db/schema"
-import { createDenTypeId } from "@openwork-ee/utils/typeid"
+} from "@micx-ee/den-db/schema"
+import { createDenTypeId } from "@micx-ee/utils/typeid"
 import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
@@ -242,7 +242,7 @@ export function registerTelemetryRoutes<T extends { Variables: TelemetryRouteVar
     describeRoute({
       tags: ["Telemetry"],
       summary: "Ingest telemetry events",
-      description: "Receives a batch of telemetry events from the OpenWork app or workers. Auth provides org and member identity. Unknown event types and disallowed fields are dropped. Always returns 204.",
+      description: "Receives a batch of telemetry events from the Micx app or workers. Auth provides org and member identity. Unknown event types and disallowed fields are dropped. Always returns 204.",
       responses: {
         204: emptyResponse("Events accepted."),
         400: jsonResponse("Invalid event payload.", invalidRequestSchema),

@@ -1,4 +1,4 @@
-import { OpenWorkRoadmap } from "@openwork/ui/react";
+import { MicxRoadmap } from "@micx/ui/react";
 import { SiteFooter } from "./site-footer";
 import { SiteNav } from "./site-nav";
 
@@ -10,7 +10,7 @@ export function RoadmapPageShell({ stars }: { stars: string }) {
     >
       <SiteNav stars={stars} active="roadmap" />
       <main className="mx-auto w-full max-w-6xl px-6 md:px-8">
-        <OpenWorkRoadmap />
+        <MicxRoadmap />
         <SiteFooter />
       </main>
     </div>

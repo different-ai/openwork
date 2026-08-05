@@ -3,7 +3,7 @@ import { lazy, Suspense, useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Download, ExternalLink, FolderOpen, X } from "lucide-react";
 
-import type { OpenworkServerClient } from "@/app/lib/openwork-server";
+import type { MicxServerClient } from "@/app/lib/micx-server";
 import { getDesktopFileIcon, openDesktopPath, revealDesktopItemInDir } from "@/app/lib/desktop";
 import { isElectronRuntime } from "@/app/utils";
 import { Button } from "@/components/ui/button";
@@ -37,7 +37,7 @@ function isMarkdownPrimitiveEvalArtifact(target: OpenTarget) {
 type ArtifactPanelProps = {
   sessionId: string;
   tab: ArtifactPanelTab;
-  client: OpenworkServerClient | null;
+  client: MicxServerClient | null;
   workspaceId: string | null;
   workspaceRoot: string;
   isRemoteWorkspace?: boolean;
@@ -45,7 +45,7 @@ type ArtifactPanelProps = {
 };
 
 type ArtifactPanelViewProps = {
-  client: OpenworkServerClient;
+  client: MicxServerClient;
   workspaceId: string;
   workspaceRoot: string;
   isRemoteWorkspace?: boolean;

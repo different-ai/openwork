@@ -104,7 +104,7 @@ test("ignores lifecycle requests and classifies a tools/call with no response as
   expect(diagnoseExternalMcpToolCall({ inspection, succeeded: false })).toEqual({
     status: "failed",
     layer: "network",
-    summary: "OpenWork started tools/call but did not capture an HTTP response. This does not prove the remote MCP caused the failure.",
+    summary: "Micx started tools/call but did not capture an HTTP response. This does not prove the remote MCP caused the failure.",
   })
 })
 
@@ -199,8 +199,8 @@ test("attributes a blocked or deadline-stopped tools/call to the right layer", (
     diagnostic: { phase: "CONFIGURATION", category: "security_blocked", code: "MCP_URL_BLOCKED" },
   })).toEqual({
     status: "failed",
-    layer: "openwork",
-    summary: "OpenWork's outbound network safety policy blocked this tools/call request, so it was not sent to the remote MCP.",
+    layer: "micx",
+    summary: "Micx's outbound network safety policy blocked this tools/call request, so it was not sent to the remote MCP.",
   })
   expect(diagnoseExternalMcpToolCall({
     inspection: { request: { method: "POST", url: "https://mcp.example.test/rpc", startedAt: new Date().toISOString(), headers: [], body: { text: "{}", bytes: 2, truncated: false } } },
@@ -209,7 +209,7 @@ test("attributes a blocked or deadline-stopped tools/call to the right layer", (
   })).toEqual({
     status: "failed",
     layer: "network",
-    summary: "OpenWork sent the request, but the remote MCP did not respond before OpenWork’s deadline.",
+    summary: "Micx sent the request, but the remote MCP did not respond before Micx’s deadline.",
   })
   expect(diagnoseExternalMcpToolCall({
     inspection: { request: { method: "POST", url: "https://mcp.example.test/rpc", startedAt: new Date().toISOString(), headers: [], body: { text: "{}", bytes: 2, truncated: false } } },
@@ -265,7 +265,7 @@ test("attributes remote HTTP and downstream provider failures without crossing e
   })
 })
 
-test("distinguishes remote MCP setup failures from OpenWork failures before tools/call", () => {
+test("distinguishes remote MCP setup failures from Micx failures before tools/call", () => {
   expect(diagnoseExternalMcpToolCall({
     inspection: {},
     succeeded: false,
@@ -282,6 +282,6 @@ test("distinguishes remote MCP setup failures from OpenWork failures before tool
   })).toEqual({
     status: "failed",
     layer: "network",
-    summary: "OpenWork could not reach the remote MCP while preparing the session, so tools/call was not sent.",
+    summary: "Micx could not reach the remote MCP while preparing the session, so tools/call was not sent.",
   })
 })

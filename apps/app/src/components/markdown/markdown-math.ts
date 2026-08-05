@@ -34,7 +34,7 @@ function escapeMathSource(value: string) {
  * still gets the content, and leaves the rest of the message intact.
  */
 function mathFallbackHtml(source: string) {
-  return `<code data-openwork-math-error="" class="rounded-md bg-gray-2/70 px-1.5 py-0.5 font-mono text-sm text-foreground">${escapeMathSource(source)}</code>`;
+  return `<code data-micx-math-error="" class="rounded-md bg-gray-2/70 px-1.5 py-0.5 font-mono text-sm text-foreground">${escapeMathSource(source)}</code>`;
 }
 
 export function renderMathHtml(text: string, displayMode: boolean) {

@@ -4,7 +4,7 @@ import type {
   WorkspaceBlueprintSessionMessage,
   WorkspaceBlueprintSessionTemplate,
   WorkspaceBlueprintStarter,
-  WorkspaceOpenworkConfig,
+  WorkspaceMicxConfig,
 } from "../types";
 import { parseTemplateFrontmatter } from "../utils";
 import { t } from "../../i18n";
@@ -27,7 +27,7 @@ const defaultWelcomeBlueprintMessages = (): WorkspaceBlueprintSessionMessage[] =
 export function defaultBlueprintSessionsForPreset(_preset: string): WorkspaceBlueprintSessionTemplate[] {
   return [
     {
-      id: "welcome-to-openwork",
+      id: "welcome-to-micx",
       title: t("blueprint.welcome_title"),
       messages: defaultWelcomeBlueprintMessages(),
       openOnFirstLoad: true,
@@ -211,25 +211,25 @@ export function buildDefaultWorkspaceBlueprint(preset: string): WorkspaceBluepri
   };
 }
 
-export function blueprintSessions(config: WorkspaceOpenworkConfig | null | undefined): WorkspaceBlueprintSessionTemplate[] {
+export function blueprintSessions(config: WorkspaceMicxConfig | null | undefined): WorkspaceBlueprintSessionTemplate[] {
   return Array.isArray(config?.blueprint?.sessions)
     ? config!.blueprint!.sessions!.filter((item): item is WorkspaceBlueprintSessionTemplate => Boolean(item))
     : [];
 }
 
-export function blueprintMaterializedSessions(config: WorkspaceOpenworkConfig | null | undefined): WorkspaceBlueprintMaterializedSession[] {
+export function blueprintMaterializedSessions(config: WorkspaceMicxConfig | null | undefined): WorkspaceBlueprintMaterializedSession[] {
   return Array.isArray(config?.blueprint?.materialized?.sessions?.items)
     ? config!.blueprint!.materialized!.sessions!.items!.filter((item): item is WorkspaceBlueprintMaterializedSession => Boolean(item))
     : [];
 }
 
-export function normalizeWorkspaceOpenworkConfig(
+export function normalizeWorkspaceMicxConfig(
   value: unknown,
   preset?: string | null,
-): WorkspaceOpenworkConfig {
+): WorkspaceMicxConfig {
   const candidate =
     value && typeof value === "object"
-      ? (value as Partial<WorkspaceOpenworkConfig>)
+      ? (value as Partial<WorkspaceMicxConfig>)
       : {};
 
   const normalizedPreset =

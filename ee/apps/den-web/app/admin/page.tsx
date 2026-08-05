@@ -6,7 +6,7 @@ export default function AdminPage() {
     <main className="min-h-screen bg-slate-50 px-4 py-6 sm:px-6 lg:px-8">
       <div className="mx-auto flex w-full max-w-6xl flex-wrap items-center justify-between gap-3 pb-5">
         <div>
-          <p className="text-[0.7rem] font-semibold uppercase tracking-[0.18em] text-slate-500">OpenWork</p>
+          <p className="text-[0.7rem] font-semibold uppercase tracking-[0.18em] text-slate-500">Micx</p>
           <p className="mt-1 text-sm text-slate-600">Internal Den backoffice</p>
         </div>
         <Link

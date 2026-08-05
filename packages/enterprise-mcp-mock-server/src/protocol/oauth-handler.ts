@@ -269,7 +269,7 @@ export async function handleOAuthRequest(context: OAuthRequestContext): Promise<
         response,
         400,
         "dynamic_client_registration_required",
-        "The MCP connection failed before OpenWork could complete the protocol lifecycle. Dynamic client registration is required before this gateway accepts OAuth authorization.",
+        "The MCP connection failed before Micx could complete the protocol lifecycle. Dynamic client registration is required before this gateway accepts OAuth authorization.",
       )
       return true
     }

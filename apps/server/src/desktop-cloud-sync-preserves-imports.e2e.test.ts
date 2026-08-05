@@ -31,12 +31,12 @@ function auth(token: string) {
 }
 
 async function createWorkspaceRoot() {
-  const root = await mkdtemp(join(tmpdir(), "openwork-desktop-cloud-sync-"));
+  const root = await mkdtemp(join(tmpdir(), "micx-desktop-cloud-sync-"));
   roots.push(root);
   return root;
 }
 
-async function startOpenworkServer(workspaceRoot: string) {
+async function startMicxServer(workspaceRoot: string) {
   const config = {
     host: "127.0.0.1",
     port: 0,
@@ -62,7 +62,7 @@ async function startOpenworkServer(workspaceRoot: string) {
 describe("desktop cloud sync provider imports", () => {
   test("preserves workspace provider import baseline while recording sync state", async () => {
     const root = await createWorkspaceRoot();
-    const { base, token } = await startOpenworkServer(root);
+    const { base, token } = await startMicxServer(root);
     const providerImport = {
       cloudProviderId: "lpr_test",
       providerId: "ow_lpr_test",
@@ -78,7 +78,7 @@ describe("desktop cloud sync provider imports", () => {
       method: "PATCH",
       headers: auth(token),
       body: JSON.stringify({
-        openwork: {
+        micx: {
           cloudImports: {
             providers: { lpr_test: providerImport },
           },
@@ -112,8 +112,8 @@ describe("desktop cloud sync provider imports", () => {
     const configResponse = await fetch(`${base}/workspace/ws_1/config`, { headers: auth(token) });
     expect(configResponse.status).toBe(200);
     const configBody = expectRecord(await configResponse.json(), "workspace config response");
-    const openwork = expectRecord(configBody.openwork, "workspace openwork config");
-    const cloudImports = expectRecord(openwork.cloudImports, "workspace cloud imports");
+    const micx = expectRecord(configBody.micx, "workspace micx config");
+    const cloudImports = expectRecord(micx.cloudImports, "workspace cloud imports");
     const providers = expectRecord(cloudImports.providers, "workspace imported providers");
     const preservedProvider = expectRecord(providers.lpr_test, "preserved provider import baseline");
     expect(preservedProvider).toEqual(providerImport);

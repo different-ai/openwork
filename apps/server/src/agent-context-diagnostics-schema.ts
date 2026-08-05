@@ -4,7 +4,7 @@ import type {
   AgentContextDiagnosticCheckId,
   AgentContextDiagnosticsReport,
   AgentContextDiagnosticsRequest,
-} from "@openwork/types/agent-context-diagnostics";
+} from "@micx/types/agent-context-diagnostics";
 
 // Keep runtime validation local: Electron imports the compiled server with Node,
 // while the shared types workspace intentionally exports source for app builds.
@@ -42,14 +42,14 @@ const diagnosticEvidenceKindSchema = z.enum([
   "unavailable",
 ]);
 const diagnosticOwnerSchema = z.enum([
-  "openwork-client",
-  "openwork-server",
+  "micx-client",
+  "micx-server",
   "opencode-engine",
   "network-admin",
   "organization-admin",
   "member",
   "member-and-organization-admin",
-  "openwork-support",
+  "micx-support",
 ]);
 
 const forbiddenDiagnosticTextPattern = /[\u0000-\u001f\u007f-\u009f\p{Default_Ignorable_Code_Point}]/u;
@@ -394,7 +394,7 @@ const promptEvidenceSchema = z.object({
 const agentEvidenceSchema = z.object({
   evidenceSource: z.enum(["effective-engine", "configured-intent"]),
   defaultAgent: safeTextSchema.max(160).nullable(),
-  configuredOpenworkAgent: z.object({
+  configuredMicxAgent: z.object({
     state: z.enum(["present", "missing", "configured-disabled"]),
     mode: z.enum(["subagent", "primary", "all"]).nullable(),
     prompt: promptEvidenceSchema,
@@ -450,7 +450,7 @@ export const agentContextDiagnosticsReportSchema = z.object({
     id: safeTextSchema.min(1).max(160),
     name: safeTextSchema.min(1).max(240),
     type: z.enum(["local", "remote"]),
-    remoteType: z.enum(["opencode", "openwork"]).nullable(),
+    remoteType: z.enum(["opencode", "micx"]).nullable(),
     engineConfigured: z.boolean(),
   }).strict(),
   checks: z.array(agentContextDiagnosticCheckRuntimeSchema).length(AGENT_CONTEXT_DIAGNOSTIC_CHECK_IDS.length),
@@ -625,13 +625,13 @@ export const agentContextDiagnosticsReportSchema = z.object({
   ) {
     const runtimeCloudMcp = value.mcps.find((mcp) =>
       mcp.source === "config.remote"
-      && mcp.name === "openwork-cloud"
+      && mcp.name === "micx-cloud"
       && mcp.path !== null
     );
     if (!runtimeCloudMcp) {
       context.addIssue({
         code: "custom",
-        message: "cloud handshake evidence requires the retained runtime OpenWork Cloud entry",
+        message: "cloud handshake evidence requires the retained runtime Micx Cloud entry",
         path: ["mcps"],
       });
     }

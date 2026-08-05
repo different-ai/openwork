@@ -446,7 +446,7 @@ describe("den-web observability Next config", () => {
 
     expect(shouldUploadSentrySourceMaps({
       SENTRY_AUTH_TOKEN: "secret-token",
-      SENTRY_ORG: "openwork",
+      SENTRY_ORG: "micx",
       SENTRY_PROJECT: "den-web",
     })).toBe(false);
   });
@@ -456,7 +456,7 @@ describe("den-web observability Next config", () => {
     const wrapped = withObservabilityNextConfig(config, {
       DEN_WEB_UPLOAD_SENTRY_SOURCEMAPS: "true",
       SENTRY_AUTH_TOKEN: "secret-token",
-      SENTRY_ORG: "openwork",
+      SENTRY_ORG: "micx",
       SENTRY_PROJECT: "den-web",
       SENTRY_URL: "https://sentry.example.test",
     }, (nextConfig, sentryOptions) => ({ nextConfig, sentryOptions }));
@@ -464,7 +464,7 @@ describe("den-web observability Next config", () => {
     expect(wrapped).toEqual({
       nextConfig: config,
       sentryOptions: expect.objectContaining({
-        org: "openwork",
+        org: "micx",
         project: "den-web",
         authToken: "secret-token",
         sentryUrl: "https://sentry.example.test",
@@ -477,7 +477,7 @@ describe("den-web observability Next config", () => {
     expect(shouldUploadSentrySourceMaps({
       DEN_WEB_UPLOAD_SENTRY_SOURCEMAPS: "true",
       SENTRY_AUTH_TOKEN: "secret-token",
-      SENTRY_ORG: "openwork",
+      SENTRY_ORG: "micx",
       SENTRY_PROJECT: "den-web",
     })).toBe(true);
   });

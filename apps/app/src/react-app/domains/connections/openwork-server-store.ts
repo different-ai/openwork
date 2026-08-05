@@ -4,66 +4,66 @@ import { t } from "../../../i18n";
 import type { StartupPreference, WorkspaceDisplay } from "../../../app/types";
 import { isDesktopRuntime } from "../../../app/utils";
 import {
-  openworkServerInfo,
-  openworkServerRestart,
-  type OpenworkServerInfo,
+  micxServerInfo,
+  micxServerRestart,
+  type MicxServerInfo,
 } from "../../../app/lib/desktop";
 import {
-  getOpenworkGatewayOrigin,
-  readOpenworkGatewayDenToken,
+  getMicxGatewayOrigin,
+  readMicxGatewayDenToken,
 } from "../../../app/lib/gateway-runtime";
 import {
-  clearOpenworkServerSettings,
-  createOpenworkServerClient,
-  isLoopbackOpenworkServerUrl,
-  normalizeOpenworkServerUrl,
-  readOpenworkServerSettings,
-  writeOpenworkServerSettings,
-  type OpenworkAuditEntry,
-  type OpenworkServerCapabilities,
-  type OpenworkServerClient,
-  type OpenworkServerDiagnostics,
-  type OpenworkServerError,
-  type OpenworkServerSettings,
-  type OpenworkServerStatus,
-} from "../../../app/lib/openwork-server";
+  clearMicxServerSettings,
+  createMicxServerClient,
+  isLoopbackMicxServerUrl,
+  normalizeMicxServerUrl,
+  readMicxServerSettings,
+  writeMicxServerSettings,
+  type MicxAuditEntry,
+  type MicxServerCapabilities,
+  type MicxServerClient,
+  type MicxServerDiagnostics,
+  type MicxServerError,
+  type MicxServerSettings,
+  type MicxServerStatus,
+} from "../../../app/lib/micx-server";
 
 type SetStateAction<T> = T | ((current: T) => T);
 
 type RemoteWorkspaceInput = {
-  openworkHostUrl: string;
-  openworkToken?: string | null;
+  micxHostUrl: string;
+  micxToken?: string | null;
   directory?: string | null;
   displayName?: string | null;
 };
 
-export type OpenworkServerStoreSnapshot = {
-  openworkServerSettings: OpenworkServerSettings;
+export type MicxServerStoreSnapshot = {
+  micxServerSettings: MicxServerSettings;
   shareRemoteAccessBusy: boolean;
   shareRemoteAccessError: string | null;
-  openworkServerUrl: string;
-  openworkServerBaseUrl: string;
-  openworkServerAuth: { token?: string; hostToken?: string };
-  openworkServerClient: OpenworkServerClient | null;
-  openworkServerStatus: OpenworkServerStatus;
-  openworkServerCapabilities: OpenworkServerCapabilities | null;
-  openworkServerReady: boolean;
-  openworkServerWorkspaceReady: boolean;
-  resolvedOpenworkCapabilities: OpenworkServerCapabilities | null;
-  openworkServerCanWriteSkills: boolean;
-  openworkServerCanWritePlugins: boolean;
-  openworkServerHostInfo: OpenworkServerInfo | null;
-  openworkServerDiagnostics: OpenworkServerDiagnostics | null;
-  openworkReconnectBusy: boolean;
-  openworkAuditEntries: OpenworkAuditEntry[];
-  openworkAuditStatus: "idle" | "loading" | "error";
-  openworkAuditError: string | null;
+  micxServerUrl: string;
+  micxServerBaseUrl: string;
+  micxServerAuth: { token?: string; hostToken?: string };
+  micxServerClient: MicxServerClient | null;
+  micxServerStatus: MicxServerStatus;
+  micxServerCapabilities: MicxServerCapabilities | null;
+  micxServerReady: boolean;
+  micxServerWorkspaceReady: boolean;
+  resolvedMicxCapabilities: MicxServerCapabilities | null;
+  micxServerCanWriteSkills: boolean;
+  micxServerCanWritePlugins: boolean;
+  micxServerHostInfo: MicxServerInfo | null;
+  micxServerDiagnostics: MicxServerDiagnostics | null;
+  micxReconnectBusy: boolean;
+  micxAuditEntries: MicxAuditEntry[];
+  micxAuditStatus: "idle" | "loading" | "error";
+  micxAuditError: string | null;
   devtoolsWorkspaceId: string | null;
 };
 
-export type OpenworkServerStore = ReturnType<typeof createOpenworkServerStore>;
+export type MicxServerStore = ReturnType<typeof createMicxServerStore>;
 
-type CreateOpenworkServerStoreOptions = {
+type CreateMicxServerStoreOptions = {
   startupPreference: () => StartupPreference | null;
   documentVisible: () => boolean;
   developerMode: () => boolean;
@@ -75,33 +75,33 @@ type CreateOpenworkServerStoreOptions = {
 };
 
 type MutableState = {
-  openworkServerSettings: OpenworkServerSettings;
+  micxServerSettings: MicxServerSettings;
   shareRemoteAccessBusy: boolean;
   shareRemoteAccessError: string | null;
-  openworkServerUrl: string;
-  openworkServerStatus: OpenworkServerStatus;
-  openworkServerCapabilities: OpenworkServerCapabilities | null;
-  openworkServerCheckedAt: number | null;
-  openworkServerHostInfo: OpenworkServerInfo | null;
-  openworkServerHostInfoReady: boolean;
-  openworkServerDiagnostics: OpenworkServerDiagnostics | null;
-  openworkReconnectBusy: boolean;
-  openworkAuditEntries: OpenworkAuditEntry[];
-  openworkAuditStatus: "idle" | "loading" | "error";
-  openworkAuditError: string | null;
+  micxServerUrl: string;
+  micxServerStatus: MicxServerStatus;
+  micxServerCapabilities: MicxServerCapabilities | null;
+  micxServerCheckedAt: number | null;
+  micxServerHostInfo: MicxServerInfo | null;
+  micxServerHostInfoReady: boolean;
+  micxServerDiagnostics: MicxServerDiagnostics | null;
+  micxReconnectBusy: boolean;
+  micxAuditEntries: MicxAuditEntry[];
+  micxAuditStatus: "idle" | "loading" | "error";
+  micxAuditError: string | null;
   devtoolsWorkspaceId: string | null;
 };
 
 const applyStateAction = <T,>(current: T, next: SetStateAction<T>) =>
   typeof next === "function" ? (next as (value: T) => T)(current) : next;
 
-export function createOpenworkServerStore(options: CreateOpenworkServerStoreOptions) {
+export function createMicxServerStore(options: CreateMicxServerStoreOptions) {
   const bootStartedAt = Date.now();
   const listeners = new Set<() => void>();
   const intervals = new Map<string, number>();
 
   let clientCacheKey = "";
-  let clientCacheValue: OpenworkServerClient | null = null;
+  let clientCacheValue: MicxServerClient | null = null;
   let started = false;
   let disposed = false;
   let healthTimeoutId: number | null = null;
@@ -109,23 +109,23 @@ export function createOpenworkServerStore(options: CreateOpenworkServerStoreOpti
   let healthDelayMs = 10_000;
   let consecutiveHealthFailures = 0;
   let visibilityChangeHandler: (() => void) | null = null;
-  let snapshot: OpenworkServerStoreSnapshot;
+  let snapshot: MicxServerStoreSnapshot;
 
   let state: MutableState = {
-    openworkServerSettings: readOpenworkServerSettings(),
+    micxServerSettings: readMicxServerSettings(),
     shareRemoteAccessBusy: false,
     shareRemoteAccessError: null,
-    openworkServerUrl: "",
-    openworkServerStatus: "disconnected",
-    openworkServerCapabilities: null,
-    openworkServerCheckedAt: null,
-    openworkServerHostInfo: null,
-    openworkServerHostInfoReady: !isDesktopRuntime(),
-    openworkServerDiagnostics: null,
-    openworkReconnectBusy: false,
-    openworkAuditEntries: [],
-    openworkAuditStatus: "idle",
-    openworkAuditError: null,
+    micxServerUrl: "",
+    micxServerStatus: "disconnected",
+    micxServerCapabilities: null,
+    micxServerCheckedAt: null,
+    micxServerHostInfo: null,
+    micxServerHostInfoReady: !isDesktopRuntime(),
+    micxServerDiagnostics: null,
+    micxReconnectBusy: false,
+    micxAuditEntries: [],
+    micxAuditStatus: "idle",
+    micxAuditError: null,
     devtoolsWorkspaceId: null,
   };
 
@@ -134,15 +134,15 @@ export function createOpenworkServerStore(options: CreateOpenworkServerStoreOpti
   };
 
   const getBaseUrl = () => {
-    const gatewayOrigin = getOpenworkGatewayOrigin();
-    if (gatewayOrigin) return normalizeOpenworkServerUrl(gatewayOrigin) ?? "";
+    const gatewayOrigin = getMicxGatewayOrigin();
+    if (gatewayOrigin) return normalizeMicxServerUrl(gatewayOrigin) ?? "";
 
     const pref = options.startupPreference();
-    const hostInfo = state.openworkServerHostInfo;
-    const settingsUrl = normalizeOpenworkServerUrl(state.openworkServerSettings.urlOverride ?? "") ?? "";
+    const hostInfo = state.micxServerHostInfo;
+    const settingsUrl = normalizeMicxServerUrl(state.micxServerSettings.urlOverride ?? "") ?? "";
 
     if (pref === "local") return hostInfo?.baseUrl ?? "";
-    if (pref === "server" && settingsUrl && isLoopbackOpenworkServerUrl(settingsUrl) && hostInfo?.baseUrl) {
+    if (pref === "server" && settingsUrl && isLoopbackMicxServerUrl(settingsUrl) && hostInfo?.baseUrl) {
       return hostInfo.baseUrl;
     }
     if (pref === "server") return settingsUrl;
@@ -150,24 +150,24 @@ export function createOpenworkServerStore(options: CreateOpenworkServerStoreOpti
   };
 
   const getAuth = () => {
-    const gatewayOrigin = getOpenworkGatewayOrigin();
+    const gatewayOrigin = getMicxGatewayOrigin();
     if (gatewayOrigin) {
-      const token = readOpenworkGatewayDenToken().trim();
+      const token = readMicxGatewayDenToken().trim();
       return { token: token || undefined, hostToken: undefined };
     }
 
     const pref = options.startupPreference();
-    const hostInfo = state.openworkServerHostInfo;
-    const settingsUrl = normalizeOpenworkServerUrl(state.openworkServerSettings.urlOverride ?? "") ?? "";
-    const settingsToken = state.openworkServerSettings.token?.trim() ?? "";
-    const settingsHostToken = state.openworkServerSettings.hostToken?.trim() ?? "";
+    const hostInfo = state.micxServerHostInfo;
+    const settingsUrl = normalizeMicxServerUrl(state.micxServerSettings.urlOverride ?? "") ?? "";
+    const settingsToken = state.micxServerSettings.token?.trim() ?? "";
+    const settingsHostToken = state.micxServerSettings.hostToken?.trim() ?? "";
     const clientToken = hostInfo?.clientToken?.trim() ?? "";
     const hostToken = hostInfo?.hostToken?.trim() ?? "";
 
     if (pref === "local") {
       return { token: clientToken || undefined, hostToken: hostToken || undefined };
     }
-    if (pref === "server" && settingsUrl && isLoopbackOpenworkServerUrl(settingsUrl) && hostInfo?.baseUrl) {
+    if (pref === "server" && settingsUrl && isLoopbackMicxServerUrl(settingsUrl) && hostInfo?.baseUrl) {
       return {
         token: clientToken || settingsToken || undefined,
         hostToken: hostToken || settingsHostToken || undefined,
@@ -176,7 +176,7 @@ export function createOpenworkServerStore(options: CreateOpenworkServerStoreOpti
     if (pref === "server") {
       return {
         token: settingsToken || undefined,
-        hostToken: settingsUrl && isLoopbackOpenworkServerUrl(settingsUrl) ? settingsHostToken || undefined : undefined,
+        hostToken: settingsUrl && isLoopbackMicxServerUrl(settingsUrl) ? settingsHostToken || undefined : undefined,
       };
     }
     if (hostInfo?.baseUrl) {
@@ -184,7 +184,7 @@ export function createOpenworkServerStore(options: CreateOpenworkServerStoreOpti
     }
     return {
       token: settingsToken || undefined,
-      hostToken: settingsUrl && isLoopbackOpenworkServerUrl(settingsUrl) ? settingsHostToken || undefined : undefined,
+      hostToken: settingsUrl && isLoopbackMicxServerUrl(settingsUrl) ? settingsHostToken || undefined : undefined,
     };
   };
 
@@ -200,7 +200,7 @@ export function createOpenworkServerStore(options: CreateOpenworkServerStoreOpti
     const key = `${baseUrl}::${auth.token ?? ""}::${auth.hostToken ?? ""}`;
     if (key !== clientCacheKey) {
       clientCacheKey = key;
-      clientCacheValue = createOpenworkServerClient({
+      clientCacheValue = createMicxServerClient({
         baseUrl,
         token: auth.token,
         hostToken: auth.hostToken,
@@ -210,48 +210,48 @@ export function createOpenworkServerStore(options: CreateOpenworkServerStoreOpti
   };
 
   const refreshSnapshot = () => {
-    const openworkServerBaseUrl = getBaseUrl().trim();
-    const openworkServerAuth = getAuth();
-    const openworkServerClient = getClient();
-    const openworkServerReady = state.openworkServerStatus === "connected";
-    const openworkServerWorkspaceReady = Boolean(options.runtimeWorkspaceId());
-    const resolvedOpenworkCapabilities = state.openworkServerCapabilities;
+    const micxServerBaseUrl = getBaseUrl().trim();
+    const micxServerAuth = getAuth();
+    const micxServerClient = getClient();
+    const micxServerReady = state.micxServerStatus === "connected";
+    const micxServerWorkspaceReady = Boolean(options.runtimeWorkspaceId());
+    const resolvedMicxCapabilities = state.micxServerCapabilities;
 
     const pref = options.startupPreference();
-    const info = state.openworkServerHostInfo;
+    const info = state.micxServerHostInfo;
     const hostUrl = info?.connectUrl ?? info?.lanUrl ?? info?.mdnsUrl ?? info?.baseUrl ?? "";
-    const settingsUrl = normalizeOpenworkServerUrl(state.openworkServerSettings.urlOverride ?? "") ?? "";
+    const settingsUrl = normalizeMicxServerUrl(state.micxServerSettings.urlOverride ?? "") ?? "";
 
-    let openworkServerUrl = hostUrl || settingsUrl;
-    if (pref === "local") openworkServerUrl = hostUrl;
-    if (pref === "server") openworkServerUrl = settingsUrl;
-    state.openworkServerUrl = openworkServerUrl;
+    let micxServerUrl = hostUrl || settingsUrl;
+    if (pref === "local") micxServerUrl = hostUrl;
+    if (pref === "server") micxServerUrl = settingsUrl;
+    state.micxServerUrl = micxServerUrl;
 
     snapshot = {
-      openworkServerSettings: state.openworkServerSettings,
+      micxServerSettings: state.micxServerSettings,
       shareRemoteAccessBusy: state.shareRemoteAccessBusy,
       shareRemoteAccessError: state.shareRemoteAccessError,
-      openworkServerUrl,
-      openworkServerBaseUrl,
-      openworkServerAuth,
-      openworkServerClient,
-      openworkServerStatus: state.openworkServerStatus,
-      openworkServerCapabilities: state.openworkServerCapabilities,
-      openworkServerReady,
-      openworkServerWorkspaceReady,
-      resolvedOpenworkCapabilities,
-      openworkServerCanWriteSkills:
-        openworkServerReady &&
-        (resolvedOpenworkCapabilities?.skills?.write ?? false),
-      openworkServerCanWritePlugins:
-        openworkServerReady &&
-        (resolvedOpenworkCapabilities?.plugins?.write ?? false),
-      openworkServerHostInfo: state.openworkServerHostInfo,
-      openworkServerDiagnostics: state.openworkServerDiagnostics,
-      openworkReconnectBusy: state.openworkReconnectBusy,
-      openworkAuditEntries: state.openworkAuditEntries,
-      openworkAuditStatus: state.openworkAuditStatus,
-      openworkAuditError: state.openworkAuditError,
+      micxServerUrl,
+      micxServerBaseUrl,
+      micxServerAuth,
+      micxServerClient,
+      micxServerStatus: state.micxServerStatus,
+      micxServerCapabilities: state.micxServerCapabilities,
+      micxServerReady,
+      micxServerWorkspaceReady,
+      resolvedMicxCapabilities,
+      micxServerCanWriteSkills:
+        micxServerReady &&
+        (resolvedMicxCapabilities?.skills?.write ?? false),
+      micxServerCanWritePlugins:
+        micxServerReady &&
+        (resolvedMicxCapabilities?.plugins?.write ?? false),
+      micxServerHostInfo: state.micxServerHostInfo,
+      micxServerDiagnostics: state.micxServerDiagnostics,
+      micxReconnectBusy: state.micxReconnectBusy,
+      micxAuditEntries: state.micxAuditEntries,
+      micxAuditStatus: state.micxAuditStatus,
+      micxAuditError: state.micxAuditError,
       devtoolsWorkspaceId: state.devtoolsWorkspaceId,
     };
   };
@@ -267,60 +267,60 @@ export function createOpenworkServerStore(options: CreateOpenworkServerStoreOpti
     mutateState((current) => ({ ...current, [key]: value }));
   };
 
-  const setOpenworkServerSettings = (next: SetStateAction<OpenworkServerSettings>) => {
-    const resolved = applyStateAction(state.openworkServerSettings, next);
-    mutateState((current) => ({ ...current, openworkServerSettings: resolved }));
+  const setMicxServerSettings = (next: SetStateAction<MicxServerSettings>) => {
+    const resolved = applyStateAction(state.micxServerSettings, next);
+    mutateState((current) => ({ ...current, micxServerSettings: resolved }));
     queueHealthCheck(0);
   };
 
-  const updateOpenworkServerSettings = (next: OpenworkServerSettings) => {
-    const stored = writeOpenworkServerSettings(next);
-    mutateState((current) => ({ ...current, openworkServerSettings: stored }));
+  const updateMicxServerSettings = (next: MicxServerSettings) => {
+    const stored = writeMicxServerSettings(next);
+    mutateState((current) => ({ ...current, micxServerSettings: stored }));
     queueHealthCheck(0);
   };
 
-  const resetOpenworkServerSettings = () => {
-    clearOpenworkServerSettings();
-    mutateState((current) => ({ ...current, openworkServerSettings: {} }));
+  const resetMicxServerSettings = () => {
+    clearMicxServerSettings();
+    mutateState((current) => ({ ...current, micxServerSettings: {} }));
     queueHealthCheck(0);
   };
 
   const shouldWaitForLocalHostInfo = () =>
     isDesktopRuntime() &&
     options.startupPreference() !== "server" &&
-    !state.openworkServerHostInfoReady;
+    !state.micxServerHostInfoReady;
 
-  const shouldRetryStartupCheck = (status: OpenworkServerStatus) =>
+  const shouldRetryStartupCheck = (status: MicxServerStatus) =>
     status !== "connected" &&
     isDesktopRuntime() &&
     options.startupPreference() !== "server" &&
     Date.now() - bootStartedAt < 5_000;
 
-  const checkOpenworkServer = async (url: string, token?: string, hostToken?: string) => {
-    const client = createOpenworkServerClient({ baseUrl: url, token, hostToken });
+  const checkMicxServer = async (url: string, token?: string, hostToken?: string) => {
+    const client = createMicxServerClient({ baseUrl: url, token, hostToken });
     try {
       await client.health();
     } catch (error) {
-      const resolved = error as OpenworkServerError | Error;
+      const resolved = error as MicxServerError | Error;
       if ("status" in resolved && (resolved.status === 401 || resolved.status === 403)) {
-        return { status: "limited" as OpenworkServerStatus, capabilities: null };
+        return { status: "limited" as MicxServerStatus, capabilities: null };
       }
-      return { status: "disconnected" as OpenworkServerStatus, capabilities: null };
+      return { status: "disconnected" as MicxServerStatus, capabilities: null };
     }
 
     if (!token) {
-      return { status: "limited" as OpenworkServerStatus, capabilities: null };
+      return { status: "limited" as MicxServerStatus, capabilities: null };
     }
 
     try {
       const capabilities = await client.capabilities();
-      return { status: "connected" as OpenworkServerStatus, capabilities };
+      return { status: "connected" as MicxServerStatus, capabilities };
     } catch (error) {
-      const resolved = error as OpenworkServerError | Error;
+      const resolved = error as MicxServerError | Error;
       if ("status" in resolved && (resolved.status === 401 || resolved.status === 403)) {
-        return { status: "limited" as OpenworkServerStatus, capabilities: null };
+        return { status: "limited" as MicxServerStatus, capabilities: null };
       }
-      return { status: "disconnected" as OpenworkServerStatus, capabilities: null };
+      return { status: "disconnected" as MicxServerStatus, capabilities: null };
     }
   };
 
@@ -358,36 +358,36 @@ export function createOpenworkServerStore(options: CreateOpenworkServerStoreOpti
       consecutiveHealthFailures = 0;
       mutateState((current) => ({
         ...current,
-        openworkServerStatus: "disconnected",
-        openworkServerCapabilities: null,
-        openworkServerCheckedAt: Date.now(),
+        micxServerStatus: "disconnected",
+        micxServerCapabilities: null,
+        micxServerCheckedAt: Date.now(),
       }));
       return;
     }
 
     healthBusy = true;
     try {
-      let result = await checkOpenworkServer(url, auth.token, auth.hostToken);
+      let result = await checkMicxServer(url, auth.token, auth.hostToken);
 
       if (shouldRetryStartupCheck(result.status)) {
         await new Promise<void>((resolve) => window.setTimeout(resolve, 250));
         if (disposed) return;
 
         try {
-          const info = await openworkServerInfo() as OpenworkServerInfo;
+          const info = await micxServerInfo() as MicxServerInfo;
           if (disposed) return;
 
           mutateState((current) => ({
             ...current,
-            openworkServerHostInfo: info,
-            openworkServerHostInfoReady: true,
+            micxServerHostInfo: info,
+            micxServerHostInfoReady: true,
           }));
 
           const retryUrl = info.baseUrl?.trim() ?? "";
           const retryToken = info.clientToken?.trim() || undefined;
           const retryHostToken = info.hostToken?.trim() || undefined;
           if (retryUrl) {
-            result = await checkOpenworkServer(retryUrl, retryToken, retryHostToken);
+            result = await checkMicxServer(retryUrl, retryToken, retryHostToken);
           }
         } catch {
           // Preserve the original check result when the retry probe fails.
@@ -395,8 +395,8 @@ export function createOpenworkServerStore(options: CreateOpenworkServerStoreOpti
       }
 
       if (disposed) return;
-      const previousStatus = state.openworkServerStatus;
-      const previousCapabilities = state.openworkServerCapabilities;
+      const previousStatus = state.micxServerStatus;
+      const previousCapabilities = state.micxServerCapabilities;
       const healthy = result.status === "connected" || result.status === "limited";
       if (healthy) {
         consecutiveHealthFailures = 0;
@@ -413,15 +413,15 @@ export function createOpenworkServerStore(options: CreateOpenworkServerStoreOpti
 
       mutateState((current) => ({
         ...current,
-        openworkServerStatus: preservePrevious ? previousStatus : result.status,
-        openworkServerCapabilities: preservePrevious ? previousCapabilities : result.capabilities,
-        openworkServerCheckedAt: Date.now(),
+        micxServerStatus: preservePrevious ? previousStatus : result.status,
+        micxServerCapabilities: preservePrevious ? previousCapabilities : result.capabilities,
+        micxServerCheckedAt: Date.now(),
       }));
     } catch {
       healthDelayMs = Math.min(healthDelayMs * 2, 60_000);
       mutateState((current) => ({
         ...current,
-        openworkServerCheckedAt: Date.now(),
+        micxServerCheckedAt: Date.now(),
       }));
     } finally {
       healthBusy = false;
@@ -434,12 +434,12 @@ export function createOpenworkServerStore(options: CreateOpenworkServerStoreOpti
     emitChange();
 
     if (!isDesktopRuntime()) return;
-    const port = state.openworkServerHostInfo?.port;
+    const port = state.micxServerHostInfo?.port;
     if (!port) return;
-    if (state.openworkServerSettings.portOverride === port) return;
+    if (state.micxServerSettings.portOverride === port) return;
 
-    updateOpenworkServerSettings({
-      ...state.openworkServerSettings,
+    updateMicxServerSettings({
+      ...state.micxServerSettings,
       portOverride: port,
     });
   };
@@ -481,19 +481,19 @@ export function createOpenworkServerStore(options: CreateOpenworkServerStoreOpti
       if (!options.documentVisible()) return;
       void (async () => {
         try {
-          const info = await openworkServerInfo() as OpenworkServerInfo;
+          const info = await micxServerInfo() as MicxServerInfo;
           if (disposed) return;
           mutateState((current) => ({
             ...current,
-            openworkServerHostInfo: info,
-            openworkServerHostInfoReady: true,
+            micxServerHostInfo: info,
+            micxServerHostInfoReady: true,
           }));
         } catch {
           if (disposed) return;
           mutateState((current) => ({
             ...current,
-            openworkServerHostInfo: null,
-            openworkServerHostInfoReady: true,
+            micxServerHostInfo: null,
+            micxServerHostInfoReady: true,
           }));
         }
       })();
@@ -504,22 +504,22 @@ export function createOpenworkServerStore(options: CreateOpenworkServerStoreOpti
     const refreshDiagnostics = () => {
       if (!options.documentVisible()) return;
       if (!options.developerMode()) {
-        setStateField("openworkServerDiagnostics", null);
+        setStateField("micxServerDiagnostics", null);
         return;
       }
 
       const client = getClient();
-      if (!client || state.openworkServerStatus === "disconnected") {
-        setStateField("openworkServerDiagnostics", null);
+      if (!client || state.micxServerStatus === "disconnected") {
+        setStateField("micxServerDiagnostics", null);
         return;
       }
 
       void (async () => {
         try {
           const status = await client.status();
-          if (!disposed) setStateField("openworkServerDiagnostics", status);
+          if (!disposed) setStateField("micxServerDiagnostics", status);
         } catch {
-          if (!disposed) setStateField("openworkServerDiagnostics", null);
+          if (!disposed) setStateField("micxServerDiagnostics", null);
         }
       })();
     };
@@ -561,9 +561,9 @@ export function createOpenworkServerStore(options: CreateOpenworkServerStoreOpti
       if (!options.developerMode()) {
         mutateState((current) => ({
           ...current,
-          openworkAuditEntries: [],
-          openworkAuditStatus: "idle",
-          openworkAuditError: null,
+          micxAuditEntries: [],
+          micxAuditStatus: "idle",
+          micxAuditError: null,
         }));
         return;
       }
@@ -573,17 +573,17 @@ export function createOpenworkServerStore(options: CreateOpenworkServerStoreOpti
       if (!client || !workspaceId) {
         mutateState((current) => ({
           ...current,
-          openworkAuditEntries: [],
-          openworkAuditStatus: "idle",
-          openworkAuditError: null,
+          micxAuditEntries: [],
+          micxAuditStatus: "idle",
+          micxAuditError: null,
         }));
         return;
       }
 
       mutateState((current) => ({
         ...current,
-        openworkAuditStatus: "loading",
-        openworkAuditError: null,
+        micxAuditStatus: "loading",
+        micxAuditError: null,
       }));
 
       void (async () => {
@@ -592,16 +592,16 @@ export function createOpenworkServerStore(options: CreateOpenworkServerStoreOpti
           if (disposed) return;
           mutateState((current) => ({
             ...current,
-            openworkAuditEntries: Array.isArray(result.items) ? result.items : [],
-            openworkAuditStatus: "idle",
+            micxAuditEntries: Array.isArray(result.items) ? result.items : [],
+            micxAuditStatus: "idle",
           }));
         } catch (error) {
           if (disposed) return;
           mutateState((current) => ({
             ...current,
-            openworkAuditEntries: [],
-            openworkAuditStatus: "error",
-            openworkAuditError:
+            micxAuditEntries: [],
+            micxAuditStatus: "error",
+            micxAuditError:
               error instanceof Error
                 ? error.message
                 : t("app.error_audit_load"),
@@ -624,25 +624,25 @@ export function createOpenworkServerStore(options: CreateOpenworkServerStoreOpti
     for (const key of [...intervals.keys()]) stopInterval(key);
   };
 
-  const testOpenworkServerConnection = async (next: OpenworkServerSettings) => {
-    const derived = normalizeOpenworkServerUrl(next.urlOverride ?? "");
+  const testMicxServerConnection = async (next: MicxServerSettings) => {
+    const derived = normalizeMicxServerUrl(next.urlOverride ?? "");
     if (!derived) {
       mutateState((current) => ({
         ...current,
-        openworkServerStatus: "disconnected",
-        openworkServerCapabilities: null,
-        openworkServerCheckedAt: Date.now(),
+        micxServerStatus: "disconnected",
+        micxServerCapabilities: null,
+        micxServerCheckedAt: Date.now(),
       }));
       return false;
     }
 
-    const result = await checkOpenworkServer(derived, next.token);
+    const result = await checkMicxServer(derived, next.token);
     consecutiveHealthFailures = result.status === "disconnected" ? consecutiveHealthFailures + 1 : 0;
     mutateState((current) => ({
       ...current,
-      openworkServerStatus: result.status,
-      openworkServerCapabilities: result.capabilities,
-      openworkServerCheckedAt: Date.now(),
+      micxServerStatus: result.status,
+      micxServerCapabilities: result.capabilities,
+      micxServerCheckedAt: Date.now(),
     }));
 
     const ok = result.status === "connected" || result.status === "limited";
@@ -651,12 +651,12 @@ export function createOpenworkServerStore(options: CreateOpenworkServerStoreOpti
       const shouldAttach =
         !options.activeClient() ||
         active.workspaceType !== "remote" ||
-        active.remoteType !== "openwork";
+        active.remoteType !== "micx";
       if (shouldAttach) {
         await options
           .createRemoteWorkspaceFlow({
-            openworkHostUrl: derived,
-            openworkToken: next.token ?? null,
+            micxHostUrl: derived,
+            micxToken: next.token ?? null,
           })
           .catch(() => undefined);
       }
@@ -664,27 +664,27 @@ export function createOpenworkServerStore(options: CreateOpenworkServerStoreOpti
     return ok;
   };
 
-  const reconnectOpenworkServer = async () => {
-    if (state.openworkReconnectBusy) return false;
-    setStateField("openworkReconnectBusy", true);
+  const reconnectMicxServer = async () => {
+    if (state.micxReconnectBusy) return false;
+    setStateField("micxReconnectBusy", true);
 
     try {
-      let hostInfo = state.openworkServerHostInfo;
+      let hostInfo = state.micxServerHostInfo;
       if (isDesktopRuntime()) {
         try {
-          hostInfo = await openworkServerInfo() as OpenworkServerInfo;
-          mutateState((current) => ({ ...current, openworkServerHostInfo: hostInfo }));
+          hostInfo = await micxServerInfo() as MicxServerInfo;
+          mutateState((current) => ({ ...current, micxServerHostInfo: hostInfo }));
         } catch {
           hostInfo = null;
-          setStateField("openworkServerHostInfo", null);
+          setStateField("micxServerHostInfo", null);
         }
       }
 
       if (hostInfo?.clientToken?.trim() && options.startupPreference() !== "server") {
         const liveToken = hostInfo.clientToken.trim();
-        const settings = state.openworkServerSettings;
+        const settings = state.micxServerSettings;
         if ((settings.token?.trim() ?? "") !== liveToken) {
-          updateOpenworkServerSettings({ ...settings, token: liveToken });
+          updateMicxServerSettings({ ...settings, token: liveToken });
         }
       }
 
@@ -693,30 +693,30 @@ export function createOpenworkServerStore(options: CreateOpenworkServerStoreOpti
       if (!url) {
         mutateState((current) => ({
           ...current,
-          openworkServerStatus: "disconnected",
-          openworkServerCapabilities: null,
-          openworkServerCheckedAt: Date.now(),
+          micxServerStatus: "disconnected",
+          micxServerCapabilities: null,
+          micxServerCheckedAt: Date.now(),
         }));
         return false;
       }
 
-      const result = await checkOpenworkServer(url, auth.token, auth.hostToken);
+      const result = await checkMicxServer(url, auth.token, auth.hostToken);
       mutateState((current) => ({
         ...current,
-        openworkServerStatus: result.status,
-        openworkServerCapabilities: result.capabilities,
-        openworkServerCheckedAt: Date.now(),
+        micxServerStatus: result.status,
+        micxServerCapabilities: result.capabilities,
+        micxServerCheckedAt: Date.now(),
       }));
       return result.status === "connected" || result.status === "limited";
     } finally {
-      setStateField("openworkReconnectBusy", false);
+      setStateField("micxReconnectBusy", false);
     }
   };
 
-  async function ensureLocalOpenworkServerClient(): Promise<OpenworkServerClient | null> {
-    let hostInfo = state.openworkServerHostInfo;
+  async function ensureLocalMicxServerClient(): Promise<MicxServerClient | null> {
+    let hostInfo = state.micxServerHostInfo;
     if (hostInfo?.baseUrl?.trim() && hostInfo.clientToken?.trim()) {
-      const existing = createOpenworkServerClient({
+      const existing = createMicxServerClient({
         baseUrl: hostInfo.baseUrl.trim(),
         token: hostInfo.clientToken.trim(),
         hostToken: hostInfo.hostToken?.trim() || undefined,
@@ -724,7 +724,7 @@ export function createOpenworkServerStore(options: CreateOpenworkServerStoreOpti
       try {
         await existing.health();
         if (options.startupPreference() !== "server") {
-          await reconnectOpenworkServer();
+          await reconnectMicxServer();
         }
         return existing;
       } catch {
@@ -735,10 +735,10 @@ export function createOpenworkServerStore(options: CreateOpenworkServerStoreOpti
     if (!isDesktopRuntime()) return null;
 
     try {
-      hostInfo = await openworkServerRestart({
-        remoteAccessEnabled: state.openworkServerSettings.remoteAccessEnabled === true,
-      }) as OpenworkServerInfo;
-      mutateState((current) => ({ ...current, openworkServerHostInfo: hostInfo }));
+      hostInfo = await micxServerRestart({
+        remoteAccessEnabled: state.micxServerSettings.remoteAccessEnabled === true,
+      }) as MicxServerInfo;
+      mutateState((current) => ({ ...current, micxServerHostInfo: hostInfo }));
     } catch {
       return null;
     }
@@ -749,10 +749,10 @@ export function createOpenworkServerStore(options: CreateOpenworkServerStoreOpti
     if (!baseUrl || !token) return null;
 
     if (options.startupPreference() !== "server") {
-      await reconnectOpenworkServer();
+      await reconnectMicxServer();
     }
 
-    return createOpenworkServerClient({
+    return createMicxServerClient({
       baseUrl,
       token,
       hostToken: hostToken || undefined,
@@ -761,8 +761,8 @@ export function createOpenworkServerStore(options: CreateOpenworkServerStoreOpti
 
   const saveShareRemoteAccess = async (enabled: boolean) => {
     if (state.shareRemoteAccessBusy) return;
-    const previous = state.openworkServerSettings;
-    const next: OpenworkServerSettings = {
+    const previous = state.micxServerSettings;
+    const next: MicxServerSettings = {
       ...previous,
       remoteAccessEnabled: enabled,
     };
@@ -772,7 +772,7 @@ export function createOpenworkServerStore(options: CreateOpenworkServerStoreOpti
       shareRemoteAccessBusy: true,
       shareRemoteAccessError: null,
     }));
-    updateOpenworkServerSettings(next);
+    updateMicxServerSettings(next);
 
     try {
       if (isDesktopRuntime() && options.selectedWorkspaceDisplay().workspaceType === "local") {
@@ -780,10 +780,10 @@ export function createOpenworkServerStore(options: CreateOpenworkServerStoreOpti
         if (!restarted) {
           throw new Error(t("app.error_restart_local_worker"));
         }
-        await reconnectOpenworkServer();
+        await reconnectMicxServer();
       }
     } catch (error) {
-      updateOpenworkServerSettings(previous);
+      updateMicxServerSettings(previous);
       mutateState((current) => ({
         ...current,
         shareRemoteAccessError:
@@ -814,17 +814,17 @@ export function createOpenworkServerStore(options: CreateOpenworkServerStoreOpti
     start,
     dispose,
     syncFromOptions,
-    setOpenworkServerSettings,
-    updateOpenworkServerSettings,
-    resetOpenworkServerSettings,
+    setMicxServerSettings,
+    updateMicxServerSettings,
+    resetMicxServerSettings,
     saveShareRemoteAccess,
-    checkOpenworkServer,
-    testOpenworkServerConnection,
-    reconnectOpenworkServer,
-    ensureLocalOpenworkServerClient,
+    checkMicxServer,
+    testMicxServerConnection,
+    reconnectMicxServer,
+    ensureLocalMicxServerClient,
   };
 }
 
-export function useOpenworkServerStoreSnapshot(store: OpenworkServerStore) {
+export function useMicxServerStoreSnapshot(store: MicxServerStore) {
   return useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot);
 }

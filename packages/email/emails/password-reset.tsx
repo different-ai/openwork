@@ -5,5 +5,5 @@ export default function PasswordResetPreview(props: PasswordResetEmailProps) {
 }
 
 PasswordResetPreview.PreviewProps = {
-  resetLink: "https://app.openworklabs.com/api/auth/reset-password/example-token?callbackURL=https%3A%2F%2Fapp.openworklabs.com%2Freset-password",
+  resetLink: "https://app.micxlabs.com/api/auth/reset-password/example-token?callbackURL=https%3A%2F%2Fapp.micxlabs.com%2Freset-password",
 } satisfies PasswordResetEmailProps

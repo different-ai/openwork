@@ -21,7 +21,7 @@ function ws(fields: {
 
 describe("findManagedEngineWorkspace", () => {
   test("selects the local workspace in a typical local + remote config", () => {
-    // Mirrors the real desktop config: a local workspace followed by an OpenWork
+    // Mirrors the real desktop config: a local workspace followed by an Micx
     // remote worker that has no local path.
     const workspaces = [
       ws({ id: "ws_local", path: "/home/user/cloud/work", workspaceType: "local" }),

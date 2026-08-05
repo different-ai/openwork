@@ -4,14 +4,14 @@
  * on a freshly bootstrapped DB where migration-only indexes are silently dropped (B2).
  *
  * Usage:
- *   DATABASE_URL=mysql://root:password@127.0.0.1:3306/openwork_den \
+ *   DATABASE_URL=mysql://root:password@127.0.0.1:3306/micx_den \
  *     node --import tsx scripts/verify-memory-schema.ts
  *
  * Exits non-zero on the first failed assertion so it can gate CI.
  */
 import "../src/load-env.ts"
 import mysql from "mysql2/promise"
-import { createDenTypeId } from "@openwork-ee/utils/typeid"
+import { createDenTypeId } from "@micx-ee/utils/typeid"
 import {
   assertMemoryFulltextIndexExists,
   ensureMemoryFulltextIndex,
@@ -25,7 +25,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 async function main() {
   const databaseUrl = process.env.DATABASE_URL?.trim()
   if (!databaseUrl) {
-    throw new Error("DATABASE_URL is required (e.g. mysql://root:password@127.0.0.1:3306/openwork_den)")
+    throw new Error("DATABASE_URL is required (e.g. mysql://root:password@127.0.0.1:3306/micx_den)")
   }
 
   const connection = await mysql.createConnection(databaseUrl)

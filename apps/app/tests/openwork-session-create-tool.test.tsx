@@ -5,14 +5,14 @@ import { MemoryRouter } from "react-router-dom";
 import type { DynamicToolUIPart } from "ai";
 
 import { MessageListProvider } from "../src/components/chat/message-list-provider";
-import { OpenWorkSessionCreateTool } from "../src/components/tools/openwork-session-create";
+import { MicxSessionCreateTool } from "../src/components/tools/micx-session-create";
 
 const noop = () => {};
 
 function sessionCreatePart(): DynamicToolUIPart {
   return {
     type: "dynamic-tool",
-    toolName: "openwork_session_create",
+    toolName: "micx_session_create",
     toolCallId: "call-create-sessions",
     state: "output-available",
     input: {
@@ -36,7 +36,7 @@ function sessionCreatePart(): DynamicToolUIPart {
   };
 }
 
-describe("OpenWorkSessionCreateTool", () => {
+describe("MicxSessionCreateTool", () => {
   test("renders named created-chat rows with an Open chat action for each session", () => {
     const html = renderToStaticMarkup(
       <MemoryRouter>
@@ -56,12 +56,12 @@ describe("OpenWorkSessionCreateTool", () => {
           onMcpReopenAuthorization={async () => {}}
           onMcpRetry={noop}
         >
-          <OpenWorkSessionCreateTool part={sessionCreatePart()} />
+          <MicxSessionCreateTool part={sessionCreatePart()} />
         </MessageListProvider>
       </MemoryRouter>,
     );
 
-    expect(html).toContain("data-openwork-session-create-card");
+    expect(html).toContain("data-micx-session-create-card");
     expect(html).toContain('data-created-session-count="3"');
     expect(html).toContain("Dolphin research");
     expect(html).toContain("Banana research");

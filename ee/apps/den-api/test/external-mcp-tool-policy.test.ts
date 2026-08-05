@@ -1,4 +1,4 @@
-import type { ExternalMcpToolPolicy } from "@openwork-ee/den-db"
+import type { ExternalMcpToolPolicy } from "@micx-ee/den-db"
 import { describe, expect, test } from "bun:test"
 import {
   evaluateToolPolicy,

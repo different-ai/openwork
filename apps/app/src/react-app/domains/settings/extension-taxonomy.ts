@@ -1,4 +1,4 @@
-import { isBuiltInOpenWorkExtension, type McpDirectoryInfo } from "../../../app/constants";
+import { isBuiltInMicxExtension, type McpDirectoryInfo } from "../../../app/constants";
 import { t } from "../../../i18n";
 
 /**
@@ -25,9 +25,9 @@ export const extensionInventoryFilters: ExtensionInventoryFilter[] = [
   "plugin",
 ];
 
-/** Built-ins ship with OpenWork and run here, so they are apps. Accounts arrive as org connections. */
+/** Built-ins ship with Micx and run here, so they are apps. Accounts arrive as org connections. */
 export function taxonomyForDirectoryEntry(entry: McpDirectoryInfo): ExtensionTaxonomy {
-  if (isBuiltInOpenWorkExtension(entry) || entry.kind === "ui-control") return "app";
+  if (isBuiltInMicxExtension(entry) || entry.kind === "ui-control") return "app";
   return "mcp";
 }
 

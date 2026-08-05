@@ -10,7 +10,7 @@ import {
   type EgressDiagnosticRun,
   type EgressDiagnosticStep,
   type EgressDiagnosticStepId,
-} from "@openwork/types/den/egress-diagnostics"
+} from "@micx/types/den/egress-diagnostics"
 
 type DiagnosticFetch = typeof fetch
 
@@ -183,19 +183,19 @@ function httpFailure(status: number, category: EgressDiagnosticCategory): Diagno
   }
   if (status >= 500) {
     return new DiagnosticFailure({
-      action: "Give OpenWork support the run ID and diagnostic reference so the Diagnostics deployment can be inspected.",
+      action: "Give Micx support the run ID and diagnostic reference so the Diagnostics deployment can be inspected.",
       category,
       code: `http_${status}`,
       message: `The Diagnostics service returned HTTP ${status}.`,
-      owner: "openwork-support",
+      owner: "micx-support",
     })
   }
   return new DiagnosticFailure({
-    action: "Give OpenWork support the run ID and response status, then compare the matching remote trace.",
+    action: "Give Micx support the run ID and response status, then compare the matching remote trace.",
     category,
     code: `http_${status}`,
     message: `The diagnostic request returned unexpected HTTP ${status}.`,
-    owner: "openwork-support",
+    owner: "micx-support",
   })
 }
 
@@ -203,11 +203,11 @@ async function readJson(response: Response): Promise<Record<string, unknown>> {
   const maximumBytes = 64 * 1024
   const reader = response.body?.getReader()
   if (!reader) throw new DiagnosticFailure({
-    action: "Give OpenWork support the run ID and diagnostic reference.",
+    action: "Give Micx support the run ID and diagnostic reference.",
     category: "http",
     code: "empty_response_body",
     message: "Diagnostics returned an empty response where JSON was required.",
-    owner: "openwork-support",
+    owner: "micx-support",
   })
   const decoder = new TextDecoder()
   let text = ""
@@ -222,11 +222,11 @@ async function readJson(response: Response): Promise<Record<string, unknown>> {
     if (bytes > maximumBytes) {
       await reader.cancel()
       throw new DiagnosticFailure({
-        action: "Give OpenWork support the run ID; the diagnostic response exceeded its declared safety bound.",
+        action: "Give Micx support the run ID; the diagnostic response exceeded its declared safety bound.",
         category: "http",
         code: "response_too_large",
         message: "Diagnostics returned more than 64 KiB of response data.",
-        owner: "openwork-support",
+        owner: "micx-support",
       })
     }
     text += decoder.decode(value, { stream: true })
@@ -239,11 +239,11 @@ async function readJson(response: Response): Promise<Record<string, unknown>> {
     // Report a stable safe error below.
   }
   throw new DiagnosticFailure({
-    action: "Give OpenWork support the run ID and diagnostic reference.",
+    action: "Give Micx support the run ID and diagnostic reference.",
     category: "http",
     code: "invalid_json_response",
     message: "Diagnostics returned a malformed JSON response.",
-    owner: "openwork-support",
+    owner: "micx-support",
   })
 }
 
@@ -255,13 +255,13 @@ function requestHeaders(runId: string, step: string, additional: HeadersInit = {
   const headers = new Headers(additional)
   headers.set(EGRESS_DIAGNOSTIC_RUN_HEADER, runId)
   headers.set(EGRESS_DIAGNOSTIC_STEP_HEADER, step)
-  headers.set("user-agent", "openwork-den-egress-diagnostics/1.0")
+  headers.set("user-agent", "micx-den-egress-diagnostics/1.0")
   return headers
 }
 
 function diagnosticRunSignature(secret: string, runId: string, step: string): string {
   return createHmac("sha256", secret)
-    .update(`openwork-diagnostics-v1\n${runId}\n${step}`)
+    .update(`micx-diagnostics-v1\n${runId}\n${step}`)
     .digest("hex")
 }
 
@@ -292,7 +292,7 @@ async function sendRequest(input: {
   if (!input.expectedStatuses.includes(response.status)) throw httpFailure(response.status, input.category)
   if (!diagnosticIdPattern.test(diagnosticId)) {
     throw new DiagnosticFailure({
-      action: "Ask the network administrator to inspect whether a proxy, gateway, or service mesh replaced the response or removed x-openwork-diagnostic-id.",
+      action: "Ask the network administrator to inspect whether a proxy, gateway, or service mesh replaced the response or removed x-micx-diagnostic-id.",
       category: input.category,
       code: "diagnostic_reference_missing",
       message: "A response arrived, but it did not contain proof that it came from the Diagnostics application.",
@@ -304,11 +304,11 @@ async function sendRequest(input: {
 
 function protocolFailure(category: EgressDiagnosticCategory, code: string, message: string): DiagnosticFailure {
   return new DiagnosticFailure({
-    action: "Give OpenWork support the run ID and diagnostic reference so the response contract can be compared with the remote trace.",
+    action: "Give Micx support the run ID and diagnostic reference so the response contract can be compared with the remote trace.",
     category,
     code,
     message,
-    owner: "openwork-support",
+    owner: "micx-support",
   })
 }
 
@@ -352,9 +352,9 @@ export async function runEgressDiagnostic(input: {
       })
       const body = await readJson(response)
       requireValue(body.ok === true, {
-        action: "Give OpenWork support the run ID and diagnostic reference.",
+        action: "Give Micx support the run ID and diagnostic reference.",
         category: "connectivity", code: "invalid_reachability_response",
-        message: "The reachability endpoint returned an unexpected response.", owner: "openwork-support",
+        message: "The reachability endpoint returned an unexpected response.", owner: "micx-support",
       })
     },
     "http-methods": async (evidence) => {
@@ -376,7 +376,7 @@ export async function runEgressDiagnostic(input: {
       const response = await sendRequest({
         category: "http", evidence, expectedStatuses: [200], fetchImpl,
         init: {
-          body: JSON.stringify({ probe: "openwork-egress-diagnostic" }),
+          body: JSON.stringify({ probe: "micx-egress-diagnostic" }),
           headers: { authorization: `Bearer ${input.bearerToken}`, "content-type": "application/json" },
           method: "POST",
         },
@@ -394,9 +394,9 @@ export async function runEgressDiagnostic(input: {
       const location = first.headers.get("location") ?? ""
       const redirectUrl = new URL(location, origin)
       requireValue(redirectUrl.origin === origin && redirectUrl.pathname === "/diagnostics/egress", {
-        action: "Give OpenWork support the run ID and diagnostic reference.",
+        action: "Give Micx support the run ID and diagnostic reference.",
         category: "http", code: "unsafe_redirect_target",
-        message: "The controlled redirect did not remain on the Diagnostics origin.", owner: "openwork-support",
+        message: "The controlled redirect did not remain on the Diagnostics origin.", owner: "micx-support",
       })
       const second = await sendRequest({
         category: "http", evidence, expectedStatuses: [200], fetchImpl, runId,
@@ -416,9 +416,9 @@ export async function runEgressDiagnostic(input: {
         ? protectedMetadata.authorization_servers
         : []
       requireValue(protectedMetadata.resource === `${origin}/mcp` && authorizationServers.includes(origin), {
-        action: "Give OpenWork support the run ID and diagnostic reference.",
+        action: "Give Micx support the run ID and diagnostic reference.",
         category: "oauth", code: "protected_resource_metadata_mismatch",
-        message: "OAuth protected-resource metadata did not describe the expected MCP resource.", owner: "openwork-support",
+        message: "OAuth protected-resource metadata did not describe the expected MCP resource.", owner: "micx-support",
       })
       const authorizationResponse = await sendRequest({
         category: "oauth", evidence, expectedStatuses: [200], fetchImpl, runId,
@@ -427,9 +427,9 @@ export async function runEgressDiagnostic(input: {
       })
       const authorizationMetadata = await readJson(authorizationResponse)
       requireValue(authorizationMetadata.issuer === origin && authorizationMetadata.token_endpoint === `${origin}/oauth/token`, {
-        action: "Give OpenWork support the run ID and diagnostic reference.",
+        action: "Give Micx support the run ID and diagnostic reference.",
         category: "oauth", code: "authorization_server_metadata_mismatch",
-        message: "OAuth authorization-server metadata did not describe the expected token endpoint.", owner: "openwork-support",
+        message: "OAuth authorization-server metadata did not describe the expected token endpoint.", owner: "micx-support",
       })
     },
     "oauth-token": async (evidence) => {
@@ -443,7 +443,7 @@ export async function runEgressDiagnostic(input: {
         init: {
           body: form.toString(),
           headers: {
-            authorization: `Basic ${Buffer.from(`openwork-diagnostics:${input.bearerToken}`).toString("base64")}`,
+            authorization: `Basic ${Buffer.from(`micx-diagnostics:${input.bearerToken}`).toString("base64")}`,
             "content-type": "application/x-www-form-urlencoded",
           },
           method: "POST",
@@ -452,9 +452,9 @@ export async function runEgressDiagnostic(input: {
       })
       const body = await readJson(response)
       requireValue(body.token_type === "Bearer" && typeof body.access_token === "string" && body.access_token.length > 20, {
-        action: "Give OpenWork support the run ID and diagnostic reference.",
+        action: "Give Micx support the run ID and diagnostic reference.",
         category: "oauth", code: "invalid_token_response",
-        message: "The OAuth-shaped token response did not contain a usable synthetic Bearer token.", owner: "openwork-support",
+        message: "The OAuth-shaped token response did not contain a usable synthetic Bearer token.", owner: "micx-support",
       })
       accessToken = body.access_token
     },
@@ -469,7 +469,7 @@ export async function runEgressDiagnostic(input: {
         init: {
           body: JSON.stringify({
             id: 1, jsonrpc: "2.0", method: "initialize",
-            params: { capabilities: {}, clientInfo: { name: "openwork-den-egress-diagnostics", version: "1.0" }, protocolVersion: "2025-11-25" },
+            params: { capabilities: {}, clientInfo: { name: "micx-den-egress-diagnostics", version: "1.0" }, protocolVersion: "2025-11-25" },
           }),
           headers: baseHeaders, method: "POST",
         },
@@ -480,9 +480,9 @@ export async function runEgressDiagnostic(input: {
       const session = initialized.headers.get("mcp-session-id") ?? ""
       const version = initialized.headers.get("mcp-protocol-version") ?? ""
       requireValue(result !== null && result.protocolVersion === "2025-11-25" && session.length > 20 && version === "2025-11-25", {
-        action: "Give OpenWork support the run ID and initialize diagnostic reference.",
+        action: "Give Micx support the run ID and initialize diagnostic reference.",
         category: "mcp", code: "mcp_initialize_contract_mismatch",
-        message: "MCP initialization did not return the expected protocol version and session.", owner: "openwork-support",
+        message: "MCP initialization did not return the expected protocol version and session.", owner: "micx-support",
       })
       const sessionHeaders = { ...baseHeaders, "mcp-protocol-version": version, "mcp-session-id": session }
       await sendRequest({
@@ -498,15 +498,15 @@ export async function runEgressDiagnostic(input: {
       const catalogBody = await readJson(catalogResponse)
       const catalogResult = asRecord(catalogBody.result)
       requireValue(catalogResult !== null && Array.isArray(catalogResult.tools) && catalogResult.tools.length === 1, {
-        action: "Give OpenWork support the run ID and catalog diagnostic reference.",
+        action: "Give Micx support the run ID and catalog diagnostic reference.",
         category: "mcp", code: "mcp_catalog_contract_mismatch",
-        message: "MCP tool discovery did not return the single synthetic diagnostic tool.", owner: "openwork-support",
+        message: "MCP tool discovery did not return the single synthetic diagnostic tool.", owner: "micx-support",
       })
       const tool = asRecord(catalogResult.tools[0])
       requireValue(tool !== null && typeof tool.name === "string" && tool.name.length > 0, {
-        action: "Give OpenWork support the run ID and catalog diagnostic reference.",
+        action: "Give Micx support the run ID and catalog diagnostic reference.",
         category: "mcp", code: "mcp_tool_name_missing",
-        message: "MCP tool discovery returned a tool without a usable name.", owner: "openwork-support",
+        message: "MCP tool discovery returned a tool without a usable name.", owner: "micx-support",
       })
       const toolResponse = await sendRequest({
         category: "mcp", evidence, expectedStatuses: [200], fetchImpl,
@@ -519,9 +519,9 @@ export async function runEgressDiagnostic(input: {
       const toolBody = await readJson(toolResponse)
       const toolResult = asRecord(toolBody.result)
       requireValue(toolResult !== null && toolResult.isError === false, {
-        action: "Give OpenWork support the run ID and tool-call diagnostic reference.",
+        action: "Give Micx support the run ID and tool-call diagnostic reference.",
         category: "mcp", code: "mcp_tool_contract_mismatch",
-        message: "The synthetic MCP tool call was not reported as successful.", owner: "openwork-support",
+        message: "The synthetic MCP tool call was not reported as successful.", owner: "micx-support",
       })
     },
   }
@@ -566,7 +566,7 @@ export async function runEgressDiagnostic(input: {
         diagnosticIds: evidence.diagnosticIds,
         code: null,
         message: definition.message,
-        owner: "openwork-support",
+        owner: "micx-support",
         action: definition.action,
       })
     } catch (error) {

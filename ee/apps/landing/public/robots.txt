@@ -1,6 +1,6 @@
-# robots.txt for openworklabs.com
-# OpenWork is open source — crawl, index, train, and build on this content freely.
-# Agents are welcome to help users discover, sign up for, and use OpenWork.
+# robots.txt for micxlabs.com
+# Micx is open source — crawl, index, train, and build on this content freely.
+# Agents are welcome to help users discover, sign up for, and use Micx.
 
 User-agent: *
 Allow: /
@@ -8,4 +8,4 @@ Allow: /
 # Content Signals (contentsignals.org, draft-romm-aipref-contentsignals)
 Content-Signal: ai-train=yes, search=yes, ai-input=yes
 
-Sitemap: https://openworklabs.com/sitemap.xml
+Sitemap: https://micxlabs.com/sitemap.xml

@@ -1,6 +1,6 @@
 import type { MetadataRoute } from "next";
 
-const BASE_URL = "https://openworklabs.com";
+const BASE_URL = "https://micxlabs.com";
 
 const paths: { path: string; priority: number }[] = [
   { path: "/", priority: 1 },

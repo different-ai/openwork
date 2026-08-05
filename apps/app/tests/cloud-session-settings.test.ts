@@ -6,13 +6,13 @@ describe("Cloud session settings projection", () => {
   test("restores the persisted active organization for late settings updates", () => {
     expect(cloudSessionOrganizationFromSettings({
       activeOrgId: " org_123 ",
-      activeOrgName: " OpenWork Labs ",
-      activeOrgSlug: " openwork-labs ",
+      activeOrgName: " Micx Labs ",
+      activeOrgSlug: " micx-labs ",
     })).toEqual({
       id: "org_123",
-      name: "OpenWork Labs",
+      name: "Micx Labs",
       role: "member",
-      slug: "openwork-labs",
+      slug: "micx-labs",
     });
   });
 

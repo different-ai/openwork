@@ -13,12 +13,12 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { TextInput } from "../../../design-system/text-input";
-import type { OpenworkClaudePluginPreview } from "../../../../app/lib/openwork-server";
+import type { MicxClaudePluginPreview } from "../../../../app/lib/micx-server";
 
 export type ClaudePluginImportModalProps = {
   open: boolean;
   onClose: () => void;
-  onPreview: (url: string) => Promise<OpenworkClaudePluginPreview>;
+  onPreview: (url: string) => Promise<MicxClaudePluginPreview>;
   onInstall: (url: string) => Promise<{ ok: boolean; message: string }>;
   /** Called after a successful install so the host view can refresh. */
   onInstalled?: () => void;
@@ -26,7 +26,7 @@ export type ClaudePluginImportModalProps = {
 
 type ModalState = {
   url: string;
-  preview: OpenworkClaudePluginPreview | null;
+  preview: MicxClaudePluginPreview | null;
   /** URL the current preview was generated from; install always targets this. */
   previewedUrl: string | null;
   previewing: boolean;
@@ -46,7 +46,7 @@ const initialState: ModalState = {
 type ModalAction =
   | Partial<ModalState>
   | "reset"
-  | { kind: "preview-success"; url: string; preview: OpenworkClaudePluginPreview };
+  | { kind: "preview-success"; url: string; preview: MicxClaudePluginPreview };
 
 function reducer(state: ModalState, action: ModalAction): ModalState {
   if (action === "reset") return initialState;

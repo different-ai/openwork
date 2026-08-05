@@ -1,7 +1,7 @@
 import { diagnosticsConfig, validateProductionConfig } from "../src/config"
 import { listWireHistory } from "../src/history-store"
 import type { WireBody, WireExchange } from "../src/contracts"
-import { egressDiagnosticRunSchema } from "@openwork/types/den/egress-diagnostics"
+import { egressDiagnosticRunSchema } from "@micx/types/den/egress-diagnostics"
 
 export const dynamic = "force-dynamic"
 
@@ -54,7 +54,7 @@ export default async function DiagnosticsPage({ searchParams }: { searchParams: 
   return <main>
     <meta httpEquiv="refresh" content="5" />
     <header className="hero">
-      <div><p className="eyebrow">OpenWork Enterprise</p><h1>Diagnostics</h1><p>Prove that an enterprise allowlist reaches us, then inspect the client handshake request by request.</p></div>
+      <div><p className="eyebrow">Micx Enterprise</p><h1>Diagnostics</h1><p>Prove that an enterprise allowlist reaches us, then inspect the client handshake request by request.</p></div>
       <div className="hero-actions">
         <nav className="diagnostic-nav"><a href="/connections">Connections</a><a className="active" href="/">Wire traces</a></nav>
         <div className="endpoint"><span>Active {config.profile} MCP endpoint</span><code>{origin}/mcp</code></div>

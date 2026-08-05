@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, expect, mock, test } from "bun:test"
-import { and, eq } from "@openwork-ee/den-db/drizzle"
+import { and, eq } from "@micx-ee/den-db/drizzle"
 import {
   ConfigObjectAccessGrantTable,
   ConfigObjectTable,
@@ -12,11 +12,11 @@ import {
   PluginAccessGrantTable,
   PluginConfigObjectTable,
   PluginTable,
-} from "@openwork-ee/den-db/schema"
-import { createDenTypeId } from "@openwork-ee/utils/typeid"
+} from "@micx-ee/den-db/schema"
+import { createDenTypeId } from "@micx-ee/utils/typeid"
 import type { PluginArchActorContext } from "../src/routes/org/plugin-system/access.js"
 
-process.env.DATABASE_URL = process.env.DATABASE_URL ?? "mysql://root:password@127.0.0.1:3306/openwork_test_membercreate"
+process.env.DATABASE_URL = process.env.DATABASE_URL ?? "mysql://root:password@127.0.0.1:3306/micx_test_membercreate"
 process.env.DB_MODE ??= "mysql"
 process.env.DEN_DB_ENCRYPTION_KEY ??= "member-create-test-key-123456789"
 process.env.BETTER_AUTH_SECRET ??= "member-create-test-secret-123456"
@@ -51,7 +51,7 @@ async function clearRows() {
 
 beforeAll(async () => {
   mock.restore()
-  db = (await import("@openwork-ee/den-db")).createDenDb({
+  db = (await import("@micx-ee/den-db")).createDenDb({
     databaseUrl: process.env.DATABASE_URL,
     mode: "mysql",
   }).db
@@ -227,7 +227,7 @@ test("a member cannot import plugins from GitHub without starting a fetch", asyn
       authType: "none",
       context: memberContext,
       credentialMode: "shared",
-      githubUrl: "https://github.com/openworklabs/test-plugin",
+      githubUrl: "https://github.com/micxlabs/test-plugin",
     }))).toBe(403)
     expect(fetchCalls).toBe(0)
   } finally {

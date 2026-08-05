@@ -1,6 +1,6 @@
 import { beforeEach, expect, mock, test } from "bun:test"
 
-// Regression guard for OpenWork seat billing: quantity syncs must accrue
+// Regression guard for Micx seat billing: quantity syncs must accrue
 // prorations onto the next monthly invoice ("create_prorations") instead of
 // invoicing and charging the card on every seat change ("always_invoice"),
 // which produced a separate bank charge per added/removed member.

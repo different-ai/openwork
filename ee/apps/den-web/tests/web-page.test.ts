@@ -2,13 +2,13 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
-import { DEFAULT_OPENWORK_WEB_URL } from "../app/(den)/_lib/runtime-config";
+import { DEFAULT_MICX_WEB_URL } from "../app/(den)/_lib/runtime-config";
 import { getWebPageAccessState, WebOpenButton } from "../app/(den)/dashboard/web/page";
 import { GET } from "../app/api/runtime-config/route";
 
 const originalEnv = {
   DEN_API_BASE: process.env.DEN_API_BASE,
-  DEN_WEB_OPENWORK_WEB_URL: process.env.DEN_WEB_OPENWORK_WEB_URL,
+  DEN_WEB_MICX_WEB_URL: process.env.DEN_WEB_MICX_WEB_URL,
 };
 
 function restoreEnvValue(name: keyof typeof originalEnv) {
@@ -31,7 +31,7 @@ function readStringProperty(value: unknown, key: string) {
 
 afterEach(() => {
   restoreEnvValue("DEN_API_BASE");
-  restoreEnvValue("DEN_WEB_OPENWORK_WEB_URL");
+  restoreEnvValue("DEN_WEB_MICX_WEB_URL");
 });
 
 describe("Web dashboard page", () => {
@@ -53,24 +53,24 @@ describe("Web dashboard page", () => {
 
   test("renders the external Web button with the configured href", () => {
     const html = renderToStaticMarkup(createElement(WebOpenButton, {
-      openworkWebUrl: DEFAULT_OPENWORK_WEB_URL,
+      micxWebUrl: DEFAULT_MICX_WEB_URL,
     }));
 
-    expect(html).toContain(`href="${DEFAULT_OPENWORK_WEB_URL}"`);
+    expect(html).toContain(`href="${DEFAULT_MICX_WEB_URL}"`);
     expect(html).toContain('target="_blank"');
     expect(html).toContain('rel="noopener noreferrer"');
-    expect(html).toContain("Open OpenWork Web");
+    expect(html).toContain("Open Micx Web");
   });
 
   test("runtime config exposes the default Web URL and deployment override", async () => {
     delete process.env.DEN_API_BASE;
-    delete process.env.DEN_WEB_OPENWORK_WEB_URL;
+    delete process.env.DEN_WEB_MICX_WEB_URL;
 
     const defaultPayload: unknown = await (await GET()).json();
-    expect(readStringProperty(defaultPayload, "openworkWebUrl")).toBe(DEFAULT_OPENWORK_WEB_URL);
+    expect(readStringProperty(defaultPayload, "micxWebUrl")).toBe(DEFAULT_MICX_WEB_URL);
 
-    process.env.DEN_WEB_OPENWORK_WEB_URL = "https://self-hosted.example.test";
+    process.env.DEN_WEB_MICX_WEB_URL = "https://self-hosted.example.test";
     const overridePayload: unknown = await (await GET()).json();
-    expect(readStringProperty(overridePayload, "openworkWebUrl")).toBe("https://self-hosted.example.test");
+    expect(readStringProperty(overridePayload, "micxWebUrl")).toBe("https://self-hosted.example.test");
   });
 });

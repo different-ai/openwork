@@ -45,7 +45,7 @@ function fakeUpdaterHarness({ version }) {
 }
 
 async function registerFakeUpdaterIpc({ version }) {
-  const tempDir = mkdtempSync(path.join(os.tmpdir(), "openwork-updater-test-"));
+  const tempDir = mkdtempSync(path.join(os.tmpdir(), "micx-updater-test-"));
   const handlers = new Map();
   const harness = fakeUpdaterHarness({ version });
   isolatedUpdaterImportId += 1;
@@ -72,7 +72,7 @@ async function registerFakeUpdaterIpc({ version }) {
 describe("staleUpdaterStatePaths", () => {
   it("targets the ShipIt cache on macOS", { skip: process.platform !== "darwin" }, () => {
     assert.deepEqual(staleUpdaterStatePaths(fakeApp), [
-      "/Users/test/Library/Caches/com.differentai.openwork.ShipIt",
+      "/Users/test/Library/Caches/com.differentai.micx.ShipIt",
     ]);
   });
 
@@ -85,7 +85,7 @@ describe("targetedStableUpdaterFeed", () => {
   it("builds a fixed GitHub release feed from a strict stable version", () => {
     assert.equal(
       targetedStableUpdaterFeed("0.17.22", "0.17.23"),
-      "https://github.com/different-ai/openwork/releases/download/v0.17.23",
+      "https://github.com/different-ai/micx/releases/download/v0.17.23",
     );
   });
 
@@ -128,7 +128,7 @@ describe("installAndRestart", () => {
       getMainWindow: () => null,
     });
 
-    const install = handlers.get("openwork:updater:installAndRestart");
+    const install = handlers.get("micx:updater:installAndRestart");
     assert.equal(typeof install, "function");
     assert.deepEqual(await install(), {
       ok: false,
@@ -143,9 +143,9 @@ describe("downloaded update lifecycle", () => {
       version: "0.17.1",
     });
     try {
-      const check = handlers.get("openwork:updater:check");
-      const download = handlers.get("openwork:updater:download");
-      const install = handlers.get("openwork:updater:installAndRestart");
+      const check = handlers.get("micx:updater:check");
+      const download = handlers.get("micx:updater:download");
+      const install = handlers.get("micx:updater:installAndRestart");
       assert.equal(typeof check, "function");
       assert.equal(typeof download, "function");
       assert.equal(typeof install, "function");
@@ -170,9 +170,9 @@ describe("downloaded update lifecycle", () => {
       version: "0.17.1",
     });
     try {
-      const check = handlers.get("openwork:updater:check");
-      const download = handlers.get("openwork:updater:download");
-      const install = handlers.get("openwork:updater:installAndRestart");
+      const check = handlers.get("micx:updater:check");
+      const download = handlers.get("micx:updater:download");
+      const install = handlers.get("micx:updater:installAndRestart");
       assert.equal(typeof check, "function");
       assert.equal(typeof download, "function");
       assert.equal(typeof install, "function");
@@ -194,9 +194,9 @@ describe("downloaded update lifecycle", () => {
       version: "0.17.1",
     });
     try {
-      const check = handlers.get("openwork:updater:check");
-      const download = handlers.get("openwork:updater:download");
-      const install = handlers.get("openwork:updater:installAndRestart");
+      const check = handlers.get("micx:updater:check");
+      const download = handlers.get("micx:updater:download");
+      const install = handlers.get("micx:updater:installAndRestart");
       assert.equal(typeof check, "function");
       assert.equal(typeof download, "function");
       assert.equal(typeof install, "function");
@@ -228,7 +228,7 @@ describe("release channel changes", () => {
 
   it("pins enterprise builds to their parallel stable manifest channel", async () => {
     const handlers = new Map();
-    const userData = await mkdtemp(path.join(os.tmpdir(), "openwork-enterprise-updater-"));
+    const userData = await mkdtemp(path.join(os.tmpdir(), "micx-enterprise-updater-"));
     try {
       registerUpdaterIpc({
         app: {
@@ -241,11 +241,11 @@ describe("release channel changes", () => {
         manifestChannel: "enterprise",
       });
 
-      const setChannel = handlers.get("openwork:updater:setChannel");
+      const setChannel = handlers.get("micx:updater:setChannel");
       assert.equal(typeof setChannel, "function");
       assert.deepEqual(await setChannel(null, "alpha"), {
         channel: "stable",
-        feedUrl: "https://github.com/different-ai/openwork/releases/latest/download",
+        feedUrl: "https://github.com/different-ai/micx/releases/latest/download",
         currentVersion: desktopVersion,
       });
     } finally {

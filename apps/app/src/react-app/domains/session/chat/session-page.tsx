@@ -6,9 +6,9 @@ import { Cloud, FileText, Globe, Mic2, PanelRight, TextSearch, Zap } from "lucid
 
 import { resolveExtensionIconSrc } from "@/react-app/design-system/extension-icon-src";
 import { t } from "../../../../i18n";
-import { OPENWORK_EXTENSION_CATALOG } from "../../../../app/constants";
+import { MICX_EXTENSION_CATALOG } from "../../../../app/constants";
 import { buildDenAuthUrl, readDenBootstrapConfig } from "../../../../app/lib/den";
-import { type OpenworkServerClient, type OpenworkServerStatus } from "../../../../app/lib/openwork-server";
+import { type MicxServerClient, type MicxServerStatus } from "../../../../app/lib/micx-server";
 import { getDisplaySessionTitle } from "../../../../app/lib/session-title";
 import type { BootPhase } from "../../../../app/lib/startup-boot";
 import { openDesktopPath, revealDesktopItemInDir, type WorkspaceInfo } from "../../../../app/lib/desktop";
@@ -71,8 +71,8 @@ import { getSidePanelSessionKey } from "../panel/side-panel-session";
 import { TerminalDock } from "../terminal/terminal-dock";
 import { useActivePanelTab, usePanelTabStore, useSessionPanelState } from "../panel/panel-tab-store";
 import { useWorkspaceShellLayout } from "../../../shell/workspace-shell-layout";
-import { useControlAction, type OpenworkControlAction } from "../../../shell/control/control-provider";
-import { getExtensionId, isOpenWorkExtensionEnabled, OPENWORK_EXTENSION_STATE_CHANGED } from "../../settings/extension-state";
+import { useControlAction, type MicxControlAction } from "../../../shell/control/control-provider";
+import { getExtensionId, isMicxExtensionEnabled, MICX_EXTENSION_STATE_CHANGED } from "../../settings/extension-state";
 import { cn } from "@/lib/utils";
 import {
   canNavigateSelectedConversationHistory,
@@ -89,7 +89,7 @@ const STARTUP_SKELETON_ROWS = [
   { id: "middle", titleWidth: "56%", bodyWidth: "88%" },
   { id: "final", titleWidth: "36%", bodyWidth: "74%" },
 ];
-const GLOBAL_VOICE_SIDE_PANEL_KEY = "__openwork_voice__";
+const GLOBAL_VOICE_SIDE_PANEL_KEY = "__micx_voice__";
 const EMPTY_TRANSCRIPT_TARGETS: OpenTarget[] = [];
 const EMPTY_SESSION_TABS: WorkbenchSessionTab[] = [];
 
@@ -153,7 +153,7 @@ export type SessionPageSidebarProps = {
 
 export type SessionPageSurfaceProps = Omit<
   SessionSurfaceProps,
-  "client" | "workspaceId" | "sessionId" | "opencodeBaseUrl" | "openworkToken" | "isControlTarget"
+  "client" | "workspaceId" | "sessionId" | "opencodeBaseUrl" | "micxToken" | "isControlTarget"
 >;
 
 export type SessionPageProps = {
@@ -177,10 +177,10 @@ export type SessionPageProps = {
   opencodeBaseUrl?: string | null;
   workspaces: WorkspaceInfo[];
   clientConnected: boolean;
-  openworkServerStatus: OpenworkServerStatus;
-  openworkServerClient: OpenworkServerClient | null;
-  environmentClient?: OpenworkServerClient | null;
-  openworkServerToken?: string | null;
+  micxServerStatus: MicxServerStatus;
+  micxServerClient: MicxServerClient | null;
+  environmentClient?: MicxServerClient | null;
+  micxServerToken?: string | null;
   developerMode: boolean;
   headerStatus: string;
   busyHint: string | null;
@@ -278,7 +278,7 @@ function absoluteWorkspacePath(root: string | null | undefined, value: string) {
 
 function hiddenAccessibleTargetsStorageKey(workspaceId: string | null | undefined, sessionId: string | null | undefined) {
   if (!workspaceId || !sessionId) return null;
-  return `openwork.session.hiddenAccessibleTargets.v1:${workspaceId}:${sessionId}`;
+  return `micx.session.hiddenAccessibleTargets.v1:${workspaceId}:${sessionId}`;
 }
 
 function readHiddenAccessibleTargetIds(workspaceId: string | null | undefined, sessionId: string | null | undefined): Set<string> {
@@ -355,10 +355,10 @@ export function SessionPage(props: SessionPageProps) {
   const panelRailActive = activeSidePanel === "panel";
   const voiceRailActive = activeSidePanel === "voice";
   const voiceExtension = useMemo(
-    () => OPENWORK_EXTENSION_CATALOG.find((entry) => getExtensionId(entry) === "openwork-voice") ?? null,
+    () => MICX_EXTENSION_CATALOG.find((entry) => getExtensionId(entry) === "micx-voice") ?? null,
     [],
   );
-  const voiceExtensionEnabled = voiceExtension ? isOpenWorkExtensionEnabled(voiceExtension) : false;
+  const voiceExtensionEnabled = voiceExtension ? isMicxExtensionEnabled(voiceExtension) : false;
   const showCloudSignIn = shellConfig.cloudSignin && !denAuth.isSignedIn && denAuth.status !== "checking";
   const openCloudSignIn = useCallback(() => {
     const baseUrl = readDenBootstrapConfig().baseUrl;
@@ -422,7 +422,7 @@ export function SessionPage(props: SessionPageProps) {
   // the panel opened and doesn't render the unified panel chrome.
   useEffect(() => {
     if (!isElectronRuntime()) return;
-    const browser = (window as Window).__OPENWORK_ELECTRON__?.browser;
+    const browser = (window as Window).__MICX_ELECTRON__?.browser;
     if (!browser) return;
     const unsubOpen = browser.onPanelOpened?.(() => {
       if (preserveSidePanelOnPanelOpenRef.current) {
@@ -464,11 +464,11 @@ export function SessionPage(props: SessionPageProps) {
     return target.value;
   }, []);
   const downloadOpenTarget = useCallback(async (target: OpenTarget) => {
-    if (target.kind !== "file" || !props.openworkServerClient || !props.runtimeWorkspaceId) {
+    if (target.kind !== "file" || !props.micxServerClient || !props.runtimeWorkspaceId) {
       return;
     }
 
-    const result = await props.openworkServerClient.downloadWorkspaceFile(props.runtimeWorkspaceId, target.value);
+    const result = await props.micxServerClient.downloadWorkspaceFile(props.runtimeWorkspaceId, target.value);
     const url = URL.createObjectURL(new Blob([result.data], { type: result.contentType ?? "application/octet-stream" }));
     const anchor = document.createElement("a");
 
@@ -477,13 +477,13 @@ export function SessionPage(props: SessionPageProps) {
     anchor.click();
 
     window.setTimeout(() => URL.revokeObjectURL(url), 1000);
-  }, [props.openworkServerClient, props.runtimeWorkspaceId]);
+  }, [props.micxServerClient, props.runtimeWorkspaceId]);
   const openTarget = useCallback((target: OpenTarget, options?: OpenTargetOptions, sourceSessionId?: string) => {
     if (target.kind === "url" || target.preview === "browser") {
       const url = browserUrlForTarget(target);
       if (isElectronRuntime()) {
         setCurrentSidePanel("panel");
-        void window.__OPENWORK_ELECTRON__?.browser?.createTab?.(url);
+        void window.__MICX_ELECTRON__?.browser?.createTab?.(url);
       } else {
         window.open(url, "_blank", "noopener,noreferrer");
       }
@@ -542,10 +542,10 @@ export function SessionPage(props: SessionPageProps) {
     // panel that forces the user to click "+".
     toggleCurrentSidePanel("panel");
   }, [hasBrowserTabs, toggleCurrentSidePanel]);
-  const openBrowserUrlControlAction = useMemo<OpenworkControlAction>(() => ({
+  const openBrowserUrlControlAction = useMemo<MicxControlAction>(() => ({
     id: "browser.open_url",
     label: "Open URL in built-in browser",
-    description: "Create or select an OpenWork built-in browser tab, navigate it to a URL, and return the CDP handle for browser automation.",
+    description: "Create or select an Micx built-in browser tab, navigate it to a URL, and return the CDP handle for browser automation.",
     sideEffect: "navigation",
     requiresArgs: true,
     args: [
@@ -562,23 +562,23 @@ export function SessionPage(props: SessionPageProps) {
         return { ok: false, error: `Browser provider is not available yet: ${provider}` };
       }
       setCurrentSidePanel("panel");
-      return window.__OPENWORK_ELECTRON__?.browser?.openUrl?.(url, provider);
+      return window.__MICX_ELECTRON__?.browser?.openUrl?.(url, provider);
     },
   }), [setCurrentSidePanel]);
   useControlAction(openBrowserUrlControlAction);
-  const setBrowserProxyControlAction = useMemo<OpenworkControlAction>(() => ({
+  const setBrowserProxyControlAction = useMemo<MicxControlAction>(() => ({
     id: "browser.set_proxy",
     label: "Set built-in browser proxy",
     description: "Route all built-in browser traffic through an HTTP/SOCKS proxy (e.g. to browse from another location). Applies to every built-in browser tab until cleared. Pass an empty proxy to restore system network settings.",
     sideEffect: "mutation",
     args: [
-      { name: "proxy", type: "string", description: "Proxy URL like http://user:pass@host:8080 or socks5://host:1080, env:NAME to use the OPENWORK_BROWSER_PROXY_NAME environment variable, or empty to clear." },
+      { name: "proxy", type: "string", description: "Proxy URL like http://user:pass@host:8080 or socks5://host:1080, env:NAME to use the MICX_BROWSER_PROXY_NAME environment variable, or empty to clear." },
     ],
     previewArgs: { proxy: "env:DE" },
     disabled: !isElectronRuntime(),
     execute: async (args) => {
       const proxy = controlStringArg(args, "proxy") || "";
-      const setProxy = window.__OPENWORK_ELECTRON__?.browser?.setProxy;
+      const setProxy = window.__MICX_ELECTRON__?.browser?.setProxy;
       if (!setProxy) return { ok: false, error: "Built-in browser is not available." };
       return setProxy(proxy);
     },
@@ -649,24 +649,24 @@ export function SessionPage(props: SessionPageProps) {
       const target = accessibleTargets.find((item) => item.id === requested?.id || item.value === requested?.value);
       if (target) removeAccessibleTarget(target);
     };
-    window.addEventListener("openwork-open-accessible-target", open);
-    window.addEventListener("openwork-hide-accessible-target", hide);
+    window.addEventListener("micx-open-accessible-target", open);
+    window.addEventListener("micx-hide-accessible-target", hide);
     return () => {
-      window.removeEventListener("openwork-open-accessible-target", open);
-      window.removeEventListener("openwork-hide-accessible-target", hide);
+      window.removeEventListener("micx-open-accessible-target", open);
+      window.removeEventListener("micx-hide-accessible-target", hide);
     };
   }, [accessibleTargets, openTarget, removeAccessibleTarget]);
   useEffect(() => {
     const handler = () => setCurrentSidePanel(null);
-    window.addEventListener("openwork-close-right-pane", handler);
-    return () => window.removeEventListener("openwork-close-right-pane", handler);
+    window.addEventListener("micx-close-right-pane", handler);
+    return () => window.removeEventListener("micx-close-right-pane", handler);
   }, [setCurrentSidePanel]);
   useEffect(() => {
     const refresh = () => setExtensionStateVersion((value) => value + 1);
-    window.addEventListener(OPENWORK_EXTENSION_STATE_CHANGED, refresh);
+    window.addEventListener(MICX_EXTENSION_STATE_CHANGED, refresh);
     window.addEventListener("storage", refresh);
     return () => {
-      window.removeEventListener(OPENWORK_EXTENSION_STATE_CHANGED, refresh);
+      window.removeEventListener(MICX_EXTENSION_STATE_CHANGED, refresh);
       window.removeEventListener("storage", refresh);
     };
   }, []);
@@ -676,7 +676,7 @@ export function SessionPage(props: SessionPageProps) {
     }
   }, [activeSidePanel, setCurrentSidePanel, voiceExtensionEnabled]);
 
-  const openVoicePanelControlAction = useMemo<OpenworkControlAction | null>(() => (
+  const openVoicePanelControlAction = useMemo<MicxControlAction | null>(() => (
     voiceExtensionEnabled ? {
       id: "voice.panel.open",
       label: "Open Voice Mode",
@@ -691,7 +691,7 @@ export function SessionPage(props: SessionPageProps) {
   ), [setCurrentSidePanel, voiceExtensionEnabled]);
   useControlAction(openVoicePanelControlAction);
 
-  const closeVoicePanelControlAction = useMemo<OpenworkControlAction | null>(() => (
+  const closeVoicePanelControlAction = useMemo<MicxControlAction | null>(() => (
     voiceExtensionEnabled && activeSidePanel === "voice" ? {
       id: "voice.panel.close",
       label: "Close Voice Mode",
@@ -837,13 +837,13 @@ export function SessionPage(props: SessionPageProps) {
 
   const reactSessionBaseUrl = props.opencodeBaseUrl?.trim() ?? "";
   const reactSessionToken =
-    props.openworkServerToken?.trim() ||
-    props.openworkServerClient?.token?.trim() ||
+    props.micxServerToken?.trim() ||
+    props.micxServerClient?.token?.trim() ||
     "";
   const canRenderReactSurface = Boolean(
     props.selectedSessionId &&
       props.runtimeWorkspaceId &&
-      props.openworkServerClient &&
+      props.micxServerClient &&
       reactSessionBaseUrl &&
       reactSessionToken &&
       props.surface,
@@ -887,7 +887,7 @@ export function SessionPage(props: SessionPageProps) {
     props.sidebar.onOpenSession(workspaceId, sessionId);
   }, [focusWorkbenchPane, openWorkbenchTab, props.sidebar]);
 
-  const focusWorkbenchSessionControlAction = useMemo<OpenworkControlAction>(() => ({
+  const focusWorkbenchSessionControlAction = useMemo<MicxControlAction>(() => ({
     id: "workbench.session.focus",
     label: "Focus an open session",
     description: "Focus a session already visible in either split-screen pane, or reuse its existing tab without opening a duplicate.",
@@ -898,7 +898,7 @@ export function SessionPage(props: SessionPageProps) {
       name: "sessionId",
       type: "string",
       required: true,
-      description: "Session id from the OpenWork context resources or conversation tabs.",
+      description: "Session id from the Micx context resources or conversation tabs.",
     }],
     execute: (args) => {
       if (!args || typeof args !== "object" || !("sessionId" in args) || typeof args.sessionId !== "string") {
@@ -1072,7 +1072,7 @@ export function SessionPage(props: SessionPageProps) {
           extensionsActive={props.extensionsActive}
           status={{
             clientConnected: props.clientConnected,
-            openworkServerStatus: props.openworkServerStatus,
+            micxServerStatus: props.micxServerStatus,
             developerMode: props.developerMode,
             showConnectionStatus: Boolean(props.selectedWorkspaceId),
             providerConnectedIds: props.providerConnectedIds,
@@ -1182,8 +1182,8 @@ export function SessionPage(props: SessionPageProps) {
                   size="sm"
                   onClick={() => {
                     try {
-                      window.localStorage.removeItem("openwork.acknowledgedProviders");
-                      window.localStorage.removeItem("openwork.orgOnboardingSeen");
+                      window.localStorage.removeItem("micx.acknowledgedProviders");
+                      window.localStorage.removeItem("micx.orgOnboardingSeen");
                     } catch {}
                   }}
                   title="Clears acknowledged providers + org onboarding so they trigger again"
@@ -1276,17 +1276,17 @@ export function SessionPage(props: SessionPageProps) {
                         // Spread `surface` first so the explicit per-workspace
                         // routing props below CAN'T be silently overridden by
                         // anything that leaks into `surface`. SessionSurface's
-                        // server target (client/workspaceId/sessionId/opencodeBaseUrl/openworkToken)
+                        // server target (client/workspaceId/sessionId/opencodeBaseUrl/micxToken)
                         // must come from the resolved workspace endpoint passed by
                         // SessionRoute, not from anything in `surface`.
                         {...props.surface!}
-                        client={props.openworkServerClient!}
+                        client={props.micxServerClient!}
                         environmentClient={props.environmentClient}
                         workspaceId={props.runtimeWorkspaceId!}
                         sessionId={props.selectedSessionId!}
                         isControlTarget={focusedWorkbenchPane === "primary"}
                         opencodeBaseUrl={reactSessionBaseUrl}
-                        openworkToken={reactSessionToken}
+                        micxToken={reactSessionToken}
                         todos={props.todos}
                         activePermission={props.activePermission}
                         permissionReplyBusy={props.permissionReplyBusy}
@@ -1311,13 +1311,13 @@ export function SessionPage(props: SessionPageProps) {
                         >
                           <SessionSurface
                             {...props.surface!}
-                            client={props.openworkServerClient!}
+                            client={props.micxServerClient!}
                             environmentClient={props.environmentClient}
                             workspaceId={props.runtimeWorkspaceId!}
                             sessionId={splitSessionId!}
                             isControlTarget={focusedWorkbenchPane === "secondary"}
                             opencodeBaseUrl={reactSessionBaseUrl}
-                            openworkToken={reactSessionToken}
+                            micxToken={reactSessionToken}
                             todos={[]}
                             onOpenTarget={openTarget}
                           />
@@ -1441,7 +1441,7 @@ export function SessionPage(props: SessionPageProps) {
                     </div>
                   ) : activeSidePanel === "voice" ? (
                     <VoicePanel
-                      client={props.openworkServerClient}
+                      client={props.micxServerClient}
                       workspaceId={props.runtimeWorkspaceId}
                       sessionId={props.selectedSessionId}
                       onClose={closeRightPane}
@@ -1449,7 +1449,7 @@ export function SessionPage(props: SessionPageProps) {
                   ) : activeSidePanel === "panel" ? (
                     <SidePanel
                       sessionId={sidePanelSessionKey}
-                      client={props.openworkServerClient}
+                      client={props.micxServerClient}
                       workspaceId={props.runtimeWorkspaceId}
                       workspaceRoot={props.selectedWorkspaceRoot}
                       isRemoteWorkspace={props.surface?.isRemoteWorkspace ?? false}

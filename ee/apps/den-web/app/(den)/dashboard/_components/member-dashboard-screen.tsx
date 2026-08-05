@@ -6,7 +6,7 @@ import { DenButton } from "../../_components/ui/button";
 import { createOrganizationInstallLink } from "../../_lib/install-link-data";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 
-const OPEN_APP_URL = "openwork://open";
+const OPEN_APP_URL = "micx://open";
 
 /**
  * Members have exactly one job on the dashboard: install the app. The
@@ -75,7 +75,7 @@ export function MemberDashboardScreen() {
           disabled={busyAction !== null}
           onClick={() => void handleDownload()}
         >
-          Download OpenWork
+          Download Micx
         </DenButton>
 
         <div className="mt-3 flex items-center gap-1.5 text-[12px] text-gray-400">
@@ -103,7 +103,7 @@ export function MemberDashboardScreen() {
         <p className="mt-10 w-full border-t border-gray-100 pt-5 text-[13px] text-gray-500">
           Already installed?{" "}
           <a href={OPEN_APP_URL} className="font-medium text-gray-900 underline-offset-2 hover:underline">
-            Open OpenWork →
+            Open Micx →
           </a>
         </p>
       </div>

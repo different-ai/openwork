@@ -24,7 +24,7 @@ import type {
   AutomationSchedule,
   AutomationState,
   CreateAutomation,
-} from "@openwork/types/automations"
+} from "@micx/types/automations"
 
 import { createDenClient, DenApiError, readDenSettings } from "@/app/lib/den"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
@@ -433,7 +433,7 @@ export function AutomationsPage() {
                 <div><span className="text-muted-foreground">Model</span><p>{detail.revision.model.providerId}/{detail.revision.model.modelId}</p></div>
                 <div><span className="text-muted-foreground">Next run</span><p>{formatTime(task.nextDueAt)}</p></div>
                 <div><span className="text-muted-foreground">Runtime limit</span><p>{Math.round(detail.revision.maximumRuntimeMs / 60_000)} minutes</p></div>
-                <div><span className="text-muted-foreground">Integrations</span><p>Your available OpenWork Connect tools</p></div>
+                <div><span className="text-muted-foreground">Integrations</span><p>Your available Micx Connect tools</p></div>
               </CardContent>
             </Card>
 

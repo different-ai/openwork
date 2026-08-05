@@ -1,13 +1,13 @@
 "use client";
 
-import { detectPlatform, DownloadPlatformGrid, type DetectedPlatform, type DownloadPlatformGroup, type DownloadPlatformOption } from "@openwork/ui/react";
+import { detectPlatform, DownloadPlatformGrid, type DetectedPlatform, type DownloadPlatformGroup, type DownloadPlatformOption } from "@micx/ui/react";
 import { ChevronDown, Download, ShieldCheck } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useSearchParams } from "next/navigation";
 import { requestJson } from "../_lib/den-flow";
 import {
   getDesktopHandoffGrant,
-  getDesktopHandoffOpenworkUrl,
+  getDesktopHandoffMicxUrl,
   rememberDesktopHandoffGrant,
 } from "../_lib/desktop-handoff";
 import { getInstallConfigErrorMessage } from "../_lib/install-errors";
@@ -33,7 +33,7 @@ type InstallConfig = {
   distribution: "cloud" | "enterprise";
 };
 
-const RETURN_TO_OPENWORK_URL = "openwork://open";
+const RETURN_TO_MICX_URL = "micx://open";
 const INSTALL_PLATFORMS: InstallPlatform[] = ["mac-arm64", "mac-x64", "win-x64", "linux-x64", "linux-arm64"];
 
 type InstallerOs = "macos" | "windows" | "linux";
@@ -65,20 +65,20 @@ function installerOsFor(platform: InstallPlatform | null, detected: DetectedPlat
 function openGuidance(os: InstallerOs | null, fileName: string | null): OpenGuidance {
   const openFile = fileName
     ? `Double-click ${fileName} in Downloads.`
-    : "Open the OpenWork Enterprise download in your Downloads folder.";
+    : "Open the Micx Enterprise download in your Downloads folder.";
 
   if (os === "macos") {
     return {
-      actions: [openFile, "Drag OpenWork Enterprise to Applications, then open it."],
+      actions: [openFile, "Drag Micx Enterprise to Applications, then open it."],
       trust: {
         title: "macOS confirms apps downloaded from the internet",
-        body: "Choose Open when macOS asks you to confirm the signed OpenWork Enterprise app.",
+        body: "Choose Open when macOS asks you to confirm the signed Micx Enterprise app.",
       },
     };
   }
   if (os === "windows") {
     return {
-      actions: [openFile, "Complete the OpenWork Enterprise setup, then open the app."],
+      actions: [openFile, "Complete the Micx Enterprise setup, then open the app."],
       trust: {
         title: "Windows may warn before it opens the installer",
         body: "If you see “Windows protected your PC”, choose More info, then Run anyway.",
@@ -89,7 +89,7 @@ function openGuidance(os: InstallerOs | null, fileName: string | null): OpenGuid
     return {
       actions: [
         "Make the downloaded AppImage executable.",
-        "Open the OpenWork Enterprise AppImage.",
+        "Open the Micx Enterprise AppImage.",
       ],
       trust: null,
     };
@@ -122,7 +122,7 @@ function parseInstallConfig(value: unknown): InstallConfig | null {
   }
 
   const clientName = typeof value.clientName === "string" ? value.clientName.trim() : "";
-  const appName = typeof value.appName === "string" && value.appName.trim() ? value.appName.trim() : "OpenWork";
+  const appName = typeof value.appName === "string" && value.appName.trim() ? value.appName.trim() : "Micx";
   const webUrl = typeof value.webUrl === "string" ? value.webUrl.trim() : "";
   const apiUrl = typeof value.apiUrl === "string" ? value.apiUrl.trim() : "";
   const requireSignin = value.requireSignin;
@@ -439,19 +439,19 @@ export function InstallScreen() {
         "/v1/auth/desktop-handoff",
         {
           method: "POST",
-          body: JSON.stringify({ desktopScheme: "openwork" }),
+          body: JSON.stringify({ desktopScheme: "micx" }),
         },
         12000,
       );
       if (!response.ok) {
         throw new Error(response.status === 401
-          ? "Sign in to your Den portal before activating OpenWork Enterprise."
+          ? "Sign in to your Den portal before activating Micx Enterprise."
           : `Could not create an activation link (${response.status}).`);
       }
-      const nextConnectLink = getDesktopHandoffOpenworkUrl(payload);
+      const nextConnectLink = getDesktopHandoffMicxUrl(payload);
       const grant = getDesktopHandoffGrant(payload, nextConnectLink);
       if (!nextConnectLink || !grant) {
-        throw new Error("Den did not return a valid OpenWork Enterprise activation link.");
+        throw new Error("Den did not return a valid Micx Enterprise activation link.");
       }
       rememberDesktopHandoffGrant(grant);
       setDesktopGrant(grant);
@@ -459,7 +459,7 @@ export function InstallScreen() {
       advanceGuide(3);
       window.location.assign(nextConnectLink);
     } catch (connectFailure) {
-      setConnectError(connectFailure instanceof Error ? connectFailure.message : "Could not open OpenWork. Try again.");
+      setConnectError(connectFailure instanceof Error ? connectFailure.message : "Could not open Micx. Try again.");
     } finally {
       setConnecting(false);
     }
@@ -471,7 +471,7 @@ export function InstallScreen() {
       setConnectCopied(true);
       window.setTimeout(() => setConnectCopied(false), 1800);
     } catch {
-      setConnectError("Could not copy automatically. Select the OpenWork link and copy it manually.");
+      setConnectError("Could not copy automatically. Select the Micx link and copy it manually.");
     }
   }
 
@@ -483,7 +483,7 @@ export function InstallScreen() {
         "/v1/auth/desktop-handoff",
         {
           method: "POST",
-          body: JSON.stringify({ desktopScheme: "openwork" }),
+          body: JSON.stringify({ desktopScheme: "micx" }),
         },
         12000,
       );
@@ -492,10 +492,10 @@ export function InstallScreen() {
           ? "Sign in to your Den portal before creating an activation link."
           : `Could not create an activation link (${response.status}).`);
       }
-      const nextConnectLink = getDesktopHandoffOpenworkUrl(payload);
+      const nextConnectLink = getDesktopHandoffMicxUrl(payload);
       const grant = getDesktopHandoffGrant(payload, nextConnectLink);
       if (!nextConnectLink || !grant) {
-        throw new Error("Den did not return a valid OpenWork Enterprise activation link.");
+        throw new Error("Den did not return a valid Micx Enterprise activation link.");
       }
       rememberDesktopHandoffGrant(grant);
       setDesktopGrant(grant);
@@ -504,7 +504,7 @@ export function InstallScreen() {
       setConnectCopied(true);
       window.setTimeout(() => setConnectCopied(false), 1800);
     } catch (copyFailure) {
-      setConnectError(copyFailure instanceof Error ? copyFailure.message : "Could not copy a fresh OpenWork link.");
+      setConnectError(copyFailure instanceof Error ? copyFailure.message : "Could not copy a fresh Micx link.");
     } finally {
       setConnecting(false);
     }
@@ -512,11 +512,11 @@ export function InstallScreen() {
 
   async function copyReturnLink() {
     try {
-      await navigator.clipboard.writeText(RETURN_TO_OPENWORK_URL);
+      await navigator.clipboard.writeText(RETURN_TO_MICX_URL);
       setReturnCopied(true);
       window.setTimeout(() => setReturnCopied(false), 1800);
     } catch {
-      setConnectError("Could not copy automatically. Select the OpenWork link and copy it manually.");
+      setConnectError("Could not copy automatically. Select the Micx link and copy it manually.");
     }
   }
 
@@ -524,9 +524,9 @@ export function InstallScreen() {
     return (
       <OnboardingShell state="install-loading" width="wide">
         <section className="grid gap-4 rounded-[1.75rem] border border-slate-200/80 bg-white p-6 md:p-8" data-testid="install-page">
-          <p className="den-eyebrow">OpenWork Desktop</p>
+          <p className="den-eyebrow">Micx Desktop</p>
           <h1 className="den-title-lg">Loading your install link.</h1>
-          <p className="den-copy">Checking your team's OpenWork setup...</p>
+          <p className="den-copy">Checking your team's Micx setup...</p>
         </section>
       </OnboardingShell>
     );
@@ -537,7 +537,7 @@ export function InstallScreen() {
       <OnboardingShell state="install-error" width="wide">
         <section className="grid gap-6 rounded-[1.75rem] border border-slate-200/80 bg-white p-6 md:p-8" data-testid="install-page">
           <div className="grid gap-2">
-            <p className="den-eyebrow">OpenWork Desktop</p>
+            <p className="den-eyebrow">Micx Desktop</p>
             <h1 className="den-title-lg">This install link can't be opened.</h1>
             <p className="den-copy">{error ?? "Ask your workspace admin for a fresh install link."}</p>
           </div>
@@ -553,14 +553,14 @@ export function InstallScreen() {
           <div className="grid gap-6 rounded-[1.75rem] border border-[#e7eaef] bg-[#fcfcfd] p-5 text-center sm:p-6 md:p-8" data-testid="install-card">
             <div className="grid justify-items-center gap-3">
               <h1 className="m-0 text-[2rem] font-semibold leading-[1.04] tracking-[-0.05em] text-slate-950 sm:text-[2.4rem]">
-                Download OpenWork
+                Download Micx
               </h1>
-              <p className="den-copy max-w-2xl">Choose the version for your computer, install it, and open OpenWork.</p>
+              <p className="den-copy max-w-2xl">Choose the version for your computer, install it, and open Micx.</p>
             </div>
 
             {isMobile ? (
               <div className="den-frame-inset grid gap-3 rounded-[1.5rem] p-5 text-left" data-testid="install-mobile-note">
-                <p className="m-0 text-base font-medium text-[var(--dls-text-primary)]">OpenWork Cloud runs on your computer.</p>
+                <p className="m-0 text-base font-medium text-[var(--dls-text-primary)]">Micx Cloud runs on your computer.</p>
                 <p className="den-copy">Open this link on your Mac, Windows, or Linux machine.</p>
                 <button type="button" className="den-button-secondary w-full sm:w-auto" onClick={() => void copyCurrentLink()}>
                   {copied ? "Copied" : "Copy install link"}
@@ -569,8 +569,8 @@ export function InstallScreen() {
             ) : (
               <div className="grid gap-5 text-left">
                 <DownloadPlatformGrid groups={downloadGroups} />
-                <a className="den-button-secondary w-fit" href={RETURN_TO_OPENWORK_URL}>
-                  I already installed OpenWork
+                <a className="den-button-secondary w-fit" href={RETURN_TO_MICX_URL}>
+                  I already installed Micx
                 </a>
               </div>
             )}
@@ -592,7 +592,7 @@ export function InstallScreen() {
         <div className="grid gap-6 rounded-[1.75rem] border border-[#e7eaef] bg-[#fcfcfd] p-5 text-center sm:p-6 md:p-8" data-testid="install-card">
           <div className="grid justify-items-center gap-3">
             <h1 className="m-0 grid max-w-[22ch] gap-1 text-[2rem] font-semibold leading-[1.04] tracking-[-0.05em] text-slate-950 sm:text-[2.4rem]">
-              <span>Download OpenWork Enterprise</span>
+              <span>Download Micx Enterprise</span>
               <span className="flex min-w-0 flex-wrap items-center justify-center gap-x-[0.18em] gap-y-1">
                 <span>for</span>
                 <OrganizationBrandIdentity
@@ -617,7 +617,7 @@ export function InstallScreen() {
             <InstallStep
               index={1}
               state={guideStep > 1 ? "complete" : "active"}
-              title="Download OpenWork Enterprise"
+              title="Download Micx Enterprise"
               description="This is the signed desktop app itself. Den sends your browser directly to the matching GitHub release asset."
               expanded={expandedStep === 1}
               onExpand={() => setExpandedStep(1)}
@@ -634,7 +634,7 @@ export function InstallScreen() {
                     onClick={() => advanceGuide(2)}
                     data-testid="install-skip-download"
                   >
-                    I already have OpenWork Enterprise
+                    I already have Micx Enterprise
                   </button>
                   {downloadState !== "idle" ? (
                     <div className="den-frame-inset grid gap-2 rounded-[1.25rem] p-4" aria-live="polite" data-testid="install-download-status">
@@ -662,7 +662,7 @@ export function InstallScreen() {
               state={guideStep === 2 ? "active" : guideStep > 2 ? "complete" : "pending"}
               title="Continue on your computer"
               description={guideStep < 2
-                ? "Only continue once OpenWork Enterprise is installed and open on this computer."
+                ? "Only continue once Micx Enterprise is installed and open on this computer."
                 : "Open the downloaded app. It will wait at the pixel-dither activation screen."}
               expanded={expandedStep === 2 && guideStep >= 2}
               onExpand={() => setExpandedStep(2)}
@@ -711,7 +711,7 @@ export function InstallScreen() {
                         </span>
                         <span className="grid gap-0.5">
                           <span className="text-[13px] font-semibold leading-[17px] text-[#1f3d8f]">Activation happens from this Den page</span>
-                          <span className="text-[13px] leading-[17px] text-[#3a4e80]">OpenWork Enterprise stays locked until this signed-in portal sends it a one-time activation link.</span>
+                          <span className="text-[13px] leading-[17px] text-[#3a4e80]">Micx Enterprise stays locked until this signed-in portal sends it a one-time activation link.</span>
                         </span>
                       </div>
 
@@ -730,7 +730,7 @@ export function InstallScreen() {
                           disabled={connecting}
                           onClick={() => void beginConnect()}
                         >
-                          {connecting ? "Preparing…" : "Activate OpenWork Enterprise"}
+                          {connecting ? "Preparing…" : "Activate Micx Enterprise"}
                         </button>
                       </div>
 
@@ -759,7 +759,7 @@ export function InstallScreen() {
               index={3}
               state={guideStep === 3 ? "active" : "pending"}
               title="Confirm activation"
-              description="Keep this page open while OpenWork Enterprise consumes the one-time link and signs you in."
+              description="Keep this page open while Micx Enterprise consumes the one-time link and signs you in."
               expanded={expandedStep === 3 && guideStep === 3}
               onExpand={() => setExpandedStep(3)}
               testId="install-guide-step-signin"
@@ -768,14 +768,14 @@ export function InstallScreen() {
                     <div className="flex flex-col gap-3 sm:flex-row">
                       <a
                         className="grid h-11 shrink-0 place-items-center rounded-[11px] bg-[#101828] px-6 text-[13px] font-semibold text-white transition-colors hover:bg-black sm:w-[18rem]"
-                        href={RETURN_TO_OPENWORK_URL}
+                        href={RETURN_TO_MICX_URL}
                       >
-                        Return to OpenWork Enterprise
+                        Return to Micx Enterprise
                       </a>
                       {handoffStatus.status === "consumed" ? null : (
                         <p className="m-0 flex grow items-center gap-3 rounded-[11px] border border-[#e1e4e8] bg-white px-4 text-[13px] text-[#60646c]">
                           <span className="size-4 animate-spin rounded-full border-2 border-[#b0b7c3] border-t-[#101828]" aria-hidden="true" />
-                          Waiting for OpenWork Enterprise…
+                          Waiting for Micx Enterprise…
                         </p>
                       )}
                     </div>
@@ -784,7 +784,7 @@ export function InstallScreen() {
                       <div className="flex items-start gap-3 rounded-[11px] border border-[#e7eaef] bg-[#fafbfc] px-3.5 py-3" data-testid="install-connected">
                         <span className="grid size-5 shrink-0 place-items-center rounded-full border-[1.5px] border-[#c9cfd7] bg-white text-[11px] font-bold text-[#30a46c]" aria-hidden="true">✓</span>
                         <span className="grid gap-0.5">
-                          <span className="text-[13px] font-semibold text-[#1c2024]">OpenWork Enterprise is activated</span>
+                          <span className="text-[13px] font-semibold text-[#1c2024]">Micx Enterprise is activated</span>
                           <span className="text-[11px] text-[#60646c]">The app consumed the one-time link and signed you in to {config.clientName}.</span>
                         </span>
                       </div>
@@ -793,7 +793,7 @@ export function InstallScreen() {
                     ) : null}
 
                     {handoffStatus.status === "consumed" ? (
-                      <CopyLinkRow value={RETURN_TO_OPENWORK_URL} copied={returnCopied} onCopy={() => void copyReturnLink()} />
+                      <CopyLinkRow value={RETURN_TO_MICX_URL} copied={returnCopied} onCopy={() => void copyReturnLink()} />
                     ) : connectLink ? (
                       <div className="grid gap-2">
                         <p className="m-0 text-[11px] text-[#7a808a]">Nothing opened? Copy this {config.appName} link and open it anywhere links work.</p>

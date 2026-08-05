@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import type { ServerConfig } from "../types.js";
-import { callOpenWorkCloudUploadAction } from "./cloud-uploads.js";
+import { callMicxCloudUploadAction } from "./cloud-uploads.js";
 
 const roots: string[] = [];
 
@@ -32,14 +32,14 @@ function cloudMcp() {
   return {
     type: "remote",
     enabled: true,
-    url: "https://api.openwork.test/mcp/agent",
+    url: "https://api.micx.test/mcp/agent",
     headers: { Authorization: "Bearer member-token" },
     oauth: false,
   };
 }
 
 async function tempRoot() {
-  const root = join(tmpdir(), `openwork-cloud-uploads-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+  const root = join(tmpdir(), `micx-cloud-uploads-${Date.now()}-${Math.random().toString(36).slice(2)}`);
   roots.push(root);
   await mkdir(root, { recursive: true });
   return root;
@@ -56,7 +56,7 @@ test("drive upload sends exact workspace bytes and server-derived Office metadat
   const captured: { file?: File } = {};
   let capturedUrl = "";
 
-  const result = await callOpenWorkCloudUploadAction(
+  const result = await callMicxCloudUploadAction(
     testConfig(root),
     "drive_upload_file",
     { path: "agreement.docx", filename: "changed.pdf", mimeType: "application/pdf" },
@@ -77,7 +77,7 @@ test("drive upload sends exact workspace bytes and server-derived Office metadat
   );
 
   expect(result).toEqual({ ok: true, file: { id: "file_1" } });
-  expect(capturedUrl).toBe("https://api.openwork.test/v1/direct-uploads/google-workspace/drive-files");
+  expect(capturedUrl).toBe("https://api.micx.test/v1/direct-uploads/google-workspace/drive-files");
   expect(captured.file?.name).toBe("agreement.docx");
   expect(captured.file?.type).toBe("application/vnd.openxmlformats-officedocument.wordprocessingml.document");
   if (!captured.file) throw new Error("Expected captured file");
@@ -91,7 +91,7 @@ test("Gmail attachment action reuses the same direct multipart transport for mul
   let capturedFiles: File[] = [];
   let capturedPayload = "";
 
-  const result = await callOpenWorkCloudUploadAction(
+  const result = await callMicxCloudUploadAction(
     testConfig(root),
     "gmail_create_draft_with_attachments",
     {
@@ -132,7 +132,7 @@ test("direct upload rejects files above the deployed 4 MiB transport ceiling bef
   await writeFile(join(root, "too-large.bin"), Buffer.alloc((4 * 1024 * 1024) + 1));
   let fetchCalled = false;
 
-  await expect(callOpenWorkCloudUploadAction(
+  await expect(callMicxCloudUploadAction(
     testConfig(root),
     "drive_upload_file",
     { path: "too-large.bin" },
@@ -155,7 +155,7 @@ test("direct upload rejects symlinks that resolve outside authorized roots", asy
   await symlink(join(outside, "secret.txt"), join(root, "linked.txt"));
   let fetchCalled = false;
 
-  await expect(callOpenWorkCloudUploadAction(
+  await expect(callMicxCloudUploadAction(
     testConfig(root),
     "drive_upload_file",
     { path: "linked.txt" },

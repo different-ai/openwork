@@ -25,13 +25,13 @@ describe("Automation model options", () => {
     }])
   })
 
-  test("expands the member's managed OpenWork aliases even when Den stores no model rows", () => {
+  test("expands the member's managed Micx aliases even when Den stores no model rows", () => {
     const options = automationModelOptions([
-      provider({ id: "lpr_member_openwork", source: "openwork", name: "OpenWork Models" }),
+      provider({ id: "lpr_member_micx", source: "micx", name: "Micx Models" }),
     ])
 
-    expect(options.some((option) => option.providerId === "openwork" && option.modelId === "z-ai/glm-5.2")).toBe(true)
-    expect(options.some((option) => option.providerId === "lpr_member_openwork")).toBe(false)
+    expect(options.some((option) => option.providerId === "micx" && option.modelId === "z-ai/glm-5.2")).toBe(true)
+    expect(options.some((option) => option.providerId === "lpr_member_micx")).toBe(false)
   })
 
   test("keeps authorized custom providers on their concrete Den provider IDs", () => {

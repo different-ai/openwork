@@ -1,5 +1,5 @@
-import { and, eq, isNull, sql } from "@openwork-ee/den-db/drizzle"
-import { MemberTable, OrganizationTable } from "@openwork-ee/den-db/schema"
+import { and, eq, isNull, sql } from "@micx-ee/den-db/drizzle"
+import { MemberTable, OrganizationTable } from "@micx-ee/den-db/schema"
 import { db } from "./db.js"
 import { syncInferenceAfterMemberChange } from "./inference.js"
 import { syncInferenceSubscriptionQuantityAfterMemberChange, syncSeatSubscriptionQuantityAfterMemberChange } from "./stripe-billing.js"

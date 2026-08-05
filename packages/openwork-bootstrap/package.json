@@ -1,11 +1,11 @@
 {
-  "name": "openwork-bootstrap",
+  "name": "micx-bootstrap",
   "version": "0.1.0",
-  "description": "Script-installable OpenWork bootstrap CLI for agents",
+  "description": "Script-installable Micx bootstrap CLI for agents",
   "private": true,
   "type": "module",
   "bin": {
-    "openwork-bootstrap": "bin/openwork.mjs"
+    "micx-bootstrap": "bin/micx.mjs"
   },
   "files": [
     "bin",
@@ -13,8 +13,8 @@
     "start.md"
   ],
   "scripts": {
-    "check": "node --check bin/openwork.mjs && node --check evals/agent-fraimz-openwork-bootstrap.mjs && node --check evals/agent-fraimz-openwork-app-install.mjs && node --check evals/agent-fraimz-linux-container.mjs",
-    "test": "node test/openwork-bootstrap.test.mjs"
+    "check": "node --check bin/micx.mjs && node --check evals/agent-fraimz-micx-bootstrap.mjs && node --check evals/agent-fraimz-micx-app-install.mjs && node --check evals/agent-fraimz-linux-container.mjs",
+    "test": "node test/micx-bootstrap.test.mjs"
   },
   "engines": {
     "node": ">=20"

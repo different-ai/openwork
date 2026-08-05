@@ -6,25 +6,25 @@ import {
   type ReactNode,
 } from "react";
 
-import type { OpenworkServerStore } from "./openwork-server-store";
+import type { MicxServerStore } from "./micx-server-store";
 
-const OpenworkServerContext = createContext<OpenworkServerStore | null>(null);
+const MicxServerContext = createContext<MicxServerStore | null>(null);
 
-export function OpenworkServerProvider(props: {
-  store: OpenworkServerStore;
+export function MicxServerProvider(props: {
+  store: MicxServerStore;
   children: ReactNode;
 }) {
   return (
-    <OpenworkServerContext.Provider value={props.store}>
+    <MicxServerContext.Provider value={props.store}>
       {props.children}
-    </OpenworkServerContext.Provider>
+    </MicxServerContext.Provider>
   );
 }
 
-export function useOpenworkServer() {
-  const store = use(OpenworkServerContext);
+export function useMicxServer() {
+  const store = use(MicxServerContext);
   if (!store) {
-    throw new Error("useOpenworkServer must be used within an OpenworkServerProvider");
+    throw new Error("useMicxServer must be used within an MicxServerProvider");
   }
 
   useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot);

@@ -30,7 +30,7 @@ const escapeRegExp = (value: string) =>
 const removeCloudProviderComment = (raw: string, providerId: string) =>
   raw.replace(
     new RegExp(
-      `(^[ \t]*)// OpenWork Cloud import:.*\\n\\1(?="${escapeRegExp(providerId)}":)`,
+      `(^[ \t]*)// Micx Cloud import:.*\\n\\1(?="${escapeRegExp(providerId)}":)`,
       "m",
     ),
     "$1",
@@ -68,17 +68,17 @@ export const resolveCloudProviderCredentials = (
 
 export const getCloudManagedProviderId = (
   provider: Pick<DenOrgLlmProvider, "id" | "providerId" | "source">,
-) => (provider.source === "openwork" ? "openwork" : provider.id.trim());
+) => (provider.source === "micx" ? "micx" : provider.id.trim());
 
 /**
  * A provider key in `opencode.jsonc` that is owned by the cloud-import system:
- * `lpr_*` keys (org-managed providers) and the `openwork` hosted provider.
+ * `lpr_*` keys (org-managed providers) and the `micx` hosted provider.
  * These keys are never hand-authored, so re-importing over an existing block
  * with one of these ids is a safe reconcile (recovers a lost import baseline)
  * rather than a clobber of a user's manual provider (#2346).
  */
 export const isCloudManagedProviderKey = (providerId: string) =>
-  /^lpr_/i.test(providerId) || providerId.trim() === "openwork";
+  /^lpr_/i.test(providerId) || providerId.trim() === "micx";
 
 
 export const getProviderModelIds = (
@@ -148,10 +148,10 @@ export const buildCloudProviderConfig = (
     env: getCloudProviderEnv(provider.providerConfig),
   };
 
-  // OpenWork Models are catalog-backed via OPENCODE_MODELS_URL. Den provisions
+  // Micx Models are catalog-backed via OPENCODE_MODELS_URL. Den provisions
   // the provider + key with zero model rows — writing `models: {}` can prevent
-  // the engine from keeping catalog models, so omit an empty map for openwork.
-  if (Object.keys(models).length > 0 || provider.source !== "openwork") {
+  // the engine from keeping catalog models, so omit an empty map for micx.
+  if (Object.keys(models).length > 0 || provider.source !== "micx") {
     next.models = models;
   }
 

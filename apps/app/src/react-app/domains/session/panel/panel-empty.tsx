@@ -63,7 +63,7 @@ export function getPanelDestinations(
     destinations.push({
       id: "voice",
       label: "Voice Mode",
-      description: "Talk to OpenWork with real-time voice.",
+      description: "Talk to Micx with real-time voice.",
       icon: <Mic2 aria-hidden="true" />,
       activate: actions.onOpenVoice,
     });

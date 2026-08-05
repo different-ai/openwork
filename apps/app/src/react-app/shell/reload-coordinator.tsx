@@ -146,7 +146,7 @@ type ReloadCoordinatorContextValue = {
   registerWorkspaceReloadControls: (controls: WorkspaceReloadControls | null) => () => void;
 };
 
-export const orgOnboardingVisibilityEvent = "openwork-org-onboarding-visibility";
+export const orgOnboardingVisibilityEvent = "micx-org-onboarding-visibility";
 
 const ReloadCoordinatorContext = createContext<ReloadCoordinatorContextValue | null>(null);
 
@@ -230,9 +230,9 @@ export function ReloadCoordinatorProvider({ children }: { children: ReactNode })
       systemState.markReloadRequired(detail?.reason ?? "config", detail?.trigger);
     };
 
-    window.addEventListener("openwork-reload-required", handler);
+    window.addEventListener("micx-reload-required", handler);
 
-    return () => window.removeEventListener("openwork-reload-required", handler);
+    return () => window.removeEventListener("micx-reload-required", handler);
   }, [systemState.markReloadRequired]);
 
   // Track what is pending so the post-reload receipt can describe it.

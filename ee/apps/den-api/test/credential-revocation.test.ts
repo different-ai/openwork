@@ -3,7 +3,7 @@ import {
   AuthSessionTable,
   OAuthAccessTokenTable,
   OAuthRefreshTokenTable,
-} from "@openwork-ee/den-db/schema"
+} from "@micx-ee/den-db/schema"
 
 const selectedRows = {
   sessions: [{ id: "session_one" }, { id: "session_two" }],

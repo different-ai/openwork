@@ -24,14 +24,14 @@ afterEach(async () => {
 });
 
 async function createWorkspaceRoot() {
-  const root = await mkdtemp(join(tmpdir(), "openwork-activate-"));
+  const root = await mkdtemp(join(tmpdir(), "micx-activate-"));
   await mkdir(join(root, ".opencode"), { recursive: true });
   roots.push(root);
   return root;
 }
 
 function hostAuth(token: string) {
-  return { "X-OpenWork-Host-Token": token };
+  return { "X-Micx-Host-Token": token };
 }
 
 function workspaceIdsFromConfig(value: unknown): string[] {
@@ -87,7 +87,7 @@ function startMockOpencode() {
   return { server, requests };
 }
 
-function startMockRemoteOpenwork() {
+function startMockRemoteMicx() {
   const requests: Array<{ pathname: string; authorization: string | null }> = [];
   const server = Bun.serve({
     hostname: "127.0.0.1",
@@ -113,7 +113,7 @@ function startMockRemoteOpenwork() {
   return { server, requests };
 }
 
-async function startOpenworkServerWithWorkspaces(input: {
+async function startMicxServerWithWorkspaces(input: {
   configPath: string;
   workspaces: ServerConfig["workspaces"];
   authorizedRoots: string[];
@@ -170,20 +170,20 @@ describe("workspace activation", () => {
         baseUrl: opencodeBaseUrl,
       },
     ];
-    const openwork = await startOpenworkServerWithWorkspaces({
+    const micx = await startMicxServerWithWorkspaces({
       configPath: join(firstRoot, "server.json"),
       workspaces,
       authorizedRoots: [firstRoot, secondRoot],
     });
 
-    const base = `http://127.0.0.1:${openwork.server.port}`;
+    const base = `http://127.0.0.1:${micx.server.port}`;
     const disposeCount = () => mock.requests.filter(
       (request) => request.method === "POST" && request.pathname === "/instance/dispose",
     ).length;
 
     const response = await fetch(`${base}/workspaces/ws_2/activate`, {
       method: "POST",
-      headers: hostAuth(openwork.hostToken),
+      headers: hostAuth(micx.hostToken),
     });
 
     expect(response.status).toBe(200);
@@ -201,7 +201,7 @@ describe("workspace activation", () => {
 
     const sameWorkspaceResponse = await fetch(`${base}/workspaces/ws_2/activate`, {
       method: "POST",
-      headers: hostAuth(openwork.hostToken),
+      headers: hostAuth(micx.hostToken),
     });
 
     expect(sameWorkspaceResponse.status).toBe(200);
@@ -233,16 +233,16 @@ describe("workspace activation", () => {
       `${JSON.stringify({ workspaces, authorizedRoots: [firstRoot, secondRoot] }, null, 2)}\n`,
       "utf8",
     );
-    const openwork = await startOpenworkServerWithWorkspaces({
+    const micx = await startMicxServerWithWorkspaces({
       configPath,
       workspaces,
       authorizedRoots: [firstRoot, secondRoot],
     });
 
-    const base = `http://127.0.0.1:${openwork.server.port}`;
+    const base = `http://127.0.0.1:${micx.server.port}`;
     const persistedResponse = await fetch(`${base}/workspaces/ws_2/activate?persist=true`, {
       method: "POST",
-      headers: hostAuth(openwork.hostToken),
+      headers: hostAuth(micx.hostToken),
     });
     expect(persistedResponse.status).toBe(200);
     const persistedBody = await persistedResponse.json();
@@ -252,7 +252,7 @@ describe("workspace activation", () => {
 
     const volatileResponse = await fetch(`${base}/workspaces/ws_1/activate`, {
       method: "POST",
-      headers: hostAuth(openwork.hostToken),
+      headers: hostAuth(micx.hostToken),
     });
     expect(volatileResponse.status).toBe(200);
     const volatileBody = await volatileResponse.json();
@@ -262,7 +262,7 @@ describe("workspace activation", () => {
 
     const bodyPersistedResponse = await fetch(`${base}/workspaces/ws_1/activate`, {
       method: "POST",
-      headers: { ...hostAuth(openwork.hostToken), "Content-Type": "application/json" },
+      headers: { ...hostAuth(micx.hostToken), "Content-Type": "application/json" },
       body: JSON.stringify({ persist: true }),
     });
     expect(bodyPersistedResponse.status).toBe(200);
@@ -278,16 +278,16 @@ describe("workspace lifecycle registry", () => {
     const configRoot = await createWorkspaceRoot();
     const workspaceRoot = await createWorkspaceRoot();
     const configPath = join(configRoot, "server.json");
-    const openwork = await startOpenworkServerWithWorkspaces({
+    const micx = await startMicxServerWithWorkspaces({
       configPath,
       workspaces: [],
       authorizedRoots: [],
     });
 
-    const base = `http://127.0.0.1:${openwork.server.port}`;
+    const base = `http://127.0.0.1:${micx.server.port}`;
     const response = await fetch(`${base}/workspaces/local`, {
       method: "POST",
-      headers: { ...hostAuth(openwork.hostToken), "Content-Type": "application/json" },
+      headers: { ...hostAuth(micx.hostToken), "Content-Type": "application/json" },
       body: JSON.stringify({ folderPath: workspaceRoot, name: "Persisted Local", preset: "starter" }),
     });
 
@@ -306,7 +306,7 @@ describe("workspace lifecycle registry", () => {
     const configRoot = await createWorkspaceRoot();
     const workspaceRoot = await createWorkspaceRoot();
     const configPath = join(configRoot, "server.json");
-    const openwork = await startOpenworkServerWithWorkspaces({
+    const micx = await startMicxServerWithWorkspaces({
       configPath,
       workspaces: [],
       authorizedRoots: [],
@@ -315,10 +315,10 @@ describe("workspace lifecycle registry", () => {
       opencodePassword: "runtime-pass",
     });
 
-    const base = `http://127.0.0.1:${openwork.server.port}`;
+    const base = `http://127.0.0.1:${micx.server.port}`;
     const response = await fetch(`${base}/workspaces/local`, {
       method: "POST",
-      headers: { ...hostAuth(openwork.hostToken), "Content-Type": "application/json" },
+      headers: { ...hostAuth(micx.hostToken), "Content-Type": "application/json" },
       body: JSON.stringify({ folderPath: workspaceRoot, name: "Runtime Local", preset: "starter" }),
     });
     expect(response.status).toBe(201);
@@ -332,27 +332,27 @@ describe("workspace lifecycle registry", () => {
     expect(workspace?.opencodePassword).toBeUndefined();
   });
 
-  test("creates and persists remote OpenWork workspace records", async () => {
+  test("creates and persists remote Micx workspace records", async () => {
     const workspaceRoot = await createWorkspaceRoot();
     const configPath = join(workspaceRoot, "server.json");
     await writeFile(configPath, `${JSON.stringify({ workspaces: [], authorizedRoots: [] }, null, 2)}\n`, "utf8");
-    const remote = startMockRemoteOpenwork();
-    const openwork = await startOpenworkServerWithWorkspaces({
+    const remote = startMockRemoteMicx();
+    const micx = await startMicxServerWithWorkspaces({
       configPath,
       workspaces: [],
       authorizedRoots: [],
     });
 
-    const base = `http://127.0.0.1:${openwork.server.port}`;
+    const base = `http://127.0.0.1:${micx.server.port}`;
     const response = await fetch(`${base}/workspaces/remote`, {
       method: "POST",
-      headers: { ...hostAuth(openwork.hostToken), "Content-Type": "application/json" },
+      headers: { ...hostAuth(micx.hostToken), "Content-Type": "application/json" },
       body: JSON.stringify({
         baseUrl: `http://127.0.0.1:${remote.server.port}`,
-        openworkHostUrl: `http://127.0.0.1:${remote.server.port}`,
-        openworkToken: "remote_token",
+        micxHostUrl: `http://127.0.0.1:${remote.server.port}`,
+        micxToken: "remote_token",
         directory: "/remote/project",
-        remoteType: "openwork",
+        remoteType: "micx",
         sandboxRunId: "run_1",
       }),
     });
@@ -360,15 +360,15 @@ describe("workspace lifecycle registry", () => {
     expect(response.status).toBe(201);
     const body = await response.json();
     expect(body.activeId).toBe("rem_ws_remote");
-    expect(body.workspaces[0].openworkWorkspaceId).toBe("ws_remote");
-    expect(body.workspaces[0].openworkWorkspaceName).toBe("Remote Project");
+    expect(body.workspaces[0].micxWorkspaceId).toBe("ws_remote");
+    expect(body.workspaces[0].micxWorkspaceName).toBe("Remote Project");
     expect(remote.requests[0]).toEqual({ pathname: "/workspaces", authorization: "Bearer remote_token" });
 
     const persisted = await readPersistedConfig(configPath);
     const workspaces = workspacesFromConfig(persisted);
     expect(workspaces[0]?.id).toBe("rem_ws_remote");
     expect(workspaces[0]?.workspaceType).toBe("remote");
-    expect(workspaces[0]?.remoteType).toBe("openwork");
+    expect(workspaces[0]?.remoteType).toBe("micx");
     expect(workspaces[0]?.sandboxRunId).toBe("run_1");
     expect(authorizedRootsFromConfig(persisted)).toEqual([]);
   });
@@ -383,9 +383,9 @@ describe("workspace lifecycle registry", () => {
         path: "/remote/one",
         preset: "remote",
         workspaceType: "remote",
-        remoteType: "openwork",
+        remoteType: "micx",
         baseUrl: "http://127.0.0.1:9",
-        openworkWorkspaceId: "ws_one",
+        micxWorkspaceId: "ws_one",
       },
       {
         id: "rem_ws_two",
@@ -393,22 +393,22 @@ describe("workspace lifecycle registry", () => {
         path: "/remote/two",
         preset: "remote",
         workspaceType: "remote",
-        remoteType: "openwork",
+        remoteType: "micx",
         baseUrl: "http://127.0.0.1:9",
-        openworkWorkspaceId: "ws_two",
+        micxWorkspaceId: "ws_two",
       },
     ];
     await writeFile(configPath, `${JSON.stringify({ workspaces, authorizedRoots: [] }, null, 2)}\n`, "utf8");
-    const openwork = await startOpenworkServerWithWorkspaces({
+    const micx = await startMicxServerWithWorkspaces({
       configPath,
       workspaces,
       authorizedRoots: [],
     });
-    const base = `http://127.0.0.1:${openwork.server.port}`;
+    const base = `http://127.0.0.1:${micx.server.port}`;
 
     const renameResponse = await fetch(`${base}/workspaces/rem_ws_one/display-name`, {
       method: "PATCH",
-      headers: { ...hostAuth(openwork.hostToken), "Content-Type": "application/json" },
+      headers: { ...hostAuth(micx.hostToken), "Content-Type": "application/json" },
       body: JSON.stringify({ displayName: "Renamed One" }),
     });
     expect(renameResponse.status).toBe(200);
@@ -417,14 +417,14 @@ describe("workspace lifecycle registry", () => {
 
     const activateResponse = await fetch(`${base}/workspaces/rem_ws_two/activate?persist=true`, {
       method: "POST",
-      headers: hostAuth(openwork.hostToken),
+      headers: hostAuth(micx.hostToken),
     });
     expect(activateResponse.status).toBe(200);
     expect(await readPersistedWorkspaceIds(configPath)).toEqual(["rem_ws_two", "rem_ws_one"]);
 
     const deleteResponse = await fetch(`${base}/workspaces/rem_ws_one`, {
       method: "DELETE",
-      headers: hostAuth(openwork.hostToken),
+      headers: hostAuth(micx.hostToken),
     });
     expect(deleteResponse.status).toBe(200);
     persisted = await readPersistedConfig(configPath);

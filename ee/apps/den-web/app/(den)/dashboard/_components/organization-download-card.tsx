@@ -59,7 +59,7 @@ export function OrganizationDownloadCard({
             <h2 className="text-[16px] font-semibold text-[#07192C]">Download for this workspace</h2>
           </div>
           <p className="mt-2 max-w-[620px] text-[13px] leading-[1.6] text-[#5A6886]">
-            Give teammates a preconfigured OpenWork — the installer connects them to {organizationName}.
+            Give teammates a preconfigured Micx — the installer connects them to {organizationName}.
           </p>
           {error ? (
             <p className="mt-3 text-[13px] text-red-600" role="alert">

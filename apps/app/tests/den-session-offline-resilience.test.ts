@@ -134,10 +134,10 @@ describe("mergePassiveDenSettings", () => {
       },
     });
 
-    window.localStorage.setItem("openwork.den.authToken", "tok_stored");
-    window.localStorage.setItem("openwork.den.activeOrgId", "org_stored");
-    window.localStorage.setItem("openwork.den.activeOrgSlug", "stored-org");
-    window.localStorage.setItem("openwork.den.activeOrgName", "Stored Org");
+    window.localStorage.setItem("micx.den.authToken", "tok_stored");
+    window.localStorage.setItem("micx.den.activeOrgId", "org_stored");
+    window.localStorage.setItem("micx.den.activeOrgSlug", "stored-org");
+    window.localStorage.setItem("micx.den.activeOrgName", "Stored Org");
 
     writeDenSettings(
       mergePassiveDenSettings(readDenSettings(), {
@@ -149,10 +149,10 @@ describe("mergePassiveDenSettings", () => {
       }),
     );
 
-    expect(window.localStorage.getItem("openwork.den.authToken")).toBe("tok_stored");
-    expect(window.localStorage.getItem("openwork.den.activeOrgId")).toBe("org_stored");
-    expect(window.localStorage.getItem("openwork.den.activeOrgSlug")).toBe("stored-org");
-    expect(window.localStorage.getItem("openwork.den.activeOrgName")).toBe("Stored Org");
+    expect(window.localStorage.getItem("micx.den.authToken")).toBe("tok_stored");
+    expect(window.localStorage.getItem("micx.den.activeOrgId")).toBe("org_stored");
+    expect(window.localStorage.getItem("micx.den.activeOrgSlug")).toBe("stored-org");
+    expect(window.localStorage.getItem("micx.den.activeOrgName")).toBe("Stored Org");
   });
 });
 

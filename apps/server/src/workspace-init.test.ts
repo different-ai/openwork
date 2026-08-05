@@ -4,14 +4,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import {
-  defaultWorkspaceOpenworkConfig,
+  defaultWorkspaceMicxConfig,
   ensureWorkspaceFiles,
   ensureLocalWorkspaceFiles,
 } from "./workspace-init.js";
-import { openworkExtensionsPreviewPluginPath, openworkPluginPath } from "./openwork-extensions-plugin-path.js";
+import { micxExtensionsPreviewPluginPath, micxPluginPath } from "./micx-extensions-plugin-path.js";
 
 async function withWorkspace(fn: (root: string) => Promise<void>) {
-  const root = await mkdtemp(join(tmpdir(), "openwork-workspace-init-"));
+  const root = await mkdtemp(join(tmpdir(), "micx-workspace-init-"));
   try {
     await fn(root);
   } finally {
@@ -20,13 +20,13 @@ async function withWorkspace(fn: (root: string) => Promise<void>) {
 }
 
 describe("ensureWorkspaceFiles", () => {
-  test("does not write an openwork.json file (config is DB-backed now)", async () => {
+  test("does not write an micx.json file (config is DB-backed now)", async () => {
     await withWorkspace(async (root) => {
       const result = await ensureWorkspaceFiles(root, "starter");
-      // openwork config no longer lands on disk; it is seeded into the runtime
+      // micx config no longer lands on disk; it is seeded into the runtime
       // DB by the workspace-creation route.
       await expect(
-        readFile(join(root, ".opencode", "openwork.json"), "utf8"),
+        readFile(join(root, ".opencode", "micx.json"), "utf8"),
       ).rejects.toThrow();
       await expect(readFile(join(root, "opencode.jsonc"), "utf8")).rejects.toThrow();
       expect(result.reloadReasons).toEqual([]);
@@ -36,9 +36,9 @@ describe("ensureWorkspaceFiles", () => {
     });
   });
 
-  test("defaultWorkspaceOpenworkConfig carries authorizedRoots + workspace metadata", async () => {
+  test("defaultWorkspaceMicxConfig carries authorizedRoots + workspace metadata", async () => {
     await withWorkspace(async (root) => {
-      const config = defaultWorkspaceOpenworkConfig(root, "starter");
+      const config = defaultWorkspaceMicxConfig(root, "starter");
       expect(config.authorizedRoots).toEqual([root]);
       expect(config.workspace?.preset).toBe("starter");
       expect(config.version).toBe(1);
@@ -46,23 +46,23 @@ describe("ensureWorkspaceFiles", () => {
   });
 
   test("uses shipped extension preview plugin", async () => {
-    const pluginPath = openworkExtensionsPreviewPluginPath();
+    const pluginPath = micxExtensionsPreviewPluginPath();
     const plugin = await readFile(pluginPath, "utf8");
-    expect(pluginPath).toContain(join("opencode-plugins", "openwork-extensions-preview.ts"));
-    expect(plugin).toContain("openwork_execute");
+    expect(pluginPath).toContain(join("opencode-plugins", "micx-extensions-preview.ts"));
+    expect(plugin).toContain("micx_execute");
   });
 
   test("uses external resources plugin path in packaged Electron", () => {
     const previousResourcesPath = process.resourcesPath;
-    const resourcesPath = join("/Applications", "OpenWork.app", "Contents", "Resources");
+    const resourcesPath = join("/Applications", "Micx.app", "Contents", "Resources");
     process.resourcesPath = resourcesPath;
     try {
-      const pluginPath = openworkPluginPath(
-        "openwork-extensions-preview",
+      const pluginPath = micxPluginPath(
+        "micx-extensions-preview",
         join(resourcesPath, "app.asar", "server", "dist"),
       );
 
-      expect(pluginPath).toBe(join(resourcesPath, "opencode-plugins", "openwork-extensions-preview.js"));
+      expect(pluginPath).toBe(join(resourcesPath, "opencode-plugins", "micx-extensions-preview.js"));
       expect(pluginPath).not.toContain("app.asar");
     } finally {
       if (previousResourcesPath) {
@@ -76,18 +76,18 @@ describe("ensureWorkspaceFiles", () => {
   test("does not create workspace extension preview plugin", async () => {
     await withWorkspace(async (root) => {
       await ensureWorkspaceFiles(root, "starter");
-      await expect(stat(join(root, ".opencode", "plugins", "openwork-extensions-preview.ts"))).rejects.toThrow();
+      await expect(stat(join(root, ".opencode", "plugins", "micx-extensions-preview.ts"))).rejects.toThrow();
     });
   });
 
-  test("does not rewrite existing OpenWork agents", async () => {
+  test("does not rewrite existing Micx agents", async () => {
     await withWorkspace(async (root) => {
       await mkdir(join(root, ".opencode", "agents"), { recursive: true });
-      await writeFile(join(root, ".opencode", "agents", "openwork.md"), "---\ndescription: Old\n---\n\nOld instructions\n", "utf8");
+      await writeFile(join(root, ".opencode", "agents", "micx.md"), "---\ndescription: Old\n---\n\nOld instructions\n", "utf8");
       const result = await ensureWorkspaceFiles(root, "starter");
-      const agent = await readFile(join(root, ".opencode", "agents", "openwork.md"), "utf8");
+      const agent = await readFile(join(root, ".opencode", "agents", "micx.md"), "utf8");
       expect(agent).toContain("Old instructions");
-      expect(agent).not.toContain("OpenWork Artifacts");
+      expect(agent).not.toContain("Micx Artifacts");
       expect(result.reloadReasons).toEqual([]);
     });
   });
@@ -130,7 +130,7 @@ describe("ensureWorkspaceFiles", () => {
   test("does not repair or inject into desktop-created schema-only opencode config", async () => {
     await withWorkspace(async (root) => {
       await mkdir(join(root, ".opencode"), { recursive: true });
-      await writeFile(join(root, ".opencode", "openwork.json"), "{}\n", "utf8");
+      await writeFile(join(root, ".opencode", "micx.json"), "{}\n", "utf8");
       const configPath = join(root, "opencode.jsonc");
       await writeFile(configPath, `{
   "$schema": "https://opencode.ai/config.json"
@@ -156,10 +156,10 @@ describe("ensureLocalWorkspaceFiles", () => {
         { path: root, preset: "starter", workspaceType: "local" },
         { path: "", preset: "remote", workspaceType: "remote" },
       ]);
-      // No openwork.json file is written; provisioning does not crash on the
+      // No micx.json file is written; provisioning does not crash on the
       // remote (empty-path) entry.
       await expect(
-        readFile(join(root, ".opencode", "openwork.json"), "utf8"),
+        readFile(join(root, ".opencode", "micx.json"), "utf8"),
       ).rejects.toThrow();
     });
   });

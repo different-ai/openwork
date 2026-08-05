@@ -439,7 +439,7 @@ function handleInitialize(context: McpRequestContext, rpc: JsonRpcRequest, token
     jsonRpcResult(responseId, {
       protocolVersion: negotiatedProtocolVersion,
       capabilities: { tools: { listChanged: false } },
-      serverInfo: { name: "openwork-enterprise-mcp-mock", version: "0.1.0" },
+      serverInfo: { name: "micx-enterprise-mcp-mock", version: "0.1.0" },
       instructions: `Synthetic ${profile.displayName} development server. No provider data or authority is present.`,
     }),
     { "mcp-session-id": sessionId, "mcp-protocol-version": negotiatedProtocolVersion },

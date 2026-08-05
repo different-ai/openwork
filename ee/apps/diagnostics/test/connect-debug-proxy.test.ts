@@ -51,10 +51,10 @@ function fault(slug: string, pathname: string, now = 1_000) {
 describe("Connect debug proxy configuration", () => {
   test("accepts only encoded origins whose host is allowlisted", () => {
     delete process.env.VERCEL
-    process.env.DEBUG_PROXY_DEFAULT_UPSTREAM = "https://app.openworklabs.com"
-    process.env.DEBUG_PROXY_ALLOWED_UPSTREAMS = "staging.openworklabs.com,http://127.0.0.1:4545"
+    process.env.DEBUG_PROXY_DEFAULT_UPSTREAM = "https://app.micxlabs.com"
+    process.env.DEBUG_PROXY_ALLOWED_UPSTREAMS = "staging.micxlabs.com,http://127.0.0.1:4545"
     const config = connectDebugProxyConfig()
-    expect(allowedUpstreamOverride(encodeUpstreamParameter("https://staging.openworklabs.com"), config)).toBe("https://staging.openworklabs.com")
+    expect(allowedUpstreamOverride(encodeUpstreamParameter("https://staging.micxlabs.com"), config)).toBe("https://staging.micxlabs.com")
     expect(allowedUpstreamOverride(encodeUpstreamParameter("http://127.0.0.1:4545"), config)).toBe("http://127.0.0.1:4545")
     expect(allowedUpstreamOverride(encodeUpstreamParameter("https://evil.example"), config)).toBeNull()
     expect(allowedUpstreamOverride("~not-canonical-base64", config)).toBeNull()
@@ -120,41 +120,41 @@ describe("Connect debug proxy fault engine", () => {
 
 describe("Connect debug proxy rewriting and streaming", () => {
   test("rewrites upstream Location, absolute JSON URLs, and cookie scope", async () => {
-    const upstreamUrl = new URL("https://api.openworklabs.com/v1/session")
+    const upstreamUrl = new URL("https://api.micxlabs.com/v1/session")
     const proxyBase = "https://proxy.example/via/default/access-key"
     expect(rewriteLocationHeader("/login?next=%2F", upstreamUrl, proxyBase)).toBe(`${proxyBase}/login?next=%2F`)
     expect(rewriteLocationHeader("https://identity.example/login", upstreamUrl, proxyBase)).toBe("https://identity.example/login")
-    expect(rewriteSetCookieHeader("session=value; Domain=api.openworklabs.com; Path=/; Secure; HttpOnly", "/via/default/access-key"))
+    expect(rewriteSetCookieHeader("session=value; Domain=api.micxlabs.com; Path=/; Secure; HttpOnly", "/via/default/access-key"))
       .toBe("session=value;Path=/via/default/access-key; Secure; HttpOnly")
     expect(rewriteSetCookieHeader("session=value; Path=/api; Secure", "/")).toBe("session=value;Path=/api; Secure")
 
     const response = await buildConnectDebugProxyResponse({
       proxyBase,
       tamperMode: null,
-      upstream: Response.json({ redirect: "https://api.openworklabs.com/next" }),
+      upstream: Response.json({ redirect: "https://api.micxlabs.com/next" }),
       upstreamRequestUrl: upstreamUrl,
     })
     expect(await response.json()).toEqual({ redirect: `${proxyBase}/next` })
   })
 
   test("keeps the desktop auth handoff on the selected proxy base", async () => {
-    const upstreamUrl = new URL("https://app.openworklabs.com/api/den/v1/auth/desktop-handoff")
+    const upstreamUrl = new URL("https://app.micxlabs.com/api/den/v1/auth/desktop-handoff")
     const proxyBase = "https://proxy.example/via/default/access-key"
-    const upstreamDenBaseUrl = "https://app.openworklabs.com/api/den"
-    const deepLink = `openwork://den-auth?grant=one-time-grant&denBaseUrl=${encodeURIComponent(upstreamDenBaseUrl)}`
+    const upstreamDenBaseUrl = "https://app.micxlabs.com/api/den"
+    const deepLink = `micx://den-auth?grant=one-time-grant&denBaseUrl=${encodeURIComponent(upstreamDenBaseUrl)}`
 
     expect(rewriteLocationHeader(deepLink, upstreamUrl, proxyBase)).toBe(
-      `openwork://den-auth?grant=one-time-grant&denBaseUrl=${encodeURIComponent(`${proxyBase}/api/den`)}`,
+      `micx://den-auth?grant=one-time-grant&denBaseUrl=${encodeURIComponent(`${proxyBase}/api/den`)}`,
     )
 
     const response = await buildConnectDebugProxyResponse({
       proxyBase,
       tamperMode: null,
-      upstream: Response.json({ openworkUrl: deepLink }),
+      upstream: Response.json({ micxUrl: deepLink }),
       upstreamRequestUrl: upstreamUrl,
     })
-    const payload = await response.json() as { openworkUrl: string }
-    expect(new URL(payload.openworkUrl).searchParams.get("denBaseUrl")).toBe(`${proxyBase}/api/den`)
+    const payload = await response.json() as { micxUrl: string }
+    expect(new URL(payload.micxUrl).searchParams.get("denBaseUrl")).toBe(`${proxyBase}/api/den`)
   })
 
   test("keeps the proxy key private while translating same-origin browser headers", () => {
@@ -165,18 +165,18 @@ describe("Connect debug proxy rewriting and streaming", () => {
       cookie: `${CONNECT_DEBUG_PROXY_BROWSER_ROUTE_COOKIE}=%2Fvia%2Fdefault%2Faccess-key; den-session=opaque`,
     }), {
       proxyBase: "https://proxy.example/via/default/access-key",
-      upstreamOrigin: "https://api.openworklabs.com",
+      upstreamOrigin: "https://api.micxlabs.com",
     })
     expect(headers.has("x-connect-debug-proxy-key")).toBe(false)
-    expect(headers.get("origin")).toBe("https://api.openworklabs.com")
-    expect(headers.get("referer")).toBe("https://api.openworklabs.com/login?next=1")
+    expect(headers.get("origin")).toBe("https://api.micxlabs.com")
+    expect(headers.get("referer")).toBe("https://api.micxlabs.com/login?next=1")
     expect(headers.get("cookie")).toBe("den-session=opaque")
   })
 
   test("sets a short-lived browser route without exposing it to Den", async () => {
     delete process.env.VERCEL
     process.env.DEBUG_PROXY_ACCESS_KEY = "debug-access-key-1234"
-    process.env.DEBUG_PROXY_DEFAULT_UPSTREAM = "https://app.openworklabs.com"
+    process.env.DEBUG_PROXY_DEFAULT_UPSTREAM = "https://app.micxlabs.com"
     let forwardedCookie = ""
     const response = await proxyConnectDebugRequest({
       pathSegments: ["debug-access-key-1234"],
@@ -219,7 +219,7 @@ describe("Connect debug proxy rewriting and streaming", () => {
       proxyBase: "https://proxy.example/via/default/access-key",
       tamperMode: null,
       upstream: new Response(upstreamBody, { headers: { "content-type": "text/event-stream" } }),
-      upstreamRequestUrl: new URL("https://api.openworklabs.com/mcp/agent"),
+      upstreamRequestUrl: new URL("https://api.micxlabs.com/mcp/agent"),
     })
     const reader = response.body?.getReader()
     if (!reader) throw new Error("Expected streamed body")
@@ -236,7 +236,7 @@ describe("Connect debug proxy rewriting and streaming", () => {
     const encoder = new TextEncoder()
     const upstreamBody = new ReadableStream<Uint8Array>({
       async start(controller) {
-        controller.enqueue(encoder.encode(`{"padding":"${"x".repeat(80)}","url":"https://api.openworklabs.com`))
+        controller.enqueue(encoder.encode(`{"padding":"${"x".repeat(80)}","url":"https://api.micxlabs.com`))
         await secondChunk
         controller.enqueue(encoder.encode(`/next"}`))
         controller.close()
@@ -246,7 +246,7 @@ describe("Connect debug proxy rewriting and streaming", () => {
       proxyBase: "https://proxy.example/via/default/access-key",
       tamperMode: null,
       upstream: new Response(upstreamBody, { headers: { "content-type": "application/json" } }),
-      upstreamRequestUrl: new URL("https://api.openworklabs.com/mcp/agent"),
+      upstreamRequestUrl: new URL("https://api.micxlabs.com/mcp/agent"),
     })
     const reader = response.body?.getReader()
     if (!reader) throw new Error("Expected streamed body")
@@ -284,7 +284,7 @@ describe("Connect debug proxy rewriting and streaming", () => {
       upstream: Response.json({ jsonrpc: "2.0", id: 1, result: { protocolVersion: "2025-06-18" } }, {
         headers: { "mcp-protocol-version": "2025-06-18" },
       }),
-      upstreamRequestUrl: new URL("https://app.openworklabs.com/api/den/mcp/agent"),
+      upstreamRequestUrl: new URL("https://app.micxlabs.com/api/den/mcp/agent"),
     })
     expect(response.headers.get("mcp-protocol-version")).toBe("1900-01-01")
     expect(await response.text()).toContain("1900-01-01")
@@ -295,7 +295,7 @@ describe("Connect debug proxy request handling", () => {
   test("preserves credentials in transit but retains only redacted request metadata", async () => {
     delete process.env.VERCEL
     process.env.DEBUG_PROXY_ACCESS_KEY = "debug-access-key-1234"
-    process.env.DEBUG_PROXY_DEFAULT_UPSTREAM = "https://app.openworklabs.com"
+    process.env.DEBUG_PROXY_DEFAULT_UPSTREAM = "https://app.micxlabs.com"
     let forwardedAuthorization = ""
     let forwardedCookie = ""
     let forwardedBody = ""

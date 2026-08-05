@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto"
 import { Daytona, DaytonaConflictError, type CreateSandboxFromImageParams, type CreateSandboxFromSnapshotParams, type Sandbox } from "@daytonaio/sdk"
-import { eq } from "@openwork-ee/den-db/drizzle"
-import { DaytonaSandboxTable, WorkerTable } from "@openwork-ee/den-db/schema"
-import { createDenTypeId } from "@openwork-ee/utils/typeid"
+import { eq } from "@micx-ee/den-db/drizzle"
+import { DaytonaSandboxTable, WorkerTable } from "@micx-ee/den-db/schema"
+import { createDenTypeId } from "@micx-ee/utils/typeid"
 import { db } from "../db.js"
 import { env } from "../env.js"
 import { appLogger } from "../observability/logger.js"
@@ -177,8 +177,8 @@ function workerHint(workerId: WorkerId) {
 
 function sandboxLabels(workerId: WorkerId) {
   return {
-    "openwork.den.provider": "daytona",
-    "openwork.den.worker-id": workerId,
+    "micx.den.provider": "daytona",
+    "micx.den.worker-id": workerId,
   }
 }
 
@@ -312,7 +312,7 @@ function sharedVolumeMounts(workerId: WorkerId, volumeId: string) {
 }
 
 function checkpointRestoreMarkerPath() {
-  return `${env.daytona.runtimeDataPath}/.openwork-restore-marker`
+  return `${env.daytona.runtimeDataPath}/.micx-restore-marker`
 }
 
 function checkpointStateManifest() {
@@ -333,8 +333,8 @@ function checkpointEnvironmentScript() {
   // It was missing from the checkpoint, so every recycle onto a new snapshot
   // started the user from scratch. Resolved from $HOME in-shell so it tracks
   // the image instead of a hardcoded /root.
-  return `ENGINE_STATE_PATH=\${OPENWORK_ENGINE_STATE_PATH:-\$HOME/.local/share/opencode}
-OPENWORK_STATE_MANIFEST="${checkpointStateManifest()} \$ENGINE_STATE_PATH"
+  return `ENGINE_STATE_PATH=\${MICX_ENGINE_STATE_PATH:-\$HOME/.local/share/opencode}
+MICX_STATE_MANIFEST="${checkpointStateManifest()} \$ENGINE_STATE_PATH"
 CHECKPOINT_DIR=${shellQuote(checkpointDir())}
 RESTORE_MARKER=${shellQuote(checkpointRestoreMarkerPath())}
 LAST_FLUSH_MARKER=${shellQuote(checkpointLastFlushMarkerPath())}
@@ -348,7 +348,7 @@ function checkpointFlushFunctions(input: { failOnError: boolean }) {
   if [ ! -e "$LAST_FLUSH_MARKER" ]; then
     return 0
   fi
-  for state_path in $OPENWORK_STATE_MANIFEST; do
+  for state_path in $MICX_STATE_MANIFEST; do
     changed_entry=$(find "$state_path" -newer "$LAST_FLUSH_MARKER" -print -quit 2>/dev/null || true)
     if [ -n "$changed_entry" ]; then
       return 0
@@ -379,7 +379,7 @@ flush_checkpoint() {
   epoch=$(date +%s)
   tmp_checkpoint=${shellQuote(env.daytona.sidecarDir)}/ckpt-$epoch.tar
   set --
-  for state_path in $OPENWORK_STATE_MANIFEST; do
+  for state_path in $MICX_STATE_MANIFEST; do
     set -- "$@" "\${state_path#/}"
   done
   # Collapse the WAL so the copied database is self-consistent and small. Best
@@ -412,33 +412,33 @@ ${checkpointFlushFunctions({ failOnError: true })}
 flush_checkpoint`
 }
 
-export function buildOpenWorkStartCommand(input: ProvisionInput) {
+export function buildMicxStartCommand(input: ProvisionInput) {
   const verifyRuntimeStep = [
-    "if ! command -v openwork-server >/dev/null 2>&1; then echo 'openwork-server binary missing from Daytona runtime image; rebuild and republish the Daytona snapshot' >&2; exit 1; fi",
+    "if ! command -v micx-server >/dev/null 2>&1; then echo 'micx-server binary missing from Daytona runtime image; rebuild and republish the Daytona snapshot' >&2; exit 1; fi",
     "if ! command -v opencode >/dev/null 2>&1; then echo 'opencode binary missing from Daytona runtime image; rebuild and republish the Daytona snapshot' >&2; exit 1; fi",
   ].join("; ")
-  const openworkServe = [
-    "OPENWORK_DATA_DIR=",
+  const micxServe = [
+    "MICX_DATA_DIR=",
     shellQuote(env.daytona.runtimeDataPath),
-    " OPENWORK_SERVER_CONFIG=",
+    " MICX_SERVER_CONFIG=",
     shellQuote(`${env.daytona.runtimeDataPath}/server.json`),
-    " OPENWORK_TOKEN=",
+    " MICX_TOKEN=",
     shellQuote(input.clientToken),
-    " OPENWORK_HOST_TOKEN=",
+    " MICX_HOST_TOKEN=",
     shellQuote(input.hostToken),
-    " OPENWORK_MANAGE_OPENCODE=",
+    " MICX_MANAGE_OPENCODE=",
     shellQuote("1"),
-    " OPENWORK_OPENCODE_BIN=",
+    " MICX_OPENCODE_BIN=",
     shellQuote("/usr/local/bin/opencode"),
-    " OPENWORK_WEB_ROOT=",
-    shellQuote("/opt/openwork/web"),
+    " MICX_WEB_ROOT=",
+    shellQuote("/opt/micx/web"),
     // The instance still serves its own SPA copy for direct/debug access, but
     // without a bootstrap token that path is intentionally inert; the gateway
     // is the supported entry.
-    " OPENWORK_WEB_BOOTSTRAP_TOKEN=",
+    " MICX_WEB_BOOTSTRAP_TOKEN=",
     shellQuote("0"),
-    " OPENWORK_EXTENSIONS_PLUGIN_DIR=",
-    shellQuote("/opt/openwork/opencode-plugins"),
+    " MICX_EXTENSIONS_PLUGIN_DIR=",
+    shellQuote("/opt/micx/opencode-plugins"),
     " DEN_RUNTIME_PROVIDER=",
     shellQuote("daytona"),
     " DEN_WORKER_ID=",
@@ -449,10 +449,10 @@ export function buildOpenWorkStartCommand(input: ProvisionInput) {
     shellQuote(workerActivityHeartbeatUrl(input.workerId)),
     " DEN_ACTIVITY_HEARTBEAT_TOKEN=",
     shellQuote(input.activityToken),
-    " openwork-server",
+    " micx-server",
     ` --workspace ${shellQuote(env.daytona.runtimeWorkspacePath)}`,
     ` --host 0.0.0.0`,
-    ` --port ${shellQuote(String(env.daytona.openworkPort))}`,
+    ` --port ${shellQuote(String(env.daytona.micxPort))}`,
     ` --cors '*'`,
     // This single-user worker's SPA has no approvals responder, so manual mode makes gated writes such as chat-attachment uploads time out to 403.
     // Auto matches the desktop sidecar's approvalMode; viewer tokens remain blocked by scope checks.
@@ -489,7 +489,7 @@ hydrate_checkpoint() {
     return 0
   fi
   if ! state_dirs_pristine; then
-    echo "checkpoint hydrate skipped; local OpenWork state is not pristine or was already restored"
+    echo "checkpoint hydrate skipped; local Micx state is not pristine or was already restored"
     return 0
   fi
   echo "checkpoint hydrate restoring $latest_checkpoint"
@@ -497,7 +497,7 @@ hydrate_checkpoint() {
     printf '%s\n' "$latest_checkpoint" > "$RESTORE_MARKER"
     return 0
   fi
-  echo "checkpoint hydrate failed for $latest_checkpoint; continuing with fresh OpenWork state" >&2
+  echo "checkpoint hydrate failed for $latest_checkpoint; continuing with fresh Micx state" >&2
   rm -rf ${shellQuote(env.daytona.runtimeDataPath)} ${shellQuote(env.daytona.runtimeWorkspacePath)}
   mkdir -p ${shellQuote(env.daytona.runtimeDataPath)} ${shellQuote(`${env.daytona.runtimeWorkspacePath}/volumes`)}
   ln -sfn ${shellQuote(env.daytona.workspaceMountPath)} ${shellQuote(`${env.daytona.runtimeWorkspacePath}/volumes/workspace`) }
@@ -516,7 +516,7 @@ checkpoint_loop() {
 server_pid=""
 checkpoint_pid=""
 on_term() {
-  echo "termination requested; flushing OpenWork checkpoint"
+  echo "termination requested; flushing Micx checkpoint"
   flush_checkpoint
   if [ -n "$server_pid" ]; then
     kill -TERM "$server_pid" 2>/dev/null || true
@@ -534,7 +534,7 @@ hydrate_checkpoint
 attempt=0
 while [ "$attempt" -lt 3 ]; do
   attempt=$((attempt + 1))
-  ${openworkServe} &
+  ${micxServe} &
   server_pid=$!
   checkpoint_loop &
   checkpoint_pid=$!
@@ -548,7 +548,7 @@ while [ "$attempt" -lt 3 ]; do
     flush_checkpoint
     exit 0
   fi
-  echo "openwork-server failed (attempt $attempt, exit $status); rebuild and republish the Daytona snapshot if this persists; retrying in 3s"
+  echo "micx-server failed (attempt $attempt, exit $status); rebuild and republish the Daytona snapshot if this persists; retrying in 3s"
   sleep 3
 done
 flush_checkpoint
@@ -672,7 +672,7 @@ async function waitForHealth(url: string, timeoutMs: number, sandbox: DaytonaSan
         const logs = await sandbox.process.getSessionCommandLogs(sessionId, commandId)
         throw new Error(
           [
-            `openwork session exited with ${command.exitCode}`,
+            `micx session exited with ${command.exitCode}`,
             logs.stdout?.trim() ? `stdout:\n${logs.stdout.trim().slice(-4000)}` : "",
             logs.stderr?.trim() ? `stderr:\n${logs.stderr.trim().slice(-4000)}` : "",
           ]
@@ -681,7 +681,7 @@ async function waitForHealth(url: string, timeoutMs: number, sandbox: DaytonaSan
         )
       }
     } catch (error) {
-      if (error instanceof Error && error.message.startsWith("openwork session exited")) {
+      if (error instanceof Error && error.message.startsWith("micx session exited")) {
         throw error
       }
     }
@@ -739,7 +739,7 @@ function restoreMarkerExistsCommand() {
 async function verifyRestoreMarker(sandbox: DaytonaSandboxRuntime) {
   const exitCode = await runSandboxShellCommand(
     sandbox,
-    `openwork-restore-verify-${Date.now()}`,
+    `micx-restore-verify-${Date.now()}`,
     restoreMarkerExistsCommand(),
     env.daytona.createTimeoutSeconds,
   )
@@ -825,7 +825,7 @@ export async function refreshDaytonaSignedPreview(workerId: WorkerId) {
   await sandbox.refreshData()
 
   const expiresInSeconds = normalizedSignedPreviewExpirySeconds()
-  const preview = await sandbox.getSignedPreviewUrl(env.daytona.openworkPort, expiresInSeconds)
+  const preview = await sandbox.getSignedPreviewUrl(env.daytona.micxPort, expiresInSeconds)
   const expiresAt = signedPreviewRefreshAt(expiresInSeconds)
 
   await db
@@ -899,7 +899,7 @@ async function checkpointExistsOnDaytonaVolume(daytona: Daytona, workerId: Worke
 
     const exitCode = await runSandboxShellCommand(
       probeSandbox,
-      `openwork-ckpt-probe-${workerHint(workerId)}-${Date.now()}`,
+      `micx-ckpt-probe-${workerHint(workerId)}-${Date.now()}`,
       checkpointExistsCommand(),
       env.daytona.createTimeoutSeconds,
     )
@@ -1025,7 +1025,7 @@ async function getSandboxByName(runtime: DaytonaProvisioningRuntime, name: strin
   }
 }
 
-type StartedOpenWorkProcess = {
+type StartedMicxProcess = {
   signedPreviewUrl: string
   signedPreviewUrlExpiresAt: Date
 }
@@ -1040,24 +1040,24 @@ function provisionedInstance(workerId: WorkerId, region: string | null, imageVer
   }
 }
 
-async function startOpenWorkProcessOnDaytonaSandbox(input: {
+async function startMicxProcessOnDaytonaSandbox(input: {
   provisionInput: ProvisionInput
   runtime: DaytonaProvisioningRuntime
   sandbox: DaytonaSandboxRuntime
   sessionId: string
-}): Promise<StartedOpenWorkProcess> {
+}): Promise<StartedMicxProcess> {
   await input.sandbox.process.createSession(input.sessionId)
   const command = await input.sandbox.process.executeSessionCommand(
     input.sessionId,
     {
-      command: buildOpenWorkStartCommand(input.provisionInput),
+      command: buildMicxStartCommand(input.provisionInput),
       runAsync: true,
     },
     0,
   )
 
   const expiresInSeconds = normalizedSignedPreviewExpirySeconds()
-  const preview = await input.sandbox.getSignedPreviewUrl(env.daytona.openworkPort, expiresInSeconds)
+  const preview = await input.sandbox.getSignedPreviewUrl(env.daytona.micxPort, expiresInSeconds)
   await input.runtime.waitForHealth(preview.url, env.daytona.healthcheckTimeoutMs, input.sandbox, input.sessionId, command.cmdId)
   return {
     signedPreviewUrl: preview.url,
@@ -1069,7 +1069,7 @@ async function persistDaytonaSandbox(input: {
   provisionInput: ProvisionInput
   runtime: DaytonaProvisioningRuntime
   sandbox: DaytonaSandboxRuntime
-  started: StartedOpenWorkProcess
+  started: StartedMicxProcess
   workspaceVolumeId: string
   dataVolumeId: string
 }) {
@@ -1084,7 +1084,7 @@ async function persistDaytonaSandbox(input: {
   })
 }
 
-async function startOpenWorkOnDaytonaSandbox(input: {
+async function startMicxOnDaytonaSandbox(input: {
   provisionInput: ProvisionInput
   runtime: DaytonaProvisioningRuntime
   sandbox: DaytonaSandboxRuntime
@@ -1093,7 +1093,7 @@ async function startOpenWorkOnDaytonaSandbox(input: {
   dataVolumeId: string
   imageVersion?: string | null
 }): Promise<ProvisionedInstance> {
-  const started = await startOpenWorkProcessOnDaytonaSandbox(input)
+  const started = await startMicxProcessOnDaytonaSandbox(input)
   await persistDaytonaSandbox({
     provisionInput: input.provisionInput,
     runtime: input.runtime,
@@ -1158,11 +1158,11 @@ async function wakeExistingDaytonaSandbox(input: {
     await startDaytonaSandboxForWake({ workerId: input.provisionInput.workerId, sandbox: input.sandbox })
   }
 
-  return startOpenWorkOnDaytonaSandbox({
+  return startMicxOnDaytonaSandbox({
     provisionInput: input.provisionInput,
     runtime: input.runtime,
     sandbox: input.sandbox,
-    sessionId: `openwork-wake-${workerHint(input.provisionInput.workerId)}-${Date.now()}`,
+    sessionId: `micx-wake-${workerHint(input.provisionInput.workerId)}-${Date.now()}`,
     workspaceVolumeId: input.workspaceVolumeId,
     dataVolumeId: input.dataVolumeId,
     imageVersion: input.imageVersion,
@@ -1184,15 +1184,15 @@ async function recycleDaytonaSandbox(input: {
     replacementSandbox = await input.runtime.createSandbox(
       buildDaytonaCreateParams(input.provisionInput, currentDaytonaSandboxName(input.provisionInput), input.sharedVolume),
     )
-    const started = await startOpenWorkProcessOnDaytonaSandbox({
+    const started = await startMicxProcessOnDaytonaSandbox({
       provisionInput: input.provisionInput,
       runtime: input.runtime,
       sandbox: replacementSandbox,
-      sessionId: `openwork-recycle-${workerHint(input.provisionInput.workerId)}-${Date.now()}`,
+      sessionId: `micx-recycle-${workerHint(input.provisionInput.workerId)}-${Date.now()}`,
     })
     const restored = await input.runtime.verifyRestoreMarker(replacementSandbox)
     if (!restored) {
-      throw new Error("Daytona replacement did not restore an OpenWork checkpoint")
+      throw new Error("Daytona replacement did not restore an Micx checkpoint")
     }
 
     await persistDaytonaSandbox({
@@ -1256,11 +1256,11 @@ export async function provisionWorkerOnDaytonaWithRuntime(
   let createdSandbox: DaytonaSandboxRuntime | null = null
   try {
     createdSandbox = await runtime.createSandbox(buildDaytonaCreateParams(input, name, sharedVolume))
-    return startOpenWorkOnDaytonaSandbox({
+    return startMicxOnDaytonaSandbox({
       provisionInput: input,
       runtime,
       sandbox: createdSandbox,
-      sessionId: `openwork-${workerHint(input.workerId)}`,
+      sessionId: `micx-${workerHint(input.workerId)}`,
       workspaceVolumeId: sharedVolume.id,
       dataVolumeId: sharedVolume.id,
     })
@@ -1325,7 +1325,7 @@ export async function flushWorkerCheckpointOnDaytona(workerId: WorkerId) {
   await sandbox.refreshData()
   const exitCode = await runSandboxShellCommand(
     toDaytonaSandboxRuntime(sandbox),
-    `openwork-update-flush-${workerHint(workerId)}-${Date.now()}`,
+    `micx-update-flush-${workerHint(workerId)}-${Date.now()}`,
     checkpointFlushCommand(),
     env.daytona.createTimeoutSeconds,
   )

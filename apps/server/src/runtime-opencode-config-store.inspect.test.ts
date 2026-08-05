@@ -36,16 +36,16 @@ function serverConfig(root: string): ServerConfig {
 async function withRuntimePath(
   run: (input: { root: string; stateDir: string; dbPath: string; config: ServerConfig }) => Promise<void>,
 ): Promise<void> {
-  const root = await mkdtemp(join(tmpdir(), "openwork-passive-runtime-inspection-"));
+  const root = await mkdtemp(join(tmpdir(), "micx-passive-runtime-inspection-"));
   const stateDir = join(root, "state");
   const dbPath = join(stateDir, "runtime.sqlite");
-  const previousDb = process.env.OPENWORK_RUNTIME_DB;
-  process.env.OPENWORK_RUNTIME_DB = dbPath;
+  const previousDb = process.env.MICX_RUNTIME_DB;
+  process.env.MICX_RUNTIME_DB = dbPath;
   try {
     await run({ root, stateDir, dbPath, config: serverConfig(root) });
   } finally {
-    if (previousDb === undefined) delete process.env.OPENWORK_RUNTIME_DB;
-    else process.env.OPENWORK_RUNTIME_DB = previousDb;
+    if (previousDb === undefined) delete process.env.MICX_RUNTIME_DB;
+    else process.env.MICX_RUNTIME_DB = previousDb;
     await rm(root, { recursive: true, force: true });
   }
 }
@@ -97,13 +97,13 @@ describe("passive runtime OpenCode config inspection", () => {
       const sqlite = new Database(dbPath, { create: true });
       sqlite.run("CREATE TABLE runtime_opencode_configs (workspace_id TEXT PRIMARY KEY NOT NULL, config_json TEXT NOT NULL, updated_at INTEGER NOT NULL)");
       sqlite.query("INSERT INTO runtime_opencode_configs (workspace_id, config_json, updated_at) VALUES (?, ?, ?)")
-        .run(WORKSPACE_ID, JSON.stringify({ default_agent: "openwork", plugin: ["safe-plugin"] }), 1234);
+        .run(WORKSPACE_ID, JSON.stringify({ default_agent: "micx", plugin: ["safe-plugin"] }), 1234);
       sqlite.close();
       await writeFile(join(stateDir, "sentinel.txt"), "unchanged\n", "utf8");
 
       const before = await snapshotDirectory(stateDir);
       expect(await inspectRuntimeOpencodeConfig(config, WORKSPACE_ID)).toEqual({
-        default_agent: "openwork",
+        default_agent: "micx",
         plugin: ["safe-plugin"],
       });
       const after = await snapshotDirectory(stateDir);
@@ -182,7 +182,7 @@ describe("passive runtime OpenCode config inspection", () => {
       sqlite.run("CREATE TABLE runtime_opencode_configs (workspace_id TEXT PRIMARY KEY NOT NULL, config_json TEXT NOT NULL, updated_at INTEGER NOT NULL)");
       sqlite.query("INSERT INTO runtime_opencode_configs (workspace_id, config_json, updated_at) VALUES (?, ?, ?)")
         .run(WORKSPACE_ID, JSON.stringify({
-          default_agent: "openwork",
+          default_agent: "micx",
           padding: "x".repeat(1024 * 1024),
         }), 1234);
       sqlite.close();
@@ -193,7 +193,7 @@ describe("passive runtime OpenCode config inspection", () => {
       });
       expect(await inspectRuntimeOpencodeConfig(config, WORKSPACE_ID)).toEqual({});
       expect(await readRuntimeOpencodeConfig(config, WORKSPACE_ID)).toEqual({
-        default_agent: "openwork",
+        default_agent: "micx",
       });
     });
   });

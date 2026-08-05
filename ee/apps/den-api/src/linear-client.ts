@@ -30,7 +30,7 @@ export type CompleteLinearIssueInput = {
 const logger = appLogger.child({ component: "linear" })
 
 const ISSUE_CREATE_MUTATION = `
-mutation OpenWorkIssueCreate($input: IssueCreateInput!) {
+mutation MicxIssueCreate($input: IssueCreateInput!) {
   issueCreate(input: $input) {
     success
     issue {
@@ -42,7 +42,7 @@ mutation OpenWorkIssueCreate($input: IssueCreateInput!) {
 }`
 
 const ISSUE_COMPLETE_MUTATION = `
-mutation OpenWorkIssueComplete($id: String!, $input: IssueUpdateInput!) {
+mutation MicxIssueComplete($id: String!, $input: IssueUpdateInput!) {
   issueUpdate(id: $id, input: $input) {
     success
     issue {

@@ -6,7 +6,7 @@ import {
   automationRunSchema,
   automationSchema,
   automationUsageSchema,
-} from "@openwork/types/automations"
+} from "@micx/types/automations"
 
 const engineIdSchema = z.string().trim().min(1).max(240)
 const timestampSchema = z.number().int().nonnegative()

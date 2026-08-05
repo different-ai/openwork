@@ -109,13 +109,13 @@ console.log("ok")
       PATH: process.env.PATH ?? "",
       HOME: process.env.HOME ?? "",
       TMPDIR: process.env.TMPDIR ?? "",
-      DATABASE_URL: "mysql://root:password@127.0.0.1:3306/openwork_test",
+      DATABASE_URL: "mysql://root:password@127.0.0.1:3306/micx_test",
       DB_MODE: "mysql",
       DEN_DB_ENCRYPTION_KEY: "x".repeat(32),
       BETTER_AUTH_SECRET: "y".repeat(32),
       BETTER_AUTH_URL: options.betterAuthUrl,
       DEN_API_PUBLIC_URL: options.apiPublicUrl ?? "",
-      OPENWORK_DEV_MODE: "0",
+      MICX_DEV_MODE: "0",
       PROVISIONER_MODE: "stub",
       DEN_ORG_MODE: "",
       DEN_MCP_RESOURCE_URL: "",
@@ -194,13 +194,13 @@ describe("getMcpResourceUrl", () => {
   test("auto-trusts a path-prefixed public API resource", () => {
     runMcpResourceProbe({
       betterAuthUrl: "https://app.example.com",
-      apiPublicUrl: "https://openwork.example/api/den",
+      apiPublicUrl: "https://micx.example/api/den",
       route: "agent",
-      requestUrl: "https://openwork.example/api/den/mcp/agent",
-      expectedResource: "https://openwork.example/api/den/mcp/agent",
-      expectedMetadataUrl: "https://openwork.example/.well-known/oauth-protected-resource/api/den/mcp/agent",
-      metadataUrl: "https://openwork.example/api/den/mcp/agent",
-      expectedMetadataResource: "https://openwork.example/api/den/mcp/agent",
+      requestUrl: "https://micx.example/api/den/mcp/agent",
+      expectedResource: "https://micx.example/api/den/mcp/agent",
+      expectedMetadataUrl: "https://micx.example/.well-known/oauth-protected-resource/api/den/mcp/agent",
+      metadataUrl: "https://micx.example/api/den/mcp/agent",
+      expectedMetadataResource: "https://micx.example/api/den/mcp/agent",
       expectedAuthorizationServer: "https://app.example.com/api/auth",
     })
   })
@@ -234,22 +234,22 @@ describe("getMcpResourceUrl", () => {
 
   test("honors an additional direct API-origin resource", () => {
     runMcpResourceProbe({
-      betterAuthUrl: "https://app.openworklabs.com",
-      additionalResources: " https://api.openworklabs.com/mcp/ ",
-      requestUrl: "https://api.openworklabs.com/mcp/agent",
-      expectedResource: "https://api.openworklabs.com/mcp",
-      metadataUrl: "https://api.openworklabs.com/mcp/agent",
-      expectedMetadataResource: "https://api.openworklabs.com/mcp",
-      expectedAuthorizationServer: "https://app.openworklabs.com/api/auth",
+      betterAuthUrl: "https://app.micxlabs.com",
+      additionalResources: " https://api.micxlabs.com/mcp/ ",
+      requestUrl: "https://api.micxlabs.com/mcp/agent",
+      expectedResource: "https://api.micxlabs.com/mcp",
+      metadataUrl: "https://api.micxlabs.com/mcp/agent",
+      expectedMetadataResource: "https://api.micxlabs.com/mcp",
+      expectedAuthorizationServer: "https://app.micxlabs.com/api/auth",
     })
   })
 
   test("falls back to the configured resource when the request origin is not allowlisted", () => {
     runMcpResourceProbe({
-      betterAuthUrl: "https://app.openworklabs.com",
+      betterAuthUrl: "https://app.micxlabs.com",
       route: "agent",
-      requestUrl: "https://api.openworklabs.com/mcp/agent",
-      expectedResource: "https://app.openworklabs.com/api/den/mcp/agent",
+      requestUrl: "https://api.micxlabs.com/mcp/agent",
+      expectedResource: "https://app.micxlabs.com/api/den/mcp/agent",
     })
   })
 
@@ -278,16 +278,16 @@ describe("getMcpResourceUrl", () => {
 describe("resolveMcpResourceFromRequest", () => {
   test("checks bare and proxied candidates against a static allowlist", () => {
     expect(resolveMcpResourceFromRequest(
-      "https://api.openworklabs.com/mcp/agent",
-      ["https://api.openworklabs.com/mcp"],
-      "https://app.openworklabs.com/api/den/mcp",
-    )).toBe("https://api.openworklabs.com/mcp")
+      "https://api.micxlabs.com/mcp/agent",
+      ["https://api.micxlabs.com/mcp"],
+      "https://app.micxlabs.com/api/den/mcp",
+    )).toBe("https://api.micxlabs.com/mcp")
 
     expect(resolveMcpResourceFromRequest(
-      "https://api.openworklabs.com/mcp/agent",
-      ["https://app.openworklabs.com/api/den/mcp"],
-      "https://app.openworklabs.com/api/den/mcp",
-    )).toBe("https://app.openworklabs.com/api/den/mcp")
+      "https://api.micxlabs.com/mcp/agent",
+      ["https://app.micxlabs.com/api/den/mcp"],
+      "https://app.micxlabs.com/api/den/mcp",
+    )).toBe("https://app.micxlabs.com/api/den/mcp")
 
     expect(resolveMcpResourceFromRequest(
       "https://app.example.com/.well-known/oauth-protected-resource/mcp/agent",
@@ -299,11 +299,11 @@ describe("resolveMcpResourceFromRequest", () => {
 
 describe("deriveDenMcpResource", () => {
   test("keeps hosted web-app and direct API origin behavior unchanged", () => {
-    expect(deriveDenMcpResource("https://app.openworklabs.com", [])).toBe(
-      "https://app.openworklabs.com/api/den/mcp",
+    expect(deriveDenMcpResource("https://app.micxlabs.com", [])).toBe(
+      "https://app.micxlabs.com/api/den/mcp",
     )
-    expect(deriveDenMcpResource("https://api.openworklabs.com", [])).toBe(
-      "https://api.openworklabs.com/mcp",
+    expect(deriveDenMcpResource("https://api.micxlabs.com", [])).toBe(
+      "https://api.micxlabs.com/mcp",
     )
   })
 })

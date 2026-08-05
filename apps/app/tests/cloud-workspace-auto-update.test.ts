@@ -12,7 +12,7 @@ const eligible: AutoUpdateInput = {
   updating: false,
   requestFailed: false,
   hasActiveRun: false,
-  latestVersion: "openwork-0.19.0",
+  latestVersion: "micx-0.19.0",
   lastAttemptedVersion: null,
 };
 
@@ -31,7 +31,7 @@ describe("cloud workspace auto-update", () => {
       { ...eligible, updating: true },
       { ...eligible, requestFailed: true },
       { ...eligible, hasActiveRun: true },
-      { ...eligible, lastAttemptedVersion: "openwork-0.19.0" },
+      { ...eligible, lastAttemptedVersion: "micx-0.19.0" },
       { ...eligible, latestVersion: null },
     ];
 
@@ -43,12 +43,12 @@ describe("cloud workspace auto-update", () => {
   test("allows a new attempt when the target version changes", () => {
     expect(shouldAutoUpdateCloudWorkspace({
       ...eligible,
-      lastAttemptedVersion: "openwork-0.19.0",
+      lastAttemptedVersion: "micx-0.19.0",
     })).toBe(false);
     expect(shouldAutoUpdateCloudWorkspace({
       ...eligible,
-      latestVersion: "openwork-0.20.0",
-      lastAttemptedVersion: "openwork-0.19.0",
+      latestVersion: "micx-0.20.0",
+      lastAttemptedVersion: "micx-0.19.0",
     })).toBe(true);
   });
 });

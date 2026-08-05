@@ -11,12 +11,12 @@ import { app, shell } from "electron";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-const COMPUTER_USE_HELPER_APP_NAME = "OpenWork Computer Use.app";
+const COMPUTER_USE_HELPER_APP_NAME = "Micx Computer Use.app";
 const COMPUTER_USE_HELPER_EXECUTABLE = "ComputerUse";
 
 function computerUseHelperExecutablePath() {
   const appPath = computerUseHelperAppPath();
-  const explicitBinary = process.env.OPENWORK_COMPUTER_USE_BINARY?.trim();
+  const explicitBinary = process.env.MICX_COMPUTER_USE_BINARY?.trim();
   const candidates = [
     explicitBinary,
     appPath ? path.join(appPath, "Contents", "MacOS", COMPUTER_USE_HELPER_EXECUTABLE) : null,
@@ -26,7 +26,7 @@ function computerUseHelperExecutablePath() {
 }
 
 function computerUseHelperAppPath() {
-  const explicitApp = process.env.OPENWORK_COMPUTER_USE_APP?.trim();
+  const explicitApp = process.env.MICX_COMPUTER_USE_APP?.trim();
   const candidates = [
     explicitApp,
     process.resourcesPath ? path.join(process.resourcesPath, "helpers", COMPUTER_USE_HELPER_APP_NAME) : null,
@@ -41,13 +41,13 @@ function getComputerUseMcpCommand() {
   if (helperExecutable) return [helperExecutable, "mcp"];
 
   if (app.isPackaged) {
-    throw new Error("OpenWork Computer Use is missing from this OpenWork build.");
+    throw new Error("Micx Computer Use is missing from this Micx build.");
   }
 
-  if (process.env.OPENWORK_DEV_MODE === "1") {
-    return ["node", path.resolve(__dirname, "../../..", "packages/handsfree/bin/openwork-handsfree-computer-use.mjs"), "mcp"];
+  if (process.env.MICX_DEV_MODE === "1") {
+    return ["node", path.resolve(__dirname, "../../..", "packages/handsfree/bin/micx-handsfree-computer-use.mjs"), "mcp"];
   }
-  return ["npx", "-y", "@openwork/handsfree", "mcp"];
+  return ["npx", "-y", "@micx/handsfree", "mcp"];
 }
 
 // ---------------------------------------------------------------------------
@@ -57,7 +57,7 @@ function getComputerUseMcpCommand() {
 
 function resolveComputerUseExecutable() {
   // 1. Explicit env override.
-  const explicit = process.env.OPENWORK_COMPUTER_USE_BINARY?.trim();
+  const explicit = process.env.MICX_COMPUTER_USE_BINARY?.trim();
   if (explicit && existsSync(explicit)) return explicit;
 
   // 2. .app bundle (packaged builds + pnpm dev).

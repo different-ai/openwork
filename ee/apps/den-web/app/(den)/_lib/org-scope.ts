@@ -1,4 +1,4 @@
-export const ORG_SCOPE_HEADER = "x-openwork-org-id";
+export const ORG_SCOPE_HEADER = "x-micx-org-id";
 
 let currentOrgScope: string | null = null;
 

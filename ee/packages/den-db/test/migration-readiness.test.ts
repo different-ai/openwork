@@ -51,7 +51,7 @@ describe("Den DB migration readiness wiring", () => {
   })
 
   test("Helm migration defaults execute the precompiled dist runner", () => {
-    const values = readRepoFile("packaging/helm/openwork-ee/values.yaml")
+    const values = readRepoFile("packaging/helm/micx-ee/values.yaml")
     const migrationsBlock = requireSlice(values, "migrations:\n", "\ningress:")
 
     assert.match(migrationsBlock, /command:\n\s+- node/)
@@ -64,8 +64,8 @@ describe("Den DB migration readiness wiring", () => {
     const denDbBuildIndex = dockerfile.indexOf("RUN pnpm --dir /app/ee/packages/den-db run build")
     const denApiBuildIndex = dockerfile.indexOf("pnpm --dir /app/ee/apps/den-api run build")
 
-    assert.notEqual(denDbBuildIndex, -1, "Dockerfile.den builds @openwork-ee/den-db")
-    assert.notEqual(denApiBuildIndex, -1, "Dockerfile.den builds @openwork-ee/den-api")
+    assert.notEqual(denDbBuildIndex, -1, "Dockerfile.den builds @micx-ee/den-db")
+    assert.notEqual(denApiBuildIndex, -1, "Dockerfile.den builds @micx-ee/den-api")
     assert.ok(denDbBuildIndex < denApiBuildIndex, "den-db dist assets are built before den-api")
   })
 
@@ -74,7 +74,7 @@ describe("Den DB migration readiness wiring", () => {
     const denApiBuild = readRepoFile("ee/apps/den-api/scripts/build.mjs")
     const startLine = denApiPackage.split("\n").find((line) => line.includes('"start"')) ?? ""
 
-    assert.match(denApiPackage, /"build:den-db": "pnpm --filter @openwork-ee\/den-db build"/)
+    assert.match(denApiPackage, /"build:den-db": "pnpm --filter @micx-ee\/den-db build"/)
     assert.match(denApiBuild, /run\(pnpmCommand, \["run", "build:den-db"\]\)/)
     assert.match(startLine, /"start": "node dist\/main\.js"/)
     assert.equal(startLine.includes("db:migrate"), false, "hosted start alone does not migrate")
@@ -89,7 +89,7 @@ describe("Den DB migration readiness wiring", () => {
     assert.match(workflow, /branches:\n\s+- dev/)
     assert.match(workflow, /paths:\n\s+- "ee\/packages\/den-db\/drizzle\/\*\*"/)
     assert.match(workflow, /pscale branch safe-migrations disable/)
-    assert.match(workflow, /run_with_ddl_retry pnpm --filter @openwork-ee\/den-db db:migrate/)
+    assert.match(workflow, /run_with_ddl_retry pnpm --filter @micx-ee\/den-db db:migrate/)
     assert.match(workflow, /pscale branch safe-migrations enable/)
   })
 
@@ -97,11 +97,11 @@ describe("Den DB migration readiness wiring", () => {
     const checkWorkflow = readRepoFile(".github/workflows/den-db-check.yml")
     const publishWorkflow = readRepoFile(".github/workflows/publish-ee-images.yml")
 
-    assert.match(checkWorkflow, /pnpm --filter @openwork-ee\/den-db test/)
+    assert.match(checkWorkflow, /pnpm --filter @micx-ee\/den-db test/)
     assert.match(checkWorkflow, /"ee\/apps\/den-api\/package\.json"/)
     assert.match(checkWorkflow, /"ee\/apps\/den-api\/scripts\/build\.mjs"/)
     assert.match(checkWorkflow, /"packaging\/docker\/Dockerfile\.den"/)
-    assert.match(checkWorkflow, /"packaging\/helm\/openwork-ee\/templates\/migration-job\.yaml"/)
+    assert.match(checkWorkflow, /"packaging\/helm\/micx-ee\/templates\/migration-job\.yaml"/)
     assert.match(checkWorkflow, /"\.github\/workflows\/publish-ee-images\.yml"/)
     assert.match(publishWorkflow, /Assert Den DB migration assets/)
     assert.match(publishWorkflow, /test -s \/app\/ee\/packages\/den-db\/dist\/scripts\/bootstrap\.js/)
