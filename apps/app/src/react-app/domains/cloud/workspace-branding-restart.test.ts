@@ -9,6 +9,7 @@ declare const expect: (value: unknown) => {
 import {
   bootstrapBrandingFromDesktopConfig,
   bootstrapBrandingNeedsSync,
+  brandIconReconcileAction,
   hasWorkspaceBranding,
   workspaceBrandingFingerprint,
 } from "./workspace-branding-restart";
@@ -61,5 +62,29 @@ describe("workspace branding restart", () => {
       {},
       { brandLogoUrl: "https://example.com/logo.png" },
     )).toBe(true);
+  });
+
+  test("reconcile clears a shell icon the org no longer configures", () => {
+    expect(brandIconReconcileAction({}, { applied: true })).toEqual({ apply: null });
+  });
+
+  test("reconcile applies a configured icon the shell never applied", () => {
+    expect(brandIconReconcileAction(
+      { brandIconUrl: "https://example.com/icon.png" },
+      { applied: false },
+    )).toEqual({ apply: "https://example.com/icon.png" });
+  });
+
+  test("reconcile is a no-op when the shell already matches the config", () => {
+    expect(brandIconReconcileAction({}, { applied: false })).toBe(null);
+    expect(brandIconReconcileAction(
+      { brandIconUrl: "https://example.com/icon.png" },
+      { applied: true },
+    )).toBe(null);
+  });
+
+  test("reconcile is a no-op without a shell bridge", () => {
+    expect(brandIconReconcileAction({}, null)).toBe(null);
+    expect(brandIconReconcileAction({ brandIconUrl: "https://example.com/icon.png" }, null)).toBe(null);
   });
 });

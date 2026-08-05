@@ -1,7 +1,7 @@
 import { execFileSync, spawn } from "node:child_process";
 import { createServer } from "node:http";
 import net from "node:net";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import {
   cp,
   mkdir,
@@ -656,6 +656,17 @@ async function readBrandIconSidecar() {
   }
 }
 
+function readBrandIconSidecarSourceUrlSync() {
+  try {
+    const parsed = JSON.parse(readFileSync(brandIconSidecarPath(), "utf8"));
+    return parsed && typeof parsed === "object" && typeof parsed.sourceUrl === "string"
+      ? parsed.sourceUrl
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 async function clearBrandIconCache() {
   await Promise.all([
     rm(brandIconCachePath(), { force: true }),
@@ -860,7 +871,18 @@ async function getBrandIconState() {
   return { ...brandIconRuntimeState };
 }
 
-const INITIAL_APP_ICON_IMAGE = resolveBrandIconImage() ?? APP_ICON_IMAGE;
+const INITIAL_BRAND_ICON_IMAGE = resolveBrandIconImage();
+const INITIAL_APP_ICON_IMAGE = INITIAL_BRAND_ICON_IMAGE ?? APP_ICON_IMAGE;
+if (INITIAL_BRAND_ICON_IMAGE) {
+  // The renderer's level-based reconcile compares getBrandIconState() with
+  // the fresh org config. Record that a cached brand icon is restored at
+  // boot so a clear whose edge the renderer missed still resets the icon.
+  brandIconRuntimeState = {
+    applied: true,
+    sourceUrl: readBrandIconSidecarSourceUrlSync(),
+    reason: null,
+  };
+}
 if (process.platform === "darwin" && INITIAL_APP_ICON_IMAGE && !INITIAL_APP_ICON_IMAGE.isEmpty() && app.dock) {
   app.dock.setIcon(INITIAL_APP_ICON_IMAGE);
 }
