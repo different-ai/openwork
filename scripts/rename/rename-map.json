@@ -24,5 +24,8 @@
     "OPENWORK": "MICX",
     "openwork": "micx"
   },
-  "preserveSubstrings": ["den_", "Den", "DEN_"]
+  "preserveSubstrings": [
+    "den_",
+    "DEN_"
+  ]
 }

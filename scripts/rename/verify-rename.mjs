@@ -22,6 +22,8 @@ const ACCEPTABLE = [
   "ttl.sh/openwork",
   // open(动词)+Work 开头的语义标识符 (非品牌), 如 openWorkbenchTab/OpenWorkspaceSettings/OpenWorkModels
   /openWork(bench|space|Models|Sandbox)/,
+  // MySQL 数据库库名 openwork_den (运行时数据标识, plan 保留 db 名)
+  "openwork_den",
   // DER 二进制测试证书主题 (含 OpenWork 字节, 不可安全重命名)
   "intermediate.der",
 ];
@@ -40,8 +42,8 @@ function walk(base, rel = "") {
     if (SKIP_RELPATHS.has(relP)) continue;
     if (SKIP_DIRS.has(name)) continue;
     if (statSync(p).isDirectory()) { walk(p, relP); continue; }
-    // 跳过二进制/图片/字体等非 UTF-8 文本(证书/PNG 等可能含 openwork 字节但不可改名)。
-    if (/\.(der|png|gif|jpg|jpeg|ico|woff2?|ttf|eot|keystore|p12|pem|crt)(\.|$)/.test(name)) continue;
+    // 跳过二进制/图片/字体/TSo .tsbuildinfo 缓存等非 UTF-8 或机器生成文本。
+    if (/\.(der|png|gif|jpg|jpeg|ico|woff2?|ttf|eot|keystore|p12|pem|crt|tsbuildinfo)(\.|$)/.test(name)) continue;
     const lines = readFileSync(p, "utf8").split("\n");
     lines.forEach((ln, i) => {
       if (ln.toLowerCase().includes("openwork") && !isAccepted(ln)) {
