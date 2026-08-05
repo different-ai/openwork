@@ -12,7 +12,7 @@ COPY packages/ui/package.json /app/packages/ui/package.json
 COPY ee/packages/utils/package.json /app/ee/packages/utils/package.json
 COPY ee/apps/den-web/package.json /app/ee/apps/den-web/package.json
 
-RUN pnpm install --frozen-lockfile --trust-lockfile --filter @openwork-ee/den-web...
+RUN pnpm install --frozen-lockfile --trust-lockfile --filter @micx-ee/den-web...
 
 COPY packages/types /app/packages/types
 COPY packages/ui /app/packages/ui
