@@ -1,0 +1,222 @@
+# docker-compose.prod.yml — Micx Work production self-host (single machine)
+#
+# A PRODUCTION-oriented single-machine Compose stack for a private deployment:
+#   - mysql        : persistent MySQL storage for Den (Micx control plane)
+#   - den-api      : Micx control plane (port 8788) + install-time bootstrap/migrations
+#   - micx-migrate : one-shot DB bootstrap Job (run once against MySQL)
+#   - den-web      : Micx cloud web app (port 3005)
+#   - inference    : OPTIONAL (profile "inference") routing/credits service (port 8791)
+#
+# Image references come from the real repo packaging (ghcr.io/different-ai/*).
+# For a stable deployment pin an immutable release tag or digest instead of "latest".
+#
+# Env overrides (via .env or export):
+#   MICX_IMAGE_REPOSITORY — registry override (default: ghcr.io/different-ai)
+#   MICX_IMAGE_TAG        — running tag (default: latest; pin a release in production)
+#   MICX_WEB_PUBLIC_ORIGIN   — browser-facing web origin (default https://mic.example.com)
+#   MICX_API_PUBLIC_URL      — browser-facing API origin (default http://den-api:8788 internal)
+#   MICX_MCP_RESOURCE_URL    — public MCP resource URL (default https://mic.example.com/mcp)
+#   MICX_MCP_ADDITIONAL_RESOURCES — extra public MCP resource URLs
+#   MICX_CORS_ORIGINS / MICX_WEB_APP_HOSTS — trusted origins / allowed hosts
+#   MICX_MYSQL_ROOT_PASSWORD — MySQL root password (required)
+#   MICX_MYSQL_DATABASE / MICX_MYSQL_USER / MICX_MYSQL_PASSWORD — DB name / app user / app pass
+#   MICX_BETTER_AUTH_SECRET — Better Auth secret (required; openssl rand -base64 64)
+#   MICX_DB_ENCRYPTION_KEY  — DB column-encryption key (required; openssl rand -base64 64)
+#   MICX_OWNER_EMAILS       — owner/admin emails, comma separated (required in single_org)
+#   MICX_ORG_NAME / MICX_ORG_SLUG — single-org identity (default Micx / default)
+#   MICX_ALLOW_PUBLIC_SIGNUP — "false" (default) | "true"
+#   MICX_REQUIRE_EMAIL_VERIFICATION — "true" (default) | "false"
+#   MICX_PROVISIONER_MODE   — stub (default) | render | daytona
+#   MICX_WORKER_URL_TEMPLATE — worker URL template used by provisioning
+#   MICX_OBSERVABILITY_BACKEND — none (default) | otel | sentry
+#   MICX_EMAIL_FROM / MICX_SMTP_HOST / MICX_SMTP_PORT / MICX_SMTP_USER /
+#   MICX_SMTP_PASS / MICX_SMTP_SECURE — optional SMTP relay for auth/notification email
+#   DEN_API_PORT / DEN_WEB_PORT / DEN_INFERENCE_PORT — host ports (defaults 8788 / 3005 / 8791)
+#
+# Production setup steps:
+#   1. Set secret env vars (see MICX_BETTER_AUTH_SECRET, MICX_DB_ENCRYPTION_KEY, MySQL passwases).
+#   2. docker compose -f packaging/docker/docker-compose.prod.yml up -d
+#      (with -d --profile inference only if you enable the inference service)
+#   3. Run migrations exactly once after MySQL is healthy:
+#        docker compose -f packaging/docker/docker-compose.prod.yml run --rm micx-migrate
+#   4. Terminate a public TLS (e.g. Caddy/nginx) in front of :3005/:8788.
+#
+# NOTE on migrations: the official den-api image does NOT auto-run DB migrations on start.
+# The real production migrations entrypoint is /app/ee/packages/den-db/dist/scripts/bootstrap.js
+# (same entrypoint the Helm chart's migration Job uses). That is available in the published
+# image, so use the `micx-migrate` one-shot service below to initialize/upgrade a DB.
+
+x-observability-env: &observability-env
+  DEN_OBSERVABILITY_BACKEND: ${MICX_OBSERVABILITY_BACKEND:-none}
+  OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+  OTEL_TRACES_SAMPLER: ${OTEL_TRACES_SAMPLER:-parentbased_always_on}
+  OTEL_TRACES_SAMPLER_ARG: ${OTEL_TRACES_SAMPLER_ARG:-}
+  SENTRY_DSN: ${SENTRY_DSN:-}
+  SENTRY_TRACES_SAMPLE_RATE: ${SENTRY_TRACES_SAMPLE_RATE:-1}
+  SENTRY_ENVIRONMENT: ${SENTRY_ENVIRONMENT:-production}
+  SENTRY_RELEASE: ${SENTRY_RELEASE:-}
+  SENTRY_DIST: ${SENTRY_DIST:-}
+
+services:
+  mysql:
+    image: mysql:8.4
+    command:
+      - --performance_schema=OFF
+      - --innodb-buffer-pool-size=256M
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MICX_MYSQL_ROOT_PASSWORD:?set root password}
+      MYSQL_DATABASE: ${MICX_MYSQL_DATABASE:-micx_den}
+      MYSQL_USER: ${MICX_MYSQL_USER:-micx}
+      MYSQL_PASSWORD: ${MICX_MYSQL_PASSWORD:?set app password}
+    volumes:
+      - den-mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
+    restart: unless-stopped
+    # Restrict exposure: the app reaches MySQL on the internal Compose network.
+    # Expose only if you need external admin tooling (prefer an SSH tunnel):
+    # ports:
+    #   - "127.0.0.1:33061:3306"
+
+  den-api:
+    image: ${MICX_IMAGE_REPOSITORY:-ghcr.io/different-ai}/micx-den-api:${MICX_IMAGE_TAG:-latest}
+    restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
+    ports:
+      - "${DEN_API_PORT:-8788}:8788"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8788/health').then((res)=>process.exit(res.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 120s
+    environment:
+      <<: *observability-env
+      MICX_DEV_MODE: "0"                      # production: dev mode OFF
+      PORT: "8788"
+      DATABASE_URL: mysql://${MICX_MYSQL_USER:-micx}:${MICX_MYSQL_PASSWORD}@mysql:3306/${MICX_MYSQL_DATABASE:-micx_den}
+      BETTER_AUTH_SECRET: ${MICX_BETTER_AUTH_SECRET:?BETTER_AUTH_SECRET required}
+      DEN_DB_ENCRYPTION_KEY: ${MICX_DB_ENCRYPTION_KEY:?DEN_DB_ENCRYPTION_KEY required}
+      # Public-facing origins. Self-host example; replace with your real domain.
+      BETTER_AUTH_URL: ${MICX_WEB_PUBLIC_ORIGIN:-https://mic.example.com}
+      DEN_API_PUBLIC_URL: ${MICX_API_PUBLIC_URL:-http://den-api:8788}
+      DEN_MCP_RESOURCE_URL: ${MICX_MCP_RESOURCE_URL:-https://mic.example.com/mcp}
+      DEN_MCP_ADDITIONAL_RESOURCES: ${MICX_MCP_ADDITIONAL_RESOURCES:-}
+      DEN_BETTER_AUTH_TRUSTED_ORIGINS: ${MICX_WEB_PUBLIC_ORIGIN:-https://mic.example.com}
+      CORS_ORIGINS: ${MICX_CORS_ORIGINS:-https://mic.example.com,http://localhost:3005,http://127.0.0.1:3005}
+      DEN_WEB_APP_HOSTS: ${MICX_WEB_APP_HOSTS:-mic.example.com}
+      # Tenancy: single-org self-host gated to owner emails.
+      DEN_ORG_MODE: single_org
+      DEN_SINGLE_ORG_NAME: ${MICX_ORG_NAME:-Micx}
+      DEN_SINGLE_ORG_SLUG: ${MICX_ORG_SLUG:-default}
+      DEN_SINGLE_ORG_OWNER_EMAILS: ${MICX_OWNER_EMAILS:?owner emails required}
+      DEN_SINGLE_ORG_ALLOW_PUBLIC_SIGNUP: ${MICX_ALLOW_PUBLIC_SIGNUP:-false}
+      DEN_REQUIRE_EMAIL_VERIFICATION: ${MICX_REQUIRE_EMAIL_VERIFICATION:-true}
+      # Email sending (SMTP relay referenced by the runtime; fill or leave blank).
+      EMAIL_FROM: ${MICX_EMAIL_FROM:-}
+      SMTP_HOST: ${MICX_SMTP_HOST:-}
+      SMTP_PORT: ${MICX_SMTP_PORT:-587}
+      SMTP_USER: ${MICX_SMTP_USER:-}
+      SMTP_PASS: ${MICX_SMTP_PASS:-}
+      SMTP_SECURE: ${MICX_SMTP_SECURE:-false}
+      # Provisioner: stub = self-host, no external worker.
+      PROVISIONER_MODE: ${MICX_PROVISIONER_MODE:-stub}
+      WORKER_URL_TEMPLATE: ${MICX_WORKER_URL_TEMPLATE:-}
+      # Installer artifacts: persist bundled installers to a shared volume.
+      MICX_INSTALLER_ARTIFACTS_DIR: /var/lib/micx/installer-artifacts
+      # Connect-Link mode shared with web. "signed" would require the private key env.
+      DEN_CONNECT_LINK_MODE: exchange
+      DEN_CONNECT_LINK_PRIVATE_KEY: ${MICX_CONNECT_LINK_PRIVATE_KEY:-}
+    volumes:
+      - installer-artifacts:/var/lib/micx/installer-artifacts
+
+  # One-time DB migration Job. Run once on fresh install (and on upgrades):
+  #   docker compose -f packaging/docker/docker-compose.prod.yml run --rm micx-migrate
+  micx-migrate:
+    image: ${MICX_IMAGE_REPOSITORY:-ghcr.io/different-ai}/micx-den-api:${MICX_IMAGE_TAG:-latest}
+    restart: "no"
+    depends_on:
+      mysql:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: mysql://${MICX_MYSQL_USER:-micx}:${MICX_MYSQL_PASSWORD}@mysql:3306/${MICX_MYSQL_DATABASE:-micx_den}
+      DEN_DB_ENCRYPTION_KEY: ${MICX_DB_ENCRYPTION_KEY:?DEN_DB_ENCRYPTION_KEY required}
+      DB_MODE: mysql
+    command: ["node", "/app/ee/packages/den-db/dist/scripts/bootstrap.js"]
+
+  den-web:
+    image: ${MICX_IMAGE_REPOSITORY:-ghcr.io/different-ai}/micx-den-web:${MICX_IMAGE_TAG:-latest}
+    restart: unless-stopped
+    depends_on:
+      den-api:
+        condition: service_healthy
+    ports:
+      - "${DEN_WEB_PORT:-3005}:3005"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3005/api/health').then((res)=>process.exit(res.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 10s
+      retries: 30
+      start_period: 180s
+    environment:
+      <<: *observability-env
+      MICX_DEV_MODE: "0"
+      PORT: "3005"
+      # Internal cluster wiring to the API.
+      DEN_API_BASE: http://den-api:8788
+      DEN_AUTH_FALLBACK_BASE: http://den-api:8788
+      # Browser-facing origins.
+      DEN_AUTH_ORIGIN: ${MICX_WEB_PUBLIC_ORIGIN:-https://mic.example.com}
+      DEN_WEB_PUBLIC_ORIGIN: ${MICX_WEB_PUBLIC_ORIGIN:-https://mic.example.com}
+      DEN_WEB_MICX_AUTH_CALLBACK_URL: ${MICX_WEB_PUBLIC_ORIGIN:-https://mic.example.com}
+      # Tenancy mirror (same org mode as den-api).
+      DEN_ORG_MODE: single_org
+      DEN_SINGLE_ORG_NAME: ${MICX_ORG_NAME:-Micx}
+      DEN_SINGLE_ORG_SLUG: ${MICX_ORG_SLUG:-default}
+      DEN_SINGLE_ORG_OWNER_EMAILS: ${MICX_OWNER_EMAILS:-}
+      DEN_SINGLE_ORG_ALLOW_PUBLIC_SIGNUP: ${MICX_ALLOW_PUBLIC_SIGNUP:-false}
+
+  # OPTIONAL inference service. Off by default (profile-gated): it requires OpenRouter /
+  # billing config you must supply, so do not start it as part of the default stack.
+  # Enable with: docker compose --profile inference -f packaging/docker/docker-compose.prod.yml up -d
+  inference:
+    image: ${MICX_IMAGE_REPOSITORY:-ghcr.io/different-ai}/micx-inference:${MICX_IMAGE_TAG:-latest}
+    profiles: ["inference"]
+    restart: unless-stopped
+    depends_on:
+      den-api:
+        condition: service_healthy
+    ports:
+      - "${DEN_INFERENCE_PORT:-8791}:8791"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8791/health').then((res)=>process.exit(res.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+    environment:
+      MICX_DEV_MODE: "0"
+      PORT: "8791"
+      DATABASE_URL: mysql://${MICX_MYSQL_USER:-micx}:${MICX_MYSQL_PASSWORD}@mysql:3306/${MICX_MYSQL_DATABASE:-micx_den}
+      DEN_DB_ENCRYPTION_KEY: ${MICX_DB_ENCRYPTION_KEY:?DEN_DB_ENCRYPTION_KEY required}
+      DB_MODE: mysql
+      INFERENCE_PROXY_BASE_URL: ${MICX_INFERENCE_PROXY_BASE_URL:-}
+      OPENROUTER_UPSTREAM_URL: ${MICX_OPENROUTER_UPSTREAM_URL:-}
+      OPENAI_REALTIME_API_KEY: ${MICX_OPENAI_REALTIME_API_KEY:-}
+      OPENAI_API_KEY: ${MICX_OPENAI_API_KEY:-}
+      INFERENCE_ADMIN_TOKEN: ${MICX_INFERENCE_ADMIN_TOKEN:-}
+      INFERENCE_WEBHOOK_SECRET: ${MICX_INFERENCE_WEBHOOK_SECRET:-}
+
+networks:
+  default:
+    name: micx-prod-net
+
+volumes:
+  den-mysql-data:
+  installer-artifacts:

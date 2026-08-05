@@ -1,0 +1,394 @@
+# =============================================================================
+# Micx EE (micx-ee) — Production example values
+# =============================================================================
+# This file is an EXAMPLE template intended for operators running a
+# single-organization, self-hosted ("private deploy") Micx Work deployment.
+# Every key below exists in the real packaging/helm/micx-ee/values.yaml.
+# Do NOT invent keys — only keys present here are honored by the chart.
+#
+# 本文件是面向单组织、自托管（私有部署）Micx Work 的生产示例模板。
+# 所有键均来自 packaging/helm/micx-ee/values.yaml，未添加任何不存在的键。
+#
+# SECRETS:
+#   Values marked <FILL_ME> are REQUIRED secrets and MUST be replaced by the
+#   operator. Everything else below is a concrete, working example value.
+#   标有 <FILL_ME> 的为 MUST 由运维替换的必填密钥；其余均为可直接使用的示例值。
+#
+# Usage:
+#   Create your own file from this template, fill in secrets and your domain,
+#   then: helm upgrade --install micx-ee oci://ghcr.io/different-ai/charts/micx-ee \
+#         -f your-production-values.yaml
+# =============================================================================
+
+# Global overrides (leave blank unless you need to pin names).
+# 全局名称覆盖（一般留空即可）。
+nameOverride: ""
+fullnameOverride: ""
+
+# ---------------------------------------------------------------------------
+# Container image defaults
+# 镜像默认值。生产建议使用固定的 immutable tag 或 digest，
+# 例如 "v0.17.1" 或 "sha-<commit>"，而不要用 latest。
+# ---------------------------------------------------------------------------
+image:
+  tag: latest
+  pullPolicy: IfNotPresent
+
+# Pull credentials for ghcr.io if your registry is private.
+# 若使用私有 registry，在此填写镜像拉取凭据 secret。
+imagePullSecrets: []
+
+# ---------------------------------------------------------------------------
+# Application configuration (passed to the den-api / den-web processes)
+# ---------------------------------------------------------------------------
+config:
+  databaseMode: mysql          # MySQL is the default; PlanetScale needs extra credentials.
+                               # 数据库模式：默认 MySQL；PlanetScale 需额外凭证。
+  micxDevMode: "0"             # Leave OFF for production. 生产环境必须关闭开发者模式为 "0"。
+  # Passed to the den-api Node.js process as NODE_OPTIONS at container startup.
+  # 以 NODE_OPTIONS 注入 den-api 进程。生产一般留空；可填写 --max-old-space-size=4096 之类。
+  denApiNodeOptions: ""
+
+  tenancy:
+    # Single-org self-host: exactly one organization shown/login'd into.
+    # 自托管单组织模式。
+    mode: single_org
+    singleOrgName: Micx                    # Organization display name. 组织显示名。
+    singleOrgSlug: default                 # Organization slug (URL segment). 组织标识。
+    ownerEmails: "admin@micx.example.com"  # Emails allowed to become org owner/admin.
+                                           # 允许成为组织管理员（owner）的邮箱（逗号分隔）。
+    allowPublicSignup: "false"             # Self-host: signup gated to owner emails.
+                                           # 自托管建议关闭公开注册，仅限 owner 邮箱。
+    requireEmailVerification: "true"       # Require verified email before sign-in. 要求邮箱验证后再登录。
+
+  auth:
+    passwordBreachScreeningEnabled: "false"  # Optional HIBP-live check; contact provider for access.
+                                              # 可选：泄露密码扫描（需要 HIBP 接入），默认关闭。
+
+  # GitHub Connector (optional; fill only if you configure a GitHub App).
+  # GitHub 连接器（可选）：配置了 GitHub App 才需要填写。
+  githubConnector:
+    appId: ""
+    clientId: ""
+
+  public:
+    # Replace with your production domains. Defaults below are a safe example.
+    # 替换为你的生产域名。下面的示例可以照抄替换。
+    webOrigin: https://micx.example.com                        # Browser-facing web origin. 面向浏览器的 web 源。
+    apiOrigin: https://api.micx.example.com                    # Public API origin. 公开 API 源。
+    mcpResourceUrl: https://api.micx.example.com/mcp           # Public MCP resource endpoint. MCP 资源地址。
+    # Extra public MCP resource URLs this deployment serves, comma-separated.
+    # 需要额外公开的 MCP 资源 URL（逗号分隔），一般留空即可。
+    mcpAdditionalResources: ""
+    # Leave blank to keep external-MCP SSRF protection enabled.
+    # 留空以保持外部 MCP URL 的 SSRF 防护开启；仅对可信内网 MCP 才设 "1"。
+    allowPrivateMcpUrls: ""
+    mcpClaimNamespace: ""                    # Namespace for plugin MCP claims. 选填。
+    desktopDenBaseUrl: https://mic.example.com            # Base URL the desktop was-installed from.
+    corsOrigins: https://mic.example.com,https://api.mic.example.com
+    betterAuthTrustedOrigins: https://mic.example.com
+    webAppHosts: mic.example.com                         # Allowed host header(s) for the web app.
+    # Emails auto-promoted to bootstrap admin. 初始引导管理员邮箱（逗号分隔）。
+    bootstrapAdminEmails: "admin@mic.example.com"
+    installLinksGatingEnabled: "false"      # Self-host: installer install links open by default.
+             # 自托管：默认开放安装器安装链接；设 "true" 需 bootstrap admin 审批。
+    connectLinkMode: exchange               # "exchange" or "signed". exchange 无需私钥，默认安全。
+    connectLinkKeyId: ""                    # Required only when connectLinkMode=signed. 仅 signed 模式需要。
+    micxAppConnectUrl: ""                   # Optional app-side connect origin. 选填。
+    micxWebUrl: ""                          # Optional marketing URL shown in UI. 选填。
+    # Installer artifact release metadata (optional; blank == latest published release).
+    installerReleaseTag: ""
+    installerReleaseRepo: ""
+    authCallbackUrl: https://mic.example.com                # Post-auth callback origin. 认证回调源。
+
+  internal:
+    apiBaseUrl: ""                          # Blank: inferred from public.apiOrigin. 留空自动推断。
+    authFallbackBaseUrl: ""                 # In-cluster fallback; leave blank for Helm. 集群内自动推断。
+    inferenceProxyBaseUrl: ""               # Internal URL to the inference service (Helm wires it).
+                                             # 推理服务集群内地址；Helm 会自动接线，一般留空。
+
+  provisioner:
+    mode: stub                     # Self-host no-cloud default: stub. OpenRouter/daytona = advanced.
+        # 自托管默认 stub（无外部 worker）；接 daytona 才改成 daytona，并填下方 daytona/worker 配置。
+    reconcileIntervalMs: "60000"   # Provisioning reconcile loop cadence. 调度间隔。
+    reconcileStaleMs: "1200000"
+    reconcileBatchSize: "10"
+    workerUrlTemplate: ""          # Used by stub/worker provisioning; blank in simple self-host.
+                                   # 简单自托管一般留空。
+
+  daytona:              # Only fill if provisioner.mode=daytona. 仅 daytona 模式需要。
+    apiUrl: ""
+    target: ""
+    snapshot: ""
+    sandboxImage: ""
+    sandboxCpu: ""
+    sandboxMemory: ""
+    sandboxDisk: ""
+    sandboxPublic: ""
+    sandboxAutoStopInterval: ""
+    sandboxAutoArchiveInterval: ""
+    sandboxAutoDeleteInterval: ""
+    signedPreviewExpiresSeconds: "86400"
+    sandboxNamePrefix: ""
+    sharedVolumeName: ""
+    volumeNamePrefix: ""
+    workspaceMountPath: ""
+    dataMountPath: ""
+    runtimeWorkspacePath: ""
+    runtimeDataPath: ""
+    sidecarDir: ""
+    micxPort: ""
+    opencodePort: ""
+    createTimeoutSeconds: ""
+    deleteTimeoutSeconds: ""
+    healthcheckTimeoutMs: ""
+
+  polar:              # Optional billing/paywall; leave off for self-host. 自托管可选计费，默认关闭。
+    featureGateEnabled: "false"
+    apiBase: ""
+    productId: ""
+    benefitId: ""
+    successUrl: ""
+    returnUrl: ""
+
+  inference:          # Only relevant if you deploy the inference service.
+    openRouterWorkspaceId: ""
+    stripeInferencePriceId: ""
+    openRouterUpstreamUrl: ""
+    creditsPerDollar: ""
+
+  web:
+    posthogKey: ""      # Optional product analytics; blank in self-host. 自托管一般留空。
+    posthogHost: ""
+
+# ---------------------------------------------------------------------------
+# Observability — default none is fine for a simple self-host.
+# 可观测性：自建单机默认 none 即可。
+# ---------------------------------------------------------------------------
+observability:
+  backend: none                         # none | otel | sentry
+  serviceNames:
+    denApi: den-api
+    denWeb: den-web
+  otel:
+    endpoint: ""
+    tracesEndpoint: ""
+    metricsEndpoint: ""
+    logsEndpoint: ""
+    protocol: http/protobuf
+    exporters:
+      traces: otlp
+      metrics: otlp
+      logs: otlp
+    tracesSampler: parentbased_always_on
+    tracesSamplerArg: ""
+    headers:
+      existingSecret: ""
+      key: OTEL_EXPORTER_OTLP_HEADERS
+  sentry:
+    dsn: ""
+    dsnSecret:
+      existingSecret: ""
+      key: SENTRY_DSN
+    tracesSampleRate: "1"
+    environment: ""
+    release: ""
+    dist: ""
+
+# ---------------------------------------------------------------------------
+# Custom CA bundle (optional; mount your private registry/backend roots).
+# ---------------------------------------------------------------------------
+customCa:
+  enabled: false
+  existingSecret: ""
+  existingConfigMap: ""
+  key: ca.crt
+
+# ---------------------------------------------------------------------------
+# Secrets.
+#   create: true  — the chart builds a Secret from secret.values below.
+#   Operate or refer to an existingSecret (default name convention = micx-ee-secret)
+#   when you manage the Secret yourself.
+#   Values marked <FILL_ME> MUST be populated by the operator.
+# ---------------------------------------------------------------------------
+secret:
+  create: true
+  existingSecret: ""
+  keys:               # Env var names the chart maps each value to. Do not change.
+    databaseUrl: DATABASE_URL
+    betterAuthSecret: BETTER_AUTH_SECRET
+    denDbEncryptionKey: DEN_DB_ENCRYPTION_KEY
+    daytonaApiKey: DAYTONA_API_KEY
+    polarAccessToken: POLAR_ACCESS_TOKEN
+    openRouterManagementApiKey: OPENROUTER_MANAGEMENT_API_KEY
+    inferenceAdminToken: INFERENCE_ADMIN_TOKEN
+    inferenceWebhookSecret: INFERENCE_WEBHOOK_SECRET
+    emailFrom: EMAIL_FROM
+    smtpHost: SMTP_HOST
+    smtpPort: SMTP_PORT
+    smtpUser: SMTP_USER
+    smtpPass: SMTP_PASS
+    smtpSecure: SMTP_SECURE
+    githubConnectorAppClientSecret: GITHUB_CONNECTOR_APP_CLIENT_SECRET
+    githubConnectorAppPrivateKey: GITHUB_CONNECTOR_APP_PRIVATE_KEY
+    githubConnectorAppWebhookSecret: GITHUB_CONNECTOR_APP_WEBHOOK_SECRET
+    connectLinkPrivateKey: DEN_CONNECT_LINK_PRIVATE_KEY
+  values:
+    databaseUrl: mysql://micx:change-me@mysql:3306/micx_den   # <FILL_ME> real DB password.
+    # <FILL_ME> At least 32 characters. Generate: openssl rand -base64 64
+    betterAuthSecret: "<FILL_ME>"
+    # <FILL_ME> At least 32 characters. Generate: openssl rand -base64 64
+    denDbEncryptionKey: "<FILL_ME>"
+    daytonaApiKey: ""                         # Only if provisioning=daytona.
+    polarAccessToken: ""                      # Only if billing (Polar) is enabled.
+    openRouterManagementApiKey: ""            # Only if the inference service is deployed.
+    inferenceAdminToken: ""                   # Only if the inference service is deployed.
+    inferenceWebhookSecret: ""                # Only if the inference service is deployed.
+    emailFrom: "noreply@mic.example.com"       # Sender for auth/notification email.
+    smtpHost: "smtp.example-relay.com"         # <FILL_ME> your SMTP relay host.
+    smtpPort: "587"
+    smtpUser: ""                               # May leave blank if your relay needs no auth.
+    smtpPass: ""                               # <FILL_ME> if smtpUser set.
+    smtpSecure: "false"
+    githubConnectorAppClientSecret: ""
+    githubConnectorAppPrivateKey: ""
+    githubConnectorAppWebhookSecret: ""
+    connectLinkPrivateKey: ""                   # Only if config.public.connectLinkMode=signed.
+
+# Installer artifacts volume: persisted builds served to the desktop installer.
+# 安装产物持久化：用于为桌面端安装提供安装包。生产建议开启并挂到持久卷。
+installerArtifacts:
+  enabled: false
+  existingClaim: ""          # Point to a PVC if you have a pre-provisioned volume.
+  hostPath: ""               # Or use a host path on a single-node self-host.
+  mountPath: /var/lib/micx/installer-artifacts
+
+# ---------------------------------------------------------------------------
+# den-api (Micx control plane)
+# ---------------------------------------------------------------------------
+denApi:
+  replicaCount: 1
+  image:
+    repository: ghcr.io/different-ai/micx-den-api
+    tag: ""                    # <FILL_ME optional> pin a release tag, e.g. "v0.17.1".
+  service:
+    type: ClusterIP
+    port: 8788
+    annotations: {}
+    loadBalancerClass: ""
+    loadBalancerSourceRanges: []
+  containerPort: 8788
+  env: {}
+  podAnnotations: {}
+  podLabels: {}
+  resources: {}               # Suggest reservations in production.
+  probes:
+    liveness:
+      initialDelaySeconds: 30
+      periodSeconds: 10
+      timeoutSeconds: 5
+      failureThreshold: 6
+    readiness:
+      initialDelaySeconds: 10
+      periodSeconds: 5
+      timeoutSeconds: 5
+      failureThreshold: 12
+
+# ---------------------------------------------------------------------------
+# den-web (Micx cloud web app)
+# ---------------------------------------------------------------------------
+denWeb:
+  replicaCount: 1
+  image:
+    repository: ghcr.io/different-ai/micx-den-web
+    tag: ""                                   # <FILL_ME optional> pin a release tag, e.g. "v0.17.1".
+  service:
+    type: ClusterIP
+    port: 3005
+    annotations: {}
+    loadBalancerClass: ""
+    loadBalancerSourceRanges: []
+  containerPort: 3005
+  env: {}
+  podAnnotations: {}
+  podLabels: {}
+  resources: {}
+  probes:
+    liveness:
+      initialDelaySeconds: 60
+      periodSeconds: 10
+      timeoutSeconds: 10
+      failureThreshold: 6
+    readiness:
+      initialDelaySeconds: 20
+      periodSeconds: 5
+      timeoutSeconds: 10
+      failureThreshold: 18
+
+# ---------------------------------------------------------------------------
+# Inference service — optional. Advanced (needs OpenRouter/config). Off by default.
+# ---------------------------------------------------------------------------
+inference:
+  enabled: false
+  replicaCount: 1
+  image:
+    repository: ghcr.io/different-ai/micx-inference
+    tag: ""
+  service:
+    type: ClusterIP
+    port: 8791
+    annotations: {}
+    loadBalancerClass: ""
+    loadBalancerSourceRanges: []
+  containerPort: 8791
+  env: {}
+  podAnnotations: {}
+  podLabels: {}
+  resources: {}
+  probes:
+    liveness:
+      initialDelaySeconds: 30
+      periodSeconds: 10
+      timeoutSeconds: 5
+      failureThreshold: 6
+    readiness:
+      initialDelaySeconds: 10
+      periodSeconds: 5
+      timeoutSeconds: 5
+      failureThreshold: 12
+
+# ---------------------------------------------------------------------------
+# Database migrations (run before/on install/upgrade).
+# bootstrap.ts initializes an empty DB from a snapshot then applies migrations.
+# Production recommended: run as a Job (hook: true), kept enabled.
+# ---------------------------------------------------------------------------
+migrations:
+  enabled: true
+  hook: true
+  hookDeletePolicy: before-hook-creation,hook-succeeded
+  backoffLimit: 2
+  activeDeadlineSeconds: 600
+  podAnnotations: {}
+  resources: {}
+  command:
+    - node
+  args:
+    - /app/ee/packages/den-db/dist/scripts/bootstrap.js
+
+# ---------------------------------------------------------------------------
+# Ingress. Enable + set your hosts for production. Two routes: web + api.
+# ---------------------------------------------------------------------------
+ingress:
+  enabled: false              # Set true in production with a real TLS issuer.
+  className: ""               # e.g. "nginx" or your cloud ingress class.
+  annotations: {}             # e.g. cert-manager annotations.
+  web:
+    host: mic.example.com
+    path: /
+    pathType: Prefix
+  api:
+    enabled: true
+    host: api.mic.example.com
+    path: /
+    pathType: Prefix
+  tls: []                     # e.g. [{ hosts: [mic.example.com, api.mic.example.com], secretName: mic-tls }]
