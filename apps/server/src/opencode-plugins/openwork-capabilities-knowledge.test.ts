@@ -126,6 +126,16 @@ describe("OpenWork capabilities knowledge plugin", () => {
     // Scheduling OpenWork work through the OS is the exact failure this guidance prevents.
     expect(knowledge).toContain("Never write a cron entry, a launchd or systemd unit, a Task Scheduler job");
     expect(knowledge).toContain("Proposing is not creating");
+    // Reading and changing an existing Automation is a real capability, so the
+    // guidance must name it rather than claim the agent cannot act at all.
+    expect(knowledge).toContain("listAutomations");
+    expect(knowledge).toContain("listAutomationRuns");
+    expect(knowledge).toContain("updateAutomation");
+    expect(knowledge).toContain("runAutomationNow");
+    expect(knowledge).toContain("cancelAutomationRun");
+    expect(knowledge).toContain("Never state a next run time or a run outcome from memory or inference");
+    expect(knowledge).toContain("Deactivating stops future runs; it does not cancel a run already in progress");
+    expect(knowledge).not.toContain("you cannot create, activate, or run an Automation");
     expect(knowledge).toContain("There is no interval schedule");
     expect(knowledge).toContain("durably recorded as missed");
     expect(knowledge).toContain("0=Sunday through 6=Saturday");
