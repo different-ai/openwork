@@ -19,6 +19,7 @@ import {
   FieldLabel,
 } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
+import { t } from "@/i18n";
 import { registerExtensionConfig, type ExtensionConfigContext } from "./extension-registry";
 
 export type OpenWorkVoiceConfigProps = {
@@ -51,25 +52,25 @@ export function OpenWorkVoiceConfig(props: OpenWorkVoiceConfigProps) {
   return (
     <Card variant="outline" size="sm">
       <CardHeader>
-        <CardTitle>Realtime voice</CardTitle>
+        <CardTitle>{t("voice.realtime_title")}</CardTitle>
         <CardDescription>
-          Voice Mode uses OpenAI Realtime and the same OpenWork UI control surface exposed through OpenWork UI MCP.
+          {t("voice.desc")}
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
         {props.envKeyDetected ? (
           <Alert>
             <Mic2 />
-            <AlertTitle>OpenAI key detected</AlertTitle>
+            <AlertTitle>{t("voice.key_detected")}</AlertTitle>
             <AlertDescription>
-              Voice Mode will use OPENAI_REALTIME_API_KEY when present, otherwise OPENAI_API_KEY from OpenWork environment variables.
+              {t("voice.key_detected_desc")}
             </AlertDescription>
           </Alert>
         ) : null}
 
         <FieldGroup className="gap-4">
           <Field>
-            <FieldLabel htmlFor="openwork-voice-api-key">OpenAI API key</FieldLabel>
+            <FieldLabel htmlFor="openwork-voice-api-key">{t("voice.api_key_label")}</FieldLabel>
             <Input
               id="openwork-voice-api-key"
               type="password"
@@ -78,7 +79,7 @@ export function OpenWorkVoiceConfig(props: OpenWorkVoiceConfigProps) {
               placeholder="sk-..."
             />
             <FieldDescription>
-              Saved as OPENAI_API_KEY in OpenWork's local env store. The renderer only receives short-lived Realtime client secrets.
+              {t("voice.api_key_field_desc")}
             </FieldDescription>
           </Field>
         </FieldGroup>
@@ -99,10 +100,10 @@ export function OpenWorkVoiceConfig(props: OpenWorkVoiceConfigProps) {
       <CardFooter className="flex-wrap gap-2 border-t border-border justify-between">
         <Button onClick={() => void props.onSaveApiKey(apiKey)} disabled={props.busy || !canSave}>
           {props.busy ? <Loader2 data-icon="inline-start" className="animate-spin" /> : null}
-          Save key
+          {t("voice.save_key")}
         </Button>
         <Button variant="outline" onClick={() => void props.onTestSession()} disabled={props.busy || !props.envKeyDetected}>
-          Test Realtime
+          {t("voice.test_realtime")}
         </Button>
       </CardFooter>
     </Card>
