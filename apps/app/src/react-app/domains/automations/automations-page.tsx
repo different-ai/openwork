@@ -46,21 +46,10 @@ import { useDenAuth } from "@/react-app/domains/cloud/den-auth-provider"
 import { ConfirmModal } from "@/react-app/design-system/modals/confirm-modal"
 import { AutomationEditor } from "./automation-editor"
 import { automationExecutionThreadRoute, automationExecutionIdentity } from "./automation-cloud-thread"
-import { formatAutomationWeekdays } from "./automation-format"
+import { formatAutomationSchedule, formatAutomationTime } from "./automation-format"
 import { automationModelOptions } from "./automation-model-options"
 
 const ACTIVE_RUN_STATUSES = new Set<AutomationRun["status"]>(["queued", "claimed", "running"])
-
-function formatTime(value: number | null | undefined) {
-  return typeof value === "number" ? new Date(value).toLocaleString() : "—"
-}
-
-function scheduleLabel(schedule: AutomationSchedule) {
-  if (schedule.kind === "once") return `Once · ${formatTime(schedule.at)} · ${schedule.timezone}`
-  const time = `${String(schedule.hour).padStart(2, "0")}:${String(schedule.minute).padStart(2, "0")}`
-  if (schedule.kind === "daily") return `Daily · ${time} · ${schedule.timezone}`
-  return `Weekly · ${formatAutomationWeekdays(schedule.daysOfWeek)} · ${time} · ${schedule.timezone}`
-}
 
 function stateLabel(state: AutomationState) {
   if (state === "needs_attention") return "Needs attention"
@@ -362,7 +351,7 @@ export function AutomationsPage() {
                 <h2 className="truncate text-xl font-semibold">{task.name}</h2>
                 <Badge variant={stateVariant(task.state)}>{stateLabel(task.state)}</Badge>
               </div>
-              <p className="mt-1 text-sm text-muted-foreground">{scheduleLabel(detail.revision.schedule)}</p>
+              <p className="mt-1 text-sm text-muted-foreground">{formatAutomationSchedule(detail.revision.schedule)}</p>
             </div>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -431,7 +420,7 @@ export function AutomationsPage() {
               </CardHeader>
               <CardContent className="grid gap-3 text-sm sm:grid-cols-2">
                 <div><span className="text-muted-foreground">Model</span><p>{detail.revision.model.providerId}/{detail.revision.model.modelId}</p></div>
-                <div><span className="text-muted-foreground">Next run</span><p>{formatTime(task.nextDueAt)}</p></div>
+                <div><span className="text-muted-foreground">Next run</span><p>{formatAutomationTime(task.nextDueAt)}</p></div>
                 <div><span className="text-muted-foreground">Runtime limit</span><p>{Math.round(detail.revision.maximumRuntimeMs / 60_000)} minutes</p></div>
                 <div><span className="text-muted-foreground">Integrations</span><p>Your available OpenWork Connect tools</p></div>
               </CardContent>
@@ -460,7 +449,7 @@ export function AutomationsPage() {
                           </span>
                         ) : null}
                       </span>
-                      <span className="mt-1 block truncate text-xs text-muted-foreground">{formatTime(run.startedAt ?? run.createdAt)}</span>
+                      <span className="mt-1 block truncate text-xs text-muted-foreground">{formatAutomationTime(run.startedAt ?? run.createdAt)}</span>
                     </span>
                     <span className="flex items-center gap-2">
                       {!ACTIVE_RUN_STATUSES.has(run.status) ? <span className="text-xs text-muted-foreground">{usageLabel(run)}</span> : null}
@@ -530,7 +519,7 @@ export function AutomationsPage() {
                         <span className="absolute -start-[1.2rem] top-1.5 size-2 rounded-full bg-muted-foreground" />
                         <div className="flex items-center justify-between gap-2">
                           <span className="text-xs font-medium">{event.type.replaceAll("_", " ")}</span>
-                          <time className="text-xs text-muted-foreground">{formatTime(event.createdAt)}</time>
+                          <time className="text-xs text-muted-foreground">{formatAutomationTime(event.createdAt)}</time>
                         </div>
                         <p className="mt-1 break-words text-xs text-muted-foreground">{eventSummary(event)}</p>
                       </li>
@@ -601,8 +590,8 @@ export function AutomationsPage() {
                 <Badge variant={stateVariant(item.automation.state)}>{stateLabel(item.automation.state)}</Badge>
               </div>
               <div className="mt-4 flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
-                <span>{scheduleLabel(item.revision.schedule)}</span>
-                <span>{item.latestRun ? `Last run: ${item.latestRun.status}` : `Next: ${formatTime(item.automation.nextDueAt)}`}</span>
+                <span>{formatAutomationSchedule(item.revision.schedule)}</span>
+                <span>{item.latestRun ? `Last run: ${item.latestRun.status}` : `Next: ${formatAutomationTime(item.automation.nextDueAt)}`}</span>
               </div>
             </button>
           ))}

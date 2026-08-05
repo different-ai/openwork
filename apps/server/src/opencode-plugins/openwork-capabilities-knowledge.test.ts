@@ -112,4 +112,22 @@ describe("OpenWork capabilities knowledge plugin", () => {
     expect(read).not.toContain("JWKS");
     expect(read).not.toContain("~/.cursor/mcp.json");
   });
+
+  test("teaches Automations as the product feature for recurring work", async () => {
+    const plugin = await OpenWorkCapabilitiesKnowledge();
+    const output = { system: [] };
+
+    await plugin["experimental.chat.system.transform"]({}, output);
+
+    const knowledge = output.system.join("\n");
+    expect(knowledge).toContain("## Automations");
+    expect(knowledge).toContain("openwork_execute");
+    expect(knowledge).toContain("automation.propose");
+    // Scheduling OpenWork work through the OS is the exact failure this guidance prevents.
+    expect(knowledge).toContain("Never write a cron entry, a launchd or systemd unit, a Task Scheduler job");
+    expect(knowledge).toContain("Proposing is not creating");
+    expect(knowledge).toContain("There is no interval schedule");
+    expect(knowledge).toContain("durably recorded as missed");
+    expect(knowledge).toContain("0=Sunday through 6=Saturday");
+  });
 });

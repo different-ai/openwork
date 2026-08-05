@@ -272,6 +272,22 @@ export const createAutomationSchema = z.object({
 })
 export type CreateAutomation = z.infer<typeof createAutomationSchema>
 
+/**
+ * What an in-app agent may hand back when a person describes recurring work.
+ *
+ * A proposal is inert: it names the Automation the person could create, and
+ * nothing more. Automations are active the moment they exist, so creation stays
+ * behind an explicit human action in the renderer, which owns the Den session.
+ * The model is optional because the renderer resolves the person's own default.
+ */
+export const automationProposalSchema = z.object({
+  name: z.string().trim().min(1).max(120),
+  instructions: z.string().trim().min(1).max(100_000),
+  schedule: automationScheduleSchema,
+  model: automationModelSchema.optional(),
+})
+export type AutomationProposal = z.infer<typeof automationProposalSchema>
+
 export const updateAutomationSchema = createAutomationSchema.partial().refine(
   (input) => Object.keys(input).length > 0,
   "At least one behavior-changing field is required",
