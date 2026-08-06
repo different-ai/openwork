@@ -11,7 +11,7 @@
     "start": "node --import ./dist/instrumentation.js dist/server.js"
   },
   "dependencies": {
-    "@hono/node-server": "2.0.12",
+    "@hono/node-server": "2.1.0",
     "@openwork-ee/den-db": "workspace:*",
     "@openwork-ee/utils": "workspace:*",
     "@openwork/types": "workspace:*",
