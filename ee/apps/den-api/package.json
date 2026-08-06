@@ -57,7 +57,7 @@
     "@standard-community/standard-json": "^0.3.5",
     "@standard-community/standard-openapi": "^0.2.9",
     "@standard-schema/spec": "^1.1.0",
-    "better-auth": "1.7.0-beta.4",
+    "better-auth": "1.7.0-beta.10",
     "better-call": "1.3.5",
     "botid": "^1.5.11",
     "dotenv": "^16.4.5",
