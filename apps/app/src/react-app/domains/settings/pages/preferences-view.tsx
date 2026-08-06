@@ -1,4 +1,12 @@
 /** @jsxImportSource react */
+import { useState } from "react";
+import type { ModelRef } from "@/app/types";
+import { ModelSelect } from "@/components/model-select";
+
+const DEFAULT_MODEL: ModelRef = {
+  providerID: "opencode",
+  modelID: "big-pickle",
+};
 import {
   Select,
   SelectContent,
@@ -45,6 +53,8 @@ export type PreferencesViewProps = {
   showAutomations: boolean;
   automationsEnabled: boolean;
   onToggleAutomations: () => void;
+  defaultModel: ModelRef | null;
+  onDefaultModelChange: (model: ModelRef) => void;
 };
 
 function desktopNotificationPreferenceLabel(value: DesktopNotificationPreference) {
@@ -59,10 +69,14 @@ function desktopNotificationPreferenceLabel(value: DesktopNotificationPreference
 }
 
 export function PreferencesView(props: PreferencesViewProps) {
+  const [modelPickerOpen, setModelPickerOpen] = useState(false);
+
   const desktopNotificationItems = DESKTOP_NOTIFICATION_PREFERENCE_VALUES.map((value) => ({
     value,
     label: desktopNotificationPreferenceLabel(value),
   }));
+
+  const activeModel = props.defaultModel ?? DEFAULT_MODEL;
 
   return (
     <LayoutStack>
@@ -71,6 +85,25 @@ export function PreferencesView(props: PreferencesViewProps) {
           <LayoutSectionTitle>{t("settings.model_title")}</LayoutSectionTitle>
           <LayoutSectionDescription>{t("settings.model_section_desc")}</LayoutSectionDescription>
         </LayoutSectionHeader>
+
+        {/* Default model */}
+        <LayoutSectionItem>
+          <LayoutSectionItemHeader>
+            <LayoutSectionItemTitle>{t("settings.default_model")}</LayoutSectionItemTitle>
+            <LayoutSectionItemDescription>{t("settings.default_model_desc")}</LayoutSectionItemDescription>
+            <LayoutSectionItemHeaderActions>
+              <div className="flex h-7 items-center">
+                <ModelSelect
+                  open={modelPickerOpen}
+                  value={activeModel}
+                  onOpenChange={setModelPickerOpen}
+                  onChange={props.onDefaultModelChange}
+                  disabled={props.busy}
+                />
+              </div>
+            </LayoutSectionItemHeaderActions>
+          </LayoutSectionItemHeader>
+        </LayoutSectionItem>
 
         {/* Show reasoning */}
         <LayoutSectionItem>

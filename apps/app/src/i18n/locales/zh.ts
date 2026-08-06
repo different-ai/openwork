@@ -819,6 +819,8 @@ export default {
   "settings.model_behavior_desc": "打开默认模型选择器，选择可用的推理配置。",
   "settings.model_section_desc": "选择默认对话模型并查看其推理方式。",
   "settings.model_title": "模型",
+  "settings.default_model": "默认模型",
+  "settings.default_model_desc": "选择用于新对话的默认模型。",
   "settings.no_active_workspace": "没有活动的本地工作区。",
   "settings.no_audit_entries": "暂无审计记录。",
   "settings.no_custom_path_set": "未设置自定义路径",

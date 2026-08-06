@@ -821,6 +821,8 @@ export default {
   "settings.model_behavior_desc": "Abra o seletor de modelo padrão para escolher perfis de raciocínio quando disponíveis.",
   "settings.model_section_desc": "Escolha o modelo de chat padrão e veja como ele raciocina.",
   "settings.model_title": "Modelo",
+  "settings.default_model": "Modelo padrão",
+  "settings.default_model_desc": "Escolha o modelo padrão para novos chats.",
   "settings.no_active_workspace": "Nenhum workspace local ativo.",
   "settings.no_audit_entries": "Nenhuma entrada de auditoria ainda.",
   "settings.no_custom_path_set": "Nenhum caminho personalizado definido",

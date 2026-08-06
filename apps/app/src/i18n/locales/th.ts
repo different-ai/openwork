@@ -816,6 +816,8 @@ export default {
   "settings.model_behavior_desc": "เปิดตัวเลือกโมเดลเริ่มต้นเพื่อเลือก reasoning profiles เมื่อมีให้ใช้",
   "settings.model_section_desc": "เลือกโมเดลแชทเริ่มต้นและตรวจสอบวิธีการใช้เหตุผล",
   "settings.model_title": "โมเดล",
+  "settings.default_model": "โมเดลเริ่มต้น",
+  "settings.default_model_desc": "เลือกโมเดลเริ่มต้นที่จะใช้สำหรับแชทใหม่",
   "settings.no_active_workspace": "ไม่มีพื้นที่ทำงานภายในเครื่องที่ใช้งาน",
   "settings.no_audit_entries": "ยังไม่มีรายการตรวจสอบ",
   "settings.no_custom_path_set": "ยังไม่ได้ตั้งเส้นทางกำหนดเอง",

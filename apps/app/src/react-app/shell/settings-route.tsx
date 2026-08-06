@@ -73,6 +73,7 @@ import "@/react-app/domains/settings/openwork-voice-config";
 import { useSettingsExtensionController } from "@/react-app/domains/settings/settings-extension-controller";
 import { buildExtensionItems } from "@/react-app/domains/settings/extension-items";
 import { isOpenWorkExtensionEnabled, OPENWORK_EXTENSION_STATE_CHANGED } from "@/react-app/domains/settings/extension-state";
+import { WorkspaceProvider } from "./workspace-provider";
 import { PreferencesView } from "@/react-app/domains/settings/pages/preferences-view";
 import { GeneralSettingsView } from "@/react-app/domains/settings/pages/general-view";
 import { AuthorizedFoldersPanel } from "@/react-app/domains/settings/panels/authorized-folders-panel";
@@ -155,6 +156,7 @@ import {
   testRemoteWorkspaceConnection,
 } from "@/react-app/domains/workspace/remote-workspace-diagnostics";
 import { ModelPickerModal } from "@/react-app/domains/session/modals/model-picker-modal";
+import { openProviderAuthEvent } from "@/react-app/shell/new-providers-listener";
 import type { ModelRef } from "@/app/types";
 import { workspaceSwatchColor } from "@/react-app/domains/session/sidebar/utils";
 import { recordInspectorEvent } from "../../app/lib/app-inspector";
@@ -899,7 +901,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     await providerAuthStore.refreshProviders();
   }, [providerAuthStore]);
 
-  const handleOpenProviderAuth = useCallback(() => {
+  const handleOpenProviderAuthModal = useCallback(() => {
     if (providerAuthStore.isProviderAddRestricted()) {
       restrictionNotice.show({
         title: t("restrictions.add_custom_providers_disabled_title"),
@@ -910,6 +912,16 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
 
     void providerAuthStore.openProviderAuthModal();
   }, [providerAuthStore, restrictionNotice]);
+
+  const handleOpenProviderAuth = useCallback(() => {
+    navigateSettingsPath("ai");
+  }, [navigateSettingsPath]);
+
+  useEffect(() => {
+    const handler = () => handleOpenProviderAuth();
+    window.addEventListener(openProviderAuthEvent, handler);
+    return () => window.removeEventListener(openProviderAuthEvent, handler);
+  }, [handleOpenProviderAuth]);
 
   useEffect(() => {
     if (!activeClient || !selectedWorkspaceId) return;
@@ -2164,7 +2176,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
             providerConnectError={providerAuthSnapshot.providerAuthError}
             providerDisconnectStatus={configActionStatus}
             providerDisconnectError={null}
-            onOpenProviderAuth={handleOpenProviderAuth}
+            onOpenProviderAuth={handleOpenProviderAuthModal}
             onDisconnectProvider={async (providerId) => {
               const message = await providerAuthStore.disconnectProvider(providerId);
               if (typeof message === "string" && message.trim()) {
@@ -2208,29 +2220,39 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
         );
       case "preferences":
         return (
-          <PreferencesView
-            busy={busy}
-            showThinking={local.prefs.showThinking}
-            onToggleShowThinking={() => {
-              local.setPrefs((previous) => ({ ...previous, showThinking: !previous.showThinking }));
-            }}
-            autoCompactContext={autoCompactContext}
-            autoCompactContextBusy={autoCompactContextBusy}
-            onToggleAutoCompactContext={toggleAutoCompactContext}
-            analyticsEnabled={local.prefs.analyticsEnabled}
-            onToggleAnalytics={() => {
-              local.setPrefs((previous) => ({ ...previous, analyticsEnabled: !previous.analyticsEnabled }));
-            }}
-            desktopNotifications={local.prefs.desktopNotifications}
-            onDesktopNotificationsChange={(desktopNotifications) => {
-              local.setPrefs((previous) => ({ ...previous, desktopNotifications }));
-            }}
-            memoryEnabled={memoryEnabled}
-            onToggleMemory={toggleMemory}
-            showAutomations={isDesktopRuntime()}
-            automationsEnabled={automationsEnabled}
-            onToggleAutomations={toggleAutomations}
-          />
+          <WorkspaceProvider
+            client={activeClient}
+            opencodeBaseUrl={opencodeBaseUrl}
+            selectedWorkspaceRoot={selectedWorkspaceRoot}
+          >
+            <PreferencesView
+              busy={busy}
+              showThinking={local.prefs.showThinking}
+              onToggleShowThinking={() => {
+                local.setPrefs((previous) => ({ ...previous, showThinking: !previous.showThinking }));
+              }}
+              autoCompactContext={autoCompactContext}
+              autoCompactContextBusy={autoCompactContextBusy}
+              onToggleAutoCompactContext={toggleAutoCompactContext}
+              analyticsEnabled={local.prefs.analyticsEnabled}
+              onToggleAnalytics={() => {
+                local.setPrefs((previous) => ({ ...previous, analyticsEnabled: !previous.analyticsEnabled }));
+              }}
+              desktopNotifications={local.prefs.desktopNotifications}
+              onDesktopNotificationsChange={(desktopNotifications) => {
+                local.setPrefs((previous) => ({ ...previous, desktopNotifications }));
+              }}
+              defaultModel={local.prefs.defaultModel}
+              onDefaultModelChange={(defaultModel) => {
+                local.setPrefs((previous) => ({ ...previous, defaultModel }));
+              }}
+              memoryEnabled={memoryEnabled}
+              onToggleMemory={toggleMemory}
+              showAutomations={isDesktopRuntime()}
+              automationsEnabled={automationsEnabled}
+              onToggleAutomations={toggleAutomations}
+            />
+          </WorkspaceProvider>
         );
       case "extensions":
         return (
@@ -2675,7 +2697,10 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
           modelPicker.setOpen(false);
         }}
         onBehaviorChange={() => {}}
-        onOpenSettings={() => {}}
+        onOpenSettings={() => {
+          modelPicker.setOpen(false);
+          handleOpenProviderAuth();
+        }}
         onClose={() => modelPicker.setOpen(false)}
       />
     </>

@@ -927,6 +927,8 @@ export default {
   "settings.model_behavior_desc": "Откройте выбор модели по умолчанию, чтобы выбрать профили рассуждений, когда они доступны.",
   "settings.model_section_desc": "Выберите модель чата по умолчанию и посмотрите, как она рассуждает.",
   "settings.model_title": "Модель",
+  "settings.default_model": "Модель по умолчанию",
+  "settings.default_model_desc": "Выберите модель по умолчанию для новых чатов.",
   "settings.no_active_workspace": "Нет активного локального workspace.",
   "settings.no_providers_connected": "Пока нет подключенных провайдеров.",
   "settings.no_audit_entries": "Пока нет записей аудита.",

@@ -815,6 +815,8 @@ export default {
   "settings.model_behavior_desc": "デフォルトモデルピッカーを開いて、利用可能な場合に推論プロファイルを選択します。",
   "settings.model_section_desc": "デフォルトのチャットモデルを選択し、推論方法を確認します。",
   "settings.model_title": "モデル",
+  "settings.default_model": "デフォルトモデル",
+  "settings.default_model_desc": "新しいチャットに使用するデフォルトのモデルを選択します。",
   "settings.no_active_workspace": "アクティブなローカルワークスペースがありません。",
   "settings.no_audit_entries": "まだ監査エントリがありません。",
   "settings.no_custom_path_set": "カスタムパスが設定されていません",

@@ -823,6 +823,8 @@ export default {
   "settings.model_behavior_desc": "Abre el selector del modelo predeterminado para elegir perfiles de razonamiento cuando estén disponibles.",
   "settings.model_section_desc": "Elige el modelo de chat predeterminado y revisa cómo razona.",
   "settings.model_title": "Modelo",
+  "settings.default_model": "Modelo predeterminado",
+  "settings.default_model_desc": "Elige el modelo predeterminado para los nuevos chats.",
   "settings.no_active_workspace": "No hay espacio de trabajo local activo.",
   "settings.no_audit_entries": "Aún no hay entradas de auditoría.",
   "settings.no_custom_path_set": "No se ha establecido ninguna ruta personalizada",

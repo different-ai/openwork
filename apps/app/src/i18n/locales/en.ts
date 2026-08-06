@@ -1332,6 +1332,8 @@ export default {
   "settings.model_behavior_unavailable": "Model behavior configuration is not yet available.",
   "settings.model_section_desc": "Pick the default chat model and review how it reasons.",
   "settings.model_title": "Model",
+  "settings.default_model": "Default model",
+  "settings.default_model_desc": "Pick the default model used for new chats.",
   "settings.no_active_workspace": "No active local workspace.",
   "settings.no_providers_connected": "No providers connected yet.",
   "settings.no_audit_entries": "No audit entries yet.",
