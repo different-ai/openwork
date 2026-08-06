@@ -221,7 +221,7 @@ describe("cloud MCP health foundation", () => {
   test("desired revisions detect token metadata change without embedding raw tokens", () => {
     const config = {
       type: "remote",
-      url: "https://api.micxlabs.com/mcp/agent",
+      url: "https://api.openworklabs.com/mcp/agent",
       headers: { Authorization: "Bearer owt_super_secret" },
       oauth: false,
     };

@@ -10,14 +10,14 @@ describe("Micx capabilities knowledge plugin", () => {
     await plugin["experimental.chat.system.transform"]({}, output);
 
     const knowledge = output.system.join("\n");
-    expect(knowledge).toContain("https://api.micxlabs.com/mcp/agent");
-    expect(knowledge).toContain("app.micxlabs.com/api/den");
+    expect(knowledge).toContain("https://api.openworklabs.com/mcp/agent");
+    expect(knowledge).toContain("app.openworklabs.com/api/den");
     expect(knowledge).toContain("internal same-origin desktop proxy");
     expect(knowledge).toContain("OpenCode is verified");
     expect(knowledge).toContain("Codex is setup-only");
     expect(knowledge).toContain("cursor://anysphere.cursor-mcp/oauth/callback");
     expect(knowledge).toContain("Settings > MCP servers");
-    expect(knowledge).toContain("https://app.micxlabs.com/api/auth");
+    expect(knowledge).toContain("https://app.openworklabs.com/api/auth");
     expect(knowledge).toContain("RFC9728 discovery");
     expect(knowledge).toContain("PKCE S256");
     expect(knowledge).toContain("opencode mcp auth micx");
@@ -39,7 +39,7 @@ describe("Micx capabilities knowledge plugin", () => {
     expect(knowledge).toContain("Settings > Debug");
     expect(knowledge).toContain("custom or local MCP server");
     expect(knowledge).not.toContain("Access tokens are opaque");
-    expect(knowledge).not.toContain("https://api.micxlabs.com/mcp`");
+    expect(knowledge).not.toContain("https://api.openworklabs.com/mcp`");
     expect(knowledge).not.toContain("micx-ui-mcp");
     expect(knowledge).not.toContain("micx_extensions_export");
   });
@@ -98,8 +98,8 @@ describe("Micx capabilities knowledge plugin", () => {
       path: "cloud/run-in-the-cloud/cloud-mcp.mdx",
     });
 
-    expect(read).toContain("https://api.micxlabs.com/mcp/agent");
-    expect(read).toContain("app.micxlabs.com/api/den");
+    expect(read).toContain("https://api.openworklabs.com/mcp/agent");
+    expect(read).toContain("app.openworklabs.com/api/den");
     expect(read).toContain("internal same-origin desktop proxy");
     expect(read).toContain("OpenCode | Verified");
     expect(read).toContain("Codex | Setup only");

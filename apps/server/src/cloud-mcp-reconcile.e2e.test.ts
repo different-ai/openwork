@@ -251,7 +251,7 @@ function delivery(body: Record<string, unknown>): Record<string, unknown> {
 
 const CLOUD_CONFIG: CloudConfig = {
   type: "remote",
-  url: "https://api.micxlabs.com/mcp/agent",
+  url: "https://api.openworklabs.com/mcp/agent",
   enabled: true,
   headers: { Authorization: "Bearer owt_secret_cloud_token" },
   oauth: false,
@@ -363,7 +363,7 @@ describe("micx-cloud MCP strict reconcile", () => {
     const micx = await startMicx([workspace("ws_1", root, `http://127.0.0.1:${mock.server.port}`)]);
 
     const cases: Array<{ config: Record<string, unknown>; code: string }> = [
-      { config: { ...CLOUD_CONFIG, url: "https://api.micxlabs.com/mcp" }, code: "cloud_endpoint_invalid" },
+      { config: { ...CLOUD_CONFIG, url: "https://api.openworklabs.com/mcp" }, code: "cloud_endpoint_invalid" },
       { config: { ...CLOUD_CONFIG, enabled: false }, code: "cloud_mcp_disabled" },
       { config: { ...CLOUD_CONFIG, headers: {} }, code: "invalid_mcp_token" },
       { config: { ...CLOUD_CONFIG, oauth: {} }, code: "invalid_mcp_token" },
@@ -405,7 +405,7 @@ describe("micx-cloud MCP strict reconcile", () => {
     const micx = await startMicx([workspace("ws_1", root, `http://127.0.0.1:${mock.server.port}`)]);
     await writeRuntimeOpencodeConfig(micx.config, "ws_1", (current) => ({
       ...current,
-      mcp: { "micx-cloud": { ...CLOUD_CONFIG, url: "https://api.micxlabs.com/mcp" } },
+      mcp: { "micx-cloud": { ...CLOUD_CONFIG, url: "https://api.openworklabs.com/mcp" } },
     }));
 
     const body = await responseRecord(await getHealth(micx.base));

@@ -24,7 +24,7 @@ describe("agent diagnostics effective engine inspection", () => {
         mcp: {
           "micx-cloud": {
             type: "remote",
-            url: "https://api.micxlabs.com/mcp/agent",
+            url: "https://api.openworklabs.com/mcp/agent",
             headers: { Authorization: "Bearer NOT_REPORTED" },
           },
         },

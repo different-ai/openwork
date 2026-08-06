@@ -10,7 +10,7 @@ import {
 } from "./agent-context-cloud-probe.js";
 
 const TOKEN = "Bearer ow_diagnostics_token_abcdefghijklmnopqrstuvwxyz";
-const ENDPOINT = "https://app.micxlabs.com/api/den/mcp/agent";
+const ENDPOINT = "https://app.openworklabs.com/api/den/mcp/agent";
 const SESSION_ID = "diagnostics-session-id";
 const PROTOCOL_VERSION = "2025-06-18";
 
@@ -293,11 +293,11 @@ describe("Micx Cloud catalog probe", () => {
       [{ config: null }, "cloud_mcp_missing"],
       [{ config: { type: "local", enabled: true } }, "cloud_mcp_not_remote"],
       [{ config: { type: "remote", enabled: false, url: ENDPOINT } }, "cloud_mcp_disabled"],
-      [{ config: { type: "remote", enabled: true, url: "https://app.micxlabs.com/api/den/mcp/agent?token=secret", headers: { Authorization: TOKEN } } }, "invalid_endpoint"],
-      [{ config: { type: "remote", enabled: true, url: "https://app.micxlabs.com/api/den/mcp/agent/", headers: { Authorization: TOKEN } } }, "invalid_endpoint"],
-      [{ config: { type: "remote", enabled: true, url: "https://app.micxlabs.com/api/den/mcp/agent/status", headers: { Authorization: TOKEN } } }, "invalid_endpoint"],
-      [{ config: { type: "remote", enabled: true, url: "https://app.micxlabs.com/api/den/mcp/agentish", headers: { Authorization: TOKEN } } }, "invalid_endpoint"],
-      [{ config: { type: "remote", enabled: true, url: "http://app.micxlabs.com/mcp/agent", headers: { Authorization: TOKEN } } }, "invalid_endpoint"],
+      [{ config: { type: "remote", enabled: true, url: "https://app.openworklabs.com/api/den/mcp/agent?token=secret", headers: { Authorization: TOKEN } } }, "invalid_endpoint"],
+      [{ config: { type: "remote", enabled: true, url: "https://app.openworklabs.com/api/den/mcp/agent/", headers: { Authorization: TOKEN } } }, "invalid_endpoint"],
+      [{ config: { type: "remote", enabled: true, url: "https://app.openworklabs.com/api/den/mcp/agent/status", headers: { Authorization: TOKEN } } }, "invalid_endpoint"],
+      [{ config: { type: "remote", enabled: true, url: "https://app.openworklabs.com/api/den/mcp/agentish", headers: { Authorization: TOKEN } } }, "invalid_endpoint"],
+      [{ config: { type: "remote", enabled: true, url: "http://app.openworklabs.com/mcp/agent", headers: { Authorization: TOKEN } } }, "invalid_endpoint"],
       [{ config: { type: "remote", enabled: true, url: "https://localhost.evil/mcp/agent", headers: { Authorization: TOKEN } } }, "untrusted_endpoint"],
     ];
     for (const [overrides, code] of cases) {
@@ -1078,7 +1078,7 @@ describe("Micx Cloud catalog probe", () => {
       enterpriseEndpoint,
       enterpriseEndpoint,
     ]);
-    expect(requestedUrls.some((url) => url.includes("micxlabs.com"))).toBe(false);
+    expect(requestedUrls.some((url) => url.includes("openworklabs.com"))).toBe(false);
     expect(activated).toMatchObject({
       performed: true,
       status: "observed",

@@ -40,7 +40,7 @@ describe("resolveOpencodeModelsUrl", () => {
   });
 
   test("uses the production catalog outside development", async () => {
-    expect(await resolveOpencodeModelsUrl({ env: {} })).toBe("https://models.micxlabs.com/");
+    expect(await resolveOpencodeModelsUrl({ env: {} })).toBe("https://models.openworklabs.com/");
   });
 
   test("uses the local catalog when the development server is available", async () => {
@@ -54,7 +54,7 @@ describe("resolveOpencodeModelsUrl", () => {
     expect(await resolveOpencodeModelsUrl({
       env: { MICX_DEV_MODE: "1" },
       fetchModels: async () => new Response(null, { status: 503 }),
-    })).toBe("https://models.micxlabs.com/");
+    })).toBe("https://models.openworklabs.com/");
   });
 });
 

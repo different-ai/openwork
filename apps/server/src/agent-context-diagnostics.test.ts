@@ -1030,7 +1030,7 @@ describe("agent context diagnostics analyzer", () => {
       "https://den.customer.example/custom/mcp/agent",
       "https://den.customer.example/custom/mcp/agent",
     ]);
-    expect(fetchCalls.some((call) => call.url.includes("micxlabs.com"))).toBe(false);
+    expect(fetchCalls.some((call) => call.url.includes("openworklabs.com"))).toBe(false);
     expect(report.mcps).toContainEqual(expect.objectContaining({
       name: "micx-cloud",
       source: "config.remote",
