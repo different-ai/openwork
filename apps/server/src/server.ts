@@ -837,7 +837,10 @@ function isSessionCommandProxyRequest(method: string, proxyPath: string) {
   return method === "POST" && /^\/session\/[^/]+\/command$/.test(normalizeOpencodeProxyPath(proxyPath));
 }
 
-export async function startServer(config: ServerConfig): Promise<ServeResult> {
+export async function startServer(
+  config: ServerConfig,
+  options?: { serve?: typeof serve },
+): Promise<ServeResult> {
   const approvals = new ApprovalService(config.approval);
   const reloadEvents = new ReloadEventStore();
   const tokens = new TokenService(config);
@@ -1029,7 +1032,7 @@ export async function startServer(config: ServerConfig): Promise<ServeResult> {
 
   let server: ServeResult;
   try {
-    server = await serve({
+    server = await (options?.serve ?? serve)({
       ...serverOptions,
       idleTimeout: 120,
     });

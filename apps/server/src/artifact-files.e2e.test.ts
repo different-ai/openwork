@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -30,6 +30,12 @@ async function createWorkspaceRoot() {
 }
 
 async function startOpenworkServer(workspaceRoot: string) {
+  const previousDataDir = process.env.OPENWORK_DATA_DIR;
+  process.env.OPENWORK_DATA_DIR = join(workspaceRoot, ".openwork-test-data");
+  stops.push(() => {
+    if (previousDataDir === undefined) delete process.env.OPENWORK_DATA_DIR;
+    else process.env.OPENWORK_DATA_DIR = previousDataDir;
+  });
   const config: ServerConfig = {
     host: "127.0.0.1",
     port: 0,
@@ -46,9 +52,20 @@ async function startOpenworkServer(workspaceRoot: string) {
     logFormat: "pretty",
     logRequests: false,
   };
-  const server = await startServer(config) as Served;
+  const transport: { fetch?: (request: Request) => Response | Promise<Response> } = {};
+  const server = await startServer(config, {
+    serve: async (options) => {
+      transport.fetch = options.fetch;
+      return { port: 0, stop: () => {} };
+    },
+  }) as Served;
   stops.push(() => server.stop(true));
-  return { base: `http://127.0.0.1:${server.port}`, token: config.token };
+  const dispatch = transport.fetch;
+  if (!dispatch) throw new Error("Expected the in-process server handler");
+  return {
+    request: (path: string, init?: RequestInit) => dispatch(new Request(`http://openwork.test${path}`, init)),
+    token: config.token,
+  };
 }
 
 function auth(token: string) {
@@ -58,9 +75,9 @@ function auth(token: string) {
 describe("artifact file routes", () => {
   test("resolve, read, write, and download markdown/csv/xlsx/pptx/docx/html artifacts", async () => {
     const root = await createWorkspaceRoot();
-    const { base, token } = await startOpenworkServer(root);
+    const { request, token } = await startOpenworkServer(root);
 
-    const resolveResponse = await fetch(`${base}/workspace/ws_1/artifacts/resolve`, {
+    const resolveResponse = await request("/workspace/ws_1/artifacts/resolve", {
       method: "POST",
       headers: auth(token),
       body: JSON.stringify({
@@ -90,10 +107,10 @@ describe("artifact file routes", () => {
     expect(resolved.items.find((item) => item.value === "http://localhost:4321/")).toMatchObject({ kind: "url", preview: "browser" });
     expect(resolved.items.find((item) => item.value === "ws://localhost:4321/socket")).toMatchObject({ kind: "url", preview: "browser" });
 
-    const csvRead = await fetch(`${base}/workspace/ws_1/files/content?path=${encodeURIComponent("reports/artifact-eval.csv")}`, { headers: auth(token) });
+    const csvRead = await request(`/workspace/ws_1/files/content?path=${encodeURIComponent("reports/artifact-eval.csv")}`, { headers: auth(token) });
     expect(await csvRead.json()).toMatchObject({ content: "name,revenue\nAda,10\nGrace,20\n" });
 
-    const mdWrite = await fetch(`${base}/workspace/ws_1/files/content`, {
+    const mdWrite = await request("/workspace/ws_1/files/content", {
       method: "POST",
       headers: auth(token),
       body: JSON.stringify({ path: "reports/artifact-eval.md", content: "# Updated\n" }),
@@ -101,15 +118,59 @@ describe("artifact file routes", () => {
     expect(mdWrite.status).toBe(200);
     expect(await readFile(join(root, "reports", "artifact-eval.md"), "utf8")).toBe("# Updated\n");
 
-    const xlsxWrite = await fetch(`${base}/workspace/ws_1/files/raw`, {
+    const xlsxWrite = await request("/workspace/ws_1/files/raw", {
       method: "POST",
       headers: auth(token),
       body: JSON.stringify({ path: "reports/artifact-eval.xlsx", dataBase64: Buffer.from([80, 75, 9, 9]).toString("base64") }),
     });
     expect(xlsxWrite.status).toBe(200);
 
-    const xlsxDownload = await fetch(`${base}/workspace/ws_1/files/raw?path=${encodeURIComponent("reports/artifact-eval.xlsx")}`, { headers: auth(token) });
+    const xlsxDownload = await request(`/workspace/ws_1/files/raw?path=${encodeURIComponent("reports/artifact-eval.xlsx")}`, { headers: auth(token) });
     expect(xlsxDownload.status).toBe(200);
     expect(Array.from(new Uint8Array(await xlsxDownload.arrayBuffer()))).toEqual([80, 75, 9, 9]);
+  });
+
+  test("rejects stale text and binary writes without replacing external changes", async () => {
+    const root = await createWorkspaceRoot();
+    const { request, token } = await startOpenworkServer(root);
+    const markdownPath = join(root, "reports", "artifact-eval.md");
+    const binaryPath = join(root, "reports", "artifact-eval.xlsx");
+
+    const markdownBase = (await stat(markdownPath)).mtimeMs;
+    await writeFile(markdownPath, "# External markdown\n", "utf8");
+    await utimes(markdownPath, new Date(), new Date(markdownBase + 2_000));
+    const markdownCurrent = (await stat(markdownPath)).mtimeMs;
+
+    const staleMarkdownWrite = await request("/workspace/ws_1/files/content", {
+      method: "POST",
+      headers: auth(token),
+      body: JSON.stringify({ path: "reports/artifact-eval.md", content: "# Stale local markdown\n", baseUpdatedAt: markdownBase }),
+    });
+    expect(staleMarkdownWrite.status).toBe(409);
+    expect(await staleMarkdownWrite.json()).toMatchObject({
+      code: "conflict",
+      details: { baseUpdatedAt: markdownBase, currentUpdatedAt: markdownCurrent },
+    });
+    expect(await readFile(markdownPath, "utf8")).toBe("# External markdown\n");
+
+    const binaryBase = (await stat(binaryPath)).mtimeMs;
+    await writeFile(binaryPath, new Uint8Array([80, 75, 7, 7]));
+    await utimes(binaryPath, new Date(), new Date(binaryBase + 2_000));
+    const binaryCurrent = (await stat(binaryPath)).mtimeMs;
+    const staleBinaryWrite = await request("/workspace/ws_1/files/raw", {
+      method: "POST",
+      headers: auth(token),
+      body: JSON.stringify({
+        path: "reports/artifact-eval.xlsx",
+        dataBase64: Buffer.from([80, 75, 8, 8]).toString("base64"),
+        baseUpdatedAt: binaryBase,
+      }),
+    });
+    expect(staleBinaryWrite.status).toBe(409);
+    expect(await staleBinaryWrite.json()).toMatchObject({
+      code: "conflict",
+      details: { baseUpdatedAt: binaryBase, currentUpdatedAt: binaryCurrent },
+    });
+    expect(Array.from(await readFile(binaryPath))).toEqual([80, 75, 7, 7]);
   });
 });
