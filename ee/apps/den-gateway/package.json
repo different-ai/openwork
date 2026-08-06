@@ -13,7 +13,7 @@
     "@hono/node-server": "^2.0.10",
     "@openwork-ee/utils": "workspace:*",
     "dotenv": "^16.4.5",
-    "hono": "4.12.27",
+    "hono": "4.12.34",
     "zod": "^4.3.6"
   },
   "devDependencies": {
