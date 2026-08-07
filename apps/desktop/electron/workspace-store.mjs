@@ -1048,6 +1048,32 @@ export function createWorkspaceStore({
     });
   }
 
+  /**
+   * Ensure at least one local workspace exists so the app is immediately
+   * usable ("chat-first"): the engine, model picker, and provider list only
+   * come up when a local workspace boots the server. When the user has not
+   * created or connected any local workspace, seed a global default under the
+   * user's home. Remote-only setups are left untouched (they boot their own
+   * engine remotely). Returns the workspace state after the (maybe no-op)
+   * seed, plus whether a new workspace was created.
+   */
+  async function ensureDefaultLocalWorkspace(input = {}) {
+    const current = await readWorkspaceState();
+    // Seed only when the user has no workspace at all. A remote-only setup is
+    // a deliberate choice to run workers remotely (no local engine needed), so
+    // it must not gain a local default.
+    if (current.workspaces.length > 0) {
+      return { state: current, seeded: false };
+    }
+    const name = String(input.name ?? "OpenWork Chat");
+    const folderValue = String(input.folderPath ?? "").trim();
+    const folderPath = folderValue
+      ? await normalizeLocalWorkspacePath(folderValue)
+      : path.join(os.homedir(), name);
+    const state = await createWorkspace({ folderPath, name });
+    return { state, seeded: true };
+  }
+
   async function createRemoteWorkspace(input = {}) {
     const baseUrl = String(input.baseUrl ?? "").trim();
     if (!baseUrl) throw new Error("baseUrl is required");
@@ -1285,6 +1311,7 @@ export function createWorkspaceStore({
     clearDesktopBootstrapConfig,
     debugDesktopBootstrapConfig,
     defaultWorkspaceOpenworkConfig,
+    ensureDefaultLocalWorkspace,
     exportConfig,
     forgetWorkspace,
     getDesktopBootstrapConfig,

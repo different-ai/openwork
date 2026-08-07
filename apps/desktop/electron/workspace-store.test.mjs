@@ -205,6 +205,116 @@ test("does not create a default workspace when desktop state is absent", async (
   }
 });
 
+test("ensures a chat-first default workspace is seeded when no local workspace exists", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "openwork-workspace-store-"));
+  const userData = path.join(root, "userData");
+  const previousHome = process.env.HOME;
+  const previousDevMode = process.env.OPENWORK_DEV_MODE;
+  const previousServerConfig = process.env.OPENWORK_SERVER_CONFIG;
+  process.env.HOME = path.join(root, "home");
+  process.env.OPENWORK_DEV_MODE = "1";
+  process.env.OPENWORK_SERVER_CONFIG = path.join(root, "missing-server.json");
+  try {
+    const store = createWorkspaceStore({
+      app: { getPath: (name) => name === "userData" ? userData : root },
+      defaultDenBaseUrl: "https://example.test",
+      defaultRequireSignin: false,
+      forceRequireSignin: false,
+    });
+
+    const { state, seeded } = await store.ensureDefaultLocalWorkspace({ name: "OpenWork Chat" });
+    assert.equal(seeded, true);
+    assert.equal(state.workspaces.length, 1);
+    assert.equal(state.workspaces[0].name, "OpenWork Chat");
+    assert.equal(state.workspaces[0].workspaceType, "local");
+    assert.equal(state.selectedId, state.workspaces[0].id);
+    assert.ok(String(state.workspaces[0].path).trim().endsWith("Open Work Chat") || String(state.workspaces[0].path).trim().length > 0);
+
+    // A second call is a no-op: the seeded default already satisfies the invariant.
+    const again = await store.ensureDefaultLocalWorkspace({ name: "OpenWork Chat" });
+    assert.equal(again.seeded, false);
+    assert.equal(again.state.workspaces.length, 1);
+  } finally {
+    restoreEnv("HOME", previousHome);
+    restoreEnv("OPENWORK_DEV_MODE", previousDevMode);
+    restoreEnv("OPENWORK_SERVER_CONFIG", previousServerConfig);
+  }
+});
+
+test("does not seed a default workspace when a local workspace already exists", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "openwork-workspace-store-"));
+  const userData = path.join(root, "userData");
+  const existing = path.join(root, "existing-project");
+  await mkdir(existing, { recursive: true });
+  await mkdir(userData, { recursive: true });
+  await writeFile(
+    path.join(userData, "openwork-workspaces.json"),
+    JSON.stringify({
+      selectedId: "ws_existing",
+      activeId: "ws_existing",
+      watchedId: "ws_existing",
+      workspaces: [{ id: "ws_existing", path: existing, name: "Existing", workspaceType: "local" }],
+    }),
+    "utf8",
+  );
+
+  const previousDevMode = process.env.OPENWORK_DEV_MODE;
+  const previousServerConfig = process.env.OPENWORK_SERVER_CONFIG;
+  process.env.OPENWORK_DEV_MODE = "1";
+  process.env.OPENWORK_SERVER_CONFIG = path.join(root, "missing-server.json");
+  try {
+    const store = createWorkspaceStore({
+      app: { getPath: (name) => name === "userData" ? userData : root },
+      defaultDenBaseUrl: "https://example.test",
+      defaultRequireSignin: false,
+      forceRequireSignin: false,
+    });
+    const { state, seeded } = await store.ensureDefaultLocalWorkspace({ name: "OpenWork Chat" });
+    assert.equal(seeded, false);
+    assert.equal(state.workspaces.length, 1);
+    assert.equal(state.workspaces[0].id, "ws_existing");
+  } finally {
+    restoreEnv("OPENWORK_DEV_MODE", previousDevMode);
+    restoreEnv("OPENWORK_SERVER_CONFIG", previousServerConfig);
+  }
+});
+
+test("does not seed a default workspace for a remote-only setup", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "openwork-workspace-store-"));
+  const userData = path.join(root, "userData");
+  await mkdir(userData, { recursive: true });
+  await writeFile(
+    path.join(userData, "openwork-workspaces.json"),
+    JSON.stringify({
+      selectedId: "rem_ws",
+      activeId: "rem_ws",
+      watchedId: "rem_ws",
+      workspaces: [{ id: "rem_ws", path: "", name: "Remote", workspaceType: "remote", baseUrl: "https://worker.example.com" }],
+    }),
+    "utf8",
+  );
+
+  const previousDevMode = process.env.OPENWORK_DEV_MODE;
+  const previousServerConfig = process.env.OPENWORK_SERVER_CONFIG;
+  process.env.OPENWORK_DEV_MODE = "1";
+  process.env.OPENWORK_SERVER_CONFIG = path.join(root, "missing-server.json");
+  try {
+    const store = createWorkspaceStore({
+      app: { getPath: (name) => name === "userData" ? userData : root },
+      defaultDenBaseUrl: "https://example.test",
+      defaultRequireSignin: false,
+      forceRequireSignin: false,
+    });
+    const { state, seeded } = await store.ensureDefaultLocalWorkspace({ name: "OpenWork Chat" });
+    assert.equal(seeded, false);
+    assert.equal(state.workspaces.length, 1);
+    assert.equal(state.workspaces[0].id, "rem_ws");
+  } finally {
+    restoreEnv("OPENWORK_DEV_MODE", previousDevMode);
+    restoreEnv("OPENWORK_SERVER_CONFIG", previousServerConfig);
+  }
+});
+
 test("normalizes recovered remote OpenWork entries before persisting", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "openwork-workspace-store-"));
   const userData = path.join(root, "userData");

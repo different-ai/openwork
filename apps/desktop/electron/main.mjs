@@ -129,6 +129,11 @@ if (process.env.OPENWORK_ELECTRON_USE_MOCK_KEYCHAIN === "1") {
 const RELEASE_DOWNLOAD_BASE_URL = "https://github.com/different-ai/openwork/releases/latest/download";
 const RELEASE_PAGE_URL = "https://github.com/different-ai/openwork/releases/latest";
 const DOCS_PAGE_URL = "https://openworklabs.com/docs";
+// Chat-first global default workspace: when the user has not created or
+// connected any local workspace, the app seeds this one so the engine, model
+// picker, and provider list are available immediately (no "create workspace"
+// empty state). Mirrors the chat-first onboarding folder in the renderer.
+const DEFAULT_WORKSPACE_NAME = "OpenWork Chat";
 const applicationMenu = createApplicationMenu({
   appName: APP_NAME,
   docsUrl: DOCS_PAGE_URL,
@@ -1257,7 +1262,12 @@ function assertOpenworkServerReady(info) {
 }
 
 async function bootRuntimeForSelectedWorkspace() {
-  const list = await workspaceStore.readWorkspaceState();
+  const { state: list, seeded } = await workspaceStore.ensureDefaultLocalWorkspace({
+    name: DEFAULT_WORKSPACE_NAME,
+  });
+  if (seeded) {
+    console.info("[runtime] seeded default workspace", { name: DEFAULT_WORKSPACE_NAME });
+  }
   const selectedId = list.selectedId || list.activeId || list.workspaces[0]?.id || "";
   const workspace = selectedId
     ? list.workspaces.find((entry) => entry?.id === selectedId)
