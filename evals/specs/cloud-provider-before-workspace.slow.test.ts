@@ -1,5 +1,5 @@
 import { expect, onTestFinished } from "vitest";
-import { denFetch, evalIn, go, readAvailableModels, waitFor, waitForText } from "@openwork/behaviors";
+import { denFetch, evalIn, go, readAvailableModels } from "@openwork/behaviors";
 import type { DenSession } from "@openwork/behaviors";
 import { desktop } from "@openwork/hosts";
 import { eventually, needs, server, signInDesktopAs, test } from "@openwork/testkit";
@@ -176,15 +176,25 @@ test("managed models survive sign-in before the first workspace exists", async (
   expect(created.status).toBe(201);
   expect(workspaceId).not.toBe("");
 
-  // The workspace was created through the server API, not the renderer, so
-  // reload once to re-hydrate the app's workspace list before navigating.
-  await evalIn(desktopApp, "(() => { window.location.reload(); return true; })()");
-  await waitFor(desktopApp, "Boolean(document.body && document.body.innerText.trim().length > 0)", {
-    timeoutMs: 60_000,
-    label: "renderer back after reload",
-  });
-  await go(desktopApp, `/workspace/${workspaceId}/session`);
-  await waitForText(desktopApp, "Power your first task", { timeoutMs: 120_000 });
+  // The workspace was created through the server API, not the renderer. The
+  // route store refreshes on workspace changes, so steer to the session route
+  // until the composer surface appears (bounded, re-navigating each probe).
+  await eventually(
+    async () => {
+      await go(desktopApp, `/workspace/${workspaceId}/session`);
+      const seen = await evalIn(
+        desktopApp,
+        `document.body.innerText.includes("Power your first task")`,
+        { timeoutMs: 8_000 },
+      ).catch(() => false);
+      return seen === true;
+    },
+    {
+      within: 120_000,
+      intervalMs: 5_000,
+      label: "session route for the first workspace",
+    },
+  );
   const models = await eventually(
     () => readAvailableModels(desktopApp),
     {
