@@ -15,8 +15,8 @@ const USAGE = `Usage:
   pnpm --dir evals dev:den -- up [--port <port>] [--database <name>] [--seed]
   pnpm --dir evals dev:den -- down --port <port> [--drop-database]
 
-The up command creates an isolated database, pushes the current schema with
-db:push, starts den-api in multi-org dev mode, waits for /health, and prints the
+The up command creates an isolated database, initializes it with
+db:bootstrap, starts den-api in multi-org dev mode, waits for /health, and prints the
 OPENWORK_EVAL_DEN_* exports. The generated trusted origins always include the
 printed web URL; omitting it causes Better Auth 403 INVALID_ORIGIN responses.`;
 
@@ -191,9 +191,19 @@ async function createDatabase(database: string): Promise<void> {
   ]);
 }
 
-async function pushSchema(state: DevDenState): Promise<void> {
-  console.log(`Pushing schema to ${state.database} with db:push...`);
-  await run("pnpm", ["--filter", "@openwork-ee/den-db", "db:push"], denEnvironment(state));
+async function applySchema(state: DevDenState): Promise<void> {
+  // Uses db:bootstrap, the same entrypoint a real Den install runs, rather than
+  // re-deriving DDL with db:push.
+  //
+  // push regenerates a prefix-length index as ``token`(191)`` — doubled
+  // backticks — which MySQL rejects with a 1064 parse error, so an isolated Den
+  // could never finish standing up. bootstrap instead initializes an empty
+  // database from the build-time schema snapshot and records the committed
+  // migrations as its baseline, so the eval Den is built the way a deployment
+  // is. Plain db:migrate is not an option here: the ledger is baselined, so on
+  // an empty database it has nothing to create the base tables from.
+  console.log(`Bootstrapping ${state.database} from the current schema snapshot...`);
+  await run("pnpm", ["--filter", "@openwork-ee/den-db", "db:bootstrap"], denEnvironment(state));
 }
 
 async function seedDemoOrg(state: DevDenState): Promise<void> {
@@ -222,7 +232,7 @@ async function up(portValue: string | undefined, databaseValue: string | undefin
   };
 
   await createDatabase(database);
-  await pushSchema(state);
+  await applySchema(state);
   await ensurePortFree(port);
 
   const logFd = openSync(state.logPath, "w");
