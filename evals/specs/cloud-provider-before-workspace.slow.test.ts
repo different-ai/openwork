@@ -1,5 +1,5 @@
 import { expect, onTestFinished } from "vitest";
-import { denFetch, evalIn, go, readAvailableModels } from "@openwork/behaviors";
+import { createAndSelectWorkspace, denFetch, evalIn, readAvailableModels } from "@openwork/behaviors";
 import type { DenSession } from "@openwork/behaviors";
 import { desktop } from "@openwork/hosts";
 import { eventually, needs, server, signInDesktopAs, test } from "@openwork/testkit";
@@ -165,36 +165,12 @@ test("managed models survive sign-in before the first workspace exists", async (
   );
   expect(initialSucceeded).toBe(true);
 
+  // The first workspace is created through the product itself: organization
+  // onboarding plus the app's workspace.create action, the same journey a
+  // person takes right after this sign-in.
   const workspacePath = `/tmp/openwork-provider-before-workspace-${Date.now()}`;
-  const created = await localServerRequest(desktopApp, "/workspaces/local", {
-    method: "POST",
-    host: true,
-    body: { folderPath: workspacePath, name: "First Workspace", preset: "starter" },
-  });
-  const createdBody = isRecord(created.body) ? created.body : {};
-  const workspaceId = typeof createdBody.activeId === "string" ? createdBody.activeId : "";
-  expect(created.status).toBe(201);
+  const { workspaceId } = await createAndSelectWorkspace(desktopApp, { path: workspacePath });
   expect(workspaceId).not.toBe("");
-
-  // The workspace was created through the server API, not the renderer. The
-  // route store refreshes on workspace changes, so steer to the session route
-  // until the composer surface appears (bounded, re-navigating each probe).
-  await eventually(
-    async () => {
-      await go(desktopApp, `/workspace/${workspaceId}/session`);
-      const seen = await evalIn(
-        desktopApp,
-        `document.body.innerText.includes("Power your first task")`,
-        { timeoutMs: 8_000 },
-      ).catch(() => false);
-      return seen === true;
-    },
-    {
-      within: 120_000,
-      intervalMs: 5_000,
-      label: "session route for the first workspace",
-    },
-  );
   const models = await eventually(
     () => readAvailableModels(desktopApp),
     {
