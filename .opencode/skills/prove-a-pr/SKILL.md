@@ -21,13 +21,19 @@ description: Prove a PR, prepare merge verification, publish all evidence, check
 
 - Use `write-a-spec` and `run-tests`. Prose, screenshots, and recordings never
   decide pass/fail.
+- Prefer Daytona for agent-first verification. Attempt the Daytona lane first
+  when its credentials and service access are available; otherwise run the same
+  checks locally. Missing Daytona credentials, tooling, or service access is an
+  expected OSS contributor fallback, not a failed check.
+- Record whether each check ran on Daytona or locally. When falling back, state
+  the unavailable Daytona prerequisite without exposing secret values.
 - Give every claim an observable assertion and a visible testkit tape.
 - Report only `Passed`, `Incomplete`, or `Failed`. Always quote exact commands,
   exit codes, and passed/failed/skipped counts.
 - Call a failure pre-existing only after the same command demonstrates it in a
   clean `origin/dev` worktree. Quote the control command and matching failure.
 
-## Satisfy local prerequisites
+## Satisfy local fallback prerequisites
 
 ```bash
 pnpm --filter @openwork/types build

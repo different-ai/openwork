@@ -51,6 +51,12 @@ evidence tape. Evidence is ambient: do not create or pass roll handles. Report
 otherwise report `Incomplete` or `Failed` with repro steps. Pure docs/comments,
 types-only changes, and inert agent config may skip runtime proof, but say so.
 
+Run agent-first verification through Daytona first when Daytona credentials and
+access are available. If Daytona is unavailable, run the same verification
+locally instead; missing Daytona access is an expected OSS contributor path,
+not a test failure. Report which execution lane was used and why local fallback
+was necessary when applicable.
+
 ## Demo-Driven Development (the paved path)
 
 Feature work starts with the demo, not a PRD:

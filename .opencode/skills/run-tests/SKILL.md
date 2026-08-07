@@ -11,7 +11,17 @@ description: Run the tests, run one spec, run e2e locally or on Daytona, investi
   discard the old verdict and run again.
 - Run one spec at a time so each failure and ambient tape has one owner.
 
-## Prepare local execution
+## Choose the execution environment
+
+- Prefer Daytona when Daytona credentials, tooling, and service access are
+  available. Set `OPENWORK_EVAL_DAYTONA=1` for that run.
+- If Daytona is unavailable, run the same spec locally with
+  `OPENWORK_EVAL_DAYTONA` unset. Missing Daytona access is an expected path for
+  OSS contributors and does not make the verdict fail or incomplete.
+- Record the selected lane. For local fallback, report which Daytona
+  prerequisite was unavailable without printing secret values.
+
+## Prepare local fallback
 
 ```bash
 pnpm --filter @openwork/types build
@@ -40,8 +50,8 @@ pnpm evals:spec specs/<name>.test.ts
 OPENWORK_EVAL_APP_SPECS=1 pnpm --dir evals exec vitest run --config vitest.config.ts --project stack specs/<name>.slow.test.ts
 ```
 
-- Set `OPENWORK_EVAL_DAYTONA=1` to place resources in sandboxes. Leave it unset
-  for isolated local resources.
+- The commands above use Daytona when `OPENWORK_EVAL_DAYTONA=1` is set and
+  isolated local resources when it is unset.
 
 ## Read the verdict
 
