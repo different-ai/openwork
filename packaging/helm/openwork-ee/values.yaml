@@ -134,6 +134,14 @@ customCa:
   existingConfigMap: ""
   key: ca.crt
 
+tests:
+  tlsChainCheck:
+    # Helm test pod that checks each configured ingress host serves a full TLS
+    # certificate chain. Create ingress TLS Secrets from fullchain.pem
+    # (leaf + intermediate), not cert.pem, so engine clients can verify TLS.
+    enabled: true
+    image: alpine/openssl:latest
+
 secret:
   create: true
   existingSecret: ""

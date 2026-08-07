@@ -129,6 +129,26 @@ Provider-specific starter guides:
 install an ingress controller. Use it only when the cluster already has a
 compatible provider ingress controller.
 
+### Verify TLS serving
+
+After the release is deployed and ingress DNS resolves, run:
+
+```bash
+helm test <release>
+```
+
+The `tls-chain-check` test pod connects to each configured web/API ingress host
+with SNI and fails if the endpoint serves fewer than two certificates. Manually,
+the equivalent check is:
+
+```bash
+echo | openssl s_client -connect HOST:443 -servername HOST -showcerts 2>/dev/null | grep -c "BEGIN CERT"
+```
+
+The count must be at least `2`. Create the Kubernetes TLS Secret from
+`fullchain.pem` (leaf + intermediate), not `cert.pem`, so engine clients do not
+fail with `UNABLE_TO_VERIFY_LEAF_SIGNATURE`.
+
 Published self-host planning pages:
 
 - [Private network deployment](../../../packages/docs/start-here/private-network-deployment.mdx)

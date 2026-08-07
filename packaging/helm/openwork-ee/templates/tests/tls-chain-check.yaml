@@ -1,0 +1,51 @@
+{{- if and .Values.ingress.enabled .Values.ingress.tls .Values.tests.tlsChainCheck.enabled }}
+{{- $hosts := list .Values.ingress.web.host -}}
+{{- if .Values.ingress.api.enabled -}}
+{{- $hosts = append $hosts .Values.ingress.api.host -}}
+{{- end -}}
+apiVersion: v1
+kind: Pod
+metadata:
+  name: {{ include "openwork-ee.fullname" . }}-tls-chain-check
+  labels:
+    {{- include "openwork-ee.componentLabels" (dict "root" . "component" "tls-chain-check") | nindent 4 }}
+  annotations:
+    "helm.sh/hook": test
+spec:
+  restartPolicy: Never
+  activeDeadlineSeconds: 120
+  {{- with .Values.imagePullSecrets }}
+  imagePullSecrets:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  containers:
+    - name: tls-chain-check
+      image: {{ .Values.tests.tlsChainCheck.image | quote }}
+      imagePullPolicy: IfNotPresent
+      command:
+        - /bin/sh
+        - -ec
+      args:
+        - |-
+          failed=0
+
+          for host in $TLS_CHAIN_CHECK_HOSTS; do
+            cert_count="$(echo | openssl s_client -connect "${host}:443" -servername "$host" -showcerts 2>/dev/null | grep -c "BEGIN CERT" || true)"
+
+            if [ "$cert_count" -lt 2 ]; then
+              printf 'TLS chain incomplete: %s served %s certificate(s); serve the full chain (leaf + intermediate, fullchain.pem) or engine clients will fail with UNABLE_TO_VERIFY_LEAF_SIGNATURE\n' "$host" "$cert_count" >&2
+              failed=1
+            else
+              printf 'TLS chain OK: %s served %s certificate(s)\n' "$host" "$cert_count"
+            fi
+          done
+
+          exit "$failed"
+      env:
+        - name: TLS_CHAIN_CHECK_HOSTS
+          value: {{ join " " $hosts | quote }}
+      resources:
+        requests:
+          cpu: 10m
+          memory: 16Mi
+{{- end }}
