@@ -11,10 +11,7 @@
     "skipLibCheck": true,
     "sourceMap": true,
     "inlineSources": true,
-    "resolveJsonModule": true,
-    "paths": {
-      "sharp": ["./node_modules/sharp/lib/index.d.ts"]
-    }
+    "resolveJsonModule": true
   },
   "include": ["src"]
 }

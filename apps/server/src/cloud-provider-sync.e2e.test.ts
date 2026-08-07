@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { EnvService } from "./env-file.js";
+import { CloudProviderSync } from "./cloud-provider-sync.js";
 import { readOpenworkWorkspaceConfig, writeOpenworkWorkspaceConfig } from "./openwork-workspace-config-store.js";
 import {
   readGlobalRuntimeOpencodeConfig,
@@ -155,6 +156,70 @@ afterEach(async () => {
 });
 
 describe("cloud provider sync gateway", () => {
+  test("materializes providers before the first workspace exists and finishes setup later", async () => {
+    const root = await createRoot();
+    const config = serverConfig(root, "https://engine.example.test");
+    config.workspaces = [];
+    let reloads = 0;
+    const engineRequests: string[] = [];
+    const engine = Bun.serve({
+      port: 0,
+      fetch(request) {
+        const url = new URL(request.url);
+        engineRequests.push(`${request.method} ${url.pathname}`);
+        return Response.json({ ok: true });
+      },
+    });
+    stops.push(() => engine.stop(true));
+    const den = Bun.serve({
+      port: 0,
+      fetch(request) {
+        const url = new URL(request.url);
+        if (url.pathname === "/v1/llm-providers") {
+          return Response.json({
+            llmProviders: [buildProvider([{ id: "model-a", name: "Model A", config: {} }])],
+          });
+        }
+        return Response.json({
+          llmProvider: buildProvider([{ id: "model-a", name: "Model A", config: {} }]),
+        });
+      },
+    });
+    stops.push(() => den.stop(true));
+    const sync = new CloudProviderSync({
+      config,
+      env: new EnvService({ path: process.env.OPENWORK_ENV_STORE }),
+      reloadEngine: async () => {
+        reloads += 1;
+      },
+      intervalMs: 3_600_000,
+    });
+    stops.push(() => sync.stop());
+
+    sync.setSession({
+      baseUrl: `http://127.0.0.1:${den.port}`,
+      token: "den-token",
+      orgId: "org_test",
+    });
+    expect((await sync.run("before-workspace")).status).toBe("noop");
+    expect(sync.status().lastRun?.status).toBe("noop");
+    expect(runtimeProviderMap(await readGlobalRuntimeOpencodeConfig(config)).lpr_test).toBeDefined();
+    expect(reloads).toBe(0);
+    expect(engineRequests).toEqual([]);
+
+    config.workspaces.push({
+      id: "ws_1",
+      name: "Workspace",
+      path: root,
+      preset: "starter",
+      workspaceType: "local",
+      baseUrl: `http://127.0.0.1:${engine.port}`,
+    });
+    expect(await sync.run("workspace-created")).toEqual({ status: "applied" });
+    expect(reloads).toBe(1);
+    expect(engineRequests).toContain("PUT /auth/lpr_test");
+  });
+
   test("materializes Den providers globally, reconciles changes, and sweeps the session", async () => {
     const root = await createRoot();
     const engineRequests: string[] = [];

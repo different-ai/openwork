@@ -610,14 +610,15 @@ export class CloudProviderSync {
 
     const workspaceCleanup = await this.cleanupWorkspaceTakeovers();
     const engineWorkspace = findManagedEngineWorkspace(this.config.workspaces) ?? this.config.workspaces[0];
-    if (!engineWorkspace) throw new Error("workspace_missing");
-    const fileResult = await writeOpenworkRuntimeConfigFile(this.config, engineWorkspace.id);
+    const runtimeFileChanged = engineWorkspace
+      ? (await writeOpenworkRuntimeConfigFile(this.config, engineWorkspace.id)).changed
+      : false;
     this.reloadPending = this.reloadPending
       || providerStateChanged
       || workspaceCleanup.runtimeChanged
-      || fileResult.changed;
+      || runtimeFileChanged;
     let reloadError: unknown;
-    if (this.reloadPending) {
+    if (engineWorkspace && this.reloadPending) {
       try {
         await this.reloadEngine();
         this.reloadPending = false;
@@ -639,7 +640,7 @@ export class CloudProviderSync {
       || envUpserts.length > 0
       || envDeletes.length > 0
       || workspaceCleanup.changed
-      || fileResult.changed;
+      || runtimeFileChanged;
   }
 
   private async cleanupWorkspaceTakeovers(): Promise<{ changed: boolean; runtimeChanged: boolean }> {
