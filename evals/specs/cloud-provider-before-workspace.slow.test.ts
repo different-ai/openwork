@@ -116,10 +116,33 @@ test("managed models survive sign-in before the first workspace exists", async (
   });
   await signInDesktopAs(desktopApp, den.ref, member);
 
+  // Deliver the Den session to the local server the same way the desktop
+  // runtime does (PUT /den-session), while zero workspaces exist. This is the
+  // exact state that used to fail every sync with workspace_missing.
+  const sessionPush = await localServerRequest(desktopApp, "/den-session", {
+    method: "PUT",
+    host: true,
+    body: { baseUrl: den.ref.apiUrl, token: member.token, orgId },
+  });
+  expect(sessionPush.status).toBe(204);
+  const syncRun = await localServerRequest(desktopApp, "/cloud-provider-sync/run", {
+    method: "POST",
+    host: true,
+    body: { reason: "eval_before_workspace" },
+  });
+  const syncRunBody = isRecord(syncRun.body) ? syncRun.body : {};
+  evidence.fact(
+    "A sync with zero workspaces no longer fails with workspace_missing",
+    `Run result: ${JSON.stringify(syncRunBody)}`,
+    syncRun.status === 200 && (syncRunBody.status === "applied" || syncRunBody.status === "noop"),
+  );
+  expect(syncRun.status).toBe(200);
+  expect(syncRunBody.status === "applied" || syncRunBody.status === "noop", JSON.stringify(syncRunBody)).toBe(true);
+
   const initialStatus = await eventually(
     () => localServerRequest(desktopApp, "/cloud-provider-sync/status"),
     {
-      within: 120_000,
+      within: 60_000,
       intervalMs: 2_000,
       label: "provider sync before workspace creation",
       until: (value) => {
