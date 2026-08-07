@@ -10,6 +10,12 @@ import {
 } from "@openwork/types/automations"
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
+import {
+  RUNNER_NOTIFICATION_POLL_MAX_MS,
+  RUNNER_NOTIFICATION_POLL_MIN_MS,
+  capRunnerNotificationPollDelayForKeepalive,
+  nextRunnerNotificationPollDelay,
+} from "../src/automations/runner-notification-poll.js"
 import { automationUpdateChangedRows } from "../src/automations/update-result.js"
 import { isMcpOperationAllowed } from "../src/mcp/policy.js"
 
@@ -138,6 +144,25 @@ test("every runner endpoint re-checks that the token owner is still an active me
   )
   assert.match(sse, /Date\.now\(\) >= identity\.expiresAt\) break/)
   assert.match(sse, /if \(!\(await service\.isActiveRunnerOwner\(identity\)\)\) break/)
+})
+
+test("idle runner notification polling backs off without delaying keepalives", () => {
+  let delay = RUNNER_NOTIFICATION_POLL_MIN_MS
+  delay = nextRunnerNotificationPollDelay(delay, false)
+  assert.equal(delay, 2_000)
+  delay = nextRunnerNotificationPollDelay(delay, false)
+  assert.equal(delay, 4_000)
+  delay = nextRunnerNotificationPollDelay(delay, false)
+  assert.equal(delay, 8_000)
+  delay = nextRunnerNotificationPollDelay(delay, false)
+  assert.equal(delay, RUNNER_NOTIFICATION_POLL_MAX_MS)
+  assert.equal(nextRunnerNotificationPollDelay(delay, false), RUNNER_NOTIFICATION_POLL_MAX_MS)
+
+  assert.equal(
+    capRunnerNotificationPollDelayForKeepalive(delay, 14_000),
+    RUNNER_NOTIFICATION_POLL_MIN_MS,
+  )
+  assert.equal(nextRunnerNotificationPollDelay(delay, true), RUNNER_NOTIFICATION_POLL_MIN_MS)
 })
 
 test("manual runs use durable runner presence across Den API replicas", () => {

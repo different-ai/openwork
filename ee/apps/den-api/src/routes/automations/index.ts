@@ -29,6 +29,12 @@ import {
 import { invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
 import { automationService, type AutomationService } from "../../automations/service.js"
 import { automationRunnerAuth } from "../../automations/runner-auth.js"
+import {
+  RUNNER_KEEPALIVE_INTERVAL_MS,
+  RUNNER_NOTIFICATION_POLL_MIN_MS,
+  capRunnerNotificationPollDelayForKeepalive,
+  nextRunnerNotificationPollDelay,
+} from "../../automations/runner-notification-poll.js"
 
 const idParamsSchema = z.object({ id: z.string().min(1).max(160) })
 const automationRunParamsSchema = z.object({ id: z.string().min(1).max(160) })
@@ -110,6 +116,7 @@ export function registerAutomationRoutes<T extends { Variables: RouteVariables }
     return streamSSE(c, async (stream) => {
       let lastKeepaliveAt = 0
       let lastOwnerCheckAt = Date.now()
+      let notificationPollDelayMs = RUNNER_NOTIFICATION_POLL_MIN_MS
       while (!stream.aborted) {
         // A held-open stream must not outlive the credential or membership.
         if (Date.now() >= identity.expiresAt) break
@@ -128,12 +135,22 @@ export function registerAutomationRoutes<T extends { Variables: RouteVariables }
           })
           await stream.writeSSE({ id: payload.cursor, event: payload.type, data: JSON.stringify(payload) })
         }
-        if (notifications.length === 0 && Date.now() - lastKeepaliveAt >= 15_000) {
+        if (notifications.length === 0 && Date.now() - lastKeepaliveAt >= RUNNER_KEEPALIVE_INTERVAL_MS) {
           await service.touchDesktopRunner(identity)
           await stream.writeSSE({ event: "keepalive", data: "{}" })
           lastKeepaliveAt = Date.now()
         }
-        await stream.sleep(1_000)
+        notificationPollDelayMs = nextRunnerNotificationPollDelay(
+          notificationPollDelayMs,
+          notifications.length > 0,
+        )
+        // Idle runners need only a bounded recovery scan. Keep the sleep short
+        // enough to preserve the existing presence heartbeat, and return to
+        // the low-latency interval as soon as this stream observes activity.
+        await stream.sleep(capRunnerNotificationPollDelayForKeepalive(
+          notificationPollDelayMs,
+          Date.now() - lastKeepaliveAt,
+        ))
       }
     })
   })
