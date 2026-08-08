@@ -57,6 +57,7 @@ describe("extractGmailMessage", () => {
         headers: [
           { name: "From", value: "Ada <ada@example.com>" },
           { name: "To", value: "Ben <ben@example.com>" },
+          { name: "Bcc", value: "Investors <investors@example.com>" },
           { name: "Subject", value: "Nested body" },
           { name: "Date", value: "Tue, 07 Jul 2026 10:00:00 +0000" },
         ],
@@ -82,6 +83,7 @@ describe("extractGmailMessage", () => {
       threadId: "thread_1",
       from: "Ada <ada@example.com>",
       to: "Ben <ben@example.com>",
+      bcc: "Investors <investors@example.com>",
       subject: "Nested body",
       date: "Tue, 07 Jul 2026 10:00:00 +0000",
       snippet: "Snippet fallback",

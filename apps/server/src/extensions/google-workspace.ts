@@ -962,6 +962,7 @@ function gmailMessageSummary(message: unknown) {
     subject: gmailHeader(message.payload, "Subject"),
     from: gmailHeader(message.payload, "From"),
     to: gmailHeader(message.payload, "To"),
+    bcc: gmailHeader(message.payload, "Bcc"),
     date: gmailHeader(message.payload, "Date"),
   };
 }
@@ -1022,7 +1023,7 @@ async function googleWorkspaceListMessages(config: ServerConfig, args: Record<st
     : [];
   const messages = await Promise.all(ids.map(async (id) => {
     const message = await fetchGoogleJson(
-      `https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(id)}?format=metadata&metadataHeaders=Subject&metadataHeaders=From&metadataHeaders=To&metadataHeaders=Date`,
+      `https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(id)}?format=metadata&metadataHeaders=Subject&metadataHeaders=From&metadataHeaders=To&metadataHeaders=Bcc&metadataHeaders=Date`,
       { headers: { Authorization: `Bearer ${accessToken}` } },
     );
     return gmailMessageSummary(message);

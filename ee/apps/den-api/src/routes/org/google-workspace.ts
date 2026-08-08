@@ -111,6 +111,7 @@ const gmailMessageSummarySchema = z.object({
   threadId: z.string(),
   from: z.string(),
   to: z.string(),
+  bcc: z.string(),
   subject: z.string(),
   date: z.string(),
   snippet: z.string(),
@@ -734,6 +735,7 @@ export function registerGoogleWorkspaceRoutes<T extends { Variables: OrgRouteVar
         messageUrl.searchParams.set("format", "metadata")
         messageUrl.searchParams.append("metadataHeaders", "From")
         messageUrl.searchParams.append("metadataHeaders", "To")
+        messageUrl.searchParams.append("metadataHeaders", "Bcc")
         messageUrl.searchParams.append("metadataHeaders", "Subject")
         messageUrl.searchParams.append("metadataHeaders", "Date")
         const messageResponse = await googleWorkspaceApiFetch(messageUrl, {
@@ -748,6 +750,7 @@ export function registerGoogleWorkspaceRoutes<T extends { Variables: OrgRouteVar
           threadId: message.threadId,
           from: message.from,
           to: message.to,
+          bcc: message.bcc,
           subject: message.subject,
           date: message.date,
           snippet: message.snippet,
