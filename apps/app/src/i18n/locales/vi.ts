@@ -816,6 +816,8 @@ export default {
   "settings.model_behavior_desc": "Mở bộ chọn model mặc định để chọn hồ sơ suy luận khi có sẵn.",
   "settings.model_section_desc": "Chọn model trò chuyện mặc định và xem xét cách nó suy luận.",
   "settings.model_title": "Model",
+  "settings.default_model": "Model mặc định",
+  "settings.default_model_desc": "Chọn model mặc định cho các cuộc trò chuyện mới.",
   "settings.no_active_workspace": "Không có workspace nội bộ đang hoạt động.",
   "settings.no_audit_entries": "Chưa có mục kiểm toán.",
   "settings.no_custom_path_set": "Chưa đặt đường dẫn tùy chỉnh",

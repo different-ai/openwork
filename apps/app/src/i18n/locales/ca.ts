@@ -823,6 +823,8 @@ export default {
   "settings.model_behavior_desc": "Obre el selector de models predeterminat per triar perfils de raonament quan estiguin disponibles.",
   "settings.model_section_desc": "Tria el model de xat predeterminat i revisa com raona.",
   "settings.model_title": "Model",
+  "settings.default_model": "Model predeterminat",
+  "settings.default_model_desc": "Tria el model predeterminat per als nous xats.",
   "settings.no_active_workspace": "No hi ha workspace local actiu.",
   "settings.no_audit_entries": "Encara no hi ha entrades d'auditoria.",
   "settings.no_custom_path_set": "No s'ha definit cap camí personalitzat",

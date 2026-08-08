@@ -823,6 +823,8 @@ export default {
   "settings.model_behavior_desc": "Ouvrez le sélecteur du modèle par défaut pour choisir des profils de raisonnement lorsqu'ils sont disponibles.",
   "settings.model_section_desc": "Choisissez le modèle de chat par défaut et examinez sa manière de raisonner.",
   "settings.model_title": "Modèle",
+  "settings.default_model": "Modèle par défaut",
+  "settings.default_model_desc": "Choisissez le modèle par défaut pour les nouvelles discussions.",
   "settings.no_active_workspace": "Aucun espace de travail local actif.",
   "settings.no_audit_entries": "Aucune entrée d'audit pour le moment.",
   "settings.no_custom_path_set": "Aucun chemin personnalisé défini",
