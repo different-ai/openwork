@@ -423,7 +423,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   const params = useParams<{ workspaceId?: string }>();
   const routeWorkspaceId = props.workspaceId?.trim() || params.workspaceId?.trim() || "";
   const local = useLocal();
-  const { memoryEnabled, toggleMemory, automationsEnabled, toggleAutomations } = useFeatureFlagsPreferences();
+  const { memoryEnabled, toggleMemory } = useFeatureFlagsPreferences();
   const platform = usePlatform();
   const checkDesktopRestriction = useCheckDesktopRestriction();
   const restrictionNotice = useRestrictionNotice();
@@ -2227,9 +2227,6 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
             }}
             memoryEnabled={memoryEnabled}
             onToggleMemory={toggleMemory}
-            showAutomations={isDesktopRuntime()}
-            automationsEnabled={automationsEnabled}
-            onToggleAutomations={toggleAutomations}
           />
         );
       case "extensions":

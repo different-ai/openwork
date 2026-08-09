@@ -49,13 +49,6 @@ export type LocalPreferences = {
   featureFlags: {
     microsandboxCreateSandbox: boolean;
     /**
-     * Automations preview. Client-only and per-device. Hidden entirely on web;
-     * desktop gates the sidebar entry, /automations route, Den availability
-     * probe, and runner registration until the user opts in. The Den APIs stay
-     * callable (owner-scoped + authz'd). Off by default.
-     */
-    automations: boolean;
-    /**
      * Memory Bank preview. Client-only, per-device, never synced. Gates desktop
      * UI surfacing (the management panel + copy-prompt affordance); the routes
      * stay callable (owner-scoped + authz'd). Off by default — opt-in preview.
@@ -100,7 +93,7 @@ const INITIAL_PREFS: LocalPreferences = {
   defaultModel: null,
   selectedAgent: null,
   releaseChannel: "stable",
-  featureFlags: { microsandboxCreateSandbox: true, automations: false, memory: false },
+  featureFlags: { microsandboxCreateSandbox: true, memory: false },
   hasCompletedOnboarding: false,
   analyticsEnabled: true,
   desktopNotifications: DEFAULT_DESKTOP_NOTIFICATION_PREFERENCE,

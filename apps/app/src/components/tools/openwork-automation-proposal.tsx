@@ -13,7 +13,6 @@ import { Button } from "@/components/ui/button"
 import { Tool } from "@/components/ui/tool"
 import { useDenAuth } from "@/react-app/domains/cloud/den-auth-provider"
 import { formatAutomationSchedule } from "@/react-app/domains/automations/automation-format"
-import { useFeatureFlagsPreferences } from "@/react-app/domains/settings/state/feature-flags-preferences"
 import { automationsRoute } from "@/react-app/shell/workspace-routes"
 
 function parseOutputValue(output: unknown): unknown {
@@ -50,7 +49,6 @@ export function isAutomationProposalToolPart(part: DynamicToolUIPart): boolean {
 export function OpenWorkAutomationProposalTool({ part }: { part: DynamicToolUIPart }) {
   const navigate = useNavigate()
   const denAuth = useDenAuth()
-  const { automationsEnabled } = useFeatureFlagsPreferences()
   const [created, setCreated] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
 
@@ -63,11 +61,9 @@ export function OpenWorkAutomationProposalTool({ part }: { part: DynamicToolUIPa
   const token = settings.authToken?.trim() ?? ""
   const organizationId = settings.activeOrgId?.trim() ?? ""
   const signedIn = denAuth.isSignedIn && Boolean(token) && Boolean(organizationId)
-  const blocker = !automationsEnabled
-    ? "Turn on the Automations preview in Settings → Preferences to create this."
-    : !signedIn
-      ? "Sign in to OpenWork Cloud to create this Automation."
-      : null
+  const blocker = !signedIn
+    ? "Sign in to OpenWork Cloud to create this Automation."
+    : null
 
   const create = async () => {
     setBusy(true)

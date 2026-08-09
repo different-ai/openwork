@@ -12,7 +12,7 @@ import { AutomationRunnerBridge } from "@/react-app/domains/automations/automati
 import { BrandThemeProvider } from "@/react-app/domains/cloud/brand-theme";
 import { DesktopConfigProvider } from "@/react-app/domains/cloud/desktop-config-provider";
 import { RestrictionNoticeProvider } from "@/react-app/domains/cloud/restriction-notice-provider";
-import { LocalProvider, useLocal } from "@/react-app/kernel/local-provider";
+import { LocalProvider } from "@/react-app/kernel/local-provider";
 import { ServerProvider } from "@/react-app/kernel/server-provider";
 import { ArchitectureMismatchGate } from "./architecture-mismatch-gate";
 import { BootStateProvider } from "./boot-state";
@@ -48,15 +48,6 @@ type AppProvidersProps = {
   children: ReactNode;
 };
 
-function AutomationRunnerBridgeGate() {
-  const { prefs } = useLocal();
-  return (
-    <AutomationRunnerBridge
-      enabled={isDesktopRuntime() && prefs.featureFlags?.automations === true}
-    />
-  );
-}
-
 function EnterpriseAwareAppProviders({ children }: AppProvidersProps) {
   const activationRequired = useEnterpriseActivationRequired();
   if (activationRequired) {
@@ -70,7 +61,7 @@ function EnterpriseAwareAppProviders({ children }: AppProvidersProps) {
           <BrandThemeProvider>
             <RestrictionNoticeProvider>
               <LocalProvider>
-                <AutomationRunnerBridgeGate />
+                <AutomationRunnerBridge enabled={isDesktopRuntime()} />
                 <ReloadCoordinatorProvider>{children}</ReloadCoordinatorProvider>
                 <Toaster />
               </LocalProvider>

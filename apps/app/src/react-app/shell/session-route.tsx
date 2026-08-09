@@ -462,8 +462,7 @@ export function SessionRoute() {
   const denAuth = useDenAuth();
   const { config: shellConfig } = useShellConfig();
   const local = useLocal();
-  const automationsEnabled =
-    isDesktopRuntime() && local.prefs.featureFlags?.automations === true;
+  const automationsEnabled = isDesktopRuntime();
   const automationsRouteActive = automationsEnabled && automationsRouteRequested;
   const denSettings = readDenSettings();
   const [automationsSupported, setAutomationsSupported] = useState(false);

@@ -1,12 +1,9 @@
-import { automationsEnglish } from "./automations";
-
 /**
  * French translations (Français)
  * Professional terms (Skills, Plugins, Commands, Sessions, OpenCode, OpenPackage, OpenWork) are NOT translated
  */
 
 export default {
-  ...automationsEnglish,
   "app.compact_command_desc": "Résumez cette session pour réduire la taille du contexte.",
   "app.error_audit_load": "Échec du chargement du journal d'audit.",
   "app.error_auth_failed": "Échec de l'authentification",

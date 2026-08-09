@@ -1,12 +1,9 @@
-import { automationsEnglish } from "./automations";
-
 /**
  * Thai translations
  * Professional terms (Skills, Plugins, Commands, Sessions, OpenCode, OpenPackage, OpenWork) are NOT translated
  */
 
 export default {
-  ...automationsEnglish,
   "app.compact_command_desc": "สรุปเซสชันนี้เพื่อลดขนาดบริบท",
   "app.error_audit_load": "โหลดบันทึกการตรวจสอบไม่สำเร็จ",
   "app.error_auth_failed": "การยืนยันตัวตนล้มเหลว",

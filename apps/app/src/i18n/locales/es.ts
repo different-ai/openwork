@@ -1,12 +1,9 @@
-import { automationsEnglish } from "./automations";
-
 /**
  * Spanish translations (Español)
  * Professional terms (Skills, Plugins, Commands, Sessions, OpenCode, OpenPackage, OpenWork) are NOT translated
  */
 
 export default {
-  ...automationsEnglish,
   "app.compact_command_desc": "Resume esta sesión para reducir el contexto.",
   "app.error_audit_load": "No se pudo cargar el audit log.",
   "app.error_auth_failed": "Error de autenticación",

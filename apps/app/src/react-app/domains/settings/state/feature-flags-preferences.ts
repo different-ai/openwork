@@ -20,18 +20,6 @@ export function useFeatureFlagsPreferences() {
 
   const memoryEnabled = prefs.featureFlags?.memory === true;
 
-  const automationsEnabled = prefs.featureFlags?.automations === true;
-
-  const toggleAutomations = useCallback(() => {
-    setPrefs((previous) => ({
-      ...previous,
-      featureFlags: {
-        ...previous.featureFlags,
-        automations: !previous.featureFlags?.automations,
-      },
-    }));
-  }, [setPrefs]);
-
   const toggleMemory = useCallback(() => {
     setPrefs((previous) => ({
       ...previous,
@@ -47,7 +35,5 @@ export function useFeatureFlagsPreferences() {
     toggleMicrosandboxCreateSandbox,
     memoryEnabled,
     toggleMemory,
-    automationsEnabled,
-    toggleAutomations,
   };
 }

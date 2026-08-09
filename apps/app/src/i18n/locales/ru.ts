@@ -1,12 +1,9 @@
-import { automationsEnglish } from "./automations";
-
 /**
  * Russian translations
  * Product terms like OpenWork, OpenCode, OpenPackage, Skills, Plugins, Commands, Sessions, and MCP stay as project terminology where needed.
  */
 
 export default {
-  ...automationsEnglish,
   "app.compact_command_desc": "Сведите этот сеанс в компактный вид, чтобы уменьшить размер контекста.",
   "app.error_audit_load": "Не удалось загрузить журнал аудита.",
   "app.error_auth_failed": "Ошибка аутентификации",
