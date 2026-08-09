@@ -1,99 +1,58 @@
 # AGENTS.md
 
-OpenWork helps users run agents, skills, and MCP. It is an open-source alternative to Claude Cowork/Codex as a desktop app.
+OpenWork is a free, open-source desktop app (macOS, Windows, Linux) for doing
+work with AI agents on your own files — an open-source alternative to Claude
+Cowork and Codex, built on OpenCode, running any model from 50+ providers.
+Desktop mode keeps files local; cloud is optional. Three surfaces live in this
+repo:
 
-## What OpenWork Is
+- **Desktop app** (`apps/`, `packages/`) — local-first agent workspace: chat on
+  files, skills, browser automation, scheduled automations, Anthropic-compatible
+  plugins.
+- **OpenWork MCP gateway** (`ee/apps/den-api`) — one URL
+  (`api.openworklabs.com/mcp/agent`) that brings org-assigned skills, plugins,
+  and connections (Google Workspace, Microsoft 365, MCPs) into Codex, Claude
+  Code, Cursor, or any MCP client via `search_capabilities` /
+  `execute_capability`.
+- **OpenWork Den** (`ee/apps/den-*`) — the org control plane: provision
+  inference, manage teams and access, set desktop policies, publish skills and
+  plugins through marketplaces.
 
-OpenWork is a practical control surface for agentic work:
+The app consumes OpenWork server surfaces (self-hosted or hosted) rather than
+inventing parallel behavior. Anything OpenCode can do is available in OpenWork,
+even before a dedicated UI exists.
 
-* Run local and remote agent workflows from one place.
-* Use OpenCode capabilities directly through OpenWork.
-* Compose desktop app, server, and messaging connectors without lock-in.
-* Treat the OpenWork app as a client of the OpenWork server API surface.
-* Connect to hosted workers through a simple user flow: `Add a worker` -> `Connect remote`.
+## Verification (every change)
 
-## Core Philosophy
+- The only proof path is `evals/specs/**/*.test.ts` with `test` from
+  `@openwork/testkit`; app-driving specs use `.slow.test.ts`. Prose, screenshots,
+  and recordings never decide pass/fail — the testkit tape does.
+- Skills own the mechanics: `prove-a-pr` → `write-a-spec` → `run-tests` →
+  `diagnose-a-red-run` when red → `publish-evidence`. Evidence is ambient; never
+  create or pass roll handles.
+- Verdicts: `Passed` only when every claim has an observable assertion in the
+  tape; otherwise `Incomplete` or `Failed` with repro steps. Skips are never
+  passed.
+- Prefer Daytona when credentials are available; local fallback is an expected
+  OSS path, not a failure. Report which lane ran.
+- Docs/comments, types-only, and inert agent config may skip runtime proof — say so.
 
-* **Local-first, cloud-ready**: OpenWork runs on your machine in one click and can connect to cloud workflows when needed.
-* **Server-consumption first**: the app should consume OpenWork server surfaces (self-hosted or hosted), not invent parallel behavior.
-* **Composable**: use the desktop app, WhatsApp/Slack/Telegram connectors, or server mode based on the task.
-* **Ejectable**: OpenWork is powered by OpenCode, so anything OpenCode can do is available in OpenWork, even before a dedicated UI exists.
-* **Sharing is caring**: start solo, then share quickly; one CLI or desktop command can spin up an instantly shareable instance.
+## Pull requests
 
+- Run tests and report commands + results. A runtime-observable change is not
+  done until its testkit tape is visible on the PR. If validation cannot run,
+  say why and give exact repro steps.
+- Feature work is demo-driven: `/voiceover <feature>` — no code until the script
+  is approved — then a fresh worktree (never the user's checkout), spec from the
+  narration, PR against `dev` with the tape. The `voiceover` skill owns the
+  journey.
 
-## Pull Request Expectations (Fast Merge)
+## Coding
 
-If you open a PR, you must run tests and report what you ran (commands + result).
-
-For runtime-observable changes, include the `@openwork/testkit` evidence tape.
-Custom screenshots and recordings may supplement that tape, but never determine the
-pass/fail verdict. The orchestrator owns publishing the tape, and a runtime-observable
-change is not done until its tape is visible on the PR. If validation cannot run,
-say why and give exact repro steps.
-
-## Validate Every Experience
-
-Almost everything we change affects the filesystem, runtime DB, server API,
-provisioning, sessions, config, or UI. Validation has two layers:
-
-1. **Agent-first verification** produces the verdict. New executable end-to-end
-   coverage has one path: `evals/specs/**/*.test.ts`, with `test` imported from
-   `@openwork/testkit`. Specs that drive the app use `.slow.test.ts`. Prose is
-   never proof.
-2. **Human verification** publishes the testkit tape on the PR so a person can
-   audit the verdict without rerunning it. It never decides pass/fail. The
-   orchestrator owns this step.
-
-Use the skills in this order: `prove-a-pr` → `write-a-spec` → `run-tests` →
-`diagnose-a-red-run` when failing → `publish-evidence` for an existing ambient
-evidence tape. Evidence is ambient: do not create or pass roll handles. Report
-`Passed` only when every claim has an observable assertion in the tape;
-otherwise report `Incomplete` or `Failed` with repro steps. Pure docs/comments,
-types-only changes, and inert agent config may skip runtime proof, but say so.
-
-Run agent-first verification through Daytona first when Daytona credentials and
-access are available. If Daytona is unavailable, run the same verification
-locally instead; missing Daytona access is an expected OSS contributor path,
-not a test failure. Report which execution lane was used and why local fallback
-was necessary when applicable.
-
-## Demo-Driven Development (the paved path)
-
-Feature work starts with the demo, not a PRD:
-
-1. `/voiceover <feature>` — align on the demo script; **no code until it is approved** (`voiceover` skill).
-2. Build on a fresh worktree/branch (`git worktree add ...`), never on the user's checkout.
-3. Translate the approved narration directly into `evals/specs/<slug>.slow.test.ts`, then build and run it until every claim holds.
-4. Open a PR against `dev` and publish the existing testkit evidence tape (`publish-evidence` skill).
-
-## Coding Guidelines
-
-### TypeScript
-
-- Never use `any`, typecasts, or `as`, unless 100% necessary or specifically instructed.
-
-### Package Managers
-
-- Use pnpm.
-- Never use npm or yarn.
-
-### UI and UX
-
-- Use components from @/components when possible.
-- When creating new components, we prefer using shadcn/ui with (Base UI).
-- Assume most end users of OpenWork are non-technical.
-
-### Tech Stack Preferences
-
-When uncertain, prefer: Tailwind, TypeScript, React, shadcn/ui (Base UI), TanStack Query, Zustand, Zod, Drizzle, Better-Auth.
-
-### Code Style
-
-- Always strive for concise, simple solutions.
-- If a problem can be solved in a simpler way, propose it.
-- Use the smallest possible diff to make a change. Then think of how to make it smaller and do that again.
-- Avoid fallback expressions when types or control flow already guarantee a value.
-
-### Workflow
-
-- If asked to do too much work at once, stop and state that clearly.
+- pnpm only, never npm/yarn. TypeScript: never `any`, typecasts, or `as` unless
+  100% necessary or instructed.
+- Prefer Tailwind, React, shadcn/ui (Base UI), TanStack Query, Zustand, Zod,
+  Drizzle, Better-Auth. Reuse `@/components`; end users are non-technical.
+- Smallest possible diff, then make it smaller. Propose the simpler solution. No
+  fallback expressions when types or control flow already guarantee a value.
+- If asked to do too much at once, stop and say so.
