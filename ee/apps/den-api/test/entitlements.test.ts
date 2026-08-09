@@ -1,4 +1,5 @@
 import { beforeAll, expect, test } from "bun:test"
+import type { BillingAddon } from "../src/billing/addons.js"
 
 function seedRequiredEnv() {
   process.env.DATABASE_URL = process.env.DATABASE_URL ?? "mysql://root:password@127.0.0.1:3306/openwork_test"
@@ -94,4 +95,27 @@ test("usage analytics follows the same enterprise gate", () => {
   }
   expect(entitlements.checkEntitlement({ plan: { tier: "enterprise" } }, "analytics", { gatingEnabled: true })).toEqual({ ok: true })
   expect(entitlements.checkEntitlement(null, "analytics", { gatingEnabled: false })).toEqual({ ok: true })
+})
+
+test("active addons grant their catalog entitlements", () => {
+  const paidSsoAddon: BillingAddon = {
+    key: "paid-sso",
+    label: "Paid SSO",
+    billingModel: "flat",
+    stripePriceId: () => "price_sso",
+    priceIdMissingError: "stripe_sso_price_id_missing",
+    stripeProduct: "openwork_sso",
+    unitAmount: 1000,
+    currency: "usd",
+    interval: "month",
+    entitlements: ["sso"],
+  }
+  const options = {
+    gatingEnabled: true,
+    activeAddonKeys: [paidSsoAddon.key],
+    addonCatalog: [paidSsoAddon],
+  }
+
+  expect(entitlements.checkEntitlement(null, "sso", options)).toEqual({ ok: true })
+  expect(entitlements.checkEntitlement(null, "analytics", options).ok).toBe(false)
 })

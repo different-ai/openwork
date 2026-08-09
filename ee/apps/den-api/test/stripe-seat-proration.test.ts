@@ -6,11 +6,60 @@ import { beforeEach, expect, mock, test } from "bun:test"
 // which produced a separate bank charge per added/removed member.
 
 type UpdateCall = { itemId: string; params: Record<string, unknown> }
+type FakeSubscription = {
+  id: string
+  customer: string
+  status: "active"
+  metadata: { org_id: string }
+  items: {
+    data: Array<{
+      id: string
+      quantity: number
+      price: { id: string }
+    }>
+  }
+  cancel_at_period_end: boolean
+  canceled_at: null
+  ended_at: null
+}
+type FakeEvent = {
+  id: string
+  type: "customer.subscription.created"
+  data: { object: FakeSubscription }
+}
 
 const updateCalls: UpdateCall[] = []
 const selectResults: Array<Array<Record<string, unknown>>> = []
+const insertedSubscriptions: Array<Record<string, unknown>> = []
+
+function createFakeEvent(priceId: string, suffix: string): FakeEvent {
+  return {
+    id: `evt_${suffix}`,
+    type: "customer.subscription.created",
+    data: {
+      object: {
+        id: `sub_${suffix}`,
+        customer: "cus_addons",
+        status: "active",
+        metadata: { org_id: "org_addons" },
+        items: {
+          data: [{ id: `si_${suffix}`, quantity: 2, price: { id: priceId } }],
+        },
+        cancel_at_period_end: false,
+        canceled_at: null,
+        ended_at: null,
+      },
+    },
+  }
+}
+
+let webhookEvent = createFakeEvent("price_inference_fake", "initial")
 
 class FakeStripe {
+  webhooks = {
+    constructEvent: () => webhookEvent,
+  }
+
   subscriptionItems = {
     update: (itemId: string, params: Record<string, unknown>) => {
       updateCalls.push({ itemId, params })
@@ -20,10 +69,12 @@ class FakeStripe {
 }
 
 function queryChain() {
+  const result = selectResults.shift() ?? []
   const chain = {
     from: () => chain,
     where: () => chain,
-    limit: () => Promise.resolve(selectResults.shift() ?? []),
+    limit: () => Promise.resolve(result),
+    then: (onFulfilled: (rows: Array<Record<string, unknown>>) => unknown) => Promise.resolve(result).then(onFulfilled),
   }
   return chain
 }
@@ -31,14 +82,22 @@ function queryChain() {
 mock.module("stripe", () => ({ default: FakeStripe }))
 
 mock.module("../src/db.js", () => ({
-  db: { select: () => queryChain() },
+  db: {
+    select: () => queryChain(),
+    insert: () => ({
+      values: (values: Record<string, unknown>) => {
+        insertedSubscriptions.push(values)
+        return { onDuplicateKeyUpdate: () => Promise.resolve() }
+      },
+    }),
+  },
 }))
 
 mock.module("../src/env.js", () => ({
   env: {
     stripe: {
       secretKey: "sk_test_fake",
-      webhookSecret: undefined,
+      webhookSecret: "whsec_test_fake",
       inferencePriceId: "price_inference_fake",
       seatPriceId: "price_seat_fake",
       billingSuccessUrl: undefined,
@@ -62,6 +121,9 @@ const loggerStub = {
 mock.module("../src/observability/logger.js", () => ({ appLogger: loggerStub }))
 
 const {
+  getOrgBillingSummary,
+  handleStripeWebhook,
+  resolveStripeBillingAddon,
   syncInferenceSubscriptionQuantityAfterMemberChange,
   syncSeatSubscriptionQuantityAfterMemberChange,
 } = await import("../src/stripe-billing.js")
@@ -69,6 +131,7 @@ const {
 beforeEach(() => {
   updateCalls.length = 0
   selectResults.length = 0
+  insertedSubscriptions.length = 0
 })
 
 test("seat quantity sync accrues prorations instead of invoicing each change", async () => {
@@ -104,4 +167,48 @@ test("no Stripe call when the seat subscription is not active", async () => {
   await syncSeatSubscriptionQuantityAfterMemberChange({ organizationId: "org_test", memberCount: 8 })
 
   expect(updateCalls).toHaveLength(0)
+})
+
+test("billing summary includes every catalog addon", async () => {
+  selectResults.push(
+    [{ status: "active", quantity: 3, stripe_customer_id: "cus_addons" }],
+    [{ status: "trialing", quantity: 2, stripe_customer_id: "cus_addons" }],
+    [{ count: 7 }],
+    [{ metadata: null }],
+  )
+
+  const summary = await getOrgBillingSummary({
+    organizationId: "org_addons",
+    returnUrl: "https://example.test/dashboard/billing",
+  })
+
+  expect(summary.addons).toHaveLength(2)
+  expect(summary.addons[0]).toMatchObject({
+    key: "inference",
+    status: "active",
+    quantity: 3,
+    price: { priceId: "price_inference_fake", unitAmount: 1000, currency: "usd", interval: "month" },
+  })
+  expect(summary.addons[1]).toMatchObject({
+    key: "seats",
+    status: "trialing",
+    quantity: 2,
+    price: { priceId: "price_seat_fake", unitAmount: 1000, currency: "usd", interval: "month" },
+  })
+  expect(summary.stripe.seats.billableSeatCount).toBe(2)
+})
+
+test("subscription webhooks resolve both addons from Stripe price IDs", async () => {
+  for (const [priceId, expectedKey, expectedStoredType] of [
+    ["price_inference_fake", "inference", "inference"],
+    ["price_seat_fake", "seats", "seat"],
+  ]) {
+    webhookEvent = createFakeEvent(priceId, expectedKey)
+    selectResults.push([])
+
+    await handleStripeWebhook({ payload: "{}", signature: "test_signature" })
+
+    expect(resolveStripeBillingAddon({ priceId })?.key).toBe(expectedKey)
+    expect(insertedSubscriptions.at(-1)?.type).toBe(expectedStoredType)
+  }
 })

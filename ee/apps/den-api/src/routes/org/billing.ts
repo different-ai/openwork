@@ -1,18 +1,23 @@
 import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
+import { getAddon } from "../../billing/addons.js"
 import { getCloudWorkerBillingStatus } from "../../billing/polar.js"
-import { createInferenceCheckoutSession, createInferencePortalSession, createSeatCheckoutSession, getOrgBillingSummary, syncSeatCheckoutSession } from "../../stripe-billing.js"
+import { createInferencePortalSession, createOrgSubscriptionCheckoutSession, getOrgBillingSummary, syncSeatCheckoutSession } from "../../stripe-billing.js"
 import { orgRoleRoute } from "../../middleware/index.js"
 import { forbiddenSchema, jsonResponse, unauthorizedSchema } from "../../openapi.js"
 import { getRequiredUserEmail } from "../../user.js"
 import { env } from "../../env.js"
 import { ORGANIZATION_SUPER_ADMIN_ROLE, organizationRoleValueSatisfies } from "../../organization-role-hierarchy.js"
+import { resolveStripeCheckoutAddonKey } from "./billing-compat.js"
 import type { OrgRouteVariables } from "./shared.js"
 import { ensureOrganizationAdmin, ensureOrganizationSuperAdmin, orgAccessFailureStatus } from "./shared.js"
 
 const stripeBillingResponseSchema = z.object({}).passthrough().meta({ ref: "OrgStripeBillingResponse" })
-const stripeCheckoutRequestSchema = z.object({ type: z.enum(["inference", "seat"]).optional() })
+const stripeCheckoutRequestSchema = z.object({
+  addonKey: z.string().trim().min(1).optional(),
+  type: z.enum(["inference", "seat"]).optional(),
+})
 const stripeCheckoutResponseSchema = z.object({ url: z.string() }).meta({ ref: "OrgStripeCheckoutResponse" })
 const stripeCheckoutSyncRequestSchema = z.object({ sessionId: z.string().trim().min(1) })
 const stripeCheckoutSyncResponseSchema = z.object({ synced: z.boolean() }).meta({ ref: "OrgStripeCheckoutSyncResponse" })
@@ -144,14 +149,18 @@ export function registerOrgBillingRoutes<T extends { Variables: OrgRouteVariable
         return c.json({ error: "invalid_request", details: parsed.error }, 400)
       }
       const payload = c.get("organizationContext")
-      const subscriptionType = parsed.data.type ?? "inference"
-      const createCheckoutSession = subscriptionType === "seat" ? createSeatCheckoutSession : createInferenceCheckoutSession
-      const session = await createCheckoutSession({
+      const addonKey = resolveStripeCheckoutAddonKey(parsed.data)
+      const addon = addonKey ? getAddon(addonKey) : undefined
+      if (!addon) {
+        return c.json({ error: "billing_addon_not_found" }, 400)
+      }
+      const session = await createOrgSubscriptionCheckoutSession({
+        addonKey: addon.key,
         organizationId: payload.organization.id,
         orgMemberId: payload.currentMember.id,
         email,
         name: user.name ?? email,
-        successUrl: subscriptionType === "seat" ? seatCheckoutSuccessUrl(c) : checkoutSuccessUrl(c),
+        successUrl: addon.billingModel === "per-seat" ? seatCheckoutSuccessUrl(c) : checkoutSuccessUrl(c),
         cancelUrl: checkoutCancelUrl(c),
       })
       return c.json({ url: session.url })

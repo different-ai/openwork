@@ -62,6 +62,17 @@ new friction is on *changing* enterprise config without a plan.
 Follow the existing org-metadata pattern (`organization-limits.ts` already
 stores `limits`, `requireSso`, `allowedDesktopVersions`, `inference` there).
 
+### Stripe addon catalog
+
+Self-serve Stripe products are registered in
+`ee/apps/den-api/src/billing/addons.ts`. The catalog owns each addon's key,
+billing model, price lookup, display price, and optional entitlement grants;
+checkout, billing summaries, and webhooks resolve products through it. To add a
+paid addon, add one catalog entry and its price environment lookup. Use a
+`flat` billing model for ordinary subscriptions or `per-seat` for the existing
+setup-and-proration flow. Add entitlement keys only when an active subscription
+should unlock an existing gated capability.
+
 ```ts
 // organization.metadata
 {

@@ -1,0 +1,1 @@
+ALTER TABLE `org_subscriptions` MODIFY COLUMN `type` varchar(64) NOT NULL;

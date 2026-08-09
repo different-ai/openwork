@@ -3,7 +3,6 @@ import { boolean, index, int, mysqlEnum, mysqlTable, timestamp, uniqueIndex, var
 import { denTypeIdColumn, timestamps } from "../columns"
 import { MemberTable, OrganizationTable } from "./org"
 
-export const OrgSubscriptionType = ["inference", "seat"] as const
 export const OrgSubscriptionStatus = [
   "incomplete",
   "incomplete_expired",
@@ -22,7 +21,7 @@ export const OrgSubscriptionTable = mysqlTable(
     id: denTypeIdColumn("orgSubscription", "id").notNull().primaryKey(),
     organization_id: denTypeIdColumn("organization", "organization_id").notNull(),
     created_by_org_membership_id: denTypeIdColumn("member", "created_by_org_membership_id"),
-    type: mysqlEnum("type", OrgSubscriptionType).notNull(),
+    type: varchar("type", { length: 64 }).notNull(),
     status: mysqlEnum("status", OrgSubscriptionStatus).notNull().default("incomplete"),
     stripe_customer_id: varchar("stripe_customer_id", { length: 255 }).notNull(),
     stripe_subscription_id: varchar("stripe_subscription_id", { length: 255 }).notNull(),

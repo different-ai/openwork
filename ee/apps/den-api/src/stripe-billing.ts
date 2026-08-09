@@ -1,13 +1,14 @@
 import Stripe from "stripe"
-import { and, eq, isNull, sql } from "@openwork-ee/den-db/drizzle"
+import { and, eq, inArray, isNull, sql } from "@openwork-ee/den-db/drizzle"
 import {
   MemberTable,
   OrgSubscriptionStatus,
-  OrgSubscriptionType,
   OrgSubscriptionTable,
   OrganizationTable,
 } from "@openwork-ee/den-db/schema"
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
+import { getAddon, getAddonByStripePriceId, listAddons, resolveAddon } from "./billing/addons.js"
+import type { BillingAddon } from "./billing/addons.js"
 import { db } from "./db.js"
 import { env } from "./env.js"
 import type { DenOrgMode } from "./env.js"
@@ -16,20 +17,27 @@ import { appLogger } from "./observability/logger.js"
 
 type OrgId = typeof OrganizationTable.$inferSelect.id
 type MemberId = typeof MemberTable.$inferSelect.id
+type OrgSubscriptionRow = typeof OrgSubscriptionTable.$inferSelect
 type OrgSubscriptionStatusValue = (typeof OrgSubscriptionStatus)[number]
-type OrgSubscriptionTypeValue = (typeof OrgSubscriptionType)[number]
 
 const STRIPE_API_VERSION = "2026-04-22.dahlia"
-const INFERENCE_SUBSCRIPTION_TYPE = "inference" as const
-const SEAT_SUBSCRIPTION_TYPE = "seat" as const
 export const FREE_ORG_SEAT_COUNT = 5
 const ACTIVE_STATUSES = new Set<OrgSubscriptionStatusValue>(["active", "trialing"])
 const EXPIRED_STATUSES = new Set<OrgSubscriptionStatusValue>(["past_due", "canceled", "unpaid", "incomplete_expired", "expired"])
 const logger = appLogger.child({ component: "stripe_billing" })
 
-export type StripeCheckoutSubscriptionType = typeof INFERENCE_SUBSCRIPTION_TYPE | typeof SEAT_SUBSCRIPTION_TYPE
-
 let stripeClient: Stripe | null = null
+
+function requireAddon(key: string) {
+  const addon = getAddon(key)
+  if (!addon) {
+    throw new Error("billing_addon_not_found")
+  }
+  return addon
+}
+
+const inferenceAddon = requireAddon("inference")
+const seatsAddon = requireAddon("seats")
 
 function stripe() {
   if (!env.stripe.secretKey) {
@@ -43,24 +51,12 @@ function stripe() {
   return stripeClient
 }
 
-function requireInferencePriceId() {
-  if (!env.stripe.inferencePriceId) {
-    throw new Error("stripe_inference_price_id_missing")
+function requireAddonPriceId(addon: BillingAddon) {
+  const priceId = addon.stripePriceId()
+  if (!priceId) {
+    throw new Error(addon.priceIdMissingError)
   }
-  return env.stripe.inferencePriceId
-}
-
-function requireSeatPriceId() {
-  if (!env.stripe.seatPriceId) {
-    throw new Error("stripe_seat_price_id_missing")
-  }
-  return env.stripe.seatPriceId
-}
-
-function requirePriceIdForSubscriptionType(subscriptionType: StripeCheckoutSubscriptionType) {
-  return subscriptionType === INFERENCE_SUBSCRIPTION_TYPE
-    ? requireInferencePriceId()
-    : requireSeatPriceId()
+  return priceId
 }
 
 function fromUnixSeconds(value: number | null | undefined) {
@@ -91,16 +87,14 @@ function firstSubscriptionItem(subscription: Stripe.Subscription) {
   return subscription.items.data[0] ?? null
 }
 
-function parseSubscriptionType(value: string | null | undefined): OrgSubscriptionTypeValue | null {
-  switch (value) {
-    case INFERENCE_SUBSCRIPTION_TYPE:
-      return INFERENCE_SUBSCRIPTION_TYPE
-    case SEAT_SUBSCRIPTION_TYPE:
-    case "seats":
-      return SEAT_SUBSCRIPTION_TYPE
-    default:
-      return null
-  }
+export function resolveStripeBillingAddon(input: {
+  addonKey?: string | null
+  subscriptionType?: string | null
+  priceId?: string | null
+}) {
+  return resolveAddon(input.addonKey)
+    ?? resolveAddon(input.subscriptionType)
+    ?? getAddonByStripePriceId(input.priceId)
 }
 
 function getBillingMetadata(metadata: Stripe.Metadata | null | undefined) {
@@ -109,7 +103,10 @@ function getBillingMetadata(metadata: Stripe.Metadata | null | undefined) {
   return {
     organizationId: orgId || null,
     orgMemberId: orgMemberId || null,
-    subscriptionType: parseSubscriptionType(metadata?.subscription_type?.trim()),
+    addon: resolveStripeBillingAddon({
+      addonKey: metadata?.addon_key?.trim(),
+      subscriptionType: metadata?.subscription_type?.trim(),
+    }),
   }
 }
 
@@ -117,18 +114,10 @@ function getSubscriptionMetadata(subscription: Stripe.Subscription) {
   return getBillingMetadata(subscription.metadata)
 }
 
-function subscriptionTypeFromStripeSubscription(subscription: Stripe.Subscription, item: Stripe.SubscriptionItem | null) {
-  const metadataType = getSubscriptionMetadata(subscription).subscriptionType
-  if (metadataType) {
-    return metadataType
-  }
-
+function addonFromStripeSubscription(subscription: Stripe.Subscription, item: Stripe.SubscriptionItem | null) {
+  const metadataAddon = getSubscriptionMetadata(subscription).addon
   const priceId = typeof item?.price?.id === "string" ? item.price.id : null
-  if (env.stripe.seatPriceId && priceId === env.stripe.seatPriceId) {
-    return SEAT_SUBSCRIPTION_TYPE
-  }
-
-  return INFERENCE_SUBSCRIPTION_TYPE
+  return metadataAddon ?? getAddonByStripePriceId(priceId) ?? inferenceAddon
 }
 
 async function activeMemberCount(organizationId: OrgId) {
@@ -198,24 +187,28 @@ export async function getOrganizationSeatBillingCounts(input: { organizationId: 
   return calculateOrganizationSeatBillingCounts({ memberCount, metadata: rows[0]?.metadata })
 }
 
-async function findOrgSubscriptionByType(organizationId: OrgId, subscriptionType: OrgSubscriptionTypeValue) {
+function addonStorageKeys(addon: BillingAddon) {
+  return [addon.key, ...(addon.legacyKeys ?? [])]
+}
+
+async function findOrgSubscriptionByAddon(organizationId: OrgId, addon: BillingAddon) {
   return db
     .select()
     .from(OrgSubscriptionTable)
     .where(and(
       eq(OrgSubscriptionTable.organization_id, organizationId),
-      eq(OrgSubscriptionTable.type, subscriptionType),
+      inArray(OrgSubscriptionTable.type, addonStorageKeys(addon)),
     ))
     .limit(1)
     .then((rows) => rows[0] ?? null)
 }
 
 async function findInferenceSubscriptionByOrg(organizationId: OrgId) {
-  return findOrgSubscriptionByType(organizationId, INFERENCE_SUBSCRIPTION_TYPE)
+  return findOrgSubscriptionByAddon(organizationId, inferenceAddon)
 }
 
 async function findSeatSubscriptionByOrg(organizationId: OrgId) {
-  return findOrgSubscriptionByType(organizationId, SEAT_SUBSCRIPTION_TYPE)
+  return findOrgSubscriptionByAddon(organizationId, seatsAddon)
 }
 
 async function findOrgSubscriptionByStripeId(stripeSubscriptionId: string) {
@@ -256,11 +249,6 @@ export async function cancelOrganizationSubscriptions(input: { organizationId: O
       })
     }
   }
-}
-
-async function findInferenceSubscriptionByStripeId(stripeSubscriptionId: string) {
-  const row = await findOrgSubscriptionByStripeId(stripeSubscriptionId)
-  return row?.type === INFERENCE_SUBSCRIPTION_TYPE ? row : null
 }
 
 async function findStripeCustomerIdByOrg(organizationId: string) {
@@ -334,7 +322,7 @@ export async function upsertOrgSubscriptionFromStripe(subscription: Stripe.Subsc
   }
 
   const status = subscriptionStatus(subscription.status)
-  const subscriptionType = subscriptionTypeFromStripeSubscription(subscription, item)
+  const addon = addonFromStripeSubscription(subscription, item)
   const quantity = item?.quantity ?? 0
   const priceId = typeof item?.price?.id === "string" ? item.price.id : null
   const now = new Date()
@@ -342,7 +330,7 @@ export async function upsertOrgSubscriptionFromStripe(subscription: Stripe.Subsc
     id: createDenTypeId("orgSubscription"),
     organization_id: metadata.organizationId as OrgId,
     created_by_org_membership_id: metadata.orgMemberId as MemberId | null,
-    type: subscriptionType,
+    type: addon.legacyKeys?.[0] ?? addon.key,
     status,
     stripe_customer_id: customerIdFromSubscription(subscription),
     stripe_subscription_id: subscription.id,
@@ -362,6 +350,7 @@ export async function upsertOrgSubscriptionFromStripe(subscription: Stripe.Subsc
   await db.insert(OrgSubscriptionTable).values(values).onDuplicateKeyUpdate({
     set: {
       created_by_org_membership_id: values.created_by_org_membership_id,
+      type: values.type,
       status: values.status,
       stripe_customer_id: values.stripe_customer_id,
       stripe_subscription_id: values.stripe_subscription_id,
@@ -378,7 +367,7 @@ export async function upsertOrgSubscriptionFromStripe(subscription: Stripe.Subsc
     },
   })
 
-  if (subscriptionType === INFERENCE_SUBSCRIPTION_TYPE && EXPIRED_STATUSES.has(status)) {
+  if (addon.enablesInference && EXPIRED_STATUSES.has(status)) {
     await setInferenceEnabled({ organizationId: metadata.organizationId as OrgId, enabled: false })
   }
 
@@ -464,7 +453,7 @@ export async function findOrCreateStripeCustomer(input: {
 }
 
 export async function createOrgSubscriptionCheckoutSession(input: {
-  subscriptionType: StripeCheckoutSubscriptionType
+  addonKey: string
   organizationId: OrgId
   orgMemberId: MemberId
   email: string
@@ -472,13 +461,15 @@ export async function createOrgSubscriptionCheckoutSession(input: {
   successUrl: string
   cancelUrl: string
 }) {
-  const priceId = requirePriceIdForSubscriptionType(input.subscriptionType)
-  const openworkProduct = input.subscriptionType === SEAT_SUBSCRIPTION_TYPE ? "openwork_seats" : "openwork_models"
+  const addon = requireAddon(input.addonKey)
+  const priceId = requireAddonPriceId(addon)
+  const legacySubscriptionType = addon.legacyKeys?.[0] ?? addon.key
   const metadata = {
     org_id: input.organizationId,
     created_by_org_member_id: input.orgMemberId,
-    openwork_product: openworkProduct,
-    subscription_type: input.subscriptionType,
+    openwork_product: addon.stripeProduct,
+    addon_key: addon.key,
+    subscription_type: legacySubscriptionType,
   }
   const customer = await findOrCreateStripeCustomer({
     organizationId: input.organizationId,
@@ -487,11 +478,12 @@ export async function createOrgSubscriptionCheckoutSession(input: {
     metadata: {
       org_id: input.organizationId,
       created_by_org_member_id: input.orgMemberId,
-      openwork_product: openworkProduct,
+      openwork_product: addon.stripeProduct,
+      addon_key: addon.key,
     },
   })
 
-  if (input.subscriptionType === SEAT_SUBSCRIPTION_TYPE) {
+  if (addon.billingModel === "per-seat") {
     return stripe().checkout.sessions.create({
       mode: "setup",
       customer,
@@ -520,12 +512,12 @@ export async function createOrgSubscriptionCheckoutSession(input: {
   })
 }
 
-export async function createInferenceCheckoutSession(input: Omit<Parameters<typeof createOrgSubscriptionCheckoutSession>[0], "subscriptionType">) {
-  return createOrgSubscriptionCheckoutSession({ ...input, subscriptionType: INFERENCE_SUBSCRIPTION_TYPE })
+export async function createInferenceCheckoutSession(input: Omit<Parameters<typeof createOrgSubscriptionCheckoutSession>[0], "addonKey">) {
+  return createOrgSubscriptionCheckoutSession({ ...input, addonKey: inferenceAddon.key })
 }
 
-export async function createSeatCheckoutSession(input: Omit<Parameters<typeof createOrgSubscriptionCheckoutSession>[0], "subscriptionType">) {
-  return createOrgSubscriptionCheckoutSession({ ...input, subscriptionType: SEAT_SUBSCRIPTION_TYPE })
+export async function createSeatCheckoutSession(input: Omit<Parameters<typeof createOrgSubscriptionCheckoutSession>[0], "addonKey">) {
+  return createOrgSubscriptionCheckoutSession({ ...input, addonKey: seatsAddon.key })
 }
 
 export async function createStripePortalSession(input: { organizationId: OrgId; returnUrl: string }) {
@@ -543,7 +535,7 @@ export async function createInferencePortalSession(input: { organizationId: OrgI
   return createStripePortalSession(input)
 }
 
-function serializeSubscription(row: Awaited<ReturnType<typeof findOrgSubscriptionByStripeId>>) {
+function serializeSubscription(row: OrgSubscriptionRow | null) {
   return row ? {
     id: row.id,
     status: row.status,
@@ -557,13 +549,18 @@ function serializeSubscription(row: Awaited<ReturnType<typeof findOrgSubscriptio
 }
 
 export async function getOrgBillingSummary(input: { organizationId: OrgId; includePortalUrl?: boolean; returnUrl: string }) {
-  const row = await findInferenceSubscriptionByOrg(input.organizationId)
-  const seatRow = await findSeatSubscriptionByOrg(input.organizationId)
+  const addonSubscriptions = await Promise.all(listAddons().map(async (addon) => ({
+    addon,
+    row: await findOrgSubscriptionByAddon(input.organizationId, addon),
+  })))
+  const row = addonSubscriptions.find((entry) => entry.addon === inferenceAddon)?.row ?? null
+  const seatRow = addonSubscriptions.find((entry) => entry.addon === seatsAddon)?.row ?? null
   const seatCounts = await getOrganizationSeatBillingCounts({ organizationId: input.organizationId })
   const hasActiveSubscription = Boolean(row && ACTIVE_STATUSES.has(row.status))
   const hasActiveSeatSubscription = Boolean(seatRow && ACTIVE_STATUSES.has(seatRow.status))
   let portalUrl: string | null = null
-  if (input.includePortalUrl && (row?.stripe_customer_id || seatRow?.stripe_customer_id)) {
+  const hasStripeCustomer = addonSubscriptions.some((entry) => Boolean(entry.row?.stripe_customer_id))
+  if (input.includePortalUrl && hasStripeCustomer) {
     try {
       portalUrl = (await createInferencePortalSession({ organizationId: input.organizationId, returnUrl: input.returnUrl })).url
     } catch (error) {
@@ -571,23 +568,40 @@ export async function getOrgBillingSummary(input: { organizationId: OrgId; inclu
     }
   }
 
+  const addons = addonSubscriptions.map(({ addon, row: addonRow }) => ({
+    key: addon.key,
+    label: addon.label,
+    billingModel: addon.billingModel,
+    status: addonRow?.status ?? null,
+    quantity: addonRow?.quantity ?? 0,
+    price: {
+      configured: Boolean(env.stripe.secretKey && addon.stripePriceId()),
+      priceId: addon.stripePriceId() ?? null,
+      unitAmount: addon.unitAmount,
+      currency: addon.currency,
+      interval: addon.interval,
+    },
+    subscription: serializeSubscription(addonRow),
+  }))
+
   return {
+    addons,
     stripe: {
-      configured: Boolean(env.stripe.secretKey && env.stripe.inferencePriceId),
-      priceId: env.stripe.inferencePriceId ?? null,
-      unitAmount: 1000,
-      currency: "usd",
-      interval: "month",
+      configured: Boolean(env.stripe.secretKey && inferenceAddon.stripePriceId()),
+      priceId: inferenceAddon.stripePriceId() ?? null,
+      unitAmount: inferenceAddon.unitAmount,
+      currency: inferenceAddon.currency,
+      interval: inferenceAddon.interval,
       memberCount: seatCounts.total,
       hasActiveSubscription,
       portalUrl,
       subscription: serializeSubscription(row),
       seats: {
-        configured: Boolean(env.stripe.secretKey && env.stripe.seatPriceId),
-        priceId: env.stripe.seatPriceId ?? null,
-        unitAmount: 1000,
-        currency: "usd",
-        interval: "month",
+        configured: Boolean(env.stripe.secretKey && seatsAddon.stripePriceId()),
+        priceId: seatsAddon.stripePriceId() ?? null,
+        unitAmount: seatsAddon.unitAmount,
+        currency: seatsAddon.currency,
+        interval: seatsAddon.interval,
         freeSeatCount: seatCounts.free,
         seatsFreeAdditional: seatCounts.additionalFree,
         billableSeatCount: seatCounts.chargeable,
@@ -637,19 +651,19 @@ export async function syncSeatSubscriptionQuantityAfterMemberChange(input: { org
   })
 }
 
-async function createSeatSubscriptionFromSetupCheckoutSession(session: Stripe.Checkout.Session, eventId: string) {
+async function createPerSeatSubscriptionFromSetupCheckoutSession(session: Stripe.Checkout.Session, eventId: string) {
   if (typeof session.setup_intent !== "string" || typeof session.customer !== "string") {
     return null
   }
 
   const metadata = getBillingMetadata(session.metadata)
-  if (metadata.subscriptionType !== SEAT_SUBSCRIPTION_TYPE || !metadata.organizationId) {
+  if (metadata.addon?.billingModel !== "per-seat" || !metadata.organizationId) {
     return null
   }
 
-  const existingSeatSubscription = await findSeatSubscriptionByOrg(metadata.organizationId as OrgId)
-  if (existingSeatSubscription && ACTIVE_STATUSES.has(existingSeatSubscription.status)) {
-    return existingSeatSubscription
+  const existingSubscription = await findOrgSubscriptionByAddon(metadata.organizationId as OrgId, metadata.addon)
+  if (existingSubscription && ACTIVE_STATUSES.has(existingSubscription.status)) {
+    return existingSubscription
   }
 
   const setupIntent = await stripe().setupIntents.retrieve(session.setup_intent)
@@ -661,19 +675,21 @@ async function createSeatSubscriptionFromSetupCheckoutSession(session: Stripe.Ch
     throw new Error("stripe_setup_payment_method_missing")
   }
 
+  const legacySubscriptionType = metadata.addon.legacyKeys?.[0] ?? metadata.addon.key
   const subscription = await stripe().subscriptions.create(
     {
       customer: session.customer,
       default_payment_method: paymentMethod,
-      items: [{ price: requireSeatPriceId(), quantity: 0 }],
+      items: [{ price: requireAddonPriceId(metadata.addon), quantity: 0 }],
       metadata: {
         org_id: metadata.organizationId,
         created_by_org_member_id: metadata.orgMemberId ?? "",
-        openwork_product: "openwork_seats",
-        subscription_type: SEAT_SUBSCRIPTION_TYPE,
+        openwork_product: metadata.addon.stripeProduct,
+        addon_key: metadata.addon.key,
+        subscription_type: legacySubscriptionType,
       },
     },
-    { idempotencyKey: `openwork-seat-subscription-${session.id}` },
+    { idempotencyKey: `openwork-${legacySubscriptionType}-subscription-${session.id}` },
   )
 
   return upsertOrgSubscriptionFromStripe(subscription, eventId)
@@ -682,7 +698,7 @@ async function createSeatSubscriptionFromSetupCheckoutSession(session: Stripe.Ch
 export async function syncSeatCheckoutSession(input: { organizationId: OrgId; sessionId: string }) {
   const session = await stripe().checkout.sessions.retrieve(input.sessionId)
   const metadata = getBillingMetadata(session.metadata)
-  if (metadata.subscriptionType !== SEAT_SUBSCRIPTION_TYPE) {
+  if (metadata.addon?.billingModel !== "per-seat") {
     return null
   }
   if (metadata.organizationId !== input.organizationId) {
@@ -691,7 +707,7 @@ export async function syncSeatCheckoutSession(input: { organizationId: OrgId; se
   if (session.status !== "complete") {
     return null
   }
-  return createSeatSubscriptionFromSetupCheckoutSession(session, `checkout-session-sync:${session.id}`)
+  return createPerSeatSubscriptionFromSetupCheckoutSession(session, `checkout-session-sync:${session.id}`)
 }
 
 export async function handleStripeWebhook(input: { payload: string; signature: string | null }) {
@@ -707,11 +723,11 @@ export async function handleStripeWebhook(input: { payload: string; signature: s
     case "checkout.session.completed": {
       const session = event.data.object as Stripe.Checkout.Session
       if (session.mode === "setup") {
-        await createSeatSubscriptionFromSetupCheckoutSession(session, event.id)
+        await createPerSeatSubscriptionFromSetupCheckoutSession(session, event.id)
       } else if (typeof session.subscription === "string") {
         const subscription = await stripe().subscriptions.retrieve(session.subscription)
         const row = await upsertOrgSubscriptionFromStripe(subscription, event.id)
-        if (row?.type === INFERENCE_SUBSCRIPTION_TYPE && ACTIVE_STATUSES.has(subscriptionStatus(subscription.status))) {
+        if (row && resolveAddon(row.type)?.enablesInference && ACTIVE_STATUSES.has(subscriptionStatus(subscription.status))) {
           await setInferenceEnabled({ organizationId: row.organization_id, enabled: true })
         }
       }
@@ -735,7 +751,7 @@ export async function handleStripeWebhook(input: { payload: string; signature: s
             .update(OrgSubscriptionTable)
             .set({ status: "expired", last_event_id: event.id, updated_at: new Date() })
             .where(eq(OrgSubscriptionTable.id, row.id))
-          if (row.type === INFERENCE_SUBSCRIPTION_TYPE) {
+          if (resolveAddon(row.type)?.enablesInference) {
             await setInferenceEnabled({ organizationId: row.organization_id, enabled: false })
           }
         }

@@ -1,4 +1,6 @@
 import { env } from "./env.js"
+import { listAddons } from "./billing/addons.js"
+import type { BillingAddon } from "./billing/addons.js"
 
 export const PLAN_TIERS = ["free", "team", "enterprise"] as const
 export type PlanTier = (typeof PLAN_TIERS)[number]
@@ -34,6 +36,8 @@ type MetadataInput = Record<string, unknown> | string | null | undefined
 
 type EntitlementOptions = {
   gatingEnabled?: boolean
+  activeAddonKeys?: readonly string[]
+  addonCatalog?: readonly BillingAddon[]
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -82,13 +86,31 @@ export function getOrganizationEntitlements(
 ): OrganizationEntitlements {
   const gatingEnabled = options.gatingEnabled ?? env.planGatingEnabled
   const entitled = !gatingEnabled || parseOrganizationPlan(metadata).tier === "enterprise"
+  const addonEntitlements = getAddonEntitlementKeys(options.activeAddonKeys ?? [], options.addonCatalog)
 
   return {
-    sso: entitled,
-    desktopPolicies: entitled,
-    orgControls: entitled,
-    analytics: entitled,
+    sso: entitled || addonEntitlements.has("sso"),
+    desktopPolicies: entitled || addonEntitlements.has("desktopPolicies"),
+    orgControls: entitled || addonEntitlements.has("orgControls"),
+    analytics: entitled || addonEntitlements.has("analytics"),
   }
+}
+
+export function getAddonEntitlementKeys(
+  activeAddonKeys: readonly string[],
+  addons: readonly BillingAddon[] = listAddons(),
+) {
+  const activeKeys = new Set(activeAddonKeys)
+  const entitlements = new Set<EntitlementKey>()
+  for (const addon of addons) {
+    if (!activeKeys.has(addon.key) && !addon.legacyKeys?.some((key) => activeKeys.has(key))) {
+      continue
+    }
+    for (const entitlement of addon.entitlements ?? []) {
+      entitlements.add(entitlement)
+    }
+  }
+  return entitlements
 }
 
 export function checkEntitlement(
