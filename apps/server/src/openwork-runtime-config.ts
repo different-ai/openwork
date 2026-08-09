@@ -131,7 +131,6 @@ export function buildOpenworkRuntimeConfigObjectFromSnapshot(
       ...runtimePluginList(runtimeConfig),
     ],
     ...(disabledProviders.length ? { disabled_providers: disabledProviders } : {}),
-    mcp: runtimeMcpMap(runtimeConfig),
     ...(Object.keys(provider).length ? { provider } : {}),
   };
 }
