@@ -1,0 +1,7 @@
+{
+  "tool_name": "Bash",
+  "tool_input_preview": "{\"command\":\"for u in https://den-web-one.vercel.app https://den-api-pvc1.onrender.com/health; do\\n  printf \\\"%-45s \\\" \\\"$u\\\"\\n  curl -s -m 25 -o /dev/null -w 'HTTP=%{http_code} t=%{time_total}s\\\\n' -L...",
+  "error": "Exit code 28\nhttps://den-web-one.vercel.app                HTTP=200 t=1.324069s\r\nhttps://den-api-pvc1.onrender.com/health      HTTP=000 t=25.012928s",
+  "timestamp": "2026-08-01T15:51:34.653Z",
+  "retry_count": 1
+}
