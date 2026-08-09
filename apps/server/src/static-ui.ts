@@ -2,7 +2,6 @@ import { readFile, stat } from "node:fs/promises";
 import { extname } from "node:path";
 import { ApiError, formatError } from "./errors.js";
 import { resolveWithinRoot } from "./paths.js";
-import { cssResponse, htmlResponse, jsResponse, svgResponse } from "./toy-ui.js";
 import type { ServerConfig } from "./types.js";
 
 const WEB_ROOT_ENV = "OPENWORK_WEB_ROOT";
@@ -146,5 +145,45 @@ function jsonError(error: ApiError): Response {
   return new Response(JSON.stringify(formatError(error)), {
     status: error.status,
     headers: { "Content-Type": "application/json" },
+  });
+}
+
+function htmlResponse(body: string, status = 200): Response {
+  return new Response(body, {
+    status,
+    headers: {
+      "Content-Type": "text/html; charset=utf-8",
+      "Cache-Control": "no-store",
+    },
+  });
+}
+
+function cssResponse(body: string): Response {
+  return new Response(body, {
+    status: 200,
+    headers: {
+      "Content-Type": "text/css; charset=utf-8",
+      "Cache-Control": "no-store",
+    },
+  });
+}
+
+function jsResponse(body: string): Response {
+  return new Response(body, {
+    status: 200,
+    headers: {
+      "Content-Type": "text/javascript; charset=utf-8",
+      "Cache-Control": "no-store",
+    },
+  });
+}
+
+function svgResponse(body: string): Response {
+  return new Response(body, {
+    status: 200,
+    headers: {
+      "Content-Type": "image/svg+xml; charset=utf-8",
+      "Cache-Control": "no-store",
+    },
   });
 }

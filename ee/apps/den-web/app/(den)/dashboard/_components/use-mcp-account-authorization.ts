@@ -3,6 +3,12 @@
 import { useEffect, useRef, useState } from "react";
 import { openMcpAuthorizationWindow, safeMcpAuthorizationUrl, showMcpAuthorizationError } from "./mcp-authorization-url";
 import {
+  MCP_AUTHORIZATION_TIMEOUT_MESSAGE,
+  MCP_AUTHORIZATION_UNCONFIRMED_CONNECTED_MESSAGE,
+  MCP_AUTHORIZATION_WINDOW_CLOSED_MESSAGE,
+  resolveMcpAuthorizationPollOutcome,
+} from "./mcp-account-authorization-state";
+import {
   McpOAuthStartError,
   useMcpConnections,
   useStartMcpConnectionOAuth,
@@ -42,19 +48,35 @@ export function useMcpAccountAuthorization(onConnected?: () => void) {
     onConnectedRef.current?.();
   }
 
-  function pollUntilConnected(connectionId: string) {
+  function finishFailed(
+    connectionId: string,
+    authorizationWindow: Window,
+    message: string,
+  ) {
+    stopPolling();
+    showMcpAuthorizationError(authorizationWindow, { message });
+    setError({ connectionId, message });
+  }
+
+  function pollUntilConnected(connectionId: string, authorizationWindow: Window) {
     stopPolling();
     setPollingConnectionId(connectionId);
     const startedAt = Date.now();
     pollTimer.current = setInterval(async () => {
       const result = await refetch();
       const connection = result.data?.find((entry) => entry.id === connectionId);
-      if (connection?.connectedForMe && connection.needsReconnect !== true) {
+      const outcome = resolveMcpAuthorizationPollOutcome({
+        connected: Boolean(connection?.connectedForMe && connection.needsReconnect !== true),
+        authorizationWindowClosed: authorizationWindow.closed,
+        elapsedMs: Date.now() - startedAt,
+        timeoutMs: OAUTH_POLL_TIMEOUT_MS,
+      });
+      if (outcome === "connected") {
         finishConnected();
-        return;
-      }
-      if (Date.now() - startedAt > OAUTH_POLL_TIMEOUT_MS) {
-        stopPolling();
+      } else if (outcome === "window_closed") {
+        finishFailed(connectionId, authorizationWindow, MCP_AUTHORIZATION_WINDOW_CLOSED_MESSAGE);
+      } else if (outcome === "timeout") {
+        finishFailed(connectionId, authorizationWindow, MCP_AUTHORIZATION_TIMEOUT_MESSAGE);
       }
     }, OAUTH_POLL_INTERVAL_MS);
   }
@@ -66,16 +88,25 @@ export function useMcpAccountAuthorization(onConnected?: () => void) {
       authorizationWindow = openMcpAuthorizationWindow();
       const result = await startOAuth.mutateAsync(connectionId);
       if (result.status === "connected") {
-        authorizationWindow.close();
-        void refetch();
-        finishConnected();
+        const refreshed = await refetch();
+        const connection = refreshed.data?.find((entry) => entry.id === connectionId);
+        if (connection?.connectedForMe && connection.needsReconnect !== true) {
+          authorizationWindow.close();
+          finishConnected();
+        } else {
+          finishFailed(
+            connectionId,
+            authorizationWindow,
+            MCP_AUTHORIZATION_UNCONFIRMED_CONNECTED_MESSAGE,
+          );
+        }
         return;
       }
       if (!result.authorizeUrl) {
         throw new Error("The MCP provider did not return an authorization URL.");
       }
       authorizationWindow.location.href = safeMcpAuthorizationUrl(result.authorizeUrl);
-      pollUntilConnected(connectionId);
+      pollUntilConnected(connectionId, authorizationWindow);
     } catch (connectError) {
       const message = connectError instanceof Error ? connectError.message : "Failed to connect account.";
       showMcpAuthorizationError(authorizationWindow, {

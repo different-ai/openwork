@@ -177,6 +177,8 @@ export type EnterpriseMcpDiagnosticEvent =
     outcome: "started" | "succeeded" | "failed"
     durationMs?: number
     httpStatus?: number
+    responseBodyExcerpt?: string
+    protocolVersionFallback?: string
   }
   | {
     kind: "credential-invalidation"

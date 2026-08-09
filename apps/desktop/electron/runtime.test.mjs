@@ -9,6 +9,7 @@ import {
   commandMatchesPackagedSidecar,
   embeddedServerImportUrl,
   prioritizeWorkspacePaths,
+  resolveEvalLocalServerDelayMs,
   resolveOpenworkServerConfigPath,
   seedWorkspacePathsForEmbeddedServer,
   selectStickyOpenworkPortWorkspace,
@@ -60,6 +61,16 @@ describe("selectStickyOpenworkPortWorkspace", () => {
       selectStickyOpenworkPortWorkspace([], ["/workspace/from-server"]),
       "/workspace/from-server",
     );
+  });
+});
+
+describe("resolveEvalLocalServerDelayMs", () => {
+  it("enables only positive finite eval delays", () => {
+    assert.equal(resolveEvalLocalServerDelayMs({ OPENWORK_EVAL_LOCAL_SERVER_DELAY_MS: "3000" }), 3000);
+    assert.equal(resolveEvalLocalServerDelayMs({ OPENWORK_EVAL_LOCAL_SERVER_DELAY_MS: "0" }), 0);
+    assert.equal(resolveEvalLocalServerDelayMs({ OPENWORK_EVAL_LOCAL_SERVER_DELAY_MS: "-1" }), 0);
+    assert.equal(resolveEvalLocalServerDelayMs({ OPENWORK_EVAL_LOCAL_SERVER_DELAY_MS: "Infinity" }), 0);
+    assert.equal(resolveEvalLocalServerDelayMs({ OPENWORK_EVAL_LOCAL_SERVER_DELAY_MS: "invalid" }), 0);
   });
 });
 

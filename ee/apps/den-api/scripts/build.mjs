@@ -109,6 +109,8 @@ function main() {
   writeGeneratedVersionFile(process.env.DEN_API_LATEST_APP_VERSION)
   cleanDist()
 
+  run(pnpmCommand, ["run", "build:types"])
+  run(pnpmCommand, ["run", "build:automations"])
   run(pnpmCommand, ["run", "build:connect-link"])
   run(pnpmCommand, ["run", "build:email"])
   run(pnpmCommand, ["run", "build:install-config"])

@@ -159,6 +159,15 @@ export function cloudWorkspaceStatusHasReadyContent(variant: CloudWorkspacePillV
   return variant === "ready" || variant === "stale";
 }
 
+export function shouldShowCloudWorkspaceStatusPill(input: {
+  variant: CloudWorkspacePillVariant;
+  hasInstance: boolean;
+  requestFailed: boolean;
+}): boolean {
+  if (!input.hasInstance && !input.requestFailed) return false;
+  return input.variant === "waking" || input.variant === "provisioning" || input.variant === "failed";
+}
+
 export function mapCloudWorkspaceMainContentDecision(input: {
   status: CloudWorkspacePillVariant;
   hasWorkspaces: boolean;

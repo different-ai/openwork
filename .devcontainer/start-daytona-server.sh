@@ -47,7 +47,22 @@ export DEN_WEB_ALLOWED_DEV_ORIGINS="${DEN_WEB_ALLOWED_DEV_ORIGINS:-$DEN_WEB_PUBL
 
 DEFAULT_ORIGINS="$DEN_WEB_PUBLIC_URL,$DEN_API_PUBLIC_URL,$DEN_WORKER_PROXY_PUBLIC_URL,http://localhost:$DEN_WEB_PORT,http://127.0.0.1:$DEN_WEB_PORT,http://localhost:$DEN_API_PORT,http://127.0.0.1:$DEN_API_PORT,http://localhost:$DEN_WORKER_PROXY_PORT,http://127.0.0.1:$DEN_WORKER_PROXY_PORT"
 export CORS_ORIGINS="${CORS_ORIGINS:-$DEFAULT_ORIGINS}"
-export DEN_BETTER_AUTH_TRUSTED_ORIGINS="${DEN_BETTER_AUTH_TRUSTED_ORIGINS:-$CORS_ORIGINS}"
+
+# Daytona mints a fresh preview hostname on every preview-url call, so any
+# origin baked at boot goes stale immediately. Trust the preview proxy domain
+# by wildcard (better-auth supports wildcard trusted origins) so rotated
+# preview URLs keep working. Local hosts produce no wildcard.
+PREVIEW_PROXY_HOST="${DEN_WEB_PUBLIC_URL#http://}"
+PREVIEW_PROXY_HOST="${PREVIEW_PROXY_HOST#https://}"
+PREVIEW_PROXY_HOST="${PREVIEW_PROXY_HOST%%/*}"
+PREVIEW_PROXY_WILDCARD=""
+case "$PREVIEW_PROXY_HOST" in
+  localhost*|127.*|0.0.0.0*|\[*) ;;
+  *.*.*)
+    PREVIEW_PROXY_WILDCARD="https://*.${PREVIEW_PROXY_HOST#*.}"
+    ;;
+esac
+export DEN_BETTER_AUTH_TRUSTED_ORIGINS="${DEN_BETTER_AUTH_TRUSTED_ORIGINS:-$CORS_ORIGINS${PREVIEW_PROXY_WILDCARD:+,$PREVIEW_PROXY_WILDCARD}}"
 
 run_root() {
   if [ "$(id -u)" -eq 0 ]; then

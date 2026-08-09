@@ -19,6 +19,22 @@ import { connectionNeedsReconnect, isNativeProviderConnectionId } from "./native
 const CONNECT_POLL_INTERVAL_MS = 2_000;
 const CONNECT_TIMEOUT_MS = 90_000;
 
+export type OrgMcpConnectFailure =
+  | "missing_context"
+  | "missing_authorization_url"
+  | "timeout";
+
+export function orgMcpConnectFailureMessage(failure: OrgMcpConnectFailure): string {
+  switch (failure) {
+    case "missing_context":
+      return "Sign in to OpenWork Cloud and select an organization before connecting.";
+    case "missing_authorization_url":
+      return "The connection did not return a sign-in URL. Check its OAuth configuration and try again.";
+    case "timeout":
+      return "Sign-in did not complete. Check the provider window for an OAuth error, then verify the provider redirect URI and try again.";
+  }
+}
+
 async function openAuthorizationUrl(url: string) {
   if (isDesktopRuntime()) {
     await openDesktopUrl(url);
@@ -202,7 +218,10 @@ export function useOrgMcpConnections() {
     const settings = readDenSettings();
     const token = settings.authToken?.trim() ?? "";
     const orgId = settings.activeOrgId?.trim() ?? "";
-    if (!token || !orgId) return;
+    if (!token || !orgId) {
+      setError(orgMcpConnectFailureMessage("missing_context"));
+      return;
+    }
 
     const previous = connectionsRef.current.find((entry) => entry.id === connectionId);
     const previousConnectedAt = previous?.connectedAt ?? null;
@@ -214,6 +233,7 @@ export function useOrgMcpConnections() {
     };
     setDisconnectingId(null);
     setConnectingId(connectionId);
+    setError(null);
     try {
       const client = createDenClient({ baseUrl: settings.baseUrl, token });
       if (options?.forceFreshAuthorization === true && previous?.connectedForMe) {
@@ -229,6 +249,7 @@ export function useOrgMcpConnections() {
         return;
       }
       if (!result.authorizeUrl) {
+        setError(orgMcpConnectFailureMessage("missing_authorization_url"));
         setConnectingId(null);
         return;
       }
@@ -241,6 +262,7 @@ export function useOrgMcpConnections() {
         if (!isActionScopeCurrent(pollScope)) return;
         if (Date.now() - startedAt >= CONNECT_TIMEOUT_MS) {
           stopPolling();
+          setError(orgMcpConnectFailureMessage("timeout"));
           setConnectingId(null);
           return;
         }

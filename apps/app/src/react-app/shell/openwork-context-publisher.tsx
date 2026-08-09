@@ -1,6 +1,6 @@
 /** @jsxImportSource react */
 import { useMemo } from "react";
-import { useLocation } from "react-router-dom";
+import { useLocation } from "react-router";
 
 import { usePanelTabStore } from "../domains/session/panel/panel-tab-store";
 import { useWorkbenchStore } from "../domains/session/chat/workbench-store";

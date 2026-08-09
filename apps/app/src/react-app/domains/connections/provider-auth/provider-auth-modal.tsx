@@ -72,7 +72,6 @@ export type ProviderAuthModalProps = {
   authMethods: Record<string, ProviderAuthMethod[]>;
   onSelect: (providerId: string, methodIndex?: number) => Promise<ProviderOAuthStartResult>;
   onSubmitApiKey: (providerId: string, apiKey: string) => Promise<string | void>;
-  onConnectCloudProvider: (cloudProviderId: string) => Promise<string | void>;
   onSubmitOAuth: (
     providerId: string,
     methodIndex: number,
@@ -89,10 +88,9 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
   const isRemoteWorker = workerType === "remote";
 
   const [view, setView] = useState<
-    "list" | "method" | "api" | "cloud" | "oauth-code" | "oauth-auto" | "openwork-subscribe"
+    "list" | "method" | "api" | "oauth-code" | "oauth-auto" | "openwork-subscribe"
   >("list");
   const [selectedProviderId, setSelectedProviderId] = useState<string | null>(null);
-  const [selectedCloudMethod, setSelectedCloudMethod] = useState<ProviderAuthMethod | null>(null);
   const [apiKeyInput, setApiKeyInput] = useState("");
   const [oauthCodeInput, setOauthCodeInput] = useState("");
   const [oauthSession, setOauthSession] = useState<ProviderOAuthSession | null>(null);
@@ -276,7 +274,6 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
     }
     setView("list");
     setSelectedProviderId(null);
-    setSelectedCloudMethod(null);
     setApiKeyInput("");
     setOauthCodeInput("");
     setOauthSession(null);
@@ -521,7 +518,6 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
   const handleMethodSelect = async (method: ProviderAuthMethod) => {
     if (!selectedEntry || actionDisabled) return;
     setLocalError(null);
-    setSelectedCloudMethod(null);
 
     if (method.type === "oauth") {
       await startOauth(selectedEntry, method.methodIndex);
@@ -529,8 +525,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
     }
 
     if (method.type === "cloud") {
-      setSelectedCloudMethod(method);
-      setView("cloud");
+      setView("openwork-subscribe");
       return;
     }
 
@@ -583,19 +578,6 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
     }
   };
 
-  const handleCloudSubmit = async () => {
-    if (!selectedCloudMethod?.cloudProviderId || actionDisabled) return;
-
-    setLocalError(null);
-    try {
-      await props.onConnectCloudProvider(selectedCloudMethod.cloudProviderId);
-      props.onClose();
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Failed to connect organization provider";
-      setLocalError(message);
-    }
-  };
-
   const handleOauthCodeSubmit = async () => {
     if (!selectedEntry || !oauthSession || actionDisabled) return;
 
@@ -630,14 +612,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
 
     if (resolvedView === "api" && (selectedEntry?.methods.length ?? 0) > 1) {
       setView("method");
-      setSelectedCloudMethod(null);
       setApiKeyInput("");
-      setLocalError(null);
-      return;
-    }
-    if (resolvedView === "cloud" && (selectedEntry?.methods.length ?? 0) > 1) {
-      setView("method");
-      setSelectedCloudMethod(null);
       setLocalError(null);
       return;
     }
@@ -647,7 +622,6 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
   const submittingLabel = () => {
     if (!props.submitting) return null;
     if (resolvedView === "api") return "Saving API key...";
-    if (resolvedView === "cloud") return "Connecting organization provider...";
     if (resolvedView === "oauth-code") return "Verifying authorization code...";
     if (resolvedView === "oauth-auto") return "Waiting for OAuth confirmation...";
     return "Opening authentication...";
@@ -705,7 +679,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
       return "Continue in the browser and let OpenWork finish the connection automatically.";
     }
     if (method.type === "cloud") {
-      return method.description ?? "Use the provider and credential managed by your organization.";
+      return "Subscribe to OpenWork Models.";
     }
     if (isOpencodeZenProvider(entry.id)) {
       return "Sign in to OpenCode Zen with an API key to unlock paid models alongside the free tier.";
@@ -816,7 +790,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
                             <div className="mt-2 flex flex-wrap gap-1.5">
                               {entry.methods.map((method) => (
                                 <span
-                                  key={`${entry.id}-${method.type}-${method.methodIndex ?? method.cloudProviderId ?? method.label}`}
+                                  key={`${entry.id}-${method.type}-${method.methodIndex ?? method.label}`}
                                   className={`text-[10px] font-medium px-2 py-0.5 rounded-md border ${
                                     method.type === "oauth"
                                       ? "bg-indigo-3/30 text-indigo-11 border-indigo-5/30"
@@ -857,7 +831,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
                   <div className="grid gap-2">
                     {selectedEntry.methods.map((method) => (
                       <button
-                        key={`${selectedEntry.id}-${method.type}-${method.methodIndex ?? method.cloudProviderId ?? method.label}`}
+                        key={`${selectedEntry.id}-${method.type}-${method.methodIndex ?? method.label}`}
                         type="button"
                         className={`w-full rounded-xl border px-4 py-3.5 text-left transition-all duration-200 disabled:opacity-60 disabled:cursor-not-allowed ${
                           method.type === "oauth"
@@ -932,41 +906,6 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
                       ))}
                     </div>
                   ) : null}
-                </div>
-              ) : null}
-
-              {resolvedView === "cloud" && selectedEntry && selectedCloudMethod ? (
-                <div className="rounded-xl border border-gray-6/40 bg-gray-2/50 shadow-sm p-5 space-y-4">
-                  <div className="flex items-center justify-between gap-4">
-                    <div>
-                      <div className="text-sm font-medium text-gray-12">{selectedEntry.name}</div>
-                      <div className="text-xs text-gray-10 mt-1">Connect with the provider managed by your organization.</div>
-                    </div>
-                    <Button variant="outline" onClick={handleBack} disabled={actionDisabled}>
-                      Back
-                    </Button>
-                  </div>
-                  <div className="text-xs text-gray-9">
-                    {selectedCloudMethod.description ?? "Use the provider and credential managed by your organization."}
-                  </div>
-                  {(selectedCloudMethod.modelCount ?? 0) > 0 ? (
-                    <div className="rounded-lg border border-gray-6/60 bg-gray-1/60 px-3 py-2 text-[11px] text-gray-9">
-                      {(selectedCloudMethod.modelCount ?? 0)} curated model{(selectedCloudMethod.modelCount ?? 0) === 1 ? "" : "s"} will be added to this workspace.
-                    </div>
-                  ) : null}
-                  {(selectedCloudMethod.env?.length ?? 0) > 0 ? (
-                    <div className="text-[11px] text-gray-9">
-                      Env vars: <span className="font-mono">{selectedCloudMethod.env?.join(", ")}</span>
-                    </div>
-                  ) : null}
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="text-[11px] text-gray-9">
-                      OpenWork will install the provider config and use the credential stored for your org.
-                    </div>
-                    <Button onClick={handleCloudSubmit} disabled={actionDisabled}>
-                      {props.submitting ? "Connecting..." : "Connect provider"}
-                    </Button>
-                  </div>
                 </div>
               ) : null}
 

@@ -8,6 +8,7 @@ export const providerProfileIdSchema = z.enum([
   "microsoft-work-iq",
   "microsoft-enterprise",
   "agent-365-mail-v1-2026-07",
+  "slack-user-mcp",
 ])
 
 export type ProviderProfileId = z.infer<typeof providerProfileIdSchema>
@@ -60,6 +61,7 @@ const rawProviderProfileSchema = z.object({
       requiredResourceScopes: z.array(z.string().min(1)).min(1),
       defaultClientAuthenticationMethod: z.enum(["none", "client_secret_post"]),
       clientAuthenticationMethods: z.array(z.enum(["none", "client_secret_post"])).min(1),
+      tokenResponseStyle: z.enum(["standard", "slack-user"]).default("standard"),
     }),
     protocol: z.object({
       versions: z.array(z.string().regex(/^\d{4}-\d{2}-\d{2}$/)).min(1),
@@ -67,6 +69,7 @@ const rawProviderProfileSchema = z.object({
       sessionMode: z.literal("required"),
       pageSize: z.number().int().positive().max(100),
       fidelity: z.enum(["mcp-specification", "provider-observed"]),
+      versionNegotiation: z.enum(["fallback", "strict"]).default("fallback"),
     }),
     tools: z.array(mockToolSchema).min(1),
   })

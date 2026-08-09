@@ -42,7 +42,16 @@ export const automationScheduleSchema = z.discriminatedUnion("kind", [
 ])
 export type AutomationSchedule = z.infer<typeof automationScheduleSchema>
 
-export const automationModelSchema = z.object({ providerId: idSchema, modelId: idSchema })
+/**
+ * `variant` is the model's reasoning/thinking level, the same value the
+ * composer sends as its behavior pill. It is optional because most models
+ * expose no variants, and null means "whatever the provider defaults to".
+ */
+export const automationModelSchema = z.object({
+  providerId: idSchema,
+  modelId: idSchema,
+  variant: z.string().trim().min(1).max(60).nullable().optional(),
+})
 export type AutomationModel = z.infer<typeof automationModelSchema>
 
 /**
@@ -238,6 +247,7 @@ export const automationRunSchema = z.object({
   executionThread: automationExecutionThreadSchema.nullable(),
   providerId: idSchema,
   modelId: idSchema,
+  modelVariant: z.string().trim().min(1).max(60).nullable().default(null),
   startedAt: nullableTimestampSchema,
   finishedAt: nullableTimestampSchema,
   error: automationErrorSchema.nullable(),
@@ -271,6 +281,22 @@ export const createAutomationSchema = z.object({
   model: automationModelSchema,
 })
 export type CreateAutomation = z.infer<typeof createAutomationSchema>
+
+/**
+ * What an in-app agent may hand back when a person describes recurring work.
+ *
+ * A proposal is inert: it names the Automation the person could create, and
+ * nothing more. Automations are active the moment they exist, so creation stays
+ * behind an explicit human action in the renderer, which owns the Den session.
+ * The model is optional because the renderer resolves the person's own default.
+ */
+export const automationProposalSchema = z.object({
+  name: z.string().trim().min(1).max(120),
+  instructions: z.string().trim().min(1).max(100_000),
+  schedule: automationScheduleSchema,
+  model: automationModelSchema.optional(),
+})
+export type AutomationProposal = z.infer<typeof automationProposalSchema>
 
 export const updateAutomationSchema = createAutomationSchema.partial().refine(
   (input) => Object.keys(input).length > 0,

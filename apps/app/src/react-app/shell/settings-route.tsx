@@ -1,6 +1,6 @@
 /** @jsxImportSource react */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Navigate, useLocation, useNavigate, useParams } from "react-router-dom";
+import { Navigate, useLocation, useNavigate, useParams } from "react-router";
 import { toast } from "@/components/ui/sonner";
 
 import {
@@ -423,7 +423,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   const params = useParams<{ workspaceId?: string }>();
   const routeWorkspaceId = props.workspaceId?.trim() || params.workspaceId?.trim() || "";
   const local = useLocal();
-  const { memoryEnabled, toggleMemory, automationsEnabled, toggleAutomations } = useFeatureFlagsPreferences();
+  const { memoryEnabled, toggleMemory } = useFeatureFlagsPreferences();
   const platform = usePlatform();
   const checkDesktopRestriction = useCheckDesktopRestriction();
   const restrictionNotice = useRestrictionNotice();
@@ -1690,7 +1690,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   useCloudProviderAutoSync(() => connectionsStore.syncCloudControlMcp());
 
   useEffect(() => {
-    if (route.tab !== "cloud-providers") return;
+    if (route.tab !== "cloud-providers" && route.tab !== "ai") return;
     void providerAuthStore.runCloudProviderSync("settings_cloud_opened");
   }, [providerAuthStore, route.tab]);
 
@@ -2189,14 +2189,19 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
             cloudProvidersView={
               <CloudProvidersView
                 embedded
+                checkDesktopAppRestriction={checkDesktopRestriction}
                 cloudOrgProviders={providerAuthSnapshot.cloudOrgProviders}
                 connectCloudProvider={providerAuthStore.connectCloudProvider}
                 importedCloudProviders={providerAuthSnapshot.importedCloudProviders}
+                importsUnavailable={
+                  openworkServerSnapshot.openworkServerCapabilities?.config?.read === false ||
+                  openworkServerSnapshot.openworkServerCapabilities?.config?.write === false
+                }
+                lastSyncError={providerAuthSnapshot.lastSyncError}
+                openworkServerAvailable={Boolean(openworkServerSnapshot.openworkServerClient)}
                 onOpenAccount={openCloudAccountSettings}
                 refreshCloudOrgProviders={providerAuthStore.refreshCloudOrgProviders}
-                refreshImportedCloudProviders={providerAuthStore.refreshImportedCloudProviders}
-                removeCloudProvider={providerAuthStore.removeCloudProvider}
-                session={denSession}
+                runCloudProviderSync={providerAuthStore.runCloudProviderSync}
               />
             }
           />
@@ -2222,8 +2227,6 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
             }}
             memoryEnabled={memoryEnabled}
             onToggleMemory={toggleMemory}
-            automationsEnabled={automationsEnabled}
-            onToggleAutomations={toggleAutomations}
           />
         );
       case "extensions":
@@ -2310,6 +2313,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
                 installedPlugins={extensionItems.installedCloudPlugins}
                 orgMcpItems={orgMcpConnectionItems}
                 organizationName={cloudSession.activeOrgName}
+                orgMcpError={orgMcpConnections.error}
                 uninstallSkill={(name) => { void extensionsStore.uninstallSkill(name); }}
                 removeCloudPlugin={(pluginId) => { void extensionsStore.removeCloudOrgPlugin(pluginId); }}
                 orgMcpConnectingId={orgMcpConnections.connectingId}
@@ -2343,14 +2347,19 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
       case "cloud-providers":
         return (
           <CloudProvidersView
+            checkDesktopAppRestriction={checkDesktopRestriction}
             cloudOrgProviders={providerAuthSnapshot.cloudOrgProviders}
             connectCloudProvider={providerAuthStore.connectCloudProvider}
             importedCloudProviders={providerAuthSnapshot.importedCloudProviders}
+            importsUnavailable={
+              openworkServerSnapshot.openworkServerCapabilities?.config?.read === false ||
+              openworkServerSnapshot.openworkServerCapabilities?.config?.write === false
+            }
+            lastSyncError={providerAuthSnapshot.lastSyncError}
+            openworkServerAvailable={Boolean(openworkServerSnapshot.openworkServerClient)}
             onOpenAccount={openCloudAccountSettings}
             refreshCloudOrgProviders={providerAuthStore.refreshCloudOrgProviders}
-            refreshImportedCloudProviders={providerAuthStore.refreshImportedCloudProviders}
-            removeCloudProvider={providerAuthStore.removeCloudProvider}
-            session={denSession}
+            runCloudProviderSync={providerAuthStore.runCloudProviderSync}
           />
         );
       case "advanced":
@@ -2574,7 +2583,6 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
         )}
         onSelect={providerAuthStore.startProviderAuth}
         onSubmitApiKey={providerAuthStore.submitProviderApiKey}
-        onConnectCloudProvider={providerAuthStore.connectCloudProvider}
         onSubmitOAuth={providerAuthStore.completeProviderAuthOAuth}
         onRefreshProviders={providerAuthStore.refreshProviders}
         showOpenWorkModelsSubscribe={showOpenWorkModelsSubscribe}

@@ -48,6 +48,7 @@ import {
   connectorInstanceListQuerySchema,
   connectorInstanceListResponseSchema,
   connectorInstanceMutationResponseSchema,
+  connectorInstanceSyncNowResponseSchema,
   connectorInstanceParamsSchema,
   connectorInstanceUpdateSchema,
   connectorMappingCreateSchema,
@@ -177,6 +178,7 @@ import {
   removePluginFromMarketplace,
   removePluginMembership,
   retryConnectorSyncEvent,
+  syncConnectorInstanceNow,
   setConfigObjectLifecycle,
   setConnectorInstanceLifecycle,
   setMarketplaceLifecycle,
@@ -1684,6 +1686,35 @@ export function registerPluginArchRoutes<T extends { Variables: OrgRouteVariable
         const params = validParam<any>(c)
         const body = validJson<any>(c)
         return c.json({ ok: true, item: await setConnectorInstanceAutoImport({ autoImportNewPlugins: Boolean(body.autoImportNewPlugins), connectorInstanceId: params.connectorInstanceId, context }) })
+      } catch (error) {
+        return routeErrorResponse(c, error)
+      }
+    })
+
+  withPluginArchOrgContext(app, "post", pluginArchRoutePaths.connectorInstanceSyncNow,
+    paramValidator(connectorInstanceParamsSchema),
+    describeRoute({
+      tags: ["Connectors"],
+      summary: "Sync connector instance now",
+      description: "Queues sync work for each connector target without sync work already queued or running.",
+      responses: {
+        200: jsonResponse("Connector instance sync queued successfully.", connectorInstanceSyncNowResponseSchema),
+        400: jsonResponse("The connector instance path parameters were invalid.", invalidRequestSchema),
+        401: jsonResponse("The caller must be signed in to sync connector instances.", unauthorizedSchema),
+        403: jsonResponse("The caller lacks permission to edit this connector instance.", forbiddenSchema),
+        404: jsonResponse("The connector instance could not be found.", notFoundSchema),
+      },
+    }),
+    async (c: OrgContext) => {
+      try {
+        const item = await syncConnectorInstanceNow({
+          connectorInstanceId: normalizeDenTypeId(
+            "connectorInstance",
+            validParam<z.infer<typeof connectorInstanceParamsSchema>>(c).connectorInstanceId,
+          ),
+          context: actorContext(c),
+        })
+        return c.json({ ok: true, item }, 200)
       } catch (error) {
         return routeErrorResponse(c, error)
       }

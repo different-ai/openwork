@@ -1,8 +1,9 @@
 version = 1
 
-# Warden gates "security clearance" on a single question: does this diff
-# introduce a new security issue? See .warden/skills/diff-security-review.
-# The clearance itself is granted by .github/workflows/warden-clearance.yml.
+# Warden gates clearance on blocking findings from two skills:
+# diff-security-review (all findings block) and desktop-den-sync-review (only
+# high findings block; medium findings are advisory). The clearance itself is
+# granted by .github/workflows/warden-clearance.yml.
 
 [defaults]
 reportOn = "low"
@@ -31,5 +32,22 @@ actions = ["opened", "synchronize", "reopened"]
 draft = false
 
 # Lets developers run `warden` locally on uncommitted changes before pushing.
+[[skills.triggers]]
+type = "local"
+
+[[skills]]
+name = "desktop-den-sync-review"
+paths = [
+  "apps/app/**",
+  "apps/desktop/**",
+  "ee/apps/den-api/**",
+  "packages/types/**",
+]
+
+[[skills.triggers]]
+type = "pull_request"
+actions = ["opened", "synchronize", "reopened"]
+draft = false
+
 [[skills.triggers]]
 type = "local"

@@ -1,5 +1,5 @@
 /** @jsxImportSource react */
-import { useBootState, useBootOverlayVisible } from "./boot-state";
+import { bootOverlayCanHide, useBootState, useBootOverlayVisible } from "./boot-state";
 import { OwDotTicker } from "./dot-ticker";
 
 const RELEASES_URL = "https://github.com/different-ai/openwork/releases";
@@ -11,11 +11,11 @@ const RELEASES_URL = "https://github.com/different-ai/openwork/releases";
  */
 export function LoadingOverlay() {
   const visible = useBootOverlayVisible();
-  const { phase, message, error } = useBootState();
+  const { phase, routeReady, message, error } = useBootState();
 
   if (!visible) return null;
 
-  const fading = phase === "ready";
+  const fading = bootOverlayCanHide(phase, routeReady);
 
   return (
     <div

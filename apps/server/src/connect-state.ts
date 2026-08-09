@@ -45,6 +45,7 @@ export type ConnectStateInspection = {
 };
 
 export type ConnectSnapshot = {
+  status: ConnectStateInspectionStatus;
   connectEnabled: boolean;
   connectCatalogEnabled: boolean;
   cloudMcpPresent: boolean;
@@ -282,10 +283,12 @@ async function resolveCloudHealth(config: ServerConfig, options: ConnectSnapshot
 }
 
 export async function getConnectSnapshot(config: ServerConfig, options: ConnectSnapshotOptions = {}): Promise<ConnectSnapshot> {
-  const state = await readConnectState(config);
+  const stateInspection = await inspectConnectState(config);
+  const state = stateInspection.state;
   const { cloudHealth, workspace } = await resolveCloudHealth(config, options);
 
   return {
+    status: stateInspection.status,
     connectEnabled: state.connectEnabled,
     connectCatalogEnabled: state.connectEnabled,
     cloudMcpPresent: cloudHealth?.usable === true,
@@ -316,6 +319,7 @@ export async function inspectConnectSnapshot(
       ? stateInspection.status
       : "unreadable",
     snapshot: {
+      status: stateInspection.status,
       connectEnabled: stateInspection.state.connectEnabled,
       connectCatalogEnabled: stateInspection.state.connectEnabled,
       cloudMcpPresent: runtimeInspection.cloudMcpPresent,

@@ -19,6 +19,8 @@ import { compareCapabilityMatches, SEARCH_CAPABILITIES_TOOL_NAME, searchCapabili
 import { executeExternalCapability, externalMcpSearchCoverageHint, parseExternalCapabilityName, resolveMcpMemberIdentity, searchExternalCapabilities, type ExternalCapabilityExecuteResult } from "./external-capabilities.js"
 import { executeMarketplaceCapability, listAccessibleMarketplaceSkillDescriptors, parseMarketplaceCapabilityName, searchMarketplaceCapabilities, type MarketplaceCapabilityObjectType, type RemoteSkillDescriptor } from "./marketplace-capabilities.js"
 import { resolvePublicOrigin } from "../capability-sources/generic-oauth.js"
+import { automationService } from "../automations/service.js"
+import { AGENT_AUTOMATION_INDEX_LIMIT, registerAgentAutomationResources } from "./automation-index.js"
 import { env } from "../env.js"
 import { isPlatformAdminUserId } from "../middleware/admin.js"
 import { executeAvailableAdminCapability, parseAdminCapabilityName, searchAvailableAdminCapabilities } from "./admin-capabilities.js"
@@ -418,6 +420,20 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
         organizationId: principal.organizationId,
         member: memberIdentity,
         marketplaceEnabled: externalMcpConnectionsEnabled,
+      })
+      // Owner-scoped: the index only ever carries this member's own
+      // Automations. Without a resolved member there is no owner to scope to,
+      // and a failure here must not take the whole connection down.
+      const automations = memberIdentity
+        ? await automationService.list({
+          organizationId: principal.organizationId,
+          ownerMemberId: memberIdentity.orgMembershipId,
+        }, { limit: AGENT_AUTOMATION_INDEX_LIMIT }).catch(() => null)
+        : null
+      registerAgentAutomationResources({
+        server,
+        items: automations?.items ?? [],
+        fetchedAt: Date.now(),
       })
     }
 

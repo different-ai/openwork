@@ -1,21 +1,22 @@
 "use client";
 
+import { motion, useReducedMotion } from "framer-motion";
 import {
+  Check,
   Cloud,
+  Database,
+  Globe,
   Monitor,
-  PlugZap,
-  ShieldCheck,
-  Users
+  Paintbrush,
+  Server,
+  ShieldCheck
 } from "lucide-react";
-import { useState } from "react";
+
 import { BookCallForm } from "./book-call-form";
-import { LandingAppDemoPanel } from "./landing-app-demo-panel";
-import { LandingEnterpriseHero } from "./landing-enterprise-hero";
-import {
-  defaultLandingDemoFlowId,
-  landingDemoFlows,
-  landingDemoFlowTimes
-} from "./landing-demo-flows";
+import { LpAnalyticsPanel } from "./lp-analytics-panel";
+import { LpCta } from "./lp-cta";
+import { LpSectionHeader } from "./lp-primitives";
+import { LpSsoCard } from "./lp-sso-card";
 import { SiteFooter } from "./site-footer";
 import { SiteNav } from "./site-nav";
 
@@ -25,226 +26,257 @@ type Props = {
   calUrl: string;
 };
 
-const stackItems = [
+const sovereignPillars = [
   {
-    id: "desktop",
-    title: "Desktop app",
-    description:
-      "Employees get an easy-to-use desktop app with your shared skills and plugins ready to run.",
+    title: "Your models",
+    body: "Bring your own inference: AWS Bedrock, Azure AI Foundry, OpenRouter, or models running in your own VPC. Provision centrally, swap anytime.",
+    icon: Database
+  },
+  {
+    title: "Your data",
+    body: "Local-first by design. Files stay on employee machines or inside your perimeter — prompts go straight to the provider you chose, nowhere else.",
+    icon: ShieldCheck
+  },
+  {
+    title: "Your infrastructure",
+    body: "Run a managed private instance we operate for you, or self-host the whole stack. It’s open source — audit it, fork it, and leave anytime.",
+    icon: Server
+  },
+  {
+    title: "Your brand",
+    body: "White-label the whole experience: your name, your logo, your domain. Roll it out to your workforce — or to your own customers.",
+    icon: Paintbrush
+  }
+];
+
+const identityFeatures = [
+  "SAML and OIDC single sign-on",
+  "SCIM seat provisioning and deprovisioning",
+  "DNS domain verification before production",
+  "One shared sign-in URL for the whole org"
+];
+
+const deployments = [
+  {
+    tag: "FREE FOREVER",
+    tagClass: "text-[#059669]",
+    title: "Desktop",
+    body: "The local-first app for macOS, Windows, and Linux. Files stay on employee machines.",
     icon: Monitor
   },
   {
-    id: "cloud",
-    title: "Cloud",
-    description:
-      "Admins set guardrails, providers, and policy controls, then deploy workflows across the organisation.",
+    tag: "ALPHA",
+    tagClass: "text-[var(--lp-blue)]",
+    title: "OpenWork Web",
+    body: "The same workspace in the browser, with your org’s models, skills, and policies.",
+    icon: Globe
+  },
+  {
+    tag: "FOR TEAMS",
+    tagClass: "text-[var(--lp-blue)]",
+    title: "Managed private instance",
+    body: "A dedicated instance we run for your org. SSO, policies, and audit built in.",
     icon: Cloud,
-    imageSrc: "/stack-cloud-dashboard.png"
+    tonal: true
   },
   {
-    id: "skill-hub",
-    title: "Extension Marketplace",
-    description:
-      "Publish reusable skills, MCPs, and plugins for your team from one place.",
-    icon: PlugZap,
-    imageSrc: "/stack-skill-hub.png"
+    tag: "OPEN SOURCE",
+    tagClass: "text-[var(--lp-muted)]",
+    title: "Self-hosted",
+    body: "Run the full OpenWork stack in your VPC, under your operational controls.",
+    icon: Server
+  }
+];
+
+const compliance = [
+  {
+    title: "SOC 2 Type II",
+    body: "Audit in progress with an independent firm — report available under NDA on completion."
   },
   {
-    id: "onboarding",
-    title: "Custom onboarding",
-    description:
-      "Roll out the right tools, context, and templates for each team from day one.",
-    icon: ShieldCheck,
-    imageSrc: "/stack-custom-onboarding.png"
+    title: "SAML SSO + SCIM",
+    body: "Sign-in through your IdP. Seats provision and deprovision automatically."
+  },
+  {
+    title: "Full audit trail",
+    body: "Every agent action logged and attributable, exportable to your SIEM."
+  },
+  {
+    title: "Open source",
+    body: "Audit the code you run. No black boxes between agents and your data."
   }
 ];
 
 export function LandingEnterprise(props: Props) {
-  const [activeStackDemoId, setActiveStackDemoId] = useState(defaultLandingDemoFlowId);
+  const reduceMotion = useReducedMotion();
+  const calHref = props.calUrl || "#book";
+  const calExternal = Boolean(props.calUrl);
 
   return (
-    <div className="relative min-h-screen overflow-hidden text-[#011627]">
-      <div className="relative z-10 flex min-h-screen flex-col items-center pb-3 pt-1 md:pb-4 md:pt-2">
-        <div className="w-full">
-          <SiteNav
-            stars={props.stars}
-            callUrl={props.calUrl}
-            downloadHref={props.downloadHref}
-            active="enterprise"
-          />
-        </div>
+    <div className="relative min-h-screen overflow-x-hidden bg-[var(--lp-page)] text-[var(--lp-ink)]">
+      <div className="relative z-10">
+        <SiteNav
+          stars={props.stars}
+          callUrl={props.calUrl}
+          downloadHref={props.downloadHref}
+          active="enterprise"
+        />
 
-        <main className="mx-auto flex w-full max-w-5xl flex-col gap-16 px-6 pb-24 md:gap-20 md:px-8 md:pb-28">
-          <section>
-            <div className="max-w-4xl">
-              <h1 className="mb-5 text-4xl font-medium leading-[1.1] tracking-tight md:text-5xl lg:text-6xl">
-                A privacy-first alternative to Claude Cowork<br />for your organization
-              </h1>
+        <main className="mx-auto w-full max-w-[1176px] px-6 pb-8">
+          <section className="pt-16 md:pt-[88px]">
+            <div className="text-[15px] text-[var(--lp-muted)]">OpenWork Enterprise</div>
+            <h1 className="mt-5 max-w-[760px] text-[46px] font-light leading-[51px] tracking-[-0.02em] md:text-[56px] md:leading-[61px]">
+              <motion.span
+                className="block"
+                initial={reduceMotion ? false : { opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: reduceMotion ? 0 : 0.4 }}
+              >
+                Self-sovereign AI
+              </motion.span>
+              <motion.span
+                className="block"
+                initial={reduceMotion ? false : { opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: reduceMotion ? 0 : 0.4, delay: reduceMotion ? 0 : 0.08 }}
+              >
+                for your <span className="font-pixel font-normal">company.</span>
+              </motion.span>
+            </h1>
+            <p className="mt-7 max-w-[760px] text-[18px] leading-[28px] text-[var(--lp-body)] md:text-[20px] md:leading-[30px]">
+              Your models, your infrastructure, your rules. OpenWork is open source end to end — adopt it for your whole company without handing your AI stack to a vendor.
+            </p>
+            <div className="mt-8 flex flex-col gap-3 sm:flex-row">
+              <a
+                href={calHref}
+                target={calExternal ? "_blank" : undefined}
+                rel={calExternal ? "noreferrer" : undefined}
+                className="lp-pill-primary"
+              >
+                Talk to sales →
+              </a>
+              <a href="/docs" className="lp-pill-secondary">Read the docs</a>
+            </div>
+            <div className="mt-7 flex flex-wrap gap-2.5">
+              <span className="lp-pill-secondary lp-pill-sm !h-9 gap-2 !text-[13px]"><span className="h-2 w-2 rounded-full bg-[#F59E0B]" />SOC 2 Type II — in progress</span>
+              <span className="lp-pill-secondary lp-pill-sm !h-9 !text-[13px]">SAML SSO + SCIM</span>
+              <span className="lp-pill-secondary lp-pill-sm !h-9 !text-[13px]">Audit logs</span>
+              <span className="lp-pill-secondary lp-pill-sm !h-9 !text-[13px]">Self-host or managed</span>
+              <span className="lp-pill-secondary lp-pill-sm !h-9 !text-[13px]">White labeling</span>
+            </div>
+          </section>
 
-              <p className="max-w-3xl text-lg leading-relaxed text-slate-600 md:text-xl">
-                Get your entire organisation running on shared skills, plugins,
-                and AI workflows. Bring your own LLM providers, choose from 50+
-                supported models, and integrate with LiteLLM out of the box.
-              </p>
-
-              <div className="mt-8 flex flex-col items-start gap-4 sm:flex-row sm:items-center">
-                <a
-                  href={props.calUrl || "#book"}
-                  target={props.calUrl ? "_blank" : undefined}
-                  rel={props.calUrl ? "noreferrer" : undefined}
-                  className="doc-button"
-                >
-                  Book a call
-                </a>
-                <a href="/trust" className="secondary-button">
-                  Security Review
-                </a>
-
-                <div className="flex items-center gap-2 opacity-80 sm:ml-4">
-                  <span className="text-[13px] font-medium text-gray-500">
-                    Backed by
-                  </span>
-                  <div className="flex items-center gap-1.5">
-                    <div className="flex h-[18px] w-[18px] items-center justify-center rounded-[4px] bg-[#ff6600] text-[11px] font-bold leading-none text-white">
-                      Y
-                    </div>
-                    <span className="text-[13px] font-semibold tracking-tight text-gray-600">
-                      Combinator
-                    </span>
+          <section className="mt-[120px]">
+            <LpSectionHeader label="What sovereign means here" heading="Nothing about your AI belongs to us." />
+            <div className="mt-10 grid gap-8 sm:grid-cols-2 lg:grid-cols-4">
+              {sovereignPillars.map((pillar) => {
+                const Icon = pillar.icon;
+                return (
+                  <div key={pillar.title}>
+                    <Icon className="h-5 w-5 text-[var(--lp-ink)]" strokeWidth={1.75} />
+                    <h3 className="mt-6 text-[17px] font-semibold">{pillar.title}</h3>
+                    <p className="mt-3 text-[14px] leading-[22px] text-[var(--lp-body)]">{pillar.body}</p>
                   </div>
-                </div>
-              </div>
+                );
+              })}
             </div>
-
-            <figure
-              aria-label="OpenWork enterprise dashboard showing AI adoption, spend, and tool penetration by department"
-              className="mt-12 overflow-hidden rounded-xl border border-gray-200 bg-white shadow-[0_24px_60px_-30px_rgba(1,22,39,0.25)] md:mt-16 lg:-mx-16 xl:-mx-32"
-            >
-              <LandingEnterpriseHero />
-            </figure>
           </section>
 
-          <section className="space-y-6">
+          <section className="mt-[120px]">
+            <LpSectionHeader
+              label="Oversight"
+              heading="See everything your agents do."
+              right={<p className="max-w-[380px] text-[14.5px] leading-[22px] text-[var(--lp-body)] md:text-right">Usage, spend, and a full audit trail — per member, per skill, per model.</p>}
+            />
+            <div className="mt-10"><LpAnalyticsPanel /></div>
+          </section>
+
+          <section className="mt-[120px] grid gap-12 lg:grid-cols-[360px_minmax(0,1fr)] lg:items-center">
             <div>
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                {stackItems.map((item) => {
-                  const Icon = item.icon;
-                  return (
-                    <div
-                      key={item.title}
-                      className="flex flex-col overflow-hidden rounded-xl border border-gray-200 bg-white"
-                    >
-                      <div className="flex h-[220px] items-center justify-center bg-gray-50/60 p-4 md:h-[280px]">
-                        {item.id === "desktop" ? (
-                          <div className="h-full w-full overflow-hidden rounded-lg border border-gray-200 bg-white">
-                            <div className="relative flex h-7 items-center border-b border-gray-100 bg-gradient-to-b from-white to-gray-50 px-3">
-                              <div className="flex gap-1.5">
-                                <div className="h-2 w-2 rounded-full bg-[#ff5f56]"></div>
-                                <div className="h-2 w-2 rounded-full bg-[#ffbd2e]"></div>
-                                <div className="h-2 w-2 rounded-full bg-[#27c93f]"></div>
-                              </div>
-                              <div className="absolute left-1/2 -translate-x-1/2 text-[10px] font-medium tracking-wide text-gray-500">
-                                OpenWork
-                              </div>
-                            </div>
-                            <div className="h-[calc(100%-1.75rem)] overflow-hidden">
-                              <div className="origin-top-left scale-[0.58]">
-                                <div className="w-[172.413793%] bg-white">
-                                  <LandingAppDemoPanel
-                                    flows={landingDemoFlows}
-                                    activeFlowId={activeStackDemoId}
-                                    onSelectFlow={setActiveStackDemoId}
-                                    timesById={landingDemoFlowTimes}
-                                  />
-                                </div>
-                              </div>
-                            </div>
-                          </div>
-                        ) : item.imageSrc ? (
-                          <img
-                            src={item.imageSrc}
-                            alt={`${item.title} interface`}
-                            className={`h-full w-full rounded-md ${
-                              item.id === "skill-hub" || item.id === "onboarding"
-                                ? "object-cover object-center scale-[1.02]"
-                                : "object-cover object-top"
-                            }`}
-                          />
-                        ) : (
-                          <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-white text-[#011627]">
-                            <Icon size={18} />
-                          </div>
-                        )}
-                      </div>
-                      <div className="border-t border-gray-100 p-5">
-                        <h4 className="text-[16px] font-medium tracking-tight text-[#011627]">
-                          {item.title}
-                        </h4>
-                        <p className="mt-1 text-[14px] text-gray-500">
-                          {item.description}
-                        </p>
-                      </div>
-                    </div>
-                  );
-                })}
+              <LpSectionHeader label="Identity" heading="Bring your identity provider." />
+              <div className="mt-8 flex flex-col gap-3">
+                {identityFeatures.map((feature) => (
+                  <div key={feature} className="flex items-center gap-2.5 text-[14.5px] text-[var(--lp-ink)]">
+                    <span className="flex h-[15px] w-[15px] shrink-0 items-center justify-center rounded-full bg-[var(--lp-ink)] text-white"><Check className="h-2.5 w-2.5" strokeWidth={2.5} /></span>
+                    {feature}
+                  </div>
+                ))}
               </div>
+              <a href="/docs" className="lp-pill-secondary lp-pill-sm mt-7">Read the SSO docs</a>
             </div>
-
-            <div className="grid gap-6 md:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
-              <div className="rounded-[2rem] border border-gray-200 bg-white p-6 md:p-8">
-                <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-emerald-100 bg-emerald-50 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-emerald-700">
-                  <ShieldCheck size={12} />
-                  Information security
-                </div>
-                <h3 className="mb-3 text-2xl font-medium tracking-tight text-[#011627]">
-                  Compliance-ready agentic workflows
-                </h3>
-                <p className="max-w-3xl text-[15px] leading-relaxed text-slate-600">
-                  OpenWork helps organizations run agentic workflows with a
-                  local-first, permission-aware architecture built for privacy,
-                  access control, and deployment flexibility across HIPAA, SOC 2
-                  Type II, ISO 27001, CCPA, and GDPR-sensitive environments.
-                  Enterprise plans add SSO / SAML with SCIM provisioning and
-                  desktop policies — admins decide which providers, models,
-                  extensions, and app versions employees can use, enforced
-                  automatically by the desktop app.
-                </p>
-              </div>
-
-              <div className="rounded-[2rem] border border-gray-200 bg-white p-6">
-                <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-blue-100 bg-blue-50 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-blue-700">
-                  <PlugZap size={12} />
-                  Deployment
-                </div>
-                <h3 className="mb-3 text-[1.35rem] font-medium tracking-tight text-[#011627]">
-                  Self-hosted or managed
-                </h3>
-                <p className="text-[14px] leading-relaxed text-slate-600">
-                  Deploy inside your own environment or work with us on a
-                  managed rollout, with your gateway, MCP servers, skills, and
-                  internal data sources connected.
-                </p>
-                <ul className="mt-4 space-y-2 text-[14px] leading-relaxed text-slate-600">
-                  <li>
-                    <span className="font-medium text-[#011627]">Managed deployment</span>{" "}
-                    — we run it, or guide your self-hosted install
-                  </li>
-                  <li>
-                    <span className="font-medium text-[#011627]">Skill development</span>{" "}
-                    — custom skills built for your team&apos;s workflows
-                  </li>
-                  <li>
-                    <span className="font-medium text-[#011627]">MCP consulting</span>{" "}
-                    — your internal tools and data, connected as MCP servers
-                  </li>
-                </ul>
-              </div>
-            </div>
-
-            <BookCallForm />
+            <LpSsoCard />
           </section>
 
-          <SiteFooter />
+          <section className="mt-[120px]">
+            <LpSectionHeader label="Deployment" heading="From laptop to private cloud." />
+            <p className="mt-6 max-w-[680px] text-[16px] leading-[25px] text-[var(--lp-body)]">
+              Start local, then move to a dedicated environment without changing how your team works.
+            </p>
+            <div className="mt-10 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+              {deployments.map((deployment) => {
+                const Icon = deployment.icon;
+                const content = (
+                  <>
+                    <div className="flex items-start justify-between gap-3">
+                      <div className={`text-[11px] font-bold tracking-[0.08em] ${deployment.tagClass}`}>{deployment.tag}</div>
+                      <Icon className="h-5 w-5 text-[var(--lp-ink)]" strokeWidth={1.75} />
+                    </div>
+                    <h3 className="mt-6 text-[17px] font-semibold">{deployment.title}</h3>
+                    <p className="mt-2 text-[13.5px] leading-[21px] text-[var(--lp-body)]">{deployment.body}</p>
+                  </>
+                );
+                return (
+                  <div
+                    key={deployment.title}
+                    className={`rounded-[24px] bg-[var(--lp-tonal)] p-7 ${deployment.tonal ? "shadow-[0_10px_30px_rgba(1,22,39,0.08)]" : ""}`}
+                  >
+                    {content}
+                  </div>
+                );
+              })}
+            </div>
+            <div className="mt-5 flex flex-col gap-4 rounded-[12px] bg-[#0B1E30] px-[22px] py-[18px] sm:flex-row sm:items-center sm:justify-between">
+              <code className="mono overflow-x-auto text-[13.5px] text-[#E2E8F0]">$ git clone different-ai/openwork &amp;&amp; docker compose up</code>
+              <a href="/docs" className="shrink-0 text-[13px] font-medium text-[#7DD3FC]">Self-hosting guide →</a>
+            </div>
+            <p className="mt-3 text-[13.5px] text-[var(--lp-muted)]">The full stack is open source — run it in your VPC with your keys, your models, and your policies.</p>
+          </section>
+
+          <section className="mt-[120px] flex flex-col justify-between gap-8 rounded-[24px] bg-[var(--lp-tonal)] px-7 py-10 md:flex-row md:items-center md:px-12">
+            <div className="max-w-[760px]">
+              <div className="text-[13px] font-medium text-[var(--lp-blue)]">Central management</div>
+              <h2 className="mt-3 text-[26px] font-semibold leading-[34px] tracking-[-0.015em]">Deploy skills, MCPs, and models to every seat from one place.</h2>
+              <p className="mt-3 text-[15px] leading-6 text-[var(--lp-body)]">Central management lives in OpenWork Cloud — and runs on your private instance too.</p>
+            </div>
+            <a href="/cloud" className="lp-pill-primary shrink-0">Explore OpenWork Cloud →</a>
+          </section>
+
+          <section className="mt-[120px]">
+            <LpSectionHeader label="Compliance" heading="Compliance, in the open." />
+            <div className="mt-10 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+              {compliance.map((item) => (
+                <div key={item.title} className="rounded-[14px] bg-white p-5 shadow-[0_2px_8px_rgba(1,22,39,0.04)]">
+                  <h3 className="text-[16px] font-semibold">{item.title}</h3>
+                  <p className="mt-3 text-[13.5px] leading-[21px] text-[var(--lp-body)]">{item.body}</p>
+                </div>
+              ))}
+            </div>
+            <a href="/trust" className="mt-6 inline-flex text-[14px] font-medium text-[var(--lp-ink)] underline underline-offset-4">SOC 2 status, DPA, and subprocessors live in the Trust Center →</a>
+          </section>
+
+          <div className="mt-[120px]"><BookCallForm /></div>
+
+          <div className="mt-[120px]">
+            <LpCta
+              heading="Own your AI stack."
+              sub="Talk to us about a managed private instance — or self-host the whole thing. Migration from Claude Cowork included."
+              primary={{ label: "Book a call →", href: calHref }}
+              secondary={{ label: "Read the security docs", href: "/trust" }}
+              trust="Open source · SSO · Audit logs · Your models"
+            />
+          </div>
+
+          <div className="mt-16"><SiteFooter /></div>
         </main>
       </div>
     </div>

@@ -19,6 +19,7 @@ export type GoogleWorkspaceGmailMessage = {
   threadId: string
   from: string
   to: string
+  bcc: string
   subject: string
   date: string
   snippet: string
@@ -256,6 +257,7 @@ export function extractGmailMessage(payloadJson: unknown): GoogleWorkspaceGmailM
     threadId: readString(message, "threadId"),
     from: headers.get("from") ?? "",
     to: headers.get("to") ?? "",
+    bcc: headers.get("bcc") ?? "",
     subject: headers.get("subject") ?? "",
     date: headers.get("date") ?? "",
     snippet,

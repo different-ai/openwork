@@ -255,6 +255,7 @@ export function NewTaskComposer(props: NewTaskComposerProps) {
       onModelPickerOpenChange={context?.onModelPickerOpenChange ?? noop}
       onModelChange={context?.onModelChange ?? noop}
       attachments={attachments}
+      attachmentsUploading={props.busy && attachments.length > 0}
       onAttachFiles={handleAttachFiles}
       onRemoveAttachment={handleRemoveAttachment}
       attachmentsEnabled

@@ -14,6 +14,9 @@ const sessionRoutePath = fileURLToPath(
 const sessionProviderAuthPath = fileURLToPath(
   new URL("../src/react-app/domains/connections/provider-auth/use-session-provider-auth.ts", import.meta.url),
 );
+const providerAuthModalPath = fileURLToPath(
+  new URL("../src/react-app/domains/connections/provider-auth/provider-auth-modal.tsx", import.meta.url),
+);
 
 describe("composer model controls", () => {
   test("stay enabled during ordinary generation and disable during steering", () => {
@@ -56,5 +59,14 @@ describe("composer model controls", () => {
     expect(sessionProviderAuthSource).toContain(
       "setCompletedCloudProviderSync({ context: cloudProviderSyncContext, providerList });",
     );
+  });
+
+  test("does not offer organization-provider connect actions in the model picker", () => {
+    const sessionRouteSource = readFileSync(sessionRoutePath, "utf8");
+    const providerAuthModalSource = readFileSync(providerAuthModalPath, "utf8");
+
+    expect(sessionRouteSource).not.toContain("onConnectCloud" + "Provider");
+    expect(providerAuthModalSource).not.toContain("onConnectCloud" + "Provider");
+    expect(providerAuthModalSource).not.toContain("Connect organization provider");
   });
 });

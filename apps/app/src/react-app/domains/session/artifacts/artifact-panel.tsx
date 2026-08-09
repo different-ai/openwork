@@ -1,5 +1,5 @@
 /** @jsxImportSource react */
-import { lazy, Suspense, useEffect, useMemo, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Download, ExternalLink, FolderOpen, X } from "lucide-react";
 
@@ -9,7 +9,6 @@ import { isElectronRuntime } from "@/app/utils";
 import { Button } from "@/components/ui/button";
 import { toast } from "@/components/ui/sonner";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { formatFileSize } from "@/lib/utils";
 import { usePlatform } from "@/react-app/kernel/platform";
 import { type ArtifactPanelTab, usePanelTabStore } from "../panel/panel-tab-store";
 import { isCollectibleArtifactTarget, type BinaryData, type Data, type OpenTarget, type TextData } from "./open-target";
@@ -96,6 +95,8 @@ function ArtifactPanelView({ client, workspaceId, workspaceRoot, isRemoteWorkspa
   const queryClient = useQueryClient();
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
+  const lastSyncedRef = useRef<string | null>(null);
+  const failedDraftRef = useRef<string | null>(null);
   const isDirectTextEdit = isTextContent(target) && target.preview === "markdown" && !isMarkdownPrimitiveEvalArtifact(target);
   const externalPath = useMemo(() => target.kind === "file" ? absoluteWorkspacePath(workspaceRoot, target.value) : target.value, [target.kind, target.value, workspaceRoot]);
   const canUseDesktopFileActions = target.kind === "file" && !isRemoteWorkspace && platform.capabilities.revealInFileManager;
@@ -154,10 +155,13 @@ function ArtifactPanelView({ client, workspaceId, workspaceRoot, isRemoteWorkspa
   useEffect(() => {
     setEditing(false);
     setDraft("");
+    lastSyncedRef.current = null;
+    failedDraftRef.current = null;
   }, [target.id, workspaceId]);
 
   useEffect(() => {
-    if (data?.kind === "text") {
+    if (data?.kind === "text" && data.data !== lastSyncedRef.current) {
+      lastSyncedRef.current = data.data;
       setDraft(data.data);
     }
   }, [data]);
@@ -183,8 +187,16 @@ function ArtifactPanelView({ client, workspaceId, workspaceRoot, isRemoteWorkspa
       );
 
       if (input.kind === "text") {
-        setDraft(input.data);
+        lastSyncedRef.current = input.data;
+        failedDraftRef.current = null;
       }
+    },
+    onError: (cause, input) => {
+      if (input.kind === "text") {
+        failedDraftRef.current = input.data;
+      }
+
+      toast.error(cause instanceof Error ? cause.message : "Could not save changes.");
     },
   });
 
@@ -232,20 +244,27 @@ function ArtifactPanelView({ client, workspaceId, workspaceRoot, isRemoteWorkspa
     }
   };
 
-  const save = () => {
-    if (target.kind !== "file" || !isTextContent(target) || data?.kind !== "text") {
+  const isTextEditing = data?.kind === "text" && (editing || isDirectTextEdit);
+  const isDirty = data?.kind === "text" && draft !== data.data;
+
+  useEffect(() => {
+    if (
+      target.kind !== "file" ||
+      data?.kind !== "text" ||
+      !(editing || isDirectTextEdit) ||
+      isSaving ||
+      draft === data.data ||
+      draft === failedDraftRef.current
+    ) {
       return;
     }
 
-    mutate(
-      {
-        kind: "text",
-        data: draft,
-        baseUpdatedAt: data.updatedAt,
-      },
-      { onSuccess: () => setEditing(false) },
-    );
-  };
+    const timer = window.setTimeout(() => {
+      mutate({ kind: "text", data: draft, baseUpdatedAt: data.updatedAt });
+    }, 600);
+
+    return () => window.clearTimeout(timer);
+  }, [draft, data, editing, isDirectTextEdit, isSaving, target.kind, mutate]);
 
   const saveSpreadsheetContent = async (payload: Data) => {
     if (target.kind !== "file") {
@@ -270,52 +289,19 @@ function ArtifactPanelView({ client, workspaceId, workspaceRoot, isRemoteWorkspa
               {target.name}
             </h3>
             <span className="shrink-0 text-xs text-muted-foreground">
-              {target.exists === false ? "missing" : target.size !== undefined ? `${formatFileSize(target.size)}` : ""}
+              {target.exists === false ? "missing" : isTextEditing ? (isSaving || isDirty ? "Saving\u2026" : "Saved") : ""}
             </span>
           </div>
           <div className="flex shrink-0 items-center gap-2">
-          {isTextContent(target) && data?.kind === "text" ? (
-            editing || isDirectTextEdit ? (
-              <>
-                <Tooltip>
-                  <TooltipTrigger
-                    render={(
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => {
-                          if (data?.kind === "text") {
-                            setDraft(data.data);
-                          }
-                          setEditing(false);
-                        }}
-                        disabled={isSaving}
-                      >
-                        Discard
-                      </Button>
-                    )}
-                  />
-                  <TooltipContent>Discard changes</TooltipContent>
-                </Tooltip>
-                <Tooltip>
-                  <TooltipTrigger
-                    render={(
-                      <Button variant="default" size="sm" onClick={() => void save()} disabled={isSaving || draft === data.data}>{isSaving ? "Saving" : "Save"}</Button>
-                    )}
-                  />
-                  <TooltipContent>Save changes</TooltipContent>
-                </Tooltip>
-              </>
-            ) : (
-              <Tooltip>
-                <TooltipTrigger
-                  render={(
-                    <Button variant="ghost" size="sm" onClick={() => setEditing(true)}>Edit</Button>
-                  )}
-                />
-                <TooltipContent>Edit artifact</TooltipContent>
-              </Tooltip>
-            )
+          {isTextContent(target) && data?.kind === "text" && !isDirectTextEdit ? (
+            <Tooltip>
+              <TooltipTrigger
+                render={(
+                  <Button variant="ghost" size="sm" onClick={() => setEditing((value) => !value)}>{editing ? "Done" : "Edit"}</Button>
+                )}
+              />
+              <TooltipContent>{editing ? "Stop editing" : "Edit artifact"}</TooltipContent>
+            </Tooltip>
           ) : null}
           {target.kind === "file" ? (
             <Tooltip>

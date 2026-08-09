@@ -78,6 +78,11 @@ export function selectStickyOpenworkPortWorkspace(requestedWorkspacePaths = [], 
   return "";
 }
 
+export function resolveEvalLocalServerDelayMs(env = process.env) {
+  const delayMs = Number(env.OPENWORK_EVAL_LOCAL_SERVER_DELAY_MS);
+  return Number.isFinite(delayMs) && delayMs > 0 ? delayMs : 0;
+}
+
 export function commandMatchesPackagedSidecar(command, sidecarDirs = []) {
   const value = String(command ?? "");
   if (!sidecarDirs.some((dir) => String(dir ?? "").trim() && value.includes(dir))) {
@@ -1545,6 +1550,10 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
   let inProcessServer = null;
 
   async function startOpenworkServer(options) {
+    const evalDelayMs = resolveEvalLocalServerDelayMs();
+    if (evalDelayMs > 0) {
+      await new Promise((resolve) => setTimeout(resolve, evalDelayMs));
+    }
     const currentPort = openworkServerState.port;
     // Stop any previously running in-process server
     if (inProcessServer) {

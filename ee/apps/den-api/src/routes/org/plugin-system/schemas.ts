@@ -761,6 +761,7 @@ export const connectorSyncSummarySchema = z.object({
 
 export const connectorSyncEventSchema = z.object({
   id: connectorSyncEventIdSchema,
+  attemptCount: z.number().int().nonnegative(),
   connectorInstanceId: connectorInstanceIdSchema,
   connectorTargetId: connectorTargetIdSchema.nullable(),
   connectorType: connectorTypeSchema,
@@ -768,6 +769,7 @@ export const connectorSyncEventSchema = z.object({
   eventType: connectorSyncEventTypeSchema,
   externalEventRef: z.string().trim().min(1).max(255).nullable(),
   sourceRevisionRef: z.string().trim().min(1).max(255).nullable(),
+  nextAttemptAt: nullableTimestampSchema,
   status: connectorSyncStatusSchema,
   summaryJson: connectorSyncSummarySchema.nullable(),
   startedAt: z.string().datetime({ offset: true }),
@@ -1080,6 +1082,10 @@ export const connectorInstanceRemoveResponseSchema = pluginArchMutationResponseS
 export const connectorInstanceListResponseSchema = pluginArchListResponseSchema("PluginArchConnectorInstanceListResponse", connectorInstanceSchema)
 export const connectorInstanceDetailResponseSchema = pluginArchDetailResponseSchema("PluginArchConnectorInstanceDetailResponse", connectorInstanceSchema)
 export const connectorInstanceMutationResponseSchema = pluginArchMutationResponseSchema("PluginArchConnectorInstanceMutationResponse", connectorInstanceSchema)
+export const connectorInstanceSyncNowResponseSchema = pluginArchMutationResponseSchema(
+  "PluginArchConnectorInstanceSyncNowResponse",
+  z.object({ enqueuedCount: z.number().int().nonnegative() }),
+)
 export const connectorTargetListResponseSchema = pluginArchListResponseSchema("PluginArchConnectorTargetListResponse", connectorTargetSchema)
 export const connectorTargetDetailResponseSchema = pluginArchDetailResponseSchema("PluginArchConnectorTargetDetailResponse", connectorTargetSchema)
 export const connectorTargetMutationResponseSchema = pluginArchMutationResponseSchema("PluginArchConnectorTargetMutationResponse", connectorTargetSchema)

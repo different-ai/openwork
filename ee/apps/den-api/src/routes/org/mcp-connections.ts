@@ -81,7 +81,11 @@ import {
   externalMcpSharedCallbackUrl,
 } from "../../capability-sources/external-mcp-oauth-contract.js"
 import type { MemberTeamSummary } from "../../orgs.js"
-import { EXTERNAL_MCP_PRESETS } from "../../capability-sources/external-mcp-presets.js"
+import {
+  EXTERNAL_MCP_PRESETS,
+  externalMcpPresetListResponseSchema,
+  externalMcpPresetResponseSchema,
+} from "../../capability-sources/external-mcp-presets.js"
 import {
   MAX_RESOLVE_QUERY_LENGTH,
   classifyResolveQuery,
@@ -91,6 +95,7 @@ import {
   suggestConnectionName,
 } from "../../capability-sources/external-mcp-resolve.js"
 import {
+  externalMcpOAuthConfigurationDefaults,
   pluginMcpRequiresPreRegisteredOAuthClient,
   requiredPluginMcpAuthType,
 } from "../../capability-sources/external-mcp-auth-policy.js"
@@ -266,7 +271,7 @@ const createExternalConnectionBodySchema = z.object({
     tokenEndpointAuthMethod: z.enum(["client_secret_basic", "client_secret_post"]).optional(),
   }).optional(),
   authorizationServerIssuer: z.string().trim().url().max(2048).nullable().optional(),
-  requestedScopes: z.array(z.string().trim().min(1).max(255)).max(100).optional().default([]),
+  requestedScopes: z.array(z.string().trim().min(1).max(255)).max(100).optional(),
   /** Who can USE the connection. Defaults to org-wide so the naive quick-add path matches expectations, but it's an explicit, editable choice. */
   access: accessInputSchema.optional().default({ orgWide: true, memberIds: [], teamIds: [] }),
 })
@@ -559,19 +564,6 @@ const listConnectionsQuerySchema = z.object({
   scope: z.enum(["usable", "manageable"]).optional().default("usable"),
 })
 
-const presetResponseSchema = z.object({
-  presetId: z.string(),
-  displayName: z.string(),
-  description: z.string(),
-  url: z.string(),
-  authType: z.enum(["oauth", "apikey", "none"]),
-  requiresOAuthClient: z.boolean().optional(),
-}).meta({ ref: "ExternalMcpPresetResponse" })
-
-const presetListResponseSchema = z.object({
-  presets: z.array(presetResponseSchema),
-}).meta({ ref: "ExternalMcpPresetListResponse" })
-
 const resolveConnectionBodySchema = z.object({
   /** Free-form: a full URL, a bare host, or a product name like "vercel". */
   query: z.string().min(1).max(MAX_RESOLVE_QUERY_LENGTH),
@@ -583,7 +575,7 @@ const resolveConnectionResponseSchema = z.object({
   attempted: z.array(z.string()),
   /** Why the query produced no candidates (only for not_found). */
   reason: z.string().optional(),
-  preset: presetResponseSchema.optional(),
+  preset: externalMcpPresetResponseSchema.optional(),
   match: z.object({
     url: z.string(),
     suggestedName: z.string(),
@@ -1571,7 +1563,7 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
       summary: "List predefined External MCP Connection presets",
       description: "Common third-party MCP servers (Notion, Linear, Stripe, Slack, ...) an admin can add with one click, prefilled with a real name and URL.",
       responses: {
-        200: jsonResponse("Presets.", presetListResponseSchema),
+        200: jsonResponse("Presets.", externalMcpPresetListResponseSchema),
         401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
       },
     }),
@@ -2061,7 +2053,7 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
       if (body.oauthClient && body.authType !== "oauth") {
         return c.json({ error: "invalid_request", message: "oauthClient is only allowed when authType is oauth." }, 400)
       }
-      if (body.authType !== "oauth" && (body.authorizationServerIssuer !== undefined || body.requestedScopes.length > 0)) {
+      if (body.authType !== "oauth" && (body.authorizationServerIssuer !== undefined || (body.requestedScopes?.length ?? 0) > 0)) {
         return c.json({ error: "invalid_request", message: "OAuth issuer and scopes are only allowed when authType is oauth." }, 400)
       }
       if (body.authType === "apikey" && !body.apiKey) {
@@ -2080,6 +2072,11 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
         }
       }
 
+      const oauthConfiguration = externalMcpOAuthConfigurationDefaults({
+        url: body.url,
+        authorizationServerIssuer: body.authorizationServerIssuer,
+        requestedScopes: body.requestedScopes,
+      })
       const created = await createExternalMcpConnection({
         organizationId: payload.organization.id,
         name: body.name,
@@ -2089,8 +2086,7 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
         apiKey: body.apiKey ?? null,
         oauthConfiguration: body.authType === "oauth" ? {
           version: 1,
-          authorizationServerIssuer: body.authorizationServerIssuer ?? null,
-          requestedScopes: [...new Set(body.requestedScopes)],
+          ...oauthConfiguration,
         } : null,
         createdByOrgMembershipId: payload.currentMember.id,
         access: {
@@ -2111,7 +2107,7 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
             enterpriseMcpRegistrationSource: "pre-registered",
             registrationContractVersion: 2,
             registeredRedirectUri: externalMcpCallbackUrl({ connectionId: created.id, callbackMode }),
-            authorizationServerIssuer: body.authorizationServerIssuer ?? undefined,
+            authorizationServerIssuer: oauthConfiguration.authorizationServerIssuer ?? undefined,
             tokenEndpointAuthMethod: body.oauthClient.tokenEndpointAuthMethod,
           },
           createdByOrgMembershipId: payload.currentMember.id,
@@ -2210,6 +2206,19 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
       const identityChanged = normalizeExternalMcpIdentityUrl(connection.url) !== normalizeExternalMcpIdentityUrl(body.url)
         || connection.authType !== body.authType
         || connection.credentialMode !== body.credentialMode
+      const oauthConfigurationDefaults = externalMcpOAuthConfigurationDefaults({
+        url: body.url,
+        authorizationServerIssuer: body.authorizationServerIssuer !== undefined
+          ? body.authorizationServerIssuer
+          : !identityChanged && connection.authType === "oauth"
+            ? connection.oauthConfiguration?.authorizationServerIssuer ?? undefined
+            : undefined,
+        requestedScopes: body.requestedScopes
+          ?? (!identityChanged && connection.authType === "oauth"
+            && connection.oauthConfiguration?.requestedScopes.length
+            ? connection.oauthConfiguration.requestedScopes
+            : undefined),
+      })
       const shouldWriteOAuthConfiguration = body.authType !== "oauth"
         || connection.authType !== "oauth"
         || connection.oauthConfiguration !== null
@@ -2220,12 +2229,8 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
         : body.authType === "oauth"
           ? {
               version: 1,
-              authorizationServerIssuer: body.authorizationServerIssuer !== undefined
-                ? body.authorizationServerIssuer
-                : connection.authType === "oauth"
-                  ? connection.oauthConfiguration?.authorizationServerIssuer ?? null
-                  : null,
-              requestedScopes: [...new Set(body.requestedScopes ?? connection.oauthConfiguration?.requestedScopes ?? [])],
+              authorizationServerIssuer: oauthConfigurationDefaults.authorizationServerIssuer,
+              requestedScopes: oauthConfigurationDefaults.requestedScopes,
               ...(connection.authType === "oauth" && connection.oauthConfiguration?.discovery
                 ? { discovery: connection.oauthConfiguration.discovery }
                 : {}),

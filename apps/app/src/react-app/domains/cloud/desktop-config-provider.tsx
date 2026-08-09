@@ -20,13 +20,16 @@ import {
   createDenClient,
   DenApiError,
   ensureDenActiveOrganization,
+  getDenDesktopConfigCacheKey,
   normalizeDenDesktopConfig,
+  readCachedDenDesktopConfig,
   readDenBootstrapConfig,
   readDenSettings,
   setDenBootstrapConfig,
+  writeCachedDenDesktopConfig,
   type DenDesktopConfig,
 } from "../../../app/lib/den";
-import { applyBrandAppName, applyBrandIcon } from "../../../app/lib/desktop";
+import { applyBrandAppName, applyBrandIcon, getBrandIconState } from "../../../app/lib/desktop";
 import { createOpenworkServerClient } from "../../../app/lib/openwork-server";
 import {
   denSessionUpdatedEvent,
@@ -38,6 +41,7 @@ import { useDenAuth } from "./den-auth-provider";
 import {
   bootstrapBrandingFromDesktopConfig,
   bootstrapBrandingNeedsSync,
+  brandIconReconcileAction,
 } from "./workspace-branding-restart";
 
 export type DesktopConfigStore = {
@@ -59,7 +63,6 @@ const DesktopConfigContext = createContext<DesktopConfigStore | undefined>(
 
 const DEFAULT_DESKTOP_CONFIG: DenDesktopConfig = {};
 const DESKTOP_CONFIG_REFRESH_MS = 60 * 60 * 1000;
-const DESKTOP_CONFIG_CACHE_PREFIX = "openwork.den.desktopConfig:";
 const DESKTOP_CONFIG_ITEMS = [
   ...desktopPolicyKeys,
   "allowedDesktopVersions",
@@ -115,38 +118,6 @@ function isBootstrapBrandingActionItem(item: DesktopConfigItem): boolean {
   return item === "brandAppName" || item === "brandLogoUrl" || item === "brandIconUrl";
 }
 
-function getDesktopConfigCacheKey(): string {
-  const settings = readDenSettings();
-  const baseUrl = settings.baseUrl.trim();
-  const activeOrgId = settings.activeOrgId?.trim() ?? "";
-  if (!baseUrl) return "";
-  return `${DESKTOP_CONFIG_CACHE_PREFIX}${baseUrl}::${activeOrgId}`;
-}
-
-function readCachedDesktopConfig(key: string): DenDesktopConfig | null {
-  if (typeof window === "undefined" || !key) return null;
-
-  try {
-    const raw = window.localStorage.getItem(key);
-    if (!raw) return null;
-    return normalizeDenDesktopConfig(JSON.parse(raw));
-  } catch {
-    return null;
-  }
-}
-
-function writeCachedDesktopConfig(key: string, config: DenDesktopConfig) {
-  if (typeof window === "undefined" || !key) return;
-  try {
-    window.localStorage.setItem(
-      key,
-      JSON.stringify(normalizeDenDesktopConfig(config)),
-    );
-  } catch {
-    // Quota / private-browsing failures are non-fatal — we just miss the cache next boot.
-  }
-}
-
 function desktopConfigItemMatches(
   previousValue: DenDesktopConfig[DesktopConfigItem],
   nextValue: DenDesktopConfig[DesktopConfigItem],
@@ -177,6 +148,44 @@ function getDesktopConfigActions(input: {
 type DesktopConfigProviderProps = {
   children: ReactNode;
 };
+
+// Rewrites desktop-bootstrap.json branding to match `normalizedConfig` so a
+// cleared wordmark/icon cannot resurrect from the install/connect snapshot on
+// the next relaunch. No-op when the bootstrap already matches.
+function syncBootstrapBranding(normalizedConfig: DenDesktopConfig): void {
+  if (!isDesktopRuntime()) return;
+  const bootstrap = readDenBootstrapConfig();
+  if (!bootstrapBrandingNeedsSync(bootstrap, normalizedConfig)) return;
+  const branding = bootstrapBrandingFromDesktopConfig(normalizedConfig);
+  void setDenBootstrapConfig(
+    {
+      ...bootstrap,
+      brandAppName: branding.brandAppName,
+      brandLogoUrl: branding.brandLogoUrl,
+      brandIconUrl: branding.brandIconUrl,
+    },
+    { dispatchSettingsChanged: false },
+  ).catch(() => undefined);
+}
+
+// Level-based safety net behind the edge-triggered config diff: the shell
+// (Electron main) restores its cached/bootstrap brand icon on every launch,
+// so when a clear's edge is missed (stale localStorage cache, failed IPC,
+// org/base-URL switch changing the cache key), nothing would ever tell the
+// shell to reset and the branded icon would persist forever. After every
+// fresh config fetch, compare the shell's applied state to the config and
+// re-assert the expected icon plus the bootstrap branding snapshot.
+async function reconcileShellBranding(latestConfig: DenDesktopConfig): Promise<void> {
+  if (!isDesktopRuntime()) return;
+  const normalizedConfig = normalizeDenDesktopConfig(latestConfig);
+  syncBootstrapBranding(normalizedConfig);
+  const action = brandIconReconcileAction(normalizedConfig, await getBrandIconState());
+  if (!action) return;
+  const result = await applyBrandIcon(action.apply);
+  if (!result.ok) {
+    console.warn(`[brand-icon] Desktop icon reconcile was not applied: ${result.reason ?? "unknown failure"}`);
+  }
+}
 
 type DesktopConfigState = {
   config: DenDesktopConfig;
@@ -245,20 +254,8 @@ export function DesktopConfigProvider({ children }: DesktopConfigProviderProps) 
     const shouldSyncBootstrapBranding = actions.some((action) =>
       isBootstrapBrandingActionItem(action.item),
     );
-    if (shouldSyncBootstrapBranding && isDesktopRuntime()) {
-      const bootstrap = readDenBootstrapConfig();
-      if (bootstrapBrandingNeedsSync(bootstrap, normalizedConfig)) {
-        const branding = bootstrapBrandingFromDesktopConfig(normalizedConfig);
-        void setDenBootstrapConfig(
-          {
-            ...bootstrap,
-            brandAppName: branding.brandAppName,
-            brandLogoUrl: branding.brandLogoUrl,
-            brandIconUrl: branding.brandIconUrl,
-          },
-          { dispatchSettingsChanged: false },
-        ).catch(() => undefined);
-      }
+    if (shouldSyncBootstrapBranding) {
+      syncBootstrapBranding(normalizedConfig);
     }
 
     currentDesktopConfigRef.current = normalizedConfig;
@@ -273,6 +270,7 @@ export function DesktopConfigProvider({ children }: DesktopConfigProviderProps) 
     if (import.meta.env.DEV && requireFresh && devRefreshDesktopConfigRef.current) {
       const nextConfig = devRefreshDesktopConfigRef.current;
       applyDesktopConfigActions(nextConfig);
+      void reconcileShellBranding(nextConfig).catch(() => undefined);
       return nextConfig;
     }
 
@@ -280,7 +278,7 @@ export function DesktopConfigProvider({ children }: DesktopConfigProviderProps) 
     const settings = readDenSettings();
     const token = settings.authToken?.trim() ?? "";
     const activeOrgId = settings.activeOrgId?.trim() ?? "";
-    const cacheKey = getDesktopConfigCacheKey();
+    const cacheKey = getDenDesktopConfigCacheKey();
 
     if (!isSignedIn || !token || !activeOrgId) {
       applyDesktopConfigActions(DEFAULT_DESKTOP_CONFIG);
@@ -288,7 +286,7 @@ export function DesktopConfigProvider({ children }: DesktopConfigProviderProps) 
       return DEFAULT_DESKTOP_CONFIG;
     }
 
-    const cached = readCachedDesktopConfig(cacheKey);
+    const cached = readCachedDenDesktopConfig(cacheKey);
     if (cached) {
       applyDesktopConfigActions(cached);
     }
@@ -305,8 +303,9 @@ export function DesktopConfigProvider({ children }: DesktopConfigProviderProps) 
 
       if (currentRun !== refreshRunRef.current) return nextConfig;
 
-      writeCachedDesktopConfig(cacheKey, nextConfig);
+      writeCachedDenDesktopConfig(cacheKey, nextConfig);
       applyDesktopConfigActions(nextConfig);
+      void reconcileShellBranding(nextConfig).catch(() => undefined);
       return nextConfig;
     } catch (error) {
       if (currentRun !== refreshRunRef.current) {
@@ -361,8 +360,8 @@ export function DesktopConfigProvider({ children }: DesktopConfigProviderProps) 
       return;
     }
 
-    const cacheKey = getDesktopConfigCacheKey();
-    const cached = readCachedDesktopConfig(cacheKey);
+    const cacheKey = getDenDesktopConfigCacheKey();
+    const cached = readCachedDenDesktopConfig(cacheKey);
     applyDesktopConfigActions(cached ?? DEFAULT_DESKTOP_CONFIG);
     setDesktopConfigState((current) => ({ ...current, loading: !cached }));
     void desktopConfigHandler();

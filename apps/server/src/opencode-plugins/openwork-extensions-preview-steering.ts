@@ -128,7 +128,8 @@ const connectStateResponseSchema = z.object({
   }).passthrough(),
 }).passthrough();
 
-const connectSkillsResponseSchema = z.object({
+// Both catalogs answer with the same envelope: a rendered prompt section.
+const connectCatalogResponseSchema = z.object({
   ok: z.literal(true),
   schemaVersion: z.number(),
   instruction: z.string(),
@@ -305,7 +306,21 @@ export async function resolveOpenWorkConnectSkillInstruction(_input?: unknown, f
       headers: { Authorization: `Bearer ${token}` },
     });
     if (!response.ok) return "";
-    return connectSkillsResponseSchema.parse(await parseResponse(response)).instruction;
+    return connectCatalogResponseSchema.parse(await parseResponse(response)).instruction;
+  } catch {
+    return "";
+  }
+}
+
+export async function resolveOpenWorkAutomationInstruction(_input?: unknown, fetcher: OpenWorkFetch = fetch): Promise<string> {
+  try {
+    const { url, token } = requireOpenWorkServer();
+    // Automations are account-scoped like Connect skills, not per-workspace.
+    const response = await fetcher(`${url}/experimental/connect/automations`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!response.ok) return "";
+    return connectCatalogResponseSchema.parse(await parseResponse(response)).instruction;
   } catch {
     return "";
   }

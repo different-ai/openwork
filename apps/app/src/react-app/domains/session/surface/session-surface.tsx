@@ -657,6 +657,9 @@ export function SessionSurface(props: SessionSurfaceProps) {
   );
   const draft = useComposerStateStore((state) => getComposerDraft(state, props.sessionId));
   const attachments = useComposerStateStore((state) => getComposerAttachments(state, props.sessionId));
+  // True while a send with attachments is in flight (compression + inbox
+  // upload + prompt POST); drives the uploading overlay on composer chips.
+  const [attachmentsUploading, setAttachmentsUploading] = useState(false);
   const mentions = useComposerStateStore((state) => getComposerMentions(state, props.sessionId));
   const pasteParts = useComposerStateStore((state) => getComposerPasteParts(state, props.sessionId));
   const setComposerDraft = useComposerStateStore((state) => state.setDraft);
@@ -1161,6 +1164,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
     if (!text && attachments.length === 0) return;
     const nextDraft = buildDraft(text, attachments);
     const sentAttachments = attachments;
+    if (sentAttachments.length) setAttachmentsUploading(true);
     try {
       const result = await sendDraft(nextDraft);
       if (result.outcome === "blocked" || result.outcome === "cancelled") return;
@@ -1177,6 +1181,8 @@ export function SessionSurface(props: SessionSurfaceProps) {
           .forEach(revokeAttachmentPreview);
       }
     } catch {
+    } finally {
+      setAttachmentsUploading(false);
     }
   }, [attachments, buildDraft, clearComposer, draft, props.sessionId, sendDraft]);
 
@@ -2069,6 +2075,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
         onModelChange={handleModelChange}
         sessionId={props.sessionId}
         attachments={attachments}
+        attachmentsUploading={attachmentsUploading}
         onAttachFiles={handleAttachFiles}
         onRemoveAttachment={handleRemoveAttachment}
         attachmentsEnabled={props.attachmentsEnabled}

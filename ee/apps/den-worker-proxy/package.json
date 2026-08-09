@@ -11,11 +11,11 @@
   },
   "dependencies": {
     "@daytonaio/sdk": "^0.201.0",
-    "@hono/node-server": "^1.13.8",
+    "@hono/node-server": "2.0.12",
     "@openwork-ee/den-db": "workspace:*",
     "@openwork-ee/utils": "workspace:*",
     "dotenv": "^16.4.5",
-    "hono": "4.12.27",
+    "hono": "4.12.34",
     "zod": "^4.3.6"
   },
   "devDependencies": {

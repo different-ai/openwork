@@ -5,13 +5,30 @@ import { Menu, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { OpenWorkMark } from "./openwork-mark";
 
+type ActivePage =
+  | "home"
+  | "pricing"
+  | "download"
+  | "enterprise"
+  | "connect"
+  | "cloud"
+  | "docs"
+  | "roadmap";
+
 type Props = {
   stars: string;
   callUrl?: string;
   downloadHref?: string;
   mobilePrimaryHref?: string;
   mobilePrimaryLabel?: string;
-  active?: "home" | "pricing" | "download" | "enterprise" | "cloud" | "docs" | "roadmap";
+  active?: ActivePage;
+};
+
+type NavItem = {
+  href: string;
+  label: string;
+  key: ActivePage;
+  newTab?: boolean;
 };
 
 export function SiteNav(props: Props) {
@@ -30,17 +47,19 @@ export function SiteNav(props: Props) {
   const mobilePrimaryLabel = props.mobilePrimaryLabel || "Get Started for free";
   const callExternal = /^https?:\/\//.test(callHref);
   const mobilePrimaryExternal = /^https?:\/\//.test(mobilePrimaryHref);
-  const navItems = [
+  const downloadHref = props.downloadHref || "/download";
+  const downloadExternal = /^https?:\/\//.test(downloadHref);
+  const navItems: NavItem[] = [
+    { href: "/#product", label: "Product", key: "home" },
+    { href: "/connect", label: "Connect", key: "connect" },
+    { href: "/cloud", label: "Cloud", key: "cloud" },
+    { href: "/enterprise", label: "Enterprise", key: "enterprise" },
     { href: "/docs", label: "Docs", key: "docs", newTab: true },
-    { href: "/roadmap", label: "Roadmap", key: "roadmap" },
-    { href: "/pricing", label: "Pricing", key: "pricing" },
-    { href: "/download", label: "Desktop", key: "download" },
-    { href: "https://app.openworklabs.com", label: "Cloud", key: "cloud" },
-    { href: "/enterprise", label: "Enterprise", key: "enterprise" }
-  ] as const;
+    { href: "/pricing", label: "Pricing", key: "pricing" }
+  ];
 
-  const opensInNewTab = (item: (typeof navItems)[number]) =>
-    ("newTab" in item && item.newTab) || /^(?:https?:\/\/)/.test(item.href);
+  const opensInNewTab = (item: NavItem) =>
+    item.newTab || /^(?:https?:\/\/)/.test(item.href);
 
   const navLink = (isActive: boolean) =>
     isActive
@@ -49,7 +68,7 @@ export function SiteNav(props: Props) {
 
   return (
     <header className={`sticky top-0 z-20 w-full transition-all duration-300 ${scrolled ? "bg-white/80 shadow-sm backdrop-blur-md" : ""}`}>
-      <div className="mx-auto flex max-w-5xl flex-col px-6 md:px-8">
+      <div className="mx-auto flex w-full max-w-[1176px] flex-col px-6">
         <div className="grid grid-cols-[auto_1fr_auto] items-center py-4">
           <Link
             href="/"
@@ -62,7 +81,7 @@ export function SiteNav(props: Props) {
             </span>
           </Link>
 
-          <nav className="hidden items-center justify-center gap-8 text-[15px] font-medium md:flex">
+          <nav className="hidden items-center justify-center gap-7 text-[14px] font-normal lg:flex">
             {navItems.map(item => (
               <Link
                 key={item.key}
@@ -75,10 +94,10 @@ export function SiteNav(props: Props) {
             ))}
           </nav>
 
-          <div className="flex items-center gap-4">
+          <div className="col-start-3 flex items-center gap-4">
             <a
               href="https://github.com/different-ai/openwork"
-              className="hidden items-center gap-2 rounded-full border border-gray-100 bg-white px-3.5 py-2 text-sm font-medium text-gray-500 shadow-[0_1px_2px_rgba(17,24,39,0.06)] transition-colors hover:text-[#011627] sm:flex"
+              className="hidden h-9 items-center gap-2 rounded-full border border-[var(--lp-border)] bg-white px-3.5 text-sm font-normal text-[var(--lp-muted)] transition-colors hover:text-[var(--lp-ink)] sm:flex"
               rel="noreferrer"
               target="_blank"
               aria-label="OpenWork GitHub stars"
@@ -93,15 +112,17 @@ export function SiteNav(props: Props) {
               </svg>
               {props.stars}
             </a>
-            <Link
-              href="/download"
-              className="hidden items-center gap-2 rounded-full bg-[#011627] px-5 py-2.5 text-sm font-medium text-white shadow-sm transition-colors hover:bg-[#102638] md:inline-flex"
+            <a
+              href={downloadHref}
+              target={downloadExternal ? "_blank" : undefined}
+              rel={downloadExternal ? "noreferrer" : undefined}
+              className="lp-pill-primary lp-pill-sm !hidden lg:!inline-flex"
             >
               Download
-            </Link>
+            </a>
             <button
               type="button"
-              className="rounded-full p-2 text-[#011627] transition-colors hover:bg-white/70 md:hidden"
+              className="rounded-full p-2 text-[#011627] transition-colors hover:bg-white/70 lg:hidden"
               onClick={() => setMobileOpen(current => !current)}
               aria-expanded={mobileOpen}
               aria-label={
@@ -114,7 +135,7 @@ export function SiteNav(props: Props) {
         </div>
 
         {mobileOpen ? (
-          <div className="landing-shell mb-8 rounded-xl p-4 md:hidden">
+          <div className="mb-8 rounded-xl bg-white p-4 shadow-[0_1px_3px_rgba(1,22,39,0.08)] lg:hidden">
             <div className="flex flex-col gap-1 text-[15px] font-medium text-gray-700">
               {navItems.map(item => (
                 <Link

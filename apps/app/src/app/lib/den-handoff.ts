@@ -1,6 +1,7 @@
 import {
   createDenClient,
   readDenSettings,
+  seedDenDesktopConfigConnectPolicy,
   writeDenSettings,
   type DenDesktopHandoffExchange,
 } from "./den";
@@ -70,6 +71,12 @@ export async function exchangeHandoffAndSignIn(
       activeOrgSlug: activeOrg ? activeOrg.slug ?? null : storedSettings.activeOrgSlug,
       activeOrgName: activeOrg ? activeOrg.name ?? null : storedSettings.activeOrgName,
     });
+    if (exchange.organization) {
+      seedDenDesktopConfigConnectPolicy({
+        organizationId: exchange.organization.id,
+        connectEnabled: exchange.connectEnabled,
+      });
+    }
 
     dispatchDenSessionUpdated({
       status: "success",

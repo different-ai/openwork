@@ -9,6 +9,7 @@ describe("OpenWork provider adapters", () => {
 
     expect(contributions.map((contribution) => contribution.featureId)).toEqual([
       "sessions",
+      "automations",
       "extensions",
     ]);
     expect(
@@ -67,17 +68,38 @@ describe("OpenWork provider adapters", () => {
 
     expect(contributions.map((contribution) => contribution.featureId)).toEqual([
       "sessions",
+      "automations",
       "extensions",
       "mcp:notion",
       "connect",
     ]);
-    expect(contributions[2]).toMatchObject({
+    expect(contributions[3]).toMatchObject({
       provider: { id: "notion", kind: "mcp" },
       affordances: [],
     });
-    expect(contributions[3]?.affordances.map((affordance) => affordance.id)).toEqual([
+    expect(contributions[4]?.affordances.map((affordance) => affordance.id)).toEqual([
       "connect.capabilities.search",
       "connect.capability.execute",
     ]);
+  });
+
+  test("exposes an Automations proposal affordance that writes nothing", () => {
+    const proposal = buildOpenworkProviderContributions([])
+      .flatMap((contribution) => contribution.affordances)
+      .find((affordance) => affordance.id === "automation.propose");
+
+    expect(proposal).toMatchObject({
+      kind: "command",
+      // No data effect: a proposal is rendered for a person, never persisted.
+      effects: { data: "none", ui: "none", external: false },
+      executor: { kind: "openwork" },
+    });
+    expect(proposal?.arguments.map((argument) => argument.name)).toEqual([
+      "name",
+      "instructions",
+      "schedule",
+      "model",
+    ]);
+    expect(proposal?.arguments.find((argument) => argument.name === "model")?.required).toBe(false);
   });
 });

@@ -5,12 +5,23 @@ declare const expect: (value: unknown) => {
   toEqual: (expected: unknown) => void;
 };
 
+import { readFileSync } from "node:fs";
+
 import {
   isOrganizationModelsEmpty,
   refreshOrganizationModels,
   shouldAutoOpenUnavailableModelPicker,
   shouldWaitForCloudProviderSyncBeforePolicyReconcile,
 } from "./managed-models-recovery";
+
+const sessionProviderAuthSource = readFileSync(
+  new URL("./use-session-provider-auth.ts", import.meta.url),
+  "utf8",
+);
+const providerAuthStoreSource = readFileSync(
+  new URL("./store.ts", import.meta.url),
+  "utf8",
+);
 
 describe("managed model sync ordering", () => {
   test("waits to reconcile policy until the first signed-in cloud provider sync settles", () => {
@@ -68,5 +79,41 @@ describe("managed model recovery", () => {
     });
 
     expect(calls).toEqual(["sync:manual", "providers"]);
+  });
+
+  test("returns the refreshed provider snapshot for lifecycle and product triggers", async () => {
+    const calls: string[] = [];
+    const snapshot = { connected: ["openwork"], all: [] };
+
+    const result = await refreshOrganizationModels({
+      runCloudProviderSync: async (reason) => {
+        calls.push(`sync:${reason}`);
+      },
+      refreshProviders: async () => {
+        calls.push("providers");
+        return snapshot;
+      },
+    }, "app_resume");
+
+    expect(calls).toEqual(["sync:app_resume", "providers"]);
+    expect(result).toBe(snapshot);
+  });
+
+  test("publishes automatic sync results into the live session snapshot", () => {
+    expect(sessionProviderAuthSource.includes(
+      "useCloudProviderAutoSync(refreshCloudProviderSync)",
+    )).toBe(true);
+    expect(sessionProviderAuthSource.includes(
+      "useCloudProviderAutoSync(store.runCloudProviderSync)",
+    )).toBe(false);
+  });
+
+  test("reconciles the stored default after server-managed provider syncs", () => {
+    expect(providerAuthStoreSource.includes(
+      "preselectEntitledOrgDefaultModel(providerList)",
+    )).toBe(true);
+    expect(providerAuthStoreSource.includes(
+      "await refreshProvidersAfterCloudSync({ force: true });",
+    )).toBe(true);
   });
 });

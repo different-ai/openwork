@@ -37,15 +37,24 @@ import {
 import { t } from "@/i18n";
 import { useCloudSession } from "./cloud-session-provider";
 
-type ResourceActionKind = "import" | "remove" | "sync";
+export type CloudProviderRowStatus =
+  | "connected"
+  | "syncing"
+  | "error"
+  | "conflict"
+  | "blocked"
+  | "needs_credential"
+  | "needs_server"
+  | "unavailable";
 
 export type CloudProviderRow = {
   key: string;
   cloudProviderId: string;
   provider: DenOrgLlmProvider | null;
   imported: CloudImportedProvider | null;
-  status: "available" | "imported" | "out_of_sync" | "removed_from_cloud";
+  status: CloudProviderRowStatus;
   name: string;
+  detail: string;
 };
 
 export type CloudPluginRow = {
@@ -80,6 +89,44 @@ function resourceStatusTone(status: string) {
       return "error" as const;
     default:
       return "neutral" as const;
+  }
+}
+
+function cloudProviderStatusTone(status: CloudProviderRowStatus) {
+  switch (status) {
+    case "connected":
+      return "ready" as const;
+    case "error":
+    case "conflict":
+      return "error" as const;
+    case "blocked":
+    case "needs_credential":
+    case "needs_server":
+    case "unavailable":
+      return "warning" as const;
+    default:
+      return "neutral" as const;
+  }
+}
+
+function cloudProviderStatusLabel(status: CloudProviderRowStatus) {
+  switch (status) {
+    case "connected":
+      return t("den.cloud_provider_connected");
+    case "syncing":
+      return t("den.cloud_provider_syncing");
+    case "error":
+      return t("den.cloud_provider_error");
+    case "conflict":
+      return t("den.cloud_provider_conflict");
+    case "blocked":
+      return t("den.cloud_provider_blocked");
+    case "needs_credential":
+      return t("den.cloud_provider_needs_credential");
+    case "needs_server":
+      return t("den.cloud_provider_needs_server");
+    case "unavailable":
+      return t("den.cloud_provider_imports_unavailable");
   }
 }
 
@@ -144,7 +191,7 @@ function MarketplacePluginListItem({
         onClick={() => void onImportPlugin(row.marketplaceId, row.plugin)}
         disabled={actionId !== null}
       >
-        {actionBusy ? t("den.importing") : row.status === "available" ? t("den.import_provider") : t("den.sync")}
+        {actionBusy ? t("den.importing_plugin") : row.status === "available" ? t("den.import_plugin") : t("den.sync")}
       </Button>
     </SettingsListItem>
   );
@@ -152,92 +199,43 @@ function MarketplacePluginListItem({
 
 interface CloudProviderListItemProps {
   actionId: string | null;
-  actionKind: ResourceActionKind | null;
   row: CloudProviderRow;
-  onImport: (cloudProviderId: string, providerName: string) => void | Promise<void>;
-  onRemove?: (cloudProviderId: string, providerName: string) => void | Promise<void>;
-  onSync: (cloudProviderId: string, providerName: string) => void | Promise<void>;
+  onRetry: (cloudProviderId: string) => void | Promise<void>;
 }
 
-function CloudProviderListItem({ actionId, actionKind, row, onImport, onRemove, onSync }: CloudProviderListItemProps) {
+function CloudProviderListItem({ actionId, row, onRetry }: CloudProviderListItemProps) {
   const actionBusy = actionId === row.cloudProviderId;
-  const actionLabel = !actionBusy
-    ? null
-    : actionKind === "import"
-      ? t("den.importing")
-      : actionKind === "sync"
-        ? t("den.syncing")
-        : t("den.removing");
-  const source = row.provider?.source === "custom" ? "custom" : "managed";
-  const modelCount = row.provider?.models.length ?? 0;
-  const cloudProviderDetail = modelCount === 0
-    ? `All Models · ${source} provider`
-    : t("den.cloud_provider_detail", { count: modelCount, source });
-  const cloudProviderSyncDetail = modelCount === 0
-    ? `Cloud provider changed. Sync the All Models ${source} config into this workspace.`
-    : t("den.cloud_provider_sync_detail", { count: modelCount, source });
+  const status = actionBusy ? "syncing" : row.status;
 
   return (
     <SettingsListItem>
       <SettingsListItemContent>
         <SettingsListTitle>
           <SettingsListItemTitle>{row.name}</SettingsListItemTitle>
-          {row.status !== "available" ? (
-            <SettingsPill className={statusBadgeVariants({ tone: resourceStatusTone(row.status) })}>
-              {row.status === "imported"
-                ? t("den.imported_badge")
-                : row.status === "out_of_sync"
-                  ? t("den.out_of_sync_badge")
-                  : t("den.removed_from_cloud_badge")}
-            </SettingsPill>
-          ) : null}
+          <SettingsPill className={statusBadgeVariants({ tone: cloudProviderStatusTone(status) })}>
+            {cloudProviderStatusLabel(status)}
+          </SettingsPill>
         </SettingsListTitle>
         <SettingsListItemDescription>
           {[
             row.provider?.providerId ?? row.imported?.providerId,
             row.provider?.hasApiKey ? t("den.credentials_ready_badge") : null,
-            row.status === "removed_from_cloud"
-              ? t("den.cloud_provider_removed_detail", {
-                  providerId: row.imported?.providerId ?? row.name,
-                })
-              : row.status === "out_of_sync"
-                ? cloudProviderSyncDetail
-                : cloudProviderDetail,
+            row.detail,
           ].filter(Boolean).join(" · ")}
         </SettingsListItemDescription>
       </SettingsListItemContent>
-      <SettingsListItemActions>
-        {row.status === "out_of_sync" && row.provider ? (
+      {row.status === "error" && row.provider ? (
+        <SettingsListItemActions>
           <Button
             variant="outline"
             size="sm"
-            onClick={() => void onSync(row.cloudProviderId, row.name)}
+            onClick={() => void onRetry(row.cloudProviderId)}
             disabled={actionId !== null}
           >
-            {actionBusy && actionKind === "sync" ? t("den.syncing") : t("den.sync")}
+            {actionBusy ? t("den.cloud_provider_syncing") : t("den.cloud_provider_retry")}
           </Button>
-        ) : null}
-        {row.status === "available" && row.provider ? (
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => void onImport(row.cloudProviderId, row.name)}
-            disabled={actionId !== null}
-          >
-            {actionBusy ? actionLabel : t("den.import_provider")}
-          </Button>
-        ) : null}
-        {row.status !== "available" && onRemove ? (
-          <Button
-            variant="destructive"
-            size="sm"
-            onClick={() => void onRemove(row.cloudProviderId, row.name)}
-            disabled={actionId !== null}
-          >
-            {actionBusy ? actionLabel : row.status === "removed_from_cloud" ? t("den.uninstall") : t("common.remove")}
-          </Button>
-        ) : null}
-      </SettingsListItemActions>
+        </SettingsListItemActions>
+      ) : null}
     </SettingsListItem>
   );
 }
@@ -384,35 +382,40 @@ export function MarketplacePluginsSection({
 export interface CloudProvidersSectionProps {
   actionError: string | null;
   actionId: string | null;
-  actionKind: ResourceActionKind | null;
   busy: boolean;
   rows: CloudProviderRow[];
-  onImport: (cloudProviderId: string, providerName: string) => void | Promise<void>;
   onRefresh: () => void | Promise<void>;
-  onRemove?: (cloudProviderId: string, providerName: string) => void | Promise<void>;
-  onSync: (cloudProviderId: string, providerName: string) => void | Promise<void>;
+  onRetry: (cloudProviderId: string) => void | Promise<void>;
 }
 
 export function CloudProvidersSection({
   actionError,
   actionId,
-  actionKind,
   busy,
   rows,
-  onImport,
   onRefresh,
-  onRemove,
-  onSync,
+  onRetry,
 }: CloudProvidersSectionProps) {
   const { hasActiveOrg } = useCloudSession();
   const [searchQuery, setSearchQuery] = React.useState("");
   const visibleRows = useSearch({ items: rows, keys: nameSearchKeys, query: searchQuery });
-  const providerGroups = [
-    { value: "available", label: "Available", rows: visibleRows.filter((row) => row.status === "available") },
-    { value: "out_of_sync", label: t("den.out_of_sync_badge"), rows: visibleRows.filter((row) => row.status === "out_of_sync") },
-    { value: "imported", label: t("den.imported_badge"), rows: visibleRows.filter((row) => row.status === "imported") },
-    { value: "removed_from_cloud", label: t("den.removed_from_cloud_badge"), rows: visibleRows.filter((row) => row.status === "removed_from_cloud") },
-  ].filter((group) => group.rows.length > 0);
+  const statuses: CloudProviderRowStatus[] = [
+    "connected",
+    "syncing",
+    "error",
+    "conflict",
+    "blocked",
+    "needs_credential",
+    "needs_server",
+    "unavailable",
+  ];
+  const providerGroups = statuses
+    .map((status) => ({
+      value: status,
+      label: cloudProviderStatusLabel(status),
+      rows: visibleRows.filter((row) => row.status === status),
+    }))
+    .filter((group) => group.rows.length > 0);
 
   return (
     <SettingsSection>
@@ -424,13 +427,14 @@ export function CloudProvidersSection({
           <SettingsSectionHeaderDescription>{t("den.cloud_providers_hint")}</SettingsSectionHeaderDescription>
         </SettingsSectionHeaderContent>
         <SettingsSectionHeaderActions>
-          <RefreshButton
-            busy={busy}
+          <Button
+            variant="outline"
+            size="sm"
             disabled={[busy, !hasActiveOrg].some(Boolean)}
-            onRefresh={onRefresh}
+            onClick={() => void onRefresh()}
           >
-            {t("den.refresh")}
-          </RefreshButton>
+            {busy ? t("den.cloud_provider_syncing") : t("den.sync_now")}
+          </Button>
         </SettingsSectionHeaderActions>
       </SettingsSectionHeader>
 
@@ -457,7 +461,7 @@ export function CloudProvidersSection({
           </Field>
 
           {visibleRows.length > 0 ? (
-            <Accordion multiple defaultValue={["available", "imported", "out_of_sync"]}>
+            <Accordion multiple defaultValue={statuses}>
               {providerGroups.map((group) => (
                 <AccordionItem key={group.value} value={group.value}>
                   <AccordionTrigger className="items-center hover:no-underline group gap-x-3">
@@ -470,11 +474,8 @@ export function CloudProvidersSection({
                         <CloudProviderListItem
                           key={row.key}
                           actionId={actionId}
-                          actionKind={actionKind}
                           row={row}
-                          onImport={onImport}
-                          onRemove={onRemove}
-                          onSync={onSync}
+                          onRetry={onRetry}
                         />
                       ))}
                     </SettingsList>

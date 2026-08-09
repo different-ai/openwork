@@ -6,8 +6,10 @@ import type {
 } from "../src/app/lib/openwork-server";
 import {
   createCloudMcpSubmissionCoordinator,
+  clearCloudMcpSubmissionFailure,
   decideCloudMcpSubmissionGate,
   ensureCloudMcpSubmissionReadiness,
+  IDLE_CLOUD_MCP_SUBMISSION_GATE_STATE,
   resolveCloudMcpSubmissionAuth,
   type CloudMcpSubmissionGateDecision,
   type CloudMcpSubmissionPreparationResult,
@@ -158,6 +160,19 @@ function preparation(input: {
 }
 
 describe("Cloud MCP pre-send readiness", () => {
+  test("a successful provider refresh clears only a stale failure", () => {
+    const failed = {
+      status: "failed" as const,
+      issue: failure({ code: "provider_tool_projection_missing" }),
+      attempt: 3,
+      maxAttempts: 3,
+    };
+    const checking = { ...failed, status: "checking" as const };
+
+    expect(clearCloudMcpSubmissionFailure(failed)).toEqual(IDLE_CLOUD_MCP_SUBMISSION_GATE_STATE);
+    expect(clearCloudMcpSubmissionFailure(checking)).toBe(checking);
+  });
+
   test("ready projected tools send immediately", async () => {
     const coordinator = createCloudMcpSubmissionCoordinator();
     const decision = requiredDecision();

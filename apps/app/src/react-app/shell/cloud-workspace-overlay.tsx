@@ -19,12 +19,14 @@ import {
   formatCloudWorkspaceElapsed,
   mapCloudWorkspaceState,
   shouldAutoUpdateCloudWorkspace,
+  shouldShowCloudWorkspaceStatusPill,
   type CloudWorkspaceBootStage,
   type CloudWorkspaceMainContentDecision,
   type CloudWorkspaceViewModel,
 } from "./cloud-workspace-status";
 import type { DenCloudInstance } from "@/app/lib/den";
 import { OwDotTicker } from "./dot-ticker";
+import { useBootOverlayVisible } from "./boot-state";
 
 type CloudWorkspaceStatusContextValue = {
   gatewayMode: boolean;
@@ -444,10 +446,21 @@ export function CloudWorkspaceStatusPanel(props: {
 
 function CloudWorkspaceOverlayInner() {
   const cloudWorkspace = useCloudWorkspaceStatus();
+  const bootOverlayVisible = useBootOverlayVisible();
   const [open, setOpen] = useState(false);
   const viewModel = cloudWorkspace.viewModel;
 
-  if (!cloudWorkspace.gatewayMode || !cloudWorkspace.visible) return null;
+  if (
+    bootOverlayVisible ||
+    cloudWorkspace.takeoverActive ||
+    !cloudWorkspace.gatewayMode ||
+    !cloudWorkspace.visible ||
+    !shouldShowCloudWorkspaceStatusPill({
+      variant: viewModel.variant,
+      hasInstance: cloudWorkspace.instance !== null,
+      requestFailed: cloudWorkspace.requestFailed,
+    })
+  ) return null;
 
   return (
     <LazyMotion features={domMax}>

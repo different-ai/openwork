@@ -12,6 +12,7 @@ import { isActiveAutomationOwner, resolveAutomationModelAccess } from "./authori
 import { automationRepository } from "./repository.js"
 
 const schedulerOwner = `den:${process.pid}:${randomUUID()}`
+const DESKTOP_RUNNER_ONLINE_WINDOW_MS = 45_000
 
 type OwnerScope = { organizationId: string; ownerMemberId: string }
 export type DesktopRunnerScope = OwnerScope & { runnerId: string }
@@ -137,6 +138,14 @@ export class AutomationService {
 
   touchDesktopRunner(scope: DesktopRunnerScope) {
     return automationRepository.touchDesktopRunner({ ...scope, now: Date.now() })
+  }
+
+  hasOnlineDesktopRunner(scope: OwnerScope) {
+    const now = Date.now()
+    return automationRepository.hasRecentDesktopRunner({
+      ...scope,
+      seenAfter: now - DESKTOP_RUNNER_ONLINE_WINDOW_MS,
+    })
   }
 
   async discoverDesktopRunnerWork(scope: DesktopRunnerScope) {

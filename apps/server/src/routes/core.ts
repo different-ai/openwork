@@ -9,6 +9,7 @@ import {
 } from "../connect-state.js";
 import type { CloudMcpLiveStatusObserver } from "../cloud-mcp-health.js";
 import { readOpenWorkConnectSkillCatalog, renderOpenWorkConnectSkillInstruction } from "../connect-skill-catalog.js";
+import { readOpenWorkAutomationCatalog, renderOpenWorkAutomationInstruction } from "../connect-automation-catalog.js";
 import { EnvStoreReadError, InvalidEnvKeyError, isValidEnvKey, type EnvService } from "../env-file.js";
 import { syncManagedProviderAuth } from "../managed-provider-auth.js";
 import { ApiError } from "../errors.js";
@@ -22,16 +23,6 @@ import {
 } from "../extensions/google-workspace.js";
 import { callExperimentalExtensionAction, listExperimentalExtensionActions } from "../extensions/index.js";
 import type { TokenService } from "../tokens.js";
-import {
-  TOY_UI_CSS,
-  TOY_UI_FAVICON_SVG,
-  TOY_UI_HTML,
-  TOY_UI_JS,
-  cssResponse,
-  htmlResponse,
-  jsResponse,
-  svgResponse,
-} from "../toy-ui.js";
 import type { Capabilities, ServerConfig, WorkspaceInfo } from "../types.js";
 import { addRoute, type Route } from "./registry.js";
 
@@ -60,7 +51,6 @@ interface RegisterCoreRoutesOptions {
   createWorkspaceOpencodeClient: (config: ServerConfig, workspace: WorkspaceInfo) => WorkspaceOpencodeClient;
   refreshRegistrationFromLiveStatus?: CloudMcpLiveStatusObserver;
   serializeWorkspace: (workspace: ServerConfig["workspaces"][number]) => unknown;
-  resolveToyUiEnabled: () => boolean;
   resolveDevLogPath: () => string | null;
   createOpenAiRealtimeVoiceSession: (env: EnvService, input: unknown) => Promise<unknown>;
   managedProviderAuthLogger?: {
@@ -122,7 +112,6 @@ export function registerCoreRoutes(options: RegisterCoreRoutesOptions): void {
     createWorkspaceOpencodeClient,
     refreshRegistrationFromLiveStatus,
     serializeWorkspace,
-    resolveToyUiEnabled,
     resolveDevLogPath,
     createOpenAiRealtimeVoiceSession,
     managedProviderAuthLogger,
@@ -193,41 +182,6 @@ export function registerCoreRoutes(options: RegisterCoreRoutesOptions): void {
       return jsonResponse({ ok: false, reason: "dev_log_disabled" });
     }
     return jsonResponse({ ok: true, path: target });
-  });
-
-  addRoute(routes, "GET", "/ui", "none", async () => {
-    if (!resolveToyUiEnabled()) {
-      throw new ApiError(404, "ui_disabled", "Toy UI is disabled");
-    }
-    return htmlResponse(TOY_UI_HTML);
-  });
-
-  addRoute(routes, "GET", "/w/:id/ui", "none", async () => {
-    if (!resolveToyUiEnabled()) {
-      throw new ApiError(404, "ui_disabled", "Toy UI is disabled");
-    }
-    return htmlResponse(TOY_UI_HTML);
-  });
-
-  addRoute(routes, "GET", "/ui/assets/toy.css", "none", async () => {
-    if (!resolveToyUiEnabled()) {
-      throw new ApiError(404, "ui_disabled", "Toy UI is disabled");
-    }
-    return cssResponse(TOY_UI_CSS);
-  });
-
-  addRoute(routes, "GET", "/ui/assets/toy.js", "none", async () => {
-    if (!resolveToyUiEnabled()) {
-      throw new ApiError(404, "ui_disabled", "Toy UI is disabled");
-    }
-    return jsResponse(TOY_UI_JS);
-  });
-
-  addRoute(routes, "GET", "/ui/assets/openwork-mark.svg", "none", async () => {
-    if (!resolveToyUiEnabled()) {
-      throw new ApiError(404, "ui_disabled", "Toy UI is disabled");
-    }
-    return svgResponse(TOY_UI_FAVICON_SVG);
   });
 
   addRoute(routes, "GET", "/w/:id/status", "client", async (ctx) => {
@@ -337,6 +291,17 @@ export function registerCoreRoutes(options: RegisterCoreRoutesOptions): void {
       schemaVersion: 1,
       skills,
       instruction: renderOpenWorkConnectSkillInstruction(skills),
+    });
+  });
+
+  addRoute(routes, "GET", "/experimental/connect/automations", "client", async (_ctx) => {
+    // Owner-scoped through the same openwork-cloud connection as skills.
+    const index = await readOpenWorkAutomationCatalog(config);
+    return jsonResponse({
+      ok: true,
+      schemaVersion: 1,
+      index,
+      instruction: renderOpenWorkAutomationInstruction(index),
     });
   });
 

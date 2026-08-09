@@ -848,6 +848,10 @@ jobs:
       needs.resolve-release.result == 'success' &&
       needs.publish-electron.result == 'success' &&
       needs.publish-release.result == 'success'
+    # AUR is a community distribution channel hosted on aur.archlinux.org.
+    # Outages there (e.g. "The AUR is down due to maintenance", 2026-08-04)
+    # must not mark an otherwise-published release run as failed.
+    continue-on-error: true
     runs-on: blacksmith-4vcpu-ubuntu-2404
     permissions:
       contents: write
@@ -937,6 +941,12 @@ jobs:
       - publish-electron-assets
       - publish-npm
       - publish-daytona-snapshot
+    # publish-daytona-snapshot is allowed to FAIL without blocking the release
+    # (result != 'cancelled' instead of == 'success'): the sandbox snapshot is
+    # rebuildable after the fact by re-running this workflow with the same tag,
+    # while desktop artifacts users install and update from should never be
+    # held back by it. v0.18.15 (2026-08-05) was fully built but never
+    # published solely because this job failed.
     if: |
       always() &&
       needs.resolve-release.result == 'success' &&
@@ -944,7 +954,7 @@ jobs:
       (needs.publish-electron.result == 'success' || needs.publish-electron.result == 'skipped') &&
       (needs.publish-electron-assets.result == 'success' || needs.publish-electron-assets.result == 'skipped') &&
       (needs.publish-npm.result == 'success' || needs.publish-npm.result == 'skipped') &&
-      (needs.publish-daytona-snapshot.result == 'success' || needs.publish-daytona-snapshot.result == 'skipped')
+      needs.publish-daytona-snapshot.result != 'cancelled'
     runs-on: blacksmith-4vcpu-ubuntu-2404
     env:
       RELEASE_TAG: ${{ needs.resolve-release.outputs.release_tag }}

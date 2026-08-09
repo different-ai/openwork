@@ -1,6 +1,14 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
 
+import {
+  escapeXml,
+  isRecord,
+  jsonRpcResult,
+  mcpPost,
+  stringHeaders,
+  type McpFetch,
+} from "./connect-mcp-transport.js";
 import { readConnectCloudMcp, writeConnectCloudMcp } from "./connect-state.js";
 import { readRuntimeMcpConfig } from "./runtime-opencode-config-store.js";
 import { externalFetch } from "./server-fetch.js";
@@ -26,48 +34,7 @@ const skillIndexSchema = z.object({
 }).passthrough();
 
 export type OpenWorkConnectSkill = z.infer<typeof skillIndexSchema>["skills"][number];
-type McpFetch = (input: string, init?: RequestInit) => Promise<Response>;
 const catalogCache = new Map<string, { expiresAt: number; value: Promise<OpenWorkConnectSkill[] | null> }>();
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function stringHeaders(value: unknown): Record<string, string> {
-  if (!isRecord(value)) return {};
-  return Object.fromEntries(Object.entries(value).filter((entry): entry is [string, string] => typeof entry[1] === "string"));
-}
-
-function parseJsonOrText(raw: string): unknown {
-  try { return JSON.parse(raw); } catch { return raw; }
-}
-
-async function readMcpPayload(response: Response): Promise<unknown> {
-  const raw = await response.text();
-  if (!raw.trim()) return null;
-  if (!response.headers.get("content-type")?.toLowerCase().includes("text/event-stream")) return parseJsonOrText(raw);
-  for (const frame of raw.split(/\r?\n\r?\n/)) {
-    const data = frame.split(/\r?\n/).filter((line) => line.startsWith("data:")).map((line) => line.slice(5).trimStart()).join("\n");
-    if (data) return parseJsonOrText(data);
-  }
-  return null;
-}
-
-function jsonRpcResult(payload: unknown): Record<string, unknown> | null {
-  const record = Array.isArray(payload) ? payload.find(isRecord) : payload;
-  if (!isRecord(record) || record.error !== undefined || !isRecord(record.result)) return null;
-  return record.result;
-}
-
-async function mcpPost(fetcher: McpFetch, url: string, headers: Record<string, string>, body: unknown) {
-  const response = await fetcher(url, {
-    method: "POST",
-    headers: { accept: "application/json, text/event-stream", "content-type": "application/json", ...headers },
-    body: JSON.stringify(body),
-    signal: AbortSignal.timeout(5_000),
-  });
-  return { response, payload: await readMcpPayload(response) };
-}
 
 /**
  * Read the standards-shaped skill index through one openwork-cloud config.
@@ -163,10 +130,6 @@ export async function readOpenWorkConnectSkillCatalog(
 
 export function resetOpenWorkConnectSkillCatalogCacheForTests(): void {
   catalogCache.clear();
-}
-
-function escapeXml(value: string): string {
-  return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&apos;");
 }
 
 type InjectedMarketplaceSkill = {

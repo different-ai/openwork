@@ -52,7 +52,7 @@ export async function saveControlPlaneUrl(value: string) {
       activeOrgSlug: null,
       activeOrgName: null,
     },
-    { persistBootstrap: false },
+    { persistBootstrap: false, intentionalActiveOrgClear: true },
   );
 
   return persisted;

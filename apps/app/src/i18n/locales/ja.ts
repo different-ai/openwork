@@ -1,11 +1,8 @@
-import { automationsEnglish } from "./automations";
-
 /**
  * Japanese translations (日本語)
  */
 
 export default {
-  ...automationsEnglish,
   "app.compact_command_desc": "このセッションを要約してコンテキストサイズを削減します。",
   "app.error_audit_load": "監査ログの読み込みに失敗しました。",
   "app.error_auth_failed": "認証に失敗しました",
@@ -235,9 +232,18 @@ export default {
   "den.cloud_control_plane_url_hint": "デベロッパーモード専用。ローカルまたはセルフホストのCloudコントロールプレーンを対象にする場合に使用します。変更するとサインアウトされ、新しいコントロールプレーンに対して再接続します。",
   "den.cloud_control_plane_url_label": "Cloudコントロールプレーン URL",
   "den.cloud_provider_detail": "{count}モデル · {source}プロバイダー",
+  "den.cloud_provider_blocked": "このデスクトップでは利用できません",
+  "den.cloud_provider_conflict": "競合",
+  "den.cloud_provider_connected": "接続済み",
+  "den.cloud_provider_error": "同期エラー",
+  "den.cloud_provider_imports_unavailable": "このワークスペースではインポートを利用できません",
+  "den.cloud_provider_needs_credential": "組織の認証情報が必要です",
+  "den.cloud_provider_needs_server": "OpenWorkサーバーが必要です",
+  "den.cloud_provider_retry": "再試行",
+  "den.cloud_provider_syncing": "同期中",
   "den.cloud_provider_removed_detail": "このインポート済みプロバイダーはクラウドにありません。ローカルの{providerId}設定をアンインストールしてください。",
   "den.cloud_provider_sync_detail": "クラウドプロバイダーが変更されました。{count}モデルの{source}設定をopencode.jsoncに同期してください。",
-  "den.cloud_providers_hint": "管理対象LLMプロバイダーをopencode.jsoncにインポートし、このワークスペースで組織の認証情報を使用します。",
+  "den.cloud_providers_hint": "組織から付与されたプロバイダーは自動的に同期されます。ここで状態を確認できます。",
   "den.cloud_providers_title": "クラウドプロバイダー",
   "den.cloud_section_desc": "サインインして組織を選択し、Cloudワーカーやチームテンプレートを開きます。",
   "den.cloud_section_title": "OpenWork Cloud",
@@ -253,12 +259,10 @@ export default {
   "den.finish_signin": "サインインを完了",
   "den.finishing": "完了中…",
   "den.hide_signin_code": "サインインコードを隠す",
-  "den.import_all": "すべてインポート",
+  "den.import_plugin": "プラグインをインポート",
   "den.import_provider": "インポート",
-  "den.import_provider_failed": "{name}のインポートに失敗しました。",
   "den.imported_badge": "インポート済み",
-  "den.imported_provider": "{name}をインポートしました。",
-  "den.importing": "インポート中…",
+  "den.importing_plugin": "プラグインをインポート中…",
   "den.needs_attention": "要確認",
   "den.no_cloud_providers": "この組織にはまだクラウドプロバイダーがありません。",
   "den.no_org_selected": "組織が選択されていません",
@@ -294,6 +298,7 @@ export default {
   "den.status_signed_in_as": "{email}としてサインインしました。",
   "den.status_signed_out": "サインアウトし、このデバイスのOpenWork Cloudセッションを削除しました。",
   "den.sync": "同期",
+  "den.sync_now": "今すぐ同期",
   "den.sync_provider_failed": "{name}の同期に失敗しました。",
   "den.synced_provider": "{name}を同期しました。",
   "den.syncing": "同期中…",
@@ -937,7 +942,7 @@ export default {
   "settings.tab_description_debug": "ランタイムダイアログ、ログ、低レベルデバッグユーティリティを確認します。",
   "settings.tab_description_cloud_account": "Sign in, manage your organization, and configure your cloud connection.",
   "settings.tab_description_cloud_marketplaces": "Browse and import plugins from your organization's marketplaces.",
-  "settings.tab_description_cloud_providers": "Import and manage LLM provider keys from your organization.",
+  "settings.tab_description_cloud_providers": "組織のLLMプロバイダーの同期状態を確認します。",
   "settings.tab_description_extensions": "エージェントが使用できるスキル、接続、ツール。",
   "settings.tab_description_general": "プロバイダーを接続し、デフォルトモデルを選択し、フォルダへのアクセスを許可し、OpenWorkワークスペースとそのランタイム接続を管理します。",
   "settings.tab_description_environment": "ローカルのエージェント、skills、MCP servers が使う API キーやトークンを保存します。シークレットはこのデバイスに保持されます。",

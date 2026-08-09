@@ -777,6 +777,15 @@ export const auth = betterAuth({
             return createDenTypeId("oauthRefreshToken");
           case "oauthConsent":
             return createDenTypeId("oauthConsent");
+          // better-auth 1.7 oauth-provider models with no den typeid: without
+          // an id the drizzle adapter emits `insert ... values (default, ...)`
+          // and MySQL rejects it (no default on `id`) — the oauthResource seed
+          // storm of 2026-08-07. oauthClientResource/oauthClientAssertion use
+          // forceAllowId, but cover them for any future non-forced create.
+          case "oauthResource":
+          case "oauthClientResource":
+          case "oauthClientAssertion":
+            return crypto.randomUUID();
           case "rateLimit":
             return createDenTypeId("rateLimit");
           case "organization":
@@ -994,12 +1003,23 @@ export const auth = betterAuth({
       consentPage: `${env.betterAuthUrl}/mcp/select-organization`,
       scopes: [...DEN_MCP_SCOPES],
       validAudiences: DEN_MCP_OAUTH_VALID_AUDIENCES,
+      // better-auth 1.7 gates every token-request `resource` parameter on the
+      // oauthResource registry (invalid_target "is not configured" otherwise;
+      // validAudiences no longer whitelists issuance). Seed all accepted MCP
+      // resource aliases at startup — seeding is idempotent (insertOnly).
+      resources: [...DEN_MCP_RESOURCES],
+      // 1.7 defaults to requiring an oauthClientResource link per client per
+      // resource. Dynamically registered MCP clients never request resources
+      // at registration, so enforcement would invalid_target every DCR client.
+      // Keep pre-1.7 behavior: registry + audience validation, no per-client ACL.
+      enforcePerClientResources: false,
       allowPublicClientPrelogin: true,
       allowDynamicClientRegistration: true,
       allowUnauthenticatedClientRegistration: true,
       accessTokenExpiresIn: DEN_MCP_ACCESS_TOKEN_EXPIRES_IN_SECONDS,
       m2mAccessTokenExpiresIn: DEN_MCP_ACCESS_TOKEN_EXPIRES_IN_SECONDS,
       refreshTokenExpiresIn: DEN_MCP_REFRESH_TOKEN_EXPIRES_IN_SECONDS,
+      refreshTokenReuseInterval: 30,
       storeTokens: { hash: hashOAuthProviderToken },
       clientRegistrationDefaultScopes: [...DEN_MCP_DEFAULT_CLIENT_SCOPES],
       clientRegistrationAllowedScopes: [...DEN_MCP_SCOPES],
@@ -1037,8 +1057,9 @@ export const auth = betterAuth({
           return normalizeDenTypeId("organization", activeOrganizationId);
         },
       },
-      customAccessTokenClaims: ({ referenceId, resource, scopes }) => {
+      customAccessTokenClaims: ({ referenceId, resources, scopes }) => {
         const claims: Record<string, string> = {};
+        const resource = resources?.[0];
         const mcpResource = typeof resource === "string" ? normalizeMcpOAuthResource(resource) : null;
         if (hasMcpScope(scopes) || mcpResource) {
           claims[DEN_MCP_TOKEN_USE_CLAIM] = "mcp";

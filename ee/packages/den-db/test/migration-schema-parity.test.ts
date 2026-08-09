@@ -262,14 +262,50 @@ function exportTableNames(statements: string[]) {
     .sort()
 }
 
+// Columns that migrations ADD to tables the migration chain does not create
+// (those tables are seeded from the current export before replay, so the
+// seeded CREATE TABLE must not already contain the columns the replay adds).
+// worker: added by 0002. oauth*: added by 0056.
+const SEED_COLUMN_STRIPS: Record<string, string[]> = {
+  worker: ["last_heartbeat_at", "last_active_at"],
+  oauthClient: [
+    "backchannel_logout_uri",
+    "backchannel_logout_session_required",
+    "jwks",
+    "jwks_uri",
+    "dpop_bound_access_tokens",
+  ],
+  oauthAccessToken: [
+    "authorization_code_id",
+    "resources",
+    "requested_user_info_claims",
+    "revoked",
+    "confirmation",
+  ],
+  oauthRefreshToken: [
+    "authorization_code_id",
+    "resources",
+    "requested_user_info_claims",
+    "rotated_at",
+    "rotation_replay_response",
+    "rotation_replay_expires_at",
+    "confirmation",
+  ],
+  oauthConsent: ["resources", "requested_user_info_claims"],
+}
+
 function statementForSeed(statement: string) {
-  if (createTableName(statement) !== "worker") {
+  const tableName = createTableName(statement)
+  const strips = tableName ? SEED_COLUMN_STRIPS[tableName] : undefined
+  if (!strips) {
     return statement
   }
 
-  return statement
-    .replace(/\n\s*`last_heartbeat_at` timestamp\(3\),/i, "")
-    .replace(/\n\s*`last_active_at` timestamp\(3\),/i, "")
+  let seeded = statement
+  for (const column of strips) {
+    seeded = seeded.replace(new RegExp(`\\n\\s*\`${column}\` [^,\\n]+,`, "i"), "")
+  }
+  return seeded
 }
 
 function seedShouldSkipIndex(statement: string) {

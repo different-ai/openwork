@@ -167,6 +167,7 @@ export type McpViewProps = {
   /** Connected org-level External MCP Connections rendered in My Extensions. */
   orgMcpItems?: ExtensionItem[];
   organizationName?: string | null;
+  orgMcpError?: string | null;
   orgMcpConnectingId?: string | null;
   connectOrgMcp?: (connectionId: string) => void;
   reconnectOrgMcp?: (connectionId: string) => void;
@@ -912,6 +913,7 @@ export function McpView(props: McpViewProps) {
             connecting={connectingBusy || disconnectingBusy}
             connectingLabel={disconnectingBusy ? t("mcp.org_connection_disconnecting_action") : t("mcp.org_connection_waiting_browser")}
             beta
+            errorInfo={props.orgMcpError}
             url={connection.url}
             oauth={connection.authType === "oauth"}
             connectLabel={orgMcpConnectionActionLabel(connection)}

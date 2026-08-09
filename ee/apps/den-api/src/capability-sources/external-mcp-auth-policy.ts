@@ -1,4 +1,4 @@
-import { EXTERNAL_MCP_PRESETS } from "./external-mcp-presets.js"
+import { EXTERNAL_MCP_PRESETS, type ExternalMcpPreset } from "./external-mcp-presets.js"
 
 export type PluginMcpAuthType = "apikey" | "none" | "oauth"
 
@@ -6,9 +6,32 @@ function normalizedRemoteMcpUrl(value: string) {
   try {
     const url = new URL(value)
     const pathname = url.pathname.length > 1 ? url.pathname.replace(/\/+$/, "") : url.pathname
-    return `${url.protocol.toLowerCase()}//${url.host.toLowerCase()}${pathname}${url.search}`
+    return `${url.host.toLowerCase()}${pathname}`
   } catch {
     return null
+  }
+}
+
+export function matchExternalMcpPresetForUrl(
+  url: string,
+  presets: readonly ExternalMcpPreset[] = EXTERNAL_MCP_PRESETS,
+): ExternalMcpPreset | null {
+  const normalizedUrl = normalizedRemoteMcpUrl(url)
+  if (normalizedUrl === null) return null
+  return presets.find((candidate) => normalizedRemoteMcpUrl(candidate.url) === normalizedUrl) ?? null
+}
+
+export function externalMcpOAuthConfigurationDefaults(input: {
+  url: string
+  authorizationServerIssuer?: string | null
+  requestedScopes?: readonly string[]
+}): { authorizationServerIssuer: string | null; requestedScopes: string[] } {
+  const preset = matchExternalMcpPresetForUrl(input.url)
+  return {
+    authorizationServerIssuer: input.authorizationServerIssuer !== undefined
+      ? input.authorizationServerIssuer
+      : preset?.authorizationServerIssuer ?? null,
+    requestedScopes: [...new Set(input.requestedScopes ?? preset?.defaultOAuthScopes ?? [])],
   }
 }
 
@@ -21,18 +44,12 @@ export function requiredPluginMcpAuthType(input: {
   declaredAuthType: "oauth" | null
   url: string
 }): PluginMcpAuthType | null {
-  const normalizedUrl = normalizedRemoteMcpUrl(input.url)
-  const preset = normalizedUrl
-    ? EXTERNAL_MCP_PRESETS.find((candidate) => normalizedRemoteMcpUrl(candidate.url) === normalizedUrl)
-    : null
+  const preset = matchExternalMcpPresetForUrl(input.url)
   return preset?.authType ?? input.declaredAuthType
 }
 
 export function pluginMcpRequiresPreRegisteredOAuthClient(url: string): boolean {
-  const normalizedUrl = normalizedRemoteMcpUrl(url)
-  return normalizedUrl !== null && EXTERNAL_MCP_PRESETS.some((candidate) =>
-    normalizedRemoteMcpUrl(candidate.url) === normalizedUrl && candidate.requiresOAuthClient === true
-  )
+  return matchExternalMcpPresetForUrl(url)?.requiresOAuthClient === true
 }
 
 export function resolveGithubPluginMcpImportAuthType(input: {

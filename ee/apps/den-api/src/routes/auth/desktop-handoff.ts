@@ -5,6 +5,7 @@ import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
+import { memberFacingMcpConnectionsEnabled } from "../../capability-sources/external-mcp-rollout.js"
 import { authenticatedRoute, jsonValidator, publicRoute } from "../../middleware/index.js"
 import { db } from "../../db.js"
 import { env, type DenOrgMode } from "../../env.js"
@@ -47,6 +48,7 @@ const desktopHandoffExchangeResponseSchema = z.object({
     slug: z.string(),
     name: z.string(),
   }).nullable(),
+  connectEnabled: z.boolean().nullable(),
 }).meta({ ref: "DesktopHandoffExchangeResponse" })
 
 const desktopHandoffStatusResponseSchema = z.object({
@@ -590,6 +592,7 @@ export function registerDesktopAuthRoutes<T extends { Variables: AuthContextVari
     // back to null when the session has no resolvable organization; the app
     // then repairs through its normal org-resolution path.
     let organization: { id: string; slug: string; name: string } | null = null
+    let organizationMetadata: string | null = null
     try {
       const resolved = await resolveUserOrganizations({
         userId: normalizeDenTypeId("user", exchange.user.id),
@@ -597,14 +600,27 @@ export function registerDesktopAuthRoutes<T extends { Variables: AuthContextVari
       })
       const activeOrg = resolved.orgs.find((org) => org.id === resolved.activeOrgId) ?? null
       organization = activeOrg ? { id: activeOrg.id, slug: activeOrg.slug, name: activeOrg.name } : null
+      organizationMetadata = activeOrg?.metadata ?? null
     } catch {
       organization = null
+    }
+
+    let connectEnabled: boolean | null = null
+    if (organization) {
+      try {
+        connectEnabled = memberFacingMcpConnectionsEnabled(organizationMetadata, {
+          gatingEnabled: env.mcpConnectionsGatingEnabled,
+        })
+      } catch {
+        connectEnabled = null
+      }
     }
 
     return c.json({
       token: exchange.token,
       user: exchange.user,
       organization,
+      connectEnabled,
     })
     },
   )

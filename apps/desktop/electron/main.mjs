@@ -1,7 +1,7 @@
 import { execFileSync, spawn } from "node:child_process";
 import { createServer } from "node:http";
 import net from "node:net";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import {
   cp,
   mkdir,
@@ -71,6 +71,7 @@ import {
   writeWindowsBrandShortcut,
   windowsIconFromNativeImage,
 } from "./brand-icon-windows.mjs";
+import { resetMacDockIcon } from "./brand-icon-darwin.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const APP_ROOT = path.resolve(__dirname, "../../..");
@@ -542,6 +543,20 @@ async function applyAppIconImage(image, { taskbarIconPath = null, taskbarAppId =
 async function applyDefaultAppIconImage(expectedSequence = null) {
   let image = APP_ICON_IMAGE;
   let taskbarIconPath = null;
+  if (process.platform === "darwin") {
+    // Packaged macOS builds have no loose default icon file (APP_ICON_IMAGE
+    // is null), so reset the dock via dock.setIcon(null) to restore the
+    // bundle icon instead of silently leaving the branded icon in place.
+    if (expectedSequence !== null && expectedSequence !== brandIconApplySequence) {
+      return { ok: false, reason: "stale" };
+    }
+    try {
+      const result = resetMacDockIcon(app.dock, image);
+      return result.ok ? result : brandIconFailure(result.reason);
+    } catch (error) {
+      return brandIconFailure("os-apply-failed", error);
+    }
+  }
   if (process.platform === "win32") {
     try {
       await removeWindowsBrandShortcut();
@@ -567,8 +582,8 @@ async function applyDefaultAppIconImage(expectedSequence = null) {
     }
   }
   if (!image || image.isEmpty()) {
-    // Preserve the pre-existing no-op fallback on platforms whose packaged
-    // application icon is managed entirely by the bundle.
+    // Linux: the packaged window/launcher icon is managed by the desktop
+    // integration, so a missing loose icon is a safe no-op.
     return process.platform === "win32" ? brandIconFailure("stock-icon-unavailable") : { ok: true };
   }
   if (process.platform === "win32" && taskbarIconPath) {
@@ -636,6 +651,17 @@ async function readBrandIconSidecar() {
   try {
     const parsed = JSON.parse(await readFile(brandIconSidecarPath(), "utf8"));
     return parsed && typeof parsed === "object" ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function readBrandIconSidecarSourceUrlSync() {
+  try {
+    const parsed = JSON.parse(readFileSync(brandIconSidecarPath(), "utf8"));
+    return parsed && typeof parsed === "object" && typeof parsed.sourceUrl === "string"
+      ? parsed.sourceUrl
+      : null;
   } catch {
     return null;
   }
@@ -845,7 +871,18 @@ async function getBrandIconState() {
   return { ...brandIconRuntimeState };
 }
 
-const INITIAL_APP_ICON_IMAGE = resolveBrandIconImage() ?? APP_ICON_IMAGE;
+const INITIAL_BRAND_ICON_IMAGE = resolveBrandIconImage();
+const INITIAL_APP_ICON_IMAGE = INITIAL_BRAND_ICON_IMAGE ?? APP_ICON_IMAGE;
+if (INITIAL_BRAND_ICON_IMAGE) {
+  // The renderer's level-based reconcile compares getBrandIconState() with
+  // the fresh org config. Record that a cached brand icon is restored at
+  // boot so a clear whose edge the renderer missed still resets the icon.
+  brandIconRuntimeState = {
+    applied: true,
+    sourceUrl: readBrandIconSidecarSourceUrlSync(),
+    reason: null,
+  };
+}
 if (process.platform === "darwin" && INITIAL_APP_ICON_IMAGE && !INITIAL_APP_ICON_IMAGE.isEmpty() && app.dock) {
   app.dock.setIcon(INITIAL_APP_ICON_IMAGE);
 }

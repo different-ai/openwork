@@ -40,7 +40,7 @@ import {
   type OrganizationPermissionRecord,
 } from "./organization-access.js"
 import { ensureDefaultDesktopPolicyForOrganization } from "./desktop-policies.js"
-import { isProtectedOrganizationRoleName } from "./organization-role-hierarchy.js"
+import { isProtectedOrganizationRoleName, shouldRevokeSessionsForRoleChange } from "./organization-role-hierarchy.js"
 import { isSingleOrgOwnerEmailEligible, resolveSingleOrgMembershipRole } from "./single-org-policy.js"
 
 type UserId = typeof AuthUserTable.$inferSelect.id
@@ -501,8 +501,6 @@ function normalizeAssignableRole(input: string, availableRoles: Set<string>, fal
 }
 
 export async function listAssignableRoles(orgId: OrgId) {
-  await ensureDefaultDynamicRoles(orgId)
-
   const rows = await db
     .select({ role: OrganizationRoleTable.role })
     .from(OrganizationRoleTable)
@@ -1151,7 +1149,6 @@ export async function ensureSingletonOrganizationForUser(userId: UserId) {
     organizationId: organization.id,
     createdByOrgMemberId: member.id,
   })
-  await ensureDefaultDynamicRoles(organization.id)
 
   return organization.id
 }
@@ -1165,8 +1162,6 @@ export async function ensureUserOrgAccess(input: {
 
   const memberships = await listMembershipRows(input.userId)
   if (memberships.length > 0) {
-    const organizationIds = [...new Set(memberships.map((membership) => membership.organizationId))]
-    await Promise.all(organizationIds.map((organizationId) => ensureDefaultDynamicRoles(organizationId)))
     return memberships[0].organizationId
   }
 
@@ -1484,8 +1479,6 @@ export async function getOrganizationContextForUser(input: {
     return null
   }
 
-  await ensureDefaultDynamicRoles(organization.id)
-
   const members = await db
     .select({
       id: MemberTable.id,
@@ -1774,10 +1767,14 @@ export async function updateOrganizationMemberRole(input: {
       orgMembershipId: updated.member.id,
       userId: updated.member.userId,
     })
-    await revokeMembershipSessionCredentials({
-      organizationId: input.organizationId,
-      userId: updated.member.userId,
-    })
+    // Revocation prevents a live session from retaining access it just lost.
+    // An upgrade removes no access, so there is nothing to revoke.
+    if (shouldRevokeSessionsForRoleChange(updated.previousRole, updated.nextRole)) {
+      await revokeMembershipSessionCredentials({
+        organizationId: input.organizationId,
+        userId: updated.member.userId,
+      })
+    }
   }
 
   return updated

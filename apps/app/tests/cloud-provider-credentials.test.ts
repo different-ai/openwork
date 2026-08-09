@@ -69,4 +69,14 @@ describe("resolveCloudProviderCredentials", () => {
       }),
     ).toEqual({ envEntries: [], primaryApiKey: "" });
   });
+
+  test("whitespace credentials remain missing for automatic import status", () => {
+    expect(
+      resolveCloudProviderCredentials({
+        apiKey: "  ",
+        apiKeys: { AWS_ACCESS_KEY_ID: " " },
+        providerConfig: { env: AWS_ENV },
+      }),
+    ).toEqual({ envEntries: [], primaryApiKey: "" });
+  });
 });

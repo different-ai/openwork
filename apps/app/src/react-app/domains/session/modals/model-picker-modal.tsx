@@ -7,7 +7,7 @@ import {
   useState,
 } from "react";
 import { ArrowRight, Check, ChevronDown, ChevronRight, RefreshCw, Search, Sparkles, Star, X } from "lucide-react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router";
 
 import {
   Dialog,

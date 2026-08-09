@@ -139,6 +139,7 @@ function gmailMessagePayload() {
       headers: [
         { name: "From", value: "Ada <ada@example.com>" },
         { name: "To", value: "Ben <ben@example.com>" },
+        { name: "Bcc", value: "Investors <investors@example.com>" },
         { name: "Subject", value: "Quarterly plan" },
         { name: "Date", value: "Tue, 07 Jul 2026 10:00:00 +0000" },
       ],
@@ -654,6 +655,7 @@ test("gmail list returns metadata-mapped messages", async () => {
         threadId: "thread_1",
         from: "Ada <ada@example.com>",
         to: "Ben <ben@example.com>",
+        bcc: "Investors <investors@example.com>",
         subject: "Quarterly plan",
         date: "Tue, 07 Jul 2026 10:00:00 +0000",
         snippet: "Gmail snippet",

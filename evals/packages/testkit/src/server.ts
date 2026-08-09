@@ -277,6 +277,13 @@ async function createMember(
   return member;
 }
 
+export async function inviteMember(den: Den, key: string, person?: PersonShape): Promise<DenSession> {
+  const runId = `${Date.now().toString(36)}${process.pid.toString(36)}`;
+  const member = await createMember(den.ref, den.admin, personDefaults(key, person, runId), den.database?.url);
+  den.members[key] = member;
+  return member;
+}
+
 async function provisionOrganization(
   ref: DenRef,
   shape: OrgShape,

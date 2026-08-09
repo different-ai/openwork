@@ -451,6 +451,7 @@ export const agentContextMcpEvidenceSchema = z.object({
 export type AgentContextMcpEvidence = z.infer<typeof agentContextMcpEvidenceSchema>
 
 export const agentContextConnectEvidenceSchema = z.object({
+  stateStatus: z.enum(["available", "missing", "invalid", "unreadable"]),
   connectEnabled: z.boolean(),
   legacyGoogleWorkspaceConfigured: z.boolean(),
   expectedBranch: z.enum(["cloud-active", "cloud-disconnected", "extensions-only"]),

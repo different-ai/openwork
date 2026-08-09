@@ -822,7 +822,6 @@ function SidebarSplitPill({ workspaceSessionGroups, selectedWorkspaceId, selecte
 export type AppSidebarProps = {
   sessionNumberShortcuts: SessionNumberShortcutsState;
   workspaceSessionGroups: WorkspaceSessionGroup[];
-  showInitialLoading?: boolean;
   selectedWorkspaceId: string;
   developerMode: boolean;
   selectedSessionId: string | null;
@@ -1206,7 +1205,6 @@ export function AppSidebar(props: AppSidebarProps) {
                   key={group.workspace.id}
                   group={group}
                   className={cn(index === 0 && "mac:pt-0")}
-                  showInitialLoading={props.showInitialLoading}
                   previewCount={previewCount(group.workspace.id)}
                   showMoreSessions={showMoreSessions}
                 />
@@ -1386,7 +1384,6 @@ function GlobalPinnedSessionTree({ group, sessionId }: GlobalPinnedSessionEntry)
 type WorkspaceReorderItemProps = {
   className: string;
   group: WorkspaceSessionGroup;
-  showInitialLoading?: boolean;
   previewCount: number;
   showMoreSessions: (workspaceId: string, totalRoots: number) => void;
 };
@@ -1394,7 +1391,6 @@ type WorkspaceReorderItemProps = {
 function WorkspaceReorderItem({
   className,
   group,
-  showInitialLoading,
   previewCount,
   showMoreSessions,
 }: WorkspaceReorderItemProps) {
@@ -1419,7 +1415,6 @@ function WorkspaceReorderItem({
       <WorkspaceSidebarGroup
         className={className}
         group={group}
-        showInitialLoading={showInitialLoading}
         previewCount={previewCount}
         showMoreSessions={showMoreSessions}
         onWorkspaceTitlePointerDown={(event) => dragControls.start(event)}
@@ -1489,7 +1484,6 @@ function WorkspaceHeader({
 type WorkspaceSidebarGroupProps = {
   className: string;
   group: WorkspaceSessionGroup;
-  showInitialLoading?: boolean;
   previewCount: number;
   showMoreSessions: (workspaceId: string, totalRoots: number) => void;
   onWorkspaceTitlePointerDown: React.PointerEventHandler<HTMLDivElement>;
@@ -1498,7 +1492,6 @@ type WorkspaceSidebarGroupProps = {
 function WorkspaceSidebarGroup({
   className,
   group,
-  showInitialLoading,
   previewCount,
   showMoreSessions,
   onWorkspaceTitlePointerDown,
@@ -1595,7 +1588,7 @@ function WorkspaceSidebarGroup({
                 workspace={workspace}
                 statusLabel={statusLabel}
                 isError={group.status === "error"}
-                isLoading={group.status === "loading" || isConnecting}
+                isLoading={isConnecting}
                 onTitlePointerDown={onWorkspaceTitlePointerDown}
               />
               <div data-workspace-actions className="group/workspace-actions absolute right-8 top-1/2 flex -translate-y-1/2 items-center gap-0.5">
@@ -1653,16 +1646,7 @@ function WorkspaceSidebarGroup({
                       ctx.onEditWorkspaceConnection(workspace.id);
                     }}
                   />
-                ) : showInitialLoading || (group.status === "loading" && group.sessions.length === 0) ? (
-                  <SidebarMenuSubItem>
-                    <SidebarMenuSubButton aria-disabled className={cn("text-muted-foreground text-xs truncate", SIDEBAR_ROW_LANE)}>
-                      <SidebarGlyphSlot>
-                        <SessionDotMatrixLoader label={t("workspace.loading_tasks")} />
-                      </SidebarGlyphSlot>
-                      <span className="truncate">{t("workspace.loading_tasks")}</span>
-                    </SidebarMenuSubButton>
-                  </SidebarMenuSubItem>
-                ) : activeSessions.length > 0 ? (
+                ) : group.status === "loading" && group.sessions.length === 0 ? null : activeSessions.length > 0 ? (
                   <>
                     {wsGroups.length > 0 ? (
                       <GroupedSessionList

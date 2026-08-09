@@ -96,6 +96,7 @@ import {
 import { buildOpenworkRuntimeConfigObject, openworkRuntimeConfigFilePath, writeOpenworkRuntimeConfigFile } from "./openwork-runtime-config.js";
 import { readLegacyConfigSweepState } from "./legacy-config-sweep.js";
 import { findManagedEngineWorkspace } from "./workspaces.js";
+import { CloudProviderSync, parseCloudProviderDenSession } from "./cloud-provider-sync.js";
 import pkg from "../package.json" with { type: "json" };
 import constants from "../../../constants.json" with { type: "json" };
 
@@ -851,6 +852,13 @@ export async function startServer(config: ServerConfig): Promise<ServeResult> {
     watcherHandle = startReloadWatchers({ config, reloadEvents, logger });
   };
   const engineMcpServerState = beginEngineMcpServerState(config);
+  const cloudProviderSync = new CloudProviderSync({
+    config,
+    env,
+    reloadEngine: () => reloadOpencodeEngine(config, resolveEngineRuntimeWorkspace(config), engineMcpServerState),
+    engineBusy: () => engineHasActiveSessions(config, resolveEngineRuntimeWorkspace(config)),
+    logger: toManagedProviderAuthLogger(logger),
+  });
   const routes = createRoutes(
     config,
     approvals,
@@ -859,6 +867,7 @@ export async function startServer(config: ServerConfig): Promise<ServeResult> {
     restartReloadWatchers,
     engineMcpServerState,
     logger,
+    cloudProviderSync,
   );
 
   const serverOptions: {
@@ -1026,6 +1035,7 @@ export async function startServer(config: ServerConfig): Promise<ServeResult> {
       idleTimeout: 120,
     });
   } catch (error) {
+    cloudProviderSync.stop();
     invalidateEngineMcpServerState(config, engineMcpServerState);
     watcherHandle.close();
     reloadBaselineRefreshers.delete(config);
@@ -1042,6 +1052,7 @@ export async function startServer(config: ServerConfig): Promise<ServeResult> {
   return {
     ...server,
     stop: async () => {
+      cloudProviderSync.stop();
       invalidateEngineMcpServerState(config, engineMcpServerState);
       watcherHandle.close();
       reloadBaselineRefreshers.delete(config);
@@ -1270,13 +1281,13 @@ function buildCapabilities(config: ServerConfig): Capabilities {
   const inboxEnabled = resolveInboxEnabled();
   const outboxEnabled = resolveOutboxEnabled();
   const maxBytes = resolveInboxMaxBytes();
-  const toyUiEnabled = resolveToyUiEnabled();
   const browserProvider = resolveBrowserProvider();
   const opencodeConfigured = config.workspaces.some((workspace) => Boolean(workspace.baseUrl?.trim()));
   return {
     schemaVersion,
     serverVersion: SERVER_VERSION,
     opencodeVersion: OPENCODE_VERSION,
+    providerSync: true,
     skills: { read: true, write: writeEnabled, source: "openwork" },
     plugins: { read: true, write: writeEnabled },
     mcp: { read: true, write: writeEnabled },
@@ -1285,7 +1296,6 @@ function buildCapabilities(config: ServerConfig): Capabilities {
 
     approvals: { mode: config.approval.mode, timeoutMs: config.approval.timeoutMs },
     sandbox: { enabled: sandboxEnabled, backend: sandboxBackend },
-    ui: { toy: toyUiEnabled },
     tokens: { scoped: true, scopes: ["owner", "collaborator", "viewer"] },
     proxy: {
       opencode: opencodeConfigured,
@@ -1339,12 +1349,6 @@ function resolveInboxMaxBytes(): number {
   // uploads should be bounded here (memory: formData buffers the body) and by
   // downstream provider/tool limits rather than an arbitrary small cap.
   return 250_000_000;
-}
-
-function resolveToyUiEnabled(): boolean {
-  const raw = (process.env.OPENWORK_TOY_UI ?? "").trim().toLowerCase();
-  if (!raw) return true;
-  return ["1", "true", "yes", "on"].includes(raw);
 }
 
 // Dev-only log sink target. When OPENWORK_DEV_LOG_FILE is set to a path, the
@@ -1530,6 +1534,7 @@ function createRoutes(
   onWorkspacesChanged: () => void,
   engineMcpServerState: EngineMcpServerState,
   logger: ServerLogger,
+  cloudProviderSync: CloudProviderSync,
 ): Route[] {
   const routes: Route[] = [];
   registerCoreRoutes({
@@ -1552,7 +1557,6 @@ function createRoutes(
     createWorkspaceOpencodeClient,
     refreshRegistrationFromLiveStatus: refreshEngineMcpRegistrationFromLiveStatus,
     serializeWorkspace,
-    resolveToyUiEnabled,
     resolveDevLogPath,
     createOpenAiRealtimeVoiceSession,
   });
@@ -2048,6 +2052,33 @@ function createRoutes(
     return jsonResponse({ provider: runtimeProviderMap(runtime) });
   });
 
+  addRoute(routes, "PUT", "/den-session", "host-token", async (ctx) => {
+    ensureWritable(config);
+    const session = parseCloudProviderDenSession(await readJsonBody(ctx.request));
+    if (!session) throw new ApiError(400, "invalid_payload", "baseUrl, token, and orgId are required");
+    cloudProviderSync.setSession(session);
+    return new Response(null, { status: 204 });
+  });
+
+  addRoute(routes, "DELETE", "/den-session", "host-token", async () => {
+    ensureWritable(config);
+    await cloudProviderSync.clearSession();
+    return new Response(null, { status: 204 });
+  });
+
+  addRoute(routes, "POST", "/cloud-provider-sync/run", "host-token", async (ctx) => {
+    ensureWritable(config);
+    const body = await readJsonBody(ctx.request);
+    if (body.reason !== undefined && typeof body.reason !== "string") {
+      throw new ApiError(400, "invalid_payload", "reason must be a string");
+    }
+    return jsonResponse(await cloudProviderSync.run(typeof body.reason === "string" ? body.reason : undefined));
+  });
+
+  addRoute(routes, "GET", "/cloud-provider-sync/status", "client", async () => {
+    return jsonResponse(cloudProviderSync.status());
+  });
+
   addRoute(routes, "PATCH", "/runtime-config/providers", "host-token", async (ctx) => {
     ensureWritable(config);
     const workspace = resolveEngineRuntimeWorkspace(config);
@@ -2060,8 +2091,14 @@ function createRoutes(
 
     const fileResult = await writeOpenworkRuntimeConfigFile(config, workspace.id);
     const shouldReload = result.changed || fileResult.changed;
-    if (shouldReload) {
+    // Never dispose a live engine under running sessions; park the reload on
+    // the provider sync so it applies on a later pass once the engine idles.
+    const reloadDeferred = shouldReload && (await engineHasActiveSessions(config, workspace));
+    if (shouldReload && !reloadDeferred) {
       await reloadOpencodeEngine(config, workspace, engineMcpServerState);
+    }
+    if (reloadDeferred) {
+      cloudProviderSync.markReloadPending();
     }
     // The provider entry only names its credential env vars; the engine needs
     // the value itself via its auth API.
@@ -2076,7 +2113,7 @@ function createRoutes(
       changed: result.changed,
       provider: runtimeProviderMap(result.config),
       runtimeConfigPath: openworkRuntimeConfigFilePath(config),
-      reload: shouldReload ? "reloaded" : "skipped",
+      reload: shouldReload ? (reloadDeferred ? "deferred" : "reloaded") : "skipped",
     });
   });
 
@@ -3296,6 +3333,31 @@ function parseOpencodeErrorBody(input: string): unknown {
   }
 }
 
+// Bounded so a dispose wedged on live-session teardown can never freeze the
+// caller (CloudProviderSync serializes passes on one queue; an unbounded
+// dispose froze every later pass and the status it reports). Overridable for
+// tests.
+function opencodeDisposeTimeoutMs(): number {
+  const configured = Number(process.env.OPENWORK_ENGINE_DISPOSE_TIMEOUT_MS ?? "");
+  return Number.isFinite(configured) && configured > 0 ? configured : 30_000;
+}
+
+/**
+ * True when the managed engine reports any non-idle session (subagent child
+ * sessions carry their own ids and statuses, so they count too). Unknown
+ * activity reports false: a reload against a dead engine fails loudly on its
+ * own, and "unknown" must never park reloads forever.
+ */
+async function engineHasActiveSessions(config: ServerConfig, workspace: WorkspaceInfo): Promise<boolean> {
+  try {
+    const opencode = createWorkspaceOpencodeClient(config, workspace);
+    const statuses = unwrapOpencodeResult(await opencode.session.status(), "/session/status");
+    return Object.values(statuses).some((status) => status.type !== "idle");
+  } catch {
+    return false;
+  }
+}
+
 async function reloadOpencodeEngine(
   config: ServerConfig,
   workspace: WorkspaceInfo,
@@ -3318,8 +3380,25 @@ async function reloadOpencodeEngine(
   let response: Response;
   try {
     // OpenCode reload targets the managed loopback engine; CA trust is irrelevant.
-    response = await loopbackFetch(targetUrl, { method: "POST", headers });
+    // The engine answers /instance/dispose only AFTER teardown completes, so a
+    // dispose wedged on live-session teardown would otherwise hang forever.
+    response = await loopbackFetch(targetUrl, {
+      method: "POST",
+      headers,
+      signal: AbortSignal.timeout(opencodeDisposeTimeoutMs()),
+    });
   } catch (error) {
+    if (error instanceof Error && error.name === "TimeoutError") {
+      // Deliberately NOT opencode_engine_unreachable: the app escalates that
+      // code to a full desktop engine restart, which would kill the very
+      // sessions the wedged dispose is still tearing down.
+      throw new ApiError(
+        504,
+        "opencode_reload_timeout",
+        "OpenCode dispose did not complete in time; the reload stays pending",
+        { baseUrl },
+      );
+    }
     throw new ApiError(
       503,
       "opencode_engine_unreachable",
@@ -3372,6 +3451,18 @@ async function reloadOpencodeEngine(
     logPersistedCloudMcpReconcileResult({ config, workspace, trigger: "engine_reload", health });
   } catch (error) {
     logPersistedCloudMcpReconcileError({ config, workspace, trigger: "engine_reload", error });
+  }
+  // The MCP re-registration above writes the runtime DB; refresh the
+  // engine-visible file synchronously so the next provider-sync pass compares
+  // against post-reload state instead of racing the async fresh-keeper and
+  // reporting a phantom "changed" (which would schedule yet another reload).
+  try {
+    const engineWorkspace = resolveEngineRuntimeWorkspace(config);
+    if (engineWorkspace.id === workspace.id) {
+      await writeOpenworkRuntimeConfigFile(config, workspace.id);
+    }
+  } catch {
+    // Best-effort: the fresh-keeper listener still converges eventually.
   }
 }
 

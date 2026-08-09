@@ -14,8 +14,9 @@ beforeAll(async () => {
   accessModule = await import("../src/routes/org/plugin-system/access.js")
 })
 
-function createActorContext(input?: { isOwner?: boolean; role?: string; teamIds?: string[] }) {
+function createActorContext(input?: { automation?: true; isOwner?: boolean; role?: string; teamIds?: string[] }) {
   return {
+    automation: input?.automation,
     memberTeams: (input?.teamIds ?? []).map((teamId) => ({
       createdAt: new Date("2026-04-17T00:00:00.000Z"),
       id: teamId,
@@ -32,6 +33,7 @@ function createActorContext(input?: { isOwner?: boolean; role?: string; teamIds?
         userId: "user_current",
       },
     },
+    session: null,
   } as any
 }
 
@@ -47,6 +49,18 @@ test("org owners and admins get plugin-system capability access", () => {
   expect(accessModule.hasPluginArchCapability(createActorContext({ role: "member" }), "config_object.create")).toBe(true)
   expect(accessModule.hasPluginArchCapability(createActorContext({ role: "member" }), "marketplace.create")).toBe(false)
   expect(accessModule.hasPluginArchCapability(createActorContext({ role: "member" }), "connector_instance.create")).toBe(false)
+})
+
+test("server-side connector automation bypasses human session freshness without weakening human step-up", async () => {
+  await expect(accessModule.requirePluginArchCapability(
+    createActorContext({ automation: true, role: "admin" }),
+    "marketplace.create",
+  )).resolves.toBeUndefined()
+
+  await expect(accessModule.requirePluginArchCapability(
+    createActorContext({ role: "admin" }),
+    "marketplace.create",
+  )).rejects.toMatchObject({ error: "reauth" })
 })
 
 test("grant resolution supports direct, team, org-wide, and highest-role precedence", () => {

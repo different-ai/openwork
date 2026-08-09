@@ -152,6 +152,16 @@ jobs:
       - name: Check outbound access manifest
         run: pnpm check:outbound-access
 
+      # The packaged builds bundle the server plugins with `--target node`,
+      # which resolves workspace packages through their published exports
+      # rather than TypeScript paths. Typechecks and bun tests never take that
+      # route, so an unbuildable import reached dev twice before this ran here.
+      - name: Bundle the server plugins the way packaged builds do
+        run: |
+          set -euo pipefail
+          rm -rf packages/types/dist
+          pnpm --filter openwork-server build
+
       - name: Typecheck Electron main against the IPC contract
         run: pnpm --filter @openwork/desktop typecheck:electron
 

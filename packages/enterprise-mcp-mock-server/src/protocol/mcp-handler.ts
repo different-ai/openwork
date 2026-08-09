@@ -413,6 +413,30 @@ function handleInitialize(context: McpRequestContext, rpc: JsonRpcRequest, token
     return
   }
 
+  if (
+    profile.protocol.versionNegotiation === "strict" &&
+    !profile.protocol.versions.includes(params.data.protocolVersion)
+  ) {
+    state.emit({
+      correlationId,
+      scenario,
+      phase: "MCP_VERSION",
+      direction: "outbound",
+      kind: "response",
+      outcome: "failed",
+      summary: "Rejected an unsupported MCP protocol version with HTTP 400",
+      details: {
+        requestedVersion: params.data.protocolVersion,
+        supportedVersions: profile.protocol.versions,
+      },
+    })
+    sendJson(context.response, 400, {
+      error: "unsupported_protocol_version",
+      supportedVersions: profile.protocol.versions,
+    })
+    return
+  }
+
   const negotiatedProtocolVersion = profile.protocol.versions.includes(params.data.protocolVersion)
     ? params.data.protocolVersion
     : profile.protocol.versions[0]

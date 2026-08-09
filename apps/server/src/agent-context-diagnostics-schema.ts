@@ -430,6 +430,7 @@ const mcpEvidenceSchema = z.object({
 }).strict();
 
 const connectEvidenceSchema = z.object({
+  stateStatus: z.enum(["available", "missing", "invalid", "unreadable"]),
   connectEnabled: z.boolean(),
   legacyGoogleWorkspaceConfigured: z.boolean(),
   expectedBranch: z.enum(["cloud-active", "cloud-disconnected", "extensions-only"]),

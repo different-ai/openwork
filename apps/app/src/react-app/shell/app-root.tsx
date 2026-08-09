@@ -1,7 +1,7 @@
 /** @jsxImportSource react */
 
 import { useEffect, useMemo, useSyncExternalStore, type ReactNode } from "react";
-import { Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
+import { Navigate, Route, Routes, useLocation, useNavigate } from "react-router";
 
 import { captureAnalyticsEvent, initAnalytics } from "../../app/lib/analytics";
 import {
@@ -44,6 +44,7 @@ import { SessionRoute } from "./session-route";
 import { SettingsRoute } from "./settings-route";
 import { ShellConfigProvider } from "./shell-config";
 import { WelcomeRoute } from "./welcome-route";
+import { signedInRoute } from "./den-signin-routing";
 
 
 type DenSigninGateProps = {
@@ -102,8 +103,7 @@ function DenSigninGate({ children }: DenSigninGateProps) {
       if (!denAuth.isSignedIn && !onSignin) {
         navigate("/signin", { replace: true });
       } else if (denAuth.isSignedIn && onSignin) {
-        // Signed in — route to onboarding so the user sees their org resources.
-        navigate("/onboarding", { replace: true });
+        navigate(signedInRoute(readDenSettings().activeOrgId), { replace: true });
       }
     } else if (onSignin) {
       navigate("/session", { replace: true });
@@ -126,9 +126,8 @@ function DenSigninGate({ children }: DenSigninGateProps) {
     requireSignin,
   ]);
 
-  // After a fresh sign-in, navigate to the onboarding page so the user sees
-  // their signed-in org state. Do not wait for an active org: first-run users
-  // may not belong to one yet, and must not remain on the signed-out welcome.
+  // After a fresh sign-in, returning members go straight to chat. Give org
+  // restoration a brief chance to settle before treating the user as new.
   useEffect(() => {
     const handler = (event: WindowEventMap[typeof denSessionUpdatedEvent]) => {
       if (event.detail?.status !== "success") return;
@@ -136,12 +135,14 @@ function DenSigninGate({ children }: DenSigninGateProps) {
       const check = () => {
         attempts++;
         const settings = readDenSettings();
-        if (settings.authToken?.trim()) {
-          navigate("/onboarding", { replace: true });
+        if (settings.authToken?.trim() && settings.activeOrgId?.trim()) {
+          navigate("/session", { replace: true });
         } else if (attempts < 10) {
           // Session persistence should already be done, but retry briefly in
           // case another consumer is still applying the handoff result.
           setTimeout(check, 500);
+        } else if (settings.authToken?.trim()) {
+          navigate(signedInRoute(settings.activeOrgId), { replace: true });
         }
       };
       // First check after a short delay for the auth to settle
@@ -152,7 +153,7 @@ function DenSigninGate({ children }: DenSigninGateProps) {
   }, [navigate]);
 
   if (requireSignin && denAuth.status === "checking") {
-    return <ForcedSigninPage developerMode={false} />;
+    return null;
   }
 
   if (redirectingPreparedWorkspace) return <Navigate to="/onboarding" replace />;

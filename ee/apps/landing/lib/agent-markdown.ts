@@ -1,26 +1,29 @@
 const home = `# OpenWork
 
-> The open-source Claude Cowork alternative. OpenWork is a desktop app that lets teams chat with 50+ LLMs, bring their own provider keys, and ship reusable agent setups with guardrails.
+> The open-source Claude Cowork alternative. Chat on files, use skills, schedule tasks, automate a browser, and run on any model — plus an MCP gateway for your whole team.
 
 ## What it is
 
-- Desktop app (macOS, Windows, Linux) — GUI for OpenCode
-- Bring your own model and provider (OpenAI, Anthropic, local models, 50+ supported)
-- Skills, plugins, and MCP servers extend what the agent can do
-- Shared agent setups for teams, with policy and guardrails
-- Free and open source
+- Free, open-source desktop app for macOS, Windows, and Linux
+- Any model or provider: Claude, GPT, Gemini, Mistral, local models, and 50+ providers
+- Chat on files, browser automation, scheduled tasks, skills, and Anthropic-compatible plugins
+- OpenWork Connect: one MCP gateway URL for org-wide skills, servers, roles, and policies
+- OpenWork Web in alpha; central management and private deployment options for teams
+- Coming soon: Dispatch (assign tasks from your phone) and live artifacts (auto-refreshing dashboards)
 
 ## Primary calls-to-action
 
-- **Try it free** — [Get Started for free](https://app.openworklabs.com?mode=sign-up)
+- **Download for free** — [Desktop](https://openworklabs.com/download)
+- **Open in your browser** — [OpenWork Web](https://app.openworklabs.com)
 - **Team plans** — [Pricing](https://openworklabs.com/pricing) (first 5 seats free, then \\$10 per seat/mo)
 - **Sign in to the hosted workspace** — [Cloud](https://app.openworklabs.com)
 - **SSO / audit / procurement** — [Enterprise](https://openworklabs.com/enterprise)
 - **Docs** — [openworklabs.com/docs](https://openworklabs.com/docs)
+- **Migrate from Claude Cowork** — [Migration guide](https://openworklabs.com/docs/start-here/migrate-from-claude-cowork)
 
 ## How it compares
 
-- **vs Claude Cowork** — open source, 50+ LLMs from any provider, local-first (files stay on your machine), one-link team sharing of agent setups
+- **vs Claude Cowork** — feature parity without model or vendor lock-in, plus an MCP gateway usable from any compatible client
 - **vs Codex** — general knowledge work on files (not only coding), model and provider agnostic
 - **vs ChatGPT Desktop** — agents act on local files and tools (MCP, plugins, skills) with guardrails; the setup is shareable and self-hostable
 
@@ -195,8 +198,33 @@ const download = `# Get Started with OpenWork
 Once the desktop app is running, use the [workspace-guide skill](https://openworklabs.com/.well-known/agent-skills/workspace-guide/SKILL.md) for first-run orientation.
 `
 
+const connect = `# OpenWork Connect
+
+> The MCP gateway for your whole org. Add a server or skill once, then share it with every teammate and agent through one URL.
+
+- Org-level authentication, roles, allowlists, and audit apply to every call
+- Works in OpenWork and any MCP-compatible client
+- First 5 seats are free
+- [Get started free](https://app.openworklabs.com?mode=sign-up)
+- [Read the docs](https://openworklabs.com/docs)
+`
+
+const cloud = `# OpenWork Cloud
+
+> The dashboard for running OpenWork across your organization.
+
+- Provision model providers centrally
+- Deploy skills and MCP servers to every seat
+- Manage members, policies, usage, and audit
+- OpenWork Web and the Connect MCP gateway are built in
+- [Get started free](https://app.openworklabs.com?mode=sign-up)
+- [Explore Connect](https://openworklabs.com/connect)
+`
+
 export const agentMarkdown: Record<string, string> = {
   "/": home,
+  "/connect": connect,
+  "/cloud": cloud,
   "/pricing": pricing,
   "/enterprise": enterprise,
   "/download": download,

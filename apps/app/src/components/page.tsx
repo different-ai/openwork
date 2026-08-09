@@ -7,7 +7,7 @@ import { cn } from "@/lib/utils";
 function Page({ className, ...props }: ComponentProps<"div">) {
   return (
     <div
-      className={cn("relative h-screen bg-background text-foreground", className)}
+      className={cn("relative h-dvh bg-background text-foreground", className)}
       {...props}
     />
   );

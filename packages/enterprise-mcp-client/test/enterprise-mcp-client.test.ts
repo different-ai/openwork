@@ -1479,6 +1479,89 @@ describe("enterprise MCP OAuth persistence contract", () => {
     assert.equal(persistence.registration?.source, "client-metadata")
   })
 
+  it("starts OAuth when initialize and tool discovery are both public but no member credential exists", async () => {
+    const resourceOrigin = "https://bigquery.googleapis.test"
+    const authorizationOrigin = "https://accounts.google.test"
+    const mcpMethods: string[] = []
+    const fetch: EnterpriseMcpFetch = async (url, init) => {
+      const target = new URL(url)
+      if (target.href === `${resourceOrigin}/.well-known/oauth-protected-resource/mcp`) {
+        return Response.json({
+          resource: `${resourceOrigin}/mcp`,
+          authorization_servers: [`${authorizationOrigin}/`],
+          scopes_supported: ["https://www.googleapis.test/auth/bigquery"],
+          bearer_methods_supported: ["header"],
+        })
+      }
+      if (target.href === `${authorizationOrigin}/.well-known/oauth-authorization-server`) {
+        return Response.json({
+          issuer: authorizationOrigin,
+          authorization_endpoint: `${authorizationOrigin}/o/oauth2/v2/auth`,
+          token_endpoint: `${authorizationOrigin}/token`,
+          response_types_supported: ["code"],
+          grant_types_supported: ["authorization_code", "refresh_token"],
+          token_endpoint_auth_methods_supported: ["client_secret_post", "client_secret_basic"],
+          code_challenge_methods_supported: ["plain", "S256"],
+        })
+      }
+      if (target.href === `${resourceOrigin}/mcp`) {
+        const body = typeof init?.body === "string" ? init.body : ""
+        if (!body) return new Response(null, { status: 202 })
+        const request = rpcRequestSchema.parse(JSON.parse(body))
+        mcpMethods.push(request.method)
+        if (request.method === "notifications/initialized") return new Response(null, { status: 202 })
+        if (request.method === "initialize") {
+          return Response.json({
+            jsonrpc: "2.0",
+            id: request.id,
+            result: {
+              protocolVersion: "2025-06-18",
+              capabilities: { tools: {} },
+              serverInfo: { name: "bigquery-style-test", version: "1.0.0" },
+            },
+          })
+        }
+        if (request.method === "tools/list") {
+          return Response.json({
+            jsonrpc: "2.0",
+            id: request.id,
+            result: { tools: [{ name: "execute_sql", inputSchema: { type: "object" } }] },
+          })
+        }
+      }
+      return new Response(null, { status: 404 })
+    }
+    const persistence = new MemoryOAuthPersistence()
+    persistence.seedRegistration({
+      client_id: "pre-registered-google-client",
+      client_secret: "test-client-secret",
+      token_endpoint_auth_method: "client_secret_post",
+    })
+    const client = createEnterpriseMcpClient({ fetch })
+    const connection: EnterpriseMcpConnection = {
+      id: "oauth-public-bigquery-style",
+      serverUrl: `${resourceOrigin}/mcp`,
+      authorization: { type: "oauth", persistence },
+    }
+
+    const started = await client.connect({
+      connection,
+      redirectUri: "https://den.example.test/v1/mcp-connections/oauth/callback",
+      authorizationId: "signed-bigquery-state",
+    })
+
+    assert.equal(started.status, "needs_auth")
+    if (started.status !== "needs_auth") throw new Error("Expected OAuth authorization to be required.")
+    const authorizeUrl = new URL(started.authorizeUrl)
+    assert.equal(authorizeUrl.origin, authorizationOrigin)
+    assert.equal(authorizeUrl.searchParams.get("client_id"), "pre-registered-google-client")
+    assert.equal(authorizeUrl.searchParams.get("scope"), "https://www.googleapis.test/auth/bigquery")
+    assert.equal(authorizeUrl.searchParams.get("state"), "signed-bigquery-state")
+    assert.ok(mcpMethods.includes("initialize"))
+    assert.ok(mcpMethods.includes("tools/list"))
+    assert.equal(persistence.credential, undefined)
+  })
+
   it("refreshes an expired enterprise OAuth credential and persists the replacement", async () => {
     const server = await startOAuthMcpServer()
     try {

@@ -51,21 +51,54 @@ jobs:
           mode: report
           findings-file: ${{ steps.analyze.outputs.findings-file }}
 
-      # Consumed by warden-clearance.yml (workflow_run). The clearance
-      # workflow refuses to act on PRs that touch review machinery, so this
-      # artifact cannot be forged without tripping that guard.
+      # Consumed by warden-clearance.yml (workflow_run). blocking_count excludes
+      # advisory desktop↔den sync findings so they notify without withholding
+      # clearance. The clearance workflow refuses to act on PRs that touch review
+      # machinery, so this artifact cannot be forged without tripping that guard.
       - name: Write clearance summary
         env:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           FINDINGS_COUNT: ${{ steps.analyze.outputs.findings-count }}
           HIGH_COUNT: ${{ steps.analyze.outputs.high-count }}
+          FINDINGS_FILE: ${{ steps.analyze.outputs.findings-file }}
         run: |
           set -euo pipefail
+
+          if [ -n "$FINDINGS_FILE" ] && [ -f "$FINDINGS_FILE" ] && counts="$(jq -ce '
+            {
+              security_count: ([.skills[] | select(.name == "diff-security-review") | .findings | length] | add // 0),
+              sync_blocking_count: ([.skills[] | select(.name == "desktop-den-sync-review") | .findings[] | select(.severity != "medium" and .severity != "low")] | length),
+              sync_advisory_count: ([.skills[] | select(.name == "desktop-den-sync-review") | .findings[] | select(.severity == "medium" or .severity == "low")] | length)
+            }
+          ' "$FINDINGS_FILE" 2>/dev/null)"; then
+            security_count="$(jq -r '.security_count' <<< "$counts")"
+            sync_blocking_count="$(jq -r '.sync_blocking_count' <<< "$counts")"
+            sync_advisory_count="$(jq -r '.sync_advisory_count' <<< "$counts")"
+            blocking_count="$((security_count + sync_blocking_count))"
+          else
+            security_count="$FINDINGS_COUNT"
+            sync_blocking_count=0
+            sync_advisory_count=0
+            blocking_count="$FINDINGS_COUNT"
+          fi
+
           jq -n \
             --arg sha "$HEAD_SHA" \
             --arg count "$FINDINGS_COUNT" \
             --arg high "$HIGH_COUNT" \
-            '{head_sha: $sha, findings_count: ($count | tonumber), high_count: ($high | tonumber)}' \
+            --arg blocking "$blocking_count" \
+            --arg security "$security_count" \
+            --arg sync_blocking "$sync_blocking_count" \
+            --arg sync_advisory "$sync_advisory_count" \
+            '{
+              head_sha: $sha,
+              findings_count: ($count | tonumber),
+              high_count: ($high | tonumber),
+              blocking_count: ($blocking | tonumber),
+              security_count: ($security | tonumber),
+              sync_blocking_count: ($sync_blocking | tonumber),
+              sync_advisory_count: ($sync_advisory | tonumber)
+            }' \
             > warden-summary.json
           cat warden-summary.json
 

@@ -170,7 +170,7 @@ describe("Google Workspace extension", () => {
             threadId: "t1",
             snippet: "Hello there",
             labelIds: ["INBOX", "UNREAD"],
-            payload: { headers: [{ name: "Subject", value: "Quarterly report" }, { name: "From", value: "alice@example.com" }] },
+            payload: { headers: [{ name: "Subject", value: "Quarterly report" }, { name: "From", value: "alice@example.com" }, { name: "Bcc", value: "investors@example.com" }] },
           }), { status: 200 });
         }
         return new Response(JSON.stringify({ messages: [{ id: "m1" }], resultSizeEstimate: 1 }), { status: 200 });
@@ -189,6 +189,7 @@ describe("Google Workspace extension", () => {
         subject: "Quarterly report",
         from: "alice@example.com",
         to: "",
+        bcc: "investors@example.com",
         date: "",
       }],
       resultSizeEstimate: 1,

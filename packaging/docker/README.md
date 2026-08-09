@@ -354,7 +354,7 @@ docker compose up --build
 
 Then open:
 
-- `http://127.0.0.1:8787/ui`
+- `http://127.0.0.1:8787/health`
 
 ### Config
 

@@ -55,6 +55,8 @@ export type ExtensionDetailModalProps = {
   beta?: boolean;
   /** Reason this item is visible but unavailable. */
   disabledReason?: string | null;
+  /** Actionable error from the most recent connection attempt. */
+  errorInfo?: string | null;
   /** Remote URL if applicable. */
   url?: string;
   /** Declarative setup instructions from an extension manifest. */
@@ -191,6 +193,7 @@ export function ExtensionDetailModal({
   preview = false,
   beta = false,
   disabledReason = null,
+  errorInfo = null,
   url,
   setupInstructions,
   resourceLabels = [],
@@ -304,6 +307,12 @@ export function ExtensionDetailModal({
       <div className="text-sm leading-relaxed text-card-foreground">
         {description}
       </div>
+
+      {errorInfo ? (
+        <div role="alert" className="rounded-lg border border-red-6 bg-red-2 px-3 py-2 text-sm text-red-11">
+          {errorInfo}
+        </div>
+      ) : null}
 
       {setupInstructions ? (
         <Card variant="outline" size="sm">

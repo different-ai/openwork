@@ -1348,6 +1348,7 @@ export async function runAgentContextDiagnostics(input: {
     input.dependencies?.signal?.throwIfAborted();
     connectSnapshotAvailable = false;
     connectSnapshot = {
+      status: "unreadable",
       connectEnabled: false,
       connectCatalogEnabled: false,
       cloudMcpPresent: false,
@@ -1963,6 +1964,7 @@ export async function runAgentContextDiagnostics(input: {
     },
     mcps,
     connect: {
+      stateStatus: connectSnapshot.status,
       connectEnabled: connectSnapshot.connectEnabled,
       legacyGoogleWorkspaceConfigured: connectSnapshot.googleWorkspace.legacyConfigured,
       expectedBranch: branch,

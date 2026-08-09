@@ -26,7 +26,7 @@ export function useEnterpriseActivationRequired() {
 function EnterpriseActivationPage() {
   return (
     <div
-      className="relative min-h-screen bg-background text-foreground"
+      className="relative min-h-dvh bg-background text-foreground"
       data-state="enterprise-activation"
       data-testid="enterprise-activation-root"
     >
@@ -50,7 +50,7 @@ function EnterpriseActivationPage() {
       <div className="absolute inset-x-0 top-0 z-20 h-10 mac:titlebar-drag" />
 
       <div
-        className="relative z-10 flex min-h-screen items-center justify-center px-6 py-16"
+        className="relative z-10 flex min-h-dvh items-center justify-center px-6 py-16"
         data-testid="enterprise-activation-foreground"
       >
         <section

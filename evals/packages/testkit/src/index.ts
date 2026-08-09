@@ -46,8 +46,13 @@ function wrapTestApi<T extends (...args: never[]) => unknown>(api: T): T {
 
 export const test = wrapTestApi(fixtureTest);
 
+export { createDesktopHandoffGrant, signInDesktopAs } from "@openwork/behaviors";
+export type { DesktopHandle } from "@openwork/hosts";
 export * from "./app.ts";
+export * from "./eventually.ts";
+export * from "./faults.ts";
 export * from "./mock.ts";
 export * from "./needs.ts";
 export * from "./place.ts";
 export * from "./server.ts";
+export * from "./state.ts";

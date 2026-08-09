@@ -11,7 +11,6 @@ export type AutomationRunnerIdentity = {
 }
 
 export class AutomationRunnerAuth {
-  private readonly connections = new Map<string, number>()
   constructor(private readonly secret = env.betterAuthSecret) {}
 
   private sign(payload: string) {
@@ -64,23 +63,6 @@ export class AutomationRunnerAuth {
     }
   }
 
-  private connectionKey(scope: Pick<AutomationRunnerIdentity, "organizationId" | "ownerMemberId">) {
-    return `${scope.organizationId}:${scope.ownerMemberId}`
-  }
-
-  connected(scope: AutomationRunnerIdentity) {
-    const key = this.connectionKey(scope)
-    this.connections.set(key, (this.connections.get(key) ?? 0) + 1)
-    return () => {
-      const remaining = (this.connections.get(key) ?? 1) - 1
-      if (remaining > 0) this.connections.set(key, remaining)
-      else this.connections.delete(key)
-    }
-  }
-
-  hasConnected(scope: Pick<AutomationRunnerIdentity, "organizationId" | "ownerMemberId">) {
-    return (this.connections.get(this.connectionKey(scope)) ?? 0) > 0
-  }
 }
 
 export const automationRunnerAuth = new AutomationRunnerAuth()

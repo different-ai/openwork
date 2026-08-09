@@ -1,9 +1,48 @@
 import { randomBytes } from "node:crypto";
 import { existsSync, readdirSync } from "node:fs";
+import { createRequire } from "node:module";
 import { isAbsolute, join } from "node:path";
 import { opencodeDataDirs as defaultOpencodeDataDirs } from "@openwork/paths";
 
-import Database from "better-sqlite3";
+// better-sqlite3's N-API binding hard-crashes Bun (panic: "NAPI FATAL ERROR:
+// Error::New napi_get_last_error_info"), and the Daytona worker runtime ships
+// openwork-server as a bun-compiled binary. Use Bun's built-in bun:sqlite
+// driver under Bun and better-sqlite3 under Node/Electron; both expose the
+// better-sqlite3-style API surface used here (prepare/get/run, exec,
+// transaction, close). Loading is lazy so merely importing this module never
+// touches a native binding.
+type SqliteStatement = {
+  get(...params: unknown[]): unknown;
+  run(...params: unknown[]): unknown;
+};
+
+type SqliteDatabase = {
+  prepare(sql: string): SqliteStatement;
+  exec(sql: string): void;
+  transaction<T>(fn: () => T): () => T;
+  close(): void;
+};
+
+type SqliteConstructor = new (dbPath: string, options?: { readonly?: boolean }) => SqliteDatabase;
+
+const requireModule = createRequire(import.meta.url);
+
+let sqliteConstructor: SqliteConstructor | null = null;
+
+function loadSqliteConstructor(): SqliteConstructor {
+  if (!sqliteConstructor) {
+    sqliteConstructor =
+      typeof (globalThis as { Bun?: unknown }).Bun === "undefined"
+        ? (requireModule("better-sqlite3") as SqliteConstructor)
+        : ((requireModule("bun:sqlite") as { Database: SqliteConstructor }).Database);
+  }
+  return sqliteConstructor;
+}
+
+function openDatabase(dbPath: string, options?: { readonly?: boolean }): SqliteDatabase {
+  const Database = loadSqliteConstructor();
+  return new Database(dbPath, options);
+}
 
 type SeedMessage = {
   role: "assistant" | "user";
@@ -92,9 +131,9 @@ export function resolveOpencodeDbPath(): string {
 function findOpencodeSessionDbPath(sessionId: string, inputPath?: string): string | null {
   const candidates = (inputPath ? [inputPath] : candidateOpencodeDbPaths()).filter((candidate) => existsSync(candidate));
   for (const dbPath of candidates) {
-    const db = new Database(dbPath, { readonly: true });
+    const db = openDatabase(dbPath, { readonly: true });
     try {
-      const session = db.prepare("select id from session where id = ?1").get(sessionId);
+      const session = db.prepare("select id from session where id = ?").get(sessionId);
       if (session) return dbPath;
     } catch {
       // ignore non-matching dbs
@@ -147,28 +186,28 @@ export function seedOpencodeSessionMessages(input: {
     throw new Error(`OpenCode database not found at ${dbPath}`);
   }
 
-  const db = new Database(dbPath);
+  const db = openDatabase(dbPath);
   db.exec("PRAGMA foreign_keys = ON");
 
   try {
     const run = db.transaction(() => {
-      const session = db.prepare("select id from session where id = ?1").get(sessionId);
+      const session = db.prepare("select id from session where id = ?").get(sessionId);
       if (!session) {
         throw new Error(`OpenCode session not found: ${sessionId}`);
       }
 
-      const existing = db.prepare("select count(1) as count from message where session_id = ?1").get(sessionId) as { count?: number } | null;
+      const existing = db.prepare("select count(1) as count from message where session_id = ?").get(sessionId) as { count?: number } | null;
       if ((existing?.count ?? 0) > 0) {
         return { inserted: 0, skipped: true };
       }
 
       const insertMessage = db.prepare(
-        "insert into message (id, session_id, time_created, time_updated, data) values (?1, ?2, ?3, ?4, ?5)",
+        "insert into message (id, session_id, time_created, time_updated, data) values (?, ?, ?, ?, ?)",
       );
       const insertPart = db.prepare(
-        "insert into part (id, message_id, session_id, time_created, time_updated, data) values (?1, ?2, ?3, ?4, ?5, ?6)",
+        "insert into part (id, message_id, session_id, time_created, time_updated, data) values (?, ?, ?, ?, ?, ?)",
       );
-      const updateSession = db.prepare("update session set time_updated = ?2 where id = ?1");
+      const updateSession = db.prepare("update session set time_updated = ? where id = ?");
 
       const startedAt = input.now ?? Date.now();
       let counter = 0;
@@ -218,7 +257,7 @@ export function seedOpencodeSessionMessages(input: {
         }
       });
 
-      updateSession.run(sessionId, startedAt + messages.length);
+      updateSession.run(startedAt + messages.length, sessionId);
       return { inserted: messages.length, skipped: false };
     });
 

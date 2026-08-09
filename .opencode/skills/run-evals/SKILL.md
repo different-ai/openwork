@@ -8,6 +8,8 @@ description: DEPRECATED legacy automation runner. Load only when a user explicit
 Use this guide only when the user names a flow that already exists in
 `evals/flows/`. The directory is frozen.
 
+For current verification, use `prove-a-pr` → `write-a-spec` → `run-tests` → `publish-evidence`.
+
 - Refuse to create, scaffold, copy, rename, or modify a legacy flow.
 - If the requested behavior has no existing flow, use `write-a-spec` and
   `run-tests`; new specs import `test` from `@openwork/testkit`.

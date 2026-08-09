@@ -100,7 +100,7 @@ export function SettingsShell(props: SettingsShellProps) {
   }
 
   return (
-    <div className="flex h-dvh min-h-screen w-full overflow-hidden">
+    <div className="flex h-dvh min-h-dvh w-full overflow-hidden">
       <SidebarProvider defaultOpen className="relative min-h-0 flex-1">
         <SettingsSidebar
           activeTab={props.activeTab}

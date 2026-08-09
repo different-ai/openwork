@@ -36,7 +36,12 @@ overrides:
   "fast-uri@>=3.0.0 <3.1.5": 3.1.5
   "fast-xml-parser@>=5.0.0 <5.7.0": 5.7.0
   "form-data@>=4.0.0 <4.0.6": 4.0.6
-  "hono@<4.12.27": 4.12.27
+  # 0.25.12 keeps the >=0.25.0 dev-server CORS fix. Do not bump to 0.28.x:
+  # its browser-name target lists (Vite optimizeDeps defaults) refuse to
+  # lower plain destructuring, which kills `vite dev` on every fresh install.
+  esbuild: 0.25.12
+  better-call: 1.3.7
+  "hono@<4.12.34": 4.12.34
   "ip-address@>=10.0.0 <10.3.1": 10.3.1
   "js-yaml@>=4.0.0 <4.3.0": 4.3.0
   "postcss@<8.5.23": 8.5.23
@@ -49,6 +54,7 @@ overrides:
   "tar@<7.5.22": 7.5.22
   "tmp@>=0.2.0 <0.2.7": 0.2.7
   "undici@>=6.0.0 <6.28.0": 6.28.0
+  "uuid@<11.1.1": 11.1.1
   "ws@>=8.0.0 <8.21.0": 8.21.0
 allowBuilds:
   "@sentry/cli": true
@@ -62,6 +68,5 @@ allowBuilds:
   protobufjs: true
   sharp: true
 patchedDependencies:
-  '@better-auth/drizzle-adapter@1.6.11': patches/@better-auth__drizzle-adapter@1.6.11.patch
-  '@better-auth/oauth-provider@1.6.11': patches/@better-auth__oauth-provider@1.6.11.patch
+  '@better-auth/drizzle-adapter@1.7.0-beta.10': patches/@better-auth__drizzle-adapter@1.7.0-beta.10.patch
   '@modelcontextprotocol/sdk': patches/@modelcontextprotocol__sdk.patch

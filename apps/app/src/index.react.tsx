@@ -2,7 +2,7 @@
 import * as React from "react";
 import ReactDOM from "react-dom/client";
 import { QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, HashRouter } from "react-router-dom";
+import { BrowserRouter, HashRouter } from "react-router";
 
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { initializeDenBootstrapConfig } from "./app/lib/den";

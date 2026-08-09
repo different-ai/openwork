@@ -6,7 +6,11 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
-import type { AutomationModelOption } from "./automation-model-options"
+import { ChevronDown } from "lucide-react"
+
+import { ModelPickerModal } from "@/react-app/domains/session/modals/model-picker-modal"
+import type { AutomationModelOption, AutomationProviderCatalog } from "./automation-model-options"
+import { automationPickerOptions, describeAutomationModel } from "./automation-model-options"
 
 const WEEKDAYS = [
   { value: 1, label: "Mon" },
@@ -41,7 +45,7 @@ function defaultInput(modelOptions: readonly AutomationModelOption[]): CreateAut
     name: "",
     instructions: "",
     schedule: { kind: "daily", timezone: localTimezone(), hour: 9, minute: 0 },
-    model: { providerId: first.providerId, modelId: first.modelId },
+    model: { providerId: first.providerId, modelId: first.modelId, variant: null },
   }
 }
 
@@ -58,6 +62,7 @@ export type AutomationEditorProps = {
   initial?: CreateAutomation | null
   initialKey?: string
   modelOptions: readonly AutomationModelOption[]
+  providerCatalog?: AutomationProviderCatalog
   busy: boolean
   submitLabel: string
   onCancel: () => void
@@ -78,8 +83,19 @@ export function AutomationEditor(props: AutomationEditorProps) {
     setInput(defaultInput(props.modelOptions))
   }, [props.initial, props.initialKey, props.modelOptions])
 
+  const [pickerOpen, setPickerOpen] = useState(false)
+  const [modelQuery, setModelQuery] = useState("")
   const selectedModel = modelKey(input.model)
   const currentModelAvailable = props.modelOptions.some((option) => modelKey(option) === selectedModel)
+  const modelLabel = describeAutomationModel(input.model, props.modelOptions)
+  const pickerOptions = useMemo(
+    () => automationPickerOptions({
+      options: props.modelOptions,
+      catalog: props.providerCatalog ?? {},
+      selected: input.model,
+    }),
+    [input.model, props.modelOptions, props.providerCatalog],
+  )
   const canSave = useMemo(
     () => input.name.trim().length > 0 && input.instructions.trim().length > 0 && currentModelAvailable,
     [currentModelAvailable, input.instructions, input.name],
@@ -242,26 +258,42 @@ export function AutomationEditor(props: AutomationEditorProps) {
         </div>
         <div className="space-y-2">
           <Label htmlFor="automation-model">Model</Label>
-          <select
+          <Button
             id="automation-model"
-            className="h-9 w-full rounded-lg border border-border bg-background px-3 text-sm"
-            value={selectedModel}
-            onChange={(event) => {
-              const option = props.modelOptions.find((candidate) => modelKey(candidate) === event.currentTarget.value)
-              if (option) setInput((current) => ({
-                ...current,
-                model: { providerId: option.providerId, modelId: option.modelId },
-              }))
-            }}
+            type="button"
+            variant="outline"
+            className="h-9 w-full justify-between gap-2 font-normal"
+            onClick={() => setPickerOpen(true)}
           >
-            {!currentModelAvailable ? <option value={selectedModel}>Current model is no longer available</option> : null}
-            {props.modelOptions.map((option) => (
-              <option key={modelKey(option)} value={modelKey(option)}>
-                {option.providerName} · {option.modelName}
-                {option.accessKind === "free" ? " (Free)" : ""}
-              </option>
-            ))}
-          </select>
+            <span className="min-w-0 truncate">
+              {currentModelAvailable ? modelLabel : "Current model is no longer available"}
+            </span>
+            <ChevronDown className="size-4 shrink-0 opacity-60" />
+          </Button>
+          <ModelPickerModal
+            open={pickerOpen}
+            options={pickerOptions}
+            query={modelQuery}
+            setQuery={setModelQuery}
+            subtitle="Runs use this model and reasoning level in your desktop runtime."
+            target="default"
+            current={{ providerID: input.model.providerId, modelID: input.model.modelId }}
+            onSelect={(model) => {
+              setInput((current) => ({
+                ...current,
+                // A different model has its own reasoning levels, so the old
+                // variant cannot carry over.
+                model: { providerId: model.providerID, modelId: model.modelID, variant: null },
+              }))
+              setPickerOpen(false)
+            }}
+            onBehaviorChange={(model, variant) => setInput((current) => ({
+              ...current,
+              model: { providerId: model.providerID, modelId: model.modelID, variant },
+            }))}
+            onOpenSettings={() => setPickerOpen(false)}
+            onClose={() => setPickerOpen(false)}
+          />
         </div>
       </div>
 

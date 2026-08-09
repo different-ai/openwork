@@ -4,6 +4,8 @@ export type { SurfaceHandle, SurfaceKind } from "@openwork/cdp";
 
 export interface ElectronSurfaceOptions {
   profile?: "fresh" | "shared";
+  /** Exact caller-owned profile root. Local hosts preserve it on disposal. */
+  profileDir?: string;
   bootstrap?: {
     baseUrl: string;
     apiBaseUrl?: string;

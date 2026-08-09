@@ -81,16 +81,16 @@ export function BookCallForm() {
   };
 
   return (
-    <section id="book" className="rounded-[2rem] border border-gray-200 bg-white p-6 md:p-8">
-      <div className="rounded-[1.5rem] border border-slate-200/70 bg-white p-5 md:p-6">
-        <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-slate-200/70 bg-slate-50 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
+    <section id="book" className="rounded-[24px] border border-[var(--lp-border)] bg-white p-8">
+      <div>
+        <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-[var(--lp-border)] bg-[var(--lp-tonal)] px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--lp-muted)]">
           <Mail size={12} />
           Get in touch with us
         </div>
         <h3 className="mb-3 text-2xl font-medium tracking-tight text-[#011627]">
           Tell us what you need.
         </h3>
-        <p className="mb-6 max-w-2xl text-[15px] leading-relaxed text-slate-600">
+        <p className="mb-6 max-w-2xl text-[15px] leading-relaxed text-[var(--lp-body)]">
           Share your team context and we&apos;ll get back to you over email.
         </p>
 
@@ -120,14 +120,14 @@ export function BookCallForm() {
                 </label>
               </div>
               <div>
-                <label className="mb-2 block text-[12px] font-semibold uppercase tracking-[0.16em] text-slate-500">
+                <label className="mb-2 block text-[12px] font-semibold uppercase tracking-[0.16em] text-[var(--lp-muted)]">
                   Full name
                 </label>
                 <input
                   value={fields.fullName}
                   onChange={event => setField("fullName", event.target.value)}
                   placeholder="Jeff Bezos"
-                  className="w-full rounded-2xl border border-slate-200 bg-white/90 px-4 py-3 text-[14px] text-[#011627] outline-none transition focus:border-slate-300 focus:bg-white"
+                  className="w-full rounded-2xl border border-[#F1F5F9] bg-white/90 px-4 py-3 text-[14px] text-[#011627] outline-none transition focus:border-[var(--lp-border)] focus:bg-white"
                   autoComplete="name"
                   required
                   type="text"
@@ -135,7 +135,7 @@ export function BookCallForm() {
                 />
               </div>
               <div>
-                <label className="mb-2 block text-[12px] font-semibold uppercase tracking-[0.16em] text-slate-500">
+                <label className="mb-2 block text-[12px] font-semibold uppercase tracking-[0.16em] text-[var(--lp-muted)]">
                   Company email
                 </label>
                 <input
@@ -144,7 +144,7 @@ export function BookCallForm() {
                     setField("companyEmail", event.target.value)
                   }
                   placeholder="jeff@amazon.com"
-                  className="w-full rounded-2xl border border-slate-200 bg-white/90 px-4 py-3 text-[14px] text-[#011627] outline-none transition focus:border-slate-300 focus:bg-white"
+                  className="w-full rounded-2xl border border-[#F1F5F9] bg-white/90 px-4 py-3 text-[14px] text-[#011627] outline-none transition focus:border-[var(--lp-border)] focus:bg-white"
                   autoComplete="email"
                   required
                   type="email"
@@ -154,14 +154,14 @@ export function BookCallForm() {
             </div>
 
             <div>
-              <label className="mb-2 block text-[12px] font-semibold uppercase tracking-[0.16em] text-slate-500">
+              <label className="mb-2 block text-[12px] font-semibold uppercase tracking-[0.16em] text-[var(--lp-muted)]">
                 How can we help?
               </label>
               <textarea
                 value={fields.message}
                 onChange={event => setField("message", event.target.value)}
                 placeholder="Share more about what you want to accomplish"
-                className="min-h-[160px] w-full rounded-2xl border border-slate-200 bg-white/90 px-4 py-3 text-[14px] text-[#011627] outline-none transition focus:border-slate-300 focus:bg-white"
+                className="min-h-[160px] w-full rounded-2xl border border-[#F1F5F9] bg-white/90 px-4 py-3 text-[14px] text-[#011627] outline-none transition focus:border-[var(--lp-border)] focus:bg-white"
                 required
                 disabled={state === "loading"}
               />

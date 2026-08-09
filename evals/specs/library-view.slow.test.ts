@@ -521,7 +521,7 @@ test.skipIf(!apiUrl || !webUrl)(title, async () => {
   const desktopShot = await screenshot(browser);
   const desktopSeen = await validate(desktopShot, [
     "Rows show a logo tile, a title with chips beside it, and one meta line inside a hairline-divided card",
-    "An amber needs-sign-in row shows a dark Sign in button under a NEEDS YOUR SIGN-IN caption",
+    "A white needs-sign-in row shows an amber Connect your account chip and a dark Sign in button under a NEEDS YOUR SIGN-IN caption",
   ]);
   await roll.add(desktopShot, desktopSeen);
   expect(desktopSeen.ok, desktopSeen.why).toBe(true);

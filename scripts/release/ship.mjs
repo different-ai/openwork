@@ -70,10 +70,48 @@ heading("Pushing tag to origin");
 run(`git push origin ${tag}`);
 success(`Pushed ${tag}`);
 
-// ── Step 3: Push dev ────────────────────────────────────────────────
-heading("Pushing dev to origin");
-run("git push origin dev");
-success("Pushed dev");
+// ── Step 3: Sync dev ────────────────────────────────────────────────
+// dev is ruleset-protected (PR + review + signed commits; admins are not
+// bypass actors), so a direct push is expected to be rejected for everyone.
+// Release tags ARE admin-bypassable, which is why Step 2 works. Try the
+// direct push for the day the rules allow it; otherwise push a sync branch
+// and open the backfill PR so dev catches up through review.
+heading("Syncing dev");
+
+let devSynced = false;
+if (!dryRun) {
+  try {
+    execSync("git push origin HEAD:dev", { cwd: root, encoding: "utf8", stdio: "pipe" });
+    devSynced = true;
+  } catch {
+    devSynced = false;
+  }
+} else {
+  log("[dry-run] git push origin HEAD:dev (falling back to a sync PR if rejected)");
+}
+
+if (devSynced) {
+  success("Pushed dev directly");
+} else if (!dryRun) {
+  const syncBranch = `release/${tag}-dev-sync`;
+  log(`Direct push rejected by branch rules — opening a backfill PR instead`);
+  run(`git push -f origin HEAD:refs/heads/${syncBranch}`);
+  success(`Pushed ${syncBranch}`);
+
+  const prUrl = run(
+    `gh pr create --repo different-ai/openwork --base dev --head ${syncBranch} ` +
+      `--title "chore(release): ${tag}" ` +
+      `--body "Backfills the ${tag} version bump into dev (the release was cut from the tag). Needs one approval from someone other than the pusher."`,
+    { allowFail: true },
+  );
+  if (prUrl) {
+    success(`Backfill PR: ${prUrl}`);
+    log("Note: the pusher cannot approve it (last-push rule) — ask a teammate.");
+  } else {
+    log(`Could not open the PR automatically (gh missing or PR exists).`);
+    log(`Open it manually: https://github.com/different-ai/openwork/compare/dev...${syncBranch}`);
+  }
+}
 
 // ── Step 4: Print workflow URL ──────────────────────────────────────
 heading("GitHub Actions");

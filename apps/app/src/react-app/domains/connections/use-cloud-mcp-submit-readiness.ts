@@ -14,6 +14,7 @@ import {
 } from "./cloud-mcp-user-state";
 import {
   createCloudMcpSubmissionCoordinator,
+  clearCloudMcpSubmissionFailure,
   decideCloudMcpSubmissionGate,
   ensureCloudMcpSubmissionReadiness,
   IDLE_CLOUD_MCP_SUBMISSION_GATE_STATE,
@@ -48,6 +49,7 @@ type CloudMcpSubmitInput = {
 export type CloudMcpSubmitReadiness = {
   state: CloudMcpSubmissionGateState;
   submit: (input: CloudMcpSubmitInput) => Promise<CloudMcpSubmissionResult>;
+  clearFailure: () => void;
 };
 
 function missingContextIssue(input: {
@@ -338,5 +340,9 @@ export function useCloudMcpSubmitReadiness(
     });
   }, [waitForAuthResolution]);
 
-  return { state, submit };
+  const clearFailure = useCallback(() => {
+    setState(clearCloudMcpSubmissionFailure);
+  }, []);
+
+  return { state, submit, clearFailure };
 }

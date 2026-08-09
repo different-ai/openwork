@@ -3,13 +3,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, test } from "bun:test";
 
 import type { OpenworkCloudMcpHealth } from "../src/app/lib/openwork-server";
-import type { ExtensionItem } from "../src/react-app/domains/settings/extension-items";
-import {
-  buildConnectRows,
-  isCloudMarketplaceItem,
-  readyCloudMcpToolIds,
-  resolveConnectViewState,
-} from "../src/react-app/domains/settings/pages/connect-view";
+import { readyCloudMcpToolIds } from "../src/react-app/domains/settings/cloud/agent-access-card";
 import {
   formatPluginConnectRowMeta,
   isDesktopInstallableMarketplacePlugin,
@@ -17,45 +11,10 @@ import {
   resolveConnectRowGroup,
 } from "../src/react-app/domains/settings/connect-cloud-readiness";
 
-const connectViewSource = readFileSync(
-  fileURLToPath(new URL("../src/react-app/domains/settings/pages/connect-view.tsx", import.meta.url)),
-  "utf8",
-);
 const agentAccessSource = readFileSync(
   fileURLToPath(new URL("../src/react-app/domains/settings/cloud/agent-access-card.tsx", import.meta.url)),
   "utf8",
 );
-
-describe("resolveConnectViewState", () => {
-  test("shows loading while auth is being checked", () => {
-    expect(resolveConnectViewState({ authStatus: "checking", connectionsCount: 0 })).toBe("loading");
-  });
-
-  test("signed-out users see the sign-in state", () => {
-    expect(resolveConnectViewState({ authStatus: "signed_out", connectionsCount: 0 })).toBe("signin");
-  });
-
-  test("a temporary Cloud outage does not replace Connect with sign-in", () => {
-    expect(resolveConnectViewState({ authStatus: "unavailable", connectionsCount: 1 })).toBe("active");
-  });
-
-  test("signed-in users with the org Connect flag see active", () => {
-    expect(resolveConnectViewState({ authStatus: "signed_in", connectEnabled: true, connectionsCount: 0 })).toBe("active");
-  });
-
-  test("signed-in users with usable org connections see active even without the flag", () => {
-    expect(resolveConnectViewState({ authStatus: "signed_in", connectEnabled: false, connectionsCount: 1 })).toBe("active");
-  });
-
-  test("signed-in users with no flag and no connections see the pitch", () => {
-    expect(resolveConnectViewState({ authStatus: "signed_in", connectEnabled: false, connectionsCount: 0 })).toBe("pitch");
-    expect(resolveConnectViewState({ authStatus: "signed_in", connectionsCount: 0 })).toBe("pitch");
-  });
-
-  test("signed-in users with an active org keep the Agent access card visible without catalog rollout", () => {
-    expect(resolveConnectViewState({ authStatus: "signed_in", connectEnabled: false, connectionsCount: 0, activeOrgSelected: true })).toBe("active");
-  });
-});
 
 function cloudHealth(usable: boolean): OpenworkCloudMcpHealth {
   return {
@@ -99,44 +58,6 @@ describe("Agent access card helpers", () => {
 });
 
 describe("Connect cloud-readiness row resolution", () => {
-  test("routes cloud marketplace items into Connect plugin readiness rows", () => {
-    const marketplacePluginItem: ExtensionItem = {
-      id: "marketplace:market_1:plugin_1",
-      source: "marketplace",
-      name: "Calendar Helper",
-      description: "Calendar scheduling skill",
-      installState: "available",
-      setupState: "needs_setup",
-      active: false,
-      enablement: null,
-      resources: [],
-      marketplaceId: "market_1",
-      marketplaceName: "Operations",
-      plugin: {
-        id: "plugin_1",
-        name: "Calendar Helper",
-        description: "Calendar scheduling skill",
-        status: "published",
-        memberCount: 1,
-        updatedAt: null,
-        componentCounts: { skill: 1, mcp: 1 },
-        cloudReadiness: {
-          state: "needs_signin",
-          hasInstructional: true,
-          connections: [{ id: "connection_1", name: "Calendar", url: "https://calendar.example.test/mcp" }],
-        },
-      },
-    };
-
-    expect(connectViewSource).toContain("export function buildConnectRows");
-    expect(isCloudMarketplaceItem(marketplacePluginItem)).toBe(true);
-    const rows = buildConnectRows({ connections: [], items: [marketplacePluginItem], role: "member" });
-    expect(rows).toHaveLength(1);
-    expect(rows[0]?.kind).toBe("plugin");
-    expect(rows[0]?.group).toBe("needs_signin");
-    expect(rows[0]?.name).toBe("Calendar Helper");
-  });
-
   test("maps plugin readiness states to Connect groups", () => {
     expect(resolveConnectRowGroup({ state: "needs_signin", hasInstructional: false, connections: [] }, "member")).toBe("needs_signin");
     expect(resolveConnectRowGroup({ state: "ready", hasInstructional: true, connections: [] }, "member")).toBe("ready");

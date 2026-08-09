@@ -51,6 +51,19 @@ const createResultSchema = z.object({
   })),
 });
 
+const automationProposalResultSchema = z.object({
+  ok: z.literal(true),
+  kind: z.literal("automation-proposal"),
+  created: z.literal(false),
+  limitation: z.string(),
+  proposal: z.object({
+    name: z.string(),
+    instructions: z.string(),
+    schedule: z.record(z.string(), z.unknown()),
+    model: z.record(z.string(), z.unknown()).optional(),
+  }),
+});
+
 const affordanceResultSchema = <T extends z.ZodTypeAny>(id: string, result: T) => z.object({
   ok: z.literal(true),
   id: z.literal(id),
@@ -253,6 +266,7 @@ describe("OpenWorkExtensionsPreview session tools", () => {
 
     expect(contributions.map((contribution) => contribution.featureId)).toEqual([
       "sessions",
+      "automations",
       "extensions",
       "mcp:notion",
       "connect",
@@ -483,5 +497,47 @@ describe("OpenWorkExtensionsPreview semantic tool surface", () => {
     expect(system).toContain("Use openwork_context");
     expect(system).toContain("session.search");
     expect(system).toContain("browser.open_url");
+  });
+
+  test("proposes an Automation without creating anything or calling a backend", async () => {
+    const fake = startFakeOpenWorkServer();
+    const plugin = await OpenWorkExtensionsPreview({ directory: "/tmp/archive" });
+
+    const output = await plugin.tool.openwork_execute.execute({
+      id: "automation.propose",
+      args: {
+        name: "Morning Slack check",
+        instructions: "Summarize my most recent Slack message.",
+        schedule: { kind: "daily", timezone: "Europe/Berlin", hour: 9, minute: 0 },
+      },
+    }, { sessionID: "ses_origin" });
+    const parsed = affordanceResultSchema("automation.propose", automationProposalResultSchema)
+      .parse(JSON.parse(output));
+
+    expect(parsed.result.created).toBe(false);
+    expect(parsed.result.proposal.name).toBe("Morning Slack check");
+    expect(parsed.result.proposal.schedule).toEqual({
+      kind: "daily",
+      timezone: "Europe/Berlin",
+      hour: 9,
+      minute: 0,
+    });
+    // The whole point of proposal-only: an agent never reaches Den or the
+    // local server, so it cannot bring an Automation into existence.
+    expect(fake.requests).toHaveLength(0);
+    expect(parsed.effects).toEqual({ data: "none", ui: "none", external: false });
+  });
+
+  test("rejects a proposal whose schedule is not a supported kind", async () => {
+    const plugin = await OpenWorkExtensionsPreview({ directory: "/tmp/archive" });
+
+    await expect(plugin.tool.openwork_execute.execute({
+      id: "automation.propose",
+      args: {
+        name: "Every five minutes",
+        instructions: "Say hello.",
+        schedule: { kind: "interval", timezone: "Europe/Berlin", everyMinutes: 5 },
+      },
+    }, { sessionID: "ses_origin" })).rejects.toThrow();
   });
 });

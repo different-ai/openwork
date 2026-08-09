@@ -122,12 +122,6 @@ Inbox/outbox:
 - `POST /files/sessions/:sessionId/write-batch`
 - `POST /files/sessions/:sessionId/ops`
 
-Toy UI (static assets served by the server):
-
-- `GET /ui`
-- `GET /w/:id/ui`
-- `GET /ui/assets/*`
-
 OpenCode proxy:
 
 - `GET|POST|... /opencode/*`

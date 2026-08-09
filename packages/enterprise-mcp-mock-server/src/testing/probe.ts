@@ -78,7 +78,8 @@ const registrationResponseSchema = z.object({
 const tokenResponseSchema = z.object({
   access_token: z.string().min(1),
   refresh_token: z.string().min(1),
-  token_type: z.literal("Bearer"),
+  token_type: z.enum(["Bearer", "user"]),
+  ok: z.literal(true).optional(),
 })
 
 const rpcEnvelopeSchema = z.object({
@@ -682,6 +683,10 @@ export async function probeEnterpriseMcpMockServer(options: ProbeEnterpriseMcpMo
       "oauth_token",
       "Token response did not match the required shape",
     )
+    const expectedTokenType = profile.oauth.tokenResponseStyle === "slack-user" ? "user" : "Bearer"
+    if (token.token_type !== expectedTokenType || (expectedTokenType === "user" && token.ok !== true)) {
+      throw new ProbeFailure("AUTH_TOKEN_ACQUISITION", "oauth_token", "Token response did not match the selected provider profile")
+    }
     accessToken = token.access_token
     refreshToken = token.refresh_token
     sensitiveValues.push(accessToken, refreshToken)

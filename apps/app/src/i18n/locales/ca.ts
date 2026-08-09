@@ -1,12 +1,9 @@
-import { automationsEnglish } from "./automations";
-
 /**
  * Catalan translations (Català)
  * Professional terms (Skills, Plugins, Commands, Sessions, OpenCode, OpenPackage, OpenWork) are NOT translated
  */
 
 export default {
-  ...automationsEnglish,
   "app.compact_command_desc": "Resumeix aquesta sessió per reduir la mida del context.",
   "app.error_audit_load": "No s'ha pogut carregar el registre d'auditoria.",
   "app.error_auth_failed": "L'autenticació ha fallat",
@@ -236,9 +233,18 @@ export default {
   "den.cloud_control_plane_url_hint": "Només el mode desenvolupador. Fes servir-ho per orientar un pla de control Cloud local o autoallotjat. En canviar-lo, es tanca la sessió perquè l'aplicació es pugui rehidratar contra el nou pla de control.",
   "den.cloud_control_plane_url_label": "URL del pla de control Cloud",
   "den.cloud_provider_detail": "{count} models · proveïdor {source}",
+  "den.cloud_provider_blocked": "No disponible en aquest escriptori",
+  "den.cloud_provider_conflict": "Conflicte",
+  "den.cloud_provider_connected": "Connectat",
+  "den.cloud_provider_error": "Error de sincronització",
+  "den.cloud_provider_imports_unavailable": "Les importacions no estan disponibles en aquest workspace",
+  "den.cloud_provider_needs_credential": "Cal la credencial de l'organització",
+  "den.cloud_provider_needs_server": "Cal el servidor OpenWork",
+  "den.cloud_provider_retry": "Torna-ho a provar",
+  "den.cloud_provider_syncing": "S'està sincronitzant",
   "den.cloud_provider_removed_detail": "Aquest proveïdor importat ja no està al núvol. Desinstal·la la configuració local de {providerId}.",
   "den.cloud_provider_sync_detail": "El proveïdor de Cloud ha canviat. Sincronitza la configuració dels {count} models {source} a opencode.jsonc.",
-  "den.cloud_providers_hint": "Importa proveïdors de LLM gestionats a opencode.jsonc i fes servir la credencial de l'organització en aquest workspace.",
+  "den.cloud_providers_hint": "Els proveïdors que t'atorga l'organització se sincronitzen automàticament. Revisa'n l'estat aquí.",
   "den.cloud_providers_title": "Proveïdors del núvol",
   "den.cloud_section_desc": "Inicia la sessió, tria una organització i obre workers del núvol o plantilles d'equip.",
   "den.cloud_section_title": "OpenWork Cloud",
@@ -254,12 +260,10 @@ export default {
   "den.finish_signin": "Acaba l'inici de sessió",
   "den.finishing": "S'està acabant...",
   "den.hide_signin_code": "Amaga el codi d'inici de sessió",
-  "den.import_all": "Importa-ho tot",
+  "den.import_plugin": "Importa el plugin",
   "den.import_provider": "Importar",
-  "den.import_provider_failed": "No s'ha pogut importar {name}.",
   "den.imported_badge": "Importat",
-  "den.imported_provider": "{name} importat.",
-  "den.importing": "S'està important...",
+  "den.importing_plugin": "S'està important el plugin...",
   "den.needs_attention": "Necessita atenció",
   "den.no_cloud_providers": "Encara no hi ha cap proveïdor de núvol disponible per a aquesta organització.",
   "den.no_org_selected": "No s'ha seleccionat cap organització",
@@ -299,6 +303,7 @@ export default {
   "den.status_signed_in_as": "S'ha iniciat la sessió com a {email}.",
   "den.status_signed_out": "Heu tancat la sessió i heu esborrat la vostra sessió OpenWork Cloud en aquest dispositiu.",
   "den.sync": "Sincronitza",
+  "den.sync_now": "Sincronitza ara",
   "den.sync_provider_failed": "No s'ha pogut sincronitzar {name}.",
   "den.synced_provider": "{name} sincronitzat.",
   "den.syncing": "S'està sincronitzant...",
@@ -945,7 +950,7 @@ export default {
   "settings.tab_description_debug": "Revisa els diagnòstics, els registres i les utilitats avançades de depuració del runtime.",
   "settings.tab_description_cloud_account": "Sign in, manage your organization, and configure your cloud connection.",
   "settings.tab_description_cloud_marketplaces": "Browse and import plugins from your organization's marketplaces.",
-  "settings.tab_description_cloud_providers": "Import and manage LLM provider keys from your organization.",
+  "settings.tab_description_cloud_providers": "Revisa l'estat de sincronització dels proveïdors LLM de l'organització.",
   "settings.tab_description_environment": "Save API keys and tokens for local agents, skills, and MCP servers. Secrets stay on this device.",
   "settings.tab_description_extensions": "Skills, connexions i eines que el teu agent pot utilitzar.",
   "settings.tab_description_general": "Connecta proveïdors, tria el model predeterminat, autoritza carpetes i controla el workspace OpenWork seleccionat juntament amb la seva connexió de runtime.",

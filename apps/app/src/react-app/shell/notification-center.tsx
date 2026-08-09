@@ -19,7 +19,7 @@ import {
   type AppNotification,
   type NotificationSeverity,
 } from "@/react-app/kernel/notification-store";
-import { useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router";
 import { requestOpenModelPicker } from "./new-providers-listener";
 import { useControlAction, type OpenworkControlAction } from "./control/control-provider";
 import { openNotificationCenterEvent } from "./notifications";

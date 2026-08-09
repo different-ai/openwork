@@ -37,7 +37,7 @@ void compileTimeCatalogReadonly
 test("provider profiles are declarative, unique, and provenance-labelled", () => {
   const profiles = listProviderProfiles()
   assert.equal(Object.isFrozen(profiles), true)
-  assert.equal(profiles.length, 5)
+  assert.equal(profiles.length, 6)
   assert.equal(new Set(profiles.map((profile) => profile.id)).size, profiles.length)
   for (const profile of profiles) {
     assert.equal(getProviderProfile(profile.id), profile)
@@ -111,6 +111,14 @@ test("provider profiles are declarative, unique, and provenance-labelled", () =>
   assert.equal(mail.tools[0]?.name, "mcp_MailTools_graph_mail_createMessage")
   assert.equal(mail.provenance.aspectFidelity.catalog, "provider-documented")
   assert.equal(mail.provenance.aspectFidelity.toolSchemas, "synthetic")
+
+  const slack = profiles.find((profile) => profile.id === "slack-user-mcp")
+  assert.ok(slack)
+  assert.equal(slack.oauth.registrationPath, null)
+  assert.equal(slack.oauth.defaultClientAuthenticationMethod, "client_secret_post")
+  assert.equal(slack.oauth.tokenResponseStyle, "slack-user")
+  assert.deepEqual(slack.protocol.versions, ["2025-06-18"])
+  assert.equal(slack.protocol.versionNegotiation, "strict")
 })
 
 test("Work IQ schemas accept current documented inputs and reject the old generic path mapper", () => {

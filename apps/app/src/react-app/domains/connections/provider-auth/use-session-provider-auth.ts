@@ -15,7 +15,11 @@ import { useCloudProviderAutoSync } from "@/react-app/domains/cloud/use-cloud-pr
 import { useReloadCoordinator } from "@/react-app/shell/reload-coordinator";
 import { type RouteWorkspace, workspaceLabel } from "@/react-app/shell/route-workspaces";
 import { reconcilePolicyDisabledProviders } from "@/react-app/domains/connections/policy-provider-reconcile";
-import { shouldWaitForCloudProviderSyncBeforePolicyReconcile } from "./managed-models-recovery";
+import {
+  refreshOrganizationModels,
+  shouldWaitForCloudProviderSyncBeforePolicyReconcile,
+  type OrganizationModelsRefreshReason,
+} from "./managed-models-recovery";
 import { createProviderAuthStore, useProviderAuthStoreSnapshot } from "./store";
 
 const emptyWorkspaceDisplay: WorkspaceDisplay = {
@@ -169,11 +173,13 @@ export function useSessionProviderAuth(input: UseSessionProviderAuthInput) {
       ? completedCloudProviderSync
       : null;
   const cloudProviderSyncReady = Boolean(currentCloudProviderSync);
-  const loadCloudProviderSync = useCallback(async (reason: "app_launch" | "manual") => {
-    await store.runCloudProviderSync(reason);
-    return store.refreshProviders({ force: true });
-  }, [store]);
-  const refreshCloudProviderSync = useCallback(async (reason: "manual") => {
+  const loadCloudProviderSync = useCallback((reason: OrganizationModelsRefreshReason) => (
+    refreshOrganizationModels({
+      runCloudProviderSync: store.runCloudProviderSync,
+      refreshProviders: () => store.refreshProviders({ force: true }),
+    }, reason)
+  ), [store]);
+  const refreshCloudProviderSync = useCallback(async (reason: OrganizationModelsRefreshReason) => {
     const providerList = await loadCloudProviderSync(reason);
     setCompletedCloudProviderSync({ context: cloudProviderSyncContext, providerList });
     return providerList;
@@ -289,7 +295,10 @@ export function useSessionProviderAuth(input: UseSessionProviderAuthInput) {
 
   // Session is where forced sign-in lands. Keep org-managed cloud providers in
   // sync here so sign-in applies opencode.json changes before Settings opens.
-  useCloudProviderAutoSync(store.runCloudProviderSync);
+  // Route every lifecycle trigger through the snapshot-publishing wrapper:
+  // refreshing only the engine leaves selected-model availability stale until
+  // this route is recreated by a restart or sign-out.
+  useCloudProviderAutoSync(refreshCloudProviderSync);
   const snapshot = useProviderAuthStoreSnapshot(store);
 
   return {

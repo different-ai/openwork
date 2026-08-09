@@ -604,12 +604,12 @@ export function registerFileRoutes(options: RegisterFileRoutesOptions): void {
       throw new ApiError(413, "file_too_large", "File exceeds upload limit", { maxBytes, size: file.size });
     }
 
-    await requireApproval(ctx, {
-      workspaceId: workspace.id,
-      action: "workspace.inbox.upload",
-      summary: `Upload ${relativePath} to inbox`,
-      paths: [dest],
-    });
+    // Inbox uploads are exempt from host approval: the inbox is the designated
+    // client drop area (path-constrained via resolveSafeChildPath, size-capped,
+    // audited, and disable-able via inbox.enabled). Parking the upload on the
+    // manual-approval queue froze web/gateway clients for the whole approval
+    // timeout and then failed the send, because client tokens cannot approve
+    // their own writes. All other write routes remain approval-gated.
 
     await ensureDir(dirname(dest));
     const bytes = Buffer.from(await file.arrayBuffer());

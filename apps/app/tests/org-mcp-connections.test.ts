@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 
 import {
   isOrgMcpPollScopeCurrent,
+  orgMcpConnectFailureMessage,
   resolveOrgMcpConnectionCardState,
 } from "../src/react-app/domains/connections/use-org-mcp-connections";
 
@@ -68,6 +69,12 @@ describe("resolveOrgMcpConnectionCardState", () => {
 });
 
 describe("organization MCP OAuth polling", () => {
+  test("terminal connection failures provide actionable feedback", () => {
+    expect(orgMcpConnectFailureMessage("missing_context")).toContain("Sign in");
+    expect(orgMcpConnectFailureMessage("missing_authorization_url")).toContain("OAuth configuration");
+    expect(orgMcpConnectFailureMessage("timeout")).toContain("provider redirect URI");
+  });
+
   test("an in-flight response cannot apply org A rows after switching to org B", async () => {
     let releaseResponse = () => {};
     const responsePending = new Promise<void>((resolve) => {

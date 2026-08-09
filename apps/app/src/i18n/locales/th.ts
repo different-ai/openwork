@@ -1,12 +1,9 @@
-import { automationsEnglish } from "./automations";
-
 /**
  * Thai translations
  * Professional terms (Skills, Plugins, Commands, Sessions, OpenCode, OpenPackage, OpenWork) are NOT translated
  */
 
 export default {
-  ...automationsEnglish,
   "app.compact_command_desc": "สรุปเซสชันนี้เพื่อลดขนาดบริบท",
   "app.error_audit_load": "โหลดบันทึกการตรวจสอบไม่สำเร็จ",
   "app.error_auth_failed": "การยืนยันตัวตนล้มเหลว",
@@ -236,9 +233,18 @@ export default {
   "den.cloud_control_plane_url_hint": "โหมดนักพัฒนาเท่านั้น ใช้เพื่อเชื่อมต่อ Cloud control plane ภายในเครื่องหรือที่โฮสต์เอง การเปลี่ยนจะออกจากระบบเพื่อให้แอปโหลดข้อมูลจาก control plane ใหม่",
   "den.cloud_control_plane_url_label": "URL ของ Cloud control plane",
   "den.cloud_provider_detail": "{count} โมเดล · {source} provider",
+  "den.cloud_provider_blocked": "ไม่พร้อมใช้งานบนเดสก์ท็อปนี้",
+  "den.cloud_provider_conflict": "ขัดแย้ง",
+  "den.cloud_provider_connected": "เชื่อมต่อแล้ว",
+  "den.cloud_provider_error": "ข้อผิดพลาดในการซิงค์",
+  "den.cloud_provider_imports_unavailable": "นำเข้าไม่ได้ในพื้นที่ทำงานนี้",
+  "den.cloud_provider_needs_credential": "ต้องใช้ข้อมูลรับรองขององค์กร",
+  "den.cloud_provider_needs_server": "ต้องใช้ OpenWork server",
+  "den.cloud_provider_retry": "ลองอีกครั้ง",
+  "den.cloud_provider_syncing": "กำลังซิงค์",
   "den.cloud_provider_removed_detail": "Provider ที่นำเข้านี้ไม่อยู่บน Cloud แล้ว ถอนการติดตั้งการกำหนดค่า {providerId} ในเครื่อง",
   "den.cloud_provider_sync_detail": "Provider บน Cloud เปลี่ยนแปลงแล้ว ซิงค์การกำหนดค่า {source} กับ {count} โมเดลเข้า opencode.jsonc",
-  "den.cloud_providers_hint": "นำเข้า LLM provider ที่จัดการแล้วเข้า opencode.jsonc และใช้ข้อมูลรับรองขององค์กรในพื้นที่ทำงานนี้",
+  "den.cloud_providers_hint": "Provider ที่องค์กรให้สิทธิ์จะซิงค์โดยอัตโนมัติ ตรวจสอบสถานะได้ที่นี่",
   "den.cloud_providers_title": "Provider บน Cloud",
   "den.cloud_section_desc": "เข้าสู่ระบบ เลือกองค์กร และเปิด Cloud workers หรือเทมเพลตทีม",
   "den.cloud_section_title": "OpenWork Cloud",
@@ -254,12 +260,10 @@ export default {
   "den.finish_signin": "เข้าสู่ระบบให้เสร็จ",
   "den.finishing": "กำลังเสร็จสิ้น...",
   "den.hide_signin_code": "ซ่อนรหัสเข้าสู่ระบบ",
-  "den.import_all": "นำเข้าทั้งหมด",
+  "den.import_plugin": "นำเข้าปลั๊กอิน",
   "den.import_provider": "นำเข้า",
-  "den.import_provider_failed": "ไม่สามารถนำเข้า {name} ได้",
   "den.imported_badge": "นำเข้าแล้ว",
-  "den.imported_provider": "นำเข้า {name} แล้ว",
-  "den.importing": "กำลังนำเข้า…",
+  "den.importing_plugin": "กำลังนำเข้าปลั๊กอิน…",
   "den.needs_attention": "ต้องให้ความสนใจ",
   "den.no_cloud_providers": "ยังไม่มี provider บน Cloud สำหรับองค์กรนี้",
   "den.no_org_selected": "ยังไม่ได้เลือกองค์กร",
@@ -295,6 +299,7 @@ export default {
   "den.status_signed_in_as": "เข้าสู่ระบบเป็น {email}",
   "den.status_signed_out": "ออกจากระบบและล้างเซสชัน OpenWork Cloud บนอุปกรณ์นี้แล้ว",
   "den.sync": "ซิงค์",
+  "den.sync_now": "ซิงค์ตอนนี้",
   "den.sync_provider_failed": "ไม่สามารถซิงค์ {name} ได้",
   "den.synced_provider": "ซิงค์ {name} แล้ว",
   "den.syncing": "กำลังซิงค์…",
@@ -938,7 +943,7 @@ export default {
   "settings.tab_description_debug": "ตรวจสอบข้อมูลวินิจฉัยรันไทม์ logs และเครื่องมือดีบักระดับต่ำ",
   "settings.tab_description_cloud_account": "Sign in, manage your organization, and configure your cloud connection.",
   "settings.tab_description_cloud_marketplaces": "Browse and import plugins from your organization's marketplaces.",
-  "settings.tab_description_cloud_providers": "Import and manage LLM provider keys from your organization.",
+  "settings.tab_description_cloud_providers": "ตรวจสอบสถานะการซิงค์ LLM provider ขององค์กร",
   "settings.tab_description_environment": "Save API keys and tokens for local agents, skills, and MCP servers. Secrets stay on this device.",
   "settings.tab_description_extensions": "ทักษะ การเชื่อมต่อ และเครื่องมือที่เอเจนต์ของคุณใช้ได้",
   "settings.tab_description_general": "เชื่อมต่อผู้ให้บริการ เลือกโมเดลเริ่มต้น อนุญาตโฟลเดอร์ และควบคุมพื้นที่ทำงาน OpenWork ที่เลือกพร้อมการเชื่อมต่อรันไทม์",

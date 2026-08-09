@@ -22,11 +22,13 @@ import { normalizeOrganizationMetadata } from "../../organization-limits.js"
 import {
   acceptInvitationForUser,
   createOrganizationForUser,
+  getOrganizationContextForUser,
   getInvitationPreview,
   getSingletonSsoStatus,
   normalizeAllowedEmailDomains,
   OrganizationEmailDomainRestrictionError,
   serializeMemberFacingOrganizationMetadata,
+  seedDefaultOrganizationRoles,
   setSessionActiveOrganization,
   type AcceptInvitationForUserResult,
   updateOrganizationSettings,
@@ -34,7 +36,7 @@ import {
 import { getRequiredUserEmail } from "../../user.js"
 import { checkRateLimit } from "../../utils/rate-limit.js"
 import type { OrgRouteVariables } from "./shared.js"
-import { ensureOrganizationSuperAdmin, orgAccessFailureStatus } from "./shared.js"
+import { ensureOrganizationAdminRole, ensureOrganizationSuperAdmin, orgAccessFailureStatus } from "./shared.js"
 
 const createOrganizationSchema = z.object({
   name: z.string().trim().min(2).max(120),
@@ -57,6 +59,10 @@ const resolveSsoByEmailQuerySchema = z.object({
   email: z.string().trim().email(),
 })
 
+const organizationContextQuerySchema = z.object({
+  refreshRoles: z.enum(["true", "false"]).optional().transform((value) => value === "true"),
+})
+
 const resolveSsoByEmailResponseSchema = z.object({
   requireSso: z.literal(true),
   method: z.literal("sso"),
@@ -77,6 +83,17 @@ const rateLimitedSchema = z.object({
   error: z.literal("rate_limited"),
   message: z.string(),
 }).meta({ ref: "RateLimitedError" })
+
+const SSO_RESOLVE_IDENTITY_RATE_LIMIT_MAX = 20
+const SSO_RESOLVE_RATE_LIMIT_WINDOW_MS = 60_000
+// See the login-options buckets: a long domain window buys burst tolerance for
+// a coworker sign-in wave while keeping SUSTAINED per-domain throughput below
+// the previous flat 20/min (120 per 10 min = 12/min; 30 misses per 10 min = 3/min).
+const SSO_RESOLVE_DOMAIN_RATE_LIMIT_WINDOW_MS = 600_000
+const SSO_RESOLVE_DOMAIN_RATE_LIMIT_MAX = 120
+const SSO_RESOLVE_DOMAIN_MISS_RATE_LIMIT_MAX = 30
+// A generous domain bucket bounds distributed enumeration without recreating coworker lockouts;
+// only unresolved addresses pay the tighter miss bucket.
 
 const singleOrgSsoStatusResponseSchema = z.object({
   configured: z.boolean(),
@@ -206,29 +223,32 @@ function normalizeResolveEmail(email: string) {
   return email.trim().toLowerCase()
 }
 
-function getResolveEmailDomain(email: string) {
-  const normalized = normalizeResolveEmail(email)
-  const atIndex = normalized.lastIndexOf("@")
-  return atIndex > 0 && atIndex < normalized.length - 1 ? normalized.slice(atIndex + 1) : "unknown"
+export function ssoResolveRateLimitKeys(headers: Headers, email: string) {
+  const normalizedEmail = normalizeResolveEmail(email)
+  const domainHash = sha256Hex(normalizedEmail.slice(normalizedEmail.lastIndexOf("@") + 1))
+  return {
+    ip: `org-sso-resolve:ip:${sha256Hex(getRequestAddress(headers))}`,
+    email: `org-sso-resolve:email:${sha256Hex(normalizedEmail)}`,
+    domain: `org-sso-resolve:domain:${domainHash}`,
+    domainMiss: `org-sso-resolve:domain-miss:${domainHash}`,
+  }
 }
 
-async function checkSsoResolveRateLimit(headers: Headers, email: string) {
-  const normalizedEmail = normalizeResolveEmail(email)
+async function checkSsoResolveRateLimit(keys: ReturnType<typeof ssoResolveRateLimitKeys>) {
   const now = Date.now()
-  const keys = [
-    `org-sso-resolve:ip:${sha256Hex(getRequestAddress(headers))}`,
-    `org-sso-resolve:email:${sha256Hex(normalizedEmail)}`,
-    `org-sso-resolve:domain:${sha256Hex(getResolveEmailDomain(normalizedEmail))}`,
-  ]
 
-  for (const key of keys) {
-    const retryAfter = await checkRateLimit(key, 20, 60_000, now)
+  for (const key of [keys.ip, keys.email]) {
+    const retryAfter = await checkRateLimit(key, SSO_RESOLVE_IDENTITY_RATE_LIMIT_MAX, SSO_RESOLVE_RATE_LIMIT_WINDOW_MS, now)
     if (retryAfter !== null) {
       return retryAfter
     }
   }
 
-  return null
+  return checkRateLimit(keys.domain, SSO_RESOLVE_DOMAIN_RATE_LIMIT_MAX, SSO_RESOLVE_DOMAIN_RATE_LIMIT_WINDOW_MS, now)
+}
+
+function checkSsoResolveMissRateLimit(key: string) {
+  return checkRateLimit(key, SSO_RESOLVE_DOMAIN_MISS_RATE_LIMIT_MAX, SSO_RESOLVE_DOMAIN_RATE_LIMIT_WINDOW_MS, Date.now())
 }
 
 async function setRequestActiveOrganization(
@@ -563,7 +583,8 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
         }, botProtection.status)
       }
 
-      const retryAfter = await checkSsoResolveRateLimit(c.req.raw.headers, query.email)
+      const rateLimitKeys = ssoResolveRateLimitKeys(c.req.raw.headers, query.email)
+      const retryAfter = await checkSsoResolveRateLimit(rateLimitKeys)
       if (retryAfter !== null) {
         c.header("Retry-After", String(retryAfter))
         return c.json({
@@ -584,9 +605,21 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
         })
       }
 
+      const method = await resolveNonSsoSignInMethodForEmail(query.email)
+      if (method === "signup") {
+        const missRetryAfter = await checkSsoResolveMissRateLimit(rateLimitKeys.domainMiss)
+        if (missRetryAfter !== null) {
+          c.header("Retry-After", String(missRetryAfter))
+          return c.json({
+            error: "rate_limited",
+            message: "Too many sign-in resolution attempts. Try again later.",
+          }, 429)
+        }
+      }
+
       return c.json({
         requireSso: false,
-        method: await resolveNonSsoSignInMethodForEmail(query.email),
+        method,
       })
     },
   )
@@ -604,9 +637,31 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
       },
     }),
     orgMemberRoute(),
+    queryValidator(organizationContextQuerySchema),
     resolveMemberTeamsMiddleware,
     async (c) => {
-      const payload = c.get("organizationContext")
+      let payload = c.get("organizationContext")
+      const query = c.req.valid("query")
+
+      if (query.refreshRoles) {
+        const permission = ensureOrganizationAdminRole(c, "Only workspace owners and admins can refresh organization roles.")
+        if (!permission.ok) {
+          return c.json(permission.response, orgAccessFailureStatus(permission.response))
+        }
+
+        await seedDefaultOrganizationRoles(payload.organization.id)
+        const refreshedPayload = await getOrganizationContextForUser({
+          organizationId: payload.organization.id,
+          userId: normalizeDenTypeId("user", c.get("user").id),
+        })
+        if (!refreshedPayload) {
+          return c.json({ error: "organization_not_found" }, 404)
+        }
+
+        payload = refreshedPayload
+        c.set("organizationContext", payload)
+      }
+
       const owner = payload.members.find((member: typeof payload.members[number]) => member.isOwner) ?? null
       const cloudEnabled = organizationCloudEnabled(payload.organization.metadata, { orgMode: env.orgMode })
       const [ssoRows, scimRows] = await Promise.all([

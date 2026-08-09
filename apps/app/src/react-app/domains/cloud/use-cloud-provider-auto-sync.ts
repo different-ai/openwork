@@ -6,12 +6,14 @@ import { useDenAuth } from "./den-auth-provider";
 
 type CloudProviderSyncReason = "sign_in" | "app_resume";
 type SyncFn = (reason: CloudProviderSyncReason) => Promise<unknown>;
+const CLOUD_PROVIDER_SYNC_INTERVAL_MS = 5 * 60 * 1_000;
 
 export function subscribeCloudProviderSyncTriggers(input: {
   windowTarget: EventTarget;
   documentTarget: EventTarget;
   isDocumentVisible: () => boolean;
   sync: (reason: CloudProviderSyncReason) => void;
+  intervalMs?: number;
 }) {
   const handleDenSettingsChanged = () => {
     input.sync("sign_in");
@@ -29,12 +31,14 @@ export function subscribeCloudProviderSyncTriggers(input: {
   input.windowTarget.addEventListener("focus", handleAppResume);
   input.windowTarget.addEventListener("online", handleAppResume);
   input.documentTarget.addEventListener("visibilitychange", handleVisibilityChange);
+  const interval = setInterval(handleAppResume, input.intervalMs ?? CLOUD_PROVIDER_SYNC_INTERVAL_MS);
 
   return () => {
     input.windowTarget.removeEventListener(denSettingsChangedEvent, handleDenSettingsChanged);
     input.windowTarget.removeEventListener("focus", handleAppResume);
     input.windowTarget.removeEventListener("online", handleAppResume);
     input.documentTarget.removeEventListener("visibilitychange", handleVisibilityChange);
+    clearInterval(interval);
   };
 }
 

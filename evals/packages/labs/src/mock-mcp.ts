@@ -37,6 +37,8 @@ export interface MockMcpHandle {
    * calls and returns before this run's calls ever arrive.
    */
   toolCalls(opts?: { name?: string; timeoutMs?: number; atLeast?: number; sinceIso?: string }): Promise<MockToolCall[]>;
+  configureOAuthRedirectUris(redirectUris: readonly string[]): Promise<void>;
+  resetOAuth(): Promise<void>;
   stop(): Promise<void>;
   [Symbol.asyncDispose](): Promise<void>;
 }
@@ -45,7 +47,17 @@ export interface StartMockMcpOptions {
   port?: number;
   scriptPath?: string;
   publicUrl?: string;
+  profileId?: EnterpriseMcpProfileId;
+  oauthClientSecret?: string;
 }
+
+export type EnterpriseMcpProfileId =
+  | "synthetic-enterprise-oauth-mcp"
+  | "servicenow-inbound-quickstart"
+  | "microsoft-work-iq"
+  | "microsoft-enterprise"
+  | "agent-365-mail-v1-2026-07"
+  | "slack-user-mcp";
 
 const REPO_ROOT = fileURLToPath(new URL("../../../..", import.meta.url));
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -100,7 +112,137 @@ async function waitForHealth(url: string, output: () => string, child: ChildProc
   throw new Error(`Mock OAuth+MCP server not reachable at ${url}. Last: ${last}. Output: ${output().slice(-1_000)}`);
 }
 
+async function waitForEnterpriseHealth(url: string, output: () => string, child: ChildProcess): Promise<string> {
+  let last = "unreachable";
+  const deadline = Date.now() + 30_000;
+  while (Date.now() < deadline) {
+    if (child.exitCode !== null) {
+      throw new Error(`Enterprise MCP mock exited before becoming healthy. Output: ${output().slice(-1_000)}`);
+    }
+    try {
+      const response = await fetch(`${url}/health`);
+      const body: unknown = await response.json().catch(() => null);
+      if (response.ok && isRecord(body) && body.status === "ok" && typeof body.mcpUrl === "string") {
+        return body.mcpUrl;
+      }
+      last = response.ok ? JSON.stringify(body) : `HTTP ${response.status}`;
+    } catch (error) {
+      last = error instanceof Error ? error.message : String(error);
+    }
+    await sleep(500);
+  }
+  throw new Error(`Enterprise MCP mock not reachable at ${url}. Last: ${last}. Output: ${output().slice(-1_000)}`);
+}
+
+async function stopChild(child: ChildProcess | null): Promise<void> {
+  if (!child || child.exitCode !== null) return;
+  await new Promise<void>((resolve) => {
+    const timer = setTimeout(() => {
+      child.kill("SIGKILL");
+      resolve();
+    }, 5_000);
+    child.once("exit", () => {
+      clearTimeout(timer);
+      resolve();
+    });
+    child.kill("SIGTERM");
+  });
+}
+
+async function stopProcessGroup(child: ChildProcess | null): Promise<void> {
+  if (!child || child.exitCode !== null || !child.pid) return;
+  const pid = child.pid;
+  await new Promise<void>((resolve) => {
+    const timer = setTimeout(() => {
+      try {
+        process.kill(-pid, "SIGKILL");
+      } catch {
+        // The process group already exited.
+      }
+      resolve();
+    }, 5_000);
+    child.once("exit", () => {
+      clearTimeout(timer);
+      resolve();
+    });
+    try {
+      process.kill(-pid, "SIGTERM");
+    } catch {
+      clearTimeout(timer);
+      resolve();
+    }
+  });
+}
+
+async function startEnterpriseProfileMock(options: StartMockMcpOptions): Promise<MockMcpHandle> {
+  if (options.publicUrl) throw new Error("Enterprise MCP provider profiles must be started in the local eval process.");
+  if (!options.profileId) throw new Error("An enterprise MCP provider profile id is required.");
+  const profileId = options.profileId;
+  const port = options.port ?? 3979;
+  const url = `http://127.0.0.1:${port}`;
+  const runner = join(REPO_ROOT, "packages", "enterprise-mcp-mock-server", "src", "cli.ts");
+  let child: ChildProcess | null = null;
+  let output = "";
+  let redirectUris: readonly string[] = [];
+  let mcpUrl = `${url}/mcp`;
+  const boot = async (): Promise<void> => {
+    output = "";
+    const active = spawn("pnpm", ["--filter", "@openwork/enterprise-mcp-mock-server", "exec", "tsx", runner], {
+      cwd: REPO_ROOT,
+      detached: true,
+      env: {
+        ...process.env,
+        PORT: String(port),
+        PROFILE_ID: profileId,
+        OAUTH_CLIENT_SECRET: options.oauthClientSecret ?? "enterprise-mcp-eval-client-secret",
+        OAUTH_REDIRECT_URIS: redirectUris.join(","),
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    child = active;
+    active.stdout?.on("data", (chunk: Buffer) => {
+      output += String(chunk);
+    });
+    active.stderr?.on("data", (chunk: Buffer) => {
+      output += String(chunk);
+    });
+    mcpUrl = await waitForEnterpriseHealth(url, () => output, active);
+  };
+  await boot();
+  const stop = async (): Promise<void> => {
+    const active = child;
+    child = null;
+    await stopProcessGroup(active);
+  };
+  return {
+    url,
+    mcpUrl,
+    async requests() {
+      return [];
+    },
+    async toolCalls(opts = {}) {
+      if ((opts.atLeast ?? 0) > 0) await sleep(opts.timeoutMs ?? 120_000);
+      return [];
+    },
+    async authorizeRequestSince(iso) {
+      throw new Error(`Enterprise profile request logs do not retain OAuth query parameters after ${iso}.`);
+    },
+    async configureOAuthRedirectUris(nextRedirectUris) {
+      await stop();
+      redirectUris = [...nextRedirectUris];
+      await boot();
+    },
+    async resetOAuth() {
+      await stop();
+      await boot();
+    },
+    stop,
+    [Symbol.asyncDispose]: stop,
+  };
+}
+
 export async function startMockMcp(options: StartMockMcpOptions = {}): Promise<MockMcpHandle> {
+  if (options.profileId) return startEnterpriseProfileMock(options);
   const port = options.port ?? 3979;
   const externalUrl = options.publicUrl ? trimTrailingSlashes(options.publicUrl.trim()) : undefined;
   const localUrl = `http://127.0.0.1:${port}`;
@@ -139,18 +281,7 @@ export async function startMockMcp(options: StartMockMcpOptions = {}): Promise<M
   const stop = async (): Promise<void> => {
     const active = child;
     child = null;
-    if (!active || active.exitCode !== null) return;
-    await new Promise<void>((resolve) => {
-      const timer = setTimeout(() => {
-        active.kill("SIGKILL");
-        resolve();
-      }, 5_000);
-      active.once("exit", () => {
-        clearTimeout(timer);
-        resolve();
-      });
-      active.kill("SIGTERM");
-    });
+    await stopChild(active);
   };
 
   const rawEntries = async (): Promise<Record<string, unknown>[]> => {
@@ -205,6 +336,13 @@ export async function startMockMcp(options: StartMockMcpOptions = {}): Promise<M
         await sleep(500);
       }
       throw new Error(`No GET /authorize reached the mock IdP after ${iso}. Output: ${output.slice(-1_000)}`);
+    },
+    async configureOAuthRedirectUris() {
+      throw new Error("The legacy mock must receive preregistered redirect URIs before startup.");
+    },
+    async resetOAuth() {
+      const response = await fetch(`${url}/admin/expire-oauth-tokens`, { method: "POST" });
+      if (!response.ok) throw new Error(`Mock OAuth reset failed: HTTP ${response.status}`);
     },
     stop,
     [Symbol.asyncDispose]: stop,

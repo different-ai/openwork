@@ -457,6 +457,8 @@ function createAttachmentChipDom(attachment: ComposerAttachmentToken) {
   dom.contentEditable = "false";
   dom.setAttribute("spellcheck", "false");
   dom.title = attachment.name;
+  dom.dataset.attachmentId = attachment.id;
+  dom.dataset.attachmentStatus = "ready";
 
   if (attachment.kind === "image" && attachment.previewUrl) {
     const img = document.createElement("img");
@@ -475,6 +477,25 @@ function createAttachmentChipDom(attachment: ComposerAttachmentToken) {
     dom.append(chip);
   }
 
+  // Upload progress overlay: hidden by default, toggled through the chip's
+  // data-attachment-status attribute while the draft's attachments are being
+  // compressed/uploaded at send time (see syncAttachmentChipStatus).
+  const spinner = document.createElement("span");
+  spinner.dataset.attachmentSpinner = "true";
+  spinner.className = "absolute inset-0 hidden items-center justify-center rounded-xl bg-background/60";
+  const spinnerIcon = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  spinnerIcon.setAttribute("viewBox", "0 0 24 24");
+  spinnerIcon.setAttribute("fill", "none");
+  spinnerIcon.setAttribute("class", "h-4 w-4 animate-spin text-foreground");
+  const spinnerArc = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  spinnerArc.setAttribute("d", "M12 3a9 9 0 1 0 9 9");
+  spinnerArc.setAttribute("stroke", "currentColor");
+  spinnerArc.setAttribute("stroke-width", "2.5");
+  spinnerArc.setAttribute("stroke-linecap", "round");
+  spinnerIcon.append(spinnerArc);
+  spinner.append(spinnerIcon);
+  dom.append(spinner);
+
   const remove = document.createElement("button");
   remove.type = "button";
   remove.className = "absolute -right-1.5 -top-1.5 inline-flex h-5 w-5 items-center justify-center rounded-full border border-border bg-background text-xs leading-none text-muted-foreground shadow-sm transition-colors hover:bg-muted hover:text-foreground";
@@ -484,6 +505,22 @@ function createAttachmentChipDom(attachment: ComposerAttachmentToken) {
   remove.textContent = "×";
   dom.append(remove);
   return dom;
+}
+
+/**
+ * Toggle the uploading overlay on every attachment chip inside `root`.
+ * Chips are raw Lexical token DOM (not React), so status is synced by
+ * attribute instead of a re-render. Exported for the composer, which flips
+ * this while a draft with attachments is being uploaded/sent.
+ */
+export function syncAttachmentChipStatus(root: HTMLElement, status: "uploading" | "ready") {
+  for (const chip of root.querySelectorAll<HTMLElement>("[data-attachment-id]")) {
+    chip.dataset.attachmentStatus = status;
+    const spinner = chip.querySelector<HTMLElement>("[data-attachment-spinner]");
+    if (!spinner) continue;
+    spinner.classList.toggle("hidden", status !== "uploading");
+    spinner.classList.toggle("flex", status === "uploading");
+  }
 }
 
 function updateAttachmentChipDom(dom: HTMLElement, attachment: ComposerAttachmentToken) {

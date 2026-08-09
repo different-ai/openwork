@@ -1,12 +1,9 @@
-import { automationsEnglish } from "./automations";
-
 /**
  * Traduções para português do Brasil
  * Termos profissionais (Skills, Plugins, Commands, Sessions, OpenCode, OpenPackage, OpenWork) NÃO são traduzidos
  */
 
 export default {
-  ...automationsEnglish,
   "app.compact_command_desc": "Resumir esta sessão para reduzir o tamanho do contexto.",
   "app.error_audit_load": "Falha ao carregar o log de auditoria.",
   "app.error_auth_failed": "Falha na autenticação",
@@ -236,9 +233,18 @@ export default {
   "den.cloud_control_plane_url_hint": "Apenas modo desenvolvedor. Use para apontar para um plano de controle Cloud local ou auto-hospedado. Alterá-lo desconecta você para que o app possa se re-hidratar no novo plano de controle.",
   "den.cloud_control_plane_url_label": "URL do plano de controle Cloud",
   "den.cloud_provider_detail": "{count} modelos · provedor {source}",
+  "den.cloud_provider_blocked": "Indisponível neste desktop",
+  "den.cloud_provider_conflict": "Conflito",
+  "den.cloud_provider_connected": "Conectado",
+  "den.cloud_provider_error": "Erro de sincronização",
+  "den.cloud_provider_imports_unavailable": "As importações não estão disponíveis neste workspace",
+  "den.cloud_provider_needs_credential": "Requer credencial da organização",
+  "den.cloud_provider_needs_server": "Requer o servidor OpenWork",
+  "den.cloud_provider_retry": "Tentar novamente",
+  "den.cloud_provider_syncing": "Sincronizando",
   "den.cloud_provider_removed_detail": "Este provedor importado não está mais no cloud. Desinstale a configuração local {providerId}.",
   "den.cloud_provider_sync_detail": "O provedor cloud mudou. Sincronize a configuração {source} com {count} modelos para o opencode.jsonc.",
-  "den.cloud_providers_hint": "Importe provedores LLM gerenciados para o opencode.jsonc e use a credencial da organização neste workspace.",
+  "den.cloud_providers_hint": "Os provedores concedidos pela organização são sincronizados automaticamente. Confira o status aqui.",
   "den.cloud_providers_title": "Provedores cloud",
   "den.cloud_section_desc": "Entre, escolha uma organização e abra workers Cloud ou templates de equipe.",
   "den.cloud_section_title": "OpenWork Cloud",
@@ -254,12 +260,10 @@ export default {
   "den.finish_signin": "Concluir login",
   "den.finishing": "Concluindo...",
   "den.hide_signin_code": "Ocultar código de login",
-  "den.import_all": "Importar tudo",
+  "den.import_plugin": "Importar plugin",
   "den.import_provider": "Importar",
-  "den.import_provider_failed": "Falha ao importar {name}.",
   "den.imported_badge": "Importado",
-  "den.imported_provider": "{name} importado.",
-  "den.importing": "Importando…",
+  "den.importing_plugin": "Importando plugin…",
   "den.needs_attention": "Requer atenção",
   "den.no_cloud_providers": "Nenhum provedor cloud disponível para esta organização.",
   "den.no_org_selected": "Nenhuma organização selecionada",
@@ -298,6 +302,7 @@ export default {
   "den.status_signed_in_as": "Conectado como {email}.",
   "den.status_signed_out": "Saiu do OpenWork Cloud e a sessão foi limpa neste dispositivo.",
   "den.sync": "Sincronizar",
+  "den.sync_now": "Sincronizar agora",
   "den.sync_provider_failed": "Falha ao sincronizar {name}.",
   "den.synced_provider": "{name} sincronizado.",
   "den.syncing": "Sincronizando…",
@@ -943,7 +948,7 @@ export default {
   "settings.tab_description_debug": "Revise diagnósticos do runtime, logs e utilitários de depuração de baixo nível.",
   "settings.tab_description_cloud_account": "Sign in, manage your organization, and configure your cloud connection.",
   "settings.tab_description_cloud_marketplaces": "Browse and import plugins from your organization's marketplaces.",
-  "settings.tab_description_cloud_providers": "Import and manage LLM provider keys from your organization.",
+  "settings.tab_description_cloud_providers": "Confira o status de sincronização dos provedores LLM da organização.",
   "settings.tab_description_environment": "Save API keys and tokens for local agents, skills, and MCP servers. Secrets stay on this device.",
   "settings.tab_description_extensions": "Skills, conexões e ferramentas que seu agente pode usar.",
   "settings.tab_description_general": "Conecte provedores, escolha o modelo padrão, autorize pastas e controle o workspace OpenWork selecionado e sua conexão de runtime.",

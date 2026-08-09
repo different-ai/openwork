@@ -21,6 +21,7 @@
         "tab": "Start here",
         "pages": [
           "start-here/get-started",
+          "start-here/migrate-from-claude-cowork",
           {
             "group": "Connect your stack",
             "pages": [

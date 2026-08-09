@@ -218,7 +218,7 @@ export function DenSignInSurface(props: DenSignInSurfaceProps) {
     // Paper first-load spec: same centered welcome card as WelcomePage.
     // Forced sign-in only removes the "Use Without Cloud" option.
     return (
-      <div className="relative min-h-screen bg-background text-foreground">
+      <div className="relative min-h-dvh bg-background text-foreground">
         {/* Pixel-dither mosaic background (dark:invert keeps it visible in dark mode) */}
         <div className="pointer-events-none absolute inset-0 z-0 overflow-hidden opacity-[0.1] dark:invert">
           <Dithering
@@ -237,7 +237,7 @@ export function DenSignInSurface(props: DenSignInSurfaceProps) {
         {/* Titlebar drag region */}
         <div className="absolute inset-x-0 top-0 z-20 h-10 mac:titlebar-drag" />
 
-        <div className="relative z-10 flex min-h-screen items-center justify-center px-6 py-16">
+        <div className="relative z-10 flex min-h-dvh items-center justify-center px-6 py-16">
           <div className="w-full max-w-[720px] rounded-3xl border border-border bg-background px-8 pb-12 pt-10 sm:px-16 sm:pb-16 sm:pt-14">
             <div className="flex items-center gap-2.5">
               <img

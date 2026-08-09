@@ -1,5 +1,3 @@
-import { automationsEnglish } from "./automations";
-
 /**
  * 中文（简体）翻译
  * 产品名称保留英文：OpenCode、OpenPackage、OpenWork
@@ -9,7 +7,6 @@ import { automationsEnglish } from "./automations";
  */
 
 export default {
-  ...automationsEnglish,
   "app.compact_command_desc": "压缩此会话以减少上下文大小。",
   "app.error_audit_load": "加载审计日志失败。",
   "app.error_auth_failed": "认证失败",
@@ -239,9 +236,18 @@ export default {
   "den.cloud_control_plane_url_hint": "仅限开发者模式。用于连接本地或自托管的Cloud控制平面。更改后将退出登录以重新连接新的控制平面。",
   "den.cloud_control_plane_url_label": "Cloud控制平面URL",
   "den.cloud_provider_detail": "{count}个模型 · {source}提供商",
+  "den.cloud_provider_blocked": "此桌面端不可用",
+  "den.cloud_provider_conflict": "冲突",
+  "den.cloud_provider_connected": "已连接",
+  "den.cloud_provider_error": "同步错误",
+  "den.cloud_provider_imports_unavailable": "此工作区无法导入",
+  "den.cloud_provider_needs_credential": "需要组织凭据",
+  "den.cloud_provider_needs_server": "需要OpenWork服务器",
+  "den.cloud_provider_retry": "重试",
+  "den.cloud_provider_syncing": "同步中",
   "den.cloud_provider_removed_detail": "此导入的提供商不再存在于云端。请卸载本地的{providerId}配置。",
   "den.cloud_provider_sync_detail": "云端提供商已变更。将{count}个模型的{source}配置同步到opencode.jsonc。",
-  "den.cloud_providers_hint": "将托管LLM提供商导入opencode.jsonc，并在此工作区中使用组织凭据。",
+  "den.cloud_providers_hint": "组织授予的提供商会自动同步。可在此查看其状态。",
   "den.cloud_providers_title": "云端提供商",
   "den.cloud_section_desc": "登录、选择组织，打开Cloud工作区或团队模板。",
   "den.cloud_section_title": "OpenWork Cloud",
@@ -257,12 +263,10 @@ export default {
   "den.finish_signin": "完成登录",
   "den.finishing": "正在完成…",
   "den.hide_signin_code": "隐藏登录码",
-  "den.import_all": "全部导入",
+  "den.import_plugin": "导入插件",
   "den.import_provider": "导入",
-  "den.import_provider_failed": "导入{name}失败。",
   "den.imported_badge": "已导入",
-  "den.imported_provider": "已导入{name}。",
-  "den.importing": "导入中…",
+  "den.importing_plugin": "正在导入插件…",
   "den.needs_attention": "需要关注",
   "den.no_cloud_providers": "此组织暂无可用的云端提供商。",
   "den.no_org_selected": "未选择组织",
@@ -298,6 +302,7 @@ export default {
   "den.status_signed_in_as": "已登录为{email}。",
   "den.status_signed_out": "已退出登录并清除此设备上的OpenWork Cloud会话。",
   "den.sync": "同步",
+  "den.sync_now": "立即同步",
   "den.sync_provider_failed": "同步{name}失败。",
   "den.synced_provider": "已同步{name}。",
   "den.syncing": "同步中…",
@@ -941,7 +946,7 @@ export default {
   "settings.tab_description_debug": "查看运行时诊断信息、日志和底层调试工具。",
   "settings.tab_description_cloud_account": "Sign in, manage your organization, and configure your cloud connection.",
   "settings.tab_description_cloud_marketplaces": "Browse and import plugins from your organization's marketplaces.",
-  "settings.tab_description_cloud_providers": "Import and manage LLM provider keys from your organization.",
+  "settings.tab_description_cloud_providers": "查看组织LLM提供商的同步状态。",
   "settings.tab_description_extensions": "智能体可使用的技能、连接和工具。",
   "settings.tab_description_general": "连接提供商、选择默认模型、授权文件夹，以及控制所选OpenWork工作区和运行时连接。",
   "settings.tab_description_environment": "保存本机 agents、skills 和 MCP servers 使用的 API keys 与 tokens。Secret 只保留在这台设备上。",

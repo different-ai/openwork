@@ -10,6 +10,8 @@ journey. Pass/fail evidence comes from an `@openwork/testkit` spec and its
 ambient tape; use `daytona-flow-validator` and `run-tests` before declaring a
 verdict. Custom screenshots or recordings never replace the tape.
 
+Follow `prove-a-pr` for the repository-wide agent-first and human-verification contract.
+
 ## Default supplementary format: screenshot index
 
 For presentation, use a browseable HTML page with named PNG screenshots for

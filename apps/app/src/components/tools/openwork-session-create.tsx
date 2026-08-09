@@ -2,7 +2,7 @@
 
 import { AlertTriangle, Check, MessageCircle } from "lucide-react"
 import type { DynamicToolUIPart } from "ai"
-import { useNavigate } from "react-router-dom"
+import { useNavigate } from "react-router"
 
 import { useMessageList } from "@/components/chat/message-list-provider"
 import { Button } from "@/components/ui/button"

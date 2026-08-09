@@ -86,6 +86,12 @@ export const IDLE_CLOUD_MCP_SUBMISSION_GATE_STATE: CloudMcpSubmissionGateState =
   maxAttempts: 1 + CLOUD_MCP_SUBMISSION_RETRY_DELAYS_MS.length,
 };
 
+export function clearCloudMcpSubmissionFailure(
+  state: CloudMcpSubmissionGateState,
+): CloudMcpSubmissionGateState {
+  return state.status === "failed" ? IDLE_CLOUD_MCP_SUBMISSION_GATE_STATE : state;
+}
+
 function normalize(value: string | null | undefined): string {
   return value?.trim().replace(/\/+$/, "") ?? "";
 }

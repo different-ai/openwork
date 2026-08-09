@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { ChevronDown, Settings2 } from "lucide-react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router";
 
 import type { ModelOption, ModelRef } from "@/app/types";
 import { t } from "@/i18n";

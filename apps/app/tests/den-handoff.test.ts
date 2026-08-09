@@ -70,14 +70,19 @@ describe("exchangeHandoffAndSignIn", () => {
       token: "tok_handoff",
       user: exchangeUser,
       organization: { id: "org_invited", slug: "invited-org", name: "Invited Org" },
+      connectEnabled: false,
     });
 
     const result = await exchangeHandoffAndSignIn("grant_test", { baseUrl: "https://den.test" });
 
     expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error(result.error);
     expect(window.localStorage.getItem("openwork.den.activeOrgId")).toBe("org_invited");
     expect(window.localStorage.getItem("openwork.den.activeOrgSlug")).toBe("invited-org");
     expect(window.localStorage.getItem("openwork.den.activeOrgName")).toBe("Invited Org");
+    expect(result.exchange.connectEnabled).toBe(false);
+    expect(window.localStorage.getItem("openwork.den.desktopConfig:https://den.test::org_invited"))
+      .toBe(JSON.stringify({ connectEnabled: false }));
   });
 
   test("prefers the caller-provided organization over the exchange payload", async () => {
@@ -95,6 +100,7 @@ describe("exchangeHandoffAndSignIn", () => {
 
     expect(result.ok).toBe(true);
     expect(window.localStorage.getItem("openwork.den.activeOrgId")).toBe("org_bootstrap");
+    expect(window.localStorage.getItem("openwork.den.desktopConfig:https://den.test::org_bootstrap")).toBeNull();
   });
 
   test("preserves the stored organization when the exchange has none", async () => {
@@ -107,8 +113,12 @@ describe("exchangeHandoffAndSignIn", () => {
     const result = await exchangeHandoffAndSignIn("grant_test", { baseUrl: "https://den.test" });
 
     expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error(result.error);
     expect(window.localStorage.getItem("openwork.den.activeOrgId")).toBe("org_stored");
     expect(window.localStorage.getItem("openwork.den.activeOrgSlug")).toBe("stored-org");
     expect(window.localStorage.getItem("openwork.den.activeOrgName")).toBe("Stored Org");
+    expect(result.exchange.connectEnabled).toBeNull();
+    expect(window.localStorage.getItem("openwork.den.desktopConfig:https://den.test::org_stored"))
+      .toBeNull();
   });
 });

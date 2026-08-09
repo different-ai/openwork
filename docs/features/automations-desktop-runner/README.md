@@ -13,6 +13,12 @@ resumable notification cursor. After connecting or receiving a wake-up, the
 desktop discovers work over HTTP, atomically claims one occurrence, and reports
 attempt-bound heartbeats, ordered events, cancellation, usage, and completion.
 
+When a runner has no pending notifications, Den exponentially backs its cursor
+query off from one second to 15 seconds. The poll resets to one second after
+activity, and its sleep is capped by the existing 15-second presence keepalive.
+This preserves the resumable SSE and bounded claim protocol while reducing an
+idle runner's steady-state notification queries from 60 to four per minute.
+
 The claimed Automation runs as a normal visible local OpenWork thread in the
 desktop's active workspace. It uses the selected model and the same local
 OpenCode tool and integration experience as a thread started by the user.

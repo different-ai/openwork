@@ -1,6 +1,6 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js"
-import { UnauthorizedError } from "@modelcontextprotocol/sdk/client/auth.js"
-import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js"
+import { auth, UnauthorizedError } from "@modelcontextprotocol/sdk/client/auth.js"
+import { StreamableHTTPClientTransport, StreamableHTTPError } from "@modelcontextprotocol/sdk/client/streamableHttp.js"
 import type { RequestOptions } from "@modelcontextprotocol/sdk/shared/protocol.js"
 import { z } from "zod"
 import type {
@@ -23,6 +23,7 @@ import type {
 import { EnterpriseMcpClientError, EnterpriseMcpLifecycleDeadlineError, EnterpriseMcpToolResultError } from "./errors.js"
 import { EnterpriseMcpOAuthProvider } from "./oauth-provider.js"
 import { createEnterpriseMcpRequestObserver, type EnterpriseMcpRequestObserver } from "./request-observer.js"
+import { createEnterpriseMcpTokenResponseCompat } from "./token-response-compat.js"
 import { collectEnterpriseMcpTools } from "./tool-catalog.js"
 import { assertEnterpriseMcpToolArguments } from "./tool-input.js"
 
@@ -50,6 +51,7 @@ const DEFAULT_OPERATION_TIMEOUT_MS = 30_000
 const DEFAULT_CLOSE_TIMEOUT_MS = 5_000
 const DEFAULT_AUTHORIZATION_TRANSACTION_TTL_MS = 10 * 60_000
 const DEFAULT_EXPIRATION_SKEW_MS = 30_000
+export const ENTERPRISE_MCP_PROTOCOL_VERSION_FALLBACK = "2025-06-18"
 
 const optionsSchema = z.object({
   operationTimeoutMs: z.number().int().positive(),
@@ -63,11 +65,13 @@ const optionsSchema = z.object({
 type Session = {
   client: Client
   transport: StreamableHTTPClientTransport
+  serverUrl: URL
   oauthProvider?: EnterpriseMcpOAuthProvider
   observer: EnterpriseMcpRequestObserver
   controller: AbortController
   requestOptions: RequestOptions
   lifecycle: EnterpriseMcpLifecycle
+  createTransport: () => StreamableHTTPClientTransport
 }
 
 function requestInit(authorization: EnterpriseMcpAuthorization): RequestInit | undefined {
@@ -218,10 +222,22 @@ export function createEnterpriseMcpClient(options: EnterpriseMcpClientOptions): 
     }, remaining)
     controller.signal.addEventListener("abort", () => clearTimeout(timeout), { once: true })
 
+    const compatibleFetch = createEnterpriseMcpTokenResponseCompat({
+      fetch: configuredFetch,
+      onTranslation: (translation) => emitDiagnostic({
+        kind: "request",
+        connectionId: input.connection.id,
+        operationPhase: input.operationPhase,
+        requestPhase: translation.requestPhase,
+        outcome: translation.outcome,
+        httpStatus: translation.httpStatus,
+        responseBodyExcerpt: translation.responseBodyExcerpt,
+      }),
+    })
     const observer = createEnterpriseMcpRequestObserver({
       connectionId: input.connection.id,
       operationPhase: input.operationPhase,
-      fetch: configuredFetch,
+      fetch: compatibleFetch,
       diagnosticSink: options.diagnosticSink ? emitDiagnostic : undefined,
       signal: options.lifecycle
         ? AbortSignal.any([controller.signal, options.lifecycle.signal])
@@ -248,11 +264,12 @@ export function createEnterpriseMcpClient(options: EnterpriseMcpClientOptions): 
           oauthConfiguration,
         })
       : undefined
-    const transport = new StreamableHTTPClientTransport(serverUrl, {
+    const createTransport = () => new StreamableHTTPClientTransport(serverUrl, {
       authProvider: oauthProvider,
       fetch: observer.fetch,
       requestInit: requestInit(input.connection.authorization),
     })
+    const transport = createTransport()
     const client = new Client({ name: clientName, version: clientVersion }, { capabilities: {} })
     const requestOptions: RequestOptions = {
       signal: requestSignal,
@@ -264,12 +281,58 @@ export function createEnterpriseMcpClient(options: EnterpriseMcpClientOptions): 
     return {
       client,
       transport,
+      serverUrl,
       oauthProvider,
       observer,
       controller,
       requestOptions,
       lifecycle: { expiresAt: configuredExpiresAt, signal: requestSignal },
+      createTransport,
     }
+  }
+
+  function hasInitializeHttp400(error: unknown): boolean {
+    let current: unknown = error
+    const seen = new Set<unknown>()
+    for (let depth = 0; depth < 5 && current && !seen.has(current); depth += 1) {
+      seen.add(current)
+      if (current instanceof StreamableHTTPError && current.code === 400) return true
+      current = typeof current === "object" && current !== null && "cause" in current
+        ? current.cause
+        : undefined
+    }
+    return false
+  }
+
+  async function connectWithProtocolVersionFallback(input: {
+    session: Session
+    connectionId: string
+    operationPhase: EnterpriseMcpOperationPhase
+  }): Promise<void> {
+    try {
+      await input.session.client.connect(input.session.transport, input.session.requestOptions)
+      return
+    } catch (error) {
+      if (
+        input.session.observer.lastFailedRequestPhase() !== "mcp-initialize"
+        || !hasInitializeHttp400(error)
+      ) throw error
+    }
+
+    emitDiagnostic({
+      kind: "request",
+      connectionId: input.connectionId,
+      operationPhase: input.operationPhase,
+      requestPhase: "mcp-initialize",
+      outcome: "started",
+      protocolVersionFallback: ENTERPRISE_MCP_PROTOCOL_VERSION_FALLBACK,
+    })
+    input.session.client = new Client(
+      { name: clientName, version: clientVersion },
+      { capabilities: {}, protocolVersion: ENTERPRISE_MCP_PROTOCOL_VERSION_FALLBACK },
+    )
+    input.session.transport = input.session.createTransport()
+    await input.session.client.connect(input.session.transport, input.session.requestOptions)
   }
 
   async function runOperation<T>(input: {
@@ -342,7 +405,11 @@ export function createEnterpriseMcpClient(options: EnterpriseMcpClientOptions): 
       flow: { kind: "runtime" },
       operation: async (session) => {
         try {
-          await session.client.connect(session.transport, session.requestOptions)
+          await connectWithProtocolVersionFallback({
+            session,
+            connectionId: input.connection.id,
+            operationPhase: input.operationPhase,
+          })
           emitDiagnostic({
             kind: "operation",
             connectionId: input.connection.id,
@@ -399,7 +466,14 @@ export function createEnterpriseMcpClient(options: EnterpriseMcpClientOptions): 
         operationPhase: "connection-handshake",
         operation: async (session) => {
           try {
-            await session.client.connect(session.transport, session.requestOptions)
+            const hadOAuthCredential = session.oauthProvider
+              ? Boolean(await session.oauthProvider.tokens())
+              : false
+            await connectWithProtocolVersionFallback({
+              session,
+              connectionId: input.connection.id,
+              operationPhase: "connection-handshake",
+            })
             emitDiagnostic({
               kind: "operation",
               connectionId: input.connection.id,
@@ -413,6 +487,29 @@ export function createEnterpriseMcpClient(options: EnterpriseMcpClientOptions): 
             // implementing tools/list at all.
             if (session.client.getServerCapabilities()?.tools) {
               await session.client.listTools(undefined, session.requestOptions)
+            }
+            // OAuth connections must not be treated as member-connected merely
+            // because a provider exposes initialize and tools/list publicly.
+            // When no member credential exists, proactively run OAuth discovery
+            // so providers such as BigQuery can return an authorization URL
+            // without first issuing an MCP-level 401 challenge.
+            if (session.oauthProvider && !hadOAuthCredential) {
+              const authResult = await auth(session.oauthProvider, {
+                serverUrl: session.serverUrl,
+                fetchFn: session.observer.fetch,
+              })
+              const authorizeUrl = session.oauthProvider.authorizeUrl
+              if (authResult === "REDIRECT") {
+                if (!authorizeUrl) {
+                  throw new Error("The OAuth provider requested authorization without an authorization URL.")
+                }
+                try {
+                  await closeWithinDeadline(() => session.client.close(), closeTimeoutMs)
+                } catch {
+                  // The bounded cleanup attempt must not discard a valid authorization URL.
+                }
+                return { status: "needs_auth", authorizeUrl }
+              }
             }
             try {
               await closeWithinDeadline(() => session.client.close(), closeTimeoutMs)
@@ -457,7 +554,11 @@ export function createEnterpriseMcpClient(options: EnterpriseMcpClientOptions): 
           try {
             await session.transport.finishAuth(code)
             exchangedTokens = true
-            await session.client.connect(session.transport, session.requestOptions)
+            await connectWithProtocolVersionFallback({
+              session,
+              connectionId: input.connection.id,
+              operationPhase: "authorization-callback",
+            })
             emitDiagnostic({
               kind: "operation",
               connectionId: input.connection.id,

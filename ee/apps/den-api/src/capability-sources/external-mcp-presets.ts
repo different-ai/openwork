@@ -5,6 +5,8 @@
  * so an org admin can add them once, org-wide, in Den, instead of every
  * device connecting to them separately.
  */
+import { z } from "zod"
+
 export type ExternalMcpPreset = {
   presetId: string
   displayName: string
@@ -12,7 +14,24 @@ export type ExternalMcpPreset = {
   url: string
   authType: "oauth" | "apikey" | "none"
   requiresOAuthClient?: boolean
+  authorizationServerIssuer?: string
+  defaultOAuthScopes?: readonly string[]
 }
+
+export const externalMcpPresetResponseSchema = z.object({
+  presetId: z.string(),
+  displayName: z.string(),
+  description: z.string(),
+  url: z.string(),
+  authType: z.enum(["oauth", "apikey", "none"]),
+  requiresOAuthClient: z.boolean().optional(),
+  authorizationServerIssuer: z.string().url().optional(),
+  defaultOAuthScopes: z.array(z.string()).optional(),
+}).meta({ ref: "ExternalMcpPresetResponse" })
+
+export const externalMcpPresetListResponseSchema = z.object({
+  presets: z.array(externalMcpPresetResponseSchema),
+}).meta({ ref: "ExternalMcpPresetListResponse" })
 
 export const EXTERNAL_MCP_PRESETS: ExternalMcpPreset[] = [
   {
@@ -64,6 +83,20 @@ export const EXTERNAL_MCP_PRESETS: ExternalMcpPreset[] = [
     url: "https://mcp.slack.com/mcp",
     authType: "oauth",
     requiresOAuthClient: true,
+    authorizationServerIssuer: "https://mcp.slack.com",
+    defaultOAuthScopes: [
+      "search:read.public",
+      "search:read.private",
+      "search:read.im",
+      "search:read.mpim",
+      "search:read.files",
+      "chat:write",
+      "channels:history",
+      "groups:history",
+      "im:history",
+      "mpim:history",
+      "users:read",
+    ],
   },
   {
     presetId: "exa",

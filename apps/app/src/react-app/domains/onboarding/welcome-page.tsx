@@ -59,12 +59,12 @@ export function WelcomePage({
   }, [markRouteReady]);
 
   return (
-    <Page className="min-h-screen">
+    <Page className="min-h-dvh">
       <PageTitlebarRegion />
 
       <ScrollArea className="relative z-10">
         <ScrollAreaViewport>
-          <div className="relative flex min-h-screen items-center justify-center px-6 py-16">
+          <div className="relative flex min-h-dvh items-center justify-center px-6 py-16">
             {/* Paper first-load spec: subtle black pixel-dither mosaic over a
                 near-white ground. `dark:invert` flips the pixels to white so
                 the texture survives dark mode. */}

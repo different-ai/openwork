@@ -27,6 +27,7 @@ import { jsonValidator, publicRoute, authenticatedRoute } from "../../middleware
 import { DEFAULT_ORGANIZATION_LIMITS } from "../../organization-limits.js"
 import { denTypeIdSchema, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
 import { seedDefaultOrganizationRoles, setSessionActiveOrganization } from "../../orgs.js"
+import { clampUtf8Bytes, PROJECTION_TEXT_MAX_BYTES } from "../org/plugin-system/projection-text.js"
 import type { AuthContextVariables } from "../../session.js"
 import {
   DEFAULT_OPENWORK_MARKETPLACE_DESCRIPTION,
@@ -270,7 +271,7 @@ export function registerBootstrapRoutes<T extends { Variables: AuthContextVariab
           sourceMode: "cloud",
           title: metadata.title,
           description: metadata.description,
-          searchText: [metadata.title, metadata.description, skillText].filter(Boolean).join("\n"),
+          searchText: clampUtf8Bytes([metadata.title, metadata.description, skillText].filter(Boolean).join("\n"), PROJECTION_TEXT_MAX_BYTES),
           currentFileName: null,
           currentFileExtension: null,
           currentRelativePath: null,

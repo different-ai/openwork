@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   BarChart3,
   ChevronDown,
@@ -321,6 +321,7 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
   const [switcherOpen, setSwitcherOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [profilePromptDismissed, setProfilePromptDismissed] = useState(false);
+  const switcherTriggerRef = useRef<HTMLButtonElement>(null);
   const isSingleOrgMode = runtimeConfigLoaded && runtimeConfig.orgMode === "single_org";
   const {
     query: switcherQuery,
@@ -332,6 +333,32 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
     showMore: showMoreOrgDirectory,
     showSearch: showSwitcherSearch,
   } = useOrgListWindow(orgDirectory, 20);
+
+  useEffect(() => {
+    if (!switcherOpen) return;
+
+    function handlePointerDown(event: PointerEvent) {
+      const clickedInsideSwitcher = event.composedPath().some(
+        (target) => target instanceof Element && target.hasAttribute("data-workspace-switcher-root"),
+      );
+      if (!clickedInsideSwitcher) {
+        setSwitcherOpen(false);
+      }
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key !== "Escape") return;
+      setSwitcherOpen(false);
+      switcherTriggerRef.current?.focus();
+    }
+
+    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [switcherOpen]);
 
   if (orgSelectionRequired) {
     return (
@@ -501,11 +528,15 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
       </button>
     </div>
   ) : (
-    <div className="relative">
+    <div data-workspace-switcher-root="" className="relative">
       <button
+        ref={switcherTriggerRef}
         type="button"
+        data-testid="workspace-switcher-trigger"
         className="flex w-full items-center justify-between gap-3 rounded-xl px-2 py-2 text-left transition-colors hover:bg-gray-100"
         onClick={() => setSwitcherOpen((current) => !current)}
+        aria-expanded={switcherOpen}
+        aria-haspopup="dialog"
       >
         <div className="flex min-w-0 items-center gap-3">
           <OrgMark name={activeOrg?.name ?? "OpenWork"} />
@@ -527,8 +558,13 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
       </button>
 
       {switcherOpen ? (
-        <div className="absolute bottom-[calc(100%+0.5rem)] left-0 w-[240px] z-30 grid gap-1 rounded-2xl border border-gray-200 bg-white py-2 shadow-[0_12px_24px_-12px_rgba(0,0,0,0.15)]">
-          <div className="px-3 py-1.5">
+        <div
+          data-testid="workspace-switcher-menu"
+          role="dialog"
+          aria-label="Workspace switcher"
+          className="absolute bottom-[calc(100%+0.5rem)] left-0 z-30 grid w-[240px] max-w-[calc(100vw-1.5rem)] grid-cols-[minmax(0,1fr)] gap-1 rounded-2xl border border-gray-200 bg-white py-2 shadow-[0_12px_24px_-12px_rgba(0,0,0,0.15)]"
+        >
+          <div className="min-w-0 px-3 py-1.5">
             <p className="truncate text-[13px] font-medium text-gray-900">
               {user?.email ?? "OpenWork user"}
             </p>

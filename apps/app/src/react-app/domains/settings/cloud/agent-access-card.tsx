@@ -8,6 +8,7 @@ import type {
   OpenworkCloudMcpEngineRefresh,
   OpenworkCloudMcpHealth,
   OpenworkCloudMcpProviderModelContext,
+  OpenworkConnectState,
   OpenworkServerClient,
 } from "@/app/lib/openwork-server";
 import { Button } from "@/components/ui/button";
@@ -32,6 +33,7 @@ import {
   cloudMcpProbeTraceLines,
 } from "@/react-app/domains/connections/cloud-mcp-diagnostics";
 import { readCloudMcpUserState } from "@/react-app/domains/connections/cloud-mcp-user-state";
+import { resolveOpenWorkConnectStateSummary } from "@/react-app/domains/connections/openwork-connect-status";
 import { t } from "@/i18n";
 
 const CLOUD_MCP_REFRESH_MARGIN_MS = 24 * 60 * 60 * 1000;
@@ -99,6 +101,7 @@ export function AgentAccessCard(props: {
 }) {
   const cloudSession = useCloudSession();
   const [health, setHealth] = useState<OpenworkCloudMcpHealth | null>(null);
+  const [connectState, setConnectState] = useState<OpenworkConnectState | null>(null);
   const [busy, setBusy] = useState<"test" | "repair" | "refresh" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [advancedOpen, setAdvancedOpen] = useState(false);
@@ -135,7 +138,10 @@ export function AgentAccessCard(props: {
             }
           : null
     : null;
-  const summary = missingContextSummary ?? cloudMcpDisplaySummary({
+  const connectStateSummary = connectState && (connectState.status !== "available" || !connectState.connectEnabled)
+    ? resolveOpenWorkConnectStateSummary(connectState.status, connectState.connectEnabled)
+    : null;
+  const summary = missingContextSummary ?? connectStateSummary ?? cloudMcpDisplaySummary({
       signedIn,
       orgSelected,
       connecting: busy !== null,
@@ -252,6 +258,24 @@ export function AgentAccessCard(props: {
   };
 
   useEffect(() => {
+    if (!props.client) {
+      setConnectState(null);
+      return;
+    }
+    let cancelled = false;
+    void props.client.getConnectState(props.workspaceId)
+      .then((state) => {
+        if (!cancelled) setConnectState(state);
+      })
+      .catch(() => {
+        if (!cancelled) setConnectState(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [health, props.client, props.workspaceId, signedIn]);
+
+  useEffect(() => {
     if (!props.client || !context || !signedIn) {
       updateHealth(null);
       return;
@@ -322,7 +346,7 @@ export function AgentAccessCard(props: {
   const canRun = Boolean(props.client && context && signedIn);
   const readyTools = readyCloudMcpToolIds(health);
 
-  if (health?.usable) {
+  if (health?.usable && !connectStateSummary) {
     return (
       <SettingsInset className="flex flex-col gap-3 bg-dls-surface sm:flex-row sm:items-center sm:justify-between" data-testid="agent-access-card">
         <div className="space-y-2">
@@ -367,7 +391,7 @@ export function AgentAccessCard(props: {
         </div>
       </div>
 
-      {health?.usable ? (
+      {health?.usable && !connectStateSummary ? (
         <div className="space-y-2 rounded-xl border border-green-6/30 bg-green-2 p-3 text-sm text-green-11">
           <div className="font-medium">Cloud tools verified for this workspace</div>
           <div className="flex flex-wrap gap-2 font-mono text-xs">

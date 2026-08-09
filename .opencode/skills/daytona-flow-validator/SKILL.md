@@ -8,6 +8,8 @@ description: do e2e tests, validate feature, prove it works, pass/fail, testkit 
 Use this skill to decide whether a Daytona Electron or browser flow actually
 works. Launching the sandbox is separate. This skill owns the feedback loop.
 
+Follow `prove-a-pr` for the repository-wide agent-first and human-verification contract.
+
 ## Core Rule
 
 Never report success from a click, script return value, or recording alone.

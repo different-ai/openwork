@@ -8,12 +8,16 @@ WORKDIR /src
 
 RUN apt-get update \
   && apt-get install -y --no-install-recommends ca-certificates curl git unzip \
+    python3 make g++ \
   && npm install -g bun \
   && corepack enable \
   && rm -rf /var/lib/apt/lists/*
 
 COPY . .
 
+# python3/make/g++ above: better-sqlite3 v13 has no install script, but pnpm's
+# implicit node-gyp build for packages with a binding.gyp still compiles it
+# from source here, which needs a toolchain (v12 downloaded prebuilds instead).
 RUN pnpm install --frozen-lockfile --filter openwork-server... --filter @openwork/app...
 
 ARG TARGETARCH

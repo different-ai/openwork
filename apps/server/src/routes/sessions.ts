@@ -101,7 +101,7 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
 
   async function createWorkspaceSession(
     workspace: WorkspaceInfo,
-    input: { title: string; prompt?: string; providerId?: string; modelId?: string },
+    input: { title: string; prompt?: string; providerId?: string; modelId?: string; variant?: string },
   ) {
     const opencode = createWorkspaceOpencodeClient(config, workspace);
     const session = buildSession(
@@ -117,6 +117,7 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
         ...(input.providerId && input.modelId
           ? { model: { providerID: input.providerId, modelID: input.modelId } }
           : {}),
+        ...(input.variant ? { variant: input.variant } : {}),
         parts: [{ type: "text", text: input.prompt }],
       });
       if (result.error !== undefined) {
@@ -224,6 +225,7 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
     const prompt = optionalStringField(body, "prompt");
     const providerId = optionalStringField(body, "providerId");
     const modelId = optionalStringField(body, "modelId");
+    const variant = optionalStringField(body, "variant");
     if (Boolean(providerId) !== Boolean(modelId)) {
       throw new ApiError(400, "invalid_payload", "providerId and modelId must be provided together");
     }
@@ -234,6 +236,7 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
       title,
       ...(prompt ? { prompt } : {}),
       ...(providerId && modelId ? { providerId, modelId } : {}),
+      ...(variant ? { variant } : {}),
     });
     return jsonResponse(result, 201);
   });

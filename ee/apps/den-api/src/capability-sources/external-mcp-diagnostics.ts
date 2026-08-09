@@ -58,6 +58,7 @@ export type ExternalMcpDiagnostic = {
   connectUrl?: string
   providerErrorMessage?: string
   providerErrorData?: string
+  providerResponseExcerpt?: string
 }
 
 export type ExternalMcpSafeOutbound = {
@@ -81,6 +82,23 @@ type FetchLike = (url: string | URL, init?: RequestInit) => Promise<Response>
 export const EXTERNAL_MCP_JSON_RESPONSE_LIMIT_BYTES = 4 * 1024 * 1024
 export const EXTERNAL_MCP_SSE_RESPONSE_LIMIT_BYTES = 16 * 1024 * 1024
 const EXTERNAL_MCP_PROVIDER_DECLARED_ERROR_SNIFF_LIMIT_BYTES = 64 * 1024
+const EXTERNAL_MCP_PROVIDER_RESPONSE_EXCERPT_CHARS = 600
+const EXTERNAL_MCP_OAUTH_PROVIDER_DETAIL_CHARS = 300
+const SENSITIVE_TEXT_PAIR = /((?:token|secret|password|assertion|code|key|authorization)[\w-]*\s*[=:]\s*)[^\s&"',;)]+/gi
+const SENSITIVE_QUOTED_TEXT_PAIR = /(["'][\w-]*(?:token|secret|password|assertion|code|key|authorization)[\w-]*["']\s*:\s*["'])[^"']*(["'])/gi
+const JWT_CREDENTIAL = /eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{4,}/g
+const SLACK_CREDENTIAL = /\bxox[a-z]-[A-Za-z0-9-]+|\bxoxe(?:-\d)?-[A-Za-z0-9-]+/gi
+const BEARER_CREDENTIAL = /(\bBearer\s+)[A-Za-z0-9._~+/=-]{8,}/gi
+const GITHUB_CREDENTIAL = /\bgh[pousr]_[A-Za-z0-9]{20,}/gi
+const LONG_OPAQUE_CREDENTIAL = /[A-Za-z0-9_~+/=-]{40,}/g
+const PROVIDER_RESPONSE_STRING_FIELDS = ["error_description", "error_uri", "message"]
+const PROVIDER_RESPONSE_CONTENT_TYPE_CHARS = 120
+
+type ProviderResponseLog = {
+  contentType: string
+  bodyChars: number
+  excerpt?: string
+}
 
 export class ExternalMcpLifecycleDeadlineError extends Error {
   constructor() {
@@ -145,6 +163,9 @@ const SAFE_ERROR_NAMES = new Set([
   "FetchError",
   "McpError",
   "UnauthorizedError",
+  "StreamableHTTPError",
+  "OAuthError",
+  "CustomOAuthError",
   "InvalidClientError",
   "UnauthorizedClientError",
   "InvalidClientMetadataError",
@@ -193,6 +214,66 @@ const TYPED_OAUTH_ERROR_NAMES = new Set([
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null
+}
+
+function redactSensitiveString(value: string): string {
+  return value
+    .replace(SENSITIVE_QUOTED_TEXT_PAIR, "$1[redacted]$2")
+    .replace(SENSITIVE_TEXT_PAIR, "$1[redacted]")
+    .replace(JWT_CREDENTIAL, "[redacted]")
+    .replace(SLACK_CREDENTIAL, "[redacted]")
+    .replace(BEARER_CREDENTIAL, "$1[redacted]")
+    .replace(GITHUB_CREDENTIAL, "[redacted]")
+    .replace(LONG_OPAQUE_CREDENTIAL, "[redacted]")
+}
+
+function isOAuthTokenPhase(phase: ExternalMcpDiagnosticPhase): boolean {
+  return phase === "AUTH_TOKEN_ACQUISITION" || phase === "CONTINUITY_REFRESH"
+}
+
+function isProviderTokenErrorExcerpt(excerpt: string): boolean {
+  try {
+    const parsed: unknown = JSON.parse(excerpt)
+    return isRecord(parsed) && parsed.ok === false && typeof parsed.error === "string"
+  } catch {
+    return false
+  }
+}
+
+function structuredProviderResponseExcerpt(text: string): string | undefined {
+  try {
+    const parsed: unknown = JSON.parse(text)
+    if (!isRecord(parsed)) return undefined
+    const allowed: Record<string, unknown> = {}
+    if (typeof parsed.ok === "boolean") allowed.ok = parsed.ok
+    if (typeof parsed.error === "string") {
+      allowed.error = redactSensitiveString(parsed.error)
+    } else if (isRecord(parsed.error)) {
+      if (
+        typeof parsed.error.code === "number"
+        && Number.isSafeInteger(parsed.error.code)
+        && String(parsed.error.code).length <= 16
+      ) {
+        allowed.error_code = parsed.error.code
+      }
+      if (typeof parsed.error.message === "string") {
+        allowed.error_message = redactSensitiveString(parsed.error.message)
+      }
+    }
+    for (const field of PROVIDER_RESPONSE_STRING_FIELDS) {
+      const value = parsed[field]
+      if (typeof value === "string") allowed[field] = redactSensitiveString(value)
+    }
+    if (Object.keys(allowed).length === 0) return undefined
+    return JSON.stringify(allowed).slice(0, EXTERNAL_MCP_PROVIDER_RESPONSE_EXCERPT_CHARS)
+  } catch {
+    return undefined
+  }
+}
+
+function providerResponseContentType(contentType: string): string {
+  const bounded = contentType.slice(0, PROVIDER_RESPONSE_CONTENT_TYPE_CHARS)
+  return /^[a-z0-9!#$&^_.+-]+\/[a-z0-9!#$&^_.+-]+$/i.test(bounded) ? bounded : "unknown"
 }
 
 function stringProperty(value: unknown, key: string): string | undefined {
@@ -558,8 +639,34 @@ function isProviderInputValidationExcerpt(value: string | undefined): boolean {
 }
 
 function errorName(value: unknown): string {
-  const name = value instanceof Error ? value.name : stringProperty(value, "name")
+  const name = value instanceof Error && value.name === "Error" && SAFE_ERROR_NAMES.has(value.constructor.name)
+    ? value.constructor.name
+    : value instanceof Error
+      ? value.name
+      : stringProperty(value, "name")
   return name && SAFE_ERROR_NAMES.has(name) ? name : "Error"
+}
+
+function oauthProviderDetail(error: unknown): string | undefined {
+  let current: unknown = error
+  const seen = new Set<unknown>()
+  for (let depth = 0; depth < 5 && current && !seen.has(current); depth += 1) {
+    seen.add(current)
+    const name = errorName(current)
+    if (TYPED_OAUTH_ERROR_NAMES.has(name) || name === "OAuthError" || name === "CustomOAuthError") {
+      const description = stringProperty(current, "error_description")
+        ?? (current instanceof Error ? current.message : stringProperty(current, "message"))
+      if (!description) return name
+      const prefix = `${name}: `
+      const redacted = redactSensitiveString(description).slice(
+        0,
+        Math.max(0, EXTERNAL_MCP_OAUTH_PROVIDER_DETAIL_CHARS - prefix.length),
+      )
+      return `${prefix}${redacted}`.slice(0, EXTERNAL_MCP_OAUTH_PROVIDER_DETAIL_CHARS)
+    }
+    current = errorCause(current)
+  }
+  return undefined
 }
 
 function hasUnsupportedVersionMessage(value: unknown): boolean {
@@ -602,8 +709,12 @@ export function safeExternalMcpCauseChain(error: unknown): ExternalMcpSafeCause[
   const seen = new Set<unknown>()
   for (let depth = 0; depth < 5 && current && !seen.has(current); depth += 1) {
     seen.add(current)
-    const rawCode = stringProperty(current, "code")
-    const code = rawCode && SAFE_NATIVE_ERROR_CODES.has(rawCode) ? rawCode : undefined
+    const rawCode = stringOrNumberProperty(current, "code")
+    const code = typeof rawCode === "number" && Number.isSafeInteger(rawCode)
+      ? String(rawCode).slice(0, 16)
+      : typeof rawCode === "string" && SAFE_NATIVE_ERROR_CODES.has(rawCode)
+        ? rawCode
+        : undefined
     const errno = stringOrNumberProperty(current, "errno")
     const safeErrno = typeof errno === "number" && Number.isSafeInteger(errno)
       ? errno
@@ -631,8 +742,12 @@ function safeMessageFor(input: {
   providerCode?: string
   jsonRpcCode?: number
   providerErrorMessage?: string
+  providerDetail?: string
 }): string {
-  const message = safeBaseMessageFor(input)
+  const baseMessage = safeBaseMessageFor(input)
+  const message = input.providerDetail
+    ? `${baseMessage} Provider detail (untrusted): "${input.providerDetail}".`
+    : baseMessage
   const details = [
     ...(input.providerStatus === undefined ? [] : [`provider status ${input.providerStatus}`]),
     ...(input.providerCode ? [`code ${input.providerCode}`] : []),
@@ -1282,12 +1397,18 @@ function classifyError(error: unknown, fallbackPhase: ExternalMcpDiagnosticPhase
 export class ExternalMcpDiagnosticError extends Error {
   readonly diagnostic: ExternalMcpDiagnostic
   readonly safeCauseChain: ExternalMcpSafeCause[]
+  #providerResponseLog: ProviderResponseLog | undefined
 
-  constructor(diagnostic: ExternalMcpDiagnostic, cause?: unknown) {
+  constructor(diagnostic: ExternalMcpDiagnostic, cause?: unknown, providerResponseLog?: ProviderResponseLog) {
     super(diagnostic.message, cause === undefined ? undefined : { cause })
     this.name = "ExternalMcpDiagnosticError"
     this.diagnostic = diagnostic
     this.safeCauseChain = cause === undefined ? [] : safeExternalMcpCauseChain(cause)
+    this.#providerResponseLog = providerResponseLog
+  }
+
+  providerResponseForLog(): ProviderResponseLog | undefined {
+    return this.#providerResponseLog
   }
 }
 
@@ -1306,6 +1427,9 @@ export class ExternalMcpDiagnosticTracker {
   private outbound: ExternalMcpSafeOutbound | null = null
   private providerRequestId: string | null = null
   private providerDeclaredError: ProviderDeclaredErrorEvidence | null = null
+  private providerResponseExcerpt: string | null = null
+  private providerResponseLog: ProviderResponseLog | null = null
+  private providerResponseExcerptPhase: ExternalMcpDiagnosticPhase | null = null
   private backgroundFailure: { phase: ExternalMcpDiagnosticPhase; error: unknown } | null = null
 
   constructor(referenceId: string, credentialContext?: {
@@ -1328,6 +1452,9 @@ export class ExternalMcpDiagnosticTracker {
     this.forcedClassification = null
     this.providerRequestId = null
     this.providerDeclaredError = null
+    this.providerResponseExcerpt = null
+    this.providerResponseLog = null
+    this.providerResponseExcerptPhase = null
     this.backgroundFailure = null
   }
 
@@ -1394,6 +1521,16 @@ export class ExternalMcpDiagnosticTracker {
 
   recordProviderDeclaredError(evidence: ProviderDeclaredErrorEvidence): void {
     this.providerDeclaredError = evidence
+  }
+
+  recordProviderResponseExcerpt(input: {
+    memberExcerpt?: string
+    log: ProviderResponseLog
+    phase: ExternalMcpDiagnosticPhase
+  }): void {
+    this.providerResponseExcerpt = input.memberExcerpt ?? null
+    this.providerResponseLog = input.log
+    this.providerResponseExcerptPhase = input.phase
   }
 
   providerToolError(result?: unknown): ExternalMcpDiagnosticError {
@@ -1515,7 +1652,15 @@ export class ExternalMcpDiagnosticTracker {
     const providerEvidence = this.providerDeclaredError
       ?? thrownProviderEvidence
       ?? providerDeclaredErrorFromError(source.error, source.phase)
-    const providerErrorMessage = providerEvidence?.message
+    const capturedOAuthProviderDetail = this.providerResponseExcerpt
+      && this.providerResponseExcerptPhase
+      && isOAuthTokenPhase(this.providerResponseExcerptPhase)
+      ? this.providerResponseExcerpt.slice(0, EXTERNAL_MCP_OAUTH_PROVIDER_DETAIL_CHARS)
+      : undefined
+    const safeOAuthProviderDetail = oauthProviderDetail(error)
+      ?? oauthProviderDetail(source.error)
+      ?? capturedOAuthProviderDetail
+    const providerErrorMessage = providerEvidence?.message ?? safeOAuthProviderDetail
     const providerErrorData = providerEvidence?.dataExcerpt
     const diagnosticWithoutMessage = {
       referenceId: this.referenceId,
@@ -1527,13 +1672,21 @@ export class ExternalMcpDiagnosticTracker {
     }
     const diagnostic: ExternalMcpDiagnostic = {
       ...diagnosticWithoutMessage,
-      message: safeMessageFor(diagnosticWithoutMessage),
+      message: safeMessageFor({
+        ...diagnosticWithoutMessage,
+        ...(safeOAuthProviderDetail ? { providerDetail: safeOAuthProviderDetail } : {}),
+      }),
       ...(this.lastHttpStatus === null ? {} : { httpStatus: this.lastHttpStatus }),
       ...(classification.phase === source.phase ? {} : { operationPhase: source.phase }),
       ...(this.outbound ? { outbound: this.outbound } : {}),
       ...(this.providerRequestId ? { providerRequestId: this.providerRequestId } : {}),
+      ...(this.providerResponseExcerpt ? { providerResponseExcerpt: this.providerResponseExcerpt } : {}),
     }
-    return new ExternalMcpDiagnosticError(diagnostic, error)
+    return new ExternalMcpDiagnosticError(
+      diagnostic,
+      error,
+      this.providerResponseLog ?? undefined,
+    )
   }
 }
 
@@ -1681,6 +1834,56 @@ async function responseTextWithinLimit(response: Response, limit: number): Promi
   return new TextDecoder().decode(bytes)
 }
 
+async function responseTextExcerptWithinLimit(response: Response, limit: number): Promise<string | null> {
+  if (!response.body) return null
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder()
+  let text = ""
+  try {
+    while (text.length < limit) {
+      const next = await reader.read()
+      if (next.done) {
+        text += decoder.decode()
+        return text.slice(0, limit)
+      }
+      text += decoder.decode(next.value, { stream: true })
+      if (text.length >= limit) {
+        void reader.cancel().catch(() => undefined)
+        return text.slice(0, limit)
+      }
+    }
+    return text.slice(0, limit)
+  } catch {
+    return null
+  }
+}
+
+async function providerResponseExcerpts(response: Response): Promise<{
+  memberExcerpt?: string
+  log: ProviderResponseLog
+} | null> {
+  try {
+    const text = await responseTextExcerptWithinLimit(
+      response.clone(),
+      EXTERNAL_MCP_PROVIDER_RESPONSE_EXCERPT_CHARS,
+    )
+    if (text === null) return null
+    const memberExcerpt = structuredProviderResponseExcerpt(text)
+    return {
+      ...(memberExcerpt ? { memberExcerpt } : {}),
+      log: {
+        contentType: providerResponseContentType(
+          (response.headers.get("content-type") ?? "").split(";", 1)[0]?.trim().toLowerCase() ?? "",
+        ),
+        bodyChars: text.length,
+        ...(memberExcerpt ? { excerpt: memberExcerpt } : {}),
+      },
+    }
+  } catch {
+    return null
+  }
+}
+
 async function sniffProviderDeclaredError(input: {
   response: Response
   phase: ExternalMcpDiagnosticPhase
@@ -1809,6 +2012,15 @@ export function createExternalMcpDiagnosticFetch(input: {
       }
       input.tracker.recordHttpStatus(response.status)
       input.tracker.recordProviderRequestId(response.headers)
+      if (!response.ok || (response.ok && isOAuthTokenPhase(phase) && contentType === "application/json")) {
+        const excerpts = await providerResponseExcerpts(response)
+        if (excerpts && (!response.ok || (excerpts.memberExcerpt && isProviderTokenErrorExcerpt(excerpts.memberExcerpt)))) {
+          input.tracker.recordProviderResponseExcerpt({
+            ...excerpts,
+            phase,
+          })
+        }
+      }
       const challenge = response.headers.get("www-authenticate") ?? ""
       const hasAuthorization = Boolean(requestHeader(init, "authorization"))
       const unauthenticatedChallenge = phase === "MCP_INITIALIZE"
@@ -1897,9 +2109,13 @@ export function externalMcpDiagnosticForLog(error: unknown, referenceId: string,
   const diagnosticError = error instanceof ExternalMcpDiagnosticError
     ? error
     : new ExternalMcpDiagnosticTracker(referenceId).error(error, fallbackPhase)
+  const providerResponseLog = diagnosticError.providerResponseForLog()
   return {
     diagnostic: diagnosticError.diagnostic,
     causeChain: diagnosticError.safeCauseChain,
+    ...(providerResponseLog
+      ? { providerResponseLog }
+      : {}),
   }
 }
 

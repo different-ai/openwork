@@ -63,6 +63,8 @@ export default async function Home() {
       <LandingHome
         stars={github.stars}
         downloadHref={github.downloads.macos}
+        windowsDownloadHref={github.downloads.windows}
+        linuxDownloadHref={github.downloads.linux}
         callHref={cal}
         isMobileVisitor={isMobileVisitor}
       />

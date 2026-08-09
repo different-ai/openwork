@@ -467,7 +467,6 @@ export function registerOrgSsoRoutes<T extends { Variables: OrgRouteVariables }>
       const response = await auth.api.spMetadata({
         query: {
           providerId: connection.providerId,
-          format: parsed.data.format,
         },
       })
 

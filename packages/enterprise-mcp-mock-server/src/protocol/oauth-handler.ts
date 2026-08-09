@@ -98,6 +98,20 @@ function sendInvalidClient(context: OAuthRequestContext): void {
   sendOAuthError(response, 401, "invalid_client", "The synthetic OAuth client was rejected")
 }
 
+function sendTokenError(
+  context: OAuthRequestContext,
+  status: number,
+  error: string,
+  errorDescription: string,
+  slackError: "invalid_code" | "invalid_refresh_token",
+): void {
+  if (context.profile.oauth.tokenResponseStyle === "slack-user") {
+    sendJson(context.response, 200, { ok: false, error: slackError })
+    return
+  }
+  sendOAuthError(context.response, status, error, errorDescription)
+}
+
 export async function handleOAuthRequest(context: OAuthRequestContext): Promise<boolean> {
   const { request, response, url, baseUrl, scenario, profile, state, correlationId } = context
   const mcpUrl = new URL(profile.endpointPath, baseUrl).href
@@ -328,7 +342,11 @@ export async function handleOAuthRequest(context: OAuthRequestContext): Promise<
         : client?.tokenEndpointAuthMethod === "client_secret_post" && safeEqual(client.clientSecret, clientSecret)
     if (faultApplies(context, "reject-client") || !client || !clientAuthenticationValid) {
       if (context.activeFault?.effect === "reject-client") emitFault(context, "Rejected the OAuth client during token exchange")
-      sendInvalidClient(context)
+      if (profile.oauth.tokenResponseStyle === "slack-user") {
+        sendJson(response, 200, { ok: false, error: "bad_client_secret" })
+      } else {
+        sendInvalidClient(context)
+      }
       return true
     }
 
@@ -358,7 +376,13 @@ export async function handleOAuthRequest(context: OAuthRequestContext): Promise<
         !safeEqual(codeRecord.codeChallenge, pkceChallenge(verifier))
       if (invalidGrant) {
         if (context.activeFault?.effect === "reject-grant") emitFault(context, "Rejected the authorization grant during token exchange")
-        sendOAuthError(response, 400, "invalid_grant", "The authorization code or PKCE verifier was rejected")
+        sendTokenError(
+          context,
+          400,
+          "invalid_grant",
+          "The authorization code or PKCE verifier was rejected",
+          "invalid_code",
+        )
         return true
       }
       state.authorizationCodes.delete(code)
@@ -371,11 +395,23 @@ export async function handleOAuthRequest(context: OAuthRequestContext): Promise<
       const existing = state.refreshTokens.get(refreshToken)
       if (faultApplies(context, "refresh-expired")) {
         emitFault(context, "Rejected refresh-token continuity because the credential expired")
-        sendOAuthError(response, 400, "invalid_grant", "The refresh token expired; reconnect the provider account before retrying.")
+        sendTokenError(
+          context,
+          400,
+          "invalid_grant",
+          "The refresh token expired; reconnect the provider account before retrying.",
+          "invalid_refresh_token",
+        )
         return true
       }
       if (!existing || existing.clientId !== clientId) {
-        sendOAuthError(response, 400, "invalid_grant", "The synthetic refresh token was rejected")
+        sendTokenError(
+          context,
+          400,
+          "invalid_grant",
+          "The synthetic refresh token was rejected",
+          "invalid_refresh_token",
+        )
         return true
       }
       revokeTokenFamily(state, existing.familyId)
@@ -421,9 +457,11 @@ function issueTokenResponse(
   scopes: readonly string[],
   existingFamilyId?: string,
 ): void {
-  const accessToken = context.state.issueOpaque("access-token")
-  const refreshToken = context.state.issueOpaque("refresh-token")
+  const slackStyle = context.profile.oauth.tokenResponseStyle === "slack-user"
+  const accessToken = context.state.issueOpaque(slackStyle ? "xoxp" : "access-token")
+  const refreshToken = context.state.issueOpaque(slackStyle ? "xoxe-1" : "refresh-token")
   const familyId = existingFamilyId ?? context.state.issueOpaque("token-family")
+  const expiresIn = slackStyle ? 43_200 : 3_600
   context.state.putToken({
     accessToken,
     familyId,
@@ -431,7 +469,7 @@ function issueTokenResponse(
     resource,
     scopes,
     subject: "synthetic-enterprise-user@example.invalid",
-    expiresAt: context.state.now() + 3_600_000,
+    expiresAt: context.state.now() + expiresIn * 1_000,
   })
   context.state.putRefreshToken({
     refreshToken,
@@ -442,13 +480,26 @@ function issueTokenResponse(
     subject: "synthetic-enterprise-user@example.invalid",
     expiresAt: context.state.now() + refreshTokenLifetimeMs,
   })
-  sendJson(context.response, 200, {
-    access_token: accessToken,
-    refresh_token: refreshToken,
-    token_type: "Bearer",
-    expires_in: 3600,
-    scope: scopes.join(" "),
-  })
+  sendJson(
+    context.response,
+    200,
+    slackStyle
+      ? {
+          ok: true,
+          access_token: accessToken,
+          refresh_token: refreshToken,
+          token_type: "user",
+          expires_in: expiresIn,
+          scope: scopes.join(" "),
+        }
+      : {
+          access_token: accessToken,
+          refresh_token: refreshToken,
+          token_type: "Bearer",
+          expires_in: expiresIn,
+          scope: scopes.join(" "),
+        },
+  )
   context.state.emit({
     correlationId: context.correlationId,
     scenario: context.scenario,

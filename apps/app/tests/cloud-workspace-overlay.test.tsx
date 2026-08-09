@@ -18,9 +18,11 @@ import {
   formatCloudWorkspaceElapsed,
   mapCloudWorkspaceMainContentDecision,
   mapCloudWorkspaceState,
+  shouldShowCloudWorkspaceStatusPill,
   shouldRefetchCloudWorkspaceOnReadyTransition,
 } from "../src/react-app/shell/cloud-workspace-status";
 import type { CloudWorkspaceMainContentDecision, CloudWorkspacePillVariant } from "../src/react-app/shell/cloud-workspace-status";
+import { BootStateProvider } from "../src/react-app/shell/boot-state";
 
 const originalWindow = globalThis.window;
 
@@ -35,7 +37,7 @@ function instance(input: Partial<DenCloudInstance> = {}): DenCloudInstance {
 }
 
 describe("cloud workspace overlay state", () => {
-  test("maps ready and current workers to the quiet Cloud pill", () => {
+  test("maps ready and current workers to a quiet status", () => {
     const state = mapCloudWorkspaceState({ instance: instance(), updating: false });
 
     expect(state.variant).toBe("ready");
@@ -89,7 +91,17 @@ describe("cloud workspace overlay state", () => {
     expect(failed.showRetry).toBe(true);
   });
 
-  test("keeps the pill in updating state after the user clicks update", () => {
+  test("shows the corner pill only for resolved degraded states", () => {
+    expect(shouldShowCloudWorkspaceStatusPill({ variant: "waking", hasInstance: false, requestFailed: false })).toBe(false);
+    expect(shouldShowCloudWorkspaceStatusPill({ variant: "waking", hasInstance: true, requestFailed: false })).toBe(true);
+    expect(shouldShowCloudWorkspaceStatusPill({ variant: "provisioning", hasInstance: true, requestFailed: false })).toBe(true);
+    expect(shouldShowCloudWorkspaceStatusPill({ variant: "failed", hasInstance: false, requestFailed: true })).toBe(true);
+    expect(shouldShowCloudWorkspaceStatusPill({ variant: "ready", hasInstance: true, requestFailed: false })).toBe(false);
+    expect(shouldShowCloudWorkspaceStatusPill({ variant: "stale", hasInstance: true, requestFailed: false })).toBe(false);
+    expect(shouldShowCloudWorkspaceStatusPill({ variant: "updating", hasInstance: true, requestFailed: false })).toBe(false);
+  });
+
+  test("keeps the workspace status updating after the user clicks update", () => {
     const state = mapCloudWorkspaceState({
       instance: instance({ imageVersion: "openwork-0.18.2", latestVersion: "openwork-0.18.8" }),
       updating: true,
@@ -321,7 +333,11 @@ describe("cloud workspace overlay gateway gating", () => {
       value: { location: { origin: "https://instance.example.test" } },
     });
 
-    expect(renderToStaticMarkup(<CloudWorkspaceOverlay />)).toBe("");
+    expect(renderToStaticMarkup(
+      <BootStateProvider>
+        <CloudWorkspaceOverlay />
+      </BootStateProvider>,
+    )).toBe("");
   });
 });
 

@@ -117,6 +117,7 @@ function healthyReport(): AgentContextDiagnosticsReport {
       },
     ],
     connect: {
+      stateStatus: "available",
       connectEnabled: true,
       legacyGoogleWorkspaceConfigured: false,
       expectedBranch: "cloud-active",

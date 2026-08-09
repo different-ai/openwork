@@ -57,6 +57,10 @@ const PHASE_MESSAGES: Record<BootPhaseId, string> = {
 
 const BootStateContext = createContext<BootStateContextValue | null>(null);
 
+export function bootOverlayCanHide(phase: BootPhaseId, routeReady: boolean): boolean {
+  return routeReady && (phase === "ready" || phase === "idle");
+}
+
 export function BootStateProvider({ children }: { children: ReactNode }) {
   const [snapshot, setSnapshot] = useState<BootStateSnapshot>(DEFAULT_STATE);
   // Once the main route has finished its first successful refresh (workspaces
@@ -135,7 +139,7 @@ export function useBootOverlayVisible(): boolean {
   // is interactive and can mark itself ready again. Treat `idle + routeReady`
   // the same as `ready + routeReady` so the full-screen boot overlay never
   // becomes a permanent pointer-events blocker during development.
-  const canHide = routeReady && (phase === "ready" || phase === "idle");
+  const canHide = bootOverlayCanHide(phase, routeReady);
   const [visible, setVisible] = useState(!canHide);
 
   useEffect(() => {

@@ -72,6 +72,23 @@ export function organizationRoleValueSatisfies(input: {
   return roles.some((role) => organizationRoleSatisfies(role, input.requiredRole))
 }
 
+export function shouldRevokeSessionsForRoleChange(previousRole: string, nextRole: string) {
+  if (previousRole === nextRole) {
+    return false
+  }
+
+  const previousRoles = splitOrganizationRoles(previousRole)
+  const nextRoles = splitOrganizationRoles(nextRole)
+  // Only single built-in roles have a provable ordering; ambiguous changes fail closed.
+  if (previousRoles.length !== 1 || nextRoles.length !== 1) {
+    return true
+  }
+
+  const previousLevel = builtInRoleLevel(previousRoles[0] ?? "")
+  const nextLevel = builtInRoleLevel(nextRoles[0] ?? "")
+  return previousLevel === null || nextLevel === null || nextLevel <= previousLevel
+}
+
 export function isProtectedOrganizationRoleName(role: string) {
   return BUILT_IN_ORGANIZATION_ROLES.some((builtInRole) => builtInRole === role)
 }

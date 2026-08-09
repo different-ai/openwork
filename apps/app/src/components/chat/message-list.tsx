@@ -36,6 +36,10 @@ import { ReadFileTool, WriteFileTool } from "@/components/tools/file"
 import { GlobTool } from "@/components/tools/glob"
 import { GrepTool } from "@/components/tools/grep"
 import { LspTool } from "@/components/tools/lsp"
+import {
+  isAutomationProposalToolPart,
+  OpenWorkAutomationProposalTool,
+} from "@/components/tools/openwork-automation-proposal"
 import { OpenWorkSessionCreateTool } from "@/components/tools/openwork-session-create"
 import { QuestionTool } from "@/components/tools/question"
 import { SkillTool } from "@/components/tools/skill"
@@ -227,6 +231,10 @@ const ToolMessageInner = ({ part }: ToolMessageProps) => {
     return <OpenWorkSessionCreateTool part={part} />
   }
 
+  if (part.type === "dynamic-tool" && isAutomationProposalToolPart(part)) {
+    return <OpenWorkAutomationProposalTool part={part} />
+  }
+
   if (isTaskToolPart(part)) {
     return <SubagentRunLine part={part} />
   }
@@ -414,6 +422,7 @@ type AssistantMessageProps = {
 const AssistantMessage = React.memo(
   ({ message, hideReasoning }: AssistantMessageProps) => {
     const { showThinking, highlightQuery } = useMessageList()
+    const messageText = React.useMemo(() => getMessagesText([message]), [message])
     const assistantRenderGroups = React.useMemo(
       () => {
         const groups = getAssistantRenderGroups(message.parts, showThinking)
@@ -421,6 +430,11 @@ const AssistantMessage = React.memo(
       },
       [hideReasoning, message.parts, showThinking]
     )
+    const copyRenderedText = React.useCallback(() => {
+      const selection = window.getSelection()?.toString() ?? ""
+      const text = selection.trim() ? selection : messageText
+      if (text) void navigator.clipboard.writeText(text)
+    }, [messageText])
 
     return (
       <Message
@@ -428,54 +442,77 @@ const AssistantMessage = React.memo(
         data-message-id={message.id}
         data-message-role={message.role}
       >
-        <div className="group flex w-full flex-col gap-0 space-y-2">
-          {assistantRenderGroups.map((group, index) => {
-            if (group.kind === "text") {
-              return (
-                <MessageContent
-                  key={`text-${index}`}
-                  className="text-foreground prose w-full min-w-0 flex-1 rounded-lg bg-transparent p-0"
-                  markdown
-                  highlightQuery={highlightQuery}
-                >
-                  {group.text}
-                </MessageContent>
-              )
-            }
+        <ContextMenu>
+          <ContextMenuTrigger
+            className="!select-text"
+            render={
+              <div
+                className="group flex w-full flex-col gap-0 space-y-2 !select-text"
+                style={{ userSelect: "text" }}
+              >
+                {assistantRenderGroups.map((group, index) => {
+                  if (group.kind === "text") {
+                    return (
+                      <MessageContent
+                        key={`text-${index}`}
+                        className="text-foreground prose w-full min-w-0 flex-1 rounded-lg bg-transparent p-0 !select-text"
+                        style={{ userSelect: "text" }}
+                        markdown
+                        highlightQuery={highlightQuery}
+                      >
+                        {group.text}
+                      </MessageContent>
+                    )
+                  }
 
-            if (group.kind === "reasoning") {
-              return (
-                <ReasoningBlock
-                  key={`reasoning-${index}`}
-                  text={group.text}
-                  isStreaming={group.isStreaming}
-                />
-              )
-            }
+                  if (group.kind === "reasoning") {
+                    return (
+                      <ReasoningBlock
+                        key={`reasoning-${index}`}
+                        text={group.text}
+                        isStreaming={group.isStreaming}
+                      />
+                    )
+                  }
 
-            if (group.kind === "file") {
-              return (
-                <div key={`file-${index}`} className="w-fit max-w-full">
-                  <FileMessage part={group.part} tone="assistant" />
-                </div>
-              )
-            }
+                  if (group.kind === "file") {
+                    return (
+                      <div key={`file-${index}`} className="w-fit max-w-full">
+                        <FileMessage part={group.part} tone="assistant" />
+                      </div>
+                    )
+                  }
 
-            if (group.kind === "tool-aggregate") {
-              return (
-                <div key={`tool-aggregate-${index}`} className="w-full">
-                  <ToolAggregateGroup parts={group.parts} />
-                </div>
-              )
-            }
+                  if (group.kind === "tool-aggregate") {
+                    return (
+                      <div key={`tool-aggregate-${index}`} className="w-full">
+                        <ToolAggregateGroup parts={group.parts} />
+                      </div>
+                    )
+                  }
 
-            return (
-              <div key={`tool-${index}`} className="w-full">
-                <ToolMessage part={group.part} />
+                  return (
+                    <div key={`tool-${index}`} className="w-full">
+                      <ToolMessage part={group.part} />
+                    </div>
+                  )
+                })}
               </div>
-            )
-          })}
-        </div>
+            }
+          />
+          <ContextMenuContent className="w-56">
+            <ContextMenuItem onClick={copyRenderedText}>
+              <Copy className="size-4" />
+              Copy
+            </ContextMenuItem>
+            {messageText ? (
+              <ContextMenuItem onClick={() => void navigator.clipboard.writeText(messageText)}>
+                <Copy className="size-4" />
+                Copy as Markdown
+              </ContextMenuItem>
+            ) : null}
+          </ContextMenuContent>
+        </ContextMenu>
       </Message>
     )
   }

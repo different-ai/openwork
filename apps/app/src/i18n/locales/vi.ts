@@ -1,12 +1,9 @@
-import { automationsEnglish } from "./automations";
-
 /**
  * Tiếng Việt translations
  * Thuật ngữ chuyên môn KHÔNG dịch: Skills, Plugins, Commands, Sessions, OpenCode, OpenPackage, OpenWork, MCPs, OAuth, MCP
  */
 
 export default {
-  ...automationsEnglish,
   "app.compact_command_desc": "Tóm tắt phiên này để giảm kích thước ngữ cảnh.",
   "app.error_audit_load": "Tải nhật ký kiểm toán thất bại.",
   "app.error_auth_failed": "Xác thực thất bại",
@@ -236,9 +233,18 @@ export default {
   "den.cloud_control_plane_url_hint": "Chỉ chế độ nhà phát triển. Dùng để trỏ đến Cloud control plane nội bộ hoặc tự lưu trữ. Thay đổi sẽ đăng xuất để ứng dụng kết nối lại với control plane mới.",
   "den.cloud_control_plane_url_label": "URL Cloud control plane",
   "den.cloud_provider_detail": "{count} model · provider {source}",
+  "den.cloud_provider_blocked": "Không khả dụng trên desktop này",
+  "den.cloud_provider_conflict": "Xung đột",
+  "den.cloud_provider_connected": "Đã kết nối",
+  "den.cloud_provider_error": "Lỗi đồng bộ",
+  "den.cloud_provider_imports_unavailable": "Không thể nhập trong workspace này",
+  "den.cloud_provider_needs_credential": "Cần thông tin xác thực của tổ chức",
+  "den.cloud_provider_needs_server": "Cần OpenWork server",
+  "den.cloud_provider_retry": "Thử lại",
+  "den.cloud_provider_syncing": "Đang đồng bộ",
   "den.cloud_provider_removed_detail": "Provider đã nhập không còn trên Cloud. Gỡ cài đặt cấu hình {providerId} cục bộ.",
   "den.cloud_provider_sync_detail": "Provider Cloud đã thay đổi. Đồng bộ cấu hình {source} với {count} model vào opencode.jsonc.",
-  "den.cloud_providers_hint": "Nhập provider LLM được quản lý vào opencode.jsonc và sử dụng thông tin xác thực của tổ chức trong workspace này.",
+  "den.cloud_providers_hint": "Provider do tổ chức cấp sẽ tự động đồng bộ. Xem trạng thái tại đây.",
   "den.cloud_providers_title": "Provider Cloud",
   "den.cloud_section_desc": "Đăng nhập, chọn tổ chức và mở worker Cloud hoặc mẫu nhóm.",
   "den.cloud_section_title": "OpenWork Cloud",
@@ -254,12 +260,10 @@ export default {
   "den.finish_signin": "Hoàn tất đăng nhập",
   "den.finishing": "Đang hoàn tất...",
   "den.hide_signin_code": "Ẩn mã đăng nhập",
-  "den.import_all": "Nhập tất cả",
+  "den.import_plugin": "Nhập plugin",
   "den.import_provider": "Nhập",
-  "den.import_provider_failed": "Không thể nhập {name}.",
   "den.imported_badge": "Đã nhập",
-  "den.imported_provider": "Đã nhập {name}.",
-  "den.importing": "Đang nhập…",
+  "den.importing_plugin": "Đang nhập plugin…",
   "den.needs_attention": "Cần chú ý",
   "den.no_cloud_providers": "Chưa có provider Cloud nào cho tổ chức này.",
   "den.no_org_selected": "Chưa chọn tổ chức",
@@ -295,6 +299,7 @@ export default {
   "den.status_signed_in_as": "Đã đăng nhập với {email}.",
   "den.status_signed_out": "Đã đăng xuất và xóa phiên OpenWork Cloud trên thiết bị này.",
   "den.sync": "Đồng bộ",
+  "den.sync_now": "Đồng bộ ngay",
   "den.sync_provider_failed": "Không thể đồng bộ {name}.",
   "den.synced_provider": "Đã đồng bộ {name}.",
   "den.syncing": "Đang đồng bộ…",
@@ -938,7 +943,7 @@ export default {
   "settings.tab_description_debug": "Xem chẩn đoán runtime, nhật ký và tiện ích gỡ lỗi cấp thấp.",
   "settings.tab_description_cloud_account": "Sign in, manage your organization, and configure your cloud connection.",
   "settings.tab_description_cloud_marketplaces": "Browse and import plugins from your organization's marketplaces.",
-  "settings.tab_description_cloud_providers": "Import and manage LLM provider keys from your organization.",
+  "settings.tab_description_cloud_providers": "Xem trạng thái đồng bộ provider LLM của tổ chức.",
   "settings.tab_description_environment": "Save API keys and tokens for local agents, skills, and MCP servers. Secrets stay on this device.",
   "settings.tab_description_extensions": "Kỹ năng, kết nối và công cụ mà agent của bạn có thể sử dụng.",
   "settings.tab_description_general": "Kết nối provider, chọn model mặc định, cấp quyền thư mục và kiểm soát workspace OpenWork cùng kết nối runtime.",

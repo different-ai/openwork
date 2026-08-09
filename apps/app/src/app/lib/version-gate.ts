@@ -227,8 +227,11 @@ export function selectStableDesktopUpdate(input: {
   metadata: DenAppVersionMetadata;
   desktopConfig: DenDesktopConfig | null | undefined;
 }): StableDesktopUpdateSelection | null {
-  const currentVersion = normalizeStableDesktopVersion(input.currentVersion);
-  if (!currentVersion) return null;
+  // The installed build may be a prerelease (e.g. returning from the alpha
+  // channel to stable); it only needs to be comparable. The published
+  // inventory below must stay plain-stable x.y.z.
+  const currentVersion = input.currentVersion.trim();
+  if (!parseComparableVersion(currentVersion)) return null;
 
   const publishedVersions = [...new Set(input.metadata.publishedDesktopVersions.flatMap((version) => {
     const normalized = normalizeStableDesktopVersion(version);

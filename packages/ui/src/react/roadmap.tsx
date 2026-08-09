@@ -91,6 +91,16 @@ export const roadmapSections: RoadmapSection[] = [
         status: "live",
       },
       {
+        title: "Live artifacts",
+        description: "Persistent, interactive dashboards that refresh with current data from your connected apps and files every time you open them.",
+        status: "next",
+      },
+      {
+        title: "Scheduled tasks",
+        description: "Run any prompt on a schedule or trigger — set it once and let it handle itself.",
+        status: "partial",
+      },
+      {
         title: "Built-in browser control",
         description: "Let agents navigate, click, type, and capture pages in a browser that stays visible inside the app.",
         status: "live",
@@ -256,6 +266,11 @@ export const roadmapSections: RoadmapSection[] = [
         status: "next",
       },
       {
+        title: "Dispatch from your phone",
+        description: "Assign a task from your phone and let it run on your desktop — with your local files, connections, and skills.",
+        status: "next",
+      },
+      {
         title: "Email and messaging",
         description: "Reach OpenWork from more of the places where requests and decisions arrive.",
         status: "exploring",
@@ -367,7 +382,7 @@ export function OpenWorkRoadmap({
           <span className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-600 shadow-sm">
             OpenWork roadmap
           </span>
-          <span className="text-xs text-slate-500">Updated July 2026</span>
+          <span className="text-xs text-slate-500">Updated August 2026</span>
         </div>
 
         <h1 className="max-w-4xl text-5xl font-medium leading-[0.98] tracking-[-0.05em] text-[#011627] sm:text-6xl md:text-7xl lg:text-[5.5rem]">

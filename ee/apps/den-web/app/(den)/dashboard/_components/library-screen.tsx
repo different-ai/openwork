@@ -241,7 +241,6 @@ function LibraryRow({ item, isAdmin, isFocused, orgName, orgSlug }: { item: Libr
       ) : undefined}
       action={action}
       href={rowHref}
-      tone={sectionState === "ready" ? "default" : "warning"}
       focused={isFocused}
       dataAttributes={{
         "data-library-item-type": item.type,

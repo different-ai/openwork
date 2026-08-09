@@ -525,7 +525,14 @@ function surfacePorts(handle: SurfaceHandle): number[] {
 }
 
 export function createLocalHost(options: LocalHostOptions): DisposableHost {
-  const rootDir = options.rootDir ?? join(options.repoRoot, "evals", "results", ".surfaces");
+  // Surface profiles become the Electron process HOME. node-gyp/electron-rebuild
+  // generate Makefiles with unquoted include paths under that HOME, so a repo
+  // checkout on a path containing spaces breaks every native rebuild. The env
+  // override lets such machines park surfaces on a space-free path (e.g. /tmp).
+  const surfacesRootOverride = process.env.OPENWORK_EVAL_SURFACES_DIR?.trim();
+  const rootDir = options.rootDir ?? (surfacesRootOverride
+    ? surfacesRootOverride
+    : join(options.repoRoot, "evals", "results", ".surfaces"));
   const log = options.log;
   const spawnedSurfaces = new Set<SurfaceHandle>();
   const denPorts = new Set<number>();
@@ -629,8 +636,12 @@ async function clearStaleSurfaces(rootDir: string, log: (message: string) => voi
       const spawnEnvForChecks: NodeJS.ProcessEnv = { ...process.env, ...opts.env };
       if (insideContainerSandbox() && (spawnEnvForChecks.DISPLAY ?? "").trim().length === 0) spawnEnvForChecks.DISPLAY = ":99";
       await ensureDisplay(options.repoRoot, spawnEnvForChecks, log);
-      await clearStaleSurfaces(rootDir, log);
-      const profileRoot = join(rootDir, `${sanitizeSlug(name)}-${timestamp()}-${process.pid}`);
+      if (opts.profileDir !== undefined && !opts.profileDir.trim()) {
+        throw new Error("Electron profileDir must not be empty.");
+      }
+      const callerOwnedProfile = opts.profileDir !== undefined;
+      if (!callerOwnedProfile) await clearStaleSurfaces(rootDir, log);
+      const profileRoot = opts.profileDir ?? join(rootDir, `${sanitizeSlug(name)}-${timestamp()}-${process.pid}`);
       const paths = electronProfilePaths(profileRoot);
       await ensureElectronProfile(paths);
       await writeBootstrap(paths.bootstrapPath, opts.bootstrap);
@@ -671,7 +682,7 @@ async function clearStaleSurfaces(rootDir: string, log: (message: string) => voi
         cdpUrl,
         pid: spawned.pid,
         profileDir: profileRoot,
-        meta: { vitePort: String(port), cdpPort: String(cdpPort), log: logPath },
+        meta: { vitePort: String(port), cdpPort: String(cdpPort), log: logPath, profileOwner: callerOwnedProfile ? "caller" : "host" },
       };
       spawnedSurfaces.add(handle);
       return handle;
@@ -751,7 +762,7 @@ async function clearStaleSurfaces(rootDir: string, log: (message: string) => voi
         await killLocalPid(handle.pid, { log });
       }
       await disposeKnownPorts(handle);
-      if (handle.kind === "electron" && handle.profileDir) {
+      if (handle.kind === "electron" && handle.profileDir && handle.meta?.profileOwner !== "caller") {
         await rm(handle.profileDir, { recursive: true, force: true });
       }
       spawnedSurfaces.delete(handle);

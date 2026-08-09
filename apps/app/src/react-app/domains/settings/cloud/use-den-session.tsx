@@ -336,7 +336,7 @@ export function useDenSession({
           activeOrgSlug: null,
           activeOrgName: null,
         },
-        { persistBootstrap: false },
+        { persistBootstrap: false, intentionalActiveOrgClear: true },
       );
       setBaseUrl(resolved.baseUrl);
       setBaseUrlDraft(resolved.baseUrl);

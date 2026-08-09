@@ -1,6 +1,7 @@
 import type { FilePartInput, TextPartInput } from "@opencode-ai/sdk/v2/client";
 
 import type { ComposerAttachment } from "../../../../app/types";
+import { compressImageFile } from "./image-compression";
 import { joinWorkspaceRelativePath, toFileUrl } from "./prompt-file-parts";
 
 type AttachmentKind = "image" | "file";
@@ -314,7 +315,11 @@ export async function composerAttachmentsToWorkspaceFileParts(input: {
 
   const uploaded: UploadedChatAttachment[] = [];
   for (const attachment of input.attachments) {
-    const metadata = resolveAttachmentFileMetadata(attachment.file);
+    // Oversized images are re-encoded here, at send time, so the composer chip
+    // appears instantly at attach time and the canvas work happens while the
+    // chip already shows its uploading state.
+    const file = await compressImageFile(attachment.file);
+    const metadata = resolveAttachmentFileMetadata(file);
     const id = input.createId ? input.createId() : randomAttachmentId();
     const inboxPath = buildChatAttachmentInboxPath({
       sessionId: input.sessionId,
@@ -324,7 +329,7 @@ export async function composerAttachmentsToWorkspaceFileParts(input: {
 
     let result: InboxUploadResult;
     try {
-      result = await input.endpoint.client.uploadInbox(workspaceId, attachment.file, { path: inboxPath });
+      result = await input.endpoint.client.uploadInbox(workspaceId, file, { path: inboxPath });
     } catch (error) {
       throw new Error(uploadErrorMessage(metadata.filename, error));
     }
@@ -335,8 +340,8 @@ export async function composerAttachmentsToWorkspaceFileParts(input: {
     if (!result.path.trim()) {
       throw new Error(`Failed to copy attachment "${metadata.filename}" into this worker workspace: upload did not return a path`);
     }
-    if (result.bytes !== attachment.file.size) {
-      throw new Error(`Failed to copy attachment "${metadata.filename}" into this worker workspace: expected ${attachment.file.size} bytes, wrote ${result.bytes}`);
+    if (result.bytes !== file.size) {
+      throw new Error(`Failed to copy attachment "${metadata.filename}" into this worker workspace: expected ${file.size} bytes, wrote ${result.bytes}`);
     }
 
     const workspacePath = workspaceInboxPath(result.path);
@@ -347,7 +352,7 @@ export async function composerAttachmentsToWorkspaceFileParts(input: {
       bytes: result.bytes,
       workspacePath,
       url: toFileUrl(absolutePath),
-      file: attachment.file,
+      file,
     });
   }
 
@@ -358,12 +363,13 @@ export async function composerAttachmentsToWorkspaceFileParts(input: {
 }
 
 export async function composerAttachmentToFilePart(attachment: ComposerAttachment): Promise<FilePartInput | null> {
-  const metadata = resolveAttachmentFileMetadata(attachment.file);
+  const file = await compressImageFile(attachment.file);
+  const metadata = resolveAttachmentFileMetadata(file);
   const modelMime = modelFacingAttachmentMime(metadata.mime);
   if (!modelMime) return null;
   return {
     type: "file",
-    url: await fileToDataUrl(attachment.file, modelMime),
+    url: await fileToDataUrl(file, modelMime),
     filename: metadata.filename,
     mime: modelMime,
   };

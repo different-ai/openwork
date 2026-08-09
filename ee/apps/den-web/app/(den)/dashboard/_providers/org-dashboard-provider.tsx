@@ -154,6 +154,11 @@ export function OrgDashboardProvider({
     return target;
   }
 
+  function shouldRefreshRolesForPage(org: DenOrgSummary) {
+    const isMembersPage = pathname === "/dashboard/members" || pathname === "/dashboard/manage-members";
+    return isMembersPage && getOrgAccessFlags(org.role, false).isAdmin;
+  }
+
   async function loadOrgDirectory() {
     const { response, payload } = await requestJson("/v1/me/orgs", { method: "GET" }, 12000);
     if (!response.ok) {
@@ -178,9 +183,10 @@ export function OrgDashboardProvider({
     }
   }
 
-  async function loadOrgContext(organizationId: string) {
+  async function loadOrgContext(organizationId: string, refreshRoles: boolean) {
+    const path = refreshRoles ? "/v1/org?refreshRoles=true" : "/v1/org";
     const { response, payload } = await requestJson(
-      "/v1/org",
+      path,
       { method: "GET", headers: { [ORG_SCOPE_HEADER]: organizationId } },
       12000,
     );
@@ -281,7 +287,7 @@ export function OrgDashboardProvider({
         directoryPayload = await loadOrgDirectory();
       }
 
-      const context = await loadOrgContext(targetOrg.id);
+      const context = await loadOrgContext(targetOrg.id, shouldRefreshRolesForPage(targetOrg));
 
       setOrgDirectory(directoryPayload.orgs.map((entry) => ({ ...entry, isActive: entry.id === context.organization.id })));
       setOrgContext(context);
@@ -485,7 +491,7 @@ export function OrgDashboardProvider({
       try {
         setRequestOrgScope(targetOrg.id);
         await setActiveOrganization({ organizationId: targetOrg.id });
-        const context = await loadOrgContext(targetOrg.id);
+        const context = await loadOrgContext(targetOrg.id, shouldRefreshRolesForPage(targetOrg));
         setOrgDirectory((current) => current.map((entry) => ({ ...entry, isActive: entry.id === context.organization.id })));
         setOrgContext(context);
         setOrgSelectionRequired(false);

@@ -77,6 +77,42 @@ describe("selectStableDesktopUpdate", () => {
     });
   });
 
+  test("updates an installed alpha build to its published stable release", () => {
+    expect(selectStableDesktopUpdate({
+      currentVersion: "0.17.24-alpha.2151+5221290",
+      metadata,
+      desktopConfig: {},
+    })).toEqual({
+      kind: "update",
+      targetVersion: "0.17.24",
+      latestPublishedVersion: "0.17.24",
+    });
+  });
+
+  test("does not downgrade an alpha build ahead of every published stable release", () => {
+    expect(selectStableDesktopUpdate({
+      currentVersion: "0.17.25-alpha.10+abcdef0",
+      metadata,
+      desktopConfig: {},
+    })).toEqual({ kind: "current", latestPublishedVersion: "0.17.24" });
+  });
+
+  test("blocks an alpha build when policy has not approved the newer stable release", () => {
+    expect(selectStableDesktopUpdate({
+      currentVersion: "0.17.24-alpha.2151+5221290",
+      metadata,
+      desktopConfig: { allowedDesktopVersions: ["0.17.23"] },
+    })).toEqual({ kind: "blocked", latestPublishedVersion: "0.17.24" });
+  });
+
+  test("rejects an unparseable installed version", () => {
+    expect(selectStableDesktopUpdate({
+      currentVersion: "not-a-version",
+      metadata,
+      desktopConfig: {},
+    })).toBeNull();
+  });
+
   test("does not downgrade when the installed version is newer than Den's inventory", () => {
     expect(selectStableDesktopUpdate({
       currentVersion: "0.17.25",

@@ -8,6 +8,8 @@ description: DEPRECATED legacy flow compatibility. Load only when a user explici
 This guide exists only to run a user-requested flow that is already present in
 `evals/flows/`. The corpus is frozen.
 
+For current verification, use `prove-a-pr` → `write-a-spec` → `run-tests` → `publish-evidence`.
+
 ## Hard boundary
 
 - Refuse requests to create, scaffold, copy, rename, or modify a legacy flow.

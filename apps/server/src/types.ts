@@ -107,6 +107,7 @@ export interface Capabilities {
   schemaVersion: number;
   serverVersion: string;
   opencodeVersion: string;
+  providerSync: true;
   skills: { read: boolean; write: boolean; source: "openwork" | "opencode" };
   plugins: { read: boolean; write: boolean };
   mcp: { read: boolean; write: boolean };
@@ -115,7 +116,6 @@ export interface Capabilities {
 
   approvals: { mode: ApprovalMode; timeoutMs: number };
   sandbox: { enabled: boolean; backend: SandboxBackend };
-  ui: { toy: boolean };
   tokens: { scoped: boolean; scopes: TokenScope[] };
   proxy: {
     opencode: boolean;

@@ -31,11 +31,8 @@
     },
     "./automations": {
       "types": "./src/automations.ts",
-      "bun": "./src/automations.ts",
-      "browser": "./src/automations.ts",
-      "node": "./dist/automations.js",
       "development": "./src/automations.ts",
-      "default": "./dist/automations.js"
+      "default": "./src/automations.ts"
     },
     "./den/desktop-app-restrictions": {
       "types": "./src/den/desktop-app-restrictions.ts",

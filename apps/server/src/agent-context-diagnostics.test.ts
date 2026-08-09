@@ -525,6 +525,7 @@ describe("classifyEngineMcpTransportCause", () => {
 describe("agent context diagnostics analyzer", () => {
   test("mirrors Connect's health-first steering priority", () => {
     const snapshot = {
+      status: "available",
       connectEnabled: false,
       connectCatalogEnabled: false,
       cloudMcpPresent: false,
@@ -894,6 +895,7 @@ describe("agent context diagnostics analyzer", () => {
     });
 
     const firstRun = await run();
+    expect(firstRun.connect).toMatchObject({ stateStatus: "missing", connectEnabled: false });
     expect(checkById(firstRun, "connect-steering-scope")).toMatchObject({
       status: "passed",
       details: { connectStateStatus: "missing", connectEnabled: false },
@@ -901,6 +903,7 @@ describe("agent context diagnostics analyzer", () => {
 
     await writeFile(join(fixture.root, "state", "connect-state.json"), "{not valid json", "utf8");
     const corrupt = await run();
+    expect(corrupt.connect).toMatchObject({ stateStatus: "invalid", connectEnabled: false });
     expect(checkById(corrupt, "connect-steering-scope")).toMatchObject({
       status: "warning",
       evidenceKind: "unavailable",

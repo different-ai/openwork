@@ -121,7 +121,7 @@ describe("cloud provider runtime patch (re-import diff #2346)", () => {
     // Same payload -> in sync.
     expect(isCloudProviderOutOfSync(first, baseline)).toBe(false);
 
-    // Den adds a model -> out of sync (drives the Sync/Import action).
+    // Den adds a model -> out of sync (drives automatic reconciliation).
     const updated = makeProvider(
       [makeModel("model-x"), makeModel("model-y")],
       "2024-03-01T00:00:00.000Z",
@@ -160,5 +160,16 @@ describe("cloud provider runtime patch (re-import diff #2346)", () => {
     expect(mirrorSource).not.toContain('provider.source !== "openwork"');
     expect(mirrorSource).toContain("getCloudProviderEnv(provider.providerConfig)");
     expect(mirrorSource).toContain(".slice(0, 1)");
+  });
+
+  test("organization providers are not offered as model-picker connect methods", () => {
+    const source = readFileSync(providerAuthStoreSourcePath, "utf8");
+    expect(source).not.toContain("buildCloudProvider" + "Method");
+    expect(source).not.toContain('method.type === "cloud" && method.cloudProviderId');
+  });
+
+  test("terminal conflicts are skipped by later automatic sync passes", () => {
+    const source = readFileSync(providerAuthStoreSourcePath, "utf8");
+    expect(source).toContain('reason !== "manual" && state.lastSyncError[cloudProviderId]?.kind === "conflict"');
   });
 });

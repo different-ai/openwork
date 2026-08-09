@@ -1,12 +1,9 @@
-import { automationsEnglish } from "./automations";
-
 /**
  * French translations (Français)
  * Professional terms (Skills, Plugins, Commands, Sessions, OpenCode, OpenPackage, OpenWork) are NOT translated
  */
 
 export default {
-  ...automationsEnglish,
   "app.compact_command_desc": "Résumez cette session pour réduire la taille du contexte.",
   "app.error_audit_load": "Échec du chargement du journal d'audit.",
   "app.error_auth_failed": "Échec de l'authentification",
@@ -236,9 +233,18 @@ export default {
   "den.cloud_control_plane_url_hint": "Mode développeur uniquement. Utilisez ceci pour cibler un plan de contrôle Cloud local ou auto-hébergé. Le modifier vous déconnecte afin que l'application puisse se réhydrater avec le nouveau plan de contrôle.",
   "den.cloud_control_plane_url_label": "URL du plan de contrôle Cloud",
   "den.cloud_provider_detail": "{count} modèles · fournisseur {source}",
+  "den.cloud_provider_blocked": "Indisponible sur cet ordinateur",
+  "den.cloud_provider_conflict": "Conflit",
+  "den.cloud_provider_connected": "Connecté",
+  "den.cloud_provider_error": "Erreur de synchronisation",
+  "den.cloud_provider_imports_unavailable": "Les imports ne sont pas disponibles dans cet espace de travail",
+  "den.cloud_provider_needs_credential": "Identifiant de l'organisation requis",
+  "den.cloud_provider_needs_server": "Serveur OpenWork requis",
+  "den.cloud_provider_retry": "Réessayer",
+  "den.cloud_provider_syncing": "Synchronisation",
   "den.cloud_provider_removed_detail": "Ce fournisseur importé n'est plus dans le cloud. Désinstallez la configuration locale {providerId}.",
   "den.cloud_provider_sync_detail": "Le fournisseur cloud a changé. Synchronisez la configuration {source} du modèle {count} dans opencode.jsonc.",
-  "den.cloud_providers_hint": "Importez des fournisseurs LLM gérés dans opencode.jsonc et utilisez l'identifiant de l'organisation dans cet espace de travail.",
+  "den.cloud_providers_hint": "Les fournisseurs accordés par votre organisation se synchronisent automatiquement. Consultez leur état ici.",
   "den.cloud_providers_title": "Fournisseurs cloud",
   "den.cloud_section_desc": "Connectez-vous, choisissez une organisation et ouvrez des workers Cloud ou des modèles d'équipe.",
   "den.cloud_section_title": "OpenWork Cloud",
@@ -254,12 +260,10 @@ export default {
   "den.finish_signin": "Terminer la connexion",
   "den.finishing": "Finalisation...",
   "den.hide_signin_code": "Masquer le code de connexion",
-  "den.import_all": "Tout importer",
+  "den.import_plugin": "Importer le plugin",
   "den.import_provider": "Importer",
-  "den.import_provider_failed": "Échec de l'import de {name}.",
   "den.imported_badge": "Importé",
-  "den.imported_provider": "{name} importé.",
-  "den.importing": "Importation...",
+  "den.importing_plugin": "Importation du plugin...",
   "den.needs_attention": "Nécessite une attention",
   "den.no_cloud_providers": "Aucun fournisseur cloud n'est encore disponible pour cette organisation.",
   "den.no_org_selected": "Aucune organisation sélectionnée",
@@ -299,6 +303,7 @@ export default {
   "den.status_signed_in_as": "Connecté en tant que {email}.",
   "den.status_signed_out": "Déconnecté et session OpenWork Cloud effacée sur cet appareil.",
   "den.sync": "Synchroniser",
+  "den.sync_now": "Synchroniser maintenant",
   "den.sync_provider_failed": "Échec de la synchronisation de {name}.",
   "den.synced_provider": "{name} synchronisé.",
   "den.syncing": "Synchronisation...",
@@ -945,7 +950,7 @@ export default {
   "settings.tab_description_debug": "Consultez les diagnostics du runtime, les journaux et les utilitaires de débogage bas niveau.",
   "settings.tab_description_cloud_account": "Sign in, manage your organization, and configure your cloud connection.",
   "settings.tab_description_cloud_marketplaces": "Browse and import plugins from your organization's marketplaces.",
-  "settings.tab_description_cloud_providers": "Import and manage LLM provider keys from your organization.",
+  "settings.tab_description_cloud_providers": "Consultez l'état de synchronisation des fournisseurs LLM de l'organisation.",
   "settings.tab_description_environment": "Save API keys and tokens for local agents, skills, and MCP servers. Secrets stay on this device.",
   "settings.tab_description_extensions": "Les skills, connexions et outils que votre agent peut utiliser.",
   "settings.tab_description_general": "Connectez des fournisseurs, choisissez le modèle par défaut, autorisez des dossiers et contrôlez l'espace de travail OpenWork sélectionné ainsi que sa connexion runtime.",

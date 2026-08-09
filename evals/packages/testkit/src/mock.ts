@@ -41,6 +41,15 @@ export function deriveMockEnv(name: string, url: string, mcpUrl: string): Record
 }
 
 export function mcpMock(options: StartMockMcpOptions = {}): MockBoot {
+  const boot = async (_place: Place): Promise<BootedMock> => {
+    const port = options.port ?? await allocateFreePort();
+    const handle = await startMockMcp({ ...options, port });
+    return {
+      handle,
+      env: ({ name, url, mcpUrl }) => deriveMockEnv(name, url, mcpUrl),
+    };
+  };
+  if (options.profileId) return { boot };
   return {
     daytonaPort: options.port ?? 3979,
     async connect(publicUrl) {
@@ -50,13 +59,6 @@ export function mcpMock(options: StartMockMcpOptions = {}): MockBoot {
         env: ({ name, url, mcpUrl }) => deriveMockEnv(name, url, mcpUrl),
       };
     },
-    async boot(_place) {
-      const port = options.port ?? await allocateFreePort();
-      const handle = await startMockMcp({ ...options, port });
-      return {
-        handle,
-        env: ({ name, url, mcpUrl }) => deriveMockEnv(name, url, mcpUrl),
-      };
-    },
+    boot,
   };
 }

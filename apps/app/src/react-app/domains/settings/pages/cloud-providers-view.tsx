@@ -1,70 +1,120 @@
 /** @jsxImportSource react */
 import * as React from "react";
-import { toast } from "@/components/ui/sonner";
 
 import type { CloudImportedProvider } from "@/app/cloud/import-state";
+import type { DesktopAppRestrictionChecker } from "@/app/cloud/desktop-app-restrictions";
 import type { DenOrgLlmProvider } from "@/app/lib/den";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { t } from "@/i18n";
 import { useCloudSession } from "@/react-app/domains/settings/cloud/cloud-session-provider";
-import { CloudProvidersSection, type CloudProviderRow } from "@/react-app/domains/settings/cloud/sections";
-import type { useDenSession } from "@/react-app/domains/settings/cloud/use-den-session";
+import {
+  CloudProvidersSection,
+  type CloudProviderRow,
+  type CloudProviderRowStatus,
+} from "@/react-app/domains/settings/cloud/sections";
+import {
+  getCloudProviderEnv,
+  getCloudManagedProviderId,
+  isCloudProviderOutOfSync,
+} from "@/react-app/domains/connections/provider-auth/cloud-provider-config";
+import { isProviderAllowedByDesktopPolicy } from "@/react-app/domains/connections/provider-auth/provider-policy";
+import type { CloudProviderSyncError } from "@/react-app/domains/connections/provider-auth/store";
 import { SettingsNotice, SettingsStack } from "@/react-app/domains/settings/settings-section";
 
-type CloudProvidersSession = Pick<
-  ReturnType<typeof useDenSession>,
-  "syncCurrentDenSettings"
->;
-type ProviderActionKind = "import" | "remove" | "sync";
+export type CloudProviderRowStateInput = {
+  imported: boolean;
+  outOfSync: boolean;
+  allowed: boolean;
+  importsUnavailable: boolean;
+  needsCredential: boolean;
+  needsServer: boolean;
+  syncError: CloudProviderSyncError | null;
+};
+
+export function resolveCloudProviderRowStatus(
+  input: CloudProviderRowStateInput,
+): CloudProviderRowStatus {
+  if (input.importsUnavailable) return "unavailable";
+  if (!input.allowed) return "blocked";
+  if (input.syncError) return input.syncError.kind;
+  if (input.needsCredential) return "needs_credential";
+  if (input.needsServer) return "needs_server";
+  return input.imported && !input.outOfSync ? "connected" : "syncing";
+}
+
+export function canRetryCloudProviderRow(status: CloudProviderRowStatus) {
+  return status === "error";
+}
 
 export type CloudProvidersViewProps = {
+  checkDesktopAppRestriction: DesktopAppRestrictionChecker;
   cloudOrgProviders: DenOrgLlmProvider[];
   connectCloudProvider: (cloudProviderId: string) => Promise<string | void>;
   embedded?: boolean;
   importedCloudProviders: Record<string, CloudImportedProvider>;
+  importsUnavailable: boolean;
+  lastSyncError: Record<string, CloudProviderSyncError>;
+  openworkServerAvailable: boolean;
   onOpenAccount: () => void;
   refreshCloudOrgProviders: (options?: { force?: boolean }) => Promise<DenOrgLlmProvider[]>;
-  refreshImportedCloudProviders: () => Promise<Record<string, CloudImportedProvider>>;
-  removeCloudProvider: (cloudProviderId: string) => Promise<string | void>;
-  session: CloudProvidersSession;
+  runCloudProviderSync: (reason: "manual") => Promise<unknown>;
 };
 
-const sortStrings = (values: string[]) => values.toSorted();
-
-const sameStringList = (a: string[], b: string[]) =>
-  a.length === b.length && a.every((value, index) => value === b[index]);
-
 export function CloudProvidersView({
+  checkDesktopAppRestriction,
   cloudOrgProviders,
   connectCloudProvider,
   embedded = false,
   importedCloudProviders,
+  importsUnavailable,
+  lastSyncError,
+  openworkServerAvailable,
   onOpenAccount,
   refreshCloudOrgProviders,
-  refreshImportedCloudProviders,
-  removeCloudProvider,
-  session,
+  runCloudProviderSync,
 }: CloudProvidersViewProps) {
-  const { activeOrganization: activeOrg, authToken, isSignedIn, user } = useCloudSession();
+  const { activeOrganization, isSignedIn } = useCloudSession();
   const [busy, setBusy] = React.useState(false);
   const [actionId, setActionId] = React.useState<string | null>(null);
-  const [actionKind, setActionKind] = React.useState<ProviderActionKind | null>(null);
   const [actionError, setActionError] = React.useState<string | null>(null);
-  const activeOrgId = activeOrg?.id ?? "";
 
   const rows = React.useMemo<CloudProviderRow[]>(() => {
-    const nextRows: CloudProviderRow[] = cloudOrgProviders.map((provider) => {
+    const restrictToCloud = checkDesktopAppRestriction({ restriction: "allowCustomProviders" });
+    return cloudOrgProviders.map((provider) => {
       const imported = importedCloudProviders[provider.id] ?? null;
-      const status = !imported
-        ? "available"
-        : imported.providerId !== provider.id.trim() ||
-            imported.sourceProviderId !== provider.providerId ||
-            (imported.source ?? null) !== (provider.source ?? null) ||
-            (imported.updatedAt ?? null) !== (provider.updatedAt ?? null) ||
-            !sameStringList(imported.modelIds, sortStrings(provider.models.map((model) => model.id)))
-          ? "out_of_sync"
-          : "imported";
+      const outOfSync = imported ? isCloudProviderOutOfSync(provider, imported) : false;
+      const allowed = isProviderAllowedByDesktopPolicy({
+        providerId: getCloudManagedProviderId(provider),
+        restrictToCloud,
+        checkRestriction: checkDesktopAppRestriction,
+      });
+      const syncError = lastSyncError[provider.id] ?? null;
+      const env = getCloudProviderEnv(provider.providerConfig);
+      const status = resolveCloudProviderRowStatus({
+        imported: Boolean(imported),
+        outOfSync,
+        allowed,
+        importsUnavailable,
+        needsCredential: !provider.hasApiKey && env.length > 0,
+        needsServer: provider.hasApiKey && env.length > 1 && !openworkServerAvailable,
+        syncError,
+      });
+      const source = provider.source === "custom" ? "custom" : "managed";
+      const modelCount = provider.models.length;
+      const providerDetail = modelCount === 0
+        ? `All Models · ${source} provider`
+        : t("den.cloud_provider_detail", { count: modelCount, source });
+      const detail = status === "blocked"
+        ? t("den.cloud_provider_blocked")
+        : status === "unavailable"
+          ? t("den.cloud_provider_imports_unavailable")
+          : status === "needs_credential"
+            ? syncError?.message ?? t("den.cloud_provider_needs_credential")
+            : status === "needs_server"
+              ? syncError?.message ?? t("den.cloud_provider_needs_server")
+              : syncError?.message ?? providerDetail;
+
       return {
         key: `live:${provider.id}`,
         cloudProviderId: provider.id,
@@ -72,135 +122,48 @@ export function CloudProvidersView({
         imported,
         status,
         name: provider.name,
+        detail,
       };
     });
-
-    for (const imported of Object.values(importedCloudProviders)) {
-      if (cloudOrgProviders.some((provider) => provider.id === imported.cloudProviderId)) continue;
-      nextRows.push({
-        key: `imported:${imported.cloudProviderId}`,
-        cloudProviderId: imported.cloudProviderId,
-        provider: null,
-        imported,
-        status: "removed_from_cloud",
-        name: imported.name,
-      });
-    }
-
-    return nextRows;
-  }, [cloudOrgProviders, importedCloudProviders]);
-
-  const refresh = React.useCallback(
-    async (quiet = false) => {
-      if (!authToken.trim() || !activeOrgId) return;
-
-      setBusy(true);
-      setActionError(null);
-
-      try {
-        session.syncCurrentDenSettings();
-        const [items] = await Promise.all([
-          refreshCloudOrgProviders({ force: !quiet }),
-          refreshImportedCloudProviders(),
-        ]);
-        if (!quiet) {
-          toast.info(
-            items.length > 0
-              ? `Loaded ${items.length} cloud provider${items.length === 1 ? "" : "s"} for ${activeOrg?.name ?? t("den.active_org_title")}.`
-              : `No cloud providers are available for ${activeOrg?.name ?? t("den.active_org_title")}.`,
-          );
-        }
-      } catch (error) {
-        if (!quiet) {
-          setActionError(error instanceof Error ? error.message : "Failed to load cloud providers.");
-        }
-      } finally {
-        setBusy(false);
-      }
-    },
-    [
-      refreshCloudOrgProviders,
-      refreshImportedCloudProviders,
-      activeOrg,
-      activeOrgId,
-      authToken,
-      session.syncCurrentDenSettings,
-    ],
-  );
+  }, [
+    checkDesktopAppRestriction,
+    cloudOrgProviders,
+    importedCloudProviders,
+    importsUnavailable,
+    lastSyncError,
+    openworkServerAvailable,
+  ]);
 
   React.useEffect(() => {
-    if (!user || !activeOrgId) return;
-    void refresh(true);
-  }, [activeOrgId, refresh, user]);
+    if (!isSignedIn || !activeOrganization?.id) return;
+    void refreshCloudOrgProviders();
+  }, [activeOrganization?.id, isSignedIn, refreshCloudOrgProviders]);
 
-  const importProvider = React.useCallback(
-    async (cloudProviderId: string, providerName: string) => {
-      if (actionId) return;
+  const syncNow = React.useCallback(async () => {
+    if (busy) return;
+    setBusy(true);
+    setActionError(null);
+    try {
+      await runCloudProviderSync("manual");
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : t("den.sync_provider_failed", { name: "Cloud providers" }));
+    } finally {
+      setBusy(false);
+    }
+  }, [busy, runCloudProviderSync]);
 
-      setActionId(cloudProviderId);
-      setActionKind("import");
-      setActionError(null);
-
-      try {
-        const message = await connectCloudProvider(cloudProviderId);
-        toast.success(message || t("den.imported_provider", { name: providerName }));
-      } catch (error) {
-        setActionError(
-          error instanceof Error ? error.message : t("den.import_provider_failed", { name: providerName }),
-        );
-      } finally {
-        setActionId(null);
-        setActionKind(null);
-      }
-    },
-    [actionId, connectCloudProvider],
-  );
-
-  const removeProvider = React.useCallback(
-    async (cloudProviderId: string, providerName: string) => {
-      if (actionId) return;
-
-      setActionId(cloudProviderId);
-      setActionKind("remove");
-      setActionError(null);
-
-      try {
-        const message = await removeCloudProvider(cloudProviderId);
-        toast.success(message || t("den.removed_provider", { name: providerName }));
-      } catch (error) {
-        setActionError(
-          error instanceof Error ? error.message : t("den.remove_provider_failed", { name: providerName }),
-        );
-      } finally {
-        setActionId(null);
-        setActionKind(null);
-      }
-    },
-    [actionId, removeCloudProvider],
-  );
-
-  const syncProvider = React.useCallback(
-    async (cloudProviderId: string, providerName: string) => {
-      if (actionId) return;
-
-      setActionId(cloudProviderId);
-      setActionKind("sync");
-      setActionError(null);
-
-      try {
-        await connectCloudProvider(cloudProviderId);
-        toast.success(t("den.synced_provider", { name: providerName }));
-      } catch (error) {
-        setActionError(
-          error instanceof Error ? error.message : t("den.sync_provider_failed", { name: providerName }),
-        );
-      } finally {
-        setActionId(null);
-        setActionKind(null);
-      }
-    },
-    [actionId, connectCloudProvider],
-  );
+  const retryProvider = React.useCallback(async (cloudProviderId: string) => {
+    if (actionId) return;
+    setActionId(cloudProviderId);
+    setActionError(null);
+    try {
+      await connectCloudProvider(cloudProviderId);
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : t("den.sync_provider_failed", { name: "Cloud provider" }));
+    } finally {
+      setActionId(null);
+    }
+  }, [actionId, connectCloudProvider]);
 
   if (!isSignedIn) {
     const notice = (
@@ -225,13 +188,10 @@ export function CloudProvidersView({
     <CloudProvidersSection
       actionError={actionError}
       actionId={actionId}
-      actionKind={actionKind}
       busy={busy}
       rows={rows}
-      onImport={importProvider}
-      onRefresh={refresh}
-      onRemove={undefined}
-      onSync={syncProvider}
+      onRefresh={syncNow}
+      onRetry={retryProvider}
     />
   );
 
