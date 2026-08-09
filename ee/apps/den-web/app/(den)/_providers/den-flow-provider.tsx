@@ -486,6 +486,13 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
       }
     }
 
+    // An unresolved invitation or workspace claim outranks the desktop/web
+    // handoff: the person came to join, and the join/claim screens hand the
+    // session back to the app once the membership actually exists.
+    if (authenticatedUser && (getPendingWorkspaceClaimToken() || getPendingOrgInvitationId())) {
+      return "join-org";
+    }
+
     if (desktopAuthRequested) {
       setAuthInfo("Signed in. Returning to OpenWork...");
       return null;
@@ -494,10 +501,6 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
     if (webAuthRequested) {
       setAuthInfo("Signed in. Returning to OpenWork...");
       return null;
-    }
-
-    if (authenticatedUser && (getPendingWorkspaceClaimToken() || getPendingOrgInvitationId())) {
-      return "join-org";
     }
 
     if (authenticatedUser && nextMode === "sign-up") {
@@ -2082,6 +2085,15 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (!desktopAuthRequested || !user || desktopRedirectUrl || desktopRedirectBusy || desktopRedirectAttempted) {
+      return;
+    }
+
+    // A signed-in user with an unresolved invitation or workspace claim must
+    // finish joining before the browser bounces back to the desktop app —
+    // otherwise the app signs in without the membership the person came for.
+    // The join/claim screens own the handoff on those paths ("Return to
+    // OpenWork") once the membership exists.
+    if (getPendingOrgInvitationId() || getPendingWorkspaceClaimToken()) {
       return;
     }
 

@@ -144,6 +144,81 @@ export function parseDenAuthDeepLink(rawUrl: string): DenAuthDeepLink | null {
   };
 }
 
+export type OrgInviteLink = {
+  /** Web origin of the Den deployment the invitation belongs to. */
+  origin: string;
+  host: string;
+  token: string;
+  /** Public, unauthenticated invitation preview endpoint on that origin. */
+  previewUrl: string;
+};
+
+const INVITE_TOKEN_PATTERN = /^[A-Za-z0-9_-]{8,}$/;
+
+function usesLocalHttpHost(host: string): boolean {
+  const normalized = host.toLowerCase();
+  return (
+    normalized === "localhost"
+    || normalized.startsWith("localhost:")
+    || normalized === "127.0.0.1"
+    || normalized.startsWith("127.")
+  );
+}
+
+/**
+ * Recognize an organization invite link — the URL a teammate receives in the
+ * "You're invited to join …" email or via the dashboard's "Copy invite link"
+ * action: `https://<den-web-origin>/join-org?invite=<token>`.
+ *
+ * Ordinary web origins only: invites never ride the desktop scheme, and plain
+ * http is accepted solely for local development hosts.
+ */
+export function parseOrgInviteLink(rawUrl: string): OrgInviteLink | null {
+  let url: URL;
+  try {
+    url = new URL(rawUrl.trim());
+  } catch {
+    return null;
+  }
+
+  const protocol = url.protocol.toLowerCase();
+  if (protocol !== "https:" && !(protocol === "http:" && usesLocalHttpHost(url.host))) {
+    return null;
+  }
+
+  if (url.pathname.replace(/\/+$/, "") !== "/join-org") {
+    return null;
+  }
+
+  const token = url.searchParams.get("invite")?.trim() ?? "";
+  if (!INVITE_TOKEN_PATTERN.test(token)) {
+    return null;
+  }
+
+  const previewUrl = new URL("/api/den/v1/orgs/invitations/preview", url.origin);
+  previewUrl.searchParams.set("id", token);
+
+  return { origin: url.origin, host: url.host, token, previewUrl: previewUrl.toString() };
+}
+
+/**
+ * Build the browser URL that finishes joining: the join page with the desktop
+ * handoff flags, so after the person accepts the invite the web app offers
+ * "Return to OpenWork" and signs this app in with a one-time grant.
+ */
+export function buildOrgInviteJoinUrl(
+  link: OrgInviteLink,
+  options: { desktopAuth: boolean; desktopScheme?: string },
+): string {
+  const url = new URL("/join-org", link.origin);
+  url.searchParams.set("invite", link.token);
+  if (options.desktopAuth) {
+    url.searchParams.set("desktopAuth", "1");
+    url.searchParams.set("desktopScheme", options.desktopScheme ?? "openwork");
+  }
+  return url.toString();
+}
+
 export function parseConnectDeepLink(rawUrl: string): ConnectDeepLink | null {
   let url: URL;
   try {

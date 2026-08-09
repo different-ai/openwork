@@ -4,6 +4,38 @@ import assert from "node:assert/strict";
 import { openExternalUrl } from "./open-external.mjs";
 
 describe("openExternalUrl", () => {
+  it("records and suppresses the open when a capture file is configured", async () => {
+    const appended = [];
+    let openedUrl = "";
+    const result = await openExternalUrl("https://example.com/join-org?invite=abc", {
+      env: { OPENWORK_OPEN_EXTERNAL_CAPTURE_FILE: "/tmp/captured-urls.log" },
+      appendFile: (file, line) => appended.push({ file, line }),
+      openExternal: async (url) => {
+        openedUrl = url;
+      },
+    });
+    assert.deepEqual(result, { ok: true });
+    assert.equal(openedUrl, "", "capture mode must not open a real browser");
+    assert.deepEqual(appended, [
+      { file: "/tmp/captured-urls.log", line: "https://example.com/join-org?invite=abc\n" },
+    ]);
+  });
+
+  it("reports a capture failure instead of falling back to a real open", async () => {
+    let openedUrl = "";
+    const result = await openExternalUrl("https://example.com", {
+      env: { OPENWORK_OPEN_EXTERNAL_CAPTURE_FILE: "/tmp/captured-urls.log" },
+      appendFile: () => {
+        throw new Error("disk full");
+      },
+      openExternal: async (url) => {
+        openedUrl = url;
+      },
+    });
+    assert.deepEqual(result, { ok: false, error: "disk full" });
+    assert.equal(openedUrl, "");
+  });
+
   it("reports success when shell.openExternal resolves", async () => {
     let openedUrl = "";
     const result = await openExternalUrl("https://example.com", {

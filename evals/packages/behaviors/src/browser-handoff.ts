@@ -8,16 +8,24 @@ import type { Surface } from "@openwork/cdp";
 /**
  * The desktop signs in by opening the system browser and finishing there. To
  * observe that faithfully we capture what the app actually asks the OS to open
- * (via a PATH shim for xdg-open, which is what Electron's shell.openExternal
- * calls on Linux) rather than trusting that a browser appeared.
+ * rather than trusting that a browser appeared. Two capture channels cover
+ * every placement:
  *
- * Nothing here modifies the product: the app opens a URL exactly as it always
- * does; we just record where it pointed.
+ *  - a PATH shim for xdg-open, which is what Electron's shell.openExternal
+ *    calls on Linux (`binDir`), and
+ *  - the product's own eval seam `OPENWORK_OPEN_EXTERNAL_CAPTURE_FILE`, which
+ *    records-and-suppresses the open on platforms whose OS-level URL APIs no
+ *    shim can see (macOS, Windows) — pass `env` when spawning the app.
  */
 
 export interface UrlCapture {
   /** Prepend to PATH when spawning the app. */
   binDir: string;
+  /**
+   * Environment for the spawned app: the PATH shim plus the cross-platform
+   * capture seam. Spread into `desktop({ env })`.
+   */
+  env: Record<string, string>;
   /** Every URL the app asked the OS to open, oldest first. */
   opened(): Promise<string[]>;
   /** Wait for a URL matching a predicate, so a spec never races the handoff. */
@@ -39,6 +47,10 @@ export async function captureOpenedUrls(): Promise<UrlCapture> {
 
   return {
     binDir: dir,
+    env: {
+      PATH: `${dir}:${process.env.PATH ?? ""}`,
+      OPENWORK_OPEN_EXTERNAL_CAPTURE_FILE: logPath,
+    },
     opened,
     async waitForUrl(match, { timeoutMs = 60_000 } = {}) {
       const deadline = Date.now() + timeoutMs;

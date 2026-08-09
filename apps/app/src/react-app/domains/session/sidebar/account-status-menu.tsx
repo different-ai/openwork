@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   BookOpen,
+  Link2,
   LogOut,
   MessageCircleMore,
   MoreHorizontal,
@@ -23,6 +24,7 @@ import { cn } from "@/lib/utils";
 import { t } from "@/i18n";
 import { usePlatform } from "../../../kernel/platform";
 import { useDenAuth } from "../../cloud/den-auth-provider";
+import { JoinOrganizationDialog } from "../../cloud/join-organization-dialog";
 import { useControlAction, type OpenworkControlAction } from "../../../shell/control/control-provider";
 import { useShellConfig } from "../../../shell/shell-config";
 import type { OpenworkServerStatus } from "../../../../app/lib/openwork-server";
@@ -205,6 +207,7 @@ export function AccountStatusMenu(props: AccountStatusMenuProps) {
   const [initializing, setInitializing] = useState(
     () => Date.now() - BOOT_STARTED_AT < INITIALIZING_MS,
   );
+  const [joinOrganizationOpen, setJoinOrganizationOpen] = useState(false);
 
   const hasOpenWorkModels = useMemo(
     () => hasOpenWorkModelsProvider(props.providerConnectedIds),
@@ -300,6 +303,7 @@ export function AccountStatusMenu(props: AccountStatusMenuProps) {
   };
 
   return (
+    <>
     <DropdownMenu>
       <DropdownMenuTrigger
         render={
@@ -457,12 +461,27 @@ export function AccountStatusMenu(props: AccountStatusMenuProps) {
             Log out
           </DropdownMenuItem>
         ) : restoringSession ? null : (
-          <DropdownMenuItem onClick={openSignIn}>
-            <UserRound className="size-3.5" />
-            Sign in
-          </DropdownMenuItem>
+          <>
+            <DropdownMenuItem onClick={openSignIn}>
+              <UserRound className="size-3.5" />
+              Sign in
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              onClick={() => setJoinOrganizationOpen(true)}
+              data-testid="account-menu-join-org"
+            >
+              <Link2 className="size-3.5" />
+              {t("welcome.join_org")}
+            </DropdownMenuItem>
+          </>
         )}
       </DropdownMenuContent>
     </DropdownMenu>
+    <JoinOrganizationDialog
+      open={joinOrganizationOpen}
+      onOpenChange={setJoinOrganizationOpen}
+      onConnected={() => setJoinOrganizationOpen(false)}
+    />
+    </>
   );
 }

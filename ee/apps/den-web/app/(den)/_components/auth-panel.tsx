@@ -410,12 +410,20 @@ export function AuthPanel({
   useEffect(() => {
     const trimmedEmail = prefilledEmail?.trim() ?? "";
     const key = prefillKey ?? trimmedEmail;
-    if (!emailFirstFlow || !resolveEmailFirstOnPrefill || !trimmedEmail || resolvedLoginOptionPrefillRef.current === key || loginOption || loginOptionBusy) {
+    if (!emailFirstFlow || !resolveEmailFirstOnPrefill || !trimmedEmail || resolvedLoginOptionPrefillRef.current === key) {
       return;
     }
 
-    let cancelled = false;
     resolvedLoginOptionPrefillRef.current = key;
+
+    // One resolution per prefill key, owned by the ref — never by effect
+    // cleanup. The synchronous state writes below re-render the den-flow
+    // provider, which recreates context functions in this effect's deps and
+    // re-runs the effect; a cleanup-scoped cancel flag therefore aborted every
+    // in-flight request and stranded invited users on the busy state
+    // ("Checking the workspace sign-in method..."). Staleness is keyed to the
+    // ref instead: results apply unless a newer prefill superseded this one.
+    const stale = () => resolvedLoginOptionPrefillRef.current !== key;
 
     async function resolvePrefilledLoginOption() {
       setLoginOptionBusy(true);
@@ -426,7 +434,7 @@ export function AuthPanel({
 
       try {
         const { response, payload } = await requestJson(`/v1/auth/login-options?email=${encodeURIComponent(trimmedEmail)}`, { method: "GET" }, 12000);
-        if (cancelled) {
+        if (stale()) {
           return;
         }
         if (!response.ok) {
@@ -444,22 +452,18 @@ export function AuthPanel({
         setAuthMode(nextOption.nextStep === "new_account" ? "sign-up" : "sign-in");
         setLoginOption(nextOption);
       } catch (error) {
-        if (!cancelled) {
+        if (!stale()) {
           setLoginOptionError(error instanceof Error ? error.message : "Could not check sign-in options.");
         }
       } finally {
-        if (!cancelled) {
+        if (!stale()) {
           setLoginOptionBusy(false);
         }
       }
     }
 
     void resolvePrefilledLoginOption();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [emailFirstFlow, loginOption, loginOptionBusy, prefillKey, prefilledEmail, resolveEmailFirstOnPrefill, setAuthMode, setAuthName, setEmail, setPassword]);
+  }, [emailFirstFlow, prefillKey, prefilledEmail, resolveEmailFirstOnPrefill, setAuthMode, setAuthName, setEmail, setPassword]);
 
   const switchMode = (mode: AuthMode) => {
     if (mode === authMode && !passwordResetRequested) {

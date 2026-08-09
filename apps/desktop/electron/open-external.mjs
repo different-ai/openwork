@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { appendFileSync } from "node:fs";
 
 const DEFAULT_TIMEOUT_MS = 4000;
 
@@ -22,6 +23,23 @@ export async function openExternalUrl(url, deps = {}) {
     // why: enables evals to prove the failure UX without breaking a real machine.
     console.error("[shell] openExternal failed:", message);
     return { ok: false, error: message };
+  }
+
+  const captureFile = env.OPENWORK_OPEN_EXTERNAL_CAPTURE_FILE?.trim();
+  if (captureFile) {
+    // why: evals observe exactly which URL the app hands to the OS. Linux specs
+    // shim xdg-open on PATH for this, but macOS/Windows open URLs through OS
+    // APIs no shim can see — so record and suppress the real open instead,
+    // keeping test runs deterministic and browser-free on every platform.
+    try {
+      const appendFile = deps.appendFile ?? appendFileSync;
+      appendFile(captureFile, `${url}\n`);
+      return { ok: true };
+    } catch (error) {
+      const message = describeError(error);
+      console.error("[shell] openExternal capture failed:", message);
+      return { ok: false, error: message };
+    }
   }
 
   const timeoutMs = Number.isFinite(deps.timeoutMs) ? deps.timeoutMs : DEFAULT_TIMEOUT_MS;

@@ -193,6 +193,32 @@ function failureSummary(results: SeenResult[]): string {
     .join("; ")}`;
 }
 
+/**
+ * Retry transport-level vision failures (resets, header timeouts) with a
+ * short backoff. Long app-driving runs must not lose an otherwise green tape
+ * to one dropped connection at the final frame. Model verdicts and HTTP
+ * error statuses are never retried — only requests that failed to complete.
+ */
+function withTransportRetry(ask: (req: VisionRequest) => Promise<string>): (req: VisionRequest) => Promise<string> {
+  const attempts = 3;
+  return async (req) => {
+    let lastError: unknown;
+    for (let attempt = 1; attempt <= attempts; attempt++) {
+      try {
+        return await ask(req);
+      } catch (error) {
+        const transportFailure = error instanceof TypeError
+          || (isRecord(error) && (error.code === "UND_ERR_HEADERS_TIMEOUT" || error.code === "ECONNRESET"))
+          || (isRecord(error) && isRecord(error.cause));
+        if (!transportFailure || attempt === attempts) throw error;
+        lastError = error;
+        await new Promise((resolve) => setTimeout(resolve, attempt * 2_000));
+      }
+    }
+    throw lastError;
+  };
+}
+
 export async function validate(
   shot: Shot,
   expectations: string[],
@@ -205,8 +231,8 @@ export async function validate(
     || (anthropicKey && !openAiKey ? ANTHROPIC_DEFAULT_MODEL : OPENAI_DEFAULT_MODEL);
   let ask = opts.ask;
   if (!ask) {
-    if (openAiKey) ask = (req) => askOpenAi(req, openAiKey);
-    else if (anthropicKey) ask = (req) => askAnthropic(req, anthropicKey);
+    if (openAiKey) ask = withTransportRetry((req) => askOpenAi(req, openAiKey));
+    else if (anthropicKey) ask = withTransportRetry((req) => askAnthropic(req, anthropicKey));
     else {
       throw new Error(
         "Vision validation requires OPENAI_API_KEY or ANTHROPIC_API_KEY, unless ValidateOptions.ask is provided.",
