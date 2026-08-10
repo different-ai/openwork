@@ -1,7 +1,7 @@
 import { expect, onTestFinished, test } from "vitest";
 import { photoRoll, screenshot, validate } from "@openwork/fraimz";
 import { desktop } from "@openwork/hosts";
-import { startMockMcp } from "@openwork/labs";
+import { startMockMcp } from "@openwork/fakes";
 import {
   clickButton,
   createAndSelectWorkspace,

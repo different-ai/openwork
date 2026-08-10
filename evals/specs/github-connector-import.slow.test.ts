@@ -2,8 +2,8 @@ import { generateKeyPairSync } from "node:crypto";
 import { expect } from "vitest";
 import { denFetch } from "@openwork/behaviors";
 import type { DenSession } from "@openwork/behaviors";
-import { startMockGithub } from "@openwork/labs";
-import type { MockGithubRepository } from "@openwork/labs";
+import { startMockGithub } from "@openwork/fakes";
+import type { MockGithubRepository } from "@openwork/fakes";
 import { localMysqlIsRunning, needs, server, test } from "@openwork/testkit";
 
 /**

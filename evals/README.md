@@ -62,7 +62,7 @@ new executable coverage is always assembled as a spec under `specs/`.
 | --- | --- |
 | `@openwork/testkit` | spec fixture plus `needs()`, `server()`, `app()`, mock, and placement resources |
 | `@openwork/cdp` | raw CDP client, targets, `Surface`, and `attachSurface` |
-| `@openwork/labs` | egress, identity-provider, release-feed, and mock-MCP labs |
+| `@openwork/fakes` | fake versions of what OpenWork talks to: GitHub, Google, an OIDC identity provider, an MCP server, the release feed, and the network egress boundary, each with dial-in failure modes |
 | `@openwork/hosts` | local and Daytona hosts and `resolveHost()` |
 | `@openwork/behaviors` | framework-free actions and observations over narrow handles |
 | `@openwork/matchers` | pure findings over facts, with no I/O |

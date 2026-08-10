@@ -4,8 +4,8 @@ import tls from "node:tls";
 import { fileURLToPath } from "node:url";
 import type { DetailedPeerCertificate } from "node:tls";
 
-import { parseClientHelloVersions } from "@openwork/labs";
-import type { ClientHelloParseResult, EgressLabHandle, EgressLabProfile } from "@openwork/labs";
+import { parseClientHelloVersions } from "@openwork/fakes";
+import type { ClientHelloParseResult, EgressLabHandle, EgressLabProfile } from "@openwork/fakes";
 import type { TlsFacts, TlsVersionFacts } from "@openwork/matchers";
 
 export type { TlsFacts, TlsVersionFacts } from "@openwork/matchers";

@@ -1,6 +1,6 @@
 import { execSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { notImplemented } from "@openwork/labs";
+import { notImplemented } from "@openwork/fakes";
 
 export type DenRef = { apiUrl: string; webUrl: string };
 export type DenSession = DenRef & { token: string; email: string; password: string };

@@ -1,6 +1,6 @@
 import { expect, test } from "vitest";
 import { desktop } from "@openwork/hosts";
-import { startEgressLab } from "@openwork/labs";
+import { startEgressLab } from "@openwork/fakes";
 import { clickButton, diagnoseEgressLabProduct, enabledButtons, visibleText, waitUntilInteractive } from "@openwork/behaviors";
 import { matchVerdictExpectations } from "@openwork/matchers";
 import { photoRoll, screenshot, validate } from "@openwork/fraimz";

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { startEgressLab } from "@openwork/labs";
+import { startEgressLab } from "@openwork/fakes";
 import { diagnoseTls } from "@openwork/matchers";
 import { probeTls } from "../src/diagnostics.ts";
 

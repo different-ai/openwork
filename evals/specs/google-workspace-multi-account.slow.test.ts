@@ -1,7 +1,7 @@
 import { expect, onTestFinished, test } from "vitest";
 import { photoRoll, screenshot, validate } from "@openwork/fraimz";
 import { desktop } from "@openwork/hosts";
-import { startMockGoogle } from "@openwork/labs";
+import { startMockGoogle } from "@openwork/fakes";
 import {
   clickButton,
   clickText,
@@ -33,7 +33,7 @@ import {
 import type { Surface } from "@openwork/cdp";
 import type { DenRef, DenSession } from "@openwork/behaviors";
 import type { DesktopHandle } from "@openwork/hosts";
-import type { MockGoogleHandle } from "@openwork/labs";
+import type { MockGoogleHandle } from "@openwork/fakes";
 
 /**
  * CLAIM: one organization can publish two independently configured Google

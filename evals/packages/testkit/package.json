@@ -15,7 +15,7 @@
     "@openwork/cdp": "workspace:*",
     "@openwork/fraimz": "workspace:*",
     "@openwork/hosts": "workspace:*",
-    "@openwork/labs": "workspace:*",
+    "@openwork/fakes": "workspace:*",
     "mysql2": "^3.11.3",
     "vitest": "^3.2.4"
   }

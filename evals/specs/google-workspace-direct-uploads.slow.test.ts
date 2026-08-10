@@ -5,10 +5,10 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect } from "vitest";
 import { denFetch } from "@openwork/behaviors";
-import { startMockGoogle } from "@openwork/labs";
+import { startMockGoogle } from "@openwork/fakes";
 import { localMysqlIsRunning, needs, server, test } from "@openwork/testkit";
 import type { DenSession } from "@openwork/behaviors";
-import type { MockGoogleHandle } from "@openwork/labs";
+import type { MockGoogleHandle } from "@openwork/fakes";
 
 /**
  * CLAIMS:
@@ -34,7 +34,7 @@ const title = !localPlacement
   : !mysqlOpen
     ? "google workspace direct uploads skipped — needs: MySQL on 127.0.0.1:3306"
     : "workspace paths upload directly to Google without model-visible bytes";
-const cloudUploadRunner = fileURLToPath(new URL("../packages/labs/bin/cloud-upload-runner.mjs", import.meta.url));
+const cloudUploadRunner = fileURLToPath(new URL("../packages/fakes/bin/cloud-upload-runner.mjs", import.meta.url));
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);

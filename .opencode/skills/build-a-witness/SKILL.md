@@ -5,7 +5,7 @@ description: Mock a provider, add a mock, fake the API for tests. Use when build
 
 # Skill: Build a Witness
 
-Follow the pattern established by `labs/mock-mcp` and the Google fixtures.
+Follow the pattern established by `@openwork/fakes` (`evals/packages/fakes/src/mock-mcp.ts`) and the Google fixtures.
 
 ## Witness contracts
 

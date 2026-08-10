@@ -1,1 +1,1 @@
-export * from "@openwork/labs/egress";
+export * from "@openwork/fakes/egress";

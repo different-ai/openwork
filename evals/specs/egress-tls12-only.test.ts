@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { startEgressLab } from "@openwork/labs";
+import { startEgressLab } from "@openwork/fakes";
 import {
   diagnoseEgressLabProduct,
   probeTls,

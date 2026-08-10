@@ -1,6 +1,6 @@
 import { allocateFreePort } from "@openwork/cdp";
-import { startMockMcp } from "@openwork/labs";
-import type { MockMcpHandle, StartMockMcpOptions } from "@openwork/labs";
+import { startMockMcp } from "@openwork/fakes";
+import type { MockMcpHandle, StartMockMcpOptions } from "@openwork/fakes";
 import type { Place } from "./place.ts";
 
 export type MockHandle = MockMcpHandle;

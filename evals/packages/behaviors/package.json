@@ -32,7 +32,7 @@
   },
   "dependencies": {
     "@openwork/cdp": "workspace:*",
-    "@openwork/labs": "workspace:*",
+    "@openwork/fakes": "workspace:*",
     "@openwork/matchers": "workspace:*",
     "@openwork/timeline": "workspace:*"
   }

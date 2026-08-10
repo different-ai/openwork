@@ -8,7 +8,7 @@ import {
 import { matchVerdictExpectations } from "@openwork/matchers";
 import type { DiagnosticVerdict } from "@openwork/behaviors";
 import type { DiagnosticVerdictExpectation } from "@openwork/matchers";
-import type { EgressLabHandle } from "@openwork/labs";
+import type { EgressLabHandle } from "@openwork/fakes";
 import type { FlowContext } from "../flow.ts";
 
 export {

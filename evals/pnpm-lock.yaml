@@ -17,15 +17,15 @@ importers:
       '@openwork/evidence':
         specifier: workspace:*
         version: link:packages/evidence
+      '@openwork/fakes':
+        specifier: workspace:*
+        version: link:packages/fakes
       '@openwork/fraimz':
         specifier: workspace:*
         version: link:packages/fraimz
       '@openwork/hosts':
         specifier: workspace:*
         version: link:packages/hosts
-      '@openwork/labs':
-        specifier: workspace:*
-        version: link:packages/labs
       '@openwork/matchers':
         specifier: workspace:*
         version: link:packages/matchers
@@ -42,9 +42,9 @@ importers:
       '@openwork/cdp':
         specifier: workspace:*
         version: link:../cdp
-      '@openwork/labs':
+      '@openwork/fakes':
         specifier: workspace:*
-        version: link:../labs
+        version: link:../fakes
       '@openwork/matchers':
         specifier: workspace:*
         version: link:../matchers
@@ -55,6 +55,8 @@ importers:
   packages/cdp: {}
 
   packages/evidence: {}
+
+  packages/fakes: {}
 
   packages/fraimz:
     dependencies:
@@ -74,8 +76,6 @@ importers:
         specifier: workspace:*
         version: link:../timeline
 
-  packages/labs: {}
-
   packages/matchers: {}
 
   packages/testkit:
@@ -86,15 +86,15 @@ importers:
       '@openwork/cdp':
         specifier: workspace:*
         version: link:../cdp
+      '@openwork/fakes':
+        specifier: workspace:*
+        version: link:../fakes
       '@openwork/fraimz':
         specifier: workspace:*
         version: link:../fraimz
       '@openwork/hosts':
         specifier: workspace:*
         version: link:../hosts
-      '@openwork/labs':
-        specifier: workspace:*
-        version: link:../labs
       mysql2:
         specifier: ^3.11.3
         version: 3.23.2(@types/node@26.1.2)

@@ -14,7 +14,7 @@ import { allocateFreePort, navigate } from "@openwork/cdp";
 import type { Surface } from "@openwork/cdp";
 import { photoRoll, screenshot, validate } from "@openwork/fraimz";
 import { chrome } from "@openwork/hosts";
-import { startMockMcp } from "@openwork/labs";
+import { startMockMcp } from "@openwork/fakes";
 
 const apiUrl = process.env.OPENWORK_EVAL_DEN_API_URL?.trim().replace(/\/+$/, "") ?? "";
 const webUrl = process.env.OPENWORK_EVAL_DEN_WEB_URL?.trim().replace(/\/+$/, "") ?? "";

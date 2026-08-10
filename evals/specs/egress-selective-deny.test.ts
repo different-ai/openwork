@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
-import { outboundManifestFromUnknown, startEgressLab } from "@openwork/labs";
+import { outboundManifestFromUnknown, startEgressLab } from "@openwork/fakes";
 import {
   diagnoseEgressLabProduct,
   productDiagnosticsPrecondition,

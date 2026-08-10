@@ -19,7 +19,7 @@
     "@openwork/evidence": "workspace:*",
     "@openwork/fraimz": "workspace:*",
     "@openwork/hosts": "workspace:*",
-    "@openwork/labs": "workspace:*",
+    "@openwork/fakes": "workspace:*",
     "@openwork/matchers": "workspace:*",
     "@openwork/testkit": "workspace:*"
   },
