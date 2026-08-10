@@ -3619,7 +3619,7 @@ async function syncRuntimeMcpToOpencodeEngine(
   config: ServerConfig,
   workspace: WorkspaceInfo,
   onlyNames?: string[],
-  options?: { throwOnFailure?: boolean; deferred?: boolean },
+  options?: EngineMcpSyncOptions | null,
   serverState?: EngineMcpServerState | null,
 ): Promise<EngineMcpSyncResult> {
   const activeState = activeEngineMcpServerState(config, serverState);
@@ -3637,6 +3637,16 @@ async function syncRuntimeMcpToOpencodeEngine(
   const entries = Object.entries(runtimeMcpMap(runtimeConfig)).filter(
     ([name]) => !onlyNames || onlyNames.includes(name),
   );
+  const configCoveredNames = options?.skipNamesIfConfigCovered ?? null;
+  if (configCoveredNames) {
+    // MCPs the engine already loaded from the OPENCODE_CONFIG file at spawn
+    // must not be re-POSTed: the engine would start a second, idle process
+    // tree for each one (see #3325). Only entries absent from the file need
+    // the explicit registration.
+    const entriesToSync = entries.filter(([name]) => !configCoveredNames.has(name));
+    entries.length = 0;
+    entries.push(...entriesToSync);
+  }
   if (entries.length === 0) {
     if (!onlyNames) {
       recordEngineMcpSyncResult(
@@ -3986,6 +3996,14 @@ export type EngineMcpSyncResult = {
   status: "ok" | "failed" | "skipped";
   syncedNames: string[];
   failures: EngineMcpSyncFailure[];
+};
+export type EngineMcpSyncOptions = {
+  throwOnFailure?: boolean;
+  deferred?: boolean;
+  /** Names already loaded by the engine from the OPENCODE_CONFIG file. These
+   *  entries must not be re-POSTed or the engine spawns a duplicate, idle
+   *  process tree per server (see #3325). */
+  skipNamesIfConfigCovered?: Set<string> | null;
 };
 export type EngineMcpSyncState = { status: "ok" | "failed"; at: number; failures: EngineMcpSyncFailure[] };
 
@@ -4520,19 +4538,48 @@ function logPersistedCloudMcpReconcileError(input: {
   );
 }
 
+// Names of the runtime-DB MCPs that the engine has already loaded from the
+// server-managed OPENCODE_CONFIG file (the engine reads that file at spawn
+// and on every rebuild). Returns null when the file is missing or unreadable,
+// in which case the caller must fall back to the full POST sync.
+async function runtimeMcpNamesInOpenworkRuntimeConfigFile(
+  config: ServerConfig,
+  workspaceId: string,
+): Promise<Set<string> | null> {
+  try {
+    const content = await readFile(openworkRuntimeConfigFilePath(config), "utf8");
+    const parsed = JSON.parse(content) as unknown;
+    const mcp = (parsed as { mcp?: unknown })?.mcp;
+    if (!isRecord(mcp)) return null;
+    return new Set(Object.keys(mcp));
+  } catch {
+    return null;
+  }
+}
+
 // Re-push every workspace's runtime-DB MCPs into the engine. Used at startup:
-// the runtime config file injected via OPENCODE_CONFIG covers workspaces[0]
-// only, so other workspaces' runtime MCPs are invisible to the engine until
-// something re-syncs them. Best-effort.
-export async function syncAllWorkspacesRuntimeMcpToEngine(config: ServerConfig): Promise<void> {
+// the runtime config file injected via OPENCODE_CONFIG covers the managed
+// engine's workspace only, so other workspaces' runtime MCPs are invisible to
+// the engine until something re-syncs them. Best-effort.
+export async function syncAllWorkspacesRuntimeMcpToEngine(
+  config: ServerConfig,
+  options?: { configCoveredWorkspaceId?: string },
+): Promise<void> {
   const serverState = activeEngineMcpServerState(config) ?? null;
+  const configCoveredWorkspaceId = options?.configCoveredWorkspaceId;
+  // The engine already started the config-covered workspace's runtime MCPs
+  // from the OPENCODE_CONFIG file; re-POSTing them would spawn a second,
+  // idle process tree per server (see #3325).
+  const configCoveredMcpNames = configCoveredWorkspaceId
+    ? await runtimeMcpNamesInOpenworkRuntimeConfigFile(config, configCoveredWorkspaceId)
+    : null;
   for (const workspace of config.workspaces) {
     try {
       await syncRuntimeMcpToOpencodeEngine(
         config,
         workspace,
         undefined,
-        undefined,
+        workspace.id === configCoveredWorkspaceId ? { skipNamesIfConfigCovered: configCoveredMcpNames } : undefined,
         serverState,
       );
     } catch (error) {
