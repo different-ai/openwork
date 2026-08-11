@@ -414,13 +414,8 @@ export function AuthPanel({
       return;
     }
 
+    let cancelled = false;
     resolvedLoginOptionPrefillRef.current = key;
-    // This lookup is superseded only when a different email takes over, which the
-    // ref above already tracks. Tying it to effect cleanup instead would latch
-    // loginOptionBusy on any unrelated re-render: the cleanup discards the
-    // in-flight reply, the re-run returns early because it sees the busy flag,
-    // and the invite screen checks the sign-in method forever.
-    const superseded = () => resolvedLoginOptionPrefillRef.current !== key;
 
     async function resolvePrefilledLoginOption() {
       setLoginOptionBusy(true);
@@ -431,7 +426,7 @@ export function AuthPanel({
 
       try {
         const { response, payload } = await requestJson(`/v1/auth/login-options?email=${encodeURIComponent(trimmedEmail)}`, { method: "GET" }, 12000);
-        if (superseded()) {
+        if (cancelled) {
           return;
         }
         if (!response.ok) {
@@ -449,20 +444,22 @@ export function AuthPanel({
         setAuthMode(nextOption.nextStep === "new_account" ? "sign-up" : "sign-in");
         setLoginOption(nextOption);
       } catch (error) {
-        if (!superseded()) {
+        if (!cancelled) {
           setLoginOptionError(error instanceof Error ? error.message : "Could not check sign-in options.");
         }
       } finally {
-        if (!superseded()) {
+        if (!cancelled) {
           setLoginOptionBusy(false);
         }
       }
     }
 
     void resolvePrefilledLoginOption();
-    // loginOption and loginOptionBusy are read above only to skip redundant work.
-    // Listing them here would re-run this effect on its own state writes.
-  }, [emailFirstFlow, prefillKey, prefilledEmail, resolveEmailFirstOnPrefill, setAuthMode, setAuthName, setEmail, setPassword]);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [emailFirstFlow, loginOption, loginOptionBusy, prefillKey, prefilledEmail, resolveEmailFirstOnPrefill, setAuthMode, setAuthName, setEmail, setPassword]);
 
   const switchMode = (mode: AuthMode) => {
     if (mode === authMode && !passwordResetRequested) {

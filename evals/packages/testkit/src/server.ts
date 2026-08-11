@@ -46,13 +46,6 @@ export interface ServerOptions {
   org?: OrgShape;
   reuse?: DenRef;
   reuseMembers?: Record<string, PersonShape>;
-  /**
-   * Extra origins Den should trust, on top of its own API and web hosts. A
-   * loopback identity provider needs this: Den refuses to register an SSO
-   * provider whose endpoints are not publicly routable unless the origin is
-   * trusted, so a spec that stands one up has to name it here.
-   */
-  trustedOrigins?: readonly string[];
 }
 
 export interface Den extends AsyncDisposable {
@@ -523,7 +516,7 @@ export async function server(options: ServerOptions): Promise<Den> {
     await runDbPush(database.url);
     const [apiPort, webPort] = await allocateFreePorts(2);
     if (apiPort === undefined || webPort === undefined) throw new Error("Could not allocate Den API/Web ports.");
-    const origins = [...trustedOrigins(apiPort, webPort), ...(options.trustedOrigins ?? [])].join(",");
+    const origins = trustedOrigins(apiPort, webPort).join(",");
     const ref: DenRef = {
       apiUrl: `http://127.0.0.1:${apiPort}`,
       webUrl: `http://127.0.0.1:${webPort}`,
