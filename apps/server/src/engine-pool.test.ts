@@ -171,11 +171,9 @@ async function createFixture(options?: { bin?: "ready" | "unready" }): Promise<F
   };
 
   const hookCalls = { reloadInPlace: 0, postRefreshSync: 0 };
-  let busyOverride: ((workspaceInput: WorkspaceInfo) => Promise<boolean>) | null = null;
   const hooks: EnginePoolHooks = {
     reloadInPlace: async () => { hookCalls.reloadInPlace += 1; },
-    engineBusy: async (_config, workspaceInput) => {
-      if (busyOverride) return busyOverride(workspaceInput);
+    engineBusy: async () => {
       const state = JSON.parse(await readFile(statePath, "utf8").catch(() => "{}")) as Record<string, string[]>;
       return Object.values(state).some((sessions) => sessions.length > 0);
     },
@@ -296,8 +294,8 @@ describe("engine pool", () => {
     // object every request path reads.
     const newUrl = pool.primaryUrl();
     expect(newUrl).not.toBe(primary.url);
-    expect(fixture.config.opencodeBaseUrl).toBe(newUrl);
-    expect(fixture.config.workspaces[0]?.baseUrl).toBe(newUrl);
+    expect(fixture.config.opencodeBaseUrl ?? null).toBe(newUrl);
+    expect(fixture.config.workspaces[0]?.baseUrl ?? null).toBe(newUrl);
     expect(pool.snapshot().generations.map((entry) => entry.role).sort()).toEqual(["draining", "primary"]);
 
     // The old engine is closed only once its session finishes.
