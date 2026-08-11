@@ -19,22 +19,20 @@ test.
 
 ## Publish the PR head
 
-After a multi-spec run, publish every tape whose `gitSha` matches the PR head:
+After a multi-spec run, publish each tape whose `gitSha` matches the PR head:
 
 ```bash
-pnpm fraimz:publish -- --pr <n> --all
+pnpm fraimz:publish --pr <n> --roll <roll-directory-name>
 ```
 
 `fraimz:publish` is an implementation-compatibility command name. It publishes
-existing `@openwork/testkit` tapes, not legacy flows.
+existing `@openwork/testkit` tapes, not legacy flows. There is no `--all` flag;
+run the command once per matching roll under `evals/results/rolls/`. Without
+`--roll` it selects the newest roll, which is wrong after a multi-spec run.
 
-- `--all` processes matching rolls chronologically and prints why stale or
-  malformed rolls were skipped.
-- Do not combine `--all` with `--roll`, `--force`, `--dry-run`, or `--open`.
 - Publishing accumulates sections in one sticky comment. Publishing a new spec
   preserves existing sections; republishing the same spec replaces only that
   spec's section. Confirm the summary lists every spec and verdict.
-- Use `--roll <dir|name>` only to publish one selected existing tape.
 
 ## Refuse misleading evidence
 
@@ -43,5 +41,11 @@ existing `@openwork/testkit` tapes, not legacy flows.
   output is annotated; call the exception out explicitly. Red tapes are valid
   human-verification artifacts and should be published when they explain a
   `Failed` or `Incomplete` verdict.
-- Read `BLOB_READ_WRITE_TOKEN` from the environment or the Infisical fallback.
-  Without it, still post verdicts with a no-screenshots note.
+- The publisher reads `BLOB_READ_WRITE_TOKEN` from the environment, then falls
+  back to `infisical secrets get BLOB_READ_WRITE_TOKEN --plain --silent`. When
+  a roll has frames and neither source yields a token, publishing fails and the
+  error quotes the fallback's failure; fix the token (see `get-env-var`) and
+  republish instead of retrying blind.
+- Pass `--no-screenshots` only to deliberately post a frameful verdict without
+  its frames, and call that exception out in the report and PR comment.
+  Facts-only rolls publish normally without a token.

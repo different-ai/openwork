@@ -262,6 +262,110 @@ test("publishPr renders facts without images, skips fact uploads, marks failures
   }
 });
 
+test("publishPr refuses to publish a frameful roll when no blob token resolves", async () => {
+  const rollDir = await mkdtemp(join(tmpdir(), "openwork-evidence-token-guard-"));
+  const previousToken = process.env.BLOB_READ_WRITE_TOKEN;
+  try {
+    await writeFile(join(rollDir, "roll.json"), JSON.stringify(dryRunRecord(rollDir)));
+    await writeFile(join(rollDir, "01-dry-run.png"), Buffer.from("regular png"));
+    delete process.env.BLOB_READ_WRITE_TOKEN;
+    let fetchCalled = false;
+    let commentPosted = false;
+    const exec: CommandRunner = (command, args) => {
+      if (command === "infisical") return { status: 1, stdout: "", stderr: "not logged in" };
+      if (args.includes("headRefOid")) return { status: 0, stdout: JSON.stringify({ headRefOid: ROLL_SHA }), stderr: "" };
+      commentPosted = true;
+      return { status: 0, stdout: "", stderr: "" };
+    };
+    await assert.rejects(
+      () => publishPr({ pr: 17, rollDir }, { exec, fetch: async () => { fetchCalled = true; return new Response(); } }),
+      /Refusing to publish 1 frame without screenshots: BLOB_READ_WRITE_TOKEN is unset and the infisical fallback failed \(not logged in\).*--no-screenshots/,
+    );
+    assert.equal(fetchCalled, false);
+    assert.equal(commentPosted, false);
+  } finally {
+    if (previousToken === undefined) delete process.env.BLOB_READ_WRITE_TOKEN;
+    else process.env.BLOB_READ_WRITE_TOKEN = previousToken;
+    await rm(rollDir, { recursive: true, force: true });
+  }
+});
+
+test("publishPr --no-screenshots deliberately publishes the verdict without uploads", async () => {
+  const rollDir = await mkdtemp(join(tmpdir(), "openwork-evidence-no-screenshots-"));
+  const previousToken = process.env.BLOB_READ_WRITE_TOKEN;
+  try {
+    await writeFile(join(rollDir, "roll.json"), JSON.stringify(dryRunRecord(rollDir)));
+    await writeFile(join(rollDir, "01-dry-run.png"), Buffer.from("regular png"));
+    delete process.env.BLOB_READ_WRITE_TOKEN;
+    let fetchCalled = false;
+    let infisicalCalled = false;
+    let postedMarkdown = "";
+    const exec: CommandRunner = (command, args, opts) => {
+      if (command === "infisical") {
+        infisicalCalled = true;
+        return { status: 1, stdout: "", stderr: "not logged in" };
+      }
+      if (args.includes("headRefOid")) return { status: 0, stdout: JSON.stringify({ headRefOid: ROLL_SHA }), stderr: "" };
+      if (args.includes("comments")) return { status: 0, stdout: JSON.stringify({ comments: [] }), stderr: "" };
+      postedMarkdown = opts?.input ?? "";
+      return { status: 0, stdout: "posted", stderr: "" };
+    };
+    const result = await publishPr(
+      { pr: 17, rollDir, noScreenshots: true },
+      { exec, fetch: async () => { fetchCalled = true; return new Response(); } },
+    );
+    assert.equal(result.posted, true);
+    assert.equal(fetchCalled, false);
+    assert.equal(infisicalCalled, false);
+    assert.match(postedMarkdown, /screenshots not uploaded \(--no-screenshots\)/);
+  } finally {
+    if (previousToken === undefined) delete process.env.BLOB_READ_WRITE_TOKEN;
+    else process.env.BLOB_READ_WRITE_TOKEN = previousToken;
+    await rm(rollDir, { recursive: true, force: true });
+  }
+});
+
+test("publishPr still publishes a facts-only roll when no blob token resolves", async () => {
+  const rollDir = await mkdtemp(join(tmpdir(), "openwork-evidence-facts-only-"));
+  const previousToken = process.env.BLOB_READ_WRITE_TOKEN;
+  try {
+    const roll = dryRunRecord(rollDir);
+    roll.frames = [{
+      caption: "API witness",
+      fileName: "",
+      hash: "fact-hash",
+      route: "",
+      at: roll.createdAt,
+      description: "The API returned HTTP 500.",
+      model: "test-model",
+      ok: true,
+      results: [{ expectation: "API witness", passed: true, evidence: "HTTP 500 observed" }],
+    }];
+    await writeFile(join(rollDir, "roll.json"), JSON.stringify(roll));
+    delete process.env.BLOB_READ_WRITE_TOKEN;
+    let fetchCalled = false;
+    let postedMarkdown = "";
+    const exec: CommandRunner = (command, args, opts) => {
+      if (command === "infisical") return { status: 1, stdout: "", stderr: "not logged in" };
+      if (args.includes("headRefOid")) return { status: 0, stdout: JSON.stringify({ headRefOid: ROLL_SHA }), stderr: "" };
+      if (args.includes("comments")) return { status: 0, stdout: JSON.stringify({ comments: [] }), stderr: "" };
+      postedMarkdown = opts?.input ?? "";
+      return { status: 0, stdout: "posted", stderr: "" };
+    };
+    const result = await publishPr(
+      { pr: 17, rollDir },
+      { exec, fetch: async () => { fetchCalled = true; return new Response(); } },
+    );
+    assert.equal(result.posted, true);
+    assert.equal(fetchCalled, false);
+    assert.match(postedMarkdown, /screenshots not uploaded \(no BLOB_READ_WRITE_TOKEN\)/);
+  } finally {
+    if (previousToken === undefined) delete process.env.BLOB_READ_WRITE_TOKEN;
+    else process.env.BLOB_READ_WRITE_TOKEN = previousToken;
+    await rm(rollDir, { recursive: true, force: true });
+  }
+});
+
 test("publishPr reports gh authentication guidance when the PR head cannot be resolved", async () => {
   const rollDir = await mkdtemp(join(tmpdir(), "openwork-evidence-gh-auth-"));
   try {

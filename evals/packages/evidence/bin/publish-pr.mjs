@@ -13,6 +13,7 @@ let rollArg;
 let dryRun = false;
 let force = false;
 let shouldOpen = false;
+let noScreenshots = false;
 
 for (let index = 0; index < args.length; index += 1) {
   const arg = args[index];
@@ -27,6 +28,10 @@ for (let index = 0; index < args.length; index += 1) {
   }
   if (arg === "--open") {
     shouldOpen = true;
+    continue;
+  }
+  if (arg === "--no-screenshots") {
+    noScreenshots = true;
     continue;
   }
   if (arg === "--pr" || arg === "--roll") {
@@ -73,5 +78,5 @@ if (shouldOpen) {
   process.exit(0);
 }
 
-const result = await publishPr({ pr, rollDir, dryRun, force });
+const result = await publishPr({ pr, rollDir, dryRun, force, noScreenshots });
 if (!dryRun) process.stdout.write(`${result.updated ? "Updated" : "Posted"} photo roll for PR ${pr}.\n`);

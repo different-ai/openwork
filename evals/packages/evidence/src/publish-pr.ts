@@ -32,6 +32,8 @@ export interface PublishPrOptions {
   rollDir: string;
   dryRun?: boolean;
   force?: boolean;
+  /** Deliberately publish the verdict without uploading frames. */
+  noScreenshots?: boolean;
 }
 
 export interface PublishPrResult {
@@ -71,15 +73,24 @@ function shortSha(sha: string): string {
   return sha.slice(0, 7);
 }
 
-function resolveBlobToken(exec: CommandRunner): string | null {
+type BlobTokenResolution =
+  | { token: string }
+  | { token: null; detail: string };
+
+function resolveBlobToken(exec: CommandRunner): BlobTokenResolution {
   const fromEnv = process.env.BLOB_READ_WRITE_TOKEN;
-  if (fromEnv) return fromEnv;
+  if (fromEnv) return { token: fromEnv };
   const result = exec(
     "infisical",
     ["secrets", "get", "BLOB_READ_WRITE_TOKEN", "--plain", "--silent"],
   );
-  const token = result.status === 0 && !result.error ? result.stdout.trim() : "";
-  return token.length > 0 ? token : null;
+  if (result.status !== 0 || result.error) {
+    const detail = result.error?.message ?? (result.stderr.trim() || `exit ${result.status}`);
+    return { token: null, detail: `the infisical fallback failed (${detail})` };
+  }
+  const token = result.stdout.trim();
+  if (token.length === 0) return { token: null, detail: "the infisical fallback returned an empty token" };
+  return { token };
 }
 
 async function uploadImages(
@@ -226,17 +237,28 @@ export async function publishPr(
     ? `⚠ evidence from ${shortSha(roll.gitSha)}, PR head is ${shortSha(prHeadSha)}`
     : undefined;
 
-  const token = resolveBlobToken(exec);
-  const urls = token
-    ? await uploadImages(
-      options.rollDir,
-      rollName,
-      [...new Set(roll.frames.map((frame) => frame.fileName).filter((fileName) => fileName.length > 0))],
-      token,
-      fetcher,
-    )
-    : {};
-  const uploadNotice = token ? undefined : "screenshots not uploaded (no BLOB_READ_WRITE_TOKEN)";
+  const frames = [...new Set(roll.frames.map((frame) => frame.fileName).filter((fileName) => fileName.length > 0))];
+  let urls: Record<string, string> = {};
+  let uploadNotice: string | undefined;
+  if (options.noScreenshots) {
+    uploadNotice = "screenshots not uploaded (--no-screenshots)";
+  } else {
+    const resolved = resolveBlobToken(exec);
+    if (resolved.token !== null) {
+      urls = await uploadImages(options.rollDir, rollName, frames, resolved.token, fetcher);
+    } else if (frames.length > 0) {
+      // Posting a frameful roll without its frames silently degrades the
+      // evidence; require the operator to fix the token or opt out explicitly.
+      throw new Error(
+        `Refusing to publish ${frames.length} frame${frames.length === 1 ? "" : "s"} without screenshots: `
+        + `BLOB_READ_WRITE_TOKEN is unset and ${resolved.detail}. `
+        + 'Export it with `export BLOB_READ_WRITE_TOKEN="$(infisical secrets get BLOB_READ_WRITE_TOKEN --plain --silent)"`, '
+        + "or pass --no-screenshots to deliberately publish the verdict without frames.",
+      );
+    } else {
+      uploadNotice = "screenshots not uploaded (no BLOB_READ_WRITE_TOKEN)";
+    }
+  }
   const markdown = renderPrMarkdown(roll, urls, {
     reproCommand,
     notice: [staleNotice, uploadNotice].filter((notice) => notice !== undefined).join(" · ") || undefined,
