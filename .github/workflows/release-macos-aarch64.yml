@@ -637,6 +637,48 @@ jobs:
           set -euo pipefail
           echo "::warning::Publishing unsigned Windows installer because SIGN_WINDOWS is not enabled."
 
+      - name: Validate and Checksum Windows Assets
+        if: matrix.os_type == 'windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          assets=(apps/desktop/dist-electron/${{ matrix.asset_prefix }}-win-*.{exe,zip})
+          if [ ${#assets[@]} -eq 0 ]; then
+            echo "No Windows assets found for checksumming." >&2
+            exit 1
+          fi
+          for asset in "${assets[@]}"; do
+            echo "Validating asset: $asset"
+            if [ ! -s "$asset" ]; then
+              echo "Error: Asset $asset is empty or missing." >&2
+              exit 1
+            fi
+            if [[ "$asset" == *.exe && "$SIGN_WINDOWS" == "true" ]]; then
+              echo "Verifying digital signature of $asset..."
+              node -e '
+                const { spawnSync } = require("child_process");
+                const filePath = process.argv[1];
+                const result = spawnSync("powershell.exe", [
+                  "-NoProfile",
+                  "-Command",
+                  `$sig = Get-AuthenticodeSignature "${filePath}"; if ($sig.Status -ne 0 -and $sig.Status -ne "Valid") { write-error "Invalid signature status: " + $sig.Status; exit 1 } else { $signer = if ($sig.SignerCertificate) { $sig.SignerCertificate.Subject } else { "None" }; $ts = if ($sig.TimeStamperCertificate) { $sig.TimeStamperCertificate.Subject } else { "None" }; write-output ("Signature is Valid. Signer: " + $signer + ", Timestamp: " + $ts) }`
+                ], { stdio: "inherit" });
+                if (result.status !== 0) process.exit(1);
+              ' "$asset"
+            fi
+            echo "Generating SHA-256 for $asset..."
+            node -e '
+              const fs = require("fs");
+              const crypto = require("crypto");
+              const path = require("path");
+              const filePath = process.argv[1];
+              const hash = crypto.createHash("sha256").update(fs.readFileSync(filePath)).digest("hex");
+              fs.writeFileSync(filePath + ".sha256", hash + " *" + path.basename(filePath) + "\n");
+              console.log("Checksum: " + hash);
+            ' "$asset"
+          done
+
       # electron-builder may still emit latest*.yml for a custom distribution.
       # Normalize each non-public feed so it cannot update into another flavor.
       - name: Normalize custom distribution updater manifests

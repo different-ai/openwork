@@ -114,6 +114,35 @@ function updateLatestYml(installerPath) {
   writeFileSync(latestPath, YAML.stringify(manifest), "utf8");
 }
 
+function verifySignature(filePath) {
+  if (process.platform === "win32") {
+    console.log(`Verifying digital signature of ${filePath}...`);
+    const result = spawnSync("powershell.exe", [
+      "-NoProfile",
+      "-Command",
+      `$sig = Get-AuthenticodeSignature '${filePath}'; $subj = if ($sig.SignerCertificate) { $sig.SignerCertificate.Subject } else { $null }; $ts = if ($sig.TimeStamperCertificate) { $sig.TimeStamperCertificate.Subject } else { $null }; [PSCustomObject]@{ Status = $sig.Status; StatusMessage = $sig.StatusMessage; Subject = $subj; TimeStamper = $ts } | ConvertTo-Json`
+    ], { encoding: "utf8" });
+
+    try {
+      const sigInfo = JSON.parse(result.stdout.trim());
+      console.log(`Authenticode status: ${sigInfo.Status} (${sigInfo.StatusMessage || "No status message"})`);
+      console.log(`Signer Certificate: ${sigInfo.Subject || "None"}`);
+      console.log(`Timestamp Certificate: ${sigInfo.TimeStamper || "None"}`);
+
+      if (sigInfo.Status !== 0 && sigInfo.Status !== "Valid") {
+        throw new Error(`Digital signature verification failed for ${filePath}! Status: ${sigInfo.Status}`);
+      }
+      if (!sigInfo.TimeStamper) {
+        console.warn(`WARNING: No timestamp signature found on ${filePath}`);
+      }
+    } catch (e) {
+      throw new Error(`Failed to verify signature for ${filePath}. Error: ${e.message}. Output: ${result.stdout} ${result.stderr}`);
+    }
+  } else {
+    console.log(`Non-Windows OS. Skipping Authenticode verification for ${filePath}.`);
+  }
+}
+
 if (!existsSync(signedArtifactDir)) {
   console.error(`Signed artifact directory does not exist: ${signedArtifactDir}`);
   process.exit(1);
@@ -131,6 +160,8 @@ const distInstaller = findOne(
   walk(distDir).filter((file) => basename(file) === basename(signedInstaller)),
   "matching unsigned Windows installer in dist-electron",
 );
+
+verifySignature(signedInstaller);
 
 copyFileSync(signedInstaller, distInstaller);
 regenerateBlockmap(distInstaller);
