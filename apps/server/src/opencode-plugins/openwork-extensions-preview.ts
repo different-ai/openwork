@@ -4,6 +4,7 @@ import { homedir, platform } from "node:os";
 import { z } from "zod";
 import type { OpenworkAffordanceEffects } from "@openwork/types/openwork-affordance";
 import { automationProposalSchema } from "@openwork/types/automations";
+import { repairFileInputToolResult } from "./openwork-extensions-preview-file-inputs.js";
 import {
   combineInstructionSections,
   composeAgentInstructions,
@@ -923,6 +924,30 @@ export const OpenWorkExtensionsPreview = async (factoryInput?: unknown) => {
       createInstructionSection("browser", OPENWORK_BROWSER_INSTRUCTION),
     );
     output.system.push(...composeAgentInstructions(sections));
+  },
+  // Fulfills declarative capability file inputs (e.g. gmail-drafts attachments):
+  // when the cloud route answers file_input_requires_host, re-run the request
+  // through the named local extension action and rewrite the result in place.
+  "tool.execute.after": async (
+    input: { tool: string; sessionID: string; callID: string; args: unknown },
+    output: unknown,
+  ) => {
+    try {
+      await repairFileInputToolResult({
+        tool: input.tool,
+        args: input.args,
+        result: output,
+        callExtensionAction: (call) => postJson("/experimental/extensions/call", {
+          extensionId: call.extensionId,
+          action: call.action,
+          args: call.args,
+          context: contextPayload(factoryContext),
+        }),
+      });
+    } catch (error) {
+      // Never let repair failures break an unrelated tool result.
+      console.error("[openwork:file-inputs] repair failed", unknownErrorMessage(error));
+    }
   },
   tool: {
     openwork_context: {

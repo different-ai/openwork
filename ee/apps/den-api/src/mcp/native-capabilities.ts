@@ -12,7 +12,7 @@ import {
 } from "./catalog.js"
 import { buildExternalConnectionStatus, type ExternalCapabilityMatch, type McpMemberIdentity } from "./external-capabilities.js"
 import { invokeMcpOperation, normalizeToolBody, normalizeToolRecord } from "./invoke.js"
-import { compareCapabilityMatches, scoreText, tokenize, type CapabilityMatch } from "./search.js"
+import { compareCapabilityMatches, descriptionFor, scoreText, tokenize, type CapabilityMatch } from "./search.js"
 
 export const NATIVE_CAPABILITY_PREFIX = "native:"
 
@@ -53,7 +53,7 @@ function operationScore(connection: NativeProviderConnectionEntry, operation: Mc
     operationNameTokens(connection.name, operation.name),
     tokenize(`${connection.name} ${operationSummary(operation)}`),
     queryTokens,
-    tokenize(operation.path),
+    [...tokenize(operation.path), ...tokenize(descriptionFor(operation) ?? "")],
   )
 }
 
@@ -74,6 +74,7 @@ function capabilityMatch(
     path: operation.path,
     score,
     summary: `[${connection.name}] ${operationSummary(operation)}`,
+    ...(descriptionFor(operation) === undefined ? {} : { description: descriptionFor(operation) }),
     pathParams: pathParameterNamesFromTemplate(operation.path),
     queryParams: getParameters(operation.operation, "query")
       .flatMap((parameter) => typeof parameter.name === "string" ? [parameter.name] : []),

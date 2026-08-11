@@ -81,6 +81,7 @@ const capabilityMatchOutputSchema = z.object({
   path: z.string(),
   score: z.number(),
   summary: z.string(),
+  description: z.string().optional(),
   pathParams: z.array(z.string()),
   queryParams: z.array(z.string()),
   hasBody: z.boolean(),

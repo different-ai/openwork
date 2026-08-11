@@ -25,6 +25,8 @@ export type CapabilityMatch = {
   path: string
   score: number
   summary: string
+  /** Route-level description with agent guidance (for example redirects to companion actions), when it adds detail beyond the summary. */
+  description?: string
   /** Path parameter names this tool's `path` template requires, e.g. ["workerId"]. */
   pathParams: string[]
   /** Query parameter names this tool documents, if any. */
@@ -101,6 +103,17 @@ function summaryFor(operation: McpToolOperation): string {
   return operation.operation.summary ?? operation.operation.description ?? `${operation.method} ${operation.path}`
 }
 
+/**
+ * The route description often carries agent guidance the summary drops (for
+ * example the gmail-drafts capability redirecting attachment requests to the
+ * local `openwork-cloud-uploads` extension). On `/mcp/agent`, search matches
+ * are the only discovery surface, so that guidance must ride along.
+ */
+export function descriptionFor(operation: McpToolOperation): string | undefined {
+  const description = operation.operation.description
+  return description && description !== summaryFor(operation) ? description : undefined
+}
+
 function scoreOperation(operation: McpToolOperation, queryTokens: string[]): number {
   if (queryTokens.length === 0) {
     return 0
@@ -108,8 +121,8 @@ function scoreOperation(operation: McpToolOperation, queryTokens: string[]): num
 
   const nameTokens = tokenizeToolName(operation.name)
   const summaryTokens = tokenize(summaryFor(operation))
-  const pathTokens = tokenize(operation.path)
-  return scoreText(nameTokens, summaryTokens, queryTokens, pathTokens)
+  const extraTokens = [...tokenize(operation.path), ...tokenize(descriptionFor(operation) ?? "")]
+  return scoreText(nameTokens, summaryTokens, queryTokens, extraTokens)
 }
 
 export function searchCapabilities(
@@ -127,6 +140,7 @@ export function searchCapabilities(
       path: operation.path,
       score: scoreOperation(operation, queryTokens),
       summary: summaryFor(operation),
+      ...(descriptionFor(operation) === undefined ? {} : { description: descriptionFor(operation) }),
       pathParams: pathParameterNamesFromTemplate(operation.path),
       queryParams: getParameters(operation.operation, "query").map((parameter) => parameter.name as string),
       hasBody: hasJsonRequestBody(operation.operation),

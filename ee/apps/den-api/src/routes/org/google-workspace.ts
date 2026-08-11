@@ -58,6 +58,37 @@ const createDraftBodySchema = z.object({
   threadId: z.string().trim().min(1).max(512).optional().describe("Gmail thread id to reply on. Required for replies and forwards; get it from the gmail-messages capability. When set, the draft is attached to that thread as a reply — keep the thread's subject (e.g. 'Re: …')."),
 }).strict()
 
+/**
+ * SEP-2356-style declarative file input. The model passes workspace file
+ * paths; it never passes bytes. A capable OpenWork host recognizes the
+ * file_input_requires_host error below and re-runs the draft through the
+ * authenticated multipart lane (/v1/direct-uploads/google-workspace/gmail-drafts),
+ * so attachment bytes stay outside model context end to end.
+ */
+const gmailDraftFileInput = {
+  field: "attachments",
+  extensionId: "openwork-cloud-uploads",
+  action: "gmail_create_draft_with_attachments",
+  argsField: "paths",
+}
+
+const createDraftCapabilityBodySchema = createDraftBodySchema.extend({
+  attachments: z.array(z.string().trim().min(1).max(2_000)).min(1).max(DIRECT_UPLOAD_MAX_FILES).optional()
+    .describe("Optional workspace file paths to attach (up to 10 files, 4 MiB total). Pass file paths exactly as they exist in the workspace — never file bytes or base64. The OpenWork host uploads the bytes outside model context.")
+    .meta({ "x-mcp-file": { maxSize: DIRECT_UPLOAD_MAX_BYTES, maxFiles: DIRECT_UPLOAD_MAX_FILES } }),
+})
+
+const fileInputRequiresHostSchema = z.object({
+  error: z.literal("file_input_requires_host"),
+  message: z.string(),
+  fileInput: z.object({
+    field: z.string(),
+    extensionId: z.string(),
+    action: z.string(),
+    argsField: z.string(),
+  }),
+}).meta({ ref: "GoogleWorkspaceFileInputRequiresHostError" })
+
 const createDraftResponseSchema = z.object({
   ok: z.literal(true),
   draftId: z.string(),
@@ -1295,20 +1326,29 @@ export function registerGoogleWorkspaceRoutes<T extends { Variables: OrgRouteVar
     "/v1/capabilities/google-workspace/gmail-drafts",
     describeRoute({
       tags: ["Capability Sources"],
-      summary: "Create a Gmail draft or threaded reply draft without attachments",
-      description: "Creates a plain-text Gmail draft in the calling member own mailbox. For workspace attachments, use the openwork-cloud-uploads gmail_create_draft_with_attachments action so file bytes stay outside model context. Set threadId for replies and forwards. Always share the returned draftUrl.",
+      summary: "Create a Gmail draft or threaded reply draft, optionally attaching workspace files",
+      description: "Creates a plain-text Gmail draft in the calling member own mailbox. To attach workspace files, list their paths in attachments — pass paths only, never file bytes; the OpenWork host uploads the bytes outside model context. Set threadId for replies and forwards. Always share the returned draftUrl.",
       responses: {
         200: jsonResponse("Draft created.", createDraftResponseSchema),
         400: jsonResponse("The draft request was invalid.", z.union([invalidRequestSchema, missingThreadIdSchema])),
         401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
         409: jsonResponse("The calling member has not connected their Google account or is missing permission.", needsConnectionSchema),
+        422: jsonResponse("The attachments file input must be fulfilled by the OpenWork host; no draft was created.", fileInputRequiresHostSchema),
         502: jsonResponse("Google rejected the request.", upstreamErrorSchema),
       },
     }),
     orgMemberRoute(),
-    jsonValidator(createDraftBodySchema),
+    jsonValidator(createDraftCapabilityBodySchema),
     async (c) => {
-      const result = await executeGmailDraft(c.req.valid("json"), c.get("organizationContext"), [])
+      const { attachments, ...draft } = c.req.valid("json")
+      if (attachments !== undefined) {
+        return c.json({
+          error: "file_input_requires_host",
+          message: "attachments lists workspace file paths whose bytes are uploaded by the OpenWork host, not through this capability. No draft was created. OpenWork desktop handles this automatically; if this error reaches you, the host cannot upload files here — create the draft without attachments or ask the user to update the OpenWork app.",
+          fileInput: gmailDraftFileInput,
+        }, 422)
+      }
+      const result = await executeGmailDraft(draft, c.get("organizationContext"), [])
       return c.json(result.body, result.status)
     },
   )

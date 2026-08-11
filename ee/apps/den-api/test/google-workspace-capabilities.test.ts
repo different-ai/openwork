@@ -734,6 +734,30 @@ test("gmail plain draft supports cc without requiring a thread", async () => {
   })
 })
 
+test("gmail draft with attachment paths returns file_input_requires_host and creates nothing", async () => {
+  const response = await request("/v1/capabilities/google-workspace/gmail-drafts", {
+    method: "POST",
+    body: {
+      to: "sam@acme.test",
+      subject: "Quarterly plan",
+      body: "Draft body",
+      attachments: ["reports/quarterly-plan.pdf"],
+    },
+  })
+  expect(response.status).toBe(422)
+  expect(googleCallCount).toBe(0)
+  const body: unknown = await response.json()
+  const responseBody = expectRecord(body, "file input response")
+  expect(responseBody.error).toBe("file_input_requires_host")
+  expect(responseBody.fileInput).toEqual({
+    field: "attachments",
+    extensionId: "openwork-cloud-uploads",
+    action: "gmail_create_draft_with_attachments",
+    argsField: "paths",
+  })
+  expect(expectMessage(body)).toContain("No draft was created")
+})
+
 test("direct Gmail upload attaches exact workspace bytes without model-facing base64", async () => {
   const attachmentBytes = Buffer.from("%PDF-1.4\nworkspace invoice\n", "utf8")
   const form = new FormData()
@@ -1141,9 +1165,14 @@ test("Google Workspace capability tools are discoverable and keep readable names
   expect(gmailMatch?.name).toBe("getCapabilitiesGoogleWorkspaceGmailMessages")
   expect(gmailMatch?.queryParams).toEqual(["q", "maxResults"])
   expect(searchCapabilities(catalog, "outlook mail messages", 20).find((match) => match.name === "getCapabilitiesMicrosoft365MailMessages")?.queryParams).toEqual(["search", "maxResults"])
-  const draftMatch = searchCapabilities(catalog, "gmail draft without attachments", 10)[0]
+  const draftMatch = searchCapabilities(catalog, "gmail draft with attachments", 10)[0]
   expect(draftMatch?.name).toBe("postCapabilitiesGoogleWorkspaceGmailDrafts")
-  expect(draftMatch?.summary).toContain("without attachments")
+  expect(draftMatch?.summary).toContain("attaching workspace files")
+  expect(draftMatch?.description).toContain("never file bytes")
+  const draftBodySchema = expectRecord(draftMatch?.bodySchema, "draft body schema")
+  const draftProperties = expectRecord(draftBodySchema.properties, "draft body schema properties")
+  const attachmentsSchema = expectRecord(draftProperties.attachments, "attachments schema")
+  expect(attachmentsSchema["x-mcp-file"]).toEqual({ maxSize: 4 * 1024 * 1024, maxFiles: 10 })
   expect(searchCapabilities(catalog, "download gmail attachment bytes", 10)[0]?.name).toBe("getCapabilitiesGoogleWorkspaceGmailAttachment")
 
   const expectedNames = [
