@@ -1,1 +1,0 @@
-export * from "./den.ts";

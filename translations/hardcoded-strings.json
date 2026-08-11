@@ -1,0 +1,4362 @@
+[
+  {
+    "from": "\"Engine status\"",
+    "to": "\"引擎状态\"",
+    "source": "translations-advanced-1.mjs"
+  },
+  {
+    "from": "\"Engine MCP servers\"",
+    "to": "\"引擎 MCP 服务器\"",
+    "source": "translations-advanced-1.mjs"
+  },
+  {
+    "from": "\"Engine MCP status\"",
+    "to": "\"引擎 MCP 状态\"",
+    "source": "translations-advanced-1.mjs"
+  },
+  {
+    "from": "\"Engine registration\"",
+    "to": "\"引擎注册\"",
+    "source": "translations-advanced-1.mjs"
+  },
+  {
+    "from": "\"Endpoint server\"",
+    "to": "\"端点服务器\"",
+    "source": "translations-advanced-1.mjs"
+  },
+  {
+    "from": "\"Direct endpoint check\"",
+    "to": "\"直接端点检查\"",
+    "source": "translations-advanced-1.mjs"
+  },
+  {
+    "from": "\"Direct probe\"",
+    "to": "\"直接探测\"",
+    "source": "translations-advanced-1.mjs"
+  },
+  {
+    "from": "\"Direct probe steps\"",
+    "to": "\"直接探测步骤\"",
+    "source": "translations-advanced-1.mjs"
+  },
+  {
+    "from": "\"Direct tools/list\"",
+    "to": "\"直接 tools/list\"",
+    "source": "translations-advanced-1.mjs"
+  },
+  {
+    "from": "\"Feature probes\"",
+    "to": "\"功能探测\"",
+    "source": "translations-advanced-1.mjs"
+  },
+  {
+    "from": "\"First failure\"",
+    "to": "\"首次失败\"",
+    "source": "translations-advanced-1.mjs"
+  },
+  {
+    "from": "\"First issue\"",
+    "to": "\"首个问题\"",
+    "source": "translations-advanced-1.mjs"
+  },
+  {
+    "from": "\"Failure detail\"",
+    "to": "\"失败详情\"",
+    "source": "translations-advanced-1.mjs"
+  },
+  {
+    "from": "\"Failure message\"",
+    "to": "\"失败消息\"",
+    "source": "translations-advanced-1.mjs"
+  },
+  {
+    "from": "\"Probe transport cause\"",
+    "to": "\"探测传输原因\"",
+    "source": "translations-advanced-1.mjs"
+  },
+  {
+    "from": "\"Reference ID\"",
+    "to": "\"参考 ID\"",
+    "source": "translations-advanced-1.mjs"
+  },
+  {
+    "from": "\"Request ID\"",
+    "to": "\"请求 ID\"",
+    "source": "translations-advanced-1.mjs"
+  },
+  {
+    "from": "\"Last engine refresh\"",
+    "to": "\"上次引擎刷新\"",
+    "source": "translations-advanced-1.mjs"
+  },
+  {
+    "from": "\"Refresh engine connection\"",
+    "to": "\"刷新引擎连接\"",
+    "source": "translations-advanced-1.mjs"
+  },
+  {
+    "from": "\"Test now\"",
+    "to": "\"立即测试\"",
+    "source": "translations-advanced-1.mjs"
+  },
+  {
+    "from": "\"Test again\"",
+    "to": "\"重新测试\"",
+    "source": "translations-advanced-1.mjs"
+  },
+  {
+    "from": "\"Repair and test\"",
+    "to": "\"修复并测试\"",
+    "source": "translations-advanced-1.mjs"
+  },
+  {
+    "from": "\"Copied sanitized diagnostic to the clipboard.\"",
+    "to": "\"已将脱敏诊断复制到剪贴板。\"",
+    "source": "translations-advanced-1.mjs"
+  },
+  {
+    "from": "\"Could not copy the diagnostic.\"",
+    "to": "\"无法复制诊断。\"",
+    "source": "translations-advanced-1.mjs"
+  },
+  {
+    "from": "\"Run Test now to load diagnostics for this workspace.\"",
+    "to": "\"立即运行测试以加载此工作区的诊断。\"",
+    "source": "translations-advanced-1.mjs"
+  },
+  {
+    "from": "\"Could not refresh Cloud authentication. Sign in again, then retry.\"",
+    "to": "\"无法刷新 Cloud 认证。请重新登录后重试。\"",
+    "source": "translations-advanced-1.mjs"
+  },
+  {
+    "from": "\"This OpenWork server does not support engine refresh yet. Update OpenWork, then retry.\"",
+    "to": "\"此 OpenWork 服务器尚不支持引擎刷新。请更新 OpenWork 后重试。\"",
+    "source": "translations-advanced-1.mjs"
+  },
+  {
+    "from": "\"Agent access\"",
+    "to": "\"代理访问\"",
+    "source": "translations-advanced-1.mjs"
+  },
+  {
+    "from": "\"Agent access to connected services\"",
+    "to": "\"代理访问已连接服务\"",
+    "source": "translations-advanced-1.mjs"
+  },
+  {
+    "from": "\"Agent access diagnostics are unavailable for the current workspace.\"",
+    "to": "\"当前工作区无法提供代理访问诊断。\"",
+    "source": "translations-advanced-1.mjs"
+  },
+  {
+    "from": "\"Agent diagnostics require a connected workspace.\"",
+    "to": "\"代理诊断需要已连接的工作区。\"",
+    "source": "translations-advanced-1.mjs"
+  },
+  {
+    "from": "\"Choose the workspace agents should use.\"",
+    "to": "\"选择代理应使用的工作区。\"",
+    "source": "translations-advanced-1.mjs"
+  },
+  {
+    "from": "\"Connect the workspace server\"",
+    "to": "\"连接工作区服务器\"",
+    "source": "translations-advanced-1.mjs"
+  },
+  {
+    "from": "\"Connect to the workspace server before running agent access diagnostics.\"",
+    "to": "\"运行代理访问诊断前，请先连接工作区服务器。\"",
+    "source": "translations-advanced-1.mjs"
+  },
+  {
+    "from": "\"Restore the workspace server connection.\"",
+    "to": "\"恢复工作区服务器连接。\"",
+    "source": "translations-advanced-1.mjs"
+  },
+  {
+    "from": "\"Select a workspace\"",
+    "to": "\"选择一个工作区\"",
+    "source": "translations-advanced-1.mjs"
+  },
+  {
+    "from": "\"Select a workspace before running agent access diagnostics.\"",
+    "to": "\"运行代理访问诊断前，请先选择一个工作区。\"",
+    "source": "translations-advanced-1.mjs"
+  },
+  {
+    "from": "\"Select a workspace before refreshing the engine connection.\"",
+    "to": "\"刷新引擎连接前，请先选择一个工作区。\"",
+    "source": "translations-advanced-1.mjs"
+  },
+  {
+    "from": "\"Select a workspace before migrating legacy runtime config.\"",
+    "to": "\"迁移旧版运行时配置前，请先选择一个工作区。\"",
+    "source": "translations-advanced-1.mjs"
+  },
+  {
+    "from": "\"Select a workspace to inspect runtime config.\"",
+    "to": "\"请选择一个工作区以检查运行时配置。\"",
+    "source": "translations-advanced-1.mjs"
+  },
+  {
+    "from": "\"Current model can use these Cloud tools.\"",
+    "to": "\"当前模型可以使用这些 Cloud 工具。\"",
+    "source": "translations-advanced-1.mjs"
+  },
+  {
+    "from": "\"Current model cannot use these Cloud tools.\"",
+    "to": "\"当前模型无法使用这些 Cloud 工具。\"",
+    "source": "translations-advanced-1.mjs"
+  },
+  {
+    "from": "\"Lets agents use the exact OpenWork Cloud tools for this active workspace and organization.\"",
+    "to": "\"让代理使用此活动工作区和组织的精确 OpenWork Cloud 工具。\"",
+    "source": "translations-advanced-1.mjs"
+  },
+  {
+    "from": "\"Cloud tools verified for this workspace\"",
+    "to": "\"此工作区的 Cloud 工具已验证\"",
+    "source": "translations-advanced-1.mjs"
+  },
+  {
+    "from": "\"Test and repair OpenWork Cloud MCP access for this workspace.\"",
+    "to": "\"测试并修复此工作区的 OpenWork Cloud MCP 访问。\"",
+    "source": "translations-advanced-1.mjs"
+  },
+  {
+    "from": "\"This workspace can search and run your organization's shared capabilities.\"",
+    "to": "\"此工作区可以搜索并运行组织共享的能力。\"",
+    "source": "translations-advanced-1.mjs"
+  },
+  {
+    "from": "\"Cloud token\"",
+    "to": "\"Cloud 令牌\"",
+    "source": "translations-advanced-1.mjs"
+  },
+  {
+    "from": "\"Cloud provider\"",
+    "to": "\"Cloud 提供商\"",
+    "source": "translations-advanced-1.mjs"
+  },
+  {
+    "from": "\"Cloud tools\"",
+    "to": "\"Cloud 工具\"",
+    "source": "translations-advanced-1.mjs"
+  },
+  {
+    "from": "\"Applied revision\"",
+    "to": "\"已应用的修订版本\"",
+    "source": "translations-advanced-1.mjs"
+  },
+  {
+    "from": "\"Desired revision\"",
+    "to": "\"期望修订版本\"",
+    "source": "translations-advanced-1.mjs"
+  },
+  {
+    "from": "\"Bootstrap config\"",
+    "to": "\"启动配置\"",
+    "source": "translations-advanced-1.mjs"
+  },
+  {
+    "from": "\"Desktop bootstrap paths, parsed config, and normalized values.\"",
+    "to": "\"桌面启动路径、解析后的配置和标准化值。\"",
+    "source": "translations-advanced-1.mjs"
+  },
+  {
+    "from": "\"Desired OpenWork runtime config\"",
+    "to": "\"期望的 OpenWork 运行时配置\"",
+    "source": "translations-advanced-1.mjs"
+  },
+  {
+    "from": "\"Inspect what OpenWork controls at runtime versus what belongs to your workspace config. This works through the OpenWork server and does not require the OpenCode engine to be healthy.\"",
+    "to": "\"检查 OpenWork 在运行时控制的内容与属于你工作区配置的内容。此功能通过 OpenWork 服务器工作，不需要 OpenCode 引擎处于健康状态。\"",
+    "source": "translations-advanced-1.mjs"
+  },
+  {
+    "from": "\"Runtime database\"",
+    "to": "\"运行时数据库\"",
+    "source": "translations-advanced-1.mjs"
+  },
+  {
+    "from": "\"Runtime DB JSON\"",
+    "to": "\"运行时数据库 JSON\"",
+    "source": "translations-advanced-1.mjs"
+  },
+  {
+    "from": "\"Runtime config diagnostics need the OpenWork server connection.\"",
+    "to": "\"运行时配置诊断需要 OpenWork 服务器连接。\"",
+    "source": "translations-advanced-1.mjs"
+  },
+  {
+    "from": "\"OpenWork runtime DB\"",
+    "to": "\"OpenWork 运行时数据库\"",
+    "source": "translations-advanced-1.mjs"
+  },
+  {
+    "from": "\"OpenWork injected config\"",
+    "to": "\"OpenWork 注入的配置\"",
+    "source": "translations-advanced-1.mjs"
+  },
+  {
+    "from": "\"The object OpenWork injects into OpenCode at runtime.\"",
+    "to": "\"OpenWork 在运行时注入 OpenCode 的对象。\"",
+    "source": "translations-advanced-1.mjs"
+  },
+  {
+    "from": "\"This is the OpenWork-built config object requested for the runtime database and injected safely by the server. Sensitive headers are redacted here.\"",
+    "to": "\"这是为运行时数据库请求、由服务器安全注入的 OpenWork 构建配置对象。敏感标头已在此脱敏。\"",
+    "source": "translations-advanced-1.mjs"
+  },
+  {
+    "from": "\"OpenWork-managed runtime values stored outside workspace files.\"",
+    "to": "\"存储在工作区文件之外的 OpenWork 托管运行时值。\"",
+    "source": "translations-advanced-1.mjs"
+  },
+  {
+    "from": "\"Global opencode config\"",
+    "to": "\"全局 opencode 配置\"",
+    "source": "translations-advanced-1.mjs"
+  },
+  {
+    "from": "\"Project opencode config\"",
+    "to": "\"项目 opencode 配置\"",
+    "source": "translations-advanced-1.mjs"
+  },
+  {
+    "from": "\"User opencode.jsonc\"",
+    "to": "\"用户 opencode.jsonc\"",
+    "source": "translations-advanced-1.mjs"
+  },
+  {
+    "from": "\"User-level OpenCode config under ~/.config/opencode.\"",
+    "to": "\"位于 ~/.config/opencode 下的用户级 OpenCode 配置。\"",
+    "source": "translations-advanced-1.mjs"
+  },
+  {
+    "from": "\"Workspace-level OpenCode config owned by the user/project.\"",
+    "to": "\"由用户/项目拥有的工作区级 OpenCode 配置。\"",
+    "source": "translations-advanced-1.mjs"
+  },
+  {
+    "from": "\"OpenCode config sources\"",
+    "to": "\"OpenCode 配置来源\"",
+    "source": "translations-advanced-1.mjs"
+  },
+  {
+    "from": "\"OpenCode source breakdown\"",
+    "to": "\"OpenCode 来源细分\"",
+    "source": "translations-advanced-1.mjs"
+  },
+  {
+    "from": "\"OpenCode compatibility\"",
+    "to": "\"OpenCode 兼容性\"",
+    "source": "translations-advanced-1.mjs"
+  },
+  {
+    "from": "\"OpenCode execution\"",
+    "to": "\"OpenCode 执行\"",
+    "source": "translations-advanced-1.mjs"
+  },
+  {
+    "from": "\"Disabled providers\"",
+    "to": "\"已禁用的提供商\"",
+    "source": "translations-advanced-1.mjs"
+  },
+  {
+    "from": "\"Experimental provider tools\"",
+    "to": "\"实验性提供商工具\"",
+    "source": "translations-advanced-1.mjs"
+  },
+  {
+    "from": "\"Experimental tool IDs\"",
+    "to": "\"实验性工具 ID\"",
+    "source": "translations-advanced-1.mjs"
+  },
+  {
+    "from": "\"Plugin canaries\"",
+    "to": "\"插件金丝雀\"",
+    "source": "translations-advanced-1.mjs"
+  },
+  {
+    "from": "\"Plugin hashes\"",
+    "to": "\"插件哈希\"",
+    "source": "translations-advanced-1.mjs"
+  },
+  {
+    "from": "\"Safe capabilities\"",
+    "to": "\"安全能力\"",
+    "source": "translations-advanced-1.mjs"
+  },
+  {
+    "from": "\"Live verification\"",
+    "to": "\"实时验证\"",
+    "source": "translations-advanced-1.mjs"
+  },
+  {
+    "from": "\"No Cloud MCP health has been loaded for this workspace yet.\"",
+    "to": "\"此工作区尚未加载 Cloud MCP 健康状态。\"",
+    "source": "translations-advanced-1.mjs"
+  },
+  {
+    "from": "\"Show sanitized health JSON\"",
+    "to": "\"显示脱敏健康状态 JSON\"",
+    "source": "translations-advanced-1.mjs"
+  },
+  {
+    "from": "\"Show desired JSON\"",
+    "to": "\"显示期望 JSON\"",
+    "source": "translations-advanced-1.mjs"
+  },
+  {
+    "from": "\"Show raw JSON\"",
+    "to": "\"显示原始 JSON\"",
+    "source": "translations-advanced-1.mjs"
+  },
+  {
+    "from": "\"Show hidden\"",
+    "to": "\"显示隐藏\"",
+    "source": "translations-advanced-1.mjs"
+  },
+  {
+    "from": "\"Showing hidden\"",
+    "to": "\"正在显示隐藏\"",
+    "source": "translations-advanced-1.mjs"
+  },
+  {
+    "from": "\"Stored keys: \"",
+    "to": "\"已存储的键：\"",
+    "source": "translations-advanced-1.mjs"
+  },
+  {
+    "from": "\"User-owned keys: \"",
+    "to": "\"用户拥有的键：\"",
+    "source": "translations-advanced-1.mjs"
+  },
+  {
+    "from": "\"Legacy OpenWork metadata\"",
+    "to": "\"旧版 OpenWork 元数据\"",
+    "source": "translations-advanced-1.mjs"
+  },
+  {
+    "from": "\"No legacy runtime config found for this workspace.\"",
+    "to": "\"此工作区未找到旧版运行时配置。\"",
+    "source": "translations-advanced-1.mjs"
+  },
+  {
+    "from": "\"Failed to load runtime config status.\"",
+    "to": "\"无法加载运行时配置状态。\"",
+    "source": "translations-advanced-1.mjs"
+  },
+  {
+    "from": "\"Failed to migrate legacy runtime config.\"",
+    "to": "\"无法迁移旧版运行时配置。\"",
+    "source": "translations-advanced-1.mjs"
+  },
+  {
+    "from": "\"Moves older OpenWork-owned runtime keys from `.opencode/openwork.json` and safe OpenWork-managed keys from `opencode.jsonc` into the runtime database.\"",
+    "to": "\"将旧版 OpenWork 拥有的运行时键从 `.opencode/openwork.json` 以及安全的 OpenWork 托管键从 `opencode.jsonc` 移入运行时数据库。\"",
+    "source": "translations-advanced-1.mjs"
+  },
+  {
+    "from": "\"Chat and task creation can use the OpenCode engine for this workspace.\"",
+    "to": "\"此工作区的聊天和任务创建可以使用 OpenCode 引擎。\"",
+    "source": "translations-advanced-1.mjs"
+  },
+  {
+    "from": "\"Chat and task creation may fail until OpenCode restarts.\"",
+    "to": "\"在 OpenCode 重启之前，聊天和任务创建可能失败。\"",
+    "source": "translations-advanced-1.mjs"
+  },
+  {
+    "from": "\"OpenWork server config sources below can still be inspected.\"",
+    "to": "\"以下 OpenWork 服务器配置来源仍可检查。\"",
+    "source": "translations-advanced-1.mjs"
+  },
+  {
+    "from": "\"Injected environment\"",
+    "to": "\"注入的环境\"",
+    "source": "translations-advanced-1.mjs"
+  },
+  {
+    "from": "\"Command, working directory, and OpenWork-injected environment.\"",
+    "to": "\"命令、工作目录和 OpenWork 注入的环境。\"",
+    "source": "translations-advanced-1.mjs"
+  },
+  {
+    "from": "\"No injected environment captured.\"",
+    "to": "\"未捕获到注入的环境。\"",
+    "source": "translations-advanced-1.mjs"
+  },
+  {
+    "from": "\"Agents / plugins\"",
+    "to": "\"代理 / 插件\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"MCP / permissions\"",
+    "to": "\"MCP / 权限\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"Providers / models\"",
+    "to": "\"提供商 / 模型\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"Connect an OpenWork server to load plugins.\"",
+    "to": "\"连接 OpenWork 服务器以加载插件。\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"Connect services that provide AI models\"",
+    "to": "\"连接提供 AI 模型的服务\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"Default model, reasoning, and compaction\"",
+    "to": "\"默认模型、推理和压缩\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"Authorized folders and file access\"",
+    "to": "\"已授权文件夹和文件访问\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"Plugin not found.\"",
+    "to": "\"未找到插件。\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"Enter a GitHub repository URL.\"",
+    "to": "\"输入 GitHub 仓库 URL。\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"Install a plugin from GitHub\"",
+    "to": "\"从 GitHub 安装插件\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"From GitHub\"",
+    "to": "\"来自 GitHub\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"Works with Claude Code plugins: a repo with .claude-plugin/plugin.json bundling an MCP server, skills, and commands.\"",
+    "to": "\"适用于 Claude Code 插件：包含 .claude-plugin/plugin.json 的仓库，捆绑了 MCP 服务器、技能和命令。\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"Discovered from the workspace plugin folder.\"",
+    "to": "\"从工作区插件文件夹发现。\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"Directory-discovered plugins are read-only.\"",
+    "to": "\"目录发现的插件为只读。\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"Global plugins require a local worker.\"",
+    "to": "\"全局插件需要本地 worker。\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"OpenWork server unavailable. Connect to import plugin files into this workspace.\"",
+    "to": "\"OpenWork 服务器不可用。请连接以将插件文件导入此工作区。\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"OpenWork server unavailable. Connect to remove imported plugin files from this workspace.\"",
+    "to": "\"OpenWork 服务器不可用。请连接以从此工作区移除导入的插件文件。\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"OpenWork server unavailable. Connect to load skills.\"",
+    "to": "\"OpenWork 服务器不可用。请连接以加载技能。\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"OpenWork server unavailable. Connect to install skills.\"",
+    "to": "\"OpenWork 服务器不可用。请连接以安装技能。\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"OpenWork server unavailable. Connect to view skills.\"",
+    "to": "\"OpenWork 服务器不可用。请连接以查看技能。\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"OpenWork server unavailable. Connect to edit skills.\"",
+    "to": "\"OpenWork 服务器不可用。请连接以编辑技能。\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"OpenWork server unavailable. Connect to remove skills.\"",
+    "to": "\"OpenWork 服务器不可用。请连接以移除技能。\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"OpenWork server cannot remove skills for this workspace.\"",
+    "to": "\"OpenWork 服务器无法移除此工作区的技能。\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"Local workers are required to import skills.\"",
+    "to": "\"导入技能需要本地 worker。\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"Local workers are required to install skills.\"",
+    "to": "\"安装技能需要本地 worker。\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"Local workers are required to view skills.\"",
+    "to": "\"查看技能需要本地 worker。\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"Local workers are required to edit skills.\"",
+    "to": "\"编辑技能需要本地 worker。\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"Skill content\"",
+    "to": "\"技能内容\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"Will install\"",
+    "to": "\"将安装\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"What this enables\"",
+    "to": "\"启用内容\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"Extension manifest\"",
+    "to": "\"扩展清单\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"Extension update available\"",
+    "to": "\"扩展有可用更新\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"Extension removed by admin\"",
+    "to": "\"扩展已被管理员移除\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"New extension available\"",
+    "to": "\"有新的扩展可用\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"View updates\"",
+    "to": "\"查看更新\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"Marketplace package is not installed in this workspace.\"",
+    "to": "\"此工作区未安装应用市场包。\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"Force a fresh sync of organization marketplace plugins from the cloud.\"",
+    "to": "\"强制从云端重新同步组织应用市场插件。\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"Refresh marketplace extensions\"",
+    "to": "\"刷新应用市场扩展\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"Available through OpenWork Connect.\"",
+    "to": "\"可通过 OpenWork Connect 使用。\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"Built-in OpenWork extensions are disabled by your organization. Use Show hidden to review blocked built-ins.\"",
+    "to": "\"内置的 OpenWork 扩展已被你的组织禁用。使用“显示隐藏”查看被阻止的内置扩展。\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"Organization extension installed in this workspace.\"",
+    "to": "\"组织扩展已安装到此工作区。\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"A reusable workflow that your agent can execute on demand.\"",
+    "to": "\"你的代理可按需执行的可复用工作流。\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"An account your agent can act in, once it is signed in.\"",
+    "to": "\"你的代理登录后可以代表其操作的账户。\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"Connects as a Model Context Protocol server, giving your agent access to external tools and data.\"",
+    "to": "\"作为 Model Context Protocol 服务器连接，让代理访问外部工具和数据。\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"Extends OpenWork with additional capabilities managed by your organization.\"",
+    "to": "\"通过组织管理的附加能力扩展 OpenWork。\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"Runs on this device and gives your agent tools it can use here.\"",
+    "to": "\"在此设备上运行，为你的代理提供可在此使用的工具。\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"Shared by your organization\"",
+    "to": "\"由你的组织共享\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"Shared connection\"",
+    "to": "\"共享连接\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"This library item is not available in the current workspace.\"",
+    "to": "\"此资料库项目在当前工作区不可用。\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"Search library...\"",
+    "to": "\"搜索资料库…\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"Library state\"",
+    "to": "\"资料库状态\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"No library items found\"",
+    "to": "\"未找到资料库项目\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"MCP server\"",
+    "to": "\"MCP 服务器\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"MCP servers\"",
+    "to": "\"MCP 服务器\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"Try a different search or filter, or add an MCP server.\"",
+    "to": "\"请尝试其他搜索或筛选，或添加 MCP 服务器。\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"OpenWork server unavailable. Connect to import MCP servers into this workspace.\"",
+    "to": "\"OpenWork 服务器不可用。请连接以将 MCP 服务器导入此工作区。\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"OpenWork server unavailable. Connect to remove imported MCP servers from this workspace.\"",
+    "to": "\"OpenWork 服务器不可用。请连接以从此工作区移除导入的 MCP 服务器。\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"OpenWork server unavailable. Connect to manage imported cloud marketplaces.\"",
+    "to": "\"OpenWork 服务器不可用。请连接以管理导入的云应用市场。\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"OpenWork server unavailable. Connect to manage imported cloud plugins.\"",
+    "to": "\"OpenWork 服务器不可用。请连接以管理导入的云插件。\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"OpenCode client unavailable.\"",
+    "to": "\"OpenCode 客户端不可用。\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"OpenCode is unavailable for this workspace. Retry once it restarts, or restart OpenWork if the problem continues.\"",
+    "to": "\"此工作区的 OpenCode 不可用。重启后重试；如果问题持续，请重启 OpenWork。\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"Org account\"",
+    "to": "\"组织账户\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"Your account\"",
+    "to": "\"你的账户\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"your marketplace\"",
+    "to": "\"你的应用市场\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"Your MCP client starts \"",
+    "to": "\"你的 MCP 客户端启动 \"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"Partially set up\"",
+    "to": "\"部分设置\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"Setup required\"",
+    "to": "\"需要设置\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"OAuth required\"",
+    "to": "\"需要 OAuth\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"Not installed\"",
+    "to": "\"未安装\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"Not found\"",
+    "to": "\"未找到\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"Not checked\"",
+    "to": "\"未检查\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"Search for a provider.\"",
+    "to": "\"搜索提供商。\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"Current override\"",
+    "to": "\"当前覆盖\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"Current version\"",
+    "to": "\"当前版本\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"Release stage\"",
+    "to": "\"发布阶段\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"Release page: \"",
+    "to": "\"发布页面：\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"Alpha feed: \"",
+    "to": "\"Alpha 源：\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"Alpha release\"",
+    "to": "\"Alpha 版本\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"Check selected feed\"",
+    "to": "\"检查选定的源\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"Use alpha feed\"",
+    "to": "\"使用 Alpha 源\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"Return to stable\"",
+    "to": "\"返回稳定版\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"Stable gets fully tested releases. Alpha includes the very latest changes but may be less polished (macOS only).\"",
+    "to": "\"稳定版提供经过充分测试的版本。Alpha 包含最新更改，但可能不够完善（仅限 macOS）。\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"Auto-updates are available in packaged builds only.\"",
+    "to": "\"自动更新仅适用于打包构建。\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"Could not determine the installed OpenWork version.\"",
+    "to": "\"无法确定已安装的 OpenWork 版本。\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"Update download failed.\"",
+    "to": "\"更新下载失败。\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"Update install failed.\"",
+    "to": "\"更新安装失败。\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"Electron update install is available only in the Electron desktop app.\"",
+    "to": "\"Electron 更新安装仅在 Electron 桌面应用中可用。\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"Electron updater channels are available only in the Electron desktop app.\"",
+    "to": "\"Electron 更新渠道仅在 Electron 桌面应用中可用。\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"Electron updater downloads are available only in the Electron desktop app.\"",
+    "to": "\"Electron 更新下载仅在 Electron 桌面应用中可用。\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"Electron updater is available only in packaged Electron builds.\"",
+    "to": "\"Electron 更新器仅适用于打包的 Electron 构建。\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"Electron alpha updates are macOS-only for now.\"",
+    "to": "\"Electron Alpha 更新目前仅限 macOS。\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"Electron alpha channel\"",
+    "to": "\"Electron Alpha 渠道\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"Electron alpha migration\"",
+    "to": "\"Electron Alpha 迁移\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"Electron artifact URL\"",
+    "to": "\"Electron 构件 URL\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"Advanced manual artifact override\"",
+    "to": "\"高级手动构件覆盖\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"Resolve latest Electron alpha\"",
+    "to": "\"解析最新的 Electron Alpha\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"Start install handoff…\"",
+    "to": "\"开始安装交接…\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"Safe default: use \"",
+    "to": "\"安全默认：使用 \"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"Only needed when the artifact provider gives sha256 instead of latest-mac.yml sha512\"",
+    "to": "\"仅当构件提供商提供 sha256 而非 latest-mac.yml 的 sha512 时需要\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"sha256 override (legacy optional)\"",
+    "to": "\"sha256 覆盖（旧版可选）\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"sha512 from latest-mac.yml\"",
+    "to": "\"来自 latest-mac.yml 的 sha512\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"Uses latest-mac.yml from the rolling alpha release.\"",
+    "to": "\"使用滚动 Alpha 版本中的 latest-mac.yml。\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"Requires a trusted artifact URL. macOS keeps OpenWork.app.migrate-bak for rollback.\"",
+    "to": "\"需要可信的构件 URL。macOS 会保留 OpenWork.app.migrate-bak 用于回滚。\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"Open backup in Finder\"",
+    "to": "\"在 Finder 中打开备份\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"Requested Finder reveal for OpenWork.app.migrate-bak. The backup exists after an install handoff completes.\"",
+    "to": "\"已请求在 Finder 中显示 OpenWork.app.migrate-bak。安装交接完成后备份即存在。\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"Migration backup reveal is available only in the desktop app.\"",
+    "to": "\"迁移备份显示功能仅在桌面应用中可用。\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"Opened the rolling Electron alpha release. Download links live there after dev builds finish.\"",
+    "to": "\"已打开滚动 Electron Alpha 版本。开发构建完成后下载链接将出现在那里。\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"Tauri → Electron install handoff is no longer available because Electron is now the desktop runtime.\"",
+    "to": "\"Tauri → Electron 安装交接不再可用，因为 Electron 现在是桌面运行时。\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"Tauri → Electron migration controls were removed after Electron became the desktop runtime.\"",
+    "to": "\"Tauri → Electron 迁移控制已在 Electron 成为桌面运行时后移除。\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"Tauri migration snapshots are no longer available because Tauri has been removed.\"",
+    "to": "\"Tauri 迁移快照不再可用，因为 Tauri 已被移除。\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"Debug-only controls for migrated Electron users. Stable updates remain the default in Settings → Updates.\"",
+    "to": "\"仅供迁移后的 Electron 用户使用的调试控件。稳定版更新仍是 设置 → 更新 中的默认选项。\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"Reset onboarding state only?\"",
+    "to": "\"仅重置引导状态？\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"Reset onboarding state. Restart the app to see changes.\"",
+    "to": "\"重置引导状态。重启应用以查看更改。\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"Show the native desktop menu bar.\"",
+    "to": "\"显示本机桌面菜单栏。\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"OpenWork desktop starts a private localhost bridge automatically.\"",
+    "to": "\"OpenWork 桌面会自动启动私有 localhost 桥接。\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"Do not point clients at the random localhost bridge URL directly.\"",
+    "to": "\"不要直接将客户端指向随机的 localhost 桥接 URL。\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"How to connect another client\"",
+    "to": "\"如何连接其他客户端\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"Debug deep links are not wired into the React settings route yet.\"",
+    "to": "\"调试深链接尚未接入 React 设置路由。\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"Workspace debug events are not retained in the React route yet.\"",
+    "to": "\"工作区调试事件尚未在 React 路由中保留。\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"Cleared developer log.\"",
+    "to": "\"已清除开发者日志。\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"Copied developer log to clipboard.\"",
+    "to": "\"已将开发者日志复制到剪贴板。\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"Restarted OpenCode via engine_start\"",
+    "to": "\"已通过 engine_start 重启 OpenCode\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"Restarted openwork-server\"",
+    "to": "\"已重启 openwork-server\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"Could not resolve the current OpenWork.app bundle path.\"",
+    "to": "\"无法解析当前的 OpenWork.app bundle 路径。\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"Saved OPENAI_API_KEY for Voice Mode.\"",
+    "to": "\"已为语音模式保存 OPENAI_API_KEY。\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"Saved OPENAI_API_KEY. Agents can use OpenWork extension actions for image generation.\"",
+    "to": "\"已保存 OPENAI_API_KEY。代理可以使用 OpenWork 扩展操作进行图像生成。\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"Model ID is required.\"",
+    "to": "\"需要模型 ID。\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"Prompt is required.\"",
+    "to": "\"需要提示词。\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"Select a local workspace before starting the local server/engine.\"",
+    "to": "\"启动本地服务器/引擎前，请先选择一个本地工作区。\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "label:\"Provider/model\"",
+    "to": "label:\"提供商/模型\"",
+    "source": "translations-advanced-3.mjs"
+  },
+  {
+    "from": "label:\"OpenWork versions\"",
+    "to": "label:\"OpenWork 版本\"",
+    "source": "translations-advanced-3.mjs"
+  },
+  {
+    "from": "label:\"Delivery\"",
+    "to": "label:\"交付状态\"",
+    "source": "translations-advanced-3.mjs"
+  },
+  {
+    "from": "label:\"Endpoint\"",
+    "to": "label:\"端点\"",
+    "source": "translations-advanced-3.mjs"
+  },
+  {
+    "from": "children:\"Endpoint\"",
+    "to": "children:\"端点\"",
+    "source": "translations-advanced-3.mjs"
+  },
+  {
+    "from": "label:\"Organization\"",
+    "to": "label:\"组织\"",
+    "source": "translations-advanced-3.mjs"
+  },
+  {
+    "from": "label:\"Versions\"",
+    "to": "label:\"版本\"",
+    "source": "translations-advanced-3.mjs"
+  },
+  {
+    "from": "label:\"Checked\"",
+    "to": "label:\"检查时间\"",
+    "source": "translations-advanced-3.mjs"
+  },
+  {
+    "from": "label:\"Reconnect\"",
+    "to": "label:\"重新连接\"",
+    "source": "translations-advanced-3.mjs"
+  },
+  {
+    "from": "connectedLabel:d=\"Connected\"",
+    "to": "connectedLabel:d=\"已连接\"",
+    "source": "translations-advanced-3.mjs"
+  },
+  {
+    "from": "\"Connected\":\"Connect your account\"",
+    "to": "\"已连接\":\"连接你的账户\"",
+    "source": "translations-advanced-3.mjs"
+  },
+  {
+    "from": "children:\"Not connected\"",
+    "to": "children:\"未连接\"",
+    "source": "translations-advanced-3.mjs"
+  },
+  {
+    "from": "\"Move OpenWork-managed config\"",
+    "to": "\"迁移 OpenWork 托管的配置\"",
+    "source": "translations-advanced-3.mjs"
+  },
+  {
+    "from": "e.migrationBusy?\"Migrating...\":\"Migrate\"",
+    "to": "e.migrationBusy?\"正在迁移…\":\"迁移\"",
+    "source": "translations-advanced-3.mjs"
+  },
+  {
+    "from": "\"Advanced diagnostics\"",
+    "to": "\"高级诊断\"",
+    "source": "translations-advanced-3.mjs"
+  },
+  {
+    "from": "children:\"Details\"",
+    "to": "children:\"详情\"",
+    "source": "translations-advanced-3.mjs"
+  },
+  {
+    "from": "children:\"Command\"",
+    "to": "children:\"命令\"",
+    "source": "translations-advanced-3.mjs"
+  },
+  {
+    "from": "singular:\"Command\",plural:\"Commands\"",
+    "to": "singular:\"命令\",plural:\"命令\"",
+    "source": "translations-advanced-3.mjs"
+  },
+  {
+    "from": "e.type===\"command\"?\"Command\":\"Config\"",
+    "to": "e.type===\"command\"?\"命令\":\"配置\"",
+    "source": "translations-advanced-3.mjs"
+  },
+  {
+    "from": "children:\"Location\"",
+    "to": "children:\"位置\"",
+    "source": "translations-advanced-3.mjs"
+  },
+  {
+    "from": "children:\"Resources\"",
+    "to": "children:\"资源\"",
+    "source": "translations-advanced-3.mjs"
+  },
+  {
+    "from": "children:\"Contributions\"",
+    "to": "children:\"贡献\"",
+    "source": "translations-advanced-3.mjs"
+  },
+  {
+    "from": "children:\"Visibility\"",
+    "to": "children:\"可见性\"",
+    "source": "translations-advanced-3.mjs"
+  },
+  {
+    "from": "children:\"Availability\"",
+    "to": "children:\"可用性\"",
+    "source": "translations-advanced-3.mjs"
+  },
+  {
+    "from": "children:\"Authentication\"",
+    "to": "children:\"认证\"",
+    "source": "translations-advanced-3.mjs"
+  },
+  {
+    "from": "children:\"OAuth required\"",
+    "to": "children:\"需要 OAuth\"",
+    "source": "translations-advanced-3.mjs"
+  },
+  {
+    "from": "children:\"Partially set up\"",
+    "to": "children:\"部分设置\"",
+    "source": "translations-advanced-3.mjs"
+  },
+  {
+    "from": "disconnectedLabel:\"Setup required\"",
+    "to": "disconnectedLabel:\"需要设置\"",
+    "source": "translations-advanced-3.mjs"
+  },
+  {
+    "from": "children:\"Discovery\"",
+    "to": "children:\"发现\"",
+    "source": "translations-advanced-3.mjs"
+  },
+  {
+    "from": "children:\"Override\"",
+    "to": "children:\"覆盖\"",
+    "source": "translations-advanced-3.mjs"
+  },
+  {
+    "from": "label:\"GitHub repository\"",
+    "to": "label:\"GitHub 仓库\"",
+    "source": "translations-advanced-3.mjs"
+  },
+  {
+    "from": "children:[\"Reveal in Finder\",",
+    "to": "children:[\"在 Finder 中显示\",",
+    "source": "translations-advanced-3.mjs"
+  },
+  {
+    "from": ",\"Reveal in Finder\"]",
+    "to": ",\"在 Finder 中显示\"]",
+    "source": "translations-advanced-3.mjs"
+  },
+  {
+    "from": "H===\"skill\"||H===\"plugin\"?\"Installed\":\"Connected\"",
+    "to": "H===\"skill\"||H===\"plugin\"?\"已安装\":\"已连接\"",
+    "source": "translations-advanced-3.mjs"
+  },
+  {
+    "from": "H===\"skill\"||H===\"plugin\"?\"Not installed\":\"Not connected\"",
+    "to": "H===\"skill\"||H===\"plugin\"?\"未安装\":\"未连接\"",
+    "source": "translations-advanced-3.mjs"
+  },
+  {
+    "from": "H===\"skill\"?\"Uninstall\":\"Disconnect\"",
+    "to": "H===\"skill\"?\"卸载\":\"断开连接\"",
+    "source": "translations-advanced-3.mjs"
+  },
+  {
+    "from": ",\"Install\"]",
+    "to": ",\"安装\"]",
+    "source": "translations-advanced-3.mjs"
+  },
+  {
+    "from": "M===void 0?\"Reconnect\":M",
+    "to": "M===void 0?\"重新连接\":M",
+    "source": "translations-advanced-3.mjs"
+  },
+  {
+    "from": "e.isDisabled?\"Enable\":\"Enabled\"",
+    "to": "e.isDisabled?\"启用\":\"已启用\"",
+    "source": "translations-advanced-3.mjs"
+  },
+  {
+    "from": "children:\"Enabled\"",
+    "to": "children:\"已启用\"",
+    "source": "translations-advanced-3.mjs"
+  },
+  {
+    "from": "statusLabel:\"Disabled\"",
+    "to": "statusLabel:\"已禁用\"",
+    "source": "translations-advanced-3.mjs"
+  },
+  {
+    "from": "children:\"Disabled\"",
+    "to": "children:\"已禁用\"",
+    "source": "translations-advanced-3.mjs"
+  },
+  {
+    "from": "children:\"Preview\"",
+    "to": "children:\"预览\"",
+    "source": "translations-advanced-3.mjs"
+  },
+  {
+    "from": ",\"Preview\"]",
+    "to": ",\"预览\"]",
+    "source": "translations-advanced-3.mjs"
+  },
+  {
+    "from": "\"Debug-only Tauri controls. Preparing migration data is non-destructive; installing requires a URL and two confirmations.\"",
+    "to": "\"仅供调试的 Tauri 控件。准备迁移数据不会造成破坏；安装需要 URL 和两次确认。\"",
+    "source": "translations-advanced-3.mjs"
+  },
+  {
+    "from": "placeholder:\"Paste a trusted Electron .zip/.exe/AppImage URL\"",
+    "to": "placeholder:\"粘贴可信的 Electron .zip/.exe/AppImage URL\"",
+    "source": "translations-advanced-3.mjs"
+  },
+  {
+    "from": "children:\"Jump to start\"",
+    "to": "children:\"跳转到开头\"",
+    "source": "translations-batch10.mjs"
+  },
+  {
+    "from": "children:\"Jump to latest\"",
+    "to": "children:\"跳转到最新\"",
+    "source": "translations-batch10.mjs"
+  },
+  {
+    "from": "children:\"Previous match (⇧↵)\"",
+    "to": "children:\"上一个匹配 (⇧↵)\"",
+    "source": "translations-batch10.mjs"
+  },
+  {
+    "from": "children:\"Next match (↵)\"",
+    "to": "children:\"下一个匹配 (↵)\"",
+    "source": "translations-batch10.mjs"
+  },
+  {
+    "from": "children:\"Close (Esc)\"",
+    "to": "children:\"关闭 (Esc)\"",
+    "source": "translations-batch10.mjs"
+  },
+  {
+    "from": "children:\"Waiting for input…\"",
+    "to": "children:\"等待输入…\"",
+    "source": "translations-batch10.mjs"
+  },
+  {
+    "from": "children:\"Environment variables can only be edited from a local desktop workspace.\"",
+    "to": "children:\"环境变量只能在本地桌面工作区中编辑。\"",
+    "source": "translations-batch10.mjs"
+  },
+  {
+    "from": "children:\"Continue setup\"",
+    "to": "children:\"继续设置\"",
+    "source": "translations-batch10.mjs"
+  },
+  {
+    "from": "children:\"Open Automation\"",
+    "to": "children:\"打开自动化\"",
+    "source": "translations-batch10.mjs"
+  },
+  {
+    "from": "children:\"Open chat\"",
+    "to": "children:\"打开聊天\"",
+    "source": "translations-batch10.mjs"
+  },
+  {
+    "from": "children:\"No description available\"",
+    "to": "children:\"没有可用描述\"",
+    "source": "translations-batch10.mjs"
+  },
+  {
+    "from": "children:\"Fetching\"",
+    "to": "children:\"获取中\"",
+    "source": "translations-batch10.mjs"
+  },
+  {
+    "from": "children:\"Add an API key for Anthropic, OpenAI, Google, or others\"",
+    "to": "children:\"添加 Anthropic、OpenAI、Google 或其他提供商的 API 密钥\"",
+    "source": "translations-batch10.mjs"
+  },
+  {
+    "from": "children:\"Edit a CSV\"",
+    "to": "children:\"编辑 CSV 文件\"",
+    "source": "translations-batch10.mjs"
+  },
+  {
+    "from": "children:\"Create a sample spreadsheet\"",
+    "to": "children:\"创建示例电子表格\"",
+    "source": "translations-batch10.mjs"
+  },
+  {
+    "from": "children:\"Search Craigslist for couches\"",
+    "to": "children:\"在 Craigslist 搜索沙发\"",
+    "source": "translations-batch10.mjs"
+  },
+  {
+    "from": "children:\"Connect an extension\"",
+    "to": "children:\"连接扩展\"",
+    "source": "translations-batch10.mjs"
+  },
+  {
+    "from": "children:\"Add MCPs and integrations\"",
+    "to": "children:\"添加 MCP 和集成\"",
+    "source": "translations-batch10.mjs"
+  },
+  {
+    "from": "children:\"Technical details\"",
+    "to": "children:\"技术细节\"",
+    "source": "translations-batch10.mjs"
+  },
+  {
+    "from": "children:\"Tool step unavailable\"",
+    "to": "children:\"工具步骤不可用\"",
+    "source": "translations-batch10.mjs"
+  },
+  {
+    "from": "children:\"Opening session…\"",
+    "to": "children:\"正在打开会话…\"",
+    "source": "translations-batch10.mjs"
+  },
+  {
+    "from": "children:\"No AI model connected.\"",
+    "to": "children:\"未连接 AI 模型。\"",
+    "source": "translations-batch10.mjs"
+  },
+  {
+    "from": "children:\"Add a provider to run tasks.\"",
+    "to": "children:\"添加提供商以运行任务。\"",
+    "source": "translations-batch10.mjs"
+  },
+  {
+    "from": "children:\"Open Connect\"",
+    "to": "children:\"打开连接\"",
+    "source": "translations-batch10.mjs"
+  },
+  {
+    "from": "children:\"Remote access\"",
+    "to": "children:\"远程访问\"",
+    "source": "translations-batch10.mjs"
+  },
+  {
+    "from": "children:\"Off by default. Turn this on only when you want this worker reachable from another machine.\"",
+    "to": "children:\"默认关闭。仅当你希望从另一台机器访问此工作器时才打开。\"",
+    "source": "translations-batch10.mjs"
+  },
+  {
+    "from": "children:\"Connection details\"",
+    "to": "children:\"连接详情\"",
+    "source": "translations-batch10.mjs"
+  },
+  {
+    "from": "children:\"Enable remote access and click Save to restart the worker and reveal the live connection details for this workspace.\"",
+    "to": "children:\"启用远程访问并点击保存以重启工作器，然后显示此工作区的实时连接详情。\"",
+    "source": "translations-batch10.mjs"
+  },
+  {
+    "from": "children:\"Optional collaborator access\"",
+    "to": "children:\"可选的协作者访问\"",
+    "source": "translations-batch10.mjs"
+  },
+  {
+    "from": "children:\"Routine access without permission approvals.\"",
+    "to": "children:\"无需权限审批的例行访问。\"",
+    "source": "translations-batch10.mjs"
+  },
+  {
+    "from": "children:\"What do you need done?\"",
+    "to": "children:\"你需要完成什么？\"",
+    "source": "translations-batch10.mjs"
+  },
+  {
+    "from": "children:\"Describe it in plain language\"",
+    "to": "children:\"用简单的语言描述\"",
+    "source": "translations-batch10.mjs"
+  },
+  {
+    "from": "children:\"Using the free starter model.\"",
+    "to": "children:\"正在使用免费入门模型。\"",
+    "source": "translations-batch10.mjs"
+  },
+  {
+    "from": "children:\"Add an API key for Anthropic, OpenAI, Google, or other providers so tasks can run.\"",
+    "to": "children:\"添加 Anthropic、OpenAI、Google 或其他提供商的 API 密钥，以便任务可以运行。\"",
+    "source": "translations-batch10.mjs"
+  },
+  {
+    "from": "children:\"Realtime voice over OpenWork UI MCP controls\"",
+    "to": "children:\"通过 OpenWork UI MCP 控制实现实时语音\"",
+    "source": "translations-batch10.mjs"
+  },
+  {
+    "from": "children:\"Host connection required\"",
+    "to": "children:\"需要主机连接\"",
+    "source": "translations-batch10.mjs"
+  },
+  {
+    "from": "children:\"Voice Mode needs the local OpenWork server so it can mint short-lived Realtime client secrets without exposing your API key to the renderer.\"",
+    "to": "children:\"语音模式需要本地 OpenWork 服务器，以便在不向渲染进程暴露你的 API 密钥的情况下签发短期 Realtime 客户端密钥。\"",
+    "source": "translations-batch10.mjs"
+  },
+  {
+    "from": "children:\"Rendering response\"",
+    "to": "children:\"正在渲染响应\"",
+    "source": "translations-batch10.mjs"
+  },
+  {
+    "from": "children:\"Connection:\"",
+    "to": "children:\"连接：\"",
+    "source": "translations-batch10.mjs"
+  },
+  {
+    "from": "children:\"Microphone:\"",
+    "to": "children:\"麦克风：\"",
+    "source": "translations-batch10.mjs"
+  },
+  {
+    "from": "children:\"Enter to send, Shift+Enter for newline\"",
+    "to": "children:\"按 Enter 发送，Shift+Enter 换行\"",
+    "source": "translations-batch10.mjs"
+  },
+  {
+    "from": "children:\"Timeline\"",
+    "to": "children:\"时间线\"",
+    "source": "translations-batch10.mjs"
+  },
+  {
+    "from": "children:\"Start voice or inject a transcript from UI MCP to see the voice timeline.\"",
+    "to": "children:\"启动语音或从 UI MCP 注入记录以查看语音时间线。\"",
+    "source": "translations-batch10.mjs"
+  },
+  {
+    "from": "children:\"Preview unavailable. Open externally to view this file.\"",
+    "to": "children:\"无法预览。请从外部打开以查看此文件。\"",
+    "source": "translations-batch10.mjs"
+  },
+  {
+    "from": "children:\"Discard\"",
+    "to": "children:\"放弃\"",
+    "source": "translations-batch10.mjs"
+  },
+  {
+    "from": "children:\"Discard changes\"",
+    "to": "children:\"放弃更改\"",
+    "source": "translations-batch10.mjs"
+  },
+  {
+    "from": "children:\"Save changes\"",
+    "to": "children:\"保存更改\"",
+    "source": "translations-batch10.mjs"
+  },
+  {
+    "from": "children:\"Edit artifact\"",
+    "to": "children:\"编辑产物\"",
+    "source": "translations-batch10.mjs"
+  },
+  {
+    "from": "children:\"Download artifact\"",
+    "to": "children:\"下载产物\"",
+    "source": "translations-batch10.mjs"
+  },
+  {
+    "from": "children:\"Show in folder\"",
+    "to": "children:\"在文件夹中显示\"",
+    "source": "translations-batch10.mjs"
+  },
+  {
+    "from": "children:\"Close artifact\"",
+    "to": "children:\"关闭产物\"",
+    "source": "translations-batch10.mjs"
+  },
+  {
+    "from": "children:\"No files or artifacts yet\"",
+    "to": "children:\"尚无文件或产物\"",
+    "source": "translations-batch10.mjs"
+  },
+  {
+    "from": "children:\"Files and artifacts created in this session will appear here automatically.\"",
+    "to": "children:\"此会话中创建的文件和产物会自动出现在这里。\"",
+    "source": "translations-batch10.mjs"
+  },
+  {
+    "from": "children:\"Choose a destination\"",
+    "to": "children:\"选择目标位置\"",
+    "source": "translations-batch10.mjs"
+  },
+  {
+    "from": "children:\"Open a tool or return here whenever you want to switch.\"",
+    "to": "children:\"打开工具或随时返回此处以切换。\"",
+    "source": "translations-batch10.mjs"
+  },
+  {
+    "from": "children:\"Forward\"",
+    "to": "children:\"前进\"",
+    "source": "translations-batch10.mjs"
+  },
+  {
+    "from": "children:\"Reload\"",
+    "to": "children:\"重新加载\"",
+    "source": "translations-batch10.mjs"
+  },
+  {
+    "from": "children:\"Browser panel is only available in the desktop app.\"",
+    "to": "children:\"浏览器面板仅在桌面应用中可用。\"",
+    "source": "translations-batch10.mjs"
+  },
+  {
+    "from": "children:\"Panel destinations\"",
+    "to": "children:\"面板目标位置\"",
+    "source": "translations-batch10.mjs"
+  },
+  {
+    "from": "children:\"Find in conversation (⌘F)\"",
+    "to": "children:\"在会话中查找 (⌘F)\"",
+    "source": "translations-batch10.mjs"
+  },
+  {
+    "from": "children:\"Reset notifications\"",
+    "to": "children:\"重置通知\"",
+    "source": "translations-batch10.mjs"
+  },
+  {
+    "from": "children:\"Workspace or session not found\"",
+    "to": "children:\"未找到工作区或会话\"",
+    "source": "translations-batch10.mjs"
+  },
+  {
+    "from": "children:\"Included on your plan — finish syncing to choose a model.\"",
+    "to": "children:\"已包含在你的套餐中 — 完成同步以选择模型。\"",
+    "source": "translations-batch11.mjs"
+  },
+  {
+    "from": "children:\"Current\"",
+    "to": "children:\"当前\"",
+    "source": "translations-batch11.mjs"
+  },
+  {
+    "from": "children:\"Recommended\"",
+    "to": "children:\"推荐\"",
+    "source": "translations-batch11.mjs"
+  },
+  {
+    "from": "children:\"All models\"",
+    "to": "children:\"所有模型\"",
+    "source": "translations-batch11.mjs"
+  },
+  {
+    "from": "children:\"Each claimed run starts a fresh task in your desktop OpenCode runtime.\"",
+    "to": "children:\"每次认领的运行都会在你的桌面 OpenCode 运行时中启动一个新任务。\"",
+    "source": "translations-batch11.mjs"
+  },
+  {
+    "from": "children:\"Schedule\"",
+    "to": "children:\"计划\"",
+    "source": "translations-batch11.mjs"
+  },
+  {
+    "from": "children:\"Weekly\"",
+    "to": "children:\"每周\"",
+    "source": "translations-batch11.mjs"
+  },
+  {
+    "from": "children:\"Run at\"",
+    "to": "children:\"运行时间\"",
+    "source": "translations-batch11.mjs"
+  },
+  {
+    "from": "children:\"Timezone\"",
+    "to": "children:\"时区\"",
+    "source": "translations-batch11.mjs"
+  },
+  {
+    "from": "children:\"Sign in to Den to use Automations\"",
+    "to": "children:\"登录 Den 以使用自动化\"",
+    "source": "translations-batch11.mjs"
+  },
+  {
+    "from": "children:\"Automations run remotely in Den and remain available when this app or your computer is offline.\"",
+    "to": "children:\"自动化在 Den 中远程运行，即使此应用或你的计算机关机也保持可用。\"",
+    "source": "translations-batch11.mjs"
+  },
+  {
+    "from": "children:\"Select a Den organization\"",
+    "to": "children:\"选择 Den 组织\"",
+    "source": "translations-batch11.mjs"
+  },
+  {
+    "from": "children:\"Automations belong to your active Den organization.\"",
+    "to": "children:\"自动化归属于你的活动 Den 组织。\"",
+    "source": "translations-batch11.mjs"
+  },
+  {
+    "from": "children:\"Automations unavailable\"",
+    "to": "children:\"自动化不可用\"",
+    "source": "translations-batch11.mjs"
+  },
+  {
+    "from": "children:\"Create Automation\"",
+    "to": "children:\"创建自动化\"",
+    "source": "translations-batch11.mjs"
+  },
+  {
+    "from": "children:\"It becomes active as soon as you create it.\"",
+    "to": "children:\"创建后立即生效。\"",
+    "source": "translations-batch11.mjs"
+  },
+  {
+    "from": "children:\"Back to Automations\"",
+    "to": "children:\"返回自动化\"",
+    "source": "translations-batch11.mjs"
+  },
+  {
+    "from": "children:\"Edit Automation\"",
+    "to": "children:\"编辑自动化\"",
+    "source": "translations-batch11.mjs"
+  },
+  {
+    "from": "children:\"Saving creates an immutable revision for future runs.\"",
+    "to": "children:\"保存会为未来运行创建不可变修订。\"",
+    "source": "translations-batch11.mjs"
+  },
+  {
+    "from": "children:\"Action required\"",
+    "to": "children:\"需要操作\"",
+    "source": "translations-batch11.mjs"
+  },
+  {
+    "from": "children:\"Desktop execution\"",
+    "to": "children:\"桌面执行\"",
+    "source": "translations-batch11.mjs"
+  },
+  {
+    "from": "children:\"Den keeps the schedule and durable history; your connected desktop runs the task locally.\"",
+    "to": "children:\"Den 保留计划和持久历史；你连接的桌面在本地运行任务。\"",
+    "source": "translations-batch11.mjs"
+  },
+  {
+    "from": "children:\"Next run\"",
+    "to": "children:\"下次运行\"",
+    "source": "translations-batch11.mjs"
+  },
+  {
+    "from": "children:\"Runtime limit\"",
+    "to": "children:\"运行时长限制\"",
+    "source": "translations-batch11.mjs"
+  },
+  {
+    "from": "children:\"Integrations\"",
+    "to": "children:\"集成\"",
+    "source": "translations-batch11.mjs"
+  },
+  {
+    "from": "children:\"Your available OpenWork Connect tools\"",
+    "to": "children:\"你可用的 OpenWork Connect 工具\"",
+    "source": "translations-batch11.mjs"
+  },
+  {
+    "from": "children:\"Durable receipts for manual and scheduled runs.\"",
+    "to": "children:\"手动和计划运行的持久收据。\"",
+    "source": "translations-batch11.mjs"
+  },
+  {
+    "from": "children:\"No runs yet.\"",
+    "to": "children:\"尚无运行记录。\"",
+    "source": "translations-batch11.mjs"
+  },
+  {
+    "from": "children:\"Waiting for desktop runner\"",
+    "to": "children:\"等待桌面运行器\"",
+    "source": "translations-batch11.mjs"
+  },
+  {
+    "from": "children:\"Result\"",
+    "to": "children:\"结果\"",
+    "source": "translations-batch11.mjs"
+  },
+  {
+    "from": "children:\"This Cloud thread no longer matches the selected run.\"",
+    "to": "children:\"此 Cloud 线程不再与所选运行匹配。\"",
+    "source": "translations-batch11.mjs"
+  },
+  {
+    "from": "children:\"No run selected.\"",
+    "to": "children:\"未选择运行。\"",
+    "source": "translations-batch11.mjs"
+  },
+  {
+    "from": "children:\"Scheduled durably in Den and executed by your connected desktop.\"",
+    "to": "children:\"在 Den 中持久计划，并由你连接的桌面执行。\"",
+    "source": "translations-batch11.mjs"
+  },
+  {
+    "from": "children:\"Worker URL\"",
+    "to": "children:\"工作器 URL\"",
+    "source": "translations-batch11.mjs"
+  },
+  {
+    "from": "children:\"Paste the OpenWork worker URL you want to connect to.\"",
+    "to": "children:\"粘贴你要连接的 OpenWork 工作器 URL。\"",
+    "source": "translations-batch11.mjs"
+  },
+  {
+    "from": "children:\"Access token\"",
+    "to": "children:\"访问令牌\"",
+    "source": "translations-batch11.mjs"
+  },
+  {
+    "from": "children:\"Add a token only if the worker requires one.\"",
+    "to": "children:\"仅当工作器需要时才添加令牌。\"",
+    "source": "translations-batch11.mjs"
+  },
+  {
+    "from": "children:\"Remote directory\"",
+    "to": "children:\"远程目录\"",
+    "source": "translations-batch11.mjs"
+  },
+  {
+    "from": "children:\"Optionally target a directory within that remote worker.\"",
+    "to": "children:\"可选地指定该远程工作器内的目标目录。\"",
+    "source": "translations-batch11.mjs"
+  },
+  {
+    "from": "children:\"No folder selected yet.\"",
+    "to": "children:\"尚未选择文件夹。\"",
+    "source": "translations-batch11.mjs"
+  },
+  {
+    "from": "children:\"Want more analytics?\"",
+    "to": "children:\"想要更多分析？\"",
+    "source": "translations-batch11.mjs"
+  },
+  {
+    "from": "children:\"Add a project name to group this workspace's sessions in Analytics.\"",
+    "to": "children:\"添加项目名称以在 Analytics 中分组此工作区的会话。\"",
+    "source": "translations-batch11.mjs"
+  },
+  {
+    "from": "children:\"Live logs\"",
+    "to": "children:\"实时日志\"",
+    "source": "translations-batch11.mjs"
+  },
+  {
+    "from": "children:\"Docker debug details\"",
+    "to": "children:\"Docker 调试详情\"",
+    "source": "translations-batch11.mjs"
+  },
+  {
+    "from": "children:\"Search sessions\"",
+    "to": "children:\"搜索会话\"",
+    "source": "translations-batch11.mjs"
+  },
+  {
+    "from": "children:\"Hosted frontier models for OpenWork tasks without managing provider API keys.\"",
+    "to": "children:\"面向 OpenWork 任务的托管前沿模型，无需管理提供商 API 密钥。\"",
+    "source": "translations-batch11.mjs"
+  },
+  {
+    "from": "children:\"Pricing is handled through OpenWork Cloud. You can continue using OpenCode Zen or your own providers.\"",
+    "to": "children:\"定价通过 OpenWork Cloud 处理。你可以继续使用 OpenCode Zen 或自己的提供商。\"",
+    "source": "translations-batch11.mjs"
+  },
+  {
+    "from": "children:\"Hosted frontier models without managing API keys.\"",
+    "to": "children:\"托管前沿模型，无需管理 API 密钥。\"",
+    "source": "translations-batch11.mjs"
+  },
+  {
+    "from": "children:\"Included — finish syncing\"",
+    "to": "children:\"已包含 — 完成同步\"",
+    "source": "translations-batch11.mjs"
+  },
+  {
+    "from": "children:\"Your plan includes OpenWork Models, but they are not ready in this workspace yet.\"",
+    "to": "children:\"你的套餐包含 OpenWork Models，但它们在此工作区中尚未就绪。\"",
+    "source": "translations-batch11.mjs"
+  },
+  {
+    "from": "children:\"Ollama isn't installed or running\"",
+    "to": "children:\"Ollama 未安装或未运行\"",
+    "source": "translations-batch11.mjs"
+  },
+  {
+    "from": "children:\"Download and start Ollama to use open-source models in your workspace.\"",
+    "to": "children:\"下载并启动 Ollama 以在你的工作区中使用开源模型。\"",
+    "source": "translations-batch11.mjs"
+  },
+  {
+    "from": "children:\"Download Ollama\"",
+    "to": "children:\"下载 Ollama\"",
+    "source": "translations-batch11.mjs"
+  },
+  {
+    "from": "children:\"Available models\"",
+    "to": "children:\"可用模型\"",
+    "source": "translations-batch11.mjs"
+  },
+  {
+    "from": "children:\"Select from models already loaded in Ollama.\"",
+    "to": "children:\"从 Ollama 中已加载的模型中选择。\"",
+    "source": "translations-batch11.mjs"
+  },
+  {
+    "from": "children:\"Add a custom model\"",
+    "to": "children:\"添加自定义模型\"",
+    "source": "translations-batch11.mjs"
+  },
+  {
+    "from": "children:\"No models loaded\"",
+    "to": "children:\"未加载模型\"",
+    "source": "translations-batch11.mjs"
+  },
+  {
+    "from": "children:\"Pull a model from ollama.com/library to get started.\"",
+    "to": "children:\"从 ollama.com/library 拉取模型以开始使用。\"",
+    "source": "translations-batch11.mjs"
+  },
+  {
+    "from": "children:\"Pull a model\"",
+    "to": "children:\"拉取模型\"",
+    "source": "translations-batch11.mjs"
+  },
+  {
+    "from": "children:\"Use as default model in workspace\"",
+    "to": "children:\"用作工作区中的默认模型\"",
+    "source": "translations-batch11.mjs"
+  },
+  {
+    "from": "children:\"Pull model\"",
+    "to": "children:\"拉取模型\"",
+    "source": "translations-batch11.mjs"
+  },
+  {
+    "from": "children:\"Download a model from ollama.com/library to your local Ollama instance.\"",
+    "to": "children:\"从 ollama.com/library 下载模型到你的本地 Ollama 实例。\"",
+    "source": "translations-batch11.mjs"
+  },
+  {
+    "from": "children:\"Model to pull\"",
+    "to": "children:\"要拉取的模型\"",
+    "source": "translations-batch11.mjs"
+  },
+  {
+    "from": "children:\"Enter a model name from ollama.com/library\"",
+    "to": "children:\"输入来自 ollama.com/library 的模型名称\"",
+    "source": "translations-batch11.mjs"
+  },
+  {
+    "from": "children:\"Computer Use setup (Mac only)\"",
+    "to": "children:\"Computer Use 设置（仅 Mac）\"",
+    "source": "translations-batch12.mjs"
+  },
+  {
+    "from": "children:\"Computer Use only works on Mac. Connect the local MCP server and grant the macOS permissions it needs to control apps.\"",
+    "to": "children:\"Computer Use 仅在 Mac 上可用。连接本地 MCP 服务器并授予其控制应用所需的 macOS 权限。\"",
+    "source": "translations-batch12.mjs"
+  },
+  {
+    "from": "children:\"Ready by default\"",
+    "to": "children:\"默认就绪\"",
+    "source": "translations-batch12.mjs"
+  },
+  {
+    "from": "children:\"The OpenWork Browser runs inside the app, opens visibly for browser tasks, and is the supported browser automation path in OpenWork.\"",
+    "to": "children:\"OpenWork 浏览器在应用内运行，为浏览器任务可见地打开，是 OpenWork 支持的浏览器自动化路径。\"",
+    "source": "translations-batch12.mjs"
+  },
+  {
+    "from": "children:\"Realtime voice\"",
+    "to": "children:\"实时语音\"",
+    "source": "translations-batch12.mjs"
+  },
+  {
+    "from": "children:\"Voice Mode uses OpenAI Realtime and the same OpenWork UI control surface exposed through OpenWork UI MCP.\"",
+    "to": "children:\"语音模式使用 OpenAI Realtime 以及通过 OpenWork UI MCP 暴露的相同 OpenWork UI 控制面。\"",
+    "source": "translations-batch12.mjs"
+  },
+  {
+    "from": "children:\"OpenAI key detected\"",
+    "to": "children:\"检测到 OpenAI 密钥\"",
+    "source": "translations-batch12.mjs"
+  },
+  {
+    "from": "children:\"Voice Mode will use OPENAI_REALTIME_API_KEY when present, otherwise OPENAI_API_KEY from OpenWork environment variables.\"",
+    "to": "children:\"语音模式将优先使用 OPENAI_REALTIME_API_KEY，否则使用 OpenWork 环境变量中的 OPENAI_API_KEY。\"",
+    "source": "translations-batch12.mjs"
+  },
+  {
+    "from": "children:\"Saved as OPENAI_API_KEY in OpenWork's local env store. The renderer only receives short-lived Realtime client secrets.\"",
+    "to": "children:\"已保存为 OpenWork 本地环境存储中的 OPENAI_API_KEY。渲染进程只接收短期的 Realtime 客户端密钥。\"",
+    "source": "translations-batch12.mjs"
+  },
+  {
+    "from": "children:\"Repair\"",
+    "to": "children:\"修复\"",
+    "source": "translations-batch12.mjs"
+  },
+  {
+    "from": "children:\"Global\"",
+    "to": "children:\"全局\"",
+    "source": "translations-batch12.mjs"
+  },
+  {
+    "from": "children:\"Hidden\"",
+    "to": "children:\"隐藏\"",
+    "source": "translations-batch12.mjs"
+  },
+  {
+    "from": "children:\"Launch\"",
+    "to": "children:\"启动\"",
+    "source": "translations-batch12.mjs"
+  },
+  {
+    "from": "children:\"Status\"",
+    "to": "children:\"状态\"",
+    "source": "translations-batch12.mjs"
+  },
+  {
+    "from": "children:\"Use this folder\"",
+    "to": "children:\"使用此文件夹\"",
+    "source": "translations-batch12.mjs"
+  },
+  {
+    "from": "children:\"Power your first task\"",
+    "to": "children:\"为你的第一个任务提供动力\"",
+    "source": "translations-batch12.mjs"
+  },
+  {
+    "from": "children:\"Connect a model, then try a real task in chat so you can see OpenWork work.\"",
+    "to": "children:\"连接模型，然后在聊天中尝试一个真实任务，以便了解 OpenWork 的工作方式。\"",
+    "source": "translations-batch12.mjs"
+  },
+  {
+    "from": "children:\"Use OpenWork Models\"",
+    "to": "children:\"使用 OpenWork Models\"",
+    "source": "translations-batch12.mjs"
+  },
+  {
+    "from": "children:\"Pay through OpenWork Cloud and skip API key setup.\"",
+    "to": "children:\"通过 OpenWork Cloud 付费，跳过 API 密钥设置。\"",
+    "source": "translations-batch12.mjs"
+  },
+  {
+    "from": "children:\"Bring your own API key\"",
+    "to": "children:\"使用你自己的 API 密钥\"",
+    "source": "translations-batch12.mjs"
+  },
+  {
+    "from": "children:\"Connect OpenAI, Anthropic, Google, or another provider, then run your first task.\"",
+    "to": "children:\"连接 OpenAI、Anthropic、Google 或其他提供商，然后运行你的第一个任务。\"",
+    "source": "translations-batch12.mjs"
+  },
+  {
+    "from": "children:\"How did you hear about OpenWork?\"",
+    "to": "children:\"你是怎么知道 OpenWork 的？\"",
+    "source": "translations-batch12.mjs"
+  },
+  {
+    "from": "children:\"One quick question — it helps us know where to show up.\"",
+    "to": "children:\"一个简单的问题 — 帮助我们了解在哪里出现。\"",
+    "source": "translations-batch12.mjs"
+  },
+  {
+    "from": "children:\"What did you ask the AI?\"",
+    "to": "children:\"你问了 AI 什么？\"",
+    "source": "translations-batch12.mjs"
+  },
+  {
+    "from": "children:\"Skip this part\"",
+    "to": "children:\"跳过此部分\"",
+    "source": "translations-batch12.mjs"
+  },
+  {
+    "from": "children:\"Continue\"",
+    "to": "children:\"继续\"",
+    "source": "translations-batch12.mjs"
+  },
+  {
+    "from": "placeholder:\"Paste the code from your browser\"",
+    "to": "placeholder:\"粘贴浏览器中的代码\"",
+    "source": "translations-batch12.mjs"
+  },
+  {
+    "from": "placeholder:\"Filter providers by name or ID\"",
+    "to": "placeholder:\"按名称或 ID 筛选提供商\"",
+    "source": "translations-batch12.mjs"
+  },
+  {
+    "from": "placeholder:\"Paste code\"",
+    "to": "placeholder:\"粘贴代码\"",
+    "source": "translations-batch12.mjs"
+  },
+  {
+    "from": "placeholder:\"Search models...\"",
+    "to": "placeholder:\"搜索模型...\"",
+    "source": "translations-batch12.mjs"
+  },
+  {
+    "from": "placeholder:\"Find in conversation\"",
+    "to": "placeholder:\"在会话中查找\"",
+    "source": "translations-batch12.mjs"
+  },
+  {
+    "from": "placeholder:\"Enter URL...\"",
+    "to": "placeholder:\"输入 URL...\"",
+    "source": "translations-batch12.mjs"
+  },
+  {
+    "from": "placeholder:\"Daily project summary\"",
+    "to": "placeholder:\"每日项目摘要\"",
+    "source": "translations-batch12.mjs"
+  },
+  {
+    "from": "placeholder:\"Describe the outcome, sources to check, and what a useful result should include.\"",
+    "to": "placeholder:\"描述期望结果、要检查的来源，以及有用结果应包含的内容。\"",
+    "source": "translations-batch12.mjs"
+  },
+  {
+    "from": "placeholder:\"Optional\"",
+    "to": "placeholder:\"可选\"",
+    "source": "translations-batch12.mjs"
+  },
+  {
+    "from": "label:\"Workspace needs attention\"",
+    "to": "label:\"工作区需要关注\"",
+    "source": "translations-batch12.mjs"
+  },
+  {
+    "from": "title:\"Workspace needs attention\"",
+    "to": "title:\"工作区需要关注\"",
+    "source": "translations-batch12.mjs"
+  },
+  {
+    "from": "label:\"Updating your workspace…\"",
+    "to": "label:\"正在更新你的工作区…\"",
+    "source": "translations-batch12.mjs"
+  },
+  {
+    "from": "title:\"Updating your workspace…\"",
+    "to": "title:\"正在更新你的工作区…\"",
+    "source": "translations-batch12.mjs"
+  },
+  {
+    "from": "label:\"Waking your workspace…\"",
+    "to": "label:\"正在唤醒你的工作区…\"",
+    "source": "translations-batch12.mjs"
+  },
+  {
+    "from": "title:\"Waking your workspace…\"",
+    "to": "title:\"正在唤醒你的工作区…\"",
+    "source": "translations-batch12.mjs"
+  },
+  {
+    "from": "label:\"Provisioning your workspace…\"",
+    "to": "label:\"正在配置你的工作区…\"",
+    "source": "translations-batch12.mjs"
+  },
+  {
+    "from": "label:\"Timeout · source unclear\"",
+    "to": "label:\"超时 · 来源不明\"",
+    "source": "translations-batch12.mjs"
+  },
+  {
+    "from": "label:\"Desktop\"",
+    "to": "label:\"桌面\"",
+    "source": "translations-batch12.mjs"
+  },
+  {
+    "from": "label:\"Subscribe\"",
+    "to": "label:\"订阅\"",
+    "source": "translations-batch12.mjs"
+  },
+  {
+    "from": "label:\"Voice Mode\"",
+    "to": "label:\"语音模式\"",
+    "source": "translations-batch12.mjs"
+  },
+  {
+    "from": "children:\"No profiler data yet. Interact with the app.\"",
+    "to": "children:\"尚无性能分析数据。与应用交互以生成数据。\"",
+    "source": "translations-batch13.mjs"
+  },
+  {
+    "from": "children:\"No render samples yet. Interact with the app.\"",
+    "to": "children:\"尚无渲染采样。与应用交互以生成数据。\"",
+    "source": "translations-batch13.mjs"
+  },
+  {
+    "from": "children:\"An error was thrown.\"",
+    "to": "children:\"抛出了错误。\"",
+    "source": "translations-batch13.mjs"
+  },
+  {
+    "from": "children:\"No plugin files imported yet.\"",
+    "to": "children:\"尚未导入插件文件。\"",
+    "source": "translations-batch13.mjs"
+  },
+  {
+    "from": "children:\"Hide terminal\"",
+    "to": "children:\"隐藏终端\"",
+    "source": "translations-batch13.mjs"
+  },
+  {
+    "from": "placeholder:\"Search Automations\"",
+    "to": "placeholder:\"搜索自动化\"",
+    "source": "translations-batch13.mjs"
+  },
+  {
+    "from": "placeholder:\"Worker name\"",
+    "to": "placeholder:\"工作器名称\"",
+    "source": "translations-batch13.mjs"
+  },
+  {
+    "from": "placeholder:\"Billing API\"",
+    "to": "placeholder:\"计费 API\"",
+    "source": "translations-batch13.mjs"
+  },
+  {
+    "from": "placeholder:\"Search all sessions and messages…\"",
+    "to": "placeholder:\"搜索所有会话和消息…\"",
+    "source": "translations-batch13.mjs"
+  },
+  {
+    "from": "title:\"Organization policies active\"",
+    "to": "title:\"组织策略已生效\"",
+    "source": "translations-batch13.mjs"
+  },
+  {
+    "from": "title:\"Reset counters\"",
+    "to": "title:\"重置计数器\"",
+    "source": "translations-batch13.mjs"
+  },
+  {
+    "from": "title:\"Collapse\"",
+    "to": "title:\"折叠\"",
+    "source": "translations-batch13.mjs"
+  },
+  {
+    "from": "title:\"Toggle Sidebar\"",
+    "to": "title:\"切换侧边栏\"",
+    "source": "translations-batch13.mjs"
+  },
+  {
+    "from": "title:\"Still working on it…\"",
+    "to": "title:\"仍在处理中…\"",
+    "source": "translations-batch13.mjs"
+  },
+  {
+    "from": "title:\"Starting your workspace…\"",
+    "to": "title:\"正在启动你的工作区…\"",
+    "source": "translations-batch13.mjs"
+  },
+  {
+    "from": "title:\"Select and copy for support\"",
+    "to": "title:\"选择并复制以提供给支持\"",
+    "source": "translations-batch13.mjs"
+  },
+  {
+    "from": "title:\"Requested environment variable\"",
+    "to": "title:\"已请求环境变量\"",
+    "source": "translations-batch13.mjs"
+  },
+  {
+    "from": "name:\"Custom providers\"",
+    "to": "name:\"自定义提供商\"",
+    "source": "translations-batch14.mjs"
+  },
+  {
+    "from": "description:\"Allow users to add and use models that are not deployed through OpenWork Cloud.\"",
+    "to": "description:\"允许用户添加和使用未通过 OpenWork Cloud 部署的模型。\"",
+    "source": "translations-batch14.mjs"
+  },
+  {
+    "from": "name:\"Enable OpenCode Zen Models\"",
+    "to": "name:\"启用 OpenCode Zen 模型\"",
+    "source": "translations-batch14.mjs"
+  },
+  {
+    "from": "description:\"Allow users to use the built in models provided by OpenCode.\"",
+    "to": "description:\"允许用户使用 OpenCode 提供的内置模型。\"",
+    "source": "translations-batch14.mjs"
+  },
+  {
+    "from": "name:\"Multiple workspaces\"",
+    "to": "name:\"多个工作区\"",
+    "source": "translations-batch14.mjs"
+  },
+  {
+    "from": "description:\"Allow users to create or configure more than one workspace on their machine.\"",
+    "to": "description:\"允许用户在其计算机上创建或配置多个工作区。\"",
+    "source": "translations-batch14.mjs"
+  },
+  {
+    "from": "name:\"Control Settings\"",
+    "to": "name:\"控制设置\"",
+    "source": "translations-batch14.mjs"
+  },
+  {
+    "from": "description:\"Allow users to access and change the desktop app settings.\"",
+    "to": "description:\"允许用户访问和更改桌面应用设置。\"",
+    "source": "translations-batch14.mjs"
+  },
+  {
+    "from": "name:\"Manage Extensions\"",
+    "to": "name:\"管理扩展\"",
+    "source": "translations-batch14.mjs"
+  },
+  {
+    "from": "description:\"Allow users to install and manage extensions locally.\"",
+    "to": "description:\"允许用户在本地安装和管理扩展。\"",
+    "source": "translations-batch14.mjs"
+  },
+  {
+    "from": "name:\"Built-in Extensions\"",
+    "to": "name:\"内置扩展\"",
+    "source": "translations-batch14.mjs"
+  },
+  {
+    "from": "description:\"Allow users to see and use OpenWork's built-in extensions, including browser, image, and local-provider extensions.\"",
+    "to": "description:\"允许用户查看和使用 OpenWork 的内置扩展，包括浏览器、图像和本地提供商扩展。\"",
+    "source": "translations-batch14.mjs"
+  },
+  {
+    "from": "name:\"Alpha updates\"",
+    "to": "name:\"Alpha 更新\"",
+    "source": "translations-batch14.mjs"
+  },
+  {
+    "from": "description:\"Allow users to opt into experimental Alpha desktop updates.\"",
+    "to": "description:\"允许用户选择加入实验性 Alpha 桌面更新。\"",
+    "source": "translations-batch14.mjs"
+  },
+  {
+    "from": "name:\"Welcome Page\"",
+    "to": "name:\"欢迎页\"",
+    "source": "translations-batch14.mjs"
+  },
+  {
+    "from": "description:\"Show the Getting Started page to new users.\"",
+    "to": "description:\"向新用户显示入门页面。\"",
+    "source": "translations-batch14.mjs"
+  },
+  {
+    "from": "title:\"Task completed\"",
+    "to": "title:\"任务已完成\"",
+    "source": "translations-batch14.mjs"
+  },
+  {
+    "from": "title:\"Task failed\"",
+    "to": "title:\"任务失败\"",
+    "source": "translations-batch14.mjs"
+  },
+  {
+    "from": "title:\"Permission needed\"",
+    "to": "title:\"需要权限\"",
+    "source": "translations-batch14.mjs"
+  },
+  {
+    "from": "title:\"Question needs your answer\"",
+    "to": "title:\"问题需要你的回答\"",
+    "source": "translations-batch14.mjs"
+  },
+  {
+    "from": "title:\"Proposed an Automation\"",
+    "to": "title:\"提议了一个自动化\"",
+    "source": "translations-batch14.mjs"
+  },
+  {
+    "from": "title:\"Creating new chats\"",
+    "to": "title:\"正在创建新会话\"",
+    "source": "translations-batch14.mjs"
+  },
+  {
+    "from": "title:\"Created new chats\"",
+    "to": "title:\"已创建新会话\"",
+    "source": "translations-batch14.mjs"
+  },
+  {
+    "from": "title:\"Close tab\"",
+    "to": "title:\"关闭标签页\"",
+    "source": "translations-batch14.mjs"
+  },
+  {
+    "from": "title:\"Close panel\"",
+    "to": "title:\"关闭面板\"",
+    "source": "translations-batch14.mjs"
+  },
+  {
+    "from": "title:\"Clears acknowledged providers + org onboarding so they trigger again\"",
+    "to": "title:\"清除已确认的提供商与组织引导，以便它们再次触发\"",
+    "source": "translations-batch14.mjs"
+  },
+  {
+    "from": "title:\"Archive Automation?\"",
+    "to": "title:\"归档自动化？\"",
+    "source": "translations-batch14.mjs"
+  },
+  {
+    "from": "title:\"Remote server details\"",
+    "to": "title:\"远程服务器详情\"",
+    "source": "translations-batch14.mjs"
+  },
+  {
+    "from": "title:\"Switch model\"",
+    "to": "title:\"切换模型\"",
+    "source": "translations-batch14.mjs"
+  },
+  {
+    "from": "title:\"Move to Group\"",
+    "to": "title:\"移动到分组\"",
+    "source": "translations-batch14.mjs"
+  },
+  {
+    "from": "title:\"Accessible items\"",
+    "to": "title:\"可访问项目\"",
+    "source": "translations-batch14.mjs"
+  },
+  {
+    "from": "title:\"Back in conversation history\"",
+    "to": "title:\"返回会话历史\"",
+    "source": "translations-batch14.mjs"
+  },
+  {
+    "from": "title:\"Forward in conversation history\"",
+    "to": "title:\"前进会话历史\"",
+    "source": "translations-batch14.mjs"
+  },
+  {
+    "from": "title:\"Hide (Cmd+Shift+P to toggle)\"",
+    "to": "title:\"隐藏（Cmd+Shift+P 切换）\"",
+    "source": "translations-batch14.mjs"
+  },
+  {
+    "from": "title:\"Hide (Cmd+Shift+L to toggle)\"",
+    "to": "title:\"隐藏（Cmd+Shift+L 切换）\"",
+    "source": "translations-batch14.mjs"
+  },
+  {
+    "from": "title:\"Open a visible session by number\"",
+    "to": "title:\"按编号打开可见会话\"",
+    "source": "translations-batch14.mjs"
+  },
+  {
+    "from": "title:\"Remove\"",
+    "to": "title:\"移除\"",
+    "source": "translations-batch14.mjs"
+  },
+  {
+    "from": "title:\"Summarize my week\"",
+    "to": "title:\"总结我的一周\"",
+    "source": "translations-batch14.mjs"
+  },
+  {
+    "from": "description:\"Pull highlights from email and calendar.\"",
+    "to": "description:\"从电子邮件和日历中提取重点内容。\"",
+    "source": "translations-batch14.mjs"
+  },
+  {
+    "from": "title:\"Clean up a spreadsheet\"",
+    "to": "title:\"整理电子表格\"",
+    "source": "translations-batch14.mjs"
+  },
+  {
+    "from": "description:\"Drop in a CSV and describe the result you want.\"",
+    "to": "description:\"放入 CSV 并描述你想要的结果。\"",
+    "source": "translations-batch14.mjs"
+  },
+  {
+    "from": "title:\"Draft a document\"",
+    "to": "title:\"起草文档\"",
+    "source": "translations-batch14.mjs"
+  },
+  {
+    "from": "description:\"Reports, emails, or briefs from a few bullet points.\"",
+    "to": "description:\"从几个要点生成报告、电子邮件或简报。\"",
+    "source": "translations-batch14.mjs"
+  },
+  {
+    "from": "title:\"Automate a web task\"",
+    "to": "title:\"自动化网络任务\"",
+    "source": "translations-batch14.mjs"
+  },
+  {
+    "from": "description:\"Use the built-in browser for repetitive steps.\"",
+    "to": "description:\"使用内置浏览器执行重复步骤。\"",
+    "source": "translations-batch14.mjs"
+  },
+  {
+    "from": "label:\"Search\"",
+    "to": "label:\"搜索引擎\"",
+    "source": "translations-batch14.mjs"
+  },
+  {
+    "from": "label:\"Browse the web\"",
+    "to": "label:\"浏览网页\"",
+    "source": "translations-batch14.mjs"
+  },
+  {
+    "from": "label:\"New tab\"",
+    "to": "label:\"新建标签页\"",
+    "source": "translations-batch14.mjs"
+  },
+  {
+    "from": "meta:\"Session\"",
+    "to": "meta:\"会话\"",
+    "source": "translations-batch14.mjs"
+  },
+  {
+    "from": "detail:\"Choose the LLM that runs your next prompts\"",
+    "to": "detail:\"选择运行你的下一条提示的 LLM\"",
+    "source": "translations-batch14.mjs"
+  },
+  {
+    "from": "connectedLabel:\"Available through OpenWork Connect\"",
+    "to": "connectedLabel:\"可通过 OpenWork Connect 使用\"",
+    "source": "translations-batch14.mjs"
+  },
+  {
+    "from": "description:\"Use the URL your OpenWork server shared with you. Add a token only if the server needs one.\"",
+    "to": "description:\"使用你的 OpenWork 服务器分享的 URL。仅在服务器需要时添加令牌。\"",
+    "source": "translations-batch14.mjs"
+  },
+  {
+    "from": "children:\"Automations\"",
+    "to": "children:\"自动化\"",
+    "source": "translations-batch15.mjs"
+  },
+  {
+    "from": "label:\"Automations\"",
+    "to": "label:\"自动化\"",
+    "source": "translations-batch15.mjs"
+  },
+  {
+    "from": "label:\"Library\"",
+    "to": "label:\"扩展库\"",
+    "source": "translations-batch15.mjs"
+  },
+  {
+    "from": "children:\"Copy sanitized diagnostic\"",
+    "to": "children:\"复制清理后的诊断信息\"",
+    "source": "translations-batch15.mjs"
+  },
+  {
+    "from": "children:\"React Session Debug\"",
+    "to": "children:\"React 会话调试\"",
+    "source": "translations-batch15.mjs"
+  },
+  {
+    "from": "children:\"Agent access diagnostics\"",
+    "to": "children:\"代理访问诊断\"",
+    "source": "translations-batch15.mjs"
+  },
+  {
+    "from": "title:\"Voice Mode\"",
+    "to": "title:\"语音模式\"",
+    "source": "translations-batch15.mjs"
+  },
+  {
+    "from": "subtitle:\"OpenWork hosted\"",
+    "to": "subtitle:\"OpenWork 托管\"",
+    "source": "translations-batch15.mjs"
+  },
+  {
+    "from": "subtitle:\"Runs use this model and reasoning level in your desktop runtime.\"",
+    "to": "subtitle:\"在你的桌面运行环境中使用此模型和推理级别运行。\"",
+    "source": "translations-batch15.mjs"
+  },
+  {
+    "from": "label:\"Test Realtime\"",
+    "to": "label:\"测试实时语音\"",
+    "source": "translations-batch15.mjs"
+  },
+  {
+    "from": "label:\"OpenAI API key\"",
+    "to": "label:\"OpenAI API 密钥\"",
+    "source": "translations-batch15.mjs"
+  },
+  {
+    "from": "name:\"Ollama (local)\"",
+    "to": "name:\"Ollama（本地）\"",
+    "source": "translations-batch15.mjs"
+  },
+  {
+    "from": "name:\"Cloud providers\"",
+    "to": "name:\"云端提供商\"",
+    "source": "translations-batch15.mjs"
+  },
+  {
+    "from": "description:\"Signed in to OpenWork Cloud. Connected service tools will be checked when a workspace is active.\"",
+    "to": "description:\"已登录 OpenWork Cloud。工作区激活时将检查连接的服务工具。\"",
+    "source": "translations-batch15.mjs"
+  },
+  {
+    "from": "description:\"Connected service tools are available.\"",
+    "to": "description:\"连接的服务工具可用。\"",
+    "source": "translations-batch15.mjs"
+  },
+  {
+    "from": "description:\"Open the documentation from the account menu.\"",
+    "to": "description:\"从账户菜单打开文档。\"",
+    "source": "translations-batch15.mjs"
+  },
+  {
+    "from": "description:\"Open the OpenWork feedback surface from the account menu.\"",
+    "to": "description:\"从账户菜单打开 OpenWork 反馈界面。\"",
+    "source": "translations-batch15.mjs"
+  },
+  {
+    "from": "description:\"Use the account menu in the sidebar footer.\"",
+    "to": "description:\"使用侧边栏底部的账户菜单。\"",
+    "source": "translations-batch15.mjs"
+  },
+  {
+    "from": "description:\"API key saved locally by OpenCode.\"",
+    "to": "description:\"API 密钥已由 OpenCode 保存在本地。\"",
+    "source": "translations-batch15.mjs"
+  },
+  {
+    "from": "description:\"Return the current notification center entries.\"",
+    "to": "description:\"返回当前通知中心的条目。\"",
+    "source": "translations-batch15.mjs"
+  },
+  {
+    "from": "description:\"Navigate to the main session view.\"",
+    "to": "description:\"导航到主会话视图。\"",
+    "source": "translations-batch15.mjs"
+  },
+  {
+    "from": "description:\"Navigate to general settings.\"",
+    "to": "description:\"导航到常规设置。\"",
+    "source": "translations-batch15.mjs"
+  },
+  {
+    "from": "description:\"Browse the skills and MCPs available to this agent.\"",
+    "to": "description:\"浏览此代理可用的技能和 MCP。\"",
+    "source": "translations-batch15.mjs"
+  },
+  {
+    "from": "description:\"Navigate to AI provider settings.\"",
+    "to": "description:\"导航到 AI 提供商设置。\"",
+    "source": "translations-batch15.mjs"
+  },
+  {
+    "from": "description:\"Navigate to authorized folders and file access settings.\"",
+    "to": "description:\"导航到已授权文件夹和文件访问设置。\"",
+    "source": "translations-batch15.mjs"
+  },
+  {
+    "from": "description:\"Navigate to appearance settings.\"",
+    "to": "description:\"导航到外观设置。\"",
+    "source": "translations-batch15.mjs"
+  },
+  {
+    "from": "description:\"Navigate to a specific settings panel by tab id.\"",
+    "to": "description:\"按标签页 ID 导航到特定设置面板。\"",
+    "source": "translations-batch15.mjs"
+  },
+  {
+    "from": "description:\"Navigate back one entry in history.\"",
+    "to": "description:\"在历史记录中后退一项。\"",
+    "source": "translations-batch15.mjs"
+  },
+  {
+    "from": "description:\"Navigate forward one entry in history.\"",
+    "to": "description:\"在历史记录中前进一项。\"",
+    "source": "translations-batch15.mjs"
+  },
+  {
+    "from": "description:\"List the main capabilities of OpenWork.\"",
+    "to": "description:\"列出 OpenWork 的主要功能。\"",
+    "source": "translations-batch15.mjs"
+  },
+  {
+    "from": "description:\"Control a browser to navigate, scrape, and automate web tasks.\"",
+    "to": "description:\"控制浏览器进行导航、抓取和自动化网络任务。\"",
+    "source": "translations-batch15.mjs"
+  },
+  {
+    "from": "description:\"Connect Anthropic, OpenAI, Google, OpenRouter, Ollama, or other LLM providers.\"",
+    "to": "description:\"连接 Anthropic、OpenAI、Google、OpenRouter、Ollama 或其他 LLM 提供商。\"",
+    "source": "translations-batch15.mjs"
+  },
+  {
+    "from": "description:\"Skills, connections, and tools your agent can use.\"",
+    "to": "description:\"你的代理可以使用的技能、连接和工具。\"",
+    "source": "translations-batch15.mjs"
+  },
+  {
+    "from": "description:\"Talk to OpenWork with real-time voice using OpenAI Realtime.\"",
+    "to": "description:\"使用 OpenAI Realtime 与 OpenWork 进行实时语音对话。\"",
+    "source": "translations-batch15.mjs"
+  },
+  {
+    "from": "description:\"Read, write, and organize files in your workspace.\"",
+    "to": "description:\"在工作区中读取、写入和组织文件。\"",
+    "source": "translations-batch15.mjs"
+  },
+  {
+    "from": "description:\"Generate, edit, and execute code with full tool access.\"",
+    "to": "description:\"以完整工具访问权限生成、编辑和执行代码。\"",
+    "source": "translations-batch15.mjs"
+  },
+  {
+    "from": "description:\"Control your computer with screenshots and mouse/keyboard actions.\"",
+    "to": "description:\"通过截图和鼠标/键盘操作控制你的计算机。\"",
+    "source": "translations-batch15.mjs"
+  },
+  {
+    "from": "description:\"Install specialized skill packs for specific workflows.\"",
+    "to": "description:\"为特定工作流安装专门的技能包。\"",
+    "source": "translations-batch15.mjs"
+  },
+  {
+    "from": "description:\"Schedule recurring tasks and background agents.\"",
+    "to": "description:\"安排定期任务和后台代理。\"",
+    "source": "translations-batch15.mjs"
+  },
+  {
+    "from": "description:\"Share workspace sessions with collaborators via OpenWork Cloud.\"",
+    "to": "description:\"通过 OpenWork Cloud 与协作者共享工作区会话。\"",
+    "source": "translations-batch15.mjs"
+  },
+  {
+    "from": "description:\"Return the latest visible message in the current session transcript.\"",
+    "to": "description:\"返回当前会话记录中最新可见的消息。\"",
+    "source": "translations-batch15.mjs"
+  },
+  {
+    "from": "description:\"Return the last messages from the current session transcript as readable text, including the session ID, title, and message count.\"",
+    "to": "description:\"以可读文本形式返回当前会话记录中的最后几条消息，包括会话 ID、标题和消息数量。\"",
+    "source": "translations-batch15.mjs"
+  },
+  {
+    "from": "description:\"Number of recent messages to return, from 1 to 30. Defaults to 10.\"",
+    "to": "description:\"要返回的最近消息数量，范围 1 到 30。默认为 10。\"",
+    "source": "translations-batch15.mjs"
+  },
+  {
+    "from": "description:\"Scroll the visible session transcript to the first messages.\"",
+    "to": "description:\"将可见的会话记录滚动到最前面的消息。\"",
+    "source": "translations-batch15.mjs"
+  },
+  {
+    "from": "description:\"Scroll the visible session transcript to the newest messages and composer area.\"",
+    "to": "description:\"将可见的会话记录滚动到最新消息和输入框区域。\"",
+    "source": "translations-batch15.mjs"
+  },
+  {
+    "from": "description:\"Replace the current session draft and type the supplied text visibly.\"",
+    "to": "description:\"替换当前会话草稿并可见地输入提供的文本。\"",
+    "source": "translations-batch15.mjs"
+  },
+  {
+    "from": "description:\"Prompt text to place in the composer.\"",
+    "to": "description:\"要放入输入框的提示文本。\"",
+    "source": "translations-batch15.mjs"
+  },
+  {
+    "from": "description:\"Send the currently visible composer draft to the active session.\"",
+    "to": "description:\"将当前可见的输入框草稿发送到活动会话。\"",
+    "source": "translations-batch15.mjs"
+  },
+  {
+    "from": "description:\"Stop the current streaming session run.\"",
+    "to": "description:\"停止当前流式会话运行。\"",
+    "source": "translations-batch15.mjs"
+  },
+  {
+    "from": "description:\"Open a new page in the built-in browser.\"",
+    "to": "description:\"在内置浏览器中打开新页面。\"",
+    "source": "translations-batch15.mjs"
+  },
+  {
+    "from": "description:\"View files and artifacts created in this session.\"",
+    "to": "description:\"查看此会话中创建的文件和产物。\"",
+    "source": "translations-batch15.mjs"
+  },
+  {
+    "from": "description:\"Browse the skills and connections available to your agent.\"",
+    "to": "description:\"浏览你的代理可用的技能和连接。\"",
+    "source": "translations-batch15.mjs"
+  },
+  {
+    "from": "description:\"Talk to OpenWork with real-time voice.\"",
+    "to": "description:\"与 OpenWork 进行实时语音对话。\"",
+    "source": "translations-batch15.mjs"
+  },
+  {
+    "from": "description:\"Create or select an OpenWork built-in browser tab, navigate it to a URL, and return the CDP handle for browser automation.\"",
+    "to": "description:\"创建或选择 OpenWork 内置浏览器标签页，将其导航到 URL，并返回用于浏览器自动化的 CDP 句柄。\"",
+    "source": "translations-batch15.mjs"
+  },
+  {
+    "from": "description:\"The website URL to open.\"",
+    "to": "description:\"要打开的网站 URL。\"",
+    "source": "translations-batch15.mjs"
+  },
+  {
+    "from": "description:\"Browser provider. Use builtin or auto. External is reserved for future support.\"",
+    "to": "description:\"浏览器提供商。使用 builtin 或 auto。External 保留用于未来支持。\"",
+    "source": "translations-batch15.mjs"
+  },
+  {
+    "from": "description:\"Open the sticky Voice Mode right-side panel.\"",
+    "to": "description:\"打开固定的语音模式右侧面板。\"",
+    "source": "translations-batch15.mjs"
+  },
+  {
+    "from": "description:\"Close the Voice Mode right-side panel.\"",
+    "to": "description:\"关闭语音模式右侧面板。\"",
+    "source": "translations-batch15.mjs"
+  },
+  {
+    "from": "description:\"Focus a session already visible in either split-screen pane, or reuse its existing tab without opening a duplicate.\"",
+    "to": "description:\"聚焦已在任一分屏窗格中可见的会话，或复用其现有标签页而不打开重复项。\"",
+    "source": "translations-batch15.mjs"
+  },
+  {
+    "from": "description:\"Session id from the OpenWork context resources or conversation tabs.\"",
+    "to": "description:\"来自 OpenWork 上下文资源或会话标签页的会话 ID。\"",
+    "source": "translations-batch15.mjs"
+  },
+  {
+    "from": "actionLabel:\"View updates\"",
+    "to": "actionLabel:\"查看更新\"",
+    "source": "translations-batch16.mjs"
+  },
+  {
+    "from": "description:\"Automate the built-in browser panel that stays visible inside OpenWork.\"",
+    "to": "description:\"自动化保持可见的内置 OpenWork 浏览器面板。\"",
+    "source": "translations-batch16.mjs"
+  },
+  {
+    "from": "description:\"Mac only: control Mac apps through semantic accessibility refs, screenshots, background-safe clicks, keyboard input, and strict mode.\"",
+    "to": "description:\"仅限 Mac：通过语义无障碍引用、截图、后台安全点击、键盘输入和严格模式控制 Mac 应用。\"",
+    "source": "translations-batch16.mjs"
+  },
+  {
+    "from": "description:\"Talk to OpenWork through a Realtime voice panel that drives the same semantic UI controls as OpenWork UI MCP.\"",
+    "to": "description:\"通过实时语音面板与 OpenWork 对话，该面板驱动与 OpenWork UI MCP 相同的语义 UI 控件。\"",
+    "source": "translations-batch16.mjs"
+  },
+  {
+    "from": "description:\"Local model provider at http://localhost:11434.\"",
+    "to": "description:\"位于 http://localhost:11434 的本地模型提供商。\"",
+    "source": "translations-batch16.mjs"
+  },
+  {
+    "from": "description:\"A timeout was reported, but the client did not receive structured evidence identifying which boundary created it.\"",
+    "to": "description:\"已报告超时，但客户端未收到可识别其产生边界的结构化证据。\"",
+    "source": "translations-batch16.mjs"
+  },
+  {
+    "from": "description:\"Connect the Voice Mode panel to OpenAI Realtime and start listening.\"",
+    "to": "description:\"将语音模式面板连接到 OpenAI Realtime 并开始聆听。\"",
+    "source": "translations-batch16.mjs"
+  },
+  {
+    "from": "description:\"Disconnect the active Voice Mode Realtime session.\"",
+    "to": "description:\"断开活动的语音模式 Realtime 会话。\"",
+    "source": "translations-batch16.mjs"
+  },
+  {
+    "from": "description:\"Toggle the microphone track without closing the Realtime session.\"",
+    "to": "description:\"在不关闭 Realtime 会话的情况下切换麦克风轨道。\"",
+    "source": "translations-batch16.mjs"
+  },
+  {
+    "from": "description:\"Deterministic eval hook: add a transcript to Voice Mode and place it in the composer.\"",
+    "to": "description:\"确定性评估钩子：向语音模式添加一条记录并将其放入输入框。\"",
+    "source": "translations-batch16.mjs"
+  },
+  {
+    "from": "description:\"Transcript text to inject.\"",
+    "to": "description:\"要注入的记录文本。\"",
+    "source": "translations-batch16.mjs"
+  },
+  {
+    "from": "description:\"Send a deterministic text command through the active OpenAI Realtime voice session.\"",
+    "to": "description:\"通过活动的 OpenAI Realtime 语音会话发送确定性文本命令。\"",
+    "source": "translations-batch16.mjs"
+  },
+  {
+    "from": "description:\"Text command to send through the Realtime model.\"",
+    "to": "description:\"要通过 Realtime 模型发送的文本命令。\"",
+    "source": "translations-batch16.mjs"
+  },
+  {
+    "from": "description:\"Deterministic eval hook: send PCM16 audio through the active OpenAI Realtime input buffer.\"",
+    "to": "description:\"确定性评估钩子：通过活动的 OpenAI Realtime 输入缓冲区发送 PCM16 音频。\"",
+    "source": "translations-batch16.mjs"
+  },
+  {
+    "from": "description:\"Base64 encoded PCM16 mono audio.\"",
+    "to": "description:\"Base64 编码的 PCM16 单声道音频。\"",
+    "source": "translations-batch16.mjs"
+  },
+  {
+    "from": "description:\"Return the Voice Mode runtime state for tests and agents.\"",
+    "to": "description:\"返回语音模式的运行时状态，供测试和代理使用。\"",
+    "source": "translations-batch16.mjs"
+  },
+  {
+    "from": "description:\"Create a new session in the selected workspace.\"",
+    "to": "description:\"在所选工作区中创建新会话。\"",
+    "source": "translations-batch16.mjs"
+  },
+  {
+    "from": "description:\"Return the list of sessions across workspaces so the user can ask to open one by name.\"",
+    "to": "description:\"返回跨工作区的会话列表，以便用户按名称请求打开某个会话。\"",
+    "source": "translations-batch16.mjs"
+  },
+  {
+    "from": "description:\"Focus a visible session or reuse its existing tab. Use list_sessions first to get the session ID.\"",
+    "to": "description:\"聚焦可见会话或复用其现有标签页。先使用 list_sessions 获取会话 ID。\"",
+    "source": "translations-batch16.mjs"
+  },
+  {
+    "from": "description:\"Rename a session by ID. Use list_sessions first to match the title the user said.\"",
+    "to": "description:\"按 ID 重命名会话。先使用 list_sessions 匹配用户所说的标题。\"",
+    "source": "translations-batch16.mjs"
+  },
+  {
+    "from": "description:\"New session title.\"",
+    "to": "description:\"新会话标题。\"",
+    "source": "translations-batch16.mjs"
+  },
+  {
+    "from": "description:\"Delete a session by ID. Destructive: only run after explicit user confirmation.\"",
+    "to": "description:\"按 ID 删除会话。破坏性操作：仅在用户明确确认后执行。\"",
+    "source": "translations-batch16.mjs"
+  },
+  {
+    "from": "description:\"Must be true after explicit user confirmation.\"",
+    "to": "description:\"必须在用户明确确认后为 true。\"",
+    "source": "translations-batch16.mjs"
+  },
+  {
+    "from": "description:\"Open the current session model picker.\"",
+    "to": "description:\"打开当前会话的模型选择器。\"",
+    "source": "translations-batch16.mjs"
+  },
+  {
+    "from": "description:\"Toggle pin on a session. Pinned sessions appear in a global section at the top of the sidebar.\"",
+    "to": "description:\"切换会话的置顶状态。置顶的会话显示在侧边栏顶部的全局分区中。\"",
+    "source": "translations-batch16.mjs"
+  },
+  {
+    "from": "description:\"Session ID to pin/unpin.\"",
+    "to": "description:\"要置顶/取消置顶的会话 ID。\"",
+    "source": "translations-batch16.mjs"
+  },
+  {
+    "from": "description:\"Archive a session (non-destructive, preserves context). Archived sessions move to the Archived section. Pass archived=false to unarchive.\"",
+    "to": "description:\"归档会话（非破坏性，保留上下文）。已归档会话移至归档分区。传入 archived=false 可取消归档。\"",
+    "source": "translations-batch16.mjs"
+  },
+  {
+    "from": "description:\"Create a new group (folder/separator) in the current workspace sidebar. Sessions can then be moved into it.\"",
+    "to": "description:\"在当前工作区侧边栏中创建新分组（文件夹/分隔符）。之后可将会话移入其中。\"",
+    "source": "translations-batch16.mjs"
+  },
+  {
+    "from": "description:\"Group name (e.g. 'Done', 'In progress', 'Backlog').\"",
+    "to": "description:\"分组名称（例如“已完成”“进行中”“待办”）。\"",
+    "source": "translations-batch16.mjs"
+  },
+  {
+    "from": "description:\"Workspace ID. Defaults to the selected workspace.\"",
+    "to": "description:\"工作区 ID。默认为所选工作区。\"",
+    "source": "translations-batch16.mjs"
+  },
+  {
+    "from": "description:\"Assign a session to a group (folder). Pass groupId=null or omit to remove from current group. Use session.group.list to see available groups.\"",
+    "to": "description:\"将会话分配到分组（文件夹）。传入 groupId=null 或省略以从当前分组移除。使用 session.group.list 查看可用分组。\"",
+    "source": "translations-batch16.mjs"
+  },
+  {
+    "from": "description:\"Group ID to move into. Omit or null to ungrouped.\"",
+    "to": "description:\"要移入的分组 ID。省略或传 null 表示不分组。\"",
+    "source": "translations-batch16.mjs"
+  },
+  {
+    "from": "description:\"Workspace ID. Defaults to session's workspace.\"",
+    "to": "description:\"工作区 ID。默认为会话的工作区。\"",
+    "source": "translations-batch16.mjs"
+  },
+  {
+    "from": "description:\"Remove a group from the workspace. Sessions in the group become ungrouped (not deleted).\"",
+    "to": "description:\"从工作区移除分组。分组中的会话将变为未分组（不会被删除）。\"",
+    "source": "translations-batch16.mjs"
+  },
+  {
+    "from": "description:\"Group ID to remove.\"",
+    "to": "description:\"要移除的分组 ID。\"",
+    "source": "translations-batch16.mjs"
+  },
+  {
+    "from": "description:\"Must be true.\"",
+    "to": "description:\"必须为 true。\"",
+    "source": "translations-batch16.mjs"
+  },
+  {
+    "from": "description:\"Session ID from session.list_sessions.\"",
+    "to": "description:\"来自 session.list_sessions 的会话 ID。\"",
+    "source": "translations-batch16.mjs"
+  },
+  {
+    "from": "description:\"Session ID.\"",
+    "to": "description:\"会话 ID。\"",
+    "source": "translations-batch16.mjs"
+  },
+  {
+    "from": "description:\"Workspace ID. Defaults to selected.\"",
+    "to": "description:\"工作区 ID。默认为当前选中项。\"",
+    "source": "translations-batch16.mjs"
+  },
+  {
+    "from": "description:\"Optional project name used to group the workspace's sessions in analytics.\"",
+    "to": "description:\"用于在分析中归组工作区会话的可选项目名称。\"",
+    "source": "translations-batch16.mjs"
+  },
+  {
+    "from": "title:\"1. Connect Computer Use MCP\"",
+    "to": "title:\"1. 连接 Computer Use MCP\"",
+    "source": "translations-batch17.mjs"
+  },
+  {
+    "from": "title:\"2. Grant macOS permissions\"",
+    "to": "title:\"2. 授予 macOS 权限\"",
+    "source": "translations-batch17.mjs"
+  },
+  {
+    "from": "description:\"Adds the local Computer Use server to this workspace so Composer can use the computer-control tools.\"",
+    "to": "description:\"将本地 Computer Use 服务器添加到此工作区，以便 Composer 使用计算机控制工具。\"",
+    "source": "translations-batch17.mjs"
+  },
+  {
+    "from": "description:\"Opens the OpenWork Computer Use helper. Grant both permissions there, then click Verify below.\"",
+    "to": "description:\"打开 OpenWork Computer Use 助手。在此授予两项权限，然后点击下方的“验证”。\"",
+    "source": "translations-batch17.mjs"
+  },
+  {
+    "from": "description:\"List all groups in a workspace with their IDs and labels.\"",
+    "to": "description:\"列出工作区中的所有分组及其 ID 和标签。\"",
+    "source": "translations-batch17.mjs"
+  },
+  {
+    "from": "description:\"Repos, stars, awesome lists...\"",
+    "to": "description:\"仓库、星标、精选列表…\"",
+    "source": "translations-batch17.mjs"
+  },
+  {
+    "from": "description:\"Someone recommended it directly.\"",
+    "to": "description:\"有人直接推荐。\"",
+    "source": "translations-batch17.mjs"
+  },
+  {
+    "from": "description:\"Exchange a desktop handoff grant string to sign in without the browser flow.\"",
+    "to": "description:\"交换桌面交接授权字符串，无需浏览器流程即可登录。\"",
+    "source": "translations-batch17.mjs"
+  },
+  {
+    "from": "description:\"The raw handoff grant string.\"",
+    "to": "description:\"原始交接授权字符串。\"",
+    "source": "translations-batch17.mjs"
+  },
+  {
+    "from": "description:\"Optional Den base URL.\"",
+    "to": "description:\"可选的 Den 基础 URL。\"",
+    "source": "translations-batch17.mjs"
+  },
+  {
+    "from": "description:\"Return the current cloud sign-in status and user.\"",
+    "to": "description:\"返回当前的云登录状态和用户。\"",
+    "source": "translations-batch17.mjs"
+  },
+  {
+    "from": ":\"not checked\"}",
+    "to": ":\"未检查\"}",
+    "source": "translations-batch18.mjs"
+  },
+  {
+    "from": ":\"none tracked\"}",
+    "to": ":\"无已跟踪项\"}",
+    "source": "translations-batch18.mjs"
+  },
+  {
+    "from": ":\"none tracked\",",
+    "to": ":\"无已跟踪项\",",
+    "source": "translations-batch18.mjs"
+  },
+  {
+    "from": "value:c?.checked?`${c.provider??\"unknown\"}/${c.model??\"unknown\"}; source ${c.source??\"unknown\"}; tool calling ${cy(c.toolCalling)}; present ${cd(c.present)}; missing ${cd(c.missing)}${c.limitation?`; limitation: ${c.limitation}`:\"\"}`",
+    "to": "value:c?.checked?`${c.provider??\"未知\"}/${c.model??\"未知\"}; 来源 ${c.source??\"未知\"}; 工具调用 ${cy(c.toolCalling)}; 存在 ${cd(c.present)}; 缺失 ${cd(c.missing)}${c.limitation?`; 限制: ${c.limitation}`:\"\"}`",
+    "source": "translations-batch18.mjs"
+  },
+  {
+    "from": "value:`derived present ${cd(e.cloudMcpHealth.tools.present)}; missing ${cd(e.cloudMcpHealth.tools.missing)}`",
+    "to": "value:`派生存在 ${cd(e.cloudMcpHealth.tools.present)}; 缺失 ${cd(e.cloudMcpHealth.tools.missing)}`",
+    "source": "translations-batch18.mjs"
+  },
+  {
+    "from": "value:`checked ${e.cloudMcpHealth.tools.direct.checked?\"yes\":\"no\"}; present ${cd(e.cloudMcpHealth.tools.direct.present)}; missing ${cd(e.cloudMcpHealth.tools.direct.missing)}`",
+    "to": "value:`已检查: ${e.cloudMcpHealth.tools.direct.checked?\"是\":\"否\"}; 存在 ${cd(e.cloudMcpHealth.tools.direct.present)}; 缺失 ${cd(e.cloudMcpHealth.tools.direct.missing)}`",
+    "source": "translations-batch18.mjs"
+  },
+  {
+    "from": "value:`${e.cloudMcpHealth.tools.direct.trace.endpoint??\"unknown endpoint\"} · ${e.cloudMcpHealth.tools.direct.trace.latencyMs} ms · ${e.cloudMcpHealth.tools.direct.trace.steps.map(m=>`${m.step} ${m.ok?\"ok\":\"failed\"}${m.httpStatus!==void 0?` (HTTP ${m.httpStatus})`:\"\"} ${Math.max(0,Math.round(m.latencyMs))}ms`).join(\" → \")||\"no steps\"}`",
+    "to": "value:`${e.cloudMcpHealth.tools.direct.trace.endpoint??\"未知端点\"} · ${e.cloudMcpHealth.tools.direct.trace.latencyMs} ms · ${e.cloudMcpHealth.tools.direct.trace.steps.map(m=>`${m.step} ${m.ok?\"成功\":\"失败\"}${m.httpStatus!==void 0?` (HTTP ${m.httpStatus})`:\"\"} ${Math.max(0,Math.round(m.latencyMs))}ms`).join(\" → \")||\"无步骤\"}`",
+    "source": "translations-batch18.mjs"
+  },
+  {
+    "from": "value:`${e.cloudMcpHealth.firstFailure.code} (stage ${e.cloudMcpHealth.firstFailure.stage}; ${e.cloudMcpHealth.firstFailure.retryable?\"retryable\":\"not retryable\"}): ${e.cloudMcpHealth.firstFailure.message}`",
+    "to": "value:`${e.cloudMcpHealth.firstFailure.code}（阶段 ${e.cloudMcpHealth.firstFailure.stage}; ${e.cloudMcpHealth.firstFailure.retryable?\"可重试\":\"不可重试\"}): ${e.cloudMcpHealth.firstFailure.message}`",
+    "source": "translations-batch18.mjs"
+  },
+  {
+    "from": "value:`present ${cd(e.cloudMcpHealth.pluginCanaries.present)}; missing ${cd(e.cloudMcpHealth.pluginCanaries.missing)}`",
+    "to": "value:`存在 ${cd(e.cloudMcpHealth.pluginCanaries.present)}; 缺失 ${cd(e.cloudMcpHealth.pluginCanaries.missing)}`",
+    "source": "translations-batch18.mjs"
+  },
+  {
+    "from": "value:`schema v${e.cloudMcpHealth.schemaVersion}; connect catalog ${e.cloudMcpHealth.connectCatalogEnabled?\"enabled\":\"disabled\"}`",
+    "to": "value:`schema v${e.cloudMcpHealth.schemaVersion}; 连接目录 ${e.cloudMcpHealth.connectCatalogEnabled?\"已启用\":\"已禁用\"}`",
+    "source": "translations-batch18.mjs"
+  },
+  {
+    "from": "value:`server ${cy(d.openwork.serverVersion)}; app ${Nwt(d.openwork.app)}`",
+    "to": "value:`服务器 ${cy(d.openwork.serverVersion)}; 应用 ${Nwt(d.openwork.app)}`",
+    "source": "translations-batch18.mjs"
+  },
+  {
+    "from": "value:`expected ${cy(d.opencode.expectedVersion)}; actual ${cy(d.opencode.actualVersion)}; probe ${d.opencode.probe}`",
+    "to": "value:`预期 ${cy(d.opencode.expectedVersion)}; 实际 ${cy(d.opencode.actualVersion)}; 探测 ${d.opencode.probe}`",
+    "source": "translations-batch18.mjs"
+  },
+  {
+    "from": "{tab:\"preferences\",icon:T6,title:\"Preferences\",desc:\"Default model, reasoning, and compaction.\"}",
+    "to": "{tab:\"preferences\",icon:T6,title:\"偏好设置\",desc:\"默认模型、推理与压缩。\"}",
+    "source": "translations-batch2.mjs"
+  },
+  {
+    "from": "{tab:\"permissions\",icon:Kte,title:\"Permissions\",desc:\"Authorized folders and file access.\"}",
+    "to": "{tab:\"permissions\",icon:Kte,title:\"权限\",desc:\"已授权文件夹与文件访问。\"}",
+    "source": "translations-batch2.mjs"
+  },
+  {
+    "from": "{tab:\"advanced\",icon:B6,title:\"Advanced\",desc:\"Runtime, engine, and developer options.\"}",
+    "to": "{tab:\"advanced\",icon:B6,title:\"高级\",desc:\"运行时、引擎与开发者选项。\"}",
+    "source": "translations-batch2.mjs"
+  },
+  {
+    "from": "{tab:\"ai\",icon:Tg,title:\"AI Providers\",desc:\"Connect services that provide AI models.\"}",
+    "to": "{tab:\"ai\",icon:Tg,title:\"AI 提供商\",desc:\"连接提供 AI 模型的服务。\"}",
+    "source": "translations-batch2.mjs"
+  },
+  {
+    "from": "{tab:\"cloud-account\",icon:yb,title:\"Cloud\",desc:\"OpenWork Cloud account and organization.\"}",
+    "to": "{tab:\"cloud-account\",icon:yb,title:\"Cloud\",desc:\"OpenWork Cloud 账户与组织。\"}",
+    "source": "translations-batch2.mjs"
+  },
+  {
+    "from": "{tab:\"appearance\",icon:Jte,title:\"Appearance\",desc:\"Theme, font size, and display.\"}",
+    "to": "{tab:\"appearance\",icon:Jte,title:\"外观\",desc:\"主题、字体大小与显示。\"}",
+    "source": "translations-batch2.mjs"
+  },
+  {
+    "from": "{tab:\"environment\",icon:_2,title:\"Environment\",desc:\"Environment variables and paths.\"}",
+    "to": "{tab:\"environment\",icon:_2,title:\"环境\",desc:\"环境变量与路径。\"}",
+    "source": "translations-batch2.mjs"
+  },
+  {
+    "from": "{tab:\"updates\",icon:Sl,title:\"Updates\",desc:\"App version and update channel.\"}",
+    "to": "{tab:\"updates\",icon:Sl,title:\"更新\",desc:\"应用版本与更新渠道。\"}",
+    "source": "translations-batch2.mjs"
+  },
+  {
+    "from": "{tab:\"recovery\",icon:WA,title:\"Recovery\",desc:\"Reset onboarding and clear data.\"}",
+    "to": "{tab:\"recovery\",icon:WA,title:\"恢复\",desc:\"重置引导并清除数据。\"}",
+    "source": "translations-batch2.mjs"
+  },
+  {
+    "from": "case\"ai\":return\"AI Providers\";",
+    "to": "case\"ai\":return\"AI 提供商\";",
+    "source": "translations-batch2.mjs"
+  },
+  {
+    "from": "case\"preferences\":return\"Preferences\";",
+    "to": "case\"preferences\":return\"偏好设置\";",
+    "source": "translations-batch2.mjs"
+  },
+  {
+    "from": "case\"permissions\":return\"Permissions\";",
+    "to": "case\"permissions\":return\"权限\";",
+    "source": "translations-batch2.mjs"
+  },
+  {
+    "from": "case\"general\":return\"Settings\";",
+    "to": "case\"general\":return\"设置\";",
+    "source": "translations-batch2.mjs"
+  },
+  {
+    "from": "case\"general\":return\"Overview of all settings\";",
+    "to": "case\"general\":return\"所有设置总览\";",
+    "source": "translations-batch2.mjs"
+  },
+  {
+    "from": "title:\"AI Providers\",description:\"Models you can use in your workspace.\"",
+    "to": "title:\"AI 提供商\",description:\"你可以在工作区使用的模型。\"",
+    "source": "translations-batch2.mjs"
+  },
+  {
+    "from": "title:\"Marketplaces\",description:\"App stores with extensions and plugins for your workspace.\"",
+    "to": "title:\"应用市场\",description:\"为你的工作区提供扩展和插件应用商店。\"",
+    "source": "translations-batch2.mjs"
+  },
+  {
+    "from": "Choose the organization to use with this workspace. Sign out to switch later.",
+    "to": "选择要与该工作区一起使用的组织。退出登录后可稍后切换。",
+    "source": "translations-batch3.mjs"
+  },
+  {
+    "from": "No organizations found.",
+    "to": "未找到组织。",
+    "source": "translations-batch3.mjs"
+  },
+  {
+    "from": "Search organizations...",
+    "to": "搜索组织...",
+    "source": "translations-batch3.mjs"
+  },
+  {
+    "from": "Release stage",
+    "to": "发布阶段",
+    "source": "translations-batch3.mjs"
+  },
+  {
+    "from": "OpenWork Cloud MCP health",
+    "to": "OpenWork Cloud MCP 健康状态",
+    "source": "translations-batch3.mjs"
+  },
+  {
+    "from": "Engine MCP servers",
+    "to": "引擎 MCP 服务器",
+    "source": "translations-batch3.mjs"
+  },
+  {
+    "from": "Active workspace",
+    "to": "当前工作区",
+    "source": "translations-batch3.mjs"
+  },
+  {
+    "from": "Add folder",
+    "to": "添加文件夹",
+    "source": "translations-batch3.mjs"
+  },
+  {
+    "from": "Direct endpoint check",
+    "to": "直接端点检查",
+    "source": "translations-batch3.mjs"
+  },
+  {
+    "from": "Use this when support needs exact runtime state. The main Connect card stays user-facing.",
+    "to": "当支持需要确切运行时状态时使用。主连接卡片保持面向用户。",
+    "source": "translations-batch3.mjs"
+  },
+  {
+    "from": "Technical details for OpenWork Cloud MCP delivery. Tokens and Authorization headers are redacted before display or copy.",
+    "to": "OpenWork Cloud MCP 交付的技术细节。显示或复制前会脱敏令牌和 Authorization 头。",
+    "source": "translations-batch3.mjs"
+  },
+  {
+    "from": "Control the launcher, icon, and openwork:// callback for this AppImage.",
+    "to": "控制此 AppImage 的启动器、图标和 openwork:// 回调。",
+    "source": "translations-batch3.mjs"
+  },
+  {
+    "from": "Dev discovery file",
+    "to": "开发发现文件",
+    "source": "translations-batch3.mjs"
+  },
+  {
+    "from": "Production discovery file",
+    "to": "生产发现文件",
+    "source": "translations-batch3.mjs"
+  },
+  {
+    "from": "AppImage desktop integration",
+    "to": "AppImage 桌面集成",
+    "source": "translations-batch3.mjs"
+  },
+  {
+    "from": "children:\"Integrate\"",
+    "to": "children:\"集成\"",
+    "source": "translations-batch4.mjs"
+  },
+  {
+    "from": "children:\"Use manager launcher\"",
+    "to": "children:\"使用管理器启动器\"",
+    "source": "translations-batch4.mjs"
+  },
+  {
+    "from": "children:\"Workspace\"",
+    "to": "children:\"工作区\"",
+    "source": "translations-batch4.mjs"
+  },
+  {
+    "from": "children:\"Default agent\"",
+    "to": "children:\"默认代理\"",
+    "source": "translations-batch4.mjs"
+  },
+  {
+    "from": "children:\"Display menu bar\"",
+    "to": "children:\"显示菜单栏\"",
+    "source": "translations-batch4.mjs"
+  },
+  {
+    "from": "children:\"Select an organization\"",
+    "to": "children:\"选择组织\"",
+    "source": "translations-batch4.mjs"
+  },
+  {
+    "from": "children:\"No organizations match your search.\"",
+    "to": "children:\"没有组织匹配你的搜索。\"",
+    "source": "translations-batch4.mjs"
+  },
+  {
+    "from": "children:\"Show more\"",
+    "to": "children:\"显示更多\"",
+    "source": "translations-batch4.mjs"
+  },
+  {
+    "from": "children:\"No providers match your search.\"",
+    "to": "children:\"没有提供商匹配你的搜索。\"",
+    "source": "translations-batch4.mjs"
+  },
+  {
+    "from": "children:\"Agent access ready\"",
+    "to": "children:\"代理访问就绪\"",
+    "source": "translations-batch4.mjs"
+  },
+  {
+    "from": "children:\"Recommended action\"",
+    "to": "children:\"建议操作\"",
+    "source": "translations-batch4.mjs"
+  },
+  {
+    "from": "children:\"Working directory\"",
+    "to": "children:\"工作目录\"",
+    "source": "translations-batch4.mjs"
+  },
+  {
+    "from": "children:\"Prepare migration data\"",
+    "to": "children:\"准备迁移数据\"",
+    "source": "translations-batch4.mjs"
+  },
+  {
+    "from": "children:\"OpenCode Plugins\"",
+    "to": "children:\"OpenCode 插件\"",
+    "source": "translations-batch4.mjs"
+  },
+  {
+    "from": "children:\"Release channel\"",
+    "to": "children:\"发布渠道\"",
+    "source": "translations-batch4.mjs"
+  },
+  {
+    "from": "title:\"Additional workspaces are restricted\"",
+    "to": "title:\"额外工作区受限\"",
+    "source": "translations-batch4.mjs"
+  },
+  {
+    "from": "children:\"Recheck\"",
+    "to": "children:\"重新检查\"",
+    "source": "translations-batch5.mjs"
+  },
+  {
+    "from": "children:\"Refresh\"",
+    "to": "children:\"刷新\"",
+    "source": "translations-batch5.mjs"
+  },
+  {
+    "from": "children:\"Trigger\"",
+    "to": "children:\"触发器\"",
+    "source": "translations-batch5.mjs"
+  },
+  {
+    "from": "label:\"Failure\"",
+    "to": "label:\"失败\"",
+    "source": "translations-batch5.mjs"
+  },
+  {
+    "from": "label:\"Open the command palette\"",
+    "to": "label:\"打开命令面板\"",
+    "source": "translations-batch6.mjs"
+  },
+  {
+    "from": "description:\"Open the in-app command palette so the next choice is visible.\"",
+    "to": "description:\"打开应用内命令面板，使下一个选择可见。\"",
+    "source": "translations-batch6.mjs"
+  },
+  {
+    "from": "label:\"Add a model provider\"",
+    "to": "label:\"添加模型提供商\"",
+    "source": "translations-batch6.mjs"
+  },
+  {
+    "from": "description:\"Open the provider connection modal, optionally pre-filtered to a specific provider.\"",
+    "to": "description:\"打开提供商连接弹窗，可选预筛选到特定提供商。\"",
+    "source": "translations-batch6.mjs"
+  },
+  {
+    "from": "description:\"Provider id to pre-select, e.g. 'anthropic', 'openai', 'google'.\"",
+    "to": "description:\"要预选的提供商 ID，例如 'anthropic'、'openai'、'google'。\"",
+    "source": "translations-batch6.mjs"
+  },
+  {
+    "from": "label:\"Create a local workspace\"",
+    "to": "label:\"创建本地工作区\"",
+    "source": "translations-batch6.mjs"
+  },
+  {
+    "from": "description:\"Create a workspace at the given folder path without showing the file picker dialog, optionally labeling its project for analytics.\"",
+    "to": "description:\"在给定文件夹路径创建工作区而不显示文件选择对话框，可选择为其项目标记分析标签。\"",
+    "source": "translations-batch6.mjs"
+  },
+  {
+    "from": "description:\"Absolute folder path for the new workspace.\"",
+    "to": "description:\"新工作区的绝对文件夹路径。\"",
+    "source": "translations-batch6.mjs"
+  },
+  {
+    "from": "title:\"Search session messages\"",
+    "to": "title:\"搜索会话消息\"",
+    "source": "translations-batch6.mjs"
+  },
+  {
+    "from": "detail:\"Deep search every session, including message content\"",
+    "to": "detail:\"深度搜索每个会话，包括消息内容\"",
+    "source": "translations-batch6.mjs"
+  },
+  {
+    "from": "title:\"Find in conversation\"",
+    "to": "title:\"在当前会话中查找\"",
+    "source": "translations-batch6.mjs"
+  },
+  {
+    "from": "detail:\"Search within the current conversation\"",
+    "to": "detail:\"在当前会话内搜索\"",
+    "source": "translations-batch6.mjs"
+  },
+  {
+    "from": "title:\"Next session tab\"",
+    "to": "title:\"下一个会话标签页\"",
+    "source": "translations-batch6.mjs"
+  },
+  {
+    "from": "detail:\"Switch to the next session in this workspace\"",
+    "to": "detail:\"切换到该工作区中的下一个会话\"",
+    "source": "translations-batch6.mjs"
+  },
+  {
+    "from": "title:\"Previous session tab\"",
+    "to": "title:\"上一个会话标签页\"",
+    "source": "translations-batch6.mjs"
+  },
+  {
+    "from": "detail:\"Switch to the previous session in this workspace\"",
+    "to": "detail:\"切换到该工作区中的上一个会话\"",
+    "source": "translations-batch6.mjs"
+  },
+  {
+    "from": "actionLabel:p?\"View details\":",
+    "to": "actionLabel:p?\"查看详情\":",
+    "source": "translations-batch7.mjs"
+  },
+  {
+    "from": "actionLabel:\"View details\"",
+    "to": "actionLabel:\"查看详情\"",
+    "source": "translations-batch7.mjs"
+  },
+  {
+    "from": "description:c.description??\"Installed skill\"",
+    "to": "description:c.description??\"已安装技能\"",
+    "source": "translations-batch7.mjs"
+  },
+  {
+    "from": "description:u.description??\"Installed skill\"",
+    "to": "description:u.description??\"已安装技能\"",
+    "source": "translations-batch7.mjs"
+  },
+  {
+    "from": "Te=M===void 0?\"Reconnect\":M",
+    "to": "Te=M===void 0?\"重新连接\":M",
+    "source": "translations-batch7.mjs"
+  },
+  {
+    "from": "Ae=D===void 0?\"Connecting...\":D",
+    "to": "Ae=D===void 0?\"正在连接...\":D",
+    "source": "translations-batch7.mjs"
+  },
+  {
+    "from": "e.exists?\"Found\":\"Not found\"",
+    "to": "e.exists?\"找到\":\"未找到\"",
+    "source": "translations-batch7.mjs"
+  },
+  {
+    "from": "e.configStatus.userOpencode.exists?\"Found\":\"Not found\"",
+    "to": "e.configStatus.userOpencode.exists?\"找到\":\"未找到\"",
+    "source": "translations-batch7.mjs"
+  },
+  {
+    "from": "Kc?\"Hide terminal\":\"Show terminal\"",
+    "to": "Kc?\"隐藏终端\":\"显示终端\"",
+    "source": "translations-batch7.mjs"
+  },
+  {
+    "from": "detail:\"Toggle the integrated terminal panel for this workspace\"",
+    "to": "detail:\"切换此工作区的集成终端面板\"",
+    "source": "translations-batch7.mjs"
+  },
+  {
+    "from": "te.credentialMode===\"shared\"?\"Org account\":\"你的账户\"",
+    "to": "te.credentialMode===\"shared\"?\"组织账户\":\"你的账户\"",
+    "source": "translations-batch7.mjs"
+  },
+  {
+    "from": "primaryTitle:c?\"Automations\":void 0",
+    "to": "primaryTitle:c?\"自动化任务\":void 0",
+    "source": "translations-batch7.mjs"
+  },
+  {
+    "from": "{statusLabel:\"Not checked\",tone:\"neutral\",stageLabel:\"连接工作区服务器\"",
+    "to": "{statusLabel:\"未检查\",tone:\"neutral\",stageLabel:\"连接工作区服务器\"",
+    "source": "translations-batch7.mjs"
+  },
+  {
+    "from": "{statusLabel:\"Not checked\",tone:\"neutral\",stageLabel:\"选择一个工作区\"",
+    "to": "{statusLabel:\"未检查\",tone:\"neutral\",stageLabel:\"选择一个工作区\"",
+    "source": "translations-batch7.mjs"
+  },
+  {
+    "from": "children:\"Cancel\"",
+    "to": "children:\"取消\"",
+    "source": "translations-batch8.mjs"
+  },
+  {
+    "from": "children:\"Your organization\"",
+    "to": "children:\"你的组织\"",
+    "source": "translations-batch8.mjs"
+  },
+  {
+    "from": "children:\"Loading organizations...\"",
+    "to": "children:\"正在加载组织...\"",
+    "source": "translations-batch8.mjs"
+  },
+  {
+    "from": "children:\"Choose your organization\"",
+    "to": "children:\"选择你的组织\"",
+    "source": "translations-batch8.mjs"
+  },
+  {
+    "from": "children:\"Loading available resources...\"",
+    "to": "children:\"正在加载可用资源...\"",
+    "source": "translations-batch8.mjs"
+  },
+  {
+    "from": "children:\"Sign out\"",
+    "to": "children:\"退出登录\"",
+    "source": "translations-batch8.mjs"
+  },
+  {
+    "from": "children:\"Subscribe\"",
+    "to": "children:\"订阅\"",
+    "source": "translations-batch8.mjs"
+  },
+  {
+    "from": "children:\"Toggle Sidebar\"",
+    "to": "children:\"切换侧边栏\"",
+    "source": "translations-batch8.mjs"
+  },
+  {
+    "from": "children:\"Change model\"",
+    "to": "children:\"切换模型\"",
+    "source": "translations-batch8.mjs"
+  },
+  {
+    "from": "children:\"Connect a model provider\"",
+    "to": "children:\"连接模型提供商\"",
+    "source": "translations-batch8.mjs"
+  },
+  {
+    "from": "children:\"Browse the web\"",
+    "to": "children:\"浏览网页\"",
+    "source": "translations-batch8.mjs"
+  },
+  {
+    "from": "children:\"New tab\"",
+    "to": "children:\"新标签页\"",
+    "source": "translations-batch8.mjs"
+  },
+  {
+    "from": "children:\"Instructions\"",
+    "to": "children:\"说明\"",
+    "source": "translations-batch8.mjs"
+  },
+  {
+    "from": "children:\"Configuration\"",
+    "to": "children:\"配置\"",
+    "source": "translations-batch8.mjs"
+  },
+  {
+    "from": "children:\"Connect to a local Ollama instance and choose a model.\"",
+    "to": "children:\"连接到本地 Ollama 实例并选择模型。\"",
+    "source": "translations-batch8.mjs"
+  },
+  {
+    "from": "children:\"OpenAI API key\"",
+    "to": "children:\"OpenAI API 密钥\"",
+    "source": "translations-batch8.mjs"
+  },
+  {
+    "from": "children:\"Test Realtime\"",
+    "to": "children:\"测试 Realtime\"",
+    "source": "translations-batch8.mjs"
+  },
+  {
+    "from": "children:\"Remove\"",
+    "to": "children:\"移除\"",
+    "source": "translations-batch8.mjs"
+  },
+  {
+    "from": "children:\"Search\"",
+    "to": "children:\"搜索\"",
+    "source": "translations-batch8.mjs"
+  },
+  {
+    "from": "children:\"Architecture mismatch\"",
+    "to": "children:\"架构不匹配\"",
+    "source": "translations-batch8.mjs"
+  },
+  {
+    "from": "children:\"Install the correct OpenWork build\"",
+    "to": "children:\"安装正确的 OpenWork 版本\"",
+    "source": "translations-batch8.mjs"
+  },
+  {
+    "from": "children:\"Running app\"",
+    "to": "children:\"正在运行的应用程序\"",
+    "source": "translations-batch8.mjs"
+  },
+  {
+    "from": "children:\"Your system\"",
+    "to": "children:\"你的系统\"",
+    "source": "translations-batch8.mjs"
+  },
+  {
+    "from": "children:\"Download correct version\"",
+    "to": "children:\"下载正确的版本\"",
+    "source": "translations-batch8.mjs"
+  },
+  {
+    "from": "children:\"Open release page\"",
+    "to": "children:\"打开发布页面\"",
+    "source": "translations-batch8.mjs"
+  },
+  {
+    "from": "children:\"Why OpenWork stopped here\"",
+    "to": "children:\"为什么 OpenWork 停在这里\"",
+    "source": "translations-batch8.mjs"
+  },
+  {
+    "from": "children:\"Activate OpenWork Enterprise\"",
+    "to": "children:\"激活 OpenWork Enterprise\"",
+    "source": "translations-batch8.mjs"
+  },
+  {
+    "from": "children:\"Waiting for your organization's activation link…\"",
+    "to": "children:\"正在等待你组织的激活链接…\"",
+    "source": "translations-batch8.mjs"
+  },
+  {
+    "from": "children:\"Access remains managed by your organization. Activation links expire and can be used once.\"",
+    "to": "children:\"访问权限仍由你的组织管理。激活链接会过期且只能使用一次。\"",
+    "source": "translations-batch8.mjs"
+  },
+  {
+    "from": "children:\"Preparing workspace identity\"",
+    "to": "children:\"正在准备工作区身份\"",
+    "source": "translations-batch8.mjs"
+  },
+  {
+    "from": "children:\"Preparing workspace...\"",
+    "to": "children:\"正在准备工作区...\"",
+    "source": "translations-batch8.mjs"
+  },
+  {
+    "from": "children:\"Workspace identity is ready\"",
+    "to": "children:\"工作区身份已就绪\"",
+    "source": "translations-batch8.mjs"
+  },
+  {
+    "from": "children:\"Why restart?\"",
+    "to": "children:\"为什么要重启？\"",
+    "source": "translations-batch8.mjs"
+  },
+  {
+    "from": "children:\"Restarting refreshes the workspace name and icon across your operating system and installs the prepared application update.\"",
+    "to": "children:\"重启会刷新工作区在操作系统中的名称和图标，并安装已准备好的应用程序更新。\"",
+    "source": "translations-batch8.mjs"
+  },
+  {
+    "from": "children:\"Continue without restarting\"",
+    "to": "children:\"暂不重启\"",
+    "source": "translations-batch8.mjs"
+  },
+  {
+    "from": "children:\"You have access to the following resources.\"",
+    "to": "children:\"你可以访问以下资源。\"",
+    "source": "translations-batch8.mjs"
+  },
+  {
+    "from": "children:\"No resources have been configured for this organization yet.\"",
+    "to": "children:\"此组织尚未配置任何资源。\"",
+    "source": "translations-batch8.mjs"
+  },
+  {
+    "from": "children:\"Add AI providers or marketplaces from the OpenWork Cloud dashboard.\"",
+    "to": "children:\"从 OpenWork Cloud 仪表盘添加 AI 提供商或应用市场。\"",
+    "source": "translations-batch8.mjs"
+  },
+  {
+    "from": "children:\"Providers are added to your workspace automatically. Marketplaces are available from Cloud settings.\"",
+    "to": "children:\"提供商会自动添加到你的工作区。应用市场可从 Cloud 设置中使用。\"",
+    "source": "translations-batch8.mjs"
+  },
+  {
+    "from": "children:\"Select the organization whose cloud resources should be connected to this workspace.\"",
+    "to": "children:\"选择其云资源应连接到该工作区的组织。\"",
+    "source": "translations-batch8.mjs"
+  },
+  {
+    "from": "children:\"We’ll open your workspace automatically when it’s ready.\"",
+    "to": "children:\"工作区就绪后会自动打开。\"",
+    "source": "translations-batch8.mjs"
+  },
+  {
+    "from": "children:\"Update now\"",
+    "to": "children:\"立即更新\"",
+    "source": "translations-batch8.mjs"
+  },
+  {
+    "from": "children:\"Takes about 30 seconds. Your files and sessions come along.\"",
+    "to": "children:\"大约需要 30 秒。你的文件和会话会随之一同迁移。\"",
+    "source": "translations-batch8.mjs"
+  },
+  {
+    "from": "children:\"Connect providers\"",
+    "to": "children:\"连接提供商\"",
+    "source": "translations-batch8.mjs"
+  },
+  {
+    "from": "children:\"Sign in to services or use providers managed by your organization.\"",
+    "to": "children:\"登录服务或使用由你组织管理的提供商。\"",
+    "source": "translations-batch8.mjs"
+  },
+  {
+    "from": "children:\"Loading providers…\"",
+    "to": "children:\"正在加载提供商…\"",
+    "source": "translations-batch8.mjs"
+  },
+  {
+    "from": "children:\"Connected\"",
+    "to": "children:\"已连接\"",
+    "source": "translations-batch8.mjs"
+  },
+  {
+    "from": "children:\"Arrow keys to navigate, Enter to select.\"",
+    "to": "children:\"使用方向键导航，按 Enter 选择。\"",
+    "source": "translations-batch8.mjs"
+  },
+  {
+    "from": "children:\"Choose how you'd like to connect.\"",
+    "to": "children:\"选择你希望如何连接。\"",
+    "source": "translations-batch8.mjs"
+  },
+  {
+    "from": "children:\"OpenCode Zen gives you access to the best coding models. Free models keep working without a key.\"",
+    "to": "children:\"OpenCode Zen 让你访问最佳编码模型。免费模型无需密钥即可继续使用。\"",
+    "source": "translations-batch8.mjs"
+  },
+  {
+    "from": "children:\"Get an API key →\"",
+    "to": "children:\"获取 API 密钥 →\"",
+    "source": "translations-batch8.mjs"
+  },
+  {
+    "from": "children:\"Frontier intelligence, hand picked for your team's most ambitious work.\"",
+    "to": "children:\"前沿智能，为你团队最具雄心的任务精心挑选。\"",
+    "source": "translations-batch8.mjs"
+  },
+  {
+    "from": "children:\"Finish OAuth by pasting the authorization code.\"",
+    "to": "children:\"粘贴授权码以完成 OAuth。\"",
+    "source": "translations-batch8.mjs"
+  },
+  {
+    "from": "children:\"Complete sign-in in your browser, then paste the code here.\"",
+    "to": "children:\"在浏览器中完成登录，然后将代码粘贴到这里。\"",
+    "source": "translations-batch8.mjs"
+  },
+  {
+    "from": "children:\"Open browser again\"",
+    "to": "children:\"重新打开浏览器\"",
+    "source": "translations-batch8.mjs"
+  },
+  {
+    "from": "children:\"Waiting for browser confirmation.\"",
+    "to": "children:\"等待浏览器确认。\"",
+    "source": "translations-batch8.mjs"
+  },
+  {
+    "from": "children:\"You'll need to sign in to your OpenAI account and provide the code below.\"",
+    "to": "children:\"你需要登录 OpenAI 账户并提供以下代码。\"",
+    "source": "translations-batch8.mjs"
+  },
+  {
+    "from": "children:\"The first time you do this you'll need to enable Device auth in your account settings.\"",
+    "to": "children:\"首次操作时，你需要在账户设置中启用设备认证。\"",
+    "source": "translations-batch8.mjs"
+  },
+  {
+    "from": "children:\"ChatGPT > Account Settings > Security > Enable device code authorization\"",
+    "to": "children:\"ChatGPT > 账户设置 > 安全 > 启用设备代码授权\"",
+    "source": "translations-batch8.mjs"
+  },
+  {
+    "from": "children:\"Sign in in the browser tab we just opened. We will complete the connection automatically.\"",
+    "to": "children:\"在我们刚打开的浏览器标签页中登录。我们将自动完成连接。\"",
+    "source": "translations-batch8.mjs"
+  },
+  {
+    "from": "children:\"Confirmation code\"",
+    "to": "children:\"确认码\"",
+    "source": "translations-batch8.mjs"
+  },
+  {
+    "from": "children:\"Authorization checks will start after you click Open Browser.\"",
+    "to": "children:\"点击打开浏览器后将开始授权检查。\"",
+    "source": "translations-batch8.mjs"
+  },
+  {
+    "from": "children:\"Checking connection status automatically…\"",
+    "to": "children:\"正在自动检查连接状态…\"",
+    "source": "translations-batch8.mjs"
+  },
+  {
+    "from": "children:\"This window will close once the provider is connected.\"",
+    "to": "children:\"提供商连接后此窗口将关闭。\"",
+    "source": "translations-batch8.mjs"
+  },
+  {
+    "from": "children:\"Using OpenWork Den Remote Workers? Click here\"",
+    "to": "children:\"正在使用 OpenWork Den 远程工作器？点击此处\"",
+    "source": "translations-batch8.mjs"
+  },
+  {
+    "from": "children:\"OpenWork Den remote workers\"",
+    "to": "children:\"OpenWork Den 远程工作器\"",
+    "source": "translations-batch8.mjs"
+  },
+  {
+    "from": "children:\"To get back online, you have two options:\"",
+    "to": "children:\"要恢复在线，你有两个选择：\"",
+    "source": "translations-batch8.mjs"
+  },
+  {
+    "from": "children:\"Feedback\"",
+    "to": "children:\"反馈\"",
+    "source": "translations-batch8.mjs"
+  },
+  {
+    "from": "children:\"Email support\"",
+    "to": "children:\"邮件支持\"",
+    "source": "translations-batch8.mjs"
+  },
+  {
+    "from": "children:\"Sidebar\"",
+    "to": "children:\"侧边栏\"",
+    "source": "translations-batch8.mjs"
+  },
+  {
+    "from": "children:\"Displays the mobile sidebar.\"",
+    "to": "children:\"显示移动端侧边栏。\"",
+    "source": "translations-batch8.mjs"
+  },
+  {
+    "from": "children:\"Thinking\"",
+    "to": "children:\"思考中\"",
+    "source": "translations-batch8.mjs"
+  },
+  {
+    "from": "children:\"No models found.\"",
+    "to": "children:\"未找到模型。\"",
+    "source": "translations-batch8.mjs"
+  },
+  {
+    "from": "children:\"Included — syncing into this workspace…\"",
+    "to": "children:\"已包含 — 正在同步到该工作区…\"",
+    "source": "translations-batch8.mjs"
+  },
+  {
+    "from": "children:\"One subscription unlocks these in every workspace.\"",
+    "to": "children:\"一次订阅可在每个工作区解锁这些。\"",
+    "source": "translations-batch8.mjs"
+  },
+  {
+    "from": "children:\"Your API keys\"",
+    "to": "children:\"你的 API 密钥\"",
+    "source": "translations-batch8.mjs"
+  },
+  {
+    "from": "label:\"Offline\"",
+    "to": "label:\"离线\"",
+    "source": "translations-batch9.mjs"
+  },
+  {
+    "from": "label:\"Needs attention\"",
+    "to": "label:\"需要关注\"",
+    "source": "translations-batch9.mjs"
+  },
+  {
+    "from": "label:\"Checking\"",
+    "to": "label:\"正在检查\"",
+    "source": "translations-batch9.mjs"
+  },
+  {
+    "from": "label:\"Running\"",
+    "to": "label:\"运行中\"",
+    "source": "translations-batch9.mjs"
+  },
+  {
+    "from": "label:\"Enabled\"",
+    "to": "label:\"已启用\"",
+    "source": "translations-batch9.mjs"
+  },
+  {
+    "from": "label:\"Update available\"",
+    "to": "label:\"有可用更新\"",
+    "source": "translations-batch9.mjs"
+  },
+  {
+    "from": "label:\"Stable\"",
+    "to": "label:\"稳定版\"",
+    "source": "translations-batch9.mjs"
+  },
+  {
+    "from": "label:\"Open sessions\"",
+    "to": "label:\"打开会话\"",
+    "source": "translations-batch9.mjs"
+  },
+  {
+    "from": "label:\"Open general settings\"",
+    "to": "label:\"打开常规设置\"",
+    "source": "translations-batch9.mjs"
+  },
+  {
+    "from": "label:\"Open extensions\"",
+    "to": "label:\"打开扩展\"",
+    "source": "translations-batch9.mjs"
+  },
+  {
+    "from": "label:\"Open provider settings\"",
+    "to": "label:\"打开提供商设置\"",
+    "source": "translations-batch9.mjs"
+  },
+  {
+    "from": "label:\"Open authorized folder settings\"",
+    "to": "label:\"打开已授权文件夹设置\"",
+    "source": "translations-batch9.mjs"
+  },
+  {
+    "from": "label:\"Open appearance settings\"",
+    "to": "label:\"打开外观设置\"",
+    "source": "translations-batch9.mjs"
+  },
+  {
+    "from": "label:\"Open a settings panel\"",
+    "to": "label:\"打开设置面板\"",
+    "source": "translations-batch9.mjs"
+  },
+  {
+    "from": "label:\"Go back\"",
+    "to": "label:\"返回\"",
+    "source": "translations-batch9.mjs"
+  },
+  {
+    "from": "label:\"Go forward\"",
+    "to": "label:\"前进\"",
+    "source": "translations-batch9.mjs"
+  },
+  {
+    "from": "label:\"What can OpenWork do?\"",
+    "to": "label:\"OpenWork 能做什么？\"",
+    "source": "translations-batch9.mjs"
+  },
+  {
+    "from": "label:\"AI model providers\"",
+    "to": "label:\"AI 模型提供商\"",
+    "source": "translations-batch9.mjs"
+  },
+  {
+    "from": "label:\"Voice mode\"",
+    "to": "label:\"语音模式\"",
+    "source": "translations-batch9.mjs"
+  },
+  {
+    "from": "label:\"File management\"",
+    "to": "label:\"文件管理\"",
+    "source": "translations-batch9.mjs"
+  },
+  {
+    "from": "label:\"Write and run code\"",
+    "to": "label:\"编写并运行代码\"",
+    "source": "translations-batch9.mjs"
+  },
+  {
+    "from": "label:\"Computer use\"",
+    "to": "label:\"计算机控制\"",
+    "source": "translations-batch9.mjs"
+  },
+  {
+    "from": "label:\"Skills\"",
+    "to": "label:\"技能\"",
+    "source": "translations-batch9.mjs"
+  },
+  {
+    "from": "label:\"Share sessions\"",
+    "to": "label:\"分享会话\"",
+    "source": "translations-batch9.mjs"
+  },
+  {
+    "from": "label:\"List notifications\"",
+    "to": "label:\"列出通知\"",
+    "source": "translations-batch9.mjs"
+  },
+  {
+    "from": "label:\"Open OpenWork docs\"",
+    "to": "label:\"打开 OpenWork 文档\"",
+    "source": "translations-batch9.mjs"
+  },
+  {
+    "from": "label:\"Send feedback\"",
+    "to": "label:\"发送反馈\"",
+    "source": "translations-batch9.mjs"
+  },
+  {
+    "from": "label:\"Open settings from the account menu\"",
+    "to": "label:\"从账户菜单打开设置\"",
+    "source": "translations-batch9.mjs"
+  },
+  {
+    "from": "label:\"Create a new task\"",
+    "to": "label:\"创建新任务\"",
+    "source": "translations-batch9.mjs"
+  },
+  {
+    "from": "label:\"List available sessions\"",
+    "to": "label:\"列出可用会话\"",
+    "source": "translations-batch9.mjs"
+  },
+  {
+    "from": "label:\"Open a session by ID\"",
+    "to": "label:\"按 ID 打开会话\"",
+    "source": "translations-batch9.mjs"
+  },
+  {
+    "from": "label:\"Rename a session\"",
+    "to": "label:\"重命名会话\"",
+    "source": "translations-batch9.mjs"
+  },
+  {
+    "from": "label:\"Delete a session\"",
+    "to": "label:\"删除会话\"",
+    "source": "translations-batch9.mjs"
+  },
+  {
+    "from": "label:\"Open the model picker\"",
+    "to": "label:\"打开模型选择器\"",
+    "source": "translations-batch9.mjs"
+  },
+  {
+    "from": "label:\"Pin or unpin a session\"",
+    "to": "label:\"固定或取消固定会话\"",
+    "source": "translations-batch9.mjs"
+  },
+  {
+    "from": "label:\"Archive or unarchive a session\"",
+    "to": "label:\"归档或取消归档会话\"",
+    "source": "translations-batch9.mjs"
+  },
+  {
+    "from": "label:\"Create a session group\"",
+    "to": "label:\"创建会话分组\"",
+    "source": "translations-batch9.mjs"
+  },
+  {
+    "from": "label:\"Move a session to a group\"",
+    "to": "label:\"将会话移动到分组\"",
+    "source": "translations-batch9.mjs"
+  },
+  {
+    "from": "label:\"Remove a session group\"",
+    "to": "label:\"移除会话分组\"",
+    "source": "translations-batch9.mjs"
+  },
+  {
+    "from": "label:\"List session groups\"",
+    "to": "label:\"列出会话分组\"",
+    "source": "translations-batch9.mjs"
+  },
+  {
+    "from": "label:\"Type into the composer\"",
+    "to": "label:\"在输入框中输入\"",
+    "source": "translations-batch9.mjs"
+  },
+  {
+    "from": "label:\"Send the composer prompt\"",
+    "to": "label:\"发送输入框提示\"",
+    "source": "translations-batch9.mjs"
+  },
+  {
+    "from": "label:\"Stop the current run\"",
+    "to": "label:\"停止当前运行\"",
+    "source": "translations-batch9.mjs"
+  },
+  {
+    "from": "label:\"Go to the top of the session\"",
+    "to": "label:\"跳转到会话顶部\"",
+    "source": "translations-batch9.mjs"
+  },
+  {
+    "from": "label:\"Go to the bottom of the session\"",
+    "to": "label:\"跳转到会话底部\"",
+    "source": "translations-batch9.mjs"
+  },
+  {
+    "from": "label:\"Read the latest session message\"",
+    "to": "label:\"读取最新会话消息\"",
+    "source": "translations-batch9.mjs"
+  },
+  {
+    "from": "label:\"Read the current session transcript\"",
+    "to": "label:\"读取当前会话记录\"",
+    "source": "translations-batch9.mjs"
+  },
+  {
+    "from": "label:\"Start Voice Mode\"",
+    "to": "label:\"启动语音模式\"",
+    "source": "translations-batch9.mjs"
+  },
+  {
+    "from": "label:\"Stop Voice Mode\"",
+    "to": "label:\"停止语音模式\"",
+    "source": "translations-batch9.mjs"
+  },
+  {
+    "from": "label:\"Inject a voice transcript\"",
+    "to": "label:\"注入语音记录\"",
+    "source": "translations-batch9.mjs"
+  },
+  {
+    "from": "label:\"Send text through Voice Mode\"",
+    "to": "label:\"通过语音模式发送文本\"",
+    "source": "translations-batch9.mjs"
+  },
+  {
+    "from": "label:\"Inject voice audio\"",
+    "to": "label:\"注入语音音频\"",
+    "source": "translations-batch9.mjs"
+  },
+  {
+    "from": "label:\"Read Voice Mode status\"",
+    "to": "label:\"读取语音模式状态\"",
+    "source": "translations-batch9.mjs"
+  },
+  {
+    "from": "label:\"Browser\"",
+    "to": "label:\"浏览器\"",
+    "source": "translations-batch9.mjs"
+  },
+  {
+    "from": "label:\"Files & artifacts\"",
+    "to": "label:\"文件与产物\"",
+    "source": "translations-batch9.mjs"
+  },
+  {
+    "from": "label:\"Open URL in built-in browser\"",
+    "to": "label:\"在内置浏览器中打开 URL\"",
+    "source": "translations-batch9.mjs"
+  },
+  {
+    "from": "label:\"Set built-in browser proxy\"",
+    "to": "label:\"设置内置浏览器代理\"",
+    "source": "translations-batch9.mjs"
+  },
+  {
+    "from": "label:\"Open Voice Mode\"",
+    "to": "label:\"打开语音模式\"",
+    "source": "translations-batch9.mjs"
+  },
+  {
+    "from": "label:\"Close Voice Mode\"",
+    "to": "label:\"关闭语音模式\"",
+    "source": "translations-batch9.mjs"
+  },
+  {
+    "from": "label:\"Focus an open session\"",
+    "to": "label:\"聚焦打开的会话\"",
+    "source": "translations-batch9.mjs"
+  },
+  {
+    "from": "label:\"Sign in with a handoff grant\"",
+    "to": "label:\"使用交接授权登录\"",
+    "source": "translations-batch9.mjs"
+  },
+  {
+    "from": "label:\"Get auth status\"",
+    "to": "label:\"获取认证状态\"",
+    "source": "translations-batch9.mjs"
+  },
+  {
+    "from": "label:\"API key\"",
+    "to": "label:\"API 密钥\"",
+    "source": "translations-batch9.mjs"
+  },
+  {
+    "from": "label:\"Authorization code\"",
+    "to": "label:\"授权码\"",
+    "source": "translations-batch9.mjs"
+  },
+  {
+    "from": "label:\"Accessibility\"",
+    "to": "label:\"辅助功能\"",
+    "source": "translations-batch9.mjs"
+  },
+  {
+    "from": "label:\"Screen Recording\"",
+    "to": "label:\"屏幕录制\"",
+    "source": "translations-batch9.mjs"
+  },
+  {
+    "from": "label:\"Accessibility and Screen Recording\"",
+    "to": "label:\"辅助功能与屏幕录制\"",
+    "source": "translations-batch9.mjs"
+  },
+  {
+    "from": "label:\"Verify Computer Use MCP\"",
+    "to": "label:\"验证 Computer Use MCP\"",
+    "source": "translations-batch9.mjs"
+  },
+  {
+    "from": "label:\"MCP server connected\"",
+    "to": "label:\"MCP 服务器已连接\"",
+    "source": "translations-batch9.mjs"
+  },
+  {
+    "from": "label:\"Accessibility permission\"",
+    "to": "label:\"辅助功能权限\"",
+    "source": "translations-batch9.mjs"
+  },
+  {
+    "from": "label:\"Screen Recording permission\"",
+    "to": "label:\"屏幕录制权限\"",
+    "source": "translations-batch9.mjs"
+  },
+  {
+    "from": "label:\"Realtime client-secret minting\"",
+    "to": "label:\"Realtime 客户端密钥签发\"",
+    "source": "translations-batch9.mjs"
+  },
+  {
+    "from": "label:\"Ollama provider\"",
+    "to": "label:\"Ollama 提供商\"",
+    "source": "translations-batch9.mjs"
+  },
+  {
+    "from": "label:\"Check local models\"",
+    "to": "label:\"检查本地模型\"",
+    "source": "translations-batch9.mjs"
+  },
+  {
+    "from": "label:\"An AI assistant\"",
+    "to": "label:\"AI 助手\"",
+    "source": "translations-batch9.mjs"
+  },
+  {
+    "from": "label:\"Social media\"",
+    "to": "label:\"社交媒体\"",
+    "source": "translations-batch9.mjs"
+  },
+  {
+    "from": "label:\"GitHub or open source community\"",
+    "to": "label:\"GitHub 或开源社区\"",
+    "source": "translations-batch9.mjs"
+  },
+  {
+    "from": "label:\"A friend or colleague\"",
+    "to": "label:\"朋友或同事\"",
+    "source": "translations-batch9.mjs"
+  }
+]

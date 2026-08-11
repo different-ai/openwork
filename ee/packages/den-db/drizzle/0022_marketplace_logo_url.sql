@@ -1,1 +1,0 @@
-ALTER TABLE `marketplace` ADD `logo_url` varchar(1024);

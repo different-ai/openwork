@@ -1,1 +1,0 @@
-ALTER TABLE `external_mcp_connection` ADD `oauth_configuration` json;

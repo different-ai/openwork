@@ -1,2 +1,0 @@
-ALTER TABLE `external_mcp_connection` ADD `kind` enum('external_mcp','native_provider') DEFAULT 'external_mcp' NOT NULL;--> statement-breakpoint
-ALTER TABLE `external_mcp_connection` ADD `native_provider_key` varchar(64);

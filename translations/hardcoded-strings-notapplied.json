@@ -1,0 +1,357 @@
+[
+  {
+    "from": "\"Recommended action\"",
+    "to": "\"建议操作\"",
+    "source": "translations-advanced-1.mjs"
+  },
+  {
+    "from": "\"Refreshing engine…\"",
+    "to": "\"正在刷新引擎…\"",
+    "source": "translations-advanced-1.mjs"
+  },
+  {
+    "from": "\"Copy sanitized diagnostic\"",
+    "to": "\"复制脱敏诊断\"",
+    "source": "translations-advanced-1.mjs"
+  },
+  {
+    "from": "\"Could not refresh the engine connection.\"",
+    "to": "\"无法刷新引擎连接。\"",
+    "source": "translations-advanced-1.mjs"
+  },
+  {
+    "from": "\"Could not test agent access.\"",
+    "to": "\"无法测试代理访问。\"",
+    "source": "translations-advanced-1.mjs"
+  },
+  {
+    "from": "\"Could not repair agent access.\"",
+    "to": "\"无法修复代理访问。\"",
+    "source": "translations-advanced-1.mjs"
+  },
+  {
+    "from": "\"Could not restore agent access.\"",
+    "to": "\"无法恢复代理访问。\"",
+    "source": "translations-advanced-1.mjs"
+  },
+  {
+    "from": "\"Agent access ready\"",
+    "to": "\"代理访问就绪\"",
+    "source": "translations-advanced-1.mjs"
+  },
+  {
+    "from": "\"Choose the organization agents should use.\"",
+    "to": "\"选择代理应使用的组织。\"",
+    "source": "translations-advanced-1.mjs"
+  },
+  {
+    "from": "\"Current model access was not checked.\"",
+    "to": "\"尚未检查当前模型的访问权限。\"",
+    "source": "translations-advanced-1.mjs"
+  },
+  {
+    "from": "\"Found\":\"Not found\"",
+    "to": "\"已找到\":\"未找到\"",
+    "source": "translations-advanced-1.mjs"
+  },
+  {
+    "from": "\"Cloud providers\"",
+    "to": "\"Cloud 提供商\"",
+    "source": "translations-advanced-1.mjs"
+  },
+  {
+    "from": "\"Runtime DB, workspace config, and migration diagnostics are available.\"",
+    "to": "\"运行时数据库、工作区配置和迁移诊断均可用。\"",
+    "source": "translations-advanced-1.mjs"
+  },
+  {
+    "from": "\"Default agent\"",
+    "to": "\"默认代理\"",
+    "source": "translations-advanced-1.mjs"
+  },
+  {
+    "from": "\"Migratable keys: \"",
+    "to": "\"可迁移的键：\"",
+    "source": "translations-advanced-1.mjs"
+  },
+  {
+    "from": "\"Working directory\"",
+    "to": "\"工作目录\"",
+    "source": "translations-advanced-1.mjs"
+  },
+  {
+    "from": "\"OpenCode Plugins\"",
+    "to": "\"OpenCode 插件\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"No plugins configured yet.\"",
+    "to": "\"尚未配置任何插件。\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"Failed to load plugins.\"",
+    "to": "\"无法加载插件。\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"Failed to add plugin.\"",
+    "to": "\"无法添加插件。\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"Failed to remove plugin.\"",
+    "to": "\"无法移除插件。\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"Failed to install plugin\"",
+    "to": "\"无法安装插件\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"Failed to load plugin preview\"",
+    "to": "\"无法加载插件预览\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"Failed to parse opencode.json\"",
+    "to": "\"无法解析 opencode.json\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"Failed to write .opencode/openwork.json\"",
+    "to": "\"无法写入 .opencode/openwork.json\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"Discovered from a global plugin folder.\"",
+    "to": "\"从全局插件文件夹发现。\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"Global plugins are only available for local workers.\"",
+    "to": "\"全局插件仅对本地 worker 可用。\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"OpenWork server cannot read plugins for this workspace.\"",
+    "to": "\"OpenWork 服务器无法读取此工作区的插件。\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"OpenWork server cannot write plugins for this workspace.\"",
+    "to": "\"OpenWork 服务器无法写入此工作区的插件。\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"OpenWork server unavailable. Connect to manage plugins.\"",
+    "to": "\"OpenWork 服务器不可用。请连接以管理插件。\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"OpenWork server unavailable. Connect to install plugins from GitHub.\"",
+    "to": "\"OpenWork 服务器不可用。请连接以从 GitHub 安装插件。\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"OpenWork server cannot read skills for this workspace.\"",
+    "to": "\"OpenWork 服务器无法读取此工作区的技能。\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"OpenWork server cannot write skills for this workspace.\"",
+    "to": "\"OpenWork 服务器无法写入此工作区的技能。\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"Installed skill\"",
+    "to": "\"已安装的技能\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"View details\"",
+    "to": "\"查看详情\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"Failed to load organization marketplaces.\"",
+    "to": "\"无法加载组织应用市场。\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"Available from your organization. Connect your own account to use it.\"",
+    "to": "\"可从你的组织获取。连接你自己的账户以使用。\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"Available through OpenWork Connect\"",
+    "to": "\"可通过 OpenWork Connect 使用\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"Sign in to OpenWork Cloud and choose an organization first.\"",
+    "to": "\"请先登录 OpenWork Cloud 并选择一个组织。\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"Shared by your organization.\"",
+    "to": "\"由你的组织共享。\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"MCP-backed connections appear here too. Try a different search or add an MCP server.\"",
+    "to": "\"基于 MCP 的连接也会显示在这里。请尝试其他搜索或添加 MCP 服务器。\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"OpenWork server unavailable. Connect to load plugins.\"",
+    "to": "\"OpenWork 服务器不可用。请连接以加载插件。\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"OpenWork server is not connected for this workspace.\"",
+    "to": "\"此工作区的 OpenWork 服务器未连接。\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"OpenWork server is not connected.\"",
+    "to": "\"OpenWork 服务器未连接。\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"OpenWork server is unavailable. Reconnect the server before exporting workspace config.\"",
+    "to": "\"OpenWork 服务器不可用。请先重新连接服务器再导出工作区配置。\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"OpenWork server is unavailable. Reconnect the server before renaming workspaces.\"",
+    "to": "\"OpenWork 服务器不可用。请先重新连接服务器再重命名工作区。\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"your organization\"",
+    "to": "\"你的组织\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"Not connected\"",
+    "to": "\"未连接\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"No providers match your search.\"",
+    "to": "\"没有提供商匹配你的搜索。\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"Release channel\"",
+    "to": "\"发布渠道\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"Den returned an invalid desktop release inventory.\"",
+    "to": "\"Den 返回了无效的桌面版本清单。\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"Electron update checks are available only in the Electron desktop app.\"",
+    "to": "\"Electron 更新检查仅在 Electron 桌面应用中可用。\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"Electron updater bridge is unavailable.\"",
+    "to": "\"Electron 更新桥接不可用。\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"Prepare migration data\"",
+    "to": "\"准备迁移数据\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"Reveal in Finder\"",
+    "to": "\"在 Finder 中显示\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"Reset ALL OpenWork app data? Open sessions and workspaces will be removed.\"",
+    "to": "\"重置所有 OpenWork 应用数据？打开的会话和工作区将被移除。\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"Reset OpenWork state. Restart the app to see changes.\"",
+    "to": "\"重置 OpenWork 状态。重启应用以查看更改。\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"Display menu bar\"",
+    "to": "\"显示菜单栏\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"Remove this workspace from the sidebar?\"",
+    "to": "\"将此工作区从侧边栏移除？\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"Workspace rename failed\"",
+    "to": "\"工作区重命名失败\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"Workspace was not found. Select a new workspace from the sidebar.\"",
+    "to": "\"未找到工作区。请从侧边栏选择新的工作区。\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"Remote worker connection failed.\"",
+    "to": "\"远程 worker 连接失败。\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"Exported developer log.\"",
+    "to": "\"已导出开发者日志。\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "\"OpenAI API key is required.\"",
+    "to": "\"需要 OpenAI API 密钥。\"",
+    "source": "translations-advanced-2.mjs"
+  },
+  {
+    "from": "e.exists?\"Found\":\"Not found\"",
+    "to": "e.exists?\"已找到\":\"未找到\"",
+    "source": "translations-advanced-3.mjs"
+  },
+  {
+    "from": "R===void 0?\"Connect\":R",
+    "to": "R===void 0?\"连接\":R",
+    "source": "translations-advanced-3.mjs"
+  },
+  {
+    "from": "D===void 0?\"Connecting...\":D",
+    "to": "D===void 0?\"正在连接…\":D",
+    "source": "translations-advanced-3.mjs"
+  },
+  {
+    "from": "children:[\"Connect\",",
+    "to": "children:[\"连接\",",
+    "source": "translations-advanced-3.mjs"
+  },
+  {
+    "from": "children:[d?\"Connecting...\":\"使用该组织继续\"",
+    "to": "children:[d?\"正在连接…\":\"使用该组织继续\"",
+    "source": "translations-advanced-3.mjs"
+  },
+  {
+    "from": "ue?\"Hidden\":\"Shown\"",
+    "to": "ue?\"隐藏\":\"显示\"",
+    "source": "translations-advanced-3.mjs"
+  },
+  {
+    "from": "void 0?\"Library\":de",
+    "to": "void 0?\"资料库\":de",
+    "source": "translations-advanced-3.mjs"
+  }
+]

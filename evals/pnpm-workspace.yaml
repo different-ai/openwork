@@ -1,7 +1,0 @@
-minimumReleaseAge: 4320
-
-packages:
-  - "packages/*"
-
-allowBuilds:
-  esbuild: true
