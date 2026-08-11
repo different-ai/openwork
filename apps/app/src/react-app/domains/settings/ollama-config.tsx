@@ -78,6 +78,64 @@ type OllamaModel = {
 
 type OllamaStatus = "checking" | "running" | "unreachable";
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function property(value: Record<string, unknown>, key: string) {
+  return Object.getOwnPropertyDescriptor(value, key)?.value;
+}
+
+function stringProperty(value: Record<string, unknown>, key: string) {
+  const entry = property(value, key);
+  return typeof entry === "string" ? entry : "";
+}
+
+function numberProperty(value: Record<string, unknown>, key: string) {
+  const entry = property(value, key);
+  return typeof entry === "number" && Number.isFinite(entry) ? entry : null;
+}
+
+function stringArrayProperty(value: Record<string, unknown>, key: string) {
+  const entry = property(value, key);
+  return Array.isArray(entry) ? entry.filter((item): item is string => typeof item === "string") : [];
+}
+
+function normalizeOllamaModel(value: unknown): OllamaModel | null {
+  if (!isRecord(value)) return null;
+  const name = stringProperty(value, "name");
+  const model = stringProperty(value, "model") || name;
+  const size = numberProperty(value, "size");
+  if (!name || !model || size === null) return null;
+  const rawDetails = property(value, "details");
+  const details: Record<string, unknown> = isRecord(rawDetails) ? rawDetails : {};
+  return {
+    name,
+    model,
+    modified_at: stringProperty(value, "modified_at"),
+    size,
+    digest: stringProperty(value, "digest"),
+    details: {
+      parent_model: stringProperty(details, "parent_model"),
+      format: stringProperty(details, "format"),
+      family: stringProperty(details, "family"),
+      families: stringArrayProperty(details, "families"),
+      parameter_size: stringProperty(details, "parameter_size"),
+      quantization_level: stringProperty(details, "quantization_level"),
+    },
+  };
+}
+
+function parseOllamaTagsResponse(value: unknown) {
+  if (!isRecord(value)) return null;
+  const models = property(value, "models");
+  if (!Array.isArray(models)) return null;
+  return models.flatMap((entry) => {
+    const model = normalizeOllamaModel(entry);
+    return model ? [model] : [];
+  });
+}
+
 function useOllamaModels() {
   const { data, isFetching, refetch } = useQuery({
     queryKey: ["ollama", "tags"],
@@ -91,9 +149,11 @@ function useOllamaModels() {
           return { status: "unreachable", models: [] };
         }
 
-        const data = await response.json();
+        const data: unknown = await response.json();
+        const models = parseOllamaTagsResponse(data);
+        if (!models) return { status: "unreachable", models: [] };
 
-        return { status: "running", models: Array.isArray(data?.models) ? data.models : [] };
+        return { status: "running", models };
       } catch {
         return { status: "unreachable", models: [] };
       }
@@ -115,6 +175,21 @@ type PullProgressUpdate = {
 type PullProgressState = PullProgressUpdate & {
   modelName: string;
 };
+
+function normalizePullProgressPayload(value: unknown): PullProgressUpdate | { error: string } | null {
+  if (!isRecord(value)) return null;
+  const error = stringProperty(value, "error");
+  if (error) return { error };
+  const status = stringProperty(value, "status");
+  if (!status) return null;
+  const completed = numberProperty(value, "completed");
+  const total = numberProperty(value, "total");
+  return {
+    status,
+    ...(completed !== null && completed >= 0 ? { completed } : {}),
+    ...(total !== null && total >= 0 ? { total } : {}),
+  };
+}
 
 async function pullOllamaModel(
   modelName: string,
@@ -139,18 +214,13 @@ async function pullOllamaModel(
       for (const line of lines) {
         if (!line.trim()) continue;
         try {
-          const parsed = JSON.parse(line);
-          if (parsed.status) {
-            onProgress({
-              status: parsed.status,
-              completed: typeof parsed.completed === "number" ? parsed.completed : undefined,
-              total: typeof parsed.total === "number" ? parsed.total : undefined,
-            });
-          }
-          if (parsed.error) {
+          const parsed = normalizePullProgressPayload(JSON.parse(line));
+          if (!parsed) continue;
+          if ("error" in parsed) {
             onProgress({ status: `Error: ${parsed.error}` });
             return false;
           }
+          onProgress(parsed);
         } catch {
           // ignore malformed lines
         }

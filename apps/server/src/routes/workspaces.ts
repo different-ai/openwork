@@ -1,5 +1,6 @@
 import { readFile, rename, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, resolve } from "node:path";
+import { z } from "zod";
 import { recordAudit } from "../audit.js";
 import { ApiError } from "../errors.js";
 import { inheritWorkspaceOpencodeConnection, resolveWorkspaceOpencodeConnection } from "../opencode-connection.js";
@@ -37,6 +38,39 @@ function readStringField(value: unknown, key: string): string {
   if (!isRecord(value)) return "";
   const field = value[key];
   return typeof field === "string" ? field.trim() : "";
+}
+
+const remoteWorkspaceTextSchema = z.string().trim().max(8192);
+const optionalRemoteWorkspaceTextSchema = remoteWorkspaceTextSchema
+  .nullish()
+  .transform((value) => value ?? "");
+const remoteWorkspaceRequestSchema = z.object({
+  baseUrl: remoteWorkspaceTextSchema,
+  remoteType: z.enum(["openwork", "opencode"]).default("openwork"),
+  directory: optionalRemoteWorkspaceTextSchema,
+  displayName: optionalRemoteWorkspaceTextSchema,
+  openworkHostUrl: optionalRemoteWorkspaceTextSchema,
+  openworkToken: optionalRemoteWorkspaceTextSchema,
+  openworkHostToken: optionalRemoteWorkspaceTextSchema,
+  sandboxBackend: optionalRemoteWorkspaceTextSchema,
+  sandboxRunId: optionalRemoteWorkspaceTextSchema,
+  sandboxContainerName: optionalRemoteWorkspaceTextSchema,
+  openworkWorkspaceId: optionalRemoteWorkspaceTextSchema,
+  openworkWorkspaceName: optionalRemoteWorkspaceTextSchema,
+}).passthrough();
+
+function validateHttpUrl(value: string, field: string): void {
+  if (!/^https?:\/\//i.test(value)) {
+    throw new ApiError(400, "invalid_payload", `${field} must start with http:// or https://`);
+  }
+  try {
+    const url = new URL(value);
+    if (url.protocol !== "http:" && url.protocol !== "https:") {
+      throw new Error("Unsupported protocol");
+    }
+  } catch {
+    throw new ApiError(400, "invalid_payload", `${field} must be a valid URL`);
+  }
 }
 
 function normalizeRemoteDirectory(value: unknown): string {
@@ -323,33 +357,40 @@ export function registerWorkspaceRoutes(options: RegisterWorkspaceRoutesOptions)
 
   addRoute(routes, "POST", "/workspaces/remote", "host", async (ctx) => {
     ensureWritable(config);
-    const body = await readJsonBody(ctx.request);
-    const baseUrl = readStringField(body, "baseUrl");
+    const rawBody = await readJsonBody(ctx.request);
+    const parsedBody = remoteWorkspaceRequestSchema.safeParse(rawBody);
+    if (!parsedBody.success) {
+      if (!readStringField(rawBody, "baseUrl")) {
+        throw new ApiError(400, "invalid_payload", "baseUrl is required");
+      }
+      throw new ApiError(400, "invalid_payload", "Remote workspace request is invalid");
+    }
+    const body = parsedBody.data;
+    const baseUrl = body.baseUrl;
     if (!baseUrl) {
       throw new ApiError(400, "invalid_payload", "baseUrl is required");
     }
-    if (!/^https?:\/\//i.test(baseUrl)) {
-      throw new ApiError(400, "invalid_payload", "baseUrl must start with http:// or https://");
-    }
+    validateHttpUrl(baseUrl, "baseUrl");
 
-    const remoteType = readStringField(body, "remoteType") === "opencode" ? "opencode" : "openwork";
-    const directory = readStringField(body, "directory") || null;
-    const displayName = readStringField(body, "displayName") || null;
-    const rawOpenworkHostUrl = readStringField(body, "openworkHostUrl") || null;
+    const remoteType = body.remoteType;
+    const directory = body.directory || null;
+    const displayName = body.displayName || null;
+    const rawOpenworkHostUrl = body.openworkHostUrl || null;
+    if (rawOpenworkHostUrl) validateHttpUrl(rawOpenworkHostUrl, "openworkHostUrl");
     const openworkHostUrl = remoteType === "openwork"
       ? stripOpenworkWorkspaceMount(rawOpenworkHostUrl ?? baseUrl)
       : rawOpenworkHostUrl;
-    const openworkToken = readStringField(body, "openworkToken");
-    const openworkHostToken = readStringField(body, "openworkHostToken");
-    const sandboxBackend = readStringField(body, "sandboxBackend");
-    const sandboxRunId = readStringField(body, "sandboxRunId");
-    const sandboxContainerName = readStringField(body, "sandboxContainerName");
+    const openworkToken = body.openworkToken;
+    const openworkHostToken = body.openworkHostToken;
+    const sandboxBackend = body.sandboxBackend;
+    const sandboxRunId = body.sandboxRunId;
+    const sandboxContainerName = body.sandboxContainerName;
     let openworkWorkspaceId = remoteType === "openwork"
-      ? readStringField(body, "openworkWorkspaceId")
+      ? body.openworkWorkspaceId
         || parseOpenworkWorkspaceIdFromUrl(rawOpenworkHostUrl)
         || parseOpenworkWorkspaceIdFromUrl(baseUrl)
       : "";
-    let openworkWorkspaceName = readStringField(body, "openworkWorkspaceName") || null;
+    let openworkWorkspaceName = body.openworkWorkspaceName || null;
 
     if (remoteType === "openwork" && !openworkWorkspaceId) {
       const discovered = await discoverOpenworkWorkspace({

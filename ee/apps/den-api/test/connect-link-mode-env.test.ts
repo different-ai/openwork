@@ -1,12 +1,13 @@
-import { expect, test } from "bun:test"
+import assert from "node:assert/strict"
 import { spawnSync } from "node:child_process"
 import path from "node:path"
+import { test } from "node:test"
 import { fileURLToPath } from "node:url"
 
 const denApiRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 
 function probeConnectLinkEnv(overrides: Record<string, string>) {
-  return spawnSync(process.execPath, ["--conditions", "development", "--eval", `
+  return spawnSync(process.execPath, ["--import", "tsx", "--conditions", "development", "--eval", `
     const { env } = await import("./src/env.ts")
     console.log(JSON.stringify(env.connectLink))
   `], {
@@ -35,10 +36,10 @@ test("connect links default to keyless exchange even when legacy key values exis
     DEN_CONNECT_LINK_PRIVATE_KEY: "legacy-private-key",
   })
 
-  expect(noKey.status).toBe(0)
-  expect(noKey.stdout.trim()).toBe("null")
-  expect(legacyKey.status).toBe(0)
-  expect(legacyKey.stdout.trim()).toBe("null")
+  assert.equal(noKey.status, 0)
+  assert.equal(noKey.stdout.trim(), "null")
+  assert.equal(legacyKey.status, 0)
+  assert.equal(legacyKey.stdout.trim(), "null")
 })
 
 test("signed mode is explicit and fails closed unless both key values exist", () => {
@@ -52,8 +53,24 @@ test("signed mode is explicit and fails closed unless both key values exist", ()
     DEN_CONNECT_LINK_PRIVATE_KEY: "test-private-key",
   })
 
-  expect(incomplete.status).not.toBe(0)
-  expect(incomplete.stderr).toContain("DEN_CONNECT_LINK_MODE=signed requires")
-  expect(complete.status).toBe(0)
-  expect(complete.stdout).toContain('"kid":"owc-test"')
+  assert.notEqual(incomplete.status, 0)
+  assert.match(incomplete.stderr, /DEN_CONNECT_LINK_MODE=signed requires/)
+  assert.equal(complete.status, 0)
+  assert.match(complete.stdout, /"kid":"owc-test"/)
+})
+
+test("numeric environment values are coerced and bounded", () => {
+  const valid = probeConnectLinkEnv({
+    DAYTONA_SANDBOX_CPU: "2.5",
+    PORT: "8790",
+    WORKER_PROVISIONING_RECONCILE_BATCH_SIZE: "25",
+  })
+  const invalidPort = probeConnectLinkEnv({ PORT: "70000" })
+  const invalidBatch = probeConnectLinkEnv({ WORKER_PROVISIONING_RECONCILE_BATCH_SIZE: "0" })
+
+  assert.equal(valid.status, 0)
+  assert.notEqual(invalidPort.status, 0)
+  assert.match(invalidPort.stderr, /PORT/)
+  assert.notEqual(invalidBatch.status, 0)
+  assert.match(invalidBatch.stderr, /WORKER_PROVISIONING_RECONCILE_BATCH_SIZE/)
 })

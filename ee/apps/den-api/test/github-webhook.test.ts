@@ -1,4 +1,5 @@
-import { afterEach, beforeAll, expect, test } from "bun:test"
+import assert from "node:assert/strict"
+import { afterEach, before, test } from "node:test"
 import { Hono } from "hono"
 
 function seedRequiredEnv() {
@@ -11,7 +12,7 @@ function seedRequiredEnv() {
 let envModule: typeof import("../src/env.js")
 let githubModule: typeof import("../src/routes/webhooks/github.js")
 
-beforeAll(async () => {
+before(async () => {
   seedRequiredEnv()
   envModule = await import("../src/env.js")
   githubModule = await import("../src/routes/webhooks/github.js")
@@ -27,6 +28,11 @@ function createWebhookApp() {
   return app
 }
 
+function assertInvalidRequestBody(body: unknown) {
+  assert.ok(typeof body === "object" && body !== null && "error" in body)
+  assert.equal(body.error, "invalid_request")
+}
+
 test("webhook route rejects invalid signatures before JSON parsing", async () => {
   envModule.env.githubConnectorApp.webhookSecret = "super-secret"
   const app = createWebhookApp()
@@ -40,8 +46,8 @@ test("webhook route rejects invalid signatures before JSON parsing", async () =>
     method: "POST",
   })
 
-  expect(response.status).toBe(401)
-  await expect(response.json()).resolves.toEqual({ ok: false, error: "invalid signature" })
+  assert.equal(response.status, 401)
+  assert.deepEqual(await response.json(), { ok: false, error: "invalid signature" })
 })
 
 test("webhook route returns 503 when the GitHub webhook secret is unset", async () => {
@@ -57,7 +63,43 @@ test("webhook route returns 503 when the GitHub webhook secret is unset", async 
     method: "POST",
   })
 
-  expect(response.status).toBe(503)
+  assert.equal(response.status, 503)
+})
+
+test("webhook route rejects signed malformed JSON payloads", async () => {
+  envModule.env.githubConnectorApp.webhookSecret = "super-secret"
+  const app = createWebhookApp()
+  const payload = "{"
+  const response = await app.request("http://den.local/v1/webhooks/connectors/github", {
+    body: payload,
+    headers: {
+      "x-github-delivery": "delivery-malformed-json",
+      "x-github-event": "push",
+      "x-hub-signature-256": githubModule.signGithubBody(payload, "super-secret"),
+    },
+    method: "POST",
+  })
+
+  assert.equal(response.status, 400)
+  assertInvalidRequestBody(await response.json())
+})
+
+test("webhook route rejects signed payloads with invalid GitHub metadata", async () => {
+  envModule.env.githubConnectorApp.webhookSecret = "super-secret"
+  const app = createWebhookApp()
+  const payload = JSON.stringify({ installation: { id: "not-a-number" } })
+  const response = await app.request("http://den.local/v1/webhooks/connectors/github", {
+    body: payload,
+    headers: {
+      "x-github-delivery": "delivery-invalid-metadata",
+      "x-github-event": "installation",
+      "x-hub-signature-256": githubModule.signGithubBody(payload, "super-secret"),
+    },
+    method: "POST",
+  })
+
+  assert.equal(response.status, 400)
+  assertInvalidRequestBody(await response.json())
 })
 
 test("webhook route accepts a valid signature and ignores unbound deliveries cleanly", async () => {
@@ -82,8 +124,8 @@ test("webhook route accepts a valid signature and ignores unbound deliveries cle
     method: "POST",
   })
 
-  expect(response.status).toBe(200)
-  await expect(response.json()).resolves.toEqual({
+  assert.equal(response.status, 200)
+  assert.deepEqual(await response.json(), {
     ok: true,
     accepted: false,
     reason: "missing installation id",

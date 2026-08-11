@@ -18,6 +18,7 @@ const MENU_OVERLAY_HTML = "overlay.html";
 const MENU_OVERLAY_WIDTH = 196;
 const MENU_OVERLAY_HEIGHT = 176;
 const MENU_OVERLAY_READY_TIMEOUT_MS = 2000;
+const BROWSER_BOUNDS_MAX = 100_000;
 
 export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink }) {
   const browserTabs = new Map();
@@ -598,6 +599,36 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink }) {
     return { x: Math.round(point.x * zoom), y: Math.round(point.y * zoom) };
   }
 
+  function finiteRendererNumber(value, field) {
+    const number = Number(value);
+    if (!Number.isFinite(number) || Math.abs(number) > BROWSER_BOUNDS_MAX) {
+      throw new Error(`${field} must be a finite renderer coordinate`);
+    }
+    return Math.round(number);
+  }
+
+  function normalizeBrowserBoundsInput(bounds) {
+    if (!bounds || typeof bounds !== "object") throw new Error("Browser bounds are required");
+    const width = finiteRendererNumber(bounds.width, "bounds.width");
+    const height = finiteRendererNumber(bounds.height, "bounds.height");
+    if (width < 0 || height < 0) throw new Error("Browser bounds width and height must be non-negative");
+    return {
+      x: finiteRendererNumber(bounds.x, "bounds.x"),
+      y: finiteRendererNumber(bounds.y, "bounds.y"),
+      width,
+      height,
+    };
+  }
+
+  function normalizeBrowserPointInput(point) {
+    if (point == null) return { x: 0, y: 0 };
+    if (typeof point !== "object") throw new Error("Browser point must be an object");
+    return {
+      x: finiteRendererNumber(point.x, "point.x"),
+      y: finiteRendererNumber(point.y, "point.y"),
+    };
+  }
+
   function attachActiveBrowserView() {
     const mainWindow = window();
     if (!mainWindow || !browserViewVisible) return;
@@ -744,7 +775,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink }) {
   }
 
   function registerIpc(ipcMain) {
-    ipcMain.handle("openwork:browser:show", (_event, bounds) => attachBrowserView(bounds));
+    ipcMain.handle("openwork:browser:show", (_event, bounds) => attachBrowserView(normalizeBrowserBoundsInput(bounds)));
     ipcMain.handle("openwork:browser:hide", () => hideBrowserView());
     ipcMain.handle("openwork:browser:openUrl", (_event, url, provider) => openBrowserUrlForAutomation(url, provider));
     ipcMain.handle("openwork:browser:navigate", (_event, url) => {
@@ -761,10 +792,10 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink }) {
     });
     ipcMain.handle("openwork:browser:reload", () => getActiveWebContents()?.reload());
     ipcMain.handle("openwork:browser:bounds", (_event, bounds) => {
-      lastBrowserBounds = bounds;
+      lastBrowserBounds = normalizeBrowserBoundsInput(bounds);
       const view = getActiveBrowserView();
-      if (view && browserViewVisible && bounds.width > 0 && bounds.height > 0) {
-        view.setBounds(scaleRendererBounds(bounds));
+      if (view && browserViewVisible && lastBrowserBounds.width > 0 && lastBrowserBounds.height > 0) {
+        view.setBounds(scaleRendererBounds(lastBrowserBounds));
       }
     });
     ipcMain.handle("openwork:browser:state", () => browserStatePayload());
@@ -780,7 +811,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink }) {
     ipcMain.handle("openwork:browser:listTabs", () => listBrowserTabs());
     ipcMain.handle("openwork:browser:setProxy", (_event, proxy) => setBrowserProxy(proxy));
     ipcMain.handle("openwork:browser:getProxy", () => browserProxyState());
-    ipcMain.handle("openwork:browser:tabContextMenu", (_event, tabId, point) => showBrowserTabContextMenu(tabId, point));
+    ipcMain.handle("openwork:browser:tabContextMenu", (_event, tabId, point) => showBrowserTabContextMenu(tabId, normalizeBrowserPointInput(point)));
     ipcMain.handle("openwork:browser:destroy", () => destroyBrowserView());
     ipcMain.on("openwork:menu-overlay:ready", (event) => {
       if (event.sender !== menuOverlayView?.webContents) return;

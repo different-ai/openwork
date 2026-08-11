@@ -8,6 +8,16 @@ import { z } from "zod"
 
 export const DEFAULT_DEN_DIAGNOSTICS_ORIGIN = "https://diagnostic.openworklabs.com"
 
+const maxTimerMs = 2_147_483_647
+const maxLongInterval = 31_536_000
+const portEnvSchema = z.coerce.number().int().min(1).max(65_535)
+const positiveMsEnvSchema = z.coerce.number().int().min(1).max(maxTimerMs)
+const positiveCountEnvSchema = z.coerce.number().int().min(1).max(10_000)
+const nonNegativeMinutesEnvSchema = z.coerce.number().int().min(0).max(525_600)
+const positiveSecondsEnvSchema = z.coerce.number().int().min(1).max(maxLongInterval)
+const nonNegativeSecondsEnvSchema = z.coerce.number().int().min(0).max(maxLongInterval)
+const daytonaResourceEnvSchema = z.coerce.number().positive().max(1_000_000)
+
 const EnvSchema = z.object({
   DATABASE_URL: z.string().min(1).optional(),
   DATABASE_HOST: z.string().min(1).optional(),
@@ -48,7 +58,7 @@ const EnvSchema = z.object({
   DEN_PASSWORD_BREACH_SCREENING_ENABLED: z.string().optional(),
   RESEND_API_KEY: z.string().optional(),
   SMTP_HOST: z.string().optional(),
-  SMTP_PORT: z.string().optional(),
+  SMTP_PORT: portEnvSchema.default(587),
   SMTP_USER: z.string().optional(),
   SMTP_PASS: z.string().optional(),
   SMTP_SECURE: z.string().optional(),
@@ -72,7 +82,7 @@ const EnvSchema = z.object({
   DEN_MICROSOFT_OAUTH_AUTHORIZE_URL: z.string().optional(),
   DEN_MICROSOFT_OAUTH_TOKEN_URL: z.string().optional(),
   DEN_MICROSOFT_GRAPH_BASE_URL: z.string().optional(),
-  PORT: z.string().optional(),
+  PORT: portEnvSchema.default(8790),
   CORS_ORIGINS: z.string().optional(),
   DEN_API_PUBLIC_URL: z.string().optional(),
   DEN_API_VERSION: z.string().optional(),
@@ -85,13 +95,13 @@ const EnvSchema = z.object({
   DEN_MARKETING_URL: z.string().optional(),
   DEN_MCP_CLAIM_NAMESPACE: z.string().optional(),
   DEN_BOOTSTRAP_ADMIN_EMAILS: z.string().optional(),
-  WORKER_PROXY_PORT: z.string().optional(),
-  WORKER_PROVISIONING_RECONCILE_INTERVAL_MS: z.string().optional(),
-  WORKER_PROVISIONING_RECONCILE_STALE_MS: z.string().optional(),
-  WORKER_PROVISIONING_RECONCILE_BATCH_SIZE: z.string().optional(),
-  CLOUD_IDLE_STOP_MINUTES: z.string().optional(),
-  CLOUD_IDLE_LOOP_SECONDS: z.string().optional(),
-  CLOUD_IDLE_STOP_BATCH_SIZE: z.string().optional(),
+  WORKER_PROXY_PORT: portEnvSchema.default(8789),
+  WORKER_PROVISIONING_RECONCILE_INTERVAL_MS: positiveMsEnvSchema.default(60_000),
+  WORKER_PROVISIONING_RECONCILE_STALE_MS: positiveMsEnvSchema.default(1_200_000),
+  WORKER_PROVISIONING_RECONCILE_BATCH_SIZE: positiveCountEnvSchema.default(10),
+  CLOUD_IDLE_STOP_MINUTES: nonNegativeMinutesEnvSchema.default(30),
+  CLOUD_IDLE_LOOP_SECONDS: positiveSecondsEnvSchema.default(60),
+  CLOUD_IDLE_STOP_BATCH_SIZE: positiveCountEnvSchema.default(10),
   PROVISIONER_MODE: z.enum(["stub", "render", "daytona"]).optional(),
   WORKER_URL_TEMPLATE: z.string().optional(),
   WORKER_ACTIVITY_BASE_URL: z.string().optional(),
@@ -113,10 +123,10 @@ const EnvSchema = z.object({
   RENDER_WORKER_OPENWORK_VERSION: z.string().optional(),
   RENDER_WORKER_NAME_PREFIX: z.string().optional(),
   RENDER_WORKER_PUBLIC_DOMAIN_SUFFIX: z.string().optional(),
-  RENDER_CUSTOM_DOMAIN_READY_TIMEOUT_MS: z.string().optional(),
-  RENDER_PROVISION_TIMEOUT_MS: z.string().optional(),
-  RENDER_HEALTHCHECK_TIMEOUT_MS: z.string().optional(),
-  RENDER_POLL_INTERVAL_MS: z.string().optional(),
+  RENDER_CUSTOM_DOMAIN_READY_TIMEOUT_MS: positiveMsEnvSchema.default(240_000),
+  RENDER_PROVISION_TIMEOUT_MS: positiveMsEnvSchema.default(900_000),
+  RENDER_HEALTHCHECK_TIMEOUT_MS: positiveMsEnvSchema.default(180_000),
+  RENDER_POLL_INTERVAL_MS: positiveMsEnvSchema.default(5_000),
   VERCEL_API_BASE: z.string().optional(),
   VERCEL_TOKEN: z.string().optional(),
   VERCEL_TEAM_ID: z.string().optional(),
@@ -128,7 +138,7 @@ const EnvSchema = z.object({
   DEN_CONNECT_LINK_PRIVATE_KEY: z.string().optional(),
   DEN_CONNECT_LINK_KEY_ID: z.string().max(64).optional(),
   DEN_MCP_CONNECTIONS_GATING_ENABLED: z.string().optional(),
-  SCIM_MAINTENANCE_INTERVAL_MS: z.string().optional(),
+  SCIM_MAINTENANCE_INTERVAL_MS: positiveMsEnvSchema.default(300_000),
   POLAR_FEATURE_GATE_ENABLED: z.string().optional(),
   POLAR_API_BASE: z.string().optional(),
   POLAR_ACCESS_TOKEN: z.string().optional(),
@@ -141,14 +151,14 @@ const EnvSchema = z.object({
   DAYTONA_TARGET: z.string().optional(),
   DAYTONA_SNAPSHOT: z.string().optional(),
   DAYTONA_SANDBOX_IMAGE: z.string().optional(),
-  DAYTONA_SANDBOX_CPU: z.string().optional(),
-  DAYTONA_SANDBOX_MEMORY: z.string().optional(),
-  DAYTONA_SANDBOX_DISK: z.string().optional(),
+  DAYTONA_SANDBOX_CPU: daytonaResourceEnvSchema.default(2),
+  DAYTONA_SANDBOX_MEMORY: daytonaResourceEnvSchema.default(4),
+  DAYTONA_SANDBOX_DISK: daytonaResourceEnvSchema.default(8),
   DAYTONA_SANDBOX_PUBLIC: z.string().optional(),
-  DAYTONA_SANDBOX_AUTO_STOP_INTERVAL: z.string().optional(),
-  DAYTONA_SANDBOX_AUTO_ARCHIVE_INTERVAL: z.string().optional(),
-  DAYTONA_SANDBOX_AUTO_DELETE_INTERVAL: z.string().optional(),
-  DAYTONA_SIGNED_PREVIEW_EXPIRES_SECONDS: z.string().optional(),
+  DAYTONA_SANDBOX_AUTO_STOP_INTERVAL: nonNegativeMinutesEnvSchema.default(0),
+  DAYTONA_SANDBOX_AUTO_ARCHIVE_INTERVAL: nonNegativeMinutesEnvSchema.default(10_080),
+  DAYTONA_SANDBOX_AUTO_DELETE_INTERVAL: z.coerce.number().int().min(-1).max(525_600).default(-1),
+  DAYTONA_SIGNED_PREVIEW_EXPIRES_SECONDS: positiveSecondsEnvSchema.default(86_400),
   DAYTONA_WORKER_PROXY_BASE_URL: z.string().optional(),
   DAYTONA_SANDBOX_NAME_PREFIX: z.string().optional(),
   DAYTONA_SHARED_VOLUME_NAME: z.string().optional(),
@@ -158,14 +168,14 @@ const EnvSchema = z.object({
   DAYTONA_RUNTIME_WORKSPACE_PATH: z.string().optional(),
   DAYTONA_RUNTIME_DATA_PATH: z.string().optional(),
   DAYTONA_SIDECAR_DIR: z.string().optional(),
-  DAYTONA_OPENWORK_PORT: z.string().optional(),
-  DAYTONA_OPENCODE_PORT: z.string().optional(),
-  DAYTONA_CREATE_TIMEOUT_SECONDS: z.string().optional(),
-  DAYTONA_DELETE_TIMEOUT_SECONDS: z.string().optional(),
-  DAYTONA_STOP_TIMEOUT_SECONDS: z.string().optional(),
-  DAYTONA_HEALTHCHECK_TIMEOUT_MS: z.string().optional(),
-  DEN_CKPT_INTERVAL_SECONDS: z.string().optional(),
-  DEN_CKPT_KEEP: z.string().optional(),
+  DAYTONA_OPENWORK_PORT: portEnvSchema.default(8787),
+  DAYTONA_OPENCODE_PORT: portEnvSchema.default(4096),
+  DAYTONA_CREATE_TIMEOUT_SECONDS: positiveSecondsEnvSchema.default(300),
+  DAYTONA_DELETE_TIMEOUT_SECONDS: positiveSecondsEnvSchema.default(120),
+  DAYTONA_STOP_TIMEOUT_SECONDS: nonNegativeSecondsEnvSchema.optional(),
+  DAYTONA_HEALTHCHECK_TIMEOUT_MS: positiveMsEnvSchema.default(300_000),
+  DEN_CKPT_INTERVAL_SECONDS: positiveSecondsEnvSchema.default(300),
+  DEN_CKPT_KEEP: positiveCountEnvSchema.default(3),
   INFERENCE_PROXY_BASE_URL: z.string().optional(),
   OPENROUTER_MANAGEMENT_API_KEY: z.string().optional(),
   OPENROUTER_WORKSPACE_ID: z.string().optional(),
@@ -456,7 +466,7 @@ const requireEmailVerification = parsed.DEN_REQUIRE_EMAIL_VERIFICATION === undef
 const passwordBreachScreeningEnabled = parsed.DEN_PASSWORD_BREACH_SCREENING_ENABLED === undefined
   ? true
   : parsed.DEN_PASSWORD_BREACH_SCREENING_ENABLED.trim().toLowerCase() !== "false"
-const port = Number(parsed.PORT ?? "8790")
+const port = parsed.PORT
 
 const daytonaSandboxPublic =
   (parsed.DAYTONA_SANDBOX_PUBLIC ?? "false").toLowerCase() === "true"
@@ -508,7 +518,7 @@ export const env = {
   installLinksGatingEnabled,
   connectLink,
   mcpConnectionsGatingEnabled,
-  scimMaintenanceIntervalMs: Number(parsed.SCIM_MAINTENANCE_INTERVAL_MS ?? "300000"),
+  scimMaintenanceIntervalMs: parsed.SCIM_MAINTENANCE_INTERVAL_MS,
   requireEmailVerification,
   passwordBreachScreeningEnabled,
   github: {
@@ -542,7 +552,7 @@ export const env = {
   },
   smtp: {
     host: optionalString(parsed.SMTP_HOST),
-    port: Number(parsed.SMTP_PORT ?? "587"),
+    port: parsed.SMTP_PORT,
     user: optionalString(parsed.SMTP_USER),
     pass: optionalString(parsed.SMTP_PASS),
     secure: (parsed.SMTP_SECURE ?? "false").toLowerCase() === "true",
@@ -566,7 +576,7 @@ export const env = {
       .map((email) => email.toLowerCase()),
   },
   port,
-  workerProxyPort: Number(parsed.WORKER_PROXY_PORT ?? "8789"),
+  workerProxyPort: parsed.WORKER_PROXY_PORT,
   corsOrigins,
   apiPublicUrl,
   serviceVersion: resolveDenServiceVersion({
@@ -595,12 +605,12 @@ export const env = {
   mcpClaimNamespace: normalizeOrigin(optionalString(parsed.DEN_MCP_CLAIM_NAMESPACE) ?? parsed.BETTER_AUTH_URL),
   bootstrapAdminEmails: splitCsv(parsed.DEN_BOOTSTRAP_ADMIN_EMAILS).map((email) => email.toLowerCase()),
   provisionerMode: parsed.PROVISIONER_MODE ?? "stub",
-  workerProvisioningReconcileIntervalMs: Number(parsed.WORKER_PROVISIONING_RECONCILE_INTERVAL_MS ?? "60000"),
-  workerProvisioningReconcileStaleMs: Number(parsed.WORKER_PROVISIONING_RECONCILE_STALE_MS ?? "1200000"),
-  workerProvisioningReconcileBatchSize: Number(parsed.WORKER_PROVISIONING_RECONCILE_BATCH_SIZE ?? "10"),
-  cloudIdleStopMs: Number(parsed.CLOUD_IDLE_STOP_MINUTES ?? "30") * 60_000,
-  cloudIdleLoopIntervalMs: Number(parsed.CLOUD_IDLE_LOOP_SECONDS ?? "60") * 1000,
-  cloudIdleStopBatchSize: Number(parsed.CLOUD_IDLE_STOP_BATCH_SIZE ?? "10"),
+  workerProvisioningReconcileIntervalMs: parsed.WORKER_PROVISIONING_RECONCILE_INTERVAL_MS,
+  workerProvisioningReconcileStaleMs: parsed.WORKER_PROVISIONING_RECONCILE_STALE_MS,
+  workerProvisioningReconcileBatchSize: parsed.WORKER_PROVISIONING_RECONCILE_BATCH_SIZE,
+  cloudIdleStopMs: parsed.CLOUD_IDLE_STOP_MINUTES * 60_000,
+  cloudIdleLoopIntervalMs: parsed.CLOUD_IDLE_LOOP_SECONDS * 1000,
+  cloudIdleStopBatchSize: parsed.CLOUD_IDLE_STOP_BATCH_SIZE,
   workerUrlTemplate: parsed.WORKER_URL_TEMPLATE,
   workerActivityBaseUrl:
     optionalString(parsed.WORKER_ACTIVITY_BASE_URL) ??
@@ -639,14 +649,10 @@ export const env = {
     workerOpenworkVersion: parsed.RENDER_WORKER_OPENWORK_VERSION,
     workerNamePrefix: parsed.RENDER_WORKER_NAME_PREFIX ?? "den-worker",
     workerPublicDomainSuffix: parsed.RENDER_WORKER_PUBLIC_DOMAIN_SUFFIX,
-    customDomainReadyTimeoutMs: Number(
-      parsed.RENDER_CUSTOM_DOMAIN_READY_TIMEOUT_MS ?? "240000",
-    ),
-    provisionTimeoutMs: Number(parsed.RENDER_PROVISION_TIMEOUT_MS ?? "900000"),
-    healthcheckTimeoutMs: Number(
-      parsed.RENDER_HEALTHCHECK_TIMEOUT_MS ?? "180000",
-    ),
-    pollIntervalMs: Number(parsed.RENDER_POLL_INTERVAL_MS ?? "5000"),
+    customDomainReadyTimeoutMs: parsed.RENDER_CUSTOM_DOMAIN_READY_TIMEOUT_MS,
+    provisionTimeoutMs: parsed.RENDER_PROVISION_TIMEOUT_MS,
+    healthcheckTimeoutMs: parsed.RENDER_HEALTHCHECK_TIMEOUT_MS,
+    pollIntervalMs: parsed.RENDER_POLL_INTERVAL_MS,
   },
   vercel: {
     apiBase: parsed.VERCEL_API_BASE ?? "https://api.vercel.com",
@@ -672,21 +678,15 @@ export const env = {
     snapshot: optionalString(parsed.DAYTONA_SNAPSHOT),
     image: optionalString(parsed.DAYTONA_SANDBOX_IMAGE) ?? "node:20-bookworm",
     resources: {
-      cpu: Number(parsed.DAYTONA_SANDBOX_CPU ?? "2"),
-      memory: Number(parsed.DAYTONA_SANDBOX_MEMORY ?? "4"),
-      disk: Number(parsed.DAYTONA_SANDBOX_DISK ?? "8"),
+      cpu: parsed.DAYTONA_SANDBOX_CPU,
+      memory: parsed.DAYTONA_SANDBOX_MEMORY,
+      disk: parsed.DAYTONA_SANDBOX_DISK,
     },
     public: daytonaSandboxPublic,
-    autoStopInterval: Number(parsed.DAYTONA_SANDBOX_AUTO_STOP_INTERVAL ?? "0"),
-    autoArchiveInterval: Number(
-      parsed.DAYTONA_SANDBOX_AUTO_ARCHIVE_INTERVAL ?? "10080",
-    ),
-    autoDeleteInterval: Number(
-      parsed.DAYTONA_SANDBOX_AUTO_DELETE_INTERVAL ?? "-1",
-    ),
-    signedPreviewExpiresSeconds: Number(
-      parsed.DAYTONA_SIGNED_PREVIEW_EXPIRES_SECONDS ?? "86400",
-    ),
+    autoStopInterval: parsed.DAYTONA_SANDBOX_AUTO_STOP_INTERVAL,
+    autoArchiveInterval: parsed.DAYTONA_SANDBOX_AUTO_ARCHIVE_INTERVAL,
+    autoDeleteInterval: parsed.DAYTONA_SANDBOX_AUTO_DELETE_INTERVAL,
+    signedPreviewExpiresSeconds: parsed.DAYTONA_SIGNED_PREVIEW_EXPIRES_SECONDS,
     workerProxyBaseUrl:
       optionalString(parsed.DAYTONA_WORKER_PROXY_BASE_URL) ?? "http://workers.local",
     sandboxNamePrefix:
@@ -706,18 +706,14 @@ export const env = {
       optionalString(parsed.DAYTONA_RUNTIME_DATA_PATH) ?? "/tmp/openwork-data",
     sidecarDir:
       optionalString(parsed.DAYTONA_SIDECAR_DIR) ?? "/tmp/openwork-sidecars",
-    openworkPort: Number(parsed.DAYTONA_OPENWORK_PORT ?? "8787"),
-    opencodePort: Number(parsed.DAYTONA_OPENCODE_PORT ?? "4096"),
-    createTimeoutSeconds: Number(parsed.DAYTONA_CREATE_TIMEOUT_SECONDS ?? "300"),
-    deleteTimeoutSeconds: Number(parsed.DAYTONA_DELETE_TIMEOUT_SECONDS ?? "120"),
-    stopTimeoutSeconds: parsed.DAYTONA_STOP_TIMEOUT_SECONDS === undefined
-      ? undefined
-      : Number(parsed.DAYTONA_STOP_TIMEOUT_SECONDS),
-    healthcheckTimeoutMs: Number(
-      parsed.DAYTONA_HEALTHCHECK_TIMEOUT_MS ?? "300000",
-    ),
-    checkpointIntervalSeconds: Number(parsed.DEN_CKPT_INTERVAL_SECONDS ?? "300"),
-    checkpointKeep: Number(parsed.DEN_CKPT_KEEP ?? "3"),
+    openworkPort: parsed.DAYTONA_OPENWORK_PORT,
+    opencodePort: parsed.DAYTONA_OPENCODE_PORT,
+    createTimeoutSeconds: parsed.DAYTONA_CREATE_TIMEOUT_SECONDS,
+    deleteTimeoutSeconds: parsed.DAYTONA_DELETE_TIMEOUT_SECONDS,
+    stopTimeoutSeconds: parsed.DAYTONA_STOP_TIMEOUT_SECONDS,
+    healthcheckTimeoutMs: parsed.DAYTONA_HEALTHCHECK_TIMEOUT_MS,
+    checkpointIntervalSeconds: parsed.DEN_CKPT_INTERVAL_SECONDS,
+    checkpointKeep: parsed.DEN_CKPT_KEEP,
     pollIntervalMs: DEN_WORKER_POLL_INTERVAL_MS,
   },
 }

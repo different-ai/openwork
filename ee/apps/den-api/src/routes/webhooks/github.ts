@@ -3,11 +3,12 @@ import type { Env, Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { env } from "../../env.js"
 import { signedWebhookRoute } from "../../middleware/index.js"
-import { emptyResponse, jsonResponse } from "../../openapi.js"
+import { emptyResponse, invalidRequestSchema, jsonResponse } from "../../openapi.js"
 import { enqueueGithubWebhookSync } from "../org/plugin-system/store.js"
 import {
   githubWebhookAcceptedResponseSchema,
   githubWebhookIgnoredResponseSchema,
+  githubWebhookPayloadSchema,
   githubWebhookUnauthorizedResponseSchema,
 } from "../org/plugin-system/schemas.js"
 import { pluginArchRoutePaths } from "../org/plugin-system/contracts.js"
@@ -36,6 +37,7 @@ export function registerGithubWebhookRoutes<T extends Env>(app: Hono<T>) {
       responses: {
         200: jsonResponse("Ignored but valid GitHub webhook delivery.", githubWebhookIgnoredResponseSchema),
         202: jsonResponse("Accepted GitHub webhook delivery.", githubWebhookAcceptedResponseSchema),
+        400: jsonResponse("Malformed GitHub webhook payload.", invalidRequestSchema),
         401: jsonResponse("Invalid GitHub webhook signature.", githubWebhookUnauthorizedResponseSchema),
         503: emptyResponse("GitHub webhook secret is not configured."),
       },
@@ -71,15 +73,23 @@ export function registerGithubWebhookRoutes<T extends Env>(app: Hono<T>) {
         return c.json({ ok: true, accepted: false, reason: "event ignored" }, 200)
       }
 
-      const payload = JSON.parse(rawBody) as Record<string, unknown>
-      const installationId = payload.installation && typeof payload.installation === "object" && typeof (payload.installation as Record<string, unknown>).id === "number"
-        ? (payload.installation as Record<string, unknown>).id as number
-        : undefined
-      const repository = payload.repository && typeof payload.repository === "object" ? payload.repository as Record<string, unknown> : null
-      const repositoryFullName = typeof repository?.full_name === "string" ? repository.full_name : undefined
-      const repositoryId = typeof repository?.id === "number" ? repository.id : undefined
-      const ref = typeof payload.ref === "string" ? payload.ref : undefined
-      const headSha = typeof payload.after === "string" ? payload.after : undefined
+      let body: unknown
+      try {
+        body = JSON.parse(rawBody)
+      } catch {
+        return c.json({ error: "invalid_request", details: [{ message: "Webhook payload must be valid JSON.", path: [] }] }, 400)
+      }
+      const parsed = githubWebhookPayloadSchema.safeParse(body)
+      if (!parsed.success) {
+        return c.json({ error: "invalid_request", details: parsed.error.issues }, 400)
+      }
+
+      const payload = parsed.data
+      const installationId = payload.installation?.id
+      const repositoryFullName = payload.repository?.full_name
+      const repositoryId = payload.repository?.id
+      const ref = payload.ref
+      const headSha = payload.after
 
       const accepted = await enqueueGithubWebhookSync({
         deliveryId,

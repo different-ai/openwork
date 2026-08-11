@@ -544,6 +544,99 @@ async function request(baseUrl, path, options = {}) {
   return { status: response.status, body }
 }
 
+function isRecord(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+}
+
+function requireRecordBody(response, label) {
+  if (!isRecord(response.body)) {
+    throw new Error(`${label}_invalid_response: expected JSON object`)
+  }
+  return response.body
+}
+
+function stringField(record, key, label) {
+  const value = record[key]
+  if (typeof value !== "string" || !value.trim()) {
+    throw new Error(`${label}_invalid_response: missing ${key}`)
+  }
+  return value.trim()
+}
+
+function optionalStringField(record, key) {
+  const value = record[key]
+  return typeof value === "string" && value.trim() ? value.trim() : null
+}
+
+function normalizeUser(value, label) {
+  if (!isRecord(value)) throw new Error(`${label}_invalid_response: missing user`)
+  return {
+    ...value,
+    id: stringField(value, "id", label),
+    email: stringField(value, "email", label),
+    emailVerified: value.emailVerified === true,
+  }
+}
+
+function normalizeOrganization(value, label) {
+  if (!isRecord(value)) throw new Error(`${label}_invalid_response: missing organization`)
+  return {
+    ...value,
+    id: stringField(value, "id", label),
+    name: stringField(value, "name", label),
+    slug: optionalStringField(value, "slug") || stringField(value, "id", label),
+  }
+}
+
+function normalizeSkill(value, label) {
+  if (!isRecord(value)) throw new Error(`${label}_invalid_response: missing skill`)
+  return {
+    ...value,
+    id: stringField(value, "id", label),
+    title: optionalStringField(value, "title") || optionalStringField(value, "name") || stringField(value, "id", label),
+    output: optionalStringField(value, "output"),
+  }
+}
+
+function normalizeClaimLink(value, label) {
+  if (!isRecord(value)) throw new Error(`${label}_invalid_response: invalid claim link`)
+  return {
+    ...value,
+    id: stringField(value, "id", label),
+    role: stringField(value, "role", label),
+    expiresAt: stringField(value, "expiresAt", label),
+    url: stringField(value, "url", label),
+    ...(optionalStringField(value, "token") ? { token: optionalStringField(value, "token") } : {}),
+  }
+}
+
+function normalizeClaimLinks(value, label) {
+  if (!Array.isArray(value)) throw new Error(`${label}_invalid_response: missing claimLinks`)
+  return value.map((link) => normalizeClaimLink(link, label))
+}
+
+function assertHealthResponse(response) {
+  const body = requireRecordBody(response, "den_api_health")
+  if (response.status !== 200 || body.ok !== true) {
+    throw new Error(`den_api_unhealthy: ${response.status} ${JSON.stringify(response.body)}`)
+  }
+  return body
+}
+
+function normalizeWorkspaceBootstrapResponse(response) {
+  const body = requireRecordBody(response, "workspace_bootstrap")
+  if (response.status !== 200 || body.ok !== true) {
+    throw new Error(`workspace_bootstrap_failed: ${response.status} ${JSON.stringify(response.body)}`)
+  }
+  return {
+    ...body,
+    organization: normalizeOrganization(body.organization, "workspace_bootstrap"),
+    setup: isRecord(body.setup) ? body.setup : null,
+    skill: normalizeSkill(body.skill, "workspace_bootstrap"),
+    claimLinks: normalizeClaimLinks(body.claimLinks, "workspace_bootstrap"),
+  }
+}
+
 async function signupAndSignin(baseUrl, input) {
   const signup = await request(baseUrl, "/api/auth/sign-up/email", {
     method: "POST",
@@ -560,7 +653,8 @@ async function signupAndSignin(baseUrl, input) {
   if (signin.status !== 200 || !signin.body?.token) {
     throw new Error(`signin_failed: ${signin.status} ${JSON.stringify(signin.body)}`)
   }
-  return { signup, signin, token: signin.body.token, user: signin.body.user }
+  const signinBody = requireRecordBody(signin, "signin")
+  return { signup, signin, token: stringField(signinBody, "token", "signin"), user: normalizeUser(signinBody.user, "signin") }
 }
 
 function skillText(name, output) {
@@ -572,13 +666,16 @@ async function createCloudSkillPlugin(baseUrl, auth, input) {
     method: "GET",
     headers: auth,
   })
-  if (marketplaces.status !== 200 || !Array.isArray(marketplaces.body?.items)) {
+  const marketplacesBody = requireRecordBody(marketplaces, "marketplace_list")
+  if (marketplaces.status !== 200 || !Array.isArray(marketplacesBody.items)) {
     throw new Error(`marketplace_list_failed: ${marketplaces.status} ${JSON.stringify(marketplaces.body)}`)
   }
-  const marketplace = marketplaces.body.items.find((item) => item?.name === DEFAULT_OPENWORK_MARKETPLACE_NAME) || marketplaces.body.items[0]
-  if (!marketplace?.id) {
+  const marketplaceItems = marketplacesBody.items.filter(isRecord)
+  const marketplace = marketplaceItems.find((item) => item.name === DEFAULT_OPENWORK_MARKETPLACE_NAME) || marketplaceItems[0]
+  if (!marketplace) {
     throw new Error("marketplace_missing: no marketplace available for skill plugin")
   }
+  const marketplaceId = stringField(marketplace, "id", "marketplace_list")
 
   const plugin = await request(baseUrl, "/v1/plugins", {
     method: "POST",
@@ -587,32 +684,36 @@ async function createCloudSkillPlugin(baseUrl, auth, input) {
       name: input.name,
       components: [{ type: "skill", input: { rawSourceText: input.rawSourceText } }],
       orgWide: true,
-      marketplaceId: marketplace.id,
+      marketplaceId,
     }),
   })
-  if (plugin.status !== 201 || !plugin.body?.item?.id) {
+  const pluginBody = requireRecordBody(plugin, "plugin_create")
+  if (plugin.status !== 201 || !isRecord(pluginBody.item)) {
     throw new Error(`plugin_create_failed: ${plugin.status} ${JSON.stringify(plugin.body)}`)
   }
+  const pluginId = stringField(pluginBody.item, "id", "plugin_create")
 
-  const memberships = await request(baseUrl, `/v1/plugins/${encodeURIComponent(plugin.body.item.id)}/config-objects`, {
+  const memberships = await request(baseUrl, `/v1/plugins/${encodeURIComponent(pluginId)}/config-objects`, {
     method: "GET",
     headers: auth,
   })
-  if (memberships.status !== 200 || !Array.isArray(memberships.body?.items)) {
+  const membershipsBody = requireRecordBody(memberships, "plugin_components")
+  if (memberships.status !== 200 || !Array.isArray(membershipsBody.items)) {
     throw new Error(`plugin_components_failed: ${memberships.status} ${JSON.stringify(memberships.body)}`)
   }
-  const skillMembership = memberships.body.items.find((item) => item?.configObject?.objectType === "skill")
-  const configObject = skillMembership?.configObject
-  if (!configObject?.id) {
+  const skillMembership = membershipsBody.items.find((item) => isRecord(item) && isRecord(item.configObject) && item.configObject.objectType === "skill")
+  const configObject = isRecord(skillMembership) && isRecord(skillMembership.configObject) ? skillMembership.configObject : null
+  if (!configObject) {
     throw new Error(`skill_component_missing: ${JSON.stringify(memberships.body)}`)
   }
+  const skillId = stringField(configObject, "id", "plugin_components")
 
   return {
-    id: configObject.id,
-    title: configObject.title || input.name,
+    id: skillId,
+    title: optionalStringField(configObject, "title") || input.name,
     skillText: input.rawSourceText,
-    pluginId: plugin.body.item.id,
-    marketplaceId: marketplace.id,
+    pluginId,
+    marketplaceId,
   }
 }
 
@@ -662,7 +763,8 @@ async function createDesktopHandoff(baseUrl, auth) {
   if (handoff.status !== 200 || !handoff.body?.grant) {
     throw new Error(`desktop_handoff_failed: ${handoff.status} ${JSON.stringify(handoff.body)}`)
   }
-  return handoff.body
+  const handoffBody = requireRecordBody(handoff, "desktop_handoff")
+  return { ...handoffBody, grant: stringField(handoffBody, "grant", "desktop_handoff"), expiresAt: optionalStringField(handoffBody, "expiresAt") }
 }
 
 function writePreparedDesktop(input) {
@@ -799,10 +901,7 @@ async function runCloudOnboard(args) {
     if (!value) throw new Error(`missing_required_flag: --${name.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`)}`)
   }
 
-  const health = await request(baseUrl, "/health", { method: "GET" })
-  if (health.status !== 200 || health.body?.ok !== true) {
-    throw new Error(`den_api_unhealthy: ${health.status} ${JSON.stringify(health.body)}`)
-  }
+  assertHealthResponse(await request(baseUrl, "/health", { method: "GET" }))
 
   const owner = await signupAndSignin(baseUrl, {
     name: "OpenWork Owner",
@@ -816,18 +915,22 @@ async function runCloudOnboard(args) {
     headers: auth,
     body: JSON.stringify({ name: orgName }),
   })
-  if (org.status !== 201 || !org.body?.organization?.id) {
+  const orgBody = requireRecordBody(org, "org_create")
+  if (org.status !== 201) {
     throw new Error(`org_create_failed: ${org.status} ${JSON.stringify(org.body)}`)
   }
+  const organization = normalizeOrganization(orgBody.organization, "org_create")
 
   const invite = await request(baseUrl, "/v1/invitations", {
     method: "POST",
     headers: auth,
     body: JSON.stringify({ email: inviteEmail, role: "member" }),
   })
-  if (invite.status !== 201 || !invite.body?.invitationId) {
+  const inviteBody = requireRecordBody(invite, "invite")
+  if (invite.status !== 201) {
     throw new Error(`invite_failed: ${invite.status} ${JSON.stringify(invite.body)}`)
   }
+  const invitation = { ...inviteBody, invitationId: stringField(inviteBody, "invitationId", "invite") }
 
   const rawSourceText = skillText(skillName, skillOutput)
   const skill = await createCloudSkillPlugin(baseUrl, auth, {
@@ -849,7 +952,7 @@ async function runCloudOnboard(args) {
       bootstrapPath: desktopBootstrapPath,
       skillsDir,
       handoff,
-      organization: org.body.organization,
+      organization,
       skill,
     })
   }
@@ -858,8 +961,8 @@ async function runCloudOnboard(args) {
     ok: true,
     message: "OpenWork cloud onboarding complete",
     user: { id: owner.user.id, email: owner.user.email, emailVerified: owner.user.emailVerified },
-    organization: org.body.organization,
-    invitation: invite.body,
+    organization,
+    invitation,
     skill,
     skillRun,
     desktop,
@@ -890,10 +993,7 @@ async function runCloudBootstrapWorkspace(args) {
     if (!value) throw new Error(`missing_required_flag: --${name.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`)}`)
   }
 
-  const health = await request(baseUrl, "/health", { method: "GET" })
-  if (health.status !== 200 || health.body?.ok !== true) {
-    throw new Error(`den_api_unhealthy: ${health.status} ${JSON.stringify(health.body)}`)
-  }
+  assertHealthResponse(await request(baseUrl, "/health", { method: "GET" }))
 
   const deviceKey = ensureDeviceKey(deviceKeyPath)
   const response = await request(baseUrl, "/v1/bootstrap/workspace", {
@@ -907,13 +1007,11 @@ async function runCloudBootstrapWorkspace(args) {
       ...(teammateEmails.length > 0 ? { teammateEmails } : {}),
     }),
   })
-  if (response.status !== 200 || response.body?.ok !== true || !response.body?.organization?.id || !response.body?.skill?.id) {
-    throw new Error(`workspace_bootstrap_failed: ${response.status} ${JSON.stringify(response.body)}`)
-  }
+  const bootstrap = normalizeWorkspaceBootstrapResponse(response)
 
   const skill = {
-    ...response.body.skill,
-    skillText: skillText(response.body.skill.title, response.body.skill.output || "OPENWORK_BOOTSTRAP_SKILL_TRIGGERED"),
+    ...bootstrap.skill,
+    skillText: skillText(bootstrap.skill.title, bootstrap.skill.output || "OPENWORK_BOOTSTRAP_SKILL_TRIGGERED"),
   }
 
   const skillRun = runBootstrapSkill(skill, { trigger: "bootstrap.verify" })
@@ -928,20 +1026,20 @@ async function runCloudBootstrapWorkspace(args) {
       apiBaseUrl: baseUrl,
       bootstrapPath: desktopBootstrapPath,
       skillsDir,
-      organization: response.body.organization,
+      organization: bootstrap.organization,
       skill,
-      claimLinks: response.body.claimLinks,
+      claimLinks: bootstrap.claimLinks,
     })
   }
 
   jsonOut({
     ok: true,
     message: "OpenWork workspace bootstrap complete",
-    organization: response.body.organization,
-    setup: response.body.setup,
-    skill: response.body.skill,
+    organization: bootstrap.organization,
+    setup: bootstrap.setup,
+    skill: bootstrap.skill,
     skillRun,
-    claimLinks: response.body.claimLinks.map((link) => ({
+    claimLinks: bootstrap.claimLinks.map((link) => ({
       id: link.id,
       role: link.role,
       expiresAt: link.expiresAt,

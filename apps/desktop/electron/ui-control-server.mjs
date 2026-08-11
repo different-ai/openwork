@@ -9,6 +9,19 @@ import { rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import { app } from "electron";
+import { z } from "zod";
+
+const controlArgsSchema = z.record(z.string(), z.unknown()).optional();
+const affordanceRequestSchema = z.object({
+  id: z.string().trim().min(1),
+  args: controlArgsSchema,
+  expectedRevision: z.number().int().nonnegative().optional(),
+  actor: z.string().trim().min(1).optional(),
+}).strict();
+const executeRequestSchema = z.object({
+  actionId: z.string().trim().min(1),
+  args: controlArgsSchema,
+}).strict();
 
 export function createUiControlServer({ appName, appIdentifier, getWindow }) {
   let uiControlServer = null;
@@ -66,8 +79,21 @@ export function createUiControlServer({ appName, appIdentifier, getWindow }) {
     return win.webContents.executeJavaScript(expression, true);
   }
 
+  function normalizeControlEnvelope(command, input) {
+    if (command === "query" || command === "command") {
+      const parsed = affordanceRequestSchema.parse(input);
+      return { ...parsed, args: parsed.args ?? {} };
+    }
+    if (command === "execute") {
+      const parsed = executeRequestSchema.parse(input);
+      return { ...parsed, args: parsed.args ?? {} };
+    }
+    return input ?? {};
+  }
+
   async function runOpenworkControlCommand(command, args = {}) {
-    const argsJsonLiteral = jsonForJavaScript(args);
+    const envelope = normalizeControlEnvelope(command, args);
+    const argsJsonLiteral = jsonForJavaScript(envelope);
     if (command === "snapshot") {
       return evaluateOpenworkControl(`(async () => {
         const control = window.__openworkControl;

@@ -8,6 +8,7 @@ import { forbiddenSchema, jsonResponse, unauthorizedSchema } from "../../openapi
 import { getRequiredUserEmail } from "../../user.js"
 import { env } from "../../env.js"
 import { ORGANIZATION_SUPER_ADMIN_ROLE, organizationRoleValueSatisfies } from "../../organization-role-hierarchy.js"
+import { firstForwardedValue } from "../../request-url.js"
 import type { OrgRouteVariables } from "./shared.js"
 import { ensureOrganizationAdmin, ensureOrganizationSuperAdmin, orgAccessFailureStatus } from "./shared.js"
 
@@ -18,14 +19,59 @@ const stripeCheckoutSyncRequestSchema = z.object({ sessionId: z.string().trim().
 const stripeCheckoutSyncResponseSchema = z.object({ synced: z.boolean() }).meta({ ref: "OrgStripeCheckoutSyncResponse" })
 const stripePortalResponseSchema = z.object({ url: z.string() }).meta({ ref: "OrgStripePortalResponse" })
 
-function getRequestOrigin(c: { req: { raw: Request } }) {
-  const url = new URL(c.req.raw.url)
-  const forwardedProto = c.req.raw.headers.get("x-forwarded-proto")?.split(",")[0]?.trim()
-  const forwardedHost = c.req.raw.headers.get("x-forwarded-host")?.split(",")[0]?.trim()
-  if (forwardedHost) {
-    return `${forwardedProto || url.protocol.replace(/:$/, "")}://${forwardedHost}`
+function originMatchesConfiguredOrigin(origin: string) {
+  return [env.betterAuthUrl, ...env.publicUrlTrustedOrigins].some((entry) => {
+    if (!entry || entry === "*") return false
+    try {
+      return new URL(entry).origin === origin
+    } catch {
+      return false
+    }
+  })
+}
+
+function hostMatchesConfiguredHost(candidate: URL, configuredHost: string) {
+  const normalized = configuredHost.trim().toLowerCase()
+  if (!normalized) return false
+  if (normalized.startsWith(".")) {
+    return !candidate.port && candidate.hostname.toLowerCase().endsWith(normalized)
   }
-  return `${url.protocol}//${url.host}`
+
+  try {
+    const configured = new URL(normalized.includes("://") ? normalized : `https://${normalized}`)
+    return candidate.hostname.toLowerCase() === configured.hostname.toLowerCase()
+      && (configured.port ? candidate.port === configured.port : !candidate.port)
+  } catch {
+    return false
+  }
+}
+
+function originMatchesConfiguredHost(candidate: URL) {
+  return env.webAppHosts.some((host) => hostMatchesConfiguredHost(candidate, host))
+}
+
+function trustedForwardedBillingOrigin(request: Request, fallbackProtocol: string) {
+  const forwardedHost = firstForwardedValue(request.headers.get("x-forwarded-host"))
+  if (!forwardedHost) return null
+
+  const forwardedProto = firstForwardedValue(request.headers.get("x-forwarded-proto"))?.toLowerCase()
+  const protocol = forwardedProto === "https" || forwardedProto === "http" ? `${forwardedProto}:` : fallbackProtocol
+  try {
+    const candidate = new URL(`${protocol}//${forwardedHost}`)
+    if (candidate.username || candidate.password || candidate.pathname !== "/" || candidate.search || candidate.hash) {
+      return null
+    }
+    return originMatchesConfiguredOrigin(candidate.origin) || originMatchesConfiguredHost(candidate)
+      ? candidate.origin
+      : null
+  } catch {
+    return null
+  }
+}
+
+export function getRequestOrigin(c: { req: { raw: Request } }) {
+  const url = new URL(c.req.raw.url)
+  return trustedForwardedBillingOrigin(c.req.raw, url.protocol) ?? `${url.protocol}//${url.host}`
 }
 
 function billingReturnUrl(c: { req: { raw: Request } }) {

@@ -32,12 +32,27 @@ export function matchRoute(routes: Route[], method: string, path: string): Match
     const match = path.match(route.regex);
     if (!match) continue;
     const params: Record<string, string> = {};
+    let validParams = true;
     route.keys.forEach((key, index) => {
-      params[key] = decodeURIComponent(match[index + 1]);
+      const decoded = safeDecodeURIComponent(match[index + 1] ?? "");
+      if (decoded === null) {
+        validParams = false;
+        return;
+      }
+      params[key] = decoded;
     });
+    if (!validParams) return null;
     return { ...route, params };
   }
   return null;
+}
+
+function safeDecodeURIComponent(value: string): string | null {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return null;
+  }
 }
 
 export function addRoute(routes: Route[], method: string, path: string, auth: AuthMode, handler: Route["handler"]): void {

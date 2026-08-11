@@ -119,6 +119,66 @@ const DESKTOP_BOOTSTRAP_FILENAME = "desktop-bootstrap.json";
 const STANDARD_DESKTOP_INSTALLER_PATTERN = /^openwork-(?:mac-(?:arm64|x64)-.+\.dmg|win-x64-.+\.exe)$/i;
 const HOSTED_DESKTOP_WEB_URL = "https://app.openworklabs.com";
 const HOSTED_DESKTOP_API_URL = "https://api.openworklabs.com";
+const OPENWORK_CONFIG_STRING_MAX_LENGTH = 4_000;
+
+function isRecord(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function normalizeOptionalConfigString(value, field) {
+  if (value == null) return null;
+  if (typeof value !== "string") throw new Error(`${field} must be a string`);
+  const trimmed = value.trim();
+  if (trimmed.length > OPENWORK_CONFIG_STRING_MAX_LENGTH) {
+    throw new Error(`${field} is too long`);
+  }
+  return trimmed || null;
+}
+
+function normalizeWorkspaceOpenworkWorkspace(value) {
+  if (value == null) return null;
+  if (!isRecord(value)) throw new Error("workspace must be an object or null");
+  const createdAt = value.createdAt == null ? null : Number(value.createdAt);
+  if (createdAt !== null && (!Number.isFinite(createdAt) || createdAt < 0)) {
+    throw new Error("workspace.createdAt must be a non-negative number");
+  }
+  return {
+    name: normalizeOptionalConfigString(value.name, "workspace.name"),
+    createdAt,
+    preset: normalizeOptionalConfigString(value.preset, "workspace.preset"),
+  };
+}
+
+function normalizeWorkspaceOpenworkReload(value) {
+  if (value == null) return null;
+  if (!isRecord(value)) throw new Error("reload must be an object or null");
+  return {
+    ...(typeof value.auto === "boolean" ? { auto: value.auto } : {}),
+    ...(typeof value.resume === "boolean" ? { resume: value.resume } : {}),
+  };
+}
+
+export function normalizeWorkspaceOpenworkConfig(input) {
+  if (!isRecord(input)) throw new Error("workspace OpenWork config must be an object");
+  const version = input.version == null ? 1 : Number(input.version);
+  if (!Number.isInteger(version) || version < 1) {
+    throw new Error("version must be a positive integer");
+  }
+  const roots = input.authorizedRoots == null ? [] : input.authorizedRoots;
+  if (!Array.isArray(roots)) throw new Error("authorizedRoots must be an array");
+  const authorizedRoots = [];
+  for (const value of roots) {
+    const normalized = normalizeOptionalConfigString(value, "authorizedRoots[]");
+    if (normalized && !authorizedRoots.includes(normalized)) authorizedRoots.push(normalized);
+  }
+  return {
+    ...input,
+    version,
+    workspace: normalizeWorkspaceOpenworkWorkspace(input.workspace),
+    authorizedRoots,
+    reload: normalizeWorkspaceOpenworkReload(input.reload),
+  };
+}
 
 function bootstrapUrlOrigin(value) {
   if (typeof value !== "string" || !value.trim()) return "";
@@ -623,10 +683,6 @@ export function createWorkspaceStore({
       .replace(/\//g, "\\");
   }
 
-  function isRecord(value) {
-    return typeof value === "object" && value !== null;
-  }
-
   async function recoverWorkspacesFromTokenStore() {
     const store = await readJsonFile(openworkServerTokenStorePath(), null);
     if (!isRecord(store) || !isRecord(store.workspaces)) return [];
@@ -850,18 +906,23 @@ export function createWorkspaceStore({
   }
 
   async function readWorkspaceOpenworkConfig(workspacePath) {
-    const openworkPath = path.join(workspacePath, ".opencode", "openwork.json");
+    const safeWorkspacePath = String(workspacePath ?? "").trim();
+    if (!safeWorkspacePath) throw new Error("workspacePath is required");
+    const openworkPath = path.join(safeWorkspacePath, ".opencode", "openwork.json");
     if (!(await pathExists(openworkPath))) {
-      return defaultWorkspaceOpenworkConfig(workspacePath);
+      return defaultWorkspaceOpenworkConfig(safeWorkspacePath);
     }
     const raw = await readFile(openworkPath, "utf8");
-    return JSON.parse(raw);
+    return normalizeWorkspaceOpenworkConfig(JSON.parse(raw));
   }
 
   async function writeWorkspaceOpenworkConfig(workspacePath, config) {
-    const openworkPath = path.join(workspacePath, ".opencode", "openwork.json");
+    const safeWorkspacePath = String(workspacePath ?? "").trim();
+    if (!safeWorkspacePath) throw new Error("workspacePath is required");
+    const normalized = normalizeWorkspaceOpenworkConfig(config);
+    const openworkPath = path.join(safeWorkspacePath, ".opencode", "openwork.json");
     await mkdir(path.dirname(openworkPath), { recursive: true });
-    await writeFile(openworkPath, `${JSON.stringify(config, null, 2)}\n`, "utf8");
+    await writeFile(openworkPath, `${JSON.stringify(normalized, null, 2)}\n`, "utf8");
     return execResult(true, `Wrote ${openworkPath}`);
   }
 

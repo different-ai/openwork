@@ -38,6 +38,48 @@ const BRIDGE_TIMEOUT_MS = 5_000;
 let cachedBridge = null;
 let cachedBridgeAt = 0;
 
+const bridgeDiscoverySchema = z.object({
+  baseUrl: z.string().url(),
+  token: z.string().min(1),
+}).passthrough();
+const bridgeResponseEnvelopeSchema = z.union([
+  z.object({ ok: z.literal(true) }).passthrough(),
+  z.object({ ok: z.literal(false), error: z.string().min(1), hint: z.string().optional() }).passthrough(),
+]);
+
+function errorMessage(error) {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function isLoopbackBridgeUrl(rawUrl) {
+  try {
+    const url = new URL(rawUrl);
+    const hostname = url.hostname.toLowerCase();
+    return url.protocol === "http:" && (
+      hostname === "localhost" ||
+      hostname === "127.0.0.1" ||
+      hostname === "::1" ||
+      hostname === "[::1]"
+    );
+  } catch {
+    return false;
+  }
+}
+
+function normalizeBridgeDiscovery(value, filePath) {
+  const parsed = bridgeDiscoverySchema.parse(value);
+  if (!isLoopbackBridgeUrl(parsed.baseUrl)) {
+    throw new Error("OpenWork bridge discovery must point to a loopback http URL.");
+  }
+  return { baseUrl: parsed.baseUrl.replace(/\/+$/, ""), token: parsed.token, path: filePath };
+}
+
+function normalizeBridgeResponse(value, status) {
+  const parsed = bridgeResponseEnvelopeSchema.safeParse(value);
+  if (parsed.success) return parsed.data;
+  return { ok: false, error: `Invalid OpenWork bridge response envelope (HTTP ${status}).` };
+}
+
 function userAppDataDir() {
   if (platform() === "darwin") return join(homedir(), "Library", "Application Support");
   if (platform() === "win32") return process.env.APPDATA || join(homedir(), "AppData", "Roaming");
@@ -64,11 +106,9 @@ async function discoverBridge() {
     try {
       const raw = await readFile(candidate, "utf8");
       const parsed = JSON.parse(raw);
-      if (typeof parsed.baseUrl === "string" && typeof parsed.token === "string") {
-        cachedBridge = { baseUrl: parsed.baseUrl, token: parsed.token, path: candidate };
-        cachedBridgeAt = Date.now();
-        return cachedBridge;
-      }
+      cachedBridge = normalizeBridgeDiscovery(parsed, candidate);
+      cachedBridgeAt = Date.now();
+      return cachedBridge;
     } catch {
       // Try next
     }
@@ -100,14 +140,14 @@ async function bridgeRequest(path, options = {}) {
     try {
       const parsed = JSON.parse(text);
       if (!response.ok) clearBridgeCache();
-      return parsed;
+      return normalizeBridgeResponse(parsed, response.status);
     } catch {
       if (!response.ok) clearBridgeCache();
       return { ok: false, error: text || `HTTP ${response.status}` };
     }
   } catch (error) {
     clearBridgeCache();
-    return { ok: false, error: `Bridge unreachable at ${url}: ${error.message}` };
+    return { ok: false, error: `Bridge unreachable at ${url}: ${errorMessage(error)}` };
   }
 }
 
@@ -311,10 +351,12 @@ server.tool(
     try {
       const response = await fetch(`${bridge.baseUrl}/health`, { signal: AbortSignal.timeout(3000) });
       const data = await response.json();
+      const envelope = normalizeBridgeResponse(data, response.status);
+      if (!envelope.ok) throw new Error(envelope.error);
       return { content: [{ type: "text", text: `Connected to ${data.app || "OpenWork"}\nBridge: ${bridge.baseUrl}\nVersion: ${data.version ?? "?"}` }] };
     } catch (error) {
       clearBridgeCache();
-      return { content: [{ type: "text", text: `Bridge file found but not reachable: ${error.message}\nOpenWork may have quit. Relaunch it.` }], isError: true };
+      return { content: [{ type: "text", text: `Bridge file found but not reachable: ${errorMessage(error)}\nOpenWork may have quit. Relaunch it.` }], isError: true };
     }
   }
 );

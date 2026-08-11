@@ -17,6 +17,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { globalOpencodeConfigDir, workspaceOpencodeConfigCandidates } from "@openwork/paths";
+import { z } from "zod";
 
 import { configureFakeMediaForTests, installMediaPermissionHandlers } from "./media-permissions.mjs";
 import { registerMigrationIpc } from "./migration.mjs";
@@ -32,7 +33,7 @@ import { createUiControlServer } from "./ui-control-server.mjs";
 import { createApplicationMenu } from "./app-menu.mjs";
 import { applyBrandAppName } from "./brand-app-name.mjs";
 import { createBrowserPanel } from "./browser-panel.mjs";
-import { createWorkspaceStore } from "./workspace-store.mjs";
+import { createWorkspaceStore, normalizeWorkspaceOpenworkConfig } from "./workspace-store.mjs";
 import {
   buildNukeManifest,
   executeNukeFreshStart,
@@ -1625,6 +1626,66 @@ function applyNativeTheme(mode) {
   return true;
 }
 
+const ipcTrimmedStringSchema = z.string().trim().min(1).max(4_000);
+const ipcOptionalStringSchema = z.string().trim().max(4_000).nullish();
+const workspaceCreateInputSchema = z.object({
+  folderPath: ipcTrimmedStringSchema,
+  name: ipcOptionalStringSchema,
+  preset: ipcOptionalStringSchema,
+}).strict();
+const workspaceRemoteInputSchema = z.object({
+  baseUrl: ipcTrimmedStringSchema,
+  remoteType: z.enum(["openwork", "opencode"]).nullish(),
+  directory: ipcOptionalStringSchema,
+  displayName: ipcOptionalStringSchema,
+  openworkHostUrl: ipcOptionalStringSchema,
+  openworkToken: ipcOptionalStringSchema,
+  openworkClientToken: ipcOptionalStringSchema,
+  openworkHostToken: ipcOptionalStringSchema,
+  openworkWorkspaceId: ipcOptionalStringSchema,
+  openworkWorkspaceName: ipcOptionalStringSchema,
+  sandboxBackend: ipcOptionalStringSchema,
+  sandboxRunId: ipcOptionalStringSchema,
+  sandboxContainerName: ipcOptionalStringSchema,
+}).strict();
+const workspaceUpdateRemoteInputSchema = workspaceRemoteInputSchema.extend({
+  workspaceId: ipcTrimmedStringSchema,
+});
+const workspaceOpenworkReadInputSchema = z.object({
+  workspacePath: ipcTrimmedStringSchema,
+}).strict();
+const workspaceOpenworkWriteInputSchema = workspaceOpenworkReadInputSchema.extend({
+  config: z.unknown(),
+});
+const opencodeCommandWriteInputSchema = z.object({
+  scope: z.enum(["workspace", "global"]),
+  projectDir: ipcOptionalStringSchema,
+  command: z.object({
+    name: ipcTrimmedStringSchema,
+    description: ipcOptionalStringSchema,
+    template: ipcTrimmedStringSchema,
+    agent: ipcOptionalStringSchema,
+    model: ipcOptionalStringSchema,
+    subtask: z.boolean().optional(),
+  }).strict(),
+}).strict();
+const engineStartOptionsSchema = z.object({
+  runtime: z.literal("direct").optional(),
+  workspacePaths: z.array(ipcTrimmedStringSchema).max(128).optional(),
+  openworkRemoteAccess: z.boolean().optional(),
+  forceRestart: z.boolean().optional(),
+  opencodeBinPath: ipcTrimmedStringSchema.optional(),
+  preferSidecar: z.boolean().optional(),
+}).strict();
+
+function parseWorkspaceOpenworkWriteInput(input) {
+  const parsed = workspaceOpenworkWriteInputSchema.parse(input);
+  return {
+    workspacePath: parsed.workspacePath,
+    config: normalizeWorkspaceOpenworkConfig(parsed.config),
+  };
+}
+
 // Desktop IPC command registry. Every command invokable from the renderer's
 // desktopBridge Proxy (apps/app/src/app/lib/desktop.ts) has exactly one
 // entry here; handlers receive the ipcMain event followed by the renderer
@@ -1644,13 +1705,13 @@ const desktopCommandHandlers = {
       return workspaceStore.setRuntimeActiveWorkspace(typeof args[0] === "string" && args[0].trim() ? args[0] : null);
   },
   "workspaceCreate": async (event, ...args) => {
-      return workspaceStore.createWorkspace(args[0] ?? {});
+      return workspaceStore.createWorkspace(workspaceCreateInputSchema.parse(args[0]));
   },
   "workspaceCreateRemote": async (event, ...args) => {
-      return workspaceStore.createRemoteWorkspace(args[0] ?? {});
+      return workspaceStore.createRemoteWorkspace(workspaceRemoteInputSchema.parse(args[0]));
   },
   "workspaceUpdateRemote": async (event, ...args) => {
-      return workspaceStore.updateRemoteWorkspace(args[0] ?? {});
+      return workspaceStore.updateRemoteWorkspace(workspaceUpdateRemoteInputSchema.parse(args[0]));
   },
   "workspaceUpdateDisplayName": async (event, ...args) => {
       return workspaceStore.updateWorkspaceDisplayName(args[0] ?? {});
@@ -1662,12 +1723,14 @@ const desktopCommandHandlers = {
       return workspaceStore.addAuthorizedRoot(args[0] ?? {});
   },
   "workspaceOpenworkRead": async (event, ...args) => {
-      return workspaceStore.readWorkspaceOpenworkConfig(String(args[0]?.workspacePath ?? "").trim());
+      const input = workspaceOpenworkReadInputSchema.parse(args[0]);
+      return workspaceStore.readWorkspaceOpenworkConfig(input.workspacePath);
   },
   "workspaceOpenworkWrite": async (event, ...args) => {
+      const input = parseWorkspaceOpenworkWriteInput(args[0]);
       return workspaceStore.writeWorkspaceOpenworkConfig(
-        String(args[0]?.workspacePath ?? "").trim(),
-        args[0]?.config ?? workspaceStore.defaultWorkspaceOpenworkConfig(""),
+        input.workspacePath,
+        input.config,
       );
   },
   "workspaceExportConfig": async (event, ...args) => {
@@ -1680,10 +1743,11 @@ const desktopCommandHandlers = {
       return listCommandNames(String(args[0]?.scope ?? "").trim(), String(args[0]?.projectDir ?? "").trim());
   },
   "opencodeCommandWrite": async (event, ...args) => {
+      const input = opencodeCommandWriteInputSchema.parse(args[0]);
       return writeCommandFile(
-        String(args[0]?.scope ?? "").trim(),
-        String(args[0]?.projectDir ?? "").trim(),
-        args[0]?.command ?? {},
+        input.scope,
+        input.projectDir ?? "",
+        input.command,
       );
   },
   "opencodeCommandDelete": async (event, ...args) => {
@@ -1694,8 +1758,8 @@ const desktopCommandHandlers = {
       );
   },
   "engineStart": async (event, ...args) => {
-      const projectDir = String(args[0] ?? "").trim();
-      const options = args[1] ?? {};
+      const projectDir = ipcTrimmedStringSchema.parse(args[0]);
+      const options = engineStartOptionsSchema.parse(args[1] ?? {});
       return runtimeManager.engineStart(projectDir, options);
   },
   "prepareFreshRuntime": async (event, ...args) => {

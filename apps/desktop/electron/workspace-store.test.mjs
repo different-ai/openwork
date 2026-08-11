@@ -756,3 +756,35 @@ test("clearDesktopBootstrapConfig removes bootstrap files without deleting works
     assert.equal(config.fromFile, false);
   });
 });
+
+test("workspace openwork.json reads and writes validated config while preserving extension state", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "openwork-config-store-"));
+  const workspace = path.join(root, "workspace");
+  const userData = path.join(root, "userData");
+  await mkdir(workspace, { recursive: true });
+  const store = createWorkspaceStore({
+    app: { getPath: (name) => name === "userData" ? userData : root },
+    defaultDenBaseUrl: "https://example.test",
+    defaultRequireSignin: false,
+    forceRequireSignin: false,
+  });
+
+  await store.writeWorkspaceOpenworkConfig(workspace, {
+    version: 1,
+    workspace: { name: "Workspace", createdAt: 1, preset: "starter" },
+    authorizedRoots: [workspace, workspace],
+    reload: { auto: true },
+    cloudImports: { providers: { openwork: { providerId: "openwork" } } },
+  });
+
+  const config = await store.readWorkspaceOpenworkConfig(workspace);
+  assert.deepEqual(config.authorizedRoots, [workspace]);
+  assert.equal(config.cloudImports.providers.openwork.providerId, "openwork");
+
+  await assert.rejects(
+    store.writeWorkspaceOpenworkConfig(workspace, { version: 1, authorizedRoots: "not-an-array" }),
+    /authorizedRoots must be an array/,
+  );
+  await writeFile(path.join(workspace, ".opencode", "openwork.json"), JSON.stringify({ version: 0, authorizedRoots: [] }), "utf8");
+  await assert.rejects(store.readWorkspaceOpenworkConfig(workspace), /version must be a positive integer/);
+});

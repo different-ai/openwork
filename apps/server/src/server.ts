@@ -3,6 +3,7 @@ import { homedir, hostname } from "node:os";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
 import { resolveGlobalOpencodeConfigPath } from "@openwork/paths";
+import { z } from "zod";
 import type { ApprovalRequest, Capabilities, ServerConfig, WorkspaceInfo, Actor, ReloadReason, ReloadTrigger, TokenScope } from "./types.js";
 import { agentContextDiagnosticsRequestSchema } from "./agent-context-diagnostics-schema.js";
 import { ApprovalService } from "./approvals.js";
@@ -30,7 +31,7 @@ import { startReloadWatchers } from "./reload-watcher.js";
 import { opencodeConfigPath, openworkConfigPath, projectCommandsDir, projectSkillsDir } from "./workspace-files.js";
 import { ensureDir, exists, hashToken, shortId } from "./utils.js";
 import { defaultWorkspaceOpenworkConfig, ensureWorkspaceFiles, readRawOpencodeConfig } from "./workspace-init.js";
-import { sanitizeCommandName, validateMcpName } from "./validators.js";
+import { sanitizeCommandName, validateMcpConfig, validateMcpName, validatePluginSpec } from "./validators.js";
 import { TokenService } from "./tokens.js";
 import { resetManagedProviderAuthCache, syncManagedProviderAuth } from "./managed-provider-auth.js";
 import { EnvService } from "./env-file.js";
@@ -140,6 +141,7 @@ const AGENT_DIAGNOSTICS_MAX_IN_FLIGHT_PER_SERVER = 16;
 const AGENT_DIAGNOSTICS_MAX_REQUEST_BYTES = 256 * 1024;
 const AGENT_DIAGNOSTICS_DEFAULT_BODY_DEADLINE_MS = 2_000;
 const AGENT_DIAGNOSTICS_ERROR_FLUSH_MS = 25;
+const DEFAULT_JSON_BODY_MAX_BYTES = 64 * 1024 * 1024;
 
 function agentDiagnosticsActorWorkspaceKey(actor: Actor | undefined, workspaceId: string): string {
   const actorKey = actor?.tokenHash ?? actor?.clientId ?? actor?.type ?? "unknown";
@@ -237,6 +239,40 @@ function readStringField(value: unknown, key: string): string {
 
 const LEGACY_RUNTIME_CONFIG_KEYS = ["plugin", "mcp", "permission", "provider"] as const;
 const USER_OPENCODE_RUNTIME_CONFIG_KEYS = ["default_agent", "plugin", "mcp", "disabled_providers", "provider"] as const;
+const genericConfigObjectSchema = z.record(z.string(), z.unknown());
+const workspaceConfigPatchSchema = z.object({
+  opencode: genericConfigObjectSchema.optional(),
+  openwork: genericConfigObjectSchema.optional(),
+});
+
+function validateRuntimeConfigPatch(opencode: Record<string, unknown>): void {
+  const plugin = opencode.plugin;
+  if (plugin !== undefined) {
+    if (!Array.isArray(plugin)) {
+      throw new ApiError(400, "invalid_plugin_spec", "Plugin config must be an array");
+    }
+    for (const spec of plugin) {
+      if (typeof spec !== "string") {
+        throw new ApiError(400, "invalid_plugin_spec", "Plugin config entries must be strings");
+      }
+      validatePluginSpec(spec);
+    }
+  }
+
+  const mcp = opencode.mcp;
+  if (mcp !== undefined) {
+    if (!isRecord(mcp)) {
+      throw new ApiError(400, "invalid_mcp_config", "MCP config must be an object");
+    }
+    for (const [name, config] of Object.entries(mcp)) {
+      validateMcpName(name);
+      if (!isRecord(config)) {
+        throw new ApiError(400, "invalid_mcp_config", "MCP config entries must be objects");
+      }
+      validateMcpConfig(config);
+    }
+  }
+}
 
 type LegacyRuntimeConfigKey = typeof LEGACY_RUNTIME_CONFIG_KEYS[number];
 type UserOpencodeRuntimeConfigKey = typeof USER_OPENCODE_RUNTIME_CONFIG_KEYS[number];
@@ -2547,9 +2583,11 @@ function createRoutes(
     ensureWritable(config);
     requireClientScope(ctx, "collaborator");
     const workspace = await resolveWorkspace(config, ctx.params.id);
-    const body = await readJsonBody(ctx.request);
-    const opencode = body.opencode as Record<string, unknown> | undefined;
-    const openwork = body.openwork as Record<string, unknown> | undefined;
+    const parsedPatch = workspaceConfigPatchSchema.safeParse(await readJsonBody(ctx.request));
+    if (!parsedPatch.success) {
+      throw new ApiError(400, "invalid_payload", "opencode and openwork must be objects");
+    }
+    const { opencode, openwork } = parsedPatch.data;
     let runtimeChanged = false;
 
     if (!opencode && !openwork) {
@@ -2560,10 +2598,11 @@ function createRoutes(
       workspaceId: workspace.id,
       action: "config.patch",
       summary: "Patch workspace config",
-      paths: [opencode || openwork ? openworkConfigPath(workspace.path) : null].filter(Boolean) as string[],
+      paths: opencode || openwork ? [openworkConfigPath(workspace.path)] : [],
     });
 
     if (opencode) {
+      validateRuntimeConfigPatch(opencode);
       const configPath = openworkConfigPath(workspace.path);
       const nextOpencode = ensurePlainObject(opencode);
       const { permission, provider, ...topLevelUpdates } = nextOpencode;
@@ -3435,9 +3474,75 @@ function requireClientScope(ctx: RequestContext, required: TokenScope): void {
 }
 
 async function readJsonBody(request: Request): Promise<Record<string, unknown>> {
+  const text = await readJsonBodyText(request, false);
   try {
-    const json = await request.json();
-    return json as Record<string, unknown>;
+    const parsed: unknown = JSON.parse(text);
+    if (!isRecord(parsed)) {
+      throw new ApiError(400, "invalid_payload", "JSON body must be an object");
+    }
+    return parsed;
+  } catch (error) {
+    if (error instanceof ApiError) throw error;
+    throw new ApiError(400, "invalid_json", "Invalid JSON body");
+  }
+}
+
+function resolveJsonBodyMaxBytes(): number {
+  const configured = Number(process.env.OPENWORK_JSON_BODY_MAX_BYTES);
+  return Number.isFinite(configured) && configured > 0
+    ? Math.trunc(configured)
+    : DEFAULT_JSON_BODY_MAX_BYTES;
+}
+
+function jsonBodyTooLarge(): ApiError {
+  return new ApiError(413, "request_too_large", "JSON body is too large");
+}
+
+async function readJsonBodyText(
+  request: Request,
+  allowEmpty: boolean,
+): Promise<string> {
+  const maxBytes = resolveJsonBodyMaxBytes();
+  const declaredLength = request.headers.get("content-length");
+  if (declaredLength !== null) {
+    const declaredBytes = Number(declaredLength);
+    if (Number.isFinite(declaredBytes) && declaredBytes > maxBytes) {
+      throw jsonBodyTooLarge();
+    }
+  }
+
+  const reader = request.body?.getReader();
+  if (!reader) {
+    if (allowEmpty) return "";
+    throw new ApiError(400, "invalid_json", "Invalid JSON body");
+  }
+
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  try {
+    while (true) {
+      const next = await reader.read();
+      if (next.done) break;
+      size += next.value.byteLength;
+      if (size > maxBytes) throw jsonBodyTooLarge();
+      chunks.push(next.value);
+    }
+  } catch (error) {
+    if (error instanceof ApiError) throw error;
+    throw new ApiError(400, "invalid_json", "Invalid JSON body");
+  } finally {
+    reader.releaseLock();
+  }
+
+  if (size === 0) return "";
+  const bytes = new Uint8Array(size);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
   } catch {
     throw new ApiError(400, "invalid_json", "Invalid JSON body");
   }
@@ -3548,11 +3653,16 @@ async function readAgentDiagnosticsJsonBody(request: Request): Promise<unknown> 
 }
 
 async function readOptionalJsonBody(request: Request): Promise<Record<string, unknown>> {
-  const text = await request.text();
+  const text = await readJsonBodyText(request, true);
   if (!text.trim()) return {};
   try {
-    return ensurePlainObject(JSON.parse(text));
-  } catch {
+    const parsed: unknown = JSON.parse(text);
+    if (!isRecord(parsed)) {
+      throw new ApiError(400, "invalid_payload", "JSON body must be an object");
+    }
+    return parsed;
+  } catch (error) {
+    if (error instanceof ApiError) throw error;
     throw new ApiError(400, "invalid_json", "Invalid JSON body");
   }
 }

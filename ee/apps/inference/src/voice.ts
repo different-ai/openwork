@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto"
 import { eq, sql } from "@openwork-ee/den-db/drizzle"
 import type { Hono } from "hono"
+import { z } from "zod"
 import {
   InferenceOrgUsageBucketTable,
   InferenceUsageLedgerBucketChargeTable,
@@ -13,8 +14,12 @@ import { findActiveInferenceKey } from "./keys.js"
 import { ensureUsableBuckets } from "./limits.js"
 import { db } from "./db.js"
 
-const OPENWORK_VOICE_REALTIME_MODEL = "gpt-realtime-2"
+export const OPENWORK_VOICE_REALTIME_MODEL = "gpt-realtime-2"
 const OPENWORK_VOICE_TRANSCRIPTION_MODEL = "gpt-4o-transcribe"
+
+const openworkVoiceRealtimeSessionRequestSchema = z.object({
+  model: z.literal(OPENWORK_VOICE_REALTIME_MODEL).optional(),
+}).passthrough()
 
 const OPENWORK_VOICE_REALTIME_TOOLS = [
   {
@@ -61,10 +66,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
 }
 
-function readStringField(value: unknown, key: string) {
-  if (!isRecord(value)) return ""
-  const field = value[key]
-  return typeof field === "string" ? field.trim() : ""
+export function parseOpenworkVoiceRealtimeSessionRequest(input: unknown) {
+  return openworkVoiceRealtimeSessionRequestSchema.safeParse(input)
 }
 
 function readOpenAiClientSecret(payload: unknown): { clientSecret: string; expiresAt: number | null } {
@@ -120,7 +123,12 @@ async function createOpenAiRealtimeClientSecret(input: unknown, openworkRequestI
     return Response.json({ error: { message: "Managed voice is not configured.", type: "invalid_request_error", code: "openai_realtime_key_missing" } }, { status: 503 })
   }
 
-  const model = readStringField(input, "model") || OPENWORK_VOICE_REALTIME_MODEL
+  const parsed = parseOpenworkVoiceRealtimeSessionRequest(input)
+  if (!parsed.success) {
+    return Response.json({ error: { message: "Unsupported Voice Mode model.", type: "invalid_request_error", code: "unsupported_voice_model" } }, { status: 400 })
+  }
+
+  const model = parsed.data.model ?? OPENWORK_VOICE_REALTIME_MODEL
   const response = await fetch("https://api.openai.com/v1/realtime/client_secrets", {
     method: "POST",
     headers: {
@@ -261,10 +269,13 @@ export function registerVoiceRoutes(app: Hono) {
 
     const openworkRequestId = buildRequestId()
     let body: unknown = {}
-    try {
-      body = await c.req.json()
-    } catch {
-      body = {}
+    const bodyText = await c.req.raw.text()
+    if (bodyText.trim()) {
+      try {
+        body = JSON.parse(bodyText)
+      } catch {
+        return c.json({ error: { message: "Voice Mode request body must be valid JSON.", type: "invalid_request_error", code: "invalid_request" } }, 400)
+      }
     }
 
     const response = await createOpenAiRealtimeClientSecret(body, openworkRequestId)
