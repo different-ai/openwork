@@ -18,6 +18,7 @@ import {
   SkipForwardIcon,
   UsersIcon,
 } from "lucide-react";
+import { t } from "../../../i18n";
 
 export type AttributionSource =
   | "ai_assistant"
@@ -36,32 +37,32 @@ type AttributionOption = {
 const options: AttributionOption[] = [
   {
     source: "ai_assistant",
-    label: "An AI assistant",
-    description: "ChatGPT, Claude, Gemini, Perplexity...",
+    label: "onboarding.attribution_option_ai",
+    description: "onboarding.attribution_option_ai_desc",
     icon: BotIcon,
   },
   {
     source: "search",
-    label: "Search",
-    description: "Google, Bing, DuckDuckGo...",
+    label: "onboarding.attribution_option_search",
+    description: "onboarding.attribution_option_search_desc",
     icon: SearchIcon,
   },
   {
     source: "social",
-    label: "Social media",
-    description: "X, LinkedIn, YouTube, Reddit...",
+    label: "onboarding.attribution_option_social",
+    description: "onboarding.attribution_option_social_desc",
     icon: MessageCircleIcon,
   },
   {
     source: "github",
-    label: "GitHub or open source community",
-    description: "Repos, stars, awesome lists...",
+    label: "onboarding.attribution_option_github",
+    description: "onboarding.attribution_option_github_desc",
     icon: GithubIcon,
   },
   {
     source: "friend_or_colleague",
-    label: "A friend or colleague",
-    description: "Someone recommended it directly.",
+    label: "onboarding.attribution_option_friend",
+    description: "onboarding.attribution_option_friend_desc",
     icon: UsersIcon,
   },
 ];
@@ -87,22 +88,22 @@ export function AttributionStep({ onSubmit, onSkip }: AttributionStepProps) {
 
       <div className="relative z-10 mx-6 w-full max-w-md rounded-3xl border border-border bg-background px-8 py-10">
         <PageHeader className="mb-8 text-center">
-          <PageTitle>How did you hear about OpenWork?</PageTitle>
+          <PageTitle>{t("onboarding.attribution_title")}</PageTitle>
           <PageDescription>
-            One quick question — it helps us know where to show up.
+            {t("onboarding.attribution_desc")}
           </PageDescription>
         </PageHeader>
 
         {aiSelected ? (
           <div className="space-y-3">
             <div className="text-sm font-medium text-foreground">
-              What did you ask the AI?
+              {t("onboarding.attribution_ai_question")}
             </div>
             <Textarea
               autoFocus
               value={aiPrompt}
               onChange={(event) => setAiPrompt(event.target.value)}
-              placeholder={'e.g. "best open source alternative to Claude Cowork"'}
+              placeholder={t("onboarding.attribution_ai_placeholder")}
               rows={3}
             />
             <div className="flex items-center justify-end gap-2 pt-1">
@@ -111,10 +112,10 @@ export function AttributionStep({ onSubmit, onSkip }: AttributionStepProps) {
                 size="sm"
                 onClick={() => onSubmit("ai_assistant")}
               >
-                Skip this part
+                {t("onboarding.attribution_skip_part")}
               </Button>
               <Button size="sm" onClick={() => onSubmit("ai_assistant", aiPrompt)}>
-                Continue
+                {t("onboarding.attribution_continue")}
               </Button>
             </div>
           </div>
@@ -136,10 +137,10 @@ export function AttributionStep({ onSubmit, onSkip }: AttributionStepProps) {
                 <option.icon className="mt-0.5 size-5 shrink-0 text-muted-foreground" />
                 <div>
                   <div className="text-sm font-medium text-foreground">
-                    {option.label}
+                    {t(option.label)}
                   </div>
                   <div className="mt-0.5 text-xs text-muted-foreground">
-                    {option.description}
+                    {t(option.description)}
                   </div>
                 </div>
               </button>
@@ -148,7 +149,7 @@ export function AttributionStep({ onSubmit, onSkip }: AttributionStepProps) {
             <div className="pt-1 text-center">
               <Button variant="ghost" size="sm" onClick={onSkip}>
                 <SkipForwardIcon className="mr-1.5 size-3.5" />
-                Skip
+                {t("onboarding.attribution_skip")}
               </Button>
             </div>
           </div>

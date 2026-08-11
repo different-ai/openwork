@@ -44,6 +44,7 @@ import {
 } from "@/components/ui/dialog";
 import { formatFileSize } from "@/lib/utils";
 import { Input } from "@/components/ui/input";
+import { t } from "@/i18n";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { fetchOllamaModelSupportsVision, OLLAMA_PROVIDER_CONFIG, type LocalProviderInstallInput } from "./openai-image-extension";
 import { registerExtensionConfig, type ExtensionConfigContext } from "./extension-registry";
@@ -148,7 +149,7 @@ async function pullOllamaModel(
             });
           }
           if (parsed.error) {
-            onProgress({ status: `Error: ${parsed.error}` });
+            onProgress({ status: t("ollama.error_prefix", { message: parsed.error }) });
             return false;
           }
         } catch {
@@ -158,7 +159,7 @@ async function pullOllamaModel(
     }
     return true;
   } catch (error) {
-    onProgress({ status: `Pull failed: ${error instanceof Error ? error.message : String(error)}` });
+    onProgress({ status: t("ollama.pull_failed", { message: error instanceof Error ? error.message : String(error) }) });
     return false;
   }
 }
@@ -172,10 +173,10 @@ function usePullOllamaModel(options: { onSuccess?: (model: string) => void } = {
       const model = modelName.trim();
       
       if (!model) {
-        throw new Error("Model name is required.");
+        throw new Error(t("ollama.model_name_required"));
       }
 
-      let latestProgress: PullProgressUpdate = { status: "Starting pull..." };
+      let latestProgress: PullProgressUpdate = { status: t("ollama.starting_pull") };
       const updateProgress = (update: PullProgressUpdate) => {
         latestProgress = update;
         setProgress((current) => ({
@@ -190,10 +191,10 @@ function usePullOllamaModel(options: { onSuccess?: (model: string) => void } = {
       const ok = await pullOllamaModel(model, updateProgress);
 
       if (!ok) {
-        if (latestProgress.status === "Starting pull...") {
-          setProgress({ modelName: model, status: `Failed to pull ${model}.` });
+        if (latestProgress.status === t("ollama.starting_pull")) {
+          setProgress({ modelName: model, status: t("ollama.failed_to_pull", { model }) });
         }
-        throw new Error(`Failed to pull ${model}.`);
+        throw new Error(t("ollama.failed_to_pull", { model }));
       }
 
       return model;
@@ -280,8 +281,8 @@ export function OllamaConfig(props: OllamaConfigProps) {
     return (
       <Card variant="outline" size="sm">
         <CardHeader>
-          <CardTitle>Configuration</CardTitle>
-          <CardDescription>Connect to a local Ollama instance and choose a model.</CardDescription>
+          <CardTitle>{t("ollama.config_title")}</CardTitle>
+          <CardDescription>{t("ollama.desc")}</CardDescription>
           <CardAction>
             <Button variant="ghost" size="icon-sm" onClick={() => void refetch()} disabled={isFetching}>
               <RefreshCw className={isFetching ? "animate-spin" : ""} />
@@ -301,9 +302,9 @@ export function OllamaConfig(props: OllamaConfigProps) {
               <EmptyMedia variant="icon">
                 <Download />
               </EmptyMedia>
-              <EmptyTitle>Ollama isn't installed or running</EmptyTitle>
+              <EmptyTitle>{t("ollama.not_installed")}</EmptyTitle>
               <EmptyDescription>
-                Download and start Ollama to use open-source models in your workspace.
+                {t("ollama.not_installed_desc")}
               </EmptyDescription>
             </EmptyHeader>
             <EmptyContent>
@@ -312,7 +313,7 @@ export function OllamaConfig(props: OllamaConfigProps) {
                   <a href="https://ollama.com/download" target="_blank" rel="noopener noreferrer" />
                 }
               >
-                Download Ollama
+                {t("ollama.download_ollama")}
               </Button>
             </EmptyContent>
           </Empty>
@@ -323,9 +324,9 @@ export function OllamaConfig(props: OllamaConfigProps) {
 
   return (
     <Card variant="outline" size="sm">
-      <CardHeader>
-        <CardTitle>Configuration</CardTitle>
-        <CardDescription>Connect to a local Ollama instance and choose a model.</CardDescription>
+        <CardHeader>
+          <CardTitle>{t("ollama.config_title")}</CardTitle>
+          <CardDescription>{t("ollama.desc")}</CardDescription>
         <CardAction>
           <Button variant="ghost" size="icon-sm" onClick={() => void refetch()} disabled={isFetching}>
             <RefreshCw className={isFetching ? "animate-spin" : ""} />
@@ -350,10 +351,10 @@ export function OllamaConfig(props: OllamaConfigProps) {
           )}
           <AlertDescription>
             {status === "checking"
-              ? "Checking Ollama..."
+              ? t("ollama.checking")
               : status === "running"
-                ? `Ollama running (${data?.models?.length ?? 0} model${(data?.models?.length ?? 0) === 1 ? "" : "s"})`
-                : "Ollama not reachable"}
+                ? t("ollama.running_models", { count: data?.models?.length ?? 0 })
+                : t("ollama.not_reachable")}
           </AlertDescription>
         </Alert>
 
@@ -361,9 +362,9 @@ export function OllamaConfig(props: OllamaConfigProps) {
         {status === "running" && (data?.models?.length ?? 0) > 0 ? (
           <div className="flex flex-col gap-2">
             <FieldSet className="gap-3">
-              <FieldLegend variant="label">Available models</FieldLegend>
+              <FieldLegend variant="label">{t("ollama.available_models")}</FieldLegend>
               <FieldDescription>
-                Select from models already loaded in Ollama.
+                {t("ollama.select_from_loaded")}
               </FieldDescription>
               <ModelList value={selectedModel} onValueChange={setSelectedModel}>
                 {(data?.models ?? []).map((model) => (
@@ -380,7 +381,7 @@ export function OllamaConfig(props: OllamaConfigProps) {
               className="self-center"
               onClick={() => setPullDialogOpen(true)}
             >
-              Add a custom model
+              {t("ollama.add_custom_model")}
             </Button>
           </div>
         ) : null}
@@ -392,14 +393,14 @@ export function OllamaConfig(props: OllamaConfigProps) {
               <EmptyMedia variant="icon">
                 <Download />
               </EmptyMedia>
-              <EmptyTitle>No models loaded</EmptyTitle>
+              <EmptyTitle>{t("ollama.no_models_loaded")}</EmptyTitle>
               <EmptyDescription>
-                Pull a model from ollama.com/library to get started.
+                {t("ollama.no_models_loaded_desc")}
               </EmptyDescription>
             </EmptyHeader>
             <EmptyContent>
               <Button onClick={() => setPullDialogOpen(true)}>
-                Pull a model
+                {t("ollama.pull_a_model")}
               </Button>
             </EmptyContent>
           </Empty>
@@ -433,7 +434,7 @@ export function OllamaConfig(props: OllamaConfigProps) {
               nativeButton
               render={<button type="button" />}
             />
-            <FieldLabel htmlFor="ollama-set-default">Use as default model in workspace</FieldLabel>
+            <FieldLabel htmlFor="ollama-set-default">{t("ollama.use_as_default")}</FieldLabel>
           </Field>
         </FieldGroup>
         <Button
@@ -441,7 +442,7 @@ export function OllamaConfig(props: OllamaConfigProps) {
           disabled={props.busy || isPulling || checkingCapabilities || !activeModelId || status !== "running"}
         >
           {(props.busy || checkingCapabilities) && <Loader2 className="size-4 animate-spin" />}
-          Add to workspace
+          {t("ollama.add_to_workspace")}
         </Button>
       </CardFooter>
     </Card>
@@ -520,15 +521,15 @@ function PullModelDialog(props: PullModelDialogProps) {
     <Dialog open={props.open} onOpenChange={props.onOpenChange}>
       <DialogContent className="w-full max-w-md sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>Pull model</DialogTitle>
+          <DialogTitle>{t("ollama.pull_model_title")}</DialogTitle>
           <DialogDescription>
-            Download a model from ollama.com/library to your local Ollama instance.
+            {t("ollama.pull_model_desc")}
           </DialogDescription>
         </DialogHeader>
         <FieldSet className="w-full">
           <FieldGroup>
             <Field>
-              <FieldLabel htmlFor="ollama-model-pull">Model to pull</FieldLabel>
+              <FieldLabel htmlFor="ollama-model-pull">{t("ollama.model_to_pull")}</FieldLabel>
               <Input
                 id="ollama-model-pull"
                 type="text"
@@ -537,18 +538,18 @@ function PullModelDialog(props: PullModelDialogProps) {
                 placeholder={OLLAMA_PROVIDER_CONFIG.defaultModelId}
               />
               <FieldDescription>
-                Enter a model name from ollama.com/library
+                {t("ollama.enter_model_name")}
               </FieldDescription>
             </Field>
           </FieldGroup>
         </FieldSet>
         <DialogFooter>
           <DialogClose render={<Button variant="outline" />}>
-            Cancel
+            {t("common.cancel")}
           </DialogClose>
           <Button onClick={props.onPull} disabled={!props.model.trim()}>
             <Download className="size-4" />
-            Pull {props.model.trim() || "model"}
+            {t("ollama.pull_btn", { model: props.model.trim() || t("ollama.model_word") })}
           </Button>
         </DialogFooter>
       </DialogContent>

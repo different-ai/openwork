@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CheckCircle2, CircleAlert, Loader2, RefreshCw, Settings2 } from "lucide-react";
 
 import { desktopBridge } from "@/app/lib/desktop";
+import { t } from "@/i18n";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
@@ -62,7 +63,7 @@ function hasDesktopBridge() {
 
 function parsePermissionResult(value: unknown): PermissionResult {
   if (typeof value !== "object" || value === null) {
-    throw new Error("Unreadable response.");
+    throw new Error(t("computer_use.unreadable_response"));
   }
   return {
     ok: "ok" in value && value.ok === true,
@@ -110,7 +111,7 @@ export function ComputerUseConfig({
   } = useMutation({
     mutationFn: async () => {
       if (!hasDesktopBridge()) {
-        throw new Error("Computer Use is Mac only and requires the OpenWork desktop app on macOS.");
+        throw new Error(t("computer_use.mac_only_error"));
       }
 
       return parsePermissionResult(await desktopBridge.openComputerUsePermissionSetup());
@@ -145,9 +146,9 @@ export function ComputerUseConfig({
   return (
     <Card variant="outline" size="sm">
       <CardHeader>
-        <CardTitle>Computer Use setup (Mac only)</CardTitle>
+        <CardTitle>{t("computer_use.title")}</CardTitle>
         <CardDescription>
-          Computer Use only works on Mac. Connect the local MCP server and grant the macOS permissions it needs to control apps.
+          {t("computer_use.desc")}
         </CardDescription>
         <CardAction>
           <Button variant="ghost" size="icon-sm" onClick={() => void verify()} disabled={isBusy}>
@@ -166,8 +167,8 @@ export function ComputerUseConfig({
 
         {/* Step 1 — MCP */}
         <SetupRow
-          title="1. Connect Computer Use MCP"
-          description="Adds the local Computer Use server to this workspace so Composer can use the computer-control tools."
+          title={t("computer_use.step_connect_mcp")}
+          description={t("computer_use.step_connect_mcp_desc")}
           complete={connected}
         >
           <Button
@@ -177,21 +178,21 @@ export function ComputerUseConfig({
           >
             {connecting ? <Loader2 className="size-4 shrink-0 animate-spin" /> : null}
             <span className="min-w-0 break-words">
-              {connected ? "Configured" : connecting ? "Connecting…" : "Connect MCP"}
+              {connected ? t("computer_use.configured") : connecting ? t("computer_use.connecting") : t("computer_use.connect_mcp")}
             </span>
           </Button>
         </SetupRow>
 
         {/* Step 2 — Permissions */}
         <SetupRow
-          title="2. Grant macOS permissions"
-          description="Opens the OpenWork Computer Use helper. Grant both permissions there, then click Verify below."
+          title={t("computer_use.step_grant_permissions")}
+          description={t("computer_use.step_grant_permissions_desc")}
           complete={allGranted}
         >
           <div className="flex w-full min-w-0 flex-col gap-3">
             <div className="grid gap-2">
-              <Pill label="Accessibility" granted={result?.accessibility === true} checked={result !== null} />
-              <Pill label="Screen Recording" granted={result?.screenRecording === true} checked={result !== null} />
+              <Pill label={t("computer_use.accessibility")} granted={result?.accessibility === true} checked={result !== null} />
+              <Pill label={t("computer_use.screen_recording")} granted={result?.screenRecording === true} checked={result !== null} />
             </div>
 
             <Button
@@ -205,7 +206,7 @@ export function ComputerUseConfig({
                 <Settings2 className="size-4 shrink-0" />
               )}
               <span className="min-w-0 wrap-break-word">
-                {isBusy ? "Opening…" : allGranted ? "Reopen helper" : "Grant permissions"}
+                {isBusy ? t("computer_use.opening") : allGranted ? t("computer_use.reopen_helper") : t("computer_use.grant_permissions")}
               </span>
             </Button>
           </div>
@@ -216,8 +217,8 @@ export function ComputerUseConfig({
         <div className="flex w-full flex-col gap-3">
           <p className="text-xs text-muted-foreground">
             {allGranted
-              ? "Permissions verified. Try a Composer prompt that uses Computer Use."
-              : "After granting permissions in the helper, click Verify."}
+              ? t("computer_use.permissions_verified")
+              : t("computer_use.after_grant_click_verify")}
           </p>
           <div className="flex w-full justify-end gap-2">
             {onRefresh ? (
@@ -225,7 +226,7 @@ export function ComputerUseConfig({
                 variant="outline"
                 onClick={() => void onRefresh?.()}
               >
-                Refresh
+                {t("common.refresh")}
               </Button>
             ) : null}
             <Button
@@ -233,7 +234,7 @@ export function ComputerUseConfig({
               disabled={isBusy}
             >
               {isBusy ? <Loader2 className="size-4 shrink-0 animate-spin" /> : null}
-              Verify permissions
+              {t("computer_use.verify_permissions")}
             </Button>
           </div>
         </div>
@@ -291,7 +292,7 @@ function Pill({ label, granted, checked }: PillProps) {
           checked && !granted && "text-amber-11",
         )}
       >
-        {!checked ? "…" : granted ? "Granted" : "Needed"}
+        {!checked ? "…" : granted ? t("computer_use.granted") : t("computer_use.needed")}
       </span>
     </div>
   );

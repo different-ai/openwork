@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { desktopBridge } from "@/app/lib/desktop";
+import { t } from "@/i18n";
 import type {
   DesktopIntegrationResult,
   DesktopIntegrationStatus,
@@ -21,27 +22,27 @@ import {
 
 function statusDescription(status: DesktopIntegrationStatus) {
   if (status.state === "integrated") {
-    return "OpenWork is in your application launcher and handles openwork:// browser callbacks.";
+    return t("desktop.status_integrated");
   }
   if (status.state === "managed_externally") {
-    return "This AppImage is integrated by another app. OpenWork will leave its launcher untouched.";
+    return t("desktop.status_managed_external");
   }
   if (status.state === "needs_repair" && status.ownership === "external") {
     return status.issues.includes("desktop-entry")
-      ? "The manager-owned launcher cannot accept browser callbacks. Re-integrate this AppImage with its manager."
-      : "Another app manages this AppImage. Select its launcher for OpenWork browser callbacks.";
+      ? t("desktop.status_repair_external_entry")
+      : t("desktop.status_repair_external_other");
   }
   if (status.state === "needs_repair") {
-    return "The AppImage moved or its launcher, icon, or browser callback needs repair.";
+    return t("desktop.status_repair");
   }
-  return "Add this AppImage to your application launcher and enable browser sign-in callbacks.";
+  return t("desktop.status_add");
 }
 
 function statusLabel(status: DesktopIntegrationStatus) {
-  if (status.state === "integrated") return "Integrated";
-  if (status.state === "managed_externally") return "Managed by another app";
-  if (status.state === "needs_repair") return "Needs repair";
-  return "Not integrated";
+  if (status.state === "integrated") return t("desktop.integrated");
+  if (status.state === "managed_externally") return t("desktop.managed_by_other");
+  if (status.state === "needs_repair") return t("desktop.needs_repair");
+  return t("desktop.not_integrated");
 }
 
 export function DesktopIntegrationSection() {
@@ -68,7 +69,7 @@ export function DesktopIntegrationSection() {
     try {
       const result = await action();
       setStatus(result.status);
-      if (!result.ok) setError(result.error ?? "Desktop integration failed.");
+      if (!result.ok) setError(result.error ?? t("desktop.failed"));
     } catch (actionError) {
       setError(actionError instanceof Error ? actionError.message : String(actionError));
     } finally {
@@ -84,9 +85,9 @@ export function DesktopIntegrationSection() {
   return (
     <LayoutSection>
       <LayoutSectionHeader>
-        <LayoutSectionTitle>AppImage desktop integration</LayoutSectionTitle>
+        <LayoutSectionTitle>{t("desktop.appimage_title")}</LayoutSectionTitle>
         <LayoutSectionDescription>
-          Control the launcher, icon, and openwork:// callback for this AppImage.
+          {t("desktop.appimage_desc")}
         </LayoutSectionDescription>
       </LayoutSectionHeader>
 
@@ -101,7 +102,7 @@ export function DesktopIntegrationSection() {
                 disabled={busy}
                 onClick={() => void run(() => desktopBridge.desktopIntegrationInstall())}
               >
-                Integrate
+                {t("desktop.integrate")}
               </Button>
             ) : null}
             {openworkManaged ? (
@@ -111,7 +112,7 @@ export function DesktopIntegrationSection() {
                   disabled={busy}
                   onClick={() => void run(() => desktopBridge.desktopIntegrationInstall())}
                 >
-                  Repair
+                  {t("desktop.repair")}
                 </Button>
                 <Button
                   size="sm"
@@ -119,7 +120,7 @@ export function DesktopIntegrationSection() {
                   disabled={busy}
                   onClick={() => void run(() => desktopBridge.desktopIntegrationRemove())}
                 >
-                  Remove
+                  {t("desktop.remove")}
                 </Button>
               </>
             ) : null}
@@ -131,12 +132,12 @@ export function DesktopIntegrationSection() {
                   desktopBridge.desktopIntegrationInstall({ useExternalLauncher: true })
                 ))}
               >
-                Use manager launcher
+                {t("desktop.use_manager_launcher")}
               </Button>
             ) : null}
             {externallyManaged ? (
               <Button size="sm" variant="outline" disabled={busy} onClick={() => void refresh()}>
-                Recheck
+                {t("desktop.recheck")}
               </Button>
             ) : null}
           </LayoutSectionItemHeaderActions>

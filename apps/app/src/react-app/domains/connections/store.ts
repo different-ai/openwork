@@ -457,8 +457,8 @@ export function createConnectionsStore(options: {
           mcpLastUpdatedAt: Date.now(),
           mcpStatuses: serverResult.nextStatuses,
           mcpStatus: failedNames
-            ? `Some MCPs could not be registered with the engine: ${failedNames}. They may appear disconnected — try reloading the engine.`
-            : serverResult.next.length ? null : "No MCP servers configured yet.",
+            ? t("mcp.register_failed_status", { names: failedNames })
+            : serverResult.next.length ? null : "mcp.no_servers_configured",
         }));
         void healUnhealthyMcpEntries(serverResult.next, serverResult.nextStatuses);
         return;
@@ -576,7 +576,7 @@ export function createConnectionsStore(options: {
         mcpServers: next,
         mcpLastUpdatedAt: Date.now(),
         mcpStatuses: nextStatuses,
-        mcpStatus: next.length ? null : "No MCP servers configured yet.",
+        mcpStatus: next.length ? null : "mcp.no_servers_configured",
       }));
       void healUnhealthyMcpEntries(next, nextStatuses);
     } catch (error) {

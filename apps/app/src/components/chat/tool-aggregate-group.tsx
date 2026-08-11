@@ -4,6 +4,7 @@ import { useState } from "react"
 import { ChevronRight } from "lucide-react"
 
 import { FileChip } from "@/components/chat/file-chip"
+import { t } from "@/i18n"
 import { DotMatrixLoader } from "@/components/ui/dot-matrix-loader"
 import {
   getAggregateNowLabel,
@@ -96,7 +97,7 @@ export function ToolAggregateGroup({ parts, className }: ToolAggregateGroupProps
         <div className="mt-1 flex min-w-0 items-center gap-2 ps-5 text-sm text-muted-foreground">
           <DotMatrixLoader label={nowLabel} className="text-muted-foreground" />
           <span className="min-w-0 truncate">
-            <span className="text-muted-foreground/70">Now: </span>
+            <span className="text-muted-foreground/70">{t("chat.now_label")}</span>
             {nowLabel}
           </span>
         </div>

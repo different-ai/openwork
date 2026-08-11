@@ -9,6 +9,7 @@ import {
 } from "@/components/page";
 import { Button } from "@/components/ui/button";
 import { KeyRoundIcon, SkipForwardIcon, SparklesIcon } from "lucide-react";
+import { t } from "../../../i18n";
 
 type ProviderSelectionStepProps = {
   showOpenWorkModels?: boolean;
@@ -30,9 +31,9 @@ export function ProviderSelectionStep({
 
       <div className="relative z-10 mx-6 w-full max-w-md rounded-3xl border border-border bg-background px-8 py-10">
         <PageHeader className="mb-8 text-center">
-          <PageTitle>Power your first task</PageTitle>
+          <PageTitle>{t("onboarding.provider_selection_title")}</PageTitle>
           <PageDescription>
-            Connect a model, then try a real task in chat so you can see OpenWork work.
+            {t("onboarding.provider_selection_desc")}
           </PageDescription>
         </PageHeader>
 
@@ -46,10 +47,10 @@ export function ProviderSelectionStep({
               <SparklesIcon className="mt-0.5 size-5 shrink-0 text-blue-10" />
               <div>
                 <div className="text-sm font-medium text-foreground">
-                  Use OpenWork Models
+                  {t("onboarding.provider_openwork_models")}
                 </div>
                 <div className="mt-0.5 text-xs text-muted-foreground">
-                  Pay through OpenWork Cloud and skip API key setup.
+                  {t("onboarding.provider_openwork_models_desc")}
                 </div>
               </div>
             </button>
@@ -63,10 +64,10 @@ export function ProviderSelectionStep({
             <KeyRoundIcon className="mt-0.5 size-5 shrink-0 text-muted-foreground" />
             <div>
               <div className="text-sm font-medium text-foreground">
-                Bring your own API key
+                {t("onboarding.provider_bring_your_own")}
               </div>
               <div className="mt-0.5 text-xs text-muted-foreground">
-                Connect OpenAI, Anthropic, Google, or another provider, then run your first task.
+                {t("onboarding.provider_bring_your_own_desc")}
               </div>
             </div>
           </button>
@@ -74,7 +75,7 @@ export function ProviderSelectionStep({
           <div className="pt-1 text-center">
             <Button variant="ghost" size="sm" onClick={onSkip}>
               <SkipForwardIcon className="mr-1.5 size-3.5" />
-              Skip and use the free model
+              {t("onboarding.provider_skip")}
             </Button>
           </div>
         </div>

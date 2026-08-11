@@ -821,10 +821,10 @@ export function McpView(props: McpViewProps) {
             presentation={detailPresentation}
             backLabel={t("extensions.title")}
             name={detailSkill.name}
-            description={detailSkill.description ?? "Installed skill"}
+            description={detailSkill.description ?? t("extension_detail.installed_skill")}
             taxonomy="skill"
             connected={true}
-            connectedLabel={detailSkill.origin === "openwork-connect" ? "Available through OpenWork Connect" : undefined}
+            connectedLabel={detailSkill.origin === "openwork-connect" ? t("extension_detail.connected_label") : undefined}
             hidden={hidden}
             path={detailSkill.origin === "openwork-connect" ? undefined : detailSkill.path}
             trigger={detailSkill.trigger}
@@ -852,15 +852,15 @@ export function McpView(props: McpViewProps) {
           name={detailConnectMcp.name}
           description={
             detailConnectMcp.pluginName
-              ? `Provided by ${detailConnectMcp.pluginName}${detailConnectMcp.marketplaceName ? ` · ${detailConnectMcp.marketplaceName}` : ""}.`
+              ? t("extension_detail.provided_by", { name: `${detailConnectMcp.pluginName}${detailConnectMcp.marketplaceName ? ` · ${detailConnectMcp.marketplaceName}` : ""}` })
               : detailConnectMcp.marketplaceName
-                ? `Provided by ${detailConnectMcp.marketplaceName}.`
-                : "Available through OpenWork Connect."
+                ? t("extension_detail.provided_by", { name: detailConnectMcp.marketplaceName })
+                : t("extension_detail.connected_label")
           }
           taxonomy="connection"
           connected={(props.availableConnectMcpStatuses?.[detailConnectMcp.id ?? detailConnectMcp.name]?.status) === "connected"}
-          connectedLabel="Available through OpenWork Connect"
-          disconnectedLabel="Setup required"
+          connectedLabel={t("extension_detail.connected_label")}
+          disconnectedLabel={t("extension_detail.disconnected_label")}
           url={detailConnectMcp.config.type === "remote" ? detailConnectMcp.config.url : undefined}
           oauth={detailConnectMcp.config.type === "remote"}
           showEnablementCard
@@ -927,8 +927,8 @@ export function McpView(props: McpViewProps) {
             configSlot={(
               <div className="flex flex-col gap-3">
                 <div className="flex flex-wrap gap-2">
-                  <span className="rounded-full border border-dls-border bg-dls-hover px-2 py-1 text-xs text-dls-secondary">Shared by your organization</span>
-                  <span className="rounded-full border border-dls-border bg-dls-hover px-2 py-1 text-xs text-dls-secondary">{connection.credentialMode === "shared" ? "Org account" : "Your account"}</span>
+                  <span className="rounded-full border border-dls-border bg-dls-hover px-2 py-1 text-xs text-dls-secondary">{t("extensions.shared_by_org")}</span>
+                  <span className="rounded-full border border-dls-border bg-dls-hover px-2 py-1 text-xs text-dls-secondary">{connection.credentialMode === "shared" ? t("mcp.org_account") : t("mcp.your_account")}</span>
                 </div>
                 {openInDenAction({ id: detailOrgMcpItem.id })}
               </div>
@@ -954,7 +954,7 @@ export function McpView(props: McpViewProps) {
           <ChevronLeft size={16} />
           {t("extensions.title")}
         </Button>
-        <p className="text-sm text-dls-secondary">This library item is not available in the current workspace.</p>
+        <p className="text-sm text-dls-secondary">{t("mcp.item_unavailable_workspace")}</p>
       </div>
     );
   }
@@ -963,13 +963,13 @@ export function McpView(props: McpViewProps) {
     <section className="space-y-8 max-w-3xl w-full animate-in fade-in duration-300">
       {props.mcpStatus ? (
         <div className="whitespace-pre-wrap wrap-break-word rounded-xl border border-dls-border bg-dls-hover px-4 py-3 text-xs text-dls-secondary">
-          {props.mcpStatus}
+          {props.mcpStatus ? t(props.mcpStatus) : null}
         </div>
       ) : null}
 
       {props.builtInExtensionsDisabled ? (
         <div className="rounded-xl border border-amber-6 bg-amber-2 px-4 py-3 text-xs text-amber-11">
-          Built-in OpenWork extensions are disabled by your organization. Use Show hidden to review blocked built-ins.
+          {t("extensions.blocked_builtins_notice")}
         </div>
       ) : null}
 
@@ -982,10 +982,10 @@ export function McpView(props: McpViewProps) {
       />
 
       {/* Search + kind filter */}
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-        <div className="flex-1">
+      <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
+        <div className="min-w-44 flex-1">
           <SettingsListSearchInput
-            placeholder="Search library..."
+            placeholder={t("mcp.search_library_placeholder")}
             value={search}
             onChange={(e) => setSearch(e.currentTarget.value)}
           />
@@ -1006,7 +1006,11 @@ export function McpView(props: McpViewProps) {
             size="xs"
             onClick={() => setShowHidden((current) => !current)}
           >
-            {showHidden ? "Showing hidden" : hiddenOrPolicyCount > 0 ? `Show hidden (${hiddenOrPolicyCount})` : "Show hidden"}
+            {showHidden
+              ? t("extensions.showing_hidden")
+              : hiddenOrPolicyCount > 0
+                ? t("extensions.show_hidden_count", { count: hiddenOrPolicyCount })
+                : t("extensions.show_hidden")}
           </Button>
           <ExtensionLayoutToggle
             layout={layout}
@@ -1289,7 +1293,7 @@ export function ExtensionStateTabs(props: {
   }>;
 
   return (
-    <div className="flex flex-wrap gap-5 border-b border-dls-border" role="tablist" aria-label="Library state">
+    <div className="flex flex-wrap gap-5 border-b border-dls-border" role="tablist" aria-label={t("extension_detail.library_state_aria")}>
       {tabs.filter((tab) => tab.state === "all" || tab.count !== 0).map((tab) => {
         const active = props.state === tab.state;
         return (
@@ -1324,17 +1328,16 @@ type InventoryCard = {
   node: ReactNode;
 };
 
-const orgConnectionSigninBoilerplate = "Available from your organization. Connect your own account to use it.";
-
 function orgMcpCardDescription(item: ExtensionItem, state: ExtensionInventoryState) {
+  const boilerplate = t("extension_detail.org_signin_boilerplate");
   const description = item.description?.trim() ?? "";
-  if (state !== "needs_signin" || !description.includes(orgConnectionSigninBoilerplate)) {
-    return description || "Shared by your organization.";
+  if (state !== "needs_signin" || !description.includes(boilerplate)) {
+    return description || t("extensions.shared_by_org");
   }
   return description
-    .replace(orgConnectionSigninBoilerplate, "")
+    .replace(boilerplate, "")
     .replace(/\s+—\s*$/, "")
-    .trim() || "Shared connection";
+    .trim() || t("extensions.shared_connection");
 }
 
 function ExtensionLayoutToggle(props: {
@@ -1434,7 +1437,7 @@ function McpQuickConnectSection(props: {
           disabledReason={disabledReason}
           disabled={props.busy}
           meta={t("extensions.surface_this_device")}
-          actionLabel={configured ? "View details" : t("mcp.tap_to_connect")}
+          actionLabel={configured ? t("mcp.view_details") : t("mcp.tap_to_connect")}
           nextActionLabel={configured || disabledReason ? undefined : t("connect.row_action_connect")}
           onClick={() => props.onDetail(entry)}
         />
@@ -1452,13 +1455,13 @@ function McpQuickConnectSection(props: {
         <ExtensionCard
           layout={props.layout}
           name={skill.name}
-          description={skill.description ?? "Installed skill"}
+          description={skill.description ?? t("extension_detail.installed_skill")}
           taxonomy="skill"
           connected={true}
           connectedLabel={fromOrg ? t("connect.row_chip_ready") : undefined}
           hidden={hidden}
           meta={fromOrg ? orgMeta : t("extensions.surface_this_device")}
-          actionLabel="View details"
+          actionLabel={t("mcp.view_details")}
           onClick={() => props.onSkillDetail?.(skill)}
         />
       ),
@@ -1477,16 +1480,16 @@ function McpQuickConnectSection(props: {
           name={entry.name}
           description={
             entry.pluginName
-              ? `Provided by ${entry.pluginName}${entry.marketplaceName ? ` · ${entry.marketplaceName}` : ""}.`
+              ? t("extension_detail.provided_by", { name: `${entry.pluginName}${entry.marketplaceName ? ` · ${entry.marketplaceName}` : ""}` })
               : entry.marketplaceName
-                ? `Provided by ${entry.marketplaceName}.`
+                ? t("extension_detail.provided_by", { name: entry.marketplaceName })
                 : t("extensions.surface_cloud")
           }
           taxonomy="connection"
           connected={ready}
           connectedLabel={ready ? t("connect.row_chip_ready") : undefined}
           meta={orgMeta}
-          actionLabel="View details"
+          actionLabel={t("mcp.view_details")}
           nextActionLabel={ready ? undefined : t("mcp.login_action")}
           onClick={() => props.onConnectMcpDetail?.(entry)}
         />
@@ -1504,12 +1507,12 @@ function McpQuickConnectSection(props: {
         <ExtensionCard
           layout={props.layout}
           name={plugin.name}
-          description={plugin.description ?? `Organization extension with ${fileCount} installed file${fileCount === 1 ? "" : "s"}.`}
+          description={plugin.description ?? t("extensions.org_extension_files", { count: fileCount })}
           taxonomy="plugin"
           connected={true}
           hidden={hidden}
           meta={orgMeta}
-          actionLabel="View details"
+          actionLabel={t("mcp.view_details")}
           onClick={() => props.onPluginDetail?.(plugin)}
         />
       ),
@@ -1536,7 +1539,7 @@ function McpQuickConnectSection(props: {
             connectedLabel={orgMcpConnectionActionLabel(connection)}
             beta
             meta={orgMeta}
-            actionLabel={disconnecting ? t("mcp.org_connection_disconnecting_action") : "View details"}
+            actionLabel={disconnecting ? t("mcp.org_connection_disconnecting_action") : t("mcp.view_details")}
             nextActionLabel={group === "needs_signin" ? t("mcp.login_action") : undefined}
             onClick={() => props.onOrgMcpDetail?.(item)}
           />
@@ -1593,15 +1596,15 @@ function McpQuickConnectSection(props: {
       ) : !hasCards ? (
         <div className="rounded-xl border border-dashed border-dls-border px-5 py-10 text-center">
           <Unplug size={24} className="mx-auto mb-3 text-dls-secondary/30" />
-          <div className="text-sm font-medium text-dls-secondary">No library items found</div>
+          <div className="text-sm font-medium text-dls-secondary">{t("extensions.no_library_items")}</div>
           <div className="mt-1 text-xs text-dls-secondary/60">
             {props.filter === "connection"
               ? props.organizationName?.trim()
                 ? t("extensions.empty_connections", { org: props.organizationName.trim() })
                 : t("extensions.empty_connections_signed_out")
               : props.filter === "mcp"
-                ? "MCP-backed connections appear here too. Try a different search or add an MCP server."
-                : "Try a different search or filter, or add an MCP server."}
+                ? t("extensions.empty_filter_mcp")
+                : t("extensions.empty_filter")}
           </div>
         </div>
       ) : props.state === "all" ? (
@@ -1882,7 +1885,7 @@ function McpAdvancedConfigSection(props: {
               {props.onImportFromGithub ? (
                 <Button variant="outline" onClick={props.onImportFromGithub}>
                   <Download size={14} />
-                  From GitHub
+                  {t("mcp.from_github")}
                 </Button>
               ) : null}
             </div>

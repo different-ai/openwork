@@ -260,10 +260,10 @@ export function AccountStatusMenu(props: AccountStatusMenuProps) {
   const restoringSession = denAuth.status === "checking";
   const accountLabel = signedIn
     ? user.name?.trim() || user.email
-    : restoringSession ? "OpenWork Cloud" : "Sign in";
+    : restoringSession ? "OpenWork Cloud" : t("status.sign_in");
   const accountDetail = signedIn
     ? (user.name ? user.email : "OpenWork Cloud")
-    : restoringSession ? "Restoring your session" : "Sync with OpenWork Cloud";
+    : restoringSession ? t("status.restoring_session") : t("status.sync_with_cloud");
 
   const runtimeStatus = props.showConnectionStatus
     ? resolveRuntimeStatus({
@@ -311,7 +311,7 @@ export function AccountStatusMenu(props: AccountStatusMenuProps) {
             data-connect-state={connectStatus?.state}
             /* ps-1.5 puts the 24px avatar 12px from the edge, so the name lands on the sidebar label lane. */
             className="flex w-full items-center gap-2 rounded-lg ps-1.5 pe-2 py-1.5 text-left transition-colors hover:bg-sidebar-accent"
-            aria-label={signedIn ? `${user.email} — account and status` : "Account and status"}
+            aria-label={signedIn ? `${user.email} — ${t("status.account_and_status_aria")}` : t("status.account_and_status_aria")}
             title={connectNeedsAttention
               ? openWorkConnectAttentionTitle(connectStatus.description)
               : connectStatus
@@ -413,7 +413,7 @@ export function AccountStatusMenu(props: AccountStatusMenuProps) {
         {connectNeedsAttention ? (
           <DropdownMenuItem onClick={() => navigate("/settings/debug")}>
             <Stethoscope className="size-3.5" />
-            Run diagnostics
+            {t("status.run_diagnostics")}
           </DropdownMenuItem>
         ) : null}
         {promoVisible ? (
@@ -427,7 +427,7 @@ export function AccountStatusMenu(props: AccountStatusMenuProps) {
             <Sparkles className="size-3.5 text-blue-11" />
             <span className="flex min-w-0 flex-col">
               <span>OpenWork Models</span>
-              <span className="text-[10.5px] text-muted-foreground">hosted frontier models</span>
+              <span className="text-[10.5px] text-muted-foreground">{t("status.openwork_models_subtitle")}</span>
             </span>
           </DropdownMenuItem>
         ) : null}
@@ -454,12 +454,12 @@ export function AccountStatusMenu(props: AccountStatusMenuProps) {
         {signedIn ? (
           <DropdownMenuItem onClick={logOut}>
             <LogOut className="size-3.5" />
-            Log out
+            {t("status.log_out")}
           </DropdownMenuItem>
         ) : restoringSession ? null : (
           <DropdownMenuItem onClick={openSignIn}>
             <UserRound className="size-3.5" />
-            Sign in
+            {t("status.sign_in")}
           </DropdownMenuItem>
         )}
       </DropdownMenuContent>

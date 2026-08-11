@@ -164,7 +164,7 @@ export function WelcomePage({
                 {showManualFolder ? (
                   <div className="rounded-xl border border-dashed border-border p-3">
                     <label className="grid gap-2 text-xs font-medium text-muted-foreground">
-                      Daytona folder path
+                      {t("welcome.daytona_folder_path")}
                       <input
                         className="h-9 rounded-md border border-input bg-background px-3 text-sm font-normal text-foreground outline-none focus:border-ring"
                         value={manualFolder ?? ""}
@@ -178,7 +178,7 @@ export function WelcomePage({
                       onClick={onUseManualFolder}
                       disabled={busy || !manualFolder?.trim()}
                     >
-                      Use this folder
+                      {t("welcome.use_this_folder")}
                     </Button>
                   </div>
                 ) : null}

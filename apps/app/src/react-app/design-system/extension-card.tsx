@@ -139,12 +139,12 @@ function ExtensionBadges(props: {
       )}
       {props.hidden ? (
         <span className="shrink-0 rounded-md bg-gray-3 px-1.5 py-0.5 text-[10px] font-medium text-gray-11">
-          Hidden
+          {t("extension_detail.hidden_value")}
         </span>
       ) : null}
       {props.preview ? (
         <span className="rounded-md bg-blue-3 px-1.5 py-0.5 text-[10px] font-medium text-blue-11">
-          Preview
+          {t("common.preview")}
         </span>
       ) : null}
       {props.beta ? (
@@ -154,7 +154,7 @@ function ExtensionBadges(props: {
       ) : null}
       {props.disabledReason ? (
         <span className="shrink-0 rounded-md bg-amber-3 px-1.5 py-0.5 text-[10px] font-medium text-amber-11">
-          Disabled
+          {t("settings.disabled")}
         </span>
       ) : null}
     </>
@@ -176,7 +176,7 @@ export function ExtensionCard(props: ExtensionCardProps) {
     taxonomy = "mcp",
     layout = "grid",
     connected: connectedProp = false,
-    connectedLabel = "Connected",
+    connectedLabel = t("extension_detail.connected_value"),
     enablement,
     connecting = false,
     disabled = false,
@@ -269,7 +269,7 @@ export function ExtensionCard(props: ExtensionCardProps) {
         </p>
         {preview ? (
           <span className="shrink-0 rounded-md bg-blue-3 px-1.5 py-0.5 text-[10px] font-medium text-blue-11">
-            Preview
+            {t("common.preview")}
           </span>
         ) : null}
         {beta ? (

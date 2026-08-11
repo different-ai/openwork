@@ -2,6 +2,7 @@
 import { MonitorSmartphone } from "lucide-react";
 
 import { surfaceCardClass } from "../workspace/modal-styles";
+import { t } from "@/i18n";
 import { registerExtensionConfig } from "./extension-registry";
 
 const openWorkBrowserConfigFactory = () => <OpenWorkBrowserConfig />;
@@ -15,8 +16,8 @@ function OpenWorkBrowserConfig() {
       <div className="flex items-start gap-3">
         <MonitorSmartphone className="mt-0.5 size-4 shrink-0 text-blue-11" />
         <div className="space-y-1 text-[13px] leading-relaxed text-dls-secondary">
-          <div className="font-medium text-dls-text">Ready by default</div>
-          <div>The OpenWork Browser runs inside the app, opens visibly for browser tasks, and is the supported browser automation path in OpenWork.</div>
+          <div className="font-medium text-dls-text">{t("browser_extension.ready_by_default")}</div>
+          <div>{t("browser_extension.desc")}</div>
         </div>
       </div>
     </div>
