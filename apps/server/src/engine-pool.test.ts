@@ -4,12 +4,15 @@ import { join } from "node:path";
 import { afterEach, describe, expect, test } from "bun:test";
 
 import {
+  clearEnginePoolForConfig,
   EnginePool,
   computeEngineConfigFingerprint,
+  setEnginePoolForConfig,
   type EnginePoolHooks,
   type EngineSpawnTemplate,
 } from "./engine-pool.js";
 import { createManagedOpencodeServer, type ManagedOpencodeServer } from "./managed-opencode.js";
+import { proxyOpencodeRequest } from "./server.js";
 import type { ServerConfig, WorkspaceInfo } from "./types.js";
 
 const ENV_NAMES = [
@@ -70,7 +73,16 @@ async function writeFakeEngineBin(root: string): Promise<string> {
     "      const entries = busySessions(server.port).map((id) => [id, { type: 'busy' }]);",
     "      return Response.json(Object.fromEntries(entries));",
     "    }",
-    "    return Response.json({ ok: true });",
+    "    if (url.pathname === '/permission') {",
+    "      const sessionID = busySessions(server.port)[0] ?? `ses_${server.port}`;",
+    "      return Response.json([{ id: `req_${server.port}`, sessionID }]);",
+    "    }",
+    "    if (url.pathname === '/event') {",
+    "      const sessionID = busySessions(server.port)[0] ?? `ses_${server.port}`;",
+    "      const payload = { type: 'session.updated', properties: { sessionID } };",
+    "      return new Response(`data: ${JSON.stringify(payload)}\\n\\n`, { headers: { 'content-type': 'text/event-stream' } });",
+    "    }",
+    "    return Response.json({ ok: true, port: server.port, path: url.pathname });",
     "  },",
     "});",
     "console.log(`opencode server listening on http://127.0.0.1:${server.port}`);",
@@ -229,7 +241,11 @@ async function waitUntil(predicate: () => boolean | Promise<boolean>, timeoutMs:
 async function createPool(fixture: Fixture): Promise<{ pool: EnginePool; primary: ManagedOpencodeServer }> {
   const primary = await fixture.spawnPrimary();
   const pool = new EnginePool({ config: fixture.config, template: fixture.template, hooks: fixture.hooks });
-  cleanups.push(() => pool.disposeAll().catch(() => undefined));
+  setEnginePoolForConfig(fixture.config, pool);
+  cleanups.push(async () => {
+    clearEnginePoolForConfig(fixture.config);
+    await pool.disposeAll().catch(() => undefined);
+  });
   pool.adoptPrimary({
     handle: primary,
     fingerprint: await computeEngineConfigFingerprint(fixture.template),
@@ -309,6 +325,98 @@ describe("engine pool", () => {
     expect(await fixture.logLines()).toContain(`${oldPort} SIGTERM`);
   });
 
+  test("keeps live session and prompt traffic on the draining generation", async () => {
+    const fixture = await createFixture();
+    const { pool, primary } = await createPool(fixture);
+    const oldPort = portOf(primary.url);
+    await fixture.setBusy(oldPort, ["ses_live"]);
+    await fixture.setRuntimeConfig(JSON.stringify({ generation: 2 }));
+
+    expect((await pool.requestRollover({ reason: "config_changed", workspace: fixture.workspace })).action)
+      .toBe("rolled_over");
+
+    const connections = pool.connections();
+    const current = connections.find((connection) => connection.role === "primary");
+    const draining = connections.find((connection) => connection.role === "draining");
+    expect(current?.baseUrl).not.toBe(primary.url);
+    expect(draining?.baseUrl).toBe(primary.url);
+
+    expect(pool.routeRequest("GET", "/session/ses_live/message")?.target.baseUrl).toBe(primary.url);
+    expect(pool.routeRequest("POST", "/session/ses_live/prompt_async")?.target.baseUrl).toBe(primary.url);
+    expect(pool.routeRequest("POST", "/session/ses_new/prompt_async")?.target.baseUrl).toBe(current?.baseUrl);
+
+    const oldEvent = {
+      type: "permission.asked",
+      properties: { sessionID: "ses_live", requestID: "req_old" },
+    };
+    expect(pool.shouldForwardEvent(draining?.generationId ?? "", oldEvent)).toBe(true);
+    expect(pool.shouldForwardEvent(current?.generationId ?? "", oldEvent)).toBe(false);
+    expect(pool.routeRequest("POST", "/permission/req_old/reply")?.target.baseUrl).toBe(primary.url);
+    expect(pool.shouldForwardEvent(current?.generationId ?? "", {
+      type: "session.created",
+      properties: { sessionID: "ses_new" },
+    })).toBe(true);
+
+    await fixture.setBusy(oldPort, []);
+    expect(await waitUntil(() => pool.connections().length === 1, 5_000)).toBe(true);
+    const remainingPrimaryUrl = pool.primaryUrl();
+    if (!remainingPrimaryUrl) throw new Error("expected the primary engine to remain live");
+    expect(pool.routeRequest("GET", "/session/ses_live/message")?.target.baseUrl).toBe(remainingPrimaryUrl);
+  });
+
+  test("proxies owned sessions to the old engine and merges cross-generation reads", async () => {
+    const fixture = await createFixture();
+    const { pool, primary } = await createPool(fixture);
+    const oldPort = portOf(primary.url);
+    await fixture.setBusy(oldPort, ["ses_live"]);
+    await fixture.setRuntimeConfig(JSON.stringify({ generation: 2 }));
+
+    expect((await pool.requestRollover({ reason: "config_changed", workspace: fixture.workspace })).action)
+      .toBe("rolled_over");
+    const newPort = portOf(pool.primaryUrl() ?? "http://127.0.0.1:0");
+    const proxy = async (path: string, method = "GET") => {
+      const url = new URL(`http://127.0.0.1/opencode${path}`);
+      return proxyOpencodeRequest({
+        config: fixture.config,
+        request: new Request(url, { method }),
+        url,
+        workspace: fixture.workspace,
+        proxyPath: path,
+      });
+    };
+
+    const owned = await (await proxy("/session/ses_live/message")).json() as { port: number };
+    const fresh = await (await proxy("/session/ses_new/message")).json() as { port: number };
+    expect(owned.port).toBe(oldPort);
+    expect(fresh.port).toBe(newPort);
+
+    const statuses = await (await proxy("/session/status")).json() as Record<string, unknown>;
+    expect(statuses.ses_live).toEqual({ type: "busy" });
+    const pending = await (await proxy("/permission")).json() as Array<{ id: string }>;
+    expect(pending.map((item) => item.id).sort()).toEqual([`req_${newPort}`, `req_${oldPort}`].sort());
+
+    const reply = await (await proxy(`/permission/req_${oldPort}/reply`, "POST")).json() as { port: number };
+    expect(reply.port).toBe(oldPort);
+
+    const events = await (await proxy("/event")).text();
+    expect(events).toContain('"sessionID":"ses_live"');
+    expect(events).toContain(`"sessionID":"ses_${newPort}"`);
+  });
+
+  test("ends existing event fan-in leases when a generation flips", async () => {
+    const fixture = await createFixture();
+    const { pool, primary } = await createPool(fixture);
+    const lease = pool.openEventProxy();
+    await fixture.setBusy(portOf(primary.url), ["ses_live"]);
+    await fixture.setRuntimeConfig(JSON.stringify({ generation: 2 }));
+
+    expect(lease.signal.aborted).toBe(false);
+    expect((await pool.requestRollover({ reason: "config_changed", workspace: fixture.workspace })).action)
+      .toBe("rolled_over");
+    expect(lease.signal.aborted).toBe(true);
+    lease.release();
+  });
+
   test("aborts the remaining sessions once the drain grace period expires", async () => {
     setEnv("OPENWORK_ENGINE_DRAIN_TIMEOUT_MS", "300");
     setEnv("OPENWORK_ENGINE_ABORT_SETTLE_MS", "100");
@@ -323,6 +431,7 @@ describe("engine pool", () => {
       .toBe("rolled_over");
 
     expect(await waitUntil(() => !primary.isAlive(), 15_000)).toBe(true);
+    expect(await waitUntil(async () => (await fixture.logLines()).includes(`${oldPort} SIGTERM`), 2_000)).toBe(true);
     const lines = await fixture.logLines();
     expect(lines).toContain(`${oldPort} POST /session/ses_stuck/abort`);
     expect(lines).toContain(`${oldPort} SIGTERM`);

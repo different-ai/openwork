@@ -1,8 +1,42 @@
 import { describe, expect, test } from "bun:test";
+import { EventEmitter } from "node:events";
+import type { ServerResponse } from "node:http";
 import { setTimeout as delay } from "node:timers/promises";
-import { serve } from "./serve-node.js";
+import { serve, writeWebResponse } from "./serve-node.js";
 
 describe("serve", () => {
+  test("cancels a streaming response body when the client disconnects", async () => {
+    let cancelled = false;
+    const events = new EventEmitter();
+    const responseState = {
+      destroyed: false,
+      closed: false,
+      writableEnded: false,
+      writeHead: () => undefined,
+      write: () => true,
+      end: () => undefined,
+      once: events.once.bind(events),
+      off: events.off.bind(events),
+    } as unknown as ServerResponse;
+    const response = new Response(new ReadableStream<Uint8Array>({
+      async pull(controller) {
+        await delay(5);
+        controller.enqueue(new TextEncoder().encode("event\n"));
+      },
+      cancel() {
+        cancelled = true;
+      },
+    }));
+
+    const writing = writeWebResponse(response, responseState);
+    await delay(20);
+    Object.assign(responseState, { closed: true });
+    events.emit("close");
+    await writing;
+
+    expect(cancelled).toBe(true);
+  });
+
   test("does not write an error response after a streaming response has ended", async () => {
     const uncaught: unknown[] = [];
     const onUncaughtException = (error: unknown) => {

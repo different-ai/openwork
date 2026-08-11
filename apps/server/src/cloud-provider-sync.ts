@@ -705,7 +705,8 @@ export class CloudProviderSync {
     // that accepts it, PATCH /config, performs the same instance dispose as
     // POST /instance/dispose (verified against opencode 1.18.15 — both drop an
     // open /event stream, GET /config and PUT /auth do not). So a config delta
-    // still reloads, deferred while sessions are live.
+    // still reloads. Without a rollover-capable engine pool it is deferred
+    // while sessions are live; with one, reloadEngine flips generations.
     this.reloadPending = this.reloadPending
       || providerStateChanged
       || workspaceCleanup.runtimeChanged

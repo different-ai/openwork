@@ -36,7 +36,11 @@ interface RegisterSessionRoutesOptions {
   requireClientScope: (ctx: RequestContext, required: TokenScope) => void;
   resolveWorkspace: (config: ServerConfig, id: string) => Promise<WorkspaceInfo>;
   resolveWorkspaceWithoutBootstrap: (config: ServerConfig, id: string) => Promise<WorkspaceInfo>;
-  createWorkspaceOpencodeClient: (config: ServerConfig, workspace: WorkspaceInfo) => WorkspaceOpencodeClient;
+  createWorkspaceOpencodeClient: (
+    config: ServerConfig,
+    workspace: WorkspaceInfo,
+    options?: { boundedDiagnosticsReads?: boolean; sessionId?: string },
+  ) => WorkspaceOpencodeClient;
   unwrapOpencodeResult: UnwrapOpencodeResult;
 }
 
@@ -247,7 +251,7 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
     const workspace = await resolveWorkspace(config, ctx.params.id);
     const sessionId = ctx.params.sessionId?.trim();
     if (!sessionId) throw new ApiError(400, "invalid_payload", "sessionId is required");
-    const result = await createWorkspaceOpencodeClient(config, workspace).session.abort({ sessionID: sessionId });
+    const result = await createWorkspaceOpencodeClient(config, workspace, { sessionId }).session.abort({ sessionID: sessionId });
     if (result.error !== undefined) {
       throw new ApiError(502, "opencode_request_failed", "OpenCode abort failed");
     }

@@ -18,6 +18,7 @@ import {
   clearEnginePoolForConfig,
   computeEngineConfigFingerprint,
   type EnginePool,
+  type EnginePoolSnapshot,
   type EngineSpawnTemplate,
 } from "./engine-pool.js";
 import { createManagedOpencodeServer, type ManagedOpencodeServer, type OpencodeExecutionSnapshot } from "./managed-opencode.js";
@@ -58,6 +59,8 @@ export type EmbeddedServerHandle = {
   managedOpencodeExecution: OpencodeExecutionSnapshot | null;
   /** Liveness for the managed OpenCode child process, when spawned. */
   managedOpencode: { pid: number | null; isAlive: () => boolean } | null;
+  /** Current managed-engine generations for desktop diagnostics and acceptance checks. */
+  managedOpencodePool: () => EnginePoolSnapshot | null;
   /** Stop the HTTP server and managed OpenCode (if any). */
   stop: () => Promise<void>;
 };
@@ -214,8 +217,11 @@ export async function startEmbeddedServer(options: EmbeddedServerOptions): Promi
         runtimeConfigPath,
         env: engineEnv,
         reservedPorts: () => {
-          const live = managedOpencode ? Number(new URL(managedOpencode.url).port) || 0 : 0;
-          return live ? [config.port, live] : [config.port];
+          const poolPorts = enginePool?.connections()
+            .map((connection) => Number(new URL(connection.baseUrl).port) || 0)
+            .filter((port) => port > 0) ?? [];
+          const startupPort = managedOpencode ? Number(new URL(managedOpencode.url).port) || 0 : 0;
+          return [...new Set([config.port, ...poolPorts, startupPort].filter((port) => port > 0))];
         },
       };
       managedOpencode = await duringStartup(() => createManagedOpencodeServer({
@@ -289,14 +295,21 @@ export async function startEmbeddedServer(options: EmbeddedServerOptions): Promi
     });
   }
 
+  const initialManagedOpencode = managedOpencode;
   return {
     port: server.port,
     url: `http://${config.host === "0.0.0.0" ? "127.0.0.1" : config.host}:${server.port}`,
     config,
     managedOpencodeExecution: managedOpencode?.execution ?? null,
-    managedOpencode: managedOpencode
-      ? { pid: managedOpencode.pid ?? null, isAlive: managedOpencode.isAlive }
+    managedOpencode: initialManagedOpencode
+      ? {
+          get pid() {
+            return enginePool?.primaryProcess()?.pid ?? initialManagedOpencode.pid ?? null;
+          },
+          isAlive: () => enginePool?.primaryProcess()?.isAlive() ?? initialManagedOpencode.isAlive(),
+        }
       : null,
+    managedOpencodePool: () => enginePool?.snapshot() ?? null,
     stop,
   };
 }

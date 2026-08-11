@@ -10,8 +10,11 @@ import {
   EnginePool,
   enginePoolForConfig,
   setEnginePoolForConfig,
+  type EnginePoolConnection,
+  type EngineEventProxyLease,
   type EngineSpawnTemplate,
 } from "./engine-pool.js";
+import { buildEngineAuthProbeHeader } from "./engine-registry.js";
 import { addPlugin, listPlugins, normalizePluginSpec, removePlugin } from "./plugins.js";
 import { sanitizePortableOpencodeConfig } from "./portable-opencode.js";
 import { addMcp, listMcp, removeMcp, setMcpEnabled } from "./mcp.js";
@@ -881,7 +884,9 @@ export async function startServer(config: ServerConfig): Promise<ServeResult> {
     config,
     env,
     reloadEngine: () => reloadOpencodeEngine(config, resolveEngineRuntimeWorkspace(config), engineMcpServerState),
-    engineBusy: () => engineHasActiveSessions(config, resolveEngineRuntimeWorkspace(config)),
+    engineBusy: () => enginePoolForConfig(config)
+      ? Promise.resolve(false)
+      : engineHasActiveSessions(config, resolveEngineRuntimeWorkspace(config)),
     logger: toManagedProviderAuthLogger(logger),
   });
   const routes = createRoutes(
@@ -1128,9 +1133,17 @@ type OpencodeClientResult<T, E> =
 export function createWorkspaceOpencodeClient(
   config: ServerConfig,
   workspace: WorkspaceInfo,
-  options?: { boundedDiagnosticsReads?: boolean },
+  options?: { boundedDiagnosticsReads?: boolean; sessionId?: string },
 ) {
-  const connection = resolveWorkspaceOpencodeConnection(config, workspace);
+  const poolRoute = workspace.workspaceType === "remote" || !options?.sessionId
+    ? null
+    : enginePoolForConfig(config)?.routeRequest("GET", `/session/${encodeURIComponent(options.sessionId)}`) ?? null;
+  const connection = poolRoute
+    ? {
+        baseUrl: poolRoute.target.baseUrl,
+        authHeader: buildEngineAuthProbeHeader(poolRoute.target.username, poolRoute.target.password),
+      }
+    : resolveWorkspaceOpencodeConnection(config, workspace);
   const directory = resolveOpencodeDirectory(workspace);
   const baseFetch = directory ? createOpencodeDirectoryFetch(directory) : globalThis.fetch;
   const clientFetch = options?.boundedDiagnosticsReads
@@ -1159,7 +1172,7 @@ function unwrapOpencodeResult<T, E>(result: OpencodeClientResult<T, E>, path: st
   });
 }
 
-async function proxyOpencodeRequest(input: {
+export async function proxyOpencodeRequest(input: {
   config: ServerConfig;
   request: Request;
   url: URL;
@@ -1167,13 +1180,16 @@ async function proxyOpencodeRequest(input: {
   proxyPath?: string;
 }) {
   const workspace = input.workspace;
-  const baseUrl = workspace ? resolveWorkspaceOpencodeConnection(input.config, workspace).baseUrl?.trim() ?? "" : "";
+  const proxyPath = input.proxyPath ?? input.url.pathname;
+  const method = input.request.method.toUpperCase();
+  const pool = workspace?.workspaceType === "remote" ? null : enginePoolForConfig(input.config);
+  const route = pool?.routeRequest(method, proxyPath) ?? null;
+  const baseUrl = route?.target.baseUrl ??
+    (workspace ? resolveWorkspaceOpencodeConnection(input.config, workspace).baseUrl?.trim() ?? "" : "");
   if (!baseUrl) {
     throw new ApiError(400, "opencode_unconfigured", "OpenCode base URL is missing for this workspace");
   }
 
-  const proxyPath = input.proxyPath ?? input.url.pathname;
-  const targetUrl = buildOpencodeProxyUrl(baseUrl, proxyPath, input.url.search);
   const headers = new Headers(input.request.headers);
   headers.delete("authorization");
   headers.delete("x-openwork-host-token");
@@ -1186,18 +1202,39 @@ async function proxyOpencodeRequest(input: {
     headers.set("x-opencode-directory", buildOpencodeDirectoryHeader(directory));
   }
 
-  const auth = workspace ? resolveWorkspaceOpencodeConnection(input.config, workspace).authHeader ?? null : null;
+  const auth = route
+    ? buildEngineAuthProbeHeader(route.target.username, route.target.password)
+    : workspace ? resolveWorkspaceOpencodeConnection(input.config, workspace).authHeader ?? null : null;
   if (auth) {
     headers.set("Authorization", auth);
   }
 
-  const method = input.request.method.toUpperCase();
   // Buffer the request body so it can be forwarded reliably across Node.js
   // stream boundaries (Readable.toWeb streams from the HTTP adapter aren't
   // always accepted directly by Node's global fetch as a body).
   const body = method === "GET" || method === "HEAD"
     ? undefined
     : await input.request.arrayBuffer().then((buf) => (buf.byteLength > 0 ? buf : undefined));
+  if (pool && method === "GET" && isEngineEventPath(proxyPath)) {
+    return proxyEngineEventStreams({
+      pool,
+      connections: pool.connections(),
+      proxyPath,
+      search: input.url.search,
+      headers,
+      clientSignal: input.request.signal,
+    });
+  }
+  if (pool && method === "GET" && engineAggregateKind(proxyPath)) {
+    return proxyEngineAggregateRead({
+      connections: pool.connections(),
+      proxyPath,
+      search: input.url.search,
+      headers,
+      kind: engineAggregateKind(proxyPath) ?? "pending",
+    });
+  }
+  const targetUrl = buildOpencodeProxyUrl(baseUrl, proxyPath, input.url.search);
   // Managed OpenCode proxy traffic is loopback/engine I/O; keep streaming on Node fetch.
   if (isSessionCommandProxyRequest(method, proxyPath)) {
     void loopbackFetch(targetUrl, {
@@ -1215,7 +1252,228 @@ async function proxyOpencodeRequest(input: {
     body,
   });
 
+  if (response.status === 404 && route?.fallback) {
+    const fallbackHeaders = headersForEngineConnection(headers, route.fallback);
+    const fallbackResponse = await loopbackFetch(
+      buildOpencodeProxyUrl(route.fallback.baseUrl, proxyPath, input.url.search),
+      { method, headers: fallbackHeaders, body },
+    );
+    return sanitizeProxyResponse(fallbackResponse);
+  }
+
   return sanitizeProxyResponse(response);
+}
+
+function isEngineEventPath(proxyPath: string): boolean {
+  const normalized = normalizeOpencodeProxyPath(proxyPath);
+  return normalized === "/event" || normalized === "/global/event" || normalized === "/api/event";
+}
+
+function engineAggregateKind(proxyPath: string): "status" | "pending" | null {
+  const normalized = normalizeOpencodeProxyPath(proxyPath);
+  if (normalized === "/session/status") return "status";
+  if (["/permission", "/question", "/api/permission/request", "/api/question/request"].includes(normalized)) {
+    return "pending";
+  }
+  return null;
+}
+
+function headersForEngineConnection(headers: Headers, connection: EnginePoolConnection): Headers {
+  const next = new Headers(headers);
+  next.set("Authorization", buildEngineAuthProbeHeader(connection.username, connection.password));
+  return next;
+}
+
+function pendingPayloadItems(payload: unknown): { key: string | null; items: unknown[] } {
+  if (Array.isArray(payload)) return { key: null, items: payload };
+  if (!isRecord(payload)) return { key: null, items: [] };
+  for (const key of ["items", "permissions", "questions", "requests"]) {
+    const value = payload[key];
+    if (Array.isArray(value)) return { key, items: value };
+  }
+  return { key: null, items: [] };
+}
+
+function pendingItemIdentity(value: unknown): string {
+  if (!isRecord(value)) return JSON.stringify(value) ?? String(value);
+  for (const key of ["id", "requestID", "requestId", "permissionID", "questionID"]) {
+    const candidate = value[key];
+    if (typeof candidate === "string" && candidate) return candidate;
+  }
+  return JSON.stringify(value) ?? String(value);
+}
+
+async function proxyEngineAggregateRead(input: {
+  connections: EnginePoolConnection[];
+  proxyPath: string;
+  search: string;
+  headers: Headers;
+  kind: "status" | "pending";
+}): Promise<Response> {
+  const settled = await Promise.allSettled(input.connections.map(async (connection) => {
+    const response = await loopbackFetch(buildOpencodeProxyUrl(connection.baseUrl, input.proxyPath, input.search), {
+      method: "GET",
+      headers: headersForEngineConnection(input.headers, connection),
+      signal: AbortSignal.timeout(5_000),
+    });
+    const payload = response.ok ? await response.json().catch(() => null) : null;
+    return { connection, response, payload };
+  }));
+  const results = settled.flatMap((entry) => entry.status === "fulfilled" ? [entry.value] : []);
+  const primary = results.find((entry) => entry.connection.role === "primary");
+  if (!primary) throw new ApiError(502, "opencode_unreachable", "No OpenCode engine is available");
+  if (!primary.response.ok) return sanitizeProxyResponse(primary.response);
+
+  if (input.kind === "status") {
+    const merged: Record<string, unknown> = {};
+    for (const result of results.filter((entry) => entry.connection.role === "primary")) {
+      if (isRecord(result.payload)) Object.assign(merged, result.payload);
+    }
+    for (const result of results.filter((entry) => entry.connection.role === "draining")) {
+      if (isRecord(result.payload)) Object.assign(merged, result.payload);
+    }
+    return jsonResponse(merged);
+  }
+
+  const seen = new Set<string>();
+  const items: unknown[] = [];
+  let containerKey: string | null = null;
+  for (const result of results) {
+    const pending = pendingPayloadItems(result.payload);
+    containerKey ??= pending.key;
+    for (const item of pending.items) {
+      const identity = pendingItemIdentity(item);
+      if (seen.has(identity)) continue;
+      seen.add(identity);
+      items.push(item);
+    }
+  }
+  if (containerKey && isRecord(primary.payload)) {
+    return jsonResponse({ ...primary.payload, [containerKey]: items });
+  }
+  return jsonResponse(items);
+}
+
+function parseSsePayload(frame: string): unknown {
+  const data = frame
+    .split(/\r?\n/)
+    .filter((line) => line.startsWith("data:"))
+    .map((line) => line.slice("data:".length).trimStart())
+    .join("\n");
+  if (!data) return null;
+  try {
+    return JSON.parse(data);
+  } catch {
+    return null;
+  }
+}
+
+function mergedEventBody(input: {
+  pool: EnginePool;
+  streams: Array<{ connection: EnginePoolConnection; body: ReadableStream<Uint8Array> }>;
+  lease: EngineEventProxyLease;
+}): ReadableStream<Uint8Array> {
+  const encoder = new TextEncoder();
+  const readers = input.streams.map((entry) => ({ connection: entry.connection, reader: entry.body.getReader() }));
+  let cancelled = false;
+  let pingTimer: ReturnType<typeof setInterval> | null = null;
+  return new ReadableStream<Uint8Array>({
+    start(controller) {
+      let active = readers.length;
+      let closed = false;
+      const finish = () => {
+        active -= 1;
+        if (active > 0 || closed || cancelled) return;
+        closed = true;
+        if (pingTimer) clearInterval(pingTimer);
+        input.lease.release();
+        controller.close();
+      };
+      const pump = async (entry: typeof readers[number]) => {
+        const decoder = new TextDecoder();
+        let buffered = "";
+        try {
+          while (!cancelled) {
+            const chunk = await entry.reader.read();
+            if (chunk.done) break;
+            buffered += decoder.decode(chunk.value, { stream: true });
+            while (true) {
+              const delimiter = buffered.match(/\r?\n\r?\n/);
+              if (!delimiter || delimiter.index === undefined) break;
+              const frame = buffered.slice(0, delimiter.index);
+              buffered = buffered.slice(delimiter.index + delimiter[0].length);
+              if (input.pool.shouldForwardEvent(entry.connection.generationId, parseSsePayload(frame))) {
+                controller.enqueue(encoder.encode(`${frame}\n\n`));
+              }
+            }
+          }
+        } catch {
+          // A generation flip intentionally aborts these readers. The client
+          // reconnects and the next stream fans in every live generation.
+        } finally {
+          finish();
+        }
+      };
+      for (const entry of readers) void pump(entry);
+      pingTimer = setInterval(() => {
+        if (!closed && !cancelled) controller.enqueue(encoder.encode(": ping\n\n"));
+      }, 30_000);
+      pingTimer.unref?.();
+    },
+    async cancel(reason) {
+      cancelled = true;
+      if (pingTimer) clearInterval(pingTimer);
+      input.lease.release();
+      await Promise.all(readers.map((entry) => entry.reader.cancel(reason).catch(() => undefined)));
+    },
+  });
+}
+
+async function proxyEngineEventStreams(input: {
+  pool: EnginePool;
+  connections: EnginePoolConnection[];
+  proxyPath: string;
+  search: string;
+  headers: Headers;
+  clientSignal: AbortSignal;
+}): Promise<Response> {
+  const lease = input.pool.openEventProxy(input.clientSignal);
+  const settled = await Promise.allSettled(input.connections.map(async (connection) => {
+    const response = await loopbackFetch(buildOpencodeProxyUrl(connection.baseUrl, input.proxyPath, input.search), {
+      method: "GET",
+      headers: headersForEngineConnection(input.headers, connection),
+      signal: lease.signal,
+    });
+    return { connection, response };
+  }));
+  const successful = settled
+    .filter((entry): entry is PromiseFulfilledResult<{ connection: EnginePoolConnection; response: Response }> =>
+      entry.status === "fulfilled")
+    .map((entry) => entry.value);
+  const primary = successful.find((entry) => entry.connection.role === "primary");
+  if (!primary) {
+    lease.release();
+    throw new ApiError(502, "opencode_unreachable", "The primary OpenCode event stream is unavailable");
+  }
+  if (!primary.response.ok || !primary.response.body) {
+    lease.release();
+    return sanitizeProxyResponse(primary.response);
+  }
+  const streams = successful
+    .flatMap((entry) => entry.response.ok && entry.response.body
+      ? [{ connection: entry.connection, body: entry.response.body }]
+      : []);
+  const headers = new Headers(primary.response.headers);
+  headers.delete("content-length");
+  headers.delete("content-encoding");
+  headers.delete("transfer-encoding");
+  headers.set("content-type", "text/event-stream");
+  headers.set("cache-control", "no-cache");
+  return new Response(mergedEventBody({ pool: input.pool, streams, lease }), {
+    status: primary.response.status,
+    statusText: primary.response.statusText,
+    headers,
+  });
 }
 
 /**
@@ -1329,6 +1587,7 @@ function buildCapabilities(config: ServerConfig): Capabilities {
     mcp: { read: true, write: writeEnabled },
     commands: { read: true, write: writeEnabled },
     config: { read: true, write: writeEnabled },
+    engine: { rollover: config.engineRollover === true },
 
     approvals: { mode: config.approval.mode, timeoutMs: config.approval.timeoutMs },
     sandbox: { enabled: sandboxEnabled, backend: sandboxBackend },
@@ -2127,9 +2386,12 @@ function createRoutes(
 
     const fileResult = await writeOpenworkRuntimeConfigFile(config, workspace.id);
     const shouldReload = result.changed || fileResult.changed;
-    // Never dispose a live engine under running sessions; park the reload on
-    // the provider sync so it applies on a later pass once the engine idles.
-    const reloadDeferred = shouldReload && (await engineHasActiveSessions(config, workspace));
+    // A rollover-capable pool can apply this immediately without disposing
+    // the generation that owns live sessions. Legacy/external engines keep
+    // the established busy deferral.
+    const reloadDeferred = shouldReload
+      && !enginePoolForConfig(config)
+      && (await engineHasActiveSessions(config, workspace));
     if (shouldReload && !reloadDeferred) {
       await reloadOpencodeEngine(config, workspace, engineMcpServerState);
     }

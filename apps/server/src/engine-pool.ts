@@ -93,6 +93,29 @@ export type EnginePoolSnapshot = {
   }>;
 };
 
+export type EnginePoolConnection = {
+  generationId: string;
+  role: "primary" | "draining";
+  baseUrl: string;
+  username: string;
+  password: string;
+};
+
+export type EnginePoolRoute = {
+  target: EnginePoolConnection;
+  fallback: EnginePoolConnection | null;
+};
+
+export type EngineEventProxyLease = {
+  signal: AbortSignal;
+  release: () => void;
+};
+
+export type EnginePoolProcess = {
+  pid: number | null;
+  isAlive: () => boolean;
+};
+
 function positiveIntFromEnv(name: string, fallback: number): number {
   const raw = Number(process.env[name]);
   return Number.isFinite(raw) && raw > 0 ? raw : fallback;
@@ -137,6 +160,92 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function isRoutableGeneration(
+  generation: Generation,
+): generation is Generation & { status: "primary" | "draining" } {
+  return generation.status === "primary" || generation.status === "draining";
+}
+
+function normalizeProxyPath(proxyPath: string): string {
+  const raw = proxyPath.trim() || "/";
+  const withoutPrefix = raw.startsWith("/opencode") ? raw.slice("/opencode".length) : raw;
+  const normalized = (withoutPrefix || "/").replace(/\/+$/, "");
+  return normalized || "/";
+}
+
+function decodePathPart(value: string | undefined): string | null {
+  if (!value) return null;
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
+function sessionIdFromPath(proxyPath: string): string | null {
+  const match = normalizeProxyPath(proxyPath).match(/^\/(?:api\/)?session\/([^/]+)(?:\/|$)/);
+  const sessionId = decodePathPart(match?.[1]);
+  return sessionId === "status" ? null : sessionId;
+}
+
+function requestIdFromPath(proxyPath: string): string | null {
+  const normalized = normalizeProxyPath(proxyPath);
+  const legacy = normalized.match(/^\/(?:permission|question)\/([^/]+)\/(?:reply|reject)$/);
+  if (legacy) return decodePathPart(legacy[1]);
+  const scoped = normalized.match(/^\/api\/session\/[^/]+\/(?:permission|question)\/([^/]+)\/(?:reply|reject)$/);
+  return decodePathPart(scoped?.[1]);
+}
+
+function isLegacyPromptReply(proxyPath: string): boolean {
+  return /^\/(?:permission|question)\/[^/]+\/(?:reply|reject)$/.test(normalizeProxyPath(proxyPath));
+}
+
+function isPromptishSessionRequest(method: string, proxyPath: string): boolean {
+  if (method.toUpperCase() !== "POST") return false;
+  const normalized = normalizeProxyPath(proxyPath);
+  return /^\/(?:api\/)?session\/[^/]+\/(?:message|prompt(?:_async)?|command|shell)(?:\/|$)/.test(normalized);
+}
+
+function firstString(record: Record<string, unknown>, keys: string[]): string | null {
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return null;
+}
+
+function requestRecords(payload: unknown): Record<string, unknown>[] {
+  if (Array.isArray(payload)) return payload.filter(isRecord);
+  if (!isRecord(payload)) return [];
+  for (const key of ["items", "permissions", "questions", "requests"]) {
+    const value = payload[key];
+    if (Array.isArray(value)) return value.filter(isRecord);
+  }
+  return [];
+}
+
+function eventIdentifiers(payload: unknown): { sessionIds: Set<string>; requestIds: Set<string> } {
+  const sessionIds = new Set<string>();
+  const requestIds = new Set<string>();
+  const visit = (value: unknown, depth: number): void => {
+    if (depth > 6 || !isRecord(value)) return;
+    for (const [key, item] of Object.entries(value)) {
+      if (typeof item === "string") {
+        if (["sessionID", "sessionId", "session_id"].includes(key)) sessionIds.add(item);
+        if (["requestID", "requestId", "permissionID", "questionID"].includes(key)) requestIds.add(item);
+        continue;
+      }
+      if (Array.isArray(item)) {
+        for (const child of item) visit(child, depth + 1);
+      } else {
+        visit(item, depth + 1);
+      }
+    }
+  };
+  visit(payload, 0);
+  return { sessionIds, requestIds };
+}
+
 /**
  * Everything a spawned engine reads at build time. Comparing this is what
  * lets a repeated no-op reload skip spawning a replacement.
@@ -161,6 +270,10 @@ export class EnginePool {
   private pendingRollover: { reason: RolloverReason; workspace: WorkspaceInfo; manual: boolean } | null = null;
   private lastSpawnAt = 0;
   private disposed = false;
+  private readonly sessionOwnership = new Map<string, string>();
+  private readonly pinnedRequests = new Map<string, string>();
+  private readonly activeSessionsByGeneration = new Map<string, Set<string>>();
+  private readonly eventProxyControllers = new Set<AbortController>();
 
   constructor(input: { config: ServerConfig; template: EngineSpawnTemplate; hooks: EnginePoolHooks }) {
     this.config = input.config;
@@ -194,6 +307,87 @@ export class EnginePool {
 
   primaryUrl(): string | null {
     return this.generations.find((entry) => entry.status === "primary")?.handle.url ?? null;
+  }
+
+  primaryProcess(): EnginePoolProcess | null {
+    const primary = this.generations.find((entry) => entry.status === "primary") ?? null;
+    return primary ? { pid: primary.handle.pid ?? null, isAlive: primary.handle.isAlive } : null;
+  }
+
+  connections(): EnginePoolConnection[] {
+    return this.generations
+      .filter(isRoutableGeneration)
+      .sort((left, right) => left.status === right.status ? 0 : left.status === "primary" ? -1 : 1)
+      .map((entry) => this.connectionFor(entry));
+  }
+
+  routeRequest(method: string, proxyPath: string): EnginePoolRoute | null {
+    const primary = this.generations.find(
+      (entry): entry is Generation & { status: "primary" } => entry.status === "primary",
+    ) ?? null;
+    if (!primary) return null;
+    const primaryConnection = this.connectionFor(primary);
+    const sessionId = sessionIdFromPath(proxyPath);
+    if (sessionId) {
+      const owner = this.generationForId(this.sessionOwnership.get(sessionId));
+      if (owner) {
+        const active = this.activeSessionsByGeneration.get(owner.id)?.has(sessionId) === true;
+        if (isPromptishSessionRequest(method, proxyPath) && !active) {
+          this.sessionOwnership.delete(sessionId);
+        } else {
+          return { target: this.connectionFor(owner), fallback: null };
+        }
+      }
+    }
+
+    const requestId = requestIdFromPath(proxyPath);
+    if (requestId) {
+      const owner = this.generationForId(this.pinnedRequests.get(requestId));
+      if (owner) return { target: this.connectionFor(owner), fallback: null };
+    }
+
+    const draining = this.generations.find(
+      (entry): entry is Generation & { status: "draining" } => entry.status === "draining",
+    ) ?? null;
+    const fallback = draining && isLegacyPromptReply(proxyPath) ? this.connectionFor(draining) : null;
+    return { target: primaryConnection, fallback };
+  }
+
+  openEventProxy(clientSignal?: AbortSignal): EngineEventProxyLease {
+    const controller = new AbortController();
+    this.eventProxyControllers.add(controller);
+    const signal = clientSignal
+      ? AbortSignal.any([clientSignal, controller.signal])
+      : controller.signal;
+    let released = false;
+    return {
+      signal,
+      release: () => {
+        if (released) return;
+        released = true;
+        this.eventProxyControllers.delete(controller);
+      },
+    };
+  }
+
+  shouldForwardEvent(generationId: string, payload: unknown): boolean {
+    const generation = this.generationForId(generationId);
+    if (!generation) return false;
+    const identifiers = eventIdentifiers(payload);
+    if (generation.status === "draining") {
+      const ownedSession = [...identifiers.sessionIds].some((id) => this.sessionOwnership.get(id) === generation.id);
+      if (ownedSession) {
+        for (const requestId of identifiers.requestIds) this.pinnedRequests.set(requestId, generation.id);
+      }
+      return ownedSession || [...identifiers.requestIds].some((id) => this.pinnedRequests.get(id) === generation.id);
+    }
+    return ![...identifiers.sessionIds].some((id) => {
+      const owner = this.sessionOwnership.get(id);
+      return owner !== undefined && owner !== generation.id;
+    }) && ![...identifiers.requestIds].some((id) => {
+      const owner = this.pinnedRequests.get(id);
+      return owner !== undefined && owner !== generation.id;
+    });
   }
 
   snapshot(): EnginePoolSnapshot {
@@ -375,7 +569,8 @@ export class EnginePool {
     }
 
     const drainingSessions = await this.nonIdleSessionIds(primary);
-    this.flip(generation, primary);
+    const pinnedRequestIds = await this.pendingRequestIds(primary);
+    this.flip(generation, primary, drainingSessions, pinnedRequestIds);
 
     this.hooks.logger?.log("info", "Engine rollover flipped to the new generation.", {
       "engine.rollover.reason": reason,
@@ -397,9 +592,21 @@ export class EnginePool {
    * request resolves its engine from `config`, so there must be no await
    * between demoting the old engine and promoting the new one.
    */
-  private flip(next: Generation, previous: Generation | null): void {
+  private flip(
+    next: Generation,
+    previous: Generation | null,
+    drainingSessions: string[],
+    pinnedRequestIds: string[],
+  ): void {
     next.status = "primary";
     if (previous) previous.status = "draining";
+
+    if (previous) {
+      const active = new Set(drainingSessions);
+      this.activeSessionsByGeneration.set(previous.id, active);
+      for (const sessionId of active) this.sessionOwnership.set(sessionId, previous.id);
+      for (const requestId of pinnedRequestIds) this.pinnedRequests.set(requestId, previous.id);
+    }
 
     this.config.opencodeBaseUrl = next.handle.url;
     this.config.opencodeUsername = next.handle.username;
@@ -434,6 +641,7 @@ export class EnginePool {
     if (previous?.registryId) {
       void updateEngineInstanceRole(this.config, previous.registryId, "draining").catch(() => undefined);
     }
+    this.abortEventProxies();
   }
 
   /**
@@ -445,6 +653,7 @@ export class EnginePool {
     const tick = async (): Promise<void> => {
       if (generation.status !== "draining") return;
       const remaining = await this.nonIdleSessionIds(generation);
+      this.updateActiveSessions(generation, remaining);
       if (remaining.length === 0) {
         await this.retire(generation, "idle");
         return;
@@ -476,6 +685,13 @@ export class EnginePool {
       generation.drainTimer = null;
     }
     generation.drainDeadline = null;
+    this.activeSessionsByGeneration.delete(generation.id);
+    for (const [sessionId, generationId] of this.sessionOwnership) {
+      if (generationId === generation.id) this.sessionOwnership.delete(sessionId);
+    }
+    for (const [requestId, generationId] of this.pinnedRequests) {
+      if (generationId === generation.id) this.pinnedRequests.delete(requestId);
+    }
     if (generation.trustedIdentity) {
       try {
         this.hooks.clearTrusted(this.config, generation.trustedIdentity);
@@ -503,6 +719,7 @@ export class EnginePool {
   async disposeAll(): Promise<void> {
     this.disposed = true;
     this.pendingRollover = null;
+    this.abortEventProxies();
     const ordered = [...this.generations].sort((left, right) => {
       if (left.status === right.status) return 0;
       return left.status === "draining" ? -1 : 1;
@@ -552,6 +769,62 @@ export class EnginePool {
       // still bounds it, and an unreachable engine has nothing left to drain.
       return [];
     }
+  }
+
+  private async pendingRequestIds(generation: Generation | null): Promise<string[]> {
+    if (!generation || generation.status === "dead" || !generation.handle.isAlive()) return [];
+    const requestIds = new Set<string>();
+    for (const path of ["/permission", "/question", "/api/permission/request", "/api/question/request"]) {
+      try {
+        const response = await loopbackFetch(new URL(path, generation.handle.url).toString(), {
+          headers: { Authorization: buildEngineAuthProbeHeader(generation.handle.username, generation.handle.password) },
+          signal: AbortSignal.timeout(2_000),
+        });
+        if (!response.ok) continue;
+        const payload: unknown = await response.json();
+        for (const record of requestRecords(payload)) {
+          const requestId = firstString(record, ["id", "requestID", "requestId", "permissionID", "questionID"]);
+          if (requestId) requestIds.add(requestId);
+          const sessionId = firstString(record, ["sessionID", "sessionId", "session_id"]);
+          if (sessionId) this.sessionOwnership.set(sessionId, generation.id);
+        }
+      } catch {
+        // The legacy and v2 surfaces vary by bundled engine version. A missing
+        // list never blocks the rollover; path routing still handles scoped ids.
+      }
+    }
+    return [...requestIds];
+  }
+
+  private updateActiveSessions(generation: Generation, sessionIds: string[]): void {
+    const next = new Set(sessionIds);
+    this.activeSessionsByGeneration.set(generation.id, next);
+    for (const [sessionId, generationId] of this.sessionOwnership) {
+      if (generationId === generation.id && !next.has(sessionId)) this.sessionOwnership.delete(sessionId);
+    }
+    for (const sessionId of next) this.sessionOwnership.set(sessionId, generation.id);
+  }
+
+  private connectionFor(generation: Generation & { status: "primary" | "draining" }): EnginePoolConnection {
+    return {
+      generationId: generation.id,
+      role: generation.status,
+      baseUrl: generation.handle.url,
+      username: generation.handle.username,
+      password: generation.handle.password,
+    };
+  }
+
+  private generationForId(generationId: string | undefined): (Generation & { status: "primary" | "draining" }) | null {
+    if (!generationId) return null;
+    const generation = this.generations.find((entry) => entry.id === generationId) ?? null;
+    return generation && isRoutableGeneration(generation) ? generation : null;
+  }
+
+  private abortEventProxies(): void {
+    const controllers = [...this.eventProxyControllers];
+    this.eventProxyControllers.clear();
+    for (const controller of controllers) controller.abort(new Error("OpenCode engine generation changed"));
   }
 
   private async abortSession(generation: Generation, sessionId: string): Promise<void> {
