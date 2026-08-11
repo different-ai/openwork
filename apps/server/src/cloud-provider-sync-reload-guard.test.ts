@@ -105,6 +105,9 @@ function startFakeEngine(): FakeEngine {
       if (request.method === "GET" && url.pathname === "/config") {
         return new Response(JSON.stringify({}), { headers: { "content-type": "application/json" } });
       }
+      if (url.pathname.startsWith("/auth/")) {
+        return new Response(JSON.stringify(true), { headers: { "content-type": "application/json" } });
+      }
       return new Response(JSON.stringify({ error: "not_found" }), { status: 404, headers: { "content-type": "application/json" } });
     },
   });
@@ -121,19 +124,52 @@ function startFakeEngine(): FakeEngine {
   };
 }
 
-function startFakeDen(): { url: string } {
+/** A Den provider snapshot with the full config surface the engine reads. */
+function stableDenProvider(): Record<string, unknown> {
+  return {
+    id: "lpr_steady",
+    providerId: "openai-compatible",
+    name: "Steady provider",
+    source: "custom",
+    updatedAt: "2026-08-04T10:00:00.000Z",
+    providerConfig: {
+      env: ["STEADY_PROVIDER_API_KEY"],
+      npm: "@ai-sdk/openai-compatible",
+      api: "https://models.example.test/api/v1",
+      options: { baseURL: "https://models.example.test/api/v1" },
+    },
+    apiKey: "sk-steady-provider",
+    apiKeys: null,
+    models: [
+      { id: "model-b", name: "Model B", config: {} },
+      { id: "model-a", name: "Model A", config: {} },
+    ],
+  };
+}
+
+function startFakeDen(options?: { providers?: Record<string, unknown>[] }): { url: string; requests: string[] } {
+  const providers = options?.providers ?? [];
+  const requests: string[] = [];
   const den = Bun.serve({
     port: 0,
     fetch(request) {
       const url = new URL(request.url);
+      requests.push(`${request.method} ${url.pathname}`);
       if (request.method === "GET" && url.pathname === "/v1/llm-providers") {
-        return new Response(JSON.stringify({ llmProviders: [] }), { headers: { "content-type": "application/json" } });
+        return new Response(JSON.stringify({ llmProviders: providers }), { headers: { "content-type": "application/json" } });
+      }
+      const connect = url.pathname.match(/^\/v1\/llm-providers\/([^/]+)\/connect$/);
+      if (request.method === "GET" && connect) {
+        const provider = providers.find((entry) => entry.id === decodeURIComponent(connect[1] ?? ""));
+        if (provider) {
+          return new Response(JSON.stringify({ llmProvider: provider }), { headers: { "content-type": "application/json" } });
+        }
       }
       return new Response(JSON.stringify({ error: "not_found" }), { status: 404, headers: { "content-type": "application/json" } });
     },
   });
   stops.push(() => den.stop(true));
-  return { url: `http://127.0.0.1:${den.port}` };
+  return { url: `http://127.0.0.1:${den.port}`, requests };
 }
 
 afterEach(async () => {
@@ -244,6 +280,51 @@ describe("engine reload guard", () => {
     }));
     expect(settled.status).toBe("noop");
     expect(engine.disposeCount()).toBe(1);
+  });
+
+  test("repeated passes over an unchanged Den snapshot never dispose the engine again", async () => {
+    const root = await createTempRoot();
+    const engine = startFakeEngine();
+    const config = serverConfig(root, `http://127.0.0.1:${engine.port}`);
+    const server = await startServer(config);
+    stops.push(() => server.stop());
+    const base = `http://127.0.0.1:${server.port}`;
+    const den = startFakeDen({ providers: [stableDenProvider()] });
+
+    const put = await fetch(`${base}/den-session`, {
+      method: "PUT",
+      headers: hostHeaders(),
+      body: JSON.stringify({ baseUrl: den.url, token: "den_token", orgId: "org_test" }),
+    });
+    expect(put.status).toBe(204);
+
+    // Materialize the provider. The engine cannot apply provider config on a
+    // live instance (PUT /auth carries credentials only), so this legitimately
+    // disposes -- but it must settle, not repeat.
+    await readJsonObject(await fetch(`${base}/cloud-provider-sync/run`, {
+      method: "POST",
+      headers: hostHeaders(),
+      body: JSON.stringify({ reason: "materialize" }),
+    }));
+    const settledDisposes = engine.disposeCount();
+    expect(settledDisposes).toBeGreaterThan(0);
+
+    // Every later pass sees byte-identical Den state. A pass that still reports
+    // "applied" here is the runaway-dispose bug: on the 5-minute interval it
+    // would tear down the engine forever, aborting whatever is running.
+    for (let pass = 0; pass < 5; pass += 1) {
+      const result = await readJsonObject(await fetch(`${base}/cloud-provider-sync/run`, {
+        method: "POST",
+        headers: hostHeaders(),
+        body: JSON.stringify({ reason: `steady_${pass}` }),
+      }));
+      expect(result.status).toBe("noop");
+      expect(engine.disposeCount()).toBe(settledDisposes);
+    }
+
+    // The credential push is fingerprint-guarded, so it must not re-deliver
+    // on every pass either.
+    expect(engine.requests.filter((entry) => entry === "PUT /auth/lpr_steady")).toHaveLength(1);
   });
 
   test("a deferred reload lands by itself once the engine idles, even with no Den session", async () => {

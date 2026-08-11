@@ -698,6 +698,14 @@ export class CloudProviderSync {
     const runtimeFileChanged = engineWorkspace
       ? (await writeOpenworkRuntimeConfigFile(this.config, engineWorkspace.id)).changed
       : false;
+    // Credentials reach a live engine through PUT /auth/{providerID} below, so
+    // a key rotation never needs a reload. Provider *config* (models, npm,
+    // options.baseURL) has no live path: the engine reads it from
+    // OPENCODE_CONFIG when it builds an instance, and the only write endpoint
+    // that accepts it, PATCH /config, performs the same instance dispose as
+    // POST /instance/dispose (verified against opencode 1.18.15 — both drop an
+    // open /event stream, GET /config and PUT /auth do not). So a config delta
+    // still reloads, deferred while sessions are live.
     this.reloadPending = this.reloadPending
       || providerStateChanged
       || workspaceCleanup.runtimeChanged
