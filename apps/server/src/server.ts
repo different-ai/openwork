@@ -6,6 +6,12 @@ import { resolveGlobalOpencodeConfigPath } from "@openwork/paths";
 import type { ApprovalRequest, Capabilities, ServerConfig, WorkspaceInfo, Actor, ReloadReason, ReloadTrigger, TokenScope } from "./types.js";
 import { agentContextDiagnosticsRequestSchema } from "./agent-context-diagnostics-schema.js";
 import { ApprovalService } from "./approvals.js";
+import {
+  EnginePool,
+  enginePoolForConfig,
+  setEnginePoolForConfig,
+  type EngineSpawnTemplate,
+} from "./engine-pool.js";
 import { addPlugin, listPlugins, normalizePluginSpec, removePlugin } from "./plugins.js";
 import { sanitizePortableOpencodeConfig } from "./portable-opencode.js";
 import { addMcp, listMcp, removeMcp, setMcpEnabled } from "./mcp.js";
@@ -3502,7 +3508,28 @@ async function engineHasActiveSessions(config: ServerConfig, workspace: Workspac
   }
 }
 
+/**
+ * Bring the engine onto current config.
+ *
+ * With engine rollover enabled the pool decides: an idle engine still reloads
+ * in place, a busy one rolls over to a standby so live runs are not aborted.
+ * Disabled (the default), this is the in-place dispose and callers keep their
+ * own defer-while-busy handling.
+ */
 async function reloadOpencodeEngine(
+  config: ServerConfig,
+  workspace: WorkspaceInfo,
+  serverState?: EngineMcpServerState,
+): Promise<void> {
+  const pool = enginePoolForConfig(config);
+  if (pool) {
+    await pool.requestRollover({ reason: "engine_reload", workspace });
+    return;
+  }
+  await reloadOpencodeEngineInPlace(config, workspace, serverState);
+}
+
+async function reloadOpencodeEngineInPlace(
   config: ServerConfig,
   workspace: WorkspaceInfo,
   serverState?: EngineMcpServerState,
@@ -3558,11 +3585,27 @@ async function reloadOpencodeEngine(
     });
   }
 
+  await postEngineRefreshSync(config, workspace, activeState);
+}
+
+/**
+ * Re-attach engine state that a fresh instance cannot recover from disk.
+ *
+ * Runs after any engine refresh — an in-place dispose or a rollover flip —
+ * because both leave the serving engine without the runtime-DB MCPs that only
+ * reach it through the dynamic push.
+ */
+async function postEngineRefreshSync(
+  config: ServerConfig,
+  workspace: WorkspaceInfo,
+  activeState: EngineMcpServerState | undefined,
+): Promise<void> {
+  const directory = resolveOpencodeDirectory(workspace);
   markOpenworkCloudMcpStale(workspace, directory);
-  // Re-register runtime-DB MCPs: dispose rebuilds engine state from disk
-  // configs (including the server-managed runtime config file for the
-  // primary workspace), but other workspaces' runtime MCPs only reach the
-  // engine through this dynamic push.
+  // Re-register runtime-DB MCPs: a rebuilt instance reads disk configs
+  // (including the server-managed runtime config file for the primary
+  // workspace), but other workspaces' runtime MCPs only reach the engine
+  // through this dynamic push.
   try {
     await syncRuntimeMcpToOpencodeEngine(
       config,
@@ -4075,6 +4118,48 @@ export function registerTrustedOpencodeProcess(
     if (state) clearEngineMcpServerEvidence(state);
   }
   trustedOpencodeProcessByConfig.set(config, next);
+}
+
+/**
+ * Build the engine pool for a config and register it.
+ *
+ * Lives here so the pool can reuse server-private helpers (in-place reload,
+ * busy probe, post-refresh MCP sync) without exporting them; the startup path
+ * only supplies what it already knows about the spawn.
+ */
+export function createEnginePoolForConfig(input: {
+  config: ServerConfig;
+  template: EngineSpawnTemplate;
+  handle: Parameters<EnginePool["adoptPrimary"]>[0]["handle"];
+  fingerprint: string;
+  registryId: string | null;
+  trustedIdentity: string | null;
+}): EnginePool {
+  const { config } = input;
+  const pool = new EnginePool({
+    config,
+    template: input.template,
+    hooks: {
+      reloadInPlace: (poolConfig, workspace) => reloadOpencodeEngineInPlace(poolConfig, workspace),
+      engineBusy: (poolConfig, workspace) => engineHasActiveSessions(poolConfig, workspace),
+      postRefreshSync: async (poolConfig, workspace) => {
+        await postEngineRefreshSync(poolConfig, workspace, activeEngineMcpServerState(poolConfig));
+        await syncAllWorkspacesRuntimeMcpToEngine(poolConfig);
+      },
+      writeRuntimeConfigFile: (poolConfig, workspaceId) => writeOpenworkRuntimeConfigFile(poolConfig, workspaceId),
+      registerTrusted: (poolConfig, generation) => registerTrustedOpencodeProcess(poolConfig, generation),
+      clearTrusted: (poolConfig, identity) => clearTrustedOpencodeProcess(poolConfig, identity),
+      logger: createServerLogger(config),
+    },
+  });
+  pool.adoptPrimary({
+    handle: input.handle,
+    fingerprint: input.fingerprint,
+    registryId: input.registryId,
+    trustedIdentity: input.trustedIdentity,
+  });
+  setEnginePoolForConfig(config, pool);
+  return pool;
 }
 
 export function clearTrustedOpencodeProcess(config: ServerConfig, expectedIdentity?: string): void {

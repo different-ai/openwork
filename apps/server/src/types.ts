@@ -103,6 +103,12 @@ export interface ServerConfig {
   hostTokenSource: "cli" | "env" | "file" | "generated";
   logFormat: LogFormat;
   logRequests: boolean;
+  /**
+   * Roll the managed engine over instead of disposing it when a reload is
+   * needed while sessions are live: a standby engine takes new work and the
+   * old one is closed once its runs finish. Off by default (alpha).
+   */
+  engineRollover?: boolean;
   /** In-memory secure key custody supplied by an embedding host such as OpenWork Desktop. */
   localManagedMcpVaultKey?: LocalManagedMcpVaultKeyProvider;
 }

@@ -22,6 +22,7 @@ export interface CliArgs {
   verbose?: boolean;
   logFormat?: LogFormat;
   logRequests?: boolean;
+  engineRollover?: boolean;
   version?: boolean;
   help?: boolean;
 }
@@ -42,6 +43,7 @@ interface FileConfig {
   opencodePassword?: string;
   logFormat?: LogFormat;
   logRequests?: boolean;
+  engineRollover?: boolean;
 }
 
 const DEFAULT_PORT = 8787;
@@ -304,6 +306,9 @@ export async function resolveServerConfig(cli: CliArgs): Promise<ServerConfig> {
   const envLogRequests = parseBoolean(process.env.OPENWORK_LOG_REQUESTS);
   const logRequests = cli.logRequests ?? envLogRequests ?? fileConfig.logRequests ?? DEFAULT_LOG_REQUESTS;
 
+  const envEngineRollover = parseBoolean(process.env.OPENWORK_ENGINE_ROLLOVER);
+  const engineRollover = cli.engineRollover ?? envEngineRollover ?? fileConfig.engineRollover ?? false;
+
   const authorizedRoots =
     fileConfig.authorizedRoots?.length
       ? fileConfig.authorizedRoots.map((root) => resolve(configDir, root))
@@ -332,5 +337,6 @@ export async function resolveServerConfig(cli: CliArgs): Promise<ServerConfig> {
     hostTokenSource,
     logFormat,
     logRequests,
+    engineRollover,
   };
 }
