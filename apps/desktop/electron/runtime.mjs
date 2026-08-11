@@ -164,6 +164,7 @@ function createOpenworkServerState() {
     child: null,
     childExited: true,
     inProcess: false,
+    engineRollover: false,
     remoteAccessEnabled: false,
     host: null,
     port: null,
@@ -182,11 +183,12 @@ function createOpenworkServerState() {
   };
 }
 
-function snapshotOpenworkServerState(state) {
+export function snapshotOpenworkServerState(state) {
   const child = state.childExited ? null : state.child;
   const running = state.inProcess || Boolean(child && child.exitCode === null && !child.killed);
   return {
     running,
+    engineRollover: state.engineRollover === true,
     remoteAccessEnabled: state.remoteAccessEnabled,
     host: state.host,
     port: state.port,
@@ -204,6 +206,10 @@ function snapshotOpenworkServerState(state) {
     lastStderr: state.lastStderr,
     managedOpencodeExecution: state.managedOpencodeExecution,
   };
+}
+
+export function resolveEngineRolloverPreference(optionValue, persistedValue) {
+  return typeof optionValue === "boolean" ? optionValue : persistedValue === true;
 }
 
 /**
@@ -1154,9 +1160,10 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
 
   async function loadPortState() {
     return readJsonFile(openworkServerStatePath(), {
-      version: 3,
+      version: 4,
       workspacePorts: {},
       preferredPort: null,
+      engineRollover: false,
     });
   }
 
@@ -1205,7 +1212,7 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
   async function persistPreferredOpenworkPort(workspaceKey, port) {
     const state = await loadPortState();
     const normalized = normalizeWorkspaceKey(workspaceKey);
-    state.version = 3;
+    state.version = 4;
     state.workspacePorts ??= {};
     if (normalized) {
       state.workspacePorts[normalized] = port;
@@ -1213,6 +1220,18 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     } else {
       state.preferredPort = port;
     }
+    await savePortState(state);
+  }
+
+  async function readEngineRolloverPreference() {
+    const state = await loadPortState();
+    return state.engineRollover === true;
+  }
+
+  async function persistEngineRolloverPreference(enabled) {
+    const state = await loadPortState();
+    state.version = 4;
+    state.engineRollover = enabled === true;
     await savePortState(state);
   }
 
@@ -1579,7 +1598,14 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     // The inner start stops any previous runtime before mutating state, so a
     // throw below always happens with nothing left running.
     try {
-      return await startOpenworkServerInner(options);
+      const engineRollover = resolveEngineRolloverPreference(
+        options.engineRollover,
+        await readEngineRolloverPreference(),
+      );
+      if (typeof options.engineRollover === "boolean") {
+        await persistEngineRolloverPreference(engineRollover);
+      }
+      return await startOpenworkServerInner({ ...options, engineRollover });
     } catch (error) {
       resetRuntimeStatesAfterFailedServerStart(openworkServerState, engineState, options);
       throw error;
@@ -1661,6 +1687,7 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
       opencodeBin: managedOpencode?.path ?? undefined,
       opencodeCwd: managedOpencodeWorkdir(),
       localManagedMcpVaultKey,
+      engineRollover: options.engineRollover === true,
     });
     inProcessServer = handle;
     openworkServerState.managedOpencodeExecution = handle.managedOpencodeExecution ?? null;
@@ -1672,6 +1699,7 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     const baseUrl = handle.url;
 
     openworkServerState.inProcess = true;
+    openworkServerState.engineRollover = options.engineRollover === true;
     openworkServerState.remoteAccessEnabled = options.remoteAccessEnabled;
     openworkServerState.host = host;
     openworkServerState.port = boundPort;
@@ -1761,6 +1789,7 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
         remoteAccessEnabled: options.remoteAccessEnabled,
         manageOpencode: options.manageOpencode === true,
         opencodeBinPath: options.opencodeBinPath,
+        engineRollover: options.engineRollover,
       });
     } catch (error) {
       appendOutput(engineState, "lastStderr", `OpenWork server: ${error instanceof Error ? error.message : String(error)}\n`);
@@ -1784,12 +1813,17 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     // the sticky preferred port, racing the not-yet-released socket into
     // EADDRINUSE and leaving the runtime in error -> boot screen.
     const requestedRemoteAccess = options.openworkRemoteAccess === true;
+    const requestedEngineRollover = resolveEngineRolloverPreference(
+      options.engineRollover,
+      await readEngineRolloverPreference(),
+    );
     if (
       options.forceRestart !== true &&
       openworkServerState.inProcess &&
       lifecycleState === "healthy" &&
       normalizeWorkspaceKey(engineState.projectDir) === normalizeWorkspaceKey(safeProjectDir) &&
-      openworkServerState.remoteAccessEnabled === requestedRemoteAccess
+      openworkServerState.remoteAccessEnabled === requestedRemoteAccess &&
+      openworkServerState.engineRollover === requestedEngineRollover
     ) {
       const existing = snapshotOpenworkServerState(openworkServerState);
       if (existing.running && existing.baseUrl && (existing.ownerToken || existing.clientToken)) {
@@ -1819,6 +1853,7 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
         remoteAccessEnabled: options.openworkRemoteAccess === true,
         manageOpencode: true,
         opencodeBinPath: options.opencodeBinPath,
+        engineRollover: requestedEngineRollover,
       });
 
       lifecycleState = "healthy";
@@ -1849,11 +1884,17 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
       workspacePaths: [projectDir],
       opencodeEnableExa: options.opencodeEnableExa,
       openworkRemoteAccess,
+      ...(typeof options.engineRollover === "boolean"
+        ? { engineRollover: options.engineRollover }
+        : {}),
       forceRestart: true,
     });
   }
 
   async function engineInfo() {
+    if (inProcessServer?.managedOpencode) {
+      engineState.managedPid = inProcessServer.managedOpencode.pid ?? null;
+    }
     return { ...snapshotEngineState(engineState), lifecycleState };
   }
 
@@ -1861,6 +1902,7 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     return {
       lifecycleState,
       engine: await engineInfo(),
+      enginePool: inProcessServer?.managedOpencodePool?.() ?? null,
       openworkServer: snapshotOpenworkServerState(openworkServerState),
     };
   }

@@ -23,6 +23,7 @@ export type OpenworkServerCapabilities = {
   mcp: { read: boolean; write: boolean };
   commands: { read: boolean; write: boolean };
   config: { read: boolean; write: boolean };
+  engine?: { rollover: boolean };
   providerSync?: boolean;
   sandbox?: { enabled: boolean; backend: "none" | "docker" | "container" };
   proxy?: { opencode: boolean };

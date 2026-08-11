@@ -10,12 +10,34 @@ import {
   embeddedServerImportUrl,
   prioritizeWorkspacePaths,
   resetRuntimeStatesAfterFailedServerStart,
+  resolveEngineRolloverPreference,
   resolveEvalLocalServerDelayMs,
   resolveOpenworkServerConfigPath,
   seedWorkspacePathsForEmbeddedServer,
   selectStickyOpenworkPortWorkspace,
   snapshotEngineState,
+  snapshotOpenworkServerState,
 } from "./runtime.mjs";
+
+describe("engine rollover preference", () => {
+  it("uses an explicit value and otherwise restores the persisted value", () => {
+    assert.equal(resolveEngineRolloverPreference(true, false), true);
+    assert.equal(resolveEngineRolloverPreference(false, true), false);
+    assert.equal(resolveEngineRolloverPreference(undefined, true), true);
+    assert.equal(resolveEngineRolloverPreference(undefined, false), false);
+  });
+
+  it("reports the active mode in the desktop server snapshot", () => {
+    const snapshot = snapshotOpenworkServerState({
+      child: null,
+      childExited: true,
+      inProcess: true,
+      engineRollover: true,
+    });
+    assert.equal(snapshot.running, true);
+    assert.equal(snapshot.engineRollover, true);
+  });
+});
 
 describe("prioritizeWorkspacePaths", () => {
   it("keeps the active runtime workspace first", () => {

@@ -49,7 +49,27 @@ export function useEngineReload(input: UseEngineReloadInput) {
   const reloadCoordinator = useReloadCoordinator();
   const [engineReloadVersion, setEngineReloadVersion] = useState(0);
   const [routeEngineInfo, setRouteEngineInfo] = useState<EngineInfo | null>(null);
+  const [engineRolloverAvailable, setEngineRolloverAvailable] = useState(false);
   const reloadEventCursorByWorkspaceRef = useRef<Record<string, number | null>>({});
+
+  useEffect(() => {
+    const endpoint = endpointForWorkspace(workspace);
+    if (!endpoint) {
+      setEngineRolloverAvailable(false);
+      return;
+    }
+    let cancelled = false;
+    void endpoint.client.capabilities()
+      .then((capabilities) => {
+        if (!cancelled) setEngineRolloverAvailable(capabilities.engine?.rollover === true);
+      })
+      .catch(() => {
+        if (!cancelled) setEngineRolloverAvailable(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [endpointForWorkspace, workspace]);
 
   const reloadWorkspaceEngineFromUi = useCallback(async () => {
     if (!client || !workspaceId) {
@@ -90,8 +110,9 @@ export function useEngineReload(input: UseEngineReloadInput) {
       canReloadWorkspaceEngine: () => Boolean(client && workspaceId),
       reloadWorkspaceEngine: reloadWorkspaceEngineFromUi,
       activeSessions: () => activeReloadBlockingSessions,
+      allowsBusyReload: () => engineRolloverAvailable,
     });
-  }, [activeReloadBlockingSessions, client, reloadCoordinator, reloadWorkspaceEngineFromUi, workspaceId]);
+  }, [activeReloadBlockingSessions, client, engineRolloverAvailable, reloadCoordinator, reloadWorkspaceEngineFromUi, workspaceId]);
 
   useEffect(() => {
     if (!reloadCoordinator.canReloadWorkspaceEngine) return;

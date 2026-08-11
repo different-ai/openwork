@@ -20,6 +20,18 @@ export function useFeatureFlagsPreferences() {
 
   const memoryEnabled = prefs.featureFlags?.memory === true;
 
+  const continuousEngineEnabled = prefs.featureFlags?.continuousEngine === true;
+
+  const setContinuousEngine = useCallback((enabled: boolean) => {
+    setPrefs((previous) => ({
+      ...previous,
+      featureFlags: {
+        ...previous.featureFlags,
+        continuousEngine: enabled,
+      },
+    }));
+  }, [setPrefs]);
+
   const toggleMemory = useCallback(() => {
     setPrefs((previous) => ({
       ...previous,
@@ -33,6 +45,8 @@ export function useFeatureFlagsPreferences() {
   return {
     microsandboxCreateSandboxEnabled,
     toggleMicrosandboxCreateSandbox,
+    continuousEngineEnabled,
+    setContinuousEngine,
     memoryEnabled,
     toggleMemory,
   };

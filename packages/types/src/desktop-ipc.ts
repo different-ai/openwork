@@ -87,6 +87,7 @@ export type DesktopIntegrationResult = {
 
 export type OpenworkServerInfo = {
   running: boolean;
+  engineRollover: boolean;
   remoteAccessEnabled: boolean;
   host: string | null;
   port: number | null;

@@ -133,6 +133,7 @@ export type WorkspaceReloadControls = {
   reloadWorkspaceEngine: () => Promise<boolean>;
   activeSessions?: () => ReloadSession[];
   stopSession?: (sessionId: string) => void | Promise<void>;
+  allowsBusyReload?: () => boolean;
 };
 
 type ReloadCoordinatorContextValue = {
@@ -153,6 +154,7 @@ const ReloadCoordinatorContext = createContext<ReloadCoordinatorContextValue | n
 export function ReloadCoordinatorProvider({ children }: { children: ReactNode }) {
   const controlsRef = useRef<WorkspaceReloadControls | null>(null);
   const [activeSessions, setActiveSessions] = useState<ReloadSession[]>([]);
+  const [allowsBusyReload, setAllowsBusyReload] = useState(false);
   const [orgOnboardingVisible, setOrgOnboardingVisible] = useState(false);
   const pendingReloadTriggerRef = useRef<ReloadTrigger | null>(null);
   const hadPendingReloadRef = useRef(false);
@@ -162,10 +164,12 @@ export function ReloadCoordinatorProvider({ children }: { children: ReactNode })
   const registerWorkspaceReloadControls = useCallback((controls: WorkspaceReloadControls | null) => {
     controlsRef.current = controls;
     setActiveSessions(controls?.activeSessions?.() ?? []);
+    setAllowsBusyReload(controls?.allowsBusyReload?.() === true);
     return () => {
       if (controlsRef.current === controls) {
         controlsRef.current = null;
         setActiveSessions([]);
+        setAllowsBusyReload(false);
       }
     };
   }, []);
@@ -249,8 +253,7 @@ export function ReloadCoordinatorProvider({ children }: { children: ReactNode })
 
   const reloadIdle =
     systemState.reload.reloadPending &&
-    activeSessions.length === 0 &&
-    !activityBlocked &&
+    (allowsBusyReload || (activeSessions.length === 0 && !activityBlocked)) &&
     !orgOnboardingVisible;
 
   // Auto-reload when idle. Reloading is a cheap in-process engine rebuild
@@ -287,20 +290,21 @@ export function ReloadCoordinatorProvider({ children }: { children: ReactNode })
     const timer = window.setTimeout(() => {
       // Re-check at fire time: a task may have started during the debounce
       // window. The effect re-runs when activity ends and reschedules.
-      if (hasLiveSessionActivity(useSessionActivityStore.getState().statusesByWorkspaceId)) {
+      if (!allowsBusyReload && hasLiveSessionActivity(useSessionActivityStore.getState().statusesByWorkspaceId)) {
         return;
       }
       lastAutoReloadAtRef.current = Date.now();
       void systemState.reloadWorkspaceEngine();
     }, delay);
     return () => window.clearTimeout(timer);
-  }, [reloadIdle, systemState]);
+  }, [allowsBusyReload, reloadIdle, systemState]);
 
   // Changes pending while tasks are running: quiet center entry instead of
   // a toast. The same dedupe key means the eventual "applied" receipt
   // replaces it.
   useEffect(() => {
     if (!systemState.reload.reloadPending) return;
+    if (allowsBusyReload) return;
     if (activeSessions.length === 0 && !activityBlocked) return;
     notifyEvent({
       kind: "reload",
@@ -309,7 +313,7 @@ export function ReloadCoordinatorProvider({ children }: { children: ReactNode })
       title: t("notifications.reload_pending_title"),
       body: t("notifications.reload_pending_body"),
     });
-  }, [systemState.reload.reloadPending, activeSessions.length, activityBlocked]);
+  }, [allowsBusyReload, systemState.reload.reloadPending, activeSessions.length, activityBlocked]);
 
   // Reload failures are the one case that still warrants a toast (Alert
   // class): transient toast with Retry + persistent center entry.
