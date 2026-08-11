@@ -92,7 +92,11 @@ export async function ensureLocalWorkspaceFiles(
 ): Promise<void> {
   for (const workspace of workspaces) {
     if (workspace.workspaceType === "remote" || !workspace.path.trim()) continue;
-    await ensureWorkspaceFiles(workspace.path, workspace.preset);
+    try {
+      await ensureWorkspaceFiles(workspace.path, workspace.preset);
+    } catch (err) {
+      console.warn(`Failed to ensure files for workspace at ${workspace.path}:`, err);
+    }
   }
 }
 
