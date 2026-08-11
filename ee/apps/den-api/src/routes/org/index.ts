@@ -13,6 +13,7 @@ import { registerDeleteOrganizationRoutes } from "./delete-organization.js"
 import { registerOrgDesktopPolicyRoutes } from "./desktop-policies.js"
 import { registerOrgEgressDiagnosticRoutes } from "./egress-diagnostics.js"
 import { registerOrgInvitationRoutes } from "./invitations.js"
+import { registerFeishuHireRoutes } from "./feishu-hire.js"
 import { registerGoogleWorkspaceRoutes } from "./google-workspace.js"
 import { registerOrgInstallLinkRoutes } from "./install-links.js"
 import { registerOrgInferenceRoutes } from "./inference.js"
@@ -73,6 +74,7 @@ export function registerOrgRoutes<T extends { Variables: OrgRouteVariables & Req
   registerOrgLlmProviderRoutes(app)
   registerOrgMemberRoutes(app)
   registerOAuthProviderRoutes(app)
+  registerFeishuHireRoutes(app)
   registerGoogleWorkspaceRoutes(app)
   registerMicrosoft365Routes(app)
   registerMcpConnectionRoutes(app)

@@ -15,6 +15,8 @@ import { env } from "../env.js"
 export type NativeOAuthProviderConfig = {
   providerId: string
   displayName: string
+  /** Organization credentials are shared; delegated credentials require each member to sign in. */
+  credentialMode?: "per_member" | "shared"
   authorizeUrl: string
   tokenUrl: string
   userinfoUrl?: string
@@ -98,6 +100,16 @@ export const NATIVE_OAUTH_PROVIDERS: Record<string, NativeOAuthProviderConfig> =
     },
     usesPkce: true,
     tenantIdExtraKey: "tenantId",
+  },
+  "feishu-hire": {
+    providerId: "feishu-hire",
+    displayName: "Feishu Hire",
+    credentialMode: "shared",
+    authorizeUrl: "https://open.feishu.cn/app",
+    tokenUrl: "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal",
+    websiteUrl: "https://www.feishu.cn/hire",
+    defaultScopes: [],
+    usesPkce: false,
   },
 }
 

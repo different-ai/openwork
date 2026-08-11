@@ -28,7 +28,7 @@ export type NativeProviderConnectionEntry = {
   name: string
   url: string
   authType: "oauth"
-  credentialMode: "per_member"
+  credentialMode: "shared" | "per_member"
   connected: boolean
   connectedAt: null
   connectedForMe: boolean
@@ -79,6 +79,7 @@ export function buildNativeProviderEntry(
     tenantId?: string | null
     credentialProviderId?: string
     name?: string
+    credentialMode?: "shared" | "per_member"
   },
 ): NativeProviderConnectionEntry | null {
   if (!state.clientConfigured) {
@@ -89,7 +90,7 @@ export function buildNativeProviderEntry(
     name: state.name ?? provider.displayName,
     url: provider.websiteUrl,
     authType: "oauth",
-    credentialMode: "per_member",
+    credentialMode: state.credentialMode ?? provider.credentialMode ?? "per_member",
     nativeProviderKey: provider.providerId,
     connected: true,
     connectedAt: null,
@@ -121,14 +122,18 @@ export async function listNativeProviderUsableEntries(input: {
     if (!provider) continue
     const client = await getOrgOAuthClient(input.organizationId, connection.id)
     if (!client) continue
-    const account = await getConnectedAccount({
-      organizationId: input.organizationId,
-      orgMembershipId: input.orgMembershipId,
-      providerId: connection.id,
-    })
+    const credentialMode = provider.credentialMode ?? "per_member"
+    const account = credentialMode === "shared"
+      ? null
+      : await getConnectedAccount({
+          organizationId: input.organizationId,
+          orgMembershipId: input.orgMembershipId,
+          providerId: connection.id,
+        })
     const entry = buildNativeProviderEntry(provider, {
       clientConfigured: true,
-      connectedForMe: Boolean(account?.accessToken),
+      connectedForMe: credentialMode === "shared" || Boolean(account?.accessToken),
+      credentialMode,
       credentialProviderId: connection.id,
       name: connection.name,
       ...(account?.externalAccountId ? { externalAccountId: account.externalAccountId } : {}),
@@ -149,14 +154,18 @@ export async function listNativeProviderUsableEntries(input: {
   for (const provider of Object.values(NATIVE_OAUTH_PROVIDERS)) {
     const client = await getOrgOAuthClient(input.organizationId, provider.providerId)
     if (!client) continue
-    const account = await getConnectedAccount({
-      organizationId: input.organizationId,
-      orgMembershipId: input.orgMembershipId,
-      providerId: provider.providerId,
-    })
+    const credentialMode = provider.credentialMode ?? "per_member"
+    const account = credentialMode === "shared"
+      ? null
+      : await getConnectedAccount({
+          organizationId: input.organizationId,
+          orgMembershipId: input.orgMembershipId,
+          providerId: provider.providerId,
+        })
     const entry = buildNativeProviderEntry(provider, {
       clientConfigured: true,
-      connectedForMe: Boolean(account?.accessToken),
+      connectedForMe: credentialMode === "shared" || Boolean(account?.accessToken),
+      credentialMode,
       ...(account?.externalAccountId ? { externalAccountId: account.externalAccountId } : {}),
       ...(account?.scopes ? { grantedScopes: account.scopes } : {}),
       ...(provider.tenantIdExtraKey

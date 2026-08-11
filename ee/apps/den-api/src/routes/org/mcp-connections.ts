@@ -285,6 +285,7 @@ const createNativeProviderConnectionBodySchema = z.object({
     clientSecret: z.string().trim().min(1).max(4096).optional(),
     features: z.array(z.string().trim().min(1).max(128)).optional(),
   }),
+  serviceUrl: z.string().trim().url().max(2048).optional(),
 })
 
 const createConnectionBodySchema = z.union([
@@ -1016,6 +1017,10 @@ async function toConnectionResponse(
   const oauthClient = row.authType === "oauth" || options.includeAccess
     ? await getOrgOAuthClient(row.organizationId, row.id)
     : null
+  if (row.kind === "native_provider" && row.credentialMode === "shared" && oauthClient) {
+    connected = true
+    connectedForMe = true
+  }
   const oauthRegistrationSource = oauthRegistrationSourceForClient(oauthClient)
   const callbackMode = row.oauthConfiguration?.callbackMode ?? null
   const requiredAuthTypes = [...options.requiredAuthTypes]
@@ -2013,14 +2018,31 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
         if (unknownFeatures.length > 0) {
           return c.json({ error: "invalid_request", message: `Unknown optional feature(s): ${unknownFeatures.join(", ")}.` }, 400)
         }
+        let serviceUrl = provider.websiteUrl
+        if (provider.providerId === "feishu-hire") {
+          if (!body.serviceUrl) {
+            return c.json({ error: "invalid_request", message: "Feishu Hire requires the tenant Hire URL." }, 400)
+          }
+          const parsedServiceUrl = new URL(body.serviceUrl)
+          const allowedHost = parsedServiceUrl.hostname.endsWith(".feishu.cn")
+            || parsedServiceUrl.hostname.endsWith(".larksuite.com")
+          const allowedPath = parsedServiceUrl.pathname === "/hire" || parsedServiceUrl.pathname.startsWith("/hire/")
+          if (parsedServiceUrl.protocol !== "https:" || !allowedHost || !allowedPath) {
+            return c.json({ error: "invalid_request", message: "Use an HTTPS Feishu or Lark tenant URL under /hire." }, 400)
+          }
+          parsedServiceUrl.search = ""
+          parsedServiceUrl.hash = ""
+          serviceUrl = parsedServiceUrl.toString().replace(/\/$/, "")
+        }
+        const credentialMode = provider.credentialMode ?? "per_member"
         const created = await createExternalMcpConnection({
           organizationId: payload.organization.id,
           name: body.name,
-          url: provider.websiteUrl,
+          url: serviceUrl,
           authType: "oauth",
           kind: "native_provider",
           nativeProviderKey: provider.providerId,
-          credentialMode: "per_member",
+          credentialMode,
           createdByOrgMembershipId: payload.currentMember.id,
           access: { orgWide: true, memberIds: [], teamIds: [] },
         })
@@ -2029,7 +2051,12 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
           providerId: created.id,
           clientId: body.oauthClient.clientId,
           clientSecret: body.oauthClient.clientSecret ?? null,
-          ...(body.oauthClient.features ? { extra: { features: body.oauthClient.features } } : {}),
+          ...(body.oauthClient.features || body.serviceUrl
+            ? { extra: {
+                ...(body.oauthClient.features ? { features: body.oauthClient.features } : {}),
+                ...(body.serviceUrl ? { serviceUrl } : {}),
+              } }
+            : {}),
           createdByOrgMembershipId: payload.currentMember.id,
         })
         const response = await toConnectionResponse(created, {

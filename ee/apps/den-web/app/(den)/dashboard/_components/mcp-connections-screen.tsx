@@ -78,6 +78,7 @@ import { getPluginPartsSummary, pluginQueryKeys, usePlugins } from "./plugin-dat
 import { TelegramDialog } from "./telegram-dialog";
 import {
   ConnectorQuickAddGrid,
+  FEISHU_HIRE_QUICK_ADD_ID,
   GOOGLE_WORKSPACE_QUICK_ADD_ID,
   MICROSOFT_365_QUICK_ADD_ID,
   TELEGRAM_QUICK_ADD_ID,
@@ -276,6 +277,7 @@ export function McpConnectionsScreen() {
   const [issuerReviewConnection, setIssuerReviewConnection] = useState<ExternalMcpConnection | null>(null);
   const [issuerReviewPreview, setIssuerReviewPreview] = useState<McpIssuerReview | null>(null);
   const [googleDialogMode, setGoogleDialogMode] = useState<"create" | "legacy" | null>(null);
+  const [feishuHireDialogOpen, setFeishuHireDialogOpen] = useState(false);
   const [microsoftDialogOpen, setMicrosoftDialogOpen] = useState(false);
   const [telegramDialogOpen, setTelegramDialogOpen] = useState(false);
   const telegramConnection = useTelegramConnection(true);
@@ -299,6 +301,11 @@ export function McpConnectionsScreen() {
     if (id === GOOGLE_WORKSPACE_QUICK_ADD_ID) {
       createNativeConnection.reset();
       setGoogleDialogMode("create");
+      return;
+    }
+    if (id === FEISHU_HIRE_QUICK_ADD_ID) {
+      createNativeConnection.reset();
+      setFeishuHireDialogOpen(true);
       return;
     }
     if (id === MICROSOFT_365_QUICK_ADD_ID) {
@@ -390,6 +397,7 @@ export function McpConnectionsScreen() {
     const quickAddId = searchParams.get("quickAdd");
     if (!quickAddId || handledQuickAddId.current === quickAddId) return;
     const isKnownTarget = quickAddId === GOOGLE_WORKSPACE_QUICK_ADD_ID
+      || quickAddId === FEISHU_HIRE_QUICK_ADD_ID
       || quickAddId === MICROSOFT_365_QUICK_ADD_ID
       || quickAddId === TELEGRAM_QUICK_ADD_ID
       || presets.some((preset) => preset.presetId === quickAddId);
@@ -923,6 +931,26 @@ export function McpConnectionsScreen() {
         }}
       />
 
+      <FeishuHireDialog
+        open={feishuHireDialogOpen}
+        submitting={createNativeConnection.isPending}
+        error={createNativeConnection.error}
+        onClose={() => setFeishuHireDialogOpen(false)}
+        onSubmit={async (input) => {
+          await createNativeConnection.mutateAsync({
+            nativeProviderKey: FEISHU_HIRE_QUICK_ADD_ID,
+            name: input.name,
+            serviceUrl: input.serviceUrl,
+            oauthClient: {
+              clientId: input.appId,
+              clientSecret: input.appSecret,
+              features: [],
+            },
+          });
+          setFeishuHireDialogOpen(false);
+        }}
+      />
+
       <Microsoft365Dialog
         open={microsoftDialogOpen}
         submitting={saveNativeClient.isPending}
@@ -1265,6 +1293,141 @@ function ImportPluginConnectionDialog({
           </DenButton>
         </div>
       </div>
+    </div>
+  );
+}
+
+function FeishuHireDialog({
+  open,
+  submitting,
+  error,
+  onClose,
+  onSubmit,
+}: {
+  open: boolean;
+  submitting: boolean;
+  error: unknown;
+  onClose: () => void;
+  onSubmit: (input: { name: string; serviceUrl: string; appId: string; appSecret: string }) => Promise<void> | void;
+}) {
+  const [name, setName] = useState("Feishu Hire");
+  const [serviceUrl, setServiceUrl] = useState("");
+  const [appId, setAppId] = useState("");
+  const [appSecret, setAppSecret] = useState("");
+
+  useEffect(() => {
+    if (!open) return;
+    setName("Feishu Hire");
+    setServiceUrl("");
+    setAppId("");
+    setAppSecret("");
+  }, [open]);
+
+  if (!open) return null;
+  const saveDisabled = submitting || !name.trim() || !serviceUrl.trim() || !appId.trim() || !appSecret.trim();
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 px-4 py-6" onClick={onClose}>
+      <form
+        data-testid="feishu-hire-dialog"
+        className="max-h-[calc(100vh-3rem)] w-full max-w-lg overflow-y-auto rounded-[28px] border border-gray-200 bg-white p-6 shadow-[0_24px_80px_-32px_rgba(15,23,42,0.45)]"
+        onClick={(event) => event.stopPropagation()}
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (saveDisabled) return;
+          void onSubmit({
+            name: name.trim(),
+            serviceUrl: serviceUrl.trim(),
+            appId: appId.trim(),
+            appSecret: appSecret.trim(),
+          });
+        }}
+      >
+        <h2 className="text-[18px] font-semibold tracking-[-0.02em] text-gray-950">Add Feishu Hire</h2>
+        <p className="mt-1 text-[13px] leading-6 text-gray-600">
+          Connect your organization&apos;s recruiting system once. OpenWork agents receive read-only access to recruiting summaries; credentials and sensitive candidate details stay hidden.
+        </p>
+
+        <div className="mt-5 space-y-4">
+          <div>
+            <label className="mb-1.5 block text-[12px] font-medium text-gray-700" htmlFor="feishu-hire-name">Name</label>
+            <DenInput
+              id="feishu-hire-name"
+              name="feishu-hire-name"
+              value={name}
+              onChange={(event) => setName(event.target.value)}
+              placeholder="Feishu Hire"
+              required
+            />
+          </div>
+          <div>
+            <label className="mb-1.5 block text-[12px] font-medium text-gray-700" htmlFor="feishu-hire-url">Tenant Hire URL</label>
+            <DenInput
+              id="feishu-hire-url"
+              name="feishu-hire-url"
+              type="url"
+              value={serviceUrl}
+              onChange={(event) => setServiceUrl(event.target.value)}
+              placeholder="https://your-company.feishu.cn/hire"
+              required
+            />
+            <p className="mt-1.5 text-[12px] leading-5 text-gray-500">Use the URL you open to access Feishu Hire. LarkSuite tenant URLs are also supported.</p>
+          </div>
+
+          <div className="rounded-2xl border border-gray-100 bg-gray-50 p-4">
+            <p className="text-[13px] font-semibold text-gray-900">Feishu app credentials</p>
+            <p className="mt-1 text-[12px] leading-5 text-gray-500">
+              Create an internal app in the Feishu developer console, grant the read-only permissions below, then paste its App ID and App Secret.
+            </p>
+            <div className="mt-3 space-y-3">
+              <div>
+                <label className="mb-1.5 block text-[12px] font-medium text-gray-700" htmlFor="feishu-hire-app-id">App ID</label>
+                <DenInput
+                  id="feishu-hire-app-id"
+                  name="feishu-hire-app-id"
+                  value={appId}
+                  onChange={(event) => setAppId(event.target.value)}
+                  autoComplete="off"
+                  required
+                />
+              </div>
+              <div>
+                <label className="mb-1.5 block text-[12px] font-medium text-gray-700" htmlFor="feishu-hire-app-secret">App Secret</label>
+                <DenInput
+                  id="feishu-hire-app-secret"
+                  name="feishu-hire-app-secret"
+                  type="password"
+                  value={appSecret}
+                  onChange={(event) => setAppSecret(event.target.value)}
+                  autoComplete="new-password"
+                  required
+                />
+              </div>
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-gray-100 bg-gray-50 p-4">
+            <p className="text-[13px] font-semibold text-gray-900">Required read-only permissions</p>
+            <ul className="mt-2 space-y-1.5 font-mono text-[12px] text-gray-700">
+              <li>hire:job:readonly</li>
+              <li>hire:talent:readonly</li>
+              <li>hire:application:readonly</li>
+            </ul>
+          </div>
+        </div>
+
+        {error ? (
+          <DenNotice message={error instanceof Error ? error.message : "Failed to add Feishu Hire."} className="mt-4" />
+        ) : null}
+
+        <div className="mt-6 flex justify-end gap-2">
+          <DenButton type="button" variant="secondary" onClick={onClose} disabled={submitting}>Cancel</DenButton>
+          <DenButton type="submit" data-testid="save-feishu-hire" disabled={saveDisabled}>
+            {submitting ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : null}
+            Add connector
+          </DenButton>
+        </div>
+      </form>
     </div>
   );
 }

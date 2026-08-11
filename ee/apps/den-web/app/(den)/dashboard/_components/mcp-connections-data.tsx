@@ -629,6 +629,7 @@ export type CreateMcpConnectionInput = {
 export type CreateNativeProviderConnectionInput = {
   nativeProviderKey: string;
   name: string;
+  serviceUrl?: string;
   oauthClient: {
     clientId: string;
     clientSecret?: string;

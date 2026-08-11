@@ -17,6 +17,8 @@ describe("connector quick add v2", () => {
     expect(grid).toContain("Added");
     expect(grid).toContain("Manage");
     expect(grid).toContain("quick-add-preset-");
+    expect(grid).toContain("quick-add-feishu-hire");
+    expect(grid).toContain("Read-only jobs, candidates, and applications");
   });
 
   test("uses the smart bar instead of the standalone add button", () => {
@@ -24,6 +26,8 @@ describe("connector quick add v2", () => {
 
     expect(screen).toContain("connector-smart-bar");
     expect(screen).toContain("Advanced setup");
+    expect(screen).toContain("feishu-hire-app-secret");
+    expect(screen).toContain("hire:application:readonly");
     expect(screen).not.toMatch(/>\s*Add MCP\s*</);
   });
 });

@@ -6,10 +6,17 @@ import type { ExternalMcpConnection, ExternalMcpPreset } from "./mcp-connections
 import { IntegrationIcon } from "./integration-icon";
 
 export const GOOGLE_WORKSPACE_QUICK_ADD_ID = "google-workspace";
+export const FEISHU_HIRE_QUICK_ADD_ID = "feishu-hire";
 export const MICROSOFT_365_QUICK_ADD_ID = "microsoft-365";
 export const TELEGRAM_QUICK_ADD_ID = "telegram";
 
 const SUITE_CONNECTORS = [
+  {
+    id: FEISHU_HIRE_QUICK_ADD_ID,
+    displayName: "Feishu Hire",
+    description: "Read-only jobs, candidates, and applications from your organization's Feishu recruiting system.",
+    simpleIconSlug: "feishu",
+  },
   {
     id: GOOGLE_WORKSPACE_QUICK_ADD_ID,
     displayName: "Google Workspace",
@@ -100,8 +107,6 @@ export function ConnectorQuickAddGrid({
   );
   const suites = SUITE_CONNECTORS.filter((suite) => matchesFilter(suite.displayName, suite.description, suite.id));
   const filteredPresets = presets.filter((preset) => matchesFilter(preset.displayName, preset.description, preset.presetId));
-  const microsoftConfigured = connections.some((connection) => connection.id === MICROSOFT_365_QUICK_ADD_ID);
-
   if (normalizedFilter && suites.length === 0 && filteredPresets.length === 0) {
     return <p className="text-[13px] text-gray-400" data-testid="connector-quick-add-grid">No connectors match &quot;{filter}&quot;.</p>;
   }
@@ -113,19 +118,22 @@ export function ConnectorQuickAddGrid({
           <GroupHeader>From your workspace suite</GroupHeader>
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {suites.map((suite) => {
-              const showManage = suite.id === MICROSOFT_365_QUICK_ADD_ID
-                ? microsoftConfigured
-                : suite.id === TELEGRAM_QUICK_ADD_ID && telegramConnected;
+              const connection = connections.find((entry) => (
+                entry.id === suite.id || entry.nativeProviderKey === suite.id
+              ));
+              const showManage = Boolean(connection) || (suite.id === TELEGRAM_QUICK_ADD_ID && telegramConnected);
               return (
                 <button
                   key={suite.id}
                   type="button"
                   data-testid={suite.id === MICROSOFT_365_QUICK_ADD_ID
                     ? "quick-add-microsoft-365"
+                    : suite.id === FEISHU_HIRE_QUICK_ADD_ID
+                      ? "quick-add-feishu-hire"
                     : suite.id === TELEGRAM_QUICK_ADD_ID
                       ? "quick-add-telegram"
                       : undefined}
-                  onClick={() => onSelect(suite.id)}
+                  onClick={() => connection ? onManage(connection.id) : onSelect(suite.id)}
                   className="rounded-2xl border border-gray-100 bg-white p-3.5 text-left transition hover:border-gray-300 hover:shadow-sm"
                 >
                   <div className="flex items-start gap-2.5">
@@ -144,7 +152,7 @@ export function ConnectorQuickAddGrid({
                     </div>
                   </div>
                   <div className="mt-2.5 flex items-center justify-between">
-                    <EffortPill effort="guided" />
+                    {showManage ? <AddedPill /> : <EffortPill effort="guided" />}
                     {showManage ? <ManageAffordance /> : <AddAffordance />}
                   </div>
                 </button>

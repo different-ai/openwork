@@ -481,6 +481,9 @@ export function registerOAuthProviderRoutes<T extends { Variables: OrgRouteVaria
       if (resolved === "forbidden") {
         return c.json({ error: "forbidden", message: "You have not been granted access to this connection." }, 403)
       }
+      if ((resolved.provider.credentialMode ?? "per_member") === "shared") {
+        return c.json({ error: "invalid_request", message: `${resolved.provider.displayName} is managed by the organization and does not require member sign-in.` }, 400)
+      }
 
       const started = await beginNativeProviderConnect({
         provider: resolved.provider,
@@ -510,7 +513,7 @@ export function registerOAuthProviderRoutes<T extends { Variables: OrgRouteVaria
   // before the parameterized /v1/mcp-connections/:connectionId routes
   // (routes/org/index.ts order), so provider ids never reach the emc_ id
   // validator. Zero desktop changes.
-  for (const provider of Object.values(NATIVE_OAUTH_PROVIDERS)) {
+  for (const provider of Object.values(NATIVE_OAUTH_PROVIDERS).filter((entry) => (entry.credentialMode ?? "per_member") === "per_member")) {
     app.get(
       `/v1/mcp-connections/${provider.providerId}/connect/start`,
       describeRoute({
