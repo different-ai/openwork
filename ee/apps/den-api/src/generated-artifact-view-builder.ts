@@ -215,9 +215,15 @@ async function buildClientBundle(reactSource: string, previewData: unknown, prev
       name: "generated-artifact-view",
       setup(pluginBuild) {
         pluginBuild.onResolve({ filter: /^artifact:view$/ }, () => ({ path: "artifact:view", namespace: "generated-artifact" }))
+        pluginBuild.onResolve({ filter: /^artifact:safe-react$/ }, () => ({ path: "artifact:safe-react", namespace: "generated-artifact-runtime" }))
         pluginBuild.onLoad({ filter: /.*/, namespace: "generated-artifact" }, () => ({
-          contents: `import BaseReact from "react";\n${SAFE_REACT_PREAMBLE}\nconst React = createSafeArtifactReact(BaseReact);\n${reactSource}`,
+          contents: `import React from "artifact:safe-react";\n${reactSource}`,
           loader: "tsx",
+          resolveDir: process.cwd(),
+        }))
+        pluginBuild.onLoad({ filter: /.*/, namespace: "generated-artifact-runtime" }, () => ({
+          contents: `import BaseReact from "react";\n${SAFE_REACT_PREAMBLE}\nexport default createSafeArtifactReact(BaseReact);`,
+          loader: "js",
           resolveDir: process.cwd(),
         }))
       },
