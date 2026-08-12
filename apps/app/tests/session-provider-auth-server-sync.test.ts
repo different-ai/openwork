@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
+import { clearDenSession } from "../src/app/lib/den";
 import { createOpenworkServerClient } from "../src/app/lib/openwork-server";
 import { createClient } from "../src/app/lib/opencode";
 import type { ResolvedWorkspaceEndpoint } from "../src/app/lib/workspace-endpoint";
@@ -64,12 +65,22 @@ function memoryStorage(): Storage {
 
 function installWindow(): Storage {
   const localStorage = memoryStorage();
+  const listeners = new Map<string, Set<EventListener>>();
   Object.defineProperty(globalThis, "window", {
     configurable: true,
     value: {
-      addEventListener: () => undefined,
-      removeEventListener: () => undefined,
-      dispatchEvent: () => true,
+      addEventListener: (type: string, listener: EventListener) => {
+        const registered = listeners.get(type) ?? new Set<EventListener>();
+        registered.add(listener);
+        listeners.set(type, registered);
+      },
+      removeEventListener: (type: string, listener: EventListener) => {
+        listeners.get(type)?.delete(listener);
+      },
+      dispatchEvent: (event: Event) => {
+        for (const listener of listeners.get(event.type) ?? []) listener(event);
+        return true;
+      },
       localStorage,
       location: { origin: "https://self-hosted.example" },
       __OPENWORK_GATEWAY__: undefined,
@@ -310,6 +321,34 @@ describe("session-route cloud provider sync wiring", () => {
       requests.filter((request) => request.url === "https://den.example/api/den/v1/llm-providers"),
     ).toHaveLength(1);
     expect(requests.filter((request) => new URL(request.url).pathname === "/cloud-provider-sync/run")).toHaveLength(0);
+    store.dispose();
+  });
+
+  test("clearing the Den session clears assigned organization models", async () => {
+    const storage = installWindow();
+    installCloudSession(storage);
+    const requests: RecordedRequest[] = [];
+    installFetchMock(requests);
+    const store = createSessionRouteStore({
+      endpoint: null,
+      hostToken: "",
+    });
+    const assignedModelsLoaded = new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error("assigned models did not load")), 1_000);
+      const unsubscribe = store.subscribe(() => {
+        if (store.getSnapshot().cloudOrgProviders.length === 0) return;
+        clearTimeout(timeout);
+        unsubscribe();
+        resolve();
+      });
+    });
+
+    store.start();
+    await assignedModelsLoaded;
+    clearDenSession();
+
+    expect(store.getSnapshot().cloudOrgProviders).toEqual([]);
+    expect(store.getSnapshot().importedCloudProviders).toEqual({});
     store.dispose();
   });
 

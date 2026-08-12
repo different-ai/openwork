@@ -26,6 +26,7 @@ export { normalizeDesktopConfig };
 
 import { isDesktopDeployment, isWebDeployment } from "./openwork-deployment";
 import {
+  dispatchDenSessionUpdated,
   dispatchDenSettingsChanged,
 } from "./den-session-events";
 import {
@@ -1194,6 +1195,10 @@ export function clearDenSession(options?: { includeBaseUrls?: boolean }) {
 
   dispatchDenSettingsChanged({
     settings: readDenSettings(),
+  });
+  dispatchDenSessionUpdated({
+    status: "signed_out",
+    baseUrl: readDenSettings().baseUrl,
   });
 }
 

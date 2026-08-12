@@ -34,10 +34,7 @@ import { resolveOpenworkConnection } from "./openwork-connection";
 import { captureAnalyticsEvent } from "../../app/lib/analytics";
 import { buildOpenworkWorkspaceBaseUrl, createOpenworkServerClient } from "../../app/lib/openwork-server";
 import { buildDenAuthUrl, clearDenSession, DEFAULT_DEN_BASE_URL, readDenSettings } from "../../app/lib/den";
-import {
-  denSettingsChangedEvent,
-  dispatchDenSessionUpdated,
-} from "../../app/lib/den-session-events";
+import { denSettingsChangedEvent } from "../../app/lib/den-session-events";
 import { writeActiveWorkspaceId, writeLastSessionFor, writeWorkspaceProjectDimension } from "./session-memory";
 import { workspaceSessionRoute } from "./workspace-routes";
 import { ensureDesktopLocalOpenworkConnection } from "./desktop-local-openwork";
@@ -193,7 +190,6 @@ export function WelcomeRoute() {
         return false;
       }
       clearDenSession({ includeBaseUrls: false });
-      dispatchDenSessionUpdated({ status: "signed_out", baseUrl: persisted.baseUrl });
       setOrganizationServerUrl(persisted.baseUrl);
       return true;
     } catch (error) {

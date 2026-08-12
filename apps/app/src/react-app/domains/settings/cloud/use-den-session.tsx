@@ -23,7 +23,6 @@ import { clearDesktopBootstrapConfig } from "@/app/lib/desktop";
 import { exchangeHandoffAndSignIn } from "@/app/lib/den-handoff";
 import {
   denSessionUpdatedEvent,
-  dispatchDenSessionUpdated,
   type DenSessionUpdatedDetail,
 } from "@/app/lib/den-session-events";
 import { t } from "@/i18n";
@@ -189,7 +188,6 @@ export function useDenSession({
   const clearSignedInState = React.useCallback(
     (
       message?: string | null,
-      eventDetail?: Pick<DenSessionUpdatedDetail, "baseUrl">,
       options?: { includeBaseUrls?: boolean },
     ) => {
       const includeBaseUrls = options?.includeBaseUrls ?? !developerMode;
@@ -226,8 +224,6 @@ export function useDenSession({
           }
         }
       } catch {}
-      // Notify provider auth store so it can clean up cloud-imported providers
-      dispatchDenSessionUpdated({ status: "signed_out", ...eventDetail });
       });
     },
     [clearSessionState, developerMode, onBeforeSignedOut, setAuthToken, setBaseUrl],
@@ -283,9 +279,7 @@ export function useDenSession({
 
       setBaseUrl(persisted.baseUrl);
       setBaseUrlDraft(persisted.baseUrl);
-      await clearSignedInState(t("den.status_base_url_updated"), {
-        baseUrl: persisted.baseUrl,
-      }, { includeBaseUrls: false });
+      await clearSignedInState(t("den.status_base_url_updated"), { includeBaseUrls: false });
     } catch (error) {
       setBaseUrlError(error instanceof Error ? error.message : t("den.error_base_url"));
     } finally {
@@ -306,9 +300,7 @@ export function useDenSession({
       setBaseUrlError(null);
       setBaseUrl(persisted.baseUrl);
       setBaseUrlDraft(persisted.baseUrl);
-      await clearSignedInState(t("den.status_base_url_updated"), {
-        baseUrl: persisted.baseUrl,
-      }, { includeBaseUrls: false });
+      await clearSignedInState(t("den.status_base_url_updated"), { includeBaseUrls: false });
     } catch (error) {
       setBaseUrlError(error instanceof Error ? error.message : t("den.error_base_url"));
     } finally {
@@ -340,9 +332,7 @@ export function useDenSession({
       );
       setBaseUrl(resolved.baseUrl);
       setBaseUrlDraft(resolved.baseUrl);
-      await clearSignedInState(t("den.status_server_config_cleared"), {
-        baseUrl: resolved.baseUrl,
-      }, { includeBaseUrls: false });
+      await clearSignedInState(t("den.status_server_config_cleared"), { includeBaseUrls: false });
     } catch (error) {
       setBaseUrlError(error instanceof Error ? error.message : t("den.error_base_url"));
     } finally {
