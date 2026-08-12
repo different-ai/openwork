@@ -10,6 +10,7 @@ import { loadTelegramWorkerAccess, type TelegramWorkerAccess } from "../capabili
 import { organizationCloudEnabled } from "../capability-sources/cloud-rollout.js"
 import { CLOUD_INSTANCE_BACKEND } from "../workers/cloud-constants.js"
 import { wakeCloudWorker } from "../workers/cloud-lifecycle.js"
+import { resolveAutomationModelAccess } from "./authority.js"
 
 const WORKER_READY_TIMEOUT_MS = 120_000
 const WORKER_READY_POLL_MS = 1_000
@@ -322,6 +323,24 @@ async function abortAndObserve(
   return stopped?.outcome === "settled"
 }
 
+async function currentAgentAuthority(input: OwnerScope & { action: AgentAction }): Promise<CloudAgentExecution | null> {
+  const access = await resolveAutomationModelAccess({
+    organizationId: input.organizationId,
+    ownerMemberId: input.ownerMemberId,
+    providerId: input.action.model.providerId,
+    modelId: input.action.model.modelId,
+  })
+  if (access.ok) return null
+  return {
+    ok: false,
+    status: "failed",
+    code: access.code,
+    message: access.message,
+    retryable: false,
+    needsAttention: true,
+  }
+}
+
 export async function executeCloudAgent(input: CloudAgentExecutorInput): Promise<CloudAgentExecution> {
   const deadlineController = new AbortController()
   const deadlineTimer = setTimeout(() => deadlineController.abort(new Error("automation_deadline_exceeded")), input.maximumRuntimeMs)
@@ -329,6 +348,8 @@ export async function executeCloudAgent(input: CloudAgentExecutorInput): Promise
   let client: ReturnType<typeof createHeadlessThreadClient> | null = null
   let nativeThreadId: string | null = null
   try {
+    const initialAuthorityFailure = await currentAgentAuthority(input)
+    if (initialAuthorityFailure) return initialAuthorityFailure
     const runtime = await readyWorker(input, signal)
     if (!runtime.ok) {
       const cancelled = input.signal.aborted
@@ -372,7 +393,13 @@ export async function executeCloudAgent(input: CloudAgentExecutorInput): Promise
 
     const messageId = previousReceipt?.messageId ?? messageIdForRun(input.automationRunId)
     nativeThreadId = previousReceipt?.nativeThreadId ?? null
+    const recoveringNativeThread = nativeThreadId !== null
     if (!nativeThreadId) {
+      // Wake-up and Connect repair can take minutes. Re-check live authority at
+      // the native-thread boundary so queued recovery cannot use credentials
+      // materialized before the owner or model grant was revoked.
+      const authorityFailure = await currentAgentAuthority(input)
+      if (authorityFailure) return authorityFailure
       const thread = await client.createThread({ title: `Automation: ${input.automationName}`, signal })
       nativeThreadId = thread.id
       // Persist the native session and stable user-message id before any work
@@ -380,6 +407,26 @@ export async function executeCloudAgent(input: CloudAgentExecutorInput): Promise
       await input.onAdmitted({ workerId: runtime.workerId, workspaceId, nativeThreadId, messageId })
     }
 
+    // Thread creation and receipt persistence are also asynchronous. Make the
+    // final authorization decision immediately before submitting the turn.
+    const authorityFailure = await currentAgentAuthority(input)
+    if (authorityFailure) {
+      // A recovered receipt may refer to a turn admitted by a previous Den
+      // process. Do not terminalize the run until that thread is observably
+      // stopped, or a retry could overlap side effects from the revoked turn.
+      if (recoveringNativeThread && !await abortAndObserve(client, nativeThreadId)) {
+        return {
+          ok: false,
+          status: "failed",
+          code: "execution_failed",
+          message: "Model authority was revoked, but OpenWork Cloud could not confirm that the native thread stopped. Inspect the native run before retrying.",
+          retryable: false,
+          needsAttention: true,
+          events: [{ type: "warning", payload: { code: "authority_revoked_abort_not_observed", nativeThreadId } }],
+        }
+      }
+      return authorityFailure
+    }
     const accepted = await client.sendTurn(nativeThreadId, {
       prompt: input.action.instructions,
       messageId,

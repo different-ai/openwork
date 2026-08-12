@@ -996,6 +996,27 @@ export class DenAutomationRepository implements AutomationRepository {
     payload: Record<string, unknown>
     now: number
   }): Promise<AutomationRunEvent> {
+    // This format was shipped with the Desktop runner protocol. Keep it stable
+    // so a retry after a Den deployment finds the event committed by the prior
+    // version instead of failing the ordered-sequence check.
+    const idempotencyKey = `desktop:${input.runId}:${input.attempt}:${input.sequence}`
+    return this.appendClaimedEvent(input, idempotencyKey)
+  }
+
+  appendCloudEvent(input: Parameters<DenAutomationRepository["appendDesktopEvent"]>[0]) {
+    const idempotencyKey = `${input.leaseOwner}:${input.runId}:${input.attempt}:${input.sequence}`
+    return this.appendClaimedEvent(input, idempotencyKey)
+  }
+
+  private async appendClaimedEvent(input: {
+    runId: string
+    leaseOwner: string
+    attempt: number
+    sequence: number
+    type: AutomationRunEventType
+    payload: Record<string, unknown>
+    now: number
+  }, idempotencyKey: string): Promise<AutomationRunEvent> {
     return db.transaction(async (tx) => {
       const runs = await tx.select().from(AutomationRunTable).where(and(
         eq(AutomationRunTable.id, normalizeRunId(input.runId)),
@@ -1006,7 +1027,6 @@ export class DenAutomationRepository implements AutomationRepository {
       )).limit(1).for("update")
       const run = runs[0]
       if (!run) throw new Error("automation_run_lease_lost")
-      const idempotencyKey = `${input.leaseOwner}:${input.runId}:${input.attempt}:${input.sequence}`
       const duplicate = await tx.select().from(AutomationRunEventTable).where(and(
         eq(AutomationRunEventTable.run_id, run.id),
         eq(AutomationRunEventTable.attempt, input.attempt),
@@ -1036,10 +1056,6 @@ export class DenAutomationRepository implements AutomationRepository {
       if (!inserted[0]) throw new Error("automation_runner_event_not_durable")
       return mapEvent(inserted[0])
     })
-  }
-
-  appendCloudEvent(input: Parameters<DenAutomationRepository["appendDesktopEvent"]>[0]) {
-    return this.appendDesktopEvent(input)
   }
 
   async listRunnerNotifications(input: { organizationId: string; ownerMemberId: string; after: number; limit: number }) {

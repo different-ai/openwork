@@ -676,11 +676,12 @@ export class AutomationService {
     })
     if (!result.ok && result.needsAttention) {
       const attentionCode = [
+        "owner_membership_lost",
         "model_access_lost",
         "provider_unavailable",
         "connect_access_unavailable",
         "execution_runtime_unavailable",
-      ].includes(result.code) ? result.code as "model_access_lost" | "provider_unavailable" | "connect_access_unavailable" | "execution_runtime_unavailable" : "execution_runtime_unavailable"
+      ].includes(result.code) ? result.code as "owner_membership_lost" | "model_access_lost" | "provider_unavailable" | "connect_access_unavailable" | "execution_runtime_unavailable" : "execution_runtime_unavailable"
       await automationRepository.markNeedsAttention({
         automationId: claimed.automation.id,
         expectedRevisionId: claimed.revision.id,

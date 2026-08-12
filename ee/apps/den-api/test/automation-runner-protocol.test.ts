@@ -108,7 +108,17 @@ test("offline outcome is explicit and target-auditable", () => {
 })
 
 test("Desktop and Cloud events remain ordered within their claimed attempt", () => {
-  assert.match(repositorySource, /\$\{input\.leaseOwner\}:\$\{input\.runId\}:\$\{input\.attempt\}:\$\{input\.sequence\}/)
+  const desktopEvents = repositorySource.slice(
+    repositorySource.indexOf("async appendDesktopEvent"),
+    repositorySource.indexOf("appendCloudEvent"),
+  )
+  const cloudEvents = repositorySource.slice(
+    repositorySource.indexOf("appendCloudEvent"),
+    repositorySource.indexOf("private async appendClaimedEvent"),
+  )
+  assert.match(desktopEvents, /desktop:\$\{input\.runId\}:\$\{input\.attempt\}:\$\{input\.sequence\}/)
+  assert.doesNotMatch(desktopEvents, /input\.leaseOwner/)
+  assert.match(cloudEvents, /\$\{input\.leaseOwner\}:\$\{input\.runId\}:\$\{input\.attempt\}:\$\{input\.sequence\}/)
   assert.match(repositorySource, /attempt:\s*input\.attempt,[\s\S]*sequence:\s*input\.sequence/)
   assert.match(repositorySource, /orderBy\(asc\(AutomationRunEventTable\.attempt\), asc\(AutomationRunEventTable\.sequence\)\)/)
 })
@@ -221,6 +231,14 @@ test("every dispatch path revalidates the owner's model access", () => {
   const runNow = serviceSource.slice(serviceSource.indexOf("async runNow"), serviceSource.indexOf("listRuns"))
   assert.match(runNow, /resolveAutomationModelAccess\(\{ \.\.\.scope, \.\.\.current\.revision\.model \}\)/)
   assert.match(runNow, /shouldApplyAutomationModelAccessFailure\(\{[\s\S]*supportsModelAttention\(scope\)/)
+
+  const executorSource = readFileSync(join(import.meta.dir, "../src/automations/cloud-agent-executor.ts"), "utf8")
+  const execution = executorSource.slice(executorSource.indexOf("export async function executeCloudAgent"))
+  assert.match(executorSource, /currentAgentAuthority[\s\S]*resolveAutomationModelAccess\(/)
+  assert.match(execution, /currentAgentAuthority\(input\)[\s\S]*readyWorker/)
+  assert.match(execution, /currentAgentAuthority\(input\)[\s\S]*createThread/)
+  assert.match(execution, /currentAgentAuthority\(input\)[\s\S]*abortAndObserve\(client, nativeThreadId\)[\s\S]*sendTurn/)
+  assert.match(serviceSource, /"owner_membership_lost",[\s\S]*markNeedsAttention/)
 })
 
 test("Cloud placement never inherits the legacy Desktop model exception", () => {
