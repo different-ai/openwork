@@ -126,3 +126,48 @@ export const dynamicArtifactAppPayloadSchema = z.object({
   data: z.unknown(),
 })
 export type DynamicArtifactAppPayload = z.infer<typeof dynamicArtifactAppPayloadSchema>
+
+export const generatedArtifactViewCspSchema = z.object({
+  connectDomains: z.array(z.string()).length(0),
+  resourceDomains: z.array(z.string()).length(0),
+  frameDomains: z.array(z.string()).length(0),
+  baseUriDomains: z.array(z.string()).length(0),
+})
+export type GeneratedArtifactViewCsp = z.infer<typeof generatedArtifactViewCspSchema>
+
+export const generatedArtifactViewBuildDiagnosticSchema = z.object({
+  level: z.enum(["error", "warning"]),
+  message: z.string().trim().min(1).max(4_000),
+  line: z.number().int().positive().nullable(),
+  column: z.number().int().nonnegative().nullable(),
+})
+export type GeneratedArtifactViewBuildDiagnostic = z.infer<typeof generatedArtifactViewBuildDiagnosticSchema>
+
+export const generatedArtifactViewRevisionSchema = z.object({
+  id: idSchema,
+  artifactViewId: idSchema,
+  resourceUri: z.string().startsWith("ui://openwork/artifacts/"),
+  buildStatus: z.enum(["ready", "failed"]),
+  sourceDigest: digestSchema,
+  resourceDigest: digestSchema.nullable(),
+  outputSchemaDigest: digestSchema,
+  csp: generatedArtifactViewCspSchema,
+  diagnostics: z.array(generatedArtifactViewBuildDiagnosticSchema),
+  compiledHtmlBytes: z.number().int().nonnegative().nullable(),
+  retiredAt: z.string().datetime().nullable(),
+  createdAt: z.string().datetime(),
+})
+export type GeneratedArtifactViewRevision = z.infer<typeof generatedArtifactViewRevisionSchema>
+
+export const generatedArtifactViewSchema = z.object({
+  id: idSchema,
+  configObjectId: idSchema,
+  title: z.string().trim().min(1).max(255),
+  description: z.string().trim().max(2_000).nullable(),
+  status: z.enum(["active", "retired"]),
+  activeRevisionId: idSchema.nullable(),
+  revisions: z.array(generatedArtifactViewRevisionSchema),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime(),
+})
+export type GeneratedArtifactView = z.infer<typeof generatedArtifactViewSchema>

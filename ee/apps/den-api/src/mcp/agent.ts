@@ -45,6 +45,15 @@ import {
 } from "./capability-registry.js"
 import { runCodemodeScript } from "./codemode-run.js"
 import { recordCodemodeScriptResult } from "../codemode-runs.js"
+import {
+  activateArtifactViewRevision,
+  listArtifactViews,
+  loadArtifactViewRevision,
+  retireArtifactView,
+  saveArtifactViewRevision,
+} from "../artifact-views.js"
+import { registerAgentGeneratedArtifactViews } from "./generated-artifact-views.js"
+import type { PluginArchActorContext } from "../routes/org/plugin-system/access.js"
 
 export { externalToolContent } from "./tool-content.js"
 export { externalCapabilityErrorToolResult, externalCapabilitySuccessToolResult }
@@ -334,6 +343,7 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
       .where(eq(OrganizationTable.id, organizationId))
       .limit(1)
     const codemodeEnabled = codemodeScriptsEnabled(organizationRows[0]?.metadata)
+    const method = await mcpRequestMethod(c.req.raw)
     const capabilityContext = createCapabilityRegistryContext({
       app: app as unknown as Hono,
       env: c.env,
@@ -348,7 +358,28 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
     })
     const { externalMcpConnectionsEnabled } = capabilityContext
     let remoteSkills: RemoteSkillDescriptor[] = []
-    const method = await mcpRequestMethod(c.req.raw)
+    let artifactContext: PluginArchActorContext | null = null
+    const artifactMethod = method === "initialize"
+      || method === "tools/list"
+      || method === "tools/call"
+      || method === "resources/list"
+      || method === "resources/read"
+    if (codemodeEnabled && memberIdentity && artifactMethod) {
+      const organizationContext = await getOrganizationContextForUser({
+        userId: normalizeDenTypeId("user", principal.userId),
+        organizationId,
+      })
+      if (organizationContext) {
+        artifactContext = {
+          organizationContext,
+          memberTeams: await listTeamsForMember({
+            organizationId,
+            memberId: memberIdentity.orgMembershipId,
+          }),
+          session: null,
+        }
+      }
+    }
     if (method === "initialize" || method === "resources/list" || method === "resources/read") {
       remoteSkills = [
         ...listBuiltinSkillDescriptors(),
@@ -443,111 +474,137 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
     )
 
     if (codemodeEnabled) {
-      registerAgentDynamicArtifactApp({
-        server,
-        load: async ({ configObjectId, receiptId, maxAgeMs }) => {
-          if (!memberIdentity) {
+      const loadDynamicArtifact = async ({
+        configObjectId,
+        receiptId,
+        maxAgeMs,
+        expectedOutputSchemaDigest,
+      }: {
+        configObjectId: string
+        receiptId?: string
+        maxAgeMs?: number
+        expectedOutputSchemaDigest?: string
+      }) => {
+        if (!artifactContext) {
+          return {
+            ok: false as const,
+            error: "saved_script_not_found",
+            message: "The saved Script is unavailable to this member.",
+          }
+        }
+        try {
+          const detail = await getCodemodeScriptDetail({
+            context: artifactContext,
+            configObjectId,
+            maxAgeMs,
+          })
+          const snapshot = receiptId
+            ? await getCodemodeScriptSnapshot({ context: artifactContext, configObjectId, receiptId })
+            : detail.latestSuccessfulSnapshot
+          if (!snapshot) {
             return {
-              ok: false,
+              ok: false as const,
+              error: "saved_script_snapshot_not_found",
+              message: receiptId
+                ? "That immutable artifact snapshot was not found."
+                : "This saved Script does not have a successful artifact snapshot yet. Run it explicitly or through its Automation first.",
+            }
+          }
+          if (snapshot.status !== "succeeded" || snapshot.contentDeletedAt !== null
+            || snapshot.markdown === null
+            || snapshot.resultDigest === null || snapshot.rendererVersion !== "codemode-markdown-v1") {
+            return {
+              ok: false as const,
+              error: "saved_script_snapshot_unavailable",
+              message: "This artifact snapshot has no readable successful content.",
+            }
+          }
+          if (expectedOutputSchemaDigest && snapshot.outputSchemaDigest !== expectedOutputSchemaDigest) {
+            return {
+              ok: false as const,
+              error: "artifact_view_schema_incompatible",
+              message: "This Artifact result does not match the immutable view revision's output schema.",
+            }
+          }
+          const freshness = receiptId
+            ? artifactFreshness({
+                latestFinishedAt: new Date(snapshot.finishedAt),
+                latestStatus: "succeeded",
+                latestSuccessfulFinishedAt: new Date(snapshot.finishedAt),
+                latestSuccessfulReceiptId: snapshot.receiptId,
+                maxAgeMs: Math.min(30 * 24 * 60 * 60_000, Math.max(60_000, maxAgeMs ?? 24 * 60 * 60_000)),
+              })
+            : detail.freshness
+          return {
+            ok: true as const,
+            markdown: snapshot.markdown,
+            payload: {
+              schemaVersion: DYNAMIC_ARTIFACT_APP_SCHEMA_VERSION,
+              artifact: {
+                title: detail.title,
+                description: detail.description,
+                pluginId: snapshot.pluginId,
+                configObjectId: snapshot.configObjectId,
+                configObjectVersionId: snapshot.configObjectVersionId,
+                receiptId: snapshot.receiptId,
+                automationRunId: snapshot.automationRunId,
+                source: snapshot.source,
+                generatedAt: snapshot.finishedAt,
+                resultDigest: snapshot.resultDigest,
+                rendererVersion: snapshot.rendererVersion,
+                freshness,
+              },
+              data: snapshot.value,
+            },
+          }
+        } catch (error) {
+          if (error instanceof PluginArchAuthorizationError) {
+            return {
+              ok: false as const,
               error: "saved_script_not_found",
               message: "The saved Script is unavailable to this member.",
             }
           }
-          try {
-            const organizationContext = await getOrganizationContextForUser({
-              userId: normalizeDenTypeId("user", principal.userId),
-              organizationId,
-            })
-            if (!organizationContext) {
-              return {
-                ok: false,
-                error: "saved_script_not_found",
-                message: "The saved Script is unavailable to this member.",
-              }
-            }
-            const memberTeams = await listTeamsForMember({
-              organizationId,
-              memberId: memberIdentity.orgMembershipId,
-            })
-            const context = {
-              organizationContext,
-              memberTeams,
-              session: null,
-            }
-            const detail = await getCodemodeScriptDetail({
-              context,
-              configObjectId,
-              maxAgeMs,
-            })
-            const snapshot = receiptId
-              ? await getCodemodeScriptSnapshot({ context, configObjectId, receiptId })
-              : detail.latestSuccessfulSnapshot
-            if (!snapshot) {
-              return {
-                ok: false,
-                error: "saved_script_snapshot_not_found",
-                message: receiptId
-                  ? "That immutable artifact snapshot was not found."
-                  : "This saved Script does not have a successful artifact snapshot yet. Run it explicitly or through its Automation first.",
-              }
-            }
-            if (snapshot.status !== "succeeded" || snapshot.contentDeletedAt !== null
-              || snapshot.markdown === null
-              || snapshot.resultDigest === null || snapshot.rendererVersion !== "codemode-markdown-v1") {
-              return {
-                ok: false,
-                error: "saved_script_snapshot_unavailable",
-                message: "This artifact snapshot has no readable successful content.",
-              }
-            }
-            const freshness = receiptId
-              ? artifactFreshness({
-                  latestFinishedAt: new Date(snapshot.finishedAt),
-                  latestStatus: "succeeded",
-                  latestSuccessfulFinishedAt: new Date(snapshot.finishedAt),
-                  latestSuccessfulReceiptId: snapshot.receiptId,
-                  maxAgeMs: Math.min(30 * 24 * 60 * 60_000, Math.max(60_000, maxAgeMs ?? 24 * 60 * 60_000)),
-                })
-              : detail.freshness
-            return {
-              ok: true,
-              markdown: snapshot.markdown,
-              payload: {
-                schemaVersion: DYNAMIC_ARTIFACT_APP_SCHEMA_VERSION,
-                artifact: {
-                  title: detail.title,
-                  description: detail.description,
-                  pluginId: snapshot.pluginId,
-                  configObjectId: snapshot.configObjectId,
-                  configObjectVersionId: snapshot.configObjectVersionId,
-                  receiptId: snapshot.receiptId,
-                  automationRunId: snapshot.automationRunId,
-                  source: snapshot.source,
-                  generatedAt: snapshot.finishedAt,
-                  resultDigest: snapshot.resultDigest,
-                  rendererVersion: snapshot.rendererVersion,
-                  freshness,
-                },
-                data: snapshot.value,
-              },
-            }
-          } catch (error) {
-            if (error instanceof PluginArchAuthorizationError) {
-              return {
-                ok: false,
-                error: "saved_script_not_found",
-                message: "The saved Script is unavailable to this member.",
-              }
-            }
-            const message = error instanceof Error ? error.message : "saved_script_not_found"
-            return {
-              ok: false,
-              error: message.includes("not_found") ? "saved_script_not_found" : "saved_script_unavailable",
-              message: "The Dynamic Artifact could not be loaded.",
-            }
+          const message = error instanceof Error ? error.message : "saved_script_not_found"
+          return {
+            ok: false as const,
+            error: message.includes("not_found") ? "saved_script_not_found" : "saved_script_unavailable",
+            message: "The Dynamic Artifact could not be loaded.",
           }
-        },
+        }
+      }
+
+      registerAgentDynamicArtifactApp({
+        server,
+        load: loadDynamicArtifact,
       })
+
+      if (artifactContext) {
+        const generatedViews = await listArtifactViews({ context: artifactContext })
+        registerAgentGeneratedArtifactViews({
+          server,
+          views: generatedViews,
+          loadResource: async ({ artifactViewId, revisionId }) => {
+            const { revision } = await loadArtifactViewRevision({
+              context: artifactContext,
+              artifactViewId,
+              revisionId,
+            })
+            if (revision.build_status !== "ready" || !revision.compiled_html || !revision.resource_digest) {
+              throw new Error("artifact_view_revision_not_ready")
+            }
+            return {
+              html: revision.compiled_html,
+              resourceDigest: revision.resource_digest,
+              csp: revision.csp,
+            }
+          },
+          loadData: loadDynamicArtifact,
+          save: (request) => saveArtifactViewRevision({ context: artifactContext, ...request }),
+          activate: (request) => activateArtifactViewRevision({ context: artifactContext, ...request }),
+          retire: (request) => retireArtifactView({ context: artifactContext, ...request }),
+        })
+      }
 
       server.registerTool(
         EXECUTE_CAPABILITY_SCRIPT_TOOL_NAME,
