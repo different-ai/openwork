@@ -47,16 +47,43 @@ export function toTranscriptMessage(message: HeadlessThreadMessage): HeadlessTra
   };
 }
 
+function emptyUsage() {
+  return { inputTokens: 0, outputTokens: 0, reasoningTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, cost: 0 };
+}
+
 export function toTranscript(snapshot: HeadlessThreadSnapshot): HeadlessThreadTranscript {
   const messages = snapshot.messages.map(toTranscriptMessage);
+  const assistantMessages = snapshot.messages.filter((message) => message.role === "assistant");
   const lastAssistant = messages.filter((message) => message.role === "assistant" && message.text).at(-1);
+  const usage = assistantMessages.reduce((total, message) => {
+    if (!message.usage) return total;
+    total.inputTokens += message.usage.inputTokens;
+    total.outputTokens += message.usage.outputTokens;
+    total.reasoningTokens += message.usage.reasoningTokens;
+    total.cacheReadTokens += message.usage.cacheReadTokens;
+    total.cacheWriteTokens += message.usage.cacheWriteTokens;
+    total.cost += message.usage.cost;
+    return total;
+  }, emptyUsage());
   return {
     threadId: snapshot.threadId,
     title: snapshot.title,
     status: snapshot.status,
     messages,
     finalAssistantText: lastAssistant ? lastAssistant.text : "",
+    usage,
+    terminalError: assistantMessages.at(-1)?.error ?? null,
   };
+}
+
+export function assistantReplyForTurn(messages: HeadlessThreadMessage[], input: {
+  messageId: string | null;
+  messageCountBefore: number;
+}): HeadlessThreadMessage | null {
+  if (input.messageId) {
+    return messages.find((message) => message.role === "assistant" && message.parentId === input.messageId) ?? null;
+  }
+  return messages.slice(input.messageCountBefore).find((message) => message.role === "assistant") ?? null;
 }
 
 /**

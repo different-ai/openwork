@@ -19,6 +19,7 @@ import {
   automationRunnerTokenResponseSchema,
   automationRunnerWorkResponseSchema,
   createAutomationSchema,
+  createCloudAutomationSchema,
   updateAutomationSchema,
 } from "@openwork/types/automations"
 import {
@@ -280,17 +281,43 @@ export function registerAutomationRoutes<T extends { Variables: RouteVariables }
 
   app.post(
     "/v1/automations",
-    describeMcpRoute({
-      tags: ["Automations"], operationId: "createAutomation", "x-mcp": true,
-      summary: "Create an active Automation",
-      description: `${routeDescription} Action-based creation is the Web and Cloud Chat surface and always creates an OpenWork Cloud Automation. Published Desktop clients use the legacy agent definition, which always creates a Desktop Automation. There is no draft, review, or permission-grant step.`,
+    describeNonMcpRoute({
+      tags: ["Automations"], operationId: "createAutomation", "x-mcp": false,
+      summary: "Create an active Automation from an app surface",
+      description: `${routeDescription} This compatibility route serves first-party Desktop clients. Agents must use createCloudAutomation so they cannot accidentally create Desktop placement.`,
       responses: {
         201: jsonResponse("Active Automation created.", automationDetailSchema),
         400: jsonResponse("Invalid request.", invalidRequestSchema),
         401: jsonResponse("Sign-in required.", unauthorizedSchema),
+        409: jsonResponse("Cloud runtime or model access is unavailable.", invalidRequestSchema),
       },
     }),
     orgMemberRoute(), jsonValidator(createAutomationSchema),
+    async (c) => {
+      try {
+        return c.json(await service.create(scope(c), c.req.valid("json")), 201)
+      } catch (error) {
+        const mapped = failure(error)
+        if (mapped) return c.json(mapped.body, mapped.status)
+        throw error
+      }
+    },
+  )
+
+  app.post(
+    "/v1/cloud-automations",
+    describeMcpRoute({
+      tags: ["Automations"], operationId: "createCloudAutomation", "x-mcp": true,
+      summary: "Create an active OpenWork Cloud Automation",
+      description: `${routeDescription} This is the Web and Cloud Chat creation surface. Placement is fixed to OpenWork Cloud and the Automation can wake a stopped Cloud container without a desktop. Create only when the person explicitly asks to create or schedule it; there is no draft step.`,
+      responses: {
+        201: jsonResponse("Active Cloud Automation created.", automationDetailSchema),
+        400: jsonResponse("Invalid request.", invalidRequestSchema),
+        401: jsonResponse("Sign-in required.", unauthorizedSchema),
+        409: jsonResponse("Cloud runtime or model access is unavailable.", invalidRequestSchema),
+      },
+    }),
+    orgMemberRoute(), jsonValidator(createCloudAutomationSchema),
     async (c) => {
       try {
         return c.json(await service.create(scope(c), c.req.valid("json")), 201)

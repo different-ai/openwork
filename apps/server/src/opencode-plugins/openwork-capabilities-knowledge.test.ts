@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { resolve } from "node:path";
-import { OpenWorkCapabilitiesKnowledge } from "./openwork-capabilities-knowledge.js";
+import { automationRuntimeKnowledge, OpenWorkCapabilitiesKnowledge } from "./openwork-capabilities-knowledge.js";
 
 describe("OpenWork capabilities knowledge plugin", () => {
   test("injects current OpenWork Connect guidance", async () => {
@@ -124,8 +124,8 @@ describe("OpenWork capabilities knowledge plugin", () => {
     expect(knowledge).toContain("openwork_execute");
     expect(knowledge).toContain("automation.propose");
     // Scheduling OpenWork work through the OS is the exact failure this guidance prevents.
-    expect(knowledge).toContain("Never write a cron entry, a launchd or systemd unit, a Task Scheduler job");
-    expect(knowledge).toContain("Proposing is not creating");
+    expect(knowledge).toContain("Never write a cron entry, launchd/systemd unit, Task Scheduler job");
+    expect(knowledge).toContain("Desktop creation fixes placement to Desktop");
     // Reading and changing an existing Automation is a real capability, so the
     // guidance must name it rather than claim the agent cannot act at all.
     expect(knowledge).toContain("listAutomations");
@@ -133,11 +133,18 @@ describe("OpenWork capabilities knowledge plugin", () => {
     expect(knowledge).toContain("updateAutomation");
     expect(knowledge).toContain("runAutomationNow");
     expect(knowledge).toContain("cancelAutomationRun");
-    expect(knowledge).toContain("Never state a next run time or a run outcome from memory or inference");
-    expect(knowledge).toContain("Deactivating stops future runs; it does not cancel a run already in progress");
+    expect(knowledge).toContain("Only report schedules, status, next runs, or results from an actual capability call");
+    expect(knowledge).toContain("Deactivation stops future runs but does not cancel a run already in progress");
     expect(knowledge).not.toContain("you cannot create, activate, or run an Automation");
     expect(knowledge).toContain("There is no interval schedule");
-    expect(knowledge).toContain("durably recorded as missed");
-    expect(knowledge).toContain("0=Sunday through 6=Saturday");
+    expect(knowledge).toContain("signed-in desktop runner");
+  });
+
+  test("gives Cloud workers a Cloud-only creation contract", () => {
+    const knowledge = automationRuntimeKnowledge("daytona");
+    expect(knowledge).toContain("use createCloudAutomation");
+    expect(knowledge).toContain("runs headlessly without a desktop");
+    expect(knowledge).toContain("wake a stopped Cloud container");
+    expect(knowledge).toContain("Do not use createAutomation or automation.propose from Cloud Chat");
   });
 });

@@ -6,6 +6,7 @@ import { materializeCloudWorkerProviders } from "../llm/cloud-provider-materiali
 import { appLogger } from "../observability/logger.js"
 import { captureException } from "../observability/runtime.js"
 import { CLOUD_INSTANCE_BACKEND } from "./cloud-constants.js"
+import { automationUpdateChangedRows } from "../automations/update-result.js"
 import {
   isDaytonaSandboxMissingError,
   provisionWorkerOnDaytona,
@@ -26,6 +27,8 @@ type CloudLifecycleStore = {
   getWorker: (workerId: WorkerId) => Promise<CloudWorker | null>
   getActiveTokens: (workerId: WorkerId) => Promise<WorkerToken[]>
   listIdleWorkers: (input: { idleBefore: Date; limit: number }) => Promise<CloudWorker[]>
+  reserveWake: (workerId: WorkerId) => Promise<boolean>
+  reserveIdleStop: (input: { workerId: WorkerId; idleBefore: Date }) => Promise<boolean>
   updateWorkerStatus: (input: { workerId: WorkerId; status: WorkerStatus; imageVersion?: string | null; onlyWhenStatus?: WorkerStatus }) => Promise<void>
 }
 
@@ -79,6 +82,13 @@ const databaseCloudLifecycleStore: CloudLifecycleStore = {
       .from(WorkerTokenTable)
       .where(and(eq(WorkerTokenTable.worker_id, workerId), isNull(WorkerTokenTable.revoked_at)))
   },
+  async reserveWake(workerId) {
+    const result: unknown = await db.update(WorkerTable).set({ status: "provisioning" }).where(and(
+      eq(WorkerTable.id, workerId),
+      eq(WorkerTable.status, "stopped"),
+    ))
+    return automationUpdateChangedRows(result)
+  },
   async listIdleWorkers(input) {
     return db
       .select()
@@ -107,6 +117,28 @@ const databaseCloudLifecycleStore: CloudLifecycleStore = {
       ))
       .orderBy(asc(WorkerTable.updated_at))
       .limit(input.limit)
+  },
+  async reserveIdleStop(input) {
+    const result: unknown = await db.update(WorkerTable).set({ status: "provisioning" }).where(and(
+      eq(WorkerTable.id, input.workerId),
+      eq(WorkerTable.status, "healthy"),
+      or(
+        lt(WorkerTable.last_active_at, input.idleBefore),
+        and(isNull(WorkerTable.last_active_at), lt(WorkerTable.updated_at, input.idleBefore)),
+      ),
+      notExists(
+        db.select({ id: AutomationRunTable.id }).from(AutomationRunTable)
+          .innerJoin(AutomationTable, eq(AutomationTable.id, AutomationRunTable.automation_id))
+          .innerJoin(MemberTable, eq(MemberTable.id, AutomationTable.owner_member_id))
+          .where(and(
+            eq(AutomationTable.organization_id, WorkerTable.org_id),
+            eq(MemberTable.userId, WorkerTable.created_by_user_id),
+            eq(AutomationRunTable.execution_target, "cloud"),
+            inArray(AutomationRunTable.status, ["claimed", "running"]),
+          )),
+      ),
+    ))
+    return automationUpdateChangedRows(result)
   },
   async updateWorkerStatus(input) {
     const update = input.imageVersion === undefined
@@ -156,7 +188,12 @@ async function runWakeCloudWorker(workerId: WorkerId, options: WakeCloudWorkerOp
       return
     }
 
-    await store.updateWorkerStatus({ workerId, status: "provisioning", onlyWhenStatus: "stopped" })
+    // Another replica may already be waking or stopping this worker. Its
+    // durable status is the cross-replica mutex; callers poll until the
+    // transition resolves instead of issuing a competing provider action.
+    if (worker.status !== "stopped") return
+
+    if (!await store.reserveWake(workerId)) return
 
     const tokens = await store.getActiveTokens(workerId)
     const hostToken = tokenByScope(tokens, "host")
@@ -250,12 +287,16 @@ export async function stopIdleCloudWorkers(options: StopIdleCloudWorkersOptions 
 
   for (const worker of workers) {
     try {
+      if (!await store.reserveIdleStop({ workerId: worker.id, idleBefore })) continue
       const result = await stopWorker(worker.id)
       if (stopResultAllowsStoppedStatus(result)) {
-        await store.updateWorkerStatus({ workerId: worker.id, status: "stopped", onlyWhenStatus: "healthy" })
+        await store.updateWorkerStatus({ workerId: worker.id, status: "stopped", onlyWhenStatus: "provisioning" })
         stopped += 1
+      } else {
+        await store.updateWorkerStatus({ workerId: worker.id, status: "healthy", onlyWhenStatus: "provisioning" })
       }
     } catch (error) {
+      await store.updateWorkerStatus({ workerId: worker.id, status: "healthy", onlyWhenStatus: "provisioning" }).catch(() => undefined)
       logger.error("cloud idle stop failed", { worker_id: worker.id, error })
       captureException(error, { component: "cloud_lifecycle", worker_id: worker.id })
     }

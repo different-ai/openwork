@@ -857,7 +857,7 @@ function proposeAutomation(rawArgs: unknown): object {
     kind: "automation-proposal",
     proposal,
     created: false,
-    limitation: "Automations run only while a signed-in desktop runner is connected.",
+    limitation: "This Desktop proposal creates Desktop placement and runs only while a signed-in desktop runner is connected. Use Web or Cloud Chat to create headless Cloud placement.",
   };
 }
 

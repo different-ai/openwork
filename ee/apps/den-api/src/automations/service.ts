@@ -93,7 +93,11 @@ export class AutomationService {
       if (definition.executionTarget !== "cloud") {
         throw new Error("automation_action_target_mismatch")
       }
-      if (definition.action.kind === "agent") await this.requireNewModel(scope, definition.action.model)
+      if (definition.action.kind === "agent") {
+        // Action-based creation is Cloud placement. The legacy Zen exception
+        // exists only for already-published Desktop clients.
+        await this.requireNewModel({ ...scope, modelAttentionCapable: true }, definition.action.model)
+      }
       else {
         if (!await isActiveAutomationOwner(scope)) throw new Error("automation_owner_inactive")
         await validateSavedScriptAutomationAction({ ...scope, action: definition.action })
@@ -111,6 +115,10 @@ export class AutomationService {
   async update(scope: OwnerScope, automationId: string, changes: UpdateAutomation) {
     const current = await this.get(scope, automationId)
     if (!current) return null
+    if (changes.executionTarget !== undefined
+      && changes.executionTarget !== (current.revision.executionTarget ?? "desktop")) {
+      throw new Error("automation_action_target_mismatch")
+    }
     const nextAction = changes.action ?? current.revision.action
     if ((current.revision.executionTarget ?? "desktop") === "desktop" && nextAction?.kind === "saved_script") {
       throw new Error("automation_action_target_mismatch")
@@ -125,7 +133,14 @@ export class AutomationService {
       const requestedModel = changes.action?.kind === "agent"
         ? changes.action.model
         : changes.model ?? nextAction.model
-      if (!sameModel(requestedModel, current.revision.model)) await this.requireNewModel(scope, requestedModel)
+      if (!sameModel(requestedModel, current.revision.model)) {
+        await this.requireNewModel(
+          (current.revision.executionTarget ?? "desktop") === "cloud"
+            ? { ...scope, modelAttentionCapable: true }
+            : scope,
+          requestedModel,
+        )
+      }
     }
     const updated = await automationRepository.update({ ...scope, automationId, changes, now: Date.now() })
     return this.reconcileModelAttention(updated, scope)
@@ -136,6 +151,17 @@ export class AutomationService {
     if (!current) return null
     if (current.revision.action?.kind === "saved_script") {
       if (!await isActiveAutomationOwner(scope)) throw new Error("automation_owner_inactive")
+    } else {
+      if ((current.revision.executionTarget ?? "desktop") === "cloud"
+        && (!cloudAgentRuntimeAvailable || !await cloudAgentRuntimeAvailable(scope))) {
+        throw new Error("automation_cloud_worker_required")
+      }
+      await this.requireNewModel(
+        (current.revision.executionTarget ?? "desktop") === "cloud"
+          ? { ...scope, modelAttentionCapable: true }
+          : scope,
+        current.revision.model,
+      )
     }
     const activated = await automationRepository.setState({ ...scope, automationId, state: "active", now: Date.now() })
     return activated ? this.reconcileModelAttention(activated, scope) : null
@@ -160,7 +186,8 @@ export class AutomationService {
       if (!access.ok && shouldApplyAutomationModelAccessFailure({
         model: current.revision.model,
         failure: access,
-        modelAttentionCapable: supportsModelAttention(scope),
+        modelAttentionCapable: (current.revision.executionTarget ?? "desktop") === "cloud"
+          || supportsModelAttention(scope),
       })) blocked = { code: access.code, message: access.message, occurredAt: Date.now() }
     }
     if (blocked) {
@@ -259,7 +286,7 @@ export class AutomationService {
         failure: access,
         // Scheduling must remain compatible until a capable desktop claims
         // the work or a capable management client reconciles the Automation.
-        modelAttentionCapable: false,
+        modelAttentionCapable: (item.revision.executionTarget ?? "desktop") === "cloud",
       })) {
         await automationRepository.skipRun({ runId: claim.run.id, code: access.code, message: access.message, now })
         await automationRepository.markNeedsAttention({
@@ -445,7 +472,8 @@ export class AutomationService {
     if (access.ok || !shouldApplyAutomationModelAccessFailure({
       model: item.revision.model,
       failure: access,
-      modelAttentionCapable: supportsModelAttention(scope),
+      modelAttentionCapable: (item.revision.executionTarget ?? "desktop") === "cloud"
+        || supportsModelAttention(scope),
     })) return item
     const now = Date.now()
     await automationRepository.markNeedsAttention({
@@ -467,6 +495,7 @@ export class AutomationService {
       runId,
       leaseOwner,
       leaseMs: env.automations.leaseMs,
+      maxConcurrency: env.automations.maxConcurrency,
       now: Date.now(),
     })
     if (!claimed) return
@@ -586,6 +615,7 @@ export class AutomationService {
     const result = await executor({
       organizationId: claimed.automation.organizationId,
       ownerMemberId: claimed.automation.ownerMemberId,
+      automationRunId: claimed.run.id,
       automationName: claimed.automation.name,
       action,
       maximumRuntimeMs: claimed.revision.maximumRuntimeMs,
@@ -603,8 +633,35 @@ export class AutomationService {
       status: controller.signal.aborted ? "cancelled" : "failed",
       code: controller.signal.aborted ? "cancelled" : "execution_failed",
       message: controller.signal.aborted ? "The Automation run was cancelled." : error instanceof Error ? error.message : "Cloud agent execution failed.",
-      retryable: !controller.signal.aborted,
+      // The executor may have admitted a deterministic native turn before an
+      // unexpected exception escaped. A person must inspect that run instead
+      // of risking a second set of external side effects.
+      retryable: false,
     })).finally(() => clearInterval(interval))
+
+    if (!result.ok && result.retryable && await automationRepository.queueRetry({
+      runId: claimed.run.id,
+      leaseOwner,
+      now: Date.now(),
+    })) return
+
+    const events = result.ok ? result.events : result.events ?? [{
+      type: "terminal" as const,
+      payload: { status: result.status, code: result.code, message: result.message },
+    }]
+    for (const [index, event] of events.entries()) {
+      await monitor()
+      if (controller.signal.aborted) throw new Error("automation_run_lease_lost")
+      await automationRepository.appendCloudEvent({
+        runId: claimed.run.id,
+        leaseOwner,
+        attempt: claimed.run.attemptCount,
+        sequence: index + 1,
+        type: event.type,
+        payload: event.payload,
+        now: Date.now(),
+      })
+    }
 
     await automationRepository.completeCloud({
       automationId: claimed.automation.id,
@@ -612,15 +669,22 @@ export class AutomationService {
       leaseOwner,
       status: result.ok ? "succeeded" : result.status,
       resultSummary: result.ok ? result.resultSummary : result.message,
+      usage: result.usage,
       updateArtifactState: false,
       error: result.ok ? null : { code: result.code, message: result.message, retryable: result.retryable },
       now: Date.now(),
     })
     if (!result.ok && result.needsAttention) {
+      const attentionCode = [
+        "model_access_lost",
+        "provider_unavailable",
+        "connect_access_unavailable",
+        "execution_runtime_unavailable",
+      ].includes(result.code) ? result.code as "model_access_lost" | "provider_unavailable" | "connect_access_unavailable" | "execution_runtime_unavailable" : "execution_runtime_unavailable"
       await automationRepository.markNeedsAttention({
         automationId: claimed.automation.id,
         expectedRevisionId: claimed.revision.id,
-        reason: { code: "execution_runtime_unavailable", message: result.message, occurredAt: Date.now() },
+        reason: { code: attentionCode, message: result.message, occurredAt: Date.now() },
         now: Date.now(),
       })
     }

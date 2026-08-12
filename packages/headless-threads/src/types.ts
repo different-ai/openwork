@@ -41,8 +41,27 @@ export interface HeadlessThreadMessagePart {
 export interface HeadlessThreadMessage {
   id: string;
   role: string;
+  /** The user message this assistant response belongs to. */
+  parentId: string | null;
   createdAt: number | null;
+  error: HeadlessThreadMessageError | null;
+  usage: HeadlessThreadUsage | null;
   parts: HeadlessThreadMessagePart[];
+}
+
+export interface HeadlessThreadMessageError {
+  name: string;
+  message: string;
+  retryable: boolean | null;
+}
+
+export interface HeadlessThreadUsage {
+  inputTokens: number;
+  outputTokens: number;
+  reasoningTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  cost: number;
 }
 
 export interface CreateThreadInput {
@@ -50,6 +69,7 @@ export interface CreateThreadInput {
   /** Optional first turn. When present the thread starts running immediately. */
   prompt?: string;
   model?: HeadlessThreadModel;
+  signal?: AbortSignal;
 }
 
 export interface HeadlessThread {
@@ -69,6 +89,9 @@ export interface HeadlessThread {
 export interface HeadlessThreadTurnInput {
   prompt: string;
   model?: HeadlessThreadModel;
+  /** Stable engine message id used to make prompt admission idempotent. */
+  messageId?: string;
+  signal?: AbortSignal;
 }
 
 /**
@@ -80,17 +103,20 @@ export interface HeadlessTurnAcceptance {
   threadId: string;
   acceptedAt: number;
   messageCountBefore: number;
+  messageId: string | null;
+  /** True when the engine already held this exact user message. */
+  alreadyPresent: boolean;
 }
 
 export interface HeadlessThreadWaitInput {
   timeoutMs: number;
   pollIntervalMs?: number;
   /** The turn being waited on. Omit to wait on a thread's first reply. */
-  since?: Pick<HeadlessTurnAcceptance, "messageCountBefore">;
+  since?: { messageCountBefore: number; messageId?: string | null };
   signal?: AbortSignal;
 }
 
-export type HeadlessThreadWaitOutcome = "settled" | "timeout" | "aborted";
+export type HeadlessThreadWaitOutcome = "settled" | "failed" | "timeout" | "aborted";
 
 export interface HeadlessThreadWaitResult {
   outcome: HeadlessThreadWaitOutcome;
@@ -99,6 +125,7 @@ export interface HeadlessThreadWaitResult {
   polls: number;
   /** True when a busy or retry status was seen while waiting. */
   observedRunning: boolean;
+  terminalError: HeadlessThreadMessageError | null;
 }
 
 export interface HeadlessThreadSnapshot {
@@ -142,15 +169,18 @@ export interface HeadlessThreadTranscript {
   messages: HeadlessTranscriptMessage[];
   /** Text of the last assistant message, or an empty string when there is none. */
   finalAssistantText: string;
+  usage: HeadlessThreadUsage;
+  terminalError: HeadlessThreadMessageError | null;
 }
 
 export interface HeadlessThreadClient {
   createThread(input: CreateThreadInput): Promise<HeadlessThread>;
   sendTurn(threadId: string, input: HeadlessThreadTurnInput): Promise<HeadlessTurnAcceptance>;
   waitForThread(threadId: string, input: HeadlessThreadWaitInput): Promise<HeadlessThreadWaitResult>;
-  getThreadSnapshot(threadId: string): Promise<HeadlessThreadSnapshot>;
-  abortThread(threadId: string): Promise<HeadlessAbortResult>;
-  exportTranscript(threadId: string): Promise<HeadlessThreadTranscript>;
+  waitUntilIdle(threadId: string, input: HeadlessThreadWaitInput): Promise<HeadlessThreadWaitResult>;
+  getThreadSnapshot(threadId: string, input?: { signal?: AbortSignal }): Promise<HeadlessThreadSnapshot>;
+  abortThread(threadId: string, input?: { signal?: AbortSignal }): Promise<HeadlessAbortResult>;
+  exportTranscript(threadId: string, input?: { signal?: AbortSignal }): Promise<HeadlessThreadTranscript>;
 }
 
 /**
@@ -160,7 +190,7 @@ export interface HeadlessThreadClient {
  */
 export type HeadlessFetch = (
   input: string,
-  init?: { method?: string; headers?: Record<string, string>; body?: string },
+  init?: { method?: string; headers?: Record<string, string>; body?: string; signal?: AbortSignal },
 ) => Promise<Response>;
 
 export interface HeadlessThreadClientOptions {
@@ -175,6 +205,10 @@ export interface HeadlessThreadClientOptions {
   defaultModel?: HeadlessThreadModel;
   /** Default `waitForThread` poll interval. Defaults to 500ms. */
   pollIntervalMs?: number;
+  /** Bounds every individual HTTP request. Defaults to 15 seconds. */
+  requestTimeoutMs?: number;
+  /** Cancels every operation issued by this client. */
+  signal?: AbortSignal;
   fetch?: HeadlessFetch;
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;

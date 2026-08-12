@@ -22,6 +22,7 @@ COPY packages/email/package.json /app/packages/email/package.json
 COPY packages/enterprise-mcp-client/package.json /app/packages/enterprise-mcp-client/package.json
 COPY packages/install-config/package.json /app/packages/install-config/package.json
 COPY packages/connect-link/package.json /app/packages/connect-link/package.json
+COPY packages/headless-threads/package.json /app/packages/headless-threads/package.json
 # apps/desktop/package.json is copied below for version metadata, and it depends
 # on @openwork/paths, so the package must exist for workspace resolution.
 COPY packages/paths/package.json /app/packages/paths/package.json
@@ -45,6 +46,7 @@ COPY packages/email /app/packages/email
 COPY packages/enterprise-mcp-client /app/packages/enterprise-mcp-client
 COPY packages/install-config /app/packages/install-config
 COPY packages/connect-link /app/packages/connect-link
+COPY packages/headless-threads /app/packages/headless-threads
 COPY packages/paths /app/packages/paths
 COPY ee/packages/utils /app/ee/packages/utils
 COPY ee/packages/den-db /app/ee/packages/den-db

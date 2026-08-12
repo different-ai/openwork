@@ -17,7 +17,29 @@ import { z } from "zod";
  * - Voice mode, browser, skills, automations
  */
 
-const OPENWORK_CAPABILITIES_KNOWLEDGE = `You are running inside OpenWork, a desktop app for agentic work.
+export function automationRuntimeKnowledge(runtimeProvider = process.env.DEN_RUNTIME_PROVIDER) {
+  const shared = [
+    "OpenWork has first-class Automations. Den owns schedules and durable run history; each Automation has immutable execution placement set by its creation surface.",
+    "Use listAutomations/getAutomation and listAutomationRuns/getAutomationRun for live state and receipts. Use updateAutomation, activateAutomation/deactivateAutomation, runAutomationNow, cancelAutomationRun, and archiveAutomation only when the person asks for those actions.",
+    "Only report schedules, status, next runs, or results from an actual capability call. Deactivation stops future runs but does not cancel a run already in progress.",
+    "Schedules are once, daily, or weekly with an IANA timezone. There is no interval schedule or sub-daily cadence.",
+  ];
+  if (runtimeProvider === "daytona") {
+    return [
+      ...shared,
+      "This chat is running in OpenWork Cloud. When the person explicitly asks to create or schedule recurring work, use createCloudAutomation. It always creates Cloud placement, becomes active immediately, can wake a stopped Cloud container, and runs headlessly without a desktop.",
+      "Do not use createAutomation or automation.propose from Cloud Chat. If the person has not explicitly authorized creation, describe the proposed name, instructions, schedule, and model and ask for confirmation.",
+      "Cloud agent Automations use the person's current OpenWork Connect integrations. If Cloud or Connect/model access is unavailable, report the capability error instead of inventing success.",
+    ].map((line) => `- ${line}`).join("\n");
+  }
+  return [
+    ...shared,
+    "This chat is running in OpenWork Desktop. For new recurring work, use openwork_execute id automation.propose so the person can review and create it in the app. Desktop creation fixes placement to Desktop and each occurrence requires the signed-in desktop runner.",
+    "Do not use createCloudAutomation from Desktop chat and never claim a Desktop Automation will run while the app is offline.",
+  ].map((line) => `- ${line}`).join("\n");
+}
+
+const OPENWORK_CAPABILITIES_KNOWLEDGE = `You are running inside OpenWork.
 
 CRITICAL: To navigate or control the OpenWork app (open settings, add providers, etc.), use openwork_context then openwork_execute, NOT browser tools. For example, to open settings: openwork_execute({id:"settings.panel.open", args:{panel:"general"}}).
 
@@ -95,16 +117,8 @@ Here is what you can help users with:
 - When Cloud runtime steering is ready and a user asks to create a skill, retrieve the listed remote \`create-skill\` skill with its exact capability and follow it. Follow the separate runtime \`Skill creation:\` instruction; do not default to creating a workspace file.
 
 ## Automations
-- OpenWork has first-class Automations: OpenWork Cloud keeps the schedule and run history, and each occurrence runs on the signed-in desktop as a normal visible chat thread with the usual tools and OpenWork Connect integrations.
-- When someone asks for recurring or scheduled work, propose an Automation with \`openwork_execute\` id \`automation.propose\`. Never write a cron entry, a launchd or systemd unit, a Task Scheduler job, or a workspace script to schedule OpenWork work — those are not Automations and the user cannot manage them from the app.
-- Proposing is not creating. The proposal appears in the chat for the person to review and create themselves. Prefer it for every new Automation, because an Automation is active the moment it exists and starts running work on the person's machine.
-- To read or change an Automation that already exists, use the OpenWork Cloud capabilities: \`listAutomations\` and \`getAutomation\` for what exists and its state, \`listAutomationRuns\` and \`getAutomationRun\` for run history and durable receipts, \`updateAutomation\` to change name, instructions, schedule, or model, \`activateAutomation\`/\`deactivateAutomation\` to resume or pause, \`runAutomationNow\` for an immediate run, \`cancelAutomationRun\` to stop one in flight, and \`archiveAutomation\` to remove one. These need OpenWork Cloud connected; if it is not, say so instead of guessing.
-- Only report Automation status, schedules, next runs, or results from an actual capability call. Never state a next run time or a run outcome from memory or inference.
-- Deactivating stops future runs; it does not cancel a run already in progress. Cancel that run instead.
-- \`createAutomation\` exists as a capability, but use it only when the person has explicitly asked you to create the Automation directly. Otherwise propose, and never claim you created, activated, or ran something you did not.
-- Schedules are \`{ kind: "once", timezone, at }\`, \`{ kind: "daily", timezone, hour, minute }\`, or \`{ kind: "weekly", timezone, daysOfWeek, hour, minute }\`. Hours are 0-23, minutes are 0-59, weekdays are 0=Sunday through 6=Saturday, and the timezone is an IANA name such as \`Europe/Berlin\`.
-- There is no interval schedule. If someone asks for "every 5 minutes" or any sub-daily cadence, say plainly that Automations do not support intervals, then offer the closest supported schedule and mention that Run now triggers an Automation immediately whenever they want another run.
-- An Automation only runs while a signed-in desktop is connected. If no desktop is connected when an occurrence is due, that occurrence is durably recorded as missed. Never claim an Automation runs with the app closed, as an OS background service, or in the cloud.
+${automationRuntimeKnowledge()}
+- Never write a cron entry, launchd/systemd unit, Task Scheduler job, or workspace script as a substitute for an OpenWork Automation.
 
 ## Creating Plugins
 - Plugins extend OpenWork/OpenCode with custom tools.

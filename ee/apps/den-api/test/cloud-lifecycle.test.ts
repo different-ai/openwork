@@ -66,10 +66,24 @@ function makeStore(input: { workers: TestWorker[]; tokens?: TestWorkerToken[] })
     async getActiveTokens(workerId) {
       return tokens.filter((token) => token.worker_id === workerId && !token.revoked_at)
     },
+    async reserveWake(workerId) {
+      const worker = input.workers.find((entry) => entry.id === workerId)
+      if (!worker || worker.status !== "stopped") return false
+      worker.status = "provisioning"
+      updates.push({ workerId, status: "provisioning", onlyWhenStatus: "stopped" })
+      return true
+    },
     async listIdleWorkers(listInput: ListIdleInput) {
       return input.workers
         .filter((worker) => worker.status === "healthy" && lifecycle.isCloudWorkerIdleForStop(worker, listInput.idleBefore))
         .slice(0, listInput.limit)
+    },
+    async reserveIdleStop({ workerId, idleBefore }) {
+      const worker = input.workers.find((entry) => entry.id === workerId)
+      if (!worker || worker.status !== "healthy" || !lifecycle.isCloudWorkerIdleForStop(worker, idleBefore)) return false
+      worker.status = "provisioning"
+      updates.push({ workerId, status: "provisioning", onlyWhenStatus: "healthy" })
+      return true
     },
     async updateWorkerStatus(update) {
       const worker = input.workers.find((entry) => entry.id === update.workerId)

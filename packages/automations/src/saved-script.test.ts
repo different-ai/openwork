@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { createAutomationSchema, updateAutomationSchema } from "@openwork/types/automations"
+import { createAutomationSchema, createCloudAutomationSchema, updateAutomationSchema } from "@openwork/types/automations"
 import { automationRevisionDigest } from "./contracts"
 
 const schedule = { kind: "daily" as const, timezone: "UTC", hour: 9, minute: 0 }
@@ -43,7 +43,18 @@ describe("saved Script Automations", () => {
       schedule,
       model: { providerId: "provider_1", modelId: "model_1" },
     }).success).toBe(true)
-    expect(updateAutomationSchema.safeParse({ executionTarget: "cloud" }).success).toBe(false)
+    expect(updateAutomationSchema.safeParse({ executionTarget: "cloud" }).success).toBe(true)
+    expect(createCloudAutomationSchema.safeParse({
+      name: cloudAgent.name,
+      schedule,
+      action: cloudAgent.action,
+    }).data?.executionTarget).toBe("cloud")
+    expect(createCloudAutomationSchema.safeParse({
+      name: cloudAgent.name,
+      schedule,
+      action: cloudAgent.action,
+      executionTarget: "desktop",
+    }).success).toBe(false)
   })
 
   test("keeps legacy agent creation compatible and versions exact script identities", () => {

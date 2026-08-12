@@ -4,7 +4,7 @@ import { hasAssistantReplySince, toTranscript } from "./transcript.js";
 import type { HeadlessThreadMessage, HeadlessThreadSnapshot } from "./types.js";
 
 function message(input: Partial<HeadlessThreadMessage> & { id: string; role: string }): HeadlessThreadMessage {
-  return { createdAt: null, parts: [], ...input };
+  return { parentId: null, createdAt: null, error: null, usage: null, parts: [], ...input };
 }
 
 function snapshot(messages: HeadlessThreadMessage[]): HeadlessThreadSnapshot {

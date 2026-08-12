@@ -93,6 +93,11 @@ function mapRevision(row: RevisionRow): AutomationRevision {
 }
 
 function mapRun(row: RunRow): AutomationRun {
+  const receipt = row.execution_target === "cloud" && typeof row.engine_receipt === "object" && row.engine_receipt !== null
+    ? row.engine_receipt as Record<string, unknown>
+    : null
+  const nativeThreadId = typeof receipt?.nativeThreadId === "string" ? receipt.nativeThreadId : null
+  const workspaceId = typeof receipt?.workspaceId === "string" ? receipt.workspaceId : null
   return {
     id: row.id,
     automationId: row.automation_id,
@@ -113,6 +118,8 @@ function mapRun(row: RunRow): AutomationRun {
       automationId: row.automation_id,
       automationRunId: row.id,
       engineKind: row.engine_kind,
+      ...(nativeThreadId ? { nativeThreadId } : {}),
+      ...(workspaceId ? { workspaceId } : {}),
     } : null,
     providerId: row.provider_id,
     modelId: row.model_id,
@@ -384,7 +391,11 @@ export class DenAutomationRepository implements AutomationRepository {
     return db.transaction(async (tx) => {
       const locked = await tx.select().from(AutomationTable)
         .where(eq(AutomationTable.id, normalizeAutomationId(input.automation.id))).limit(1).for("update")
-      if (!locked[0] || locked[0].state !== "active") throw new Error("automation_not_active")
+      const currentState = locked[0]?.state
+      const canRun = input.trigger === "manual"
+        ? currentState === "active" || currentState === "inactive"
+        : currentState === "active"
+      if (!canRun) throw new Error("automation_not_active")
       const identity = automationOccurrenceIdentity({
         automationId: input.automation.id,
         scheduledFor: input.scheduledFor,
@@ -521,8 +532,16 @@ export class DenAutomationRepository implements AutomationRepository {
     })
   }
 
-  async claimCloud(input: { runId: string; leaseOwner: string; leaseMs: number; now: number }): Promise<DesktopClaim | null> {
+  async claimCloud(input: { runId: string; leaseOwner: string; leaseMs: number; maxConcurrency: number; now: number }): Promise<DesktopClaim | null> {
     return db.transaction(async (tx) => {
+      // Admission and the queued -> running transition share one transaction.
+      // Locking the active status ranges serializes competing replicas even
+      // when there are currently no active rows (InnoDB next-key locking).
+      const active = await tx.select({ id: AutomationRunTable.id }).from(AutomationRunTable).where(and(
+        eq(AutomationRunTable.execution_target, "cloud"),
+        inArray(AutomationRunTable.status, ["claimed", "running"]),
+      )).limit(input.maxConcurrency).for("update")
+      if (active.length >= input.maxConcurrency) return null
       const rows = await tx.select({ run: AutomationRunTable, automation: AutomationTable })
         .from(AutomationRunTable)
         .innerJoin(AutomationTable, eq(AutomationTable.id, AutomationRunTable.automation_id))
@@ -558,7 +577,7 @@ export class DenAutomationRepository implements AutomationRepository {
         revision: mapRevision(revision),
         run: mapRun(currentRuns[0]),
       }
-    })
+    }, { isolationLevel: "serializable", accessMode: "read write" })
   }
 
   async setCloudExecution(input: {
@@ -987,7 +1006,7 @@ export class DenAutomationRepository implements AutomationRepository {
       )).limit(1).for("update")
       const run = runs[0]
       if (!run) throw new Error("automation_run_lease_lost")
-      const idempotencyKey = `desktop:${input.runId}:${input.attempt}:${input.sequence}`
+      const idempotencyKey = `${input.leaseOwner}:${input.runId}:${input.attempt}:${input.sequence}`
       const duplicate = await tx.select().from(AutomationRunEventTable).where(and(
         eq(AutomationRunEventTable.run_id, run.id),
         eq(AutomationRunEventTable.attempt, input.attempt),
@@ -1017,6 +1036,10 @@ export class DenAutomationRepository implements AutomationRepository {
       if (!inserted[0]) throw new Error("automation_runner_event_not_durable")
       return mapEvent(inserted[0])
     })
+  }
+
+  appendCloudEvent(input: Parameters<DenAutomationRepository["appendDesktopEvent"]>[0]) {
+    return this.appendDesktopEvent(input)
   }
 
   async listRunnerNotifications(input: { organizationId: string; ownerMemberId: string; after: number; limit: number }) {
@@ -1155,10 +1178,7 @@ export class DenAutomationRepository implements AutomationRepository {
       heartbeat_at: null,
       mcp_token_hash: null,
       mcp_token_expires_at: null,
-      engine_kind: null,
-      engine_receipt: null,
       engine_sequence: 0,
-      engine_admitted_at: null,
       updated_at: new Date(input.now),
     }).where(eq(AutomationRunTable.id, normalizeRunId(input.runId)))
     return true

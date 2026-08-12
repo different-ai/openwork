@@ -107,8 +107,8 @@ test("offline outcome is explicit and target-auditable", () => {
   }).success, true)
 })
 
-test("retried runner events remain ordered within their claimed attempt", () => {
-  assert.match(repositorySource, /desktop:\$\{input\.runId\}:\$\{input\.attempt\}:\$\{input\.sequence\}/)
+test("Desktop and Cloud events remain ordered within their claimed attempt", () => {
+  assert.match(repositorySource, /\$\{input\.leaseOwner\}:\$\{input\.runId\}:\$\{input\.attempt\}:\$\{input\.sequence\}/)
   assert.match(repositorySource, /attempt:\s*input\.attempt,[\s\S]*sequence:\s*input\.sequence/)
   assert.match(repositorySource, /orderBy\(asc\(AutomationRunEventTable\.attempt\), asc\(AutomationRunEventTable\.sequence\)\)/)
 })
@@ -209,7 +209,7 @@ test("every dispatch path revalidates the owner's model access", () => {
   const serviceSource = readFileSync(join(import.meta.dir, "../src/automations/service.ts"), "utf8")
   const tick = serviceSource.slice(serviceSource.indexOf("async tick"), serviceSource.indexOf("async stop"))
   assert.match(tick, /resolveAutomationModelAccess\(\{\s*organizationId: item\.automation\.organizationId/)
-  assert.match(tick, /shouldApplyAutomationModelAccessFailure\(\{[\s\S]*modelAttentionCapable: false/)
+  assert.match(tick, /shouldApplyAutomationModelAccessFailure\(\{[\s\S]*modelAttentionCapable: \(item\.revision\.executionTarget \?\? "desktop"\) === "cloud"/)
   assert.match(tick, /await automationRepository\.skipRun\(/)
   const claim = serviceSource.slice(
     serviceSource.indexOf("async claimDesktopRunner"),
@@ -221,6 +221,36 @@ test("every dispatch path revalidates the owner's model access", () => {
   const runNow = serviceSource.slice(serviceSource.indexOf("async runNow"), serviceSource.indexOf("listRuns"))
   assert.match(runNow, /resolveAutomationModelAccess\(\{ \.\.\.scope, \.\.\.current\.revision\.model \}\)/)
   assert.match(runNow, /shouldApplyAutomationModelAccessFailure\(\{[\s\S]*supportsModelAttention\(scope\)/)
+})
+
+test("Cloud placement never inherits the legacy Desktop model exception", () => {
+  const serviceSource = readFileSync(join(import.meta.dir, "../src/automations/service.ts"), "utf8")
+  const create = serviceSource.slice(serviceSource.indexOf("async create"), serviceSource.indexOf("async update"))
+  const update = serviceSource.slice(serviceSource.indexOf("async update"), serviceSource.indexOf("async activate"))
+  const reconcile = serviceSource.slice(serviceSource.indexOf("private async reconcileModelAttention"))
+  assert.match(create, /requireNewModel\(\{ \.\.\.scope, modelAttentionCapable: true \}/)
+  assert.match(update, /executionTarget \?\? "desktop"\) === "cloud"[\s\S]*modelAttentionCapable: true/)
+  assert.match(reconcile, /executionTarget \?\? "desktop"\) === "cloud"[\s\S]*supportsModelAttention/)
+})
+
+test("Cloud admission serializes the global concurrency check across replicas", () => {
+  const claim = repositorySource.slice(
+    repositorySource.indexOf("async claimCloud"),
+    repositorySource.indexOf("async setCloudExecution"),
+  )
+  assert.match(claim, /inArray\(AutomationRunTable\.status, \["claimed", "running"\]\)/)
+  assert.match(claim, /active\.length >= input\.maxConcurrency/)
+  assert.match(claim, /for\("update"\)/)
+  assert.match(claim, /isolationLevel: "serializable"/)
+})
+
+test("manual runs allow inactive Automations without reopening scheduled dispatch", () => {
+  const claim = repositorySource.slice(
+    repositorySource.indexOf("async claim(input"),
+    repositorySource.indexOf("async recordSkippedManual"),
+  )
+  assert.match(claim, /input\.trigger === "manual"[\s\S]*currentState === "active" \|\| currentState === "inactive"/)
+  assert.match(claim, /: currentState === "active"/)
 })
 
 test("runner protocol endpoints carry no operation id and stay out of the MCP catalog", () => {
@@ -237,4 +267,22 @@ test("runner protocol endpoints carry no operation id and stay out of the MCP ca
     path: "/v1/automations",
     operation: { operationId: "listAutomations", tags: ["Automations"], "x-mcp": true },
   }), true, "Automation management operations remain available to MCP")
+})
+
+test("agents can create only Cloud Automations, never Desktop Automations", () => {
+  assert.equal(isMcpOperationAllowed({
+    method: "POST",
+    path: "/v1/automations",
+    operation: { operationId: "createAutomation", tags: ["Automations"], "x-mcp": false },
+  }), false)
+  assert.equal(isMcpOperationAllowed({
+    method: "POST",
+    path: "/v1/cloud-automations",
+    operation: { operationId: "createCloudAutomation", tags: ["Automations"], "x-mcp": true },
+  }), true)
+
+  const routesSource = readFileSync(join(import.meta.dir, "../src/routes/automations/index.ts"), "utf8")
+  assert.match(routesSource, /operationId: "createAutomation", "x-mcp": false/)
+  assert.match(routesSource, /operationId: "createCloudAutomation", "x-mcp": true/)
+  assert.match(routesSource, /jsonValidator\(createCloudAutomationSchema\)/)
 })

@@ -57,7 +57,19 @@ const messageSchema = z
       .object({
         id: z.string(),
         role: z.string(),
+        parentID: z.string().optional(),
         time: timeSchema.optional(),
+        error: z.unknown().optional(),
+        cost: z.number().nonnegative().optional(),
+        tokens: z.object({
+          input: z.number().nonnegative().optional(),
+          output: z.number().nonnegative().optional(),
+          reasoning: z.number().nonnegative().optional(),
+          cache: z.object({
+            read: z.number().nonnegative().optional(),
+            write: z.number().nonnegative().optional(),
+          }).optional(),
+        }).optional(),
       })
       .passthrough(),
     parts: z.array(partSchema),
@@ -115,11 +127,50 @@ function toPart(part: PartWire): HeadlessThreadMessagePart {
   return mapped;
 }
 
+function record(value: unknown): Record<string, unknown> | null {
+  return typeof value === "object" && value !== null ? value as Record<string, unknown> : null;
+}
+
+function stringField(records: Array<Record<string, unknown> | null>, keys: string[]): string | null {
+  for (const item of records) {
+    if (!item) continue;
+    for (const key of keys) {
+      const value = item[key];
+      if (typeof value === "string" && value.trim()) return value.trim();
+    }
+  }
+  return null;
+}
+
+function toMessageError(value: unknown): HeadlessThreadMessage["error"] {
+  const outer = record(value);
+  if (!outer) return null;
+  const data = record(outer.data);
+  const cause = record(data?.cause);
+  return {
+    name: stringField([outer, data, cause], ["name", "code", "type"]) ?? "ExecutionError",
+    message: stringField([outer, data, cause], ["message", "error", "detail"]) ?? "The agent turn failed.",
+    retryable: typeof outer.retryable === "boolean"
+      ? outer.retryable
+      : typeof data?.retryable === "boolean" ? data.retryable : null,
+  };
+}
+
 export function toThreadMessage(message: MessageWire): HeadlessThreadMessage {
   return {
     id: message.info.id,
     role: message.info.role,
+    parentId: message.info.parentID ?? null,
     createdAt: message.info.time?.created ?? null,
+    error: toMessageError(message.info.error),
+    usage: message.info.role === "assistant" ? {
+      inputTokens: message.info.tokens?.input ?? 0,
+      outputTokens: message.info.tokens?.output ?? 0,
+      reasoningTokens: message.info.tokens?.reasoning ?? 0,
+      cacheReadTokens: message.info.tokens?.cache?.read ?? 0,
+      cacheWriteTokens: message.info.tokens?.cache?.write ?? 0,
+      cost: message.info.cost ?? 0,
+    } : null,
     parts: message.parts.map(toPart),
   };
 }

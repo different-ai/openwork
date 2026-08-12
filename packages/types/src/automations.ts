@@ -165,6 +165,9 @@ export const automationExecutionThreadSchema = z.object({
   automationId: idSchema,
   automationRunId: idSchema,
   engineKind: idSchema,
+  /** Native OpenCode session identity for agent runs. */
+  nativeThreadId: idSchema.nullable().optional(),
+  workspaceId: idSchema.nullable().optional(),
 })
 export type AutomationExecutionThread = z.infer<typeof automationExecutionThreadSchema>
 
@@ -325,6 +328,14 @@ const actionCreateAutomationSchema = z.object({
   }
 })
 
+/** Cloud Chat/Web creation cannot express Desktop placement. */
+export const createCloudAutomationSchema = z.object({
+  name: z.string().trim().min(1).max(120),
+  schedule: automationScheduleSchema,
+  action: automationActionSchema,
+}).strict().transform((value) => ({ ...value, executionTarget: "cloud" as const }))
+export type CreateCloudAutomation = z.input<typeof createCloudAutomationSchema>
+
 export const createAutomationSchema = z.union([actionCreateAutomationSchema, legacyCreateAutomationSchema])
 /**
  * Published desktop clients still construct the legacy agent definition.
@@ -356,6 +367,8 @@ export const updateAutomationSchema = z.object({
   schedule: automationScheduleSchema.optional(),
   model: automationModelSchema.optional(),
   action: automationActionSchema.optional(),
+  /** Accepted for round-tripping; execution placement itself is immutable. */
+  executionTarget: automationExecutionTargetSchema.optional(),
 }).strict().refine(
   (input) => Object.keys(input).length > 0,
   "At least one behavior-changing field is required",

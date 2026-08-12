@@ -568,7 +568,7 @@ describe("runtime MCP engine sync", () => {
     const previousDb = process.env.OPENWORK_RUNTIME_DB;
     const previousMaxAge = process.env.OPENWORK_MCP_REGISTRATION_MAX_AGE_MS;
     process.env.OPENWORK_RUNTIME_DB = join(workspaceRoot, "runtime.sqlite");
-    process.env.OPENWORK_MCP_REGISTRATION_MAX_AGE_MS = "5";
+    process.env.OPENWORK_MCP_REGISTRATION_MAX_AGE_MS = "100";
     try {
       const engine = startMockOpencode({
         mcpResponseForName: (name) => name === "posthog"
@@ -590,7 +590,7 @@ describe("runtime MCP engine sync", () => {
         POSTHOG_CONFIG,
       )).toMatchObject({ status: "failed", errorSummary: "unable to verify the first certificate" });
 
-      await Bun.sleep(10);
+      await Bun.sleep(150);
       expect(inspectEngineMcpRegistrationDetails(openwork.config, workspace, "posthog", POSTHOG_CONFIG))
         .toMatchObject({ status: "not-recorded", errorSummary: null });
     } finally {

@@ -5,16 +5,16 @@ import { HeadlessThreadError } from "./errors.js";
 import type { HeadlessFetch, HeadlessThreadStatus } from "./types.js";
 
 type RecordedRequest = { method: string; path: string; body: unknown };
-type MessageWire = { info: { id: string; role: string; time?: { created: number } }; parts: unknown[] };
+type MessageWire = { info: { id: string; role: string; parentID?: string; time?: { created: number }; error?: unknown; tokens?: unknown; cost?: number }; parts: unknown[] };
 /** One poll's worth of thread state, consumed in order by snapshot reads. */
 type Beat = { status: HeadlessThreadStatus; messages: MessageWire[] };
 
 const SESSION_ID = "ses_1";
 const BASE_URL = "http://openwork.test";
 
-function reply(id: string, role: string, text?: string): MessageWire {
+function reply(id: string, role: string, text?: string, parentID?: string): MessageWire {
   return {
-    info: { id, role, time: { created: 1 } },
+    info: { id, role, time: { created: 1 }, ...(parentID ? { parentID } : {}) },
     parts: text === undefined ? [] : [{ id: `prt_${id}`, type: "text", text }],
   };
 }
@@ -171,7 +171,13 @@ describe("sendTurn", () => {
       model: { providerId: "anthropic", modelId: "claude-sonnet-5" },
     });
 
-    expect(acceptance).toEqual({ threadId: SESSION_ID, acceptedAt: 0, messageCountBefore: 2 });
+    expect(acceptance).toEqual({
+      threadId: SESSION_ID,
+      acceptedAt: 0,
+      messageCountBefore: 2,
+      messageId: null,
+      alreadyPresent: false,
+    });
     expect(double.requests.map((request) => request.path)).toEqual([
       "/workspace/ws_1/sessions/ses_1/messages",
       "/workspace/ws_1/opencode/session/ses_1/prompt_async",
@@ -197,6 +203,31 @@ describe("sendTurn", () => {
     expect(double.requests[1]?.body).toEqual({
       parts: [{ type: "text", text: "hello" }],
       model: { providerID: "openai", modelID: "gpt-5" },
+    });
+  });
+
+  test("uses a stable message id and does not submit it twice", async () => {
+    const double = createOpenworkDouble({ messages: [reply("msg_run_1", "user")] });
+
+    const acceptance = await createClient(double).sendTurn(SESSION_ID, {
+      prompt: "Run the report.",
+      messageId: "msg_run_1",
+    });
+
+    expect(acceptance.alreadyPresent).toBe(true);
+    expect(acceptance.messageId).toBe("msg_run_1");
+    expect(double.requests).toHaveLength(1);
+    expect(double.requests[0]?.path).toBe("/workspace/ws_1/sessions/ses_1/messages");
+  });
+
+  test("passes a new stable message id to OpenCode", async () => {
+    const double = createOpenworkDouble({ messages: [] });
+
+    await createClient(double).sendTurn(SESSION_ID, { prompt: "Run it.", messageId: "msg_run_2" });
+
+    expect(double.requests[1]?.body).toEqual({
+      parts: [{ type: "text", text: "Run it." }],
+      messageID: "msg_run_2",
     });
   });
 });
@@ -275,7 +306,40 @@ describe("waitForThread", () => {
     });
 
     expect(result.outcome).toBe("aborted");
-    expect(result.polls).toBe(1);
+    expect(result.polls).toBe(0);
+  });
+
+  test("matches the assistant response to the stable user message", async () => {
+    const double = createOpenworkDouble({
+      beats: [{
+        status: { type: "idle" },
+        messages: [
+          reply("msg_old_answer", "assistant", "old", "msg_old"),
+          reply("msg_new_answer", "assistant", "new", "msg_run_1"),
+        ],
+      }],
+    });
+
+    const result = await createClient(double).waitForThread(SESSION_ID, {
+      timeoutMs: 1_000,
+      since: { messageCountBefore: 2, messageId: "msg_run_1" },
+    });
+
+    expect(result.outcome).toBe("settled");
+  });
+
+  test("reports a terminal assistant error", async () => {
+    const failed = reply("msg_failed", "assistant", undefined, "msg_run_1");
+    failed.info.error = { name: "ProviderAuthError", data: { message: "Reconnect the provider." } };
+    const double = createOpenworkDouble({ beats: [{ status: { type: "idle" }, messages: [failed] }] });
+
+    const result = await createClient(double).waitForThread(SESSION_ID, {
+      timeoutMs: 1_000,
+      since: { messageCountBefore: 0, messageId: "msg_run_1" },
+    });
+
+    expect(result.outcome).toBe("failed");
+    expect(result.terminalError).toMatchObject({ name: "ProviderAuthError", message: "Reconnect the provider." });
   });
 });
 
@@ -309,6 +373,21 @@ describe("failures", () => {
     if (!(error instanceof HeadlessThreadError)) throw new Error("expected a HeadlessThreadError");
     expect(error.code).toBe("invalid_response");
   });
+
+  test("bounds an individual request even when the caller has no deadline", async () => {
+    const fetchImpl: HeadlessFetch = async (_url, init) => new Promise((_resolve, reject) => {
+      init?.signal?.addEventListener("abort", () => reject(init.signal?.reason), { once: true });
+    });
+    const client = createHeadlessThreadClient({
+      baseUrl: BASE_URL,
+      workspaceId: "ws_1",
+      token: "owt_test",
+      fetch: fetchImpl,
+      requestTimeoutMs: 5,
+    });
+
+    await expect(client.getThreadSnapshot(SESSION_ID)).rejects.toBeDefined();
+  });
 });
 
 describe("abortThread", () => {
@@ -319,6 +398,18 @@ describe("abortThread", () => {
       threadId: SESSION_ID,
       accepted: true,
     });
+  });
+
+  test("waits until the aborted thread is observably idle", async () => {
+    const double = createOpenworkDouble({ beats: [
+      { status: { type: "busy" }, messages: [] },
+      { status: { type: "idle" }, messages: [] },
+    ] });
+
+    const result = await createClient(double).waitUntilIdle(SESSION_ID, { timeoutMs: 1_000, pollIntervalMs: 10 });
+
+    expect(result.outcome).toBe("settled");
+    expect(result.observedRunning).toBe(true);
   });
 });
 
