@@ -26,6 +26,7 @@ function reply(id: string, role: string, text?: string): MessageWire {
  */
 function createOpenworkDouble(input?: { beats?: Beat[]; messages?: MessageWire[] }) {
   const requests: RecordedRequest[] = [];
+  const requestHeaders: Headers[] = [];
   const beats = input?.beats ?? [];
   const messages = input?.messages ?? [];
   let beatIndex = 0;
@@ -37,6 +38,7 @@ function createOpenworkDouble(input?: { beats?: Beat[]; messages?: MessageWire[]
     const method = init?.method ?? "GET";
     const body: unknown = init?.body === undefined ? undefined : JSON.parse(init.body);
     requests.push({ method, path: `${parsed.pathname}${parsed.search}`, body });
+    requestHeaders.push(new Headers(init?.headers));
 
     if (method === "POST" && parsed.pathname === "/workspace/ws_1/sessions") {
       const started = typeof body === "object" && body !== null && "prompt" in body;
@@ -66,7 +68,7 @@ function createOpenworkDouble(input?: { beats?: Beat[]; messages?: MessageWire[]
     return Response.json({ code: "not_found", message: "Not found" }, { status: 404 });
   };
 
-  return { fetchImpl, requests, snapshotReads: () => beatIndex };
+  return { fetchImpl, requests, requestHeaders, snapshotReads: () => beatIndex };
 }
 
 /** A clock that only moves when the client sleeps, so waits are instant. */
@@ -134,6 +136,22 @@ describe("createThread", () => {
     await client.createThread({ title: "Refund policy" });
 
     expect(double.requests[0]?.path).toBe("/workspace/ws_1/sessions");
+  });
+
+  test("authenticates server-to-server Cloud requests with both worker tokens", async () => {
+    const double = createOpenworkDouble();
+    const client = createHeadlessThreadClient({
+      baseUrl: BASE_URL,
+      workspaceId: "ws_1",
+      token: "client-token",
+      hostToken: "host-token",
+      fetch: double.fetchImpl,
+    });
+
+    await client.createThread({ title: "Cloud Automation" });
+
+    expect(double.requestHeaders[0]?.get("authorization")).toBe("Bearer client-token");
+    expect(double.requestHeaders[0]?.get("x-openwork-host-token")).toBe("host-token");
   });
 
   test("omits the prompt and model when none were given", async () => {

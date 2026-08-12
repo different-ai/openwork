@@ -109,7 +109,7 @@ function mapRun(row: RunRow): AutomationRun {
     executionThread: row.engine_kind ? {
       id: row.cloud_thread_id,
       threadKind: "automation",
-      executionLocation: "desktop",
+      executionLocation: row.execution_target,
       automationId: row.automation_id,
       automationRunId: row.id,
       engineKind: row.engine_kind,
@@ -265,10 +265,7 @@ export class DenAutomationRepository implements AutomationRepository {
             model: input.changes.model ?? currentAction.model,
           }
         : currentAction)
-      const executionTarget = input.changes.executionTarget ?? current.execution_target
-      if ((action.kind === "saved_script" && executionTarget !== "cloud") || (action.kind === "agent" && executionTarget !== "desktop")) {
-        throw new Error("automation_action_target_mismatch")
-      }
+      const executionTarget = current.execution_target
       const instructions = action.kind === "agent" ? action.instructions : "Execute the pinned saved Code Mode script."
       const schedule = input.changes.schedule ?? current.schedule_config
       const model = action.kind === "agent"
@@ -536,37 +533,90 @@ export class DenAutomationRepository implements AutomationRepository {
         )).limit(1).for("update")
       const selected = rows[0]
       if (!selected) return null
+      const revisions = await tx.select().from(AutomationRevisionTable)
+        .where(eq(AutomationRevisionTable.id, selected.run.revision_id)).limit(1)
+      const revision = revisions[0]
+      if (!revision) return null
+      const engineKind = revision.action?.kind === "saved_script"
+        ? "openwork-cloud-codemode-v1"
+        : "openwork-cloud-agent-v1"
       await tx.update(AutomationRunTable).set({
         status: "running",
         lease_owner: input.leaseOwner,
         lease_expires_at: new Date(input.now + input.leaseMs),
         heartbeat_at: new Date(input.now),
         attempt_count: selected.run.attempt_count + 1,
-        engine_kind: "openwork-cloud-codemode-v1",
+        engine_kind: selected.run.engine_kind ?? engineKind,
         started_at: selected.run.started_at ?? new Date(input.now),
         updated_at: new Date(input.now),
       }).where(and(eq(AutomationRunTable.id, selected.run.id), eq(AutomationRunTable.status, "queued")))
-      const revisions = await tx.select().from(AutomationRevisionTable)
-        .where(eq(AutomationRevisionTable.id, selected.run.revision_id)).limit(1)
       const currentRuns = await tx.select().from(AutomationRunTable)
         .where(eq(AutomationRunTable.id, selected.run.id)).limit(1)
-      if (!revisions[0] || !currentRuns[0]) return null
+      if (!currentRuns[0]) return null
       return {
         automation: mapAutomation(selected.automation),
-        revision: mapRevision(revisions[0]),
+        revision: mapRevision(revision),
         run: mapRun(currentRuns[0]),
       }
     })
+  }
+
+  async setCloudExecution(input: {
+    runId: string
+    leaseOwner: string
+    engineKind: string
+    receipt: Record<string, unknown>
+    now: number
+  }): Promise<void> {
+    const result: unknown = await db.update(AutomationRunTable).set({
+      engine_kind: input.engineKind,
+      engine_receipt: input.receipt,
+      engine_admitted_at: new Date(input.now),
+      updated_at: new Date(input.now),
+    }).where(and(
+      eq(AutomationRunTable.id, normalizeRunId(input.runId)),
+      eq(AutomationRunTable.lease_owner, input.leaseOwner),
+      eq(AutomationRunTable.status, "running"),
+    ))
+    if (!automationUpdateChangedRows(result)) throw new Error("automation_run_lease_lost")
+  }
+
+  async heartbeatCloud(input: { runId: string; leaseOwner: string; leaseMs: number; now: number }): Promise<boolean> {
+    const result: unknown = await db.update(AutomationRunTable).set({
+      heartbeat_at: new Date(input.now),
+      lease_expires_at: new Date(input.now + input.leaseMs),
+      updated_at: new Date(input.now),
+    }).where(and(
+      eq(AutomationRunTable.id, normalizeRunId(input.runId)),
+      eq(AutomationRunTable.lease_owner, input.leaseOwner),
+      eq(AutomationRunTable.status, "running"),
+      gt(AutomationRunTable.lease_expires_at, new Date(input.now)),
+    ))
+    return automationUpdateChangedRows(result)
+  }
+
+  async cloudRunState(runId: string): Promise<{ cancelRequested: boolean; receipt: Record<string, unknown> | null } | null> {
+    const rows = await db.select({
+      cancelRequestedAt: AutomationRunTable.cancel_requested_at,
+      receipt: AutomationRunTable.engine_receipt,
+    }).from(AutomationRunTable).where(and(
+      eq(AutomationRunTable.id, normalizeRunId(runId)),
+      eq(AutomationRunTable.execution_target, "cloud"),
+      eq(AutomationRunTable.status, "running"),
+    )).limit(1)
+    return rows[0] ? { cancelRequested: Boolean(rows[0].cancelRequestedAt), receipt: rows[0].receipt } : null
   }
 
   async completeCloud(input: {
     automationId: string
     runId: string
     leaseOwner: string
-    status: "succeeded" | "failed"
+    status: "succeeded" | "failed" | "cancelled"
     resultSummary: string
     validatedResult?: unknown
     codemodeReceiptId?: string | null
+    usage?: AutomationUsage
+    updateArtifactState?: boolean
     error: AutomationError | null
     now: number
   }): Promise<AutomationRun> {
@@ -575,7 +625,7 @@ export class DenAutomationRepository implements AutomationRepository {
       leaseOwner: input.leaseOwner,
       status: input.status,
       resultSummary: input.resultSummary,
-      usage: emptyUsage,
+      usage: input.usage ?? emptyUsage,
       error: input.error,
       now: input.now,
     })
@@ -591,6 +641,11 @@ export class DenAutomationRepository implements AutomationRepository {
         : { ok: false, message: input.error?.message ?? input.resultSummary },
       now: input.now,
     })
+    if (input.updateArtifactState === false) {
+      const refreshed = await this.runById(completed.id)
+      if (!refreshed) throw new Error("automation_cloud_result_not_durable")
+      return refreshed
+    }
     if (artifactState.kind === "succeeded") {
       await db.update(AutomationTable).set({
         latest_successful_run_id: normalizeRunId(artifactState.latestSuccessfulRunId),
@@ -743,7 +798,7 @@ export class DenAutomationRepository implements AutomationRepository {
       mcp_token_expires_at: immediate ? null : owned[0].run.mcp_token_expires_at,
       updated_at: new Date(input.now),
     }).where(eq(AutomationRunTable.id, normalizeRunId(input.runId)))
-    if (!immediate && ["claimed", "running"].includes(owned[0].run.status)) {
+    if (!immediate && owned[0].run.execution_target === "desktop" && ["claimed", "running"].includes(owned[0].run.status)) {
       await db.insert(AutomationRunnerNotificationTable).values({
         organization_id: normalizeOrganizationId(input.organizationId),
         owner_member_id: normalizeMemberId(input.ownerMemberId),

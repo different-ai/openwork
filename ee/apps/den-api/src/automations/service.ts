@@ -15,6 +15,8 @@ import { isActiveAutomationOwner, resolveAutomationModelAccess } from "./authori
 import { shouldApplyAutomationModelAccessFailure } from "./model-attention-rollout.js"
 import { automationRepository } from "./repository.js"
 import { validateSavedScriptAutomationAction } from "../codemode-scripts.js"
+import type { CloudAgentExecution, CloudAgentExecutorInput } from "./cloud-agent-executor.js"
+import { appLogger } from "../observability/logger.js"
 
 const schedulerOwner = `den:${process.pid}:${randomUUID()}`
 
@@ -55,12 +57,24 @@ export type CloudSavedScriptExecutor = (input: {
 }) => Promise<CloudSavedScriptExecution>
 
 let cloudSavedScriptExecutor: CloudSavedScriptExecutor | null = null
+let cloudAgentExecutor: ((input: CloudAgentExecutorInput) => Promise<CloudAgentExecution>) | null = null
+let cloudAgentRuntimeAvailable: ((scope: OwnerScope) => Promise<boolean>) | null = null
 
 export function configureCloudSavedScriptExecutor(executor: CloudSavedScriptExecutor): void {
   cloudSavedScriptExecutor = executor
 }
 
+export function configureCloudAgentExecutor(input: {
+  execute: (input: CloudAgentExecutorInput) => Promise<CloudAgentExecution>
+  runtimeAvailable: (scope: OwnerScope) => Promise<boolean>
+}): void {
+  cloudAgentExecutor = input.execute
+  cloudAgentRuntimeAvailable = input.runtimeAvailable
+}
+
 export class AutomationService {
+  private readonly cloudExecutions = new Map<string, Promise<void>>()
+
   async list(scope: OwnerScope, input: { cursor?: string; limit?: number }) {
     const page = await automationRepository.list({ ...scope, cursor: input.cursor, limit: input.limit ?? 50 })
     return {
@@ -76,14 +90,16 @@ export class AutomationService {
 
   async create(scope: OwnerScope, definition: CreateAutomationDefinition) {
     if ("action" in definition) {
-      if ((definition.action.kind === "saved_script" && definition.executionTarget !== "cloud")
-        || (definition.action.kind === "agent" && definition.executionTarget !== "desktop")) {
+      if (definition.executionTarget !== "cloud") {
         throw new Error("automation_action_target_mismatch")
       }
       if (definition.action.kind === "agent") await this.requireNewModel(scope, definition.action.model)
       else {
         if (!await isActiveAutomationOwner(scope)) throw new Error("automation_owner_inactive")
         await validateSavedScriptAutomationAction({ ...scope, action: definition.action })
+      }
+      if (definition.action.kind === "agent" && (!cloudAgentRuntimeAvailable || !await cloudAgentRuntimeAvailable(scope))) {
+        throw new Error("automation_cloud_worker_required")
       }
     } else {
       await this.requireNewModel(scope, definition.model)
@@ -96,13 +112,16 @@ export class AutomationService {
     const current = await this.get(scope, automationId)
     if (!current) return null
     const nextAction = changes.action ?? current.revision.action
-    const nextTarget = changes.executionTarget ?? current.revision.executionTarget ?? "desktop"
-    if ((nextAction?.kind === "saved_script" && nextTarget !== "cloud") || (nextAction?.kind !== "saved_script" && nextTarget !== "desktop")) {
+    if ((current.revision.executionTarget ?? "desktop") === "desktop" && nextAction?.kind === "saved_script") {
       throw new Error("automation_action_target_mismatch")
     }
     if (nextAction?.kind === "saved_script") {
       await validateSavedScriptAutomationAction({ ...scope, action: nextAction })
     } else if (nextAction?.kind === "agent") {
+      if ((current.revision.executionTarget ?? "desktop") === "cloud"
+        && (!cloudAgentRuntimeAvailable || !await cloudAgentRuntimeAvailable(scope))) {
+        throw new Error("automation_cloud_worker_required")
+      }
       const requestedModel = changes.action?.kind === "agent"
         ? changes.action.model
         : changes.model ?? nextAction.model
@@ -173,7 +192,9 @@ export class AutomationService {
       claimDeadlineMs: env.automations.runnerClaimDeadlineMs,
       now: Date.now(),
     })
-    if (claim.kind === "claimed" && claim.run.executionTarget === "cloud") await this.executeCloudRun(claim.run.id)
+    if (claim.kind === "claimed" && claim.run.executionTarget === "cloud") {
+      this.startCloudRun(claim.run.id)
+    }
     return (await automationRepository.getRunReceipt({ ...scope, runId: claim.run.id }))?.run ?? claim.run
   }
 
@@ -197,8 +218,7 @@ export class AutomationService {
 
     const queuedCloud = await automationRepository.listQueuedCloud({ limit: input.batchSize ?? env.automations.batchSize })
     for (const runId of queuedCloud) {
-      await this.executeCloudRun(runId)
-      started.push(runId)
+      if (this.startCloudRun(runId)) started.push(runId)
     }
 
     const due = await automationRepository.listDue({ now, limit: input.batchSize ?? env.automations.batchSize })
@@ -251,12 +271,15 @@ export class AutomationService {
         continue
       }
       started.push(claim.run.id)
-      if (claim.run.executionTarget === "cloud") await this.executeCloudRun(claim.run.id)
+      if (claim.run.executionTarget === "cloud") this.startCloudRun(claim.run.id)
     }
     return started
   }
 
-  async stop(): Promise<void> {}
+  async stop(): Promise<void> {
+    // Cloud run leases are durable. Shutdown must not wait for a user thread's
+    // full runtime; an interrupted run is recovered after its lease expires.
+  }
 
   registerDesktopRunner(scope: OwnerScope, registration: AutomationDesktopRunnerRegistration) {
     return automationRepository.registerDesktopRunner({
@@ -446,7 +469,12 @@ export class AutomationService {
       leaseMs: env.automations.leaseMs,
       now: Date.now(),
     })
-    if (!claimed || claimed.revision.action?.kind !== "saved_script") return
+    if (!claimed) return
+    if (claimed.revision.action?.kind === "agent") {
+      await this.executeCloudAgentRun(claimed, leaseOwner)
+      return
+    }
+    if (claimed.revision.action?.kind !== "saved_script") return
     const executor = cloudSavedScriptExecutor
     if (!executor) {
       await automationRepository.completeCloud({
@@ -481,6 +509,121 @@ export class AutomationService {
       error: result.ok ? null : { code: "execution_failed", message: result.message, retryable: result.retryable },
       now: Date.now(),
     })
+  }
+
+  private startCloudRun(runId: string): boolean {
+    if (this.cloudExecutions.has(runId)) return true
+    if (this.cloudExecutions.size >= env.automations.maxConcurrency) return false
+    const task = this.executeCloudRun(runId)
+      .catch((error) => {
+        appLogger.error("Cloud Automation dispatch failed", {
+          component: "automation_scheduler",
+          run_id: runId,
+          error,
+        })
+      })
+      .finally(() => this.cloudExecutions.delete(runId))
+    this.cloudExecutions.set(runId, task)
+    return true
+  }
+
+  private async executeCloudAgentRun(
+    claimed: NonNullable<Awaited<ReturnType<typeof automationRepository.claimCloud>>>,
+    leaseOwner: string,
+  ): Promise<void> {
+    const action = claimed.revision.action
+    if (action?.kind !== "agent") return
+    const executor = cloudAgentExecutor
+    if (!executor) {
+      await automationRepository.completeCloud({
+        automationId: claimed.automation.id,
+        runId: claimed.run.id,
+        leaseOwner,
+        status: "failed",
+        resultSummary: "OpenWork Cloud agent execution is unavailable.",
+        updateArtifactState: false,
+        error: { code: "execution_runtime_unavailable", message: "OpenWork Cloud agent execution is unavailable.", retryable: true },
+        now: Date.now(),
+      })
+      return
+    }
+
+    const controller = new AbortController()
+    let monitoring = false
+    const monitor = async () => {
+      if (monitoring) return
+      monitoring = true
+      try {
+        const state = await automationRepository.cloudRunState(claimed.run.id)
+        if (!state || state.cancelRequested) controller.abort()
+        else if (!await automationRepository.heartbeatCloud({
+          runId: claimed.run.id,
+          leaseOwner,
+          leaseMs: env.automations.leaseMs,
+          now: Date.now(),
+        })) controller.abort()
+      } finally {
+        monitoring = false
+      }
+    }
+    const heartbeatIntervalMs = Math.max(1_000, Math.min(10_000, Math.floor(env.automations.leaseMs / 3)))
+    await monitor()
+    if (controller.signal.aborted) {
+      await automationRepository.completeCloud({
+        automationId: claimed.automation.id,
+        runId: claimed.run.id,
+        leaseOwner,
+        status: "cancelled",
+        resultSummary: "The Automation run was cancelled.",
+        updateArtifactState: false,
+        error: { code: "cancelled", message: "The Automation run was cancelled.", retryable: false },
+        now: Date.now(),
+      })
+      return
+    }
+    const interval = setInterval(() => void monitor(), heartbeatIntervalMs)
+    const state = await automationRepository.cloudRunState(claimed.run.id)
+    const result = await executor({
+      organizationId: claimed.automation.organizationId,
+      ownerMemberId: claimed.automation.ownerMemberId,
+      automationName: claimed.automation.name,
+      action,
+      maximumRuntimeMs: claimed.revision.maximumRuntimeMs,
+      previousReceipt: state?.receipt ?? null,
+      signal: controller.signal,
+      onAdmitted: async (receipt) => automationRepository.setCloudExecution({
+        runId: claimed.run.id,
+        leaseOwner,
+        engineKind: "openwork-cloud-agent-v1",
+        receipt,
+        now: Date.now(),
+      }),
+    }).catch((error): CloudAgentExecution => ({
+      ok: false,
+      status: controller.signal.aborted ? "cancelled" : "failed",
+      code: controller.signal.aborted ? "cancelled" : "execution_failed",
+      message: controller.signal.aborted ? "The Automation run was cancelled." : error instanceof Error ? error.message : "Cloud agent execution failed.",
+      retryable: !controller.signal.aborted,
+    })).finally(() => clearInterval(interval))
+
+    await automationRepository.completeCloud({
+      automationId: claimed.automation.id,
+      runId: claimed.run.id,
+      leaseOwner,
+      status: result.ok ? "succeeded" : result.status,
+      resultSummary: result.ok ? result.resultSummary : result.message,
+      updateArtifactState: false,
+      error: result.ok ? null : { code: result.code, message: result.message, retryable: result.retryable },
+      now: Date.now(),
+    })
+    if (!result.ok && result.needsAttention) {
+      await automationRepository.markNeedsAttention({
+        automationId: claimed.automation.id,
+        expectedRevisionId: claimed.revision.id,
+        reason: { code: "execution_runtime_unavailable", message: result.message, occurredAt: Date.now() },
+        now: Date.now(),
+      })
+    }
   }
 
 }

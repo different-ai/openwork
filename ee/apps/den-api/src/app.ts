@@ -28,7 +28,8 @@ import { registerDevRoutes } from "./routes/dev/index.js"
 import { registerMcpTokenRoutes } from "./routes/mcp/index.js"
 import { registerMemoryRoutes } from "./routes/memory/index.js"
 import { registerAutomationRoutes } from "./routes/automations/index.js"
-import { configureCloudSavedScriptExecutor } from "./automations/service.js"
+import { configureCloudAgentExecutor, configureCloudSavedScriptExecutor } from "./automations/service.js"
+import { cloudAgentRuntimeAvailable, executeCloudAgent } from "./automations/cloud-agent-executor.js"
 import { getCatalog } from "./mcp/index.js"
 import { buildCapabilityToolTree, createCapabilityRegistryContext } from "./mcp/capability-registry.js"
 import { executeMarketplaceCapability } from "./mcp/marketplace-capabilities.js"
@@ -222,6 +223,8 @@ registerMcpRoutes(app)
 registerAgentMcpRoutes(app)
 registerAdminMcpRoutes(app)
 registerTelemetryRoutes(app)
+
+configureCloudAgentExecutor({ execute: executeCloudAgent, runtimeAvailable: cloudAgentRuntimeAvailable })
 
 configureCloudSavedScriptExecutor(async ({ organizationId, ownerMemberId, automationRunId, action }) => {
   const normalizedOrganizationId = normalizeDenTypeId("organization", organizationId)

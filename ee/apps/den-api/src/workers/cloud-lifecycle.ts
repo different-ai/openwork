@@ -1,5 +1,5 @@
-import { and, asc, eq, isNull, lt, or } from "@openwork-ee/den-db/drizzle"
-import { WorkerTable, WorkerTokenTable } from "@openwork-ee/den-db/schema"
+import { and, asc, eq, inArray, isNull, lt, notExists, or } from "@openwork-ee/den-db/drizzle"
+import { AutomationRunTable, AutomationTable, MemberTable, WorkerTable, WorkerTokenTable } from "@openwork-ee/den-db/schema"
 import { db } from "../db.js"
 import { env } from "../env.js"
 import { materializeCloudWorkerProviders } from "../llm/cloud-provider-materialization.js"
@@ -90,6 +90,19 @@ const databaseCloudLifecycleStore: CloudLifecycleStore = {
         or(
           lt(WorkerTable.last_active_at, input.idleBefore),
           and(isNull(WorkerTable.last_active_at), lt(WorkerTable.updated_at, input.idleBefore)),
+        ),
+        // A scheduled headless run can be admitted before the worker's normal
+        // activity heartbeat lands. Keep idle shutdown from racing that run.
+        notExists(
+          db.select({ id: AutomationRunTable.id }).from(AutomationRunTable)
+            .innerJoin(AutomationTable, eq(AutomationTable.id, AutomationRunTable.automation_id))
+            .innerJoin(MemberTable, eq(MemberTable.id, AutomationTable.owner_member_id))
+            .where(and(
+              eq(AutomationTable.organization_id, WorkerTable.org_id),
+              eq(MemberTable.userId, WorkerTable.created_by_user_id),
+              eq(AutomationRunTable.execution_target, "cloud"),
+              inArray(AutomationRunTable.status, ["claimed", "running"]),
+            )),
         ),
       ))
       .orderBy(asc(WorkerTable.updated_at))

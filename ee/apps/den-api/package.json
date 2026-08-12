@@ -53,6 +53,7 @@
     "@openwork/connect-link": "workspace:*",
     "@openwork/email": "workspace:*",
     "@openwork/enterprise-mcp-client": "workspace:*",
+    "@openwork/headless-threads": "workspace:*",
     "@openwork/install-config": "workspace:*",
     "@openwork/types": "workspace:*",
     "@sentry/hono": "10.64.0",

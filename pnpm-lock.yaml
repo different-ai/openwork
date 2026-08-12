@@ -528,6 +528,9 @@ importers:
       '@openwork/enterprise-mcp-client':
         specifier: workspace:*
         version: link:../../../packages/enterprise-mcp-client
+      '@openwork/headless-threads':
+        specifier: workspace:*
+        version: link:../../../packages/headless-threads
       '@openwork/install-config':
         specifier: workspace:*
         version: link:../../../packages/install-config

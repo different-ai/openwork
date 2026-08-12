@@ -16,6 +16,10 @@ function desktopThread(engineKind: string): AutomationExecutionThread {
   }
 }
 
+function cloudThread(): AutomationExecutionThread {
+  return { ...desktopThread("openwork-cloud-agent-v1"), executionLocation: "cloud" }
+}
+
 describe("Automation execution thread UI", () => {
   test("uses Den's persisted thread identity for receipt navigation", () => {
     expect(automationExecutionThreadRoute(desktopThread("openwork-desktop-runner-v1"))).toBe(
@@ -27,6 +31,13 @@ describe("Automation execution thread UI", () => {
     expect(automationExecutionIdentity(desktopThread("future-replaceable-engine"))).toEqual({
       icon: "desktop",
       label: "Desktop",
+    })
+  })
+
+  test("labels a Web-created run as OpenWork Cloud on Desktop", () => {
+    expect(automationExecutionIdentity(cloudThread())).toEqual({
+      icon: "cloud",
+      label: "OpenWork Cloud",
     })
   })
 })

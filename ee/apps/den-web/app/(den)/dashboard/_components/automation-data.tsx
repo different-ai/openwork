@@ -7,6 +7,7 @@ import {
   automationRunReceiptSchema,
   automationRunSchema,
 } from "@openwork/types/automations";
+import type { CreateAutomationDefinition } from "@openwork/types/automations";
 import { savedScriptArtifactSnapshotSchema } from "@openwork/types/dynamic-artifacts";
 import { getErrorMessage, requestJson } from "../../_lib/den-flow";
 
@@ -60,6 +61,17 @@ export function useRunAutomationNow() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (automationId: string) => payload(`/v1/automations/${encodeURIComponent(automationId)}/run`, { method: "POST" }),
+    onSuccess: async () => queryClient.invalidateQueries({ queryKey: ["automations"] }),
+  });
+}
+
+export function useCreateCloudAutomation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (definition: CreateAutomationDefinition) => automationDetailSchema.parse(await payload("/v1/automations", {
+      method: "POST",
+      body: JSON.stringify(definition),
+    })),
     onSuccess: async () => queryClient.invalidateQueries({ queryKey: ["automations"] }),
   });
 }

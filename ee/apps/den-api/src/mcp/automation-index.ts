@@ -2,7 +2,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import type { AutomationList } from "@openwork/types/automations"
 
 export const AGENT_AUTOMATION_INDEX_URI = "automation://index.json"
-export const AGENT_AUTOMATION_INDEX_SCHEMA = "https://schemas.openworklabs.com/automations/discovery/0.1.0/schema.json"
+export const AGENT_AUTOMATION_INDEX_SCHEMA = "https://schemas.openworklabs.com/automations/discovery/0.2.0/schema.json"
 
 /**
  * How many Automations the discovery index carries. The index rides in every
@@ -17,6 +17,7 @@ export type AgentAutomationIndexEntry = {
   state: string
   schedule: AutomationList["items"][number]["revision"]["schedule"]
   nextDueAt: number | null
+  executionTarget: "desktop" | "cloud"
   latestRun: { status: string; trigger: string; finishedAt: number | null } | null
 }
 
@@ -46,6 +47,7 @@ export function buildAgentAutomationIndex(input: {
       state: item.automation.state,
       schedule: item.revision.schedule,
       nextDueAt: item.automation.nextDueAt,
+      executionTarget: item.revision.executionTarget ?? "desktop",
       latestRun: item.latestRun
         ? {
           status: item.latestRun.status,

@@ -169,6 +169,8 @@ export interface HeadlessThreadClientOptions {
   workspaceId: string;
   /** A collaborator-scoped OpenWork client token. */
   token: string;
+  /** Host credential for server-to-server execution through the Cloud worker proxy. */
+  hostToken?: string;
   /** Model used when a call does not name one. */
   defaultModel?: HeadlessThreadModel;
   /** Default `waitForThread` poll interval. Defaults to 500ms. */
