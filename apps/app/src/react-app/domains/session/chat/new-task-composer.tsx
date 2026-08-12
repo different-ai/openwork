@@ -4,7 +4,7 @@ import type { Agent } from "@opencode-ai/sdk/v2/client";
 
 import { createDenClient, readDenSettings } from "@/app/lib/den";
 import type { OpenworkServerClient } from "@/app/lib/openwork-server";
-import type { ComposerAttachment, McpServerEntry, McpStatusMap, ModelRef, SkillCard, SlashCommandOption } from "@/app/types";
+import type { ComposerAttachment, McpServerEntry, McpStatusMap, ModelOption, ModelRef, SkillCard, SlashCommandOption } from "@/app/types";
 import { t } from "@/i18n";
 import { ReactSessionComposer } from "@/react-app/domains/session/surface/composer/composer";
 import { encodeComposerMentionValue, type ComposerMentionKind } from "@/react-app/domains/session/surface/composer/mention-encoding";
@@ -31,6 +31,7 @@ export type NewTaskComposerContext = {
   client: OpenworkServerClient;
   workspaceId: string | null;
   selectedModel: ModelRef;
+  modelOptions?: readonly ModelOption[];
   modelUnavailable?: boolean;
   modelUnavailableMessage?: string | null;
   organizationModelsEmpty?: boolean;
@@ -250,6 +251,7 @@ export function NewTaskComposer(props: NewTaskComposerProps) {
       statusLabel=""
       modelPickerOpen={context?.modelPickerOpen ?? false}
       selectedModel={context?.selectedModel ?? FALLBACK_MODEL}
+      modelOptions={context?.modelOptions}
       openWorkModelsEntitled={context?.openWorkModelsEntitled}
       onRefreshOrganizationModels={context?.onRefreshOrganizationModels}
       onModelPickerOpenChange={context?.onModelPickerOpenChange ?? noop}

@@ -33,6 +33,7 @@ import {
 } from "@/react-app/domains/cloud/openwork-models-promo";
 import { getConnectedProviderItems, useProviderListQuery } from "@/react-app/infra/provider-list-query";
 import { filterEntitledModelOptions } from "@/react-app/domains/connections/provider-auth/provider-policy";
+import { mergeModelOptions } from "@/react-app/domains/connections/provider-auth/assigned-model-options";
 import {
   Command,
   CommandCollection,
@@ -62,7 +63,7 @@ function getProviderDisplayName(providerId: string) {
     .join(" ");
 }
 
-function useModelOptions(open: boolean) {
+function useModelOptions(open: boolean, fallbackOptions: readonly ModelOption[]) {
   const { client, opencodeBaseUrl, selectedWorkspaceRoot } = useWorkspace();
   const checkDesktopRestriction = useCheckDesktopRestriction();
 
@@ -111,11 +112,11 @@ function useModelOptions(open: boolean) {
         })),
       );
 
-    return filterEntitledModelOptions(options, {
+    return filterEntitledModelOptions(mergeModelOptions(options, fallbackOptions), {
       restrictToCloud,
       checkRestriction: checkDesktopRestriction,
     });
-  }, [checkDesktopRestriction, data]);
+  }, [checkDesktopRestriction, data, fallbackOptions]);
 }
 
 type ModelSelectModelItem = {
@@ -196,6 +197,8 @@ interface ModelSelectProps {
   sessionId?: string;
   /** Den/import includes OpenWork Models — never show Subscribe while true. */
   openWorkModelsEntitled?: boolean;
+  /** Member-scoped models available before a workspace OpenCode client exists. */
+  fallbackOptions?: readonly ModelOption[];
 }
 
 export function ModelSelect({
@@ -207,11 +210,12 @@ export function ModelSelect({
   disabled = false,
   sessionId,
   openWorkModelsEntitled = false,
+  fallbackOptions = [],
 }: ModelSelectProps) {
   const [search, setSearch] = React.useState("");
   const [promoHidden, setPromoHidden] = React.useState(isOpenWorkModelsPromoHidden);
   const searchInputRef = React.useRef<HTMLInputElement>(null);
-  const modelOptions = useModelOptions(open);
+  const modelOptions = useModelOptions(open, fallbackOptions);
   const denAuth = useDenAuth();
   const navigate = useNavigate();
   const platform = usePlatform();

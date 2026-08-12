@@ -122,6 +122,7 @@ import { CreateRemoteWorkspaceModal } from "@/react-app/domains/workspace/create
 import { CreateWorkspaceModal } from "@/react-app/domains/workspace/create-workspace-modal";
 import type { CreateWorkspaceOptions } from "@/react-app/domains/workspace/types";
 import { isCloudManagedProviderKey } from "@/react-app/domains/connections/provider-auth/cloud-provider-config";
+import { assignedModelOptions } from "@/react-app/domains/connections/provider-auth/assigned-model-options";
 import {
   filterEntitledModelOptions,
   resolveEntitledOrgDefaultModel,
@@ -853,6 +854,10 @@ export function SessionRoute() {
     setProviderConnectedIds,
     setDisabledProviderIds,
   });
+  const organizationAssignedModelOptions = useMemo(
+    () => assignedModelOptions(sessionProviderAuthSnapshot.cloudOrgProviders),
+    [sessionProviderAuthSnapshot.cloudOrgProviders],
+  );
   useEffect(() => {
     if (!denAuth.isSignedIn) {
       setActiveOrganizationRole(null);
@@ -926,15 +931,24 @@ export function SessionRoute() {
     return new URL("/dashboard/custom-llm-providers", readDenSettings().baseUrl).toString();
   }, [activeOrganizationRole, denSessionVersion]);
   const restrictToCloudProviders = checkDesktopRestriction({ restriction: "allowCustomProviders" });
-  const entitledModelOptions = useMemo(() =>
-    filterEntitledModelOptions(
-      providerListModelEntitlementOptions(cloudProviderList ?? providerListQuery.data),
+  const entitledModelOptions = useMemo(() => {
+    const runtimeOptions = providerListModelEntitlementOptions(
+      cloudProviderList ?? providerListQuery.data,
+    );
+    return filterEntitledModelOptions(
+      runtimeOptions.length > 0 ? runtimeOptions : organizationAssignedModelOptions,
       {
         restrictToCloud: restrictToCloudProviders,
         checkRestriction: checkDesktopRestriction,
       },
-    ),
-  [checkDesktopRestriction, cloudProviderList, providerListQuery.data, restrictToCloudProviders]);
+    );
+  }, [
+    checkDesktopRestriction,
+    cloudProviderList,
+    organizationAssignedModelOptions,
+    providerListQuery.data,
+    restrictToCloudProviders,
+  ]);
   const organizationModelsEmpty = isOrganizationModelsEmpty({
     workspaceReady: Boolean(selectedWorkspaceId && opencodeClient),
     loading,
@@ -947,6 +961,7 @@ export function SessionRoute() {
     baseUrl: opencodeBaseUrl,
     workspaceRoot: selectedWorkspaceRoot,
     onOpen: handleModelPickerOpen,
+    fallbackOptions: organizationAssignedModelOptions,
   });
   // Which session the open model picker targets. Selecting a model while a
   // session is targeted remembers it for that conversation only; null means
@@ -967,16 +982,26 @@ export function SessionRoute() {
   const selectedModelProviderList = selectedModelUsesCloudProvider
     ? cloudProviderList
     : providerListQuery.data;
-  const entitledOrgDefaultModel = useMemo(() =>
-    resolveEntitledOrgDefaultModel(
-      providerListModelEntitlementOptions(cloudProviderList ?? providerListQuery.data),
+  const entitledOrgDefaultModel = useMemo(() => {
+    const runtimeOptions = providerListModelEntitlementOptions(
+      cloudProviderList ?? providerListQuery.data,
+    );
+    return resolveEntitledOrgDefaultModel(
+      runtimeOptions.length > 0 ? runtimeOptions : organizationAssignedModelOptions,
       {
         currentDefault: local.prefs.defaultModel,
         restrictToCloud: restrictToCloudProviders,
         checkRestriction: checkDesktopRestriction,
       },
-    ),
-  [checkDesktopRestriction, cloudProviderList, local.prefs.defaultModel, providerListQuery.data, restrictToCloudProviders]);
+    );
+  }, [
+    checkDesktopRestriction,
+    cloudProviderList,
+    local.prefs.defaultModel,
+    organizationAssignedModelOptions,
+    providerListQuery.data,
+    restrictToCloudProviders,
+  ]);
   useEffect(() => {
     if (entitledOrgDefaultModel) writeStoredDefaultModel(entitledOrgDefaultModel);
   }, [entitledOrgDefaultModel]);
@@ -1511,6 +1536,7 @@ export function SessionRoute() {
       client,
       workspaceId: selectedWorkspaceId || null,
       selectedModel: local.prefs.defaultModel ?? { providerID: "", modelID: "" },
+      modelOptions: organizationAssignedModelOptions,
       modelUnavailable: selectedModelUnavailable,
       modelUnavailableMessage,
       organizationModelsEmpty,
@@ -1577,6 +1603,7 @@ export function SessionRoute() {
     modelVariantValue,
     opencodeClient,
     openWorkModelsEntitled,
+    organizationAssignedModelOptions,
     organizationModelsEmpty,
     refreshCloudProviderSync,
     refreshOrganizationModelAccess,

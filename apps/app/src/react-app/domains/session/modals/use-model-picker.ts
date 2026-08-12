@@ -8,6 +8,7 @@ import type { Client, ModelOption } from "@/app/types";
 import { useCheckDesktopRestriction } from "@/react-app/domains/cloud/desktop-config-provider";
 import { isCloudManagedProviderKey } from "@/react-app/domains/connections/provider-auth/cloud-provider-config";
 import { filterEntitledModelOptions } from "@/react-app/domains/connections/provider-auth/provider-policy";
+import { mergeModelOptions } from "@/react-app/domains/connections/provider-auth/assigned-model-options";
 import {
   getConnectedProviderItems,
   useProviderListQuery,
@@ -25,10 +26,12 @@ export type UseModelPickerInput = {
   onOpen?: () => void;
   /** Optional: surface option-load failures (settings shows a toast; the session route stays silent). */
   onLoadError?: (error: unknown) => void;
+  /** Member-scoped models available before a workspace OpenCode client exists. */
+  fallbackOptions?: readonly ModelOption[];
 };
 
 export function useModelPicker(input: UseModelPickerInput) {
-  const { client, baseUrl, workspaceRoot, onOpen, onLoadError } = input;
+  const { client, baseUrl, workspaceRoot, onOpen, onLoadError, fallbackOptions = [] } = input;
   const checkDesktopRestriction = useCheckDesktopRestriction();
 
   const [open, setOpenState] = useState(false);
@@ -130,8 +133,8 @@ export function useModelPicker(input: UseModelPickerInput) {
         });
       }
     }
-    return next;
-  }, [providerListQuery.data, recentProviderIds]);
+    return mergeModelOptions(next, fallbackOptions);
+  }, [fallbackOptions, providerListQuery.data, recentProviderIds]);
 
   // Apply org-level restrictions (dev #1505) on top of the raw model list
   // so the picker never surfaces blocked options:

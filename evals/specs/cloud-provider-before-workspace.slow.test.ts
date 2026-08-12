@@ -165,6 +165,28 @@ test("managed models survive sign-in before the first workspace exists", async (
   );
   expect(initialSucceeded).toBe(true);
 
+  const preWorkspaceModels = await eventually(
+    () => readAvailableModels(desktopApp),
+    {
+      within: 30_000,
+      intervalMs: 1_000,
+      label: "assigned model in the picker before workspace creation",
+      until: (candidates) => candidates.some(
+        (candidate) => candidate.id === MODEL_ID && candidate.selectable,
+      ),
+    },
+  );
+  const preWorkspaceModel = preWorkspaceModels.find(
+    (candidate) => candidate.id === MODEL_ID && candidate.selectable,
+  );
+  evidence.fact(
+    "Assigned models are visible before the first workspace exists",
+    `Selectable model: ${JSON.stringify(preWorkspaceModel)}`,
+    preWorkspaceModel?.id === MODEL_ID && preWorkspaceModel.selectable,
+  );
+  expect(preWorkspaceModel?.id).toBe(MODEL_ID);
+  expect(preWorkspaceModel?.selectable).toBe(true);
+
   // The first workspace is created through the product itself: organization
   // onboarding plus the app's workspace.create action, the same journey a
   // person takes right after this sign-in.
