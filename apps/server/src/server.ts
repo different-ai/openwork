@@ -15,6 +15,7 @@ import {
   type EngineSpawnTemplate,
 } from "./engine-pool.js";
 import { buildEngineAuthProbeHeader } from "./engine-registry.js";
+import { shouldDeferInPlaceEngineReload } from "./engine-reload-defer.js";
 import { addPlugin, listPlugins, normalizePluginSpec, removePlugin } from "./plugins.js";
 import { sanitizePortableOpencodeConfig } from "./portable-opencode.js";
 import { addMcp, listMcp, removeMcp, setMcpEnabled } from "./mcp.js";
@@ -1867,8 +1868,16 @@ function createRoutes(
     ensureWritable,
     resolveWorkspace,
     serializeWorkspace,
-    reloadOpencodeEngine: (routeConfig, workspace) =>
-      reloadOpencodeEngine(routeConfig, workspace, engineMcpServerState),
+    reloadOpencodeEngine: async (routeConfig, workspace) => {
+      // Switch reloads must not dispose the instance over sessions that are
+      // still running in the workspace being re-activated: the in-place
+      // reload aborts them. Rollover keeps live runs on a draining
+      // generation, so only the legacy in-place path defers.
+      if (await shouldDeferInPlaceEngineReload(routeConfig, workspace, engineHasActiveSessions)) {
+        return;
+      }
+      await reloadOpencodeEngine(routeConfig, workspace, engineMcpServerState);
+    },
   });
 
   registerSessionRoutes({
@@ -2390,8 +2399,7 @@ function createRoutes(
     // the generation that owns live sessions. Legacy/external engines keep
     // the established busy deferral.
     const reloadDeferred = shouldReload
-      && !enginePoolForConfig(config)
-      && (await engineHasActiveSessions(config, workspace));
+      && (await shouldDeferInPlaceEngineReload(config, workspace, engineHasActiveSessions));
     if (shouldReload && !reloadDeferred) {
       await reloadOpencodeEngine(config, workspace, engineMcpServerState);
     }
