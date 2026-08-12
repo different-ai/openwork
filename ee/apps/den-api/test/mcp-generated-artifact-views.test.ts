@@ -13,7 +13,6 @@ const viewId = "arv_01k28e8vz5e5svgkde54dgqy0c"
 const activeRevisionId = "avr_01k28e91dcf6ftyz9e90pcrv7p"
 const draftRevisionId = "avr_01k28e99fpfmrs5hvh5rj49vrz"
 const rollbackRevisionId = "avr_01k28e9dq2en6sh6djm0bvx0yk"
-const unlistedRevisionId = "avr_01k28ea6rq7m81ds6hnb3j8q65"
 const configObjectId = "cob_01k28e8q8pf8r9sff9mhyqxved"
 const html = "<!doctype html><html><body><div id=\"root\"></div></body></html>"
 const digest = `sha256:${createHash("sha256").update(html).digest("hex")}`
@@ -123,15 +122,6 @@ test("serves the stored HTML bytes and keeps Artifact data in structuredContent"
     const result = await client.callTool({ name: `render_artifact_${viewId}`, arguments: {} })
     expect(result.structuredContent).toEqual(payload)
     expect(html).not.toContain("Qualified")
-  })
-})
-
-test("resolves an authorized immutable revision outside the discovery window", async () => {
-  await withClient(async (client) => {
-    const resource = await client.readResource({ uri: artifactViewResourceUri(viewId, unlistedRevisionId) })
-    const content = resource.contents[0]
-    expect(content && "text" in content ? content.text : null).toBe(html)
-    expect(content?.uri).toBe(artifactViewResourceUri(viewId, unlistedRevisionId))
   })
 })
 

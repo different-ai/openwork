@@ -72,21 +72,12 @@ async function accessibleView(input: {
   return row
 }
 
-async function revisionRows(
-  artifactViewId: ArtifactViewId,
-  activeRevisionId?: ArtifactViewRevisionId | null,
-): Promise<ArtifactViewRevisionRow[]> {
-  const rows = await db.select().from(ArtifactViewRevisionTable).where(eq(
+async function revisionRows(artifactViewId: ArtifactViewId): Promise<ArtifactViewRevisionRow[]> {
+  return db.select().from(ArtifactViewRevisionTable).where(eq(
     ArtifactViewRevisionTable.artifact_view_id,
     artifactViewId,
   )).orderBy(desc(ArtifactViewRevisionTable.created_at), desc(ArtifactViewRevisionTable.id))
     .limit(ARTIFACT_VIEW_REVISION_LIST_LIMIT)
-  if (!activeRevisionId || rows.some((row) => row.id === activeRevisionId)) return rows
-  const activeRows = await db.select().from(ArtifactViewRevisionTable).where(and(
-    eq(ArtifactViewRevisionTable.id, activeRevisionId),
-    eq(ArtifactViewRevisionTable.artifact_view_id, artifactViewId),
-  )).limit(1)
-  return activeRows[0] ? [...rows, activeRows[0]] : rows
 }
 
 export async function listArtifactViews(input: {
@@ -104,7 +95,7 @@ export async function listArtifactViews(input: {
   const accessible = await Promise.all(rows.map(async (row) => {
     try {
       await getCodemodeScriptDetail({ context: input.context, configObjectId: row.config_object_id })
-      return serializeView(row, await revisionRows(row.id, row.active_revision_id))
+      return serializeView(row, await revisionRows(row.id))
     } catch {
       return null
     }
@@ -215,7 +206,7 @@ export async function saveArtifactViewRevision(input: {
   const rows = await db.select().from(ArtifactViewTable).where(eq(ArtifactViewTable.id, artifactViewId)).limit(1)
   const view = rows[0]
   if (!view) throw new Error("artifact_view_not_found")
-  return serializeView(view, await revisionRows(view.id, view.active_revision_id))
+  return serializeView(view, await revisionRows(view.id))
 }
 
 export async function activateArtifactViewRevision(input: {
@@ -240,7 +231,7 @@ export async function activateArtifactViewRevision(input: {
   await db.update(ArtifactViewTable).set({ status: "active", active_revision_id: revision.id })
     .where(eq(ArtifactViewTable.id, view.id))
   const updated = { ...view, status: "active" as const, active_revision_id: revision.id, updated_at: new Date() }
-  return serializeView(updated, await revisionRows(view.id, updated.active_revision_id))
+  return serializeView(updated, await revisionRows(view.id))
 }
 
 export async function retireArtifactView(input: {
@@ -251,5 +242,5 @@ export async function retireArtifactView(input: {
   await db.update(ArtifactViewTable).set({ status: "retired", active_revision_id: null })
     .where(eq(ArtifactViewTable.id, view.id))
   const updated = { ...view, status: "retired" as const, active_revision_id: null, updated_at: new Date() }
-  return serializeView(updated, await revisionRows(view.id, updated.active_revision_id))
+  return serializeView(updated, await revisionRows(view.id))
 }
