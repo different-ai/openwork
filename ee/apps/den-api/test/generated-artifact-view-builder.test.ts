@@ -114,3 +114,15 @@ test("stores compiler diagnostics for invalid React source", async () => {
   expect(result.ok).toBe(false)
   expect(result.diagnostics.length).toBeGreaterThan(0)
 })
+
+test("rejects bundles larger than the desktop MCP Apps host limit", async () => {
+  const content = "x".repeat(190_000)
+  const result = await buildGeneratedArtifactView({
+    title: "Oversized",
+    description: null,
+    outputSchema: schema,
+    reactSource: `export default function View() { return <div>${content}</div> }`,
+  })
+  expect(result.ok).toBe(false)
+  expect(result.diagnostics[0]?.message).toContain("524288 bytes")
+})

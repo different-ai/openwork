@@ -12,7 +12,8 @@ import type {
 
 const MAX_SOURCE_BYTES = 200_000
 const MAX_CSS_BYTES = 100_000
-const MAX_HTML_BYTES = 1_000_000
+// Keep provider output within the desktop MCP Apps host's resources/read limit.
+const MAX_HTML_BYTES = 512 * 1024
 const BUILD_TIMEOUT_MS = 2_000
 const require = createRequire(import.meta.url)
 const reactPackageRoot = require.resolve("react/package.json").replace(/\/package\.json$/u, "")
