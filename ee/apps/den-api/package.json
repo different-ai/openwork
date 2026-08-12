@@ -3,8 +3,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "pnpm run build:email && pnpm run build:install-config && pnpm run build:connect-link && pnpm run build:enterprise-mcp-client && pnpm run build:codemode && OPENWORK_DEV_MODE=1 tsx watch src/main.ts",
-    "dev:local": "pnpm run build:email && pnpm run build:install-config && pnpm run build:connect-link && pnpm run build:enterprise-mcp-client && pnpm run build:codemode && OPENWORK_DEV_MODE=1 PORT=${DEN_API_PORT:-8790} tsx watch src/main.ts",
+    "dev": "pnpm run build:email && pnpm run build:install-config && pnpm run build:connect-link && pnpm run build:enterprise-mcp-client && pnpm run build:codemode && pnpm run build:headless-threads && OPENWORK_DEV_MODE=1 tsx watch src/main.ts",
+    "dev:local": "pnpm run build:email && pnpm run build:install-config && pnpm run build:connect-link && pnpm run build:enterprise-mcp-client && pnpm run build:codemode && pnpm run build:headless-threads && OPENWORK_DEV_MODE=1 PORT=${DEN_API_PORT:-8790} tsx watch src/main.ts",
     "build": "node ./scripts/build.mjs",
     "build:types": "pnpm --filter @openwork/types build",
     "build:automations": "pnpm --filter @openwork/automations build",
@@ -13,6 +13,7 @@
     "build:connect-link": "pnpm --filter @openwork/connect-link build",
     "build:enterprise-mcp-client": "pnpm --filter @openwork/enterprise-mcp-client build",
     "build:codemode": "pnpm --filter @openwork/codemode build",
+    "build:headless-threads": "pnpm --filter @openwork/headless-threads build",
     "build:den-db": "pnpm --filter @openwork-ee/den-db build",
     "openapi:snapshot": "tsx scripts/generate-openapi-snapshot.ts",
     "smoke:config-object-payload-boundary": "tsx scripts/smoke-config-object-payload-boundary.ts",
