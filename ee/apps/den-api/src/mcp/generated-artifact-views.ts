@@ -5,7 +5,7 @@ import {
   registerAppTool,
 } from "@modelcontextprotocol/ext-apps/server"
 import type { McpUiResourceMeta } from "@modelcontextprotocol/ext-apps"
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
+import type { McpServer, RegisteredResource, RegisteredTool } from "@modelcontextprotocol/sdk/server/mcp.js"
 import {
   dynamicArtifactAppPayloadSchema,
   generatedArtifactViewSchema,
@@ -54,9 +54,9 @@ function registerRevisionResource(input: {
   view: GeneratedArtifactView
   revision: GeneratedArtifactView["revisions"][number]
   loadResource: (request: { artifactViewId: string; revisionId: string }) => Promise<GeneratedArtifactResource>
-}) {
+}): RegisteredResource {
   const metadata = resourceMeta(input.revision.csp, input.revision.resourceDigest ?? "")
-  registerAppResource(
+  return registerAppResource(
     input.server,
     `Generated Artifact ${input.view.id} ${input.revision.id}`,
     input.revision.resourceUri,
@@ -88,9 +88,9 @@ function registerRenderTool(input: {
   revision: GeneratedArtifactView["revisions"][number]
   preview: boolean
   loadData: (request: LoadDataRequest) => Promise<DynamicArtifactAppLoadResult>
-}) {
+}): RegisteredTool {
   const toolName = `${input.preview ? "preview" : "render"}_artifact_${input.view.id}`
-  registerAppTool(
+  return registerAppTool(
     input.server,
     toolName,
     {
@@ -161,22 +161,47 @@ export function registerAgentGeneratedArtifactViews(input: {
   activate: (request: { artifactViewId: string; revisionId: string }) => Promise<GeneratedArtifactView>
   retire: (request: { artifactViewId: string }) => Promise<GeneratedArtifactView>
 }) {
-  for (const view of input.views) {
+  const registeredResources = new Map<string, RegisteredResource>()
+  const registeredTools = new Map<string, { revisionId: string; registration: RegisteredTool }>()
+
+  const syncTool = (
+    view: GeneratedArtifactView,
+    revision: GeneratedArtifactView["revisions"][number] | undefined,
+    preview: boolean,
+  ) => {
+    const key = `${preview ? "preview" : "render"}:${view.id}`
+    const current = registeredTools.get(key)
+    if (current?.revisionId === revision?.id) return
+    current?.registration.remove()
+    registeredTools.delete(key)
+    if (!revision) return
+    registeredTools.set(key, {
+      revisionId: revision.id,
+      registration: registerRenderTool({ server: input.server, view, revision, preview, loadData: input.loadData }),
+    })
+  }
+
+  const syncView = (view: GeneratedArtifactView) => {
     const readyRevisions = view.revisions.filter((revision) =>
       revision.buildStatus === "ready" && revision.resourceDigest !== null && revision.retiredAt === null)
     // Every immutable ready revision remains addressable by its exact URI so
     // preview, audit, and rollback never depend on mutable resource bytes.
     for (const revision of readyRevisions) {
-      registerRevisionResource({ server: input.server, view, revision, loadResource: input.loadResource })
+      if (!registeredResources.has(revision.resourceUri)) {
+        registeredResources.set(
+          revision.resourceUri,
+          registerRevisionResource({ server: input.server, view, revision, loadResource: input.loadResource }),
+        )
+      }
     }
     const activeRevision = readyRevisions.find((revision) => revision.id === view.activeRevisionId)
     const previewRevision = readyRevisions.find((revision) => revision.id !== view.activeRevisionId)
-    if (view.status === "active" && activeRevision) {
-      registerRenderTool({ server: input.server, view, revision: activeRevision, preview: false, loadData: input.loadData })
-    }
-    if (previewRevision) {
-      registerRenderTool({ server: input.server, view, revision: previewRevision, preview: true, loadData: input.loadData })
-    }
+    syncTool(view, view.status === "active" ? activeRevision : undefined, false)
+    syncTool(view, previewRevision, true)
+  }
+
+  for (const view of input.views) {
+    syncView(view)
   }
 
   input.server.registerTool(
@@ -202,7 +227,10 @@ export function registerAgentGeneratedArtifactViews(input: {
     async (request, extra) => {
       const view = await input.save(request)
       const revision = view.revisions[0]
-      if (revision?.buildStatus === "ready") await sendCatalogChanged(extra)
+      if (revision?.buildStatus === "ready") {
+        syncView(view)
+        await sendCatalogChanged(extra)
+      }
       return {
         content: [{ type: "text" as const, text: revision?.buildStatus === "ready"
           ? `Saved immutable view revision ${revision.id} at ${revision.resourceUri}.`
@@ -223,6 +251,7 @@ export function registerAgentGeneratedArtifactViews(input: {
     },
     async (request, extra) => {
       const view = await input.activate(request)
+      syncView(view)
       await sendCatalogChanged(extra)
       return {
         content: [{ type: "text" as const, text: `Activated view revision ${request.revisionId}.` }],
@@ -242,6 +271,7 @@ export function registerAgentGeneratedArtifactViews(input: {
     },
     async (request, extra) => {
       const view = await input.retire(request)
+      syncView(view)
       await sendCatalogChanged(extra)
       return {
         content: [{ type: "text" as const, text: `Retired Artifact view ${request.artifactViewId}. Its revision resources remain immutable.` }],

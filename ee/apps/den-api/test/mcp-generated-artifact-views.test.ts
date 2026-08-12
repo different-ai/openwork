@@ -13,6 +13,7 @@ const viewId = "arv_01k28e8vz5e5svgkde54dgqy0c"
 const activeRevisionId = "avr_01k28e91dcf6ftyz9e90pcrv7p"
 const draftRevisionId = "avr_01k28e99fpfmrs5hvh5rj49vrz"
 const rollbackRevisionId = "avr_01k28e9dq2en6sh6djm0bvx0yk"
+const savedRevisionId = "avr_01k28e9eq2en6sh6djm0bvx0yk"
 const configObjectId = "cob_01k28e8q8pf8r9sff9mhyqxved"
 const html = "<!doctype html><html><body><div id=\"root\"></div></body></html>"
 const digest = `sha256:${createHash("sha256").update(html).digest("hex")}`
@@ -69,7 +70,14 @@ const payload: DynamicArtifactAppPayload = {
   data: { title: "Qualified", total: 12 },
 }
 
-async function withClient<T>(run: (client: Client) => Promise<T>): Promise<T> {
+async function withClient<T>(
+  run: (client: Client) => Promise<T>,
+  overrides: Partial<{
+    save: () => Promise<GeneratedArtifactView>
+    activate: (request: { artifactViewId: string; revisionId: string }) => Promise<GeneratedArtifactView>
+    retire: () => Promise<GeneratedArtifactView>
+  }> = {},
+): Promise<T> {
   const server = new McpServer(
     { name: "generated-artifact-test", version: "1.0.0" },
     { capabilities: dynamicArtifactAppServerCapabilities },
@@ -79,9 +87,9 @@ async function withClient<T>(run: (client: Client) => Promise<T>): Promise<T> {
     views: [view],
     loadResource: async () => ({ html, resourceDigest: digest, csp: view.revisions[0]!.csp }),
     loadData: async () => ({ ok: true, payload, markdown: "# Custom pipeline" }),
-    save: async () => view,
-    activate: async () => view,
-    retire: async () => ({ ...view, status: "retired", activeRevisionId: null }),
+    save: overrides.save ?? (async () => view),
+    activate: overrides.activate ?? (async ({ revisionId }) => ({ ...view, activeRevisionId: revisionId })),
+    retire: overrides.retire ?? (async () => ({ ...view, status: "retired", activeRevisionId: null })),
   })
   const client = new Client({ name: "host", version: "1.0.0" }, { capabilities: {} })
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
@@ -135,7 +143,41 @@ test("activation emits tools/list_changed through the related tool request", asy
       name: "activate_artifact_view_revision",
       arguments: { artifactViewId: viewId, revisionId: draftRevisionId },
     })
-    expect(changed).toBe(1)
-    expect(resourcesChanged).toBe(1)
+    expect(changed).toBeGreaterThan(0)
+    expect(resourcesChanged).toBeGreaterThan(0)
+    const tools = await client.listTools()
+    const render = tools.tools.find((tool) => tool.name === `render_artifact_${viewId}`)
+    expect(render?._meta).toMatchObject({ ui: { resourceUri: artifactViewResourceUri(viewId, draftRevisionId) } })
+  })
+})
+
+test("save and retirement refresh the same session's resources and tools", async () => {
+  const savedView: GeneratedArtifactView = {
+    ...view,
+    revisions: [revision(savedRevisionId, "2026-08-12T13:00:00.000Z"), ...view.revisions],
+    updatedAt: "2026-08-12T13:00:00.000Z",
+  }
+  await withClient(async (client) => {
+    await client.callTool({
+      name: "save_artifact_view",
+      arguments: {
+        artifactViewId: viewId,
+        configObjectId,
+        title: view.title,
+        reactSource: "export default function View() { return <div /> }",
+      },
+    })
+    const resources = await client.listResources()
+    expect(resources.resources.map((resource) => resource.uri)).toContain(artifactViewResourceUri(viewId, savedRevisionId))
+    let tools = await client.listTools()
+    expect(tools.tools.find((tool) => tool.name === `preview_artifact_${viewId}`)?._meta)
+      .toMatchObject({ ui: { resourceUri: artifactViewResourceUri(viewId, savedRevisionId) } })
+
+    await client.callTool({ name: "retire_artifact_view", arguments: { artifactViewId: viewId } })
+    tools = await client.listTools()
+    expect(tools.tools.some((tool) => tool.name === `render_artifact_${viewId}`)).toBe(false)
+  }, {
+    save: async () => savedView,
+    retire: async () => ({ ...savedView, status: "retired", activeRevisionId: null }),
   })
 })

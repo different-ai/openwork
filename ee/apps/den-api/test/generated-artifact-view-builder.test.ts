@@ -12,7 +12,7 @@ const schema = {
   additionalProperties: false,
 }
 
-test("server-renders React source into a deterministic self-contained MCP App", async () => {
+test("server-builds React source into a deterministic self-contained MCP App", async () => {
   const input = {
     title: "Pipeline card",
     description: "A custom pipeline summary.",
@@ -30,7 +30,7 @@ test("server-renders React source into a deterministic self-contained MCP App", 
   expect(second.ok).toBe(true)
   if (!first.ok || !second.ok) return
   expect(first.html).toStartWith("<!doctype html>")
-  expect(first.html).toContain('<article class="card"><h1>Example</h1><strong>0</strong></article>')
+  expect(first.html).toContain('<div id="openwork-artifact-view-root"></div>')
   expect(first.html).toContain("ui/initialize")
   expect(first.html).toContain("ui/notifications/tool-result")
   expect(first.html).not.toContain("<script src=")
@@ -68,8 +68,8 @@ test("rejects authored and dynamically selected unsafe HTML elements", async () 
     outputSchema: schema,
     reactSource: `export default function View() { const Tag = "scr" + "ipt"; return <Tag>console.log("unsafe")</Tag> }`,
   })
-  expect(dynamic.ok).toBe(false)
-  expect(dynamic.diagnostics[0]?.message).toContain("unsafe HTML elements")
+  expect(dynamic.ok).toBe(true)
+  if (dynamic.ok) expect(dynamic.html).toContain("Generated Artifact views cannot render unsafe HTML elements")
 })
 
 test("rejects URL-bearing attributes and external inline styles", async () => {
@@ -115,13 +115,38 @@ test("stores compiler diagnostics for invalid React source", async () => {
   expect(result.diagnostics.length).toBeGreaterThan(0)
 })
 
+test("does not execute generated constructor-chain code while building", async () => {
+  const secret = "must-not-leak-from-host"
+  const previous = process.env.OPENWORK_GENERATED_ARTIFACT_TEST_SECRET
+  process.env.OPENWORK_GENERATED_ARTIFACT_TEST_SECRET = secret
+  try {
+    const result = await buildGeneratedArtifactView({
+      title: "Escape attempt",
+      description: null,
+      outputSchema: schema,
+      reactSource: `
+        export default function View() {
+          const key = "con" + "structor";
+          const make = ({} as any)[key][key];
+          const read = make("return global" + "This['pro' + 'cess'].env.OPENWORK_GENERATED_ARTIFACT_TEST_SECRET");
+          return <div>{read()}</div>;
+        }
+      `,
+    })
+    expect(result.ok).toBe(true)
+    if (result.ok) expect(result.html).not.toContain(secret)
+  } finally {
+    if (previous === undefined) delete process.env.OPENWORK_GENERATED_ARTIFACT_TEST_SECRET
+    else process.env.OPENWORK_GENERATED_ARTIFACT_TEST_SECRET = previous
+  }
+})
+
 test("rejects bundles larger than the desktop MCP Apps host limit", async () => {
-  const content = "x".repeat(190_000)
   const result = await buildGeneratedArtifactView({
     title: "Oversized",
     description: null,
-    outputSchema: schema,
-    reactSource: `export default function View() { return <div>${content}</div> }`,
+    outputSchema: { const: "x".repeat(400_000) },
+    reactSource: "export default function View({ data }) { return <div>{data}</div> }",
   })
   expect(result.ok).toBe(false)
   expect(result.diagnostics[0]?.message).toContain("524288 bytes")
