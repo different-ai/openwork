@@ -77,9 +77,10 @@ function sourcePolicyDiagnostic(reactSource: string, cssSource: string): Generat
   const forbidden = [
     { pattern: /\b(?:import|require)\s*(?:\(|["'{])/u, label: "module imports" },
     { pattern: /\b(?:fetch|XMLHttpRequest|WebSocket|EventSource|Worker)\b/u, label: "network APIs" },
-    { pattern: /\b(?:process|globalThis|window|document|localStorage|sessionStorage|indexedDB)\b/u, label: "host globals" },
+    { pattern: /\b(?:process|globalThis|window|document|self|parent|top|opener|frames|location|navigator|history|postMessage|localStorage|sessionStorage|indexedDB)\b/u, label: "host globals" },
     { pattern: /\b(?:eval|Function|setTimeout|setInterval)\s*\(/u, label: "dynamic code or timers" },
     { pattern: /dangerouslySetInnerHTML/u, label: "dangerous HTML injection" },
+    { pattern: /<\/?(?:script|iframe|object|embed|form|base|link|meta|style|svg|math)\b/iu, label: "unsafe HTML elements" },
   ]
   const blocked = forbidden.find(({ pattern }) => pattern.test(reactSource))
   if (blocked) return diagnostic(`Generated Artifact views cannot use ${blocked.label}. Use props.data and React rendering only.`)
@@ -88,6 +89,55 @@ function sourcePolicyDiagnostic(reactSource: string, cssSource: string): Generat
   }
   if (/<\/style/iu.test(cssSource)) return diagnostic("Generated Artifact CSS cannot close the bundle style element.")
   return null
+}
+
+const SAFE_REACT_PREAMBLE = `
+const blockedArtifactElementNames = new Set(["script", "iframe", "object", "embed", "form", "base", "link", "meta", "style", "svg", "math"]);
+const blockedArtifactPropNames = new Set(["dangerouslysetinnerhtml", "href", "src", "srcset", "action", "formaction", "poster", "ping", "cite", "data", "xlinkhref"]);
+function assertSafeArtifactElement(type, props) {
+  if (typeof type !== "string") return;
+  if (blockedArtifactElementNames.has(type.toLowerCase())) throw new Error("Generated Artifact views cannot render unsafe HTML elements.");
+  if (!props || typeof props !== "object") return;
+  for (const key of Object.keys(props)) {
+    if (blockedArtifactPropNames.has(key.toLowerCase())) throw new Error("Generated Artifact views cannot render URL-bearing or HTML-injection attributes.");
+  }
+  if (props.style && typeof props.style === "object" && Object.values(props.style).some((value) => typeof value === "string" && /(?:url\\s*\\(|@import)/iu.test(value))) {
+    throw new Error("Generated Artifact views cannot render styles that reference external resources.");
+  }
+}
+function createSafeArtifactReact(baseReact) {
+  return Object.assign({}, baseReact, {
+    createElement(type, props, ...children) {
+      assertSafeArtifactElement(type, props);
+      return baseReact.createElement(type, props, ...children);
+    },
+  });
+}
+`
+
+function createSafeReact(): typeof React {
+  const blockedElementNames = new Set(["script", "iframe", "object", "embed", "form", "base", "link", "meta", "style", "svg", "math"])
+  const blockedPropNames = new Set(["dangerouslysetinnerhtml", "href", "src", "srcset", "action", "formaction", "poster", "ping", "cite", "data", "xlinkhref"])
+  return Object.assign({}, React, {
+    createElement(type: React.ElementType, props: Record<string, unknown> | null, ...children: React.ReactNode[]) {
+      if (typeof type === "string" && blockedElementNames.has(type.toLowerCase())) {
+        throw new Error("Generated Artifact views cannot render unsafe HTML elements.")
+      }
+      if (typeof type === "string" && props) {
+        for (const key of Object.keys(props)) {
+          if (blockedPropNames.has(key.toLowerCase())) {
+            throw new Error("Generated Artifact views cannot render URL-bearing or HTML-injection attributes.")
+          }
+        }
+        if (typeof props.style === "object" && props.style !== null && Object.values(props.style).some((value) =>
+          typeof value === "string" && /(?:url\s*\(|@import)/iu.test(value)
+        )) {
+          throw new Error("Generated Artifact views cannot render styles that reference external resources.")
+        }
+      }
+      return React.createElement(type, props, ...children)
+    },
+  }) as typeof React
 }
 
 function schemaFixture(schema: unknown, depth = 0): unknown {
@@ -166,7 +216,7 @@ async function buildClientBundle(reactSource: string, previewData: unknown, prev
       setup(pluginBuild) {
         pluginBuild.onResolve({ filter: /^artifact:view$/ }, () => ({ path: "artifact:view", namespace: "generated-artifact" }))
         pluginBuild.onLoad({ filter: /.*/, namespace: "generated-artifact" }, () => ({
-          contents: `import React from "react";\n${reactSource}`,
+          contents: `import BaseReact from "react";\n${SAFE_REACT_PREAMBLE}\nconst React = createSafeArtifactReact(BaseReact);\n${reactSource}`,
           loader: "tsx",
           resolveDir: process.cwd(),
         }))
@@ -213,7 +263,7 @@ export async function buildGeneratedArtifactViewInWorker(input: GeneratedArtifac
     const sandbox = vm.createContext({
       module: { exports: moduleExports },
       exports: moduleExports,
-      React,
+      React: createSafeReact(),
       renderToStaticMarkup,
       previewData,
       previewArtifact,
@@ -223,7 +273,8 @@ export async function buildGeneratedArtifactViewInWorker(input: GeneratedArtifac
       .runInContext(sandbox, { timeout: BUILD_TIMEOUT_MS })
     if (typeof markup !== "string") throw new Error("The default export did not render a React element.")
     const javascript = await buildClientBundle(reactSource, previewData, previewArtifact)
-    const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; font-src data:"><title>${input.title.replace(/[<&>]/gu, "")}</title><style>${cssSource}</style></head><body><div id="openwork-artifact-view-root">${markup}</div><script>${javascript}</script></body></html>`
+    const scriptDigest = createHash("sha256").update(javascript).digest("base64")
+    const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-${scriptDigest}'; script-src-attr 'none'; style-src 'unsafe-inline'; img-src data:; font-src data:; connect-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; worker-src 'none'"><title>${input.title.replace(/[<&>]/gu, "")}</title><style>${cssSource}</style></head><body><div id="openwork-artifact-view-root">${markup}</div><script>${javascript}</script></body></html>`
     const htmlBytes = Buffer.byteLength(html)
     if (htmlBytes > MAX_HTML_BYTES) throw new Error(`Compiled MCP App exceeds ${MAX_HTML_BYTES} bytes.`)
     return {

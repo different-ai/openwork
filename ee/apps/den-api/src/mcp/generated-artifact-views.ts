@@ -5,7 +5,7 @@ import {
   registerAppTool,
 } from "@modelcontextprotocol/ext-apps/server"
 import type { McpUiResourceMeta } from "@modelcontextprotocol/ext-apps"
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
+import { ResourceTemplate, type McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import {
   dynamicArtifactAppPayloadSchema,
   generatedArtifactViewSchema,
@@ -73,6 +73,43 @@ function registerRevisionResource(input: {
       return {
         contents: [{
           uri: input.revision.resourceUri,
+          mimeType: RESOURCE_MIME_TYPE,
+          text: resource.html,
+          _meta: resourceMeta(resource.csp, resource.resourceDigest),
+        }],
+      }
+    },
+  )
+}
+
+function registerRevisionResourceTemplate(input: {
+  server: McpServer
+  loadResource: (request: { artifactViewId: string; revisionId: string }) => Promise<GeneratedArtifactResource>
+}) {
+  input.server.registerResource(
+    "Generated Artifact view revision",
+    new ResourceTemplate(
+      "ui://openwork/artifacts/{artifactViewId}/views/{revisionId}/index.html",
+      { list: undefined },
+    ),
+    {
+      title: "Immutable generated Artifact view revision",
+      description: "An authorized, immutable, server-built React MCP App revision.",
+      mimeType: RESOURCE_MIME_TYPE,
+    },
+    async (uri, variables) => {
+      const artifactViewId = variables.artifactViewId
+      const revisionId = variables.revisionId
+      if (typeof artifactViewId !== "string" || typeof revisionId !== "string") {
+        throw new Error("artifact_view_resource_uri_invalid")
+      }
+      const resource = await input.loadResource({ artifactViewId, revisionId })
+      if (digest(resource.html) !== resource.resourceDigest) {
+        throw new Error("artifact_view_resource_digest_mismatch")
+      }
+      return {
+        contents: [{
+          uri: uri.href,
           mimeType: RESOURCE_MIME_TYPE,
           text: resource.html,
           _meta: resourceMeta(resource.csp, resource.resourceDigest),
@@ -161,6 +198,9 @@ export function registerAgentGeneratedArtifactViews(input: {
   activate: (request: { artifactViewId: string; revisionId: string }) => Promise<GeneratedArtifactView>
   retire: (request: { artifactViewId: string }) => Promise<GeneratedArtifactView>
 }) {
+  // The template keeps every authorized immutable revision URI readable even
+  // after it falls outside the bounded discovery list.
+  registerRevisionResourceTemplate({ server: input.server, loadResource: input.loadResource })
   for (const view of input.views) {
     const readyRevisions = view.revisions.filter((revision) =>
       revision.buildStatus === "ready" && revision.resourceDigest !== null && revision.retiredAt === null)

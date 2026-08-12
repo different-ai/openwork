@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto"
 import { expect, test } from "bun:test"
 import { buildGeneratedArtifactView } from "../src/generated-artifact-view-builder.js"
 
@@ -33,6 +34,14 @@ test("server-renders React source into a deterministic self-contained MCP App", 
   expect(first.html).toContain("ui/initialize")
   expect(first.html).toContain("ui/notifications/tool-result")
   expect(first.html).not.toContain("<script src=")
+  expect(first.html).toContain("script-src 'sha256-")
+  expect(first.html).not.toContain("script-src 'unsafe-inline'")
+  expect(first.html).toContain("form-action 'none'")
+  expect(first.html).toContain("object-src 'none'")
+  const javascript = first.html.match(/<script>([\s\S]*)<\/script>/u)?.[1]
+  expect(javascript).toBeDefined()
+  const scriptDigest = createHash("sha256").update(javascript ?? "").digest("base64")
+  expect(first.html).toContain(`script-src 'sha256-${scriptDigest}'`)
   expect(first.resourceDigest).toBe(second.resourceDigest)
   expect(first.sourceDigest).toBe(second.sourceDigest)
   expect(first.csp).toEqual({
@@ -41,6 +50,46 @@ test("server-renders React source into a deterministic self-contained MCP App", 
     frameDomains: [],
     baseUriDomains: [],
   })
+})
+
+test("rejects authored and dynamically selected unsafe HTML elements", async () => {
+  const authored = await buildGeneratedArtifactView({
+    title: "Unsafe element",
+    description: null,
+    outputSchema: schema,
+    reactSource: `export default function View() { return <script>console.log("unsafe")</script> }`,
+  })
+  expect(authored.ok).toBe(false)
+  expect(authored.diagnostics[0]?.message).toContain("unsafe HTML elements")
+
+  const dynamic = await buildGeneratedArtifactView({
+    title: "Dynamic unsafe element",
+    description: null,
+    outputSchema: schema,
+    reactSource: `export default function View() { const Tag = "scr" + "ipt"; return <Tag>console.log("unsafe")</Tag> }`,
+  })
+  expect(dynamic.ok).toBe(false)
+  expect(dynamic.diagnostics[0]?.message).toContain("unsafe HTML elements")
+})
+
+test("rejects URL-bearing attributes and external inline styles", async () => {
+  const link = await buildGeneratedArtifactView({
+    title: "Unsafe link",
+    description: null,
+    outputSchema: schema,
+    reactSource: `export default function View() { return <a href="https://example.com">leave</a> }`,
+  })
+  expect(link.ok).toBe(false)
+  expect(link.diagnostics[0]?.message).toContain("URL-bearing")
+
+  const style = await buildGeneratedArtifactView({
+    title: "Unsafe style",
+    description: null,
+    outputSchema: schema,
+    reactSource: `export default function View() { return <div style={{ backgroundImage: "url(https://example.com/x)" }} /> }`,
+  })
+  expect(style.ok).toBe(false)
+  expect(style.diagnostics[0]?.message).toContain("external resources")
 })
 
 test("stores actionable diagnostics instead of emitting a bundle for forbidden capabilities", async () => {
