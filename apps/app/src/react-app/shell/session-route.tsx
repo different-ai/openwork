@@ -1531,7 +1531,6 @@ export function SessionRoute() {
   // created. Model and agent choices land in the same route-level state the
   // session composer reads, so they carry into the created session.
   const newTaskComposerContext = useMemo<NewTaskComposerContext | null>(() => {
-    if (!client) return null;
     return {
       client,
       workspaceId: selectedWorkspaceId || null,
@@ -1545,6 +1544,7 @@ export function SessionRoute() {
       onModelPickerOpenChange: (open: boolean) => {
         modelPicker.setCompactOpen(open);
         if (open) {
+          void sessionProviderAuthStore.refreshCloudOrgProviders({ force: true }).catch(() => undefined);
           void refreshCloudProviderSync("model_picker_open");
         }
       },
@@ -1612,6 +1612,7 @@ export function SessionRoute() {
     selectedWorkspace,
     selectedWorkspaceId,
     selectedWorkspaceRoot,
+    sessionProviderAuthStore,
     setSelectedAgent,
   ]);
 

@@ -57,6 +57,7 @@ export type ProviderAuthOpenworkServer = {
   };
 };
 import {
+  denSettingsChangedEvent,
   denSessionUpdatedEvent,
   type DenSessionUpdatedDetail,
 } from "../../../../app/lib/den-session-events";
@@ -2229,6 +2230,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
             cloudProviderServerSync: null,
             lastSyncError: {},
           }));
+          void refreshCloudOrgProviders({ force: true }).catch(() => undefined);
           void pushDenSession().then(() => runCloudProviderSync("sign_in"));
         } else {
           if (serverHandlesProviderSync()) {
@@ -2286,13 +2288,29 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
         denSessionUpdatedEvent,
         handleDenSessionUpdate as EventListener,
       );
+      const handleDenSettingsChange = () => {
+        void refreshCloudOrgProviders({ force: true }).catch(() => undefined);
+      };
+      window.addEventListener(
+        denSettingsChangedEvent,
+        handleDenSettingsChange,
+      );
       denSessionCleanup = () => {
         window.removeEventListener(
           denSessionUpdatedEvent,
           handleDenSessionUpdate as EventListener,
         );
+        window.removeEventListener(
+          denSettingsChangedEvent,
+          handleDenSettingsChange,
+        );
       };
     }
+    // The member's assigned model catalog is organization-scoped, not
+    // workspace-scoped. Hydrate it independently so the model picker works on
+    // first launch before a workspace exists (workspace sync still handles
+    // credential materialization once a workspace is selected).
+    void refreshCloudOrgProviders().catch(() => undefined);
     void refreshImportedCloudProviders().then((imported) => {
       // Startup cleanup: if no auth token, remove any cloud providers that
       // were left behind. Handles orphans from a previous sign-out that

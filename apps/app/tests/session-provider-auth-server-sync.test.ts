@@ -278,6 +278,41 @@ describe("session-route cloud provider sync wiring", () => {
     else process.env.VITE_OPENWORK_DEPLOYMENT = originalDeployment;
   });
 
+  test("startup hydrates assigned organization models without a workspace endpoint", async () => {
+    const storage = installWindow();
+    installCloudSession(storage);
+    const requests: RecordedRequest[] = [];
+    installFetchMock(requests);
+    const store = createSessionRouteStore({
+      endpoint: null,
+      hostToken: "",
+    });
+    const assignedModelsLoaded = new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error("assigned models did not load")), 1_000);
+      const unsubscribe = store.subscribe(() => {
+        if (store.getSnapshot().cloudOrgProviders.length === 0) return;
+        clearTimeout(timeout);
+        unsubscribe();
+        resolve();
+      });
+    });
+
+    store.start();
+    await assignedModelsLoaded;
+
+    expect(store.getSnapshot().cloudOrgProviders).toMatchObject([
+      {
+        id: "lpr_test",
+        models: [{ id: "gpt-test", name: "GPT Test" }],
+      },
+    ]);
+    expect(
+      requests.filter((request) => request.url === "https://den.example/api/den/v1/llm-providers"),
+    ).toHaveLength(1);
+    expect(requests.filter((request) => new URL(request.url).pathname === "/cloud-provider-sync/run")).toHaveLength(0);
+    store.dispose();
+  });
+
   test("a local endpoint with a host token pushes the Den session and syncs server-side after sign-in", async () => {
     const storage = installWindow();
     installCloudSession(storage);

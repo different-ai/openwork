@@ -28,7 +28,7 @@ import { resolveAttachmentFileMetadata } from "@/react-app/domains/session/sync/
  * hero creates.
  */
 export type NewTaskComposerContext = {
-  client: OpenworkServerClient;
+  client: OpenworkServerClient | null;
   workspaceId: string | null;
   selectedModel: ModelRef;
   modelOptions?: readonly ModelOption[];
@@ -89,16 +89,17 @@ export function NewTaskComposer(props: NewTaskComposerProps) {
   const skillsConnectPushRef = useRef(0);
   const mcpConnectPushRef = useRef(0);
   const context = props.context;
+  const workspaceClient = context?.client ?? null;
   const workspaceId = context?.workspaceId ?? null;
 
-  const listSkills = context && workspaceId
+  const listSkills = workspaceClient && workspaceId
     ? async (): Promise<SkillCard[]> => {
         const pushId = ++skillsConnectPushRef.current;
         // Paint cached Connect inventory instantly; the fresh fan-out lands live.
         const scope = readCloudInventoryScope();
         const cachedConnect = (scope ? readCachedConnectCapabilities(scope) : null) ?? EMPTY_CONNECT_CAPABILITY_INVENTORY;
         const connectPromise = loadSessionConnectCapabilities();
-        const response = await context.client.listSkills(workspaceId, { includeGlobal: true });
+        const response = await workspaceClient.listSkills(workspaceId, { includeGlobal: true });
         const localSkills = (response.items ?? []).map((skill) => ({
           name: skill.name,
           path: skill.path,
@@ -117,13 +118,13 @@ export function NewTaskComposer(props: NewTaskComposerProps) {
       }
     : undefined;
 
-  const listMcp = context && workspaceId
+  const listMcp = workspaceClient && workspaceId
     ? async (): Promise<{ servers: McpServerEntry[]; statuses: McpStatusMap; status: string | null }> => {
         const pushId = ++mcpConnectPushRef.current;
         const scope = readCloudInventoryScope();
         const cachedConnect = (scope ? readCachedConnectCapabilities(scope) : null) ?? EMPTY_CONNECT_CAPABILITY_INVENTORY;
         const connectPromise = loadSessionConnectCapabilities();
-        const response = await context.client.listMcp(workspaceId);
+        const response = await workspaceClient.listMcp(workspaceId);
         const localServers = (response.items ?? []).map((entry) => ({
           name: entry.name,
           config: entry.config as McpServerEntry["config"],
