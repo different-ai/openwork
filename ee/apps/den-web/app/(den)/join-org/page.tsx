@@ -1,4 +1,5 @@
 import { JoinOrgScreen } from "../_components/join-org-screen";
+import { getPublicInstallers } from "../_lib/public-installers";
 
 export default async function JoinOrgPage({
   searchParams,
@@ -13,5 +14,7 @@ export default async function JoinOrgPage({
       ? (inviteParam[0]?.trim() ?? "")
       : "";
 
-  return <JoinOrgScreen invitationId={invitationId} />;
+  const { installers, releaseTag } = await getPublicInstallers();
+
+  return <JoinOrgScreen invitationId={invitationId} installers={installers} releaseTag={releaseTag} />;
 }

@@ -160,7 +160,8 @@ describe("join organization invite clean layout contract", () => {
     expect(source).toContain('getStringProperty(payload, "error") === "membership_removed"');
     expect(source).toContain("Your access was removed.");
     expect(source).toContain("Ask a workspace admin for a new invite.");
-    expect(source).toContain("router.replace(getOrgDashboardRoute(nextJoinedOrg.slug));");
+    expect(source).toContain("setJoinedOrg(getJoinedOrgFromPayload(payload, acceptedPreview));");
+    expect(source).not.toContain("router.replace(getOrgDashboardRoute(nextJoinedOrg.slug));");
     expect(source).toContain("Opening your workspace.");
     expect(source).toContain("You've already joined ${preview.organization.name}.");
     expect(source).toContain("This invite was already accepted. Sign in as ${preview.invitation.email} to open your workspace.");
@@ -241,6 +242,10 @@ describe("join organization invite clean layout contract", () => {
     expect(successSource).toContain("Return to OpenWork");
     expect(successSource).toContain("desktopAuthRequested");
     expect(successSource).toContain("Continue in the browser");
+    // Cloud downloads the public app directly; only a single-org deployment
+    // routes through its own install page for the connect link.
+    expect(successSource).toContain("<DownloadOpenWorkCard");
+    expect(successSource).toContain('runtimeConfig.orgMode === "single_org"');
     expect(successSource).toContain("Email me the download link");
     expect(successSource).not.toContain("capabilities");
     expect(successSource).not.toContain("Open OpenWork");
@@ -248,7 +253,9 @@ describe("join organization invite clean layout contract", () => {
     expect(successSource).toContain("text-[30px] font-semibold leading-[38px] tracking-[-0.03em]");
     expect(successSource).toContain("den-button-primary min-h-12 w-full");
     expect(successSource).toContain("<span>You&apos;re in, welcome to</span>");
-    expect(successSource).toContain('className="whitespace-nowrap">&apos;s {brand.appName}</span>');
+    // The heading ends on the organization. A trailing possessive orphaned
+    // itself on its own line whenever the name was long.
+    expect(successSource).not.toContain("&apos;s {brand.appName}");
     expect(installSource).toContain("DownloadPlatformGrid");
     expect(installSource).toContain("<span>Download OpenWork Enterprise</span>");
     expect(installSource).toContain("Download OpenWork");

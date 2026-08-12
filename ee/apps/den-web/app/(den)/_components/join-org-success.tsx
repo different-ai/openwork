@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { DownloadOpenWorkCard, type DownloadCardInstallers } from "@openwork/ui/react";
 import {
   getDesktopHandoffGrant,
   getDesktopHandoffOpenworkUrl,
@@ -10,6 +11,7 @@ import { getErrorMessage, requestJson } from "../_lib/den-flow";
 import { createOrganizationInstallLink } from "../_lib/install-link-data";
 import { isMobileUserAgent } from "../_lib/platform";
 import { useDesktopHandoffStatus } from "../_lib/use-desktop-handoff-status";
+import { useDenFlow } from "../_providers/den-flow-provider";
 import { OnboardingCard } from "./onboarding-card";
 import { OnboardingShell } from "./onboarding-shell";
 import { OrganizationBrandIdentity, type OrganizationBrand } from "./organization-brand-identity";
@@ -77,6 +79,8 @@ type JoinOrgSuccessProps = {
   brand: OrganizationBrand;
   desktopAuthRequested: boolean;
   desktopAuthScheme: string;
+  installers?: DownloadCardInstallers | null;
+  releaseTag?: string;
   onContinueInBrowser: () => void;
 };
 
@@ -86,8 +90,15 @@ export function JoinOrgSuccess({
   brand,
   desktopAuthRequested,
   desktopAuthScheme,
+  installers,
+  releaseTag,
   onContinueInBrowser,
 }: JoinOrgSuccessProps) {
+  const { runtimeConfig, runtimeConfigLoaded } = useDenFlow();
+  // A single-org deployment gates its installer behind an org install page,
+  // because that build carries the connect link that points the app at this
+  // server. Cloud has no such link, so it can download the public app.
+  const isSingleOrgMode = runtimeConfigLoaded && runtimeConfig.orgMode === "single_org";
   const [isMobile, setIsMobile] = useState<boolean | null>(null);
   const [installBusy, setInstallBusy] = useState(false);
   const [emailBusy, setEmailBusy] = useState(false);
@@ -165,18 +176,20 @@ export function JoinOrgSuccess({
     }
   }
 
+  // The download card lays its three platforms out side by side, so it needs
+  // the same room the rest of onboarding gives it. Every other ending here is
+  // a single button, which would swim at that width.
+  const showsDownloadCard = isMobile === false && !desktopAuthRequested && !isSingleOrgMode;
+
   return (
-    <OnboardingShell state="joined" width="wide">
+    <OnboardingShell state="joined" width={showsDownloadCard ? "full" : "wide"}>
       <section data-testid="join-org-success">
         <OnboardingCard organization={{ name: organizationName, brand }}>
           <div className="grid gap-3">
             <h1 className="m-0 grid max-w-full gap-1 text-[30px] font-semibold leading-[38px] tracking-[-0.03em] text-slate-950 sm:text-[38px] sm:leading-[46px]">
               <span>You&apos;re in, welcome to</span>
-              {/* No horizontal gap: the possessive must hug the org identity
-                  ("Acme Robotics's OpenWork", not "Acme Robotics 's"). */}
               <span className="flex min-w-0 flex-wrap items-center gap-y-1">
                 <OrganizationBrandIdentity organizationName={organizationName} brand={brand} />
-                <span className="whitespace-nowrap">&apos;s {brand.appName}</span>
               </span>
             </h1>
             <p className="m-0 max-w-2xl text-[15px] leading-[23px] text-slate-600">
@@ -221,7 +234,7 @@ export function JoinOrgSuccess({
                 {handoffBusy ? "Returning to OpenWork..." : "Return to OpenWork"}
               </button>
             )
-          ) : (
+          ) : isSingleOrgMode ? (
             <button
               type="button"
               className="den-button-primary min-h-12 w-full"
@@ -231,6 +244,8 @@ export function JoinOrgSuccess({
             >
               {installBusy ? "Preparing your download..." : "Get the desktop app"}
             </button>
+          ) : (
+            <DownloadOpenWorkCard installers={installers} releaseTag={releaseTag} />
           )}
 
           <button

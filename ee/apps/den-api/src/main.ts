@@ -2,6 +2,17 @@ const DEVELOPMENT_CONDITIONS_REEXEC = "OPENWORK_DEN_DEVELOPMENT_CONDITIONS_REEXE
 
 export {}
 
+async function workspaceDistPresent(): Promise<boolean> {
+  // The container image ships built workspace packages and cannot execute their
+  // TypeScript sources, so the development re-exec below must stay off there.
+  try {
+    const [{ existsSync }, { fileURLToPath }] = await Promise.all([import("node:fs"), import("node:url")])
+    return existsSync(fileURLToPath(import.meta.resolve("@openwork-ee/den-db")))
+  } catch {
+    return false
+  }
+}
+
 async function runWithDevelopmentConditions() {
   // Clean dev/eval checkouts may not have workspace-package dist artifacts.
   // Re-exec once so package exports resolve their TypeScript source entries.
@@ -26,7 +37,11 @@ async function runWithDevelopmentConditions() {
   for (const signal of signals) process.off(signal, forwardSignal)
 }
 
-if (process.env.OPENWORK_DEV_MODE === "1" && process.env[DEVELOPMENT_CONDITIONS_REEXEC] !== "1") {
+if (
+  process.env.OPENWORK_DEV_MODE === "1"
+  && process.env[DEVELOPMENT_CONDITIONS_REEXEC] !== "1"
+  && !(await workspaceDistPresent())
+) {
   await runWithDevelopmentConditions()
 } else {
   await import("./observability/preload.js")

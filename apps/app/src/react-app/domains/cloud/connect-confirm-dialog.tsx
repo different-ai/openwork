@@ -16,6 +16,13 @@ import { formatControlPlaneHost } from "../settings/cloud/control-plane-url";
 
 export type ConnectConfirmPhase = "verifying" | "confirm" | "applying" | "error";
 
+/**
+ * A connect link is normally valid for far longer than the few seconds this
+ * dialog is open, so showing its deadline only worries the reader. Surface it
+ * when it is close enough that they might actually run out of time.
+ */
+const EXPIRY_NOTICE_WINDOW_MS = 60 * 60 * 1000;
+
 export type ConnectConfirmDialogProps = {
   open: boolean;
   phase: ConnectConfirmPhase;
@@ -75,6 +82,8 @@ export function ConnectConfirmDialog({
 }: ConnectConfirmDialogProps) {
   const targetHost = claims ? formatControlPlaneHost(claims.den.baseUrl) : null;
   const switching = Boolean(currentHost && targetHost && currentHost !== targetHost);
+  const expiresAt = claims ? claims.exp * 1000 : null;
+  const showExpiry = expiresAt !== null && expiresAt - Date.now() < EXPIRY_NOTICE_WINDOW_MS;
   const trustedBrandUrl = transport ? claims?.brand.iconUrl ?? claims?.brand.logoUrl : null;
   const logoUrl = trustedBrandUrl && isHttpsUrl(trustedBrandUrl) ? trustedBrandUrl : null;
 
@@ -123,10 +132,12 @@ export function ConnectConfirmDialog({
                 <span className="text-muted-foreground">{t("connect.confirm_server_label")}</span>
                 <span className="font-medium">{targetHost}</span>
               </div>
-              <div className="mt-1 flex justify-between gap-4">
-                <span className="text-muted-foreground">{t("connect.confirm_expires_label")}</span>
-                <span>{new Date(claims.exp * 1000).toLocaleString()}</span>
-              </div>
+              {showExpiry && expiresAt !== null ? (
+                <div className="mt-1 flex justify-between gap-4" data-testid="connect-confirm-expires">
+                  <span className="text-muted-foreground">{t("connect.confirm_expires_label")}</span>
+                  <span>{new Date(expiresAt).toLocaleTimeString()}</span>
+                </div>
+              ) : null}
             </div>
             <p className="text-xs text-muted-foreground">{t("connect.confirm_signin_note")}</p>
             <DialogFooter>

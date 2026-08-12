@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import type { DownloadCardInstallers } from "@openwork/ui/react";
 import { getErrorMessage, requestJson } from "../_lib/den-flow";
 import {
   PENDING_ORG_INVITATION_STORAGE_KEY,
@@ -234,7 +235,15 @@ function InviteAuthPanel({
   );
 }
 
-export function JoinOrgScreen({ invitationId }: { invitationId: string }) {
+export function JoinOrgScreen({
+  invitationId,
+  installers,
+  releaseTag,
+}: {
+  invitationId: string;
+  installers?: DownloadCardInstallers | null;
+  releaseTag?: string;
+}) {
   const router = useRouter();
   const { user, sessionHydrated, signOut, desktopAuthRequested, desktopAuthScheme } = useDenFlow();
   const [preview, setPreview] = useState<DenInvitationPreview | null>(null);
@@ -374,14 +383,9 @@ export function JoinOrgScreen({ invitationId }: { invitationId: string }) {
         }
 
         clearPendingInvitation();
-        const nextJoinedOrg = getJoinedOrgFromPayload(payload, acceptedPreview);
-
-        if (desktopAuthRequested) {
-          setJoinedOrg(nextJoinedOrg);
-          return;
-        }
-
-        router.replace(getOrgDashboardRoute(nextJoinedOrg.slug));
+        // Members land on the same welcome screen whether or not the desktop
+        // asked for them: the app, not the dashboard, is where they work.
+        setJoinedOrg(getJoinedOrgFromPayload(payload, acceptedPreview));
       } catch {
         // Transient transport failure: allow a later effect run to retry.
         acceptedInvitationResolutionRef.current = null;
@@ -390,7 +394,7 @@ export function JoinOrgScreen({ invitationId }: { invitationId: string }) {
     }
 
     void resolveAcceptedInvitation();
-  }, [clearPendingInvitation, desktopAuthRequested, invitationId, invitedEmailMatches, preview, router, sessionHydrated, user]);
+  }, [clearPendingInvitation, invitationId, invitedEmailMatches, preview, sessionHydrated, user]);
 
   function handleNotNow() {
     clearPendingInvitation();
@@ -454,6 +458,8 @@ export function JoinOrgScreen({ invitationId }: { invitationId: string }) {
         brand={joinedOrg.brand}
         desktopAuthRequested={desktopAuthRequested}
         desktopAuthScheme={desktopAuthScheme}
+        installers={installers}
+        releaseTag={releaseTag}
         onContinueInBrowser={() => router.replace(joinedOrg.slug ? getOrgDashboardRoute(joinedOrg.slug) : "/dashboard")}
       />
     );
