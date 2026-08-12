@@ -74,3 +74,12 @@ Untagged operations are excluded by default. Today these are OAuth/MCP discovery
 - `/register`
 
 They are required for OAuth/MCP setup, but should not appear as callable MCP tools.
+
+## Ranking
+
+Search scores exact name tokens +5, name prefixes +3, summary tokens +2, and extra path tokens +1.
+HTTP methods and route shapes add name-level verb tokens such as `create`, `list`, and `update`.
+Exact token equality is plural-insensitive, while prefix matching continues to use raw tokens.
+An exact case-insensitive operation-name query receives a +100 short-circuit bonus.
+Ties prefer connection statuses, then score, fewer path parameters, shorter names, and alphabetical order.
+`test/mcp-search-golden.test.ts` is the behavioral contract; scoring changes must keep it green.

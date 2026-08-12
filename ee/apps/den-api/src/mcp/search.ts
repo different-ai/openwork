@@ -46,7 +46,11 @@ export type CapabilityMatch = {
 export function compareCapabilityMatches(a: CapabilityMatch, b: CapabilityMatch): number {
   const statusPriority = Number("kind" in b && b.kind === "connection_status")
     - Number("kind" in a && a.kind === "connection_status")
-  return statusPriority || (b.score - a.score) || a.name.localeCompare(b.name)
+  return statusPriority
+    || (b.score - a.score)
+    || (a.pathParams.length - b.pathParams.length)
+    || (a.name.length - b.name.length)
+    || a.name.localeCompare(b.name)
 }
 
 export function searchCapabilitySourceFilter(type?: SearchCapabilityType) {
@@ -67,6 +71,10 @@ export function tokenize(value: string): string[] {
     .filter((token) => token.length > 0)
 }
 
+function singularize(token: string): string {
+  return token.length > 3 && token.endsWith("s") ? token.slice(0, -1) : token
+}
+
 export function scoreText(
   nameTokens: string[],
   summaryTokens: string[],
@@ -75,15 +83,16 @@ export function scoreText(
 ): number {
   let score = 0
   for (const queryToken of queryTokens) {
-    if (nameTokens.includes(queryToken)) {
+    const singularQueryToken = singularize(queryToken)
+    if (nameTokens.some((token) => singularize(token) === singularQueryToken)) {
       score += 5
     } else if (nameTokens.some((token) => token.startsWith(queryToken) || queryToken.startsWith(token))) {
       score += 3
     }
-    if (summaryTokens.includes(queryToken)) {
+    if (summaryTokens.some((token) => singularize(token) === singularQueryToken)) {
       score += 2
     }
-    if (extraTokens.includes(queryToken)) {
+    if (extraTokens.some((token) => singularize(token) === singularQueryToken)) {
       score += 1
     }
   }
@@ -108,7 +117,27 @@ function scoreOperation(operation: McpToolOperation, queryTokens: string[]): num
     return 0
   }
 
-  const nameTokens = tokenizeToolName(operation.name)
+  const method = operation.method.toUpperCase()
+  const collectionRoute = !operation.path.endsWith("}")
+  // These action words derive from the closed world of HTTP methods and route shapes.
+  const verbTokens = method === "POST"
+    ? ["create", "add", "new", "register"]
+    : method === "GET"
+      ? collectionRoute ? ["list"] : ["get", "read"]
+      : method === "PUT" || method === "PATCH"
+        ? ["update", "edit", "set"]
+        : method === "DELETE"
+          ? ["delete", "remove", "revoke"]
+          : []
+  const pathSegments = operation.path.split("/").filter(Boolean)
+  const lastSegment = pathSegments.at(-1)
+  const itemActionTokens = method === "POST"
+    && lastSegment !== undefined
+    && !lastSegment.endsWith("}")
+    && pathSegments.slice(0, -1).some((segment) => segment.endsWith("}"))
+    ? tokenize(lastSegment)
+    : []
+  const nameTokens = [...tokenizeToolName(operation.name), ...verbTokens, ...itemActionTokens]
   const summaryTokens = tokenize(summaryFor(operation))
   const pathTokens = tokenize(operation.path)
   return scoreText(nameTokens, summaryTokens, queryTokens, pathTokens)
@@ -120,6 +149,7 @@ export function searchCapabilities(
   limit = 5,
 ): CapabilityMatch[] {
   const queryTokens = tokenize(query)
+  const normalizedQuery = query.trim().toLowerCase()
   const boundedLimit = Math.max(1, Math.min(20, Math.trunc(limit) || 5))
 
   return catalog
@@ -127,7 +157,8 @@ export function searchCapabilities(
       name: operation.name,
       method: operation.method,
       path: operation.path,
-      score: scoreOperation(operation, queryTokens),
+      score: scoreOperation(operation, queryTokens)
+        + (normalizedQuery === operation.name.toLowerCase() ? 100 : 0),
       summary: summaryFor(operation),
       pathParams: pathParameterNamesFromTemplate(operation.path),
       queryParams: getParameters(operation.operation, "query").map((parameter) => parameter.name as string),
