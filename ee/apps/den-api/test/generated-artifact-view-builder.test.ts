@@ -38,7 +38,7 @@ test("server-renders React source into a deterministic self-contained MCP App", 
   expect(first.html).not.toContain("script-src 'unsafe-inline'")
   expect(first.html).toContain("form-action 'none'")
   expect(first.html).toContain("object-src 'none'")
-  const javascript = first.html.match(/<script>([\s\S]*)<\/script>/u)?.[1]
+  const javascript = first.html.match(/<script>([\s\S]*)<\/script>/iu)?.[1]
   expect(javascript).toBeDefined()
   const scriptDigest = createHash("sha256").update(javascript ?? "").digest("base64")
   expect(first.html).toContain(`script-src 'sha256-${scriptDigest}'`)
