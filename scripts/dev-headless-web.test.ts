@@ -5,6 +5,7 @@ import {
   buildDetachedRespawnArgs,
   buildHeadlessCorsOrigins,
   buildHeadlessRuntimeManifest,
+  buildHeadlessServerLaunch,
   buildOpenworkServerArgs,
   isHeadlessStackCommand,
   mergeHeadlessServerConfig,
@@ -114,6 +115,18 @@ describe("dev-headless-web helpers", () => {
     expect(args).not.toContain("--host-token");
   });
 
+  test("server launch always uses current source instead of compiled output", () => {
+    expect(buildHeadlessServerLaunch("/repo/openwork", ["--port", "8787"])).toEqual({
+      command: "bun",
+      args: [
+        "--conditions=development",
+        path.join("/repo/openwork", "apps/server/src/cli.ts"),
+        "--port",
+        "8787",
+      ],
+    });
+  });
+
   test("CORS is pinned to the web app origins, never wildcarded", () => {
     const corsOrigins = buildHeadlessCorsOrigins({
       webUrl: "http://127.0.0.1:5178",
@@ -211,6 +224,9 @@ describe("dev-headless-web helpers", () => {
     expect(isHeadlessStackCommand("bun scripts/dev-headless-web.ts")).toBe(true);
     expect(
       isHeadlessStackCommand("/repo/apps/server/dist/bin/openwork-server --config tmp/headless-server.json"),
+    ).toBe(true);
+    expect(
+      isHeadlessStackCommand("bun --conditions=development /repo/apps/server/src/cli.ts --config tmp/headless-server.json"),
     ).toBe(true);
     expect(isHeadlessStackCommand("node vite --host 127.0.0.1 --port 5178")).toBe(true);
     expect(isHeadlessStackCommand("/usr/bin/some-unrelated-daemon")).toBe(false);

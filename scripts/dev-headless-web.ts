@@ -1,6 +1,6 @@
 import { execFileSync, spawn, type ChildProcess } from "node:child_process";
 import { openSync } from "node:fs";
-import { access, chmod, mkdir, readFile, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
@@ -10,6 +10,7 @@ import {
   normalizeDenTarget,
   buildHeadlessCorsOrigins,
   buildHeadlessRuntimeManifest,
+  buildHeadlessServerLaunch,
   buildOpenworkServerArgs,
   isHeadlessStackCommand,
   mergeHeadlessServerConfig,
@@ -84,36 +85,10 @@ const replaceRequested =
   process.argv.includes("--replace") ||
   readBool(process.env.OPENWORK_DEV_HEADLESS_WEB_REPLACE);
 
-const autoBuildEnabled =
-  process.env.OPENWORK_DEV_HEADLESS_WEB_AUTOBUILD == null
-    ? true
-    : readBool(process.env.OPENWORK_DEV_HEADLESS_WEB_AUTOBUILD);
-
 const denProxyEnabled =
   process.env.OPENWORK_DEV_HEADLESS_WEB_DEN_PROXY == null
     ? true
     : readBool(process.env.OPENWORK_DEV_HEADLESS_WEB_DEN_PROXY);
-
-const runCommand = (command: string, args: string[]) =>
-  new Promise<void>((resolve, reject) => {
-    const child = spawn(command, args, {
-      cwd,
-      env: process.env,
-      stdio: silent ? "ignore" : "inherit",
-    });
-    child.on("error", reject);
-    child.on("exit", (code) => {
-      if (code === 0) {
-        resolve();
-        return;
-      }
-      reject(
-        new Error(
-          `${command} ${args.join(" ")} exited with code ${code ?? "unknown"}`,
-        ),
-      );
-    });
-  });
 
 // Detached: each child leads its own process group, so signals aimed at the
 // launcher (e.g. a terminal session getting reaped) cannot take the stack down.
@@ -314,61 +289,12 @@ const { token: openworkToken, hostToken: openworkHostToken } =
     previous: rotateTokensRequested ? null : existingManifest,
     generate: randomUUID,
   });
-const openworkServerBin = path.join(
-  cwd,
-  "apps/server/dist/bin/openwork-server",
-);
-const openworkPluginDir = path.join(
-  cwd,
-  "apps/server/dist/opencode-plugins",
-);
 const serverConfigPath = resolveHeadlessServerConfigPath(
   cwd,
   process.env.OPENWORK_DEV_HEADLESS_WEB_CONFIG,
 );
 const webLogPath = path.join(tmpDir, "dev-web.log");
 const headlessLogPath = path.join(tmpDir, "dev-headless.log");
-
-const ensureOpenworkServer = async () => {
-  try {
-    await access(openworkServerBin);
-    await access(openworkPluginDir);
-  } catch {
-    if (!autoBuildEnabled) {
-      logLine(
-        `[dev:headless-web] Missing OpenWork server build output at ${openworkServerBin}`,
-      );
-      logLine(
-        "[dev:headless-web] Auto-build disabled (OPENWORK_DEV_HEADLESS_WEB_AUTOBUILD=0)",
-      );
-      logLine(
-        "[dev:headless-web] Run: pnpm --filter openwork-server build && pnpm --filter openwork-server build:bin",
-      );
-      logLine(
-        "[dev:headless-web] Or unset/enable OPENWORK_DEV_HEADLESS_WEB_AUTOBUILD to auto-build.",
-      );
-      process.exit(1);
-    }
-
-    logLine(
-      `[dev:headless-web] Missing OpenWork server build output at ${openworkServerBin}`,
-    );
-    logLine(
-      "[dev:headless-web] Auto-building: pnpm --filter openwork-server build && pnpm --filter openwork-server build:bin",
-    );
-    try {
-      await runCommand("pnpm", ["--filter", "openwork-server", "build"]);
-      await runCommand("pnpm", ["--filter", "openwork-server", "build:bin"]);
-      await access(openworkServerBin);
-      await access(openworkPluginDir);
-    } catch (error) {
-      logLine(
-        `[dev:headless-web] Auto-build failed: ${error instanceof Error ? error.message : String(error)}`,
-      );
-      process.exit(1);
-    }
-  }
-};
 
 // Merge (never rewrite) the isolated config: the server persists registered
 // workspaces and expanded authorizedRoots into it at runtime.
@@ -431,10 +357,7 @@ const headlessEnv = {
   OPENWORK_SERVER_CONFIG: serverConfigPath,
   OPENWORK_MANAGE_OPENCODE: "1",
   OPENWORK_OPENCODE_BIN: process.env.OPENWORK_OPENCODE_BIN ?? "opencode",
-  OPENWORK_EXTENSIONS_PLUGIN_DIR: openworkPluginDir,
 };
-
-await ensureOpenworkServer();
 
 const children: ChildProcess[] = [];
 
@@ -456,14 +379,18 @@ const webProcess = spawnLogged(
 );
 children.push(webProcess);
 
-const headlessProcess = spawnLogged(
-  openworkServerBin,
+const headlessServerLaunch = buildHeadlessServerLaunch(
+  cwd,
   buildOpenworkServerArgs({
     host,
     port: openworkPort,
     configPath: serverConfigPath,
     corsOrigins: buildHeadlessCorsOrigins({ webUrl, webPort }),
   }),
+);
+const headlessProcess = spawnLogged(
+  headlessServerLaunch.command,
+  headlessServerLaunch.args,
   headlessLogPath,
   headlessEnv,
 );

@@ -55,8 +55,23 @@ export function isHeadlessStackCommand(command: string): boolean {
   return (
     command.includes("dev-headless-web") ||
     command.includes("openwork-server") ||
+    command.includes("apps/server/src/cli.ts") ||
     command.includes("vite")
   );
+}
+
+export function buildHeadlessServerLaunch(
+  cwd: string,
+  serverArgs: string[],
+): { command: string; args: string[] } {
+  return {
+    command: "bun",
+    args: [
+      "--conditions=development",
+      path.join(cwd, "apps/server/src/cli.ts"),
+      ...serverArgs,
+    ],
+  };
 }
 
 export function resolveHeadlessServerConfigPath(
