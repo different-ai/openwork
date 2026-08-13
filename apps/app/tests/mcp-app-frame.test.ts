@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 
 import type { OpenworkMcpAppResource } from "../src/app/lib/openwork-server"
+import { formatMcpAppDiagnostic, safeMcpAppDiagnosticMessage } from "../src/components/chat/mcp-app-diagnostics"
 import { buildMcpAppCsp, secureMcpAppHtml } from "../src/components/chat/mcp-app-frame"
 
 function fixture(overrides: Partial<OpenworkMcpAppResource> = {}): OpenworkMcpAppResource {
@@ -21,6 +22,34 @@ function fixture(overrides: Partial<OpenworkMcpAppResource> = {}): OpenworkMcpAp
 }
 
 describe("MCP App iframe policy", () => {
+  test("formats safe, copyable handshake diagnostics", () => {
+    const details = formatMcpAppDiagnostic({
+      code: "MCP_APP_INITIALIZE_TIMEOUT",
+      causeCode: "mcp_unreachable",
+      stage: "app-initialization",
+      message: "The HTML document loaded, but initialization did not complete.",
+      toolName: "artifact_render_card",
+      resourceUri: "ui://openwork/artifacts/arv_1/views/avr_2/index.html",
+      sandboxOrigin: "http://127.0.0.1:4321",
+      elapsedMs: 10_025,
+      checkpoints: ["resource-resolved+0ms", "resource-document-loaded+24ms"],
+      sandboxDocument: { readyState: "complete", hasHtmlRoot: true, scriptCount: 1 },
+    })
+    expect(details).toContain("Code: MCP_APP_INITIALIZE_TIMEOUT")
+    expect(details).toContain("Cause code: mcp_unreachable")
+    expect(details).toContain("Stage: app-initialization")
+    expect(details).toContain("Resource: ui://openwork/artifacts/arv_1/views/avr_2/index.html")
+    expect(details).toContain("Document: readyState=complete, htmlRoot=true, scripts=1")
+    expect(details).toContain("resource-document-loaded+24ms")
+  })
+
+  test("redacts credentials from diagnostic messages", () => {
+    expect(safeMcpAppDiagnosticMessage(
+      new Error("request failed: Bearer secret-value https://example.com?access_token=also-secret"),
+      "fallback",
+    )).toBe("request failed: Bearer [redacted] https://example.com?access_token=[redacted]")
+  })
+
   test("defaults every ambient capability closed", () => {
     const csp = buildMcpAppCsp(fixture())
     expect(csp).toContain("default-src 'none'")

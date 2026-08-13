@@ -211,6 +211,18 @@ describe("MCP Apps host transport", () => {
     })).rejects.toMatchObject({ code: "invalid_resource" });
   });
 
+  test("preserves an unreachable provider error for host diagnostics", async () => {
+    const { config, root } = await configuredFixture("openwork-mcp-app-host-unreachable-");
+    await stops.pop()?.();
+
+    await expect(resolveMcpAppResource({
+      serverConfig: config,
+      workspaceId: WORKSPACE_ID,
+      workspaceRoot: root,
+      projectedToolName: "fixture_render_fixture",
+    })).rejects.toMatchObject({ code: "mcp_unreachable" });
+  });
+
   test("mediates explicitly read-only same-server tool calls", async () => {
     const { config, root } = await configuredFixture("openwork-mcp-app-call-");
 

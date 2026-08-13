@@ -271,6 +271,7 @@ export async function resolveMcpAppResource(input: {
     && input.projectedToolName.startsWith(`${item.name.replace(/[^a-zA-Z0-9_-]/g, "_")}_`)
   ));
   const matches: McpAppResource[] = [];
+  const resolutionErrors: McpAppHostError[] = [];
   for (const item of candidates) {
     if (!remoteUrl(item.config)) continue;
     const match = await withRemoteClient(item.config, async (client) => {
@@ -295,6 +296,9 @@ export async function resolveMcpAppResource(input: {
       } satisfies McpAppResource;
     }).catch((error) => {
       if (error instanceof McpAppHostError && error.code !== "mcp_unreachable") throw error;
+      resolutionErrors.push(error instanceof McpAppHostError
+        ? error
+        : new McpAppHostError("mcp_app_resolution_failed", "The MCP App resource could not be resolved."));
       return null;
     });
     if (match) matches.push(match);
@@ -302,6 +306,7 @@ export async function resolveMcpAppResource(input: {
   if (matches.length > 1) {
     throw new McpAppHostError("ambiguous_tool", "More than one configured MCP App matches this projected tool name.");
   }
+  if (matches.length === 0 && resolutionErrors[0]) throw resolutionErrors[0];
   return matches[0] ?? null;
 }
 

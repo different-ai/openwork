@@ -74,10 +74,27 @@ export const MCP_APP_SANDBOX_PROXY_SCRIPT = String.raw`
   if (!hostOrigin) throw new Error("MCP App sandbox host origin is unavailable.");
   const hostTargetOrigin = hostOrigin === "null" ? "*" : hostOrigin;
   const ownOrigin = window.location.origin;
+  const notifyHost = (method, params = {}) => window.parent.postMessage({ jsonrpc: "2.0", method, params }, hostTargetOrigin);
   const inner = document.createElement("iframe");
   inner.title = "MCP App view";
   inner.style.cssText = "display:block;width:100%;height:100%;border:0;background:transparent";
   inner.setAttribute("sandbox", "allow-scripts allow-same-origin");
+  let resourceAssigned = false;
+  inner.addEventListener("load", () => {
+    if (!resourceAssigned) return;
+    let readyState = null;
+    let hasHtmlRoot = null;
+    let scriptCount = null;
+    try {
+      readyState = inner.contentDocument?.readyState || null;
+      hasHtmlRoot = Boolean(inner.contentDocument?.documentElement);
+      scriptCount = inner.contentDocument?.scripts.length ?? null;
+    } catch {}
+    notifyHost("ui/notifications/sandbox-resource-loaded", { readyState, hasHtmlRoot, scriptCount });
+  });
+  inner.addEventListener("error", () => {
+    if (resourceAssigned) notifyHost("ui/notifications/sandbox-diagnostic", { code: "MCP_APP_SANDBOX_DOCUMENT_ERROR", message: "The sandbox iframe reported a document load error." });
+  });
   document.body.appendChild(inner);
   window.addEventListener("message", (event) => {
     if (event.source === window.parent) {
@@ -86,7 +103,17 @@ export const MCP_APP_SANDBOX_PROXY_SCRIPT = String.raw`
         const html = event.data?.params?.html;
         const sandbox = event.data?.params?.sandbox;
         if (typeof sandbox === "string" && /^(?:allow-scripts|allow-same-origin|\s)+$/.test(sandbox)) inner.setAttribute("sandbox", sandbox);
-        if (typeof html === "string") inner.srcdoc = html;
+        if (typeof html !== "string") {
+          notifyHost("ui/notifications/sandbox-diagnostic", { code: "MCP_APP_SANDBOX_RESOURCE_INVALID", message: "The sandbox received an invalid HTML resource payload." });
+          return;
+        }
+        try {
+          resourceAssigned = true;
+          inner.srcdoc = html;
+          notifyHost("ui/notifications/sandbox-resource-accepted");
+        } catch {
+          notifyHost("ui/notifications/sandbox-diagnostic", { code: "MCP_APP_SANDBOX_RESOURCE_ASSIGNMENT_FAILED", message: "The sandbox could not assign the HTML resource to its isolated document." });
+        }
         return;
       }
       inner.contentWindow?.postMessage(event.data, "*");
@@ -96,7 +123,7 @@ export const MCP_APP_SANDBOX_PROXY_SCRIPT = String.raw`
       window.parent.postMessage(event.data, hostTargetOrigin);
     }
   });
-  window.parent.postMessage({ jsonrpc: "2.0", method: "ui/notifications/sandbox-proxy-ready", params: {} }, hostTargetOrigin);
+  notifyHost("ui/notifications/sandbox-proxy-ready");
 })();
 `;
 

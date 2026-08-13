@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { buildMcpAppSandboxCsp, parseMcpAppSandboxCsp } from "./mcp-app-sandbox.js";
+import { buildMcpAppSandboxCsp, MCP_APP_SANDBOX_PROXY_SCRIPT, parseMcpAppSandboxCsp } from "./mcp-app-sandbox.js";
 import { startServer } from "./server.js";
 import type { ServerConfig } from "./types.js";
 
@@ -15,6 +15,13 @@ afterEach(async () => {
 });
 
 describe("MCP Apps sandbox proxy policy", () => {
+  test("reports resource acceptance, document load, and safe sandbox failures", () => {
+    expect(MCP_APP_SANDBOX_PROXY_SCRIPT).toContain("ui/notifications/sandbox-resource-accepted");
+    expect(MCP_APP_SANDBOX_PROXY_SCRIPT).toContain("ui/notifications/sandbox-resource-loaded");
+    expect(MCP_APP_SANDBOX_PROXY_SCRIPT).toContain("ui/notifications/sandbox-diagnostic");
+    expect(MCP_APP_SANDBOX_PROXY_SCRIPT).not.toContain("params.html");
+  });
+
   test("defaults external capabilities closed", () => {
     const csp = buildMcpAppSandboxCsp(parseMcpAppSandboxCsp(null));
     expect(csp).toContain("connect-src 'none'");
