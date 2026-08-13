@@ -62,8 +62,39 @@ spec:
       {{- fail "installerArtifacts.existingClaim or installerArtifacts.hostPath is required when installerArtifacts.enabled=true" }}
       {{- end }}
       {{- end }}
-      {{- if or .Values.installerArtifacts.enabled .Values.customCa.enabled }}
+      {{- if .Values.tempFiles.enabled }}
+      {{- if eq .Values.tempFiles.storage "volume" }}
+      {{- if and .Values.tempFiles.existingClaim .Values.tempFiles.hostPath }}
+      {{- fail "tempFiles.existingClaim and tempFiles.hostPath are mutually exclusive" }}
+      {{- end }}
+      {{- if not (or .Values.tempFiles.existingClaim .Values.tempFiles.hostPath) }}
+      {{- fail "tempFiles.existingClaim or tempFiles.hostPath is required when tempFiles.storage=volume" }}
+      {{- end }}
+      {{- if gt (int .Values.denApi.replicaCount) 1 }}
+      {{- fail "tempFiles.storage=volume keeps bytes on one pod's volume, so it requires denApi.replicaCount=1; use tempFiles.storage=s3 to run more than one replica" }}
+      {{- end }}
+      {{- else if eq .Values.tempFiles.storage "s3" }}
+      {{- if not .Values.tempFiles.s3.bucket }}
+      {{- fail "tempFiles.s3.bucket is required when tempFiles.storage=s3" }}
+      {{- end }}
+      {{- else }}
+      {{- fail "tempFiles.storage must be volume or s3" }}
+      {{- end }}
+      {{- end }}
+      {{- $tempFileVolume := and .Values.tempFiles.enabled (eq .Values.tempFiles.storage "volume") }}
+      {{- if or .Values.installerArtifacts.enabled .Values.customCa.enabled $tempFileVolume }}
       volumes:
+        {{- if $tempFileVolume }}
+        - name: temp-files
+          {{- if .Values.tempFiles.existingClaim }}
+          persistentVolumeClaim:
+            claimName: {{ .Values.tempFiles.existingClaim | quote }}
+          {{- else }}
+          hostPath:
+            path: {{ .Values.tempFiles.hostPath | quote }}
+            type: Directory
+          {{- end }}
+        {{- end }}
         {{- if .Values.installerArtifacts.enabled }}
         - name: installer-artifacts
           {{- if .Values.installerArtifacts.existingClaim }}
@@ -86,8 +117,12 @@ spec:
           ports:
             - name: http
               containerPort: {{ .Values.denApi.containerPort }}
-          {{- if or .Values.installerArtifacts.enabled .Values.customCa.enabled }}
+          {{- if or .Values.installerArtifacts.enabled .Values.customCa.enabled $tempFileVolume }}
           volumeMounts:
+            {{- if $tempFileVolume }}
+            - name: temp-files
+              mountPath: {{ .Values.tempFiles.mountPath | quote }}
+            {{- end }}
             {{- if .Values.installerArtifacts.enabled }}
             - name: installer-artifacts
               mountPath: {{ .Values.installerArtifacts.mountPath | quote }}
@@ -116,6 +151,37 @@ spec:
             {{- if .Values.installerArtifacts.enabled }}
             - name: OPENWORK_INSTALLER_ARTIFACTS_DIR
               value: {{ .Values.installerArtifacts.mountPath | quote }}
+            {{- end }}
+            {{- if .Values.tempFiles.enabled }}
+            - name: DEN_TEMP_FILES_STORAGE
+              value: {{ .Values.tempFiles.storage | quote }}
+            - name: DEN_TEMP_FILES_TTL_SECONDS
+              value: {{ .Values.tempFiles.ttlSeconds | quote }}
+            - name: DEN_TEMP_FILES_MAX_BYTES
+              value: {{ .Values.tempFiles.maxBytes | quote }}
+            {{- if $tempFileVolume }}
+            - name: DEN_TEMP_FILES_DIR
+              value: {{ .Values.tempFiles.mountPath | quote }}
+            {{- else }}
+            - name: DEN_TEMP_FILES_S3_BUCKET
+              value: {{ .Values.tempFiles.s3.bucket | quote }}
+            {{- with .Values.tempFiles.s3.region }}
+            - name: DEN_TEMP_FILES_S3_REGION
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.tempFiles.s3.endpoint }}
+            - name: DEN_TEMP_FILES_S3_ENDPOINT
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.tempFiles.s3.prefix }}
+            - name: DEN_TEMP_FILES_S3_PREFIX
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.tempFiles.s3.forcePathStyle }}
+            - name: DEN_TEMP_FILES_S3_FORCE_PATH_STYLE
+              value: {{ . | quote }}
+            {{- end }}
+            {{- end }}
             {{- end }}
             {{- if .Values.customCa.enabled }}
             {{- include "openwork-ee.customCa.env" . | nindent 12 }}

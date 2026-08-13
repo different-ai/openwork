@@ -192,6 +192,31 @@ installerArtifacts:
   hostPath: ""
   mountPath: /var/lib/openwork/installer-artifacts
 
+# Short-lived file slots behind the temporary-file upload capability. Leave
+# disabled to keep den-api's built-in default (a directory under the pod's
+# temp space, adequate for evaluation only).
+#
+# storage: volume -> bytes live on the mounted volume. It is pod-local, so the
+#   chart requires denApi.replicaCount=1 with this tier.
+# storage: s3     -> bytes live in the bucket below; this is the multi-replica
+#   option. Provision a bucket lifecycle rule that expires objects under the
+#   prefix after 2 days as a backstop; den-api still enforces expiry itself and
+#   deletes the objects it created.
+tempFiles:
+  enabled: false
+  storage: volume
+  existingClaim: ""
+  hostPath: ""
+  mountPath: /var/lib/openwork/temp-files
+  ttlSeconds: "86400"
+  maxBytes: "20971520"
+  s3:
+    bucket: ""
+    region: ""
+    endpoint: ""
+    prefix: "temp-files/"
+    forcePathStyle: ""
+
 denApi:
   replicaCount: 1
   image:

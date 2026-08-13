@@ -130,6 +130,17 @@ const EnvSchema = z.object({
   DEN_MCP_CONNECTIONS_GATING_ENABLED: z.string().optional(),
   DEN_GENERATED_ARTIFACT_VIEWS_ENABLED: z.string().optional(),
   SCIM_MAINTENANCE_INTERVAL_MS: z.string().optional(),
+  DEN_TEMP_FILES_STORAGE: z.enum(["volume", "s3"]).optional(),
+  DEN_TEMP_FILES_DIR: z.string().optional(),
+  DEN_TEMP_FILES_TTL_SECONDS: z.string().optional(),
+  DEN_TEMP_FILES_MAX_BYTES: z.string().optional(),
+  DEN_TEMP_FILES_SWEEP_INTERVAL_MS: z.string().optional(),
+  DEN_TEMP_FILES_MAX_LIVE_PER_ORG: z.string().optional(),
+  DEN_TEMP_FILES_S3_BUCKET: z.string().optional(),
+  DEN_TEMP_FILES_S3_REGION: z.string().optional(),
+  DEN_TEMP_FILES_S3_ENDPOINT: z.string().optional(),
+  DEN_TEMP_FILES_S3_PREFIX: z.string().optional(),
+  DEN_TEMP_FILES_S3_FORCE_PATH_STYLE: z.string().optional(),
   POLAR_FEATURE_GATE_ENABLED: z.string().optional(),
   POLAR_API_BASE: z.string().optional(),
   POLAR_ACCESS_TOKEN: z.string().optional(),
@@ -210,6 +221,14 @@ const EnvSchema = z.object({
       }
     }
   }
+
+  if (value.DEN_TEMP_FILES_STORAGE === "s3" && !value.DEN_TEMP_FILES_S3_BUCKET?.trim()) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "DEN_TEMP_FILES_S3_BUCKET is required when DEN_TEMP_FILES_STORAGE=s3",
+      path: ["DEN_TEMP_FILES_S3_BUCKET"],
+    })
+  }
 })
 
 const parsed = EnvSchema.parse(process.env)
@@ -226,6 +245,13 @@ function splitCsv(value: string | undefined) {
 function automationTuning(value: string | undefined, fallback: number) {
   const tuned = Number(value)
   return Number.isSafeInteger(tuned) && tuned > 0 ? tuned : fallback
+}
+
+// A malformed tuning value falls back to the default rather than poisoning a
+// size cap or interval with NaN.
+function positiveInteger(value: string | undefined, fallback: number) {
+  const parsedValue = Number(value)
+  return Number.isSafeInteger(parsedValue) && parsedValue > 0 ? parsedValue : fallback
 }
 
 function optionalString(value: string | undefined) {
@@ -526,6 +552,21 @@ export const env = {
   mcpConnectionsGatingEnabled,
   generatedArtifactViewsEnabled,
   scimMaintenanceIntervalMs: Number(parsed.SCIM_MAINTENANCE_INTERVAL_MS ?? "300000"),
+  tempFiles: {
+    storage: parsed.DEN_TEMP_FILES_STORAGE ?? "volume",
+    directory: optionalString(parsed.DEN_TEMP_FILES_DIR) ?? path.join(os.tmpdir(), "openwork-temp-files"),
+    ttlSeconds: positiveInteger(parsed.DEN_TEMP_FILES_TTL_SECONDS, 86_400),
+    maxBytes: positiveInteger(parsed.DEN_TEMP_FILES_MAX_BYTES, 20 * 1024 * 1024),
+    sweepIntervalMs: positiveInteger(parsed.DEN_TEMP_FILES_SWEEP_INTERVAL_MS, 900_000),
+    maxLivePerOrganization: positiveInteger(parsed.DEN_TEMP_FILES_MAX_LIVE_PER_ORG, 200),
+    s3: {
+      bucket: optionalString(parsed.DEN_TEMP_FILES_S3_BUCKET),
+      region: optionalString(parsed.DEN_TEMP_FILES_S3_REGION) ?? "us-east-1",
+      endpoint: optionalString(parsed.DEN_TEMP_FILES_S3_ENDPOINT),
+      prefix: optionalString(parsed.DEN_TEMP_FILES_S3_PREFIX) ?? "temp-files/",
+      forcePathStyle: parseBooleanFlag(parsed.DEN_TEMP_FILES_S3_FORCE_PATH_STYLE),
+    },
+  },
   requireEmailVerification,
   passwordBreachScreeningEnabled,
   github: {

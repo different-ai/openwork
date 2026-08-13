@@ -20,6 +20,7 @@ Every tagged Den API product surface is allowed unless it is listed under blocke
 - `Plugins`
 - `Roles`
 - `Teams`
+- `Temporary Files`
 - `Users`
 - `Worker Activity`
 - `Worker Runtime`

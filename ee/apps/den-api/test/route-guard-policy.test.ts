@@ -14,6 +14,8 @@ const routeGuardExceptions = new Map<string, string>([
   ["GET /docs", "public API documentation"],
   ["GET /v1/app-version", "public desktop update metadata"],
   ["GET /v1/brand-assets/:organizationId/:kind/:version", "signed public brand asset URL"],
+  ["PUT /v1/temporary-files/:fileId/content", "unguessable expiring upload token is validated in-handler; external harnesses upload with a plain PUT"],
+  ["GET /v1/temporary-files/:fileId/content", "unguessable expiring download token is validated in-handler; third-party tool servers fetch with a plain GET"],
   ["GET /v1/dev/emails", "dev-only email outbox guarded by OPENWORK_DEV_MODE"],
   ["GET /v1/dev/emails/last", "dev-only email preview guarded by OPENWORK_DEV_MODE"],
   ["GET /api/auth/.well-known/oauth-authorization-server", "public OAuth metadata"],

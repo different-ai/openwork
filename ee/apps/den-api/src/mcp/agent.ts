@@ -131,6 +131,7 @@ export const AGENT_MCP_INSTRUCTIONS = [
   "When save_artifact_view is advertised, create or update the saved Script with an explicit JSON Schema outputSchema matching its returned data before calling it. React is injected into view source, so use React APIs without imports and render only the supplied data prop. A failed view build includes diagnostics: change the source once and retry with the returned artifactViewId; do not search for a different Artifact tool or call render_dynamic_artifact. After a successful save, call the exact render_artifact_* or preview_artifact_* tool named in its result.",
   "When a match has kind connection_status, name connectionStatus.connectionName and relay connectionStatus.action exactly. Distinguish the member's Your Connections page, the organization Connections dashboard, and the provider's own admin console.",
   "Connection probes are live. After the requested human fixes that connector, search again in the same task; otherwise do not retry unchanged or improvise workarounds through other tools.",
+  "When a capability or connected tool expects a file URL, search for the temporary file capability, mint a slot, upload the workspace file's bytes to uploadUrl with a real HTTP PUT from the execution environment, and pass downloadUrl to the tool. Never inline file bytes into tool arguments or chat.",
 ].join("\n")
 
 async function mcpRequestMethod(request: Request): Promise<string | null> {

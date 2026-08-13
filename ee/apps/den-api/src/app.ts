@@ -332,6 +332,7 @@ app.get(
         { name: "Roles", description: "Organization custom role management routes." },
         { name: "Teams", description: "Organization team management routes." },
         { name: "Templates", description: "Organization shared template routes." },
+        { name: "Temporary Files", description: "Short-lived private file slots: mint an upload URL and an expiring download URL so URL-accepting tools can fetch workspace files." },
         { name: "LLM Providers", description: "Organization LLM provider catalog, configuration, and access routes." },
         { name: "Workers", description: "Worker lifecycle, billing, and runtime routes." },
         { name: "Worker Runtime", description: "Worker runtime inspection and upgrade routes." },
