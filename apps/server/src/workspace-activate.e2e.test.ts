@@ -34,6 +34,10 @@ function hostAuth(token: string) {
   return { "X-OpenWork-Host-Token": token };
 }
 
+function clientAuth(token: string) {
+  return { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
+}
+
 function workspaceIdsFromConfig(value: unknown): string[] {
   if (!value || typeof value !== "object" || Array.isArray(value)) return [];
   if (!("workspaces" in value) || !Array.isArray(value.workspaces)) return [];
@@ -68,15 +72,40 @@ async function readPersistedConfig(configPath: string): Promise<unknown> {
 }
 
 function startMockOpencode() {
-  const requests: Array<{ method: string; pathname: string; search: string }> = [];
+  const requests: Array<{ method: string; pathname: string; search: string; directory: string | null }> = [];
+  const busyDirectories = new Set<string>();
+  const abortedDirectories = new Set<string>();
+  const heldStatus = new Map<string, Promise<void>>();
   const server = Bun.serve({
     hostname: "127.0.0.1",
     port: 0,
     fetch(request) {
       const url = new URL(request.url);
-      requests.push({ method: request.method, pathname: url.pathname, search: url.search });
+      const directory = request.headers.get("x-opencode-directory");
+      requests.push({ method: request.method, pathname: url.pathname, search: url.search, directory });
+
+      if (url.pathname === "/session/status") {
+        const hold = directory ? heldStatus.get(directory) : undefined;
+        if (hold) {
+          heldStatus.delete(directory!);
+          return hold.then(() => Response.json({}));
+        }
+        return Response.json(
+          directory && busyDirectories.has(directory)
+            ? { ses_busy: { type: "busy" } }
+            : {},
+        );
+      }
+
+      if (url.pathname.endsWith("/prompt_async") && request.method === "POST") {
+        if (directory) busyDirectories.add(directory);
+        return new Response(null, { status: 204 });
+      }
 
       if (url.pathname === "/instance/dispose") {
+        const target = url.searchParams.get("directory");
+        if (target && busyDirectories.has(target)) abortedDirectories.add(target);
+        if (target) busyDirectories.delete(target);
         return Response.json({ disposed: true });
       }
 
@@ -84,7 +113,36 @@ function startMockOpencode() {
     },
   }) as Served;
   stops.push(() => server.stop(true));
-  return { server, requests };
+  return {
+    server,
+    requests,
+    busyDirectories,
+    abortedDirectories,
+    setBusy(directory: string, busy: boolean) {
+      if (busy) busyDirectories.add(directory);
+      else busyDirectories.delete(directory);
+    },
+    holdNextStatus(directory: string) {
+      let release: () => void = () => {};
+      const released = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      heldStatus.set(directory, released);
+      return {
+        reached: new Promise<void>((resolve) => {
+          const poll = () => {
+            if (requests.some((entry) => entry.pathname === "/session/status" && entry.directory === directory)) {
+              resolve();
+              return;
+            }
+            setTimeout(poll, 1);
+          };
+          poll();
+        }),
+        release,
+      };
+    },
+  };
 }
 
 function startMockRemoteOpenwork() {
@@ -140,10 +198,11 @@ async function startOpenworkServerWithWorkspaces(input: {
     hostTokenSource: "cli",
     logFormat: "pretty",
     logRequests: false,
+    engineRollover: false,
   };
   const server = await startServer(config) as Served;
   stops.push(() => server.stop(true));
-  return { server, hostToken: config.hostToken };
+  return { server, token: config.token, hostToken: config.hostToken };
 }
 
 describe("workspace activation", () => {
@@ -206,6 +265,147 @@ describe("workspace activation", () => {
 
     expect(sameWorkspaceResponse.status).toBe(200);
     expect(disposeCount()).toBe(1);
+  });
+
+  test("does not dispose the target directory after its prompt was admitted before activation completes", async () => {
+    const firstRoot = await createWorkspaceRoot();
+    const secondRoot = await createWorkspaceRoot();
+    const mock = startMockOpencode();
+    const opencodeBaseUrl = `http://127.0.0.1:${mock.server.port}`;
+    const workspaces: ServerConfig["workspaces"] = [
+      {
+        id: "ws_1",
+        name: "One",
+        path: firstRoot,
+        preset: "starter",
+        workspaceType: "local",
+        baseUrl: opencodeBaseUrl,
+      },
+      {
+        id: "ws_2",
+        name: "Two",
+        path: secondRoot,
+        preset: "starter",
+        workspaceType: "local",
+        baseUrl: opencodeBaseUrl,
+      },
+    ];
+    const openwork = await startOpenworkServerWithWorkspaces({
+      configPath: join(firstRoot, "server.json"),
+      workspaces,
+      authorizedRoots: [firstRoot, secondRoot],
+    });
+    mock.setBusy(firstRoot, true);
+
+    const base = `http://127.0.0.1:${openwork.server.port}`;
+    const promptResponse = await fetch(`${base}/workspace/ws_2/opencode/session/ses_b/prompt_async`, {
+      method: "POST",
+      headers: clientAuth(openwork.token),
+      body: JSON.stringify({ parts: [{ type: "text", text: "Keep running" }] }),
+    });
+    expect(promptResponse.status).toBe(204);
+
+    const response = await fetch(`${base}/workspaces/ws_2/activate`, {
+      method: "POST",
+      headers: hostAuth(openwork.hostToken),
+    });
+
+    expect(response.status).toBe(200);
+    expect((await response.json()).activeId).toBe("ws_2");
+    expect(mock.requests.some(
+      (request) => request.pathname === "/session/status" && request.directory === secondRoot,
+    )).toBe(true);
+    expect(mock.requests.some(
+      (request) => request.pathname === "/session/status" && request.directory === firstRoot,
+    )).toBe(false);
+    expect(mock.requests.some((request) => request.pathname === "/instance/dispose")).toBe(false);
+    expect(mock.busyDirectories.has(firstRoot)).toBe(true);
+    expect(mock.busyDirectories.has(secondRoot)).toBe(true);
+    expect(mock.abortedDirectories.size).toBe(0);
+  });
+
+  test("does not let a busy task in another directory block an idle target reload", async () => {
+    const firstRoot = await createWorkspaceRoot();
+    const secondRoot = await createWorkspaceRoot();
+    const mock = startMockOpencode();
+    const opencodeBaseUrl = `http://127.0.0.1:${mock.server.port}`;
+    const workspaces: ServerConfig["workspaces"] = [
+      { id: "ws_1", name: "One", path: firstRoot, preset: "starter", workspaceType: "local", baseUrl: opencodeBaseUrl },
+      { id: "ws_2", name: "Two", path: secondRoot, preset: "starter", workspaceType: "local", baseUrl: opencodeBaseUrl },
+    ];
+    const openwork = await startOpenworkServerWithWorkspaces({
+      configPath: join(firstRoot, "server.json"),
+      workspaces,
+      authorizedRoots: [firstRoot, secondRoot],
+    });
+    mock.setBusy(firstRoot, true);
+
+    const response = await fetch(`http://127.0.0.1:${openwork.server.port}/workspaces/ws_2/activate`, {
+      method: "POST",
+      headers: hostAuth(openwork.hostToken),
+    });
+
+    expect(response.status).toBe(200);
+    expect(mock.requests.some(
+      (request) => request.pathname === "/session/status" && request.directory === firstRoot,
+    )).toBe(false);
+    const dispose = mock.requests.find((request) => request.pathname === "/instance/dispose");
+    expect(dispose?.search).toContain(`directory=${encodeURIComponent(secondRoot)}`);
+    expect(mock.busyDirectories.has(firstRoot)).toBe(true);
+    expect(mock.abortedDirectories.size).toBe(0);
+  });
+
+  test("serializes target prompt admission against the idle-check-to-dispose window", async () => {
+    const firstRoot = await createWorkspaceRoot();
+    const secondRoot = await createWorkspaceRoot();
+    const mock = startMockOpencode();
+    const opencodeBaseUrl = `http://127.0.0.1:${mock.server.port}`;
+    const workspaces: ServerConfig["workspaces"] = [
+      { id: "ws_1", name: "One", path: firstRoot, preset: "starter", workspaceType: "local", baseUrl: opencodeBaseUrl },
+      { id: "ws_2", name: "Two", path: secondRoot, preset: "starter", workspaceType: "local", baseUrl: opencodeBaseUrl },
+    ];
+    const openwork = await startOpenworkServerWithWorkspaces({
+      configPath: join(firstRoot, "server.json"),
+      workspaces,
+      authorizedRoots: [firstRoot, secondRoot],
+    });
+    const heldStatus = mock.holdNextStatus(secondRoot);
+    const base = `http://127.0.0.1:${openwork.server.port}`;
+
+    const activation = fetch(`${base}/workspaces/ws_2/activate`, {
+      method: "POST",
+      headers: hostAuth(openwork.hostToken),
+    });
+    await heldStatus.reached;
+
+    const otherDirectoryPrompt = await fetch(`${base}/workspace/ws_1/opencode/session/ses_a/prompt_async`, {
+      method: "POST",
+      headers: clientAuth(openwork.token),
+      body: JSON.stringify({ parts: [{ type: "text", text: "Continue independently" }] }),
+    });
+    expect(otherDirectoryPrompt.status).toBe(204);
+
+    const prompt = fetch(`${base}/workspace/ws_2/opencode/session/ses_b/prompt_async`, {
+      method: "POST",
+      headers: clientAuth(openwork.token),
+      body: JSON.stringify({ parts: [{ type: "text", text: "Start after activation" }] }),
+    });
+    await Bun.sleep(10);
+    expect(mock.requests.some(
+      (request) => request.pathname.endsWith("/prompt_async") && request.directory === secondRoot,
+    )).toBe(false);
+
+    heldStatus.release();
+    expect((await activation).status).toBe(200);
+    expect((await prompt).status).toBe(204);
+
+    const relevant = mock.requests.filter((request) =>
+      request.directory === secondRoot || request.search.includes(encodeURIComponent(secondRoot))
+    ).map((request) => request.pathname);
+    expect(relevant).toEqual(["/session/status", "/instance/dispose", "/session/ses_b/prompt_async"]);
+    expect(mock.busyDirectories.has(firstRoot)).toBe(true);
+    expect(mock.busyDirectories.has(secondRoot)).toBe(true);
+    expect(mock.abortedDirectories.size).toBe(0);
   });
 
   test("persists activation order only when requested", async () => {

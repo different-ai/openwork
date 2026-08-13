@@ -14,6 +14,8 @@ import {
   type EngineEventProxyLease,
   type EngineSpawnTemplate,
 } from "./engine-pool.js";
+import { withEngineDirectoryFence } from "./engine-directory-fence.js";
+import { shouldDeferInPlaceEngineReload } from "./engine-reload-defer.js";
 import { buildEngineAuthProbeHeader } from "./engine-registry.js";
 import { addPlugin, listPlugins, normalizePluginSpec, removePlugin } from "./plugins.js";
 import { sanitizePortableOpencodeConfig } from "./portable-opencode.js";
@@ -882,6 +884,10 @@ function isSessionCommandProxyRequest(method: string, proxyPath: string) {
   return method === "POST" && /^\/session\/[^/]+\/command$/.test(normalizeOpencodeProxyPath(proxyPath));
 }
 
+function isPromptAsyncProxyRequest(method: string, proxyPath: string) {
+  return method === "POST" && /^\/session\/[^/]+\/prompt_async$/.test(normalizeOpencodeProxyPath(proxyPath));
+}
+
 export async function startServer(config: ServerConfig): Promise<ServeResult> {
   const approvals = new ApprovalService(config.approval);
   const reloadEvents = new ReloadEventStore();
@@ -1270,22 +1276,29 @@ export async function proxyOpencodeRequest(input: {
     });
     return jsonResponse({ ok: true, accepted: true });
   }
-  const response = await loopbackFetch(targetUrl, {
-    method,
-    headers,
-    body,
-  });
+  const forward = async () => {
+    const response = await loopbackFetch(targetUrl, {
+      method,
+      headers,
+      body,
+    });
 
-  if (response.status === 404 && route?.fallback) {
-    const fallbackHeaders = headersForEngineConnection(headers, route.fallback);
-    const fallbackResponse = await loopbackFetch(
-      buildOpencodeProxyUrl(route.fallback.baseUrl, proxyPath, input.url.search),
-      { method, headers: fallbackHeaders, body },
-    );
-    return sanitizeProxyResponse(fallbackResponse);
+    if (response.status === 404 && route?.fallback) {
+      const fallbackHeaders = headersForEngineConnection(headers, route.fallback);
+      const fallbackResponse = await loopbackFetch(
+        buildOpencodeProxyUrl(route.fallback.baseUrl, proxyPath, input.url.search),
+        { method, headers: fallbackHeaders, body },
+      );
+      return sanitizeProxyResponse(fallbackResponse);
+    }
+
+    return sanitizeProxyResponse(response);
+  };
+
+  if (workspace && workspace.workspaceType !== "remote" && !pool && isPromptAsyncProxyRequest(method, proxyPath)) {
+    return withEngineDirectoryFence(input.config, workspace, forward);
   }
-
-  return sanitizeProxyResponse(response);
+  return forward();
 }
 
 function isEngineEventPath(proxyPath: string): boolean {
@@ -1891,8 +1904,14 @@ function createRoutes(
     ensureWritable,
     resolveWorkspace,
     serializeWorkspace,
-    reloadOpencodeEngine: (routeConfig, workspace) =>
-      reloadOpencodeEngine(routeConfig, workspace, engineMcpServerState),
+    reloadOpencodeEngine: async (routeConfig, workspace) => {
+      await withEngineDirectoryFence(routeConfig, workspace, async () => {
+        if (await shouldDeferInPlaceEngineReload(routeConfig, workspace, engineHasActiveSessions)) {
+          return;
+        }
+        await reloadOpencodeEngine(routeConfig, workspace, engineMcpServerState);
+      });
+    },
   });
 
   registerSessionRoutes({
@@ -2414,8 +2433,7 @@ function createRoutes(
     // the generation that owns live sessions. Legacy/external engines keep
     // the established busy deferral.
     const reloadDeferred = shouldReload
-      && !enginePoolForConfig(config)
-      && (await engineHasActiveSessions(config, workspace));
+      && (await shouldDeferInPlaceEngineReload(config, workspace, engineHasActiveSessions));
     if (shouldReload && !reloadDeferred) {
       await reloadOpencodeEngine(config, workspace, engineMcpServerState);
     }
