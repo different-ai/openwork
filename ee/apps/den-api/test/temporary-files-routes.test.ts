@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto"
 import { mkdtemp, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import path from "node:path"
@@ -34,14 +35,24 @@ const authSessionToken = `temp-files-session-${authSessionId}`
 let mcpToken = ""
 let storageDirectory = ""
 
+type Digest = { algorithm: string; value: string }
+type Transfer = { transport: string; method: string; url: string; expiresAt: string }
+
 type MintBody = {
   fileId: string
   uploadUrl: string
   downloadUrl: string
   expiresAt: string
-  maxBytes: number
+  maxSize: number
   storageTier: string
   instructions: string
+  file: { uri: string; name: string; mimeType: string; size?: number; digest?: Digest }
+  upload: Transfer
+  download: Transfer
+}
+
+function sha256Base64Url(bytes: Uint8Array | string) {
+  return createHash("sha256").update(bytes).digest("base64url")
 }
 
 function authHeaders(): Headers {
@@ -58,7 +69,15 @@ async function mint(body: Record<string, unknown> = { filename: "report.pdf" }) 
     headers,
     body: JSON.stringify(body),
   })
-  return { response, body: await response.json() as MintBody & { error?: string; maxBytes?: number } }
+  return {
+    response,
+    body: await response.json() as MintBody & {
+      error?: string
+      reason?: string
+      maxSize?: number
+      actualSize?: number
+    },
+  }
 }
 
 // The upload and download URLs are absolute and unauthenticated by design:
@@ -175,7 +194,7 @@ test("minting returns an upload URL, a download URL, and the byte ceiling", asyn
   const { response, body } = await mint({ filename: "report.pdf", contentType: "application/pdf" })
   expect(response.status).toBe(200)
   expect(body.fileId.startsWith("tmpf_")).toBe(true)
-  expect(body.maxBytes).toBe(20 * 1024 * 1024)
+  expect(body.maxSize).toBe(20 * 1024 * 1024)
   expect(body.storageTier).toBe("volume")
   expect(new Date(body.expiresAt).getTime()).toBeGreaterThan(Date.now())
   expect(body.instructions).toContain("curl -sS -X PUT")
@@ -186,6 +205,78 @@ test("minting returns an upload URL, a download URL, and the byte ceiling", asyn
   expect(downloadUrl.pathname).toBe(uploadUrl.pathname)
   // Distinct tokens: sharing the download URL must not hand out write access.
   expect(uploadUrl.searchParams.get("token")).not.toBe(downloadUrl.searchParams.get("token"))
+})
+
+// The same slot, described the way the open MCP file-transfer proposal
+// describes one, so a caller that already speaks it needs no translation.
+test("the mint also answers as a file object with transfer descriptors", async () => {
+  const { body } = await mint({ filename: "report.pdf", contentType: "application/pdf", sizeBytes: 2048 })
+
+  // The file handle carries its own scheme: it names the file, and it is not
+  // an MCP resource URI.
+  expect(body.file.uri).toBe(`mcp-file://openwork/${body.fileId}`)
+  expect(body.file.name).toBe("report.pdf")
+  expect(body.file.mimeType).toBe("application/pdf")
+  expect(body.file.size).toBe(2048)
+
+  expect(body.upload).toEqual({
+    transport: "https",
+    method: "PUT",
+    url: body.uploadUrl,
+    expiresAt: body.expiresAt,
+  })
+  expect(body.download).toEqual({
+    transport: "https",
+    method: "GET",
+    url: body.downloadUrl,
+    expiresAt: body.expiresAt,
+  })
+})
+
+test("a declared digest is echoed on the file and verified on upload", async () => {
+  const bytes = new Uint8Array(4096).map((_value, index) => (index * 7) % 256)
+  const digest = { algorithm: "sha-256", value: sha256Base64Url(bytes) }
+  const { body } = await mint({ filename: "verified.bin", digest })
+  expect(body.file.digest).toEqual(digest)
+
+  const upload = await callContentUrl(body.uploadUrl, { method: "PUT", body: bytes })
+  expect(upload.status).toBe(200)
+  const uploaded = await upload.json() as { digest: Digest; uri: string }
+  expect(uploaded.digest).toEqual(digest)
+  expect(uploaded.uri).toBe(body.file.uri)
+
+  expect(new Uint8Array(await (await callContentUrl(body.downloadUrl)).arrayBuffer())).toEqual(bytes)
+})
+
+// A mismatch must not consume the single PUT: the caller has to be able to
+// retry, and a truncated transfer must never become the file a tool fetches.
+test("bytes that do not match the declared digest are refused and the slot stays usable", async () => {
+  const bytes = new Uint8Array(1024).fill(9)
+  const { body } = await mint({
+    filename: "verified.bin",
+    digest: { algorithm: "sha-256", value: sha256Base64Url(bytes) },
+  })
+
+  const mismatch = await callContentUrl(body.uploadUrl, { method: "PUT", body: bytes.slice(0, 512) })
+  expect(mismatch.status).toBe(422)
+  const error = await mismatch.json() as { error: string; reason: string; expectedDigest: Digest; actualDigest: Digest }
+  expect(error.error).toBe("digest_mismatch")
+  expect(error.reason).toBe("digestMismatch")
+  expect(error.expectedDigest.value).toBe(sha256Base64Url(bytes))
+  expect(error.actualDigest.value).toBe(sha256Base64Url(bytes.slice(0, 512)))
+
+  // Nothing was stored, so the correct bytes still go through.
+  expect((await callContentUrl(body.uploadUrl, { method: "PUT", body: bytes })).status).toBe(200)
+  expect(new Uint8Array(await (await callContentUrl(body.downloadUrl)).arrayBuffer())).toEqual(bytes)
+})
+
+test("an upload without a declared digest still reports the digest of what was stored", async () => {
+  const { body } = await mint({ filename: "unverified.bin" })
+  const upload = await callContentUrl(body.uploadUrl, { method: "PUT", body: "plain bytes" })
+  expect((await upload.json() as { digest: Digest }).digest).toEqual({
+    algorithm: "sha-256",
+    value: sha256Base64Url("plain bytes"),
+  })
 })
 
 test("a minted slot round-trips bytes without a model ever seeing them", async () => {
@@ -269,7 +360,11 @@ test("a declared size over the ceiling fails at mint time", async () => {
   const { response, body } = await mint({ filename: "huge.bin", sizeBytes: 20 * 1024 * 1024 + 1 })
   expect(response.status).toBe(413)
   expect(body.error).toBe("file_too_large")
-  expect(body.maxBytes).toBe(20 * 1024 * 1024)
+  // Both vocabularies: this API's own code, and the machine-readable reason a
+  // file-transfer client would look for.
+  expect(body.reason).toBe("maxSizeExceeded")
+  expect(body.maxSize).toBe(20 * 1024 * 1024)
+  expect(body.actualSize).toBe(20 * 1024 * 1024 + 1)
 })
 
 test("a body over the row ceiling is refused at upload time", async () => {
@@ -281,7 +376,11 @@ test("a body over the row ceiling is refused at upload time", async () => {
 
   const upload = await callContentUrl(body.uploadUrl, { method: "PUT", body: "far more than eight bytes" })
   expect(upload.status).toBe(413)
-  expect((await upload.json() as { error: string }).error).toBe("file_too_large")
+  const error = await upload.json() as { error: string; reason: string; maxSize: number; actualSize: number }
+  expect(error.error).toBe("file_too_large")
+  expect(error.reason).toBe("maxSizeExceeded")
+  expect(error.maxSize).toBe(8)
+  expect(error.actualSize).toBe("far more than eight bytes".length)
 })
 
 test("an expired slot stops serving and is cleared on access", async () => {

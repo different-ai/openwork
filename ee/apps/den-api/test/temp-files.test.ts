@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto"
 import { mkdtemp, readFile, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import path from "node:path"
@@ -8,8 +9,11 @@ import {
   hashTempFileToken,
   resolveTempFileContentType,
   sanitizeTempFilename,
+  TEMP_FILE_DIGEST_PATTERN,
   tempFileContentUrl,
+  tempFileDigest,
   tempFileExpiresAt,
+  tempFileUri,
   verifyTempFileToken,
 } from "../src/temp-files.js"
 
@@ -146,5 +150,29 @@ describe("volume storage backend", () => {
 
   test("the tier is reported so a mint response can name it", () => {
     expect(volumeTempFileStorage(directory).tier).toBe("volume")
+  })
+})
+
+describe("file digest and handle", () => {
+  // Base64url without padding is what the MCP file-transfer proposal specifies,
+  // and it survives a URL or a header unescaped.
+  test("the digest is unpadded base64url sha-256", () => {
+    const digest = tempFileDigest(new Uint8Array([1, 2, 3]).buffer)
+    expect(digest).toBe(createHash("sha256").update(new Uint8Array([1, 2, 3])).digest("base64url"))
+    expect(digest).toMatch(TEMP_FILE_DIGEST_PATTERN)
+    expect(digest).not.toContain("=")
+    expect(digest).not.toContain("+")
+    expect(digest).not.toContain("/")
+  })
+
+  test("different bytes produce different digests", () => {
+    expect(tempFileDigest(new Uint8Array([1]).buffer)).not.toBe(tempFileDigest(new Uint8Array([2]).buffer))
+  })
+
+  // A file handle is not a resource URI: keeping its own scheme stops a client
+  // from trying to read it through resources/read.
+  test("the file handle uses a scheme of its own", () => {
+    expect(tempFileUri("tmpf_01k2p3q4r5s6t7u8v9w0x1y2z3")).toBe("mcp-file://openwork/tmpf_01k2p3q4r5s6t7u8v9w0x1y2z3")
+    expect(new URL(tempFileUri("tmpf_01k2p3q4r5s6t7u8v9w0x1y2z3")).protocol).toBe("mcp-file:")
   })
 })

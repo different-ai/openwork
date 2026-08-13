@@ -43,6 +43,34 @@ export function tempFileExpiresAt(now: Date, ttlSeconds: number) {
   return new Date(now.getTime() + ttlSeconds * 1000)
 }
 
+// SEP-2631 (MCP file objects and transfer) defines a file digest as an
+// algorithm plus a base64url value without padding, and makes sha-256 the one
+// algorithm an implementation must support. Only sha-256 is offered here, so a
+// caller that follows the proposal is already using the right name.
+export const TEMP_FILE_DIGEST_ALGORITHM = "sha-256"
+
+// 32 raw bytes encode to 43 base64url characters with no padding.
+export const TEMP_FILE_DIGEST_PATTERN = /^[A-Za-z0-9_-]{43}$/
+
+export function tempFileDigest(bytes: ArrayBuffer) {
+  return crypto.createHash("sha256").update(new Uint8Array(bytes)).digest("base64url")
+}
+
+export function tempFileDigestValue(value: string) {
+  return { algorithm: TEMP_FILE_DIGEST_ALGORITHM, value }
+}
+
+// A stable handle for the file itself, kept in a scheme of its own so it is
+// never mistaken for an MCP resource URI: the two namespaces are deliberately
+// separate in SEP-2631, and a file handle is not readable through
+// resources/read. The bytes are reached through the transfer URLs, not through
+// this string, so it stays valid for the life of the slot.
+export const TEMP_FILE_URI_SCHEME = "mcp-file"
+
+export function tempFileUri(fileId: string) {
+  return `${TEMP_FILE_URI_SCHEME}://openwork/${fileId}`
+}
+
 // Keeps a caller-supplied name usable as a Content-Disposition filename: no
 // directory traversal, no quotes or control characters to break the header.
 export function sanitizeTempFilename(filename: string) {

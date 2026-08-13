@@ -13,8 +13,13 @@ import {
   createTempFileTokenPair,
   resolveTempFileContentType,
   sanitizeTempFilename,
+  TEMP_FILE_DIGEST_ALGORITHM,
+  TEMP_FILE_DIGEST_PATTERN,
   tempFileContentUrl,
+  tempFileDigest,
+  tempFileDigestValue,
   tempFileExpiresAt,
+  tempFileUri,
   verifyTempFileToken,
 } from "../../temp-files.js"
 import { resolveTempFileStorage, type TempFileStorage } from "../../temp-file-storage.js"
@@ -27,6 +32,19 @@ const MINT_RATE_LIMIT_WINDOW_MS = 60 * 60 * 1000
 // chunked-transfer framing.
 const BODY_LIMIT_HEADROOM_BYTES = 64 * 1024
 
+// The digest, the file object, and the transfer descriptors below follow
+// SEP-2631, the open MCP proposal for file objects and transfer. Nothing in the
+// ratified specification carries a file between a client and a server without
+// base64, so this route cannot be conformant to anything today; matching the
+// proposal's names means that if it lands, the adapter is a rename rather than
+// a redesign.
+const digestSchema = z.object({
+  algorithm: z.literal(TEMP_FILE_DIGEST_ALGORITHM)
+    .describe("Digest algorithm. Only sha-256 is supported."),
+  value: z.string().regex(TEMP_FILE_DIGEST_PATTERN)
+    .describe("Base64url SHA-256 of the file bytes, without padding."),
+}).meta({ ref: "TemporaryFileDigest" })
+
 const mintTemporaryFileSchema = z.object({
   filename: z.string().trim().min(1).max(255)
     .describe("Base filename with extension, for example report.pdf. Used as the served filename."),
@@ -34,29 +52,64 @@ const mintTemporaryFileSchema = z.object({
     .describe("MIME type of the bytes you will upload, for example application/pdf. Defaults to application/octet-stream."),
   sizeBytes: z.number().int().positive().optional()
     .describe("Byte size of the file you will upload, from ls -l or stat. Supplying it fails fast instead of failing mid-upload."),
+  digest: digestSchema.optional()
+    .describe("Optional integrity digest of the bytes you will upload. When supplied, an upload whose bytes hash to anything else is rejected and the slot stays empty. Produce it with: openssl dgst -sha256 -binary <path> | basenc --base64url | tr -d '='."),
 }).meta({ ref: "TemporaryFileMintRequest" })
+
+// The file handle: a stable identity for the file, separate from the URLs that
+// move its bytes.
+const fileValueSchema = z.object({
+  uri: z.string(),
+  name: z.string(),
+  mimeType: z.string(),
+  size: z.number().optional(),
+  digest: digestSchema.optional(),
+}).meta({ ref: "TemporaryFileValue" })
+
+// How to move the bytes: one descriptor per direction. `transport` names the
+// transfer mechanism rather than the URL scheme — an ordinary HTTP request
+// against `url` — so it stays "https" even where a development deployment
+// serves the URL over plain http.
+const transferSchema = z.object({
+  transport: z.literal("https"),
+  method: z.string(),
+  url: z.string(),
+  expiresAt: z.string(),
+}).meta({ ref: "TemporaryFileTransfer" })
 
 const mintResponseSchema = z.object({
   fileId: z.string(),
   uploadUrl: z.string(),
   downloadUrl: z.string(),
   expiresAt: z.string(),
-  maxBytes: z.number(),
+  maxSize: z.number(),
   storageTier: z.enum(["volume", "s3"]),
   instructions: z.string(),
+  file: fileValueSchema,
+  upload: transferSchema,
+  download: transferSchema,
 }).meta({ ref: "TemporaryFileMintResponse" })
 
 const uploadResponseSchema = z.object({
   ok: z.literal(true),
   fileId: z.string(),
+  uri: z.string(),
   sizeBytes: z.number(),
   expiresAt: z.string(),
+  digest: digestSchema,
 }).meta({ ref: "TemporaryFileUploadResponse" })
 
+// `error` is this API's own machine-readable code; `reason` carries the
+// SEP-2631 vocabulary alongside it, so a future file-transfer adapter can pass
+// the payload through untouched.
 const temporaryFileErrorSchema = z.object({
   error: z.string(),
+  reason: z.string().optional(),
   message: z.string().optional(),
-  maxBytes: z.number().optional(),
+  maxSize: z.number().optional(),
+  actualSize: z.number().optional(),
+  expectedDigest: digestSchema.optional(),
+  actualDigest: digestSchema.optional(),
   retryAfterSeconds: z.number().optional(),
 }).meta({ ref: "TemporaryFileError" })
 
@@ -70,7 +123,7 @@ const MINT_DESCRIPTION = [
   "After minting, upload the raw bytes from your execution environment with a real HTTP PUT, for example:",
   "curl -sS -X PUT --data-binary @/path/to/file '<uploadUrl>'.",
   "Then pass downloadUrl, never uploadUrl, to the tool that needs the file.",
-  "The uploadUrl accepts exactly one PUT of at most maxBytes bytes, and both URLs stop working at expiresAt.",
+  "The uploadUrl accepts exactly one PUT of at most maxSize bytes, and both URLs stop working at expiresAt.",
   "Never paste, print, or base64-encode file bytes into a message or a tool argument: the bytes must travel only through the PUT.",
   "The downloadUrl is an unguessable expiring link that external services can fetch without additional authentication,",
   "so share it only with the tool that should read the file.",
@@ -145,6 +198,7 @@ export function registerTemporaryFileRoutes<T extends { Variables: OrgRouteVaria
       if (retryAfterSeconds !== null) {
         return c.json({
           error: "rate_limited",
+          reason: "rateLimited",
           message: "Too many temporary files were created recently. Try again shortly.",
           retryAfterSeconds,
         }, 429)
@@ -153,8 +207,10 @@ export function registerTemporaryFileRoutes<T extends { Variables: OrgRouteVaria
       if (body.sizeBytes && body.sizeBytes > env.tempFiles.maxBytes) {
         return c.json({
           error: "file_too_large",
+          reason: "maxSizeExceeded",
           message: `Temporary files are limited to ${env.tempFiles.maxBytes} bytes.`,
-          maxBytes: env.tempFiles.maxBytes,
+          maxSize: env.tempFiles.maxBytes,
+          actualSize: body.sizeBytes,
         }, 413)
       }
 
@@ -175,6 +231,7 @@ export function registerTemporaryFileRoutes<T extends { Variables: OrgRouteVaria
       if ((live?.value ?? 0) >= env.tempFiles.maxLivePerOrganization) {
         return c.json({
           error: "too_many_temporary_files",
+          reason: "tooManyFiles",
           message: "This workspace already holds the maximum number of live temporary files. Wait for older files to expire.",
         }, 429)
       }
@@ -182,6 +239,8 @@ export function registerTemporaryFileRoutes<T extends { Variables: OrgRouteVaria
       const fileId = createDenTypeId("tempFile")
       const tokens = createTempFileTokenPair()
       const expiresAt = tempFileExpiresAt(now, env.tempFiles.ttlSeconds)
+      const filename = sanitizeTempFilename(body.filename)
+      const contentType = resolveTempFileContentType({ declared: body.contentType, filename: body.filename })
 
       await db.insert(TempFileTable).values({
         id: fileId,
@@ -189,24 +248,40 @@ export function registerTemporaryFileRoutes<T extends { Variables: OrgRouteVaria
         created_by_user_id: payload.currentMember.userId,
         upload_token_hash: tokens.uploadTokenHash,
         download_token_hash: tokens.downloadTokenHash,
-        filename: sanitizeTempFilename(body.filename),
-        content_type: resolveTempFileContentType({ declared: body.contentType, filename: body.filename }),
+        filename,
+        content_type: contentType,
         max_bytes: env.tempFiles.maxBytes,
         storage_tier: storage.tier,
         storage_key: storage.keyFor(fileId),
         status: "pending",
+        expected_sha256: body.digest?.value ?? null,
         expires_at: expiresAt,
       })
 
       const uploadUrl = tempFileContentUrl({ baseUrl, fileId, token: tokens.uploadToken })
+      const downloadUrl = tempFileContentUrl({ baseUrl, fileId, token: tokens.downloadToken })
+      const expiresAtIso = expiresAt.toISOString()
       return c.json({
+        // Flat fields first: this is the shape agents reach for today, and the
+        // one most file-hosting APIs already use.
         fileId,
         uploadUrl,
-        downloadUrl: tempFileContentUrl({ baseUrl, fileId, token: tokens.downloadToken }),
-        expiresAt: expiresAt.toISOString(),
-        maxBytes: env.tempFiles.maxBytes,
+        downloadUrl,
+        expiresAt: expiresAtIso,
+        maxSize: env.tempFiles.maxBytes,
         storageTier: storage.tier,
         instructions: uploadInstructions(uploadUrl),
+        // The same slot in the SEP-2631 shape, for a caller that already
+        // speaks it.
+        file: {
+          uri: tempFileUri(fileId),
+          name: filename,
+          mimeType: contentType,
+          ...(body.sizeBytes ? { size: body.sizeBytes } : {}),
+          ...(body.digest ? { digest: body.digest } : {}),
+        },
+        upload: { transport: "https" as const, method: "PUT", url: uploadUrl, expiresAt: expiresAtIso },
+        download: { transport: "https" as const, method: "GET", url: downloadUrl, expiresAt: expiresAtIso },
       })
     },
   )
@@ -225,6 +300,7 @@ export function registerTemporaryFileRoutes<T extends { Variables: OrgRouteVaria
         409: jsonResponse("This upload URL was already used.", temporaryFileErrorSchema),
         410: jsonResponse("The temporary file expired.", temporaryFileErrorSchema),
         413: jsonResponse("The body exceeded the configured maximum.", temporaryFileErrorSchema),
+        422: jsonResponse("The bytes did not match the declared digest.", temporaryFileErrorSchema),
       },
     }),
     publicRoute,
@@ -232,8 +308,9 @@ export function registerTemporaryFileRoutes<T extends { Variables: OrgRouteVaria
       maxSize: env.tempFiles.maxBytes + BODY_LIMIT_HEADROOM_BYTES,
       onError: (c) => c.json({
         error: "file_too_large",
+        reason: "maxSizeExceeded",
         message: `Temporary files are limited to ${env.tempFiles.maxBytes} bytes.`,
-        maxBytes: env.tempFiles.maxBytes,
+        maxSize: env.tempFiles.maxBytes,
       }, 413),
     }),
     async (c) => {
@@ -245,25 +322,46 @@ export function registerTemporaryFileRoutes<T extends { Variables: OrgRouteVaria
       const now = clock()
       if (row.expires_at <= now) {
         await discardTempFile(storage, row)
-        return c.json({ error: "temporary_file_expired" }, 410)
+        return c.json({ error: "temporary_file_expired", reason: "expired" }, 410)
       }
       if (row.status === "uploaded") {
         return c.json({
           error: "temporary_file_already_uploaded",
+          reason: "alreadyUploaded",
           message: "This upload URL was already used. Create a new temporary file.",
         }, 409)
       }
 
       const bytes = await c.req.arrayBuffer()
       if (bytes.byteLength < 1) {
-        return c.json({ error: "empty_file", message: "Send the file bytes as the request body." }, 400)
+        return c.json({
+          error: "empty_file",
+          reason: "emptyBody",
+          message: "Send the file bytes as the request body.",
+        }, 400)
       }
       if (bytes.byteLength > row.max_bytes) {
         return c.json({
           error: "file_too_large",
+          reason: "maxSizeExceeded",
           message: `Temporary files are limited to ${row.max_bytes} bytes.`,
-          maxBytes: row.max_bytes,
+          maxSize: row.max_bytes,
+          actualSize: bytes.byteLength,
         }, 413)
+      }
+
+      // Verified before the bytes are stored, so a mismatched upload leaves the
+      // slot empty and retryable rather than holding content the caller did not
+      // intend to publish.
+      const digest = tempFileDigest(bytes)
+      if (row.expected_sha256 && row.expected_sha256 !== digest) {
+        return c.json({
+          error: "digest_mismatch",
+          reason: "digestMismatch",
+          message: "The uploaded bytes do not match the digest declared when this file was created. The slot is unchanged; retry the upload.",
+          expectedDigest: tempFileDigestValue(row.expected_sha256),
+          actualDigest: tempFileDigestValue(digest),
+        }, 422)
       }
 
       await storage.put(row.storage_key, bytes)
@@ -278,6 +376,7 @@ export function registerTemporaryFileRoutes<T extends { Variables: OrgRouteVaria
           status: "uploaded",
           size_bytes: bytes.byteLength,
           uploaded_at: now,
+          content_sha256: digest,
           content_type: resolveTempFileContentType({
             declared: row.content_type,
             filename: row.filename,
@@ -293,6 +392,7 @@ export function registerTemporaryFileRoutes<T extends { Variables: OrgRouteVaria
       if (claimed.rowsAffected === 0) {
         return c.json({
           error: "temporary_file_already_uploaded",
+          reason: "alreadyUploaded",
           message: "This upload URL was already used. Create a new temporary file.",
         }, 409)
       }
@@ -300,8 +400,10 @@ export function registerTemporaryFileRoutes<T extends { Variables: OrgRouteVaria
       return c.json({
         ok: true as const,
         fileId: row.id,
+        uri: tempFileUri(row.id),
         sizeBytes: bytes.byteLength,
         expiresAt: row.expires_at.toISOString(),
+        digest: tempFileDigestValue(digest),
       })
     },
   )
@@ -329,11 +431,12 @@ export function registerTemporaryFileRoutes<T extends { Variables: OrgRouteVaria
 
       if (row.expires_at <= clock()) {
         await discardTempFile(storage, row)
-        return c.json({ error: "temporary_file_expired" }, 410)
+        return c.json({ error: "temporary_file_expired", reason: "expired" }, 410)
       }
       if (row.status !== "uploaded") {
         return c.json({
           error: "temporary_file_not_uploaded",
+          reason: "notUploaded",
           message: "The bytes for this temporary file have not been uploaded yet.",
         }, 409)
       }
@@ -341,7 +444,7 @@ export function registerTemporaryFileRoutes<T extends { Variables: OrgRouteVaria
       const bytes = await storage.read(row.storage_key)
       // A missing object means storage expired the bytes ahead of the row;
       // report it as expiry rather than as a lookup failure.
-      if (!bytes) return c.json({ error: "temporary_file_expired" }, 410)
+      if (!bytes) return c.json({ error: "temporary_file_expired", reason: "expired" }, 410)
 
       c.header("Content-Type", row.content_type)
       c.header("Content-Length", String(bytes.byteLength))

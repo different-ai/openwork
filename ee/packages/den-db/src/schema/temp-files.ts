@@ -23,6 +23,11 @@ export const TempFileTable = mysqlTable(
     storage_tier: mysqlEnum("storage_tier", tempFileStorageTiers).notNull(),
     storage_key: varchar("storage_key", { length: 512 }).notNull(),
     status: mysqlEnum("status", tempFileStatuses).notNull().default("pending"),
+    // Base64url SHA-256, unpadded: 43 characters. The expected digest is what
+    // the caller promised at mint time, and the content digest is what the
+    // stored bytes actually hashed to.
+    expected_sha256: varchar("expected_sha256", { length: 64 }),
+    content_sha256: varchar("content_sha256", { length: 64 }),
     uploaded_at: timestamp("uploaded_at", { fsp: 3 }),
     expires_at: timestamp("expires_at", { fsp: 3 }).notNull(),
     created_at: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
