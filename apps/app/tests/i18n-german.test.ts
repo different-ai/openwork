@@ -54,6 +54,26 @@ describe("German translations", () => {
     expect(t("missing.translation", "de")).toBe("missing.translation");
   });
 
+  test("uses concise German copy on the visible primary paths", () => {
+    expect(t("welcome.use_without_cloud", "de")).toBe("Ohne Cloud verwenden");
+    expect(t("session.empty_title", "de")).toBe("Was möchten Sie erledigen?");
+    expect(t("dashboard.close_settings", "de")).toBe("Einstellungen schließen");
+    expect(t("settings.theme_title", "de")).toBe("Design");
+    expect(t("settings.tab_recovery", "de")).toBe("Wiederherstellung");
+    expect(t("settings.environment.applying", "de")).toBe("Wird angewendet…");
+    expect(t("models.change", "de")).toBe("Modell wechseln");
+    expect(t("models.your_api_keys", "de")).toBe("Eigene API-Schlüssel");
+  });
+
+  test("uses Germany-specific suggestions with natural du-form prompts", () => {
+    expect(t("session.suggestion_spreadsheet_title", "de")).toBe("CSV für Excel erstellen");
+    expect(t("session.suggestion_web_desc", "de")).toContain("Kleinanzeigen");
+    expect(t("session.suggestion_spreadsheet_prompt", "de").startsWith("Erstelle eine CSV-Datei")).toBe(true);
+    expect(t("session.suggestion_document_prompt", "de")).toContain("Frag mich zuerst");
+    expect(t("session.suggestion_web_prompt", "de")).toContain("Zeig mir fünf passende Angebote");
+    expect(t("session.suggestion_week_prompt", "de")).not.toContain("Sie");
+  });
+
   test("persists and restores German while updating the document language", () => {
     const previousWindow = globalThis.window;
     const previousDocument = globalThis.document;

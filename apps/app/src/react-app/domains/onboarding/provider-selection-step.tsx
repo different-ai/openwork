@@ -8,6 +8,7 @@ import {
   PageTitlebarRegion,
 } from "@/components/page";
 import { Button } from "@/components/ui/button";
+import { t } from "@/i18n";
 import { KeyRoundIcon, SkipForwardIcon, SparklesIcon } from "lucide-react";
 
 type ProviderSelectionStepProps = {
@@ -28,11 +29,11 @@ export function ProviderSelectionStep({
       <PageBackground />
       <PageTitlebarRegion />
 
-      <div className="relative z-10 mx-6 w-full max-w-md rounded-3xl border border-border bg-background px-8 py-10">
+      <div data-testid="provider-selection-step" className="relative z-10 mx-6 w-full max-w-md rounded-3xl border border-border bg-background px-8 py-10">
         <PageHeader className="mb-8 text-center">
-          <PageTitle>Power your first task</PageTitle>
+          <PageTitle>{t("welcome.provider_title")}</PageTitle>
           <PageDescription>
-            Connect a model, then try a real task in chat so you can see OpenWork work.
+            {t("welcome.provider_desc")}
           </PageDescription>
         </PageHeader>
 
@@ -46,10 +47,10 @@ export function ProviderSelectionStep({
               <SparklesIcon className="mt-0.5 size-5 shrink-0 text-blue-10" />
               <div>
                 <div className="text-sm font-medium text-foreground">
-                  Use OpenWork Models
+                  {t("welcome.provider_openwork_models")}
                 </div>
                 <div className="mt-0.5 text-xs text-muted-foreground">
-                  Pay through OpenWork Cloud and skip API key setup.
+                  {t("welcome.provider_openwork_models_desc")}
                 </div>
               </div>
             </button>
@@ -63,18 +64,18 @@ export function ProviderSelectionStep({
             <KeyRoundIcon className="mt-0.5 size-5 shrink-0 text-muted-foreground" />
             <div>
               <div className="text-sm font-medium text-foreground">
-                Bring your own API key
+                {t("welcome.provider_api_key")}
               </div>
               <div className="mt-0.5 text-xs text-muted-foreground">
-                Connect OpenAI, Anthropic, Google, or another provider, then run your first task.
+                {t("welcome.provider_api_key_desc")}
               </div>
             </div>
           </button>
 
           <div className="pt-1 text-center">
-            <Button variant="ghost" size="sm" onClick={onSkip}>
+            <Button data-testid="provider-selection-skip" variant="ghost" size="sm" onClick={onSkip}>
               <SkipForwardIcon className="mr-1.5 size-3.5" />
-              Skip and use the free model
+              {t("welcome.provider_skip")}
             </Button>
           </div>
         </div>

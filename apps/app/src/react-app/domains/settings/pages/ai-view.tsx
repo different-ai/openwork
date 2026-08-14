@@ -120,7 +120,7 @@ export function AiSettingsView(props: AiSettingsViewProps) {
               type="button"
               className="absolute right-3 top-3 flex size-7 items-center justify-center rounded-full text-blue-11 transition-colors hover:bg-blue-3/70"
               onClick={() => void props.onDismissOpenWorkModels?.()}
-              aria-label="Dismiss OpenWork Models banner"
+              aria-label={t("settings.openwork_models_dismiss")}
             >
               <X className="size-3.5" />
             </button>
@@ -131,19 +131,19 @@ export function AiSettingsView(props: AiSettingsViewProps) {
                   <div>
                     <div className="text-sm font-medium text-dls-text">OpenWork Models</div>
                     <div className="mt-0.5 text-xs text-muted-foreground">
-                      Hosted frontier models for OpenWork tasks without managing provider API keys.
+                      {t("settings.openwork_models_description")}
                     </div>
                   </div>
                   <div className="flex flex-wrap gap-2 text-[11px] text-blue-11">
                     <span className="inline-flex items-center gap-1 rounded-full border border-blue-6 bg-blue-3 px-2 py-0.5">
-                      <CheckCircle2 className="size-3" /> Managed by OpenWork Cloud
+                      <CheckCircle2 className="size-3" /> {t("settings.openwork_models_managed")}
                     </span>
                     <span className="inline-flex items-center gap-1 rounded-full border border-blue-6 bg-blue-3 px-2 py-0.5">
-                      <KeyRound className="size-3" /> No API key setup
+                      <KeyRound className="size-3" /> {t("settings.openwork_models_no_api_key")}
                     </span>
                   </div>
                   <p className="text-xs text-muted-foreground">
-                    Pricing is handled through OpenWork Cloud. You can continue using OpenCode Zen or your own providers.
+                    {t("settings.openwork_models_pricing")}
                   </p>
                 </div>
               </div>
@@ -152,7 +152,7 @@ export function AiSettingsView(props: AiSettingsViewProps) {
                 onClick={() => void props.onSubscribeOpenWorkModels?.()}
                 disabled={props.busy || props.providerAuthBusy}
               >
-                Subscribe
+                {t("settings.openwork_models_subscribe")}
                 <ArrowRight className="ml-1.5 size-3.5" />
               </Button>
             </div>
@@ -218,11 +218,11 @@ export function AiSettingsView(props: AiSettingsViewProps) {
                 <div className="flex items-center gap-2">
                   <span className="truncate text-sm font-medium text-dls-text">OpenWork Models</span>
                   <span className="shrink-0 rounded-full border border-dls-border bg-dls-sidebar/40 px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
-                    Not connected
+                    {t("settings.openwork_models_not_connected")}
                   </span>
                 </div>
                 <div className="truncate text-xs text-muted-foreground">
-                  Hosted frontier models without managing API keys.
+                  {t("settings.openwork_models_connect_description")}
                 </div>
               </div>
             </div>
@@ -231,7 +231,7 @@ export function AiSettingsView(props: AiSettingsViewProps) {
               onClick={() => void props.onSubscribeOpenWorkModels?.()}
               disabled={props.busy || props.providerAuthBusy}
             >
-              Connect
+              {t("settings.openwork_models_connect")}
               <ArrowRight className="ml-1.5 size-3.5" />
             </Button>
           </LayoutSectionItem>
@@ -245,11 +245,11 @@ export function AiSettingsView(props: AiSettingsViewProps) {
                 <div className="flex items-center gap-2">
                   <span className="truncate text-sm font-medium text-dls-text">OpenWork Models</span>
                   <span className="shrink-0 rounded-full border border-amber-6 bg-amber-3 px-2 py-0.5 text-[10px] font-medium text-amber-11">
-                    Included — syncing
+                    {t("settings.openwork_models_syncing")}
                   </span>
                 </div>
                 <div className="truncate text-xs text-muted-foreground">
-                  OpenWork Models will become available automatically when the pending workspace reload completes.
+                  {t("settings.openwork_models_syncing_desc")}
                 </div>
               </div>
             </div>

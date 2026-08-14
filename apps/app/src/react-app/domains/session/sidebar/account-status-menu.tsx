@@ -274,10 +274,10 @@ export function AccountStatusMenu(props: AccountStatusMenuProps) {
   });
   const accountLabel = signedIn
     ? user.name?.trim() || user.email
-    : restoringSession ? "OpenWork Cloud" : "Sign in";
+    : restoringSession ? "OpenWork Cloud" : t("den.signin_button");
   const accountDetail = signedIn
     ? (user.name ? user.email : "OpenWork Cloud")
-    : restoringSession ? "Restoring your session" : "Sync with OpenWork Cloud";
+    : restoringSession ? t("account.restoring_session") : t("account.sync_cloud");
 
   const runtimeStatus = props.showConnectionStatus
     ? resolveRuntimeStatus({
@@ -350,7 +350,7 @@ export function AccountStatusMenu(props: AccountStatusMenuProps) {
             data-connect-state={connectStatus?.state}
             /* ps-1.5 puts the 24px avatar 12px from the edge, so the name lands on the sidebar label lane. */
             className="flex w-full items-center gap-2 rounded-lg ps-1.5 pe-2 py-1.5 text-left transition-colors hover:bg-sidebar-accent max-lg:min-h-11"
-            aria-label={signedIn ? `${user.email} — account and status` : "Account and status"}
+            aria-label={signedIn ? t("account.aria_signed_in", { email: user.email }) : t("account.aria")}
             title={connectNeedsAttention
               ? openWorkConnectAttentionTitle(connectStatus.description)
               : connectStatus
@@ -452,7 +452,7 @@ export function AccountStatusMenu(props: AccountStatusMenuProps) {
         {connectNeedsAttention ? (
           <DropdownMenuItem onClick={() => navigate("/settings/debug")}>
             <Stethoscope className="size-3.5" />
-            Run diagnostics
+            {t("status.run_diagnostics")}
           </DropdownMenuItem>
         ) : null}
         {promoVisible ? (
@@ -469,7 +469,7 @@ export function AccountStatusMenu(props: AccountStatusMenuProps) {
             <Sparkles className="size-3.5 text-blue-11" />
             <span className="flex min-w-0 flex-col">
               <span>OpenWork Models</span>
-              <span className="text-[10.5px] text-muted-foreground">hosted frontier models</span>
+              <span className="text-[10.5px] text-muted-foreground">{t("models.hosted_frontier_models")}</span>
             </span>
           </DropdownMenuItem>
         ) : null}
@@ -496,13 +496,13 @@ export function AccountStatusMenu(props: AccountStatusMenuProps) {
         {signedIn ? (
           <DropdownMenuItem onClick={logOut}>
             <LogOut className="size-3.5" />
-            Log out
+            {t("den.sign_out")}
           </DropdownMenuItem>
         ) : restoringSession ? null : (
           <>
             <DropdownMenuItem onClick={openSignIn}>
               <UserRound className="size-3.5" />
-              Sign in
+              {t("den.signin_button")}
             </DropdownMenuItem>
             <div
               className="flex flex-col gap-2 px-2 py-2"

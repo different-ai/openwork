@@ -5,6 +5,7 @@ import { ChevronDown, Settings2 } from "lucide-react";
 import { useNavigate } from "react-router";
 
 import type { ModelOption, ModelRef } from "@/app/types";
+import { t } from "@/i18n";
 import { ProviderIcon } from "@/react-app/design-system/provider-icon";
 import {
   Popover,
@@ -354,7 +355,7 @@ export function ModelSelect({
             <PopoverTrigger
               type="button"
               disabled={disabled}
-              aria-label="Change model"
+              aria-label={t("models.change")}
               aria-keyshortcuts="Meta+Alt+/"
               className="flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-sm text-gray-10 transition-colors hover:bg-gray-3 hover:text-gray-12 disabled:pointer-events-none disabled:opacity-60"
             />
@@ -362,13 +363,13 @@ export function ModelSelect({
         >
           <span className="max-w-48 truncate">
             {hideValue || (!denAuth.isSignedIn && isCloudManagedProviderKey(value.providerID))
-              ? "Select model"
-              : (selectedOption?.title ?? value.modelID ?? "Select model")}
+              ? t("models.select")
+              : (selectedOption?.title ?? value.modelID ?? t("models.select"))}
           </span>
           <ChevronDown className="h-3 w-3" />
         </TooltipTrigger>
         <TooltipContent>
-          Change model
+          {t("models.change")}
         </TooltipContent>
       </Tooltip>
       <PopoverContent
@@ -380,10 +381,10 @@ export function ModelSelect({
           <CommandHeader>
             <CommandInput
               ref={searchInputRef}
-              placeholder="Search models..."
+              placeholder={t("models.search_placeholder")}
             />
           </CommandHeader>
-          <CommandEmpty>No models found.</CommandEmpty>
+          <CommandEmpty>{t("models.no_models_found")}</CommandEmpty>
           {openWorkModelsSyncing ? (
             <div className="mx-1 mb-1 flex items-center gap-2 rounded-md border border-amber-6/60 bg-amber-2/40 px-2 py-1.5">
               <ProviderIcon
@@ -397,7 +398,7 @@ export function ModelSelect({
                   {OPENWORK_MODELS_PROVIDER_NAME}
                 </span>
                 <span className="block truncate text-[11px] text-muted-foreground">
-                  Included — pending workspace reload…
+                  {t("models.included_pending_reload")}
                 </span>
               </span>
             </div>
@@ -412,7 +413,7 @@ export function ModelSelect({
                   {group.promo ? (
                     <>
                       <span>{group.value}</span>
-                      <span className="shrink-0 font-normal text-muted-foreground">hosted · no API keys</span>
+                      <span className="shrink-0 font-normal text-muted-foreground">{t("models.hosted_no_api_keys")}</span>
                     </>
                   ) : (
                     group.value
@@ -478,10 +479,10 @@ export function ModelSelect({
                     onClick={handleOpenWorkModels}
                   >
                     <span className="min-w-0 flex-1 text-xs leading-4 text-foreground">
-                      One subscription unlocks these in every workspace.
+                      {t("models.subscription_unlocks")}
                     </span>
                     <span className="shrink-0 text-xs font-semibold text-blue-11">
-                      {denAuth.isSignedIn ? "Enable →" : "Sign in →"}
+                      {denAuth.isSignedIn ? `${t("models.enable")} →` : `${t("models.sign_in")} →`}
                     </span>
                   </button>
                 ) : null}
@@ -493,7 +494,7 @@ export function ModelSelect({
           {canAddProviders ? (
             <div className="border-t border-border p-1">
               <div className="flex items-baseline px-2 pb-0.5 pt-1 text-xs text-muted-foreground">
-                Your API keys
+                {t("models.your_api_keys")}
               </div>
               <button
                 type="button"
@@ -516,7 +517,7 @@ export function ModelSelect({
                   {!hasKeyProviders || keyProviders.length > keyProviderPreview.length ? "…" : ""}
                 </span>
                 <span className="shrink-0 text-xs font-medium text-muted-foreground">
-                  {hasKeyProviders ? "Connect more providers" : "Add your keys"}
+                  {hasKeyProviders ? t("models.connect_more_providers") : t("models.add_your_keys")}
                 </span>
               </button>
             </div>
@@ -534,7 +535,7 @@ export function ModelSelect({
                 }}
               >
                 <Settings2 className="size-3.5" />
-                All models
+                {t("models.all_models")}
               </button>
               {showOpenWorkModelsPromo ? (
                 <button
@@ -542,7 +543,7 @@ export function ModelSelect({
                   className="shrink-0 rounded-md px-2 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
                   onClick={handleHideOpenWorkModels}
                 >
-                  Hide
+                  {t("models.hide")}
                 </button>
               ) : null}
             </div>

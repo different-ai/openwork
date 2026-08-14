@@ -18,6 +18,7 @@ import {
 import { t } from "../../../../i18n";
 import type { SettingsTab } from "../../../../app/types";
 import { Button } from "@/components/ui/button";
+import { getSettingsTabDescription, getSettingsTabLabel } from "../shell/settings-page";
 
 export type GeneralSettingsViewProps = {
   onNavigateTab: (tab: SettingsTab) => void;
@@ -27,32 +28,29 @@ export type GeneralSettingsViewProps = {
   onReportIssue: () => void;
 };
 
-type SettingsCardDefinition = { tab: SettingsTab; icon: typeof Sparkles } & (
-  | { title: string; desc: string }
-  | { titleKey: string; descKey: string }
-);
+type SettingsCardDefinition = { tab: SettingsTab; icon: typeof Sparkles };
 
 const workspaceCards: SettingsCardDefinition[] = [
-  { tab: "preferences", icon: Cog, title: "Preferences", desc: "Default model, reasoning, and compaction." },
-  { tab: "permissions", icon: FolderLock, title: "Permissions", desc: "Authorized folders and file access." },
-  { tab: "advanced", icon: Wrench, title: "Advanced", desc: "Runtime, engine, and developer options." },
+  { tab: "preferences", icon: Cog },
+  { tab: "permissions", icon: FolderLock },
+  { tab: "advanced", icon: Wrench },
 ];
 
 const globalCards: SettingsCardDefinition[] = [
-  { tab: "ai", icon: Sparkles, title: "AI Providers", desc: "Connect services that provide AI models." },
-  { tab: "cloud-account", icon: Cloud, title: "Cloud", desc: "OpenWork Cloud account and organization." },
-  { tab: "appearance", icon: Paintbrush, title: "Appearance", desc: "Theme, font size, and display." },
-  { tab: "environment", icon: Terminal, title: "Environment", desc: "Environment variables and paths." },
-  { tab: "updates", icon: RefreshCcw, title: "Updates", desc: "App version and update channel." },
-  { tab: "recovery", icon: ShieldCheck, title: "Recovery", desc: "Reset onboarding and clear data." },
+  { tab: "ai", icon: Sparkles },
+  { tab: "cloud-account", icon: Cloud },
+  { tab: "appearance", icon: Paintbrush },
+  { tab: "environment", icon: Terminal },
+  { tab: "updates", icon: RefreshCcw },
+  { tab: "recovery", icon: ShieldCheck },
 ];
 
 function cardTitle(card: SettingsCardDefinition) {
-  return "titleKey" in card ? t(card.titleKey) : card.title;
+  return getSettingsTabLabel(card.tab);
 }
 
 function cardDescription(card: SettingsCardDefinition) {
-  return "descKey" in card ? t(card.descKey) : card.desc;
+  return getSettingsTabDescription(card.tab);
 }
 
 function SettingsCard(props: {
@@ -85,7 +83,7 @@ export function GeneralSettingsView(props: GeneralSettingsViewProps) {
       {/* Workspace settings */}
       <div className="space-y-3">
         <div className="text-[11px] font-semibold uppercase tracking-[0.15em] text-dls-secondary">
-          Workspace
+          {t("settings.group_workspace")}
         </div>
         <div className="grid grid-cols-2 gap-2">
           {workspaceCards.map((card) => (
@@ -103,7 +101,7 @@ export function GeneralSettingsView(props: GeneralSettingsViewProps) {
       {/* Global settings */}
       <div className="space-y-3">
         <div className="text-[11px] font-semibold uppercase tracking-[0.15em] text-dls-secondary">
-          Global
+          {t("settings.group_global")}
         </div>
         <div className="grid grid-cols-2 gap-2">
           {globalCards.map((card) => (
@@ -121,7 +119,7 @@ export function GeneralSettingsView(props: GeneralSettingsViewProps) {
       {/* Feedback */}
       <div className="space-y-3">
         <div className="text-[11px] font-semibold uppercase tracking-[0.15em] text-dls-secondary">
-          Help
+          {t("settings.group_help")}
         </div>
         <div className="rounded-2xl border border-dls-border bg-dls-surface p-4">
           <div className="space-y-3">
