@@ -265,6 +265,7 @@ export class EnginePool {
   private readonly config: ServerConfig;
   private readonly template: EngineSpawnTemplate;
   private readonly hooks: EnginePoolHooks;
+  private readonly outputSink: ((chunk: string) => void) | null;
   private generations: Generation[] = [];
   private inFlight: Promise<RolloverOutcome> | null = null;
   private pendingRollover: { reason: RolloverReason; workspace: WorkspaceInfo; manual: boolean } | null = null;
@@ -275,10 +276,16 @@ export class EnginePool {
   private readonly activeSessionsByGeneration = new Map<string, Set<string>>();
   private readonly eventProxyControllers = new Set<AbortController>();
 
-  constructor(input: { config: ServerConfig; template: EngineSpawnTemplate; hooks: EnginePoolHooks }) {
+  constructor(input: {
+    config: ServerConfig;
+    template: EngineSpawnTemplate;
+    hooks: EnginePoolHooks;
+    outputSink?: (chunk: string) => void;
+  }) {
     this.config = input.config;
     this.template = input.template;
     this.hooks = input.hooks;
+    this.outputSink = input.outputSink ?? null;
   }
 
   /**
@@ -516,6 +523,7 @@ export class EnginePool {
           ...this.template.env,
           OPENCODE_CONFIG: this.template.runtimeConfigPath,
         },
+        ...(this.outputSink ? { outputSink: this.outputSink } : {}),
       });
     } catch (error) {
       this.hooks.logger?.log("error", "Engine rollover standby failed to start; the live engine is untouched.", {

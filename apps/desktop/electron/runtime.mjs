@@ -1734,6 +1734,7 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
       opencodeCwd: managedOpencodeWorkdir(),
       localManagedMcpVaultKey,
       engineRollover: options.engineRollover === true,
+      logFile: path.join(userDataDir, "logs", "openwork-server.log"),
     });
     inProcessServer = handle;
     openworkServerState.managedOpencodeExecution = handle.managedOpencodeExecution ?? null;

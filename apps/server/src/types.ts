@@ -103,6 +103,8 @@ export interface ServerConfig {
   hostTokenSource: "cli" | "env" | "file" | "generated";
   logFormat: LogFormat;
   logRequests: boolean;
+  /** When set, server log lines are also appended to this file (rotating). */
+  logFile?: string;
   /**
    * Roll the managed engine over instead of disposing it when a reload is
    * needed while sessions are live: a standby engine takes new work and the

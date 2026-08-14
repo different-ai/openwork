@@ -48,6 +48,7 @@ import { sanitizeCommandName, validateMcpName, validateUserMcpName } from "./val
 import { TokenService } from "./tokens.js";
 import { resetManagedProviderAuthCache, syncManagedProviderAuth } from "./managed-provider-auth.js";
 import { EnvService } from "./env-file.js";
+import { createServiceLogWriter } from "./service-log.js";
 import {
   normalizeResourceSnapshot,
   readDesktopCloudSyncState,
@@ -768,6 +769,7 @@ export function createServerLogger(config: ServerConfig): ServerLogger {
     "run.id": runId,
     "process.pid": process.pid,
   };
+  const fileSink = config.logFile ? createServiceLogWriter(config.logFile) : null;
 
   const emit = (level: LogLevel, message: string, attributes?: LogAttributes) => {
     const merged = { ...baseAttributes, ...(attributes ?? {}) };
@@ -780,11 +782,22 @@ export function createServerLogger(config: ServerConfig): ServerLogger {
         attributes: merged,
         resource,
       };
-      process.stdout.write(`${JSON.stringify(record)}\n`);
+      const line = `${JSON.stringify(record)}\n`;
+      process.stdout.write(line);
+      fileSink?.write(line);
       return;
     }
-    process.stdout.write(`${message}\n`);
+    const line = `${message}\n`;
+    process.stdout.write(line);
+    fileSink?.write(line);
   };
+
+  // Flush buffered file output on exit so the last lines before a shutdown
+  // or crash actually land on disk.
+  const flushOnExit = (): void => {
+    fileSink?.flush();
+  };
+  process.once("exit", flushOnExit);
 
   return { log: emit };
 }
@@ -4512,11 +4525,13 @@ export function createEnginePoolForConfig(input: {
   fingerprint: string;
   registryId: string | null;
   trustedIdentity: string | null;
+  outputSink?: (chunk: string) => void;
 }): EnginePool {
   const { config } = input;
   const pool = new EnginePool({
     config,
     template: input.template,
+    outputSink: input.outputSink,
     hooks: {
       reloadInPlace: (poolConfig, workspace) => reloadOpencodeEngineInPlace(poolConfig, workspace),
       engineBusy: (poolConfig, workspace) => engineHasActiveSessions(poolConfig, workspace),
