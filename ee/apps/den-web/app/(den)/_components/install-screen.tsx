@@ -11,6 +11,7 @@ import {
   rememberDesktopHandoffGrant,
 } from "../_lib/desktop-handoff";
 import { getInstallConfigErrorMessage } from "../_lib/install-errors";
+import { CONFIRM_RUNNING_STEP, parseGuideStep, TOTAL_GUIDE_STEPS, type GuideStep } from "../_lib/install-guide";
 import { buildInstallDownloadHref, type InstallPlatform, installerFileName } from "../_lib/install-download";
 import { isMobileUserAgent } from "../_lib/platform";
 import { useDesktopHandoffStatus } from "../_lib/use-desktop-handoff-status";
@@ -35,16 +36,7 @@ type InstallConfig = {
 
 const RETURN_TO_OPENWORK_URL = "openwork://open";
 const INSTALL_PLATFORMS: InstallPlatform[] = ["mac-arm64", "mac-x64", "win-x64", "linux-x64", "linux-arm64"];
-const TOTAL_GUIDE_STEPS = 4;
 
-type GuideStep = 1 | 2 | 3 | 4;
-
-function parseGuideStep(value: string | null): GuideStep {
-  if (value === "4") return 4;
-  if (value === "3") return 3;
-  if (value === "2") return 2;
-  return 1;
-}
 
 type InstallerOs = "macos" | "windows" | "linux";
 
@@ -716,7 +708,7 @@ export function InstallScreen() {
                         type="button"
                         className="grid min-h-10 w-fit place-items-center rounded-[9px] bg-[#101828] px-4 text-[13px] font-semibold text-white transition-colors hover:bg-black"
                         data-testid="install-app-ready"
-                        onClick={() => advanceGuide(3)}
+                        onClick={() => advanceGuide(CONFIRM_RUNNING_STEP)}
                       >
                         The app is installed and open
                       </button>
