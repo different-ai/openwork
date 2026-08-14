@@ -2618,10 +2618,14 @@ or use: pnpm dev:worktree`);
       },
     );
     if (process.platform === "win32") {
-      await registerWindowsDisplayShortcut();
+      await registerWindowsDisplayShortcut().catch((error) => {
+        console.warn("[windows-shortcut] startup registration failed", error);
+      });
     }
     if (process.platform !== "linux") {
-      await applyDesktopBootstrapBrandIcon(bootstrapConfig, applyBrandIconUrl);
+      await applyDesktopBootstrapBrandIcon(bootstrapConfig, applyBrandIconUrl).catch((error) =>
+        brandIconFailure("bootstrap-apply-failed", error),
+      );
     }
     applicationMenu.install();
     if (!desktopActivationRequired(DESKTOP_DISTRIBUTION, bootstrapConfig)) {
@@ -2650,7 +2654,9 @@ or use: pnpm dev:worktree`);
     queueDeepLinks(forwardedDeepLinks(process.argv));
     const win = await createMainWindow();
     if (process.platform === "linux") {
-      await applyDesktopBootstrapBrandIcon(bootstrapConfig, applyBrandIconUrl);
+      await applyDesktopBootstrapBrandIcon(bootstrapConfig, applyBrandIconUrl).catch((error) =>
+        brandIconFailure("bootstrap-apply-failed", error),
+      );
     }
     win.webContents.on("did-finish-load", () => {
       flushPendingDeepLinks();
@@ -2665,6 +2671,15 @@ or use: pnpm dev:worktree`);
     // a working app first. Renderer-owned checks pass the selected release
     // channel explicitly, avoiding stale stable-feed results for alpha users.
     void ensureAutoUpdater();
+  }).catch((error) => {
+    // Anything that rejects here happened before the window was shown, so the
+    // user would otherwise be left with a running process and no UI. Surface
+    // the reason instead of failing silently.
+    console.error("[startup] failed before the main window was ready", error);
+    const detail = error instanceof Error ? (error.stack ?? error.message) : String(error);
+    if (BrowserWindow.getAllWindows().length === 0) {
+      dialog.showErrorBox(`${APP_NAME} failed to start`, detail);
+    }
   });
 
   app.on("activate", async () => {
