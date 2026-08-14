@@ -1,8 +1,30 @@
 # Releasing OpenWork
 
-The release flow is three root scripts wrapping `scripts/release/*.mjs`. A
-release is **done when the `Release App` run is green and `Publish GitHub
+A release is **done when the `Release App` run is green and `Publish GitHub
 Release` has flipped the release public** — not when the tag is pushed.
+
+## One-button path (default): Release Cut workflow
+
+```bash
+gh workflow run release-cut.yml --repo different-ai/openwork -f bump=patch
+# rehearse without pushing anything:
+gh workflow run release-cut.yml --repo different-ai/openwork -f bump=patch -f dry_run=true
+```
+
+`.github/workflows/release-cut.yml` runs `scripts/release/prepare.mjs --ci` on
+current `dev` HEAD (bump + lockfile + strict review + commit + tag), pushes
+the tag, opens the `release/vX.Y.Z-dev-sync` backfill PR, and dispatches
+`Release App` for the tag. No local toolchain is involved; the only human
+follow-up is merging the backfill PR.
+
+One-time setup: the `v*` tag ruleset must allow the workflow to create tags —
+add the GitHub Actions app as a bypass actor, or store an admin bot token as
+the `RELEASE_CUT_TOKEN` repo secret (with the secret set, the tag push itself
+triggers `Release App` and the explicit dispatch is skipped).
+
+## Local path (fallback)
+
+The local flow is three root scripts wrapping `scripts/release/*.mjs`:
 
 ```bash
 pnpm release:review          # sanity: versions aligned, opencode pin present

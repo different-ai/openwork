@@ -1,0 +1,171 @@
+# Release Cut — one-button release, no local toolchain required.
+#
+# Does remotely what `pnpm release:prepare` + `pnpm release:ship` do locally:
+#   1. bump versions on current dev HEAD (scripts/release/prepare.mjs --ci)
+#   2. push the vX.Y.Z tag
+#   3. open the dev backfill PR (dev is PR-only, even for admins)
+#   4. dispatch the Release App workflow for the tag
+#
+# Step 4 exists because a tag pushed with the workflow's GITHUB_TOKEN does not
+# fire `on: push: tags` (GitHub suppresses recursive triggers). Dispatching by
+# API is exempt from that rule, so the chain works with the default token.
+# If RELEASE_CUT_TOKEN (a PAT/App token with v* tag-ruleset bypass) is
+# configured, the tag push itself triggers Release App and the dispatch is
+# skipped to avoid a double run.
+#
+# One-time repo config: the v* tag ruleset must allow this workflow's actor to
+# create tags — either add the GitHub Actions app as a bypass actor, or store
+# an admin bot token as the RELEASE_CUT_TOKEN secret.
+
+name: Release Cut
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: "Version bump type"
+        required: true
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+        default: patch
+      dry_run:
+        description: "Rehearse the cut without pushing anything"
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: write
+
+concurrency:
+  group: release-cut
+  cancel-in-progress: false
+
+jobs:
+  cut:
+    name: Cut ${{ inputs.bump }} release
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_CUT_TOKEN: ${{ secrets.RELEASE_CUT_TOKEN }}
+    steps:
+      - name: Checkout dev
+        uses: actions/checkout@v6
+        with:
+          ref: dev
+          fetch-depth: 0
+          # The tag/branch pushes below use the bot token when configured so
+          # the tag push itself can trigger Release App.
+          token: ${{ secrets.RELEASE_CUT_TOKEN || github.token }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          # Must match the root packageManager pin; prepare.mjs refuses to run
+          # on a mismatch (a mismatched pnpm silently rewrites pnpm-lock.yaml).
+          version: 11.4.0
+
+      - name: Configure git identity
+        run: |
+          git config user.name "OpenWork Release Bot"
+          git config user.email "release-bot@users.noreply.github.com"
+
+      - name: Prepare release (bump + review + commit + tag)
+        env:
+          BUMP: ${{ inputs.bump }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          set -euo pipefail
+          args=("$BUMP" --ci)
+          if [ "$DRY_RUN" = "true" ]; then
+            args+=(--dry-run)
+          fi
+          node scripts/release/prepare.mjs "${args[@]}"
+
+      - name: Resolve tag
+        id: tag
+        env:
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          set -euo pipefail
+          if [ "$DRY_RUN" = "true" ]; then
+            echo "tag=" >> "$GITHUB_OUTPUT"
+            echo "Dry run — nothing was committed or tagged." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          tag="$(git describe --tags --exact-match HEAD)"
+          if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "HEAD tag '$tag' does not look like a release tag (expected vX.Y.Z)" >&2
+            exit 1
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Push tag
+        if: steps.tag.outputs.tag != ''
+        env:
+          RELEASE_TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          set -euo pipefail
+          git push origin "$RELEASE_TAG"
+          echo "Pushed $RELEASE_TAG" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Open dev backfill PR
+        if: steps.tag.outputs.tag != ''
+        env:
+          RELEASE_TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          set -euo pipefail
+          sync_branch="release/${RELEASE_TAG}-dev-sync"
+          git push -f origin "HEAD:refs/heads/${sync_branch}"
+
+          pr_url="$(gh pr create \
+            --repo "$GITHUB_REPOSITORY" \
+            --base dev \
+            --head "$sync_branch" \
+            --title "chore(release): ${RELEASE_TAG}" \
+            --body "Backfills the ${RELEASE_TAG} version bump into dev (the release was cut from the tag by the Release Cut workflow). Needs one approval from someone other than the pusher." \
+            2>/dev/null || true)"
+
+          if [ -n "$pr_url" ]; then
+            echo "Backfill PR: $pr_url" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "Backfill PR could not be opened automatically (may already exist): https://github.com/$GITHUB_REPOSITORY/compare/dev...${sync_branch}" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Dispatch Release App
+        # A tag pushed with the default GITHUB_TOKEN does not trigger
+        # `on: push: tags`, so dispatch explicitly. Skipped when the tag was
+        # pushed with RELEASE_CUT_TOKEN — that push already triggered the run.
+        if: steps.tag.outputs.tag != '' && env.RELEASE_CUT_TOKEN == ''
+        env:
+          RELEASE_TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          set -euo pipefail
+          gh workflow run release-macos-aarch64.yml \
+            --repo "$GITHUB_REPOSITORY" \
+            --ref "$RELEASE_TAG" \
+            -f "tag=$RELEASE_TAG"
+          echo "Dispatched Release App for $RELEASE_TAG" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Summary
+        if: steps.tag.outputs.tag != ''
+        env:
+          RELEASE_TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          {
+            echo "### Release Cut: $RELEASE_TAG"
+            echo
+            echo "- Workflow runs: https://github.com/$GITHUB_REPOSITORY/actions/workflows/release-macos-aarch64.yml"
+            echo "- Release: https://github.com/$GITHUB_REPOSITORY/releases/tag/$RELEASE_TAG"
+            echo "- The release is done when 'Publish GitHub Release' flips the draft public."
+          } >> "$GITHUB_STEP_SUMMARY"

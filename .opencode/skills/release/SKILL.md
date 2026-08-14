@@ -12,12 +12,23 @@ A release is **done when the run is green and the GitHub release is published**
 
 ## Choose a path
 
-- **PR-first (default)**: land the bump on `dev` through a reviewed PR, then
-  tag the merge commit. No tag/dev divergence; release waits on review.
-- **Tag-first (expedited, admins only)**: `pnpm release:prepare` on a branch
-  off `dev`, push the tag (the `v*` tag ruleset grants admins bypass), and
-  backfill the bump into `dev` through a PR afterwards. Releases immediately;
-  `dev` catches up through review. Use when a release must go out now.
+- **Release Cut workflow (default)**: dispatch the `Release Cut` GitHub
+  Actions workflow (`.github/workflows/release-cut.yml`). It bumps versions on
+  current `dev` HEAD, pushes the tag, opens the dev backfill PR, and starts
+  Release App — no local toolchain involved:
+
+  ```bash
+  gh workflow run release-cut.yml --repo different-ai/openwork -f bump=patch
+  # rehearse without pushing anything:
+  gh workflow run release-cut.yml --repo different-ai/openwork -f bump=patch -f dry_run=true
+  ```
+
+- **Local tag-first (fallback, admins only)**: `pnpm release:prepare` on a
+  branch off `dev`, then `pnpm release:ship` (the `v*` tag ruleset grants
+  admins bypass). Use when Actions is down or the cut workflow itself is
+  broken.
+- **PR-first**: land the bump on `dev` through a reviewed PR, then tag the
+  merge commit. No tag/dev divergence; release waits on review.
 
 Either way, **never push `dev` directly, force-push it, or bypass its branch
 rules** — `dev` requires: at least one approval; approval of the latest push
@@ -31,6 +42,10 @@ Toolchain: pnpm must match the root `packageManager` pin —
 ---
 
 ## Bump
+
+Release Cut path: nothing to do locally — the workflow runs
+`scripts/release/prepare.mjs --ci` on the runner (bump + lockfile + strict
+review + commit + tag). Watch its run, then skip to "Watch" below.
 
 PR-first path:
 
@@ -59,6 +74,11 @@ instead of double-bumping.
 
 ## Tag and ship
 
+Release Cut path — the workflow pushes the tag, opens the
+`release/vX.Y.Z-dev-sync` backfill PR, and dispatches Release App. Your only
+follow-up is getting the backfill PR approved (by someone other than the
+pusher) and merged.
+
 PR-first — tag the merge commit on dev:
 
 ```bash
@@ -67,8 +87,8 @@ git tag vX.Y.Z origin/dev
 git push origin vX.Y.Z
 ```
 
-Tag-first — `pnpm release:ship` pushes the tag, then syncs `dev`: direct push
-if allowed, otherwise it pushes `release/vX.Y.Z-dev-sync` and opens the
+Local tag-first — `pnpm release:ship` pushes the tag, then syncs `dev`: direct
+push if allowed, otherwise it pushes `release/vX.Y.Z-dev-sync` and opens the
 backfill PR. Get it approved by someone other than the pusher and merged.
 
 ---
