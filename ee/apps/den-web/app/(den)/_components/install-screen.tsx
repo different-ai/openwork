@@ -1,7 +1,7 @@
 "use client";
 
 import { detectPlatform, DownloadPlatformGrid, type DetectedPlatform, type DownloadPlatformGroup, type DownloadPlatformOption } from "@openwork/ui/react";
-import { ChevronDown, Download, ShieldCheck } from "lucide-react";
+import { Check, ChevronDown, Download, ShieldCheck } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useSearchParams } from "next/navigation";
 import { requestJson } from "../_lib/den-flow";
@@ -35,6 +35,16 @@ type InstallConfig = {
 
 const RETURN_TO_OPENWORK_URL = "openwork://open";
 const INSTALL_PLATFORMS: InstallPlatform[] = ["mac-arm64", "mac-x64", "win-x64", "linux-x64", "linux-arm64"];
+const TOTAL_GUIDE_STEPS = 4;
+
+type GuideStep = 1 | 2 | 3 | 4;
+
+function parseGuideStep(value: string | null): GuideStep {
+  if (value === "4") return 4;
+  if (value === "3") return 3;
+  if (value === "2") return 2;
+  return 1;
+}
 
 type InstallerOs = "macos" | "windows" | "linux";
 
@@ -200,7 +210,7 @@ type StepState = "complete" | "active" | "pending";
 
 const STEP_SHELL: Record<StepState, string> = {
   complete: "border-[#e7eaef] bg-[#fafbfc]",
-  active: "border-[#c8d6f5] bg-[#f8faff]",
+  active: "border-[#b9cafa] bg-[#f8faff] shadow-[0_12px_30px_rgba(62,99,221,0.08)]",
   pending: "border-[#e1e4e8] bg-[#f7f8fa]",
 };
 
@@ -292,10 +302,9 @@ export function InstallScreen() {
   const [downloadPlatform, setDownloadPlatform] = useState<InstallPlatform | null>(null);
   const [detected, setDetected] = useState<DetectedPlatform | null>(null);
   const [currentLink, setCurrentLink] = useState("");
-  const requestedStep = searchParams.get("step");
-  const initialStep = requestedStep === "3" ? 3 : requestedStep === "2" ? 2 : 1;
-  const [guideStep, setGuideStep] = useState<1 | 2 | 3>(initialStep);
-  const [expandedStep, setExpandedStep] = useState<1 | 2 | 3>(initialStep);
+  const initialStep = parseGuideStep(searchParams.get("step"));
+  const [guideStep, setGuideStep] = useState<GuideStep>(initialStep);
+  const [expandedStep, setExpandedStep] = useState<GuideStep>(initialStep);
   const [connecting, setConnecting] = useState(false);
   const [connectError, setConnectError] = useState<string | null>(null);
   const [desktopGrant, setDesktopGrant] = useState<string | null>(null);
@@ -408,7 +417,7 @@ export function InstallScreen() {
     }
   }
 
-  function advanceGuide(nextStep: 2 | 3) {
+  function advanceGuide(nextStep: 2 | 3 | 4) {
     setGuideStep(nextStep);
     setExpandedStep(nextStep);
     const url = new URL(window.location.href);
@@ -456,7 +465,7 @@ export function InstallScreen() {
       rememberDesktopHandoffGrant(grant);
       setDesktopGrant(grant);
       setConnectLink(nextConnectLink);
-      advanceGuide(3);
+      advanceGuide(4);
       window.location.assign(nextConnectLink);
     } catch (connectFailure) {
       setConnectError(connectFailure instanceof Error ? connectFailure.message : "Could not open OpenWork. Try again.");
@@ -522,7 +531,7 @@ export function InstallScreen() {
 
   if (busy) {
     return (
-      <OnboardingShell state="install-loading" width="wide">
+      <OnboardingShell state="install-loading" width="wide" background="surface">
         <section className="grid gap-4 rounded-[1.75rem] border border-slate-200/80 bg-white p-6 md:p-8" data-testid="install-page">
           <p className="den-eyebrow">OpenWork Desktop</p>
           <h1 className="den-title-lg">Loading your install link.</h1>
@@ -534,7 +543,7 @@ export function InstallScreen() {
 
   if (!config) {
     return (
-      <OnboardingShell state="install-error" width="wide">
+      <OnboardingShell state="install-error" width="wide" background="surface">
         <section className="grid gap-6 rounded-[1.75rem] border border-slate-200/80 bg-white p-6 md:p-8" data-testid="install-page">
           <div className="grid gap-2">
             <p className="den-eyebrow">OpenWork Desktop</p>
@@ -548,7 +557,7 @@ export function InstallScreen() {
 
   if (config.distribution === "cloud") {
     return (
-      <OnboardingShell state="install" width="full">
+      <OnboardingShell state="install" width="full" background="surface">
         <section data-testid="install-page">
           <div className="grid gap-6 rounded-[1.75rem] border border-[#e7eaef] bg-[#fcfcfd] p-5 text-center sm:p-6 md:p-8" data-testid="install-card">
             <div className="grid justify-items-center gap-3">
@@ -587,10 +596,14 @@ export function InstallScreen() {
   const guidance = openGuidance(installerOsFor(downloadPlatform, detected), installerFile);
 
   return (
-    <OnboardingShell state="install" width="full">
+    <OnboardingShell state="install" width="full" background="surface">
       <section data-testid="install-page">
-        <div className="grid gap-6 rounded-[1.75rem] border border-[#e7eaef] bg-[#fcfcfd] p-5 text-center sm:p-6 md:p-8" data-testid="install-card">
+        <div className="grid gap-6 rounded-[1.75rem] border border-[#e1e5eb] bg-white p-5 text-center shadow-[0_18px_55px_rgba(16,24,40,0.06)] sm:p-6 md:p-8" data-testid="install-card">
           <div className="grid justify-items-center gap-3">
+            <div className="flex items-center gap-2 rounded-full border border-[#d3e0fb] bg-[#f4f7ff] px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-[#3e63dd]">
+              <span className="size-1.5 rounded-full bg-[#3e63dd]" aria-hidden="true" />
+              Step {guideStep} of {TOTAL_GUIDE_STEPS}
+            </div>
             <h1 className="m-0 grid max-w-[22ch] gap-1 text-[2rem] font-semibold leading-[1.04] tracking-[-0.05em] text-slate-950 sm:text-[2.4rem]">
               <span>Download OpenWork Enterprise</span>
               <span className="flex min-w-0 flex-wrap items-center justify-center gap-x-[0.18em] gap-y-1">
@@ -601,7 +614,7 @@ export function InstallScreen() {
                 />
               </span>
             </h1>
-            <p className="den-copy">Complete one step at a time. Select any step to expand or review.</p>
+            <p className="den-copy max-w-xl">Complete one step at a time. We&apos;ll guide you from download to activation.</p>
           </div>
 
         {isMobile ? (
@@ -660,18 +673,15 @@ export function InstallScreen() {
             <InstallStep
               index={2}
               state={guideStep === 2 ? "active" : guideStep > 2 ? "complete" : "pending"}
-              title="Continue on your computer"
+              title="Install and open OpenWork Enterprise"
               description={guideStep < 2
-                ? "Only continue once OpenWork Enterprise is installed and open on this computer."
-                : "Open the downloaded app. It will wait at the pixel-dither activation screen."}
+                ? "Only continue once the download finished on this computer."
+                : "Run the installer, then launch the app."}
               expanded={expandedStep === 2 && guideStep >= 2}
               onExpand={() => setExpandedStep(2)}
               testId="install-guide-step-open"
             >
-                  <div className="grid content-start gap-3 rounded-[14px] border border-[#e1e4e8] bg-white p-[18px]">
-                      <p className="m-0 text-xs font-semibold uppercase tracking-[0.04em] text-[#667085]">Next, on your computer</p>
-                      <p className="m-0 text-base font-semibold text-[#101828]">Open the file you just downloaded</p>
-
+                  <div className="grid content-start gap-3">
                       {installerFile ? (
                         <div className="flex items-center gap-2.5 rounded-[10px] border border-[#e1e4e8] bg-[#fafbfc] px-3 py-2.5" data-testid="install-file-chip">
                           <span className="grid size-[30px] shrink-0 place-items-center rounded-lg border border-[#e1e4e8] bg-white" aria-hidden="true">
@@ -696,43 +706,60 @@ export function InstallScreen() {
                       </ol>
 
                       {guidance.trust ? (
-                        <div className="flex items-start gap-2.5" data-testid="install-os-trust-note">
-                          <ShieldCheck className="mt-px size-[15px] shrink-0 text-[#8a6420]" aria-hidden="true" />
-                          <span className="grid gap-0.5">
-                            <span className="text-[13px] font-semibold leading-[17px] text-[#7a5714]">{guidance.trust.title}</span>
-                            <span className="text-[13px] leading-[17px] text-[#7a5714]">{guidance.trust.body}</span>
-                          </span>
-                        </div>
+                        <p className="m-0 flex items-start gap-2 text-[13px] leading-[17px] text-[#7a5714]" data-testid="install-os-trust-note">
+                          <ShieldCheck className="mt-px size-[15px] shrink-0" aria-hidden="true" />
+                          {guidance.trust.body}
+                        </p>
                       ) : null}
 
-                      <div className="flex items-start gap-2.5 rounded-[10px] border border-[#d3e0fb] bg-[#eef4ff] px-3 py-2.5" data-testid="install-handoff-note">
-                        <span className="mt-0.5 grid size-3.5 shrink-0 place-items-center rounded-full bg-[#3e63dd]/20" aria-hidden="true">
-                          <span className="size-1.5 rounded-full bg-[#3e63dd]" />
-                        </span>
-                        <span className="grid gap-0.5">
-                          <span className="text-[13px] font-semibold leading-[17px] text-[#1f3d8f]">Activation happens from this Den page</span>
-                          <span className="text-[13px] leading-[17px] text-[#3a4e80]">OpenWork Enterprise stays locked until this signed-in portal sends it a one-time activation link.</span>
-                        </span>
-                      </div>
+                      <button
+                        type="button"
+                        className="grid min-h-10 w-fit place-items-center rounded-[9px] bg-[#101828] px-4 text-[13px] font-semibold text-white transition-colors hover:bg-black"
+                        data-testid="install-app-ready"
+                        onClick={() => advanceGuide(3)}
+                      >
+                        The app is installed and open
+                      </button>
+                  </div>
+            </InstallStep>
 
-                      <div className="flex items-center gap-2.5 py-1">
-                        <span className="h-px grow bg-[#e1e4e8]" />
-                        <span className="text-xs text-[#7a808a]">THEN</span>
-                        <span className="h-px grow bg-[#e1e4e8]" />
-                      </div>
+            <InstallStep
+              index={3}
+              state={guideStep === 3 ? "active" : guideStep > 3 ? "complete" : "pending"}
+              title="Confirm the app is running, then activate"
+              description={guideStep < 3
+                ? "Activation only works while OpenWork Enterprise is open on this computer."
+                : "Check both lines below, then send the one-time activation link from this page."}
+              expanded={expandedStep === 3 && guideStep >= 3}
+              onExpand={() => setExpandedStep(3)}
+              testId="install-guide-step-confirm-running"
+            >
+                  <div className="grid content-start gap-3">
+                      <ul className="m-0 grid list-none gap-2 p-0" data-testid="install-running-checklist">
+                        {[
+                          `${config.appName} is installed and open on this computer.`,
+                          "It is waiting on its activation screen.",
+                        ].map((item) => (
+                          <li key={item} className="flex items-start gap-2.5">
+                            <Check className="mt-0.5 size-4 shrink-0 text-[#30a46c]" aria-hidden="true" />
+                            <span className="text-[13px] leading-5 text-[#344054]">{item}</span>
+                          </li>
+                        ))}
+                      </ul>
 
-                      <div className="flex items-center justify-between gap-3">
-                        <p className="m-0 text-[13px] leading-[17px] text-[#344054]">When the enterprise app is open at its activation screen:</p>
-                        <button
-                          type="button"
-                          className="grid h-9 shrink-0 place-items-center rounded-[9px] bg-[#101828] px-4 text-[13px] font-semibold text-white transition-colors hover:bg-black disabled:opacity-60"
-                          data-testid="install-connect-open"
-                          disabled={connecting}
-                          onClick={() => void beginConnect()}
-                        >
-                          {connecting ? "Preparing…" : "Activate OpenWork Enterprise"}
-                        </button>
-                      </div>
+                      <p className="m-0 text-[13px] leading-[17px] text-[#60646c]" data-testid="install-handoff-note">
+                        {config.appName} stays locked until this signed-in page sends it a one-time activation link.
+                      </p>
+
+                      <button
+                        type="button"
+                        className="grid min-h-10 w-fit place-items-center rounded-[9px] bg-[#101828] px-4 text-[13px] font-semibold text-white transition-colors hover:bg-black disabled:opacity-60"
+                        data-testid="install-connect-open"
+                        disabled={connecting}
+                        onClick={() => void beginConnect()}
+                      >
+                        {connecting ? "Preparing…" : "Activate OpenWork Enterprise"}
+                      </button>
 
                       <details className="grid gap-2 border-t border-[#e1e4e8] pt-3 [&[open]_svg]:rotate-180">
                         <summary className="flex cursor-pointer list-none items-center gap-1.5 text-xs font-semibold text-[#344054] [&::-webkit-details-marker]:hidden">
@@ -756,12 +783,12 @@ export function InstallScreen() {
             </InstallStep>
 
             <InstallStep
-              index={3}
-              state={guideStep === 3 ? "active" : "pending"}
+              index={4}
+              state={guideStep === 4 ? "active" : "pending"}
               title="Confirm activation"
               description="Keep this page open while OpenWork Enterprise consumes the one-time link and signs you in."
-              expanded={expandedStep === 3 && guideStep === 3}
-              onExpand={() => setExpandedStep(3)}
+              expanded={expandedStep === 4 && guideStep === 4}
+              onExpand={() => setExpandedStep(4)}
               testId="install-guide-step-signin"
             >
                   <div className="grid gap-3" aria-live="polite">
@@ -789,7 +816,7 @@ export function InstallScreen() {
                         </span>
                       </div>
                     ) : handoffStatus.status === "unknown" ? (
-                      <p className="m-0 text-sm text-amber-700">This one-time link expired. Return to step 2 and create a fresh activation link.</p>
+                      <p className="m-0 text-sm text-amber-700">This one-time link expired. Return to step 3 and create a fresh activation link.</p>
                     ) : null}
 
                     {handoffStatus.status === "consumed" ? (
