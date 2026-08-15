@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -18,6 +18,17 @@ import {
   snapshotEngineState,
   snapshotOpenworkServerState,
 } from "./runtime.mjs";
+
+describe("bundled OpenCode runtime", () => {
+  it("pins the engine release containing the timestamp-based session loop repair", async () => {
+    const constantsPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../constants.json");
+    const constants = JSON.parse(await readFile(constantsPath, "utf8"));
+
+    // OpenCode #40990 stops old assistant messages with lexicographically
+    // later IDs from short-circuiting a newly appended user turn.
+    assert.equal(constants.opencodeVersion, "v1.18.18");
+  });
+});
 
 describe("engine rollover preference", () => {
   it("uses an explicit value and otherwise restores the persisted value", () => {

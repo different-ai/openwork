@@ -50,7 +50,7 @@
     "@lexical/react": "^0.35.0",
     "@modelcontextprotocol/ext-apps": "^1.7.5",
     "@modelcontextprotocol/sdk": "^1.29.0",
-    "@opencode-ai/sdk": "^1.17.11",
+    "@opencode-ai/sdk": "^1.18.15",
     "@openwork/install-config": "workspace:*",
     "@openwork/types": "workspace:*",
     "@openwork/ui": "workspace:*",
