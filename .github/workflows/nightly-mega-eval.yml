@@ -4,6 +4,11 @@
 name: Nightly Mega Eval
 
 on:
+  # TEMP(pre-merge validation): push trigger exercises this workflow from the
+  # PR branch; GitHub only honors schedule/workflow_dispatch on the default
+  # branch. Removed before merge.
+  push:
+    branches: [feat/nightly-mega-connect-mcp]
   schedule:
     - cron: "47 3 * * *"
   workflow_dispatch:
@@ -11,7 +16,7 @@ on:
       model:
         description: "Bare OpenAI model id"
         required: false
-        default: "gpt-4o"
+        default: "gpt-5.6-luna"
         type: string
 
 permissions:
@@ -85,9 +90,9 @@ jobs:
           set -euo pipefail
 
           if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
-            MODEL="${DISPATCH_MODEL:-gpt-4o}"
+            MODEL="${DISPATCH_MODEL:-gpt-5.6-luna}"
           else
-            MODEL="${NIGHTLY_MODEL:-gpt-4o}"
+            MODEL="${NIGHTLY_MODEL:-gpt-5.6-luna}"
           fi
 
           OPENWORK_EVAL_DAYTONA=1 OPENWORK_EVAL_APP_SPECS=1 OPENWORK_EVAL_MEGA_SPEC=1 \
