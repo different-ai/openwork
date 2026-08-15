@@ -105,7 +105,7 @@ jobs:
 
           # TEMP(pre-merge validation): removed before merge
           if [ "$EVENT_NAME" = "push" ]; then
-            specs='["den-sidebar-ia.slow.test.ts","connect-state-provenance.slow.test.ts"]'
+            specs='["plugin-access-panel.slow.test.ts","team-access-view.slow.test.ts","connect-state-provenance.slow.test.ts"]'
           fi
 
           echo "specs=$specs" >> "$GITHUB_OUTPUT"
