@@ -4,11 +4,6 @@
 name: Nightly Mega Eval
 
 on:
-  # TEMP(pre-merge validation): push trigger exercises this workflow from the
-  # PR branch; GitHub only honors schedule/workflow_dispatch on the default
-  # branch. Removed before merge.
-  push:
-    branches: [feat/nightly-mega-connect-mcp]
   schedule:
     - cron: "47 3 * * *"
   workflow_dispatch:
@@ -181,7 +176,9 @@ jobs:
             echo "Nightly mega eval failed: $RUN_URL"
             echo
             echo '```text'
-            if [ -f /tmp/mega-run.log ]; then
+            if [ -f /tmp/mega-run-plain.log ]; then
+              tail -n 40 /tmp/mega-run-plain.log
+            elif [ -f /tmp/mega-run.log ]; then
               tail -n 40 /tmp/mega-run.log
             else
               echo "Vitest log unavailable."
