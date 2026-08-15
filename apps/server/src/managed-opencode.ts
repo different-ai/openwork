@@ -64,6 +64,8 @@ export async function createManagedOpencodeServer(options: {
   excludedPorts?: number[];
   timeoutMs?: number;
   env?: Record<string, string | undefined>;
+  /** Receives every stdout/stderr chunk so callers can persist engine output. */
+  outputSink?: (chunk: string) => void;
 }): Promise<ManagedOpencodeServer> {
   const hostname = options.hostname ?? "127.0.0.1";
   const port = options.port ?? await findFreePort(hostname, options.excludedPorts);
@@ -137,7 +139,9 @@ export async function createManagedOpencodeServer(options: {
         reject(error);
       };
       child.stdout?.on("data", (chunk) => {
-        output += chunk.toString();
+        const text = chunk.toString();
+        options.outputSink?.(text);
+        output += text;
         for (const line of output.split("\n")) {
           if (!line.startsWith("opencode server listening")) continue;
           const match = line.match(/on\s+(https?:\/\/[^\s]+)/);
@@ -146,7 +150,9 @@ export async function createManagedOpencodeServer(options: {
         }
       });
       child.stderr?.on("data", (chunk) => {
-        output += chunk.toString();
+        const text = chunk.toString();
+        options.outputSink?.(text);
+        output += text;
       });
       child.once("error", fail);
       child.once("exit", (code) => fail(new Error(`OpenCode server exited with code ${code}${output.trim() ? `\n${output}` : ""}`)));

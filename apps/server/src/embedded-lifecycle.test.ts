@@ -268,6 +268,49 @@ describe("embedded server lifecycle", () => {
     }
   });
 
+  test.serial("persists server and managed engine output to log files when logFile is set", async () => {
+    const fixture = await createFixture();
+    try {
+      const serverLogPath = join(fixture.root, "logs", "openwork-server.log");
+      const engineLogPath = join(fixture.root, "logs", "opencode-engine.log");
+      const handle = await startEmbeddedServer({
+        ...managedOptions(fixture, "log-file"),
+        logFile: serverLogPath,
+      });
+      fixture.handles.push(handle);
+
+      const health = await fetch(`${handle.url}/health`);
+      expect(health.status).toBe(200);
+
+      // Server log: the request logger writes each handled request. The file
+      // sink flushes on a timer, so poll until the buffered lines land.
+      const enginePort = new URL(handle.config.opencodeBaseUrl ?? "").port;
+      const waitForLine = async (path: string, predicate: (line: string) => boolean): Promise<string[]> => {
+        const deadline = Date.now() + 3000;
+        let lines: string[] = [];
+        while (Date.now() < deadline) {
+          lines = await logLines(path);
+          if (lines.some(predicate)) return lines;
+          await new Promise((resolve) => setTimeout(resolve, 50));
+        }
+        return lines;
+      };
+
+      await waitForLine(serverLogPath, (line) => line.includes("GET /health 200"));
+      await waitForLine(engineLogPath, (line) =>
+        line.includes(`opencode server listening on http://${HOST}:${enginePort}`)
+      );
+
+      await handle.stop();
+      expect((await logLines(serverLogPath)).some((line) => line.includes("GET /health 200"))).toBe(true);
+      expect((await logLines(engineLogPath)).some((line) =>
+        line.includes(`opencode server listening on http://${HOST}:${enginePort}`)
+      )).toBe(true);
+    } finally {
+      await fixture.restore();
+    }
+  });
+
   test.serial("a stopped server no longer writes generated runtime configuration", async () => {
     const fixture = await createFixture();
     try {

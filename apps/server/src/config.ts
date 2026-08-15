@@ -22,6 +22,7 @@ export interface CliArgs {
   verbose?: boolean;
   logFormat?: LogFormat;
   logRequests?: boolean;
+  logFile?: string;
   engineRollover?: boolean;
   version?: boolean;
   help?: boolean;
@@ -43,6 +44,7 @@ interface FileConfig {
   opencodePassword?: string;
   logFormat?: LogFormat;
   logRequests?: boolean;
+  logFile?: string;
   engineRollover?: boolean;
 }
 
@@ -96,6 +98,11 @@ export function parseCliArgs(argv: string[]): CliArgs {
     }
     if (value === "--no-log-requests") {
       args.logRequests = false;
+      continue;
+    }
+    if (value === "--log-file") {
+      args.logFile = argv[index + 1];
+      index += 1;
       continue;
     }
     if (value === "--config") {
@@ -306,6 +313,8 @@ export async function resolveServerConfig(cli: CliArgs): Promise<ServerConfig> {
   const envLogRequests = parseBoolean(process.env.OPENWORK_LOG_REQUESTS);
   const logRequests = cli.logRequests ?? envLogRequests ?? fileConfig.logRequests ?? DEFAULT_LOG_REQUESTS;
 
+  const logFile = cli.logFile ?? fileConfig.logFile;
+
   const envEngineRollover = parseBoolean(process.env.OPENWORK_ENGINE_ROLLOVER);
   const engineRollover = cli.engineRollover ?? envEngineRollover ?? fileConfig.engineRollover ?? false;
 
@@ -337,6 +346,6 @@ export async function resolveServerConfig(cli: CliArgs): Promise<ServerConfig> {
     hostTokenSource,
     logFormat,
     logRequests,
-    engineRollover,
+    logFile,
   };
 }

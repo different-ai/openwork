@@ -7,7 +7,9 @@
  */
 import { randomUUID } from "node:crypto";
 import { mkdir } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import { resolveServerConfig, type CliArgs } from "./config.js";
+import { createServiceLogWriter } from "./service-log.js";
 import {
   buildEngineAuthProbeHeader,
   registerEngineInstance,
@@ -68,6 +70,10 @@ export type EmbeddedServerHandle = {
 export async function startEmbeddedServer(options: EmbeddedServerOptions): Promise<EmbeddedServerHandle> {
   const config = await resolveServerConfig(options);
   config.localManagedMcpVaultKey = options.localManagedMcpVaultKey;
+
+  // Single rotating file sink for the server itself; the managed engine's
+  // output goes to a sibling file so the two services never interleave.
+  const engineLogSink = config.logFile ? createServiceLogWriter(join(dirname(config.logFile), "opencode-engine.log")) : null;
 
   // Spawn managed OpenCode if requested and no explicit base URL was provided.
   let managedOpencode: ManagedOpencodeServer | null = null;
@@ -140,6 +146,8 @@ export async function startEmbeddedServer(options: EmbeddedServerOptions): Promi
         errors.push(error);
       }
     }
+
+    engineLogSink?.close();
 
     if (errors.length === 1) throw errors[0];
     if (errors.length > 1) {
@@ -229,6 +237,7 @@ export async function startEmbeddedServer(options: EmbeddedServerOptions): Promi
         cwd,
         excludedPorts: [config.port],
         env: engineEnv,
+        ...(engineLogSink ? { outputSink: (chunk: string) => engineLogSink.write(chunk) } : {}),
       }));
 
       config.opencodeBaseUrl = managedOpencode.url;
@@ -292,6 +301,7 @@ export async function startEmbeddedServer(options: EmbeddedServerOptions): Promi
       fingerprint: await computeEngineConfigFingerprint(engineSpawnTemplate),
       registryId: managedEngineRecordId,
       trustedIdentity: managedOpencodeIdentity,
+      ...(engineLogSink ? { outputSink: (chunk: string) => engineLogSink.write(chunk) } : {}),
     });
   }
 
