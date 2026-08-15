@@ -76,6 +76,20 @@ jobs:
           set -euo pipefail
           pnpm install --frozen-lockfile
 
+      # The eval harness shells out to the daytona CLI (testkit daytonaAvailable
+      # gate and @openwork/hosts exec). Track the latest release so the CLI and
+      # the Daytona API stay aligned; the CLI itself warns on version drift.
+      - name: Install Daytona CLI
+        if: steps.config.outputs.enabled == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh release download --repo daytona/clients --pattern daytona-linux-amd64 --output /tmp/daytona --clobber
+          sudo install -m 0755 /tmp/daytona /usr/local/bin/daytona
+          daytona --version
+
       - name: Run mega journey
         id: mega-run
         if: steps.config.outputs.enabled == 'true'
@@ -99,6 +113,18 @@ jobs:
           OPENWORK_EVAL_MODEL="${MODEL}" OPENWORK_EVAL_VISION=defer \
           pnpm --dir evals exec vitest run --config vitest.config.ts --project stack specs/org-team-lifecycle-mega.slow.test.ts \
             2>&1 | tee /tmp/mega-run.log
+
+          # Skips are never passed: a spec that self-skips (unmet needs) exits 0,
+          # which would make the nightly vacuously green. Fail loudly instead.
+          sed -E 's/\x1B\[[0-9;]*m//g' /tmp/mega-run.log > /tmp/mega-run-plain.log
+          if grep -q "\[needs:" /tmp/mega-run-plain.log; then
+            echo "::error::The mega spec skipped instead of running (unmet needs above). Skips are never passed."
+            exit 1
+          fi
+          if ! grep -Eq "Tests[[:space:]]+1 passed" /tmp/mega-run-plain.log; then
+            echo "::error::The mega spec did not report '1 passed'."
+            exit 1
+          fi
 
       - name: Judge deferred vision claims
         if: steps.config.outputs.enabled == 'true'
