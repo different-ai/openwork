@@ -1,0 +1,228 @@
+# Runs every slow eval spec independently on the Daytona lane with bounded parallelism.
+# Unlike the nightly, legitimate skips stay green and are reported as incomplete needs.
+# The mega spec is excluded because the Nightly Mega Eval workflow owns it.
+name: Slow Specs Sweep
+
+on:
+  workflow_dispatch:
+    inputs:
+      only:
+        description: "Substring filter on spec filenames; empty runs all"
+        required: false
+        default: ""
+        type: string
+  # TEMP(pre-merge validation): removed before merge
+  push:
+    branches:
+      - feat/slow-specs-sweep
+
+permissions:
+  contents: read
+
+concurrency:
+  group: slow-specs-sweep
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    if: github.repository == 'different-ai/openwork'
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 10
+    outputs:
+      enabled: ${{ steps.config.outputs.enabled }}
+      specs: ${{ steps.matrix.outputs.specs }}
+
+    steps:
+      - name: Check slow specs sweep configuration
+        id: config
+        shell: bash
+        env:
+          DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          set -euo pipefail
+
+          missing=""
+          [ -z "${DAYTONA_API_KEY:-}" ] && missing="$missing DAYTONA_API_KEY"
+          [ -z "${OPENAI_API_KEY:-}" ] && missing="$missing OPENAI_API_KEY"
+          if [ -n "$missing" ]; then
+            echo "::notice::Skipping slow specs sweep; missing GitHub configuration:$missing."
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "enabled=true" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout
+        if: steps.config.outputs.enabled == 'true'
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - name: Build spec matrix
+        id: matrix
+        if: steps.config.outputs.enabled == 'true'
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          ONLY_FILTER: ${{ inputs.only }}
+        run: |
+          set -euo pipefail
+
+          specs="$(
+            printf '%s\n' evals/specs/*.slow.test.ts \
+              | sed 's#^evals/specs/##' \
+              | jq -Rsc --arg only "$ONLY_FILTER" '
+                  split("\n")
+                  | map(select(length > 0))
+                  | map(select(. != "org-team-lifecycle-mega.slow.test.ts"))
+                  | map(select($only == "" or contains($only)))
+                '
+          )"
+
+          # TEMP(pre-merge validation): removed before merge
+          if [ "$EVENT_NAME" = "push" ]; then
+            specs='["app-smoke.slow.test.ts","connect-state-provenance.slow.test.ts"]'
+          fi
+
+          echo "specs=$specs" >> "$GITHUB_OUTPUT"
+          echo "Spec matrix: $specs"
+
+  spec:
+    needs: plan
+    if: needs.plan.outputs.enabled == 'true'
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        spec: ${{ fromJSON(needs.plan.outputs.specs) }}
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - name: Setup Node
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 11.4.0
+
+      - name: Install dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          pnpm install --frozen-lockfile
+
+      # The eval harness shells out to the daytona CLI (testkit daytonaAvailable
+      # gate and @openwork/hosts exec). Track the latest release so the CLI and
+      # the Daytona API stay aligned; the CLI itself warns on version drift.
+      - name: Install Daytona CLI
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
+        run: |
+          set -euo pipefail
+          gh release download --repo daytona/clients --pattern daytona-linux-amd64 --output /tmp/daytona --clobber
+          sudo install -m 0755 /tmp/daytona /usr/local/bin/daytona
+          daytona --version
+          # The CLI requires a stored profile; the env var alone is not enough.
+          daytona login --api-key "$DAYTONA_API_KEY"
+
+      - name: Run spec
+        id: run
+        shell: bash
+        env:
+          DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          NO_COLOR: "1"
+          SPEC: ${{ matrix.spec }}
+        run: |
+          set -euo pipefail
+
+          set +e
+          OPENWORK_EVAL_DAYTONA=1 OPENWORK_EVAL_APP_SPECS=1 \
+          OPENWORK_EVAL_AUTOMATIONS_SPEC=1 OPENWORK_EVAL_CONNECTOR_SPEC=1 \
+          OPENWORK_EVAL_LOCAL_MANAGED_MCP=1 OPENWORK_EVAL_GENERATED_ARTIFACT_VIEWS_SPEC=1 \
+          OPENWORK_EVAL_SAVED_SCRIPT_AUTOMATIONS_SPEC=1 OPENWORK_EVAL_ENGINE_ROLLOVER_SPEC=1 \
+          OPENWORK_EVAL_MODEL=gpt-5.6-luna OPENWORK_EVAL_VISION=defer \
+          pnpm --dir evals exec vitest run --config vitest.config.ts --project stack "specs/${SPEC}" \
+            2>&1 | tee /tmp/spec-run.log
+          vitest_status="${PIPESTATUS[0]}"
+          set -e
+
+          sed -E 's/\x1B\[[0-9;]*m//g' /tmp/spec-run.log > /tmp/spec-run-plain.log
+          detail=""
+          if grep -Eq "Tests[[:space:]]+1 passed" /tmp/spec-run-plain.log; then
+            result="passed"
+          elif grep -Eq "1 skipped" /tmp/spec-run-plain.log; then
+            result="skipped"
+            needs_tag="$(grep -om1 '\[needs:[^]]*\]' /tmp/spec-run-plain.log || true)"
+            needs_reason="${needs_tag#\[needs:}"
+            needs_reason="${needs_reason%\]}"
+            detail="needs: ${needs_reason}"
+          else
+            result="failed"
+          fi
+
+          echo "result=$result" >> "$GITHUB_OUTPUT"
+          {
+            echo "### $SPEC"
+            echo
+            echo "| Spec | Result | Detail |"
+            echo "| --- | --- | --- |"
+            echo "| $SPEC | $result | $detail |"
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "Vitest exit code: $vitest_status"
+
+          if [ "$result" = "failed" ]; then
+            exit 1
+          fi
+
+      - name: Judge deferred vision claims
+        if: steps.run.outputs.result == 'passed'
+        shell: bash
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          set -euo pipefail
+          pnpm --dir evals fraimz:judge -- --roll latest
+
+      - name: Upload spec roll
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: sweep-roll-${{ strategy.job-index }}
+          path: evals/results/rolls/
+          retention-days: 14
+          if-no-files-found: ignore
+
+  verdict:
+    needs:
+      - plan
+      - spec
+    if: always() && needs.plan.outputs.enabled == 'true'
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 10
+
+    steps:
+      - name: Report sweep verdict
+        shell: bash
+        env:
+          SPEC_RESULT: ${{ needs.spec.result }}
+        run: |
+          set -euo pipefail
+
+          {
+            echo "## Slow Specs Sweep"
+            echo
+            echo "Spec matrix result: **$SPEC_RESULT**."
+            echo "A successful matrix means no spec failed; any skipped specs make the sweep Incomplete, not Passed."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [ "$SPEC_RESULT" = "failure" ]; then
+            exit 1
+          fi
