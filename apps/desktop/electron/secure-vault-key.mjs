@@ -22,6 +22,24 @@ async function replaceProtectedKey(filePath, encrypted) {
 }
 
 /**
+ * Compact filename-safe UTC timestamp mirroring the `*.openwork-backup-<ts>`
+ * naming used by the server legacy-config sweep.
+ *
+ * @param {Date} date
+ */
+function backupTimestamp(date) {
+  const parts = [
+    date.getUTCFullYear(),
+    date.getUTCMonth() + 1,
+    date.getUTCDate(),
+    date.getUTCHours(),
+    date.getUTCMinutes(),
+    date.getUTCSeconds(),
+  ];
+  return parts.map((part, index) => String(part).padStart(index === 0 ? 4 : 2, "0")).join("");
+}
+
+/**
  * @param {string} encoded
  */
 function decodeKey(encoded) {
@@ -59,16 +77,34 @@ export function createDesktopVaultKeyProvider({
       throw new Error("A secure Linux password store is required for OpenWork-managed OAuth.");
     }
 
+    /** @type {Buffer | undefined} */
+    let encrypted;
     try {
-      const encrypted = await readFile(filePath);
-      const decrypted = await safeStorage.decryptStringAsync(encrypted);
-      const key = decodeKey(decrypted.result);
-      if (decrypted.shouldReEncrypt) {
-        await replaceProtectedKey(filePath, await safeStorage.encryptStringAsync(decrypted.result));
-      }
-      return key;
+      encrypted = await readFile(filePath);
     } catch (error) {
       if (error?.code !== "ENOENT") throw error;
+    }
+
+    if (encrypted) {
+      /** @type {Awaited<ReturnType<typeof safeStorage.decryptStringAsync>> | undefined} */
+      let decrypted;
+      /** @type {Buffer | undefined} */
+      let key;
+      try {
+        decrypted = await safeStorage.decryptStringAsync(encrypted);
+        key = decodeKey(decrypted.result);
+      } catch {
+        // Secure storage is available but can no longer decrypt the blob (for
+        // example the OS keychain secret changed), so quarantine the original
+        // bytes and mint a fresh key instead of failing on every launch.
+        await rename(filePath, `${filePath}.openwork-backup-${backupTimestamp(new Date())}`);
+      }
+      if (decrypted && key) {
+        if (decrypted.shouldReEncrypt) {
+          await replaceProtectedKey(filePath, await safeStorage.encryptStringAsync(decrypted.result));
+        }
+        return key;
+      }
     }
 
     const key = randomBytes(KEY_BYTES);

@@ -102,6 +102,7 @@ import {
 export type ReactMcpStatus =
   | "connected"
   | "needs_auth"
+  | "reconnect_required"
   | "needs_client_registration"
   | "failed"
   | "disabled"
@@ -145,6 +146,8 @@ export type McpViewProps = {
   mcpLastUpdatedAt: number | null;
   mcpStatuses: McpStatusMap;
   mcpConnectingName: string | null;
+  /** False when secure storage for OpenWork-managed sign-ins is unavailable on this device. */
+  managedOAuthAvailable?: boolean;
   selectedMcp: string | null;
   setSelectedMcp: (name: string | null) => void;
   quickConnect: McpDirectoryInfo[];
@@ -191,6 +194,7 @@ const statusDot = (status: ReactMcpStatus) => {
     case "connected":
       return "bg-green-9";
     case "needs_auth":
+    case "reconnect_required":
     case "needs_client_registration":
       return "bg-amber-9";
     case "disabled":
@@ -209,6 +213,8 @@ const friendlyStatus = (status: ReactMcpStatus) => {
     case "needs_auth":
     case "needs_client_registration":
       return t("mcp.friendly_status_needs_signin");
+    case "reconnect_required":
+      return t("mcp.friendly_status_reconnect_required");
     case "disabled":
       return t("mcp.friendly_status_paused");
     case "disconnected":
@@ -223,6 +229,7 @@ const statusBadgeStyle = (status: ReactMcpStatus) => {
     case "connected":
       return "bg-green-3 text-green-11";
     case "needs_auth":
+    case "reconnect_required":
     case "needs_client_registration":
       return "bg-amber-3 text-amber-11";
     case "disabled":
@@ -1116,6 +1123,7 @@ export function McpView(props: McpViewProps) {
       <McpConfiguredServersSection
         servers={visibleMcpServers}
         statuses={props.mcpStatuses}
+        managedOAuthUnavailable={props.managedOAuthAvailable === false}
         lastUpdatedAt={props.mcpLastUpdatedAt}
         selectedMcp={props.selectedMcp}
         busy={props.busy}
@@ -1637,6 +1645,7 @@ function McpQuickConnectSection(props: {
 function McpConfiguredServersSection(props: {
   servers: McpServerEntry[];
   statuses: McpStatusMap;
+  managedOAuthUnavailable: boolean;
   lastUpdatedAt: number | null;
   selectedMcp: string | null;
   busy: boolean;
@@ -1665,6 +1674,15 @@ function McpConfiguredServersSection(props: {
           </span>
         ) : null}
       </div>
+
+      {props.managedOAuthUnavailable ? (
+        <div
+          data-testid="mcp-managed-oauth-unavailable"
+          className="rounded-lg border border-amber-6 bg-amber-2 px-3 py-2 text-xs text-amber-11"
+        >
+          {t("mcp.managed_oauth_unavailable")}
+        </div>
+      ) : null}
 
       {props.servers.length ? (
         <div className="space-y-2">
@@ -1768,6 +1786,14 @@ function McpConfiguredServerDetails(props: Parameters<typeof McpConfiguredServer
         ) : null}
       </div>
       {props.errorInfo ? <div className="rounded-lg border border-red-6 bg-red-2 px-3 py-2 text-xs text-red-11">{props.errorInfo}</div> : null}
+      {props.entry.managedOAuth?.status === "reconnect_required" && props.entry.managedOAuth.lastError ? (
+        <div
+          data-testid="mcp-managed-reconnect-reason"
+          className="rounded-lg border border-amber-6 bg-amber-2 px-3 py-2 text-xs text-amber-11"
+        >
+          {props.entry.managedOAuth.lastError}
+        </div>
+      ) : null}
       <details className="group">
         <summary className="flex cursor-pointer list-none items-center gap-1.5 text-[11px] text-dls-secondary transition-colors hover:text-dls-text">
           <Code2 size={11} />
@@ -1819,8 +1845,13 @@ function McpConfiguredServerAuthActions(props: Parameters<typeof McpConfiguredSe
       <>
         <div className="flex items-center justify-between gap-3 pt-1">
           <div className="text-xs text-dls-secondary">{t("mcp.logout_label")}</div>
-          <Button size="sm" disabled={props.busy} onClick={() => props.onAuthorize(props.entry)}>
-            {t("mcp.login_action")}
+          <Button
+            data-testid="mcp-managed-auth-action"
+            size="sm"
+            disabled={props.busy}
+            onClick={() => props.onAuthorize(props.entry)}
+          >
+            {props.status === "reconnect_required" ? t("mcp.action_reconnect") : t("mcp.login_action")}
           </Button>
         </div>
         <div className="text-[11px] text-dls-secondary/70">{t("mcp.login_hint")}</div>

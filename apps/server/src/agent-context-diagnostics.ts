@@ -41,6 +41,10 @@ import {
 } from "./connect-state.js";
 import { readJsoncFile } from "./jsonc.js";
 import {
+  inspectLocalManagedMcpVault,
+  type LocalManagedMcpVaultInspection,
+} from "./local-managed-mcp.js";
+import {
   inspectMcpLayersFromRuntimeSnapshot,
   type McpConfigCollision,
   type McpInventoryInspection,
@@ -1177,6 +1181,7 @@ function runtimeHealthCheck(
   workspace: WorkspaceInfo,
   engineConfigured: boolean,
   inspection: RuntimeOpencodeConfigInspection,
+  managedVault: LocalManagedMcpVaultInspection | null,
   durationMs: number,
 ): AgentContextDiagnosticCheck {
   const corrupt = inspection.status === "unreadable"
@@ -1222,6 +1227,9 @@ function runtimeHealthCheck(
       workspaceType: workspace.workspaceType,
       remoteType: workspace.remoteType ?? null,
       runtimeInspectionStatus: inspection.status,
+      managedMcpVaultStatus: managedVault ? managedVault.status : "not-inspected",
+      managedMcpVaultRecoveredAt: managedVault?.recovery?.at ?? null,
+      managedMcpVaultQuarantinedTo: managedVault?.recovery?.quarantinedTo ?? null,
     },
     durationMs,
   });
@@ -1276,6 +1284,11 @@ export async function runAgentContextDiagnostics(input: {
     : await inspectRuntimeOpencodeConfigState(input.config, input.workspace.id, {
       signal: input.dependencies?.signal,
     });
+  // Passive plaintext read of the managed MCP credential vault: surfaces
+  // secure-storage recovery evidence without decrypting and never throws.
+  const managedVaultInspection = input.workspace.workspaceType === "remote"
+    ? null
+    : await inspectLocalManagedMcpVault(input.config);
   input.dependencies?.signal?.throwIfAborted();
   const runtimeDuration = elapsed(runtimeStarted, now);
   const runtime = runtimeInspection.config;
@@ -1548,7 +1561,7 @@ export async function runAgentContextDiagnostics(input: {
         organizationConnectionsTruncated: request.organizationConnectionsProbe.truncated,
       },
     }),
-    runtimeHealthCheck(input.workspace, engineConfigured, runtimeInspection, runtimeDuration),
+    runtimeHealthCheck(input.workspace, engineConfigured, runtimeInspection, managedVaultInspection, runtimeDuration),
     diagnosticCheck({
       id: "connect-steering-scope",
       status: !connectSnapshotAvailable || crossWorkspaceSteeringDrift ? "warning" : "passed",

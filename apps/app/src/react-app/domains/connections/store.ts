@@ -74,6 +74,8 @@ export type ConnectionsStoreSnapshot = {
   mcpAuthModalOpen: boolean;
   mcpAuthEntry: McpDirectoryInfo | null;
   mcpAuthNeedsReload: boolean;
+  /** False when the server reports managed OAuth secure storage is unavailable. */
+  managedOAuthAvailable: boolean;
 };
 
 type MutableState = ConnectionsStoreSnapshot;
@@ -116,6 +118,7 @@ export function createConnectionsStore(options: {
     mcpAuthModalOpen: false,
     mcpAuthEntry: null,
     mcpAuthNeedsReload: false,
+    managedOAuthAvailable: true,
   };
 
   const emitChange = () => {
@@ -133,6 +136,7 @@ export function createConnectionsStore(options: {
       mcpAuthModalOpen: state.mcpAuthModalOpen,
       mcpAuthEntry: state.mcpAuthEntry,
       mcpAuthNeedsReload: state.mcpAuthNeedsReload,
+      managedOAuthAvailable: state.managedOAuthAvailable,
     };
   };
 
@@ -346,7 +350,9 @@ export function createConnectionsStore(options: {
       if (!managed) continue;
       if (!managed.enabled) {
         nextStatuses[entry.name] = { status: "disabled" };
-      } else if (managed.status === "needs_auth" || managed.status === "connecting" || managed.status === "reconnect_required") {
+      } else if (managed.status === "reconnect_required") {
+        nextStatuses[entry.name] = { status: "reconnect_required" };
+      } else if (managed.status === "needs_auth" || managed.status === "connecting") {
         nextStatuses[entry.name] = { status: "needs_auth" };
       } else if (!nextStatuses[entry.name]) {
         nextStatuses[entry.name] = { status: "connected" };
@@ -360,7 +366,12 @@ export function createConnectionsStore(options: {
       engineSyncStatus: engineSync?.status ?? null,
     });
 
-    return { next, nextStatuses, engineSync };
+    return {
+      next,
+      nextStatuses,
+      engineSync,
+      managedOAuthAvailable: response.managedOAuthState?.available ?? true,
+    };
   };
 
   const resolveDesktopCommand = async (commandName: "getComputerUseMcpCommand" | "getOpenworkUiMcpCommand", fallbackOnError = true) => {
@@ -461,6 +472,7 @@ export function createConnectionsStore(options: {
           mcpServers: serverResult.next,
           mcpLastUpdatedAt: Date.now(),
           mcpStatuses: serverResult.nextStatuses,
+          managedOAuthAvailable: serverResult.managedOAuthAvailable,
           mcpStatus: failedNames
             ? `Some MCPs could not be registered with the engine: ${failedNames}. They may appear disconnected — try reloading the engine.`
             : serverResult.next.length ? null : "No MCP servers configured yet.",

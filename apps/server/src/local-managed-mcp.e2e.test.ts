@@ -1,16 +1,22 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { spawn, type ChildProcess } from "node:child_process";
-import { randomBytes } from "node:crypto";
+import { createCipheriv, randomBytes } from "node:crypto";
 import { existsSync } from "node:fs";
-import { readFile, mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 
-import { deleteLocalManagedMcp, setLocalManagedMcpEnabled } from "./local-managed-mcp.js";
+import { ApiError } from "./errors.js";
+import {
+  createLocalManagedMcpConnection,
+  deleteLocalManagedMcp,
+  listLocalManagedMcpConnectionsSafe,
+  setLocalManagedMcpEnabled,
+} from "./local-managed-mcp.js";
 import { runtimeStorageDir } from "./runtime-db.js";
-import { readRuntimeMcpConfig } from "./runtime-opencode-config-store.js";
+import { readRuntimeMcpConfig, runtimeMcpMap, writeRuntimeOpencodeConfig } from "./runtime-opencode-config-store.js";
 import { startServer } from "./server.js";
 import type { ServerConfig } from "./types.js";
 
@@ -344,6 +350,8 @@ describe("OpenWork-managed local MCP OAuth gateway", () => {
       expect(await reconnectStatus.json()).toMatchObject({ status: "needs_auth", enabled: true, hasCredential: false });
       expect(await readRuntimeMcpConfig(restartedConfig, "ws_managed", "mock-oauth"))
         .toMatchObject({ enabled: true, oauth: false });
+      expect((await readdir(runtimeStorageDir(restartedConfig)))
+        .some((entry) => entry.includes(".openwork-backup-"))).toBe(false);
     } finally {
       if (previousRuntimeDb === undefined) delete process.env.OPENWORK_RUNTIME_DB;
       else process.env.OPENWORK_RUNTIME_DB = previousRuntimeDb;
@@ -351,4 +359,308 @@ describe("OpenWork-managed local MCP OAuth gateway", () => {
       else process.env.OPENWORK_DEV_MODE = previousDevMode;
     }
   }, 60_000);
+
+  test("quarantines and rebuilds the vault after a secure-storage key change, then reconnects", async () => {
+    const previousRuntimeDb = process.env.OPENWORK_RUNTIME_DB;
+    const previousDevMode = process.env.OPENWORK_DEV_MODE;
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "openwork-local-managed-mcp-rotation-"));
+    roots.push(workspaceRoot);
+    process.env.OPENWORK_RUNTIME_DB = join(workspaceRoot, "runtime.sqlite");
+    process.env.OPENWORK_DEV_MODE = "1";
+
+    try {
+      const engine = startMockOpencode();
+      const providerBaseUrl = await startOAuthProvider(await freePort());
+      const openworkPort = await freePort();
+      const config = createConfig({
+        port: openworkPort,
+        workspaceRoot,
+        engineBaseUrl: `http://127.0.0.1:${engine.server.port}`,
+        vaultKey: randomBytes(32),
+      });
+      const server = await startServer(config);
+      stops.push(() => server.stop());
+      const openworkBaseUrl = `http://127.0.0.1:${server.port}`;
+
+      for (const name of ["mock-oauth", "mock-oauth-b"]) {
+        const created = await fetch(`${openworkBaseUrl}/workspace/ws_managed/mcp/managed`, {
+          method: "POST",
+          headers: clientHeaders(config.token),
+          body: JSON.stringify({
+            name,
+            url: `${providerBaseUrl}/mcp`,
+            oauth: { applicationType: "native", requestedScopes: ["mcp:read"] },
+          }),
+        });
+        expect(created.status).toBe(201);
+        const started = await created.json() as { status: string; authorizeUrl?: string };
+        expect(started.status).toBe("needs_auth");
+        const authorization = await fetch(started.authorizeUrl!, { redirect: "manual" });
+        expect(authorization.status).toBe(302);
+        expect((await fetch(authorization.headers.get("location")!)).status).toBe(200);
+      }
+
+      await server.stop();
+      stops.pop();
+
+      const rotatedConfig = createConfig({
+        port: openworkPort,
+        workspaceRoot,
+        engineBaseUrl: `http://127.0.0.1:${engine.server.port}`,
+        vaultKey: randomBytes(32),
+      });
+      const storageDir = runtimeStorageDir(rotatedConfig);
+      const reconnectCopy = "Secure storage on this device changed, so saved sign-ins were cleared. Reconnect to restore this connection.";
+      const scanVaultForSecrets = async () => {
+        const text = await readFile(join(storageDir, "local-managed-mcp-vault.json"), "utf8");
+        expect(text).toContain('"schemaVersion":2');
+        expect(text).not.toContain("mock-access-");
+        expect(text).not.toContain("refresh_token");
+        expect(text).not.toContain("client_secret");
+        expect(text).not.toContain("clientSecret");
+        expect(text).not.toContain("codeVerifier");
+      };
+
+      const safeList = await listLocalManagedMcpConnectionsSafe(rotatedConfig, "ws_managed");
+      expect(safeList.available).toBe(true);
+      expect(safeList.connections.map((connection) => connection.name)).toEqual(["mock-oauth", "mock-oauth-b"]);
+      for (const connection of safeList.connections) {
+        expect(connection).toMatchObject({
+          status: "reconnect_required",
+          hasCredential: false,
+          lastError: reconnectCopy,
+        });
+      }
+      expect(safeList.recovery).toMatchObject({ reason: "secure_storage_changed" });
+
+      const backups = (await readdir(storageDir))
+        .filter((entry) => entry.startsWith("local-managed-mcp-vault.json.openwork-backup-"));
+      expect(backups).toHaveLength(1);
+      expect(safeList.recovery?.quarantinedTo).toBe(backups[0]!);
+      const backupValue = JSON.parse(await readFile(join(storageDir, backups[0]!), "utf8")) as {
+        schemaVersion?: number;
+        vault?: { algorithm?: string };
+      };
+      expect(backupValue.schemaVersion).toBe(2);
+      expect(backupValue.vault?.algorithm).toBe("aes-256-gcm");
+      await scanVaultForSecrets();
+
+      const rotatedServer = await startServer(rotatedConfig);
+      stops.push(() => rotatedServer.stop());
+
+      // Engine boot-time tool discovery must not overwrite the recovery copy:
+      // the gateway rejects, and the stored reconnect reason stays intact.
+      const preReconnectRuntimeConfig = await readRuntimeMcpConfig(rotatedConfig, "ws_managed", "mock-oauth");
+      const recoveredGatewayClient = await connectGateway(preReconnectRuntimeConfig!);
+      await expect(recoveredGatewayClient.listTools()).rejects.toThrow();
+      await recoveredGatewayClient.close();
+      const afterDiscoveryFailure = await fetch(`${openworkBaseUrl}/workspace/ws_managed/mcp/mock-oauth/managed`, {
+        headers: clientHeaders(rotatedConfig.token),
+      });
+      expect(await afterDiscoveryFailure.json()).toMatchObject({
+        status: "reconnect_required",
+        hasCredential: false,
+        lastError: reconnectCopy,
+      });
+      const safeListAfterDiscoveryFailure = await listLocalManagedMcpConnectionsSafe(rotatedConfig, "ws_managed");
+      expect(safeListAfterDiscoveryFailure.connections
+        .find((connection) => connection.name === "mock-oauth")?.lastError).toBe(reconnectCopy);
+
+      const reconnect = await fetch(`${openworkBaseUrl}/workspace/ws_managed/mcp/mock-oauth/managed/connect`, {
+        method: "POST",
+        headers: clientHeaders(rotatedConfig.token),
+      });
+      expect(reconnect.status).toBe(200);
+      const restarted = await reconnect.json() as { status: string; authorizeUrl?: string };
+      expect(restarted.status).toBe("needs_auth");
+      expect(restarted.authorizeUrl).toBeTruthy();
+      const reauthorization = await fetch(restarted.authorizeUrl!, { redirect: "manual" });
+      expect(reauthorization.status).toBe(302);
+      const callbackUrl = reauthorization.headers.get("location");
+      expect(callbackUrl).toStartWith(`${openworkBaseUrl}/mcp/oauth/callback`);
+      expect((await fetch(callbackUrl!)).status).toBe(200);
+
+      const reconnected = await fetch(`${openworkBaseUrl}/workspace/ws_managed/mcp/mock-oauth/managed`, {
+        headers: clientHeaders(rotatedConfig.token),
+      });
+      expect(await reconnected.json()).toMatchObject({ status: "connected", hasCredential: true, enabled: true });
+      const second = await fetch(`${openworkBaseUrl}/workspace/ws_managed/mcp/mock-oauth-b/managed`, {
+        headers: clientHeaders(rotatedConfig.token),
+      });
+      expect(await second.json()).toMatchObject({
+        status: "reconnect_required",
+        hasCredential: false,
+        lastError: reconnectCopy,
+      });
+
+      const runtimeConfig = await readRuntimeMcpConfig(rotatedConfig, "ws_managed", "mock-oauth");
+      const gatewayClient = await connectGateway(runtimeConfig!);
+      expect((await gatewayClient.listTools()).tools.map((tool) => tool.name)).toContain("mock_echo");
+      await gatewayClient.close();
+
+      const workspaceMcp = await fetch(`${openworkBaseUrl}/workspace/ws_managed/mcp`, {
+        headers: clientHeaders(rotatedConfig.token),
+      });
+      expect(workspaceMcp.status).toBe(200);
+      expect(await workspaceMcp.json()).toMatchObject({
+        managedOAuthState: {
+          available: true,
+          recovery: { reason: "secure_storage_changed", quarantinedTo: backups[0]! },
+        },
+      });
+
+      await scanVaultForSecrets();
+      expect((await readdir(storageDir))
+        .filter((entry) => entry.startsWith("local-managed-mcp-vault.json.openwork-backup-"))).toHaveLength(1);
+    } finally {
+      if (previousRuntimeDb === undefined) delete process.env.OPENWORK_RUNTIME_DB;
+      else process.env.OPENWORK_RUNTIME_DB = previousRuntimeDb;
+      if (previousDevMode === undefined) delete process.env.OPENWORK_DEV_MODE;
+      else process.env.OPENWORK_DEV_MODE = previousDevMode;
+    }
+  }, 60_000);
+
+  test("serves the plaintext index read-only while secure storage is unavailable", async () => {
+    const previousRuntimeDb = process.env.OPENWORK_RUNTIME_DB;
+    const previousDevMode = process.env.OPENWORK_DEV_MODE;
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "openwork-local-managed-mcp-unavailable-"));
+    roots.push(workspaceRoot);
+    process.env.OPENWORK_RUNTIME_DB = join(workspaceRoot, "runtime.sqlite");
+    process.env.OPENWORK_DEV_MODE = "1";
+
+    try {
+      const config = createConfig({
+        port: await freePort(),
+        workspaceRoot,
+        engineBaseUrl: "http://127.0.0.1:1",
+        vaultKey: randomBytes(32),
+      });
+      const created = await createLocalManagedMcpConnection(config, {
+        workspaceId: "ws_managed",
+        name: "offline-vault",
+        serverUrl: `http://127.0.0.1:${await freePort()}/mcp`,
+        oauth: {},
+      });
+      expect(created.status).toBe("needs_auth");
+
+      const unavailableConfig = createConfig({
+        port: config.port,
+        workspaceRoot,
+        engineBaseUrl: "http://127.0.0.1:1",
+        vaultKey: randomBytes(32),
+      });
+      unavailableConfig.localManagedMcpVaultKey = async () => {
+        throw new Error("secure storage locked");
+      };
+
+      const safeList = await listLocalManagedMcpConnectionsSafe(unavailableConfig, "ws_managed");
+      expect(safeList.available).toBe(false);
+      expect(safeList.recovery).toBeNull();
+      expect(safeList.connections).toHaveLength(1);
+      expect(safeList.connections[0]).toMatchObject({
+        name: "offline-vault",
+        status: "needs_auth",
+        hasCredential: false,
+        enabled: true,
+      });
+
+      expect((await readdir(runtimeStorageDir(unavailableConfig)))
+        .some((entry) => entry.includes(".openwork-backup-"))).toBe(false);
+
+      const failure = await setLocalManagedMcpEnabled(unavailableConfig, "ws_managed", "offline-vault", false)
+        .then(() => null, (error: unknown) => error);
+      expect(failure).toBeInstanceOf(ApiError);
+      expect(failure).toMatchObject({ status: 503, code: "managed_mcp_secure_storage_unavailable" });
+    } finally {
+      if (previousRuntimeDb === undefined) delete process.env.OPENWORK_RUNTIME_DB;
+      else process.env.OPENWORK_RUNTIME_DB = previousRuntimeDb;
+      if (previousDevMode === undefined) delete process.env.OPENWORK_DEV_MODE;
+      else process.env.OPENWORK_DEV_MODE = previousDevMode;
+    }
+  });
+
+  test("quarantines a legacy v1 vault it cannot decrypt and prunes orphaned gateway runtime entries", async () => {
+    const previousRuntimeDb = process.env.OPENWORK_RUNTIME_DB;
+    const previousDevMode = process.env.OPENWORK_DEV_MODE;
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "openwork-local-managed-mcp-v1-"));
+    roots.push(workspaceRoot);
+    process.env.OPENWORK_RUNTIME_DB = join(workspaceRoot, "runtime.sqlite");
+    process.env.OPENWORK_DEV_MODE = "1";
+
+    try {
+      const config = createConfig({
+        port: await freePort(),
+        workspaceRoot,
+        engineBaseUrl: "http://127.0.0.1:1",
+        vaultKey: randomBytes(32),
+      });
+      const storageDir = runtimeStorageDir(config);
+      await mkdir(storageDir, { recursive: true });
+
+      const oldKey = randomBytes(32);
+      const iv = randomBytes(12);
+      const cipher = createCipheriv("aes-256-gcm", oldKey, iv);
+      cipher.setAAD(Buffer.from("openwork-local-managed-mcp-v1", "utf8"));
+      const payload = JSON.stringify({
+        schemaVersion: 1,
+        connections: {
+          [`${"ws_managed".length}:ws_managedlegacy-managed`]: { name: "legacy-managed" },
+        },
+      });
+      const data = Buffer.concat([cipher.update(payload, "utf8"), cipher.final()]);
+      await writeFile(join(storageDir, "local-managed-mcp-vault.json"), `${JSON.stringify({
+        schemaVersion: 1,
+        algorithm: "aes-256-gcm",
+        iv: iv.toString("base64"),
+        tag: cipher.getAuthTag().toString("base64"),
+        data: data.toString("base64"),
+      })}\n`, "utf8");
+
+      await writeRuntimeOpencodeConfig(config, "ws_managed", (current) => ({
+        ...current,
+        mcp: {
+          ...runtimeMcpMap(current),
+          "legacy-managed": {
+            type: "remote",
+            url: `http://127.0.0.1:${config.port}/mcp/managed/ws_managed/legacy-managed`,
+            enabled: true,
+            headers: { Authorization: "Bearer stale-gateway-token" },
+            oauth: false,
+          },
+          "keep-remote": { type: "remote", url: "https://example.com/mcp", enabled: true },
+        },
+      }));
+
+      const safeList = await listLocalManagedMcpConnectionsSafe(config, "ws_managed");
+      expect(safeList.available).toBe(true);
+      expect(safeList.connections).toEqual([]);
+      expect(safeList.recovery).toMatchObject({ reason: "secure_storage_changed" });
+
+      const backups = (await readdir(storageDir))
+        .filter((entry) => entry.startsWith("local-managed-mcp-vault.json.openwork-backup-"));
+      expect(backups).toHaveLength(1);
+      expect(safeList.recovery?.quarantinedTo).toBe(backups[0]!);
+      expect(JSON.parse(await readFile(join(storageDir, backups[0]!), "utf8"))).toMatchObject({
+        schemaVersion: 1,
+        algorithm: "aes-256-gcm",
+      });
+
+      const rebuilt = JSON.parse(await readFile(join(storageDir, "local-managed-mcp-vault.json"), "utf8")) as {
+        schemaVersion?: number;
+        index?: Record<string, unknown>;
+        lastRecovery?: { quarantinedTo?: string };
+      };
+      expect(rebuilt.schemaVersion).toBe(2);
+      expect(rebuilt.index).toEqual({});
+      expect(rebuilt.lastRecovery?.quarantinedTo).toBe(backups[0]!);
+
+      expect(await readRuntimeMcpConfig(config, "ws_managed", "legacy-managed")).toBeNull();
+      expect(await readRuntimeMcpConfig(config, "ws_managed", "keep-remote")).toMatchObject({ type: "remote" });
+    } finally {
+      if (previousRuntimeDb === undefined) delete process.env.OPENWORK_RUNTIME_DB;
+      else process.env.OPENWORK_RUNTIME_DB = previousRuntimeDb;
+      if (previousDevMode === undefined) delete process.env.OPENWORK_DEV_MODE;
+      else process.env.OPENWORK_DEV_MODE = previousDevMode;
+    }
+  });
 });

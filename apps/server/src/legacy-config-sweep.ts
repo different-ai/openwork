@@ -42,7 +42,7 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function backupTimestamp(date: Date): string {
+export function backupTimestamp(date: Date): string {
   const parts = [
     date.getFullYear(),
     date.getMonth() + 1,

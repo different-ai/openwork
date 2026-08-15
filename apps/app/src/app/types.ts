@@ -354,6 +354,7 @@ export type McpStatus =
   | { status: "disabled" }
   | { status: "failed"; error: string }
   | { status: "needs_auth" }
+  | { status: "reconnect_required" }
   | { status: "needs_client_registration"; error: string };
 
 export type McpStatusMap = Record<string, McpStatus>;

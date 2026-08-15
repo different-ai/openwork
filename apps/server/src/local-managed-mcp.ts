@@ -8,7 +8,7 @@ import {
   timingSafeEqual,
 } from "node:crypto";
 import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import type { OAuthDiscoveryState } from "@modelcontextprotocol/sdk/client/auth.js";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
@@ -30,6 +30,7 @@ import {
 } from "@openwork/enterprise-mcp-client";
 import { ApiError } from "./errors.js";
 import { sanitizeDiagnosticString } from "./diagnostic-sanitizer.js";
+import { backupTimestamp } from "./legacy-config-sweep.js";
 import { runtimeStorageDir } from "./runtime-db.js";
 import {
   readRuntimeOpencodeConfig,
@@ -37,6 +38,7 @@ import {
   writeRuntimeOpencodeConfig,
 } from "./runtime-opencode-config-store.js";
 import type { ServerConfig } from "./types.js";
+import { isRecord } from "./workspace-kv-store.js";
 import { assertLocalManagedMcpUrl, createLocalManagedMcpGuardedFetch } from "./local-managed-mcp-url-guard.js";
 
 type LocalManagedMcpStatus = "needs_auth" | "connecting" | "connected" | "reconnect_required";
@@ -84,6 +86,44 @@ type VaultEnvelope = {
   data: string;
 };
 
+/** Plaintext, non-secret projection of one stored connection (vault file v2). */
+type LocalManagedMcpIndexEntry = {
+  id: string;
+  workspaceId: string;
+  name: string;
+  serverUrl: string;
+  enabled: boolean;
+  oauth: {
+    applicationType: "native" | "web";
+    requestedScopes?: string[];
+    authorizationServerIssuer?: string;
+    clientId?: string;
+  };
+  status: LocalManagedMcpStatus;
+  lastError?: string;
+  createdAt: number;
+  updatedAt: number;
+  hasCredential: boolean;
+};
+
+export type LocalManagedMcpVaultRecovery = {
+  at: number;
+  reason: string;
+  quarantinedTo: string;
+};
+
+/** Parsed on-disk vault file: v1 is a bare envelope, v2 adds the index. */
+type VaultFileState = {
+  envelope: VaultEnvelope;
+  index: Record<string, LocalManagedMcpIndexEntry> | null;
+  lastRecovery: LocalManagedMcpVaultRecovery | null;
+};
+
+type LoadedVault = {
+  vault: LocalManagedMcpVault;
+  lastRecovery: LocalManagedMcpVaultRecovery | null;
+};
+
 export type LocalManagedMcpPublicConnection = {
   name: string;
   serverUrl: string;
@@ -108,6 +148,9 @@ export type CreateLocalManagedMcpInput = {
 };
 
 const VAULT_AAD = Buffer.from("openwork-local-managed-mcp-v1", "utf8");
+const VAULT_RECOVERY_REASON = "secure_storage_changed";
+const VAULT_RECOVERED_LAST_ERROR =
+  "Secure storage on this device changed, so saved sign-ins were cleared. Reconnect to restore this connection.";
 const vaultQueueByPath = new Map<string, Promise<void>>();
 const vaultKeyByConfig = new WeakMap<ServerConfig, Promise<Buffer>>();
 const gatewaySecretByConfig = new WeakMap<ServerConfig, Buffer>();
@@ -177,28 +220,106 @@ function isVault(value: unknown): value is LocalManagedMcpVault {
     && !Array.isArray(record.connections);
 }
 
-async function readVault(config: ServerConfig): Promise<LocalManagedMcpVault> {
-  try {
-    const envelopeValue: unknown = JSON.parse(await readFile(vaultPath(config), "utf8"));
-    if (!isVaultEnvelope(envelopeValue)) throw new Error("The local managed MCP vault envelope is invalid.");
-    const key = await vaultKey(config);
-    const decipher = createDecipheriv("aes-256-gcm", key, Buffer.from(envelopeValue.iv, "base64"));
-    decipher.setAAD(VAULT_AAD);
-    decipher.setAuthTag(Buffer.from(envelopeValue.tag, "base64"));
-    const plaintext = Buffer.concat([
-      decipher.update(Buffer.from(envelopeValue.data, "base64")),
-      decipher.final(),
-    ]).toString("utf8");
-    const value: unknown = JSON.parse(plaintext);
-    if (!isVault(value)) throw new Error("The local managed MCP vault payload is invalid.");
-    return value;
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return emptyVault();
-    throw error;
-  }
+function isConnectionStatus(value: unknown): value is LocalManagedMcpStatus {
+  return value === "needs_auth" || value === "connecting" || value === "connected" || value === "reconnect_required";
 }
 
-async function writeVault(config: ServerConfig, vault: LocalManagedMcpVault): Promise<void> {
+function isVaultIndexEntry(value: unknown): value is LocalManagedMcpIndexEntry {
+  if (!isRecord(value) || !isRecord(value.oauth)) return false;
+  const oauth = value.oauth;
+  return typeof value.id === "string"
+    && typeof value.workspaceId === "string"
+    && typeof value.name === "string"
+    && typeof value.serverUrl === "string"
+    && typeof value.enabled === "boolean"
+    && (oauth.applicationType === "native" || oauth.applicationType === "web")
+    && (oauth.requestedScopes === undefined
+      || (Array.isArray(oauth.requestedScopes) && oauth.requestedScopes.every((scope) => typeof scope === "string")))
+    && (oauth.authorizationServerIssuer === undefined || typeof oauth.authorizationServerIssuer === "string")
+    && (oauth.clientId === undefined || typeof oauth.clientId === "string")
+    && isConnectionStatus(value.status)
+    && (value.lastError === undefined || typeof value.lastError === "string")
+    && typeof value.createdAt === "number"
+    && typeof value.updatedAt === "number"
+    && typeof value.hasCredential === "boolean";
+}
+
+function isVaultRecovery(value: unknown): value is LocalManagedMcpVaultRecovery {
+  return isRecord(value)
+    && typeof value.at === "number"
+    && typeof value.reason === "string"
+    && typeof value.quarantinedTo === "string";
+}
+
+function readVaultIndex(value: unknown): Record<string, LocalManagedMcpIndexEntry> {
+  if (!isRecord(value)) return {};
+  const index: Record<string, LocalManagedMcpIndexEntry> = {};
+  for (const [key, entry] of Object.entries(value)) {
+    if (isVaultIndexEntry(entry)) index[key] = entry;
+  }
+  return index;
+}
+
+/** Parse the vault file without decrypting. Accepts v1 (bare envelope) and v2. */
+async function readVaultFileState(config: ServerConfig): Promise<VaultFileState | null> {
+  let raw: string;
+  try {
+    raw = await readFile(vaultPath(config), "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
+  }
+  const value: unknown = JSON.parse(raw);
+  if (isVaultEnvelope(value)) return { envelope: value, index: null, lastRecovery: null };
+  if (isRecord(value) && value.schemaVersion === 2 && isVaultEnvelope(value.vault)) {
+    return {
+      envelope: value.vault,
+      index: readVaultIndex(value.index),
+      lastRecovery: isVaultRecovery(value.lastRecovery) ? value.lastRecovery : null,
+    };
+  }
+  throw new Error("The local managed MCP vault envelope is invalid.");
+}
+
+function decryptVault(envelope: VaultEnvelope, key: Buffer): LocalManagedMcpVault {
+  const decipher = createDecipheriv("aes-256-gcm", key, Buffer.from(envelope.iv, "base64"));
+  decipher.setAAD(VAULT_AAD);
+  decipher.setAuthTag(Buffer.from(envelope.tag, "base64"));
+  const plaintext = Buffer.concat([
+    decipher.update(Buffer.from(envelope.data, "base64")),
+    decipher.final(),
+  ]).toString("utf8");
+  const value: unknown = JSON.parse(plaintext);
+  if (!isVault(value)) throw new Error("The local managed MCP vault payload is invalid.");
+  return value;
+}
+
+function vaultIndexEntry(connection: StoredLocalManagedMcpConnection): LocalManagedMcpIndexEntry {
+  return {
+    id: connection.id,
+    workspaceId: connection.workspaceId,
+    name: connection.name,
+    serverUrl: connection.serverUrl,
+    enabled: connection.enabled,
+    oauth: {
+      applicationType: connection.oauth.applicationType,
+      ...(connection.oauth.requestedScopes ? { requestedScopes: connection.oauth.requestedScopes } : {}),
+      ...(connection.oauth.authorizationServerIssuer ? { authorizationServerIssuer: connection.oauth.authorizationServerIssuer } : {}),
+      ...(connection.oauth.clientId ? { clientId: connection.oauth.clientId } : {}),
+    },
+    status: connection.status,
+    ...(connection.lastError === undefined ? {} : { lastError: connection.lastError }),
+    createdAt: connection.createdAt,
+    updatedAt: connection.updatedAt,
+    hasCredential: Boolean(connection.credential),
+  };
+}
+
+async function writeVault(
+  config: ServerConfig,
+  vault: LocalManagedMcpVault,
+  lastRecovery: LocalManagedMcpVaultRecovery | null,
+): Promise<void> {
   const path = vaultPath(config);
   const key = await vaultKey(config);
   const iv = randomBytes(12);
@@ -212,18 +333,22 @@ async function writeVault(config: ServerConfig, vault: LocalManagedMcpVault): Pr
     tag: cipher.getAuthTag().toString("base64"),
     data: encrypted.toString("base64"),
   };
+  const file = {
+    schemaVersion: 2,
+    index: Object.fromEntries(
+      Object.entries(vault.connections).map(([entryKey, connection]) => [entryKey, vaultIndexEntry(connection)]),
+    ),
+    vault: envelope,
+    ...(lastRecovery ? { lastRecovery } : {}),
+  };
   await mkdir(dirname(path), { recursive: true });
   const temporary = `${path}.${process.pid}.${randomUUID()}.tmp`;
-  await writeFile(temporary, `${JSON.stringify(envelope)}\n`, { encoding: "utf8", mode: 0o600 });
+  await writeFile(temporary, `${JSON.stringify(file)}\n`, { encoding: "utf8", mode: 0o600 });
   await rename(temporary, path);
   await chmod(path, 0o600).catch(() => undefined);
 }
 
-async function withVaultMutation<T>(
-  config: ServerConfig,
-  mutate: (vault: LocalManagedMcpVault) => Promise<T> | T,
-  shouldPersist: (result: T) => boolean = () => true,
-): Promise<T> {
+async function withVaultQueue<T>(config: ServerConfig, run: () => Promise<T>): Promise<T> {
   const path = vaultPath(config);
   const previous = vaultQueueByPath.get(path) ?? Promise.resolve();
   let resolveCurrent: (() => void) | undefined;
@@ -233,18 +358,109 @@ async function withVaultMutation<T>(
   vaultQueueByPath.set(path, previous.catch(() => undefined).then(() => current));
   await previous.catch(() => undefined);
   try {
-    const vault = await readVault(config);
-    const result = await mutate(vault);
-    if (shouldPersist(result)) await writeVault(config, vault);
-    return result;
+    return await run();
   } finally {
     resolveCurrent?.();
   }
 }
 
+function rebuiltConnection(entry: LocalManagedMcpIndexEntry): StoredLocalManagedMcpConnection {
+  return {
+    id: entry.id,
+    workspaceId: entry.workspaceId,
+    name: entry.name,
+    serverUrl: entry.serverUrl,
+    enabled: entry.enabled,
+    oauth: {
+      applicationType: entry.oauth.applicationType,
+      ...(entry.oauth.requestedScopes ? { requestedScopes: entry.oauth.requestedScopes } : {}),
+      ...(entry.oauth.authorizationServerIssuer ? { authorizationServerIssuer: entry.oauth.authorizationServerIssuer } : {}),
+      ...(entry.oauth.clientId ? { clientId: entry.oauth.clientId } : {}),
+    },
+    status: "reconnect_required",
+    lastError: VAULT_RECOVERED_LAST_ERROR,
+    createdAt: entry.createdAt,
+    updatedAt: entry.updatedAt,
+    authorizations: {},
+  };
+}
+
+function isManagedGatewayRuntimeEntry(entry: Record<string, unknown>): boolean {
+  return entry.type === "remote"
+    && entry.oauth === false
+    && typeof entry.url === "string"
+    && entry.url.includes("/mcp/managed/");
+}
+
+/** Best effort: drop managed gateway runtime entries that lost their vault connection. */
+async function pruneOrphanedManagedRuntimeEntries(config: ServerConfig, vault: LocalManagedMcpVault): Promise<void> {
+  for (const workspace of config.workspaces) {
+    try {
+      const mcp = runtimeMcpMap(await readRuntimeOpencodeConfig(config, workspace.id));
+      for (const [name, entry] of Object.entries(mcp)) {
+        if (!isManagedGatewayRuntimeEntry(entry)) continue;
+        if (vault.connections[connectionKey(workspace.id, name)]) continue;
+        await removeManagedRuntimeEntry(config, workspace.id, name);
+      }
+    } catch (error) {
+      console.warn(
+        `[managed-mcp] Failed to prune managed runtime entries for workspace ${workspace.id} after vault recovery: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+}
+
+/**
+ * The key resolved but the stored envelope no longer authenticates: OS secure
+ * storage changed underneath the vault. Quarantine the unreadable file and
+ * rebuild the vault from the plaintext index (v2) or empty (v1) so members can
+ * reconnect instead of hitting raw crypto errors.
+ */
+async function recoverVaultLocked(config: ServerConfig, file: VaultFileState): Promise<LoadedVault> {
+  const path = vaultPath(config);
+  const backupName = `${basename(path)}.openwork-backup-${backupTimestamp(new Date())}`;
+  await rename(path, join(dirname(path), backupName));
+  const vault = emptyVault();
+  for (const [key, entry] of Object.entries(file.index ?? {})) {
+    vault.connections[key] = rebuiltConnection(entry);
+  }
+  const lastRecovery: LocalManagedMcpVaultRecovery = {
+    at: Date.now(),
+    reason: VAULT_RECOVERY_REASON,
+    quarantinedTo: backupName,
+  };
+  await writeVault(config, vault, lastRecovery);
+  if (!file.index) await pruneOrphanedManagedRuntimeEntries(config, vault);
+  return { vault, lastRecovery };
+}
+
+/** Only call while holding the per-path vault queue: may quarantine and rewrite. */
+async function loadVaultLocked(config: ServerConfig): Promise<LoadedVault> {
+  const file = await readVaultFileState(config);
+  if (!file) return { vault: emptyVault(), lastRecovery: null };
+  const key = await vaultKey(config);
+  try {
+    return { vault: decryptVault(file.envelope, key), lastRecovery: file.lastRecovery };
+  } catch {
+    return recoverVaultLocked(config, file);
+  }
+}
+
+async function withVaultMutation<T>(
+  config: ServerConfig,
+  mutate: (vault: LocalManagedMcpVault) => Promise<T> | T,
+  shouldPersist: (result: T) => boolean = () => true,
+): Promise<T> {
+  return withVaultQueue(config, async () => {
+    const { vault, lastRecovery } = await loadVaultLocked(config);
+    const result = await mutate(vault);
+    if (shouldPersist(result)) await writeVault(config, vault, lastRecovery);
+    return result;
+  });
+}
+
 async function withVaultRead<T>(config: ServerConfig, read: (vault: LocalManagedMcpVault) => T): Promise<T> {
-  await (vaultQueueByPath.get(vaultPath(config)) ?? Promise.resolve()).catch(() => undefined);
-  return read(await readVault(config));
+  return withVaultQueue(config, async () => read((await loadVaultLocked(config)).vault));
 }
 
 function connectionKey(workspaceId: string, name: string): string {
@@ -550,11 +766,87 @@ export async function createLocalManagedMcpConnection(config: ServerConfig, inpu
   return publicConnection(connection);
 }
 
-export async function listLocalManagedMcpConnections(config: ServerConfig, workspaceId: string): Promise<LocalManagedMcpPublicConnection[]> {
-  return withVaultRead(config, (vault) => Object.values(vault.connections)
-    .filter((connection) => connection.workspaceId === workspaceId)
-    .map(publicConnection)
-    .sort((left, right) => left.name.localeCompare(right.name)));
+function sortByName(connections: LocalManagedMcpPublicConnection[]): LocalManagedMcpPublicConnection[] {
+  return connections.sort((left, right) => left.name.localeCompare(right.name));
+}
+
+function indexPublicConnection(entry: LocalManagedMcpIndexEntry): LocalManagedMcpPublicConnection {
+  return {
+    name: entry.name,
+    serverUrl: entry.serverUrl,
+    enabled: entry.enabled,
+    status: entry.status,
+    lastError: entry.lastError ?? null,
+    hasCredential: entry.hasCredential,
+    updatedAt: entry.updatedAt,
+  };
+}
+
+function isSecureStorageUnavailableError(error: unknown): boolean {
+  return error instanceof ApiError && error.code === "managed_mcp_secure_storage_unavailable";
+}
+
+export type LocalManagedMcpSafeConnectionList = {
+  connections: LocalManagedMcpPublicConnection[];
+  available: boolean;
+  recovery: LocalManagedMcpVaultRecovery | null;
+};
+
+/**
+ * Listing that never throws for secure-storage key or decrypt causes: a stale
+ * key triggers quarantine-and-rebuild, and an unavailable key serves the
+ * plaintext non-secret index read-only with `available: false`.
+ */
+export async function listLocalManagedMcpConnectionsSafe(
+  config: ServerConfig,
+  workspaceId: string,
+): Promise<LocalManagedMcpSafeConnectionList> {
+  return withVaultQueue(config, async () => {
+    try {
+      const { vault, lastRecovery } = await loadVaultLocked(config);
+      return {
+        connections: sortByName(Object.values(vault.connections)
+          .filter((connection) => connection.workspaceId === workspaceId)
+          .map(publicConnection)),
+        available: true,
+        recovery: lastRecovery,
+      };
+    } catch (error) {
+      if (!isSecureStorageUnavailableError(error)) throw error;
+      const file = await readVaultFileState(config).catch(() => null);
+      return {
+        connections: sortByName(Object.values(file?.index ?? {})
+          .filter((entry) => entry.workspaceId === workspaceId)
+          .map(indexPublicConnection)),
+        available: false,
+        recovery: file?.lastRecovery ?? null,
+      };
+    }
+  });
+}
+
+export type LocalManagedMcpVaultInspection = {
+  status: "absent" | "ok" | "recovered" | "secure-storage-unavailable" | "unreadable";
+  recovery: LocalManagedMcpVaultRecovery | null;
+};
+
+/**
+ * Passive vault visibility for diagnostics: reads only plaintext non-secret
+ * fields plus key availability, never decrypts, and never throws.
+ */
+export async function inspectLocalManagedMcpVault(config: ServerConfig): Promise<LocalManagedMcpVaultInspection> {
+  let file: VaultFileState | null;
+  try {
+    file = await readVaultFileState(config);
+  } catch {
+    return { status: "unreadable", recovery: null };
+  }
+  if (!file) return { status: "absent", recovery: null };
+  const keyAvailable = await vaultKey(config).then(() => true, () => false);
+  if (!keyAvailable) return { status: "secure-storage-unavailable", recovery: file.lastRecovery };
+  return file.lastRecovery
+    ? { status: "recovered", recovery: file.lastRecovery }
+    : { status: "ok", recovery: null };
 }
 
 export async function getLocalManagedMcpConnection(config: ServerConfig, workspaceId: string, name: string): Promise<LocalManagedMcpPublicConnection> {
@@ -664,8 +956,17 @@ async function markReconnectWhenCredentialIsGone(
   error: unknown,
   fallback: string,
 ): Promise<boolean> {
-  const hasCredential = await withVaultRead(config, (vault) => Boolean(requireConnection(vault, workspaceId, name).credential));
-  if (!hasCredential) {
+  const { hasCredential, alreadyReconnectRequired } = await withVaultRead(config, (vault) => {
+    const connection = requireConnection(vault, workspaceId, name);
+    return {
+      hasCredential: Boolean(connection.credential),
+      alreadyReconnectRequired: connection.status === "reconnect_required",
+    };
+  });
+  // A connection that already needs a reconnect keeps its original reason
+  // (e.g. the secure-storage recovery copy); later tool-discovery failures
+  // must not overwrite it. Every other status still records this error.
+  if (!hasCredential && !alreadyReconnectRequired) {
     await updateConnectionStatus(config, workspaceId, name, "reconnect_required", error instanceof Error ? error.message : fallback);
   }
   return !hasCredential;

@@ -97,7 +97,7 @@ import {
   disconnectLocalManagedMcp,
   getLocalManagedMcpConnection,
   handleLocalManagedMcpGateway,
-  listLocalManagedMcpConnections,
+  listLocalManagedMcpConnectionsSafe,
   reconcileLocalManagedMcpRuntimeEntries,
   setLocalManagedMcpEnabled,
   startLocalManagedMcpAuthorization,
@@ -2876,12 +2876,12 @@ function createRoutes(
   addRoute(routes, "GET", "/workspace/:id/mcp", "client", async (ctx) => {
     const workspace = await resolveWorkspace(config, ctx.params.id);
     const items = await listMcp(config, workspace.id, workspace.path);
-    const managed = new Map(
-      (await listLocalManagedMcpConnections(config, workspace.id)).map((connection) => [connection.name, connection]),
-    );
+    const managedState = await listLocalManagedMcpConnectionsSafe(config, workspace.id);
+    const managed = new Map(managedState.connections.map((connection) => [connection.name, connection]));
     return jsonResponse({
       items: items.map((item) => ({ ...item, managedOAuth: managed.get(item.name) ?? null })),
       engineSync: engineMcpSyncStateInState(config, engineMcpServerState, workspace),
+      managedOAuthState: { available: managedState.available, recovery: managedState.recovery },
     });
   });
 

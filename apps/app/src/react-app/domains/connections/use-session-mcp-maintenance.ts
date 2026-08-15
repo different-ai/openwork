@@ -7,11 +7,12 @@ import {
   type DenSettings,
 } from "../../../app/lib/den";
 import { recordInspectorEvent } from "../../../app/lib/app-inspector";
-import type {
-  OpenworkCloudMcpFailure,
-  OpenworkCloudMcpHealth,
-  OpenworkCloudMcpProviderModelContext,
-  OpenworkServerClient,
+import {
+  OpenworkServerError,
+  type OpenworkCloudMcpFailure,
+  type OpenworkCloudMcpHealth,
+  type OpenworkCloudMcpProviderModelContext,
+  type OpenworkServerClient,
 } from "../../../app/lib/openwork-server";
 import { unwrap } from "../../../app/lib/opencode";
 import type { Client, McpServerEntry, McpStatusMap } from "../../../app/types";
@@ -198,7 +199,17 @@ export async function syncCloudControlMcpInBackground(input: {
     orgId,
     workspaceId,
   };
-  const listed = await input.client.listMcp(workspaceId);
+  // A structured server error (e.g. secure storage unavailable) must surface
+  // its own message instead of collapsing into the generic maintenance banner.
+  let listed: Awaited<ReturnType<CloudMcpMaintenanceClient["listMcp"]>>;
+  try {
+    listed = await input.client.listMcp(workspaceId);
+  } catch (error) {
+    if (error instanceof OpenworkServerError) {
+      return failedCloudMcpBackgroundSync({ health: null, code: error.code, message: error.message });
+    }
+    throw error;
+  }
   const configured = listed.items.find((entry) => entry.name === CLOUD_MCP_SERVER_NAME);
   if (configured?.config.enabled === false) {
     return { outcome: "skipped", status: "skipped", reason: "disabled", health: null };

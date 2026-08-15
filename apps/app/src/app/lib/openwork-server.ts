@@ -439,6 +439,11 @@ export type OpenworkManagedMcpConnection = {
   updatedAt: number;
 };
 
+export type OpenworkManagedOAuthState = {
+  available: boolean;
+  recovery: { at: number; reason: string; quarantinedTo: string } | null;
+};
+
 export type OpenworkManagedMcpStartResult =
   | { status: "connected" }
   | { status: "needs_auth"; authorizeUrl: string };
@@ -1911,7 +1916,11 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         },
       ),
     listMcp: (workspaceId: string) =>
-      requestJson<{ items: OpenworkMcpItem[]; engineSync?: OpenworkMcpEngineSync | null }>(
+      requestJson<{
+        items: OpenworkMcpItem[];
+        engineSync?: OpenworkMcpEngineSync | null;
+        managedOAuthState?: OpenworkManagedOAuthState | null;
+      }>(
         baseUrl,
         `/workspace/${workspaceId}/mcp`,
         { token, hostToken },

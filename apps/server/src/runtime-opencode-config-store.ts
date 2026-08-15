@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { runtimeDbPath } from "./runtime-db.js";
+import { importNodeSqlite, runtimeDbPath } from "./runtime-db.js";
 import type { ServerConfig } from "./types.js";
 import { createWorkspaceKvStore, isRecord } from "./workspace-kv-store.js";
 
@@ -331,7 +331,7 @@ export async function inspectRuntimeOpencodeConfigState(
     }
   }
 
-  const { DatabaseSync } = await import("node:sqlite");
+  const { DatabaseSync } = await importNodeSqlite();
   options?.signal?.throwIfAborted();
   try {
     const sqlite = new DatabaseSync(path, { readOnly: true });

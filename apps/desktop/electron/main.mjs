@@ -1228,10 +1228,13 @@ const runtimeManager = createRuntimeManager({
   app,
   desktopRoot: path.resolve(__dirname, ".."),
   listLocalWorkspacePaths: () => workspaceStore.listLocalWorkspacePaths(),
-  localManagedMcpVaultKey: createDesktopVaultKeyProvider({
-    filePath: path.join(app.getPath("userData"), "local-managed-mcp-vault-key.bin"),
-    loadSafeStorage: () => require("electron").safeStorage,
-  }),
+  // When OPENWORK_ENCRYPTION_KEY is set, skip the safeStorage provider so it does not shadow the documented env override used by CI/headless/enterprise.
+  localManagedMcpVaultKey: process.env.OPENWORK_ENCRYPTION_KEY?.trim()
+    ? undefined
+    : createDesktopVaultKeyProvider({
+        filePath: path.join(app.getPath("userData"), "local-managed-mcp-vault-key.bin"),
+        loadSafeStorage: () => require("electron").safeStorage,
+      }),
 });
 const initialRunnerBootstrap = workspaceStore.readDesktopBootstrapConfigSync();
 const legacyRunnerBaseUrls = [
