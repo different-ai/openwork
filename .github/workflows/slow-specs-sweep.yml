@@ -1,6 +1,10 @@
 # Runs every slow eval spec independently on the Daytona lane with bounded parallelism.
 # Unlike the nightly, legitimate skips stay green and are reported as incomplete needs.
 # The mega spec is excluded because the Nightly Mega Eval workflow owns it.
+# Specs that drive raw desktop() from @openwork/hosts are excluded dynamically:
+# they spawn Electron on the caller's machine (correct inside a VNC sandbox or
+# on a dev workstation, impossible on a headless runner) and need a follow-up
+# in-sandbox vitest lane. The plan job lists every exclusion in its summary.
 name: Slow Specs Sweep
 
 on:
@@ -66,20 +70,42 @@ jobs:
         run: |
           set -euo pipefail
 
+          # Raw desktop() specs spawn Electron on the vitest host itself; on a
+          # headless runner that dies before CDP. Exclude them until the
+          # in-sandbox vitest lane exists, and surface the list in the summary.
+          excluded="$(
+            grep -l '"@openwork/hosts"' evals/specs/*.slow.test.ts 2>/dev/null \
+              | xargs grep -l '\bdesktop(' 2>/dev/null \
+              | sed 's#^evals/specs/##' \
+              | sort \
+              || true
+          )"
+          excluded_json="$(printf '%s\n' "$excluded" | jq -Rsc 'split("\n") | map(select(length > 0))')"
+
           specs="$(
             printf '%s\n' evals/specs/*.slow.test.ts \
               | sed 's#^evals/specs/##' \
-              | jq -Rsc --arg only "$ONLY_FILTER" '
+              | jq -Rsc --arg only "$ONLY_FILTER" --argjson excluded "$excluded_json" '
                   split("\n")
                   | map(select(length > 0))
                   | map(select(. != "org-team-lifecycle-mega.slow.test.ts"))
+                  | map(select(. as $s | $excluded | index($s) | not))
                   | map(select($only == "" or contains($only)))
                 '
           )"
 
+          {
+            echo "### Sweep plan"
+            echo
+            echo "Matrix specs: $(echo "$specs" | jq 'length')"
+            echo
+            echo "Excluded (raw desktop(); need the in-sandbox lane): $(echo "$excluded_json" | jq 'length')"
+            echo "$excluded_json" | jq -r '.[] | "- `\(.)`"'
+          } >> "$GITHUB_STEP_SUMMARY"
+
           # TEMP(pre-merge validation): removed before merge
           if [ "$EVENT_NAME" = "push" ]; then
-            specs='["app-smoke.slow.test.ts","connect-state-provenance.slow.test.ts"]'
+            specs='["den-sidebar-ia.slow.test.ts","connect-state-provenance.slow.test.ts"]'
           fi
 
           echo "specs=$specs" >> "$GITHUB_OUTPUT"
