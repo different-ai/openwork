@@ -72,17 +72,21 @@ jobs:
           pnpm install --frozen-lockfile
 
       # The eval harness shells out to the daytona CLI (testkit daytonaAvailable
-      # gate and @openwork/hosts exec). Track the latest release so the CLI and
-      # the Daytona API stay aligned; the CLI itself warns on version drift.
+      # gate and @openwork/hosts exec). The binary is pinned to a release tag
+      # and checksum-verified before it can run with CI secrets; bump both
+      # together when upgrading (shasum -a 256 of daytona-linux-amd64).
       - name: Install Daytona CLI
         if: steps.config.outputs.enabled == 'true'
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
+          DAYTONA_CLI_TAG: v0.204.0
+          DAYTONA_CLI_SHA256: 4f8cdccc3959d79767e1abe62c6c9010831bc0668509522cbdb046cd92206f97
         run: |
           set -euo pipefail
-          gh release download --repo daytona/clients --pattern daytona-linux-amd64 --output /tmp/daytona --clobber
+          gh release download "$DAYTONA_CLI_TAG" --repo daytona/clients --pattern daytona-linux-amd64 --output /tmp/daytona --clobber
+          echo "$DAYTONA_CLI_SHA256  /tmp/daytona" | sha256sum -c -
           sudo install -m 0755 /tmp/daytona /usr/local/bin/daytona
           daytona --version
           # The CLI requires a stored profile; the env var alone is not enough.
