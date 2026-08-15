@@ -15,11 +15,6 @@ on:
         required: false
         default: ""
         type: string
-  # TEMP(pre-merge validation): removed before merge
-  push:
-    branches:
-      - feat/slow-specs-sweep
-
 permissions:
   contents: read
 
@@ -65,7 +60,6 @@ jobs:
         if: steps.config.outputs.enabled == 'true'
         shell: bash
         env:
-          EVENT_NAME: ${{ github.event_name }}
           ONLY_FILTER: ${{ inputs.only }}
         run: |
           set -euo pipefail
@@ -102,11 +96,6 @@ jobs:
             echo "Excluded (raw desktop(); need the in-sandbox lane): $(echo "$excluded_json" | jq 'length')"
             echo "$excluded_json" | jq -r '.[] | "- `\(.)`"'
           } >> "$GITHUB_STEP_SUMMARY"
-
-          # TEMP(pre-merge validation): removed before merge
-          if [ "$EVENT_NAME" = "push" ]; then
-            specs='["join-org-success-download.slow.test.ts","connect-state-provenance.slow.test.ts"]'
-          fi
 
           echo "specs=$specs" >> "$GITHUB_OUTPUT"
           echo "Spec matrix: $specs"
