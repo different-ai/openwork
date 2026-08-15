@@ -1,7 +1,7 @@
 /** @jsxImportSource react */
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Download, ExternalLink, FolderOpen, X } from "lucide-react";
+import { Check, Copy, Download, ExternalLink, FolderOpen, X } from "lucide-react";
 
 import type { OpenworkServerClient } from "@/app/lib/openwork-server";
 import { getDesktopFileIcon, openDesktopPath, revealDesktopItemInDir } from "@/app/lib/desktop";
@@ -95,6 +95,8 @@ function ArtifactPanelView({ client, workspaceId, workspaceRoot, isRemoteWorkspa
   const queryClient = useQueryClient();
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
+  const [copied, setCopied] = useState(false);
+  const copyTimeoutRef = useRef<number | null>(null);
   const lastSyncedRef = useRef<string | null>(null);
   const failedDraftRef = useRef<string | null>(null);
   const isDirectTextEdit = isTextContent(target) && target.preview === "markdown" && !isMarkdownPrimitiveEvalArtifact(target);
@@ -244,6 +246,30 @@ function ArtifactPanelView({ client, workspaceId, workspaceRoot, isRemoteWorkspa
     }
   };
 
+  const copyContent = async () => {
+    if (data?.kind !== "text") return;
+
+    try {
+      await navigator.clipboard.writeText(draft);
+      setCopied(true);
+      if (copyTimeoutRef.current !== null) {
+        window.clearTimeout(copyTimeoutRef.current);
+      }
+      copyTimeoutRef.current = window.setTimeout(() => {
+        setCopied(false);
+        copyTimeoutRef.current = null;
+      }, 1_500);
+    } catch {
+      // ignore clipboard failures
+    }
+  };
+
+  useEffect(() => () => {
+    if (copyTimeoutRef.current !== null) {
+      window.clearTimeout(copyTimeoutRef.current);
+    }
+  }, []);
+
   const isTextEditing = data?.kind === "text" && (editing || isDirectTextEdit);
   const isDirty = data?.kind === "text" && draft !== data.data;
 
@@ -301,6 +327,18 @@ function ArtifactPanelView({ client, workspaceId, workspaceRoot, isRemoteWorkspa
                 )}
               />
               <TooltipContent>{editing ? "Stop editing" : "Edit artifact"}</TooltipContent>
+            </Tooltip>
+          ) : null}
+          {data?.kind === "text" ? (
+            <Tooltip>
+              <TooltipTrigger
+                render={(
+                  <Button variant="ghost" size="icon-sm" onClick={() => void copyContent()} aria-label={copied ? "Copied" : "Copy artifact"}>
+                    {copied ? <Check /> : <Copy />}
+                  </Button>
+                )}
+              />
+              <TooltipContent>{copied ? "Copied" : "Copy artifact"}</TooltipContent>
             </Tooltip>
           ) : null}
           {target.kind === "file" ? (
