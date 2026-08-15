@@ -84,11 +84,14 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
         run: |
           set -euo pipefail
           gh release download --repo daytona/clients --pattern daytona-linux-amd64 --output /tmp/daytona --clobber
           sudo install -m 0755 /tmp/daytona /usr/local/bin/daytona
           daytona --version
+          # The CLI requires a stored profile; the env var alone is not enough.
+          daytona login --api-key "$DAYTONA_API_KEY"
 
       - name: Run mega journey
         id: mega-run
