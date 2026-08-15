@@ -1,0 +1,158 @@
+# Runs the mega journey nightly on Daytona and judges deferred vision claims.
+# The mega spec self-skips without its opt-in environment variables, which this
+# workflow sets explicitly.
+name: Nightly Mega Eval
+
+on:
+  schedule:
+    - cron: "47 3 * * *"
+  workflow_dispatch:
+    inputs:
+      model:
+        description: "Bare OpenAI model id"
+        required: false
+        default: "gpt-4o"
+        type: string
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: nightly-mega-eval
+  cancel-in-progress: false
+
+jobs:
+  mega:
+    if: github.repository == 'different-ai/openwork'
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 100
+
+    steps:
+      - name: Check nightly mega configuration
+        id: config
+        shell: bash
+        env:
+          DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          set -euo pipefail
+
+          missing=""
+          [ -z "${DAYTONA_API_KEY:-}" ] && missing="$missing DAYTONA_API_KEY"
+          [ -z "${OPENAI_API_KEY:-}" ] && missing="$missing OPENAI_API_KEY"
+          if [ -n "$missing" ]; then
+            echo "::notice::Skipping nightly mega eval; missing GitHub configuration:$missing."
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "enabled=true" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout
+        if: steps.config.outputs.enabled == 'true'
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - name: Setup Node
+        if: steps.config.outputs.enabled == 'true'
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+
+      - name: Setup pnpm
+        if: steps.config.outputs.enabled == 'true'
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 11.4.0
+
+      - name: Install dependencies
+        if: steps.config.outputs.enabled == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          pnpm install --frozen-lockfile
+
+      - name: Run mega journey
+        id: mega-run
+        if: steps.config.outputs.enabled == 'true'
+        shell: bash
+        env:
+          DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          DISPATCH_MODEL: ${{ inputs.model }}
+          EVENT_NAME: ${{ github.event_name }}
+          NIGHTLY_MODEL: ${{ vars.OPENWORK_EVAL_NIGHTLY_MODEL }}
+        run: |
+          set -euo pipefail
+
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            MODEL="${DISPATCH_MODEL:-gpt-4o}"
+          else
+            MODEL="${NIGHTLY_MODEL:-gpt-4o}"
+          fi
+
+          OPENWORK_EVAL_DAYTONA=1 OPENWORK_EVAL_APP_SPECS=1 OPENWORK_EVAL_MEGA_SPEC=1 \
+          OPENWORK_EVAL_MODEL="${MODEL}" OPENWORK_EVAL_VISION=defer \
+          pnpm --dir evals exec vitest run --config vitest.config.ts --project stack specs/org-team-lifecycle-mega.slow.test.ts \
+            2>&1 | tee /tmp/mega-run.log
+
+      - name: Judge deferred vision claims
+        if: steps.config.outputs.enabled == 'true'
+        shell: bash
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          set -euo pipefail
+          pnpm --dir evals fraimz:judge -- --roll latest
+
+      - name: Upload nightly mega roll
+        if: always() && steps.config.outputs.enabled == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: nightly-mega-roll
+          path: evals/results/rolls/
+          retention-days: 14
+          if-no-files-found: warn
+
+      - name: Report nightly mega failure
+        if: failure()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+
+          gh label create nightly-eval \
+            --color "B60205" \
+            --description "Automated nightly evaluation failures" \
+            --force
+
+          issue_number="$(gh issue list \
+            --state open \
+            --label nightly-eval \
+            --search '"Nightly mega eval failed" in:title' \
+            --json number,title \
+            --jq 'map(select(.title == "Nightly mega eval failed"))[0].number // empty')"
+
+          if [ -z "$issue_number" ]; then
+            issue_url="$(gh issue create \
+              --title "Nightly mega eval failed" \
+              --label nightly-eval \
+              --body "The nightly mega evaluation has failed. Failure details are posted as comments.")"
+            issue_number="${issue_url##*/}"
+          fi
+
+          {
+            echo "Nightly mega eval failed: $RUN_URL"
+            echo
+            echo '```text'
+            if [ -f /tmp/mega-run.log ]; then
+              tail -n 40 /tmp/mega-run.log
+            else
+              echo "Vitest log unavailable."
+            fi
+            echo '```'
+          } > /tmp/nightly-mega-failure.md
+
+          gh issue comment "$issue_number" --body-file /tmp/nightly-mega-failure.md

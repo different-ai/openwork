@@ -26,6 +26,7 @@ import {
   inviteMember,
   mcpMock,
   needs,
+  readCloudMcpHealth,
   server,
   test,
   unmetNeeds,
@@ -38,6 +39,7 @@ import type { NeedsSpec } from "@openwork/testkit";
  * shares that skill through a person-scoped marketplace, and proves from a
  * sequential teammate desktop that the real model runs and the shared skill
  * uses the organization connector.
+ * It also claims each desktop's openwork-cloud MCP health and direct tool probe.
  *
  * Step-0 research (2026-08-09): the preferred path exists today. The signed-in
  * app reconciler requires an active org, mints a fresh token, and repairs the
@@ -455,6 +457,48 @@ test.skipIf(missingRequirements.length > 0)(title, { timeout: 45 * 60_000 }, asy
       true,
     );
 
+    // This doubles as a fail-fast gate: a broken connector fails here in seconds with a named phase instead of surfacing as the 420s authoring timeout downstream.
+    const adminCloudMcp = await eventually(
+      () => readCloudMcpHealth(appAdmin, appAdmin.workspaceId, { probe: true }),
+      {
+        within: 180_000,
+        intervalMs: 5_000,
+        label: "admin openwork-cloud MCP ready",
+        until: (h) => h.ok && h.phase === "ready" && h.direct.checked && h.direct.missing.length === 0,
+      },
+    );
+    expect(adminCloudMcp.phase).toBe("ready");
+    expect(adminCloudMcp.usable).toBe(true);
+    expect(adminCloudMcp.engineStatus).toBe("connected");
+    expect(adminCloudMcp.direct.source).toBe("mcp_tools_list");
+    expect(adminCloudMcp.direct.present).toEqual(expect.arrayContaining(["search_capabilities", "execute_capability"]));
+    expect(adminCloudMcp.direct.missing).toEqual([]);
+    expect(adminCloudMcp.tools.missing).toEqual([]);
+    expect(adminCloudMcp.direct.present).not.toContain("mock_echo");
+    expect(adminCloudMcp.tools.present).not.toContain("mock_echo");
+    const adminCloudMcpReady = adminCloudMcp.ok
+      && adminCloudMcp.phase === "ready"
+      && adminCloudMcp.usable === true
+      && adminCloudMcp.engineStatus === "connected"
+      && adminCloudMcp.direct.checked
+      && adminCloudMcp.direct.source === "mcp_tools_list"
+      && adminCloudMcp.direct.present.includes("search_capabilities")
+      && adminCloudMcp.direct.present.includes("execute_capability")
+      && adminCloudMcp.direct.missing.length === 0
+      && adminCloudMcp.tools.missing.length === 0;
+    evidence.fact(
+      "The admin desktop's OpenWork Connect MCP connector is registered and live-probed ready",
+      `Health phase=${adminCloudMcp.phase}, engine=${adminCloudMcp.engineStatus}, probed tools=${JSON.stringify(adminCloudMcp.direct.present)}.`,
+      adminCloudMcpReady,
+    );
+    const adminGatewaySurfaceOnly = !adminCloudMcp.direct.present.includes("mock_echo")
+      && !adminCloudMcp.tools.present.includes("mock_echo");
+    evidence.fact(
+      "The Connect tool list is exactly the gateway surface",
+      `mock_echo is absent from direct tools ${JSON.stringify(adminCloudMcp.direct.present)} and registered tools ${JSON.stringify(adminCloudMcp.tools.present)}.`,
+      adminGatewaySurfaceOnly,
+    );
+
     await sendComposerMessage(appAdmin, [
       "Create exactly one OpenWork Cloud skill, not a local skill.",
       "Load and follow the remote create-skill capability `skill:create-skill`, then verify the created plugin.",
@@ -642,6 +686,48 @@ test.skipIf(missingRequirements.length > 0)(title, { timeout: 45 * 60_000 }, asy
       "The teammate's real OpenAI model is selectable through workspace config",
       `Workspace ${appMate.workspaceId} selected ${teammateModelId} after the config patch and engine reload.`,
       true,
+    );
+
+    // This turns the later mock_echo connector witness into a checked-precondition round-trip rather than an inference.
+    const teammateCloudMcp = await eventually(
+      () => readCloudMcpHealth(appMate, appMate.workspaceId, { probe: true }),
+      {
+        within: 180_000,
+        intervalMs: 5_000,
+        label: "teammate openwork-cloud MCP ready",
+        until: (h) => h.ok && h.phase === "ready" && h.direct.checked && h.direct.missing.length === 0,
+      },
+    );
+    expect(teammateCloudMcp.phase).toBe("ready");
+    expect(teammateCloudMcp.usable).toBe(true);
+    expect(teammateCloudMcp.engineStatus).toBe("connected");
+    expect(teammateCloudMcp.direct.source).toBe("mcp_tools_list");
+    expect(teammateCloudMcp.direct.present).toEqual(expect.arrayContaining(["search_capabilities", "execute_capability"]));
+    expect(teammateCloudMcp.direct.missing).toEqual([]);
+    expect(teammateCloudMcp.tools.missing).toEqual([]);
+    expect(teammateCloudMcp.direct.present).not.toContain("mock_echo");
+    expect(teammateCloudMcp.tools.present).not.toContain("mock_echo");
+    const teammateCloudMcpReady = teammateCloudMcp.ok
+      && teammateCloudMcp.phase === "ready"
+      && teammateCloudMcp.usable === true
+      && teammateCloudMcp.engineStatus === "connected"
+      && teammateCloudMcp.direct.checked
+      && teammateCloudMcp.direct.source === "mcp_tools_list"
+      && teammateCloudMcp.direct.present.includes("search_capabilities")
+      && teammateCloudMcp.direct.present.includes("execute_capability")
+      && teammateCloudMcp.direct.missing.length === 0
+      && teammateCloudMcp.tools.missing.length === 0;
+    evidence.fact(
+      "The plain-member desktop's OpenWork Connect MCP connector is registered and live-probed ready",
+      `Health phase=${teammateCloudMcp.phase}, engine=${teammateCloudMcp.engineStatus}, probed tools=${JSON.stringify(teammateCloudMcp.direct.present)}.`,
+      teammateCloudMcpReady,
+    );
+    const teammateGatewaySurfaceOnly = !teammateCloudMcp.direct.present.includes("mock_echo")
+      && !teammateCloudMcp.tools.present.includes("mock_echo");
+    evidence.fact(
+      "The plain member's Connect tool list is exactly the gateway surface",
+      `mock_echo is absent from direct tools ${JSON.stringify(teammateCloudMcp.direct.present)} and registered tools ${JSON.stringify(teammateCloudMcp.tools.present)}.`,
+      teammateGatewaySurfaceOnly,
     );
 
     // Small models drop digits from long decimal runs when echoing verbatim
