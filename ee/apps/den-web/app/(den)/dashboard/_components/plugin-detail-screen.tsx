@@ -619,7 +619,7 @@ function ProgramsSection({ plugin, onAdd, onOpen }: { plugin: DenPlugin; onAdd: 
             <Code2 className="h-3.5 w-3.5" />
             Programs
           </h2>
-          <p className="mt-1 text-[12px] text-gray-400">Reusable Code Mode Programs shared with this Plugin and its Marketplace audiences.</p>
+          <p className="mt-1 text-[12px] text-gray-400">Reusable Code Mode Programs shared with this Plugin and its collection audiences.</p>
         </div>
         <DenButton size="sm" onClick={onAdd}><Plus className="h-3.5 w-3.5" aria-hidden />Add Program</DenButton>
       </div>
@@ -678,7 +678,7 @@ function AddProgramDialog({
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 px-4 py-6" onClick={busy ? undefined : onClose}>
       <div role="dialog" aria-modal="true" aria-labelledby="add-program-title" className="w-full max-w-[520px] rounded-2xl border border-gray-100 bg-white p-6 shadow-[0_24px_60px_-24px_rgba(15,23,42,0.4)]" onClick={(event) => event.stopPropagation()}>
         <h2 id="add-program-title" className="text-[16px] font-semibold tracking-[-0.01em] text-gray-950">Add a Program to {plugin.name}</h2>
-        <p className="mt-1 text-[13px] leading-6 text-gray-500">Programs in this Plugin are visible to the same people and teams as the Plugin, including Marketplace audiences.</p>
+        <p className="mt-1 text-[13px] leading-6 text-gray-500">Programs in this Plugin are visible to the same people and teams as the Plugin, including collection audiences.</p>
         <div className="mt-4 max-h-72 space-y-2 overflow-y-auto">
           {available.length === 0 ? (
             <div className="rounded-xl border border-dashed border-gray-200 px-4 py-6 text-center text-[13px] text-gray-500">No unattached Programs you manage are available. Create one from a successful Code Mode run and choose this Plugin when saving.</div>

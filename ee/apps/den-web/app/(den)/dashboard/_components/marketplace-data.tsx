@@ -169,7 +169,7 @@ export function parseMarketplaceResolvedPayload(payload: unknown): MarketplaceRe
   const item = isRecord(payload) && isRecord(payload.item) ? payload.item : null;
   const marketplace = item && isRecord(item.marketplace) ? parseMarketplace(item.marketplace) : null;
   if (!item || !marketplace) {
-    throw new Error("Marketplace resolved response was incomplete.");
+    throw new Error("Collection resolved response was incomplete.");
   }
 
   const plugins = Array.isArray(item.plugins)
@@ -224,7 +224,7 @@ export function useMarketplace(marketplaceId: string | null) {
         15000,
       );
       if (!response.ok) {
-        throw new Error(getErrorMessage(payload, `Failed to load marketplace (${response.status}).`));
+        throw new Error(getErrorMessage(payload, `Failed to load collection (${response.status}).`));
       }
 
       return parseMarketplaceResolvedPayload(payload);
@@ -260,7 +260,7 @@ export function useMarketplaceAccess(marketplaceId: string | null) {
         15000,
       );
       if (!response.ok) {
-        throw new Error(getErrorMessage(payload, `Failed to load marketplace access (${response.status}).`));
+        throw new Error(getErrorMessage(payload, `Failed to load collection access (${response.status}).`));
       }
 
       const items = isRecord(payload) && Array.isArray(payload.items) ? payload.items : [];
@@ -413,7 +413,7 @@ export function useMarketplaces() {
         15000,
       );
       if (!response.ok) {
-        throw new Error(getErrorMessage(payload, `Failed to load marketplaces (${response.status}).`));
+        throw new Error(getErrorMessage(payload, `Failed to load collections (${response.status}).`));
       }
 
       const items = isRecord(payload) && Array.isArray(payload.items) ? payload.items : [];
@@ -444,12 +444,12 @@ export function useCreateMarketplace() {
           15000,
         );
         if (!response.ok) {
-          throw getRequestError(payload, response, `Failed to create marketplace (${response.status}).`);
+          throw getRequestError(payload, response, `Failed to create collection (${response.status}).`);
         }
         created = isRecord(payload) && isRecord(payload.item) ? parseMarketplace(payload.item) : null;
       });
       if (!created) {
-        throw new Error("Marketplace create response was incomplete.");
+        throw new Error("Collection create response was incomplete.");
       }
       return created;
     },
@@ -476,12 +476,12 @@ export function useUpdateMarketplace() {
           15000,
         );
         if (!response.ok) {
-          throw getRequestError(payload, response, `Failed to update marketplace (${response.status}).`);
+          throw getRequestError(payload, response, `Failed to update collection (${response.status}).`);
         }
         updated = isRecord(payload) && isRecord(payload.item) ? parseMarketplace(payload.item) : null;
       });
       if (!updated) {
-        throw new Error("Marketplace update response was incomplete.");
+        throw new Error("Collection update response was incomplete.");
       }
       return updated;
     },
@@ -505,7 +505,7 @@ export function useDeleteMarketplace() {
           15000,
         );
         if (!response.ok) {
-          throw getRequestError(payload, response, `Failed to delete marketplace (${response.status}).`);
+          throw getRequestError(payload, response, `Failed to delete collection (${response.status}).`);
         }
       });
       return marketplaceId;

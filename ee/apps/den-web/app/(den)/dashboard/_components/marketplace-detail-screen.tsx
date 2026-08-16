@@ -129,7 +129,7 @@ export function MarketplaceDetailScreen({ marketplaceId }: { marketplaceId: stri
     return (
       <div className="mx-auto max-w-[860px] px-6 py-8 md:px-8">
         <div className="rounded-2xl border border-gray-100 bg-white px-5 py-8 text-[13px] text-gray-400">
-          Loading marketplace…
+          Loading collection…
         </div>
       </div>
     );
@@ -139,7 +139,7 @@ export function MarketplaceDetailScreen({ marketplaceId }: { marketplaceId: stri
     return (
       <div className="mx-auto max-w-[860px] px-6 py-8 md:px-8">
         <div className="rounded-2xl border border-red-100 bg-red-50 px-5 py-3.5 text-[13px] text-red-600">
-          {error instanceof Error ? error.message : "That marketplace could not be found."}
+          {error instanceof Error ? error.message : "That collection could not be found."}
         </div>
       </div>
     );
@@ -292,10 +292,10 @@ export function MarketplaceDetailScreen({ marketplaceId }: { marketplaceId: stri
               <div className="mb-3 flex flex-wrap items-end justify-between gap-3">
                 <div>
                   <h2 className="text-[14px] font-semibold tracking-[-0.01em] text-gray-900">
-                    Plugins in this marketplace
+                    Plugins in this collection
                   </h2>
                   <p className="mt-0.5 text-[12.5px] text-gray-500">
-                    Everyone with access to this marketplace gets these in the desktop app.
+                    Everyone with access to this collection gets these in the desktop app.
                   </p>
                 </div>
                 <div className="flex items-center gap-3">
@@ -314,7 +314,7 @@ export function MarketplaceDetailScreen({ marketplaceId }: { marketplaceId: stri
               {plugins.length === 0 ? (
                 <div className="rounded-2xl border border-dashed border-gray-200 bg-white px-5 py-10 text-center">
                   <p className="text-[14px] font-medium tracking-[-0.02em] text-gray-800">
-                    No plugins in this marketplace yet
+                    No plugins in this collection yet
                   </p>
                   <p className="mx-auto mt-2 max-w-[420px] text-[13px] leading-6 text-gray-500">
                     Plugins appear here as they're imported from the source repository.
@@ -434,10 +434,10 @@ function EditMarketplaceDialog({
         onClick={(event) => event.stopPropagation()}
       >
         <h2 id="edit-marketplace-title" className="text-[16px] font-semibold tracking-[-0.01em] text-gray-950">
-          Edit marketplace
+          Edit collection
         </h2>
         <p className="mt-1 text-[13px] leading-6 text-gray-500">
-          Update how this marketplace appears to your organization.
+          Update how this collection appears to your organization.
         </p>
 
         <label className="mt-4 block">
@@ -463,7 +463,7 @@ function EditMarketplaceDialog({
 
         {updateMarketplace.error ? (
           <p className="mt-3 text-[12.5px] text-red-600">
-            {updateMarketplace.error instanceof Error ? updateMarketplace.error.message : "Failed to update marketplace."}
+            {updateMarketplace.error instanceof Error ? updateMarketplace.error.message : "Failed to update collection."}
           </p>
         ) : null}
 
@@ -528,7 +528,7 @@ function DeleteMarketplaceDialog({
 
         {error ? (
           <p className="mt-4 rounded-xl bg-red-50 px-3 py-2 text-[12.5px] text-red-600">
-            {error instanceof Error ? error.message : "Failed to delete marketplace."}
+            {error instanceof Error ? error.message : "Failed to delete collection."}
           </p>
         ) : null}
 
@@ -537,7 +537,7 @@ function DeleteMarketplaceDialog({
             Cancel
           </DenButton>
           <DenButton variant="destructive" icon={Trash2} loading={busy} onClick={onConfirm} data-testid="confirm-delete-marketplace">
-            Delete marketplace
+            Delete collection
           </DenButton>
         </div>
       </div>
@@ -628,8 +628,8 @@ function MarketplaceAccessSection({ marketplaceId }: { marketplaceId: string }) 
             </p>
             <p className="mt-0.5 text-[12.5px] leading-[1.55] text-gray-500">
               {orgWideGrant
-                ? "All org members can see this marketplace."
-                : "Only admins and people you add below can see this marketplace."}
+                ? "All org members can see this collection."
+                : "Only admins and people you add below can see this collection."}
             </p>
           </div>
           <div
@@ -901,7 +901,7 @@ function MarketplaceConfigureSection({
       <div className="rounded-2xl border border-gray-100 bg-white px-5 py-10 text-center">
         <p className="text-[14px] font-semibold tracking-[-0.01em] text-gray-900">Everything is configured</p>
         <p className="mx-auto mt-1.5 max-w-[420px] text-[13px] leading-6 text-gray-500">
-          This marketplace has no MCP configuration actions waiting.
+          This collection has no MCP configuration actions waiting.
         </p>
       </div>
     );
@@ -1163,7 +1163,7 @@ export function PluginMcpSetupDialog({
               <div className="min-w-0">
                 <h2 className="text-[18px] font-semibold tracking-[-0.02em] text-gray-950">Configure {serviceName}</h2>
                 <p className="mt-1 text-[12.5px] leading-5 text-gray-500">
-                  Required by {target.plugin.name}. Access follows this marketplace.
+                  Required by {target.plugin.name}. Access follows this collection.
                 </p>
               </div>
               <button
@@ -1226,7 +1226,7 @@ export function PluginMcpSetupDialog({
                     placeholder="API key"
                   />
                   <p className="mt-1.5 text-[11.5px] leading-4 text-gray-500">
-                    Stored securely as a shared marketplace credential.
+                    Stored securely as a shared collection credential.
                   </p>
                 </div>
               ) : null}

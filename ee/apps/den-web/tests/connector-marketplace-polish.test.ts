@@ -10,9 +10,9 @@ function readDashboardComponent(name: string) {
 }
 
 describe("connector and marketplace polish", () => {
-  test("labels Sources alpha and keeps Marketplace first with Connectors as MCPs", () => {
+  test("labels Sources alpha and keeps Collections first with Connectors as MCPs", () => {
     const shell = readDashboardComponent("org-dashboard-shell.tsx");
-    const marketplaceIndex = shell.indexOf('getMarketplacesRoute(activeOrg.slug),\n          label: "Marketplace"');
+    const marketplaceIndex = shell.indexOf('getMarketplacesRoute(activeOrg.slug),\n          label: "Collections"');
     const pluginsIndex = shell.indexOf('getPluginsRoute(activeOrg.slug),\n          label: "Plugin Directory"');
     const connectorsIndex = shell.indexOf('getMcpConnectionsRoute(activeOrg.slug),\n          label: "Connectors"');
     const sourcesIndex = shell.indexOf('getIntegrationsRoute(activeOrg.slug),\n          label: "Sources"');

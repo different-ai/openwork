@@ -9,7 +9,7 @@ export function ExtensionsDownloadPromo({ orgSlug }: { orgSlug: string }) {
         Download the app to unlock extensions
       </h2>
       <p className="mt-1.5 text-[13px] leading-6 text-[#526582]">
-        Sign in with this account to get Computer Use, Browser, Image Gen, Google Workspace, and your team&apos;s marketplace extensions — all built in.
+        Sign in with this account to get Computer Use, Browser, Image Gen, Google Workspace, and your team&apos;s collection extensions — all built in.
       </p>
       <div className="mt-3 flex flex-wrap gap-2">
         <Link

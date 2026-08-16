@@ -339,7 +339,7 @@ function DisconnectConfirmDialog({
               </li>
               <li className="flex gap-2">
                 <span className="text-gray-400">•</span>
-                <span>All plugins and marketplaces created from those repos</span>
+                <span>All plugins and collections created from those repos</span>
               </li>
               <li className="flex gap-2">
                 <span className="text-gray-400">•</span>

@@ -282,10 +282,10 @@ export function MarketplacePluginsSection({
       <SettingsSectionHeader>
         <SettingsSectionHeaderContent>
           <SettingsSectionHeaderTitle>
-            Marketplaces & Plugins
+            Collections & Plugins
           </SettingsSectionHeaderTitle>
           <SettingsSectionHeaderDescription>
-            Browse organization marketplaces and import plugin files into this workspace.
+            Browse organization collections and import plugin files into this workspace.
           </SettingsSectionHeaderDescription>
         </SettingsSectionHeaderContent>
         <SettingsSectionHeaderActions>
@@ -305,7 +305,7 @@ export function MarketplacePluginsSection({
 
       {!busy && marketplaces.length === 0 ? (
         <SettingsListEmptyState>
-          {hasActiveOrg ? "No marketplaces are available yet." : "Choose an organization to view marketplaces."}
+          {hasActiveOrg ? "No collections are available yet." : "Choose an organization to view collections."}
         </SettingsListEmptyState>
       ) : null}
 
@@ -370,7 +370,7 @@ export function MarketplacePluginsSection({
             ) : null}
 
             {selectedMarketplace && selectedRows.length === 0 ? (
-              <SettingsListEmptyState>This marketplace does not have plugins yet.</SettingsListEmptyState>
+              <SettingsListEmptyState>This collection does not have plugins yet.</SettingsListEmptyState>
             ) : null}
           </TabsContent>
         </Tabs>

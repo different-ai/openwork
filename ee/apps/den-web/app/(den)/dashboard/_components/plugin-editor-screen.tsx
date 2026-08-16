@@ -491,7 +491,7 @@ export function PluginEditorScreen() {
           </span>
         </label>
         <div>
-          <label className="mb-1.5 block text-[13px] font-medium text-gray-700">Marketplace</label>
+          <label className="mb-1.5 block text-[13px] font-medium text-gray-700">Collection</label>
           <DenSelect
             value={marketplaceId}
             onChange={(event) => {
@@ -508,7 +508,7 @@ export function PluginEditorScreen() {
             ))}
           </DenSelect>
           <p className="mt-1.5 text-[13px] text-gray-500">
-            Publishing puts the plugin in the marketplace so members find it in the OpenWork app.
+            Publishing puts the plugin in the collection so members find it in the OpenWork app.
           </p>
         </div>
       </div>

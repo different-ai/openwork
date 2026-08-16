@@ -588,7 +588,7 @@ function RemoveRepositoryConfirmDialog({
               </li>
               <li className="flex gap-2">
                 <span className="text-gray-400">•</span>
-                <span>Any marketplace that was created solely from this repository and is now empty</span>
+                <span>Any collection that was created solely from this repository and is now empty</span>
               </li>
             </ul>
             <p className="mt-3 text-[12px] leading-5 text-gray-500">

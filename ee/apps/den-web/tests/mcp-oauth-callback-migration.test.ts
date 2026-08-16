@@ -59,7 +59,7 @@ describe("MCP OAuth callback compatibility UI contract", () => {
   test("warns before deleting a connection", () => {
     const screen = readFileSync(screenPath, "utf8")
 
-    expect(screen).toContain("This can remove access grants, per-member authorization state, and plugin or marketplace bindings")
+    expect(screen).toContain("This can remove access grants, per-member authorization state, and plugin or collection bindings")
     expect(screen).toContain("window.confirm")
   })
 

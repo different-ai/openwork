@@ -308,7 +308,7 @@ function describePluginScope(plugins: DenPlugin[]): string {
   ).size;
   const pluginLabel = `${plugins.length} plugin${plugins.length === 1 ? "" : "s"}`;
   if (marketplaceCount === 0) return pluginLabel;
-  return `${pluginLabel} across ${marketplaceCount} marketplace${marketplaceCount === 1 ? "" : "s"}`;
+  return `${pluginLabel} across ${marketplaceCount} collection${marketplaceCount === 1 ? "" : "s"}`;
 }
 
 function EmptyState({ title, description }: { title: string; description: string }) {

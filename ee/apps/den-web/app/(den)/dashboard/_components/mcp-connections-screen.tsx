@@ -581,14 +581,14 @@ export function McpConnectionsScreen() {
 
   function handleRemove(connection: ExternalMcpConnection) {
     const confirmed = window.confirm(
-      `Delete ${connection.name}? This can remove access grants, per-member authorization state, and plugin or marketplace bindings.`,
+      `Delete ${connection.name}? This can remove access grants, per-member authorization state, and plugin or collection bindings.`,
     );
     if (confirmed) deleteConnection.mutate(connection.id);
   }
 
   async function handleDisconnect(connection: ExternalMcpConnection) {
     const confirmed = window.confirm(
-      `Disconnect ${connection.name}? This signs out every associated account for this connection, but keeps the MCP server setup, access rules, and plugin or marketplace bindings so you can reconnect later.`,
+      `Disconnect ${connection.name}? This signs out every associated account for this connection, but keeps the MCP server setup, access rules, and plugin or collection bindings so you can reconnect later.`,
     );
     if (!confirmed) return;
     setConnectionActionError(null);
@@ -646,7 +646,7 @@ export function McpConnectionsScreen() {
         <div data-testid="mcp-connections-staging-banner" className="mb-6 rounded-[24px] border border-amber-200 bg-amber-50 px-5 py-4 text-[14px] leading-6 text-amber-800">
           <p className="font-semibold text-amber-900">OpenWork Connect (beta) is staged for this org.</p>
           <p className="mt-1">
-            Connectors and marketplace capabilities you set up here stay staged and invisible to members until a platform admin enables OpenWork Connect (beta) for this org. Admin management remains fully usable.
+            Connectors and collection capabilities you set up here stay staged and invisible to members until a platform admin enables OpenWork Connect (beta) for this org. Admin management remains fully usable.
           </p>
         </div>
       ) : null}
@@ -1021,7 +1021,7 @@ function ImportPluginConnectionDialog({
       return;
     }
     if (!marketplaceId) {
-      setError("Choose a marketplace.");
+      setError("Choose a collection.");
       return;
     }
     if (selectedServerKeys.length === 0 && selectedSkillKeys.length === 0) {
@@ -1087,7 +1087,7 @@ function ImportPluginConnectionDialog({
       >
         <h2 className="text-[18px] font-semibold tracking-[-0.02em] text-gray-950">Add plugin connection</h2>
         <p className="mt-1 text-[13px] leading-6 text-gray-600">
-          Import a plugin from GitHub. Remote MCPs become Den-hosted org connections; imported skills are saved as skill config objects on the plugin and published through marketplaces.
+          Import a plugin from GitHub. Remote MCPs become Den-hosted org connections; imported skills are saved as skill config objects on the plugin and published through collections.
         </p>
 
         <div className="mt-5 rounded-2xl border border-gray-100 bg-gray-50 p-4">
@@ -1205,7 +1205,7 @@ function ImportPluginConnectionDialog({
                 </DenSelect>
               </label>
               <label className="block">
-                <span className="mb-1.5 block text-[12px] font-medium text-gray-700">Marketplace</span>
+                <span className="mb-1.5 block text-[12px] font-medium text-gray-700">Collection</span>
                 <DenSelect value={marketplaceId} onChange={(event) => setMarketplaceId(event.target.value)} disabled={busy}>
                   {marketplaces.map((marketplace) => (
                     <option key={marketplace.id} value={marketplace.id}>
@@ -2272,7 +2272,7 @@ function EditConnectionDialog({
         {marketplaceManaged ? (
           <div className="mt-4 rounded-2xl border border-blue-200 bg-blue-50 p-4 text-[12px] leading-5 text-blue-800" data-testid="marketplace-managed-identity-note">
             <p className="font-semibold text-blue-900">Server and authentication are managed by {marketplaceIdentityOwnerNames(marketplaceOwners)}.</p>
-            <p className="mt-1">Configure organization OAuth credentials here. Change the server URL or authentication type in the marketplace plugin definition.</p>
+            <p className="mt-1">Configure organization OAuth credentials here. Change the server URL or authentication type in the collection plugin definition.</p>
           </div>
         ) : null}
 

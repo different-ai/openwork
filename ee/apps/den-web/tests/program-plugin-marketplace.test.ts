@@ -17,7 +17,7 @@ describe("Program Plugin and Marketplace presentation", () => {
     expect(pluginData).toContain('objectType === "script"');
     expect(pluginDetail).toContain("No Programs in this Plugin yet.");
     expect(pluginDetail).toContain("Add Program");
-    expect(pluginDetail).toContain("Marketplace audiences");
+    expect(pluginDetail).toContain("collection audiences");
     expect(pluginDetail).toContain("Create one from a successful Code Mode run");
     expect(pluginData).toContain("useAttachProgramToPlugin");
     expect(pluginData).toContain("/config-objects`");

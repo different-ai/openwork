@@ -291,7 +291,7 @@ function getDashboardPageTitle(pathname: string, orgSlug: string | null) {
     return "Plugin Directory";
   }
   if (pathname.startsWith(getMarketplacesRoute(orgSlug))) {
-    return "Marketplace";
+    return "Collections";
   }
   if (pathname.startsWith(getIntegrationsRoute(orgSlug))) {
     return "Sources";
@@ -467,7 +467,7 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
     ? [
         {
           href: getMarketplacesRoute(activeOrg.slug),
-          label: "Marketplace",
+          label: "Collections",
           icon: Puzzle,
         },
         {

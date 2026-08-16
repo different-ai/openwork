@@ -51,8 +51,8 @@ export function MarketplacesScreen() {
   return (
     <DashboardPageTemplate
       icon={Store}
-      title="Marketplaces"
-      description="Marketplaces contain plugins. OpenWork Marketplace is built in, and assigned marketplaces show up inside the desktop app after sign-in."
+      title="Collections"
+      description="Collections contain plugins. The built-in OpenWork collection and assigned collections show up inside the desktop app after sign-in."
       colors={["#FEF3C7", "#92400E", "#F59E0B", "#FDE68A"]}
     >
       <div className="mb-6 flex flex-col gap-3 sm:flex-row">
@@ -62,34 +62,34 @@ export function MarketplacesScreen() {
             icon={Search}
             value={query}
             onChange={(event) => setQuery(event.target.value)}
-            placeholder="Search marketplaces..."
+            placeholder="Search collections..."
           />
         </div>
         {access.isAdmin ? (
           <DenButton icon={Plus} onClick={() => setCreateOpen(true)}>
-            New marketplace
+            New collection
           </DenButton>
         ) : null}
       </div>
 
       {error ? (
         <div className="mb-6 rounded-[24px] border border-red-200 bg-red-50 px-5 py-4 text-[14px] text-red-700">
-          {error instanceof Error ? error.message : "Failed to load marketplaces."}
+          {error instanceof Error ? error.message : "Failed to load collections."}
         </div>
       ) : null}
 
       {isLoading || integrationsLoading ? (
         <div className="rounded-2xl border border-gray-100 bg-white px-6 py-10 text-[14px] text-gray-500">
-          Loading marketplaces…
+          Loading collections…
         </div>
       ) : !hasAnyIntegration && marketplaces.length === 0 ? (
         <ConnectIntegrationEmptyState integrationsHref={getIntegrationsRoute(orgSlug)} />
       ) : filtered.length === 0 ? (
         <EmptyState
-          title={marketplaces.length === 0 ? "No marketplaces yet" : "No marketplaces match that search"}
+          title={marketplaces.length === 0 ? "No collections yet" : "No collections match that search"}
           description={
             marketplaces.length === 0
-              ? "Create or connect a marketplace, then assign it to everyone in your org or specific users and teams."
+              ? "Create or connect a collection, then assign it to everyone in your org or specific users and teams."
               : "Try a different search term or open the plugins tab."
           }
           action={
@@ -100,7 +100,7 @@ export function MarketplacesScreen() {
         />
       ) : (
         <DenCatalogList
-          label={`${filtered.length} marketplace${filtered.length === 1 ? "" : "s"}`}
+          label={`${filtered.length} collection${filtered.length === 1 ? "" : "s"}`}
           valueLabel="Plugins"
         >
           {filtered.map((marketplace) => (
@@ -176,7 +176,7 @@ function CreateMarketplaceDialog({
         onClick={(event) => event.stopPropagation()}
       >
         <h2 id="create-marketplace-title" className="text-[16px] font-semibold tracking-[-0.01em] text-gray-950">
-          New marketplace
+          New collection
         </h2>
         <p className="mt-1 text-[13px] leading-6 text-gray-500">
           Create a catalog for your organization. You can add plugins and choose its audience after creation.
@@ -196,7 +196,7 @@ function CreateMarketplaceDialog({
           <textarea
             value={description}
             onChange={(event) => setDescription(event.target.value)}
-            placeholder="What belongs in this marketplace?"
+            placeholder="What belongs in this collection?"
             rows={2}
             className="w-full resize-none rounded-xl border border-gray-200 px-3 py-2 text-[13px] text-gray-900 outline-none transition placeholder:text-gray-300 focus:border-gray-400"
           />
@@ -204,7 +204,7 @@ function CreateMarketplaceDialog({
 
         {createMutation.error ? (
           <p className="mt-3 text-[12.5px] text-red-600">
-            {createMutation.error instanceof Error ? createMutation.error.message : "Failed to create marketplace."}
+            {createMutation.error instanceof Error ? createMutation.error.message : "Failed to create collection."}
           </p>
         ) : null}
 
@@ -214,7 +214,7 @@ function CreateMarketplaceDialog({
           </DenButton>
           <DenButton disabled={!trimmedName || createMutation.isPending} onClick={() => void submit()}>
             {createMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : null}
-            Create marketplace
+            Create collection
           </DenButton>
         </div>
       </div>
@@ -251,8 +251,8 @@ function EmptyState({
 function ConnectIntegrationEmptyState({ integrationsHref }: { integrationsHref: string }) {
   return (
     <EmptyState
-      title="Connect an integration to discover marketplaces"
-      description="Marketplaces are created when OpenWork finds plugins in a connected repository. Assign them to everyone in your org or specific users and teams."
+      title="Connect an integration to discover collections"
+      description="Collections are created when OpenWork finds plugins in a connected repository. Assign them to everyone in your org or specific users and teams."
       action={{ href: integrationsHref, label: "Open Integrations", icon: Cable }}
     />
   );

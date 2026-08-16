@@ -170,7 +170,7 @@ export function getMockReposFor(provider: IntegrationProvider, accountId: string
       id: `${tag}:openwork-plugins`,
       name: "openwork-plugins",
       fullName: `${accountToLabel(accountId)}/openwork-plugins`,
-      description: "Internal plugin marketplace: release kit, commit commands, linear groomer.",
+      description: "Internal plugin collection: release kit, commit commands, linear groomer.",
       hasPlugins: true,
     },
     {

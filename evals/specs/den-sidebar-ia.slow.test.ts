@@ -132,7 +132,7 @@ test(title, async ({ evidence, place }) => {
   const adminSections = parseSections(await evalIn(browser, readSidebar));
   const adminItems = itemNames(adminSections);
   const adminSectionNames = adminSections.map((section) => section.name);
-  const adminHasMarketplace = adminItems.some((item) => item.includes("Marketplace"));
+  const adminHasMarketplace = adminItems.some((item) => item.includes("Collections"));
   const adminHasPluginDirectory = adminItems.some((item) => item.includes("Plugin Directory"));
   const adminHasConnectors = adminItems.some((item) => item.includes("Connectors") && item.includes("MCPs"));
   const adminHasWorkflowRuns = adminItems.some((item) => item.includes("Workflow Runs"));
@@ -173,7 +173,7 @@ test(title, async ({ evidence, place }) => {
     const shot = await screenshot(browser);
     const seen = await validate(shot, [
       "The left sidebar lists Work, Manage, Observability, and Team as section headings",
-      "The sidebar includes My Library, Marketplace, Plugin Directory, Connectors, Workflow Runs, and Settings",
+      "The sidebar includes My Library, Collections, Plugin Directory, Connectors, Workflow Runs, and Settings",
       "Tool Tester appears under Settings rather than as a top-level row",
       "The sidebar does not list Extensions or Your Connections as top-level rows",
     ]);
@@ -195,7 +195,7 @@ test(title, async ({ evidence, place }) => {
   const memberSections = parseSections(await evalIn(browser, readSidebar));
   const memberItems = itemNames(memberSections);
   const memberSectionNames = memberSections.map((section) => section.name);
-  const memberHasMarketplace = memberItems.some((item) => item.includes("Marketplace"));
+  const memberHasMarketplace = memberItems.some((item) => item.includes("Collections"));
   const memberHasWorkflowRuns = memberItems.some((item) => item.includes("Workflow Runs"));
   const memberHasPluginDirectory = memberItems.some((item) => item.includes("Plugin Directory"));
   const memberHasMyLibrary = memberItems.some((item) => item.includes("My Library"));
@@ -206,7 +206,7 @@ test(title, async ({ evidence, place }) => {
   expect(memberHasWorkflowRuns).toBe(false);
   expect(memberHasPluginDirectory).toBe(false);
   evidence.fact(
-    "The member sidebar is Work only: My Library is present and Marketplace, Plugin Directory, and Workflow Runs are absent",
+    "The member sidebar is Work only: My Library is present and Collections, Plugin Directory, and Workflow Runs are absent",
     `sections=${JSON.stringify(memberSectionNames)}; items=${JSON.stringify(memberItems)}`,
     memberSectionNames.join(",") === "work"
       && memberHasMyLibrary
@@ -218,7 +218,7 @@ test(title, async ({ evidence, place }) => {
   {
     const shot = await screenshot(browser);
     const seen = await validate(shot, [
-      "The left sidebar shows a Work section with My Library and does not show Manage, Marketplace, or Workflow Runs",
+      "The left sidebar shows a Work section with My Library and does not show Manage, Collections, or Workflow Runs",
       "The main page heading is My Library",
     ]);
     expect(seen.ok, seen.why).toBe(true);

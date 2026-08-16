@@ -14,7 +14,7 @@ function indexOfNeedle(needle: string) {
 }
 
 describe("Den org sidebar information architecture", () => {
-  test("members get Work labels and never see Marketplace or Workflow Runs as member destinations", () => {
+  test("members get Work labels and never see Collections or Workflow Runs as member destinations", () => {
     expect(shell).toContain('label: "My Library"');
     expect(shell).toContain('label: "My Automations"');
     expect(shell).toContain('label: "OpenWork Web"');
@@ -28,7 +28,7 @@ describe("Den org sidebar information architecture", () => {
   });
 
   test("admins see Manage then Observability then Team, with Models as a Providers category", () => {
-    const marketplace = indexOfNeedle('label: "Marketplace"');
+    const marketplace = indexOfNeedle('label: "Collections"');
     const pluginDirectory = indexOfNeedle('label: "Plugin Directory"');
     const connectors = indexOfNeedle('label: "Connectors"');
     const sources = indexOfNeedle('label: "Sources"');
