@@ -142,7 +142,7 @@ test.skipIf(!appSpecsEnabled || !mysqlOpen)(title, async ({ evidence, place }) =
   needs({ optIn: ["OPENWORK_EVAL_APP_SPECS"] });
   const run = Date.now();
   const skillName = `pr3806-connect-proof-${run}`;
-  const connectionName = `PR 3806 readiness connector ${run}`;
+  const connectionName = `PR3806 conn ${String(run).slice(-6)}`;
   const nonsenseName = `no-such-capability-${run}`;
   const rawSourceText = `---\nname: ${skillName}\ndescription: Proves preseeded Connect skill discovery on OpenCode 1.18.18.\n---\n\nReturn the PR 3806 Connect proof phrase.`;
 
