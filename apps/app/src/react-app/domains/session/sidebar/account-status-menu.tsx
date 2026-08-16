@@ -274,10 +274,10 @@ export function AccountStatusMenu(props: AccountStatusMenuProps) {
   });
   const accountLabel = signedIn
     ? user.name?.trim() || user.email
-    : restoringSession ? "OpenWork Cloud" : "Sign in";
+    : restoringSession ? "OpenWork Cloud" : t("den.signin_button");
   const accountDetail = signedIn
     ? (user.name ? user.email : "OpenWork Cloud")
-    : restoringSession ? "Restoring your session" : "Sync with OpenWork Cloud";
+    : restoringSession ? "Restoring your session" : t("account.sync_with_cloud");
 
   const runtimeStatus = props.showConnectionStatus
     ? resolveRuntimeStatus({

@@ -104,11 +104,11 @@ export function getSettingsTabIcon(tab: SettingsTab) {
 export function getSettingsTabLabel(tab: SettingsTab) {
   switch (tab) {
     case "ai":
-      return "AI Providers";
+      return t("settings.tab_ai_providers");
     case "preferences":
-      return "Preferences";
+      return t("settings.tab_preferences");
     case "permissions":
-      return "Permissions";
+      return t("settings.tab_permissions");
     case "cloud-account":
       return t("settings.tab_cloud_account");
     case "connect":
@@ -136,7 +136,7 @@ export function getSettingsTabLabel(tab: SettingsTab) {
     case "debug":
       return t("settings.tab_debug");
     case "general":
-      return "Settings";
+      return t("settings.tab_general");
     default:
       return t("settings.tab_general");
   }
