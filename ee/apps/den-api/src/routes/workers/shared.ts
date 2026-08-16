@@ -48,6 +48,7 @@ export const activityHeartbeatSchema = z.object({
   isActiveRecently: z.boolean(),
   lastActivityAt: z.string().datetime().optional().nullable(),
   openSessionCount: z.number().int().min(0).optional(),
+  busySessionCount: z.number().int().min(0).optional(),
 })
 
 export const workerIdParamSchema = z.object({

@@ -27,6 +27,12 @@ export type WorkerActivityHeartbeatPayload = {
   isActiveRecently: boolean;
   lastActivityAt: string | null;
   openSessionCount: number;
+  busySessionCount: number;
+};
+
+export type WorkerActivitySnapshot = {
+  sessions: readonly unknown[];
+  busySessionCount: number;
 };
 
 type HeartbeatEnv = Record<string, string | undefined>;
@@ -51,6 +57,19 @@ export function parseSessionActivityAt(session: unknown): number | null {
   const created = session.time.created;
   if (typeof created === "number" && Number.isFinite(created) && created > 0) return created;
   return null;
+}
+
+// A session that is busy (or retrying a step) has an in-flight task even when
+// its `time.updated` is stale — e.g. one long silent tool call. Counting these
+// keeps the sandbox alive for the entire run instead of only while the session
+// record keeps changing.
+export function countBusySessions(statuses: unknown): number {
+  if (!isRecord(statuses)) return 0;
+  let busy = 0;
+  for (const status of Object.values(statuses)) {
+    if (isRecord(status) && (status.type === "busy" || status.type === "retry")) busy += 1;
+  }
+  return busy;
 }
 
 export function resolveWorkerActivityHeartbeatConfig(env: HeartbeatEnv = process.env): WorkerActivityHeartbeatConfig {
@@ -92,34 +111,41 @@ export function resolveWorkerActivityHeartbeatConfig(env: HeartbeatEnv = process
 }
 
 export function buildWorkerActivityHeartbeatPayload(
-  sessions: readonly unknown[],
+  activity: WorkerActivitySnapshot,
   now: number,
   activeWindowMs: number,
 ): WorkerActivityHeartbeatPayload {
   let latestActivityAt = 0;
-  for (const session of sessions) {
+  for (const session of activity.sessions) {
     const activityAt = parseSessionActivityAt(session);
     if (activityAt && activityAt > latestActivityAt) latestActivityAt = activityAt;
   }
 
+  // Busy sessions are active right now, regardless of session timestamps.
+  // Report `now` so Den keeps advancing `last_active_at` and the idle-stop
+  // reaper never kills a sandbox mid-task.
+  const busy = activity.busySessionCount > 0;
+  const lastActivityAt = busy ? now : latestActivityAt;
+
   return {
     sentAt: new Date(now).toISOString(),
-    isActiveRecently: latestActivityAt > 0 && now - latestActivityAt <= activeWindowMs,
-    lastActivityAt: latestActivityAt > 0 ? new Date(latestActivityAt).toISOString() : null,
-    openSessionCount: sessions.length,
+    isActiveRecently: busy || (latestActivityAt > 0 && now - latestActivityAt <= activeWindowMs),
+    lastActivityAt: lastActivityAt > 0 ? new Date(lastActivityAt).toISOString() : null,
+    openSessionCount: activity.sessions.length,
+    busySessionCount: activity.busySessionCount,
   };
 }
 
 export async function postWorkerActivityHeartbeat(input: {
   config: WorkerActivityHeartbeatConfig;
-  sessions: readonly unknown[];
+  activity: WorkerActivitySnapshot;
   fetchImpl?: HeartbeatFetch;
   now?: () => number;
 }): Promise<WorkerActivityHeartbeatPayload | null> {
   if (!input.config.enabled) return null;
 
   const payload = buildWorkerActivityHeartbeatPayload(
-    input.sessions,
+    input.activity,
     input.now ? input.now() : Date.now(),
     input.config.activeWindowMs,
   );
@@ -137,14 +163,39 @@ export async function postWorkerActivityHeartbeat(input: {
   return payload;
 }
 
-async function listOpenSessions(config: ServerConfig): Promise<readonly unknown[]> {
-  const workspace = config.workspaces[0];
-  if (!workspace) return [];
-  const opencode = createWorkspaceOpencodeClient(config, workspace);
-  const result = await opencode.session.list({ limit: 200 });
-  if (result.data != null) return result.data;
-  if (result.error === undefined) throw new Error("opencode_empty_response");
-  throw new Error(`opencode_request_failed:${result.response.status}`);
+async function collectWorkerActivity(config: ServerConfig): Promise<WorkerActivitySnapshot> {
+  const results = await Promise.allSettled(
+    config.workspaces.map(async (workspace): Promise<WorkerActivitySnapshot> => {
+      const opencode = createWorkspaceOpencodeClient(config, workspace);
+      const [sessions, statuses] = await Promise.all([
+        opencode.session.list({ limit: 200 }).then((result) => {
+          if (result.data != null) return result.data;
+          if (result.error === undefined) throw new Error("opencode_empty_response");
+          throw new Error(`opencode_request_failed:${result.response.status}`);
+        }),
+        // Missing/failed status route degrades to timestamp-only activity so
+        // heartbeats keep flowing against older opencode engines.
+        opencode.session
+          .status()
+          .then((result) => result.data ?? {})
+          .catch(() => ({})),
+      ]);
+      return { sessions, busySessionCount: countBusySessions(statuses) };
+    }),
+  );
+
+  const fulfilled = results.filter(
+    (result): result is PromiseFulfilledResult<WorkerActivitySnapshot> => result.status === "fulfilled",
+  );
+  const firstRejection = results.find((result): result is PromiseRejectedResult => result.status === "rejected");
+  // Tolerate partial workspace failures so one broken workspace cannot hide a
+  // busy task in another; surface the error only when nothing succeeded.
+  if (fulfilled.length === 0 && firstRejection) throw firstRejection.reason;
+
+  return {
+    sessions: fulfilled.flatMap((result) => result.value.sessions),
+    busySessionCount: fulfilled.reduce((total, result) => total + result.value.busySessionCount, 0),
+  };
 }
 
 function errorMessage(error: unknown): string {
@@ -157,7 +208,7 @@ export function startWorkerActivityHeartbeat(
   options?: {
     env?: HeartbeatEnv;
     fetchImpl?: HeartbeatFetch;
-    listSessions?: () => Promise<readonly unknown[]>;
+    collectActivity?: () => Promise<WorkerActivitySnapshot>;
     now?: () => number;
   },
 ): WorkerActivityHeartbeatHandle | null {
@@ -170,12 +221,12 @@ export function startWorkerActivityHeartbeat(
     activeWindowMs: heartbeatConfig.activeWindowMs,
   });
 
-  const listSessions = options?.listSessions ?? (() => listOpenSessions(config));
+  const collectActivity = options?.collectActivity ?? (() => collectWorkerActivity(config));
   const runHeartbeat = () => {
-    void listSessions()
-      .then((sessions) => postWorkerActivityHeartbeat({
+    void collectActivity()
+      .then((activity) => postWorkerActivityHeartbeat({
         config: heartbeatConfig,
-        sessions,
+        activity,
         fetchImpl: options?.fetchImpl,
         now: options?.now,
       }))

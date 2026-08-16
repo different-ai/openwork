@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   buildWorkerActivityHeartbeatPayload,
+  countBusySessions,
   parseSessionActivityAt,
   postWorkerActivityHeartbeat,
   resolveWorkerActivityHeartbeatConfig,
@@ -81,20 +82,52 @@ describe("worker activity heartbeat", () => {
     expect(parseSessionActivityAt({ time: { created: 1000 } })).toBe(1000);
   });
 
+  test("counts busy and retry sessions, ignoring idle and malformed entries", () => {
+    expect(countBusySessions({
+      a: { type: "busy" },
+      b: { type: "retry", attempt: 1, message: "again", next: 123 },
+      c: { type: "idle" },
+      d: "garbage",
+      e: null,
+    })).toBe(2);
+    expect(countBusySessions(undefined)).toBe(0);
+    expect(countBusySessions("nope")).toBe(0);
+  });
+
   test("sets isActiveRecently on both sides of the active window boundary", () => {
     const now = 10_000;
     const windowMs = 1000;
-    expect(buildWorkerActivityHeartbeatPayload([{ time: { updated: now - windowMs } }], now, windowMs).isActiveRecently).toBe(true);
-    expect(buildWorkerActivityHeartbeatPayload([{ time: { updated: now - windowMs - 1 } }], now, windowMs).isActiveRecently).toBe(false);
+    const payloadFor = (updated: number) =>
+      buildWorkerActivityHeartbeatPayload({ sessions: [{ time: { updated } }], busySessionCount: 0 }, now, windowMs);
+    expect(payloadFor(now - windowMs).isActiveRecently).toBe(true);
+    expect(payloadFor(now - windowMs - 1).isActiveRecently).toBe(false);
+  });
+
+  test("reports active with lastActivityAt=now while any session is busy, even when timestamps are stale", () => {
+    const now = Date.UTC(2026, 0, 1, 0, 0, 0);
+    const staleUpdated = now - 60 * 60_000;
+    const payload = buildWorkerActivityHeartbeatPayload(
+      { sessions: [{ time: { updated: staleUpdated } }], busySessionCount: 1 },
+      now,
+      1000,
+    );
+    expect(payload).toEqual({
+      sentAt: "2026-01-01T00:00:00.000Z",
+      isActiveRecently: true,
+      lastActivityAt: "2026-01-01T00:00:00.000Z",
+      openSessionCount: 1,
+      busySessionCount: 1,
+    });
   });
 
   test("uses null lastActivityAt when there are no sessions", () => {
     const now = Date.UTC(2026, 0, 1, 0, 0, 0);
-    expect(buildWorkerActivityHeartbeatPayload([], now, 1000)).toEqual({
+    expect(buildWorkerActivityHeartbeatPayload({ sessions: [], busySessionCount: 0 }, now, 1000)).toEqual({
       sentAt: "2026-01-01T00:00:00.000Z",
       isActiveRecently: false,
       lastActivityAt: null,
       openSessionCount: 0,
+      busySessionCount: 0,
     });
   });
 
@@ -108,7 +141,10 @@ describe("worker activity heartbeat", () => {
 
     await postWorkerActivityHeartbeat({
       config: heartbeatConfig({ DEN_ACTIVITY_WINDOW_SECONDS: "60" }),
-      sessions: [{ time: { updated: now - 30_000 } }, { time: { created: now - 120_000 } }],
+      activity: {
+        sessions: [{ time: { updated: now - 30_000 } }, { time: { created: now - 120_000 } }],
+        busySessionCount: 0,
+      },
       fetchImpl,
       now: () => now,
     });
@@ -123,6 +159,7 @@ describe("worker activity heartbeat", () => {
       isActiveRecently: true,
       lastActivityAt: "2025-12-31T23:59:30.000Z",
       openSessionCount: 2,
+      busySessionCount: 0,
     });
   });
 
@@ -143,7 +180,7 @@ describe("worker activity heartbeat", () => {
     const handle = startWorkerActivityHeartbeat(serverConfig(), logger, {
       env: { ...enabledEnv, DEN_ACTIVITY_HEARTBEAT_INTERVAL_SECONDS: "60" },
       fetchImpl: async () => new Response("nope", { status: 503 }),
-      listSessions: async () => [],
+      collectActivity: async () => ({ sessions: [], busySessionCount: 0 }),
       now: () => Date.UTC(2026, 0, 1, 0, 0, 0),
     });
 
