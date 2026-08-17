@@ -194,6 +194,7 @@ describe("OpenWork-managed local MCP OAuth gateway", () => {
       expect(created.status).toBe(502);
       expect(await created.json()).toMatchObject({
         code: "managed_mcp_connection_failed",
+        message: expect.stringContaining("Enterprise MCP failed during MCP connection handshake"),
       });
 
       const status = await fetch(
@@ -207,6 +208,70 @@ describe("OpenWork-managed local MCP OAuth gateway", () => {
       else process.env.OPENWORK_RUNTIME_DB = previousRuntimeDb;
       if (previousDevMode === undefined) delete process.env.OPENWORK_DEV_MODE;
       else process.env.OPENWORK_DEV_MODE = previousDevMode;
+    }
+  });
+
+  test("returns actionable input errors without persisting managed connections", async () => {
+    const previousRuntimeDb = process.env.OPENWORK_RUNTIME_DB;
+    const previousDevMode = process.env.OPENWORK_DEV_MODE;
+    const previousAllowPrivateUrls = process.env.OPENWORK_ALLOW_PRIVATE_MCP_URLS;
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "openwork-local-managed-mcp-input-errors-"));
+    roots.push(workspaceRoot);
+    process.env.OPENWORK_RUNTIME_DB = join(workspaceRoot, "runtime.sqlite");
+    delete process.env.OPENWORK_DEV_MODE;
+    delete process.env.OPENWORK_ALLOW_PRIVATE_MCP_URLS;
+
+    try {
+      const engine = startMockOpencode();
+      const config = createConfig({
+        port: await freePort(),
+        workspaceRoot,
+        engineBaseUrl: `http://127.0.0.1:${engine.server.port}`,
+        vaultKey: randomBytes(32),
+      });
+      const server = await startServer(config);
+      stops.push(() => server.stop());
+      const openworkBaseUrl = `http://127.0.0.1:${server.port}`;
+      const cases = [
+        { name: "malformed-url", url: "not-a-url", code: "managed_mcp_url_invalid", message: "not-a-url" },
+        { name: "http-url", url: "http://example.com/mcp", code: "managed_mcp_url_not_allowed", message: "HTTPS" },
+        {
+          name: "unresolved-url",
+          url: "https://managed-mcp-does-not-resolve.invalid/mcp",
+          code: "managed_mcp_url_not_allowed",
+          message: "resolve",
+        },
+      ];
+
+      for (const input of cases) {
+        const created = await fetch(`${openworkBaseUrl}/workspace/ws_managed/mcp/managed`, {
+          method: "POST",
+          headers: clientHeaders(config.token),
+          body: JSON.stringify({ name: input.name, url: input.url, oauth: { applicationType: "native" } }),
+        });
+        expect(created.status).toBe(400);
+        expect(await created.json()).toMatchObject({
+          code: input.code,
+          message: expect.stringContaining(input.message),
+        });
+
+        const list = await fetch(`${openworkBaseUrl}/workspace/ws_managed/mcp`, {
+          headers: clientHeaders(config.token),
+        });
+        expect(list.status).toBe(200);
+        expect(JSON.stringify(await list.json())).not.toContain(`"name":"${input.name}"`);
+        const status = await fetch(`${openworkBaseUrl}/workspace/ws_managed/mcp/${input.name}/managed`, {
+          headers: clientHeaders(config.token),
+        });
+        expect(status.status).toBe(404);
+      }
+    } finally {
+      if (previousRuntimeDb === undefined) delete process.env.OPENWORK_RUNTIME_DB;
+      else process.env.OPENWORK_RUNTIME_DB = previousRuntimeDb;
+      if (previousDevMode === undefined) delete process.env.OPENWORK_DEV_MODE;
+      else process.env.OPENWORK_DEV_MODE = previousDevMode;
+      if (previousAllowPrivateUrls === undefined) delete process.env.OPENWORK_ALLOW_PRIVATE_MCP_URLS;
+      else process.env.OPENWORK_ALLOW_PRIVATE_MCP_URLS = previousAllowPrivateUrls;
     }
   });
 

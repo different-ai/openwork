@@ -3113,10 +3113,12 @@ function createRoutes(
         // so the failed Add request cannot leave a ghost connection behind.
         await deleteLocalManagedMcp(config, workspace.id, name).catch(() => undefined);
         if (error instanceof ApiError) throw error;
+        const cause = (error instanceof Error ? error.message : String(error)).trim().slice(0, 300);
         throw new ApiError(
           502,
           "managed_mcp_connection_failed",
-          "OpenWork could not start sign-in with this MCP server. Check the server URL, OAuth settings, and network connection, then try again.",
+          `OpenWork could not start sign-in with this MCP server. Check the server URL, OAuth settings, and network connection, then try again.${cause ? ` (${cause})` : ""}`,
+          cause ? { cause } : undefined,
         );
       }
     })();

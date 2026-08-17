@@ -39,7 +39,11 @@ import {
 } from "./runtime-opencode-config-store.js";
 import type { ServerConfig } from "./types.js";
 import { isRecord } from "./workspace-kv-store.js";
-import { assertLocalManagedMcpUrl, createLocalManagedMcpGuardedFetch } from "./local-managed-mcp-url-guard.js";
+import {
+  assertLocalManagedMcpUrl,
+  createLocalManagedMcpGuardedFetch,
+  LocalManagedMcpPrivateUrlError,
+} from "./local-managed-mcp-url-guard.js";
 
 type LocalManagedMcpStatus = "needs_auth" | "connecting" | "connected" | "reconnect_required";
 
@@ -733,8 +737,21 @@ export async function reconcileLocalManagedMcpRuntimeEntries(config: ServerConfi
 }
 
 export async function createLocalManagedMcpConnection(config: ServerConfig, input: CreateLocalManagedMcpInput): Promise<LocalManagedMcpPublicConnection> {
-  const serverUrl = new URL(input.serverUrl).toString();
-  await assertLocalManagedMcpUrl(serverUrl);
+  let serverUrl: string;
+  try {
+    serverUrl = new URL(input.serverUrl).toString();
+  } catch {
+    throw new ApiError(400, "managed_mcp_url_invalid", `Managed MCP server URL "${input.serverUrl}" is invalid.`);
+  }
+  try {
+    await assertLocalManagedMcpUrl(serverUrl);
+  } catch (error) {
+    if (!(error instanceof LocalManagedMcpPrivateUrlError)) throw error;
+    const message = error.message.includes("managed MCP egress requires HTTPS")
+      ? `OpenWork-managed sign-in requires an HTTPS server URL. ${error.message}`
+      : error.message;
+    throw new ApiError(400, "managed_mcp_url_not_allowed", message);
+  }
   const now = Date.now();
   const connection = await withVaultMutation(config, (vault) => {
     const key = connectionKey(input.workspaceId, input.name);

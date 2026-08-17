@@ -370,6 +370,7 @@ export function McpView(props: McpViewProps) {
   const useRoutedDetail = typeof props.onDetailIdChange === "function";
   const [detailTarget, setDetailTarget] = useState<ExtensionDetailTarget | null>(null);
   const detailEntry = detailTarget?.kind === "entry" ? detailTarget.entry : null;
+  const [mcpConnectFailure, setMcpConnectFailure] = useState<{ id: string; message: string } | null>(null);
   const detailSkill = detailTarget?.kind === "skill" ? detailTarget.skill : null;
   const detailConnectMcp = detailTarget?.kind === "connect-mcp" ? detailTarget.entry : null;
   const detailPlugin = detailTarget?.kind === "plugin" ? detailTarget.plugin : null;
@@ -461,11 +462,13 @@ export function McpView(props: McpViewProps) {
   const closeDetail = () => {
     setDetailTarget(null);
     setDetailSkillContent(null);
+    setMcpConnectFailure(null);
     props.onDetailIdChange?.(null);
   };
 
   const openDetail = (target: ExtensionDetailTarget) => {
     setDetailTarget(target);
+    setMcpConnectFailure(null);
     if (target.kind === "skill") {
       setDetailSkillContent(target.skill.content ?? null);
       if (!target.skill.content && target.skill.origin !== "openwork-connect" && props.readSkill) {
@@ -534,6 +537,12 @@ export function McpView(props: McpViewProps) {
       setDetailTarget(null);
     }
   }, [useRoutedDetail, detailEntry, quickConnectList]);
+
+  useEffect(() => {
+    setMcpConnectFailure((current) =>
+      current && (!detailEntry || current.id !== getMcpIdentityKey(detailEntry)) ? null : current
+    );
+  }, [detailEntry]);
 
   useEffect(() => {
     const refresh = () => setExtensionStateVersion((value) => value + 1);
@@ -788,6 +797,7 @@ export function McpView(props: McpViewProps) {
             uiControl={detailEntry.kind === "ui-control"}
             connected={isConnected}
             connecting={props.mcpConnectingName === detailEntry.name}
+            errorInfo={mcpConnectFailure?.id === getMcpIdentityKey(detailEntry) ? mcpConnectFailure.message : null}
             hidden={hidden}
             preview={detailEntry.preview}
             disabledReason={disabledReason}
@@ -803,9 +813,17 @@ export function McpView(props: McpViewProps) {
             onConnect={disabledReason ? undefined : isToggleOnlyExtension(detailEntry) ? () => {
               setOpenWorkExtensionEnabled(detailEntry, true);
               closeDetail();
-            } : hasConfigSlot ? undefined : () => {
-              props.connectMcp(detailEntry);
-              closeDetail();
+            } : hasConfigSlot ? undefined : async () => {
+              setMcpConnectFailure(null);
+              const result = await props.connectMcp(detailEntry);
+              if (result.ok) {
+                closeDetail();
+                return;
+              }
+              setMcpConnectFailure({
+                id: getMcpIdentityKey(detailEntry),
+                message: result.error.trim() ? result.error : t("mcp.connect_failed"),
+              });
             }}
             onUninstall={disabledReason ? undefined : isToggleOnlyExtension(detailEntry) && isConnected ? () => {
               setOpenWorkExtensionEnabled(detailEntry, false);
@@ -1107,8 +1125,15 @@ export function McpView(props: McpViewProps) {
         isConfigured={isEntryConfigured}
         enablementForEntry={props.enablementContext ? enablementForEntry : undefined}
         statusForEntry={quickConnectStatus}
-        onConnect={(entry) => {
-          void props.connectMcp(entry);
+        onConnect={async (entry) => {
+          setMcpConnectFailure(null);
+          const result = await props.connectMcp(entry);
+          if (result.ok) return;
+          openDetail({ kind: "entry", entry });
+          setMcpConnectFailure({
+            id: getMcpIdentityKey(entry),
+            message: result.error.trim() ? result.error : t("mcp.connect_failed"),
+          });
         }}
         onDetail={(entry) => openDetail({ kind: "entry", entry })}
         onSkillDetail={(skill) => openDetail({ kind: "skill", skill })}
