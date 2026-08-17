@@ -81,6 +81,10 @@ OpenWork Den is the control plane for managing OpenWork across a team or organiz
 
 [Read the OpenWork docs.](https://openworklabs.com/docs)
 
+## Supported languages
+
+The App is available in English (`en`), Japanese (`ja`), Simplified Chinese (`zh`), Vietnamese (`vi`), Brazilian Portuguese (`pt-BR`), Thai (`th`), French (`fr`), Catalan (`ca`), Spanish (`es`), Russian (`ru`), and German (`de`).
+
 ## Local development
 
 For one checkout, keep using `pnpm dev`; with no extra environment variables it reuses the existing shared dev profile.

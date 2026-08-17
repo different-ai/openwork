@@ -53,12 +53,12 @@ export function resolveOpenWorkConnectStateSummary(
 
 export type OpenWorkConnectStatus = {
   state: "checking" | "ready" | "needs_attention";
-  label: "Checking" | "Ready" | "Needs attention";
+  label: string;
   description: string;
 };
 
 export function openWorkConnectAttentionTitle(description: string): string {
-  return `One possible issue: ${description}`;
+  return t("connect.status_attention_title", { description });
 }
 
 export function resolveOpenWorkConnectStatus(
@@ -73,33 +73,33 @@ export function resolveOpenWorkConnectStatus(
   if (!maintenance || maintenance.status === "idle") {
     return {
       state: "ready",
-      label: "Ready",
-      description: "Signed in to OpenWork Cloud. Connected service tools will be checked when a workspace is active.",
+      label: t("connect.status_ready"),
+      description: t("connect.status_signed_in_desc"),
     };
   }
 
   if (maintenance.status === "ready") {
     return {
       state: "ready",
-      label: "Ready",
-      description: "Connected service tools are available.",
+      label: t("connect.status_ready"),
+      description: t("connect.status_tools_ready_desc"),
     };
   }
 
   if (maintenance.status === "failed" || maintenance.status === "skipped") {
     return {
       state: "needs_attention",
-      label: "Needs attention",
+      label: t("connect.status_needs_attention"),
       description: maintenance.issue?.message
-        ?? "OpenWork Connect could not verify connected service tools. Run diagnostics for details.",
+        ?? t("connect.status_tools_failed_desc"),
     };
   }
 
   return {
     state: "checking",
-    label: "Checking",
+    label: t("connect.status_checking"),
     description: maintenance.status === "retrying"
-      ? `Restoring connected service tools (${maintenance.attempt}/${maintenance.maxAttempts}).`
-      : "Checking connected service tools in the background.",
+      ? t("connect.status_restoring_tools", { attempt: maintenance.attempt, maxAttempts: maintenance.maxAttempts })
+      : t("connect.status_checking_tools"),
   };
 }

@@ -42,7 +42,9 @@ export const MODEL_PICKER_DEFAULT_SUBTITLE = "Select a model for this session.";
 export const MODEL_PICKER_UNAVAILABLE_SUBTITLE = "The model you were using is no longer available, please select a different model for this session.";
 
 export function resolveModelPickerSubtitle(subtitle: string | undefined) {
-  return subtitle ?? MODEL_PICKER_DEFAULT_SUBTITLE;
+  if (subtitle === MODEL_PICKER_UNAVAILABLE_SUBTITLE) return t("models.picker_unavailable_subtitle");
+  if (!subtitle || subtitle === MODEL_PICKER_DEFAULT_SUBTITLE) return t("models.picker_default_subtitle");
+  return subtitle;
 }
 
 export type ModelPickerModalProps = {
@@ -354,7 +356,7 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
                     <span>{OPENWORK_MODELS_PROVIDER_NAME}</span>
                   </div>
                   <div className="truncate text-[11px] text-dls-secondary">
-                    Included on your plan — pending workspace reload.
+                    {t("models.included_pending_reload")}
                   </div>
                 </div>
               </div>
@@ -375,11 +377,11 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
                     <span>{OPENWORK_MODELS_PROVIDER_NAME}</span>
                   </div>
                   <div className="truncate text-[11px] text-dls-secondary">
-                    {denAuth.isSignedIn ? "Subscribe to use hosted frontier models in this workspace." : "Sign in to unlock hosted frontier models for your team."}
+                    {denAuth.isSignedIn ? t("models.promo_subscribe_desc") : t("models.promo_signin_desc")}
                   </div>
                 </div>
                 <span className="flex shrink-0 items-center gap-1 rounded-full border border-blue-6 bg-blue-3 px-2 py-0.5 text-[11px] font-medium text-blue-11">
-                  {denAuth.isSignedIn ? "Subscribe" : "Sign in"}
+                  {denAuth.isSignedIn ? t("models.subscribe") : t("models.sign_in")}
                   <ArrowRight className="size-3" />
                 </span>
               </button>
@@ -387,7 +389,7 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
                 type="button"
                 className="flex size-9 shrink-0 items-center justify-center border-l border-blue-6/60 text-blue-11 transition-colors hover:bg-blue-3/70"
                 onClick={hideOpenWorkModels}
-                aria-label="Hide OpenWork Models"
+                aria-label={t("models.hide_openwork_models")}
               >
                 <X className="size-3.5" />
               </button>
@@ -488,19 +490,19 @@ function ProviderAccordion({
             <span className="text-[13px] font-medium text-dls-text">{group.name}</span>
             {" "}
             <span className="ml-2 text-[11px] text-dls-secondary">
-              {totalModels} model{totalModels === 1 ? "" : "s"}
+              {t("models.count", { count: totalModels })}
             </span>
           </div>
           {" "}
           <span className="flex shrink-0 items-center gap-1.5">
             {group.isNew ? (
-              <span className="rounded-md bg-blue-3 px-1.5 py-0.5 text-[10px] font-medium text-blue-11">New</span>
+              <span className="rounded-md bg-blue-3 px-1.5 py-0.5 text-[10px] font-medium text-blue-11">{t("models.new")}</span>
             ) : null}
             {group.isCloud ? (
               <span className="rounded-md bg-blue-3/50 px-1.5 py-0.5 text-[10px] font-medium text-blue-11/70">{organizationProviderLabel}</span>
             ) : null}
             {group.hasCurrent ? (
-              <span className="rounded-md bg-green-3 px-1.5 py-0.5 text-[10px] font-medium text-green-11">Current</span>
+              <span className="rounded-md bg-green-3 px-1.5 py-0.5 text-[10px] font-medium text-green-11">{t("models.current")}</span>
             ) : null}
           </span>
         </button>
@@ -514,9 +516,9 @@ function ProviderAccordion({
                 : "bg-green-3 text-green-11 hover:bg-green-4",
             ].join(" ")}
             onClick={(e) => { e.stopPropagation(); onToggleProvider?.(group.id, group.isDisabled); }}
-            title={group.isDisabled ? "Enable this provider" : "Disable this provider"}
+            title={group.isDisabled ? t("models.enable_provider") : t("models.disable_provider")}
           >
-            {group.isDisabled ? "Enable" : "Enabled"}
+            {group.isDisabled ? t("models.enable") : t("models.enabled")}
           </button>
         ) : null}
       </div>
@@ -527,7 +529,7 @@ function ProviderAccordion({
           {group.recommended.length > 0 ? (
             <>
               <div className="px-2 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-[0.1em] text-dls-secondary">
-                Recommended
+                {t("models.recommended")}
               </div>
               {group.recommended.map((opt) => (
                 <DefaultModelRow key={opt.modelID} opt={opt} current={current} onSelect={onSelect} recommended />
@@ -538,7 +540,7 @@ function ProviderAccordion({
             <>
               {group.recommended.length > 0 ? (
                 <div className="px-2 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-[0.1em] text-dls-secondary">
-                  All models
+                  {t("models.all_models")}
                 </div>
               ) : null}
               {group.other.map((opt) => (

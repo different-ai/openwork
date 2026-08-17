@@ -15,6 +15,7 @@ import {
   useOpenWorkModelsPromoEligibility,
 } from "@/react-app/domains/cloud/openwork-models-promo";
 import { usePlatform } from "@/react-app/kernel/platform";
+import { t } from "@/i18n";
 import { NewTaskComposer, type NewTaskComposerContext } from "./new-task-composer";
 
 type HeroSuggestion = {
@@ -23,26 +24,26 @@ type HeroSuggestion = {
   prompt: string;
 };
 
-const DEFAULT_SUGGESTIONS: HeroSuggestion[] = [
+const getDefaultSuggestions = (): HeroSuggestion[] => [
   {
-    title: "Summarize my week",
-    description: "Pull highlights from email and calendar.",
-    prompt: "Summarize my week: pull the highlights from my connected email and calendar and give me a short digest of what happened and what needs my attention.",
+    title: t("session.suggestion_week_title"),
+    description: t("session.suggestion_week_desc"),
+    prompt: t("session.suggestion_week_prompt"),
   },
   {
-    title: "Clean up a spreadsheet",
-    description: "Drop in a CSV and describe the result you want.",
-    prompt: "Create a sample CSV file with 20 rows of fake customer data (name, email, company, revenue). Then show me a summary of the data.",
+    title: t("session.suggestion_spreadsheet_title"),
+    description: t("session.suggestion_spreadsheet_desc"),
+    prompt: t("session.suggestion_spreadsheet_prompt"),
   },
   {
-    title: "Draft a document",
-    description: "Reports, emails, or briefs from a few bullet points.",
-    prompt: "Draft a one-page project brief. Ask me for the bullet points you need, then turn them into a clear, well-structured document.",
+    title: t("session.suggestion_document_title"),
+    description: t("session.suggestion_document_desc"),
+    prompt: t("session.suggestion_document_prompt"),
   },
   {
-    title: "Automate a web task",
-    description: "Use the built-in browser for repetitive steps.",
-    prompt: "Open craigslist.org in the browser and search for couches for sale. Show me the top 5 results with prices.",
+    title: t("session.suggestion_web_title"),
+    description: t("session.suggestion_web_desc"),
+    prompt: t("session.suggestion_web_prompt"),
   },
 ];
 
@@ -99,7 +100,7 @@ export function SessionEmptyHero(props: SessionEmptyHeroProps) {
       });
       return { title: card.title, description: card.description, prompt: card.selectionPrompt };
     })
-    : DEFAULT_SUGGESTIONS;
+    : getDefaultSuggestions();
 
   const submit = (resolvedPrompt: string, attachments: ComposerAttachment[]) => {
     const trimmedPrompt = resolvedPrompt.trim();
@@ -116,9 +117,9 @@ export function SessionEmptyHero(props: SessionEmptyHeroProps) {
     <div className="mx-auto w-full max-w-[640px] space-y-6 px-4 max-lg:px-4 sm:px-6">
       <div className="space-y-1.5 text-center">
         <h2 className="text-[24px] font-semibold leading-[30px] tracking-[-0.02em] text-foreground">
-          What do you need done?
+          {t("session.empty_title")}
         </h2>
-        <p className="text-[13px] text-muted-foreground">Describe it in plain language</p>
+        <p className="text-[13px] text-muted-foreground">{t("session.empty_description")}</p>
       </div>
 
       <NewTaskComposer
@@ -134,20 +135,20 @@ export function SessionEmptyHero(props: SessionEmptyHeroProps) {
           className="flex items-center justify-center gap-2 text-[12px] text-muted-foreground"
           data-testid="openwork-models-hint"
         >
-          <span>Using the free starter model.</span>
+          <span>{t("session.free_model_hint")}</span>
           <button
             type="button"
             className="flex items-center gap-1 font-medium text-blue-10 transition-colors hover:text-blue-11"
             onClick={() => platform.openLink(getOpenWorkModelsActionUrl(denAuth.isSignedIn, "sign-up"))}
           >
-            Get frontier models with no API keys
+            {t("session.frontier_models_cta")}
             <ArrowRight className="size-3" />
           </button>
           <button
             type="button"
             className="flex size-5 items-center justify-center rounded text-muted-foreground/70 transition-colors hover:text-foreground"
             onClick={hideOpenWorkModelsPromo}
-            aria-label="Hide OpenWork Models hint"
+            aria-label={t("session.hide_models_hint")}
           >
             <X className="size-3" />
           </button>
@@ -162,19 +163,20 @@ export function SessionEmptyHero(props: SessionEmptyHeroProps) {
         >
           <Zap className="mt-0.5 size-4 shrink-0 text-blue-10" />
           <div>
-            <div className="text-[13px] font-medium text-foreground">Connect a model provider</div>
+            <div className="text-[13px] font-medium text-foreground">{t("session.connect_model_provider")}</div>
             <div className="mt-0.5 text-[12px] text-muted-foreground">
-              Add an API key for Anthropic, OpenAI, Google, or other providers so tasks can run.
+              {t("session.connect_model_provider_desc")}
             </div>
           </div>
         </button>
       ) : null}
 
       <div className="grid gap-2 sm:grid-cols-2">
-        {suggestions.map((suggestion) => (
+        {suggestions.map((suggestion, index) => (
           <button
             key={suggestion.title}
             type="button"
+            data-testid={`session-suggestion-${index}`}
             className="rounded-xl border border-border bg-background p-3.5 text-left transition-colors hover:bg-accent"
             onClick={() => fillPrompt(suggestion.prompt)}
           >

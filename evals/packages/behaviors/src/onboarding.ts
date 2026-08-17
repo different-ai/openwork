@@ -1,12 +1,12 @@
 import type { Surface } from "@openwork/cdp";
-import { clickButton, currentHash, evalIn, fill, waitFor, waitForText } from "./desktop.ts";
+import { currentHash, evalIn, fill, waitFor } from "./desktop.ts";
 
 export interface LocalWorkspaceFacts {
   id: string;
   name: string;
   path: string;
   route: string;
-  entrypoint: "manual-folder" | "workspace-modal";
+  entrypoint: "manual-folder";
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -21,7 +21,7 @@ function parseWorkspaceFacts(value: unknown): LocalWorkspaceFacts {
     typeof value.name !== "string" ||
     typeof value.path !== "string" ||
     typeof value.route !== "string" ||
-    (entrypoint !== "manual-folder" && entrypoint !== "workspace-modal")
+    entrypoint !== "manual-folder"
   ) {
     throw new Error(`Workspace creation returned malformed facts: ${JSON.stringify(value)}`);
   }
@@ -30,7 +30,13 @@ function parseWorkspaceFacts(value: unknown): LocalWorkspaceFacts {
 
 async function submitFolder(app: Surface, path: string): Promise<void> {
   await fill(app, 'input[placeholder="/workspace/my-project"]', path);
-  await clickButton(app, "Use this folder", { timeoutMs: 20_000 });
+  await waitFor(app, `(() => {
+    const input = document.querySelector('input[placeholder="/workspace/my-project"]');
+    const button = input?.closest("div")?.querySelector("button");
+    if (!button || button.disabled) return false;
+    button.click();
+    return true;
+  })()`, { timeoutMs: 20_000, label: "manual workspace folder submit" });
 }
 
 export async function createLocalWorkspaceViaUi(
@@ -40,10 +46,9 @@ export async function createLocalWorkspaceViaUi(
   await waitFor(app, "location.hash.includes('/welcome')", { timeoutMs: 30_000, label: "welcome route" });
   let manualFolderVisible = await evalIn(app, 'Boolean(document.querySelector(\'input[placeholder="/workspace/my-project"]\'))') === true;
   if (!manualFolderVisible) {
-    const useWithoutCloudVisible = await evalIn(app, `Boolean([...document.querySelectorAll("button")]
-      .find((button) => (button.textContent ?? "").trim() === "Use Without Cloud" && !button.disabled))`);
+    const useWithoutCloudVisible = await evalIn(app, `Boolean(document.querySelector('[data-testid="welcome-use-without-cloud"]:not(:disabled)'))`);
     if (useWithoutCloudVisible === true) {
-      await clickButton(app, "Use Without Cloud");
+      await evalIn(app, `document.querySelector('[data-testid="welcome-use-without-cloud"]')?.click()`);
       await waitFor(app, 'Boolean(document.querySelector(\'input[placeholder="/workspace/my-project"]\'))', {
         timeoutMs: 15_000,
         label: "local workspace folder input",
@@ -51,78 +56,13 @@ export async function createLocalWorkspaceViaUi(
       manualFolderVisible = true;
     }
   }
-  let entrypoint: LocalWorkspaceFacts["entrypoint"];
+  if (!manualFolderVisible) throw new Error("The real manual workspace folder path is not available.");
+  await submitFolder(app, input.path);
 
-  if (manualFolderVisible) {
-    // Current dev Electron exposes this field after Use Without Cloud. The
-    // modal branch below retains the older local-workspace journey.
-    entrypoint = "manual-folder";
-    await submitFolder(app, input.path);
-  } else {
-    entrypoint = "workspace-modal";
-    await waitFor(app, `(() => {
-      const button = [...document.querySelectorAll("button")]
-        .find((candidate) => (candidate.textContent ?? "").trim() === "Get started" && !candidate.disabled);
-      if (!button) return false;
-      button.click();
-      return true;
-    })()`, { timeoutMs: 15_000, label: "Get started" });
-    await waitForText(app, "Local workspace", { timeoutMs: 15_000 });
-    await waitFor(app, `(() => {
-      const button = [...document.querySelectorAll("button")]
-        .find((candidate) => (candidate.textContent ?? "").trim() === "Local workspace" && !candidate.disabled);
-      if (!button) return false;
-      button.click();
-      return true;
-    })()`, { timeoutMs: 15_000, label: "Local workspace" });
-    await waitForText(app, "No folder selected yet.", { timeoutMs: 15_000 });
-    const injected = await evalIn(app, `(() => {
-      const placeholder = [...document.querySelectorAll("span, div, p")]
-        .find((node) => (node.textContent ?? "").includes("No folder selected yet."));
-      if (!placeholder) return { ok: false, reason: "folder placeholder not found" };
-      const key = Object.keys(placeholder).find((candidate) => candidate.startsWith("__reactFiber$"));
-      let fiber = key ? placeholder[key] : null;
-      while (fiber) {
-        const componentName = fiber.elementType?.name || fiber.type?.name || "";
-        if (componentName === "CreateWorkspaceModal") break;
-        fiber = fiber.return;
-      }
-      if (!fiber) return { ok: false, reason: "CreateWorkspaceModal fiber not found" };
-      let hook = fiber.memoizedState;
-      while (hook) {
-        if (hook.queue?.dispatch) {
-          hook.queue.dispatch({ type: "set", key: "selectedFolder", value: ${JSON.stringify(input.path)} });
-          hook.queue.dispatch({ type: "set", key: "pickingFolder", value: false });
-          return { ok: true };
-        }
-        hook = hook.next;
-      }
-      return { ok: false, reason: "folder reducer dispatch not found" };
-    })()`);
-    if (!isRecord(injected) || injected.ok !== true) {
-      throw new Error(`Could not inject the folder chosen by the native picker: ${JSON.stringify(injected)}`);
-    }
-    if (input.name) {
-      await evalIn(app, `(() => {
-        const nameInput = document.querySelector('input[placeholder*="name" i], input[placeholder*="workspace" i]');
-        if (!nameInput) return false;
-        const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
-        setter?.call(nameInput, ${JSON.stringify(input.name)});
-        nameInput.dispatchEvent(new Event("input", { bubbles: true }));
-        nameInput.dispatchEvent(new Event("change", { bubbles: true }));
-        return true;
-      })()`);
-    }
-    await waitFor(app, `(() => {
-      const button = [...document.querySelectorAll("button")]
-        .find((candidate) => (candidate.textContent ?? "").trim() === "Create Workspace" && !candidate.disabled);
-      if (!button) return false;
-      button.click();
-      return true;
-    })()`, { timeoutMs: 15_000, label: "Create Workspace" });
-  }
-
-  await waitForText(app, "Power your first task", { timeoutMs: 120_000 });
+  await waitFor(app, 'Boolean(document.querySelector(\'[data-testid="provider-selection-step"]\'))', {
+    timeoutMs: 120_000,
+    label: "provider selection step",
+  });
   // Deliberately do NOT query the workspace record here. The local server has
   // credentials in localStorage before it can actually serve, so an in-page fetch
   // at this point never settles. The caller resolves the id from the product's
@@ -133,7 +73,7 @@ export async function createLocalWorkspaceViaUi(
     name: input.name ?? "",
     path: input.path,
     route: await currentHash(app),
-    entrypoint,
+    entrypoint: "manual-folder",
   };
   return parseWorkspaceFacts(raw);
 }
