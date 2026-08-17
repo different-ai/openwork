@@ -1557,8 +1557,8 @@ export function ReactSessionComposer(props: ComposerProps) {
                                               || entry.config.url
                                               || "Remote app"
                                             : entry.config.type === "remote"
-                                              ? entry.config.url ?? entry.config.command?.join(" ") ?? "Remote app"
-                                              : entry.config.command?.join(" ") ?? "Local app"}
+                                              ? entry.config.url ?? (Array.isArray(entry.config.command) ? entry.config.command.join(" ") : entry.config.command) ?? "Remote app"
+                                              : (Array.isArray(entry.config.command) ? entry.config.command.join(" ") : entry.config.command) ?? "Local app"}
                                         </div>
                                       </div>
                                     </div>
