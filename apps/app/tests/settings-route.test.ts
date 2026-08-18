@@ -4,6 +4,8 @@ import {
   extensionsPathForRoute,
   parseExtensionsPath,
   parseSettingsPath,
+  readStoredBoolean,
+  SETTINGS_UPDATE_AUTO_DOWNLOAD_KEY,
   settingsPathForRoute,
 } from "../src/react-app/shell/settings-route";
 import {
@@ -102,5 +104,18 @@ describe("settings navigation", () => {
   test("includes Library in workspace settings", () => {
     expect(getWorkspaceSettingsTabs()).toEqual(["preferences", "permissions", "extensions", "advanced"]);
     expect(getSettingsTabLabel("extensions")).toBe("Library");
+  });
+
+  test("defaults automatic update downloads on but preserves an explicit opt-out", () => {
+    expect(readStoredBoolean(
+      SETTINGS_UPDATE_AUTO_DOWNLOAD_KEY,
+      true,
+      { getItem: () => null },
+    )).toBe(true);
+    expect(readStoredBoolean(
+      SETTINGS_UPDATE_AUTO_DOWNLOAD_KEY,
+      true,
+      { getItem: () => "0" },
+    )).toBe(false);
   });
 });

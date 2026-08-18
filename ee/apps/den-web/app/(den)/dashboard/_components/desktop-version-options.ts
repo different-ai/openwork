@@ -58,14 +58,17 @@ export function initialAllowedDesktopVersions(
   return storedVersions === null ? publishedVersions : [...storedVersions]
 }
 
-export function allPublishedDesktopVersionsAllowed(input: {
-  draftVersions: string[]
-  publishedVersions: string[]
-}): boolean {
-  if (input.publishedVersions.length === 0) return false
+export type DesktopVersionPolicyMode = "latest" | "pinned"
 
-  const publishedSet = new Set(input.publishedVersions)
-  const draftSet = new Set(input.draftVersions)
-  const hasStoredVersionOutsideInventory = input.draftVersions.some((version) => !publishedSet.has(version))
-  return !hasStoredVersionOutsideInventory && input.publishedVersions.every((version) => draftSet.has(version))
+export function desktopVersionPolicyMode(
+  versions: string[] | null | undefined,
+): DesktopVersionPolicyMode {
+  return Array.isArray(versions) ? "pinned" : "latest"
+}
+
+export function allowedDesktopVersionsForPolicy(
+  mode: DesktopVersionPolicyMode,
+  draftVersions: string[],
+): string[] | null {
+  return mode === "latest" ? null : [...new Set(draftVersions)]
 }

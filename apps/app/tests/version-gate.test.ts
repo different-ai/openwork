@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   isAlphaChannelAllowedByDesktopConfig,
   isAlphaUpdateAllowed,
+  isUpdateAllowedByDesktopConfig,
   resolveAutomaticStableDesktopUpdate,
   resolveDesktopUpdateChannel,
   resolveFreshStableDesktopUpdate,
@@ -37,6 +38,15 @@ describe("alpha desktop update policy", () => {
 });
 
 describe("selectStableDesktopUpdate", () => {
+  test("treats a missing version policy as unrestricted", () => {
+    expect(isUpdateAllowedByDesktopConfig("99.0.0", {
+      allowedDesktopVersions: undefined,
+    })).toBe(true);
+    expect(isUpdateAllowedByDesktopConfig("99.0.0", {
+      allowedDesktopVersions: ["98.0.0"],
+    })).toBe(false);
+  });
+
   test("selects the highest approved published release above the installed version", () => {
     expect(selectStableDesktopUpdate({
       currentVersion: "0.17.22",

@@ -54,6 +54,29 @@ export type ElectronUpdaterEnvState = {
 };
 
 export const ELECTRON_UPDATER_UNSUPPORTED_REASON = "Electron updater bridge is unavailable.";
+export const AUTOMATIC_UPDATE_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
+
+export function scheduleElectronUpdateAutoChecks(input: {
+  enabled: boolean;
+  supported: boolean;
+  runInitialCheck: boolean;
+  runCheck: () => void | Promise<void>;
+}): () => void {
+  if (!input.enabled || !input.supported) return () => {};
+
+  if (input.runInitialCheck) void input.runCheck();
+  const interval = setInterval(() => {
+    void input.runCheck();
+  }, AUTOMATIC_UPDATE_CHECK_INTERVAL_MS);
+  return () => clearInterval(interval);
+}
+
+export function shouldAutomaticallyDownloadUpdate(
+  updateAvailable: boolean,
+  updateAutoDownload: boolean,
+): boolean {
+  return updateAvailable && updateAutoDownload;
+}
 
 export function unsupportedElectronUpdaterEnvState(): ElectronUpdaterEnvState {
   return {
@@ -474,7 +497,7 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
         : null;
       downloadedReleaseChannelRef.current = null;
       setUpdateStatus(nextStatus);
-      if (availableAllowed && updateAutoDownload) {
+      if (shouldAutomaticallyDownloadUpdate(Boolean(availableAllowed), updateAutoDownload)) {
         await downloadUpdate(checkedReleaseChannel);
       }
     } catch (error) {
@@ -493,14 +516,19 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
 
   useEffect(() => {
     const key = `${policyReleaseChannel}:${appVersion ?? "unknown"}`;
-    if (!shouldScheduleElectronUpdateAutoCheck({
+    const runInitialCheck = shouldScheduleElectronUpdateAutoCheck({
       updateAutoCheck,
       updateEnv,
       autoCheckKey: autoCheckKeyRef.current,
       nextAutoCheckKey: key,
-    })) return;
-    autoCheckKeyRef.current = key;
-    void runCheckForUpdates(undefined, false);
+    });
+    if (runInitialCheck) autoCheckKeyRef.current = key;
+    return scheduleElectronUpdateAutoChecks({
+      enabled: updateAutoCheck,
+      supported: updateEnv?.supported !== false,
+      runInitialCheck,
+      runCheck: () => runCheckForUpdates(undefined, false),
+    });
   }, [appVersion, policyReleaseChannel, runCheckForUpdates, updateAutoCheck, updateEnv?.supported]);
 
   // Run a check when the native "Check for Updates..." menu item was used.

@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import {
-  allPublishedDesktopVersionsAllowed,
+  allowedDesktopVersionsForPolicy,
+  desktopVersionPolicyMode,
   getDesktopVersionMetadata,
   initialAllowedDesktopVersions,
 } from "../app/(den)/dashboard/_components/desktop-version-options"
@@ -26,16 +27,16 @@ describe("desktop version options", () => {
       ["0.17.21", "0.17.23"],
       ["0.17.22", "0.17.23", "0.17.24"],
     )).toEqual(["0.17.21", "0.17.23"])
-
-    expect(allPublishedDesktopVersionsAllowed({
-      draftVersions: ["0.17.21", "0.17.22", "0.17.23", "0.17.24"],
-      publishedVersions: ["0.17.22", "0.17.23", "0.17.24"],
-    })).toBe(false)
   })
 
-  test("represents an unrestricted policy by selecting the full inventory", () => {
-    const publishedVersions = ["0.17.22", "0.17.23", "0.17.24"]
-    const draftVersions = initialAllowedDesktopVersions(null, publishedVersions)
-    expect(allPublishedDesktopVersionsAllowed({ draftVersions, publishedVersions })).toBe(true)
+  test("represents unrestricted and pinned policies explicitly", () => {
+    expect(desktopVersionPolicyMode(null)).toBe("latest")
+    expect(desktopVersionPolicyMode(undefined)).toBe("latest")
+    expect(desktopVersionPolicyMode(["0.18.28"])).toBe("pinned")
+
+    expect(allowedDesktopVersionsForPolicy("latest", ["0.18.28"]))
+      .toBeNull()
+    expect(allowedDesktopVersionsForPolicy("pinned", ["0.18.28", "0.18.28"]))
+      .toEqual(["0.18.28"])
   })
 })

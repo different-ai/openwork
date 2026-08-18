@@ -267,7 +267,7 @@ function reconcileSelectedWorkspaceId(
 
 const SETTINGS_HIDE_TITLEBAR_KEY = "openwork.react.settings.hide-titlebar";
 const SETTINGS_UPDATE_AUTO_CHECK_KEY = "openwork.react.settings.update-auto-check";
-const SETTINGS_UPDATE_AUTO_DOWNLOAD_KEY = "openwork.react.settings.update-auto-download";
+export const SETTINGS_UPDATE_AUTO_DOWNLOAD_KEY = "openwork.react.settings.update-auto-download";
 
 export function parseSettingsPath(pathname: string): {
   tab: SettingsTab;
@@ -349,10 +349,15 @@ export function parseExtensionsPath(pathname: string): ReturnType<typeof parseSe
   return parseSettingsPath(`/settings/extensions${extensionPath ? `/${extensionPath}` : ""}`);
 }
 
-function readStoredBoolean(key: string, fallback: boolean) {
-  if (typeof window === "undefined") return fallback;
+export function readStoredBoolean(
+  key: string,
+  fallback: boolean,
+  storage?: Pick<Storage, "getItem">,
+) {
+  const target = storage ?? (typeof window === "undefined" ? null : window.localStorage);
+  if (!target) return fallback;
   try {
-    const raw = window.localStorage.getItem(key);
+    const raw = target.getItem(key);
     if (raw == null) return fallback;
     return raw === "1";
   } catch {
@@ -502,7 +507,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     readStoredBoolean(SETTINGS_UPDATE_AUTO_CHECK_KEY, true),
   );
   const [updateAutoDownload, setUpdateAutoDownload] = useState(() =>
-    readStoredBoolean(SETTINGS_UPDATE_AUTO_DOWNLOAD_KEY, false),
+    readStoredBoolean(SETTINGS_UPDATE_AUTO_DOWNLOAD_KEY, true),
   );
   const [configActionStatus, setConfigActionStatus] = useState<string | null>(null);
   const [revealConfigBusy, setRevealConfigBusy] = useState(false);

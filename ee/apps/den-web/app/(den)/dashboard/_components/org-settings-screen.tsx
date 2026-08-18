@@ -17,10 +17,12 @@ import { DenNotice } from "../../_components/ui/notice";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { EnterprisePlanNotice } from "./enterprise-plan-notice";
 import {
-  allPublishedDesktopVersionsAllowed,
+  allowedDesktopVersionsForPolicy,
   compareDesktopVersions,
+  desktopVersionPolicyMode,
   getDesktopVersionMetadata,
   initialAllowedDesktopVersions,
+  type DesktopVersionPolicyMode,
 } from "./desktop-version-options";
 
 function normalizeAllowedEmailDomainsInput(value: string): string[] | null {
@@ -214,6 +216,8 @@ export function OrgSettingsScreen() {
   } | null>(null);
   const [allowedDesktopVersionsDraft, setAllowedDesktopVersionsDraft] =
     useState<string[]>([]);
+  const [desktopVersionPolicyDraft, setDesktopVersionPolicyDraft] =
+    useState<DesktopVersionPolicyMode>("latest");
   const [desktopVersionOptionsBusy, setDesktopVersionOptionsBusy] =
     useState(false);
   const [desktopVersionOptionsError, setDesktopVersionOptionsError] = useState<
@@ -255,10 +259,6 @@ export function OrgSettingsScreen() {
     () => new Set(allowedDesktopVersionsDraft),
     [allowedDesktopVersionsDraft],
   );
-  const allDesktopVersionsAllowed = allPublishedDesktopVersionsAllowed({
-    draftVersions: allowedDesktopVersionsDraft,
-    publishedVersions: supportedDesktopVersionOptions,
-  });
   const pageSuccess = orgSettingsCompletion?.message ?? null;
 
   useEffect(() => {
@@ -291,6 +291,9 @@ export function OrgSettingsScreen() {
       (orgContext.organization.allowedEmailDomains?.length ?? 0) > 0,
     );
     setRequireSsoEnabled(getRequireSsoFromMetadata(orgContext.organization.metadata));
+    setDesktopVersionPolicyDraft(desktopVersionPolicyMode(
+      getAllowedDesktopVersionsFromMetadata(orgContext.organization.metadata),
+    ));
     setDomainEditModeEnabled(false);
   }, [orgContext]);
 
@@ -445,11 +448,12 @@ export function OrgSettingsScreen() {
         requireSso: requireSsoEnabled,
         ...(supportedDesktopVersionOptions.length > 0
           ? {
-              allowedDesktopVersions: allDesktopVersionsAllowed
-                ? null
-                : supportedDesktopVersionOptions.filter((version) =>
+              allowedDesktopVersions: allowedDesktopVersionsForPolicy(
+                desktopVersionPolicyDraft,
+                supportedDesktopVersionOptions.filter((version) =>
                     selectedDesktopVersions.has(version),
                   ),
+              ),
             }
           : {}),
       });
@@ -732,67 +736,108 @@ export function OrgSettingsScreen() {
           !desktopVersionOptionsError &&
           desktopVersionOptions.length > 0 ? (
             <div className="grid gap-4">
-              <div
-                data-testid="desktop-version-list"
-                className="grid max-h-[400px] gap-3 overflow-y-auto pr-2"
-              >
-                {desktopVersionOptions.map((version) => {
-                  const checked = selectedDesktopVersions.has(version);
-                  const requiresServerUpgrade =
-                    desktopVersionRange !== null &&
-                    compareDesktopVersions(
-                      version,
-                      desktopVersionRange.maxVersion,
-                    ) > 0;
-
-                  return (
-                    <label
-                      key={version}
-                      data-desktop-version={version}
-                      data-supported={!requiresServerUpgrade}
-                      className={[
-                        "flex items-center justify-between gap-4 rounded-[24px] border px-5 py-4",
-                        requiresServerUpgrade
-                          ? "cursor-not-allowed border-gray-200 bg-gray-100 text-gray-400"
-                          : "border-gray-200 bg-white",
-                      ].join(" ")}
-                    >
-                      <div className="grid gap-1">
-                        <p
-                          className={[
-                            "text-[15px] font-medium",
-                            requiresServerUpgrade
-                              ? "text-gray-400"
-                              : "text-gray-900",
-                          ].join(" ")}
-                        >
-                          v{version}
-                        </p>
-                        {requiresServerUpgrade ? (
-                          <p className="text-[12px] text-gray-400">
-                            Upgrade server to allow this version
-                          </p>
-                        ) : null}
-                      </div>
-                      <input
-                        type="checkbox"
-                        checked={checked}
-                        disabled={!canManageDesktopVersions || requiresServerUpgrade}
-                        aria-label={`Allow desktop version v${version}`}
-                        onChange={(event) =>
-                          setAllowedDesktopVersionsDraft((current) =>
-                            toggleAllowedDesktopVersion(
-                              current,
-                              version,
-                              event.target.checked,
-                            ),
-                          )
-                        }
-                      />
-                    </label>
-                  );
-                })}
+              <div className="grid gap-3" role="radiogroup" aria-label="Desktop version policy">
+                <label className="flex items-start gap-3 rounded-[24px] border border-gray-200 bg-white px-5 py-4">
+                  <input
+                    type="radio"
+                    name="desktop-version-policy"
+                    value="latest"
+                    checked={desktopVersionPolicyDraft === "latest"}
+                    disabled={!canManageDesktopVersions}
+                    onChange={() => setDesktopVersionPolicyDraft("latest")}
+                  />
+                  <span className="grid gap-1">
+                    <span className="text-[15px] font-medium text-gray-900">
+                      Follow latest stable (recommended)
+                    </span>
+                    <span className="text-[13px] text-gray-500">
+                      Allow future supported stable versions automatically.
+                    </span>
+                  </span>
+                </label>
+                <label className="flex items-start gap-3 rounded-[24px] border border-gray-200 bg-white px-5 py-4">
+                  <input
+                    type="radio"
+                    name="desktop-version-policy"
+                    value="pinned"
+                    checked={desktopVersionPolicyDraft === "pinned"}
+                    disabled={!canManageDesktopVersions}
+                    onChange={() => setDesktopVersionPolicyDraft("pinned")}
+                  />
+                  <span className="grid gap-1">
+                    <span className="text-[15px] font-medium text-gray-900">
+                      Pin approved versions
+                    </span>
+                    <span className="text-[13px] text-gray-500">
+                      Only the selected versions can sign in or be installed.
+                    </span>
+                  </span>
+                </label>
               </div>
+
+              {desktopVersionPolicyDraft === "pinned" ? (
+                <div
+                  data-testid="desktop-version-list"
+                  className="grid max-h-[400px] gap-3 overflow-y-auto pr-2"
+                >
+                  {desktopVersionOptions.map((version) => {
+                    const checked = selectedDesktopVersions.has(version);
+                    const requiresServerUpgrade =
+                      desktopVersionRange !== null &&
+                      compareDesktopVersions(
+                        version,
+                        desktopVersionRange.maxVersion,
+                      ) > 0;
+
+                    return (
+                      <label
+                        key={version}
+                        data-desktop-version={version}
+                        data-supported={!requiresServerUpgrade}
+                        className={[
+                          "flex items-center justify-between gap-4 rounded-[24px] border px-5 py-4",
+                          requiresServerUpgrade
+                            ? "cursor-not-allowed border-gray-200 bg-gray-100 text-gray-400"
+                            : "border-gray-200 bg-white",
+                        ].join(" ")}
+                      >
+                        <div className="grid gap-1">
+                          <p
+                            className={[
+                              "text-[15px] font-medium",
+                              requiresServerUpgrade
+                                ? "text-gray-400"
+                                : "text-gray-900",
+                            ].join(" ")}
+                          >
+                            v{version}
+                          </p>
+                          {requiresServerUpgrade ? (
+                            <p className="text-[12px] text-gray-400">
+                              Upgrade server to allow this version
+                            </p>
+                          ) : null}
+                        </div>
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          disabled={!canManageDesktopVersions || requiresServerUpgrade}
+                          aria-label={`Allow desktop version v${version}`}
+                          onChange={(event) =>
+                            setAllowedDesktopVersionsDraft((current) =>
+                              toggleAllowedDesktopVersion(
+                                current,
+                                version,
+                                event.target.checked,
+                              ),
+                            )
+                          }
+                        />
+                      </label>
+                    );
+                  })}
+                </div>
+              ) : null}
             </div>
           ) : null}
         </DenCard>
