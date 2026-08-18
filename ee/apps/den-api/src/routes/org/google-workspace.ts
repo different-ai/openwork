@@ -157,7 +157,7 @@ const calendarAgendaQuerySchema = z.object({
     z.enum(["today", "tomorrow"]),
     z.string().date(),
   ]).default("today"),
-  timeZone: z.string().trim().min(1).max(100).describe("IANA time zone, for example Europe/Berlin."),
+  timeZone: z.string().trim().min(1).max(100).optional().describe("Optional IANA time zone override. Omit it to use the calling member's primary Google Calendar time zone."),
   maxResults: z.coerce.number().int().min(1).max(100).default(25).describe("Maximum events to return, capped at 100."),
 })
 
@@ -479,6 +479,25 @@ async function listPrimaryCalendarEvents(input: {
     return { ok: false, error: await googleApiError("Google Calendar events list", response) }
   }
   return { ok: true, events: extractCalendarEvents(await readJson(response)) }
+}
+
+async function readPrimaryCalendarTimeZone(accessToken: string): Promise<
+  | { ok: true; timeZone: string }
+  | { ok: false; error: { error: "google_api_error"; message: string } }
+> {
+  const url = new URL(`${calendarApiBase()}/calendar/v3/calendars/primary`)
+  url.searchParams.set("fields", "timeZone")
+  const response = await googleWorkspaceApiFetch(url, {
+    headers: { authorization: `Bearer ${accessToken}` },
+  })
+  if (!response.ok) {
+    return { ok: false, error: await googleApiError("Google Calendar metadata", response) }
+  }
+  const parsed = z.object({ timeZone: z.string().trim().min(1) }).safeParse(await readJson(response))
+  if (!parsed.success) {
+    return { ok: false, error: { error: "google_api_error", message: "Google Calendar metadata returned no time zone." } }
+  }
+  return { ok: true, timeZone: parsed.data.timeZone }
 }
 
 function directUploadFiles(form: FormData) {
@@ -925,7 +944,7 @@ export function registerGoogleWorkspaceRoutes<T extends { Variables: OrgRouteVar
     describeRoute({
       tags: ["Capability Sources"],
       summary: "Get the primary Google Calendar agenda for today, tomorrow, or one local date",
-      description: "Preferred capability for listing the calling member's primary-calendar agenda for today, tomorrow, or one YYYY-MM-DD date in an IANA time zone.",
+      description: "Preferred capability for listing the calling member's primary-calendar agenda for today, tomorrow, or one YYYY-MM-DD date. Omit timeZone to use the primary calendar's configured time zone; override it only when the user explicitly asks for another time zone.",
       responses: {
         200: jsonResponse("Google Calendar agenda returned.", calendarAgendaResponseSchema),
         400: jsonResponse("The local date or time zone was invalid.", invalidRequestSchema),
@@ -953,9 +972,15 @@ export function registerGoogleWorkspaceRoutes<T extends { Variables: OrgRouteVar
       }
 
       const query = c.req.valid("query")
+      let timeZone = query.timeZone
+      if (!timeZone) {
+        const timeZoneResult = await readPrimaryCalendarTimeZone(token.accessToken)
+        if (!timeZoneResult.ok) return c.json(timeZoneResult.error, 502)
+        timeZone = timeZoneResult.timeZone
+      }
       let bounds: ReturnType<typeof calendarAgendaBounds>
       try {
-        bounds = calendarAgendaBounds({ day: query.day, timeZone: query.timeZone })
+        bounds = calendarAgendaBounds({ day: query.day, timeZone })
       } catch (error) {
         return c.json({
           error: "invalid_request",
@@ -971,7 +996,7 @@ export function registerGoogleWorkspaceRoutes<T extends { Variables: OrgRouteVar
       return c.json({
         ok: true,
         date: bounds.date,
-        timeZone: query.timeZone,
+        timeZone,
         timeMin: bounds.timeMin,
         timeMax: bounds.timeMax,
         events: result.events,

@@ -240,6 +240,9 @@ const fakeGoogleServer = Bun.serve({
         ],
       })
     }
+    if (url.pathname === "/calendar/v3/calendars/primary" && request.method === "GET") {
+      return json({ timeZone: "Europe/Berlin" })
+    }
     if (url.pathname === "/calendar/v3/calendars/primary/events" && request.method === "POST") {
       const body: unknown = await request.json()
       lastCalendarEventPayload = body
@@ -606,6 +609,23 @@ test("calendar agenda resolves tomorrow in the member's local time zone", async 
   expect(body.timeMin).toBe(expectedBounds.timeMin)
   expect(body.timeMax).toBe(expectedBounds.timeMax)
   expect(Array.isArray(body.events)).toBe(true)
+})
+
+test("calendar agenda defaults to the primary calendar time zone", async () => {
+  const expectedBounds = calendarAgendaBounds({ day: "tomorrow", timeZone: "Europe/Berlin" })
+  const response = await request(
+    "/v1/capabilities/google-workspace/calendar-agenda?day=tomorrow&maxResults=25",
+  )
+  expect(response.status).toBe(200)
+  expect(googleCallUrls.map((value) => new URL(value).pathname)).toEqual([
+    "/calendar/v3/calendars/primary",
+    "/calendar/v3/calendars/primary/events",
+  ])
+  const body = expectRecord(await response.json(), "calendar agenda response")
+  expect(body.date).toBe(expectedBounds.date)
+  expect(body.timeZone).toBe("Europe/Berlin")
+  expect(body.timeMin).toBe(expectedBounds.timeMin)
+  expect(body.timeMax).toBe(expectedBounds.timeMax)
 })
 
 test("calendar create requests a Google Meet link when asked", async () => {
@@ -1200,6 +1220,8 @@ test("Google Workspace capability tools are discoverable and keep readable names
     },
     additionalProperties: false,
   })
+  expect((agendaMatch?.querySchema as { required?: string[] } | undefined)?.required ?? [])
+    .not.toContain("timeZone")
   expect(searchCapabilities(catalog, "add meet link existing event", 10)[0]?.name).toBe("patchCapabilitiesGoogleWorkspaceCalendarEvent")
   const driveMatch = searchCapabilities(catalog, "drive files", 10)[0]
   expect(driveMatch?.name).toBe("getCapabilitiesGoogleWorkspaceDriveFiles")

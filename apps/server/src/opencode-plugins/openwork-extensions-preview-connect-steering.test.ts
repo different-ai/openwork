@@ -128,7 +128,8 @@ describe("composeOpenWorkExtensionDiscoveryInstruction", () => {
     expect(OPENWORK_CLOUD_CONNECTION_INSTRUCTION).toContain("relay connectionStatus.action exactly");
     expect(OPENWORK_CLOUD_CONNECTION_INSTRUCTION).toContain("results are live, not cached");
     expect(OPENWORK_CLOUD_CONNECTION_INSTRUCTION).toContain("native:google-workspace:getCapabilitiesGoogleWorkspaceCalendarAgenda");
-    expect(OPENWORK_CLOUD_CONNECTION_INSTRUCTION).toContain("day, timeZone, maxResults?");
+    expect(OPENWORK_CLOUD_CONNECTION_INSTRUCTION).toContain("query { day, maxResults? }");
+    expect(OPENWORK_CLOUD_CONNECTION_INSTRUCTION).toContain("Omit timeZone");
     expect(OPENWORK_CLOUD_CONNECTION_INSTRUCTION).toContain("Do not search capabilities and do not load a Calendar skill first.");
     expect(composeOpenWorkExtensionDiscoveryInstruction(state(health()))).toBe(OPENWORK_CLOUD_CONNECTION_INSTRUCTION);
     expect(composeOpenWorkExtensionDiscoveryInstruction({ ...state(health()), connectCatalogEnabled: false })).toBe(OPENWORK_CLOUD_CONNECTION_INSTRUCTION);
