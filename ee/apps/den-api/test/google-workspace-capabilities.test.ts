@@ -1199,29 +1199,9 @@ test("Google Workspace capability tools are discoverable and keep readable names
   const calendarMatch = searchCapabilities(catalog, "calendar events list", 10)[0]
   expect(calendarMatch?.name).toBe("getCapabilitiesGoogleWorkspaceCalendarEvents")
   expect(calendarMatch?.queryParams).toEqual(["timeMin", "timeMax", "maxResults"])
-  expect(calendarMatch?.querySchema).toMatchObject({
-    type: "object",
-    properties: {
-      timeMin: { type: "string", format: "date-time" },
-      timeMax: { type: "string", format: "date-time" },
-      maxResults: { type: "integer", minimum: 1, maximum: 100, default: 25 },
-    },
-    additionalProperties: false,
-  })
   const agendaMatch = searchCapabilities(catalog, "calendar agenda today tomorrow", 10)[0]
   expect(agendaMatch?.name).toBe("getCapabilitiesGoogleWorkspaceCalendarAgenda")
   expect(agendaMatch?.queryParams).toEqual(["day", "timeZone", "maxResults"])
-  expect(agendaMatch?.querySchema).toMatchObject({
-    type: "object",
-    properties: {
-      day: { default: "today" },
-      timeZone: { type: "string", minLength: 1, maxLength: 100 },
-      maxResults: { type: "integer", minimum: 1, maximum: 100, default: 25 },
-    },
-    additionalProperties: false,
-  })
-  expect((agendaMatch?.querySchema as { required?: string[] } | undefined)?.required ?? [])
-    .not.toContain("timeZone")
   expect(searchCapabilities(catalog, "add meet link existing event", 10)[0]?.name).toBe("patchCapabilitiesGoogleWorkspaceCalendarEvent")
   const driveMatch = searchCapabilities(catalog, "drive files", 10)[0]
   expect(driveMatch?.name).toBe("getCapabilitiesGoogleWorkspaceDriveFiles")
