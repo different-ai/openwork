@@ -116,12 +116,20 @@ describe("composeOpenWorkExtensionDiscoveryInstruction", () => {
   test("steers ready Connect users to verified openwork-cloud capabilities first", () => {
     expect(OPENWORK_CLOUD_CONNECTION_INSTRUCTION).toContain("verified ready for this exact workspace/model");
     expect(OPENWORK_CLOUD_CONNECTION_INSTRUCTION).toContain("use openwork-cloud_search_capabilities");
+    expect(OPENWORK_CLOUD_CONNECTION_INSTRUCTION).toContain("search once with one precise query");
+    expect(OPENWORK_CLOUD_CONNECTION_INSTRUCTION).toContain("batch independent reads");
+    expect(OPENWORK_CLOUD_CONNECTION_INSTRUCTION).not.toContain("2-4 keyword variants");
     expect(OPENWORK_CLOUD_CONNECTION_INSTRUCTION).toContain("available_skills");
+    expect(OPENWORK_CLOUD_CONNECTION_INSTRUCTION).toContain("Load each remote skill at most once per task.");
+    expect(OPENWORK_CLOUD_CONNECTION_INSTRUCTION).toContain("Reuse the full SKILL.md body already present in this task.");
     expect(OPENWORK_CLOUD_CONNECTION_INSTRUCTION).not.toContain("Skill creation:");
     expect(OPENWORK_CLOUD_CONNECTION_INSTRUCTION).not.toContain("Gmail");
     expect(OPENWORK_CLOUD_CONNECTION_INSTRUCTION).not.toContain("image generation");
     expect(OPENWORK_CLOUD_CONNECTION_INSTRUCTION).toContain("relay connectionStatus.action exactly");
     expect(OPENWORK_CLOUD_CONNECTION_INSTRUCTION).toContain("results are live, not cached");
+    expect(OPENWORK_CLOUD_CONNECTION_INSTRUCTION).toContain("native:google-workspace:getCapabilitiesGoogleWorkspaceCalendarAgenda");
+    expect(OPENWORK_CLOUD_CONNECTION_INSTRUCTION).toContain("day, timeZone, maxResults?");
+    expect(OPENWORK_CLOUD_CONNECTION_INSTRUCTION).toContain("Do not search capabilities and do not load a Calendar skill first.");
     expect(composeOpenWorkExtensionDiscoveryInstruction(state(health()))).toBe(OPENWORK_CLOUD_CONNECTION_INSTRUCTION);
     expect(composeOpenWorkExtensionDiscoveryInstruction({ ...state(health()), connectCatalogEnabled: false })).toBe(OPENWORK_CLOUD_CONNECTION_INSTRUCTION);
     expect(composeOpenWorkExtensionDiscoveryInstruction({ ...state(health()), googleWorkspace: { legacyConfigured: true } })).toBe(OPENWORK_CLOUD_CONNECTION_INSTRUCTION);
