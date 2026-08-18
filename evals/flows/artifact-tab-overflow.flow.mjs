@@ -30,11 +30,16 @@ export default {
           );
         }
 
+        // The browser rail button toggles the side panel, so only click it when
+        // the panel (and with it the seed action) is not already mounted.
         await ctx.eval(`(() => {
+          const seedReady = window.__openworkControl.listActions()
+            .some((item) => item.id === "eval.artifact_tabs.seed_overflow" && !item.disabled);
+          if (seedReady) return "already-open";
           const button = Array.from(document.querySelectorAll("button"))
-            .find((item) => item.getAttribute("aria-label") === "Browser" && !item.disabled);
+            .find((item) => (item.getAttribute("aria-label") || "").startsWith("Browser") && !item.disabled);
           button?.click();
-          return Boolean(button);
+          return button ? "clicked" : "no-button";
         })()`);
         await ctx.waitFor(
           `window.__openworkControl.listActions().some((a) => a.id === "eval.artifact_tabs.seed_overflow" && !a.disabled)`,

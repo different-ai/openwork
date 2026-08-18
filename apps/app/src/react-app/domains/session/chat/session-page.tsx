@@ -541,11 +541,15 @@ export function SessionPage(props: SessionPageProps) {
     setCurrentSidePanel("panel");
   }, [setCurrentSidePanel]);
   const openBrowserRailPane = useCallback(() => {
-    if (!hasBrowserTabs) return;
     // Opening the browser pane should land on a usable page, not an empty
-    // panel that forces the user to click "+".
+    // panel that forces the user to click "+", so the first click opens a tab.
+    if (!hasBrowserTabs) {
+      setCurrentSidePanel("panel");
+      void window.__OPENWORK_ELECTRON__?.browser?.createTab?.();
+      return;
+    }
     toggleCurrentSidePanel("panel");
-  }, [hasBrowserTabs, toggleCurrentSidePanel]);
+  }, [hasBrowserTabs, setCurrentSidePanel, toggleCurrentSidePanel]);
   const openBrowserUrlControlAction = useMemo<OpenworkControlAction>(() => ({
     id: "browser.open_url",
     label: "Open URL in built-in browser",
@@ -1562,10 +1566,10 @@ export function SessionPage(props: SessionPageProps) {
                   panelRailActive && hasBrowserTabs && "bg-primary/10 text-primary hover:bg-primary/15 hover:text-primary",
                 )}
                 onClick={openBrowserRailPane}
-                title={hasBrowserTabs ? "Browser" : "Browser opens when a page is available"}
-                aria-label={hasBrowserTabs ? "Browser" : "Browser opens when a page is available"}
+                title={props.selectedSessionId ? "Browser" : "Browser opens once you start a task"}
+                aria-label={props.selectedSessionId ? "Browser" : "Browser opens once you start a task"}
                 aria-pressed={panelRailActive && hasBrowserTabs}
-                disabled={!hasBrowserTabs}
+                disabled={!props.selectedSessionId}
               >
                 <Globe size={15} />
               </Button>
