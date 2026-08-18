@@ -22,12 +22,12 @@ const title = missingRequirements.length > 0
   : "Library authoring persists in Den and desktop and web rows open their details";
 
 const addChoices = [
-  "Add skill",
-  "Add command",
-  "Add agent",
-  "Add MCP",
-  "Add plugin",
-  "Add connection",
+  "Skill",
+  "Command",
+  "Agent",
+  "Plugin",
+  "MCP server",
+  "Connection",
 ];
 const forbiddenFlashes = [
   "Your library is empty.",
@@ -161,25 +161,31 @@ test(title, async ({ evidence, place }) => {
     return true;
   })()`);
   expect(addOpened).toBe(true);
-  await waitFor(desktop, `[...document.querySelectorAll('[role="menuitem"]')]
-    .some((item) => (item.textContent ?? "").trim() === "Add connection")`, {
+  await waitFor(desktop, `[...document.querySelectorAll('[role="dialog"] h2')]
+    .some((heading) => (heading.textContent ?? "").trim() === "Add to your Library")
+    && [...document.querySelectorAll('[role="radio"]')]
+      .some((item) => (item.textContent ?? "").includes("Connection"))`, {
     timeoutMs: 20_000,
     label: "all signed-in Library Add choices",
   });
-  const visibleAddChoices = await evalIn(desktop, `[...document.querySelectorAll('[role="menuitem"]')]
+  const visibleAddChoices = await evalIn(desktop, `[...document.querySelectorAll("[data-kind-title]")]
     .map((item) => (item.textContent ?? "").trim())`);
   expect(visibleAddChoices).toEqual(addChoices);
   evidence.fact(
-    "Signed-in desktop Library shows Add and all six choices",
-    `The open Add menu contained exact labels ${JSON.stringify(visibleAddChoices)}.`,
+    "Signed-in desktop Library shows Add and all six kind rows",
+    `The open Add picker contained exact titles ${JSON.stringify(visibleAddChoices)}.`,
     JSON.stringify(visibleAddChoices) === JSON.stringify(addChoices),
   );
 
   const skillChoiceClicked = await evalIn(desktop, `(() => {
-    const item = [...document.querySelectorAll('[role="menuitem"]')]
-      .find((entry) => (entry.textContent ?? "").trim() === "Add skill");
+    const item = [...document.querySelectorAll('[role="radio"]')]
+      .find((entry) => (entry.getAttribute("data-kind") ?? "") === "skill");
     if (!(item instanceof HTMLElement)) return false;
     item.click();
+    const continueButton = [...document.querySelectorAll('[role="dialog"] button')]
+      .find((entry) => (entry.textContent ?? "").trim() === "Continue");
+    if (!(continueButton instanceof HTMLButtonElement) || continueButton.disabled) return false;
+    continueButton.click();
     return true;
   })()`);
   expect(skillChoiceClicked).toBe(true);

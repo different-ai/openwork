@@ -1,15 +1,11 @@
 /** @jsxImportSource react */
-import { ChevronDown, Plus } from "lucide-react";
+import { useState } from "react";
+import { Plus } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import { t } from "../../../../i18n";
 import type { LibraryAddKind } from "../library";
+import { LibraryAddKindPicker } from "./library-add-kind-picker";
 
 export function libraryAddKindLabel(kind: LibraryAddKind) {
   switch (kind) {
@@ -35,6 +31,7 @@ export function LibraryAddControl(props: {
   variant?: "default" | "outline";
 }) {
   const kinds = props.kinds;
+  const [pickerOpen, setPickerOpen] = useState(false);
   if (kinds.length === 0) return null;
   const size = props.size ?? "default";
   const variant = props.variant ?? "default";
@@ -50,23 +47,22 @@ export function LibraryAddControl(props: {
   }
 
   return (
-    <DropdownMenu>
-      <DropdownMenuTrigger
-        render={(
-          <Button variant={variant} size={size} className="shrink-0 gap-1 rounded-lg">
-            <Plus size={16} />
-            {t("common.add")}
-            <ChevronDown size={14} />
-          </Button>
-        )}
+    <>
+      <Button
+        variant={variant}
+        size={size}
+        className="shrink-0 gap-1 rounded-lg"
+        onClick={() => setPickerOpen(true)}
+      >
+        <Plus size={16} />
+        {t("common.add")}
+      </Button>
+      <LibraryAddKindPicker
+        open={pickerOpen}
+        kinds={kinds}
+        onClose={() => setPickerOpen(false)}
+        onSelect={props.onSelect}
       />
-      <DropdownMenuContent align="end" className="w-48">
-        {kinds.map((kind) => (
-          <DropdownMenuItem key={kind} onClick={() => props.onSelect(kind)}>
-            {libraryAddKindLabel(kind)}
-          </DropdownMenuItem>
-        ))}
-      </DropdownMenuContent>
-    </DropdownMenu>
+    </>
   );
 }

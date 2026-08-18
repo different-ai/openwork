@@ -413,7 +413,7 @@ export function AddLibraryItemModal(props: AddLibraryItemModalProps) {
             ) : null}
           </div>
         ) : (
-          <div className="flex flex-col gap-4 rounded-3xl border border-dls-border bg-dls-surface p-5">
+          <div className="flex flex-col gap-5">
             <TextInput
               label={t("extensions.add_name_label")}
               hint={nameHintForKind(kind)}
@@ -467,6 +467,46 @@ export function AddLibraryItemModal(props: AddLibraryItemModalProps) {
                 </label>
               </>
             )}
+            {props.cloud ? (
+              <div className="flex flex-col gap-2">
+                <div className="flex items-center gap-3">
+                  <p className="shrink-0 font-mono text-[11px] font-medium tracking-[0.12em] text-dls-secondary">
+                    {t("extensions.add_access_label")}
+                  </p>
+                  <span className="h-px flex-1 bg-dls-border" />
+                </div>
+                <div role="radiogroup" aria-label={t("extensions.add_access_label")} className="flex flex-col gap-1">
+                  <button
+                    type="button"
+                    role="radio"
+                    aria-checked={!shareOrgWide}
+                    disabled={busy}
+                    className={`flex w-full items-start gap-3 rounded-xl px-3.5 py-3 text-left ${shareOrgWide ? "" : "bg-dls-hover"}`}
+                    onClick={() => setShareOrgWide(false)}
+                  >
+                    <span className={`mt-0.5 flex size-[17px] shrink-0 items-center justify-center rounded-full ${shareOrgWide ? "border-[1.5px] border-dls-border" : "bg-foreground"}`} />
+                    <span className="min-w-0">
+                      <span className="block text-sm font-semibold">{t("extensions.add_access_just_me")}</span>
+                      <span className="block text-[13px] text-dls-secondary">{t("extensions.add_access_just_me_hint")}</span>
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    role="radio"
+                    aria-checked={shareOrgWide}
+                    disabled={busy}
+                    className={`flex w-full items-start gap-3 rounded-xl px-3.5 py-3 text-left ${shareOrgWide ? "bg-dls-hover" : ""}`}
+                    onClick={() => setShareOrgWide(true)}
+                  >
+                    <span className={`mt-0.5 flex size-[17px] shrink-0 items-center justify-center rounded-full ${shareOrgWide ? "bg-foreground" : "border-[1.5px] border-dls-border"}`} />
+                    <span className="min-w-0">
+                      <span className="block text-sm font-semibold">{t("extensions.add_access_everyone")}</span>
+                      <span className="block text-[13px] text-dls-secondary">{t("extensions.add_access_everyone_hint")}</span>
+                    </span>
+                  </button>
+                </div>
+              </div>
+            ) : null}
           </div>
         )}
 
