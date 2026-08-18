@@ -240,6 +240,9 @@ const fakeGoogleServer = Bun.serve({
         ],
       })
     }
+    if (url.pathname === "/calendar/v3/calendars/primary" && request.method === "GET") {
+      return json({ timeZone: "Europe/Berlin" })
+    }
     if (url.pathname === "/calendar/v3/calendars/primary/events" && request.method === "POST") {
       const body: unknown = await request.json()
       lastCalendarEventPayload = body
@@ -391,6 +394,7 @@ let session: typeof import("../src/session.js")
 let upsertConnectedAccount: typeof import("../src/capability-sources/oauth-credentials.js").upsertConnectedAccount
 let buildMcpCatalog: typeof import("../src/mcp/catalog.js").buildMcpCatalog
 let searchCapabilities: typeof import("../src/mcp/search.js").searchCapabilities
+let calendarAgendaBounds: typeof import("../src/routes/org/google-workspace.js").calendarAgendaBounds
 
 const userId = createDenTypeId("user")
 const organizationId = createDenTypeId("organization")
@@ -450,7 +454,7 @@ beforeAll(async () => {
   }).db
   mock.module("../src/db.js", () => ({ db: realDb }))
 
-  const [appMod, dbMod, schemaMod, drizzleMod, sessionMod, credentialsMod, catalogMod, searchMod] = await Promise.all([
+  const [appMod, dbMod, schemaMod, drizzleMod, sessionMod, credentialsMod, catalogMod, searchMod, googleWorkspaceMod] = await Promise.all([
     import("../src/app.js"),
     import("../src/db.js"),
     import("@openwork-ee/den-db/schema"),
@@ -459,6 +463,7 @@ beforeAll(async () => {
     import("../src/capability-sources/oauth-credentials.js"),
     import("../src/mcp/catalog.js"),
     import("../src/mcp/search.js"),
+    import("../src/routes/org/google-workspace.js"),
   ])
   app = appMod.default
   db = dbMod.db
@@ -468,6 +473,7 @@ beforeAll(async () => {
   upsertConnectedAccount = credentialsMod.upsertConnectedAccount
   buildMcpCatalog = catalogMod.buildMcpCatalog
   searchCapabilities = searchMod.searchCapabilities
+  calendarAgendaBounds = googleWorkspaceMod.calendarAgendaBounds
 
   await db.insert(schema.AuthUserTable).values({
     id: userId,
@@ -557,6 +563,69 @@ test("calendar list returns mapped events and sends the member token", async () 
       },
     ],
   })
+})
+
+test("calendar agenda bounds follow local days and DST", () => {
+  const now = new Date("2026-08-18T10:00:00Z")
+  expect(calendarAgendaBounds({ day: "today", timeZone: "Europe/Berlin", now })).toEqual({
+    date: "2026-08-18",
+    timeMin: "2026-08-17T22:00:00.000Z",
+    timeMax: "2026-08-18T22:00:00.000Z",
+  })
+  expect(calendarAgendaBounds({ day: "tomorrow", timeZone: "Europe/Berlin", now })).toEqual({
+    date: "2026-08-19",
+    timeMin: "2026-08-18T22:00:00.000Z",
+    timeMax: "2026-08-19T22:00:00.000Z",
+  })
+  const dstDay = calendarAgendaBounds({ day: "2026-10-25", timeZone: "Europe/Berlin", now })
+  expect(dstDay).toEqual({
+    date: "2026-10-25",
+    timeMin: "2026-10-24T22:00:00.000Z",
+    timeMax: "2026-10-25T23:00:00.000Z",
+  })
+  expect(
+    new Date(dstDay.timeMax).getTime() - new Date(dstDay.timeMin).getTime(),
+  ).toBe(25 * 60 * 60 * 1000)
+  expect(() => calendarAgendaBounds({ day: "today", timeZone: "Not/AZone", now })).toThrow()
+})
+
+test("calendar agenda resolves tomorrow in the member's local time zone", async () => {
+  const expectedBounds = calendarAgendaBounds({ day: "tomorrow", timeZone: "Europe/Berlin" })
+  const response = await request(
+    "/v1/capabilities/google-workspace/calendar-agenda" +
+    "?day=tomorrow&timeZone=Europe%2FBerlin&maxResults=25",
+  )
+  expect(response.status).toBe(200)
+  expect(lastAuthorization).toBe("Bearer gws-token")
+  const url = new URL(expectString(lastCalendarUrl, "calendar agenda URL"))
+  expect(url.searchParams.get("timeMin")).toBe(expectedBounds.timeMin)
+  expect(url.searchParams.get("timeMax")).toBe(expectedBounds.timeMax)
+  expect(url.searchParams.get("singleEvents")).toBe("true")
+  expect(url.searchParams.get("orderBy")).toBe("startTime")
+  expect(url.searchParams.get("maxResults")).toBe("25")
+  const body = expectRecord(await response.json(), "calendar agenda response")
+  expect(body.date).toBe(expectedBounds.date)
+  expect(body.timeZone).toBe("Europe/Berlin")
+  expect(body.timeMin).toBe(expectedBounds.timeMin)
+  expect(body.timeMax).toBe(expectedBounds.timeMax)
+  expect(Array.isArray(body.events)).toBe(true)
+})
+
+test("calendar agenda defaults to the primary calendar time zone", async () => {
+  const expectedBounds = calendarAgendaBounds({ day: "tomorrow", timeZone: "Europe/Berlin" })
+  const response = await request(
+    "/v1/capabilities/google-workspace/calendar-agenda?day=tomorrow&maxResults=25",
+  )
+  expect(response.status).toBe(200)
+  expect(googleCallUrls.map((value) => new URL(value).pathname)).toEqual([
+    "/calendar/v3/calendars/primary",
+    "/calendar/v3/calendars/primary/events",
+  ])
+  const body = expectRecord(await response.json(), "calendar agenda response")
+  expect(body.date).toBe(expectedBounds.date)
+  expect(body.timeZone).toBe("Europe/Berlin")
+  expect(body.timeMin).toBe(expectedBounds.timeMin)
+  expect(body.timeMax).toBe(expectedBounds.timeMax)
 })
 
 test("calendar create requests a Google Meet link when asked", async () => {
@@ -1130,6 +1199,9 @@ test("Google Workspace capability tools are discoverable and keep readable names
   const calendarMatch = searchCapabilities(catalog, "calendar events list", 10)[0]
   expect(calendarMatch?.name).toBe("getCapabilitiesGoogleWorkspaceCalendarEvents")
   expect(calendarMatch?.queryParams).toEqual(["timeMin", "timeMax", "maxResults"])
+  const agendaMatch = searchCapabilities(catalog, "calendar agenda today tomorrow", 10)[0]
+  expect(agendaMatch?.name).toBe("getCapabilitiesGoogleWorkspaceCalendarAgenda")
+  expect(agendaMatch?.queryParams).toEqual(["day", "timeZone", "maxResults"])
   expect(searchCapabilities(catalog, "add meet link existing event", 10)[0]?.name).toBe("patchCapabilitiesGoogleWorkspaceCalendarEvent")
   const driveMatch = searchCapabilities(catalog, "drive files", 10)[0]
   expect(driveMatch?.name).toBe("getCapabilitiesGoogleWorkspaceDriveFiles")
@@ -1151,6 +1223,7 @@ test("Google Workspace capability tools are discoverable and keep readable names
     "getCapabilitiesGoogleWorkspaceGmailMessage",
     "getCapabilitiesGoogleWorkspaceGmailAttachment",
     "getCapabilitiesGoogleWorkspaceCalendarEvents",
+    "getCapabilitiesGoogleWorkspaceCalendarAgenda",
     "postCapabilitiesGoogleWorkspaceCalendarEvents",
     "patchCapabilitiesGoogleWorkspaceCalendarEvent",
     "getCapabilitiesGoogleWorkspaceDriveFiles",

@@ -134,9 +134,48 @@ test("agent MCP server exposes steering instructions during initialize", async (
   expect(client.getInstructions()).toContain("always attempts the downstream provider call")
   expect(client.getInstructions()).toContain("invalid_capability_arguments")
   expect(client.getInstructions()).toContain("never retry the same arguments unchanged")
+  expect(client.getInstructions()).toContain("native:google-workspace:getCapabilitiesGoogleWorkspaceCalendarAgenda")
+  expect(client.getInstructions()).toContain("query { day, maxResults? }")
+  expect(client.getInstructions()).toContain("Omit timeZone")
+  expect(client.getInstructions()).toContain("Do not call search_capabilities first")
 
   await client.close()
   await server.close()
+})
+
+test("capability-search tool description requires one exact search", () => {
+  const searchDescription = (agentModule as unknown as { SEARCH_CAPABILITIES_DESCRIPTION?: string }).SEARCH_CAPABILITIES_DESCRIPTION
+
+  expect(searchDescription).toContain("search once with one precise query")
+  expect(searchDescription).toContain("loaded capability-specific skill")
+  expect(searchDescription).toContain("Reuse an exact capability already returned")
+  expect(searchDescription).not.toContain("2-4 keyword variants")
+})
+
+test("generic execution advertises the direct local-day Calendar shortcut", () => {
+  expect(agentModule.EXECUTE_CAPABILITY_DESCRIPTION).toContain(
+    "native:google-workspace:getCapabilitiesGoogleWorkspaceCalendarAgenda",
+  )
+  expect(agentModule.EXECUTE_CAPABILITY_DESCRIPTION).toContain("query { day, maxResults? }")
+  expect(agentModule.EXECUTE_CAPABILITY_DESCRIPTION).toContain("Omit timeZone")
+  expect(agentModule.EXECUTE_CAPABILITY_DESCRIPTION).toContain("Do not call search_capabilities first")
+})
+
+test("generic execution advertises direct bounded Gmail and Drive reads", () => {
+  for (const instruction of [
+    agentModule.EXECUTE_CAPABILITY_DESCRIPTION,
+    agentModule.AGENT_MCP_INSTRUCTIONS,
+  ]) {
+    expect(instruction).toContain(
+      "native:google-workspace:getCapabilitiesGoogleWorkspaceGmailMessages",
+    )
+    expect(instruction).toContain('query { q: "in:inbox", maxResults? }')
+    expect(instruction).toContain(
+      "native:google-workspace:getCapabilitiesGoogleWorkspaceDriveFiles",
+    )
+    expect(instruction).toContain("query { query, maxResults? }")
+    expect(instruction).toContain("Do not call search_capabilities first")
+  }
 })
 
 test("agent MCP server exposes a standards-shaped remote skill index", () => {

@@ -118,6 +118,7 @@ export function buildOpenworkRuntimeConfigObjectFromSnapshot(
             "command-creator": "deny",
             "agent-creator": "deny",
             "plugin-creator": "deny",
+            "using-superpowers": "deny",
           },
         },
       },

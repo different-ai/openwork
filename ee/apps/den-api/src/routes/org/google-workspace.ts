@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto"
 import { bodyLimit } from "hono/body-limit"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
+import { DateTime } from "luxon"
 import type { DenTypeId } from "@openwork-ee/utils/typeid"
 import { env } from "../../env.js"
 import { cloudTransportRoute, jsonValidator, orgMemberRoute, paramValidator, queryValidator } from "../../middleware/index.js"
@@ -151,6 +152,15 @@ const calendarEventsQuerySchema = z.object({
   maxResults: z.coerce.number().int().min(1).max(100).default(25).describe("Maximum events to return, capped at 100."),
 })
 
+const calendarAgendaQuerySchema = z.object({
+  day: z.union([
+    z.enum(["today", "tomorrow"]),
+    z.string().date(),
+  ]).default("today"),
+  timeZone: z.string().trim().min(1).max(100).optional().describe("Optional IANA time zone override. Omit it to use the calling member's primary Google Calendar time zone."),
+  maxResults: z.coerce.number().int().min(1).max(100).default(25).describe("Maximum events to return, capped at 100."),
+})
+
 const calendarEventParamSchema = z.object({
   eventId: z.string().trim().min(1).max(512).describe("Google Calendar event id."),
 })
@@ -172,6 +182,15 @@ const calendarEventsResponseSchema = z.object({
   ok: z.literal(true),
   events: z.array(calendarEventSchema),
 }).meta({ ref: "GoogleWorkspaceCalendarEventsResponse" })
+
+const calendarAgendaResponseSchema = z.object({
+  ok: z.literal(true),
+  date: z.string().date(),
+  timeZone: z.string(),
+  timeMin: z.string().datetime(),
+  timeMax: z.string().datetime(),
+  events: z.array(calendarEventSchema),
+}).meta({ ref: "GoogleWorkspaceCalendarAgendaResponse" })
 
 const createCalendarEventBodySchema = z.object({
   summary: z.string().trim().min(1).max(1_000).describe("Event title."),
@@ -376,7 +395,7 @@ async function googleWorkspaceToken(input: {
 
 async function googleApiError(operation: string, response: Response) {
   const text = await response.text()
-  return { error: "google_api_error", message: `${operation} failed: ${response.status} ${text.slice(0, 300)}` }
+  return { error: "google_api_error" as const, message: `${operation} failed: ${response.status} ${text.slice(0, 300)}` }
 }
 
 async function googleWorkspaceApiFetch(input: Parameters<typeof fetch>[0], init?: RequestInit): Promise<Response> {
@@ -415,6 +434,70 @@ function buildCalendarConferenceData(): CalendarConferenceData {
       conferenceSolutionKey: { type: "hangoutsMeet" },
     },
   }
+}
+
+export function calendarAgendaBounds(input: {
+  day: "today" | "tomorrow" | string
+  timeZone: string
+  now?: Date
+}): { date: string; timeMin: string; timeMax: string } {
+  const now = DateTime.fromJSDate(input.now ?? new Date(), { zone: input.timeZone })
+  if (!now.isValid) throw new Error(`Invalid IANA time zone: ${input.timeZone}`)
+
+  const start = input.day === "today" || input.day === "tomorrow"
+    ? now.startOf("day").plus({ days: input.day === "tomorrow" ? 1 : 0 })
+    : DateTime.fromISO(input.day, { zone: input.timeZone }).startOf("day")
+  if (!start.isValid) throw new Error(`Invalid calendar day: ${input.day}`)
+
+  const date = start.toISODate()
+  const timeMin = start.toUTC().toISO()
+  const timeMax = start.plus({ days: 1 }).toUTC().toISO()
+  if (!date || !timeMin || !timeMax) throw new Error("Could not resolve calendar agenda bounds")
+  return { date, timeMin, timeMax }
+}
+
+async function listPrimaryCalendarEvents(input: {
+  accessToken: string
+  timeMin: string
+  timeMax: string
+  maxResults: number
+}): Promise<
+  | { ok: true; events: z.infer<typeof calendarEventSchema>[] }
+  | { ok: false; error: { error: "google_api_error"; message: string } }
+> {
+  const url = new URL(`${calendarApiBase()}/calendar/v3/calendars/primary/events`)
+  url.searchParams.set("timeMin", input.timeMin)
+  url.searchParams.set("timeMax", input.timeMax)
+  url.searchParams.set("singleEvents", "true")
+  url.searchParams.set("orderBy", "startTime")
+  url.searchParams.set("maxResults", String(input.maxResults))
+
+  const response = await googleWorkspaceApiFetch(url, {
+    headers: { authorization: `Bearer ${input.accessToken}` },
+  })
+  if (!response.ok) {
+    return { ok: false, error: await googleApiError("Google Calendar events list", response) }
+  }
+  return { ok: true, events: extractCalendarEvents(await readJson(response)) }
+}
+
+async function readPrimaryCalendarTimeZone(accessToken: string): Promise<
+  | { ok: true; timeZone: string }
+  | { ok: false; error: { error: "google_api_error"; message: string } }
+> {
+  const url = new URL(`${calendarApiBase()}/calendar/v3/calendars/primary`)
+  url.searchParams.set("fields", "timeZone")
+  const response = await googleWorkspaceApiFetch(url, {
+    headers: { authorization: `Bearer ${accessToken}` },
+  })
+  if (!response.ok) {
+    return { ok: false, error: await googleApiError("Google Calendar metadata", response) }
+  }
+  const parsed = z.object({ timeZone: z.string().trim().min(1) }).safeParse(await readJson(response))
+  if (!parsed.success) {
+    return { ok: false, error: { error: "google_api_error", message: "Google Calendar metadata returned no time zone." } }
+  }
+  return { ok: true, timeZone: parsed.data.timeZone }
 }
 
 function directUploadFiles(form: FormData) {
@@ -857,6 +940,71 @@ export function registerGoogleWorkspaceRoutes<T extends { Variables: OrgRouteVar
   )
 
   app.get(
+    "/v1/capabilities/google-workspace/calendar-agenda",
+    describeRoute({
+      tags: ["Capability Sources"],
+      summary: "Get the primary Google Calendar agenda for today, tomorrow, or one local date",
+      description: "Preferred capability for listing the calling member's primary-calendar agenda for today, tomorrow, or one YYYY-MM-DD date. Omit timeZone to use the primary calendar's configured time zone; override it only when the user explicitly asks for another time zone.",
+      responses: {
+        200: jsonResponse("Google Calendar agenda returned.", calendarAgendaResponseSchema),
+        400: jsonResponse("The local date or time zone was invalid.", invalidRequestSchema),
+        401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
+        409: jsonResponse("The calling member has not connected their Google account or is missing permission.", needsConnectionSchema),
+        502: jsonResponse("Google rejected the request.", upstreamErrorSchema),
+      },
+    }),
+    orgMemberRoute(),
+    queryValidator(calendarAgendaQuerySchema),
+    async (c) => {
+      const payload = c.get("organizationContext")
+      const token = await googleWorkspaceToken({
+        organizationId: payload.organization.id,
+        orgMembershipId: payload.currentMember.id,
+      })
+      if (token.kind === "google_api_error") {
+        return c.json({ error: "google_api_error", message: token.message }, 502)
+      }
+      if (token.kind === "needs_connection") {
+        return c.json({ error: "needs_connection", message: token.message }, 409)
+      }
+      if (missingScope(token.account, [CALENDAR_READ_SCOPE, CALENDAR_EVENTS_SCOPE])) {
+        return c.json({ error: "needs_connection", message: missingPermissionMessage("Google Calendar read") }, 409)
+      }
+
+      const query = c.req.valid("query")
+      let timeZone = query.timeZone
+      if (!timeZone) {
+        const timeZoneResult = await readPrimaryCalendarTimeZone(token.accessToken)
+        if (!timeZoneResult.ok) return c.json(timeZoneResult.error, 502)
+        timeZone = timeZoneResult.timeZone
+      }
+      let bounds: ReturnType<typeof calendarAgendaBounds>
+      try {
+        bounds = calendarAgendaBounds({ day: query.day, timeZone })
+      } catch (error) {
+        return c.json({
+          error: "invalid_request",
+          message: error instanceof Error ? error.message : "Invalid calendar agenda date or time zone.",
+        }, 400)
+      }
+      const result = await listPrimaryCalendarEvents({
+        accessToken: token.accessToken,
+        ...bounds,
+        maxResults: query.maxResults,
+      })
+      if (!result.ok) return c.json(result.error, 502)
+      return c.json({
+        ok: true,
+        date: bounds.date,
+        timeZone,
+        timeMin: bounds.timeMin,
+        timeMax: bounds.timeMax,
+        events: result.events,
+      })
+    },
+  )
+
+  app.get(
     "/v1/capabilities/google-workspace/calendar-events",
     describeRoute({
       tags: ["Capability Sources"],
@@ -888,21 +1036,14 @@ export function registerGoogleWorkspaceRoutes<T extends { Variables: OrgRouteVar
       }
 
       const query = c.req.valid("query")
-      const url = new URL(`${calendarApiBase()}/calendar/v3/calendars/primary/events`)
-      url.searchParams.set("timeMin", query.timeMin)
-      url.searchParams.set("timeMax", query.timeMax)
-      url.searchParams.set("singleEvents", "true")
-      url.searchParams.set("orderBy", "startTime")
-      url.searchParams.set("maxResults", String(query.maxResults))
-
-      const response = await googleWorkspaceApiFetch(url, {
-        headers: { authorization: `Bearer ${token.accessToken}` },
+      const result = await listPrimaryCalendarEvents({
+        accessToken: token.accessToken,
+        timeMin: query.timeMin,
+        timeMax: query.timeMax,
+        maxResults: query.maxResults,
       })
-      if (!response.ok) {
-        return c.json(await googleApiError("Google Calendar events list", response), 502)
-      }
-
-      return c.json({ ok: true, events: extractCalendarEvents(await readJson(response)) })
+      if (!result.ok) return c.json(result.error, 502)
+      return c.json({ ok: true, events: result.events })
     },
   )
 
