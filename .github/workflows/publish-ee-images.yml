@@ -26,6 +26,8 @@ on:
       - "packaging/docker/Dockerfile.den-web"
       - "packaging/docker/Dockerfile.inference"
       - "packaging/helm/openwork-ee/**"
+      - "scripts/den/**"
+      - "evals/specs/den-selfhost-tarball.slow.test.ts"
       - "ee/apps/den-api/**"
       - "ee/apps/den-gateway/**"
       - "ee/apps/den-web/**"
@@ -125,6 +127,80 @@ jobs:
       - name: Publish chart
         if: ${{ needs.artifact-version.outputs.publish == 'true' && needs.artifact-version.outputs.chart_version != '' }}
         run: helm push "dist/charts/openwork-ee-${{ needs.artifact-version.outputs.chart_version }}.tgz" "oci://${{ env.REGISTRY }}/${{ github.repository_owner }}/charts"
+
+  den-selfhost-bundle:
+    name: Build Den self-host bundle (${{ matrix.platform }}-${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    needs: artifact-version
+    # Build runs repository-controlled code on pull requests, so it must never
+    # hold a write-capable token. Release upload happens in den-selfhost-release.
+    permissions:
+      contents: read
+    strategy:
+      matrix:
+        include:
+          # sharp and other native dependencies require a native build host.
+          # No native GitHub arm64 runner is used elsewhere in this repository yet.
+          - platform: linux
+            arch: x64
+            runner: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.4.0
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build self-host bundle
+        shell: bash
+        env:
+          ARTIFACT_VERSION: ${{ needs.artifact-version.outputs.chart_version }}
+        run: |
+          set -euo pipefail
+          args=(--node-source download --platform "${{ matrix.platform }}" --arch "${{ matrix.arch }}")
+          if [ -n "$ARTIFACT_VERSION" ]; then
+            args+=(--version "$ARTIFACT_VERSION")
+          fi
+          node scripts/den/build-selfhost-bundle.mjs "${args[@]}"
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: openwork-den-${{ matrix.platform }}-${{ matrix.arch }}
+          path: dist-selfhost/openwork-den-${{ matrix.platform }}-${{ matrix.arch }}-*.tar.gz
+          if-no-files-found: error
+
+  den-selfhost-release:
+    name: Attach Den self-host bundle to release
+    runs-on: ubuntu-latest
+    needs: den-selfhost-bundle
+    if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
+    permissions:
+      contents: write
+    steps:
+      - name: Download bundle artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: openwork-den-*
+          path: dist-selfhost
+          merge-multiple: true
+
+      - name: Attach bundles to GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$GITHUB_REF_NAME" dist-selfhost/openwork-den-*.tar.gz --repo "$GITHUB_REPOSITORY" --clobber
 
   ee-images:
     name: Build ${{ matrix.image }}

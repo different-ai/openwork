@@ -12,6 +12,7 @@ ee/packages/*/node_modules/
 ee/apps/landing/.next-prod-eval/
 out/
 dist/
+dist-selfhost/
 packages/*/dist/
 apps/*/dist/
 ee/apps/*/dist/

@@ -1,0 +1,7 @@
+[Unit]
+Description=OpenWork Den
+Wants=openwork-den-api.service openwork-den-web.service
+After=network-online.target
+
+[Install]
+WantedBy=multi-user.target

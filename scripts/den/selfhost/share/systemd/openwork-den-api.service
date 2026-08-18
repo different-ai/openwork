@@ -1,0 +1,20 @@
+[Unit]
+Description=OpenWork Den API
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=openwork-den
+Group=openwork-den
+EnvironmentFile=@CONFIG_DIR@/den.env
+WorkingDirectory=@PREFIX@/current/services/den-api
+ExecStartPre=@PREFIX@/current/bin/openwork-den migrate
+ExecStart=@PREFIX@/current/bin/openwork-den start-api
+Restart=on-failure
+RestartSec=5s
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=openwork-den.target

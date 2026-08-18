@@ -1,0 +1,193 @@
+---
+title: "Self-host Den on Linux with the native tarball"
+description: "Install the Den API and web app on a single Linux host or Proxmox LXC with systemd, no Docker or Kubernetes."
+---
+
+This path installs Den natively on one Linux host with systemd, without Docker
+or Kubernetes. It is ideal for a Proxmox LXC or a small VM. The [Helm chart](https://github.com/different-ai/openwork/tree/dev/packaging/helm/openwork-ee)
+remains the recommended production path, as described in the [self-host overview](/start-here/self-host). See the cloud guides for
+[AWS](https://github.com/different-ai/openwork/blob/dev/docs/aws-eks-helm.md), [Azure](https://github.com/different-ai/openwork/blob/dev/docs/azure-aks-helm.md), and [Google Cloud](https://github.com/different-ai/openwork/blob/dev/docs/gcp-gke-helm.md).
+
+<Note>
+**This path is community-supported on a best-effort basis.**
+</Note>
+
+## What this deploys
+
+- Den API on port `8788`
+- Den Web on port `3005`
+- systemd units `openwork-den-api.service`, `openwork-den-web.service`, and
+  `openwork-den.target`
+- versioned installs under `/opt/openwork-den/versions`, with
+  `/opt/openwork-den/current` pointing to the active version
+- configuration in `/etc/openwork-den/den.env`
+- a system service user named `openwork-den`
+
+The install requires an external MySQL 8 database. MySQL is not bundled. The
+archive includes its own Node.js runtime, so no separate application runtime is
+installed on the host. The installer does not install any other host packages.
+
+## Use the tarball or something else?
+
+Kubernetes operators should use the [Helm chart](https://github.com/different-ai/openwork/tree/dev/packaging/helm/openwork-ee).
+Docker Compose remains available for local and development use. Use the native
+tarball for plain Linux hosts and LXC containers where nested Docker is
+unwanted.
+
+## Prerequisites
+
+- Linux with systemd. A plain Debian or Ubuntu LXC on Proxmox works without
+  nesting.
+- Root access for the default install.
+- A MySQL 8 database reachable over the network.
+- A domain and TLS reverse proxy for production.
+
+## Get the bundle
+
+Download `openwork-den-linux-x64-<version>.tar.gz` from the
+[GitHub release page](https://github.com/different-ai/openwork/releases). Release
+artifacts are available for `linux-x64` only for now.
+
+To build the archive from a checkout:
+
+```bash
+pnpm den:selfhost:bundle
+```
+
+The build command accepts `--platform <darwin|linux>`, `--arch <arm64|x64>`,
+and `--node-source <download|host>` after `--`. Native dependencies require the
+build host to match the requested platform and architecture. For example:
+
+```bash
+pnpm den:selfhost:bundle -- --platform linux --arch x64 --node-source download
+```
+
+## Install
+
+Extract the archive and enter its versioned directory:
+
+```bash
+tar -xzf openwork-den-linux-x64-<version>.tar.gz
+cd openwork-den-<version>
+```
+
+Install the bundle:
+
+```bash
+sudo ./install.sh
+```
+
+Edit the generated configuration and replace every example secret, database
+address, email, and public origin:
+
+```bash
+sudoedit /etc/openwork-den/den.env
+```
+
+Run the database migration, then enable and start both services through the
+target:
+
+```bash
+sudo /opt/openwork-den/current/bin/openwork-den migrate
+sudo systemctl enable --now openwork-den.target
+```
+
+For non-standard installs, `install.sh` accepts `--prefix PATH`,
+`--config-dir PATH`, `--systemd-dir PATH`, `--no-systemd`, and `--no-user`.
+
+## Configuration reference
+
+The installer creates `/etc/openwork-den/den.env` from the bundled example and
+preserves that file on later installs. It stays root-owned and group-readable by
+the `openwork-den` service user, but the service user cannot modify it. The web
+origin values must match the public URL served by the reverse proxy.
+
+| Group | Key | Purpose |
+|---|---|---|
+| Runtime | `NODE_ENV` | Use `production` for an installed deployment. |
+| Database | `DB_MODE` | Use `mysql` for the required external MySQL database. |
+| Database | `DATABASE_URL` | MySQL connection URL, including the database name and credentials. |
+| Secrets | `DEN_DB_ENCRYPTION_KEY` | Encryption key for stored Den data. Must contain at least 32 characters. |
+| Secrets | `BETTER_AUTH_SECRET` | Better Auth signing secret. Must contain at least 32 characters. |
+| Public origins | `BETTER_AUTH_URL` | Public Den Web origin used by Better Auth. |
+| Public origins | `DEN_API_PUBLIC_URL` | Public Den API URL served by the reverse proxy. |
+| Public origins | `DEN_AUTH_ORIGIN` | Public Den Web origin used by Den Web readiness and auth routing. |
+| Public origins | `DEN_BETTER_AUTH_TRUSTED_ORIGINS` | Comma-separated browser origins trusted by Better Auth. |
+| Public origins | `CORS_ORIGINS` | Comma-separated origins allowed by Den API CORS. |
+| Internal origins | `DEN_API_BASE` | Internal Den Web to Den API URL. The example uses `http://127.0.0.1:8788`. |
+| Internal origins | `DEN_AUTH_FALLBACK_BASE` | Internal API fallback for auth requests. The example uses `http://127.0.0.1:8788`. |
+| Single-org defaults | `DEN_ORG_MODE` | Use `single_org` for a private single-organization deployment. |
+| Single-org defaults | `DEN_SINGLE_ORG_NAME` | Display name for the singleton organization. |
+| Single-org defaults | `DEN_SINGLE_ORG_SLUG` | Lowercase URL slug for the singleton organization. |
+| Single-org defaults | `DEN_SINGLE_ORG_OWNER_EMAILS` | Comma-separated emails allowed to claim singleton organization ownership. |
+| Single-org defaults | `DEN_SINGLE_ORG_ALLOW_PUBLIC_SIGNUP` | Whether users outside the owner list may sign up. The example disables it. |
+| Single-org defaults | `DEN_REQUIRE_EMAIL_VERIFICATION` | Whether new accounts must verify their email. |
+| Single-org defaults | `DEN_PASSWORD_BREACH_SCREENING_ENABLED` | Whether password creation checks the external breach screening service. |
+| Single-org defaults | `DEN_BOOTSTRAP_ADMIN_EMAILS` | Comma-separated platform administrator allowlist. This is separate from organization ownership. |
+| Ports and binds | `DEN_API_PORT` | Den API listen port. Defaults to `8788` in the bundle launcher. |
+| Ports and binds | `DEN_WEB_PORT` | Den Web listen port. Defaults to `3005` in the bundle launcher. |
+| Ports and binds | `DEN_BIND_HOST` | Den API bind address. The example uses `0.0.0.0`. |
+| Ports and binds | `DEN_WEB_HOST` | Den Web bind address. Defaults to `0.0.0.0` in the bundle launcher. |
+| Provisioning | `PROVISIONER_MODE` | Keep `stub` for this self-host path. No cloud worker provisioner is bundled. |
+
+## Operate
+
+Check the target and individual services:
+
+```bash
+sudo systemctl status openwork-den.target
+sudo systemctl status openwork-den-api.service openwork-den-web.service
+```
+
+Follow API logs:
+
+```bash
+sudo journalctl -u openwork-den-api.service -f
+```
+
+Check local health and web readiness:
+
+```bash
+curl -fsS http://127.0.0.1:8788/health
+curl -fsS http://127.0.0.1:3005/api/health
+curl -fsS http://127.0.0.1:3005/api/ready
+```
+
+## Upgrade
+
+Unpack the new archive, enter its directory, and rerun:
+
+```bash
+sudo ./install.sh
+```
+
+The installer preserves `den.env`, stages the new version under
+`/opt/openwork-den/versions`, and atomically flips the `current` symlink. Den API
+runs migration through `ExecStartPre` before it starts. When upgrading an active
+install, the installer also migrates before restarting both services.
+
+Previous versions remain under `/opt/openwork-den/versions`. To roll back, point
+`/opt/openwork-den/current` to the previous version and restart
+`openwork-den-api.service` and `openwork-den-web.service`. Confirm that the older
+application is compatible with the migrated database before rolling back.
+
+## Uninstall
+
+```bash
+sudo systemctl disable --now openwork-den.target
+sudo rm -f /etc/systemd/system/openwork-den-api.service /etc/systemd/system/openwork-den-web.service /etc/systemd/system/openwork-den.target
+sudo systemctl daemon-reload
+sudo userdel openwork-den
+sudo rm -rf /opt/openwork-den
+# Remove /etc/openwork-den separately if its secrets are no longer needed.
+```
+
+## Limitations
+
+- This path is community-supported on a best-effort basis.
+- Release artifacts are available for `linux-x64` only for now.
+- `.deb` and `.rpm` packages are not available yet.
+- This is a single-host deployment path.
+
+Follow [GitHub issue #2084](https://github.com/different-ai/openwork/issues/2084)
+for the native packaging track.

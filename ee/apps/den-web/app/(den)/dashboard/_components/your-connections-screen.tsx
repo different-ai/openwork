@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type Ref } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { AlertTriangle, Check, Loader2, Plug, Wrench } from "lucide-react";
@@ -166,7 +166,7 @@ function YourConnectionRow({
   presets: ReturnType<typeof useMcpConnectionPresets>["data"];
   onSetup: (target: PluginMcpSetupTarget) => void;
   highlighted: boolean;
-  rowRef?: React.Ref<HTMLDivElement>;
+  rowRef?: Ref<HTMLDivElement>;
   polling: boolean;
   connecting: boolean;
   disconnecting: boolean;

@@ -1,0 +1,52 @@
+#!/bin/sh
+set -eu
+
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)
+ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd -P)
+PREFIX=$(CDPATH= cd -- "$ROOT/../.." && pwd -P)
+DEFAULT_CONFIG_DIR=/etc/openwork-den
+if [ -r "$PREFIX/config-dir" ]; then
+  DEFAULT_CONFIG_DIR=$(cat "$PREFIX/config-dir")
+fi
+ENV_FILE=${OPENWORK_DEN_ENV_FILE:-$DEFAULT_CONFIG_DIR/den.env}
+
+if [ -r "$ENV_FILE" ]; then
+  set -a
+  # shellcheck disable=SC1090
+  . "$ENV_FILE"
+  set +a
+fi
+
+NODE="$ROOT/bin/node"
+NODE_ENV=${NODE_ENV:-production}
+export NODE_ENV
+
+case "${1:-}" in
+  migrate)
+    DB_MODE=${DB_MODE:-mysql}
+    NODE_OPTIONS=${DEN_API_NODE_OPTIONS:-}
+    export DB_MODE NODE_OPTIONS
+    cd "$ROOT/services/den-api"
+    BOOTSTRAP=$("$NODE" -e 'console.log(require("node:fs").realpathSync(process.argv[1]))' \
+      node_modules/@openwork-ee/den-db/dist/scripts/bootstrap.js)
+    exec "$NODE" "$BOOTSTRAP"
+    ;;
+  start-api)
+    PORT=${DEN_API_PORT:-8788}
+    NODE_OPTIONS=${DEN_API_NODE_OPTIONS:-}
+    export PORT NODE_OPTIONS
+    cd "$ROOT/services/den-api"
+    exec "$NODE" dist/main.js
+    ;;
+  start-web)
+    PORT=${DEN_WEB_PORT:-3005}
+    NODE_OPTIONS=${DEN_WEB_NODE_OPTIONS:-}
+    export PORT NODE_OPTIONS
+    cd "$ROOT/services/den-web"
+    exec "$NODE" node_modules/next/dist/bin/next start --hostname "${DEN_WEB_HOST:-0.0.0.0}" --port "$PORT"
+    ;;
+  *)
+    echo "Usage: openwork-den migrate|start-api|start-web" >&2
+    exit 2
+    ;;
+esac
