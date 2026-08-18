@@ -26,6 +26,14 @@ import {
 
 const SKILL_NAME_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
+/** Fill well only — no stacked border + inset ring (those look like a double edge in-app). */
+const libraryFieldClass = [
+  "rounded-xl border-transparent bg-dls-hover shadow-none ring-0",
+  "before:hidden before:shadow-none",
+  "focus:border-transparent focus:ring-0",
+  "focus-visible:border-transparent focus-visible:ring-0",
+].join(" ");
+
 type MarketplaceOption = { id: string; name: string };
 
 export type AddLibraryItemModalProps = {
@@ -257,13 +265,14 @@ export function AddLibraryItemModal(props: AddLibraryItemModalProps) {
 
         {kind === "plugin" ? (
           <div className="flex flex-col gap-5">
-            <div className="flex flex-col gap-4 rounded-3xl border border-dls-border bg-dls-surface p-5">
+            <div className="flex flex-col gap-4">
               <TextInput
                 label={t("extensions.add_plugin_name_label")}
                 placeholder={t("extensions.add_plugin_name_placeholder")}
                 value={name}
                 autoFocus
                 disabled={busy}
+                className={libraryFieldClass}
                 onChange={(event) => setName(event.currentTarget.value)}
               />
               <label className="block">
@@ -275,6 +284,7 @@ export function AddLibraryItemModal(props: AddLibraryItemModalProps) {
                   disabled={busy}
                   rows={2}
                   placeholder={t("extensions.add_plugin_description_placeholder")}
+                  className={libraryFieldClass}
                   onChange={(event) => setDescription(event.currentTarget.value)}
                 />
               </label>
@@ -309,7 +319,7 @@ export function AddLibraryItemModal(props: AddLibraryItemModalProps) {
                     const meta = COMPONENT_META[component.kind];
                     const Icon = component.kind === "mcp" ? Server : component.kind === "command" ? Terminal : FileText;
                     return (
-                      <div key={`${component.kind}-${index}`} className="rounded-3xl border border-dls-border bg-dls-surface p-5">
+                      <div key={`${component.kind}-${index}`} className="rounded-xl bg-dls-hover/60 p-5">
                         <div className="mb-3 flex items-center justify-between">
                           <div className="flex items-center gap-2 text-sm font-medium">
                             <Icon size={16} className="text-dls-secondary" />
@@ -331,6 +341,7 @@ export function AddLibraryItemModal(props: AddLibraryItemModalProps) {
                             value={component.name}
                             disabled={busy}
                             placeholder={component.kind === "mcp" ? "Server name (e.g. Linear)" : "Name (e.g. Prep a sales call)"}
+                            className={libraryFieldClass}
                             onChange={(event) => updateComponent(index, { name: event.currentTarget.value })}
                           />
                           {component.kind !== "mcp" ? (
@@ -338,6 +349,7 @@ export function AddLibraryItemModal(props: AddLibraryItemModalProps) {
                               value={component.description}
                               disabled={busy}
                               placeholder={t("extensions.add_component_description_placeholder")}
+                              className={libraryFieldClass}
                               onChange={(event) => updateComponent(index, { description: event.currentTarget.value })}
                             />
                           ) : null}
@@ -346,6 +358,7 @@ export function AddLibraryItemModal(props: AddLibraryItemModalProps) {
                               value={component.content}
                               disabled={busy}
                               placeholder="https://mcp.example.com/mcp"
+                              className={libraryFieldClass}
                               onChange={(event) => updateComponent(index, { content: event.currentTarget.value })}
                             />
                           ) : (
@@ -353,7 +366,7 @@ export function AddLibraryItemModal(props: AddLibraryItemModalProps) {
                               value={component.content}
                               disabled={busy}
                               rows={8}
-                              className="font-mono leading-6"
+                              className={`font-mono leading-6 ${libraryFieldClass}`}
                               placeholder={
                                 component.kind === "skill"
                                   ? t("extensions.add_skill_body_placeholder")
@@ -371,7 +384,7 @@ export function AddLibraryItemModal(props: AddLibraryItemModalProps) {
             </div>
 
             {props.cloud ? (
-              <div className="flex flex-col gap-4 rounded-3xl border border-dls-border bg-dls-surface p-5">
+              <div className="flex flex-col gap-4">
                 <h2 className="text-[16px] font-semibold">{t("extensions.add_plugin_share")}</h2>
                 <label className="flex items-start gap-3 text-sm">
                   <input
@@ -395,7 +408,7 @@ export function AddLibraryItemModal(props: AddLibraryItemModalProps) {
                   <select
                     value={marketplaceId}
                     disabled={busy}
-                    className="w-full rounded-lg border border-dls-border bg-dls-surface px-3 py-2 text-sm"
+                    className={`w-full px-3 py-2 text-sm ${libraryFieldClass}`}
                     onChange={(event) => setMarketplaceId(event.currentTarget.value)}
                   >
                     <option value="">{t("extensions.add_plugin_collection_none")}</option>
@@ -422,6 +435,7 @@ export function AddLibraryItemModal(props: AddLibraryItemModalProps) {
               disabled={busy}
               maxLength={64}
               placeholder={kind === "skill" ? "e.g. customer-research" : undefined}
+              className={libraryFieldClass}
               onChange={(event) => setName(event.currentTarget.value)}
             />
             {kind !== "skill" && name.trim() && slug !== name.trim() ? (
@@ -436,6 +450,7 @@ export function AddLibraryItemModal(props: AddLibraryItemModalProps) {
                 value={instructions}
                 disabled={busy}
                 placeholder="https://mcp.example.com/mcp"
+                className={libraryFieldClass}
                 onChange={(event) => setInstructions(event.currentTarget.value)}
               />
             ) : (
@@ -447,6 +462,7 @@ export function AddLibraryItemModal(props: AddLibraryItemModalProps) {
                   disabled={busy}
                   maxLength={1024}
                   placeholder={kind === "skill" ? t("extensions.add_skill_description_placeholder") : undefined}
+                  className={libraryFieldClass}
                   onChange={(event) => setDescription(event.currentTarget.value)}
                 />
                 <label className="block">
@@ -460,7 +476,7 @@ export function AddLibraryItemModal(props: AddLibraryItemModalProps) {
                     value={instructions}
                     disabled={busy}
                     rows={kind === "skill" ? 16 : 8}
-                    className={kind === "skill" ? "min-h-64 font-mono leading-6" : "min-h-32"}
+                    className={kind === "skill" ? `min-h-64 font-mono leading-6 ${libraryFieldClass}` : `min-h-32 ${libraryFieldClass}`}
                     placeholder={kind === "skill" ? t("extensions.add_skill_body_placeholder") : undefined}
                     onChange={(event) => setInstructions(event.currentTarget.value)}
                   />
