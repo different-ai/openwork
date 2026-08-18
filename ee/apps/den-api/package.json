@@ -76,6 +76,7 @@
     "hono": "4.12.34",
     "hono-openapi": "^1.3.0",
     "ioredis": "^6.0.0",
+    "luxon": "^3.6.1",
     "jsonc-parser": "^3.2.1",
     "nanoid": "3.3.18",
     "react": "catalog:",
@@ -89,6 +90,7 @@
   "devDependencies": {
     "@sentry/cli": "3.6.0",
     "@types/json-schema": "^7.0.15",
+    "@types/luxon": "^3.6.2",
     "@types/node": "^20.11.30",
     "@types/react": "19.2.14",
     "@types/react-dom": "19.2.3",
