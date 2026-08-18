@@ -161,6 +161,23 @@ test("generic execution advertises the direct local-day Calendar shortcut", () =
   expect(agentModule.EXECUTE_CAPABILITY_DESCRIPTION).toContain("Do not call search_capabilities first")
 })
 
+test("generic execution advertises direct bounded Gmail and Drive reads", () => {
+  for (const instruction of [
+    agentModule.EXECUTE_CAPABILITY_DESCRIPTION,
+    agentModule.AGENT_MCP_INSTRUCTIONS,
+  ]) {
+    expect(instruction).toContain(
+      "native:google-workspace:getCapabilitiesGoogleWorkspaceGmailMessages",
+    )
+    expect(instruction).toContain('query { q: "in:inbox", maxResults? }')
+    expect(instruction).toContain(
+      "native:google-workspace:getCapabilitiesGoogleWorkspaceDriveFiles",
+    )
+    expect(instruction).toContain("query { query, maxResults? }")
+    expect(instruction).toContain("Do not call search_capabilities first")
+  }
+})
+
 test("agent MCP server exposes a standards-shaped remote skill index", () => {
   const index = agentModule.buildAgentSkillIndex([{
     name: "customer-briefing",
