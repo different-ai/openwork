@@ -601,7 +601,12 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-electron-pnpm-
 
-      - name: Install dependencies
+      - name: Install dependencies (macOS)
+        if: matrix.os_type == 'macos'
+        run: pnpm install --frozen-lockfile --cpu=arm64 --cpu=x64
+
+      - name: Install dependencies (Linux and Windows)
+        if: matrix.os_type != 'macos'
         run: pnpm install --frozen-lockfile
 
       # The repo commits a permanent 0.0.0-dev placeholder; the release
