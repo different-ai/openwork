@@ -109,6 +109,8 @@ describe("OpenWork Connect skill catalog", () => {
     expect(instruction).toContain("NEVER use the native Load Skill tool");
     expect(instruction).toContain("exact value from that skill's <capability> field");
     expect(instruction).toContain("Do not call openwork-cloud_search_capabilities first");
+    expect(instruction).toContain("Load each remote skill at most once per task.");
+    expect(instruction).toContain("Reuse the full SKILL.md body already present in this task.");
     expect(instruction).toContain("transient HTTP 502, 503, or 504");
     expect(instruction).toContain("retry the same capability once");
     expect(instruction).not.toContain("# Customer Briefing");
