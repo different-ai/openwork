@@ -116,6 +116,11 @@ describe("env-file", () => {
       "OPENWORK_INFERENCE_BASE_URL",
     ]);
     expect(await EnvService.readForInjection(path)).toEqual({ ANTHROPIC_API_KEY: "sk-ant" });
+    expect(await EnvService.readForProviderLookup(path)).toEqual({
+      ANTHROPIC_API_KEY: "sk-ant",
+      OPENWORK_API_KEY: "ow_inf_test",
+      OPENWORK_INFERENCE_BASE_URL: "https://inference.example.test",
+    });
   });
 
   test("delete returns false when the key is missing", async () => {

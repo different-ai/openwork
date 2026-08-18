@@ -116,6 +116,7 @@ import {
 import { runAgentContextDiagnostics } from "./agent-context-diagnostics.js";
 import { createAgentDiagnosticsEngineFetch } from "./agent-context-engine-inspection.js";
 import { sanitizeDiagnosticString } from "./diagnostic-sanitizer.js";
+import { handleFlueOpencodeRequest } from "./flue/facade.js";
 import {
   mergeOpencodeConfigs,
   mergeRuntimeProviderUpdate,
@@ -135,6 +136,7 @@ import {
   seedOpenworkWorkspaceConfigIfEmpty,
   writeOpenworkWorkspaceConfig,
 } from "./openwork-workspace-config-store.js";
+import { parseWorkspaceEngine, readWorkspaceEngine, writeWorkspaceEngine } from "./workspace-engine-store.js";
 import { buildOpenworkRuntimeConfigObject, openworkRuntimeConfigFilePath, writeOpenworkRuntimeConfigFile } from "./openwork-runtime-config.js";
 import { readLegacyConfigSweepState } from "./legacy-config-sweep.js";
 import { findManagedEngineWorkspace } from "./workspaces.js";
@@ -1062,7 +1064,12 @@ export async function startServer(config: ServerConfig): Promise<ServeResult> {
           assertOpencodeProxyAllowed(actor, request.method, mount.restPath);
           const workspace = await resolveWorkspace(config, mount.workspaceId);
           proxyService = "opencode";
-          proxyBaseUrl = workspace.baseUrl?.trim() || undefined;
+          const engine = await readWorkspaceEngine(config, workspace.id);
+          proxyBaseUrl = engine === "flue" ? "flue:in-process" : workspace.baseUrl?.trim() || undefined;
+          if (engine === "flue") {
+            const response = await handleFlueOpencodeRequest({ config, request, url, workspace, proxyPath: mount.restPath });
+            return finalize(response);
+          }
           const response = await proxyOpencodeRequest({ config, request, url, workspace, proxyPath: mount.restPath });
           return finalize(response);
         } catch (error) {
@@ -1115,6 +1122,12 @@ export async function startServer(config: ServerConfig): Promise<ServeResult> {
           const actor = await requireClient(request, config, tokens);
           assertOpencodeProxyAllowed(actor, request.method, url.pathname);
           proxyService = "opencode";
+          const workspace = config.workspaces[0];
+          if (workspace && await readWorkspaceEngine(config, workspace.id) === "flue") {
+            proxyBaseUrl = "flue:in-process";
+            const response = await handleFlueOpencodeRequest({ config, request, url, workspace, proxyPath: url.pathname });
+            return finalize(response);
+          }
           const response = await proxyOpencodeRequest({ config, request, url, workspace: config.workspaces[0] });
           return finalize(response);
         } catch (error) {
@@ -2049,6 +2062,23 @@ function createRoutes(
     },
   });
 
+  addRoute(routes, "GET", "/workspace/:id/engine", "client", async (ctx) => {
+    const workspace = await resolveWorkspaceWithoutBootstrap(config, ctx.params.id);
+    return jsonResponse({ engine: await readWorkspaceEngine(config, workspace.id) });
+  });
+
+  addRoute(routes, "PATCH", "/workspace/:id/engine", "client", async (ctx) => {
+    ensureWritable(config);
+    requireClientScope(ctx, "collaborator");
+    const workspace = await resolveWorkspaceWithoutBootstrap(config, ctx.params.id);
+    const body = await readJsonBody(ctx.request);
+    const engine = parseWorkspaceEngine(body.engine);
+    if (!engine) {
+      throw new ApiError(400, "invalid_payload", "engine must be opencode or flue");
+    }
+    return jsonResponse(await writeWorkspaceEngine(config, workspace.id, engine));
+  });
+
   registerSessionRoutes({
     routes,
     config,
@@ -2063,6 +2093,7 @@ function createRoutes(
     resolveWorkspaceWithoutBootstrap,
     createWorkspaceOpencodeClient,
     unwrapOpencodeResult,
+    readWorkspaceEngine,
   });
 
   registerCloudMcpRoutes({

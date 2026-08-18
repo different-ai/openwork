@@ -9,6 +9,7 @@ import { readOpenworkWorkspaceConfig, writeOpenworkWorkspaceConfig } from "./ope
 import { readRuntimeOpencodeConfig, writeRuntimeOpencodeConfig } from "./runtime-opencode-config-store.js";
 import { readSessionGroupState, writeSessionGroupState } from "./session-groups.js";
 import type { ServerConfig } from "./types.js";
+import { readWorkspaceEngine, writeWorkspaceEngine } from "./workspace-engine-store.js";
 import { createWorkspaceKvStore, isRecord, workspaceKvStoreCacheStatsForTests } from "./workspace-kv-store.js";
 
 const WORKSPACE_ID = "ws_workspace_kv_store";
@@ -77,6 +78,7 @@ function corruptStoreJson(dbPath: string): void {
     sqlite.query("UPDATE openwork_workspace_configs SET config_json = ? WHERE workspace_id = ?").run("{", WORKSPACE_ID);
     sqlite.query("UPDATE cloud_plugin_install_configs SET config_json = ? WHERE workspace_id = ?").run("{", WORKSPACE_ID);
     sqlite.query("UPDATE session_group_states SET state_json = ? WHERE workspace_id = ?").run("{", WORKSPACE_ID);
+    sqlite.query("UPDATE workspace_engine_configs SET config_json = ? WHERE workspace_id = ?").run("{", WORKSPACE_ID);
   } finally {
     sqlite.close();
   }
@@ -146,6 +148,7 @@ describe("workspace kv store", () => {
     expect(await readOpenworkWorkspaceConfig(config, WORKSPACE_ID)).toEqual({});
     expect(await readInstalledCloudPlugins(config, WORKSPACE_ID)).toEqual({ skills: {}, providers: {}, marketplaces: {}, plugins: {} });
     expect(await readSessionGroupState(config, WORKSPACE_ID)).toEqual({ state: { groups: [], assignments: {} }, updatedAt: null });
+    expect(await readWorkspaceEngine(config, WORKSPACE_ID)).toBe("opencode");
 
     await writeRuntimeOpencodeConfig(config, WORKSPACE_ID, () => ({ plugin: ["runtime-plugin"] }));
     await writeOpenworkWorkspaceConfig(config, WORKSPACE_ID, () => ({ workspace: { name: "Runtime" } }));
@@ -163,6 +166,7 @@ describe("workspace kv store", () => {
       groups: [{ id: "grp_kv", label: "KV" }],
       assignments: { ses_kv: "grp_kv" },
     });
+    await writeWorkspaceEngine(config, WORKSPACE_ID, "flue");
 
     corruptStoreJson(dbPath);
 
@@ -170,6 +174,7 @@ describe("workspace kv store", () => {
     expect(await readOpenworkWorkspaceConfig(config, WORKSPACE_ID)).toEqual({});
     expect(await readInstalledCloudPlugins(config, WORKSPACE_ID)).toEqual({ skills: {}, providers: {}, marketplaces: {}, plugins: {} });
     expect(await readSessionGroupState(config, WORKSPACE_ID)).toEqual({ state: { groups: [], assignments: {} }, updatedAt: session.updatedAt });
+    expect(await readWorkspaceEngine(config, WORKSPACE_ID)).toBe("opencode");
   });
 
   test("keeps session group schema_version at 1 on insert and update", async () => {

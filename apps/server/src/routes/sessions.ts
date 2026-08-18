@@ -1,5 +1,13 @@
 import type { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
 import { ApiError } from "../errors.js";
+import {
+  createFlueSession,
+  deleteFlueSession,
+  getFlueSession,
+  getFlueSessionMessages,
+  getFlueSessionSnapshot,
+  listFlueSessions,
+} from "../flue/facade.js";
 import { buildSession, buildSessionList, buildSessionMessages, buildSessionSnapshot } from "../session-read-model.js";
 import {
   createSessionGroupId,
@@ -11,6 +19,7 @@ import {
   type SessionGroupState,
 } from "../session-groups.js";
 import type { ServerConfig, TokenScope, WorkspaceInfo } from "../types.js";
+import type { WorkspaceEngine } from "../workspace-engine-store.js";
 import { addRoute, type RequestContext, type Route } from "./registry.js";
 
 type JsonResponse = (data: unknown, status?: number) => Response;
@@ -42,6 +51,7 @@ interface RegisterSessionRoutesOptions {
     options?: { boundedDiagnosticsReads?: boolean; sessionId?: string },
   ) => WorkspaceOpencodeClient;
   unwrapOpencodeResult: UnwrapOpencodeResult;
+  readWorkspaceEngine: (config: ServerConfig, workspaceId: string) => Promise<WorkspaceEngine>;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -63,6 +73,7 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
     resolveWorkspaceWithoutBootstrap,
     createWorkspaceOpencodeClient,
     unwrapOpencodeResult,
+    readWorkspaceEngine,
   } = options;
   const sessionGroupEvents = new SessionGroupEventStore();
 
@@ -85,6 +96,9 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
     workspace: WorkspaceInfo,
     input: { roots?: boolean; start?: number; search?: string; limit?: number },
   ) {
+    if (await readWorkspaceEngine(config, workspace.id) === "flue") {
+      return listFlueSessions(config, workspace, input);
+    }
     try {
       const opencode = createWorkspaceOpencodeClient(config, workspace);
       return buildSessionList(
@@ -107,6 +121,9 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
     workspace: WorkspaceInfo,
     input: { title: string; prompt?: string; providerId?: string; modelId?: string; variant?: string },
   ) {
+    if (await readWorkspaceEngine(config, workspace.id) === "flue") {
+      return createFlueSession(config, workspace, input);
+    }
     const opencode = createWorkspaceOpencodeClient(config, workspace);
     const session = buildSession(
       unwrapOpencodeResult(
@@ -138,6 +155,9 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
   }
 
   async function readWorkspaceSession(workspace: WorkspaceInfo, sessionId: string) {
+    if (await readWorkspaceEngine(config, workspace.id) === "flue") {
+      return getFlueSession(config, workspace, sessionId);
+    }
     try {
       const opencode = createWorkspaceOpencodeClient(config, workspace);
       return buildSession(
@@ -156,6 +176,9 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
     sessionId: string,
     input: { limit?: number },
   ) {
+    if (await readWorkspaceEngine(config, workspace.id) === "flue") {
+      return getFlueSessionMessages(config, workspace, sessionId, input);
+    }
     try {
       const opencode = createWorkspaceOpencodeClient(config, workspace);
       return buildSessionMessages(
@@ -174,6 +197,9 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
     sessionId: string,
     input: { limit?: number },
   ) {
+    if (await readWorkspaceEngine(config, workspace.id) === "flue") {
+      return getFlueSessionSnapshot(config, workspace, sessionId, input);
+    }
     try {
       const opencode = createWorkspaceOpencodeClient(config, workspace);
       const [session, messages, todos, statuses] = await Promise.all([
@@ -471,6 +497,11 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
     const sessionId = (ctx.params.sessionId ?? "").trim();
     if (!sessionId) {
       throw new ApiError(400, "invalid_payload", "sessionId is required");
+    }
+
+    if (await readWorkspaceEngine(config, workspace.id) === "flue") {
+      await deleteFlueSession(config, workspace, sessionId);
+      return jsonResponse({ ok: true });
     }
 
     const opencode = createWorkspaceOpencodeClient(config, workspace);

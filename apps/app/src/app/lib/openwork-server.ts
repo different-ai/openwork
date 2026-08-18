@@ -141,6 +141,8 @@ function parseCloudProviderSyncStatus(value: unknown): OpenworkCloudProviderSync
 
 export type OpenworkServerStatus = "connected" | "disconnected" | "limited";
 
+export type OpenworkWorkspaceEngine = "opencode" | "flue";
+
 export type OpenworkServerDiagnostics = {
   ok: boolean;
   version: string;
@@ -1730,6 +1732,24 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
           hostToken,
           method: "POST",
           timeoutMs: timeouts.workspaceImport,
+        },
+      ),
+    getWorkspaceEngine: (workspaceId: string) =>
+      requestJson<{ engine: OpenworkWorkspaceEngine }>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/engine`,
+        { token, hostToken, timeoutMs: timeouts.config },
+      ),
+    setWorkspaceEngine: (workspaceId: string, engine: OpenworkWorkspaceEngine) =>
+      requestJson<{ engine: OpenworkWorkspaceEngine; updatedAt: number }>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/engine`,
+        {
+          token,
+          hostToken,
+          method: "PATCH",
+          body: { engine },
+          timeoutMs: timeouts.config,
         },
       ),
     getConfig: (workspaceId: string) =>

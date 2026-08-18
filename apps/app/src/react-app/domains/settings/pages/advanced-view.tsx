@@ -4,7 +4,7 @@ import { useEffect, useReducer, useState } from "react";
 import { Separator } from "@/components/ui/separator";
 
 import type { OpencodeConnectStatus } from "@/app/types";
-import type { OpenworkCloudMcpHealth, OpenworkRuntimeConfigStatus, OpenworkServerStatus } from "@/app/lib/openwork-server";
+import type { OpenworkCloudMcpHealth, OpenworkRuntimeConfigStatus, OpenworkServerStatus, OpenworkWorkspaceEngine } from "@/app/lib/openwork-server";
 import { t } from "@/i18n";
 import { LayoutStack } from "../settings-layout";
 import type { useDenSession } from "../cloud/use-den-session";
@@ -12,6 +12,7 @@ import type { useDenSession } from "../cloud/use-den-session";
 import { advancedLocalReducer, initialAdvancedLocalState } from "./advanced-view-state";
 import {
   AdvancedDeveloperSection,
+  AdvancedEngineSection,
   AdvancedCloudMcpDiagnosticsSection,
   AdvancedOrganizationServerSection,
   AdvancedRuntimeMigrationSection,
@@ -48,6 +49,10 @@ export type AdvancedViewProps = {
   cloudMcpUrl: string | null;
   cloudMcpHealth: OpenworkCloudMcpHealth | null;
   refreshCloudMcpHealth: () => Promise<OpenworkCloudMcpHealth | null>;
+  workspaceEngine: OpenworkWorkspaceEngine | null;
+  workspaceEngineBusy: boolean;
+  workspaceEngineError: string | null;
+  setWorkspaceEngine: (engine: OpenworkWorkspaceEngine) => void;
 };
 
 type AdvancedStatusTone = "ready" | "warning" | "error" | "neutral";
@@ -203,6 +208,15 @@ export function AdvancedView(props: AdvancedViewProps) {
         openworkTone={openworkTone}
         openworkDetailLines={openworkDetailLines}
       />
+
+      {props.workspaceEngine ? (
+        <AdvancedEngineSection
+          engine={props.workspaceEngine}
+          busy={props.workspaceEngineBusy}
+          error={props.workspaceEngineError}
+          onChange={props.setWorkspaceEngine}
+        />
+      ) : null}
 
       <AdvancedCloudMcpDiagnosticsSection
         cloudMcpHealth={props.cloudMcpHealth}

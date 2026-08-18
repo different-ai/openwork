@@ -94,6 +94,8 @@ overrides:
   "uuid@<11.1.1": 11.1.1
   "ws@>=8.0.0 <8.21.0": 8.21.0
 allowBuilds:
+  '@google/genai': false
+  '@mongodb-js/zstd': false
   "@sentry/cli": true
   "@whiskeysockets/baileys": true
   better-sqlite3: true
@@ -104,6 +106,7 @@ allowBuilds:
   # msgpackr falls back to pure JS, so skip compiling it in CI and images.
   msgpackr-extract: false
   msw: false
+  node-liblzma: false
   node-pty: true
   protobufjs: true
   sharp: true

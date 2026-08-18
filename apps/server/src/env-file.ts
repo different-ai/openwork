@@ -237,6 +237,20 @@ export class EnvService {
     }
     return out;
   }
+
+  // Server-side provider lookup needs the persistable OpenWork-managed keys
+  // (OPENWORK_API_KEY / OPENWORK_INFERENCE_BASE_URL) that the desktop shell
+  // intentionally strips from child-process injection.
+  static async readForProviderLookup(overridePath?: string): Promise<Record<string, string>> {
+    const path = overridePath?.trim() ? resolve(overridePath.trim()) : resolveDefaultEnvStorePath();
+    const store = await readStore(path, { tolerateInvalid: true });
+    const out: Record<string, string> = {};
+    for (const entry of store.variables) {
+      if (isReservedEnvKey(entry.key)) continue;
+      out[entry.key] = entry.value;
+    }
+    return out;
+  }
 }
 
 export class EnvStoreReadError extends Error {

@@ -24,7 +24,9 @@ COPY packages/install-config/package.json /app/packages/install-config/package.j
 COPY packages/connect-link/package.json /app/packages/connect-link/package.json
 COPY packages/headless-threads/package.json /app/packages/headless-threads/package.json
 # apps/desktop/package.json is copied below for version metadata, and it depends
-# on @openwork/paths, so the package must exist for workspace resolution.
+# on @openwork/engine-protocol and @openwork/paths, so both packages must exist
+# for workspace resolution.
+COPY packages/engine-protocol/package.json /app/packages/engine-protocol/package.json
 COPY packages/paths/package.json /app/packages/paths/package.json
 # The root workspace declares the shared evaluator helpers as dev dependencies.
 # Their manifests must be present even though the Den API image does not build
@@ -47,6 +49,7 @@ COPY packages/enterprise-mcp-client /app/packages/enterprise-mcp-client
 COPY packages/install-config /app/packages/install-config
 COPY packages/connect-link /app/packages/connect-link
 COPY packages/headless-threads /app/packages/headless-threads
+COPY packages/engine-protocol /app/packages/engine-protocol
 COPY packages/paths /app/packages/paths
 COPY ee/packages/utils /app/ee/packages/utils
 COPY ee/packages/den-db /app/ee/packages/den-db

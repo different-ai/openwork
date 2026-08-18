@@ -146,6 +146,7 @@ import {
   safeStringify,
 } from "@/app/utils";
 import { CreateRemoteWorkspaceModal } from "@/react-app/domains/workspace/create-remote-workspace-modal";
+import { useSetWorkspaceEngine, useWorkspaceEngine } from "@/react-app/domains/workspace/use-workspace-engine";
 import { RenameWorkspaceModal } from "@/react-app/domains/workspace/rename-workspace-modal";
 import { ShareWorkspaceModal } from "@/react-app/domains/workspace/share-workspace-modal";
 import { useShareWorkspaceState } from "@/react-app/domains/workspace/share-workspace-state";
@@ -999,6 +1000,20 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   const runtimeWorkspaceId = selectedWorkspaceEndpoint?.workspaceId ?? selectedWorkspace?.id ?? null;
   routeStateRef.current.runtimeWorkspaceId = runtimeWorkspaceId;
   routeStateRef.current.selectedWorkspaceOpenworkClient = selectedWorkspaceEndpoint?.client ?? openworkClient;
+  const workspaceEngineQuery = useWorkspaceEngine(
+    selectedWorkspaceEndpoint?.client ?? openworkClient,
+    runtimeWorkspaceId,
+  );
+  const workspaceEngineMutation = useSetWorkspaceEngine({
+    client: selectedWorkspaceEndpoint?.client ?? openworkClient,
+    workspaceId: runtimeWorkspaceId,
+    onSuccess: async (engine) => {
+      await providerAuthStore.refreshProviders({ dispose: true });
+      toast.success(t("settings.workspace_engine_switch_success", {
+        engine: engine === "flue" ? t("settings.workspace_engine_flue_title") : t("settings.workspace_engine_opencode_title"),
+      }));
+    },
+  });
 
   const opencodeClient = useMemo(() => {
     if (!selectedWorkspaceEndpoint || !selectedWorkspaceEndpoint.token) return null;
@@ -2503,6 +2518,14 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
             }}
             cloudMcpHealth={cloudMcpHealth}
             refreshCloudMcpHealth={refreshCloudMcpHealth}
+            workspaceEngine={workspaceEngineQuery.data?.engine ?? null}
+            workspaceEngineBusy={workspaceEngineMutation.isPending}
+            workspaceEngineError={workspaceEngineMutation.error
+              ? t("settings.workspace_engine_switch_error", { message: describeRouteError(workspaceEngineMutation.error) })
+              : null}
+            setWorkspaceEngine={(engine) => {
+              if (engine !== workspaceEngineQuery.data?.engine) workspaceEngineMutation.mutate(engine);
+            }}
             organizationServer={denSession}
           />
         );

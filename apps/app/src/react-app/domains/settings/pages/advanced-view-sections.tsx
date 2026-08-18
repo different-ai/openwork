@@ -6,9 +6,10 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Field, FieldLabel } from "@/components/ui/field";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
-import type { OpenworkCloudMcpHealth, OpenworkRuntimeConfigStatus, OpenworkServerStatus } from "@/app/lib/openwork-server";
+import type { OpenworkCloudMcpHealth, OpenworkRuntimeConfigStatus, OpenworkServerStatus, OpenworkWorkspaceEngine } from "@/app/lib/openwork-server";
 import { sanitizeCloudMcpHealthDiagnostic, sanitizeDiagnosticRecord } from "@/app/lib/diagnostic-sanitizer";
 import {
   DEFAULT_DEN_API_BASE_URL,
@@ -321,6 +322,63 @@ export function AdvancedRuntimeSection(props: AdvancedRuntimeSectionProps) {
           detailLines={props.openworkDetailLines}
         />
       </div>
+    </LayoutSection>
+  );
+}
+
+interface AdvancedEngineSectionProps {
+  engine: OpenworkWorkspaceEngine;
+  busy: boolean;
+  error: string | null;
+  onChange: (engine: OpenworkWorkspaceEngine) => void;
+}
+
+export function AdvancedEngineSection(props: AdvancedEngineSectionProps) {
+  return (
+    <LayoutSection>
+      <LayoutSectionHeader>
+        <LayoutSectionTitle>{t("settings.workspace_engine_title")}</LayoutSectionTitle>
+        <LayoutSectionDescription>{t("settings.workspace_engine_desc")}</LayoutSectionDescription>
+      </LayoutSectionHeader>
+
+      <LayoutSectionItem>
+        <RadioGroup
+          value={props.engine}
+          disabled={props.busy}
+          onValueChange={(value) => {
+            if (value === "opencode" || value === "flue") props.onChange(value);
+          }}
+          className="gap-2"
+        >
+          <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-gray-6 bg-gray-1/60 p-3 has-[[data-checked]]:border-blue-7">
+            <RadioGroupItem value="opencode" className="mt-0.5" />
+            <span className="min-w-0 space-y-1">
+              <span className="flex flex-wrap items-center gap-2 text-sm font-medium text-gray-12">
+                {t("settings.workspace_engine_opencode_title")}
+                <Badge variant="outline">{t("settings.workspace_engine_recommended")}</Badge>
+              </span>
+              <span className="block text-xs text-gray-9">{t("settings.workspace_engine_opencode_desc")}</span>
+            </span>
+          </label>
+          <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-gray-6 bg-gray-1/60 p-3 has-[[data-checked]]:border-amber-7">
+            <RadioGroupItem value="flue" className="mt-0.5" />
+            <span className="min-w-0 space-y-1">
+              <span className="flex flex-wrap items-center gap-2 text-sm font-medium text-gray-12">
+                {t("settings.workspace_engine_flue_title")}
+                <Badge variant="outline" className="border-amber-7/40 bg-amber-3 text-amber-11">
+                  {t("settings.workspace_engine_experimental")}
+                </Badge>
+              </span>
+              <span className="block text-xs text-gray-9">{t("settings.workspace_engine_flue_desc")}</span>
+            </span>
+          </label>
+        </RadioGroup>
+        <Alert className="mt-3 border-amber-7/40 bg-amber-2/60">
+          <CircleAlert className="text-amber-11" />
+          <AlertDescription>{t("settings.workspace_engine_flue_warning")}</AlertDescription>
+        </Alert>
+        {props.error ? <SettingsNotice tone="error">{props.error}</SettingsNotice> : null}
+      </LayoutSectionItem>
     </LayoutSection>
   );
 }

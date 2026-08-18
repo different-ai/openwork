@@ -27,8 +27,11 @@
     "test": "node --test electron/after-pack-paths.test.mjs electron/agent-context-diagnostics-fetch.test.mjs electron/automation-runner.test.mjs electron/blank-slate-profile.test.mjs electron/brand-app-name.test.mjs electron/brand-icon-darwin.test.mjs electron/brand-icon-windows.test.mjs electron/connect-link.test.mjs electron/desktop-distribution.test.mjs electron/dev-profile.test.mjs electron/electron-builder-config.test.mjs electron/linux-desktop-integration.test.mjs electron/no-bare-external-fetch.test.mjs electron/nuke.test.mjs electron/open-external.test.mjs electron/runtime.test.mjs electron/runtime-ca.test.mjs electron/runtime-chain-repair.test.mjs electron/sentry.test.mjs electron/server-dependency-mirror.test.mjs electron/secure-vault-key.test.mjs electron/stdio-errors.test.mjs electron/ui-control-server.test.mjs electron/updater.test.mjs electron/remote-workspace.test.mjs electron/workspace-store.test.mjs"
   },
   "dependencies": {
+    "@earendil-works/pi-ai": "0.80.10",
+    "@flue/runtime": "1.0.0-beta.9",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@opencode-ai/sdk": "^1.18.15",
+    "@openwork/engine-protocol": "workspace:*",
     "@openwork/enterprise-mcp-client": "workspace:*",
     "@openwork/paths": "workspace:*",
     "@sentry/electron": "^7.16.0",
