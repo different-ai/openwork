@@ -3,12 +3,71 @@ import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { publishPr } from "../src/publish-pr.ts";
-import type { CommandRunner, Fetcher } from "../src/publish-pr.ts";
+import { composePrComment, publishPr, publishPrRolls } from "../src/publish-pr.ts";
+import type { CommandRunner, Fetcher, PrEvidenceSection } from "../src/publish-pr.ts";
 import type { PhotoRollRecord } from "../src/schema.ts";
 
 const ROLL_SHA = "1111111111111111111111111111111111111111";
 const OTHER_SHA = "2222222222222222222222222222222222222222";
+
+function section(
+  slug: string,
+  name: string,
+  createdAt: string,
+  verdict: PrEvidenceSection["verdict"],
+  markdown = `## ${name} details`,
+): PrEvidenceSection {
+  return { slug, name, createdAt, verdict, markdown };
+}
+
+test("composePrComment merges a new spec section into the existing sticky comment", () => {
+  const first = section("alpha-spec", "Alpha spec", "2026-07-02T10:00:00.000Z", "passed");
+  const second = section("beta-spec", "Beta spec", "2026-07-02T11:00:00.000Z", "failed");
+  const existing = composePrComment(undefined, first);
+  const merged = composePrComment(existing, second);
+
+  assert.match(merged, /## Alpha spec details/);
+  assert.match(merged, /## Beta spec details/);
+  assert.match(merged, /- ✅ PASSED — \*\*Alpha spec\*\*/);
+  assert.match(merged, /- ❌ FAILED — \*\*Beta spec\*\*/);
+});
+
+test("composePrComment replaces only a same-slug section and preserves unrelated sections and markers", () => {
+  const existing = composePrComment(undefined, [
+    section("alpha-spec", "Alpha spec", "2026-07-02T10:00:00.000Z", "failed", "old alpha evidence"),
+    section("beta-spec", "Beta spec", "2026-07-02T11:00:00.000Z", "passed", "beta evidence"),
+  ]);
+  const merged = composePrComment(
+    existing,
+    section("alpha-spec", "Alpha spec", "2026-07-02T12:00:00.000Z", "passed", "new alpha evidence"),
+  );
+
+  assert.doesNotMatch(merged, /old alpha evidence/);
+  assert.match(merged, /new alpha evidence/);
+  assert.match(merged, /beta evidence/);
+  assert.equal(merged.match(/<!-- photo-roll -->/g)?.length, 1);
+  assert.equal(merged.match(/<!-- fraimz -->/g)?.length, 1);
+  assert.equal(merged.match(/photo-roll-section slug=alpha-spec/g)?.length, 1);
+  assert.equal(merged.match(/- ✅ PASSED — \*\*Alpha spec\*\*/g)?.length, 1);
+});
+
+test("composePrComment renders a complete summary and stable chronological section order", () => {
+  const body = composePrComment(undefined, [
+    section("zulu-spec", "Zulu spec", "2026-07-02T12:00:00.000Z", "unvalidated"),
+    section("beta-spec", "Beta spec", "2026-07-02T10:00:00.000Z", "failed"),
+    section("alpha-spec", "Alpha spec", "2026-07-02T10:00:00.000Z", "passed"),
+  ]);
+
+  assert.match(body, /## Testkit evidence/);
+  for (const summary of [
+    "- ✅ PASSED — **Alpha spec**",
+    "- ❌ FAILED — **Beta spec**",
+    "- ⚪ UNVALIDATED — **Zulu spec**",
+  ]) assert.ok(body.includes(summary));
+  assert.ok(body.indexOf("slug=alpha-spec") < body.indexOf("slug=beta-spec"));
+  assert.ok(body.indexOf("slug=beta-spec") < body.indexOf("slug=zulu-spec"));
+  assert.ok(body.indexOf("Zulu spec**") < body.indexOf("slug=alpha-spec"));
+});
 
 function dryRunRecord(dir: string): PhotoRollRecord {
   return {
@@ -69,6 +128,59 @@ test("publishPr dry-run prints composed markdown without upload or gh calls", as
     assert.match(output, /Dry run: screenshots were not uploaded/);
   } finally {
     await rm(rollDir, { recursive: true, force: true });
+  }
+});
+
+test("publishPrRolls skips malformed and stale rolls and composes matching rolls chronologically", async () => {
+  const root = await mkdtemp(join(tmpdir(), "openwork-evidence-publish-all-"));
+  const previousToken = process.env.BLOB_READ_WRITE_TOKEN;
+  try {
+    delete process.env.BLOB_READ_WRITE_TOKEN;
+    const olderDir = join(root, "2026-07-02T10-00-00-000Z-older-spec");
+    const newerDir = join(root, "2026-07-02T12-00-00-000Z-newer-spec");
+    const staleDir = join(root, "2026-07-02T11-00-00-000Z-stale-spec");
+    const malformedDir = join(root, "2026-07-02T13-00-00-000Z-malformed-spec");
+    await Promise.all([olderDir, newerDir, staleDir, malformedDir].map((dir) => mkdir(dir)));
+    const older = dryRunRecord(olderDir);
+    older.name = "Older spec";
+    const newer = dryRunRecord(newerDir);
+    newer.name = "Newer spec";
+    newer.createdAt = "2026-07-02T12:00:00.000Z";
+    const stale = dryRunRecord(staleDir);
+    stale.name = "Stale spec";
+    stale.gitSha = OTHER_SHA;
+    await Promise.all([
+      writeFile(join(olderDir, "roll.json"), JSON.stringify(older)),
+      writeFile(join(newerDir, "roll.json"), JSON.stringify(newer)),
+      writeFile(join(staleDir, "roll.json"), JSON.stringify(stale)),
+      writeFile(join(malformedDir, "roll.json"), "{not-json"),
+    ]);
+    let postedMarkdown = "";
+    const messages: string[] = [];
+    const exec: CommandRunner = (_command, args, opts) => {
+      if (args.includes("headRefOid")) return { status: 0, stdout: JSON.stringify({ headRefOid: ROLL_SHA }), stderr: "" };
+      if (args.includes("comments")) return { status: 0, stdout: JSON.stringify({ comments: [] }), stderr: "" };
+      if (args.includes("BLOB_READ_WRITE_TOKEN")) return { status: 1, stdout: "", stderr: "missing" };
+      postedMarkdown = opts?.input ?? "";
+      return { status: 0, stdout: "posted", stderr: "" };
+    };
+    const result = await publishPrRolls(
+      { pr: 17, rollDirs: [malformedDir, newerDir, staleDir, olderDir] },
+      { exec, stdout: (message) => messages.push(message) },
+    );
+
+    assert.deepEqual(Object.keys(result.urls), [
+      "2026-07-02T10-00-00-000Z-older-spec",
+      "2026-07-02T12-00-00-000Z-newer-spec",
+    ]);
+    assert.equal(messages.some((message) => message.includes("unreadable or malformed roll.json")), true);
+    assert.equal(messages.some((message) => message.includes("does not match PR head")), true);
+    assert.ok(postedMarkdown.indexOf("slug=older-spec") < postedMarkdown.indexOf("slug=newer-spec"));
+    assert.match(postedMarkdown, /screenshots not uploaded \(no BLOB_READ_WRITE_TOKEN\)/);
+  } finally {
+    if (previousToken === undefined) delete process.env.BLOB_READ_WRITE_TOKEN;
+    else process.env.BLOB_READ_WRITE_TOKEN = previousToken;
+    await rm(root, { recursive: true, force: true });
   }
 });
 

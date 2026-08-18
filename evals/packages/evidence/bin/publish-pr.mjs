@@ -1,9 +1,10 @@
 #!/usr/bin/env node
 import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
+import { readdir } from "node:fs/promises";
 import { isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { formatRollAge, publishPr, readRollFile, scanRolls } from "../src/index.ts";
+import { formatRollAge, publishPr, publishPrRolls, readRollFile, scanRolls } from "../src/index.ts";
 
 const repoRoot = fileURLToPath(new URL("../../../..", import.meta.url));
 const resultsDir = join(repoRoot, "evals", "results");
@@ -13,6 +14,7 @@ let rollArg;
 let dryRun = false;
 let force = false;
 let shouldOpen = false;
+let all = false;
 
 for (let index = 0; index < args.length; index += 1) {
   const arg = args[index];
@@ -29,6 +31,10 @@ for (let index = 0; index < args.length; index += 1) {
     shouldOpen = true;
     continue;
   }
+  if (arg === "--all") {
+    all = true;
+    continue;
+  }
   if (arg === "--pr" || arg === "--roll") {
     const value = args[index + 1];
     if (!value || value.startsWith("--")) throw new Error(`${arg} requires a value.`);
@@ -41,7 +47,25 @@ for (let index = 0; index < args.length; index += 1) {
 }
 
 if (!dryRun && !shouldOpen && !pr) throw new Error("--pr <n> is required unless --dry-run or --open is set.");
-if (shouldOpen && (pr || dryRun || force)) throw new Error("--open cannot be combined with --pr, --dry-run, or --force.");
+if (shouldOpen && (pr || dryRun || force || all)) throw new Error("--open cannot be combined with --pr, --dry-run, --force, or --all.");
+if (all && rollArg) throw new Error("--all cannot be combined with --roll.");
+if (all && dryRun) throw new Error("--all cannot be combined with --dry-run.");
+if (all && force) throw new Error("--all cannot be combined with --force; it only publishes rolls matching the PR head.");
+
+if (all) {
+  const rollsDir = join(resultsDir, "rolls");
+  const rollDirs = existsSync(rollsDir)
+    ? (await readdir(rollsDir, { withFileTypes: true }))
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => join(rollsDir, entry.name))
+      .sort()
+    : [];
+  if (rollDirs.length === 0) throw new Error("No photo roll directories found.");
+  const result = await publishPrRolls({ pr, rollDirs });
+  process.stdout.write(`${result.updated ? "Updated" : "Posted"} ${Object.keys(result.urls).length} photo rolls for PR ${pr}.\n`);
+  process.exit(0);
+}
+
 const entries = (await scanRolls(resultsDir)).filter((entry) => entry.kind === "roll");
 let rollDir;
 let selectedRoll;
