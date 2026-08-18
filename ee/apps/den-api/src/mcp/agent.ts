@@ -89,18 +89,16 @@ export const SEARCH_CAPABILITIES_ANNOTATIONS: ToolAnnotations = {
   idempotentHint: true,
   openWorldHint: true,
 }
-export const CALENDAR_AGENDA_CAPABILITY_NAME = "native:google-workspace:getCapabilitiesGoogleWorkspaceCalendarAgenda"
-export const GMAIL_MESSAGES_CAPABILITY_NAME = "native:google-workspace:getCapabilitiesGoogleWorkspaceGmailMessages"
-export const DRIVE_FILES_CAPABILITY_NAME = "native:google-workspace:getCapabilitiesGoogleWorkspaceDriveFiles"
-
 export const SEARCH_CAPABILITIES_DESCRIPTION = [
   "Search for a capability by keyword. This connection exposes execute_capability for the exact result; there is no list of individually-named tools to browse.",
-  `Do not use this search tool for these requests: a bounded recent Gmail inbox list is already ${GMAIL_MESSAGES_CAPABILITY_NAME} with query { q: "in:inbox", maxResults? }, and a bounded Google Drive name or text search is already ${DRIVE_FILES_CAPABILITY_NAME} with query { query, maxResults? }. Call execute_capability directly with that exact name and query.`,
   "For an org-connected service, search once with one precise query, then execute an exact returned capability. A loaded capability-specific skill may name an exact connector-namespaced capability; execute that exact name directly instead of searching. Reuse an exact capability already returned in this task instead of searching again. Search a second time only when the first search returned no usable match or the server reports unknown_capability.",
   "Search covers native Google Workspace capabilities (Gmail, Calendar, Drive, Gmail drafts), org-connected external MCPs, and namespaced OpenWork Admin tools for allowlisted platform admins.",
   "Native API matches include a connector-namespaced name, pathParams, queryParams, querySchema, hasBody, and bodySchema. External MCP matches include argumentsSchema, schemaDigest, and invocation.argumentsField.",
   "Built-in and marketplace skill matches return SKILL.md content when executed.",
 ].join(" ")
+export const CALENDAR_AGENDA_CAPABILITY_NAME = "native:google-workspace:getCapabilitiesGoogleWorkspaceCalendarAgenda"
+export const GMAIL_MESSAGES_CAPABILITY_NAME = "native:google-workspace:getCapabilitiesGoogleWorkspaceGmailMessages"
+export const DRIVE_FILES_CAPABILITY_NAME = "native:google-workspace:getCapabilitiesGoogleWorkspaceDriveFiles"
 export const EXECUTE_CAPABILITY_DESCRIPTION = [
   "Call a capability found via search_capabilities, by its exact name.",
   `For the primary Google Calendar agenda for today, tomorrow, or one local date, call this tool directly with name ${CALENDAR_AGENDA_CAPABILITY_NAME} and query { day, maxResults? }. Omit timeZone so the capability uses the member's primary Google Calendar time zone; pass a timeZone override only when the user explicitly asks for another zone. Do not call search_capabilities first and do not load a Calendar skill first.`,

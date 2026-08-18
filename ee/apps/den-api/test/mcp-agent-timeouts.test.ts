@@ -178,18 +178,6 @@ test("generic execution advertises direct bounded Gmail and Drive reads", () => 
   }
 })
 
-test("capability search redirects known Gmail and Drive reads to direct execution", () => {
-  expect(agentModule.SEARCH_CAPABILITIES_DESCRIPTION).toContain(
-    "native:google-workspace:getCapabilitiesGoogleWorkspaceGmailMessages",
-  )
-  expect(agentModule.SEARCH_CAPABILITIES_DESCRIPTION).toContain(
-    "native:google-workspace:getCapabilitiesGoogleWorkspaceDriveFiles",
-  )
-  expect(agentModule.SEARCH_CAPABILITIES_DESCRIPTION).toContain(
-    "Do not use this search tool for these requests",
-  )
-})
-
 test("agent MCP server exposes a standards-shaped remote skill index", () => {
   const index = agentModule.buildAgentSkillIndex([{
     name: "customer-briefing",
