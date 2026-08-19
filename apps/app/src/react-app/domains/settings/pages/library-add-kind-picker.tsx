@@ -159,7 +159,9 @@ export function LibraryAddKindPicker(props: {
 
   useEffect(() => {
     if (!props.open) return;
-    setSelected(props.kinds[0] ?? null);
+    setSelected((current) => (
+      current && props.kinds.includes(current) ? current : props.kinds[0] ?? null
+    ));
   }, [props.open, props.kinds]);
 
   const makeKinds = MAKE_KINDS.filter((kind) => props.kinds.includes(kind));
@@ -168,6 +170,12 @@ export function LibraryAddKindPicker(props: {
   const handleContinue = () => {
     if (!selected) return;
     props.onSelect(selected);
+    setSelected(null);
+    props.onClose();
+  };
+
+  const handleClose = () => {
+    setSelected(null);
     props.onClose();
   };
 
@@ -175,10 +183,10 @@ export function LibraryAddKindPicker(props: {
     <Dialog
       open={props.open}
       onOpenChange={(open) => {
-        if (!open) props.onClose();
+        if (!open) handleClose();
       }}
     >
-      <DialogContent className="lg:max-w-xl">
+      <DialogContent className="max-h-[min(92dvh,880px)] overflow-y-auto lg:max-w-xl">
         <DialogHeader>
           <DialogTitle className="text-2xl font-semibold tracking-[-0.03em]">
             {t("extensions.add_picker_title")}
