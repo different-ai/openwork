@@ -25,7 +25,7 @@ import type { CdpClient, CdpTarget } from "./cdp.ts";
 import type { DenServiceOptions } from "./hosts/types.ts";
 import type { Surface } from "./surfaces.ts";
 
-const NEEDS_DEN_STACK = "Scenario needs a Den stack: run `pnpm owt up` or `pnpm evals --stack den` first";
+const NEEDS_DEN_STACK = "Scenario needs a Den stack: run `pnpm owt up` or `pnpm evals:legacy --stack den` first";
 
 export interface ScenarioContext extends FlowContext {
   actors: Record<string, Actor>;

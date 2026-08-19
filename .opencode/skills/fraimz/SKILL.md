@@ -16,7 +16,7 @@ For current verification, use `prove-a-pr` → `write-a-spec` → `run-tests` �
 - Do not use a legacy flow as coverage for new work.
 - For any new or changed executable end-to-end coverage, switch to
   `write-a-spec` → `run-tests` → `diagnose-a-red-run` when failing, then
-  `publish-evidence` for the existing ambient testkit tape.
+  `publish-evidence` for existing ambient test evidence.
 
 ## Run an existing flow
 

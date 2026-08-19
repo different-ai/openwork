@@ -316,7 +316,7 @@ Validation:
 - org switcher/create controls are absent
 - multi-org mode still shows create/switch flows
 
-### 6. End-To-End Validation And Fraimz
+### 6. End-To-End Validation And Test Evidence
 
 Owner: validation worker plus orchestrator
 
@@ -387,11 +387,11 @@ helm template openwork-ee ./packaging/helm/openwork-ee --set config.tenancy.mode
 Local `helm` is not installed in the current Codex environment, so use CI or an
 environment with Helm for this until local tooling is available.
 
-Fraimz:
+Current test-evidence follow-up:
 
-- Create or update a flow proving the single-org first-run/admin setup path.
-- Add a second flow proving multi-org cloud behavior is unchanged, or run the
-  canonical core flow if the UI changes are expected to be inert.
+- Create or update an E2E test proving the single-org first-run/admin setup path.
+- Add a second E2E test proving multi-org cloud behavior is unchanged, or run
+  the canonical test if the UI changes are expected to be inert.
 
 Validation update on 2026-07-05:
 
@@ -406,8 +406,9 @@ Validation update on 2026-07-05:
 7. `pnpm dev:web-local` started Den API, Den Web, worker proxy, inference, and
    Docker MySQL. Health, readiness, runtime config, signup/signin, singleton
    membership, and org-create rejection checks passed.
-8. `pnpm fraimz --flow den-single-org-mode --cdp-url http://127.0.0.1:9825`
-   passed and produced `evals/results/2026-07-05T15-25-15-884Z/fraimz.html`.
+8. Historical legacy-runner record: `pnpm fraimz --flow den-single-org-mode --cdp-url http://127.0.0.1:9825`
+    passed and produced the retained legacy report
+    `evals/results/2026-07-05T15-25-15-884Z/fraimz.html`.
 9. Native `helm version --short` failed because Helm is not installed locally.
    Helm validation was completed through OrbStack Docker instead:
    - `docker run --rm -v /Users/omar/code/openwork/packaging/helm/openwork-ee:/chart:ro alpine/helm:3.15.4 version --short`
@@ -430,7 +431,7 @@ validating worker output.
 4. Keep worker write scopes disjoint.
 5. Review every worker diff before integration.
 6. Run focused tests after each slice.
-7. Run `pnpm dev:web-local` and browser/fraimz validation after integrated UI
+7. Run `pnpm dev:web-local` and browser-driven E2E validation after integrated UI
    behavior exists.
 8. Update Helm README and public self-host docs before final handoff.
 

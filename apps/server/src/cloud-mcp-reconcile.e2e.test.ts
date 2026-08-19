@@ -3,7 +3,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { OPENWORK_CLOUD_EXPECTED_TOOLS, OPENWORK_CLOUD_PLUGIN_CANARIES, cloudMcpDeliveryState } from "./cloud-mcp-health.js";
+import { OPENWORK_CLOUD_EXPECTED_TOOLS, OPENWORK_CLOUD_PLUGIN_CANARIES, clearOpenworkCloudMcpProbeFlights, cloudMcpDeliveryState } from "./cloud-mcp-health.js";
 import {
   CONNECT_MCP_SERVER_INDEX_SCHEMA_VERSION,
   CONNECT_MCP_SERVER_INDEX_URI,
@@ -59,6 +59,7 @@ const cloudConfigsByOpenworkBase = new Map<string, CloudConfig>();
 
 afterEach(async () => {
   cloudMcpDeliveryState.clear();
+  clearOpenworkCloudMcpProbeFlights();
   while (stops.length) await stops.pop()?.();
   while (roots.length) await rm(roots.pop() ?? "", { recursive: true, force: true });
   if (process.platform === "win32") {
@@ -355,6 +356,11 @@ describe("openwork-cloud MCP strict reconcile", () => {
     const mcpPosts = mock.requests.filter((request) => request.method === "POST" && request.pathname === "/mcp");
     expect(mcpPosts.length).toBe(1);
     expectDirectoryQuery(mcpPosts[0]?.search, root);
+    const directProbeMethods = mock.requests
+      .filter((request) => request.pathname.endsWith("/mcp/agent") && isRecord(request.body) && typeof request.body.method === "string")
+      .map((request) => isRecord(request.body) && typeof request.body.method === "string" ? request.body.method : "unknown");
+    expect(directProbeMethods).toEqual(["initialize", "notifications/initialized", "tools/list"]);
+    console.info(`cloud-mcp-reconcile-operation-benchmark pre=6 post=${directProbeMethods.length}`);
   });
 
   test("keeps provider descriptors private while purging stale runtime endpoints", async () => {

@@ -12,10 +12,12 @@ import { appLogger } from "../observability/logger.js"
 import { captureException } from "../observability/runtime.js"
 import {
   getGithubConnectorAppConfig,
-  GithubConnectorRequestError,
   getGithubRepositoryHeadSha,
 } from "../routes/org/plugin-system/github-app.js"
 import { executeGithubConnectorSyncEvent } from "../routes/org/plugin-system/store.js"
+import { isTransientGithubSyncError } from "./github-sync-retry.js"
+
+export { isTransientGithubSyncError } from "./github-sync-retry.js"
 
 const logger = appLogger.child({ component: "github_sync_worker" })
 const MAX_BACKOFF_MS = 15 * 60_000
@@ -94,17 +96,6 @@ export function computeGithubSyncBackoffMs(
   const exponentialMs = baseMs * (2 ** Math.max(0, attemptCount - 1))
   const jitteredMs = exponentialMs * (0.8 + random() * 0.4)
   return Math.min(MAX_BACKOFF_MS, Math.round(jitteredMs))
-}
-
-export function isTransientGithubSyncError(error: unknown) {
-  if (error instanceof GithubConnectorRequestError) {
-    return error.status === 429 || error.status >= 500
-  }
-  if (error instanceof TypeError || (error instanceof Error && error.name === "AbortError")) return true
-  if (error instanceof Error && error.cause !== undefined && error.cause !== error) {
-    return isTransientGithubSyncError(error.cause)
-  }
-  return false
 }
 
 export async function processDueGithubSyncEvents(now = new Date()) {

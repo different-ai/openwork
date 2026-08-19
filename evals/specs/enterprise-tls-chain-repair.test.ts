@@ -145,7 +145,7 @@ test("enterprise TLS chain repair unlocks exactly the sign-in-stamped activation
   expect(plain.status).not.toBe(0);
   expect(plain.output).toMatch(chainErrorPattern);
   const plainError = chainErrorPattern.exec(plain.output)?.[0] ?? "";
-  evidence.fact(
+  evidence.recordAssertionEvidence(
     "The leaf-only corporate misconfig is a real failure before any repair",
     `normalizeOrganizationServerInput cleaned ${lab.url}/some/junk/path?x=1 to ${stampedOrigin}, the exact lab origin, and a child node fetch trusting only the private root (NODE_EXTRA_CA_CERTS) exited ${String(plain.status)} with "${plainError}"; it never reached the server body.`,
     true,
@@ -164,7 +164,7 @@ test("enterprise TLS chain repair unlocks exactly the sign-in-stamped activation
   expect(repaired.logs.some((line) => line.includes(`chain repaired for ${labOrigin}`))).toBe(true);
   const healed = await fetchLabInChild(lab.url, { ...process.env, ...repaired.caEnv });
   expect(healed.status).toBe(0);
-  evidence.fact(
+  evidence.recordAssertionEvidence(
     "Chain repair is driven by the activation record exactly as sign-in stamps it",
     `resolveSystemCaEnv received only the bootstrap file (baseUrl/requireSignin/enterpriseActivation as exchangeConfirmedGrant writes it), read ${labOrigin} from enterpriseActivation itself, logged "chain repaired for ${labOrigin}", exported NODE_EXTRA_CA_CERTS, and the same child fetch that just failed exited 0; no origins were ever passed to the repair call.`,
     true,
@@ -183,7 +183,7 @@ test("enterprise TLS chain repair unlocks exactly the sign-in-stamped activation
   const killSwitched = await fetchLabInChild(lab.url, { ...process.env, ...disabled.caEnv });
   expect(killSwitched.status).not.toBe(0);
   expect(killSwitched.output).toMatch(chainErrorPattern);
-  evidence.fact(
+  evidence.recordAssertionEvidence(
     "The kill switch keeps the broken chain broken",
     `With OPENWORK_DISABLE_CHAIN_REPAIR=1 and the same activation record, the runtime logged "chain repair disabled", never logged "chain repaired", and the child fetch failed again with ${chainErrorPattern.exec(killSwitched.output)?.[0] ?? "a chain error"}; the exported bundle carried the root only.`,
     true,
@@ -220,7 +220,7 @@ test("enterprise TLS chain repair unlocks exactly the sign-in-stamped activation
   expect(httpVariant.logs.some((line) => /chain repaired/.test(line))).toBe(false);
   const httpStillBroken = await fetchLabInChild(lab.url, { ...process.env, ...httpVariant.caEnv });
   expect(httpStillBroken.status).not.toBe(0);
-  evidence.fact(
+  evidence.recordAssertionEvidence(
     "A mismatched or non-https stamped origin never unlocks the lab server",
     `An activation record naming ${mismatchedOrigin} only probed that origin ("chain repair skipped for ${mismatchedOrigin}"), never logged a repair, never mentioned ${labOrigin}, and the lab fetch stayed broken; an http:// denBaseUrl produced zero TLS probes with "chain repair skipped: no activation record", and the lab fetch stayed broken there too.`,
     true,

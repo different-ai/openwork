@@ -11,7 +11,7 @@ turns screenshots from hand-crafted artifacts into a regenerable pipeline.
 
 Use this for "take/redo screenshots / make marketing images" tasks. It is NOT
 e2e evidence — for pass/fail proof use `run-tests` with an
-`@openwork/testkit` spec and its ambient evidence tape.
+`@openwork/testkit` test and its ambient test evidence.
 
 ## The Zero-Defect Bar
 
@@ -82,9 +82,9 @@ only on pass); both use `sharp`.
 
 ## Beautify (Screen.Studio-style framing)
 
-For published verdict evidence, preserve the testkit tape and its original
+For published verdict evidence, preserve the test run and its original
 validated takes. Use this skill only for separately requested polished assets;
-beautified images supplement the tape and do not inherit its proof semantics.
+beautified images supplement the test evidence and do not inherit its proof semantics.
 
 `scripts/beautify.mjs` turns a verified raw screenshot into a publication
 frame: gradient background, padding, rounded corners, soft shadow, optional

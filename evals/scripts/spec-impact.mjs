@@ -47,7 +47,7 @@ export function validateSnapshot(value) {
 
 export function analyzeImpact(contracts, changedFiles) {
   const changed = [...new Set(changedFiles.map((entry) => entry.trim()).filter(Boolean))].sort()
-  const changedSlowSpecs = changed.filter((pathname) => pathname.startsWith("evals/specs/") && pathname.endsWith(".slow.test.ts"))
+  const changedE2eTests = changed.filter((pathname) => pathname.startsWith("evals/specs/") && pathname.endsWith(".e2e.test.ts"))
   const impacted = contracts.flatMap((contract) => {
     const implementation = changed.filter((pathname) => contract.implementation.some((pattern) => matches(pathname, pattern)))
     if (implementation.length === 0) return []
@@ -56,9 +56,10 @@ export function analyzeImpact(contracts, changedFiles) {
   })
   return {
     changed,
+    changedE2eTests,
     impacted,
     attention: impacted.filter((contract) => !contract.covered),
-    matchedSpecs: [...new Set([...impacted.flatMap((contract) => contract.specs), ...changedSlowSpecs])].sort(),
+    matchedTests: [...new Set([...impacted.flatMap((contract) => contract.specs), ...changedE2eTests])].sort(),
   }
 }
 
@@ -67,23 +68,23 @@ function markdown(result) {
   if (result.impacted.length === 0) {
     lines.push(
       "No mapped implementation contract changed.",
-      "Warden suggestion: add or update an `evals/specs/<feature>.slow.test.ts` proof for this change if it affects app behavior.",
+      "Warden suggestion: add or update an `evals/specs/<feature>.e2e.test.ts` test for this change if it affects app behavior.",
       "",
     )
     return lines.join("\n")
   }
-  lines.push("| Contract | Result | Changed implementation | Mapped specs |", "| --- | --- | --- | --- |")
+  lines.push("| Contract | Result | Changed implementation | Mapped E2E tests |", "| --- | --- | --- | --- |")
   for (const contract of result.impacted) {
-    const status = contract.covered ? "Covered by a changed spec" : "Needs attention"
+    const status = contract.covered ? "Covered by a changed E2E test" : "Needs attention"
     const implementation = contract.changedImplementation.map((entry) => `\`${entry}\``).join("<br>")
     const specs = contract.specs.map((entry) => `\`${entry}\``).join("<br>")
     lines.push(`| \`${contract.id}\` | ${status} | ${implementation} | ${specs} |`)
   }
   lines.push("")
   if (result.attention.length > 0) {
-    lines.push("This check is advisory: confirm the existing mapped spec still proves the contract, or update/add a spec.", "")
+    lines.push("This check is advisory: confirm the existing mapped E2E test still proves the contract, or update/add an E2E test.", "")
   }
-  lines.push(`Matched slow specs: ${result.matchedSpecs.map((spec) => `\`${spec}\``).join(", ") || "none"}`, "")
+  lines.push(`Matched E2E tests: ${result.matchedTests.map((test) => `\`${test}\``).join(", ") || "none"}`, "")
   return lines.join("\n")
 }
 
@@ -97,7 +98,7 @@ function parseArgs(args) {
     const argument = args[index]
     if (argument === "--strict") options.strict = true
     else if (argument === "--json") options.json = true
-    else if (argument === "--matched-specs") options.matchedSpecs = true
+    else if (argument === "--matched-tests") options.matchedTests = true
     else if (["--base", "--head", "--snapshot", "--summary", "--changed-file"].includes(argument)) {
       const value = args[index + 1]
       if (!value) throw new Error(`${argument} requires a value`)
@@ -128,14 +129,14 @@ function main() {
   const result = analyzeImpact(contracts, changedFiles)
   const report = markdown(result)
   if (options.summary) appendFileSync(options.summary, report)
-  if (options.matchedSpecs) {
-    process.stdout.write(`${JSON.stringify(result.matchedSpecs)}\n`)
+  if (options.matchedTests) {
+    process.stdout.write(`${JSON.stringify(result.matchedTests)}\n`)
     return
   }
   if (options.json) process.stdout.write(`${JSON.stringify(result, null, 2)}\n`)
   else process.stdout.write(report)
   for (const contract of result.attention) {
-    process.stdout.write(`::warning title=Spec impact snapshot::${annotation(`${contract.id} changed without a mapped spec change`)}\n`)
+    process.stdout.write(`::warning title=Spec impact snapshot::${annotation(`${contract.id} changed without a mapped E2E test change`)}\n`)
   }
   if (options.strict && result.attention.length > 0) process.exitCode = 2
 }

@@ -8,14 +8,14 @@ description: Prove a PR, prepare merge verification, publish all evidence, check
 ## Verify the tree that will land
 
 - Run every check on the PR head after its final rebase or cherry-pick. Re-run
-  and re-publish after any history rewrite; tapes are bound to a commit SHA.
+  and re-publish after any history rewrite; test runs are bound to a commit SHA.
 - Before merging a stacked PR, inspect
   `gh pr view <n> --json baseRefName,headRefName,headRefOid`. If its base PR
   merged first, the stack can merge into the feature branch instead of `dev`;
-  GitHub then recreates commits with new SHAs and orphans their tapes.
+  GitHub then recreates commits with new SHAs and orphans their test evidence.
 - Detect stray commits with `git log --oneline <branch> ^origin/dev`. Remedy a
   bad stack by cherry-picking only the intended commits onto current `dev`, then
-  re-run every check and re-publish every tape.
+  re-run every check and re-publish every test run.
 
 ## Produce the agent-first verdict
 
@@ -35,7 +35,7 @@ description: Prove a PR, prepare merge verification, publish all evidence, check
   replace the required Daytona verdict.
 - Record whether each check ran on Daytona or locally. When falling back, state
   the unavailable Daytona prerequisite without exposing secret values.
-- Give every claim an observable assertion and a visible testkit tape.
+- Give every claim an observable assertion and visible test evidence.
 - Report only `Passed`, `Incomplete`, or `Failed`. Always quote exact commands,
   exit codes, and passed/failed/skipped counts.
 - Call a failure pre-existing only after the same command demonstrates it in a
@@ -54,18 +54,18 @@ pnpm dev:den:mysql
   dependencies can make den-api imports fail.
 - If the checkout path contains spaces, set `OPENWORK_EVAL_SURFACES_DIR` to a
   space-free path; node-gyp and electron-rebuild otherwise fail.
-- Set `OPENWORK_EVAL_APP_SPECS=1` for app-driving specs.
+- Set `OPENWORK_EVAL_E2E_TESTS=1` for app-driving E2E tests.
 
 ## Publish human verification
 
-- The orchestrator owns publishing after the verdict. After a multi-spec run,
-  publish each head-matching tape (once per roll):
+- The orchestrator owns publishing after the verdict. After a multi-test run,
+  publish each head-matching test run:
 
 ```bash
-pnpm evals --publish --pr <n> --roll <dir|name>
+pnpm evals:e2e --publish --pr <n> --test-run <dir|name>
 ```
 
-- Confirm the sticky PR comment shows one section for every claimed spec.
+- Confirm the sticky PR comment shows one section for every claimed test.
 - Never use `--force` to paper over a SHA mismatch; re-run on the PR head.
-  Reserve it for deliberately publishing a historical or red tape, and call
+  Reserve it for deliberately publishing historical or red test evidence, and call
   that exception out in the report and PR comment.

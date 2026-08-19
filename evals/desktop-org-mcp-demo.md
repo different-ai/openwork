@@ -1,10 +1,10 @@
-# Demo: shared MCP connections, tutorial-driven fraimz
+# Demo: shared MCP connections with test evidence
 
-One fraimz run that walks the tutorial
+One E2E test run that walks the tutorial
 (`packages/docs/cloud/share-with-your-team/shared-mcp-connections.mdx`)
 step by step, as the two personas it describes. The run has three jobs:
 
-1. **Prove** the experience works end to end (fraimz verdict).
+1. **Prove** the experience works end to end (test-evidence verdict).
 2. **Produce the tutorial's screenshots** (each starred frame below is saved
    under the image name the tutorial references).
 3. **Feed the PR comment** — frames + claims posted to #2439 for review.
@@ -76,7 +76,7 @@ Extensions with zero org items and zero errors.
 
 ## Delivery
 
-- fraimz verdict + `fraimz.html` path reported.
+- test-evidence verdict + `test-run.json` path reported.
 - Starred PNGs copied to `packages/docs/images/` under the tutorial's names.
 - PR comment on #2439: one section per frame — claim, image, what was
   asserted — plus exact repro commands.

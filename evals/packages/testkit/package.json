@@ -13,7 +13,7 @@
   "dependencies": {
     "@openwork/behaviors": "workspace:*",
     "@openwork/cdp": "workspace:*",
-    "@openwork/fraimz": "workspace:*",
+    "@openwork/test-evidence": "workspace:*",
     "@openwork/hosts": "workspace:*",
     "@openwork/labs": "workspace:*",
     "mysql2": "^3.11.3",

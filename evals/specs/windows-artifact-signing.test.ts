@@ -51,7 +51,7 @@ test("the Windows matrix signs every installer in place before publication", asy
   expect(workflow).toContain("vars.AZURE_CLIENT_ID || secrets.AZURE_CLIENT_ID");
   expect(windowsJobHeader).not.toContain("AZURE_CLIENT_ID");
 
-  evidence.fact(
+  evidence.recordAssertionEvidence(
     "Windows signing is the default and every matrix build signs before upload",
     "Manual releases default sign_windows to true. Six Windows matrix targets use the protected windows-signing environment and OIDC permission. Shared build steps sign exactly one installer, verify its signature, refresh its signed blockmap and manifest, and only then upload release assets. Azure values remain scoped to signing steps rather than the job-wide environment.",
     true,
@@ -68,7 +68,7 @@ test("public, cloud, and enterprise Windows targets avoid an unsigned artifact t
   expect(workflow).not.toContain("unsigned-electron");
   expect(workflow).not.toContain("sign-and-publish-windows:");
 
-  evidence.fact(
+  evidence.recordAssertionEvidence(
     "All Windows artifact families are signed without a serial artifact hop",
     `The Windows matrix contains ${windowsMatrixArtifacts.join(", ")}. None uploads an unsigned-electron intermediate or waits for a sign-and-publish-windows aggregation job.`,
     true,
@@ -101,7 +101,7 @@ test("signed Windows metadata is regenerated for every distribution and architec
     expect((await stat(`${installerPath}.blockmap`)).size).toBeGreaterThan(0);
   }
 
-  evidence.fact(
+  evidence.recordAssertionEvidence(
     "Each signed matrix installer receives byte-accurate updater metadata",
     `Six independent helper invocations regenerated blockmaps and SHA-512 manifest entries for ${installers.map(([name]) => basename(name)).join(", ")}.`,
     true,

@@ -1,17 +1,17 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { claim, createBriefRun, specBrief } from "../src/brief.ts";
+import { claim, createBriefRun, testBrief } from "../src/brief.ts";
 
-test("specBrief rejects invalid definitions", () => {
-  assert.throws(() => specBrief({ behavior: "  ", claims: { valid: claim("works") } }), /behavior must not be empty/);
-  assert.throws(() => specBrief({ behavior: "Works.", claims: {} }), /at least one claim/);
-  assert.throws(() => specBrief({ behavior: "Works.", claims: { blankMust: claim("  ") } }), /blankMust.*blank must/);
-  assert.throws(() => specBrief({ behavior: "Works.", claims: { blankNever: claim("works", { never: "  " }) } }), /blankNever.*blank never/);
+test("testBrief rejects invalid definitions", () => {
+  assert.throws(() => testBrief({ behavior: "  ", claims: { valid: claim("works") } }), /behavior must not be empty/);
+  assert.throws(() => testBrief({ behavior: "Works.", claims: {} }), /at least one claim/);
+  assert.throws(() => testBrief({ behavior: "Works.", claims: { blankMust: claim("  ") } }), /blankMust.*blank must/);
+  assert.throws(() => testBrief({ behavior: "Works.", claims: { blankNever: claim("works", { never: "  " }) } }), /blankNever.*blank never/);
 });
 
 test("a run records true proofs and reports its facts", () => {
   const recorded: { claimText: string; evidence: string; passed: boolean }[] = [];
-  const brief = specBrief({
+  const brief = testBrief({
     behavior: "Two claims work.",
     claims: {
       first: claim("the first succeeds"),
@@ -34,7 +34,7 @@ test("a run records true proofs and reports its facts", () => {
 
 test("a failed proof records before throwing", () => {
   const recorded: { passed: boolean }[] = [];
-  const run = createBriefRun(specBrief({ behavior: "Failure is visible.", claims: { failure: claim("must pass") } }), (_claimText, _evidence, passed) => recorded.push({ passed }));
+  const run = createBriefRun(testBrief({ behavior: "Failure is visible.", claims: { failure: claim("must pass") } }), (_claimText, _evidence, passed) => recorded.push({ passed }));
 
   assert.throws(() => run.prove.failure(false, "observed failure"), /Claim failed: failure/);
   assert.deepEqual(recorded, [{ passed: false }]);
@@ -42,14 +42,14 @@ test("a failed proof records before throwing", () => {
 
 test("blank proof evidence throws without recording", () => {
   const recorded: string[] = [];
-  const run = createBriefRun(specBrief({ behavior: "Evidence is required.", claims: { evidenced: claim("has evidence") } }), (claimText) => recorded.push(claimText));
+  const run = createBriefRun(testBrief({ behavior: "Evidence is required.", claims: { evidenced: claim("has evidence") } }), (claimText) => recorded.push(claimText));
 
   assert.throws(() => run.prove.evidenced(true, "  "), /must not be blank/);
   assert.deepEqual(recorded, []);
 });
 
 test("assertAllProven names only the missing claim", () => {
-  const run = createBriefRun(specBrief({
+  const run = createBriefRun(testBrief({
     behavior: "Every claim is required.",
     claims: { proven: claim("is proven"), missing: claim("is also proven") },
   }), () => {});

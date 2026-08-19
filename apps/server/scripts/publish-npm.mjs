@@ -41,12 +41,15 @@ async function main() {
     `${JSON.stringify(publishedPackage, null, 2)}\n`
   );
 
+  const args = process.argv.slice(2);
+  if (args.includes("--prepare-only")) return;
+
   const pnpmCli = process.env.npm_execpath;
   if (!pnpmCli) throw new Error("pnpm executable path is unavailable");
 
   const result = spawnSync(
     process.execPath,
-    [pnpmCli, "--config.git-checks=false", "publish", ...process.argv.slice(2)],
+    [pnpmCli, "--config.git-checks=false", "publish", ...args],
     { cwd: outputRoot, stdio: "inherit" }
   );
   if (result.error) throw result.error;

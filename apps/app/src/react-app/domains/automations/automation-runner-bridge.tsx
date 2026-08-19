@@ -6,6 +6,7 @@ import { createDenClient, DenApiError, readDenSettings } from "@/app/lib/den"
 import { denSettingsChangedEvent } from "@/app/lib/den-session-events"
 import { isDesktopRuntime } from "@/app/utils"
 import { useDenAuth } from "@/react-app/domains/cloud/den-auth-provider"
+import { createAutomationRunnerConnectCoordinator } from "./automation-runner-connect-coordinator"
 
 const RUNNER_TOKEN_REFRESH_MS = 5 * 60_000
 const RUNNER_ID_KEY = "openwork.automations.desktop-runner-id"
@@ -29,78 +30,78 @@ export function AutomationRunnerBridge({ enabled }: { enabled: boolean }) {
 
   useEffect(() => {
     if (!isDesktopRuntime() || !window.__OPENWORK_ELECTRON__?.invokeDesktop) return
-    let disposed = false
-    let timer: ReturnType<typeof setTimeout> | undefined
 
     const disconnect = () => window.__OPENWORK_ELECTRON__?.invokeDesktop?.("automationRunnerConfigure", null)
       .catch(() => undefined)
-    const connect = async () => {
-      if (timer) {
-        clearTimeout(timer)
-        timer = undefined
-      }
-      if (disposed || !enabled || status !== "signed_in") {
-        await disconnect()
-        return
-      }
-      const settings = readDenSettings()
-      const authToken = settings.authToken?.trim() ?? ""
-      const organizationId = settings.activeOrgId?.trim() ?? ""
-      if (!authToken || !organizationId) {
-        await disconnect()
-        return
-      }
-      try {
-        const client = createDenClient({ baseUrl: settings.baseUrl, token: authToken })
-        let runnerId = desktopRunnerId()
-        const build = await window.__OPENWORK_ELECTRON__?.invokeDesktop?.("appBuildInfo")
-        const agent = navigator.userAgent
-        const platform = /Mac/i.test(agent) ? "darwin" : /Win/i.test(agent) ? "win32" : "linux"
-        let runner: Awaited<ReturnType<typeof client.mintAutomationRunnerToken>>
+    const coordinator = createAutomationRunnerConnectCoordinator({
+      refreshMs: RUNNER_TOKEN_REFRESH_MS,
+      connect: async (isCurrent) => {
+        if (!enabled || status !== "signed_in") {
+          await disconnect()
+          return
+        }
+        const settings = readDenSettings()
+        const authToken = settings.authToken?.trim() ?? ""
+        const organizationId = settings.activeOrgId?.trim() ?? ""
+        if (!authToken || !organizationId) {
+          await disconnect()
+          return
+        }
         try {
-          runner = await client.mintAutomationRunnerToken(organizationId, {
+          const client = createDenClient({ baseUrl: settings.baseUrl, token: authToken })
+          let runnerId = desktopRunnerId()
+          const build = await window.__OPENWORK_ELECTRON__?.invokeDesktop?.("appBuildInfo")
+          if (!isCurrent()) return
+          const agent = navigator.userAgent
+          const platform = /Mac/i.test(agent) ? "darwin" : /Win/i.test(agent) ? "win32" : "linux"
+          let runner: Awaited<ReturnType<typeof client.mintAutomationRunnerToken>>
+          try {
+            runner = await client.mintAutomationRunnerToken(organizationId, {
+              runnerId,
+              protocolVersion: 1,
+              supportedExecutionTargets: ["desktop"],
+              capabilities: [AUTOMATION_MODEL_ATTENTION_CAPABILITY],
+              appVersion: String(build?.version ?? "unknown"),
+              platform,
+              concurrency: 1,
+            })
+          } catch (error) {
+            if (!(error instanceof DenApiError) || error.status !== 409 || error.code !== "automation_runner_identity_conflict") {
+              throw error
+            }
+            if (!isCurrent()) return
+            runnerId = resetDesktopRunnerId()
+            runner = await client.mintAutomationRunnerToken(organizationId, {
+              runnerId,
+              protocolVersion: 1,
+              supportedExecutionTargets: ["desktop"],
+              capabilities: [AUTOMATION_MODEL_ATTENTION_CAPABILITY],
+              appVersion: String(build?.version ?? "unknown"),
+              platform,
+              concurrency: 1,
+            })
+          }
+          if (!isCurrent()) return
+          await window.__OPENWORK_ELECTRON__?.invokeDesktop?.("automationRunnerConfigure", {
+            baseUrl: client.baseUrls.apiBaseUrl,
+            token: runner.token,
             runnerId,
-            protocolVersion: 1,
-            supportedExecutionTargets: ["desktop"],
-            capabilities: [AUTOMATION_MODEL_ATTENTION_CAPABILITY],
-            appVersion: String(build?.version ?? "unknown"),
-            platform,
-            concurrency: 1,
           })
         } catch (error) {
-          if (!(error instanceof DenApiError) || error.status !== 409 || error.code !== "automation_runner_identity_conflict") {
-            throw error
-          }
-          runnerId = resetDesktopRunnerId()
-          runner = await client.mintAutomationRunnerToken(organizationId, {
-            runnerId,
-            protocolVersion: 1,
-            supportedExecutionTargets: ["desktop"],
-            capabilities: [AUTOMATION_MODEL_ATTENTION_CAPABILITY],
-            appVersion: String(build?.version ?? "unknown"),
-            platform,
-            concurrency: 1,
-          })
+          if (isCurrent()) console.warn("[automation-runner] registration failed", error)
         }
-        if (disposed) return
-        await window.__OPENWORK_ELECTRON__?.invokeDesktop?.("automationRunnerConfigure", {
-          baseUrl: client.baseUrls.apiBaseUrl,
-          token: runner.token,
-          runnerId,
-        })
-      } catch (error) {
-        console.warn("[automation-runner] registration failed", error)
-      } finally {
-        if (!disposed) timer = setTimeout(() => void connect(), RUNNER_TOKEN_REFRESH_MS)
-      }
-    }
+      },
+    })
 
-    const handleSettingsChanged = () => void connect()
+    const requestConnect = () => void coordinator.request().catch(() => undefined)
+    const handleSettingsChanged = () => requestConnect()
     window.addEventListener(denSettingsChangedEvent, handleSettingsChanged)
-    void connect()
+    const unsubscribeCredentialRejected = window.__OPENWORK_ELECTRON__.automationRunner
+      ?.onCredentialRejected?.(() => coordinator.credentialRejected())
+    requestConnect()
     return () => {
-      disposed = true
-      if (timer) clearTimeout(timer)
+      coordinator.dispose()
+      unsubscribeCredentialRejected?.()
       window.removeEventListener(denSettingsChangedEvent, handleSettingsChanged)
       void disconnect()
     }

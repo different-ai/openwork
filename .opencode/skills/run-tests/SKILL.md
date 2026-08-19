@@ -9,7 +9,7 @@ description: Run the tests, run one spec, run e2e locally or on Daytona, investi
 
 - Check out the exact PR head that will land. After any rebase or cherry-pick,
   discard the old verdict and run again.
-- Run one spec at a time so each failure and ambient tape has one owner.
+- Run one test at a time so each failure and ambient test evidence has one owner.
 
 ## Choose the execution environment
 
@@ -42,22 +42,22 @@ pnpm dev:den:mysql
 - Build those workspace dependencies before local Den; otherwise den-api imports
   can fail.
 - If the checkout path contains spaces, set `OPENWORK_EVAL_SURFACES_DIR` to a
-  space-free path before app specs. node-gyp and electron-rebuild require it.
+  space-free path before E2E tests. node-gyp and electron-rebuild require it.
 
 ## Choose one lane
 
-- Run one app-less PR-lane spec:
+- Run one app-less PR-lane test:
 
 ```bash
-pnpm evals:spec specs/<name>.test.ts
+pnpm evals:pr specs/<name>.test.ts
 ```
 
-- Run one app/Den-driving stack-lane spec:
+- Run one app/Den-driving E2E test:
 
 ```bash
-pnpm evals <name>
+pnpm evals:e2e <name>
 # Fallback:
-OPENWORK_EVAL_APP_SPECS=1 pnpm --dir evals exec vitest run --config vitest.config.ts --project stack specs/<name>.slow.test.ts
+OPENWORK_EVAL_E2E_TESTS=1 pnpm --dir evals exec vitest run --config vitest.config.ts --project e2e specs/<name>.e2e.test.ts
 ```
 
 - The commands above use Daytona when `OPENWORK_EVAL_DAYTONA=1` is set and

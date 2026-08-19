@@ -115,7 +115,7 @@ marketplace-attached"; everything downstream keeps working.
    "unusable until published".
 
 **Proof (spec acceptance, run with `bun test` — this program uses spec
-acceptance criteria + suites instead of fraimz, per program owner decision):**
+acceptance criteria and E2E suites instead of standalone visual reports, per program owner decision):**
 
 - New suite `ee/apps/den-api/test/grant-native-capabilities.test.ts`
   (pattern: copy of `test/marketplace-capabilities.test.ts` harness, own
@@ -156,7 +156,7 @@ acceptance criteria + suites instead of fraimz, per program owner decision):**
   test/marketplace-capabilities.test.ts test/marketplace-cloud-readiness.test.ts
   test/plugin-system-create-bundle.test.ts` → **63 pass / 0 fail**
   (5 new A1–A5 + 58 existing); `pnpm exec tsc --noEmit` clean.
-  Per program owner decision, proof is spec acceptance suites, not fraimz.
+  Per program owner decision, proof is test acceptance suites and test evidence.
 
 #### P1 wire proof — spec lane (verified 2026-08-01)
 
@@ -250,9 +250,9 @@ apps/app). Marketplace copy strings retired (forbidden message + provenance).
 Mobile: Page 4 pattern applied — library mobile-first, PR1 team grid and PR2
 access rows retrofitted to stacked cards below md, share picker becomes a
 centered dialog on small screens. Proof:
-`evals/specs/library-view.slow.test.ts` — member API edges asserted for
+`evals/specs/library-view.e2e.test.ts` — member API edges asserted for
 creator and recipient, desktop-filter lift asserted (marketplaceId null row),
-browser leg AS A PLAIN MEMBER with a two-frame photo roll (desktop + 375px
+browser leg AS A PLAIN MEMBER with two visual-evidence screenshots (desktop + 375px
 mobile), vision 4/4. The browser leg caught and fixed a sharedBy parser
 mismatch — the member-perspective spec paying for itself.
 
@@ -266,9 +266,9 @@ behind a select with an amber consequence line), org-wide switch rendered
 ONLY for admins (server 403s members — hide, don't disable), creator
 provenance under the header, and a computed blast-radius line on the archive
 confirm. No new API (existing grant routes; serializer already exposed
-creator fields). Proof: `evals/specs/plugin-access-panel.slow.test.ts` — API
+creator fields). Proof: `evals/specs/plugin-access-panel.e2e.test.ts` — API
 leg (creator grants person + team; grant list asserted) + browser leg with
-vision-validated photo roll; org-wide toggle asserted PRESENT for admin.
+validated visual evidence; org-wide toggle asserted PRESENT for admin.
 Known limitation discovered: the den-web `(admin)` route group redirects
 plain members away from plugin detail — member-facing surfaces are a PR3
 decision (the member library cannot live behind the admin gate).
@@ -283,8 +283,8 @@ page (Members ▸ Teams ▸ team name) with Overview and Access tabs — the
 members-grid pattern, edge badges on DenBadge tones, amber editor rows,
 Revoke for direct grants, Open catalog for inherited ones. Proof:
 `test/plugin-system-team-access.test.ts` (route-level, real MySQL) +
-`evals/specs/team-access-view.slow.test.ts` (API leg + headless-Chrome
-browser leg with vision-validated photo roll of the real screen).
+`evals/specs/team-access-view.e2e.test.ts` (API leg + headless-Chrome
+browser leg with validated visual evidence of the real screen).
 
 Dashboard library: Mine / Shared with me / Team / Everyone, one row per
 plugin, provenance chips (Yours / Shared by N / Team T / catalog M /

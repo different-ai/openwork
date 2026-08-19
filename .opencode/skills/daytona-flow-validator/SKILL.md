@@ -1,6 +1,6 @@
 ---
 name: daytona-flow-validator
-description: do e2e tests, validate feature, prove it works, pass/fail, testkit tape, screenshots, CDP assertions. Daytona validation loop for real app behavior with repair before declaring success.
+description: do E2E tests, validate feature, prove it works, pass/fail, test evidence, screenshots, CDP assertions. Daytona validation loop for real app behavior with repair before declaring success.
 ---
 
 # Daytona Flow Validator
@@ -26,8 +26,8 @@ action must follow this loop:
 If any assertion is missing, the flow is not validated yet.
 
 Use the relevant `evals/specs/**/*.test.ts` test with `@openwork/testkit` for a
-verdict because it binds assertions and captures into one ambient evidence tape.
-App-driving tests use `.slow.test.ts`. Use manual CDP only to debug; use
+verdict because it binds assertions and captures into one ambient test run.
+App-driving E2E tests use `.e2e.test.ts`. Use manual CDP only to debug; use
 `write-a-spec` for new repeatable coverage and `run-tests` to execute it.
 
 Use `browser_eval`, direct API calls, localStorage writes, filesystem edits, or
@@ -57,13 +57,13 @@ For a UI flow, collect all of these when feasible:
 - App proof: `navigator.userAgent` contains `Electron/` for desktop flows, or does not for standalone Chrome flows.
 - State proof: URL, visible text, selected model/provider, status, or route matches the expected outcome.
 - Backend proof: relevant `daytona exec` process/log/health check for sidecars, Den, worker proxy, or mock servers.
-- Testkit tape proof: observable assertions and validated takes for every claim.
+- Test evidence: observable assertions and validated screenshot artifacts for every claim.
 - Custom screenshot indexes: supplementary presentation artifacts only. See
   `daytona-recording-artifacts`.
 - Video clips: supplementary and only for motion such as streaming, loading, or
   animation.
 
-The testkit tape determines pass/fail. Custom screenshots and video never
+The test evidence determines pass/fail. Custom screenshots and video never
 replace it, even when the user explicitly requests those additional artifacts.
 
 ## Validation Loop Template
@@ -249,7 +249,7 @@ For Den Web flows specifically:
 Use one of these verdicts:
 
 - `Passed`: every expected outcome has an observable assertion in the testkit
-  tape, with every claimed take validated.
+  test evidence, with every claimed screenshot validated.
 - `Failed`: at least one assertion disproves the expected outcome.
-- `Incomplete`: the sandbox/tooling failed, tape evidence is missing, or only a
+- `Incomplete`: the sandbox/tooling failed, test evidence is missing, or only a
   custom recording/screenshot was collected.

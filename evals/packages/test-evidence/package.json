@@ -1,0 +1,25 @@
+{
+  "name": "@openwork/test-evidence",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "test-evidence-judge": "./bin/test-evidence-judge.mjs"
+  },
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "development": "./src/index.ts",
+      "default": "./src/index.ts"
+    },
+    "./vitest": {
+      "types": "./src/vitest.ts",
+      "development": "./src/vitest.ts",
+      "default": "./src/vitest.ts"
+    }
+  },
+  "dependencies": {
+    "@openwork/cdp": "workspace:*",
+    "@openwork/timeline": "workspace:*"
+  }
+}

@@ -45,7 +45,7 @@ test("signed-in members use clean active-organization install routes without min
   expect(installRoutes).toContain("distribution: managedDesktopDistribution()");
   expect(installRoutes).toContain("orgMemberRoute()");
 
-  evidence.fact(
+  evidence.recordAssertionEvidence(
     "Authenticated onboarding uses the active organization without install tokens",
     "Clean /install loads /v1/me/install-config, downloads through /v1/me/install/:platform, post-invite and member actions navigate to /install, and the clipboard OpenWork-link guide remains present.",
     true,

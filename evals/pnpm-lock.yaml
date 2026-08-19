@@ -14,12 +14,6 @@ importers:
       '@openwork/cdp':
         specifier: workspace:*
         version: link:packages/cdp
-      '@openwork/evidence':
-        specifier: workspace:*
-        version: link:packages/evidence
-      '@openwork/fraimz':
-        specifier: workspace:*
-        version: link:packages/fraimz
       '@openwork/hosts':
         specifier: workspace:*
         version: link:packages/hosts
@@ -29,6 +23,12 @@ importers:
       '@openwork/matchers':
         specifier: workspace:*
         version: link:packages/matchers
+      '@openwork/test-artifacts':
+        specifier: workspace:*
+        version: link:packages/test-artifacts
+      '@openwork/test-evidence':
+        specifier: workspace:*
+        version: link:packages/test-evidence
       '@openwork/testkit':
         specifier: workspace:*
         version: link:packages/testkit
@@ -54,17 +54,6 @@ importers:
 
   packages/cdp: {}
 
-  packages/evidence: {}
-
-  packages/fraimz:
-    dependencies:
-      '@openwork/cdp':
-        specifier: workspace:*
-        version: link:../cdp
-      '@openwork/timeline':
-        specifier: workspace:*
-        version: link:../timeline
-
   packages/hosts:
     dependencies:
       '@openwork/cdp':
@@ -78,6 +67,17 @@ importers:
 
   packages/matchers: {}
 
+  packages/test-artifacts: {}
+
+  packages/test-evidence:
+    dependencies:
+      '@openwork/cdp':
+        specifier: workspace:*
+        version: link:../cdp
+      '@openwork/timeline':
+        specifier: workspace:*
+        version: link:../timeline
+
   packages/testkit:
     dependencies:
       '@openwork/behaviors':
@@ -86,15 +86,15 @@ importers:
       '@openwork/cdp':
         specifier: workspace:*
         version: link:../cdp
-      '@openwork/fraimz':
-        specifier: workspace:*
-        version: link:../fraimz
       '@openwork/hosts':
         specifier: workspace:*
         version: link:../hosts
       '@openwork/labs':
         specifier: workspace:*
         version: link:../labs
+      '@openwork/test-evidence':
+        specifier: workspace:*
+        version: link:../test-evidence
       mysql2:
         specifier: ^3.11.3
         version: 3.23.2(@types/node@26.1.2)

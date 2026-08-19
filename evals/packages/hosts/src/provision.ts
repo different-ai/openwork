@@ -81,7 +81,7 @@ export interface FaultProxyOnSandbox {
   stop(): Promise<void>;
 }
 
-export interface ConnectorSpecEnv {
+export interface ConnectorE2eTestEnv {
   denApiUrl: string;
   denWebUrl: string;
   sandboxA: string;
@@ -811,13 +811,13 @@ function unquote(value: string): string {
   return value;
 }
 
-export function renderConnectorSpecEnv(facts: ConnectorSpecEnv): string {
+export function renderConnectorE2eTestEnv(facts: ConnectorE2eTestEnv): string {
   assertSafeRef(facts.ref);
   return [
     `${ENV_HEADER_PREFIX} — generated ${new Date().toISOString()}${ENV_REF_MARKER}${facts.ref}`,
     `${ENV_CREATED_PREFIX}${facts.created.join(",")}`,
-    "OPENWORK_EVAL_APP_SPECS=1",
-    "OPENWORK_EVAL_CONNECTOR_SPEC=1",
+    "OPENWORK_EVAL_E2E_TESTS=1",
+    "OPENWORK_EVAL_CONNECTOR_E2E_TEST=1",
     `OPENWORK_EVAL_DEN_API_URL=${shellQuote(facts.denApiUrl)}`,
     `OPENWORK_EVAL_DEN_WEB_URL=${shellQuote(facts.denWebUrl)}`,
     `OPENWORK_EVAL_DAYTONA_SANDBOX_A=${shellQuote(facts.sandboxA)}`,
@@ -828,7 +828,7 @@ export function renderConnectorSpecEnv(facts: ConnectorSpecEnv): string {
   ].join("\n");
 }
 
-export function parseConnectorSpecEnv(content: string): ConnectorSpecEnv {
+export function parseConnectorE2eTestEnv(content: string): ConnectorE2eTestEnv {
   const values = new Map<string, string>();
   for (const line of content.split(/\r?\n/)) {
     if (!line || line.startsWith("#")) continue;
@@ -841,8 +841,8 @@ export function parseConnectorSpecEnv(content: string): ConnectorSpecEnv {
     return value;
   }
 
-  required("OPENWORK_EVAL_APP_SPECS");
-  required("OPENWORK_EVAL_CONNECTOR_SPEC");
+  required("OPENWORK_EVAL_E2E_TESTS");
+  required("OPENWORK_EVAL_CONNECTOR_E2E_TEST");
   required("OPENWORK_EVAL_MODEL");
   // Header comments are read by line scan, not regex: `.*` before a literal
   // backtracks polynomially on adversarial input (CodeQL js/polynomial-redos).

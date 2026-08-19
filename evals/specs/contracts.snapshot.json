@@ -12,12 +12,12 @@
         "ee/apps/den-api/src/routes/automations/**"
       ],
       "specs": [
-        "evals/specs/automation-model-needs-attention.slow.test.ts",
-        "evals/specs/automation-proposal-model-resolution.slow.test.ts",
-        "evals/specs/automation-revision-revert.slow.test.ts",
-        "evals/specs/automation-runtime-placement.slow.test.ts",
-        "evals/specs/automations-den-hosted.slow.test.ts",
-        "evals/specs/saved-script-automations.slow.test.ts"
+        "evals/specs/automation-model-needs-attention.e2e.test.ts",
+        "evals/specs/automation-proposal-model-resolution.e2e.test.ts",
+        "evals/specs/automation-revision-revert.e2e.test.ts",
+        "evals/specs/automation-runtime-placement.e2e.test.ts",
+        "evals/specs/automations-den-hosted.e2e.test.ts",
+        "evals/specs/saved-script-automations.e2e.test.ts"
       ]
     },
     {
@@ -34,9 +34,9 @@
         "ee/packages/den-db/src/schema/codemode.ts"
       ],
       "specs": [
-        "evals/specs/codemode-scripts.slow.test.ts",
-        "evals/specs/generated-artifact-views.slow.test.ts",
-        "evals/specs/saved-script-automations.slow.test.ts"
+        "evals/specs/codemode-scripts.e2e.test.ts",
+        "evals/specs/generated-artifact-views.e2e.test.ts",
+        "evals/specs/saved-script-automations.e2e.test.ts"
       ]
     },
     {
@@ -50,24 +50,24 @@
         "evals/packages/hosts/src/provision.ts"
       ],
       "specs": [
-        "evals/specs/codemode-scripts.slow.test.ts",
-        "evals/specs/local-managed-mcp-oauth.slow.test.ts",
-        "evals/specs/saved-script-automations.slow.test.ts",
-        "evals/specs/testkit-selftest.slow.test.ts"
+        "evals/specs/codemode-scripts.e2e.test.ts",
+        "evals/specs/local-managed-mcp-oauth.e2e.test.ts",
+        "evals/specs/saved-script-automations.e2e.test.ts",
+        "evals/specs/testkit-selftest.e2e.test.ts"
       ]
     },
     {
-      "id": "evals.slow-sweep",
-      "description": "Slow-spec runner selection, placement, batching, and shared-stack lifecycle",
+      "id": "evals.daytona-e2e-regression-suite",
+      "description": "Daytona E2E regression selection, placement, batching, and shared-stack lifecycle",
       "implementation": [
-        ".github/workflows/slow-specs-sweep.yml",
+        ".github/workflows/daytona-e2e-regression-suite.yml",
         "evals/runner/prepare-stack.ts",
         "evals/runner/stack-env.ts",
         "evals/runner/stack-suite.ts"
       ],
       "specs": [
         "evals/specs/spec-impact.test.ts",
-        "evals/specs/testkit-selftest.slow.test.ts"
+        "evals/specs/testkit-selftest.e2e.test.ts"
       ]
     }
   ]

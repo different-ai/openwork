@@ -20,7 +20,7 @@ test("joining opens clean authenticated installation except for desktop handoff 
   expect(source).toContain("if (desktopAuthRequested)");
   expect(source).toContain("setJoinedOrg(nextJoinedOrg)");
 
-  evidence.fact(
+  evidence.recordAssertionEvidence(
     "Post-invite onboarding opens token-free installation while desktop-auth requests keep their handoff",
     "Normal acceptance and accepted-invite resolution replace the route with /install; desktopAuthRequested still selects JoinOrgSuccess for the existing desktop handoff.",
     true,

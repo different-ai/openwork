@@ -36,9 +36,9 @@ For repeatable PR verdict evidence, run an app-driving testkit spec (or use
 `write-a-spec` to add new coverage under `evals/specs/`):
 
 ```bash
-OPENWORK_EVAL_APP_SPECS=1 OPENWORK_EVAL_DAYTONA=1 \
+OPENWORK_EVAL_E2E_TESTS=1 OPENWORK_EVAL_DAYTONA=1 \
   pnpm --dir evals exec vitest run --config vitest.config.ts \
-  --project stack specs/<slug>.slow.test.ts
+  --project e2e specs/<slug>.e2e.test.ts
 ```
 
 The `@openwork/testkit` ambient tape binds observable assertions to validated

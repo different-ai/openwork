@@ -38,7 +38,7 @@ const deniedPort = envPort("OPENWORK_EVAL_KUBE_DENIED_MOCK_PORT", 4792);
 function precondition(): string | null {
   if (!apiUrl) return "set OPENWORK_EVAL_DEN_API_URL";
   if (!webUrl) return "set OPENWORK_EVAL_DEN_WEB_URL";
-  if (process.env.OPENWORK_EVAL_KUBE_EGRESS_SPEC?.trim() !== "1") return "set OPENWORK_EVAL_KUBE_EGRESS_SPEC=1";
+  if (process.env.OPENWORK_EVAL_KUBE_EGRESS_TEST?.trim() !== "1") return "set OPENWORK_EVAL_KUBE_EGRESS_TEST=1";
   if (!allowedHostIp) return "set OPENWORK_EVAL_KUBE_ALLOWED_HOST_IP";
   if (allowedPort === null) return "OPENWORK_EVAL_KUBE_ALLOWED_MOCK_PORT must be a valid port";
   if (deniedPort === null) return "OPENWORK_EVAL_KUBE_DENIED_MOCK_PORT must be a valid port";
@@ -187,7 +187,7 @@ test.skipIf(skipReason !== null)(title, async ({ evidence }) => {
     const allowedDiscoveryRequests = requestsSince(await allowedMock.requests(), allowedSinceIso);
     expect(allowedDiscoveryRequests.length).toBeGreaterThan(0);
     expect(allowedDiscoveryRequests.some((request) => request.path === "/mcp")).toBe(true);
-    evidence.fact(
+    evidence.recordAssertionEvidence(
       "Den reached the allowlisted MCP server",
       `The host mock recorded ${allowedDiscoveryRequests.length} discovery requests from the in-cluster connection validation.`,
       allowedDiscoveryRequests.length > 0,
@@ -202,7 +202,7 @@ test.skipIf(skipReason !== null)(title, async ({ evidence }) => {
     expect(allowedPodFetch.code, `${allowedPodFetch.stderr}\n${allowedPodFetch.stdout}`).toBe(0);
     expect(allowedPodFetch.stdout).toContain("200");
     expect(deniedPodFetch.code, `${deniedPodFetch.stderr}\n${deniedPodFetch.stdout}`).not.toBe(0);
-    evidence.fact(
+    evidence.recordAssertionEvidence(
       "The pod-level policy allows one host port and denies the other",
       `Allowed pod fetch exit=${allowedPodFetch.code}; denied pod fetch exit=${deniedPodFetch.code}; the denied mock returned HTTP ${hostLiveness.status} to the driver first.`,
       allowedPodFetch.code === 0 && deniedPodFetch.code !== 0 && hostLiveness.status === 200,
@@ -232,7 +232,7 @@ test.skipIf(skipReason !== null)(title, async ({ evidence }) => {
     expect(deniedState).not.toBeNull();
     expect(deniedState?.connectedForMe).toBe(false);
     expect(deniedState?.connectedAt).toBeNull();
-    evidence.fact(
+    evidence.recordAssertionEvidence(
       "The denied product connection never became usable",
       `Create surfaced ${deniedCreateError}; after 60s the usable-connection API reported connectedForMe=${String(deniedState?.connectedForMe)} and connectedAt=${String(deniedState?.connectedAt)}.`,
       deniedState?.connectedForMe === false && deniedState.connectedAt === null,
@@ -242,7 +242,7 @@ test.skipIf(skipReason !== null)(title, async ({ evidence }) => {
     expect(health.status).toBe(200);
     const allowedAfterDeny = await readUsableConnection(activeAdmin, allowedConnection.id);
     expect(allowedAfterDeny?.connectedForMe).toBe(true);
-    evidence.fact(
+    evidence.recordAssertionEvidence(
       "Core Den health and the allowed connection survive the denied attempt",
       `Den health returned HTTP ${health.status}, and the original connection remained usable.`,
       health.status === 200 && allowedAfterDeny?.connectedForMe === true,
@@ -250,7 +250,7 @@ test.skipIf(skipReason !== null)(title, async ({ evidence }) => {
 
     const deniedLeaks = requestsSince(await deniedMock.requests(), deniedSinceIso);
     expect(deniedLeaks).toEqual([]);
-    evidence.fact(
+    evidence.recordAssertionEvidence(
       "No denied request leaked out of the cluster",
       `The denied mock recorded ${deniedLeaks.length} non-log requests after the host-side liveness probe.`,
       deniedLeaks.length === 0,

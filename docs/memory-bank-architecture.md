@@ -328,10 +328,10 @@ Verify at impl (non-blocking):
   6. **Fast-follow (deferred):** hard gate, encryption at rest, rate-limit/quota, modal.
 - **Per-PR verification gate (`AGENTS.md`) — applies to every stage above.** Each stage's
   PR must: (a) **run tests with pnpm and report the exact commands + results** in the PR
-  body; (b) produce **`fraimz` proof** for every experience-affecting change —
-  `evals/results/<run-id>/fraimz.html` via `/fraimz` (or `pnpm fraimz --flow <id>`), each
+  body; (b) produce **test evidence** for every experience-affecting change —
+  `evals/results/test-runs/<test-run-id>/test-run.json` from an `@openwork/testkit` test, each
   frame binding claim → user action → observable assertion → validated screenshot, and
-  report `Passed` **only** when `fraimz.html` exists with observable assertions (else
+  report `Passed` **only** when the test run exists with observable assertions (else
   `Incomplete`/`Failed` with repro); backend-only/types-only stages may skip but must say
   so and prove the core flow is unchanged; (c) attach **end-to-end evidence** (short video
   preferred, screenshots otherwise) of save → recall → view/delete; (d) meet coding

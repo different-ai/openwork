@@ -176,7 +176,7 @@ test("defineScenario returns a flow, preserves steps, gates Den env, and passes 
   assert(isFlowDefinition(flow));
   assert.deepEqual(flow.steps.map((step) => step.name), ["first", "second"]);
   const ctx = new EvalContext({ client: null, outDir: tmpdir(), flowId: flow.id, env: { OPENWORK_EVAL_RUNSTAMP: "abc123" } });
-  assert.equal(await flow.precondition?.(ctx), "Scenario needs a Den stack: run `pnpm owt up` or `pnpm evals --stack den` first");
+  assert.equal(await flow.precondition?.(ctx), "Scenario needs a Den stack: run `pnpm owt up` or `pnpm evals:legacy --stack den` first");
   await flow.steps[0].run(ctx);
   assert.equal(ctx.state.ownerEmail, "alex@acme.test");
   assert.equal(ctx.state.freshEmail, "teammate-abc123@eval.openwork.test");

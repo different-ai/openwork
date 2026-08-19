@@ -49,7 +49,7 @@ test("the welcome screen folds the server-URL door into the join-organization fi
   expect(dialogSource).toContain("saveControlPlaneUrl(invite.origin)");
   expect(dialogSource).toContain("platform.openLink(invite.url)");
 
-  evidence.fact(
+  evidence.recordAssertionEvidence(
     "The welcome screen has one paste field for invite links, install links, server URLs, and sign-in codes",
     "The separate Using OpenWork on-premises affordance is gone from Welcome; the join dialog classifies install link, then invite link, then server URL, then sign-in code, and requires explicit host confirmation before opening web invites.",
     true,

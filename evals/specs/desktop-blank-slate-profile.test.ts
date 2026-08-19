@@ -51,22 +51,22 @@ test("any desktop build can launch with an isolated blank-slate profile", async 
       && normalEnv.OPENWORK_DESKTOP_BOOTSTRAP_PATH === originalNormalEnv.OPENWORK_DESKTOP_BOOTSTRAP_PATH;
     expect(normalLaunchUnchanged).toBe(true);
 
-    evidence.fact(
+    evidence.recordAssertionEvidence(
       "Blank-slate launches cannot read or overwrite the installed profile",
       "Every Electron, OpenWork, OpenCode, home, XDG, and Windows mutable path is below one unique per-launch temporary root.",
       allPathOverridesIsolated && first.rootPath !== second.rootPath,
     );
-    evidence.fact(
+    evidence.recordAssertionEvidence(
       "Blank-slate isolates desktop bootstrap before workspace startup",
       "OPENWORK_DESKTOP_BOOTSTRAP_PATH points inside the temporary root, so an installed localhost bootstrap cannot bypass Enterprise activation.",
       firstEnv.OPENWORK_DESKTOP_BOOTSTRAP_PATH === first.environment.OPENWORK_DESKTOP_BOOTSTRAP_PATH,
     );
-    evidence.fact(
+    evidence.recordAssertionEvidence(
       "Package flavor is preserved without development mode",
       "Enterprise remains Enterprise and the blank-slate profile does not set OPENWORK_DEV_MODE.",
       packageFlavorPreserved,
     );
-    evidence.fact(
+    evidence.recordAssertionEvidence(
       "Normal desktop launches remain unchanged",
       "Without --blank-slate no temporary profile or process environment override is applied.",
       normalLaunchUnchanged,

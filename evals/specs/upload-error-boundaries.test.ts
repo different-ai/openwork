@@ -22,7 +22,7 @@ test("upload filename and path boundaries reject unsafe writes", ({ evidence }) 
   expect(multibyteName).not.toBe(multibyteInput);
   expect(multibyteName).not.toContain("�");
 
-  evidence.fact(
+  evidence.recordAssertionEvidence(
     "Oversized ASCII and multibyte upload names are bounded with extensions preserved",
     `The ${encoder.encode(asciiInput).byteLength}-byte ASCII and ${encoder.encode(multibyteInput).byteLength}-byte multibyte inputs became ${encoder.encode(asciiName).byteLength}-byte .pdf and ${encoder.encode(multibyteName).byteLength}-byte .txt names without a broken UTF-8 character.`,
     true,
@@ -51,7 +51,7 @@ test("upload filename and path boundaries reject unsafe writes", ({ evidence }) 
   expect(normalizeWorkspaceRelativePath("reports/console.txt", { allowSubdirs: true }))
     .toBe("reports/console.txt");
 
-  evidence.fact(
+  evidence.recordAssertionEvidence(
     "Windows-unsafe and oversized upload path components are rejected at the server boundary",
     "Reserved-device, alternate-data-stream, trailing-dot, trailing-space, 256-byte ASCII, and 258-byte multibyte components all threw their expected invalid-path messages; an exact 255-byte filename and an ordinary lookalike remained valid.",
     true,

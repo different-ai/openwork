@@ -27,7 +27,7 @@ Any request to create or extend coverage ("create a test scenario", "test X", "c
 
 1. **Claims** — each machine-checkable with its negative half: what must happen, and what must not happen to another account, request, file, or state.
 2. **Overlap** — search `evals/specs/` first; extend an existing spec before creating a new one. Name what you checked.
-3. **Lane** — app-less PR lane `*.test.ts`, or app/Den-driving stack lane `*.slow.test.ts`. Justify the choice.
+3. **Lane** — app-less PR lane `*.test.ts`, or app/Den-driving E2E lane `*.e2e.test.ts`. Justify the choice.
 4. **Resources** — `needs()` opt-ins and env; `server()` orgs and mocks (`mcpMock()` witnesses instead of real providers); which surfaces and how many: `app()` desktops (`profileDir` continuity, `localServerDelayMs` races), `chrome()` for Den Web, `inviteMember()` for multi-member, `faultProxy()` for failure injection, `daytonaSandbox()` per-sandbox desktops (`OPENWORK_EVAL_DAYTONA_SANDBOX_A/B`).
 5. **Environment** — Daytona (`OPENWORK_EVAL_DAYTONA=1`) when credentials are available, else local fallback; name the lane and its prerequisites.
 6. **Budget** — smallest spec count that covers the claims; one scenario per spec; one spec per run so each failure has one owner. Push app-less mechanisms to unit coverage and say so.

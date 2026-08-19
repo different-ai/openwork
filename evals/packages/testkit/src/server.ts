@@ -55,7 +55,7 @@ export interface ServerOptions {
    * Extra origins Den should trust, on top of its own API and web hosts. A
    * loopback identity provider needs this: Den refuses to register an SSO
    * provider whose endpoints are not publicly routable unless the origin is
-   * trusted, so a spec that stands one up has to name it here.
+   * trusted, so a test that stands one up has to name it here.
    */
   trustedOrigins?: readonly string[];
 }
@@ -572,7 +572,7 @@ export async function server(options: ServerOptions): Promise<Den> {
     if (base.kind !== "daytona") throw new Error("Daytona place returned a local Den base.");
     const preparedSandbox = process.env.OPENWORK_EVAL_DAYTONA_DEN_SANDBOX?.trim();
     const orgShape = options.org ?? {};
-    const isolatePreparedSpec = Boolean(preparedSandbox && options.provision !== false);
+    const isolatePreparedTest = Boolean(preparedSandbox && options.provision !== false);
     const bootstrapAdmin = personDefaults("admin", orgShape.admin, runId);
     const provisioned = await provisionDenSandbox({
       ref: base.ref,
@@ -591,8 +591,8 @@ export async function server(options: ServerOptions): Promise<Den> {
             orgShape,
             runId,
             {
-              createOrg: isolatePreparedSpec || Boolean(options.org),
-              fallbackAdmin: (isolatePreparedSpec || options.org?.admin) ? undefined : defaultReuseAdmin(),
+              createOrg: isolatePreparedTest || Boolean(options.org),
+              fallbackAdmin: (isolatePreparedTest || options.org?.admin) ? undefined : defaultReuseAdmin(),
             },
           );
       let platformAdminGrant: PlatformAdminGrant | null = null;
@@ -691,11 +691,11 @@ export async function server(options: ServerOptions): Promise<Den> {
       DEN_REQUIRE_EMAIL_VERIFICATION: "false",
       DEN_PASSWORD_BREACH_SCREENING_ENABLED: "false",
       DEN_GENERATED_ARTIFACT_VIEWS_ENABLED:
-        process.env.OPENWORK_EVAL_GENERATED_ARTIFACT_VIEWS_SPEC === "1" ? "true" : "false",
+        process.env.OPENWORK_EVAL_GENERATED_ARTIFACT_VIEWS_E2E_TEST === "1" ? "true" : "false",
       OPENWORK_DEV_MODE: "1",
       PROVISIONER_MODE: "stub",
         // The locally booted Den seeds this admin into the platform-admin
-        // allowlist so specs can exercise /v1/admin/* capability toggles.
+        // allowlist so tests can exercise /v1/admin/* capability toggles.
         DEN_BOOTSTRAP_ADMIN_EMAILS: bootstrapAdmin.email,
         ...options.env,
       };

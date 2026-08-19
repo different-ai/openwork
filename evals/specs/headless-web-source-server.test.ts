@@ -19,7 +19,7 @@ test("headless web development launches the server from current source", ({ evid
   expect(launch.args.join(" ")).not.toContain("apps/server/dist");
   expect(launch.args.join(" ")).not.toContain("openwork-server");
 
-  evidence.fact(
+  evidence.recordAssertionEvidence(
     "Local headless development is source-first",
     "The launch command executes apps/server/src/cli.ts and never references compiled server output, so a stale dist binary cannot affect a restarted development stack.",
     true,

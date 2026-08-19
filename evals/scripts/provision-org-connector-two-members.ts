@@ -4,10 +4,10 @@ import { parseArgs } from "node:util";
 
 import {
   deleteSandboxes,
-  parseConnectorSpecEnv,
+  parseConnectorE2eTestEnv,
   provisionDenSandbox,
   provisionDesktopSandbox,
-  renderConnectorSpecEnv,
+  renderConnectorE2eTestEnv,
   startMockOnSandbox,
 } from "@openwork/hosts";
 import type { DesktopSandbox } from "@openwork/hosts";
@@ -25,7 +25,7 @@ function prefixed(prefix: string, observe?: (line: string) => void): (line: stri
 }
 
 async function deleteProvisioned(envFile: string): Promise<void> {
-  const facts = parseConnectorSpecEnv(await readFile(envFile, "utf8"));
+  const facts = parseConnectorE2eTestEnv(await readFile(envFile, "utf8"));
   await deleteSandboxes(facts.created);
   const created = new Set(facts.created);
   const leftAlone = [facts.sandboxA, facts.sandboxB].filter((sandbox) => !created.has(sandbox));
@@ -67,7 +67,7 @@ async function provisionSpecEnv(options: {
       desktop("b", options.reuseB),
     ]);
 
-    await writeFile(options.out, renderConnectorSpecEnv({
+    await writeFile(options.out, renderConnectorE2eTestEnv({
       denApiUrl: den.apiUrl,
       denWebUrl: den.webUrl,
       sandboxA: desktopA.sandbox,
@@ -79,7 +79,7 @@ async function provisionSpecEnv(options: {
 
     console.log(`Wrote ${resolve(options.out)}`);
     console.log(`set -a; source ${options.out}; set +a`);
-    console.log("pnpm --dir evals exec vitest run --config vitest.config.ts --project stack specs/org-connector-two-members.slow.test.ts");
+    console.log("pnpm --dir evals exec vitest run --config vitest.config.ts --project e2e specs/org-connector-two-members.e2e.test.ts");
     console.log(`node scripts/provision-org-connector-two-members.ts --delete ${options.out}`);
   } catch (error) {
     console.error(`Provisioning failed. Provision-created sandboxes so far: ${created.join(", ") || "(none)"}`);

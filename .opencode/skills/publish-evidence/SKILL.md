@@ -1,6 +1,6 @@
 ---
 name: publish-evidence
-description: Publish evidence, publish all tapes, update PR verification, audit a red tape. Use for the human-verification layer after @openwork/testkit runs.
+description: Publish test evidence, publish all test runs, update PR verification, or audit red evidence. Use after @openwork/testkit runs.
 ---
 
 # Skill: Publish Evidence
@@ -11,36 +11,36 @@ test.
 
 ## Make every claim auditable
 
-- Show the spec name and verdict, each claim's assertion or fact, the relevant
-  frames, the source tape, and the reproduction command.
-- Require one sticky-comment section per claimed spec. If a claim has no visible
-  tape section, report the PR `Incomplete`.
-- Keep both `<!-- photo-roll -->` and `<!-- fraimz -->` markers.
+- Show the test name and verdict, each claim's assertion evidence, the relevant
+  test artifacts, the source test run, and the reproduction command.
+- Require one sticky-comment section per claimed test. If a claim has no visible
+  test-evidence section, report the PR `Incomplete`.
+- Write the `<!-- test-evidence -->` marker. The publisher recognizes old sticky
+  markers only to update comments created before the migration.
 
 ## Publish the PR head
 
-After a multi-spec run, publish each tape whose `gitSha` matches the PR head,
-once per roll:
+After a multi-test run, publish each test run whose `gitSha` matches the PR head:
 
 ```bash
-pnpm evals --publish --pr <n> --roll <dir|name>
+pnpm evals:e2e --publish --pr <n> --test-run <dir|name>
 ```
 
-`evals --publish` judges pending vision claims on the selected tape, then
-publishes it. It publishes existing `@openwork/testkit` tapes, not legacy
+`evals:e2e --publish` judges pending visual validations in the selected test
+run, then publishes it. It publishes existing `@openwork/testkit` evidence, not legacy
 flows, and never reruns tests.
 
-- Omitting `--roll` selects the most recent roll; pass `--roll` explicitly
-  when several rolls exist so each spec's tape is published deliberately.
-- Publishing replaces the sticky comment with the selected roll. Confirm the
-  final comment shows the spec and verdict you intend reviewers to see.
+- Omitting `--test-run` selects the most recent test run; pass it explicitly
+  when several runs exist so each test's evidence is published deliberately.
+- Publishing replaces the sticky comment with the selected test run. Confirm the
+  final comment shows the test and verdict you intend reviewers to see.
 - Exit codes: `0` published, `1` failed claims published (or publish failed),
   `2` pending claims still need judging (set a vision key and rerun).
 
 ## Refuse misleading evidence
 
 - Never use `--force` to hide a SHA mismatch. Re-run the spec on the PR head.
-- Use `--force` only to deliberately publish a historical or red tape. The
+- Use `--force` only to deliberately publish historical or red test evidence. The
   output is annotated; call the exception out explicitly. Red tapes are valid
   human-verification artifacts and should be published when they explain a
   `Failed` or `Incomplete` verdict.

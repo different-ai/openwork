@@ -26,7 +26,7 @@ test("the three desktop builds own sign-in policy; no installer bundle rewrites 
   expect(resolveDesktopDistribution({ isPackaged: true, packageFlavor: undefined, environmentFlavor: "enterprise" }).flavor).toBe("public");
   expect(resolveDesktopDistribution({ isPackaged: false, packageFlavor: undefined, environmentFlavor: "enterprise" }).flavor).toBe("enterprise");
 
-  evidence.fact(
+  evidence.recordAssertionEvidence(
     "Sign-in policy is fixed per build flavor",
     "public !requireSignin; cloud requireSignin; enterprise requireSignin+requireActivation; packaged builds ignore the environment flavor override",
     true,
@@ -48,7 +48,7 @@ test("the three desktop builds own sign-in policy; no installer bundle rewrites 
   }
   expect(workspaceStore).not.toContain('app.getPath("downloads")');
 
-  evidence.fact(
+  evidence.recordAssertionEvidence(
     "No installer bundle can rewrite the desktop bootstrap",
     "workspace-store.mjs and main.mjs no longer scan Downloads/Desktop for bundled desktop-bootstrap.json files; org context arrives through the welcome join field (install link, invite, server URL, sign-in code) or the build flavor",
     true,

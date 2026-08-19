@@ -28,17 +28,17 @@ test("managed MCP handshake boundaries separate provider failures from internal 
   expect(output).toContain("0 fail");
   expect(output).toContain("18 expect() calls");
 
-  evidence.fact(
+  evidence.recordAssertionEvidence(
     "Provider DCR and initialize failures cross a safe reconnect boundary",
     "The focused HTTP witness requires both deterministic provider failures to return exactly managed_mcp_connection_failed/502, omit nested provider secrets, and persist reconnect_required with no credential.",
     true,
   );
-  evidence.fact(
+  evidence.recordAssertionEvidence(
     "Recognized provider handshake failures stay out of telemetry",
     "The same witness requires the telemetry capture list to remain empty after the DCR and callback-initialize failures.",
     true,
   );
-  evidence.fact(
+  evidence.recordAssertionEvidence(
     "Malformed SDK data remains an actionable internal defect",
     "The malformed registration witness must return the generic internal 500 while capturing exactly one non-ApiError EnterpriseMcpClientError with MCP_CONNECTION_HANDSHAKE_FAILED at mcp-initialize.",
     true,

@@ -3,7 +3,7 @@
 - Started: 2026-07-15T02:36:45.026Z
 - CDP: http://127.0.0.1:39723
 - Result: PASSED (1 passed, 0 failed, 0 skipped)
-- fraimz: fraimz.html
+- legacy report: fraimz.html
 
 ## ✅ mcp-oauth-conformance — URL discovery, shared callback OAuth, and MCP tool use succeed end to end
 Kind: user-facing flow demo

@@ -1,0 +1,95 @@
+# Opens a developer-facing issue when either E2E workflow fails or times out.
+# Set E2E_TEST_ALERT_MENTION to route alerts to a GitHub team instead of the
+# developer who triggered the run.
+name: E2E Test Failure Alerts
+
+on:
+  workflow_run:
+    workflows:
+      - Nightly Critical-Path E2E Journey
+      - Daytona E2E Regression Suite
+    types:
+      - completed
+
+permissions:
+  actions: read
+  contents: read
+  issues: write
+
+jobs:
+  notify:
+    if: >-
+      github.repository == 'different-ai/openwork' &&
+      (github.event.workflow_run.conclusion == 'failure' ||
+      github.event.workflow_run.conclusion == 'timed_out')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Notify developers
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RUN_ACTOR: ${{ github.event.workflow_run.actor.login }}
+          RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+          RUN_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          RUN_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          RUN_NAME: ${{ github.event.workflow_run.name }}
+          RUN_SHA: ${{ github.event.workflow_run.head_sha }}
+          RUN_URL: ${{ github.event.workflow_run.html_url }}
+          ALERT_MENTION: ${{ vars.E2E_TEST_ALERT_MENTION }}
+        run: |
+          set -euo pipefail
+
+          case "$RUN_NAME" in
+            "Nightly Critical-Path E2E Journey") issue_title="Nightly critical-path E2E journey failed" ;;
+            "Daytona E2E Regression Suite") issue_title="Daytona E2E regression suite failed" ;;
+            *) echo "Unexpected workflow: $RUN_NAME" >&2; exit 1 ;;
+          esac
+
+          gh label create e2e-test-failure \
+            --color B60205 \
+            --description "Automated E2E test workflow failures" \
+            --force
+
+          issue_number="$(gh issue list \
+            --state open \
+            --search "\"$issue_title\" in:title" \
+            --json number,title \
+            --jq "map(select(.title == \"$issue_title\"))[0].number // empty")"
+
+          if [ -z "$issue_number" ]; then
+            issue_url="$(gh issue create \
+              --title "$issue_title" \
+              --label e2e-test-failure \
+              --body "This issue tracks failures from the **$RUN_NAME** workflow. Each failed run is posted as a comment.")"
+            issue_number="${issue_url##*/}"
+          else
+            gh issue edit "$issue_number" --add-label e2e-test-failure
+          fi
+
+          mention="${ALERT_MENTION:-@$RUN_ACTOR}"
+          failed_jobs="$(gh api --paginate "repos/$GH_REPO/actions/runs/$RUN_ID/jobs" \
+            --jq '.jobs[] | select(.conclusion == "failure" or .conclusion == "timed_out") | "- [\(.name)](\(.html_url))"')"
+
+          {
+            echo "$mention, **$RUN_NAME** completed with \`$RUN_CONCLUSION\`."
+            echo
+            echo "- Run: [$RUN_ID (attempt $RUN_ATTEMPT)]($RUN_URL)"
+            echo "- Branch: \`$RUN_BRANCH\`"
+            echo "- Commit: \`$RUN_SHA\`"
+            echo
+            echo "### Failed jobs"
+            echo
+            if [ -n "$failed_jobs" ]; then
+              echo "$failed_jobs"
+            else
+              echo "No failed job metadata was returned. Open the workflow run for details."
+            fi
+          } > "$RUNNER_TEMP/e2e-test-failure.md"
+
+          gh issue comment "$issue_number" --body-file "$RUNNER_TEMP/e2e-test-failure.md"
+          gh issue edit "$issue_number" --add-assignee "$RUN_ACTOR" || true
+          echo "Developer alert: $GITHUB_SERVER_URL/$GH_REPO/issues/$issue_number" >> "$GITHUB_STEP_SUMMARY"

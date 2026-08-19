@@ -178,7 +178,7 @@ Makes queued follow-up messages run sequentially, streamlines the model picker a
 #### Main changes
 - Follow-up messages now run sequentially, so queued work stays ordered instead of competing with the active turn.
 - The model picker is more compact and the session sidebar is denser, leaving more room for the conversation.
-- Improved slow-spec coverage, LiteLLM provider proof, and runtime failure handling make releases easier to validate.
+- Improved E2E test coverage, LiteLLM provider evidence, and runtime failure handling make releases easier to validate.
 
 #### Lines of code changed since previous release
 4147 lines changed since `v0.18.29` (3158 insertions, 989 deletions).
@@ -203,7 +203,7 @@ True
 
 #### Major bug fix details
 - Simplified model and sidebar controls to preserve conversation space.
-- Hardened slow-spec and LiteLLM provider validation plus expected runtime failure handling.
+- Hardened E2E and LiteLLM provider validation plus expected runtime failure handling.
 
 #### Deprecated features
 False

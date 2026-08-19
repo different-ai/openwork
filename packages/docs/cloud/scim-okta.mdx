@@ -57,12 +57,15 @@ Enter:
 | --- | --- |
 | SCIM connector base URL | OpenWork **SCIM base URL** |
 | Unique identifier field for users | `userName` |
-| Supported provisioning actions | Push new users, push profile updates, and push groups as needed |
+| Supported provisioning actions | Push new users and push profile updates. Add push groups after user provisioning works |
 | Authentication mode | HTTP Header |
 | Authorization | OpenWork SCIM bearer token |
 
-Select **Test API Credentials**. Save only after Okta reports a successful
-connection.
+Select **Test API Credentials** or **Test Connector Configuration**, depending
+on your Okta interface. Save only after Okta reports **Connector configured
+successfully**. For the initial user-only setup, Okta should detect **Create
+Users** and **Update User Attributes**. It is expected for import and group
+features to remain undetected when you have not selected them.
 
 ## 3. Configure provisioning to OpenWork
 
@@ -88,17 +91,25 @@ Review the attribute mappings. At minimum, keep these identity values aligned:
 The SAML NameID and SCIM `userName` must identify the same person. A mismatch
 can create a duplicate OpenWork member instead of linking SSO and SCIM.
 
-## 4. Provision one assigned user
+## 4. Provision one test user
 
-Start with the user already assigned during the SAML test:
+For the cleanest first test, use a user who has never been assigned or
+provisioned to this Okta application:
 
 1. Open the Okta application's **Assignments** tab.
-2. Confirm the test user is assigned and their application username is the
-   same email used for SAML NameID and SCIM `userName`.
-3. Open the assignment's provisioning status or Okta **System Log**.
-4. Confirm Okta's lookup and create or update operations succeed.
+2. Assign one test user and confirm their application username is the same
+   email used for SAML NameID and SCIM `userName`.
+3. Wait for Okta's automatic provisioning job to finish. Do not repeatedly
+   edit the assignment or trigger provisioning while the job is running.
+4. Open Okta **Reports → System Log** and confirm a single **Push new user to
+   external application** event succeeds.
 5. In OpenWork, open **Members** and verify the same member appears without a
    second password-backed account.
+
+If the user was already assigned for the earlier SAML test, Okta may show a
+**Provision User** action after you enable provisioning. Select it once, then
+wait and inspect the System Log before taking another action. A second request
+can race the first successful create and return `409 User already exists`.
 
 Do not broaden assignments until the test user's create, update, deactivate,
 and reactivate lifecycle works.
@@ -144,14 +155,29 @@ After the lifecycle and group tests pass:
 4. Confirm at least one owner has working Okta SAML access.
 5. Only then consider enabling **Require SSO for this organization**.
 
+## When to run reconciliation
+
+Use **Settings → SCIM → Run reconciliation** to check OpenWork's local
+SCIM-managed identities for inconsistent organization membership or missing
+provider-account state. OpenWork records unresolved drift for retry or manual
+review.
+
+Reconciliation does not import users from Okta, force Okta to provision an
+assigned user, or clear an Okta application-assignment error. Use the Okta
+Assignments page and System Log for outbound provisioning. When OpenWork has no
+local drift to process, reconciliation may complete without a visible member
+change.
+
 ## Troubleshooting
 
 | Symptom | Likely cause | Fix |
 | --- | --- | --- |
 | **Create connector** is disabled | OpenWork does not see an enabled SSO provider | Complete and test Okta SAML first; if SAML returns `invalid_saml_configuration`, upgrade and save the connection again |
 | **Test API Credentials** fails | Incorrect base URL, stale token, whitespace, or a rewritten hostname | Copy both values again from OpenWork and use the advertised base URL unchanged |
+| Okta reports `409 User already exists` | The user existed before SCIM, or more than one create job ran for the same assignment | Inspect the System Log first. If a successful create immediately precedes the conflict and the exact member exists in OpenWork, stop triggering **Provision User**. Use a never-before-provisioned user for the clean lifecycle test |
 | Okta creates a duplicate member | SAML NameID and SCIM `userName` differ | Map both to the same stable work email |
 | Assignment succeeds but no member appears | To App provisioning is disabled or the user is outside assignment scope | Enable **Create Users** and confirm the person is assigned to the application |
+| **Run reconciliation** does not provision an assigned user | Reconciliation only checks OpenWork's local SCIM identity state | Trigger and inspect outbound provisioning in Okta instead |
 | Deactivation does not remove access | **Deactivate Users** is disabled or Okta has not sent the event | Enable it and inspect the Okta System Log and OpenWork SCIM health |
 | A pushed group does not create a team | OpenWork team synchronization is off | Enable **Create teams from SCIM groups**, then retry the Okta group push |
 | A group is pushed without members | Its members are not assigned or provisioned to the application | Assign and provision the users before validating group membership |

@@ -63,7 +63,9 @@ export const AuthAccountTable = mysqlTable(
 export const AuthVerificationTable = mysqlTable(
   "verification",
   {
-    id: denTypeIdColumn("verification", "id").notNull().primaryKey(),
+    // Better Auth uses both generated IDs and deterministic 43-character
+    // SHA-256 reservations here (for example, SAML assertion replay guards).
+    id: varchar("id", { length: 64 }).notNull().primaryKey(),
     identifier: varchar("identifier", { length: 255 }).notNull(),
     value: text("value").notNull(),
     expiresAt: timestamp("expires_at", { fsp: 3 }).notNull(),

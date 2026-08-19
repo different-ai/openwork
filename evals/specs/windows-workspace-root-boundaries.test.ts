@@ -1,9 +1,9 @@
 import { expect } from "vitest";
-import { briefTest, claim, specBrief } from "@openwork/testkit";
+import { briefTest, claim, testBrief } from "@openwork/testkit";
 import { normalizeWorkspaceRootPath } from "../../packages/paths/index.mjs";
 import { prepareRuntimeWorkspaceRoot } from "../../apps/desktop/electron/runtime.mjs";
 
-briefTest(specBrief({
+briefTest(testBrief({
   behavior: "Windows workspace roots stay within filesystem path boundaries and fail recoverably when unavailable.",
   claims: {
     verbatimNormalization: claim("valid verbatim drive and UNC roots normalize to ordinary Windows filesystem paths", {

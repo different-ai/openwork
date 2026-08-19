@@ -44,7 +44,7 @@ test("capability search ranks stronger task matches above unrelated connection p
   ]);
   expect(ranked[0]).toBe(invitation);
   expect(ranked[0]?.bodySchema).toEqual({ type: "object", required: ["email", "role"] });
-  evidence.fact(
+  evidence.recordAssertionEvidence(
     "Task relevance leads capability search ordering",
     "The score-5 organization invitation capability and its request schema remain intact above the score-3 Microsoft 365 connection prompt.",
     true,
@@ -65,7 +65,7 @@ test("an actionable connection prompt wins an equal-relevance tie", async ({ evi
   const ranked = [callable, connection].sort(compareCapabilityMatches);
 
   expect(ranked[0]?.kind).toBe("connection_status");
-  evidence.fact(
+  evidence.recordAssertionEvidence(
     "Connection recovery stays actionable when relevance ties",
     "At the same lexical score, the connection-status row remains ahead of an ordinary callable capability.",
     true,

@@ -1,6 +1,6 @@
 ---
 name: daytona-electron-test
-description: "do e2e tests, run e2e, test on Daytona, run Electron on Daytona, validate feature, real desktop flow, CDP/noVNC, PR proof. Launch and drive OpenWork Electron in Daytona with validated frame evidence."
+description: "do E2E tests, run E2E, test on Daytona, run Electron on Daytona, validate feature, real desktop flow, CDP/noVNC, PR proof. Launch and drive OpenWork Electron in Daytona with test evidence."
 ---
 
 # Skill: Daytona Electron Test
@@ -29,16 +29,16 @@ bash .devcontainer/test-on-daytona.sh [branch-or-commit] --artifacts-volume
 It prints the CDP and noVNC URLs at the end. For UI validation, keep
 `--artifacts-volume` on by default so `/daytona-artifacts` is mounted and the
 artifact server on port 8090 is available for supplementary captures. Then load
-`run-tests` and run the relevant app-driving testkit spec:
+`run-tests` and run the relevant app-driving E2E test:
 
 ```bash
-OPENWORK_EVAL_APP_SPECS=1 OPENWORK_EVAL_DAYTONA=1 \
+OPENWORK_EVAL_E2E_TESTS=1 OPENWORK_EVAL_DAYTONA=1 \
   pnpm --dir evals exec vitest run --config vitest.config.ts \
-  --project stack specs/<slug>.slow.test.ts
+  --project e2e specs/<slug>.e2e.test.ts
 ```
 
 Use direct browser tools only for exploration and debugging. New repeatable
-verdict coverage belongs in `evals/specs/<slug>.slow.test.ts`, imports `test`
+verdict coverage belongs in `evals/specs/<slug>.e2e.test.ts`, imports `test`
 from `@openwork/testkit`, and records ambient evidence; see `write-a-spec`.
 
 Use `browser_list` to connect when manual inspection is needed.
@@ -76,8 +76,8 @@ source every `/daytona-secrets/*.env` file before Electron starts.
   screenshots, validation notes, and recordings that survive sandbox deletion.
 
 Validation standard: use `daytona-flow-validator`. The `@openwork/testkit`
-ambient tape and its observable assertions determine the verdict; publish the
-existing tape with `publish-evidence`. Custom screenshot indexes and video are
+ambient test evidence and its observable assertions determine the verdict;
+publish the existing test run with `publish-evidence`. Custom screenshot indexes and video are
 supplementary, with video reserved for motion such as streaming or animations.
 See `daytona-recording-artifacts` for those presentation artifacts.
 

@@ -1043,8 +1043,8 @@ jobs:
             gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest
           fi
 
-  publish-npm:
-    name: Publish openwork-server
+  prepare-npm:
+    name: Prepare openwork-server npm package
     needs: [resolve-release, verify-release]
     if: |
       always() &&
@@ -1053,6 +1053,8 @@ jobs:
       needs.resolve-release.outputs.benchmark_only != 'true' &&
       needs.resolve-release.outputs.publish_npm == 'true'
     runs-on: blacksmith-4vcpu-ubuntu-2404
+    outputs:
+      publish_server: ${{ steps.npm-versions.outputs.publish_server }}
     env:
       RELEASE_TAG: ${{ needs.resolve-release.outputs.release_tag }}
       RELEASE_VERSION: ${{ needs.resolve-release.outputs.release_version }}
@@ -1128,32 +1130,48 @@ jobs:
             echo "publish_any=true" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Ensure npm auth
-        id: npm-auth
-        shell: bash
-        env:
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
-          PUBLISH_ANY: ${{ steps.npm-versions.outputs.publish_any }}
-        run: |
-          set -euo pipefail
+      - name: Prepare openwork-server
+        if: steps.npm-versions.outputs.publish_server == 'true'
+        run: pnpm --filter openwork-server publish:npm --dry-run
 
-          if [ "${PUBLISH_ANY}" != "true" ]; then
-            echo "enabled=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
+      - name: Upload npm package
+        if: steps.npm-versions.outputs.publish_server == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: openwork-server-npm-${{ env.RELEASE_VERSION }}
+          path: apps/server/dist/npm
+          if-no-files-found: error
 
-          if [ -z "${NPM_TOKEN:-}" ]; then
-            echo "NPM_TOKEN not set; skipping npm publish."
-            echo "enabled=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
+  publish-npm:
+    name: Publish openwork-server
+    needs: [resolve-release, verify-release, prepare-npm]
+    if: |
+      always() &&
+      needs.resolve-release.result == 'success' &&
+      needs.verify-release.result == 'success' &&
+      needs.prepare-npm.result == 'success' &&
+      needs.prepare-npm.outputs.publish_server == 'true'
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+    env:
+      RELEASE_VERSION: ${{ needs.resolve-release.outputs.release_version }}
+    steps:
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
 
-          npm config set //registry.npmjs.org/:_authToken "$NPM_TOKEN"
-          echo "enabled=true" >> "$GITHUB_OUTPUT"
+      - name: Download npm package
+        uses: actions/download-artifact@v4
+        with:
+          name: openwork-server-npm-${{ env.RELEASE_VERSION }}
+          path: ${{ runner.temp }}/openwork-server-npm
 
       - name: Publish openwork-server
-        if: steps.npm-auth.outputs.enabled == 'true' && steps.npm-versions.outputs.publish_server == 'true'
-        run: pnpm --filter openwork-server publish:npm --access public
+        run: npm publish "$RUNNER_TEMP/openwork-server-npm" --access public --provenance
 
   publish-daytona-snapshot:
     name: Build + Push Daytona Snapshot

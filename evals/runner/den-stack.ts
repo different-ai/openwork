@@ -1,5 +1,5 @@
 /**
- * Den-stack harness for the eval runner (`pnpm evals --stack den`).
+ * Den-stack harness for the legacy runner (`pnpm evals:legacy --stack den`).
  *
  * Brings up everything the cloud eval flows need, idempotently:
  *   1. MySQL (docker compose, reuses the dev:den compose project + volume)
@@ -12,7 +12,7 @@
  *   6. A demo-owner session token, exported as OPENWORK_EVAL_DEN_API_URL /
  *      OPENWORK_EVAL_DEN_TOKEN so env-gated flows run without manual setup.
  *
- * `pnpm evals --stack-down` stops what the harness started.
+ * `pnpm evals:legacy --stack-down` stops what the harness started.
  */
 import { execFile, spawn } from "node:child_process";
 import { openSync } from "node:fs";

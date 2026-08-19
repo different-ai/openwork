@@ -2,13 +2,13 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { shouldPrepareSuite, suiteWorkerCount, workerSlot } from "./stack-suite.ts";
 
-test("single explicit specs keep their one-off setup", () => {
-  assert.equal(shouldPrepareSuite(["vitest", "specs/example.slow.test.ts"]), false);
+test("single explicit E2E tests keep their one-off setup", () => {
+  assert.equal(shouldPrepareSuite(["vitest", "specs/example.e2e.test.ts"]), false);
 });
 
 test("multi-file, glob, and whole-project runs prepare shared stack resources", () => {
-  assert.equal(shouldPrepareSuite(["vitest", "specs/a.slow.test.ts", "specs/b.slow.test.ts"]), true);
-  assert.equal(shouldPrepareSuite(["vitest", "specs/*.slow.test.ts"]), true);
+  assert.equal(shouldPrepareSuite(["vitest", "specs/a.e2e.test.ts", "specs/b.e2e.test.ts"]), true);
+  assert.equal(shouldPrepareSuite(["vitest", "specs/*.e2e.test.ts"]), true);
   assert.equal(shouldPrepareSuite(["vitest"]), true);
 });
 

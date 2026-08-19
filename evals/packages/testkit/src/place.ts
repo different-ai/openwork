@@ -23,7 +23,7 @@ export type DenBase =
   | { kind: "local"; apiHost: "127.0.0.1"; webHost: "127.0.0.1" }
   | { kind: "daytona"; ref: string };
 
-/** One placement decision shared by every resource in a spec. */
+/** One placement decision shared by every resource in a test. */
 export interface Place {
   kind: "local" | "daytona";
   host(): Host | undefined;
@@ -77,7 +77,7 @@ async function canConnect(port: number, host: string): Promise<boolean> {
       resolve(open);
     };
     // 750ms missed Docker Desktop's lazy port-proxy under load and skipped
-    // specs that should have run; 2.5s keeps the probe honest without stalling.
+    // tests that should have run; 2.5s keeps the probe honest without stalling.
     socket.setTimeout(2_500);
     socket.once("connect", () => done(true));
     socket.once("error", () => done(false));

@@ -1,5 +1,5 @@
 /**
- * Runnable demo for the terminal-401 credential guard (fraimz flow
+ * Runnable demo for the terminal-401 credential guard (legacy flow
  * enterprise-mcp-terminal-401-guard). Drives the real createEnterpriseMcpClient
  * through three provider scenarios and prints machine-readable evidence:
  *

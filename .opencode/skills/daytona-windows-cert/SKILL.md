@@ -11,7 +11,7 @@ control planes, install a Windows build, and prove the desktop app and spawned
 runtimes use the operating system trust path.
 
 Use this as the Windows companion to `daytona-electron-test`. For executable
-end-to-end or PR verdict evidence, use an app-driving `.slow.test.ts` spec with
+end-to-end or PR verdict evidence, use an app-driving `.e2e.test.ts` test with
 `@openwork/testkit`; custom VNC screenshots are supplementary. Reuse the repo
 support assets instead of copying their logic: `scripts/support/setup-openwork-tls-repro.ps1`,
 `scripts/support/openwork-doctor.ps1`, and `docs/support/enterprise-network-doctor.md`.
@@ -273,8 +273,8 @@ Drive the installed OpenWork Windows app through VNC, not `daytona exec`.
 
 Use `daytona-electron-test` for normal Electron driving patterns. If this is PR
 evidence, translate the user-visible path and TLS assertions into an
-`evals/specs/<slug>.slow.test.ts` test via `write-a-spec`, run it with
-`run-tests`, and use its ambient tape for the verdict. The VNC checklist and
+`evals/specs/<slug>.e2e.test.ts` test via `write-a-spec`, run it with
+`run-tests`, and use its ambient test evidence for the verdict. The VNC checklist and
 captures above remain supplementary setup and debugging evidence.
 
 ### Verify the app's generated CA bundle path

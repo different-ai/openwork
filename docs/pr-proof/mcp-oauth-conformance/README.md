@@ -1,6 +1,6 @@
 # MCP OAuth conformance proof
 
-These frames were captured by the `mcp-oauth-conformance` Fraimz flow on
+Historical record: these screenshots were captured by the legacy `mcp-oauth-conformance` flow on
 July 14, 2026 (America/Los_Angeles). The flow uses an isolated Den database and
 OpenWork's local OAuth MCP conformance server; it does not use a third-party
 service or pre-seeded connection.

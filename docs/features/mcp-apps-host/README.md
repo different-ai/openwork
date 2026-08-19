@@ -56,6 +56,6 @@ Focused server tests cover extension negotiation, projected tool naming,
 resource resolution, tool visibility, read-only same-server mediation, and
 write rejection. App tests cover result preservation, session mapping, CSP
 construction, and safe HTML injection. The Testkit scenario
-`mcp-app-inline-host.slow.test.ts` drives a deterministic OpenCode tool call,
+`mcp-app-inline-host.e2e.test.ts` drives a deterministic OpenCode tool call,
 resolves the declared `ui://` resource, mounts the sandboxed view, and captures
 the visible inline card and fallback transcript.

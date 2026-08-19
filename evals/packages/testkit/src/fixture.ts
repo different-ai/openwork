@@ -1,4 +1,4 @@
-import { test as evidenceTest } from "@openwork/fraimz/vitest";
+import { test as evidenceTest } from "@openwork/test-evidence/vitest";
 import { setBriefTestRegistrar } from "./brief-internal.ts";
 import { SkipError } from "./needs.ts";
 import { resolvePlace } from "./place.ts";

@@ -51,6 +51,6 @@ git worktree remove /tmp/openwork-dev-control
 - Electron zombies can respawn from a root process; kill the process group.
 - Leaked state pollutes organizations; delete leftover connectors between runs.
 
-For a testkit failure, read the tape's last unclaimed takes before touching
-code. Publish a useful red tape with `publish-evidence`; it remains human audit,
+For a testkit failure, read the test run's last unvalidated artifacts before touching
+code. Publish useful red test evidence with `publish-evidence`; it remains human audit,
 not a passing verdict.

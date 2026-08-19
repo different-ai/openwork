@@ -36,7 +36,7 @@ test("consentVarsFromSource extracts, deduplicates, and sorts only opt-in variab
 
 test("parseArgs maps run and publish flags", () => {
   assert.deepEqual(parseArgs(["app-smoke", "--with-llm-vision", "--daytona", "--den", "https://den.example"]), {
-    specNames: ["app-smoke"],
+    testNames: ["app-smoke"],
     withLlmVision: true,
     daytona: true,
     publish: false,
@@ -45,8 +45,8 @@ test("parseArgs maps run and publish flags", () => {
     help: false,
     den: "https://den.example",
   });
-  assert.deepEqual(parseArgs(["--publish", "--pr", "42", "--roll", "latest", "--dry-run", "--force"]), {
-    specNames: [],
+  assert.deepEqual(parseArgs(["--publish", "--pr", "42", "--test-run", "latest", "--dry-run", "--force"]), {
+    testNames: [],
     withLlmVision: false,
     daytona: false,
     publish: true,
@@ -54,13 +54,13 @@ test("parseArgs maps run and publish flags", () => {
     force: true,
     help: false,
     pr: "42",
-    roll: "latest",
+    testRun: "latest",
   });
 });
 
 test("parseArgs validates values, exclusivity, and unknown flags", () => {
   assert.throws(() => parseArgs(["--den"]), /--den requires a value/);
-  assert.throws(() => parseArgs(["--publish", "--dry-run", "app-smoke"]), /mutually exclusive with spec names/);
+  assert.throws(() => parseArgs(["--publish", "--dry-run", "app-smoke"]), /mutually exclusive with test names/);
   assert.throws(() => parseArgs(["--publish", "--pr", "1", "--den", "x"]), /mutually exclusive with --den/);
   assert.throws(() => parseArgs(["--unknown"]), /Unknown flag: --unknown/);
 });
@@ -86,7 +86,7 @@ test("summarize reads counts and skipped test details", () => {
     numFailedTests: 0,
     numPendingTests: 1,
     testResults: [{
-      name: "/repo/evals/specs/app-smoke.slow.test.ts",
+      name: "/repo/evals/specs/app-smoke.e2e.test.ts",
       assertionResults: [
         { status: "passed", title: "runs" },
         { status: "pending", title: "needs provider" },
@@ -96,6 +96,6 @@ test("summarize reads counts and skipped test details", () => {
     passed: 1,
     failed: 0,
     skipped: 1,
-    skips: [{ file: "app-smoke.slow.test.ts", title: "needs provider" }],
+    skips: [{ file: "app-smoke.e2e.test.ts", title: "needs provider" }],
   });
 });

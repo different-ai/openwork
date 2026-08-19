@@ -39,6 +39,16 @@ describe("Automations availability", () => {
     expect(bridge).toContain("!enabled || status !== \"signed_in\"")
     expect(bridge).toContain("[enabled, status]")
     expect(bridge).toContain('automationRunnerConfigure", null')
+    expect(bridge).toContain("onCredentialRejected?.(() => coordinator.credentialRejected())")
+  })
+
+  test("credential rejection crosses only the Automation runner Electron bridge", () => {
+    const main = read("../desktop/electron/main.mjs")
+    const preload = read("../desktop/electron/preload.mjs")
+    expect(main).toContain('"openwork:automation-runner:credential-rejected"')
+    expect(main).toContain("onCredentialRejected: () =>")
+    expect(preload).toContain("onCredentialRejected(callback)")
+    expect(preload).toContain("ipcRenderer.on(AUTOMATION_RUNNER_CREDENTIAL_REJECTED_EVENT, handler)")
   })
 
   test("the in-chat proposal tool only blocks on sign-in", () => {

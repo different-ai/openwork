@@ -1,0 +1,149 @@
+# Runs the critical-path E2E journey nightly on Daytona and judges deferred visual validations.
+# The journey self-skips without its opt-in environment variables, which this
+# workflow sets explicitly.
+name: Nightly Critical-Path E2E Journey
+
+on:
+  schedule:
+    - cron: "47 3 * * *"
+  workflow_dispatch:
+    inputs:
+      model:
+        description: "Bare OpenAI model id"
+        required: false
+        default: "gpt-5.6-luna"
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nightly-critical-path-e2e
+  cancel-in-progress: false
+
+jobs:
+  critical-path-e2e:
+    if: github.repository == 'different-ai/openwork'
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 100
+
+    steps:
+      - name: Check critical-path E2E configuration
+        id: config
+        shell: bash
+        env:
+          DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          set -euo pipefail
+
+          missing=""
+          [ -z "${DAYTONA_API_KEY:-}" ] && missing="$missing DAYTONA_API_KEY"
+          [ -z "${OPENAI_API_KEY:-}" ] && missing="$missing OPENAI_API_KEY"
+          if [ -n "$missing" ]; then
+            echo "::notice::Skipping nightly critical-path E2E journey; missing GitHub configuration:$missing."
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "enabled=true" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout
+        if: steps.config.outputs.enabled == 'true'
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - name: Setup Node
+        if: steps.config.outputs.enabled == 'true'
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+
+      - name: Setup pnpm
+        if: steps.config.outputs.enabled == 'true'
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 11.4.0
+
+      - name: Install dependencies
+        if: steps.config.outputs.enabled == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          pnpm install --frozen-lockfile
+          pnpm --dir evals install --frozen-lockfile
+
+      # The eval harness shells out to the daytona CLI (testkit daytonaAvailable
+      # gate and @openwork/hosts exec). The binary is pinned to a release tag
+      # and checksum-verified before it can run with CI secrets. When bumping,
+      # take the digest from GitHub's authoritative asset metadata, never from
+      # a local download (a truncating proxy once poisoned the pin):
+      #   gh api repos/daytona/clients/releases/tags/<tag> --jq '.assets[] | select(.name == "daytona-linux-amd64") | .digest'
+      - name: Install Daytona CLI
+        if: steps.config.outputs.enabled == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
+          DAYTONA_CLI_TAG: v0.204.0
+          DAYTONA_CLI_SHA256: 76701138c2ce93c14b30e7b10f51aa5ea2a9e156777bab933a4272237d81f14d
+        run: |
+          set -euo pipefail
+          gh release download "$DAYTONA_CLI_TAG" --repo daytona/clients --pattern daytona-linux-amd64 --output /tmp/daytona --clobber
+          echo "$DAYTONA_CLI_SHA256  /tmp/daytona" | sha256sum -c -
+          sudo install -m 0755 /tmp/daytona /usr/local/bin/daytona
+          daytona --version
+          # The CLI requires a stored profile; the env var alone is not enough.
+          daytona login --api-key "$DAYTONA_API_KEY"
+
+      - name: Run critical-path E2E journey
+        id: critical-path-run
+        if: steps.config.outputs.enabled == 'true'
+        shell: bash
+        env:
+          DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          DISPATCH_MODEL: ${{ inputs.model }}
+          EVENT_NAME: ${{ github.event_name }}
+          NIGHTLY_MODEL: ${{ vars.OPENWORK_EVAL_NIGHTLY_MODEL }}
+        run: |
+          set -euo pipefail
+
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            MODEL="${DISPATCH_MODEL:-gpt-5.6-luna}"
+          else
+            MODEL="${NIGHTLY_MODEL:-gpt-5.6-luna}"
+          fi
+
+          OPENWORK_EVAL_DAYTONA=1 OPENWORK_EVAL_E2E_TESTS=1 OPENWORK_EVAL_CRITICAL_PATH_E2E_JOURNEY=1 \
+          OPENWORK_EVAL_MODEL="${MODEL}" OPENWORK_EVAL_VISION=defer \
+          pnpm --dir evals exec vitest run --config vitest.config.ts --project e2e specs/org-team-lifecycle-critical-path.e2e.test.ts \
+            2>&1 | tee /tmp/critical-path-e2e-run.log
+
+          # Skips are never passed: the test self-skips on unmet needs and exits 0,
+          # which would make the nightly vacuously green. Fail loudly instead.
+          sed -E 's/\x1B\[[0-9;]*m//g' /tmp/critical-path-e2e-run.log > /tmp/critical-path-e2e-run-plain.log
+          if grep -q "\[needs:" /tmp/critical-path-e2e-run-plain.log; then
+            echo "::error::The critical-path E2E journey skipped instead of running (unmet needs above). Skips are never passed."
+            exit 1
+          fi
+          if ! grep -Eq "Tests[[:space:]]+1 passed" /tmp/critical-path-e2e-run-plain.log; then
+            echo "::error::The critical-path E2E journey did not report '1 passed'."
+            exit 1
+          fi
+
+      - name: Judge deferred vision claims
+        if: steps.config.outputs.enabled == 'true'
+        shell: bash
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          set -euo pipefail
+          pnpm --dir evals evidence:judge -- --test-run latest
+
+      - name: Upload critical-path test artifacts
+        if: always() && steps.config.outputs.enabled == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: nightly-critical-path-test-artifacts
+          path: evals/results/test-runs/
+          retention-days: 14
+          if-no-files-found: warn

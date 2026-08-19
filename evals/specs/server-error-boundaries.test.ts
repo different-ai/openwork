@@ -26,7 +26,7 @@ test("server error boundaries contain expected noise without hiding actionable f
 
     expect(captureServerException(cancellation, { requestSignal: request.signal })).toBe(false);
     expect(captured).toEqual([]);
-    evidence.fact(
+    evidence.recordAssertionEvidence(
       "Positive: request-owned aborts stay out of server telemetry",
       "An aborted request carrying its AbortError returned false and delivered zero exceptions to the telemetry host.",
       true,
@@ -34,7 +34,7 @@ test("server error boundaries contain expected noise without hiding actionable f
 
     expect(captureServerException(unrelatedError, { requestSignal: request.signal })).toBe(true);
     expect(captured).toEqual([unrelatedError]);
-    evidence.fact(
+    evidence.recordAssertionEvidence(
       "Negative: unrelated server errors remain observable",
       "A TypeError unrelated to the already-aborted request returned true and was the sole captured exception.",
       true,
@@ -45,7 +45,7 @@ test("server error boundaries contain expected noise without hiding actionable f
 
   expect(isEngineConnectionFailure(new TypeError("fetch failed"))).toBe(true);
   expect(isEngineConnectionFailure(new Error("fetch failed"))).toBe(false);
-  evidence.fact(
+  evidence.recordAssertionEvidence(
     "Cause-less loopback fetch failures retain a narrow transport type",
     "The engine transport classifier accepted a cause-less TypeError('fetch failed') while rejecting the same message on a plain Error.",
     true,
@@ -78,7 +78,7 @@ test("server error boundaries contain expected noise without hiding actionable f
     expect(failure.message).toContain("startup diagnostics from stdout");
     expect(failure.message).toContain("fatal provider configuration mismatch");
     expect((await readFile(attemptsPath, "utf8")).trim().split("\n")).toEqual(["start"]);
-    evidence.fact(
+    evidence.recordAssertionEvidence(
       "Unknown code-1 startup failures stay actionable and bounded",
       "A non-EADDRINUSE code-1 exit ran once, rejected with its exit code, and retained diagnostics from both stdout and stderr.",
       true,

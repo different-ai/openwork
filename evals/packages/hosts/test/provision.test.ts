@@ -4,14 +4,14 @@ import test from "node:test";
 import {
   deleteSandboxes,
   desktopSandboxName,
-  parseConnectorSpecEnv,
+  parseConnectorE2eTestEnv,
   provisionDesktopSandbox,
-  renderConnectorSpecEnv,
+  renderConnectorE2eTestEnv,
   serverSandboxName,
   startFaultProxyOnSandbox,
   startMockOnSandbox,
 } from "../src/provision.ts";
-import type { ConnectorSpecEnv } from "../src/provision.ts";
+import type { ConnectorE2eTestEnv } from "../src/provision.ts";
 import type { DaytonaExec } from "../src/daytona.ts";
 
 interface ExecCall {
@@ -54,8 +54,8 @@ function assertRemoteCommandsAreSingleArgument(calls: ExecCall[]): void {
   }
 }
 
-test("renderConnectorSpecEnv and parseConnectorSpecEnv round-trip the connector spec contract", () => {
-  const facts: ConnectorSpecEnv = {
+test("connector E2E test env rendering and parsing round-trip the provision contract", () => {
+  const facts: ConnectorE2eTestEnv = {
     denApiUrl: "https://den-api.example.test",
     denWebUrl: "https://den-web.example.test",
     sandboxA: "desktop-a",
@@ -64,14 +64,14 @@ test("renderConnectorSpecEnv and parseConnectorSpecEnv round-trip the connector 
     ref: "feat/eval-connector-two-members",
     created: ["den", "desktop-a"],
   };
-  const content = renderConnectorSpecEnv(facts);
+  const content = renderConnectorE2eTestEnv(facts);
 
-  assert.deepEqual(parseConnectorSpecEnv(content), facts);
+  assert.deepEqual(parseConnectorE2eTestEnv(content), facts);
   assert.match(content, /^# provisioned for org-connector-two-members — generated .*; ref=feat\/eval-connector-two-members$/m);
   assert.match(content, /^# provision-created=den,desktop-a$/m);
   assert.match(content, /OPENWORK_EVAL_MODEL=big-pickle/);
   const missingApi = content.split("\n").filter((line) => !line.startsWith("OPENWORK_EVAL_DEN_API_URL=")).join("\n");
-  assert.throws(() => parseConnectorSpecEnv(missingApi), /OPENWORK_EVAL_DEN_API_URL/);
+  assert.throws(() => parseConnectorE2eTestEnv(missingApi), /OPENWORK_EVAL_DEN_API_URL/);
 });
 
 test("server sandbox names are unique within the same CI process and second", () => {
@@ -120,7 +120,7 @@ test("provisionDesktopSandbox resolves the snapshot id and creates with connecto
 
 test("rendered values are shell-quoted, because the env file is meant to be sourced", () => {
   const nasty = "$(touch /tmp/pwned); echo it's-here";
-  const content = renderConnectorSpecEnv({
+  const content = renderConnectorE2eTestEnv({
     denApiUrl: "https://a",
     denWebUrl: "https://w",
     sandboxA: nasty,
@@ -131,7 +131,7 @@ test("rendered values are shell-quoted, because the env file is meant to be sour
   });
 
   assert(content.includes(`OPENWORK_EVAL_DAYTONA_SANDBOX_A='$(touch /tmp/pwned); echo it'"'"'s-here'`));
-  assert.equal(parseConnectorSpecEnv(content).sandboxA, nasty);
+  assert.equal(parseConnectorE2eTestEnv(content).sandboxA, nasty);
 });
 
 test("an unsafe ref is refused before it can reach a remote shell or a sourced file", async () => {
@@ -142,7 +142,7 @@ test("an unsafe ref is refused before it can reach a remote shell or a sourced f
       provisionDesktopSandbox({ ref, name: "a", reuse: "existing-a", exec, log: () => undefined }),
       /Unsafe git ref/,
     );
-    assert.throws(() => renderConnectorSpecEnv({
+    assert.throws(() => renderConnectorE2eTestEnv({
       denApiUrl: "https://a",
       denWebUrl: "https://w",
       sandboxA: "a",

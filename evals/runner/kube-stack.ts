@@ -1,5 +1,5 @@
 /**
- * Kubernetes Den-stack harness for the eval runner (`pnpm evals --stack kube`).
+ * Kubernetes Den-stack harness for the legacy runner (`pnpm evals:legacy --stack kube`).
  *
  * This is the kind-backed Den placement: the same eval scenarios target the
  * same OPENWORK_EVAL_DEN_* URLs, but the control plane runs through the Helm
@@ -701,12 +701,12 @@ export async function ensureEgressAllowlist(options: KubeLayerOptions = {}): Pro
     { input: externalManifest, timeoutMs: 60_000 },
   );
 
-  process.env.OPENWORK_EVAL_KUBE_EGRESS_SPEC = "1";
+  process.env.OPENWORK_EVAL_KUBE_EGRESS_TEST = "1";
   process.env.OPENWORK_EVAL_KUBE_ALLOWED_HOST_IP = allowedHostIp;
   process.env.OPENWORK_EVAL_KUBE_ALLOWED_MOCK_PORT = String(allowedMockPort);
   process.env.OPENWORK_EVAL_KUBE_DENIED_MOCK_PORT = String(deniedMockPort);
   runtime.log("Kube egress allowlist enforced for den-api and den-web");
-  runtime.log(`export OPENWORK_EVAL_KUBE_EGRESS_SPEC=1 OPENWORK_EVAL_KUBE_ALLOWED_HOST_IP=${allowedHostIp} OPENWORK_EVAL_KUBE_ALLOWED_MOCK_PORT=${allowedMockPort} OPENWORK_EVAL_KUBE_DENIED_MOCK_PORT=${deniedMockPort}`);
+  runtime.log(`export OPENWORK_EVAL_KUBE_EGRESS_TEST=1 OPENWORK_EVAL_KUBE_ALLOWED_HOST_IP=${allowedHostIp} OPENWORK_EVAL_KUBE_ALLOWED_MOCK_PORT=${allowedMockPort} OPENWORK_EVAL_KUBE_DENIED_MOCK_PORT=${deniedMockPort}`);
 }
 
 export async function kubeStackTest(options: KubeLayerOptions = {}): Promise<void> {

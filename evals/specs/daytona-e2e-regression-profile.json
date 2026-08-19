@@ -1,0 +1,134 @@
+{
+  "version": 1,
+  "lane": "daytona-ci",
+  "excluded": [
+    {
+      "test": "capability-search-latency.e2e.test.ts",
+      "reason": "requires a driver-local fault proxy and mock lifecycle"
+    },
+    {
+      "test": "capability-search-scale.e2e.test.ts",
+      "reason": "requires a driver-local custom mock lifecycle"
+    },
+    {
+      "test": "chat-survives-flaky-den-link.e2e.test.ts",
+      "reason": "requires ANTHROPIC_API_KEY and a dedicated network-fault topology"
+    },
+    {
+      "test": "cloud-mcp-provider-capability-submit.e2e.test.ts",
+      "reason": "requires an attached Den and a separately hosted public mock"
+    },
+    {
+      "test": "connect-state-provenance.e2e.test.ts",
+      "reason": "requires an isolated local Den and MySQL"
+    },
+    {
+      "test": "engine-rollover-session-survival.e2e.test.ts",
+      "reason": "requires ANTHROPIC_API_KEY"
+    },
+    {
+      "test": "enterprise-install-guide.e2e.test.ts",
+      "reason": "requires a local self-hosted Den, MySQL, and Redis"
+    },
+    {
+      "test": "first-run-bootstrap-contract.e2e.test.ts",
+      "reason": "requires an isolated local Den and MySQL"
+    },
+    {
+      "test": "first-signin-fresh-profile.e2e.test.ts",
+      "reason": "requires an isolated local Den and MySQL"
+    },
+    {
+      "test": "github-connector-import.e2e.test.ts",
+      "reason": "requires an isolated local Den, MySQL, and a local GitHub lab"
+    },
+    {
+      "test": "github-sync-self-healing.e2e.test.ts",
+      "reason": "requires an isolated local Den, MySQL, and a local GitHub lab"
+    },
+    {
+      "test": "google-workspace-direct-uploads.e2e.test.ts",
+      "reason": "requires an isolated local Den, MySQL, and a local Google lab"
+    },
+    {
+      "test": "initial-admin-bootstrap.e2e.test.ts",
+      "reason": "requires a fresh local Den, MySQL, and Redis"
+    },
+    {
+      "test": "library-mcp-connect-error.e2e.test.ts",
+      "reason": "uses a local managed-MCP OAuth mock without a Daytona adapter"
+    },
+    {
+      "test": "library-view.e2e.test.ts",
+      "reason": "requires an attached Den API and Den Web"
+    },
+    {
+      "test": "local-managed-mcp-oauth.e2e.test.ts",
+      "reason": "local-managed MCP OAuth is a local-only placement contract"
+    },
+    {
+      "test": "login-rate-limit-shared-domain.e2e.test.ts",
+      "reason": "requires an isolated local Den and MySQL"
+    },
+    {
+      "test": "marketplace-catalog-legibility.e2e.test.ts",
+      "reason": "requires an attached Den API and Den Web"
+    },
+    {
+      "test": "model-lands-mid-run.e2e.test.ts",
+      "reason": "requires both ANTHROPIC_API_KEY and OPENAI_API_KEY"
+    },
+    {
+      "test": "org-connector-two-members.e2e.test.ts",
+      "reason": "requires an attached Den, two dedicated desktop sandboxes, and a public mock"
+    },
+    {
+      "test": "org-model-analytics-desktop.e2e.test.ts",
+      "reason": "runs its own local provider witness and desktop topology"
+    },
+    {
+      "test": "plugin-access-panel.e2e.test.ts",
+      "reason": "requires an attached Den API and Den Web"
+    },
+    {
+      "test": "role-change-session-survival.e2e.test.ts",
+      "reason": "requires an isolated local Den and MySQL"
+    },
+    {
+      "test": "self-host-onboarding.e2e.test.ts",
+      "reason": "requires a local self-hosted Den and MySQL"
+    },
+    {
+      "test": "skill-authoring-session-freshness.e2e.test.ts",
+      "reason": "requires an isolated local Den and MySQL"
+    },
+    {
+      "test": "slack-style-mcp-connector.e2e.test.ts",
+      "reason": "uses a local OAuth mock topology without a Daytona adapter"
+    },
+    {
+      "test": "sso-invite-sign-in.e2e.test.ts",
+      "reason": "requires an isolated local Den, MySQL, and a loopback identity provider"
+    },
+    {
+      "test": "subagent-run-survives-provider-sync-storm.e2e.test.ts",
+      "reason": "requires ANTHROPIC_API_KEY"
+    },
+    {
+      "test": "team-access-view.e2e.test.ts",
+      "reason": "requires an attached Den API and Den Web"
+    },
+    {
+      "test": "testkit-app-boot.e2e.test.ts",
+      "reason": "requires an isolated local Den and MySQL"
+    },
+    {
+      "test": "testkit-selftest.e2e.test.ts",
+      "reason": "contains the intentional skip sentinel and local Den self-test"
+    },
+    {
+      "test": "tool-tester-page.e2e.test.ts",
+      "reason": "uses a driver-local browser and mock topology"
+    }
+  ]
+}

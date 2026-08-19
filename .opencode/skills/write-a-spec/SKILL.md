@@ -1,12 +1,12 @@
 ---
 name: write-a-spec
-description: Write a spec, new e2e test, test a feature end to end, add a slow spec. Use when authoring an @openwork/testkit spec in evals/specs.
+description: Write a spec, new E2E test, or test a feature end to end. Use when authoring an @openwork/testkit test in evals/specs.
 ---
 
 # Skill: Write a Spec
 
 Write new tests in `evals/specs/**/*.test.ts` and import `test` from
-`@openwork/testkit`. App-driving specs use `.slow.test.ts`; the PR lane excludes
+`@openwork/testkit`. App-driving E2E tests use `.e2e.test.ts`; the PR lane excludes
 them. Model setup as resources in dependency order: `needs()` → `server()` →
 `app()`.
 
@@ -37,9 +37,10 @@ them. Model setup as resources in dependency order: `needs()` → `server()` →
 
 ## Evidence contract
 
-- Evidence is ambient: `screenshot()` records takes, `validate()` claims them
-  whether they pass or fail, and tape facts hold witness assertions.
-- Never create, pass, or manage a roll handle.
+- Test evidence is ambient: `screenshot()` records screenshot artifacts,
+  `validate()` records their visual validations whether they pass or fail, and
+  `recordAssertionEvidence()` holds witness assertions.
+- Never create or pass test-evidence recorder handles in test bodies.
 - Bound every wait.
 - Declare every external requirement in `needs()` so missing dependencies skip
   loudly instead of timing out or weakening coverage.

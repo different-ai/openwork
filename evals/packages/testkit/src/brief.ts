@@ -1,4 +1,4 @@
-import { currentTape } from "@openwork/fraimz";
+import { currentTestEvidence } from "@openwork/test-evidence";
 import { getBriefTestRegistrar } from "./brief-internal.ts";
 import type { TestContext } from "./brief-internal.ts";
 
@@ -11,20 +11,20 @@ export function claim(must: string, opts: { never?: string } = {}): BriefClaim {
   return { must, ...opts };
 }
 
-export interface SpecBrief<K extends string> {
+export interface TestBrief<K extends string> {
   behavior: string;
   claims: Record<K, BriefClaim>;
 }
 
-export function specBrief<K extends string>(def: SpecBrief<K>): SpecBrief<K> {
-  if (!def.behavior.trim()) throw new Error("Spec brief behavior must not be empty.");
+export function testBrief<K extends string>(def: TestBrief<K>): TestBrief<K> {
+  if (!def.behavior.trim()) throw new Error("Test brief behavior must not be empty.");
   const keys = Object.keys(def.claims);
-  if (keys.length === 0) throw new Error("Spec brief must declare at least one claim.");
+  if (keys.length === 0) throw new Error("Test brief must declare at least one claim.");
   for (const key in def.claims) {
     const value = def.claims[key];
-    if (!value.must.trim()) throw new Error(`Spec brief claim "${key}" must not have a blank must.`);
+    if (!value.must.trim()) throw new Error(`Test brief claim "${key}" must not have a blank must.`);
     if (value.never !== undefined && !value.never.trim()) {
-      throw new Error(`Spec brief claim "${key}" must not have a blank never.`);
+      throw new Error(`Test brief claim "${key}" must not have a blank never.`);
     }
   }
   return def;
@@ -39,9 +39,9 @@ export interface BriefRun<K extends string> {
 }
 
 export function createBriefRun<K extends string>(
-  brief: SpecBrief<K>,
+  brief: TestBrief<K>,
   record: (claimText: string, evidence: string, passed: boolean) => void = (claimText, evidence, passed) => {
-    currentTape()?.fact(claimText, evidence, passed);
+    currentTestEvidence()?.recordAssertionEvidence(claimText, evidence, passed);
   },
 ): BriefRun<K> {
   const latest = new Map<K, { key: K; passed: boolean; evidence: string }>();
@@ -86,7 +86,7 @@ function briefTitle(behavior: string): string {
 }
 
 export function briefTest<K extends string>(
-  brief: SpecBrief<K>,
+  brief: TestBrief<K>,
   fn: (ctx: BriefTestContext<K>) => Promise<void> | void,
 ): void {
   getBriefTestRegistrar()(briefTitle(brief.behavior), async ({ place, evidence, skip }) => {

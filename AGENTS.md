@@ -25,13 +25,13 @@ even before a dedicated UI exists.
 ## Verification (every change)
 
 - The only proof path is `evals/specs/**/*.test.ts` with `test` from
-  `@openwork/testkit`; app-driving specs use `.slow.test.ts`. Prose, screenshots,
-  and recordings never decide pass/fail — the testkit tape does.
+  `@openwork/testkit`; app-driving E2E tests use `.e2e.test.ts`. Prose,
+  screenshots, and recordings never decide pass/fail — test evidence does.
 - Skills own the mechanics: `prove-a-pr` → `write-a-spec` → `run-tests` →
   `diagnose-a-red-run` when red → `publish-evidence`. Evidence is ambient; never
-  create or pass roll handles.
+  create or pass test-evidence recorder handles.
 - Verdicts: `Passed` only when every claim has an observable assertion in the
-  tape; otherwise `Incomplete` or `Failed` with repro steps. Skips are never
+  test run; otherwise `Incomplete` or `Failed` with repro steps. Skips are never
   passed.
 - Prefer Daytona when credentials are available; local fallback is an expected
   OSS path, not a failure. Report which lane ran.
@@ -44,7 +44,7 @@ even before a dedicated UI exists.
   when the requester explicitly asks for one or the current verdict is
   `Incomplete` or `Failed`, and state exactly what proof is missing.
 - Run tests and report commands + results. A runtime-observable change is not
-  done until its testkit tape is visible on the PR. If validation cannot run,
+  done until its test evidence is visible on the PR. If validation cannot run,
   say why and give exact repro steps.
 ## Local headless web (agents)
 

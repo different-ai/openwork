@@ -55,7 +55,7 @@ test("needs reports an unavailable command", () => {
   );
 });
 
-test("needs rejects a local-only spec on Daytona or an attached Den", () => {
+test("needs rejects a local-only test on Daytona or an attached Den", () => {
   assert.doesNotThrow(() => checkNeeds({ placement: "local" }, {}));
   assert.throws(() => checkNeeds({ placement: "local" }, { OPENWORK_EVAL_DAYTONA: "1" }), SkipError);
   assert.throws(

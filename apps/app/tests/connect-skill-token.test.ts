@@ -28,7 +28,7 @@ describe("connect skill token", () => {
   });
 
   test("rejects non-token segments", () => {
-    expect(parseConnectSkillToken("[skill fraimz]")).toBeNull();
+    expect(parseConnectSkillToken("[skill invalid]")).toBeNull();
     expect(parseConnectSkillToken("[connect-skill only|two]")).toBeNull();
     expect(parseConnectSkillToken("plain text")).toBeNull();
   });

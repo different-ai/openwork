@@ -42,7 +42,7 @@ test("the enterprise gate is a sign-in door with a server field, not a waiting w
   expect(gateSource).not.toContain("Waiting for your organization");
   expect(gateSource).toContain("organization-server-input");
   expect(gateSource).toContain("Continue in browser");
-  evidence.fact(
+  evidence.recordAssertionEvidence(
     "Cold enterprise launch lands on an actionable sign-in door",
     "The gate renders a server-address input and a browser sign-in action; the passive 'Waiting for your organization's activation link' wall is gone.",
     true,
@@ -65,7 +65,7 @@ test("the enterprise gate is a sign-in door with a server field, not a waiting w
   expect(normalizeOrganizationServerInput("ftp://openwork.acme.com")).toBe(null);
   expect(normalizeOrganizationServerInput("")).toBe(null);
   expect(normalizeOrganizationServerInput("not a url at all")).toBe(null);
-  evidence.fact(
+  evidence.recordAssertionEvidence(
     "Pasted addresses are cleaned to the server origin and cannot downgrade to cleartext",
     "Full URLs normalize to their origin and bare hostnames gain https; http is rejected for every non-loopback host so sign-in grants and tokens never travel unencrypted.",
     true,
@@ -82,7 +82,7 @@ test("the enterprise gate is a sign-in door with a server field, not a waiting w
   const exchangeIndex = gateSource.indexOf("exchangeHandoffAndSignIn(");
   expect(confirmIndex).toBeGreaterThan(-1);
   expect(exchangeIndex).toBeGreaterThan(-1);
-  evidence.fact(
+  evidence.recordAssertionEvidence(
     "Activation requires confirming the named server origin",
     "Both the typed server and a pasted sign-in link surface an explicit confirmation naming the origin before any grant exchange or activation stamp, restoring the deep-link server-switch guarantee.",
     true,
@@ -99,7 +99,7 @@ test("the enterprise gate is a sign-in door with a server field, not a waiting w
   });
   expect(enterprisePreactivationCommandAllowed("nukeEverything")).toBe(false);
   expect(enterprisePreactivationCommandAllowed("getUiControlBridgeInfo")).toBe(false);
-  evidence.fact(
+  evidence.recordAssertionEvidence(
     "Sign-in is the single gate and the lockdown posture is unchanged",
     "Enterprise still requires sign-in and activation; the first successful sign-in stamps activation automatically, and arbitrary IPC remains blocked before it.",
     true,
@@ -119,7 +119,7 @@ test("enterprise onboarding is workspace-address-first with a silent paste recov
   expect(gateSource).not.toMatch(/(?:paste|hide) sign-in code/i);
   expect(gateSource).not.toContain("Sign-in link or one-time code");
 
-  evidence.fact(
+  evidence.recordAssertionEvidence(
     "The enterprise blank slate asks only for the workspace address",
     "The gate shows a single workspace-address form with Continue; there is no link field, method toggle, or sign-in-code terminology.",
     true,
@@ -142,7 +142,7 @@ test("enterprise onboarding is workspace-address-first with a silent paste recov
   expect(installGuideSource).toContain('title: "Windows may warn before it opens the installer"');
   expect(installGuideSource).toContain('"Make the downloaded AppImage executable."');
 
-  evidence.fact(
+  evidence.recordAssertionEvidence(
     "The guide hands over the workspace address, not a credential",
     "The install guide's connect step shows the exact workspace address to type, keeps macOS, Windows, and Linux install guidance, avoids activation-link language, and the workspace-claim page still copies a complete OpenWork URL.",
     true,
@@ -158,7 +158,7 @@ test("enterprise onboarding is workspace-address-first with a silent paste recov
     /if \(pending\.kind === "manual"\) \{\s+await exchangeConfirmedGrant\(pending\.grant, pending\.baseUrl\);/,
   );
 
-  evidence.fact(
+  evidence.recordAssertionEvidence(
     "Pasted openwork:// URLs recover through the same field with confirmation",
     "parseManualAuthInput runs on the workspace-address input, and a pasted URL's origin reaches the named confirmation before exchangeHandoffAndSignIn.",
     true,
@@ -166,7 +166,7 @@ test("enterprise onboarding is workspace-address-first with a silent paste recov
 
   expect(forcedSigninSource).toContain("denOriginComparisonKey");
   expect(forcedSigninSource).toContain("den.error_signin_link_other_server");
-  evidence.fact(
+  evidence.recordAssertionEvidence(
     "Pasted links cannot silently switch the forced sign-in control plane",
     "A pasted link can no longer silently switch the control plane on the forced sign-in page.",
     true,

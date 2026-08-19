@@ -1,8 +1,8 @@
-# OpenWork end-to-end specs
+# OpenWork tests and test evidence
 
 All new executable end-to-end coverage lives in
 [`specs/**/*.test.ts`](./specs) and imports `test` from `@openwork/testkit`.
-Specs that drive Electron, Den, or another app surface use `.slow.test.ts`.
+Tests that drive Electron, Den, or another app surface use `.e2e.test.ts`.
 The legacy corpus under `flows/` is frozen compatibility coverage, not an
 authoring path.
 
@@ -13,11 +13,11 @@ Use the skills in this order:
 1. `write-a-spec`
 2. `run-tests`
 3. `diagnose-a-red-run` when the run fails
-4. `publish-evidence` for the existing ambient tape
+4. `publish-evidence` for the existing ambient test evidence
 
 Demo-driven feature work still starts with `/voiceover`. Approve the narration
 before code, create a fresh worktree, then translate its paragraphs directly
-into `evals/specs/<slug>.slow.test.ts`. Do not create a separate narration or
+into `evals/specs/<slug>.e2e.test.ts`. Do not create a separate narration or
 legacy-flow artifact.
 
 ## Install and run
@@ -27,30 +27,30 @@ installs or image builds.
 
 ```bash
 pnpm --dir evals install
-pnpm evals:spec                    # app-less PR project
+pnpm evals:pr                      # app-less PR project
 ```
 
 ### CLI
 
-Run the stack lane with `pnpm evals [spec-names...]`. Naming a spec
+Run the E2E lane with `pnpm evals:e2e [test-names...]`. Naming a test
 auto-satisfies the opt-in flags declared in its source, but value-bearing
 environment variables such as `OPENWORK_EVAL_MODEL` are never auto-set. Vision
 judging is deferred by default; add `--with-llm-vision` to judge inline. Use
 `--daytona` for Daytona resources, `--den <url>` to reuse Den, or
 `--publish --pr <number>` to judge and publish existing evidence.
 
-| Exit | Named spec | Bare sweep | Publish |
+| Exit | Named test | Unfiltered E2E suite | Publish |
 | --- | --- | --- | --- |
 | `0` | Passed | Passed, or incomplete with expected skips | Published |
 | `1` | Failed | Failed | Failed claims published, or publish failed |
 | `2` | Incomplete because it skipped | Not used | Claims pending judgment |
 
-Run one app-driving spec through the stack project:
+Run one app-driving test through the E2E project:
 
 ```bash
-OPENWORK_EVAL_APP_SPECS=1 \
+OPENWORK_EVAL_E2E_TESTS=1 \
   pnpm --dir evals exec vitest run --config vitest.config.ts \
-  --project stack specs/<slug>.slow.test.ts
+  --project e2e specs/<slug>.e2e.test.ts
 ```
 
 Set `OPENWORK_EVAL_DAYTONA=1` to place supported resources in Daytona
@@ -60,7 +60,7 @@ environment requirements and the cold-boot verdict check.
 ## Authoring contract
 
 - Import `test` from `@openwork/testkit`.
-- Name app-driving files `<slug>.slow.test.ts`; other specs use `<slug>.test.ts`.
+- Name app-driving files `<slug>.e2e.test.ts`; app-less tests use `<slug>.test.ts`.
 - Acquire resources in dependency order with `needs()` → `server()` → `app()`.
 - Drive user-visible behavior and assert observable outcomes. Backend, file,
   and process checks may witness side effects but do not replace the journey.
@@ -71,19 +71,19 @@ environment requirements and the cold-boot verdict check.
 ## Composable packages and diagnostics
 
 The packages under [`packages/`](./packages) are independently consumable, but
-new executable coverage is always assembled as a spec under `specs/`.
+new executable coverage is always assembled as a test under `specs/`.
 
 | Package | Owns |
 | --- | --- |
-| `@openwork/testkit` | spec fixture plus `needs()`, `server()`, `app()`, mock, and placement resources |
+| `@openwork/testkit` | test fixture plus `needs()`, `server()`, `app()`, mock, and placement resources |
 | `@openwork/cdp` | raw CDP client, targets, `Surface`, and `attachSurface` |
 | `@openwork/labs` | egress, identity-provider, release-feed, and mock-MCP labs |
 | `@openwork/hosts` | local and Daytona hosts and `resolveHost()` |
 | `@openwork/behaviors` | framework-free actions and observations over narrow handles |
 | `@openwork/matchers` | pure findings over facts, with no I/O |
-| `@openwork/fraimz` | current internal screenshot-capture and ambient-tape implementation used by testkit; not a flow-authoring path |
-| `@openwork/timeline` | timing spans for long spec journeys |
-| `@openwork/evidence` | scan, render, and PR publication for completed tapes |
+| `@openwork/test-evidence` | screenshot capture, visual validation, and ambient test-evidence recording used by testkit |
+| `@openwork/timeline` | timing spans for long test journeys |
+| `@openwork/test-artifacts` | index, render, and PR publication for completed test runs |
 
 Because behaviors and matchers do not depend on a test context, they also power
 the standalone diagnostic script:
@@ -97,25 +97,25 @@ a real endpoint without creating test evidence.
 
 ## Ambient evidence and verdicts
 
-The testkit fixture opens and closes an evidence tape around each test.
-Screenshots record takes, validation claims them, and tape facts carry witness
-assertions. Do not create, pass, or manage a roll handle.
+The testkit fixture opens and closes a test-evidence recorder around each test.
+Screenshots become test artifacts, visual validation records their expectations,
+and assertion evidence carries witness assertions. Do not create or pass recorder handles.
 
-Report `Passed` only when every claim has an observable assertion in the tape.
+Report `Passed` only when every claim has observable evidence in the test run.
 A failed assertion is `Failed`; missing requirements, tooling failure, or
-missing tape evidence is `Incomplete` or a named skip. A green suite containing
+missing test evidence is `Incomplete` or a named skip. A green suite containing
 skips is not proof.
 
-Publish an already completed tape with the `publish-evidence` skill:
+Publish an already completed test run with the `publish-evidence` skill:
 
 ```bash
-pnpm evals --publish --pr <number> [--roll <dir|name>]
+pnpm evals:e2e --publish --pr <number> [--test-run <path|directory-id|latest|name>]
 ```
 
-`evals --publish` judges and publishes a testkit tape without rerunning tests.
-Its optional `--roll`
-argument selects a specific existing tape at publish time; it is not a test
-author roll handle. Custom screenshots and recordings are supplementary and
+`evals:e2e --publish` judges and publishes test evidence without rerunning tests.
+Its optional `--test-run` argument selects an existing test run by path,
+directory ID, record name, or `latest` at
+publish time. Custom screenshots and recordings are supplementary and
 never determine the pass/fail verdict.
 
 ## Standalone isolated Den
@@ -133,7 +133,7 @@ It also adds the printed `OPENWORK_EVAL_DEN_WEB_URL` to the trusted origins;
 without that origin, Better Auth rejects eval sign-in with
 `403 INVALID_ORIGIN`.
 
-## Daytona app specs
+## Daytona E2E tests
 
 Start the maintained Electron sandbox path:
 
@@ -142,9 +142,9 @@ daytona organization use "<org-name>"
 bash .devcontainer/test-on-daytona.sh [branch-or-commit] --artifacts-volume
 ```
 
-Then run the selected `.slow.test.ts` with both
-`OPENWORK_EVAL_APP_SPECS=1` and `OPENWORK_EVAL_DAYTONA=1`. Use direct CDP tools
-only to explore or debug. Convert repeatable new coverage into a testkit spec;
+Then run the selected `.e2e.test.ts` with both
+`OPENWORK_EVAL_E2E_TESTS=1` and `OPENWORK_EVAL_DAYTONA=1`. Use direct CDP tools
+only to explore or debug. Convert repeatable new coverage into a testkit test;
 do not add a legacy flow. [`daytona-flows.md`](./daytona-flows.md) retains the
 manual sandbox notes.
 
@@ -164,8 +164,8 @@ takes `browser_url`; target-specific calls also use the selected target ID.
 | `browser_screenshot` | capture a PNG checkpoint |
 
 Use these calls for exploration and debugging, not as replacement verdict
-evidence. Repeatable executable coverage belongs in a testkit spec, where
-observable assertions and validated takes are recorded in the ambient tape.
+evidence. Repeatable executable coverage belongs in a testkit test, where
+observable assertions and validated screenshots are recorded as test evidence.
 
 ## Frozen legacy flow compatibility
 
@@ -178,7 +178,7 @@ for compatibility. The corpus is frozen:
   `@openwork/testkit`.
 
 Only when a user explicitly requests an existing legacy flow, load the
-`run-evals` or `fraimz` compatibility skill and run that unchanged flow:
+`run-evals` or the deprecated `fraimz` compatibility skill and run that unchanged flow:
 
 ```bash
 pnpm evals:legacy --list

@@ -7,8 +7,8 @@ description: screenshots, recording, presentation artifacts, validate visually. 
 
 Use this skill to collect supplementary presentation artifacts for a Daytona UI
 journey. Pass/fail evidence comes from an `@openwork/testkit` spec and its
-ambient tape; use `daytona-flow-validator` and `run-tests` before declaring a
-verdict. Custom screenshots or recordings never replace the tape.
+ambient test evidence; use `daytona-flow-validator` and `run-tests` before declaring a
+verdict. Custom screenshots or recordings never replace the test run.
 
 Follow `prove-a-pr` for the repository-wide agent-first and human-verification contract.
 
@@ -25,7 +25,7 @@ HTML page alongside the static frames.
 
 First run the relevant `evals/specs/**/*.test.ts` through `run-tests`. The spec
 imports `test` from `@openwork/testkit`; screenshots and validation claims are
-recorded ambiently in its tape. Use `publish-evidence` for that existing tape,
+recorded ambiently in its test evidence. Use `publish-evidence` for that existing test run,
 then create the custom index here only if useful.
 
 ### How to produce the screenshot index
@@ -215,19 +215,19 @@ daytona exec "$SANDBOX" -- 'bash .devcontainer/stop-daytona-recording.sh'
 
 Use these layers in order of priority:
 
-1. **Testkit evidence tape**: ambient validated takes and observable assertions
+1. **Test evidence**: ambient validated screenshots and observable assertions
    are the verdict source.
 2. **Custom screenshot index** (optional): named PNGs for presentation after
-   the tape-backed test is complete.
+   the evidence-backed test is complete.
 3. **Video clips** (optional): short MP4s for motion such as streaming,
    animations, or loading states.
 
 Do not report success from a recording or custom screenshot alone. The testkit
-tape must contain the assertions and validated takes for the claimed behavior.
+test evidence must contain the assertions and validated screenshots for the claimed behavior.
 
 Do not use a video as the primary demo if most of the flow happened through
 hidden automation. In that case, mark the artifact as supplementary and rely on
-the tape-backed spec for the verdict.
+the evidence-backed test for the verdict.
 
 If you discover invalid evidence after the fact, do not reuse the same URL as
 if it were valid. Produce new frames with new names and explain in the

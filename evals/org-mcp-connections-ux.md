@@ -153,7 +153,7 @@ members" — tells the admin who to nudge. All data already exists.
 - Assimilate org connections into the Extensions catalog tabs (replaces the
   interim "From your organization" section).
 - Dedup rule with degradation guard.
-- Connect flow with polling (built, fraimz-proven).
+- Connect flow with polling (built, proven by test evidence).
 - Callback arrival page ("Connected ✓ — Open OpenWork").
 
 **Phase 2 (fast follow):**
@@ -170,7 +170,7 @@ members" — tells the admin who to nudge. All data already exists.
 
 ## Eval / proof requirements
 
-Every phase lands with a fraimz flow that follows the tutorial's steps
+Every phase lands with an E2E test that follows the tutorial's steps
 exactly (the tutorial is the script; the eval is the proof it isn't
 fiction). Core demo sequence:
 

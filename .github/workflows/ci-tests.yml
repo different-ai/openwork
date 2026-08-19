@@ -135,7 +135,7 @@ jobs:
         run: pnpm --dir evals install --frozen-lockfile --prefer-offline
 
       - name: Run eval spec lane
-        run: pnpm --dir evals run spec
+        run: pnpm --dir evals run test:pr
 
       - name: Run app unit tests
         run: pnpm --filter @openwork/app test

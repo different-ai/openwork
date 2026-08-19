@@ -67,7 +67,7 @@ test("the enterprise install guide is three steps ending in one copy-paste link"
   expect(source).toContain('variant="flat"');
   expect(source).toContain('width="enterprise"');
 
-  evidence.fact(
+  evidence.recordAssertionEvidence(
     "The guide is download, install/open, then connect",
     "parseGuideStep accepts steps 1-3, step 3 is only the workspace address and Continue guidance, step 2 is a picture plus one sentence, and the copy-link button, checklist, fourth step, and activation-link copy are gone.",
     true,
@@ -102,7 +102,7 @@ test("the install guide renders on the organization-picker dither surface", asyn
   expect((sharedShell.match(/<Dithering\b/g) ?? []).length).toBe(1);
   expect(denShell).toContain("<DitheredOnboardingShell");
 
-  evidence.fact(
+  evidence.recordAssertionEvidence(
     "The install guide uses the organization-picker shader, not the onboarding wash",
     "Every install OnboardingShell passes background=surface, the den shell renders the 2x2 #000000 dither over --dls-surface behind a WebGL guard, and the shared onboarding shell keeps its single #8FB7E8 layer.",
     true,
