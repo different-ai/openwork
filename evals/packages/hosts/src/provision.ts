@@ -1,5 +1,8 @@
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 
@@ -460,11 +463,13 @@ function lineWriter(log: (line: string) => void): LineWriter {
   };
 }
 
-function runDenProvisionScript(ref: string, repoRoot: string, bootstrapAdminEmail: string | undefined, log: (line: string) => void): Promise<LocalProcessResult> {
+function runDenProvisionScript(ref: string, repoRoot: string, bootstrapAdminEmail: string | undefined, log: (line: string) => void, urlsFile: string): Promise<LocalProcessResult> {
   return new Promise((resolve, reject) => {
+    const env: NodeJS.ProcessEnv = { ...process.env, OPENWORK_DEN_URLS_FILE: urlsFile };
+    if (bootstrapAdminEmail) env.DEN_BOOTSTRAP_ADMIN_EMAILS = bootstrapAdminEmail;
     const child = spawn("bash", [".devcontainer/test-server-on-daytona.sh", ref, "--seed", "--name", serverSandboxName()], {
       cwd: repoRoot,
-      env: bootstrapAdminEmail ? { ...process.env, DEN_BOOTSTRAP_ADMIN_EMAILS: bootstrapAdminEmail } : process.env,
+      env,
       stdio: ["ignore", "pipe", "pipe"],
     });
     const stdoutLines = lineWriter(log);
@@ -518,6 +523,29 @@ function sandboxFromServerOutput(output: string): string | null {
   return fallback;
 }
 
+function parsedPublicUrl(value: string | undefined): string | null {
+  if (!value) return null;
+  try {
+    const url = new URL(value);
+    if (url.protocol !== "https:" || url.pathname !== "/" || url.search || url.hash || !url.hostname) return null;
+    return url.origin;
+  } catch {
+    return null;
+  }
+}
+
+function parseDenUrlsFile(content: string): { webUrl: string; apiUrl: string } | null {
+  const entries = new Map<string, string>();
+  for (const line of content.split(/\r?\n/)) {
+    const separator = line.indexOf("=");
+    if (separator <= 0) continue;
+    entries.set(line.slice(0, separator).trim(), line.slice(separator + 1).trim());
+  }
+  const webUrl = parsedPublicUrl(entries.get("DEN_WEB_URL"));
+  const apiUrl = parsedPublicUrl(entries.get("DEN_API_URL"));
+  return webUrl && apiUrl ? { webUrl, apiUrl } : null;
+}
+
 
 async function previewUrl(exec: DaytonaExec, sandbox: string, port: number): Promise<string> {
   let lastError = "not attempted";
@@ -525,7 +553,7 @@ async function previewUrl(exec: DaytonaExec, sandbox: string, port: number): Pro
     try {
       const result = await checkedExec(
         exec,
-        ["preview-url", sandbox, "-p", String(port)],
+        ["preview-url", sandbox, "-p", String(port), "--expires", "86400"],
         `preview URL gate for ${sandbox}:${port}`,
         { timeoutMs: 60_000 },
       );
@@ -584,31 +612,51 @@ export async function provisionDenSandbox(options: DenSandboxOptions & Provision
 
   if (reused) {
     sandbox = reused;
+    // Reused sandboxes only get fresh signed aliases: their baked
+    // DEN_*_PUBLIC_URL identity is unknown here, so RFC 9728 validating MCP
+    // clients (opencode OAuth) cannot connect to a reused Den sandbox.
     [webUrl, apiUrl] = await timedStep(log, "Den preview URL gate", () => Promise.all([
       previewUrl(exec, sandbox, DEN_WEB_PORT),
       previewUrl(exec, sandbox, DEN_API_PORT),
     ]));
   } else {
-    const result = await timedStep(log, "Den provisioning script", () => runDenProvisionScript(
-      ref,
-      options.repoRoot ?? REPO_ROOT,
-      options.bootstrapAdminEmail,
-      log,
-    ));
-    if (result.code !== 0) {
-      throw new Error(`Den provisioning script gate failed with exit ${result.code}. Output tail:\n${textTail(result.output)}`);
-    }
-    const parsedSandbox = sandboxFromServerOutput(result.output);
-    if (!parsedSandbox) throw new Error(`Den provisioning script output is missing sandbox. Output tail:\n${textTail(result.output)}`);
-    sandbox = parsedSandbox;
-    // URLs come from daytona for THIS sandbox, never from the script's stdout:
+    // URLs come from the trusted runner-side URLs file the provisioning
+    // script writes from daytona CLI output, never from the script's stdout:
     // the ref being provisioned controls that stream, so a spoofed
     // "DEN_API_URL=https://attacker" line would receive the demo credentials
-    // the sign-in proof posts moments later.
-    [webUrl, apiUrl] = await timedStep(log, "Den preview URL gate", () => Promise.all([
-      previewUrl(exec, parsedSandbox, DEN_WEB_PORT),
-      previewUrl(exec, parsedSandbox, DEN_API_PORT),
-    ]));
+    // the sign-in proof posts moments later. Re-deriving fresh preview URLs
+    // here is not an option either — every `daytona preview-url` call signs a
+    // different hostname, while the sandbox's baked DEN_*_PUBLIC_URL is the
+    // Den's OAuth issuer and MCP resource identity. RFC 9728 validating MCP
+    // clients (opencode) refuse a Den reached through a mismatched host.
+    const urlsDir = await mkdtemp(path.join(os.tmpdir(), "openwork-den-urls-"));
+    const urlsFile = path.join(urlsDir, "den-urls.env");
+    try {
+      const result = await timedStep(log, "Den provisioning script", () => runDenProvisionScript(
+        ref,
+        options.repoRoot ?? REPO_ROOT,
+        options.bootstrapAdminEmail,
+        log,
+        urlsFile,
+      ));
+      if (result.code !== 0) {
+        throw new Error(`Den provisioning script gate failed with exit ${result.code}. Output tail:\n${textTail(result.output)}`);
+      }
+      const parsedSandbox = sandboxFromServerOutput(result.output);
+      if (!parsedSandbox) throw new Error(`Den provisioning script output is missing sandbox. Output tail:\n${textTail(result.output)}`);
+      sandbox = parsedSandbox;
+      const urls = parseDenUrlsFile(await readFile(urlsFile, "utf8").catch(() => ""));
+      if (!urls) {
+        throw new Error(
+          `Den provisioning script did not hand back the sandbox's public URLs through ${urlsFile}. `
+          + "The baked DEN_*_PUBLIC_URL identity must be reused verbatim; check .devcontainer/test-server-on-daytona.sh.",
+        );
+      }
+      webUrl = urls.webUrl;
+      apiUrl = urls.apiUrl;
+    } finally {
+      await rm(urlsDir, { recursive: true, force: true }).catch(() => undefined);
+    }
   }
 
   await timedStep(log, "Den seeded-org proof", () => proveDenSeed(apiUrl, webUrl, sandbox, Boolean(reused)));

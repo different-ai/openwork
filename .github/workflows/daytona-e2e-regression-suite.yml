@@ -249,6 +249,25 @@ jobs:
           pnpm install --frozen-lockfile
           pnpm --dir evals install --frozen-lockfile --ignore-scripts
 
+      # The opencode MCP OAuth spec (opencode-mcp-agent-oauth.e2e.test.ts)
+      # drives the real opencode CLI as an OAuth MCP client against the Den
+      # agent endpoint. Install the exact validated version without lifecycle
+      # scripts before Daytona credentials are provisioned on the runner, then
+      # run the package's one known postinstall deliberately — the bin shim
+      # refuses to start without it, and --ignore-scripts must not silently
+      # skip it for every transitive dependency's sake.
+      - name: Install opencode CLI
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PNPM_HOME="$RUNNER_TEMP/pnpm-global"
+          export PATH="$PNPM_HOME:$PATH"
+          mkdir -p "$PNPM_HOME"
+          pnpm add --global --ignore-scripts opencode-ai@1.18.18
+          (cd "$(pnpm root -g)/opencode-ai" && node postinstall.mjs)
+          opencode --version
+          echo "$PNPM_HOME" >> "$GITHUB_PATH"
+
       # The eval harness shells out to the daytona CLI (testkit daytonaAvailable
       # gate and @openwork/hosts exec). The binary is pinned to a release tag
       # and checksum-verified before it can run with CI secrets. When bumping,

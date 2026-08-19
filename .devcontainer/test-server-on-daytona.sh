@@ -116,9 +116,21 @@ if [ "$exec_ready" -ne 1 ]; then
   exit 1
 fi
 
-DEN_WEB_URL="$(daytona preview-url "$SANDBOX" -p "$DEN_WEB_PORT" 2>/dev/null | grep -v "^time=")"
-DEN_API_URL="$(daytona preview-url "$SANDBOX" -p "$DEN_API_PORT" 2>/dev/null | grep -v "^time=")"
-DEN_WORKER_PROXY_URL="$(daytona preview-url "$SANDBOX" -p "$DEN_WORKER_PROXY_PORT" 2>/dev/null | grep -v "^time=")"
+DEN_WEB_URL="$(daytona preview-url "$SANDBOX" -p "$DEN_WEB_PORT" --expires 86400 2>/dev/null | grep -v "^time=")"
+DEN_API_URL="$(daytona preview-url "$SANDBOX" -p "$DEN_API_PORT" --expires 86400 2>/dev/null | grep -v "^time=")"
+DEN_WORKER_PROXY_URL="$(daytona preview-url "$SANDBOX" -p "$DEN_WORKER_PROXY_PORT" --expires 86400 2>/dev/null | grep -v "^time=")"
+
+# These exact URLs become the Den's public identity (OAuth issuer + MCP
+# resource). Every `daytona preview-url` call signs a fresh hostname, so a
+# caller that re-derives them later gets a *different* host and RFC 9728
+# validating MCP clients (opencode) refuse the mismatched resource. Hand the
+# baked URLs to the caller through a trusted runner-side file instead; this
+# write happens on the runner from daytona CLI output only, so sandbox (ref
+# controlled) output can never influence it.
+if [ -n "${OPENWORK_DEN_URLS_FILE:-}" ]; then
+  printf 'DEN_WEB_URL=%s\nDEN_API_URL=%s\nDEN_WORKER_PROXY_URL=%s\n' \
+    "$DEN_WEB_URL" "$DEN_API_URL" "$DEN_WORKER_PROXY_URL" > "$OPENWORK_DEN_URLS_FILE"
+fi
 
 echo "==> Checking out $REF..."
 daytona exec "$SANDBOX" -- "bash -lc 'set -euo pipefail; cd /workspace; REF=\"$REF\"; FORCE_INSTALL=\"$FORCE_INSTALL\"; if git fetch origin \"\$REF\"; then git checkout --detach FETCH_HEAD; else git fetch origin dev --depth 50 || true; git checkout \"\$REF\"; fi; git rev-parse --short HEAD; if [ \"\$FORCE_INSTALL\" = 1 ]; then rm -f .openwork-daytona/pnpm-lock.sha256; fi'"

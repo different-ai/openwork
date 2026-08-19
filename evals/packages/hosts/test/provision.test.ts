@@ -233,7 +233,7 @@ test("startFaultProxyOnSandbox uploads and detaches the proxy after resolving it
 
   assert.equal(proxy.url, "https://fault.example.test");
   assert.match(proxy.token, /^[0-9a-f]{32}$/);
-  assert.deepEqual(calls[0]?.args, ["preview-url", "den-1", "-p", "3985"]);
+  assert.deepEqual(calls[0]?.args, ["preview-url", "den-1", "-p", "3985", "--expires", "86400"]);
   const scripts = calls.filter((call) => call.args[0] === "exec").map((call) => call.args[3]?.slice(10, -1) ?? "");
   assert.match(scripts[0] ?? "", /pkill -f openwork-fault-proxy/);
   assert.match(scripts[1] ?? "", /^printf %s [A-Za-z0-9+/=]+ \| base64 -d > \/tmp\/openwork-fault-proxy\.mjs$/);
