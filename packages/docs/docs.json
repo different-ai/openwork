@@ -94,6 +94,7 @@
           {
             "group": "Install and operate",
             "pages": [
+              "start-here/enterprise-desktop-deployment",
               "start-here/installer-delivery",
               "start-here/on-prem-branding",
               "start-here/github-connector-helm"

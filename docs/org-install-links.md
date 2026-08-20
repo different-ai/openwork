@@ -151,8 +151,14 @@ the same standard installer through the same direct or mounted route.
 
 ## MDM alternative
 
-Managed deployments can skip the deep-link handoff by deploying the public
-installer and writing `desktop-bootstrap.json` directly:
+Customer-facing guidance for this path is published at
+[`packages/docs/start-here/enterprise-desktop-deployment.mdx`](../packages/docs/start-here/enterprise-desktop-deployment.mdx).
+
+Managed deployments can skip the deep-link handoff by deploying a standard
+binary — typically the enterprise distribution
+(`openwork-enterprise-<os>-<arch>-<version>.<ext>`, published on the
+`enterprise` release channel), or the public installer — and writing
+`desktop-bootstrap.json` directly:
 
 | OS | Canonical path |
 |---|---|
