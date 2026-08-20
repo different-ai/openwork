@@ -1,6 +1,6 @@
 /** @jsxImportSource react */
 
-import { useEffect, useMemo, useSyncExternalStore, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useSyncExternalStore, type ReactNode } from "react";
 import { Navigate, Route, Routes, useLocation, useNavigate } from "react-router";
 
 import { captureAnalyticsEvent, initAnalytics } from "../../app/lib/analytics";
@@ -78,6 +78,8 @@ function DenSigninGate({ children }: DenSigninGateProps) {
   const denAuth = useDenAuth();
   const location = useLocation();
   const navigate = useNavigate();
+  const locationRef = useRef(location);
+  locationRef.current = location;
   const bootstrap = useSyncExternalStore(
     subscribeToDenBootstrap,
     readDenBootstrapSnapshot,
@@ -147,8 +149,15 @@ function DenSigninGate({ children }: DenSigninGateProps) {
   useEffect(() => {
     const handler = (event: WindowEventMap[typeof denSessionUpdatedEvent]) => {
       if (event.detail?.status !== "success") return;
+      const signInLocation = locationRef.current;
       let attempts = 0;
       const check = () => {
+        const currentLocation = locationRef.current;
+        if (
+          currentLocation.pathname !== signInLocation.pathname
+          || currentLocation.search !== signInLocation.search
+          || currentLocation.hash !== signInLocation.hash
+        ) return;
         attempts++;
         const settings = readDenSettings();
         if (settings.authToken?.trim() && readOrgSelectionPending().pending) {

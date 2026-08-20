@@ -94,6 +94,7 @@ import {
   type McpViewLocalState,
 } from "./mcp-view-state";
 import { useCloudSession } from "../cloud/cloud-session-provider";
+import { useDenAuth } from "../../cloud/den-auth-provider";
 import {
   libraryAddAction,
   libraryAddKindsForFilter,
@@ -430,6 +431,7 @@ function resolveExtensionDetailTarget(
 
 export function McpView(props: McpViewProps) {
   const cloudSession = useCloudSession();
+  const denAuth = useDenAuth();
   const denBaseUrl = readDenSettings().baseUrl;
   const skillCount = props.installedSkills?.length ?? 0;
   const useRoutedDetail = typeof props.onDetailIdChange === "function";
@@ -540,12 +542,19 @@ export function McpView(props: McpViewProps) {
     setFilter(nextFilter);
     props.onFilterChange?.(nextFilter);
   };
+  const libraryCloudSignedIn = cloudSession.isSignedIn
+    || (Boolean(cloudSession.authToken.trim()) && denAuth.isSignedIn);
   const libraryAddOptions = {
-    cloudSignedIn: cloudSession.isSignedIn,
+    cloudSignedIn: libraryCloudSignedIn,
   };
   const libraryAddKinds = libraryAddKindsForFilter(filter).filter((kind) => (
     libraryAddAction(kind, libraryAddOptions) !== null
   ));
+  const skillAddPending = filter === "skill"
+    && !libraryCloudSignedIn
+    && denAuth.status === "checking"
+    && Boolean(cloudSession.authToken.trim())
+    && Boolean(cloudSession.activeOrganization?.id.trim());
   const handleAddKind = (kind: LibraryAddKind) => {
     const action = libraryAddAction(kind, libraryAddOptions);
     if (!action) return;
@@ -1280,9 +1289,13 @@ export function McpView(props: McpViewProps) {
         </div>
       ) : null}
 
-      {libraryAddKinds.length > 0 ? (
+      {libraryAddKinds.length > 0 || skillAddPending ? (
         <div className="mb-5 flex justify-end">
-          <LibraryAddControl kinds={libraryAddKinds} onSelect={handleAddKind} />
+          <LibraryAddControl
+            kinds={skillAddPending ? ["skill"] : libraryAddKinds}
+            pending={skillAddPending}
+            onSelect={handleAddKind}
+          />
         </div>
       ) : null}
 

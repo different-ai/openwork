@@ -1,6 +1,6 @@
 /** @jsxImportSource react */
 import { useState } from "react";
-import { Plus } from "lucide-react";
+import { Loader2, Plus } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { t } from "../../../../i18n";
@@ -27,6 +27,7 @@ export function libraryAddKindLabel(kind: LibraryAddKind) {
 export function LibraryAddControl(props: {
   kinds: LibraryAddKind[];
   onSelect: (kind: LibraryAddKind) => void;
+  pending?: boolean;
   size?: "xs" | "sm" | "default";
   variant?: "default" | "outline";
 }) {
@@ -35,12 +36,22 @@ export function LibraryAddControl(props: {
   if (kinds.length === 0) return null;
   const size = props.size ?? "default";
   const variant = props.variant ?? "default";
+  const pendingLabel = t("den.checking_session");
 
   const onlyKind = kinds[0];
   if (kinds.length === 1 && onlyKind) {
     return (
-      <Button variant={variant} size={size} className="shrink-0 rounded-lg" onClick={() => props.onSelect(onlyKind)}>
-        <Plus size={16} />
+      <Button
+        variant={variant}
+        size={size}
+        className="shrink-0 rounded-lg"
+        disabled={props.pending}
+        aria-busy={props.pending}
+        aria-label={props.pending ? `${libraryAddKindLabel(onlyKind)} — ${pendingLabel}` : undefined}
+        title={props.pending ? pendingLabel : undefined}
+        onClick={() => props.onSelect(onlyKind)}
+      >
+        {props.pending ? <Loader2 size={16} className="animate-spin" /> : <Plus size={16} />}
         {libraryAddKindLabel(onlyKind)}
       </Button>
     );
