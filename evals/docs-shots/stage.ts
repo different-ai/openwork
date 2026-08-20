@@ -3,7 +3,7 @@ import { mkdir, readFile, rm } from "node:fs/promises";
 import { resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
-import { denFetch, evalIn, waitFor, createOrgConnection } from "@openwork/behaviors";
+import { denFetch, evalIn, waitFor, createOrgConnection, createPluginWithSkill } from "@openwork/behaviors";
 import type { DenSession } from "@openwork/behaviors";
 import { navigate } from "@openwork/cdp";
 import type { AttachedSurface } from "@openwork/cdp";
@@ -66,27 +66,6 @@ async function readOrganizationId(admin: DenSession): Promise<string> {
   const orgs = isRecord(body) && Array.isArray(body.orgs) ? body.orgs.filter(isRecord) : [];
   const id = orgs[0] && typeof orgs[0].id === "string" ? orgs[0].id : "";
   if (!response.ok || !id) throw new Error(`Resolving the organization failed: HTTP ${response.status} ${text.slice(0, 300)}`);
-  return id;
-}
-
-async function createDocsPlugin(
-  admin: DenSession,
-  input: (typeof SEED.plugins)[number],
-): Promise<string> {
-  const skillMarkdown = `---\nname: ${input.skillName}\ndescription: ${input.skillDescription}\n---\n\n${input.skillBody}\n`;
-  const { response, body, text } = await denFetch(admin, "/v1/plugins", {
-    method: "POST",
-    headers: { authorization: `Bearer ${admin.token}` },
-    body: JSON.stringify({
-      name: input.name,
-      description: input.description,
-      orgWide: true,
-      components: [{ type: "skill", input: { rawSourceText: skillMarkdown } }],
-    }),
-  });
-  const item = isRecord(body) && isRecord(body.item) ? body.item : isRecord(body) ? body : null;
-  const id = item && typeof item.id === "string" ? item.id : "";
-  if (!response.ok || !id) throw new Error(`Creating plugin ${input.name} failed: HTTP ${response.status} ${text.slice(0, 300)}`);
   return id;
 }
 
@@ -157,7 +136,10 @@ export class Stage {
         throw new Error(`Enabling org capabilities failed: HTTP ${capabilities.response.status} ${capabilities.text.slice(0, 300)}`);
       }
       const pluginIds: string[] = [];
-      for (const plugin of SEED.plugins) pluginIds.push(await createDocsPlugin(den.admin, plugin));
+      for (const plugin of SEED.plugins) {
+        const created = await createPluginWithSkill(den.admin, plugin);
+        pluginIds.push(created.id);
+      }
       const slack = den.mocks.slack;
       if (!slack) throw new Error("The slack MCP mock was not provisioned.");
       await createOrgConnection(den.admin, {
