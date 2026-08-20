@@ -21,6 +21,7 @@ import {
   openworkAnthropicAdaptiveThinkingPluginPath,
   openworkAnthropicToolSchemaPluginPath,
   openworkOfficeAttachmentsPluginPath,
+  openworkOpenAiCompatibleSystemPluginPath,
 } from "./openwork-extensions-plugin-path.js";
 import type { ServerConfig } from "./types.js";
 import { runtimeStorageDir } from "./runtime-db.js";
@@ -129,6 +130,7 @@ export function buildOpenworkRuntimeConfigObjectFromSnapshot(
       openworkOfficeAttachmentsPluginPath(),
       openworkAnthropicAdaptiveThinkingPluginPath(),
       openworkAnthropicToolSchemaPluginPath(),
+      openworkOpenAiCompatibleSystemPluginPath(),
       ...runtimePluginList(runtimeConfig),
     ],
     ...(disabledProviders.length ? { disabled_providers: disabledProviders } : {}),
