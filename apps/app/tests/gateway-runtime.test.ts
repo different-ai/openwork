@@ -59,9 +59,9 @@ function getRequestUrl(input: RequestInfo | URL): string {
   return input.url;
 }
 
-function createTestOpenworkServerStore() {
+function createTestOpenworkServerStore(startupPreference: "local" | "server" = "server") {
   return createOpenworkServerStore({
-    startupPreference: () => "server",
+    startupPreference: () => startupPreference,
     documentVisible: () => true,
     developerMode: () => false,
     runtimeWorkspaceId: () => "workspace_test",
@@ -85,6 +85,7 @@ function installWindow(options: {
   electronInfo?: {
     baseUrl: string;
     ownerToken: string;
+    clientToken?: string;
     hostToken?: string;
   };
   /** Raw openworkServerInfo response for non-ready/restarting server states. */
@@ -100,6 +101,8 @@ function installWindow(options: {
     value: {
       localStorage,
       dispatchEvent: () => true,
+      setTimeout: () => 1,
+      clearTimeout: () => undefined,
       location: { origin: options.origin },
       __OPENWORK_GATEWAY__: options.gateway ? { version: 1 } : undefined,
       __OPENWORK_BOOTSTRAP__: options.bootstrapToken ? { token: options.bootstrapToken } : undefined,
@@ -119,6 +122,7 @@ function installWindow(options: {
                 running: true,
                 baseUrl: options.electronInfo?.baseUrl,
                 ownerToken: options.electronInfo?.ownerToken,
+                clientToken: options.electronInfo?.clientToken,
                 hostToken: options.electronInfo?.hostToken,
               };
             },
@@ -522,6 +526,37 @@ describe("non-gateway connection modes", () => {
     expect(connection.resolvedToken).toBe("owner-token");
     expect(connection.resolvedHostToken).toBe("host-token");
     expect(connection.source).toBe("desktop-runtime");
+  });
+
+  test("desktop reconnect persists the complete live server credential bundle", async () => {
+    const storage = installWindow({
+      origin: "https://instance.example.com",
+      electronInfo: {
+        baseUrl: "http://127.0.0.1:8787",
+        ownerToken: "owner-token",
+        clientToken: "live-client-token",
+        hostToken: "live-host-token",
+      },
+    });
+    storage.setItem("openwork.server.token", "stale-client-token");
+    storage.setItem("openwork.server.hostToken", "stale-host-token");
+    Object.defineProperty(globalThis, "fetch", {
+      configurable: true,
+      value: async () => new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    });
+
+    const store = createTestOpenworkServerStore("local");
+
+    expect(await store.reconnectOpenworkServer()).toBe(true);
+    expect(readOpenworkServerSettings().token).toBe("live-client-token");
+    expect(readOpenworkServerSettings().hostToken).toBe("live-host-token");
+    expect(store.getSnapshot().openworkServerAuth).toEqual({
+      token: "live-client-token",
+      hostToken: "live-host-token",
+    });
   });
 
   test("a restarting desktop server invalidates stored loopback settings instead of resolving a dead port", async () => {

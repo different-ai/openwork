@@ -682,9 +682,17 @@ export function createOpenworkServerStore(options: CreateOpenworkServerStoreOpti
 
       if (hostInfo?.clientToken?.trim() && options.startupPreference() !== "server") {
         const liveToken = hostInfo.clientToken.trim();
+        const liveHostToken = hostInfo.hostToken?.trim() ?? "";
         const settings = state.openworkServerSettings;
-        if ((settings.token?.trim() ?? "") !== liveToken) {
-          updateOpenworkServerSettings({ ...settings, token: liveToken });
+        if (
+          (settings.token?.trim() ?? "") !== liveToken ||
+          (settings.hostToken?.trim() ?? "") !== liveHostToken
+        ) {
+          updateOpenworkServerSettings({
+            ...settings,
+            token: liveToken,
+            hostToken: liveHostToken || undefined,
+          });
         }
       }
 

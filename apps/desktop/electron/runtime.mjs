@@ -161,6 +161,52 @@ function normalizeWorkspaceKey(value, platform = process.platform) {
   }
 }
 
+function normalizeServerCredentials(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const clientToken = typeof value.clientToken === "string" && value.clientToken.trim()
+    ? value.clientToken
+    : null;
+  const hostToken = typeof value.hostToken === "string" && value.hostToken.trim()
+    ? value.hostToken
+    : null;
+  if (!clientToken || !hostToken) return null;
+  return {
+    clientToken,
+    hostToken,
+    ownerToken: typeof value.ownerToken === "string" && value.ownerToken.trim()
+      ? value.ownerToken
+      : null,
+    updatedAt: typeof value.updatedAt === "number" && Number.isFinite(value.updatedAt)
+      ? value.updatedAt
+      : 0,
+  };
+}
+
+export function migrateOpenworkServerTokenStore(value) {
+  const source = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  const sourceWorkspaces = source.workspaces && typeof source.workspaces === "object" && !Array.isArray(source.workspaces)
+    ? source.workspaces
+    : {};
+  const workspaceEntries = Object.entries(sourceWorkspaces);
+  const legacyCredentials = workspaceEntries
+    .flatMap(([workspaceKey, entry]) => {
+      const credentials = normalizeServerCredentials(entry);
+      return credentials ? [{ workspaceKey, credentials }] : [];
+    })
+    .sort((left, right) => {
+      const updatedAtDifference = right.credentials.updatedAt - left.credentials.updatedAt;
+      if (updatedAtDifference !== 0) return updatedAtDifference;
+      return left.workspaceKey < right.workspaceKey ? -1 : left.workspaceKey > right.workspaceKey ? 1 : 0;
+    })[0]?.credentials;
+  const credentials = normalizeServerCredentials(source.credentials) ?? legacyCredentials ?? {
+    clientToken: randomUUID(),
+    hostToken: randomUUID(),
+    ownerToken: null,
+    updatedAt: nowMs(),
+  };
+  return { version: 2, credentials };
+}
+
 export function prioritizeWorkspacePaths(preferredPath, workspacePaths = [], options = {}) {
   const platform = options.platform ?? process.platform;
   const paths = [];
@@ -1348,7 +1394,12 @@ export function createRuntimeManager({
   }
 
   async function loadTokenStore() {
-    return readJsonFile(openworkServerTokenStorePath(), { version: 1, workspaces: {} });
+    const stored = await readJsonFile(openworkServerTokenStorePath(), { version: 1, workspaces: {} });
+    const migrated = migrateOpenworkServerTokenStore(stored);
+    if (JSON.stringify(stored) !== JSON.stringify(migrated)) {
+      await saveTokenStore(migrated);
+    }
+    return migrated;
   }
 
   async function saveTokenStore(store) {
@@ -1372,30 +1423,15 @@ export function createRuntimeManager({
     await writeFile(filePath, `${JSON.stringify(state, null, 2)}\n`, "utf8");
   }
 
-  async function loadOrCreateWorkspaceTokens(workspaceKey) {
+  async function loadServerCredentials() {
     const store = await loadTokenStore();
-    const normalized = normalizeWorkspaceKey(workspaceKey, workspacePlatform);
-    if (store.workspaces?.[normalized]) {
-      return store.workspaces[normalized];
-    }
-    const next = {
-      clientToken: randomUUID(),
-      hostToken: randomUUID(),
-      ownerToken: null,
-      updatedAt: nowMs(),
-    };
-    store.workspaces ??= {};
-    store.workspaces[normalized] = next;
-    await saveTokenStore(store);
-    return next;
+    return store.credentials;
   }
 
-  async function persistWorkspaceOwnerToken(workspaceKey, ownerToken) {
+  async function persistServerOwnerToken(ownerToken) {
     const store = await loadTokenStore();
-    const normalized = normalizeWorkspaceKey(workspaceKey, workspacePlatform);
-    if (!store.workspaces?.[normalized]) return;
-    store.workspaces[normalized].ownerToken = ownerToken;
-    store.workspaces[normalized].updatedAt = nowMs();
+    store.credentials.ownerToken = ownerToken;
+    store.credentials.updatedAt = nowMs();
     await saveTokenStore(store);
   }
 
@@ -1869,7 +1905,7 @@ export function createRuntimeManager({
     );
     const activeWorkspace = selectStickyOpenworkPortWorkspace(requestedWorkspacePaths, workspacePaths);
     const portSelection = await resolveOpenworkPort(host, activeWorkspace, currentPort);
-    const tokens = await loadOrCreateWorkspaceTokens(activeWorkspace);
+    const tokens = await loadServerCredentials();
 
     // One call: resolve config, spawn managed OpenCode, start HTTP server.
     // Dev must prefer apps/server/dist; build output also stages a packaged
@@ -1945,7 +1981,7 @@ export function createRuntimeManager({
     ownerToken ||= await issueOwnerToken(baseUrl, tokens.hostToken);
     openworkServerState.ownerToken = ownerToken;
     if (ownerToken) {
-      await persistWorkspaceOwnerToken(activeWorkspace, ownerToken);
+      await persistServerOwnerToken(ownerToken);
     }
     if (ownerToken) {
       try {

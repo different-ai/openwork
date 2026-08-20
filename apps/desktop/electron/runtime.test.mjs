@@ -9,6 +9,7 @@ import {
   commandMatchesPackagedSidecar,
   createRuntimeManager,
   embeddedServerImportUrl,
+  migrateOpenworkServerTokenStore,
   prepareRuntimeWorkspaceRoot,
   prioritizeWorkspacePaths,
   resetRuntimeStatesAfterFailedServerStart,
@@ -247,6 +248,45 @@ describe("resolveOpenworkServerConfigPath", () => {
       resolveOpenworkServerConfigPath({ XDG_CONFIG_HOME: "/tmp/xdg" }),
       "/tmp/xdg/openwork/server.json",
     );
+  });
+});
+
+describe("OpenWork server credential persistence", () => {
+  it("deterministically migrates legacy workspace credentials into one server bundle", () => {
+    const migrated = migrateOpenworkServerTokenStore({
+      version: 1,
+      workspaces: {
+        "/workspace/z": {
+          clientToken: "client-z",
+          hostToken: "host-z",
+          ownerToken: "owner-z",
+          updatedAt: 20,
+        },
+        "/workspace/a": {
+          clientToken: "client-a",
+          hostToken: "host-a",
+          ownerToken: "owner-a",
+          updatedAt: 20,
+        },
+        "/workspace/old": {
+          clientToken: "client-old",
+          hostToken: "host-old",
+          ownerToken: "owner-old",
+          updatedAt: 10,
+        },
+      },
+    });
+
+    assert.deepEqual(migrated, {
+      version: 2,
+      credentials: {
+        clientToken: "client-a",
+        hostToken: "host-a",
+        ownerToken: "owner-a",
+        updatedAt: 20,
+      },
+    });
+    assert.deepEqual(migrateOpenworkServerTokenStore(migrated), migrated);
   });
 });
 
