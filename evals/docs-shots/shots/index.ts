@@ -1,4 +1,4 @@
-import type { Scene } from "../scene.ts";
+import type { Shot } from "./shot.ts";
 import { denOpenworkWeb, denPluginDetail, denSkillEditor } from "./den-web.ts";
 import {
   libraryAddMcpModal,
@@ -7,11 +7,11 @@ import {
   libraryCreateSkillModal,
   librarySkills,
   librarySlackConnection,
-} from "./library.ts";
-import { skillCreatedCard } from "./skill-created.ts";
+  skillCreatedCard,
+} from "./desktop.ts";
 import { openworkWebTab } from "./web-tab.ts";
 
-export const scenes: Scene[] = [
+export const shots: Shot[] = [
   librarySkills,
   libraryCreateSkillModal,
   libraryAdvancedSettings,
