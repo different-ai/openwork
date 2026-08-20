@@ -9,6 +9,7 @@ import {
   getAggregateNowLabel,
   getAggregateRowFile,
   getAggregateRowLabel,
+  getAggregateRowOutput,
   getAggregateSummary,
   type AnyToolPart,
 } from "@/lib/tool-aggregate"
@@ -21,6 +22,8 @@ const ROW_CAP = 8
 /** Expansion persists per group while the session stays mounted (Paper rule). */
 const expandedByGroupKey = new Map<string, boolean>()
 const showAllByGroupKey = new Map<string, boolean>()
+/** Per-row output expansion (command rows only), keyed by toolCallId. */
+const expandedRowOutputs = new Set<string>()
 
 type ToolAggregateGroupProps = {
   parts: AnyToolPart[]
@@ -49,6 +52,7 @@ export function ToolAggregateGroup({ parts, className }: ToolAggregateGroupProps
   const groupKey = parts[0]?.toolCallId ?? "aggregate"
   const [expanded, setExpandedState] = useState(() => expandedByGroupKey.get(groupKey) ?? false)
   const [showAll, setShowAllState] = useState(() => showAllByGroupKey.get(groupKey) ?? false)
+  const [, forceRowRerender] = useState(0)
 
   const setExpanded = (value: boolean) => {
     expandedByGroupKey.set(groupKey, value)
@@ -57,6 +61,14 @@ export function ToolAggregateGroup({ parts, className }: ToolAggregateGroupProps
   const setShowAll = (value: boolean) => {
     showAllByGroupKey.set(groupKey, value)
     setShowAllState(value)
+  }
+  const toggleRowOutput = (toolCallId: string) => {
+    if (expandedRowOutputs.has(toolCallId)) {
+      expandedRowOutputs.delete(toolCallId)
+    } else {
+      expandedRowOutputs.add(toolCallId)
+    }
+    forceRowRerender((n) => n + 1)
   }
 
   const anyRunning = parts.some((part) => isToolPartInFlight(part))
@@ -107,38 +119,69 @@ export function ToolAggregateGroup({ parts, className }: ToolAggregateGroupProps
           {visibleParts.map((part, index) => {
             const status = rowStatus(part)
             const reason = failureReason(part)
+            const output = getAggregateRowOutput(part)
+            const rowExpanded = output !== null && expandedRowOutputs.has(part.toolCallId)
+            const file = getAggregateRowFile(part)
+
+            const rowLabel = file ? (
+              <span className="flex min-w-0 items-center gap-1.5">
+                <span className="shrink-0">{file.verb}</span>
+                <FileChip path={file.path} className="min-w-0" />
+              </span>
+            ) : (
+              <span className="min-w-0 truncate font-mono text-[11px]">
+                {getAggregateRowLabel(part)}
+              </span>
+            )
+
+            const rowInner = (
+              <>
+                {output !== null ? (
+                  <ChevronRight
+                    aria-hidden="true"
+                    className={cn(
+                      "size-3 shrink-0 text-muted-foreground/70 transition-transform duration-150",
+                      rowExpanded && "rotate-90",
+                    )}
+                  />
+                ) : null}
+                {status === "running" ? (
+                  <span className="flex size-3.5 shrink-0 items-center justify-center">
+                    <DotMatrixLoader label="Running" className="size-3 text-muted-foreground" />
+                  </span>
+                ) : null}
+                {rowLabel}
+                {durations[index] ? (
+                  <span className="shrink-0 tabular-nums text-muted-foreground/70">
+                    {durations[index]}
+                  </span>
+                ) : null}
+              </>
+            )
+
             return (
               <div key={part.toolCallId} className="flex min-w-0 flex-col gap-0.5">
-                <div className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
-                  {status === "running" ? (
-                    <span className="flex size-3.5 shrink-0 items-center justify-center">
-                      <DotMatrixLoader label="Running" className="size-3 text-muted-foreground" />
-                    </span>
-                  ) : null}
-                  {(() => {
-                    const file = getAggregateRowFile(part)
-                    if (!file) {
-                      return (
-                        <span className="min-w-0 truncate font-mono text-[11px]">
-                          {getAggregateRowLabel(part)}
-                        </span>
-                      )
-                    }
-                    return (
-                      <span className="flex min-w-0 items-center gap-1.5">
-                        <span className="shrink-0">{file.verb}</span>
-                        <FileChip path={file.path} className="min-w-0" />
-                      </span>
-                    )
-                  })()}
-                  {durations[index] ? (
-                    <span className="shrink-0 tabular-nums text-muted-foreground/70">
-                      {durations[index]}
-                    </span>
-                  ) : null}
-                </div>
+                {output !== null ? (
+                  <button
+                    type="button"
+                    onClick={() => toggleRowOutput(part.toolCallId)}
+                    aria-expanded={rowExpanded}
+                    className="flex min-w-0 cursor-pointer items-center gap-2 text-start text-xs text-muted-foreground hover:text-foreground"
+                  >
+                    {rowInner}
+                  </button>
+                ) : (
+                  <div className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
+                    {rowInner}
+                  </div>
+                )}
                 {reason ? (
                   <div className="text-[11px] text-muted-foreground">failed — {reason}</div>
+                ) : null}
+                {rowExpanded && output !== null ? (
+                  <pre className="ms-5 mt-0.5 overflow-x-auto whitespace-pre-wrap break-words rounded-lg bg-muted p-2 text-[11px] text-muted-foreground opacity-80">
+                    {output}
+                  </pre>
                 ) : null}
               </div>
             )
