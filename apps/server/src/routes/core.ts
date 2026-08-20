@@ -10,6 +10,7 @@ import {
 import type { CloudMcpLiveStatusObserver } from "../cloud-mcp-health.js";
 import { readOpenWorkConnectSkillCatalog, renderOpenWorkConnectSkillInstruction } from "../connect-skill-catalog.js";
 import { readOpenWorkAutomationCatalog, renderOpenWorkAutomationInstruction } from "../connect-automation-catalog.js";
+import { readDesktopPolicyState, writeDesktopPolicyState, type DesktopPolicyState } from "../desktop-policy-state.js";
 import { EnvStoreReadError, InvalidEnvKeyError, isValidEnvKey, type EnvService } from "../env-file.js";
 import { syncManagedProviderAuth } from "../managed-provider-auth.js";
 import { ApiError } from "../errors.js";
@@ -44,7 +45,7 @@ interface RegisterCoreRoutesOptions {
   readOptionalJsonBody: ReadJsonBody;
   parseOptionalBoolean: ParseOptionalBoolean;
   ensureWritable: (config: ServerConfig) => void;
-  buildCapabilities: (config: ServerConfig) => Capabilities;
+  buildCapabilities: (config: ServerConfig, desktopPolicyState?: DesktopPolicyState) => Capabilities;
   fetchRuntimeControl: FetchRuntimeControl;
   resolveWorkspace: (config: ServerConfig, id: string) => Promise<WorkspaceInfo>;
   resolveOpencodeDirectory: (workspace: WorkspaceInfo) => string | null;
@@ -211,7 +212,7 @@ export function registerCoreRoutes(options: RegisterCoreRoutesOptions): void {
   });
 
   addRoute(routes, "GET", "/w/:id/capabilities", "client", async () => {
-    return jsonResponse(buildCapabilities(config));
+    return jsonResponse(buildCapabilities(config, await readDesktopPolicyState(config)));
   });
 
   addRoute(routes, "GET", "/w/:id/workspaces", "client", async (ctx) => {
@@ -272,7 +273,37 @@ export function registerCoreRoutes(options: RegisterCoreRoutesOptions): void {
   });
 
   addRoute(routes, "GET", "/capabilities", "client", async () => {
-    return jsonResponse(buildCapabilities(config));
+    return jsonResponse(buildCapabilities(config, await readDesktopPolicyState(config)));
+  });
+
+  addRoute(routes, "GET", "/experimental/desktop-policy/state", "client", async () => {
+    return jsonResponse({
+      ok: true,
+      schemaVersion: 1,
+      state: await readDesktopPolicyState(config),
+    });
+  });
+
+  addRoute(routes, "PUT", "/experimental/desktop-policy/state", "host", async (ctx) => {
+    ensureWritable(config);
+    const body = await readJsonBody(ctx.request);
+    if (
+      !isRecord(body)
+      || typeof body.allowCreateSkills !== "boolean"
+      || typeof body.allowAddMcpServers !== "boolean"
+      || Object.keys(body).some((key) => key !== "allowCreateSkills" && key !== "allowAddMcpServers")
+    ) {
+      throw new ApiError(
+        400,
+        "invalid_payload",
+        "allowCreateSkills and allowAddMcpServers must be booleans",
+      );
+    }
+    const state = await writeDesktopPolicyState(config, {
+      allowCreateSkills: body.allowCreateSkills,
+      allowAddMcpServers: body.allowAddMcpServers,
+    });
+    return jsonResponse({ ok: true, schemaVersion: 1, state });
   });
 
   addRoute(routes, "GET", "/experimental/connect/state", "client", async (ctx) => {

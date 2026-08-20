@@ -12,6 +12,7 @@ import {
   CONNECT_STATE_PUSH_RETRY_DELAY_MS,
   deliverConnectState,
   resolveConnectStateToPush,
+  resolveDesktopPolicyStateToPush,
 } from "../src/react-app/domains/cloud/desktop-config-provider";
 
 const originalFetch = globalThis.fetch;
@@ -21,6 +22,22 @@ describe("Den desktop config client", () => {
     expect(resolveConnectStateToPush({})).toBeNull();
     expect(resolveConnectStateToPush({ connectEnabled: false })).toBe(false);
     expect(resolveConnectStateToPush({ connectEnabled: true })).toBe(true);
+  });
+
+  test("resolves effective desktop extension policy state", () => {
+    expect(resolveDesktopPolicyStateToPush({ allowManageExtensions: false })).toEqual({
+      allowCreateSkills: false,
+      allowAddMcpServers: false,
+    });
+    expect(resolveDesktopPolicyStateToPush({ allowCreateSkills: false })).toEqual({
+      allowCreateSkills: false,
+      allowAddMcpServers: true,
+    });
+    expect(resolveDesktopPolicyStateToPush({})).toEqual({
+      allowCreateSkills: true,
+      allowAddMcpServers: true,
+    });
+    expect(resolveDesktopPolicyStateToPush(null)).toBeNull();
   });
 
   test("retries the Connect push until the local server accepts it", async () => {

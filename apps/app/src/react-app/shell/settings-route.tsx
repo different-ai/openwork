@@ -124,7 +124,10 @@ import {
   type WorkspaceList,
   revealDesktopItemInDir,
 } from "@/app/lib/desktop";
-import { isDesktopProviderBlocked } from "@/app/cloud/desktop-app-restrictions";
+import {
+  isDesktopProviderBlocked,
+  resolveDesktopExtensionRestrictions,
+} from "@/app/cloud/desktop-app-restrictions";
 import { useCheckDesktopRestriction, useDesktopConfig } from "@/react-app/domains/cloud/desktop-config-provider";
 import { useRestrictionNotice } from "@/react-app/domains/cloud/restriction-notice-provider";
 import { useCloudProviderAutoSync } from "@/react-app/domains/cloud/use-cloud-provider-auto-sync";
@@ -1897,6 +1900,10 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     };
   }, [computerUsePermissions, connectionsSnapshot, extensionStateVersion, providerConnectedIds, userEnvKeys]);
   const builtInExtensionsDisabled = checkDesktopRestriction({ restriction: "allowBuiltInExtensions" });
+  const {
+    skillCreationRestricted: skillCreationDisabled,
+    mcpAddRestricted: mcpAddDisabled,
+  } = resolveDesktopExtensionRestrictions(checkDesktopRestriction);
   const restartExtensionLocalServer = useCallback(async () => {
     if (!isDesktopRuntime()) return false;
     try {
@@ -2376,6 +2383,8 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
                 quickConnect={extensionItems.quickConnectEntries}
                 enablementContext={enablementContext}
                 builtInExtensionsDisabled={builtInExtensionsDisabled}
+                skillCreationDisabled={skillCreationDisabled}
+                mcpAddDisabled={mcpAddDisabled}
                 connectMcp={(entry) => {
                   return connectionsStore.connectMcp(entry);
                 }}

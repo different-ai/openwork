@@ -36,3 +36,4 @@ export const openworkCapabilitiesKnowledgePluginPath = () => openworkPluginPath(
 export const openworkAnthropicAdaptiveThinkingPluginPath = () => openworkPluginPath("openwork-anthropic-adaptive-thinking");
 export const openworkAnthropicToolSchemaPluginPath = () => openworkPluginPath("openwork-anthropic-tool-schema");
 export const openworkOfficeAttachmentsPluginPath = () => openworkPluginPath("openwork-office-attachments");
+export const openworkDesktopPolicyLockPluginPath = () => openworkPluginPath("openwork-desktop-policy-lock");

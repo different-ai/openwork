@@ -192,6 +192,10 @@ export type McpViewProps = {
   enablementContext?: import("../../../../app/enablement").EnablementContext;
   /** Organization policy restriction for OpenWork-provided built-in extensions. */
   builtInExtensionsDisabled?: boolean;
+  /** Organization policy restriction for creating skills. */
+  skillCreationDisabled?: boolean;
+  /** Organization policy restriction for adding MCP servers. */
+  mcpAddDisabled?: boolean;
   /** Preview a Claude Code plugin bundle from a GitHub URL ("Will install" disclosure). */
   previewClaudePlugin?: (url: string) => Promise<OpenworkClaudePluginPreview>;
   /** Install a Claude Code plugin bundle from a GitHub URL. */
@@ -543,9 +547,19 @@ export function McpView(props: McpViewProps) {
   const libraryAddOptions = {
     cloudSignedIn: cloudSession.isSignedIn,
   };
-  const libraryAddKinds = libraryAddKindsForFilter(filter).filter((kind) => (
-    libraryAddAction(kind, libraryAddOptions) !== null
-  ));
+  const libraryAddKinds = libraryAddKindsForFilter(filter).filter((kind) => {
+    if (kind === "skill" && props.skillCreationDisabled) return false;
+    if (kind === "mcp" && props.mcpAddDisabled) return false;
+    return libraryAddAction(kind, libraryAddOptions) !== null;
+  });
+  const policyNotices = [
+    ...(props.skillCreationDisabled
+      ? ["Your organization administrator has disabled creating skills on this device."]
+      : []),
+    ...(props.mcpAddDisabled
+      ? ["Your organization administrator has disabled adding MCP servers on this device."]
+      : []),
+  ];
   const handleAddKind = (kind: LibraryAddKind) => {
     const action = libraryAddAction(kind, libraryAddOptions);
     if (!action) return;
@@ -1280,6 +1294,12 @@ export function McpView(props: McpViewProps) {
         </div>
       ) : null}
 
+      {policyNotices.length > 0 ? (
+        <div className="mb-5 rounded-xl border border-amber-6 bg-amber-2 px-4 py-3 text-xs text-amber-11">
+          {policyNotices.join(" ")}
+        </div>
+      ) : null}
+
       {libraryAddKinds.length > 0 ? (
         <div className="mb-5 flex justify-end">
           <LibraryAddControl kinds={libraryAddKinds} onSelect={handleAddKind} />
@@ -1541,21 +1561,23 @@ export function McpView(props: McpViewProps) {
         onToggle={() => setShowAdvanced((current) => !current)}
         onScopeChange={setConfigScope}
         onReveal={revealConfig}
-        onAddMcp={() => setAddMcpModalOpen(true)}
+        onAddMcp={props.mcpAddDisabled ? undefined : () => setAddMcpModalOpen(true)}
         onImportFromGithub={
-          props.previewClaudePlugin && props.installClaudePlugin
+          !props.mcpAddDisabled && props.previewClaudePlugin && props.installClaudePlugin
             ? () => setClaudeImportOpen(true)
             : undefined
         }
       />
 
-      <AddMcpModal
-        open={addMcpModalOpen}
-        onClose={() => setAddMcpModalOpen(false)}
-        onAdd={props.connectMcp}
-        busy={props.busy}
-        isRemoteWorkspace={props.isRemoteWorkspace}
-      />
+      {!props.mcpAddDisabled ? (
+        <AddMcpModal
+          open={addMcpModalOpen}
+          onClose={() => setAddMcpModalOpen(false)}
+          onAdd={props.connectMcp}
+          busy={props.busy}
+          isRemoteWorkspace={props.isRemoteWorkspace}
+        />
+      ) : null}
 
       <AddLibraryItemModal
         open={addAuthorableKind !== null}
@@ -1566,7 +1588,7 @@ export function McpView(props: McpViewProps) {
         onCreate={handleCreateLibraryItem}
       />
 
-      {props.previewClaudePlugin && props.installClaudePlugin ? (
+      {!props.mcpAddDisabled && props.previewClaudePlugin && props.installClaudePlugin ? (
         <ClaudePluginImportModal
           open={claudeImportOpen}
           onClose={() => setClaudeImportOpen(false)}
@@ -2290,7 +2312,7 @@ function McpAdvancedConfigSection(props: {
   onToggle: () => void;
   onScopeChange: (scope: ConfigScope) => void;
   onReveal: () => Promise<void>;
-  onAddMcp: () => void;
+  onAddMcp?: () => void;
   onImportFromGithub?: () => void;
 }) {
   return (
@@ -2312,10 +2334,12 @@ function McpAdvancedConfigSection(props: {
           <div className="flex flex-col gap-2">
             <div className="text-xs text-dls-secondary">{t("mcp.custom_app_cta_hint")}</div>
             <div className="flex flex-wrap items-center gap-2">
-              <Button variant="outline" onClick={props.onAddMcp}>
-                <Plus size={14} />
-                {t("mcp.add_modal_title")}
-              </Button>
+              {props.onAddMcp ? (
+                <Button variant="outline" onClick={props.onAddMcp}>
+                  <Plus size={14} />
+                  {t("mcp.add_modal_title")}
+                </Button>
+              ) : null}
               {props.onImportFromGithub ? (
                 <Button variant="outline" onClick={props.onImportFromGithub}>
                   <Download size={14} />

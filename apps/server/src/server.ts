@@ -137,6 +137,7 @@ import {
 } from "./openwork-workspace-config-store.js";
 import { buildOpenworkRuntimeConfigObject, openworkRuntimeConfigFilePath, writeOpenworkRuntimeConfigFile } from "./openwork-runtime-config.js";
 import { readLegacyConfigSweepState } from "./legacy-config-sweep.js";
+import { readDesktopPolicyState, type DesktopPolicyState } from "./desktop-policy-state.js";
 import { findManagedEngineWorkspace } from "./workspaces.js";
 import { CloudProviderSync, parseCloudProviderDenSession } from "./cloud-provider-sync.js";
 import pkg from "../package.json" with { type: "json" };
@@ -1753,7 +1754,7 @@ async function requireHost(request: Request, config: ServerConfig, tokens: Token
   return { type: "remote", clientId, tokenHash: hashToken(bearer), scope };
 }
 
-function buildCapabilities(config: ServerConfig): Capabilities {
+function buildCapabilities(config: ServerConfig, desktopPolicyState?: DesktopPolicyState): Capabilities {
   const writeEnabled = !config.readOnly;
   const schemaVersion = 1;
   const sandboxBackend = resolveSandboxBackend();
@@ -1768,9 +1769,9 @@ function buildCapabilities(config: ServerConfig): Capabilities {
     serverVersion: SERVER_VERSION,
     opencodeVersion: OPENCODE_VERSION,
     providerSync: true,
-    skills: { read: true, write: writeEnabled, source: "openwork" },
+    skills: { read: true, write: writeEnabled && desktopPolicyState?.allowCreateSkills !== false, source: "openwork" },
     plugins: { read: true, write: writeEnabled },
-    mcp: { read: true, write: writeEnabled },
+    mcp: { read: true, write: writeEnabled && desktopPolicyState?.allowAddMcpServers !== false },
     commands: { read: true, write: writeEnabled },
     config: { read: true, write: writeEnabled },
     engine: { rollover: config.engineRollover === true },
@@ -1792,6 +1793,23 @@ function buildCapabilities(config: ServerConfig): Capabilities {
       },
     },
   };
+}
+
+type RestrictedDesktopPolicy = "allowCreateSkills" | "allowAddMcpServers";
+
+const desktopPolicyRestrictionNotices: Record<RestrictedDesktopPolicy, string> = {
+  allowCreateSkills: "Your organization administrator has disabled creating skills on this device.",
+  allowAddMcpServers: "Your organization administrator has disabled adding MCP servers on this device.",
+};
+
+async function ensureDesktopPolicyAllows(
+  config: ServerConfig,
+  policy: RestrictedDesktopPolicy,
+): Promise<void> {
+  const state = await readDesktopPolicyState(config);
+  if (state[policy] === false) {
+    throw new ApiError(403, "policy_restricted", desktopPolicyRestrictionNotices[policy], { policy });
+  }
 }
 
 function resolveSandboxBackend(): Capabilities["sandbox"]["backend"] {
@@ -2960,6 +2978,7 @@ function createRoutes(
   addRoute(routes, "POST", "/workspace/:id/skills", "client", async (ctx) => {
     ensureWritable(config);
     requireClientScope(ctx, "collaborator");
+    await ensureDesktopPolicyAllows(config, "allowCreateSkills");
     const workspace = await resolveWorkspace(config, ctx.params.id);
     const body = await readJsonBody(ctx.request);
     const name = String(body.name ?? "");
@@ -2993,6 +3012,7 @@ function createRoutes(
   addRoute(routes, "DELETE", "/workspace/:id/skills/:name", "client", async (ctx) => {
     ensureWritable(config);
     requireClientScope(ctx, "collaborator");
+    await ensureDesktopPolicyAllows(config, "allowCreateSkills");
     const workspace = await resolveWorkspace(config, ctx.params.id);
     const name = String(ctx.params.name ?? "").trim();
     if (!name) {
@@ -3126,6 +3146,7 @@ function createRoutes(
   addRoute(routes, "POST", "/workspace/:id/mcp/managed", "client", async (ctx) => {
     ensureWritable(config);
     requireClientScope(ctx, "collaborator");
+    await ensureDesktopPolicyAllows(config, "allowAddMcpServers");
     const workspace = await resolveWorkspace(config, ctx.params.id);
     const body = await readJsonBody(ctx.request);
     const name = String(body.name ?? "").trim();
@@ -3263,6 +3284,7 @@ function createRoutes(
   addRoute(routes, "POST", "/workspace/:id/mcp", "client", async (ctx) => {
     ensureWritable(config);
     requireClientScope(ctx, "collaborator");
+    await ensureDesktopPolicyAllows(config, "allowAddMcpServers");
     const workspace = await resolveWorkspace(config, ctx.params.id);
     const body = await readJsonBody(ctx.request);
     const name = String(body.name ?? "");
@@ -3308,6 +3330,7 @@ function createRoutes(
   addRoute(routes, "DELETE", "/workspace/:id/mcp/:name", "client", async (ctx) => {
     ensureWritable(config);
     requireClientScope(ctx, "collaborator");
+    await ensureDesktopPolicyAllows(config, "allowAddMcpServers");
     const workspace = await resolveWorkspace(config, ctx.params.id);
     const name = ctx.params.name ?? "";
     await requireApproval(ctx, {
@@ -3345,6 +3368,7 @@ function createRoutes(
   addRoute(routes, "POST", "/workspace/:id/mcp/:name/enabled", "client", async (ctx) => {
     ensureWritable(config);
     requireClientScope(ctx, "collaborator");
+    await ensureDesktopPolicyAllows(config, "allowAddMcpServers");
     const workspace = await resolveWorkspace(config, ctx.params.id);
     const name = ctx.params.name ?? "";
     const body = await readJsonBody(ctx.request);

@@ -17,6 +17,22 @@ export function checkDesktopAppRestriction(input: {
   return input.config?.[input.restriction] === false;
 }
 
+export function resolveDesktopExtensionRestrictions(
+  checkRestriction: DesktopAppRestrictionChecker,
+) {
+  const extensionManagementRestricted = checkRestriction({
+    restriction: "allowManageExtensions",
+  });
+  return {
+    skillCreationRestricted:
+      checkRestriction({ restriction: "allowCreateSkills" }) ||
+      extensionManagementRestricted,
+    mcpAddRestricted:
+      checkRestriction({ restriction: "allowAddMcpServers" }) ||
+      extensionManagementRestricted,
+  };
+}
+
 export function isDesktopProviderBlocked(input: {
   providerId: string;
   checkRestriction: DesktopAppRestrictionChecker;

@@ -66,6 +66,24 @@ export const desktopPolicyDefinitions = [
     defaultValue: true,
   },
   {
+    id: "allowCreateSkills",
+    name: "Create skills",
+    description:
+      "Allow users to create or edit skills on this device. When disabled, only skills assigned by the organization are available.",
+    userNotice:
+      "Your organization administrator has disabled creating skills on this device.",
+    defaultValue: true,
+  },
+  {
+    id: "allowAddMcpServers",
+    name: "Add MCP servers",
+    description:
+      "Allow users to add MCP servers or connections on this device. When disabled, only organization-assigned connections are available.",
+    userNotice:
+      "Your organization administrator has disabled adding MCP servers on this device.",
+    defaultValue: true,
+  },
+  {
     id: "allowBuiltInExtensions",
     name: "Built-in Extensions",
     description:

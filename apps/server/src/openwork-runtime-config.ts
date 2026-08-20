@@ -21,6 +21,7 @@ import {
   openworkAnthropicAdaptiveThinkingPluginPath,
   openworkAnthropicToolSchemaPluginPath,
   openworkOfficeAttachmentsPluginPath,
+  openworkDesktopPolicyLockPluginPath,
 } from "./openwork-extensions-plugin-path.js";
 import type { ServerConfig } from "./types.js";
 import { runtimeStorageDir } from "./runtime-db.js";
@@ -124,6 +125,7 @@ export function buildOpenworkRuntimeConfigObjectFromSnapshot(
     },
     plugin: [
       "opencode-chrome-devtools",
+      openworkDesktopPolicyLockPluginPath(),
       openworkExtensionsPreviewPluginPath(),
       openworkCapabilitiesKnowledgePluginPath(),
       openworkOfficeAttachmentsPluginPath(),

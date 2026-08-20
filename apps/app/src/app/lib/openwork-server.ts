@@ -808,6 +808,17 @@ export type OpenworkConnectState = {
   googleWorkspace: { legacyConfigured: boolean };
 };
 
+export type OpenworkDesktopPolicyStateValue = {
+  allowCreateSkills: boolean;
+  allowAddMcpServers: boolean;
+};
+
+export type OpenworkDesktopPolicyState = {
+  ok: boolean;
+  schemaVersion: number;
+  state: OpenworkDesktopPolicyStateValue & { updatedAt: number };
+};
+
 export type OpenworkExtensionActionCall = {
   extensionId: string;
   action: string;
@@ -1529,6 +1540,7 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         timeoutMs: timeouts.config,
       })),
     setConnectState: (connectEnabled: boolean) => requestJson<OpenworkConnectState>(baseUrl, "/experimental/connect/state", { token, hostToken, method: "PUT", body: { connectEnabled }, timeoutMs: timeouts.config }),
+    setDesktopPolicyState: (state: OpenworkDesktopPolicyStateValue) => requestJson<OpenworkDesktopPolicyState>(baseUrl, "/experimental/desktop-policy/state", { token, hostToken, method: "PUT", body: state, timeoutMs: timeouts.config }),
     callExtensionAction: (payload: OpenworkExtensionActionCall) =>
       requestJson<OpenworkExtensionActionResult>(baseUrl, "/experimental/extensions/call", {
         token,

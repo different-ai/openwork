@@ -14,6 +14,7 @@ import { desktopPolicyKeys } from "@openwork/types/den/desktop-policies";
 
 import {
   checkDesktopAppRestriction,
+  resolveDesktopExtensionRestrictions,
   type DesktopAppRestrictionChecker,
 } from "../../../app/cloud/desktop-app-restrictions";
 import {
@@ -30,7 +31,10 @@ import {
   type DenDesktopConfig,
 } from "../../../app/lib/den";
 import { applyBrandAppName, applyBrandIcon, getBrandIconState } from "../../../app/lib/desktop";
-import { createOpenworkServerClient } from "../../../app/lib/openwork-server";
+import {
+  createOpenworkServerClient,
+  type OpenworkDesktopPolicyStateValue,
+} from "../../../app/lib/openwork-server";
 import {
   denSessionUpdatedEvent,
   denSettingsChangedEvent,
@@ -77,6 +81,19 @@ const DESKTOP_CONFIG_ITEMS = [
 
 export function resolveConnectStateToPush(config: DenDesktopConfig): boolean | null {
   return typeof config.connectEnabled === "boolean" ? config.connectEnabled : null;
+}
+
+export function resolveDesktopPolicyStateToPush(
+  config: DenDesktopConfig | null,
+): OpenworkDesktopPolicyStateValue | null {
+  if (!config) return null;
+  const restrictions = resolveDesktopExtensionRestrictions(({ restriction }) =>
+    checkDesktopAppRestriction({ config, restriction })
+  );
+  return {
+    allowCreateSkills: !restrictions.skillCreationRestricted,
+    allowAddMcpServers: !restrictions.mcpAddRestricted,
+  };
 }
 
 export const CONNECT_STATE_PUSH_RETRY_DELAY_MS = 3_000;
@@ -214,6 +231,7 @@ export function DesktopConfigProvider({ children }: DesktopConfigProviderProps) 
   // Monotonic run id — same guard-against-stale-resolution pattern as DenAuthProvider.
   const refreshRunRef = useRef(0);
   const lastPushedConnectEnabledRef = useRef<boolean | null>(null);
+  const lastPushedDesktopPolicyStateRef = useRef<string | null>(null);
   // Safe in-memory copy of the last config we actually applied. State drives
   // rendering, while this ref lets the handler compare without stale closures.
   const currentDesktopConfigRef = useRef<DenDesktopConfig>(DEFAULT_DESKTOP_CONFIG);
@@ -390,6 +408,10 @@ export function DesktopConfigProvider({ children }: DesktopConfigProviderProps) 
   }, [desktopConfigHandler, isSignedIn]);
 
   const connectEnabled = resolveConnectStateToPush(config);
+  const desktopPolicyState = resolveDesktopPolicyStateToPush(isSignedIn ? config : null);
+  const desktopPolicyStateKey = desktopPolicyState
+    ? `${desktopPolicyState.allowCreateSkills}:${desktopPolicyState.allowAddMcpServers}`
+    : null;
 
   useEffect(() => {
     if (loading) return;
@@ -420,6 +442,36 @@ export function DesktopConfigProvider({ children }: DesktopConfigProviderProps) 
       cancelled = true;
     };
   }, [connectEnabled, loading]);
+
+  useEffect(() => {
+    if (loading) return;
+    if (!desktopPolicyState || !desktopPolicyStateKey) return;
+    if (lastPushedDesktopPolicyStateRef.current === desktopPolicyStateKey) return;
+    let cancelled = false;
+
+    void deliverConnectState(
+      async () => {
+        const connection = await resolveOpenworkConnection();
+        if (!connection.normalizedBaseUrl || !connection.resolvedHostToken) return false;
+        await createOpenworkServerClient({
+          baseUrl: connection.normalizedBaseUrl,
+          token: connection.resolvedToken,
+          hostToken: connection.resolvedHostToken,
+        }).setDesktopPolicyState(desktopPolicyState);
+        return true;
+      },
+      (delayMs) => new Promise((resolveWait) => window.setTimeout(resolveWait, delayMs)),
+      () => cancelled,
+    ).then((delivered) => {
+      if (delivered && !cancelled) {
+        lastPushedDesktopPolicyStateRef.current = desktopPolicyStateKey;
+      }
+    }).catch(() => null);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [desktopPolicyStateKey, loading]);
 
   // Dev-only: expose a bridge so evals can inject config directly without
   // requiring a cloud sign-in. This simply applies the config to React state.
