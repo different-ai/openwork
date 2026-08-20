@@ -11,6 +11,7 @@ export interface AppOptions {
   place: Place;
   host?: Host;
   model?: string;
+  workspacePath?: string;
   /** Reuse this caller-owned local Electron profile root instead of creating one. */
   profileDir?: string;
   /** Eval-only delay before the desktop starts its embedded OpenWork server. */
@@ -49,7 +50,7 @@ export async function app(options: AppOptions): Promise<App> {
   try {
     // Workspace first, then the org sign-in: the signed-in org shell offers no
     // Add workspace entry, so a member's workspace exists before they connect.
-    const path = `/tmp/openwork-${options.as}-${Date.now()}`;
+    const path = options.workspacePath ?? `/tmp/openwork-${options.as}-${Date.now()}`;
     await createAndSelectWorkspace(surface, { path });
     await options.beforeSignIn?.(surface);
     await signInDesktopAs(surface, options.den.ref, member);

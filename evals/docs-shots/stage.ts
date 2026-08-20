@@ -3,12 +3,12 @@ import { mkdir, readFile, rm } from "node:fs/promises";
 import { resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
-import { createAndSelectWorkspace, denFetch, evalIn, signInDesktopAs, waitFor, createOrgConnection } from "@openwork/behaviors";
+import { denFetch, evalIn, waitFor, createOrgConnection } from "@openwork/behaviors";
 import type { DenSession } from "@openwork/behaviors";
 import { navigate } from "@openwork/cdp";
 import type { AttachedSurface } from "@openwork/cdp";
-import { chrome, desktop } from "@openwork/hosts";
-import { mcpMock, resolvePlace, server } from "@openwork/testkit/stack";
+import { chrome } from "@openwork/hosts";
+import { app, mcpMock, resolvePlace, server } from "@openwork/testkit/stack";
 import type { App, Den, Place } from "@openwork/testkit/stack";
 import { startModelWitness, WITNESS_MODEL_ID, WITNESS_PROVIDER_ID } from "./witness.ts";
 import type { ModelWitness } from "./witness.ts";
@@ -191,29 +191,15 @@ export class Stage {
   desktop(): Promise<App> {
     this.desktopPromise ??= (async () => {
       const { den } = await this.cloud();
-      const surface = await desktop({
-        name: "docs-shots",
-        host: this.place.host(),
-        bootstrap: { baseUrl: den.ref.webUrl, apiBaseUrl: den.ref.webUrl, requireSignin: false },
+      const desktopApp = await app({
+        den,
+        as: "admin",
+        place: this.place,
+        workspacePath: "/tmp/acme/acme-robotics",
       });
-      this.registerCleanup(() => surface[Symbol.asyncDispose]());
-      // Workspace first, then sign-in (the signed-in org shell offers no Add
-      // workspace entry), mirroring testkit's app() but with a docs-grade name.
-      const path = "/tmp/acme/acme-robotics";
-      await createAndSelectWorkspace(surface, { path });
-      await signInDesktopAs(surface, den.ref, den.admin);
-      const { workspaceId } = await createAndSelectWorkspace(surface, { path });
-      const desktopApp: App = {
-        handle: surface.handle,
-        client: surface.client,
-        readiness: surface.readiness,
-        workspaceRoot: surface.workspaceRoot,
-        workspaceId,
-        stop: () => surface.stop(),
-        [Symbol.asyncDispose]: () => surface[Symbol.asyncDispose](),
-      };
+      this.registerCleanup(() => desktopApp[Symbol.asyncDispose]());
       const witness = await this.witness();
-      await this.configureWorkspaceModel(desktopApp, workspaceId, witness.url);
+      await this.configureWorkspaceModel(desktopApp, desktopApp.workspaceId, witness.url);
       return desktopApp;
     })();
     return this.desktopPromise;
