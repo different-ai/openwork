@@ -8,7 +8,8 @@
       "types": "./src/index.ts",
       "development": "./src/index.ts",
       "default": "./src/index.ts"
-    }
+    },
+    "./stack": "./src/stack.ts"
   },
   "dependencies": {
     "@openwork/behaviors": "workspace:*",

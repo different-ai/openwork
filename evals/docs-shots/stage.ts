@@ -8,12 +8,8 @@ import type { DenSession } from "@openwork/behaviors";
 import { navigate } from "@openwork/cdp";
 import type { AttachedSurface } from "@openwork/cdp";
 import { chrome, desktop } from "@openwork/hosts";
-import type { App } from "../packages/testkit/src/app.ts";
-import { mcpMock } from "../packages/testkit/src/mock.ts";
-import { resolvePlace } from "../packages/testkit/src/place.ts";
-import type { Place } from "../packages/testkit/src/place.ts";
-import { server } from "../packages/testkit/src/server.ts";
-import type { Den } from "../packages/testkit/src/server.ts";
+import { mcpMock, resolvePlace, server } from "@openwork/testkit/stack";
+import type { App, Den, Place } from "@openwork/testkit/stack";
 import { startModelWitness, WITNESS_MODEL_ID, WITNESS_PROVIDER_ID } from "./witness.ts";
 import type { ModelWitness } from "./witness.ts";
 

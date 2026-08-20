@@ -1,6 +1,6 @@
 import { clickButton, evalIn, waitFor } from "@openwork/behaviors";
 import { connect, debuggerUrlFor, evaluate, listTargets } from "@openwork/cdp";
-import type { App } from "../../packages/testkit/src/app.ts";
+import type { App } from "@openwork/testkit/stack";
 import type { Scene } from "../scene.ts";
 import {
   CHAT_CLOSING_REPLY,
