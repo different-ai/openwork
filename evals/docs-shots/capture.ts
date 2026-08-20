@@ -1,48 +1,11 @@
 import { setTimeout as delay } from "node:timers/promises";
 import { evalIn } from "@openwork/behaviors";
+import { emulateFocus, freezeMotion, paintBackdrop, setViewport } from "@openwork/cdp";
 import type { Surface } from "@openwork/cdp";
 import { screenshot } from "@openwork/test-evidence";
-import type { Gate, Viewport } from "./scene.ts";
+import type { Gate } from "./scene.ts";
 
-export async function setViewport(surface: Surface, viewport: Viewport): Promise<void> {
-  await surface.client.send("Emulation.setDeviceMetricsOverride", {
-    width: viewport.width,
-    height: viewport.height,
-    deviceScaleFactor: viewport.deviceScaleFactor,
-    mobile: false,
-  });
-  // The capture window is never OS-focused; without focus emulation every
-  // shot shows the app's blurred (dimmed) state.
-  await surface.client.send("Emulation.setFocusEmulationEnabled", { enabled: true });
-  // The macOS vibrancy sidebar is a transparent renderer region (the OS
-  // composites the tint outside the page, so a raw capture has alpha-0
-  // pixels there). Paint the light vibrancy tone at the html level so the
-  // capture reads like the real focused window.
-  if (surface.handle.kind === "electron") {
-    await evalIn(surface, `(() => {
-      if (!document.getElementById("docs-shots-backdrop")) {
-        const style = document.createElement("style");
-        style.id = "docs-shots-backdrop";
-        style.textContent = "html { background-color: #232326 !important; }";
-        document.head.appendChild(style);
-      }
-      return true;
-    })()`);
-  }
-}
-
-/** Stop CSS motion and text carets so two clean frames can be pixel-identical. */
-export async function freezeMotion(surface: Surface): Promise<void> {
-  await evalIn(surface, `(() => {
-    if (!document.getElementById("docs-shots-freeze")) {
-      const style = document.createElement("style");
-      style.id = "docs-shots-freeze";
-      style.textContent = "*, *::before, *::after { animation: none !important; transition: none !important; caret-color: transparent !important; scroll-behavior: auto !important; }";
-      document.head.appendChild(style);
-    }
-    return true;
-  })()`);
-}
+export { emulateFocus, freezeMotion, paintBackdrop, setViewport };
 
 function gateFailures(gate: Gate, visibleText: string, route: string): string[] {
   const failures: string[] = [];

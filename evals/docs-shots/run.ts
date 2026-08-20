@@ -13,7 +13,7 @@
  */
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
-import { captureGated, freezeMotion, setViewport } from "./capture.ts";
+import { captureGated, emulateFocus, freezeMotion, paintBackdrop, setViewport } from "./capture.ts";
 import { DEFAULT_VIEWPORT } from "./scene.ts";
 import { scenes } from "./scenes/index.ts";
 import { REPO_ROOT, Stage } from "./stage.ts";
@@ -52,6 +52,14 @@ try {
     try {
       const surface = await scene.run(stage);
       await setViewport(surface, scene.viewport ?? DEFAULT_VIEWPORT);
+      // The capture window is never OS-focused; without focus emulation every
+      // shot shows the app's blurred (dimmed) state.
+      await emulateFocus(surface);
+      // The macOS vibrancy sidebar is a transparent renderer region (the OS
+      // composites the tint outside the page, so a raw capture has alpha-0
+      // pixels there). Paint the light vibrancy tone at the html level so the
+      // capture reads like the real focused window.
+      if (surface.handle.kind === "electron") await paintBackdrop(surface, "#232326");
       await freezeMotion(surface);
       const png = await captureGated(surface, scene.gate);
       const outPath = resolve(REPO_ROOT, scene.out);
