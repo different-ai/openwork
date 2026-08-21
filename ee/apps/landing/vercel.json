@@ -1,5 +1,11 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": "nextjs",
+  "git": {
+    "deploymentEnabled": {
+      "canary": false,
+      "experimental": false
+    }
+  },
   "buildCommand": "pnpm --dir ../../../packages/email build && pnpm --dir ../../../packages/ui build && pnpm exec next build"
 }
