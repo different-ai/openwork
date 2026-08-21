@@ -120,6 +120,7 @@ import {
   workspaceSetRuntimeActive,
   workspaceSetSelected,
   desktopBridge,
+  readDesktopDistributionInfo,
   type WorkspaceInfo,
   type WorkspaceList,
   revealDesktopItemInDir,
@@ -2539,6 +2540,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
             alphaChannelSupported={
               isElectronRuntime() &&
               isMacPlatform() &&
+              readDesktopDistributionInfo().flavor === "public" &&
               desktopConfig.config.allowAlphaUpdates !== false
             }
           />
