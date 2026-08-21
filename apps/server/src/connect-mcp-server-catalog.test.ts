@@ -12,6 +12,9 @@ import {
   readOpenWorkConnectMcpAppHostCatalog,
   readOpenWorkConnectMcpServerIndex,
   reconcileOpenWorkConnectMcpServers,
+  refreshOpenWorkConnectMcpAppHostCatalog,
+  writeOpenWorkConnectMcpAppHostAuthorization,
+  writeOpenWorkConnectMcpAppHostCatalog,
 } from "./connect-mcp-server-catalog.js";
 import { readRuntimeOpencodeConfig, writeRuntimeOpencodeConfig } from "./runtime-opencode-config-store.js";
 import type { ServerConfig } from "./types.js";
@@ -142,6 +145,63 @@ describe("OpenWork Connect MCP server catalog", () => {
         url: `https://api.openworklabs.com/mcp/agent/connections/${connectionId}`,
       }],
     });
+  });
+
+  test("opportunistically refreshes a stale private catalog from the runtime Cloud endpoint", async () => {
+    const config = await fixtureConfig();
+    const connectionId = "emc_01k28e8q8pf8r9sff9mhyqxved";
+    const requests: Array<{ url: string; headers: Headers; body: Record<string, unknown> }> = [];
+    await writeRuntimeOpencodeConfig(config, "ws_1", () => ({
+      mcp: {
+        "openwork-cloud": { type: "remote", url: "https://api.openworklabs.com/mcp/agent" },
+      },
+    }));
+    await writeOpenWorkConnectMcpAppHostAuthorization(
+      config,
+      "ws_1",
+      "Bearer private-app-host-token",
+      "https://api.openworklabs.com/mcp/agent",
+    );
+
+    const result = await refreshOpenWorkConnectMcpAppHostCatalog(config, "ws_1", indexFetcher(requests));
+
+    expect(result).toEqual({ status: "synced", appHostNames: [connectMcpAppHostName(connectionId)] });
+    expect((await readOpenWorkConnectMcpAppHostCatalog(config, "ws_1")).servers[0]?.connectionId).toBe(connectionId);
+    expect(requests.every((request) => request.headers.get("authorization") === "Bearer private-app-host-token")).toBe(true);
+  });
+
+  test("preserves the last known-good catalog when an opportunistic refresh is unavailable", async () => {
+    const config = await fixtureConfig();
+    const connectionId = "emc_01lastknowngood";
+    await writeRuntimeOpencodeConfig(config, "ws_1", () => ({
+      mcp: {
+        "openwork-cloud": { type: "remote", url: "https://api.openworklabs.com/mcp/agent" },
+      },
+    }));
+    await writeOpenWorkConnectMcpAppHostAuthorization(
+      config,
+      "ws_1",
+      "Bearer private-app-host-token",
+      "https://api.openworklabs.com/mcp/agent",
+    );
+    await writeOpenWorkConnectMcpAppHostCatalog(config, "ws_1", {
+      schemaVersion: "openwork.connect/mcp-servers/1",
+      servers: [{
+        connectionId,
+        name: "Last known good",
+        description: null,
+        url: `https://api.openworklabs.com/mcp/agent/connections/${connectionId}`,
+      }],
+    });
+
+    const result = await refreshOpenWorkConnectMcpAppHostCatalog(
+      config,
+      "ws_1",
+      async () => new Response(null, { status: 503 }),
+    );
+
+    expect(result).toEqual({ status: "unavailable", appHostNames: [] });
+    expect((await readOpenWorkConnectMcpAppHostCatalog(config, "ws_1")).servers[0]?.connectionId).toBe(connectionId);
   });
 
   test("fails closed and purges prior runtime entries when Cloud has no index", async () => {

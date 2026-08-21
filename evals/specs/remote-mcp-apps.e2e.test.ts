@@ -17,7 +17,7 @@ const title = !e2eTestsEnabled
     ? "Remote MCP Apps skipped — needs local placement without OPENWORK_EVAL_DEN_API_URL"
     : !mysqlOpen
       ? "Remote MCP Apps skipped — needs MySQL on 127.0.0.1:3306"
-      : "standard MCP Apps stay behind capability search while standalone URL Apps remain unavailable";
+      : "standard MCP Apps refresh after connection changes while standalone URL Apps remain unavailable";
 const providerId = "remote-mcp-apps-provider";
 const modelId = "remote-mcp-apps-model";
 const desktopClosingReply = "Project Atlas is open through its standard MCP server.";
@@ -872,6 +872,30 @@ test.skipIf(!e2eTestsEnabled || !localPlacement || !mysqlOpen)(title, { timeout:
     return "ok";
   })()`, { awaitPromise: true, timeoutMs: 60_000 });
   expect(configured).toBe("ok");
+
+  const lateConnection = await createOrgConnection(den.admin, {
+    name: "Atlas added after Desktop reconcile",
+    url: `${fixtureUrl}/mcp`,
+    authType: "none",
+    credentialMode: "shared",
+    access: { orgWide: true },
+  });
+  gatewayCapabilityName = `mcp:${lateConnection.id}:open_project_atlas`;
+  const refreshedIndexRead = await agentRpc(
+    den.ref.apiUrl,
+    appHostMcpToken,
+    "resources/read",
+    { uri: "openwork://connect/mcp-servers/index.json" },
+    "/mcp/agent",
+    appHostCapabilityHeaders,
+  );
+  const refreshedIndex = requireRecord(
+    JSON.parse(String(contentsFrom(refreshedIndexRead)[0]?.text ?? "{}")),
+    "refreshed Connect MCP server index",
+  );
+  const refreshedServers = Array.isArray(refreshedIndex.servers) ? refreshedIndex.servers.filter(isRecord) : [];
+  expect(refreshedServers).toContainEqual(expect.objectContaining({ connectionId: lateConnection.id }));
+
   await evalIn(desktopApp, "location.reload(); true");
   await waitFor(desktopApp, "Boolean(window.__openworkControl)", { timeoutMs: 30_000, label: "desktop control after reload" });
   const engineReady = await evalIn(desktopApp, `(async () => {
@@ -975,7 +999,7 @@ test.skipIf(!e2eTestsEnabled || !localPlacement || !mysqlOpen)(title, { timeout:
   expect(persistedMcpResult._meta).toEqual({
     source: "project-atlas-standard-mcp",
     "openwork/mcpApp": {
-      connectionId: connection.id,
+      connectionId: lateConnection.id,
       toolName: "open_project_atlas",
       resourceUri: connectedResourceUri,
       arguments: {},
@@ -1054,8 +1078,8 @@ test.skipIf(!e2eTestsEnabled || !localPlacement || !mysqlOpen)(title, { timeout:
   expect(standardMcpCalls).toBe(4);
 
   evidence.recordAssertionEvidence(
-    "Native MCP Apps stay bounded while standalone URL Apps remain unavailable",
-    `Kept every model-visible provider operation behind search_capabilities and execute_capability; exposed only the regular connected Project Atlas App binding on connection ${connection.id} to the App host; blocked direct provider access; proved the URL import tool, REST calls, Library button/form, capability matches, ui:// library resources, and standalone launch tools absent; completed the native MCP App handshake; then disabled the organization rollout, published an empty provider index, and preserved ordinary search/execute without MCP App launch metadata.`,
+    "Native MCP Apps refresh on a justified catalog miss while standalone URL Apps remain unavailable",
+    `Reconciled Desktop before adding connection ${lateConnection.id}, then rendered that newly added standard MCP App through search_capabilities and execute_capability without leaking provider tools into the model runtime. Kept direct provider access and standalone URL Apps unavailable; completed the native MCP App handshake; then disabled the organization rollout, published an empty provider index, and preserved ordinary search/execute without MCP App launch metadata.`,
     standardMcpCalls === 4 && mountedProjectAtlas,
   );
 });

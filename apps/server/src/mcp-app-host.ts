@@ -8,6 +8,7 @@ import {
   connectMcpAppHostName,
   findOpenWorkConnectMcpAppHostServer,
   readOpenWorkConnectMcpAppHostAuthorization,
+  refreshOpenWorkConnectMcpAppHostCatalog,
 } from "./connect-mcp-server-catalog.js";
 import type { ServerConfig } from "./types.js";
 import {
@@ -260,11 +261,21 @@ async function privateConnectMcpConfig(input: {
   connectionId?: string;
   serverName?: string;
 }): Promise<{ serverName: string; config: Record<string, unknown> } | null> {
-  const descriptor = await findOpenWorkConnectMcpAppHostServer(
+  let descriptor = await findOpenWorkConnectMcpAppHostServer(
     input.serverConfig,
     input.workspaceId,
     { connectionId: input.connectionId, serverName: input.serverName },
   );
+  if (!descriptor) {
+    const refreshed = await refreshOpenWorkConnectMcpAppHostCatalog(input.serverConfig, input.workspaceId);
+    if (refreshed.status === "synced") {
+      descriptor = await findOpenWorkConnectMcpAppHostServer(
+        input.serverConfig,
+        input.workspaceId,
+        { connectionId: input.connectionId, serverName: input.serverName },
+      );
+    }
+  }
   if (!descriptor) return null;
   const appHostAuthorization = await readOpenWorkConnectMcpAppHostAuthorization(
     input.serverConfig,

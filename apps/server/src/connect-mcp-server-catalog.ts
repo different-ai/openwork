@@ -3,7 +3,11 @@ import { z } from "zod";
 
 import { readMcpResourceText, type McpFetch } from "./connect-mcp-transport.js";
 import { readActivatedEnterpriseDenOrigin } from "./enterprise-den-origin.js";
-import { runtimeMcpMap, writeRuntimeOpencodeConfig } from "./runtime-opencode-config-store.js";
+import {
+  readRuntimeMcpConfig,
+  runtimeMcpMap,
+  writeRuntimeOpencodeConfig,
+} from "./runtime-opencode-config-store.js";
 import { externalFetch } from "./server-fetch.js";
 import type { ServerConfig, WorkspaceInfo } from "./types.js";
 import { createWorkspaceKvStore } from "./workspace-kv-store.js";
@@ -196,6 +200,37 @@ export async function readOpenWorkConnectMcpServerIndex(
   const cloudOrigin = endpointOrigin(cloudMcp.url);
   if (!cloudOrigin || parsed.data.servers.some((server) => endpointOrigin(server.url) !== cloudOrigin)) return null;
   return parsed.data;
+}
+
+/**
+ * Refreshes the private App-host catalog when a gateway launch proves the
+ * cached catalog may be stale. Unlike startup reconciliation, an unavailable
+ * opportunistic refresh preserves the last known-good catalog.
+ */
+export async function refreshOpenWorkConnectMcpAppHostCatalog(
+  config: ServerConfig,
+  workspaceId: string,
+  fetcher?: McpFetch,
+): Promise<{ status: "synced" | "unavailable"; appHostNames: string[] }> {
+  const cloudMcp = await readRuntimeMcpConfig(config, workspaceId, "openwork-cloud");
+  if (!cloudMcp || !await trustedAppHostCloudEndpoint(cloudMcp)) {
+    return { status: "unavailable", appHostNames: [] };
+  }
+  const appHostAuthorization = await readOpenWorkConnectMcpAppHostAuthorization(
+    config,
+    workspaceId,
+    String(cloudMcp.url),
+  );
+  if (!appHostAuthorization) return { status: "unavailable", appHostNames: [] };
+
+  const index = await readOpenWorkConnectMcpServerIndex(cloudMcp, appHostAuthorization, fetcher).catch(() => null);
+  if (!index) return { status: "unavailable", appHostNames: [] };
+
+  await writeOpenWorkConnectMcpAppHostCatalog(config, workspaceId, index);
+  return {
+    status: "synced",
+    appHostNames: index.servers.map((server) => connectMcpAppHostName(server.connectionId)).sort(),
+  };
 }
 
 /**

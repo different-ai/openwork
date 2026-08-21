@@ -12,7 +12,9 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { addMcp } from "./mcp.js";
 import {
+  CONNECT_MCP_SERVER_INDEX_URI,
   connectMcpAppHostName,
+  readOpenWorkConnectMcpAppHostCatalog,
   writeOpenWorkConnectMcpAppHostAuthorization,
   writeOpenWorkConnectMcpAppHostCatalog,
 } from "./connect-mcp-server-catalog.js";
@@ -58,8 +60,12 @@ function serverConfig(root: string): ServerConfig {
   };
 }
 
-async function startFixtureMcp(resourceContent: { text?: string; blob?: string } = { text: RESOURCE_HTML }) {
+async function startFixtureMcp(
+  resourceContent: { text?: string; blob?: string } = { text: RESOURCE_HTML },
+  connectionId?: string,
+) {
   let activeResourceUri = RESOURCE_URI;
+  let catalogReads = 0;
   const mcp = new Server(
     { name: "mcp-app-fixture", version: "1.0.0" },
     {
@@ -146,11 +152,51 @@ async function startFixtureMcp(resourceContent: { text?: string; blob?: string }
   }));
 
   let transport: WebStandardStreamableHTTPServerTransport;
+  let serverOrigin = "";
   const http = Bun.serve({
     hostname: "127.0.0.1",
     port: 0,
-    fetch: (request) => transport.handleRequest(request),
+    fetch: async (request): Promise<Response> => {
+      if (new URL(request.url).pathname !== "/catalog" || !connectionId) {
+        return await transport.handleRequest(request);
+      }
+      const body: unknown = await request.json();
+      const method = body && typeof body === "object" ? Reflect.get(body, "method") : null;
+      const id = body && typeof body === "object" ? Reflect.get(body, "id") : null;
+      if (method === "initialize") {
+        return Response.json({
+          jsonrpc: "2.0",
+          id,
+          result: { protocolVersion: "2025-06-18", capabilities: { resources: {} } },
+        });
+      }
+      if (method === "notifications/initialized") return new Response(null, { status: 202 });
+      if (method === "resources/read") {
+        catalogReads += 1;
+        return Response.json({
+          jsonrpc: "2.0",
+          id,
+          result: {
+            contents: [{
+              uri: CONNECT_MCP_SERVER_INDEX_URI,
+              mimeType: "application/json",
+              text: JSON.stringify({
+                schemaVersion: "openwork.connect/mcp-servers/1",
+                servers: [{
+                  connectionId,
+                  name: "Fixture provider",
+                  description: null,
+                  url: `${serverOrigin}/provider`,
+                }],
+              }),
+            }],
+          },
+        });
+      }
+      return new Response(null, { status: 404 });
+    },
   });
+  serverOrigin = `http://127.0.0.1:${http.port}`;
   const reconnect = async () => {
     await mcp.close();
     transport = new WebStandardStreamableHTTPServerTransport({
@@ -167,7 +213,9 @@ async function startFixtureMcp(resourceContent: { text?: string; blob?: string }
     http.stop(true);
   });
   return {
-    url: `http://127.0.0.1:${http.port}`,
+    url: `${serverOrigin}/provider`,
+    catalogUrl: `${serverOrigin}/catalog`,
+    catalogReads: () => catalogReads,
     activateUpdatedResource: async () => {
       activeResourceUri = UPDATED_RESOURCE_URI;
       // A stateful SDK server transport owns one initialized MCP session. The
@@ -183,7 +231,12 @@ async function configuredFixture(
   resourceContent?: { text?: string; blob?: string },
   mcpName = "fixture",
   connectionId?: string,
-): Promise<{ config: ServerConfig; root: string; activateUpdatedResource: () => Promise<void> }> {
+): Promise<{
+  config: ServerConfig;
+  root: string;
+  activateUpdatedResource: () => Promise<void>;
+  catalogReads: () => number;
+}> {
   const root = await mkdtemp(join(tmpdir(), prefix));
   const previousRuntimeDb = process.env.OPENWORK_RUNTIME_DB;
   const previousDevMode = process.env.OPENWORK_DEV_MODE;
@@ -198,7 +251,7 @@ async function configuredFixture(
   });
   await mkdir(join(root, ".git"), { recursive: true });
   const config = serverConfig(root);
-  const fixture = await startFixtureMcp(resourceContent);
+  const fixture = await startFixtureMcp(resourceContent, connectionId);
   const mcpConfig = {
     type: "remote",
     url: fixture.url,
@@ -210,18 +263,32 @@ async function configuredFixture(
       ...current,
       mcp: {
         ...runtimeMcpMap(current),
-        "openwork-cloud": { ...mcpConfig, headers: { Authorization: "Bearer member-token" } },
+        "openwork-cloud": {
+          ...mcpConfig,
+          url: fixture.catalogUrl,
+          headers: { Authorization: "Bearer member-token" },
+        },
       },
     }));
     await writeOpenWorkConnectMcpAppHostCatalog(config, WORKSPACE_ID, {
       schemaVersion: "openwork.connect/mcp-servers/1",
       servers: [{ connectionId, name: "Fixture provider", description: null, url: fixture.url }],
     });
-    await writeOpenWorkConnectMcpAppHostAuthorization(config, WORKSPACE_ID, "Bearer app-host-token", fixture.url);
+    await writeOpenWorkConnectMcpAppHostAuthorization(
+      config,
+      WORKSPACE_ID,
+      "Bearer app-host-token",
+      fixture.catalogUrl,
+    );
   } else {
     await addMcp(config, WORKSPACE_ID, mcpName, mcpConfig);
   }
-  return { config, root, activateUpdatedResource: fixture.activateUpdatedResource };
+  return {
+    config,
+    root,
+    activateUpdatedResource: fixture.activateUpdatedResource,
+    catalogReads: fixture.catalogReads,
+  };
 }
 
 describe("MCP Apps host transport", () => {
@@ -253,7 +320,7 @@ describe("MCP Apps host transport", () => {
   test("resolves a capability gateway launch through its exact native Connect tool", async () => {
     const connectionId = "emc_01mcpappgatewayfixture";
     const serverName = connectMcpAppHostName(connectionId);
-    const { config, root } = await configuredFixture(
+    const { config, root, catalogReads } = await configuredFixture(
       "openwork-mcp-app-host-gateway-",
       undefined,
       serverName,
@@ -278,6 +345,42 @@ describe("MCP Apps host transport", () => {
       html: RESOURCE_HTML,
     });
     expect(Object.keys(runtimeMcpMap(await readRuntimeOpencodeConfig(config, WORKSPACE_ID)))).toEqual(["openwork-cloud"]);
+    expect(catalogReads()).toBe(0);
+  });
+
+  test("refreshes a missing private catalog entry when a capability gateway launch arrives", async () => {
+    const connectionId = "emc_01mcpappgatewayrefresh";
+    const serverName = connectMcpAppHostName(connectionId);
+    const { config, root, catalogReads } = await configuredFixture(
+      "openwork-mcp-app-host-gateway-refresh-",
+      undefined,
+      serverName,
+      connectionId,
+    );
+    await writeOpenWorkConnectMcpAppHostCatalog(config, WORKSPACE_ID, {
+      schemaVersion: "openwork.connect/mcp-servers/1",
+      servers: [],
+    });
+
+    const app = await resolveConnectMcpAppResource({
+      serverConfig: config,
+      workspaceId: WORKSPACE_ID,
+      workspaceRoot: root,
+      launch: {
+        connectionId,
+        toolName: "render_fixture",
+        resourceUri: RESOURCE_URI,
+      },
+    });
+
+    expect(app).toMatchObject({
+      serverName,
+      toolName: "render_fixture",
+      resourceUri: RESOURCE_URI,
+      html: RESOURCE_HTML,
+    });
+    expect((await readOpenWorkConnectMcpAppHostCatalog(config, WORKSPACE_ID)).servers[0]?.connectionId).toBe(connectionId);
+    expect(catalogReads()).toBe(1);
   });
 
   test("rejects a stale private catalog endpoint outside the credential's trusted origin", async () => {
