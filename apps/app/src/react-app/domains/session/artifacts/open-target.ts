@@ -26,6 +26,10 @@ export type OpenTarget = {
   exists?: boolean;
   size?: number;
   updatedAt?: number;
+  // Bumped each time a write tool touches this path within the transcript, so
+  // callers can detect a re-write of the same file even when id/confidence
+  // are unchanged and force re-verification against disk.
+  revision?: number;
 };
 
 const WORKSPACES_PREFIX_PATTERN = /^workspaces\/[^/]+\//i;
@@ -122,9 +126,19 @@ export function filePathFromFileUrl(url: string): string | null {
   }
 }
 
-function targetFromFile(path: string, confidence: number, reason: string): OpenTarget | null {
+function normalizedFilePath(path: string): string | null {
   const normalized = normalizePath(path).replace(/[.,;:]+$/, "");
-  if (!normalized || normalized.length > 500 || !normalized.includes(".")) return null;
+  return !normalized || normalized.length > 500 || !normalized.includes(".") ? null : normalized;
+}
+
+function fileTargetId(path: string): string | null {
+  const normalized = normalizedFilePath(path);
+  return normalized ? `file:${normalized.toLowerCase()}` : null;
+}
+
+function targetFromFile(path: string, confidence: number, reason: string): OpenTarget | null {
+  const normalized = normalizedFilePath(path);
+  if (!normalized) return null;
   return {
     id: `file:${normalized.toLowerCase()}`,
     kind: "file",
@@ -296,8 +310,22 @@ function addFileValues(map: Map<string, OpenTarget>, values: string[], confidenc
   }
 }
 
+/**
+ * Records that a write tool touched `path` in this transcript. A repeat edit
+ * of the same file otherwise produces an identical id/confidence, giving
+ * callers no signal that the file changed again and needs re-verifying
+ * against disk (stale mtime/preview).
+ */
+function trackWriteTouch(touchCounts: Map<string, number>, values: string[]) {
+  for (const value of values) {
+    const id = fileTargetId(value);
+    if (id) touchCounts.set(id, (touchCounts.get(id) ?? 0) + 1);
+  }
+}
+
 export function deriveOpenTargets(messages: UIMessage[], options: DeriveOpenTargetsOptions = {}): OpenTarget[] {
   const targets = new Map<string, OpenTarget>();
+  const writeTouchCounts = new Map<string, number>();
 
   for (const message of messages) {
     for (const part of message.parts) {
@@ -338,13 +366,14 @@ export function deriveOpenTargets(messages: UIMessage[], options: DeriveOpenTarg
       const artifactMetadataTool = isArtifactMetadataTool(part.toolName);
 
       if (writeTool) {
-        addFileValues(
-          targets,
-          [part.input, part.output].flatMap(collectFileMetadataValues),
-          95,
-          "write tool metadata",
-        );
-        addFileValues(targets, collectPatchFileValues(part.input), 95, "patch metadata");
+        const metadataValues = [part.input, part.output].flatMap(collectFileMetadataValues);
+        const patchValues = collectPatchFileValues(part.input);
+
+        addFileValues(targets, metadataValues, 95, "write tool metadata");
+        addFileValues(targets, patchValues, 95, "patch metadata");
+        trackWriteTouch(writeTouchCounts, metadataValues);
+        trackWriteTouch(writeTouchCounts, patchValues);
+
         if (typeof part.output === "string") {
           scanText(targets, part.output, 90, "write tool output", { includeFiles: true });
         }
@@ -367,5 +396,9 @@ export function deriveOpenTargets(messages: UIMessage[], options: DeriveOpenTarg
 
   return Array.from(targets.values())
     .filter(isArtifactTarget)
+    .map((target) => {
+      const revision = writeTouchCounts.get(target.id);
+      return revision ? { ...target, revision } : target;
+    })
     .sort((left, right) => right.confidence - left.confidence);
 }
