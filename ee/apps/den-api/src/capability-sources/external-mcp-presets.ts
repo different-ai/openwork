@@ -77,6 +77,13 @@ export const EXTERNAL_MCP_PRESETS: ExternalMcpPreset[] = [
     authType: "oauth",
   },
   {
+    presetId: "xquik",
+    displayName: "Xquik",
+    description: "Search tweets, inspect profiles, export followers, and automate X workflows.",
+    url: "https://xquik.com/mcp",
+    authType: "oauth",
+  },
+  {
     presetId: "slack",
     displayName: "Slack",
     description: "Channels, DMs, and search. Slack has no automatic app registration — paste your Slack app's OAuth client once; each person then connects their own account.",

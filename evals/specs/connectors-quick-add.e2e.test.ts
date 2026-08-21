@@ -81,11 +81,11 @@ test(title, async ({ evidence, place }) => {
       && Boolean(document.querySelector('[data-testid="connector-quick-add-grid"]'))
       && groupHeaders.includes("From your workspace suite")
       && groupHeaders.includes("MCP servers")
-      && document.querySelectorAll('[data-testid^="quick-add-preset-"]').length === 10
+      && document.querySelectorAll('[data-testid^="quick-add-preset-"]').length === 11
       && (document.querySelector('[data-testid="quick-add-preset-slack"]')?.textContent ?? "").includes("OAuth app required")
       && (document.querySelector('[data-testid="quick-add-preset-exa"]')?.textContent ?? "").includes("API key")
       && (document.querySelector('[data-testid="quick-add-preset-context7"]')?.textContent ?? "").includes("Instant")
-      && (document.querySelector('[data-testid="quick-add-preset-notion"]')?.textContent ?? "").includes("One-click");
+      && (document.querySelector('[data-testid="quick-add-preset-xquik"]')?.textContent ?? "").includes("One-click");
   })()`, {
     timeoutMs: 60_000,
     label: "full connectors quick-add bar, groups, and preset effort badges",
@@ -107,12 +107,12 @@ test(title, async ({ evidence, place }) => {
     const headers = [...document.querySelectorAll("h4")].map((entry) => (entry.textContent ?? "").trim());
     return headers.includes("From your workspace suite") && headers.includes("MCP servers");
   })()`);
-  expect(fullPresetCount).toBe(10);
+  expect(fullPresetCount).toBe(11);
   expect(bothGroupHeaders).toBe(true);
   evidence.recordAssertionEvidence(
-    "Quick add separates the workspace suite from all ten MCP server presets",
+    "Quick add separates the workspace suite from all eleven MCP server presets",
     `Both group headers present: ${String(bothGroupHeaders)}; MCP preset tiles: ${String(fullPresetCount)}.`,
-    bothGroupHeaders === true && fullPresetCount === 10,
+    bothGroupHeaders === true && fullPresetCount === 11,
   );
 
   const effortBadgesMatch = await evalIn(browser, `(() => {
@@ -120,12 +120,12 @@ test(title, async ({ evidence, place }) => {
     return text("quick-add-preset-slack").includes("OAuth app required")
       && text("quick-add-preset-exa").includes("API key")
       && text("quick-add-preset-context7").includes("Instant")
-      && text("quick-add-preset-notion").includes("One-click");
+      && text("quick-add-preset-xquik").includes("One-click");
   })()`);
   expect(effortBadgesMatch).toBe(true);
   evidence.recordAssertionEvidence(
     "Preset tiles disclose OAuth-app, API-key, instant, and one-click setup effort",
-    "Slack showed OAuth app required; Exa showed API key; Context7 showed Instant; Notion showed One-click.",
+    "Slack showed OAuth app required; Exa showed API key; Context7 showed Instant; Xquik showed One-click.",
     effortBadgesMatch === true,
   );
   // Context7's Instant mechanism is covered without clicking it here: doing so
@@ -165,7 +165,7 @@ test(title, async ({ evidence, place }) => {
   );
 
   await replaceSmartBarText(browser, "");
-  await waitFor(browser, `document.querySelectorAll('[data-testid^="quick-add-preset-"]').length === 10`, {
+  await waitFor(browser, `document.querySelectorAll('[data-testid^="quick-add-preset-"]').length === 11`, {
     timeoutMs: 20_000,
     label: "full preset grid after clearing the smart bar",
   });
@@ -226,10 +226,10 @@ test(title, async ({ evidence, place }) => {
     const notice = [...document.querySelectorAll('[role="status"]')]
       .find((entry) => (entry.textContent ?? "").includes("added for everyone"));
     return Boolean(row && notice)
-      && document.querySelectorAll('[data-testid^="quick-add-preset-"]').length === 10;
+      && document.querySelectorAll('[data-testid^="quick-add-preset-"]').length === 11;
   })()`, {
     timeoutMs: 60_000,
-    label: "created mock connection row, success notice, and restored ten-preset grid",
+    label: "created mock connection row, success notice, and restored eleven-preset grid",
   });
 
   const createdRowTestId = await evalIn(browser, `([...document.querySelectorAll('[data-testid^="mcp-connection-row-"]')]
@@ -238,16 +238,16 @@ test(title, async ({ evidence, place }) => {
   const restoredPresetCount = await evalIn(browser, `document.querySelectorAll('[data-testid^="quick-add-preset-"]').length`);
   expect(typeof createdRowTestId).toBe("string");
   expect(createdRowTestId).toMatch(/^mcp-connection-row-/);
-  expect(restoredPresetCount).toBe(10);
+  expect(restoredPresetCount).toBe(11);
   // This mock connection uses a custom URL, so no curated tile should flip to
   // Added. The Added/Manage tile mechanism has focused Bun coverage; this app
-  // spec scopes frame 6 to the real row plus the unaffected ten-preset grid.
+  // spec scopes frame 6 to the real row plus the unaffected eleven-preset grid.
   evidence.recordAssertionEvidence(
     "Add connection creates a row in Your connectors without disturbing the preset grid",
     `Created row test id: ${String(createdRowTestId)}; remaining preset tiles: ${String(restoredPresetCount)}.`,
     typeof createdRowTestId === "string"
       && createdRowTestId.startsWith("mcp-connection-row-")
-      && restoredPresetCount === 10,
+      && restoredPresetCount === 11,
   );
 
   const handshakes = await connector.handshakes({

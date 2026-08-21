@@ -87,11 +87,13 @@ describe("matchPresetForQuery", () => {
     expect(matchPresetForQuery("notion", EXTERNAL_MCP_PRESETS)?.presetId).toBe("notion")
     expect(matchPresetForQuery("  Linear ", EXTERNAL_MCP_PRESETS)?.presetId).toBe("linear")
     expect(matchPresetForQuery("CONTEXT7", EXTERNAL_MCP_PRESETS)?.presetId).toBe("context7")
+    expect(matchPresetForQuery("Xquik", EXTERNAL_MCP_PRESETS)?.presetId).toBe("xquik")
   })
 
   test("matches by preset URL host for URL and domain queries", () => {
     expect(matchPresetForQuery("https://mcp.notion.com/mcp", EXTERNAL_MCP_PRESETS)?.presetId).toBe("notion")
     expect(matchPresetForQuery("mcp.stripe.com", EXTERNAL_MCP_PRESETS)?.presetId).toBe("stripe")
+    expect(matchPresetForQuery("https://xquik.com/mcp", EXTERNAL_MCP_PRESETS)?.presetId).toBe("xquik")
   })
 
   test("returns null for unknown names", () => {
