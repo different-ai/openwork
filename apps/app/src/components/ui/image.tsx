@@ -72,7 +72,7 @@ export const Image = ({
         aria-label={alt}
         role="img"
         className={cn(
-          "h-24 w-40 animate-pulse overflow-hidden rounded-md bg-gray-100 dark:bg-neutral-800",
+          "h-24 w-40 animate-pulse overflow-hidden rounded-md bg-gray-3 dark:bg-gray-8",
           className
         )}
         {...props}

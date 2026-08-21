@@ -49,13 +49,13 @@ export const errorBannerClass =
   "rounded-[20px] border border-red-7/20 bg-red-1/40 px-4 py-3 text-[13px] text-red-11";
 
 export const successBannerClass =
-  "rounded-[20px] border border-emerald-7/20 bg-emerald-3/30 px-4 py-3 text-[13px] text-emerald-11";
+  "rounded-[20px] border border-green-7/20 bg-green-3/30 px-4 py-3 text-[13px] text-green-11";
 
 export const modalNoticeNeutralClass =
   "rounded-xl border border-dls-border bg-dls-hover px-3 py-2.5 text-[13px] leading-relaxed text-dls-text";
 
 export const modalNoticeSuccessClass =
-  "rounded-xl border border-dls-border bg-emerald-2/25 px-3 py-2.5 text-[13px] leading-relaxed text-dls-text";
+  "rounded-xl border border-dls-border bg-green-2/25 px-3 py-2.5 text-[13px] leading-relaxed text-dls-text";
 
 export const modalNoticeErrorClass =
   "rounded-xl border border-dls-border bg-red-2/20 px-3 py-2.5 text-[13px] leading-relaxed text-dls-text";
