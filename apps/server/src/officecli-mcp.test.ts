@@ -21,6 +21,15 @@ afterEach(() => {
   Object.defineProperty(process, "platform", { value: previousPlatform });
 });
 
+async function removeWorkspaceRoot(workspaceRoot: string) {
+  try {
+    await rm(workspaceRoot, { recursive: true, force: true });
+  } catch (error) {
+    if (error && typeof error === "object" && "code" in error && error.code === "EBUSY") return;
+    throw error;
+  }
+}
+
 function testServerConfig(workspaceRoot: string, workspaceId: string): ServerConfig {
   return {
     host: "127.0.0.1",
@@ -54,7 +63,7 @@ describe("resolveOfficeCliBinary", () => {
       });
       expect(resolved).toBe(binary);
     } finally {
-      await rm(root, { recursive: true, force: true });
+      await removeWorkspaceRoot(root);
     }
   });
 
@@ -72,7 +81,7 @@ describe("resolveOfficeCliBinary", () => {
       });
       expect(resolved).toBe(binary);
     } finally {
-      await rm(root, { recursive: true, force: true });
+      await removeWorkspaceRoot(root);
     }
   });
 
@@ -102,7 +111,7 @@ describe("officecli provision state", () => {
       expect(await readOfficeCliProvisionState(config, workspaceId)).toBe("removed");
     } finally {
       process.env.OPENWORK_RUNTIME_DB = previousDb;
-      await rm(workspaceRoot, { recursive: true, force: true });
+      await removeWorkspaceRoot(workspaceRoot);
     }
   });
 });
@@ -128,7 +137,7 @@ describe("reconcileOfficeCliMcp", () => {
       });
     } finally {
       process.env.OPENWORK_RUNTIME_DB = previousDb;
-      await rm(workspaceRoot, { recursive: true, force: true });
+      await removeWorkspaceRoot(workspaceRoot);
     }
   });
 
@@ -147,7 +156,7 @@ describe("reconcileOfficeCliMcp", () => {
       expect(await readRuntimeOpencodeConfig(config, workspaceId)).toEqual({});
     } finally {
       process.env.OPENWORK_RUNTIME_DB = previousDb;
-      await rm(workspaceRoot, { recursive: true, force: true });
+      await removeWorkspaceRoot(workspaceRoot);
     }
   });
 
@@ -178,7 +187,7 @@ describe("reconcileOfficeCliMcp", () => {
       expect(runtime.mcp?.[OFFICECLI_MCP_NAME]?.command).toEqual([userBinary, "mcp"]);
     } finally {
       process.env.OPENWORK_RUNTIME_DB = previousDb;
-      await rm(workspaceRoot, { recursive: true, force: true });
+      await removeWorkspaceRoot(workspaceRoot);
     }
   });
 });
@@ -201,7 +210,7 @@ describe("reconcileOfficeCliMcpForAllWorkspaces", () => {
     } finally {
       delete process.env.OPENWORK_OFFICECLI_PATH;
       process.env.OPENWORK_RUNTIME_DB = previousDb;
-      await rm(workspaceRoot, { recursive: true, force: true });
+      await removeWorkspaceRoot(workspaceRoot);
     }
   });
 });
@@ -223,7 +232,7 @@ describe("officecli managed delete opt-out", () => {
       expect(retry).toBe("skipped");
     } finally {
       process.env.OPENWORK_RUNTIME_DB = previousDb;
-      await rm(workspaceRoot, { recursive: true, force: true });
+      await removeWorkspaceRoot(workspaceRoot);
     }
   });
 });
