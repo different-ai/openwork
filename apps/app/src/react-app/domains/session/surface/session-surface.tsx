@@ -309,6 +309,8 @@ export type SessionSurfaceProps = {
   modelPickerOpen: boolean;
   modelUnavailable?: boolean;
   modelUnavailableMessage?: string | null;
+  /** Source workspace name when this session was imported, else null. Imported sessions are read-only. */
+  sessionImportedFrom?: string | null;
   organizationModelsEmpty?: boolean;
   selectedModel: ModelRef;
   /** providerID → modelID → provider model, for per-session variant options. */
@@ -2165,7 +2167,11 @@ export function SessionSurface(props: SessionSurfaceProps) {
         steering={steering}
         submissionPreparing={preparingCloudTools}
         queuedCount={queuedItems.length}
-        disabled={model.transitionState !== "idle" || Boolean(props.modelUnavailable)}
+        disabled={model.transitionState !== "idle" || Boolean(props.modelUnavailable) || Boolean(props.sessionImportedFrom)}
+        readOnly={Boolean(props.sessionImportedFrom)}
+        readOnlyMessage={props.sessionImportedFrom
+          ? `${t("session_management.read_only_notice", { workspace: props.sessionImportedFrom })} ${t("session_management.read_only_hint")}`
+          : null}
         modelUnavailable={Boolean(props.modelUnavailable)}
         modelUnavailableMessage={props.modelUnavailableMessage}
         organizationModelsEmpty={props.organizationModelsEmpty}

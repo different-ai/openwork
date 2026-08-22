@@ -19,6 +19,13 @@ import { captureAnalyticsEvent, markTaskRunStart } from "@/app/lib/analytics";
 import { trackSessionActive, trackTaskStarted } from "@/app/lib/den-telemetry";
 import { buildDiagnosticsBundleJson } from "@/app/lib/diagnostics-bundle";
 import { downloadTextAsFile } from "@/app/lib/download";
+import {
+  pickSessionBundleFileText,
+  readSessionBundleFile,
+  sessionExportFilename,
+  workspaceSessionsExportFilename,
+} from "@/app/lib/session-transfer";
+import type { WorkspaceSessionImports } from "@/react-app/domains/session/sidebar/utils";
 import { canCreateWorkspaces } from "@/app/lib/workspace-creation-policy";
 import { createClient, unwrap } from "@/app/lib/opencode";
 import { abortSessionSafe, forkSession, listCommands, revertSession, setSessionArchived, shellInSession, unrevertSession } from "@/app/lib/opencode-session";
@@ -1250,8 +1257,23 @@ export function SessionRoute() {
 
   const extensionsMainOpen = /^\/(?:workspace\/[^/]+\/)?extensions(?:\/|$)/.test(location.pathname);
 
-  const surfaceProps = useMemo(() => {
-    if (!client || !selectedWorkspaceId || !selectedSessionId || !opencodeBaseUrl || !token || !opencodeClient) {
+  // Provenance for imported sessions, loaded per workspace. A workspace whose
+  // server is unreachable simply has no marks: this must never block or fail
+  // route state.
+  const [sessionImportsByWorkspaceId, setSessionImportsByWorkspaceId] = useState<WorkspaceSessionImports>({});
+
+  /**
+   * Imported sessions are read-only. The server refuses transcript writes, and
+   * this drives the visible half so the composer explains itself instead of
+   * failing on send.
+   */
+  const selectedSessionImportedFrom = useMemo(() => {
+    if (!selectedWorkspaceId || !selectedSessionId) return null;
+    const mark = sessionImportsByWorkspaceId[selectedWorkspaceId]?.[selectedSessionId];
+    return mark ? mark.sourceWorkspaceName : null;
+  }, [selectedSessionId, selectedWorkspaceId, sessionImportsByWorkspaceId]);
+
+  const surfaceProps = useMemo(() => {    if (!client || !selectedWorkspaceId || !selectedSessionId || !opencodeBaseUrl || !token || !opencodeClient) {
       return null;
     }
 
@@ -1293,6 +1315,7 @@ export function SessionRoute() {
       modelPickerOpen: modelPicker.compactOpen,
       modelUnavailable: selectedModelUnavailable,
       modelUnavailableMessage,
+      sessionImportedFrom: selectedSessionImportedFrom,
       organizationModelsEmpty,
       selectedModel: local.prefs.defaultModel ?? { providerID: "", modelID: "" },
       openWorkModelsEntitled,
@@ -1746,6 +1769,30 @@ export function SessionRoute() {
     }
   }, [client, refreshRouteState, renameWorkspaceId, renameWorkspaceTitle]);
 
+  const refreshSessionImports = useCallback(async () => {
+    const entries = await Promise.all(
+      workspaces.map(async (workspace) => {
+        const endpoint = endpointForWorkspace(workspace);
+        if (!endpoint) return null;
+        try {
+          const result = await endpoint.client.getSessionImports(endpoint.workspaceId);
+          return { workspaceId: workspace.id, marks: result.marks };
+        } catch {
+          return null;
+        }
+      }),
+    );
+    const next: WorkspaceSessionImports = {};
+    for (const entry of entries) {
+      if (entry) next[entry.workspaceId] = entry.marks;
+    }
+    setSessionImportsByWorkspaceId(next);
+  }, [endpointForWorkspace, workspaces]);
+
+  useEffect(() => {
+    void refreshSessionImports();
+  }, [refreshSessionImports]);
+
   const handleRevealWorkspace = useCallback(async (workspaceId: string) => {
     const workspace = workspaces.find((item) => item.id === workspaceId);
     const path = workspace?.path?.trim();
@@ -1784,8 +1831,99 @@ export function SessionRoute() {
     [endpointForWorkspace, workspaces],
   );
 
-  const handleForgetWorkspace = useCallback(
+  // Session export/import. The app always asks the server to strip secret-like
+  // values ("exclude"), so a shared transcript never carries a token by
+  // accident. Raw transcripts remain reachable through the API.
+  const handleExportSession = useCallback(
+    async (workspaceId: string, sessionId: string, format: "json" | "markdown") => {
+      const workspace = workspaces.find((item) => item.id === workspaceId) ?? null;
+      const endpoint = workspace ? endpointForWorkspace(workspace) : null;
+      if (!endpoint) {
+        toast.error(t("session_management.export_failed"), {
+          description: "OpenWork server is unavailable. Reconnect the server before exporting.",
+        });
+        return;
+      }
+      try {
+        const sessionTitle =
+          (sessionsByWorkspaceId[workspaceId] ?? []).find((item) => item.id === sessionId)?.title?.trim()
+          || sessionId;
+        const payload = await endpoint.client.exportSession(endpoint.workspaceId, sessionId, {
+          format,
+          sensitiveMode: "exclude",
+        });
+        const filename = sessionExportFilename(sessionTitle, format);
+        if (typeof payload === "string") {
+          downloadTextAsFile(filename, payload, "text/markdown");
+        } else {
+          downloadTextAsFile(filename, `${JSON.stringify(payload, null, 2)}\n`, "application/json");
+        }
+        toast.success(t("session_management.export_done"));
+      } catch (error) {
+        toast.error(t("session_management.export_failed"), { description: describeRouteError(error) });
+      }
+    },
+    [endpointForWorkspace, sessionsByWorkspaceId, workspaces],
+  );
+
+  const handleExportWorkspaceSessions = useCallback(
     async (workspaceId: string) => {
+      const workspace = workspaces.find((item) => item.id === workspaceId) ?? null;
+      const endpoint = workspace ? endpointForWorkspace(workspace) : null;
+      if (!workspace || !endpoint) {
+        toast.error(t("session_management.export_failed"), {
+          description: "OpenWork server is unavailable. Reconnect the server before exporting.",
+        });
+        return;
+      }
+      try {
+        const payload = await endpoint.client.exportWorkspaceSessions(endpoint.workspaceId, {
+          sensitiveMode: "exclude",
+        });
+        downloadTextAsFile(
+          workspaceSessionsExportFilename(workspaceLabel(workspace), "json"),
+          `${JSON.stringify(payload, null, 2)}\n`,
+          "application/json",
+        );
+        toast.success(t("session_management.export_done"));
+      } catch (error) {
+        toast.error(t("session_management.export_failed"), { description: describeRouteError(error) });
+      }
+    },
+    [endpointForWorkspace, workspaces],
+  );
+
+  const handleImportSessions = useCallback(
+    async (workspaceId: string) => {
+      const workspace = workspaces.find((item) => item.id === workspaceId) ?? null;
+      const endpoint = workspace ? endpointForWorkspace(workspace) : null;
+      if (!endpoint) {
+        toast.error(t("session_management.import_failed"), {
+          description: "OpenWork server is unavailable. Reconnect the server before importing.",
+        });
+        return;
+      }
+      const text = await pickSessionBundleFileText();
+      if (text === null) return;
+      try {
+        const bundle = readSessionBundleFile(text);
+        const result = await endpoint.client.importSessions(endpoint.workspaceId, bundle);
+        const count = result.imported.length;
+        toast.success(
+          count === 1
+            ? t("session_management.import_done_one", { count })
+            : t("session_management.import_done_other", { count }),
+        );
+        await refreshRouteState();
+        await refreshSessionImports();
+      } catch (error) {
+        toast.error(t("session_management.import_failed"), { description: describeRouteError(error) });
+      }
+    },
+    [endpointForWorkspace, refreshRouteState, refreshSessionImports, workspaces],
+  );
+
+  const handleForgetWorkspace = useCallback(    async (workspaceId: string) => {
       if (typeof window !== "undefined") {
         const message =
           t("workspace_list.remove_confirm") ||
@@ -2704,6 +2842,7 @@ export function SessionRoute() {
         selectedSessionId,
         developerMode: false,
         sessionStatusById: sidebarSessionStatusById,
+        sessionImportsByWorkspaceId,
         connectingWorkspaceId: null,
         workspaceConnectionStateById,
         newTaskDisabled: !canCreateTask,
@@ -2803,6 +2942,15 @@ export function SessionRoute() {
         },
         onOpenRenameWorkspace: handleOpenRenameWorkspace,
         onShareWorkspace: handleShareWorkspace,
+        onExportSession: (workspaceId, sessionId, format) => {
+          void handleExportSession(workspaceId, sessionId, format);
+        },
+        onExportWorkspaceSessions: (workspaceId) => {
+          void handleExportWorkspaceSessions(workspaceId);
+        },
+        onImportSessions: (workspaceId) => {
+          void handleImportSessions(workspaceId);
+        },
         onRevealWorkspace: (id) => void handleRevealWorkspace(id),
         onRecoverWorkspace: (workspaceId) => runRemoteWorkspaceConnectionCheck(workspaceId, "recover"),
         onTestWorkspaceConnection: (workspaceId) => runRemoteWorkspaceConnectionCheck(workspaceId, "test"),

@@ -5,6 +5,7 @@ import type { createClient } from "../../../../app/lib/opencode";
 import type { OpenworkServerClient, OpenworkWorkspaceInfo } from "../../../../app/lib/openwork-server";
 import { setSessionArchived } from "../../../../app/lib/opencode-session";
 import { getDisplaySessionTitle } from "../../../../app/lib/session-title";
+import { readSessionBundleFile } from "../../../../app/lib/session-transfer";
 import { useControlAction, type OpenworkControlAction } from "../../../shell/control/control-provider";
 import { useSessionManagementStore } from "../sidebar/session-management-store";
 import { useWorkbenchStore } from "../chat/workbench-store";
@@ -216,8 +217,89 @@ export function useSessionControlActions(input: UseSessionControlActionsInput) {
   }), [navigateToSessionRoot, openworkClient, refreshRouteState, selectedSessionId, sessionsByWorkspaceId, workspaces]);
   useControlAction(deleteSessionControlAction);
 
-  const modelPickerControlAction = useMemo<OpenworkControlAction>(() => ({
-    id: "session.model_picker.open",
+  const exportSessionControlAction = useMemo<OpenworkControlAction>(() => ({
+    id: "session.export",
+    label: "Export a session",
+    description:
+      "Export one session, or every session in a workspace, as a shareable bundle. JSON can be imported back; markdown is for reading.",
+    kind: "query",
+    effects: { data: "read", ui: "none", external: false },
+    sideEffect: "none",
+    requiresArgs: true,
+    args: [
+      { name: "sessionId", type: "string", required: false, description: "Session ID. Omit to export the whole workspace." },
+      { name: "workspaceId", type: "string", required: false, description: "Workspace ID. Defaults to the selected workspace." },
+      { name: "format", type: "string", required: false, description: "json (default) or markdown." },
+    ],
+    disabled: !openworkClient,
+    execute: async (args) => {
+      if (!openworkClient) return { ok: false, error: "OpenWork server is not connected" };
+      const sessionId = stringArg(args, "sessionId");
+      const format = stringArg(args, "format") === "markdown" ? "markdown" : "json";
+
+      const requestedWorkspaceId = stringArg(args, "workspaceId");
+      const workspaceId = sessionId
+        ? findSessionWorkspace(workspaces, sessionsByWorkspaceId, sessionId)?.id
+          ?? requestedWorkspaceId
+          ?? selectedWorkspaceId
+        : requestedWorkspaceId || selectedWorkspaceId;
+      if (!workspaceId) return { ok: false, error: "No workspace to export from" };
+
+      // The app always exports with secrets stripped.
+      const payload = sessionId
+        ? await openworkClient.exportSession(workspaceId, sessionId, { format, sensitiveMode: "exclude" })
+        : await openworkClient.exportWorkspaceSessions(workspaceId, { format, sensitiveMode: "exclude" });
+
+      const content = typeof payload === "string" ? payload : JSON.stringify(payload);
+      const sessionCount = typeof payload === "string" ? undefined : payload.sessions.length;
+      return {
+        ok: true,
+        workspaceId,
+        ...(sessionId ? { sessionId } : {}),
+        format,
+        ...(sessionCount === undefined ? {} : { sessionCount }),
+        contentLength: content.length,
+        content: content.slice(0, 20_000),
+        truncated: content.length > 20_000,
+      };
+    },
+  }), [openworkClient, selectedWorkspaceId, sessionsByWorkspaceId, workspaces]);
+  useControlAction(exportSessionControlAction);
+
+  const importSessionsControlAction = useMemo<OpenworkControlAction>(() => ({
+    id: "session.import",
+    label: "Import sessions",
+    description:
+      "Import sessions from an exported JSON bundle. Always creates new sessions and never overwrites an existing one.",
+    sideEffect: "mutation",
+    requiresArgs: true,
+    args: [
+      { name: "bundleJson", type: "string", required: true, description: "Contents of an exported session bundle (JSON)." },
+      { name: "workspaceId", type: "string", required: false, description: "Workspace ID. Defaults to the selected workspace." },
+    ],
+    disabled: !openworkClient,
+    execute: async (args) => {
+      if (!openworkClient) return { ok: false, error: "OpenWork server is not connected" };
+      const bundleJson = stringArg(args, "bundleJson");
+      if (!bundleJson) return { ok: false, error: "bundleJson is required" };
+      const workspaceId = stringArg(args, "workspaceId") || selectedWorkspaceId;
+      if (!workspaceId) return { ok: false, error: "No workspace to import into" };
+
+      let bundle: unknown;
+      try {
+        bundle = readSessionBundleFile(bundleJson);
+      } catch (error) {
+        return { ok: false, error: error instanceof Error ? error.message : "Invalid session bundle" };
+      }
+
+      const result = await openworkClient.importSessions(workspaceId, bundle);
+      await refreshRouteState();
+      return { ok: true, workspaceId, imported: result.imported };
+    },
+  }), [openworkClient, refreshRouteState, selectedWorkspaceId]);
+  useControlAction(importSessionsControlAction);
+
+  const modelPickerControlAction = useMemo<OpenworkControlAction>(() => ({    id: "session.model_picker.open",
     label: "Open the model picker",
     description: "Open the current session model picker.",
     effects: { data: "none", ui: "dialog", external: false },

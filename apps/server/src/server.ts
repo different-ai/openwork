@@ -93,6 +93,7 @@ import { registerFileRoutes } from "./routes/files.js";
 import { registerOperationRoutes } from "./routes/operations.js";
 import { addRoute, matchRoute, type AuthMode, type RequestContext, type Route } from "./routes/registry.js";
 import { registerSessionRoutes } from "./routes/sessions.js";
+import { isSessionImported, transcriptMutationSessionId } from "./session-imports.js";
 import { registerWorkspaceRoutes } from "./routes/workspaces.js";
 import { registerCloudMcpRoutes } from "./routes/cloud-mcp.js";
 import { captureServerException, isExpectedRequestCancellation } from "./telemetry.js";
@@ -952,8 +953,31 @@ export function assertOpencodeProxyAllowed(actor: Actor, method: string, proxyPa
   }
 }
 
-function isSessionCommandProxyRequest(method: string, proxyPath: string) {
-  return method === "POST" && /^\/session\/[^/]+\/command$/.test(normalizeOpencodeProxyPath(proxyPath));
+/**
+ * Imported sessions are a record of a conversation that happened elsewhere, so
+ * their transcript is read-only. Enforced here, on the proxy every writer goes
+ * through, rather than only in the composer: automations, control actions, and
+ * any other OpenCode client are held to the same rule.
+ */
+async function assertSessionNotReadOnly(
+  config: ServerConfig,
+  workspaceId: string | undefined,
+  method: string,
+  proxyPath: string,
+) {
+  if (!workspaceId) return;
+  const sessionId = transcriptMutationSessionId(method, normalizeOpencodeProxyPath(proxyPath));
+  if (!sessionId) return;
+  if (await isSessionImported(config, workspaceId, sessionId)) {
+    throw new ApiError(
+      409,
+      "session_read_only",
+      "This session was imported and is read-only. Export it or start a new session to continue the work.",
+    );
+  }
+}
+
+function isSessionCommandProxyRequest(method: string, proxyPath: string) {  return method === "POST" && /^\/session\/[^/]+\/command$/.test(normalizeOpencodeProxyPath(proxyPath));
 }
 
 function isPromptAsyncProxyRequest(method: string, proxyPath: string) {
@@ -1060,6 +1084,7 @@ export async function startServer(config: ServerConfig): Promise<ServeResult> {
         try {
           const actor = await requireClient(request, config, tokens);
           assertOpencodeProxyAllowed(actor, request.method, mount.restPath);
+          await assertSessionNotReadOnly(config, mount.workspaceId, request.method, mount.restPath);
           const workspace = await resolveWorkspace(config, mount.workspaceId);
           proxyService = "opencode";
           proxyBaseUrl = workspace.baseUrl?.trim() || undefined;
@@ -1117,6 +1142,7 @@ export async function startServer(config: ServerConfig): Promise<ServeResult> {
         try {
           const actor = await requireClient(request, config, tokens);
           assertOpencodeProxyAllowed(actor, request.method, url.pathname);
+          await assertSessionNotReadOnly(config, config.workspaces[0]?.id, request.method, url.pathname);
           proxyService = "opencode";
           const response = await proxyOpencodeRequest({ config, request, url, workspace: config.workspaces[0] });
           return finalize(response);
@@ -2088,6 +2114,7 @@ function createRoutes(
     parseOptionalBoolean,
     parseOptionalPositiveInteger,
     parseOptionalNonNegativeInteger,
+    parseExportSensitiveMode: parseWorkspaceExportSensitiveMode,
     readJsonBody,
     ensureWritable,
     requireClientScope,

@@ -778,6 +778,35 @@ export type OpenworkWorkspaceExportWarning = {
   detail: string;
 };
 
+/** JSON is the canonical bundle; markdown is a read-only transcript for sharing. */
+export type OpenworkSessionExportFormat = "json" | "markdown";
+
+export type OpenworkSessionExportEntry = {
+  session: Session;
+  messages: OpenworkSessionMessage[];
+  todos: Todo[];
+};
+
+export type OpenworkSessionExportBundle = {
+  format: string;
+  version: number;
+  exportedAt: string;
+  workspaceId: string;
+  sessions: OpenworkSessionExportEntry[];
+};
+
+export type OpenworkSessionImportMark = {
+  sourceWorkspaceId: string;
+  sourceWorkspaceName: string;
+  sourceSessionId: string;
+  importedAt: number;
+};
+
+export type OpenworkSessionImportResult = {
+  ok: boolean;
+  imported: Array<{ sourceSessionId: string; sessionId: string; title: string; messages: number }>;
+};
+
 export type OpenworkBlueprintSessionsMaterializeResult = {
   ok: boolean;
   created: Array<{ templateId: string; sessionId: string; title: string }>;
@@ -1370,8 +1399,55 @@ async function requestJson<T>(
   return json as T;
 }
 
-async function requestAgentContextDiagnosticsJson(
+/** Shared query builder for the session export routes. */
+function sessionExportQuery(options?: {
+  format?: OpenworkSessionExportFormat;
+  sensitiveMode?: OpenworkWorkspaceExportSensitiveMode;
+  sessions?: number;
+}): string {
+  const query = new URLSearchParams();
+  if (options?.format === "markdown") query.set("format", "markdown");
+  if (options?.sensitiveMode) query.set("sensitive", options.sensitiveMode);
+  if (typeof options?.sessions === "number") query.set("sessions", String(options.sessions));
+  return query.size ? `?${query.toString()}` : "";
+}
+
+/** Same error contract as requestJson, but for endpoints that return text (markdown export). */
+async function requestText(
   baseUrl: string,
+  path: string,
+  options: { token?: string; hostToken?: string; timeoutMs?: number } = {},
+): Promise<string> {
+  const url = `${baseUrl}${path}`;
+  const fetchImpl = resolveFetch(url);
+  const response = await fetchWithTimeout(
+    fetchImpl,
+    url,
+    { method: "GET", headers: buildHeaders(options.token, options.hostToken) },
+    options.timeoutMs ?? DEFAULT_OPENWORK_SERVER_TIMEOUT_MS,
+  );
+
+  const text = await response.text();
+
+  if (!response.ok) {
+    let code = "request_failed";
+    let message = response.statusText;
+    let details: unknown;
+    try {
+      const json = text ? JSON.parse(text) : null;
+      if (typeof json?.code === "string") code = json.code;
+      if (typeof json?.message === "string") message = json.message;
+      details = json?.details;
+    } catch {
+      // Non-JSON error body; keep the status text.
+    }
+    throw new OpenworkServerError(response.status, code, message, details);
+  }
+
+  return text;
+}
+
+async function requestAgentContextDiagnosticsJson(  baseUrl: string,
   path: string,
   options: {
     token?: string;
@@ -1686,8 +1762,42 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         { token, hostToken, timeoutMs: timeouts.sessionRead },
       );
     },
-    exportWorkspace: (
+    exportSession: (
       workspaceId: string,
+      sessionId: string,
+      options?: { format?: OpenworkSessionExportFormat; sensitiveMode?: OpenworkWorkspaceExportSensitiveMode },
+    ) => {
+      const path = `/workspace/${encodeURIComponent(workspaceId)}/sessions/${encodeURIComponent(sessionId)}/export${sessionExportQuery(options)}`;
+      return options?.format === "markdown"
+        ? requestText(baseUrl, path, { token, hostToken, timeoutMs: timeouts.workspaceExport })
+        : requestJson<OpenworkSessionExportBundle>(baseUrl, path, { token, hostToken, timeoutMs: timeouts.workspaceExport });
+    },
+    exportWorkspaceSessions: (
+      workspaceId: string,
+      options?: {
+        format?: OpenworkSessionExportFormat;
+        sensitiveMode?: OpenworkWorkspaceExportSensitiveMode;
+        sessions?: number;
+      },
+    ) => {
+      const path = `/workspace/${encodeURIComponent(workspaceId)}/sessions/export${sessionExportQuery(options)}`;
+      return options?.format === "markdown"
+        ? requestText(baseUrl, path, { token, hostToken, timeoutMs: timeouts.workspaceExport })
+        : requestJson<OpenworkSessionExportBundle>(baseUrl, path, { token, hostToken, timeoutMs: timeouts.workspaceExport });
+    },
+    importSessions: (workspaceId: string, bundle: unknown) =>
+      requestJson<OpenworkSessionImportResult>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/sessions/import`,
+        { token, hostToken, method: "POST", body: bundle, timeoutMs: timeouts.workspaceImport },
+      ),
+    getSessionImports: (workspaceId: string) =>
+      requestJson<{ marks: Record<string, OpenworkSessionImportMark>; updatedAt: number | null }>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/session-imports`,
+        { token, hostToken, timeoutMs: timeouts.sessionRead },
+      ),
+    exportWorkspace: (      workspaceId: string,
       options?: { sensitiveMode?: OpenworkWorkspaceExportSensitiveMode },
     ) => {
       const query = new URLSearchParams();

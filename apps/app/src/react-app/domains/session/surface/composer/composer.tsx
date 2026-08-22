@@ -58,6 +58,9 @@ type ComposerProps = {
   disabled: boolean;
   modelUnavailable?: boolean;
   modelUnavailableMessage?: string | null;
+  /** Imported sessions are read-only: the server refuses transcript writes. */
+  readOnly?: boolean;
+  readOnlyMessage?: string | null;
   organizationModelsEmpty?: boolean;
   statusLabel: string;
   modelPickerOpen: boolean;
@@ -1743,6 +1746,15 @@ export function ReactSessionComposer(props: ComposerProps) {
                 ) : (
                   <span className="max-w-[20rem] truncate text-xs font-medium text-red-10">
                     {props.modelUnavailableMessage ?? t("models.model_unavailable_short")}
+                  </span>
+                ) : null}
+                {props.readOnly ? (
+                  <span
+                    data-session-read-only-notice
+                    className="min-w-0 max-w-[26rem] truncate text-xs font-medium text-muted-foreground"
+                    title={props.readOnlyMessage ?? undefined}
+                  >
+                    {props.readOnlyMessage ?? t("session_management.read_only_notice_generic")}
                   </span>
                 ) : null}
 

@@ -71,6 +71,38 @@ export const partitionArchivedSessions = (sessions: WorkspaceSessionGroup["sessi
 };
 
 /**
+ * Provenance for a session that arrived from an exported bundle. Imported
+ * sessions are a read-only record of work done somewhere else, so they are kept
+ * out of the working session list and shown in their own section.
+ */
+export type SessionImportMarkView = {
+  sourceWorkspaceName: string;
+  sourceSessionId: string;
+  importedAt: number;
+};
+
+/** Import marks keyed by workspace id, then by local session id. */
+export type WorkspaceSessionImports = Record<string, Record<string, SessionImportMarkView>>;
+
+export const isSessionImported = (
+  sessionId: string,
+  marks: Record<string, SessionImportMarkView> | undefined,
+): boolean => Boolean(marks?.[sessionId]);
+
+/** Split sessions into the workspace's own vs. imported ones. */
+export const partitionImportedSessions = (
+  sessions: WorkspaceSessionGroup["sessions"],
+  marks: Record<string, SessionImportMarkView> | undefined,
+) => {
+  const own: SessionListItem[] = [];
+  const imported: SessionListItem[] = [];
+  for (const session of sessions) {
+    (isSessionImported(session.id, marks) ? imported : own).push(session);
+  }
+  return { own, imported };
+};
+
+/**
  * Order root sessions: pinned first, then manual order, then server recency.
  */
 export const orderRootSessions = (

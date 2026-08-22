@@ -54,6 +54,7 @@ import { useDenAuth } from "../../cloud/den-auth-provider";
 import ProviderAuthModal, { type ProviderAuthModalProps } from "../../connections/provider-auth/provider-auth-modal";
 import { RenameSessionModal } from "../modals/rename-session-modal";
 import { AppSidebar } from "../sidebar/app-sidebar";
+import type { WorkspaceSessionImports } from "../sidebar/utils";
 import { useSessionManagementStore } from "../sidebar/session-management-store";
 import { SessionSurface, type SessionSurfaceProps } from "../surface/session-surface";
 import { useSessionFindStore } from "../surface/find-store";
@@ -142,6 +143,7 @@ export type SessionPageSidebarProps = {
   selectedSessionId: string | null;
   developerMode: boolean;
   sessionStatusById: Record<string, string>;
+  sessionImportsByWorkspaceId?: WorkspaceSessionImports;
   connectingWorkspaceId: string | null;
   workspaceConnectionStateById: Record<string, WorkspaceConnectionState>;
   newTaskDisabled: boolean;
@@ -154,6 +156,9 @@ export type SessionPageSidebarProps = {
   onCreateTaskWithPrompt?: (workspaceId: string, prompt: string, attachments?: ComposerAttachment[]) => void;
   onOpenRenameWorkspace: (workspaceId: string) => void;
   onShareWorkspace: (workspaceId: string) => void;
+  onExportSession?: (workspaceId: string, sessionId: string, format: "json" | "markdown") => void;
+  onExportWorkspaceSessions?: (workspaceId: string) => void;
+  onImportSessions?: (workspaceId: string) => void;
   onRevealWorkspace: (workspaceId: string) => void;
   onRecoverWorkspace: (workspaceId: string) => Promise<boolean> | boolean | void;
   onTestWorkspaceConnection: (workspaceId: string) => Promise<boolean> | boolean | void;
@@ -1033,6 +1038,7 @@ export function SessionPage(props: SessionPageProps) {
           selectedSessionId={props.sidebar.selectedSessionId}
           showSessionActions={Boolean(props.onRenameSession || props.onDeleteSession || props.onArchiveSession)}
           sessionStatusById={props.sidebar.sessionStatusById}
+          sessionImportsByWorkspaceId={props.sidebar.sessionImportsByWorkspaceId}
           connectingWorkspaceId={props.sidebar.connectingWorkspaceId}
           workspaceConnectionStateById={props.sidebar.workspaceConnectionStateById}
           newTaskDisabled={props.sidebar.newTaskDisabled}
@@ -1055,6 +1061,9 @@ export function SessionPage(props: SessionPageProps) {
           }}
           onOpenRenameWorkspace={props.sidebar.onOpenRenameWorkspace}
           onShareWorkspace={props.sidebar.onShareWorkspace}
+          onExportSession={props.sidebar.onExportSession}
+          onExportWorkspaceSessions={props.sidebar.onExportWorkspaceSessions}
+          onImportSessions={props.sidebar.onImportSessions}
           onRevealWorkspace={props.sidebar.onRevealWorkspace}
           onRecoverWorkspace={props.sidebar.onRecoverWorkspace}
           onTestWorkspaceConnection={props.sidebar.onTestWorkspaceConnection}
