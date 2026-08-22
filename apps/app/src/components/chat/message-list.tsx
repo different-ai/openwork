@@ -111,10 +111,8 @@ import {
 } from "@/lib/build-in-tools"
 import type { ThreadStatus } from "@/lib/messages"
 import { formatToolCallDuration } from "@/lib/tool-call-duration"
-import {
-  collectToolParts,
-  getActiveToolLabel,
-} from "@/lib/tool-activity"
+import { collectLatestAssistantToolParts } from "@/lib/latest-assistant-tool-parts"
+import { getActiveToolLabel } from "@/lib/tool-activity"
 import { faviconUrlForHref } from "@/lib/favicon"
 import { cn } from "@/lib/utils"
 import { groupMessages, isMessageGroup, getLastTextPart, getAggregateOnlyParts, getAssistantRenderGroups, getFileTitle, getMediaBadge, getMessageCompleted, getMessageCreated, formatMessageTimestamp, splitTurnAtAnswer, type UIMessageWithIndex, getMessagesText, getSafeFileDownloadUrl, getSafeFileRevealPath } from "./utils"
@@ -1227,7 +1225,7 @@ export function MessageList({ messages, status, retryStatus }: MessageListProps)
   const error = useSessionErrorMessage();
   const hasSessionErrorMessage = React.useMemo(() => messages.some(isSessionErrorMessage), [messages])
   const liveActionLabel = isStreaming
-    ? getActiveToolLabel(collectToolParts(messages))
+    ? getActiveToolLabel(collectLatestAssistantToolParts(messages))
     : null
 
   return (

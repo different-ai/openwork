@@ -1,4 +1,4 @@
-import type { DynamicToolUIPart, ToolUIPart, UIMessage } from "ai"
+import type { DynamicToolUIPart, ToolUIPart } from "ai"
 import {
   isApplyPatchToolPart,
   isBashToolPart,
@@ -22,14 +22,6 @@ type AnyToolPart = ToolUIPart | DynamicToolUIPart
 
 export function isToolPartInFlight(part: AnyToolPart): boolean {
   return part.state === "input-streaming" || part.state === "input-available"
-}
-
-export function collectToolParts(messages: UIMessage[]): DynamicToolUIPart[] {
-  return messages.flatMap((message) =>
-    message.parts.filter(
-      (part): part is DynamicToolUIPart => part.type === "dynamic-tool"
-    )
-  )
 }
 
 function hostnameOf(url: string | undefined): string | undefined {
@@ -119,4 +111,3 @@ export function getActiveToolLabel(parts: DynamicToolUIPart[]): string | null {
   }
   return null
 }
-
