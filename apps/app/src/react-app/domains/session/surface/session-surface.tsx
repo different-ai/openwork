@@ -2091,6 +2091,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
                       dispatchAction={handleMessageListDispatchAction}
                       setPrompt={handleMessageListSetPrompt}
                       onRevertToUserMessage={handleRevertToUserMessage}
+                      readOnly={Boolean(props.sessionImportedFrom)}
                       onForkAtMessage={handleForkAtMessage}
                       onEditUserMessage={handleEditUserMessage}
                       onMcpReconnect={handleMcpReconnect}
@@ -2170,9 +2171,11 @@ export function SessionSurface(props: SessionSurfaceProps) {
         disabled={model.transitionState !== "idle" || Boolean(props.modelUnavailable) || Boolean(props.sessionImportedFrom)}
         readOnly={Boolean(props.sessionImportedFrom)}
         readOnlyMessage={props.sessionImportedFrom
-          ? t("session_management.read_only_notice", { workspace: props.sessionImportedFrom })
+          ? t("session_management.read_only_badge", { workspace: props.sessionImportedFrom })
           : null}
-        readOnlyHint={props.sessionImportedFrom ? t("session_management.read_only_hint") : null}
+        readOnlyHint={props.sessionImportedFrom
+          ? `${t("session_management.read_only_notice", { workspace: props.sessionImportedFrom })} ${t("session_management.read_only_hint")}`
+          : null}
         modelUnavailable={Boolean(props.modelUnavailable)}
         modelUnavailableMessage={props.modelUnavailableMessage}
         organizationModelsEmpty={props.organizationModelsEmpty}

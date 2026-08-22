@@ -106,7 +106,11 @@ function startMockOpencode(options: { sessionDirectory?: string } = {}) {
         },
         {
           info: { id: "msg_2", sessionID: "ses_1", role: "assistant", time: { created: 200 } },
-          parts: [{ id: "prt_2", messageID: "msg_2", sessionID: "ses_1", type: "text", text: "hostname: mock-host" }],
+          parts: [
+            { id: "prt_2a", messageID: "msg_2", sessionID: "ses_1", type: "reasoning", text: "Checking the hostname" },
+            { id: "prt_2b", messageID: "msg_2", sessionID: "ses_1", type: "step-start" },
+            { id: "prt_2", messageID: "msg_2", sessionID: "ses_1", type: "text", text: "hostname: mock-host" },
+          ],
         },
       ]);
     }
@@ -337,6 +341,16 @@ function parsePartTexts(rows: Array<{ session_id: string; data: string }>): stri
   });
 }
 
+function parsePartTypes(rows: Array<{ session_id: string; data: string }>): string[] {
+  return rows.map((row) => {
+    const parsed: unknown = JSON.parse(row.data);
+    if (!isRecord(parsed) || typeof parsed.type !== "string") {
+      throw new Error("Stored part has no type.");
+    }
+    return parsed.type;
+  });
+}
+
 test("a session leaves OpenWork as a shareable bundle and can be read back", async ({ evidence }) => {
   await withStack({}, async ({ base, token }) => {
     const jsonResponse = await fetch(`${base}/workspace/ws_1/sessions/ses_1/export`, { headers: authHeaders(token) });
@@ -495,11 +509,20 @@ test("an exported bundle imports back into a real, readable session", async ({ e
       const texts = parsePartTexts(parts);
       db.close();
 
-      expect(texts).toEqual(["What host am I on?", "hostname: mock-host"]);
+      expect(texts).toEqual(["What host am I on?", "Checking the hostname", "hostname: mock-host"]);
       expect(parts.every((row) => row.session_id === "ses_created_1")).toBe(true);
       evidence.recordAssertionEvidence(
         "Positive: the imported transcript is persisted in order under the new session",
-        `The engine database holds both turns ("${texts.join('", "')}") in their original order, all attached to the newly created session, so the import is durable rather than a response-shaped illusion.`,
+        `The engine database holds the turns ("${texts.join('", "')}") in their original order, all attached to the newly created session, so the import is durable rather than a response-shaped illusion.`,
+        true,
+      );
+
+      const types = parsePartTypes(parts);
+      expect(types).toEqual(["text", "reasoning", "text"]);
+      expect(types).not.toContain("step-start");
+      evidence.recordAssertionEvidence(
+        "Positive: an imported session reads exactly like the session it came from",
+        `Parts kept their original kinds (${types.join(", ")}), so the assistant's reasoning stays a separate reasoning part the UI renders as a collapsible thought instead of being folded into the reply. Run-scaffolding parts (step-start) were dropped, since they describe a live run that never happened in the destination workspace.`,
         true,
       );
 
@@ -637,7 +660,12 @@ test("imported sessions are kept out of the working session list", ({ evidence }
     { id: "ses_own_2", title: "More live work" },
   ];
   const marks = {
-    ses_imported_1: { sourceWorkspaceName: "Acme Robotics", sourceSessionId: "ses_1", importedAt: 1 },
+    ses_imported_1: {
+      sourceWorkspaceId: "ws_source",
+      sourceWorkspaceName: "Acme Robotics",
+      sourceSessionId: "ses_1",
+      importedAt: 1,
+    },
   };
 
   const partitioned = partitionImportedSessions(sessions, marks);

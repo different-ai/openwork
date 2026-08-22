@@ -1,7 +1,7 @@
 import { realpath } from "node:fs/promises";
 import type { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
 import { ApiError } from "../errors.js";
-import { seedOpencodeSessionMessages } from "../opencode-db.js";
+import { writeOpencodeSessionMessages } from "../opencode-db.js";
 import {
   forgetSessionImport,
   readSessionImportState,
@@ -583,9 +583,8 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
       const created = buildSession(
         unwrapOpencodeResult(await opencode.session.create({ title: entry.title }), "/session"),
       );
-      const result = seedOpencodeSessionMessages({
+      const result = writeOpencodeSessionMessages({
         sessionId: created.id,
-        workspaceRoot,
         messages: entry.messages,
       });
       imported.push({

@@ -6,6 +6,7 @@ import type {
   SessionSnapshotReadModel,
   SessionTodoReadModel,
 } from "./session-read-model.js";
+import type { ImportedSessionMessage } from "./opencode-db.js";
 import type { WorkspaceExportSensitiveMode, WorkspaceExportWarning } from "./workspace-export-safety.js";
 
 /**
@@ -29,7 +30,6 @@ export const SESSION_EXPORT_VERSION = 1;
 /** Import is additive and always creates new sessions, but a bundle is still untrusted input. */
 export const MAX_IMPORT_SESSIONS = 200;
 export const MAX_IMPORT_MESSAGES_PER_SESSION = 5_000;
-export const MAX_IMPORT_TEXT_LENGTH = 100_000;
 
 const REDACTED = "[redacted]";
 
@@ -58,8 +58,18 @@ export type SessionExportBundle = z.infer<typeof sessionExportBundleSchema>;
 export type SessionImportSession = {
   title: string;
   sourceSessionId: string;
-  messages: Array<{ role: "user" | "assistant"; text: string }>;
+  messages: ImportedSessionMessage[];
 };
+
+/**
+ * Part kinds that are meaningful to replay.
+ *
+ * Everything else OpenCode records (step boundaries, snapshots, patches, retry
+ * and compaction bookkeeping) describes a live run rather than the conversation,
+ * and re-inserting it into a different session would describe work that never
+ * happened there.
+ */
+const REPLAYABLE_PART_TYPES = new Set(["text", "reasoning", "tool", "file"]);
 
 /**
  * High-confidence secret *values*. These are redacted in place so the
@@ -355,26 +365,38 @@ export function parseSessionExportBundle(value: unknown): SessionExportBundle {
 }
 
 /**
- * Project a bundle onto what the OpenCode message seeder accepts.
+ * Project a bundle onto what the OpenCode message writer accepts.
  *
- * Import replays the transcript as text messages rather than reconstructing raw
- * tool parts. Writing arbitrary part payloads from an untrusted file straight
- * into the OpenCode database risks corrupting a session that the UI then cannot
- * render, so the conversation content is restored and the original bundle stays
- * the lossless record.
+ * Message and part payloads are carried across as they were exported, minus the
+ * identifiers, so an imported session renders exactly like the original:
+ * reasoning stays a separate reasoning part rather than being folded into the
+ * reply, and tool calls stay tool calls. Parts that describe a live run rather
+ * than the conversation are dropped.
  */
 export function planSessionImport(bundle: SessionExportBundle): SessionImportSession[] {
   const planned: SessionImportSession[] = [];
 
   for (const entry of bundle.sessions) {
-    const messages: SessionImportSession["messages"] = [];
+    const messages: ImportedSessionMessage[] = [];
     for (const message of entry.messages) {
       if (messages.length >= MAX_IMPORT_MESSAGES_PER_SESSION) break;
-      const text = extractMessageText(message);
-      if (!text) continue;
+
+      const parts: Array<Record<string, unknown>> = [];
+      for (const part of message.parts) {
+        const type = readString(part, "type");
+        if (!type || !REPLAYABLE_PART_TYPES.has(type)) continue;
+        const { id: _id, messageID: _messageID, sessionID: _sessionID, ...payload } = part;
+        parts.push(payload);
+      }
+      if (!parts.length) continue;
+
+      const { id: _infoId, sessionID: _infoSessionId, ...data } = message.info;
       messages.push({
         role: normalizeRole(message.info.role),
-        text: text.slice(0, MAX_IMPORT_TEXT_LENGTH),
+        data,
+        parts,
+        sourceId: message.info.id,
+        ...(message.info.parentID ? { sourceParentId: message.info.parentID } : {}),
       });
     }
     if (!messages.length) continue;

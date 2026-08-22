@@ -1299,7 +1299,9 @@ export function ReactSessionComposer(props: ComposerProps) {
                 previewUrl: attachment.previewUrl,
               }))}
               disabled={props.disabled}
-              placeholder={t("composer.placeholder")}
+              placeholder={props.readOnly
+                ? t("session_management.read_only_placeholder")
+                : t("composer.placeholder")}
               onChange={props.onDraftChange}
               onSubmit={handleEditorSubmit}
               onExpandPastedText={handleExpandPastedText}
@@ -1405,13 +1407,15 @@ export function ReactSessionComposer(props: ComposerProps) {
                 >
                   <button
                     type="button"
-                    className={`inline-flex h-9 max-h-9 w-9 shrink-0 items-center justify-center rounded-md transition-colors ${toolMenuOpen ? "bg-gray-3 text-gray-12" : "text-gray-10 hover:bg-gray-3"}`}
+                    className={`inline-flex h-9 max-h-9 w-9 shrink-0 items-center justify-center rounded-md transition-colors ${toolMenuOpen ? "bg-gray-3 text-gray-12" : "text-gray-10 hover:bg-gray-3"} ${props.readOnly ? "cursor-not-allowed opacity-50" : ""}`}
                     onClick={() => {
+                      if (props.readOnly) return;
                       setMentionOpen(false);
                       setMentionItems([]);
                       setSlashOpen(false);
                       setToolMenuOpen((value) => !value);
                     }}
+                    disabled={props.readOnly}
                     aria-expanded={toolMenuOpen}
                     aria-haspopup="dialog"
                     title={t("composer.tools_label")}
@@ -1631,13 +1635,13 @@ export function ReactSessionComposer(props: ComposerProps) {
                 <button
                   type="button"
                   className={`inline-flex h-9 max-h-9 w-9 shrink-0 items-center justify-center rounded-md text-gray-10 transition-colors hover:bg-gray-3 ${
-                    !props.attachmentsEnabled ? "cursor-not-allowed opacity-60" : ""
+                    !props.attachmentsEnabled || props.readOnly ? "cursor-not-allowed opacity-60" : ""
                   }`}
                   onClick={() => {
-                    if (!props.attachmentsEnabled) return;
+                    if (!props.attachmentsEnabled || props.readOnly) return;
                     fileInput?.click();
                   }}
-                  disabled={!props.attachmentsEnabled}
+                  disabled={!props.attachmentsEnabled || props.readOnly}
                   title={props.attachmentsDisabledReason ?? t("composer.attach_files")}
                 >
                   <Paperclip size={16} />
@@ -1651,7 +1655,7 @@ export function ReactSessionComposer(props: ComposerProps) {
                     type="button"
                     className="flex h-9 max-h-9 items-center gap-1 rounded-md px-1.5 text-[12px] font-medium text-gray-10 transition-colors hover:bg-gray-3 hover:text-gray-12"
                     onClick={() => setAgentMenuOpen((value) => !value)}
-                    disabled={props.busy}
+                    disabled={props.busy || props.readOnly}
                     aria-expanded={agentMenuOpen}
                     title={t("composer.agent_label")}
                   >
@@ -1715,9 +1719,9 @@ export function ReactSessionComposer(props: ComposerProps) {
                   hideValue={props.organizationModelsEmpty}
                   onOpenChange={props.onModelPickerOpenChange}
                   onChange={(model, variant) => {
-                    if (!props.steering) props.onModelChange(model, variant);
+                    if (!props.steering && !props.readOnly) props.onModelChange(model, variant);
                   }}
-                  disabled={props.steering}
+                  disabled={props.steering || props.readOnly}
                   sessionId={props.sessionId}
                   openWorkModelsEntitled={props.openWorkModelsEntitled}
                   openWorkModelsSyncing={props.openWorkModelsSyncing}
@@ -1754,7 +1758,7 @@ export function ReactSessionComposer(props: ComposerProps) {
                   <span
                     data-session-read-only-notice
                     className="min-w-0 max-w-[26rem] truncate text-xs font-medium text-muted-foreground"
-                    title={[props.readOnlyMessage, props.readOnlyHint].filter(Boolean).join(" ") || undefined}
+                    title={props.readOnlyHint || props.readOnlyMessage || undefined}
                   >
                     {props.readOnlyMessage ?? t("session_management.read_only_notice_generic")}
                   </span>

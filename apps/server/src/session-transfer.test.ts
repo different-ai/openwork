@@ -234,7 +234,7 @@ describe("parseSessionExportBundle", () => {
 });
 
 describe("planSessionImport", () => {
-  test("flattens a bundle into replayable transcript messages", () => {
+  test("carries messages across with their original parts intact", () => {
     const { bundle } = buildSessionExportBundle({
       workspaceId: "ws_1",
       sensitiveMode: "exclude",
@@ -255,10 +255,65 @@ describe("planSessionImport", () => {
     expect(planned).toHaveLength(1);
     expect(planned[0]?.title).toBe("Plan the launch");
     expect(planned[0]?.sourceSessionId).toBe("ses_1");
-    expect(planned[0]?.messages).toEqual([
-      { role: "user", text: "What is left?" },
-      { role: "assistant", text: "Two items." },
+    expect(planned[0]?.messages.map((message) => message.role)).toEqual(["user", "assistant"]);
+    expect(planned[0]?.messages[0]?.parts).toEqual([{ type: "text", text: "What is left?" }]);
+    expect(planned[0]?.messages[0]?.sourceId).toBe("msg_1");
+  });
+
+  test("keeps reasoning a separate part instead of folding it into the reply", () => {
+    const { bundle } = buildSessionExportBundle({
+      workspaceId: "ws_1",
+      sensitiveMode: "exclude",
+      snapshots: [
+        {
+          session: { id: "ses_1", title: "Reasoned" },
+          messages: [
+            {
+              info: { id: "msg_1", sessionID: "ses_1", role: "assistant" },
+              parts: [
+                { id: "prt_1", messageID: "msg_1", sessionID: "ses_1", type: "reasoning", text: "Thinking it through" },
+                { id: "prt_2", messageID: "msg_1", sessionID: "ses_1", type: "text", text: "Here is the answer" },
+              ],
+            },
+          ],
+          todos: [],
+          status: { type: "idle" },
+        },
+      ],
+    });
+
+    const parts = planSessionImport(bundle)[0]?.messages[0]?.parts;
+
+    expect(parts).toEqual([
+      { type: "reasoning", text: "Thinking it through" },
+      { type: "text", text: "Here is the answer" },
     ]);
+  });
+
+  test("drops parts that describe a live run rather than the conversation", () => {
+    const { bundle } = buildSessionExportBundle({
+      workspaceId: "ws_1",
+      sensitiveMode: "exclude",
+      snapshots: [
+        {
+          session: { id: "ses_1", title: "Noisy" },
+          messages: [
+            {
+              info: { id: "msg_1", sessionID: "ses_1", role: "assistant" },
+              parts: [
+                { id: "prt_1", messageID: "msg_1", sessionID: "ses_1", type: "step-start" },
+                { id: "prt_2", messageID: "msg_1", sessionID: "ses_1", type: "snapshot", snapshot: "abc" },
+                { id: "prt_3", messageID: "msg_1", sessionID: "ses_1", type: "text", text: "Done" },
+              ],
+            },
+          ],
+          todos: [],
+          status: { type: "idle" },
+        },
+      ],
+    });
+
+    expect(planSessionImport(bundle)[0]?.messages[0]?.parts).toEqual([{ type: "text", text: "Done" }]);
   });
 
   test("treats non-user roles as assistant turns", () => {
@@ -271,11 +326,23 @@ describe("planSessionImport", () => {
     expect(planSessionImport(bundle)[0]?.messages[0]?.role).toBe("assistant");
   });
 
-  test("rejects a bundle whose sessions carry no readable messages", () => {
+  test("rejects a bundle whose sessions carry no replayable parts", () => {
     const { bundle } = buildSessionExportBundle({
       workspaceId: "ws_1",
       sensitiveMode: "exclude",
-      snapshots: [snapshot({ sessionId: "ses_1", messages: [{ id: "msg_1", role: "user", text: "   " }] })],
+      snapshots: [
+        {
+          session: { id: "ses_1", title: "Empty" },
+          messages: [
+            {
+              info: { id: "msg_1", sessionID: "ses_1", role: "assistant" },
+              parts: [{ id: "prt_1", messageID: "msg_1", sessionID: "ses_1", type: "step-start" }],
+            },
+          ],
+          todos: [],
+          status: { type: "idle" },
+        },
+      ],
     });
 
     expect(() => planSessionImport(bundle)).toThrow(/no messages to import/);

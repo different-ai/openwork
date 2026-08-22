@@ -76,6 +76,7 @@ export const partitionArchivedSessions = (sessions: WorkspaceSessionGroup["sessi
  * out of the working session list and shown in their own section.
  */
 export type SessionImportMarkView = {
+  sourceWorkspaceId: string;
   sourceWorkspaceName: string;
   sourceSessionId: string;
   importedAt: number;
