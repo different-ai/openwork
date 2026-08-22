@@ -61,6 +61,8 @@ type ComposerProps = {
   /** Imported sessions are read-only: the server refuses transcript writes. */
   readOnly?: boolean;
   readOnlyMessage?: string | null;
+  /** Longer guidance, shown on hover so the inline notice stays short enough to read. */
+  readOnlyHint?: string | null;
   organizationModelsEmpty?: boolean;
   statusLabel: string;
   modelPickerOpen: boolean;
@@ -1752,7 +1754,7 @@ export function ReactSessionComposer(props: ComposerProps) {
                   <span
                     data-session-read-only-notice
                     className="min-w-0 max-w-[26rem] truncate text-xs font-medium text-muted-foreground"
-                    title={props.readOnlyMessage ?? undefined}
+                    title={[props.readOnlyMessage, props.readOnlyHint].filter(Boolean).join(" ") || undefined}
                   >
                     {props.readOnlyMessage ?? t("session_management.read_only_notice_generic")}
                   </span>

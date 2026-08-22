@@ -2170,8 +2170,9 @@ export function SessionSurface(props: SessionSurfaceProps) {
         disabled={model.transitionState !== "idle" || Boolean(props.modelUnavailable) || Boolean(props.sessionImportedFrom)}
         readOnly={Boolean(props.sessionImportedFrom)}
         readOnlyMessage={props.sessionImportedFrom
-          ? `${t("session_management.read_only_notice", { workspace: props.sessionImportedFrom })} ${t("session_management.read_only_hint")}`
+          ? t("session_management.read_only_notice", { workspace: props.sessionImportedFrom })
           : null}
+        readOnlyHint={props.sessionImportedFrom ? t("session_management.read_only_hint") : null}
         modelUnavailable={Boolean(props.modelUnavailable)}
         modelUnavailableMessage={props.modelUnavailableMessage}
         organizationModelsEmpty={props.organizationModelsEmpty}
