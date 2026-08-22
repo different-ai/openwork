@@ -8,6 +8,7 @@ import type { ServerConfig, WorkspaceInfo } from "../types.js";
 import { ensureDir, exists, shortId } from "../utils.js";
 import { defaultWorkspaceOpenworkConfig, ensureWorkspaceFiles } from "../workspace-init.js";
 import { seedOpenworkWorkspaceConfigIfEmpty } from "../openwork-workspace-config-store.js";
+import { reconcileOfficeCliMcp, resolveOfficeCliBinary } from "../officecli-mcp.js";
 import { workspaceIdForPath, workspaceIdForRemote } from "../workspaces.js";
 import { addRoute, type Route } from "./registry.js";
 
@@ -307,6 +308,11 @@ export function registerWorkspaceRoutes(options: RegisterWorkspaceRoutesOptions)
     }
     const persisted = await persistServerWorkspaceState(config);
     onWorkspacesChanged();
+
+    const officeCliBinary = resolveOfficeCliBinary();
+    if (officeCliBinary) {
+      await reconcileOfficeCliMcp(config, workspace.id, officeCliBinary);
+    }
 
     await recordAudit(workspace.path, {
       id: shortId(),

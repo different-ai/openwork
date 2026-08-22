@@ -569,6 +569,13 @@ function pathHelperEntries() {
   return match?.[1]?.split(path.delimiter).filter(Boolean) ?? [];
 }
 
+export function windowsOfficeCliPathCandidates(env = process.env) {
+  if (process.platform !== "win32") return [];
+  const localAppData = String(env.LOCALAPPDATA ?? "").trim();
+  if (!localAppData) return [];
+  return [path.join(localAppData, "OfficeCLI")];
+}
+
 function extraPathEntries() {
   const home = os.homedir();
   const candidates = [];
@@ -610,6 +617,7 @@ function extraPathEntries() {
 
   if (process.platform === "win32") {
     candidates.push(
+      ...windowsOfficeCliPathCandidates(process.env),
       path.join(home, ".volta", "bin"),
       path.join(home, ".bun", "bin"),
       path.join(home, ".cargo", "bin"),

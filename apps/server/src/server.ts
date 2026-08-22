@@ -105,6 +105,13 @@ import {
   handleLocalManagedMcpGateway,
   listLocalManagedMcpConnectionsSafe,
   reconcileLocalManagedMcpRuntimeEntries,
+} from "./local-managed-mcp.js";
+import {
+  markOfficeCliManagedMcpRemoved,
+  OFFICECLI_MCP_NAME,
+  reconcileOfficeCliMcpForAllWorkspaces,
+} from "./officecli-mcp.js";
+import {
   setLocalManagedMcpEnabled,
   startLocalManagedMcpAuthorization,
 } from "./local-managed-mcp.js";
@@ -970,6 +977,13 @@ export async function startServer(config: ServerConfig): Promise<ServeResult> {
     await reconcileLocalManagedMcpRuntimeEntries(config);
   } catch (error) {
     logger.log("warn", "Failed to reconcile OpenWork-managed MCP connections during startup.", {
+      error: error instanceof Error ? error.message : "unknown",
+    });
+  }
+  try {
+    await reconcileOfficeCliMcpForAllWorkspaces(config);
+  } catch (error) {
+    logger.log("warn", "Failed to reconcile OfficeCLI MCP during startup.", {
       error: error instanceof Error ? error.message : "unknown",
     });
   }
@@ -3336,6 +3350,9 @@ function createRoutes(
       paths: [openworkConfigPath(workspace.path)],
     });
     const managedRemoved = await deleteLocalManagedMcp(config, workspace.id, name);
+    if (name === OFFICECLI_MCP_NAME) {
+      await markOfficeCliManagedMcpRemoved(config, workspace.id);
+    }
     const removed = managedRemoved || await removeMcp(config, workspace.id, name);
     await recordAudit(workspace.path, {
       id: shortId(),

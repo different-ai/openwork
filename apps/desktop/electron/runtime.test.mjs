@@ -20,6 +20,7 @@ import {
   selectStickyOpenworkPortWorkspace,
   snapshotEngineState,
   snapshotOpenworkServerState,
+  windowsOfficeCliPathCandidates,
 } from "./runtime.mjs";
 
 describe("workspace root preparation", () => {
@@ -396,5 +397,20 @@ describe("resetRuntimeStatesAfterFailedServerStart", () => {
     assert.equal(serverState.inProcess, false);
     assert.equal(engineState.baseUrl, "http://127.0.0.1:4097");
     assert.equal(engineState.projectDir, "/workspace/current");
+  });
+});
+
+describe("windowsOfficeCliPathCandidates", () => {
+  it("includes LOCALAPPDATA OfficeCLI on win32", () => {
+    const candidates = windowsOfficeCliPathCandidates({
+      LOCALAPPDATA: "C:\\Users\\Example\\AppData\\Local",
+    });
+    assert.ok(
+      candidates.includes("C:\\Users\\Example\\AppData\\Local\\OfficeCLI"),
+    );
+  });
+
+  it("returns empty list when LOCALAPPDATA is missing", () => {
+    assert.deepEqual(windowsOfficeCliPathCandidates({}), []);
   });
 });
