@@ -9,13 +9,14 @@ import { readOpenworkWorkspaceConfig, writeOpenworkWorkspaceConfig } from "./ope
 import { readRuntimeOpencodeConfig, writeRuntimeOpencodeConfig } from "./runtime-opencode-config-store.js";
 import { readSessionGroupState, writeSessionGroupState } from "./session-groups.js";
 import type { ServerConfig } from "./types.js";
-import { createWorkspaceKvStore, isRecord, workspaceKvStoreCacheStatsForTests } from "./workspace-kv-store.js";
+import { createWorkspaceKvStore, isRecord, workspaceKvStoreCacheStatsForTests, closeWorkspaceKvStoreDatabasesForTests } from "./workspace-kv-store.js";
 
 const WORKSPACE_ID = "ws_workspace_kv_store";
 const roots: string[] = [];
 const previousRuntimeDb = process.env.OPENWORK_RUNTIME_DB;
 
 afterEach(async () => {
+  await closeWorkspaceKvStoreDatabasesForTests();
   while (roots.length) {
     const root = roots.pop();
     if (root) await rm(root, { recursive: true, force: true });

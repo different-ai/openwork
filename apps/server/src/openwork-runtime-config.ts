@@ -15,6 +15,8 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
+import { parse as parseJsonc } from "jsonc-parser";
+import { resolveGlobalOpencodeConfigPath } from "@openwork/paths";
 import {
   openworkExtensionsPreviewPluginPath,
   openworkCapabilitiesKnowledgePluginPath,
@@ -87,12 +89,44 @@ Manage: to show what is saved, discover and execute the list capability (getMemo
 
 Never persist secrets, credentials, API keys, tokens, or sensitive PII into a memory. This applies to both the content sentence and any cited snippets — redact secrets from a snippet before saving it.`;
 
+const CURSOR_ACP_PROVIDER_ID = "cursor-acp";
+
+/**
+ * OPENCODE_CONFIG replaces the user's global opencode config, so a cursor-acp
+ * provider configured there never reaches the engine. When the host carries a
+ * Cursor key, mirror the global cursor-acp provider block (and plugin) into
+ * the runtime config. A runtime-DB cursor-acp provider wins over the global
+ * file; without any block to mirror, nothing is injected.
+ */
+async function readGlobalCursorAcpProvider(): Promise<Record<string, unknown> | null> {
+  try {
+    const parsed: unknown = parseJsonc(await readFile(resolveGlobalOpencodeConfigPath(), "utf8"));
+    if (!isRecord(parsed) || !isRecord(parsed.provider)) return null;
+    const block = parsed.provider[CURSOR_ACP_PROVIDER_ID];
+    return isRecord(block) ? block : null;
+  } catch {
+    return null;
+  }
+}
+
+async function withCursorAcpProvider(runtimeConfig: RuntimeOpencodeConfig): Promise<RuntimeOpencodeConfig> {
+  if (!process.env.CURSOR_API_KEY?.trim()) return runtimeConfig;
+  const providers = runtimeProviderMap(runtimeConfig);
+  const block = providers[CURSOR_ACP_PROVIDER_ID] ?? (await readGlobalCursorAcpProvider());
+  if (!block) return runtimeConfig;
+  return {
+    ...runtimeConfig,
+    plugin: [...runtimePluginList(runtimeConfig).filter((name) => name !== CURSOR_ACP_PROVIDER_ID), CURSOR_ACP_PROVIDER_ID],
+    provider: { ...providers, [CURSOR_ACP_PROVIDER_ID]: block },
+  };
+}
+
 export async function buildOpenworkRuntimeConfigObject(
   config?: ServerConfig,
   workspaceId?: string,
 ): Promise<Record<string, unknown>> {
   const runtimeConfig = config && workspaceId ? await readEffectiveRuntimeOpencodeConfig(config, workspaceId) : {};
-  return buildOpenworkRuntimeConfigObjectFromSnapshot(runtimeConfig);
+  return buildOpenworkRuntimeConfigObjectFromSnapshot(await withCursorAcpProvider(runtimeConfig));
 }
 
 export function buildOpenworkRuntimeConfigObjectFromSnapshot(

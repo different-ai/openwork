@@ -260,3 +260,25 @@ export function workspaceKvStoreCacheStatsForTests(path: string): { connectionEn
     tableEntries: tableDbByPath.get(path)?.size ?? 0,
   };
 }
+
+/** Cached handles hold file locks (Windows EBUSY on temp-dir cleanup); tests close them before rm. */
+export async function closeWorkspaceKvStoreDatabasesForTests(): Promise<void> {
+  const pending = [...dbByPath.values()];
+  dbByPath.clear();
+  tableDbByPath.clear();
+  for (const db of pending) {
+    try {
+      (await db).close();
+    } catch {
+      // best-effort test cleanup
+    }
+  }
+  // bun:sqlite close() leaves the file locked while prepared statements (from
+  // drizzle or raw Database#query handles) remain unfinalized; forced GC
+  // finalizes them so Windows can rm the dir.
+  if (typeof process.versions.bun === "string") {
+    Bun.gc(true);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    Bun.gc(true);
+  }
+}

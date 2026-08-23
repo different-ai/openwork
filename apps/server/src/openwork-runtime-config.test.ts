@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -11,6 +11,7 @@ import {
 } from "./openwork-runtime-config.js";
 import { writeRuntimeOpencodeConfig } from "./runtime-opencode-config-store.js";
 import type { ServerConfig } from "./types.js";
+import { closeWorkspaceKvStoreDatabasesForTests } from "./workspace-kv-store.js";
 
 const roots: string[] = [];
 const cleanups: Array<() => void> = [];
@@ -18,6 +19,7 @@ let previousDb: string | undefined;
 
 afterEach(async () => {
   while (cleanups.length) cleanups.pop()?.();
+  await closeWorkspaceKvStoreDatabasesForTests();
   while (roots.length) await rm(roots.pop()!, { recursive: true, force: true });
   if (previousDb === undefined) delete process.env.OPENWORK_RUNTIME_DB;
   else process.env.OPENWORK_RUNTIME_DB = previousDb;
@@ -186,5 +188,111 @@ describe("openwork runtime config file", () => {
     const second = await buildOpenworkRuntimeConfig(config, "ws_1");
 
     expect(second).toBe(first);
+  });
+});
+
+describe("cursor-acp provider injection", () => {
+  const GLOBAL_CONFIG_WITH_CURSOR_ACP = JSON.stringify({
+    plugin: ["cursor-acp"],
+    provider: {
+      "cursor-acp": {
+        name: "Cursor",
+        npm: "@ai-sdk/openai-compatible",
+        options: { baseURL: "http://127.0.0.1:32124/v1" },
+        models: { auto: { name: "Auto" } },
+      },
+    },
+  });
+
+  type BuiltProvider = Record<string, {
+    name?: string;
+    npm?: string;
+    options?: { baseURL?: string };
+    models?: Record<string, { name?: string }>;
+  }>;
+
+  async function setupCursorAcp(options: { cursorApiKey?: string; globalConfig?: string }) {
+    const { config } = await setup();
+    const globalDir = await mkdtemp(join(tmpdir(), "openwork-cursor-acp-global-"));
+    roots.push(globalDir);
+    if (options.globalConfig !== undefined) {
+      await writeFile(join(globalDir, "opencode.json"), options.globalConfig, "utf8");
+    }
+    const previousKey = process.env.CURSOR_API_KEY;
+    const previousDir = process.env.OPENCODE_CONFIG_DIR;
+    cleanups.push(() => {
+      if (previousKey === undefined) delete process.env.CURSOR_API_KEY;
+      else process.env.CURSOR_API_KEY = previousKey;
+      if (previousDir === undefined) delete process.env.OPENCODE_CONFIG_DIR;
+      else process.env.OPENCODE_CONFIG_DIR = previousDir;
+    });
+    if (options.cursorApiKey === undefined) delete process.env.CURSOR_API_KEY;
+    else process.env.CURSOR_API_KEY = options.cursorApiKey;
+    process.env.OPENCODE_CONFIG_DIR = globalDir;
+    return { config };
+  }
+
+  async function buildParsed(config: ServerConfig): Promise<Record<string, unknown>> {
+    return JSON.parse(await buildOpenworkRuntimeConfig(config, "ws_1")) as Record<string, unknown>;
+  }
+
+  test("adds cursor-acp plugin and provider from the global config when CURSOR_API_KEY is set", async () => {
+    const { config } = await setupCursorAcp({
+      cursorApiKey: "cur_test_key",
+      globalConfig: GLOBAL_CONFIG_WITH_CURSOR_ACP,
+    });
+
+    const parsed = await buildParsed(config);
+    expect(parsed.plugin).toContain("cursor-acp");
+    const provider = parsed.provider as BuiltProvider;
+    expect(provider["cursor-acp"]?.name).toBe("Cursor");
+    expect(provider["cursor-acp"]?.npm).toBe("@ai-sdk/openai-compatible");
+    expect(provider["cursor-acp"]?.options?.baseURL).toBe("http://127.0.0.1:32124/v1");
+    expect(provider["cursor-acp"]?.models?.auto?.name).toBe("Auto");
+  });
+
+  test("leaves cursor-acp out when CURSOR_API_KEY is not set", async () => {
+    const { config } = await setupCursorAcp({ globalConfig: GLOBAL_CONFIG_WITH_CURSOR_ACP });
+
+    const parsed = await buildParsed(config);
+    expect(parsed.plugin).not.toContain("cursor-acp");
+    const provider = (parsed.provider ?? {}) as Record<string, unknown>;
+    expect(provider["cursor-acp"]).toBeUndefined();
+  });
+
+  test("leaves cursor-acp out when the global config has no cursor-acp provider", async () => {
+    const { config } = await setupCursorAcp({ cursorApiKey: "cur_test_key", globalConfig: "{}" });
+
+    const parsed = await buildParsed(config);
+    expect(parsed.plugin).not.toContain("cursor-acp");
+    const provider = (parsed.provider ?? {}) as Record<string, unknown>;
+    expect(provider["cursor-acp"]).toBeUndefined();
+  });
+
+  test("leaves cursor-acp out when no global config file exists", async () => {
+    const { config } = await setupCursorAcp({ cursorApiKey: "cur_test_key" });
+
+    const parsed = await buildParsed(config);
+    expect(parsed.plugin).not.toContain("cursor-acp");
+    const provider = (parsed.provider ?? {}) as Record<string, unknown>;
+    expect(provider["cursor-acp"]).toBeUndefined();
+  });
+
+  test("runtime-DB cursor-acp provider wins over the global config and the plugin is not duplicated", async () => {
+    const { config } = await setupCursorAcp({
+      cursorApiKey: "cur_test_key",
+      globalConfig: GLOBAL_CONFIG_WITH_CURSOR_ACP,
+    });
+    await writeRuntimeOpencodeConfig(config, "ws_1", (current) => ({
+      ...current,
+      plugin: ["cursor-acp"],
+      provider: { "cursor-acp": { name: "Runtime Cursor" } },
+    }));
+
+    const parsed = await buildParsed(config);
+    const plugins = (parsed.plugin as string[]).filter((name) => name === "cursor-acp");
+    expect(plugins).toHaveLength(1);
+    const provider = parsed.provider as BuiltProvider;
+    expect(provider["cursor-acp"]?.name).toBe("Runtime Cursor");
   });
 });

@@ -13,6 +13,7 @@ import {
 } from "./runtime-opencode-config-store.js";
 import { startServer } from "./server.js";
 import type { ServerConfig } from "./types.js";
+import { closeWorkspaceKvStoreDatabasesForTests } from "./workspace-kv-store.js";
 
 const WORKSPACE_ID = "ws_runtime_test";
 
@@ -59,6 +60,7 @@ async function withWorkspace(fn: (input: { root: string; config: ServerConfig })
     else process.env.OPENWORK_RUNTIME_DB = previousDb;
     if (previousOpencodeConfigDir === undefined) delete process.env.OPENCODE_CONFIG_DIR;
     else process.env.OPENCODE_CONFIG_DIR = previousOpencodeConfigDir;
+    await closeWorkspaceKvStoreDatabasesForTests();
     await rm(root, { recursive: true, force: true });
   }
 }
