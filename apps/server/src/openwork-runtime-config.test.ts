@@ -329,6 +329,24 @@ describe("cursor-acp provider injection", () => {
     expect(provider["cursor-acp"]?.name).toBe("Cursor");
   });
 
+  test("reads cursor-acp from opencode.json when opencode.jsonc has no block", async () => {
+    const { config } = await setupCursorAcp({
+      cursorApiKey: "cur_test_key",
+      globalConfig: GLOBAL_CONFIG_WITH_CURSOR_ACP,
+    });
+    await writeFile(
+      join(process.env.OPENCODE_CONFIG_DIR!, "opencode.jsonc"),
+      JSON.stringify({ $schema: "https://opencode.ai/config.json" }),
+      "utf8",
+    );
+
+    const parsed = await buildParsed(config);
+    const provider = parsed.provider as BuiltProvider;
+    expect(provider["cursor-acp"]?.options?.baseURL).toBe("http://127.0.0.1:32124/v1");
+    const plugins = parsed.plugin as string[];
+    expect(plugins.includes("cursor-acp") || plugins.some((name) => name.endsWith("cursor-acp.js"))).toBe(true);
+  });
+
   test("runtime-DB cursor-acp provider wins over the global config and the plugin is not duplicated", async () => {
     const { config } = await setupCursorAcp({
       cursorApiKey: "cur_test_key",

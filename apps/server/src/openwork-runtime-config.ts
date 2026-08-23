@@ -13,7 +13,7 @@
  * which was frozen at spawn and reverted MCP state on each dispose.
  */
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { join, dirname } from "node:path";
 import { randomUUID } from "node:crypto";
 import { parse as parseJsonc } from "jsonc-parser";
 import { resolveGlobalOpencodeConfigPath } from "@openwork/paths";
@@ -101,14 +101,22 @@ const CURSOR_ACP_PROVIDER_ID = "cursor-acp";
  * file; without any block to mirror, nothing is injected.
  */
 async function readGlobalCursorAcpProvider(): Promise<Record<string, unknown> | null> {
-  try {
-    const parsed: unknown = parseJsonc(await readFile(resolveGlobalOpencodeConfigPath(), "utf8"));
-    if (!isRecord(parsed) || !isRecord(parsed.provider)) return null;
-    const block = parsed.provider[CURSOR_ACP_PROVIDER_ID];
-    return isRecord(block) ? block : null;
-  } catch {
-    return null;
+  const primaryPath = resolveGlobalOpencodeConfigPath();
+  const configDir = dirname(primaryPath);
+  const jsonPath = join(configDir, "opencode.json");
+  const jsoncPath = join(configDir, "opencode.jsonc");
+  const candidatePaths = primaryPath === jsoncPath ? [jsoncPath, jsonPath] : [jsonPath, jsoncPath];
+  for (const candidatePath of candidatePaths) {
+    try {
+      const parsed: unknown = parseJsonc(await readFile(candidatePath, "utf8"));
+      if (!isRecord(parsed) || !isRecord(parsed.provider)) continue;
+      const block = parsed.provider[CURSOR_ACP_PROVIDER_ID];
+      if (isRecord(block)) return block;
+    } catch {
+      // missing or unreadable candidate — try sibling
+    }
   }
+  return null;
 }
 
 async function withCursorAcpProvider(runtimeConfig: RuntimeOpencodeConfig): Promise<RuntimeOpencodeConfig> {
