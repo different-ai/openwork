@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -12,6 +12,7 @@ import {
 import { writeRuntimeOpencodeConfig } from "./runtime-opencode-config-store.js";
 import type { ServerConfig } from "./types.js";
 import { closeWorkspaceKvStoreDatabasesForTests } from "./workspace-kv-store.js";
+import { EnvService } from "./env-file.js";
 
 const roots: string[] = [];
 const cleanups: Array<() => void> = [];
@@ -218,17 +219,22 @@ describe("cursor-acp provider injection", () => {
     if (options.globalConfig !== undefined) {
       await writeFile(join(globalDir, "opencode.json"), options.globalConfig, "utf8");
     }
+    const envPath = join(globalDir, "env.json");
     const previousKey = process.env.CURSOR_API_KEY;
     const previousDir = process.env.OPENCODE_CONFIG_DIR;
+    const previousStore = process.env.OPENWORK_ENV_STORE;
     cleanups.push(() => {
       if (previousKey === undefined) delete process.env.CURSOR_API_KEY;
       else process.env.CURSOR_API_KEY = previousKey;
       if (previousDir === undefined) delete process.env.OPENCODE_CONFIG_DIR;
       else process.env.OPENCODE_CONFIG_DIR = previousDir;
+      if (previousStore === undefined) delete process.env.OPENWORK_ENV_STORE;
+      else process.env.OPENWORK_ENV_STORE = previousStore;
     });
     if (options.cursorApiKey === undefined) delete process.env.CURSOR_API_KEY;
     else process.env.CURSOR_API_KEY = options.cursorApiKey;
     process.env.OPENCODE_CONFIG_DIR = globalDir;
+    process.env.OPENWORK_ENV_STORE = envPath;
     return { config };
   }
 
@@ -276,6 +282,51 @@ describe("cursor-acp provider injection", () => {
     expect(parsed.plugin).not.toContain("cursor-acp");
     const provider = (parsed.provider ?? {}) as Record<string, unknown>;
     expect(provider["cursor-acp"]).toBeUndefined();
+  });
+
+  test("adds cursor-acp from the env store when process.env.CURSOR_API_KEY is unset", async () => {
+    const { config } = await setupCursorAcp({ globalConfig: GLOBAL_CONFIG_WITH_CURSOR_ACP });
+    const envPath = join(roots[roots.length - 1]!, "env.json");
+    const previousStore = process.env.OPENWORK_ENV_STORE;
+    cleanups.push(() => {
+      if (previousStore === undefined) delete process.env.OPENWORK_ENV_STORE;
+      else process.env.OPENWORK_ENV_STORE = previousStore;
+    });
+    process.env.OPENWORK_ENV_STORE = envPath;
+    await new EnvService({ path: envPath }).upsertMany([{ key: "CURSOR_API_KEY", value: "cur_test_key" }]);
+
+    const parsed = await buildParsed(config);
+    expect(parsed.plugin).toContain("cursor-acp");
+    const provider = parsed.provider as BuiltProvider;
+    expect(provider["cursor-acp"]?.options?.baseURL).toBe("http://127.0.0.1:32124/v1");
+  });
+
+  test("injects the absolute local plugin path when plugin/cursor-acp.js exists", async () => {
+    const { config } = await setupCursorAcp({
+      cursorApiKey: "cur_test_key",
+      globalConfig: GLOBAL_CONFIG_WITH_CURSOR_ACP,
+    });
+    const pluginPath = join(process.env.OPENCODE_CONFIG_DIR!, "plugin", "cursor-acp.js");
+    await mkdir(join(process.env.OPENCODE_CONFIG_DIR!, "plugin"), { recursive: true });
+    await writeFile(pluginPath, "export default async () => ({})", "utf8");
+
+    const parsed = await buildParsed(config);
+    expect(parsed.plugin).toContain(pluginPath);
+    expect((parsed.plugin as string[]).filter((name) => name === "cursor-acp")).toEqual([]);
+    const provider = parsed.provider as BuiltProvider;
+    expect(provider["cursor-acp"]?.options?.baseURL).toBe("http://127.0.0.1:32124/v1");
+  });
+
+  test("injects cursor-acp from a local plugin file even when CURSOR_API_KEY is unset", async () => {
+    const { config } = await setupCursorAcp({ globalConfig: GLOBAL_CONFIG_WITH_CURSOR_ACP });
+    const pluginPath = join(process.env.OPENCODE_CONFIG_DIR!, "plugin", "cursor-acp.js");
+    await mkdir(join(process.env.OPENCODE_CONFIG_DIR!, "plugin"), { recursive: true });
+    await writeFile(pluginPath, "export default async () => ({})", "utf8");
+
+    const parsed = await buildParsed(config);
+    expect(parsed.plugin).toContain(pluginPath);
+    const provider = parsed.provider as BuiltProvider;
+    expect(provider["cursor-acp"]?.name).toBe("Cursor");
   });
 
   test("runtime-DB cursor-acp provider wins over the global config and the plugin is not duplicated", async () => {

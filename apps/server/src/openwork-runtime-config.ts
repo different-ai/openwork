@@ -37,6 +37,8 @@ import {
   type RuntimeOpencodeConfig,
 } from "./runtime-opencode-config-store.js";
 import { CONNECT_MCP_SERVER_NAME_PREFIX } from "./connect-mcp-server-catalog.js";
+import { resolveCursorApiKey } from "./cursor-acp-env.js";
+import { resolveLocalCursorAcpPluginPath } from "./cursor-acp-plugin-path.js";
 
 const OPENWORK_AGENT_PROMPT = `You are OpenWork.
 
@@ -110,13 +112,19 @@ async function readGlobalCursorAcpProvider(): Promise<Record<string, unknown> | 
 }
 
 async function withCursorAcpProvider(runtimeConfig: RuntimeOpencodeConfig): Promise<RuntimeOpencodeConfig> {
-  if (!process.env.CURSOR_API_KEY?.trim()) return runtimeConfig;
   const providers = runtimeProviderMap(runtimeConfig);
+  const localPluginPath = resolveLocalCursorAcpPluginPath();
+  const hasKey = Boolean(await resolveCursorApiKey());
+  if (!hasKey && !localPluginPath && !providers[CURSOR_ACP_PROVIDER_ID]) return runtimeConfig;
   const block = providers[CURSOR_ACP_PROVIDER_ID] ?? (await readGlobalCursorAcpProvider());
   if (!block) return runtimeConfig;
+  const pluginSpec = localPluginPath ?? CURSOR_ACP_PROVIDER_ID;
   return {
     ...runtimeConfig,
-    plugin: [...runtimePluginList(runtimeConfig).filter((name) => name !== CURSOR_ACP_PROVIDER_ID), CURSOR_ACP_PROVIDER_ID],
+    plugin: [
+      ...runtimePluginList(runtimeConfig).filter((name) => name !== CURSOR_ACP_PROVIDER_ID && name !== pluginSpec),
+      pluginSpec,
+    ],
     provider: { ...providers, [CURSOR_ACP_PROVIDER_ID]: block },
   };
 }
