@@ -47,6 +47,7 @@ function failureReason(part: AnyToolPart): string | null {
  */
 export function ToolAggregateGroup({ parts, className }: ToolAggregateGroupProps) {
   const groupKey = parts[0]?.toolCallId ?? "aggregate"
+  const latestToolCallId = parts.at(-1)?.toolCallId ?? groupKey
   const [expanded, setExpandedState] = useState(() => expandedByGroupKey.get(groupKey) ?? false)
   const [showAll, setShowAllState] = useState(() => showAllByGroupKey.get(groupKey) ?? false)
 
@@ -70,7 +71,7 @@ export function ToolAggregateGroup({ parts, className }: ToolAggregateGroupProps
   const hiddenCount = parts.length - visibleParts.length
 
   return (
-    <div className={className} data-tool-aggregate={groupKey}>
+    <div className={className} data-tool-aggregate={latestToolCallId}>
       <button
         type="button"
         onClick={() => setExpanded(!expanded)}
