@@ -47,6 +47,20 @@ test("OpenWork Connect and the agent endpoint implement stateless MCP 2026", ({ 
   expect(agent.output).toContain("4 pass")
   expect(agent.output).toContain("0 fail")
 
+  const managedGateway = run("pnpm", [
+    "--filter",
+    "openwork-server",
+    "test",
+    "src/local-managed-mcp.e2e.test.ts",
+    "--test-name-pattern",
+    "returns safe connection errors for DCR and protocol negotiation failures",
+  ])
+  expect(managedGateway.error, managedGateway.output).toBeUndefined()
+  expect(managedGateway.status, managedGateway.output).toBe(0)
+  expect(managedGateway.output).toContain("1 pass")
+  expect(managedGateway.output).toContain("0 fail")
+  expect(managedGateway.output).toContain("24 expect() calls")
+
   evidence.recordAssertionEvidence(
     "OpenWork Connect negotiates the current stateless protocol",
     "The outbound client uses automatic SDK negotiation, reaches a 2026-07-28 server through server/discover without initialize or Mcp-Session-Id, and does not misclassify authorization or server failures as legacy-protocol signals.",
@@ -65,6 +79,11 @@ test("OpenWork Connect and the agent endpoint implement stateless MCP 2026", ({ 
   evidence.recordAssertionEvidence(
     "Protocol and authorization boundaries fail closed",
     "The server rejects a protocol header/body mismatch with JSON-RPC error -32020, and OAuth keeps an administrator-selected read scope narrower than a provider's broader advertisement.",
+    true,
+  )
+  evidence.recordAssertionEvidence(
+    "Managed Connect failures preserve safe API boundaries",
+    "DCR rejection plus modern discovery and legacy initialize failures return the bounded managed-MCP 502 without provider secrets or telemetry noise, while malformed internal SDK data remains a captured generic 500.",
     true,
   )
 })
