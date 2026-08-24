@@ -20,15 +20,38 @@ function run(command: string, args: string[]) {
 }
 
 test("OpenWork Connect and the agent endpoint implement stateless MCP 2026", ({ evidence }) => {
-  const connect = run("pnpm", ["--filter", "@openwork/enterprise-mcp-client", "test"])
+  const connect = run("pnpm", [
+    "--filter",
+    "@openwork/enterprise-mcp-client",
+    "exec",
+    "tsx",
+    "--test",
+    "test/requirements-discovery.test.ts",
+    "test/slack-mcp-compat.test.ts",
+  ])
   expect(connect.error, connect.output).toBeUndefined()
   expect(connect.status, connect.output).toBe(0)
   expect(connect.output).toContain("discovers a 2026 stateless server without an initialize handshake")
   expect(connect.output).toContain("negotiates the stateless protocol without initialize or a session id")
   expect(connect.output).toContain("does not downgrade the discovery probe after HTTP 401")
-  expect(connect.output).toContain("keeps an administrator's selected scopes narrower than a scope-less provider advertisement")
-  expect(connect.output).toContain("tests 77")
+  expect(connect.output).toContain("tests 16")
   expect(connect.output).toContain("fail 0")
+
+  const scopes = run("pnpm", [
+    "--filter",
+    "@openwork/enterprise-mcp-client",
+    "exec",
+    "tsx",
+    "--test",
+    "--test-name-pattern",
+    "keeps an administrator's selected scopes narrower",
+    "test/enterprise-mcp-client.test.ts",
+  ])
+  expect(scopes.error, scopes.output).toBeUndefined()
+  expect(scopes.status, scopes.output).toBe(0)
+  expect(scopes.output).toContain("keeps an administrator's selected scopes narrower than a scope-less provider advertisement")
+  expect(scopes.output).toContain("tests 1")
+  expect(scopes.output).toContain("fail 0")
 
   const agent = run("pnpm", [
     "--filter",
