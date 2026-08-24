@@ -44,13 +44,15 @@ test("OpenWork Connect and the agent endpoint implement stateless MCP 2026", ({ 
     "tsx",
     "--test",
     "--test-name-pattern",
-    "keeps an administrator's selected scopes narrower",
+    "prefers protected-resource scopes|keeps an administrator's selected scopes narrower|rejects selected scopes",
     "test/enterprise-mcp-client.test.ts",
   ])
   expect(scopes.error, scopes.output).toBeUndefined()
   expect(scopes.status, scopes.output).toBe(0)
+  expect(scopes.output).toContain("prefers protected-resource scopes over unrelated authorization-server scopes")
   expect(scopes.output).toContain("keeps an administrator's selected scopes narrower than a scope-less provider advertisement")
-  expect(scopes.output).toContain("tests 1")
+  expect(scopes.output).toContain("rejects selected scopes that neither the resource nor authorization server advertises")
+  expect(scopes.output).toContain("tests 3")
   expect(scopes.output).toContain("fail 0")
 
   const agent = run("pnpm", [
@@ -66,8 +68,10 @@ test("OpenWork Connect and the agent endpoint implement stateless MCP 2026", ({ 
   expect(agent.output).toContain("serves the 2026 stateless wire with fresh per-request servers")
   expect(agent.output).toContain("rejects a modern protocol header/body mismatch instead of normalizing it")
   expect(agent.output).toContain("keeps the 2025 stateless fallback for existing clients")
+  expect(agent.output).toContain("keeps a prepared request-local server bound through legacy request cloning")
   expect(agent.output).toContain("delivers modern list changes through subscriptions/listen")
-  expect(agent.output).toContain("4 pass")
+  expect(agent.output).toContain("isolates list-change subscriptions by authenticated catalog audience")
+  expect(agent.output).toContain("6 pass")
   expect(agent.output).toContain("0 fail")
 
   const managedGateway = run("pnpm", [
@@ -96,12 +100,12 @@ test("OpenWork Connect and the agent endpoint implement stateless MCP 2026", ({ 
   )
   evidence.recordAssertionEvidence(
     "Compatibility and notification behavior remain explicit",
-    "A 2025 SDK client completes initialize and tools/list without a session identifier, while a modern listener receives catalog changes through subscriptions/listen.",
+    "A 2025 SDK client completes initialize and tools/list without a session identifier even when the SDK clones its Request, while modern listeners receive catalog changes through subscriptions/listen only for their authenticated organization and user audience.",
     true,
   )
   evidence.recordAssertionEvidence(
     "Protocol and authorization boundaries fail closed",
-    "The server rejects a protocol header/body mismatch with JSON-RPC error -32020, and OAuth keeps an administrator-selected read scope narrower than a provider's broader advertisement.",
+    "The server rejects a protocol header/body mismatch with JSON-RPC error -32020. OAuth prefers resource-specific scopes over unrelated authorization-server scopes, preserves a narrower administrator selection, and rejects selections advertised by neither party before registration.",
     true,
   )
   evidence.recordAssertionEvidence(
