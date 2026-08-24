@@ -114,6 +114,7 @@ test("OpenWork Connect and the agent endpoint implement stateless MCP 2026", ({ 
     "@openwork-ee/den-api",
     "exec",
     "bun",
+    "--conditions=development",
     "test",
     "--test-name-pattern",
     "preserves an application-owned OAuth issuer mismatch over a captured HTTP 401",
