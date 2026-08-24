@@ -76,13 +76,13 @@ test("OpenWork Connect and the agent endpoint implement stateless MCP 2026", ({ 
     "test",
     "src/local-managed-mcp.e2e.test.ts",
     "--test-name-pattern",
-    "returns safe connection errors for DCR and protocol negotiation failures",
+    "rolls back a new managed connection when the initial OAuth handshake fails|returns safe connection errors for DCR and protocol negotiation failures",
   ])
   expect(managedGateway.error, managedGateway.output).toBeUndefined()
   expect(managedGateway.status, managedGateway.output).toBe(0)
-  expect(managedGateway.output).toContain("1 pass")
+  expect(managedGateway.output).toContain("2 pass")
   expect(managedGateway.output).toContain("0 fail")
-  expect(managedGateway.output).toContain("24 expect() calls")
+  expect(managedGateway.output).toContain("28 expect() calls")
 
   evidence.recordAssertionEvidence(
     "OpenWork Connect negotiates the current stateless protocol",
@@ -106,7 +106,7 @@ test("OpenWork Connect and the agent endpoint implement stateless MCP 2026", ({ 
   )
   evidence.recordAssertionEvidence(
     "Managed Connect failures preserve safe API boundaries",
-    "DCR rejection plus modern discovery and legacy initialize failures return the bounded managed-MCP 502 without provider secrets or telemetry noise, while malformed internal SDK data remains a captured generic 500.",
+    "An unreachable server plus DCR rejection and modern discovery or legacy initialize failures return the bounded managed-MCP 502 without provider secrets or telemetry noise, while malformed internal SDK data remains a captured generic 500.",
     true,
   )
 })

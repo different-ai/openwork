@@ -4,7 +4,7 @@ import { expect } from "vitest";
 import { test } from "@openwork/testkit";
 
 const repoRoot = resolve(import.meta.dirname, "../..");
-const witnessName = "returns safe connection errors for DCR and protocol negotiation failures";
+const witnessName = "rolls back a new managed connection when the initial OAuth handshake fails|returns safe connection errors for DCR and protocol negotiation failures";
 
 test("managed MCP handshake boundaries separate provider failures from internal defects", ({ evidence }) => {
   const result = spawnSync("pnpm", [
@@ -24,13 +24,13 @@ test("managed MCP handshake boundaries separate provider failures from internal 
 
   expect(result.error, output).toBeUndefined();
   expect(result.status, output).toBe(0);
-  expect(output).toContain("1 pass");
+  expect(output).toContain("2 pass");
   expect(output).toContain("0 fail");
-  expect(output).toContain("24 expect() calls");
+  expect(output).toContain("28 expect() calls");
 
   evidence.recordAssertionEvidence(
     "Provider DCR and protocol negotiation failures cross a safe reconnect boundary",
-    "The focused HTTP witness requires DCR rejection plus modern discovery and legacy initialize failures to return exactly managed_mcp_connection_failed/502, omit nested provider secrets, and persist reconnect_required with no credential.",
+    "The focused HTTP witness requires an unreachable endpoint plus DCR rejection and modern discovery or legacy initialize failures to return exactly managed_mcp_connection_failed/502, omit provider details, and leave no usable credential.",
     true,
   );
   evidence.recordAssertionEvidence(

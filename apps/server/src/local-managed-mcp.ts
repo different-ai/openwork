@@ -1022,7 +1022,9 @@ function errorCauseChain(error: unknown): unknown[] {
   for (let depth = 0; depth < 6 && current !== undefined && current !== null && !seen.has(current); depth += 1) {
     chain.push(current);
     seen.add(current);
-    current = isRecord(current) ? current.cause : undefined;
+    current = isRecord(current)
+      ? current.cause ?? (isRecord(current.data) ? current.data.cause : undefined)
+      : undefined;
   }
   return chain;
 }
