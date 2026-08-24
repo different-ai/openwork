@@ -57,6 +57,15 @@ function githubRawBase(): string {
   return (process.env.OPENWORK_GITHUB_RAW_BASE?.trim() || "https://raw.githubusercontent.com").replace(/\/+$/, "");
 }
 
+/**
+ * Optional token for private repos. GitHub accepts the same Bearer token on
+ * both api.github.com and raw.githubusercontent.com.
+ */
+function githubAuthHeaders(): Record<string, string> {
+  const token = process.env.OPENWORK_GITHUB_TOKEN?.trim();
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
@@ -99,7 +108,7 @@ export function parseClaudePluginSource(input: string): ClaudePluginSource {
 
 async function fetchGithubJson(url: string): Promise<unknown> {
   const response = await externalFetch(url, {
-    headers: { Accept: "application/vnd.github+json", "User-Agent": "openwork-server" },
+    headers: { Accept: "application/vnd.github+json", "User-Agent": "openwork-server", ...githubAuthHeaders() },
     signal: AbortSignal.timeout(20_000),
   });
   if (!response.ok) {
@@ -111,7 +120,7 @@ async function fetchGithubJson(url: string): Promise<unknown> {
 
 async function fetchGithubText(url: string): Promise<string> {
   const response = await externalFetch(url, {
-    headers: { Accept: "text/plain", "User-Agent": "openwork-server" },
+    headers: { Accept: "text/plain", "User-Agent": "openwork-server", ...githubAuthHeaders() },
     signal: AbortSignal.timeout(20_000),
   });
   if (!response.ok) {

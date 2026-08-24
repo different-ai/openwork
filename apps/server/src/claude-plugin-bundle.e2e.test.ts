@@ -63,10 +63,12 @@ const PLUGIN_FILES: Record<string, string> = {
 
 function startMockGithub(options?: { branch?: string }) {
   const branch = options?.branch ?? "main";
+  const authHeaders: Array<string | null> = [];
   const server = Bun.serve({
     hostname: "127.0.0.1",
     port: 0,
     fetch(request) {
+      authHeaders.push(request.headers.get("authorization"));
       const url = new URL(request.url);
       // API: repo info
       if (url.pathname === "/repos/slackapi/slack-mcp-plugin") {
@@ -92,7 +94,7 @@ function startMockGithub(options?: { branch?: string }) {
     },
   }) as Served;
   stops.push(() => server.stop(true));
-  return server;
+  return { port: server.port, authHeaders };
 }
 
 function startMockOpencode() {
@@ -157,6 +159,7 @@ async function startOpenwork(options?: { branch?: string }) {
     headers: { Authorization: "Bearer owt_test_token", "Content-Type": "application/json" },
     workspaceRoot,
     engine,
+    github,
   };
 }
 
@@ -225,6 +228,34 @@ describe("claude plugin bundles", () => {
     expect(body.preview.warnings.some((warning) => warning.includes("local-helper"))).toBe(true);
     // Nothing installed on dryRun.
     expect(existsSync(join(openwork.workspaceRoot, ".opencode/skills/slack-plugin"))).toBe(false);
+  });
+
+  test("sends OPENWORK_GITHUB_TOKEN as a Bearer header for private repos", async () => {
+    const openwork = await startOpenwork();
+    setEnv("OPENWORK_GITHUB_TOKEN", "ghp_test_private_token");
+
+    const response = await fetch(`${openwork.base}/workspace/ws_1/claude-plugins`, {
+      method: "POST",
+      headers: openwork.headers,
+      body: JSON.stringify({ url: "https://github.com/slackapi/slack-mcp-plugin", dryRun: true }),
+    });
+    expect(response.status).toBe(200);
+    expect(openwork.github.authHeaders.length).toBeGreaterThan(0);
+    expect(openwork.github.authHeaders.every((header) => header === "Bearer ghp_test_private_token")).toBe(true);
+  });
+
+  test("sends no Authorization header when OPENWORK_GITHUB_TOKEN is unset", async () => {
+    const openwork = await startOpenwork();
+    setEnv("OPENWORK_GITHUB_TOKEN", "");
+
+    const response = await fetch(`${openwork.base}/workspace/ws_1/claude-plugins`, {
+      method: "POST",
+      headers: openwork.headers,
+      body: JSON.stringify({ url: "https://github.com/slackapi/slack-mcp-plugin", dryRun: true }),
+    });
+    expect(response.status).toBe(200);
+    expect(openwork.github.authHeaders.length).toBeGreaterThan(0);
+    expect(openwork.github.authHeaders.every((header) => header === null)).toBe(true);
   });
 
   test("resolves branch names containing slashes in /tree/ URLs", async () => {
