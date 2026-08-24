@@ -266,3 +266,112 @@ export function seedOpencodeSessionMessages(input: {
     db.close();
   }
 }
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+export type ImportedSessionMessage = {
+  role: "user" | "assistant";
+  /** Original message payload, minus identifiers, which are reassigned here. */
+  data: Record<string, unknown>;
+  /** Original part payloads, minus identifiers, in their original order. */
+  parts: Array<Record<string, unknown>>;
+  /** Source message id, used to rewrite parentID links onto the new ids. */
+  sourceId: string;
+  /** Source parentID, if the original message had one. */
+  sourceParentId?: string;
+};
+
+/**
+ * Write an imported transcript into an existing session, preserving the
+ * original message and part payloads.
+ *
+ * Unlike seedOpencodeSessionMessages, which composes plain text turns for
+ * blueprint sessions, this keeps reasoning, tool calls and message metadata
+ * intact so an imported session renders exactly like the session it came from.
+ * Identifiers are reassigned because ids must be unique and ascending in the
+ * destination database, and parentID links are rewritten onto the new ids so a
+ * message never points at an unrelated message.
+ */
+export function writeOpencodeSessionMessages(input: {
+  sessionId: string;
+  messages: ImportedSessionMessage[];
+  dbPath?: string;
+  now?: number;
+}): { inserted: number; skipped: boolean } {
+  const sessionId = input.sessionId.trim();
+  if (!sessionId) {
+    throw new Error("sessionId is required");
+  }
+  if (!input.messages.length) {
+    return { inserted: 0, skipped: true };
+  }
+
+  const explicitDbPath = input.dbPath?.trim() || undefined;
+  const dbPath = findOpencodeSessionDbPath(sessionId, explicitDbPath) || explicitDbPath || resolveOpencodeDbPath();
+  if (!existsSync(dbPath)) {
+    throw new Error(`OpenCode database not found at ${dbPath}`);
+  }
+
+  const db = openDatabase(dbPath);
+  db.exec("PRAGMA foreign_keys = ON");
+
+  try {
+    const run = db.transaction(() => {
+      const session = db.prepare("select id from session where id = ?").get(sessionId);
+      if (!session) {
+        throw new Error(`OpenCode session not found: ${sessionId}`);
+      }
+
+      const existing = db.prepare("select count(1) as count from message where session_id = ?").get(sessionId) as { count?: number } | null;
+      if ((existing?.count ?? 0) > 0) {
+        return { inserted: 0, skipped: true };
+      }
+
+      const insertMessage = db.prepare(
+        "insert into message (id, session_id, time_created, time_updated, data) values (?, ?, ?, ?, ?)",
+      );
+      const insertPart = db.prepare(
+        "insert into part (id, message_id, session_id, time_created, time_updated, data) values (?, ?, ?, ?, ?, ?)",
+      );
+      const updateSession = db.prepare("update session set time_updated = ? where id = ?");
+
+      const startedAt = input.now ?? Date.now();
+      let counter = 0;
+      const idBySourceId = new Map<string, string>();
+
+      input.messages.forEach((item, index) => {
+        const createdAt = startedAt + index;
+        counter += 1;
+        const messageId = ascendingId("msg", createdAt, counter);
+        idBySourceId.set(item.sourceId, messageId);
+
+        const parentId = item.sourceParentId ? idBySourceId.get(item.sourceParentId) : undefined;
+        const previousTime = isPlainObject(item.data.time) ? item.data.time : {};
+        const messageData: Record<string, unknown> = {
+          ...item.data,
+          role: item.role,
+          time: { ...previousTime, created: createdAt },
+        };
+        if (parentId) messageData.parentID = parentId;
+        else delete messageData.parentID;
+
+        insertMessage.run(messageId, sessionId, createdAt, createdAt, JSON.stringify(messageData));
+
+        item.parts.forEach((part) => {
+          counter += 1;
+          const partId = ascendingId("prt", createdAt, counter);
+          insertPart.run(partId, messageId, sessionId, createdAt, createdAt, JSON.stringify(part));
+        });
+      });
+
+      updateSession.run(startedAt + input.messages.length, sessionId);
+      return { inserted: input.messages.length, skipped: false };
+    });
+
+    return run();
+  } finally {
+    db.close();
+  }
+}

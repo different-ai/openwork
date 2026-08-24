@@ -1,7 +1,25 @@
 import { realpath } from "node:fs/promises";
 import type { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
 import { ApiError } from "../errors.js";
+import { writeOpencodeSessionMessages } from "../opencode-db.js";
+import {
+  forgetSessionImport,
+  readSessionImportState,
+  recordSessionImports,
+  type SessionImportMark,
+} from "../session-imports.js";
 import { buildSession, buildSessionList, buildSessionMessages, buildSessionSnapshot } from "../session-read-model.js";
+import type { SessionSnapshotReadModel } from "../session-read-model.js";
+import {
+  buildSessionExportBundle,
+  MAX_IMPORT_SESSIONS,
+  parseSessionExportBundle,
+  planSessionImport,
+  renderSessionBundleMarkdown,
+  SessionBundleError,
+  type SessionExportBundle,
+  type SessionTransferSensitiveMode,
+} from "../session-transfer.js";
 import {
   createSessionGroupId,
   normalizeSessionGroupState,
@@ -32,6 +50,7 @@ interface RegisterSessionRoutesOptions {
   parseOptionalBoolean: ParseOptionalBoolean;
   parseOptionalPositiveInteger: ParseOptionalPositiveInteger;
   parseOptionalNonNegativeInteger: ParseOptionalNonNegativeInteger;
+  parseExportSensitiveMode: (value: string | null) => SessionTransferSensitiveMode;
   readJsonBody: ReadJsonBody;
   ensureWritable: (config: ServerConfig) => void;
   requireClientScope: (ctx: RequestContext, required: TokenScope) => void;
@@ -58,6 +77,7 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
     parseOptionalBoolean,
     parseOptionalPositiveInteger,
     parseOptionalNonNegativeInteger,
+    parseExportSensitiveMode,
     readJsonBody,
     ensureWritable,
     requireClientScope,
@@ -240,6 +260,61 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
       throw new ApiError(400, "invalid_payload", `${field} must be a non-empty string`);
     }
     return value.trim();
+  }
+
+  function parseExportFormat(value: string | null): "json" | "markdown" {
+    const trimmed = (value ?? "").trim();
+    if (!trimmed || trimmed === "json") return "json";
+    if (trimmed === "markdown") return "markdown";
+    throw new ApiError(400, "invalid_query", `Invalid export format: ${trimmed}`);
+  }
+
+  /**
+   * Snapshots for a whole workspace, read one at a time.
+   *
+   * Each snapshot is four OpenCode calls, so a parallel fan-out over a large
+   * workspace would hammer the engine. Sessions deleted mid-export are skipped
+   * rather than failing the whole bundle.
+   */
+  async function collectWorkspaceSnapshots(
+    workspace: WorkspaceInfo,
+    input: { sessionLimit: number; messageLimit?: number },
+  ): Promise<SessionSnapshotReadModel[]> {
+    const sessions = await listWorkspaceSessions(workspace, { limit: input.sessionLimit });
+    const snapshots: SessionSnapshotReadModel[] = [];
+    for (const session of sessions.slice(0, input.sessionLimit)) {
+      try {
+        snapshots.push(await readWorkspaceSessionSnapshot(workspace, session.id, { limit: input.messageLimit }));
+      } catch (error) {
+        if (error instanceof ApiError && error.status === 404) continue;
+        throw error;
+      }
+    }
+    return snapshots;
+  }
+
+  function exportResponse(
+    bundle: SessionExportBundle,
+    warnings: ReturnType<typeof buildSessionExportBundle>["warnings"],
+    input: { format: "json" | "markdown"; sensitiveMode: SessionTransferSensitiveMode },
+  ): Response {
+    // Same contract as workspace export: refuse to guess when a transcript
+    // looks like it carries secrets, and let the caller pick include/exclude.
+    if (warnings.length && input.sensitiveMode === "auto") {
+      throw new ApiError(
+        409,
+        "session_export_requires_decision",
+        "These sessions include secret-like content. Choose whether to redact it or include it before exporting.",
+        { warnings },
+      );
+    }
+    if (input.format === "markdown") {
+      return new Response(renderSessionBundleMarkdown(bundle), {
+        status: 200,
+        headers: { "Content-Type": "text/markdown; charset=utf-8" },
+      });
+    }
+    return jsonResponse(bundle);
   }
 
   addRoute(routes, "POST", "/workspace/:id/sessions", "client", async (ctx) => {
@@ -454,6 +529,114 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
     return jsonResponse({ items, cursor: sessionGroupEvents.cursor(workspace.id), workspaceId: workspace.id });
   });
 
+  // Registered before "/workspace/:id/sessions/:sessionId" so the literal
+  // "export" segment is not captured as a session id, matching how
+  // "/session-groups/reorder" precedes "/session-groups/:groupId" above.
+  addRoute(routes, "GET", "/workspace/:id/sessions/export", "client", async (ctx) => {
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const format = parseExportFormat(ctx.url.searchParams.get("format"));
+    const sensitiveMode = parseExportSensitiveMode(ctx.url.searchParams.get("sensitive"));
+    const sessionLimit = Math.min(
+      parseOptionalPositiveInteger(ctx.url.searchParams.get("sessions"), "sessions") ?? MAX_IMPORT_SESSIONS,
+      MAX_IMPORT_SESSIONS,
+    );
+    const snapshots = await collectWorkspaceSnapshots(workspace, {
+      sessionLimit,
+      messageLimit: parseOptionalPositiveInteger(ctx.url.searchParams.get("limit"), "limit"),
+    });
+    const { bundle, warnings } = buildSessionExportBundle({
+      workspaceId: workspace.id,
+      workspaceName: workspace.name,
+      snapshots,
+      sensitiveMode,
+    });
+    return exportResponse(bundle, warnings, { format, sensitiveMode });
+  });
+
+  addRoute(routes, "POST", "/workspace/:id/sessions/import", "client", async (ctx) => {
+    ensureWritable(config);
+    requireClientScope(ctx, "collaborator");
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const body = await readJsonBody(ctx.request);
+
+    let planned;
+    let bundle;
+    try {
+      bundle = parseSessionExportBundle(body);
+      planned = planSessionImport(bundle);
+    } catch (error) {
+      if (error instanceof SessionBundleError) {
+        throw new ApiError(400, "invalid_session_bundle", error.message, error.issues ? { issues: error.issues } : undefined);
+      }
+      throw error;
+    }
+
+    const workspaceRoot = resolveOpencodeDirectory(workspace) ?? workspace.path;
+    const opencode = createWorkspaceOpencodeClient(config, workspace);
+    const imported: Array<{ sourceSessionId: string; sessionId: string; title: string; messages: number }> = [];
+    const marks: Array<{ sessionId: string; mark: SessionImportMark }> = [];
+    const importedAt = Date.now();
+    const sourceWorkspaceName = bundle.workspaceName?.trim() || bundle.workspaceId;
+
+    // Import never touches an existing session: every entry becomes a new one.
+    for (const entry of planned) {
+      const created = buildSession(
+        unwrapOpencodeResult(await opencode.session.create({ title: entry.title }), "/session"),
+      );
+      const result = writeOpencodeSessionMessages({
+        sessionId: created.id,
+        messages: entry.messages,
+      });
+      imported.push({
+        sourceSessionId: entry.sourceSessionId,
+        sessionId: created.id,
+        title: entry.title,
+        messages: result.inserted,
+      });
+      marks.push({
+        sessionId: created.id,
+        mark: {
+          sourceWorkspaceId: bundle.workspaceId,
+          sourceWorkspaceName,
+          sourceSessionId: entry.sourceSessionId,
+          importedAt,
+        },
+      });
+    }
+
+    // Recorded after the sessions exist so a crash can never mark a session
+    // that was not created.
+    await recordSessionImports(config, workspace.id, marks);
+
+    return jsonResponse({ ok: true, imported }, 201);
+  });
+
+  addRoute(routes, "GET", "/workspace/:id/session-imports", "client", async (ctx) => {
+    const workspace = await resolveWorkspaceWithoutBootstrap(config, ctx.params.id);
+    const result = await readSessionImportState(config, workspace.id);
+    return jsonResponse({ marks: result.state.marks, updatedAt: result.updatedAt });
+  });
+
+  addRoute(routes, "GET", "/workspace/:id/sessions/:sessionId/export", "client", async (ctx) => {
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const sessionId = (ctx.params.sessionId ?? "").trim();
+    if (!sessionId) {
+      throw new ApiError(400, "invalid_payload", "sessionId is required");
+    }
+    const format = parseExportFormat(ctx.url.searchParams.get("format"));
+    const sensitiveMode = parseExportSensitiveMode(ctx.url.searchParams.get("sensitive"));
+    const snapshot = await readWorkspaceSessionSnapshot(workspace, sessionId, {
+      limit: parseOptionalPositiveInteger(ctx.url.searchParams.get("limit"), "limit"),
+    });
+    const { bundle, warnings } = buildSessionExportBundle({
+      workspaceId: workspace.id,
+      workspaceName: workspace.name,
+      snapshots: [snapshot],
+      sensitiveMode,
+    });
+    return exportResponse(bundle, warnings, { format, sensitiveMode });
+  });
+
   addRoute(routes, "GET", "/workspace/:id/sessions/:sessionId", "client", async (ctx) => {
     const workspace = await resolveWorkspace(config, ctx.params.id);
     const sessionId = (ctx.params.sessionId ?? "").trim();
@@ -504,6 +687,9 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
       await opencode.session.delete({ sessionID: sessionId }),
       `/session/${encodeURIComponent(sessionId)}`,
     );
+    // Deleting an imported session drops its provenance too, so the marks
+    // cannot outlive the sessions they describe.
+    await forgetSessionImport(config, workspace.id, sessionId);
 
     return jsonResponse({ ok: true });
   });

@@ -10,6 +10,7 @@ import {
   Clock3,
   ChevronRight,
   Columns2,
+  Download,
   FolderPlus,
   LayoutGrid,
   MoreHorizontal,
@@ -20,6 +21,7 @@ import {
   Search,
   Share2,
   Trash2,
+  Upload,
   RefreshCw,
   RotateCcw,
   Settings,
@@ -127,10 +129,17 @@ import {
   isNeedsAttentionSessionStatus,
   isSessionArchived,
   partitionArchivedSessions,
+  partitionImportedSessions,
   workspaceKindLabel,
   workspaceLabel,
 } from "./utils";
-import type { FlattenedSessionRow, SessionListItem, SessionTreeState } from "./utils";
+import type {
+  FlattenedSessionRow,
+  SessionImportMarkView,
+  SessionListItem,
+  SessionTreeState,
+  WorkspaceSessionImports,
+} from "./utils";
 import {
   useSessionManagementStore,
   usePinnedSessionIds,
@@ -150,6 +159,8 @@ import {
   sidebarRowPaddingInlineStart,
 } from "./sidebar-lanes";
 import { WorkspaceAvatarPicker } from "./workspace-avatar-picker";
+import { WorkspaceAvatar } from "@/react-app/design-system/workspace-avatar";
+import { useWorkspaceAvatarPreference } from "./workspace-avatar-store";
 import { useWorkbenchStore } from "../chat/workbench-store";
 import { SidebarDestination } from "./sidebar-destination";
 import { SessionTitle } from "./session-title";
@@ -350,6 +361,39 @@ function SessionMenuContent({ variant, sessionId, workspaceId, isPinned, isArchi
             )}
           </DropdownMenuSubContent>
         </DropdownMenuSub>
+        {ctx.onExportSession ? (
+          <DropdownMenuSub>
+            <DropdownMenuSubTrigger data-session-menu-export>
+              <Download className="size-4" />
+              {t("session_management.export_session")}
+            </DropdownMenuSubTrigger>
+            <DropdownMenuSubContent className="w-60">
+              <DropdownMenuItem
+                data-session-menu-export-json
+                onClick={() => ctx.onExportSession?.(workspaceId, sessionId, "json")}
+              >
+                {t("session_management.export_this_session_json")}
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                data-session-menu-export-markdown
+                onClick={() => ctx.onExportSession?.(workspaceId, sessionId, "markdown")}
+              >
+                {t("session_management.export_this_session_markdown")}
+              </DropdownMenuItem>
+              {ctx.onExportWorkspaceSessions ? (
+                <>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem
+                    data-session-menu-export-workspace
+                    onClick={() => ctx.onExportWorkspaceSessions?.(workspaceId)}
+                  >
+                    {t("session_management.export_all_sessions")}
+                  </DropdownMenuItem>
+                </>
+              ) : null}
+            </DropdownMenuSubContent>
+          </DropdownMenuSub>
+        ) : null}
         {ctx.onArchiveSession ? (
           <DropdownMenuItem onClick={() => ctx.onArchiveSession?.(sessionId, !isArchived)}>
             {isArchived ? <ArchiveRestore className="size-4" /> : <Archive className="size-4" />}
@@ -435,6 +479,39 @@ function SessionMenuContent({ variant, sessionId, workspaceId, isPinned, isArchi
           )}
         </ContextMenuSubContent>
       </ContextMenuSub>
+      {ctx.onExportSession ? (
+        <ContextMenuSub>
+          <ContextMenuSubTrigger data-session-menu-export>
+            <Download className="mr-2 size-4" />
+            {t("session_management.export_session")}
+          </ContextMenuSubTrigger>
+          <ContextMenuSubContent>
+            <ContextMenuItem
+              data-session-menu-export-json
+              onClick={() => ctx.onExportSession?.(workspaceId, sessionId, "json")}
+            >
+              {t("session_management.export_this_session_json")}
+            </ContextMenuItem>
+            <ContextMenuItem
+              data-session-menu-export-markdown
+              onClick={() => ctx.onExportSession?.(workspaceId, sessionId, "markdown")}
+            >
+              {t("session_management.export_this_session_markdown")}
+            </ContextMenuItem>
+            {ctx.onExportWorkspaceSessions ? (
+              <>
+                <ContextMenuSeparator />
+                <ContextMenuItem
+                  data-session-menu-export-workspace
+                  onClick={() => ctx.onExportWorkspaceSessions?.(workspaceId)}
+                >
+                  {t("session_management.export_all_sessions")}
+                </ContextMenuItem>
+              </>
+            ) : null}
+          </ContextMenuSubContent>
+        </ContextMenuSub>
+      ) : null}
       {ctx.onArchiveSession ? (
         <ContextMenuItem onClick={() => ctx.onArchiveSession?.(sessionId, !isArchived)}>
           {isArchived ? <ArchiveRestore className="size-4" /> : <Archive className="size-4" />}
@@ -849,6 +926,7 @@ export type AppSidebarProps = {
   selectedSessionId: string | null;
   showSessionActions?: boolean;
   sessionStatusById?: Record<string, string>;
+  sessionImportsByWorkspaceId?: WorkspaceSessionImports;
   connectingWorkspaceId: string | null;
   workspaceConnectionStateById: Record<string, WorkspaceConnectionState>;
   newTaskDisabled: boolean;
@@ -859,6 +937,9 @@ export type AppSidebarProps = {
   onOpenRenameSession?: (sessionId: string) => void;
   onOpenDeleteSession?: (sessionId: string) => void;
   onArchiveSession?: (sessionId: string, archived: boolean) => void;
+  onExportSession?: (workspaceId: string, sessionId: string, format: "json" | "markdown") => void;
+  onExportWorkspaceSessions?: (workspaceId: string) => void;
+  onImportSessions?: (workspaceId: string) => void;
   onOpenCreateGroupModal?: (workspaceId: string) => void;
   onOpenRenameWorkspace: (workspaceId: string) => void;
   onShareWorkspace: (workspaceId: string) => void;
@@ -1031,6 +1112,7 @@ export function AppSidebar(props: AppSidebarProps) {
     developerMode: props.developerMode,
     showSessionActions: props.showSessionActions,
     sessionStatusById: props.sessionStatusById,
+    sessionImportsByWorkspaceId: props.sessionImportsByWorkspaceId,
     newTaskDisabled: props.newTaskDisabled,
     connectingWorkspaceId: props.connectingWorkspaceId,
     workspaceConnectionStateById: props.workspaceConnectionStateById,
@@ -1041,6 +1123,9 @@ export function AppSidebar(props: AppSidebarProps) {
     onOpenRenameSession: props.onOpenRenameSession,
     onOpenDeleteSession: props.onOpenDeleteSession,
     onArchiveSession: props.onArchiveSession,
+    onExportSession: props.onExportSession,
+    onExportWorkspaceSessions: props.onExportWorkspaceSessions,
+    onImportSessions: props.onImportSessions,
     onOpenCreateGroupModal: props.onOpenCreateGroupModal,
     onOpenRenameWorkspace: props.onOpenRenameWorkspace,
     onShareWorkspace: props.onShareWorkspace,
@@ -1082,6 +1167,29 @@ export function AppSidebar(props: AppSidebarProps) {
     }
     return entries;
   }, [props.workspaceSessionGroups]);
+  const importedSessions = React.useMemo(() => {
+    const entries: ImportedSessionEntry[] = [];
+    for (const group of props.workspaceSessionGroups) {
+      const marks = props.sessionImportsByWorkspaceId?.[group.workspace.id];
+      if (!marks) continue;
+      // Archived wins: an archived import belongs in the archived section, so a
+      // session never shows up in two places at once.
+      for (const session of partitionImportedSessions(
+        partitionArchivedSessions(group.sessions).active,
+        marks,
+      ).imported) {
+        const mark = marks[session.id];
+        if (!mark) continue;
+        entries.push({
+          group,
+          session,
+          sourceWorkspaceId: mark.sourceWorkspaceId,
+          sourceWorkspaceName: mark.sourceWorkspaceName.trim(),
+        });
+      }
+    }
+    return entries;
+  }, [props.sessionImportsByWorkspaceId, props.workspaceSessionGroups]);
 
   return (
     <SidebarContext.Provider value={contextValue}>
@@ -1245,6 +1353,9 @@ export function AppSidebar(props: AppSidebarProps) {
                 />
               ))}
             </Reorder.Group>
+            {importedSessions.length > 0 || props.onImportSessions ? (
+              <GlobalImportedSessions entries={importedSessions} />
+            ) : null}
             {archivedSessions.length > 0 ? (
               <GlobalArchivedSessions entries={archivedSessions} />
             ) : null}
@@ -1349,8 +1460,188 @@ function GlobalArchivedSessions({ entries }: { entries: GlobalArchivedSessionEnt
   );
 }
 
-function GlobalArchivedSessionItem({ group, session }: GlobalArchivedSessionEntry) {
+/**
+ * An imported session, tagged with the workspace the bundle came from. That
+ * source is what the Imported section groups by: an import is only interesting
+ * because of where it originated.
+ */
+type ImportedSessionEntry = GlobalArchivedSessionEntry & {
+  sourceWorkspaceId: string;
+  sourceWorkspaceName: string;
+};
+
+/**
+ * Imported sessions are read-only records of work done elsewhere, so they get
+ * their own section instead of competing with live work in the session list.
+ *
+ * The section renders even when empty: importing is only offered here, so
+ * hiding it with no imports yet would leave no way to make the first one.
+ */
+function GlobalImportedSessions({ entries }: { entries: ImportedSessionEntry[] }) {
   const ctx = useSidebarContext();
+  const [expanded, setExpanded] = React.useState(false);
+  const importWorkspaceId = ctx.selectedWorkspaceId;
+  const canImport = Boolean(ctx.onImportSessions && importWorkspaceId);
+
+  // Grouped by the workspace the sessions were exported from, so the heading is
+  // the provenance rather than a second, unrelated workspace name. Keyed by id
+  // rather than name so two workspaces sharing a name stay distinct.
+  const importsBySource = React.useMemo(() => {
+    const bySource = new Map<string, { id: string; name: string; items: ImportedSessionEntry[] }>();
+    for (const entry of entries) {
+      const existing = bySource.get(entry.sourceWorkspaceId);
+      if (existing) existing.items.push(entry);
+      else {
+        bySource.set(entry.sourceWorkspaceId, {
+          id: entry.sourceWorkspaceId,
+          name: entry.sourceWorkspaceName || t("session_management.imported_unknown_source"),
+          items: [entry],
+        });
+      }
+    }
+    return [...bySource.values()];
+  }, [entries]);
+
+  return (
+    <SidebarGroup data-sidebar-imported-section className="mt-4 pb-1 pt-0">
+      <SidebarGroupContent>
+        <Collapsible open={expanded} onOpenChange={setExpanded} className="group/imported">
+          <div className="group/imported-header relative">
+            <CollapsibleTrigger
+              render={
+                <button
+                  type="button"
+                  className={cn("group/separator flex h-6 w-full cursor-pointer items-center gap-2 pe-2 rounded-md transition-colors hover:bg-sidebar-accent/50", SIDEBAR_ROW_LANE)}
+                >
+                  <SidebarGlyphSlot>
+                    <Download className="size-3.5 text-muted-foreground" />
+                  </SidebarGlyphSlot>
+                  <span className={SIDEBAR_SECTION_LABEL}>
+                    {t("session_management.imported_label")}
+                  </span>
+                  <span className="text-[10px] tabular-nums text-muted-foreground/70">{entries.length}</span>
+                  <ChevronRight className="ml-auto size-3.5 text-muted-foreground transition-transform duration-200 group-data-open/imported:rotate-90" />
+                </button>
+              }
+            />
+            {canImport ? (
+              <Button
+                variant="ghost"
+                size="icon"
+                data-sidebar-import-sessions
+                className="absolute right-6 top-1/2 z-10 size-5 -translate-y-1/2 text-muted-foreground opacity-0 transition-opacity group-hover/imported-header:opacity-100 focus-visible:opacity-100"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  ctx.onImportSessions?.(importWorkspaceId);
+                }}
+                aria-label={t("session_management.import_sessions")}
+                title={t("session_management.import_sessions")}
+              >
+                <Upload className="size-3.5" />
+              </Button>
+            ) : null}
+          </div>
+          <CollapsibleContent>
+            <SidebarMenu>
+              <SidebarMenuItem>
+                <SidebarMenuSub>
+                  {entries.length === 0 ? (
+                    <div className="px-2 py-1.5 text-[11px] text-muted-foreground/70">
+                      {t("session_management.imported_empty")}
+                    </div>
+                  ) : importsBySource.map((source) => (
+                    <ImportedSourceGroup
+                      key={source.id}
+                      sourceWorkspaceId={source.id}
+                      sourceWorkspaceName={source.name}
+                      entries={source.items}
+                    />
+                  ))}
+                </SidebarMenuSub>
+              </SidebarMenuItem>
+            </SidebarMenu>
+          </CollapsibleContent>
+        </Collapsible>
+      </SidebarGroupContent>
+    </SidebarGroup>
+  );
+}
+
+/**
+ * A source-workspace heading inside the Imported section, carrying the sessions
+ * that came from it.
+ *
+ * Uses the same workspace avatar as the Workspaces list, keyed by the source
+ * workspace id, so a workspace keeps one colour everywhere it appears. A source
+ * that no longer exists locally still hashes to a stable colour from its id.
+ */
+function ImportedSourceGroup({
+  sourceWorkspaceId,
+  sourceWorkspaceName,
+  entries,
+}: {
+  sourceWorkspaceId: string;
+  sourceWorkspaceName: string;
+  entries: ImportedSessionEntry[];
+}) {
+  const avatar = useWorkspaceAvatarPreference(sourceWorkspaceId);
+  // Open by default: the Imported section is already collapsed, so starting
+  // closed too would need two clicks before anything is visible.
+  const [expanded, setExpanded] = React.useState(true);
+
+  return (
+    <SidebarMenuItem data-sidebar-imported-workspace={sourceWorkspaceId}>
+      <Collapsible open={expanded} onOpenChange={setExpanded} className="group/imported-source">
+        <CollapsibleTrigger
+          render={
+            <button
+              type="button"
+              data-sidebar-imported-workspace-toggle
+              aria-label={t("session_management.imported_from", { workspace: sourceWorkspaceName })}
+              className={cn(
+                "flex h-6 w-full cursor-pointer items-center gap-2 pe-2 rounded-md transition-colors hover:bg-sidebar-accent/50",
+                SIDEBAR_ROW_LANE,
+              )}
+            >
+              <SidebarGlyphSlot>
+                <WorkspaceAvatar
+                  workspaceId={sourceWorkspaceId}
+                  label={sourceWorkspaceName}
+                  imageUrl={avatar?.imageUrl}
+                  color={avatar?.color}
+                  sizeClass="size-3.5"
+                />
+              </SidebarGlyphSlot>
+              <span
+                data-sidebar-imported-workspace-name
+                className="min-w-0 flex-1 truncate text-left text-xs text-muted-foreground"
+              >
+                {sourceWorkspaceName}
+              </span>
+              <span className="shrink-0 text-[10px] tabular-nums text-muted-foreground/70">
+                {entries.length}
+              </span>
+              <ChevronRight className="size-3.5 shrink-0 text-muted-foreground transition-transform duration-200 group-data-open/imported-source:rotate-90" />
+            </button>
+          }
+        />
+        <CollapsibleContent>
+          <SidebarMenuSub>
+            {entries.map((entry) => (
+              <GlobalArchivedSessionItem
+                key={`${entry.group.workspace.id}:${entry.session.id}`}
+                group={entry.group}
+                session={entry.session}
+              />
+            ))}
+          </SidebarMenuSub>
+        </CollapsibleContent>
+      </Collapsible>
+    </SidebarMenuItem>
+  );
+}
+
+function GlobalArchivedSessionItem({ group, session }: GlobalArchivedSessionEntry) {  const ctx = useSidebarContext();
   const pinnedIds = usePinnedSessionIds();
   const tree = useSessionTree(group.sessions, ctx.sessionStatusById);
   const forcedExpandedSessionIds = React.useMemo(
@@ -1580,6 +1871,19 @@ function WorkspaceSidebarGroup({
     () => partitionArchivedSessions(group.sessions),
     [group.sessions],
   );
+  // Imported sessions render only in the Imported section at the bottom, so
+  // they are filtered out of this workspace's working list.
+  const importedMarks = ctx.sessionImportsByWorkspaceId?.[workspace.id];
+  const importedSessionIds = React.useMemo(
+    () => new Set(Object.keys(importedMarks ?? {})),
+    [importedMarks],
+  );
+  const hiddenRootIds = React.useMemo(() => {
+    if (!importedSessionIds.size) return pinnedIds;
+    const next = new Set(pinnedIds);
+    for (const id of importedSessionIds) next.add(id);
+    return next;
+  }, [importedSessionIds, pinnedIds]);
   const sessionRows = flattenSessionRows(
     group.sessions,
     wsGroups.length > 0 ? Number.MAX_SAFE_INTEGER : previewCount,
@@ -1588,15 +1892,15 @@ function WorkspaceSidebarGroup({
     forcedExpandedSessionIds,
     EMPTY_PINNED_IDS,
     orderIds,
-    { exclude: pinnedIds },
+    { exclude: hiddenRootIds },
   );
   const visibleRootIds = React.useMemo(
     () => sessionRows.flatMap((row) => (row.depth === 0 ? [row.session.id] : [])),
     [sessionRows],
   );
   const activeRootCount = React.useMemo(
-    () => getRootSessions(activeSessions).filter((session) => !pinnedIds.has(session.id)).length,
-    [activeSessions, pinnedIds],
+    () => getRootSessions(activeSessions).filter((session) => !hiddenRootIds.has(session.id)).length,
+    [activeSessions, hiddenRootIds],
   );
   const remainingRootSessions = Math.max(0, activeRootCount - previewCount);
   const showMoreLabel = remainingRootSessions > 0

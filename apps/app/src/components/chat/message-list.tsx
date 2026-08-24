@@ -612,7 +612,7 @@ function renderUserTextWithSkillChips(text: string, highlightQuery: string | und
 
 const UserMessage = React.memo(
   ({ message, isStreaming }: UserMessageProps) => {
-    const { onRevertToUserMessage, onForkAtMessage, onEditUserMessage, highlightQuery } = useMessageList()
+    const { onRevertToUserMessage, onForkAtMessage, onEditUserMessage, highlightQuery, readOnly } = useMessageList()
     const messageText = React.useMemo(() => getMessagesText([message]), [message])
     const inlineParts = React.useMemo(
       () => message.parts.filter((part) => (part.type === "text" && Boolean(part.text)) || isFileUIPart(part)),
@@ -692,23 +692,25 @@ const UserMessage = React.memo(
                         <Split className="rotate-90" />
                       </Button>
                     </MessageAction>
-                    <MessageAction tooltip="Revert">
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        aria-label="Revert"
-                        onClick={() => onRevertToUserMessage(message.id)}
-                      >
-                        <Undo2 />
-                      </Button>
-                    </MessageAction>
+                    {readOnly ? null : (
+                      <MessageAction tooltip="Revert">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          aria-label="Revert"
+                          onClick={() => onRevertToUserMessage(message.id)}
+                        >
+                          <Undo2 />
+                        </Button>
+                      </MessageAction>
+                    )}
                   </MessageActions>
                 )}
               </div>
             }
           />
           <ContextMenuContent className="w-56">
-            {messageText ? (
+            {messageText && !readOnly ? (
               <ContextMenuItem onClick={() => onEditUserMessage(message.id, messageText)}>
                 <Pencil className="size-4" />
                 Edit message
@@ -724,10 +726,12 @@ const UserMessage = React.memo(
               <Split className="size-4 rotate-90" />
               Branch in new chat
             </ContextMenuItem>
-            <ContextMenuItem onClick={() => onRevertToUserMessage(message.id)}>
-              <Undo2 className="size-4" />
-              Revert
-            </ContextMenuItem>
+            {readOnly ? null : (
+              <ContextMenuItem onClick={() => onRevertToUserMessage(message.id)}>
+                <Undo2 className="size-4" />
+                Revert
+              </ContextMenuItem>
+            )}
           </ContextMenuContent>
         </ContextMenu>
       </Message>
@@ -956,7 +960,7 @@ function MessageGroup({
   messages,
   isStreaming,
 }: AssistantMessageGroupProps) {
-  const { onRevertToUserMessage, onForkAtMessage, showThinking } = useMessageList()
+  const { onRevertToUserMessage, onForkAtMessage, showThinking, readOnly } = useMessageList()
   const lastItem = items[items.length - 1]
   // Branch/revert must target a real server-side message id. Synthetic
   // client-side messages (e.g. session errors) don't exist on the server and
@@ -1187,16 +1191,18 @@ function MessageGroup({
                     <Split className="rotate-90" />
                   </Button>
                 </MessageAction>
-                <MessageAction tooltip="Revert">
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    aria-label="Revert"
-                    onClick={() => onRevertToUserMessage(lastRealItem.message.id)}
-                  >
-                    <Undo2 />
-                  </Button>
-                </MessageAction>
+                {readOnly ? null : (
+                  <MessageAction tooltip="Revert">
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      aria-label="Revert"
+                      onClick={() => onRevertToUserMessage(lastRealItem.message.id)}
+                    >
+                      <Undo2 />
+                    </Button>
+                  </MessageAction>
+                )}
               </>
             ) : null}
           </MessageActions>

@@ -14,6 +14,8 @@ interface MessageListContextValue {
   showThinking: boolean
   highlightQuery?: string
   developerMode: boolean
+  /** Imported sessions are a read-only record: nothing may edit the transcript. */
+  readOnly: boolean
   displaySuggestions: boolean
   providerConnectedCount: number
   dispatchAction: (action: DispatchAction) => void
@@ -38,6 +40,7 @@ interface MessageListProviderProps {
   showThinking: boolean
   highlightQuery?: string
   developerMode: boolean
+  readOnly?: boolean
   onRevertToUserMessage: (messageId: string) => void
   onForkAtMessage: (messageId: string) => void
   onEditUserMessage: (messageId: string, text: string) => void
@@ -66,6 +69,7 @@ export function MessageListProvider({
   showThinking,
   highlightQuery,
   developerMode,
+  readOnly = false,
   displaySuggestions,
   providerConnectedCount,
   dispatchAction,
@@ -84,6 +88,7 @@ export function MessageListProvider({
       showThinking,
       highlightQuery,
       developerMode,
+      readOnly,
       displaySuggestions,
       providerConnectedCount,
       dispatchAction,
@@ -101,6 +106,7 @@ export function MessageListProvider({
       showThinking,
       highlightQuery,
       developerMode,
+      readOnly,
       displaySuggestions,
       providerConnectedCount,
       dispatchAction,

@@ -29,8 +29,10 @@ describe("composer model controls", () => {
     const modelSelect = composerSource.slice(modelSelectStart, composerSource.indexOf("/>", modelSelectStart) + 2);
 
     expect(composerSource).not.toContain("ModelBehaviorSelect");
-    expect(modelSelect).toContain("disabled={props.steering}");
-    expect(modelSelect).not.toContain("disabled={props.busy}");
+    // Disabled while steering, and on read-only (imported) sessions, but never
+    // during ordinary generation: props.busy must stay out of this condition.
+    expect(modelSelect).toContain("disabled={props.steering || props.readOnly}");
+    expect(modelSelect).not.toContain("props.busy");
     expect(modelSelect).toContain("behaviorOptions={props.modelBehaviorOptions}");
     expect(modelSelectSource).toContain("setThinkingFor(option)");
     expect(modelSelectSource).not.toContain("setThinkingOpen(true)");
