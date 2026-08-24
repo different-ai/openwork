@@ -1629,8 +1629,12 @@ export class ExternalMcpDiagnosticTracker {
         inferredClassification = classifyError(this.backgroundFailure.error, this.backgroundFailure.phase)
       }
     }
+    const sourceCode = errorCode(source.error)
+    const sourceIsApplicationOwnedOAuthFailure = sourceCode?.startsWith("MCP_OAUTH_") === true
+      || sourceCode === "MCP_LIFECYCLE_DEADLINE"
     const classified = this.forcedClassification
       && !TYPED_OAUTH_ERROR_NAMES.has(errorName(source.error))
+      && !sourceIsApplicationOwnedOAuthFailure
       && inferredClassification.phase !== "MCP_VERSION"
       ? this.forcedClassification
       : inferredClassification

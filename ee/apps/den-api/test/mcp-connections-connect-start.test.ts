@@ -542,6 +542,19 @@ test("connect start repairs a verified stale resource issuer alias before author
     port: 0,
     async fetch(incoming) {
       const url = new URL(incoming.url)
+      if (url.pathname === "/.well-known/oauth-authorization-server") {
+        return Response.json({
+          issuer: authorizationOrigin,
+          authorization_endpoint: `${authorizationOrigin}/authorize`,
+          token_endpoint: `${authorizationOrigin}/token`,
+          registration_endpoint: `${authorizationOrigin}/register`,
+          authorization_response_iss_parameter_supported: true,
+          response_types_supported: ["code"],
+          grant_types_supported: ["authorization_code", "refresh_token"],
+          code_challenge_methods_supported: ["S256"],
+          token_endpoint_auth_methods_supported: ["none"],
+        })
+      }
       if (url.pathname === "/register") {
         const metadata: unknown = await incoming.json()
         const redirectUris = isRecord(metadata) && isStringArray(metadata.redirect_uris)
@@ -623,9 +636,9 @@ test("connect start repairs a verified stale resource issuer alias before author
             authorizationServerUrl: resourceOrigin,
             authorizationServerMetadata: {
               issuer: authorizationOrigin,
-              authorization_endpoint: `${authorizationOrigin}/authorize`,
-              token_endpoint: `${authorizationOrigin}/token`,
-              registration_endpoint: `${authorizationOrigin}/register`,
+              authorization_endpoint: "http://127.0.0.1:1/authorize",
+              token_endpoint: "http://127.0.0.1:1/token",
+              registration_endpoint: "http://127.0.0.1:1/register",
               authorization_response_iss_parameter_supported: true,
               code_challenge_methods_supported: ["S256"],
             },
@@ -654,6 +667,9 @@ test("connect start repairs a verified stale resource issuer alias before author
       .limit(1)
     expect(repaired?.oauthConfiguration?.authorizationServerIssuer).toBe(authorizationOrigin)
     expect(repaired?.oauthIssuerReviewRequiredAt).toBeNull()
+    expect(repaired?.oauthConfiguration?.discovery?.authorizationServerUrl).toBe(authorizationOrigin)
+    expect(repaired?.oauthConfiguration?.discovery?.authorizationServerMetadata?.authorization_endpoint).toBe(`${authorizationOrigin}/authorize`)
+    expect(repaired?.oauthConfiguration?.discovery?.authorizationServerMetadata?.token_endpoint).toBe(`${authorizationOrigin}/token`)
 
     if (!repaired?.oauthConfiguration?.discovery) throw new Error("Expected repaired discovery state.")
     await db
@@ -665,6 +681,18 @@ test("connect start repairs a verified stale resource issuer alias before author
         },
       })
       .where(drizzle.eq(schema.ExternalMcpConnectionTable.id, connection.id))
+    const [staleAgain] = await db
+      .select()
+      .from(schema.ExternalMcpConnectionTable)
+      .where(drizzle.eq(schema.ExternalMcpConnectionTable.id, connection.id))
+      .limit(1)
+    expect(staleAgain?.oauthConfiguration?.authorizationServerIssuer).toBe(resourceOrigin)
+    expect(staleAgain?.oauthConfiguration?.discovery?.authorizationServerUrl).toBe(authorizationOrigin)
+    expect(staleAgain?.oauthConfiguration?.discovery?.authorizationServerMetadata).toMatchObject({
+      issuer: authorizationOrigin,
+      authorization_endpoint: `${authorizationOrigin}/authorize`,
+      token_endpoint: `${authorizationOrigin}/token`,
+    })
     const memberResponse = await principalRequest(
       regularUserId,
       `/v1/mcp-connections/${connection.id}/connect/start`,

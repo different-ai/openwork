@@ -5,6 +5,8 @@ import {
   type EnterpriseMcpOAuthClientRegistration,
   type EnterpriseMcpOAuthPersistence,
   type EnterpriseMcpPersistenceContext,
+  type StoredOAuthClientInformation,
+  type StoredOAuthTokens,
 } from "@openwork/enterprise-mcp-client"
 import type { OAuthDiscoveryState } from "@modelcontextprotocol/sdk/client/auth.js"
 import { and, eq } from "@openwork-ee/den-db/drizzle"
@@ -22,8 +24,6 @@ import {
   OAuthMetadataSchema,
   OAuthProtectedResourceMetadataSchema,
   OpenIdProviderMetadataSchema,
-  type OAuthClientInformationMixed,
-  type OAuthTokens,
 } from "@modelcontextprotocol/sdk/shared/auth.js"
 import { z } from "zod"
 import { db } from "../db.js"
@@ -54,11 +54,48 @@ function invalidCredentialHealth(
   return credentialHealth("reconnect_required", "authorization_rejected")
 }
 
+function oauthIssuer(configuration: ExternalMcpOAuthConfiguration | null | undefined): string | undefined {
+  const discovery = configuration?.discovery
+  const metadata = discovery?.authorizationServerMetadata
+  const metadataIssuer = metadata
+    && typeof metadata === "object"
+    && "issuer" in metadata
+    && typeof metadata.issuer === "string"
+    ? metadata.issuer
+    : undefined
+  const authorizationServerUrl = typeof discovery?.authorizationServerUrl === "string"
+    ? discovery.authorizationServerUrl
+    : undefined
+  return configuration?.authorizationServerIssuer
+    ?? metadataIssuer
+    ?? authorizationServerUrl
+    ?? undefined
+}
+
+function oauthConfigurationWithIssuer(
+  configuration: ExternalMcpOAuthConfiguration | null | undefined,
+  issuer: string,
+): ExternalMcpOAuthConfiguration {
+  return {
+    ...(configuration ?? {
+      version: 1,
+      authorizationServerIssuer: null,
+      requestedScopes: [],
+      callbackMode: "legacy-v1",
+    }),
+    authorizationServerIssuer: issuer,
+  }
+}
+
 const oauthDiscoveryStateSchema = z.object({
   authorizationServerUrl: z.string().url(),
   authorizationServerMetadata: OAuthMetadataSchema.or(OpenIdProviderMetadataSchema).optional(),
   resourceMetadata: OAuthProtectedResourceMetadataSchema.optional(),
   resourceMetadataUrl: z.string().url().optional(),
+  openworkMetadataVerification: z.object({
+    version: z.literal(1),
+    issuer: z.string().url(),
+  }).optional(),
 })
 
 const pendingAuthorizationSchema = z.object({
@@ -122,13 +159,13 @@ function clientRevision(input: {
     .digest("hex")
 }
 
-function clientExpiration(clientInformation: OAuthClientInformationMixed): number | undefined {
+function clientExpiration(clientInformation: StoredOAuthClientInformation): number | undefined {
   const parsed = OAuthClientInformationFullSchema.safeParse(clientInformation)
   const seconds = parsed.success ? parsed.data.client_secret_expires_at : undefined
   return seconds && seconds > 0 ? seconds * 1_000 : undefined
 }
 
-function safeClientInformation(clientInformation: OAuthClientInformationMixed): Record<string, unknown> {
+function safeClientInformation(clientInformation: StoredOAuthClientInformation): Record<string, unknown> {
   return Object.fromEntries(Object.entries(clientInformation).filter(([key]) => (
     key !== "client_secret" && key !== "registration_access_token"
   )))
@@ -138,8 +175,16 @@ function restoredClientInformation(input: {
   clientId: string
   clientSecret: string | null
   extra: Record<string, unknown> | null
-}): OAuthClientInformationMixed {
+}): StoredOAuthClientInformation {
   const candidate = input.extra?.clientInformation
+  const candidateIssuer = typeof candidate === "object"
+    && candidate !== null
+    && "issuer" in candidate
+    && typeof candidate.issuer === "string"
+    ? candidate.issuer
+    : undefined
+  const issuer = candidateIssuer
+    ?? (typeof input.extra?.authorizationServerIssuer === "string" ? input.extra.authorizationServerIssuer : undefined)
   const tokenEndpointAuthMethod = input.extra?.tokenEndpointAuthMethod
   const registeredRedirectUri = input.extra?.registeredRedirectUri
   const full = OAuthClientInformationFullSchema.safeParse({
@@ -153,11 +198,12 @@ function restoredClientInformation(input: {
         }
       : {}),
   })
-  if (full.success) return full.data
-  return OAuthClientInformationSchema.parse({
+  if (full.success) return { ...full.data, ...(issuer ? { issuer } : {}) }
+  const clientInformation = OAuthClientInformationSchema.parse({
     client_id: input.clientId,
     client_secret: input.clientSecret ?? undefined,
   })
+  return { ...clientInformation, ...(issuer ? { issuer } : {}) }
 }
 
 export class DenEnterpriseMcpOAuthPersistence implements EnterpriseMcpOAuthPersistence {
@@ -263,7 +309,7 @@ export class DenEnterpriseMcpOAuthPersistence implements EnterpriseMcpOAuthPersi
 
     save: async (input: {
       context: EnterpriseMcpPersistenceContext
-      clientInformation: OAuthClientInformationMixed
+      clientInformation: StoredOAuthClientInformation
       redirectUri: string
       expiresAt?: number
       source: "client-metadata" | "dynamic"
@@ -281,6 +327,17 @@ export class DenEnterpriseMcpOAuthPersistence implements EnterpriseMcpOAuthPersi
         if (!connections[0]) throw new Error("The enterprise MCP connection no longer exists.")
         this.assertCurrentIdentity(connections[0])
         assertCommitActive(input.context)
+        const selectedIssuer = oauthIssuer(connections[0].oauthConfiguration)
+        if (
+          input.clientInformation.issuer
+          && selectedIssuer
+          && input.clientInformation.issuer !== selectedIssuer
+        ) {
+          throw new EnterpriseMcpOAuthContractError(
+            "MCP_OAUTH_ISSUER_MISMATCH",
+            "The OAuth client registration does not match the selected authorization server issuer.",
+          )
+        }
         const existing = await tx
           .select()
           .from(OrgOAuthClientTable)
@@ -555,6 +612,9 @@ export class DenEnterpriseMcpOAuthPersistence implements EnterpriseMcpOAuthPersi
             token_type: account.tokenType ?? "Bearer",
             refresh_token: account.refreshToken ?? undefined,
             scope: account.scopes?.join(" ") ?? undefined,
+            ...(oauthIssuer(this.connection.oauthConfiguration)
+              ? { issuer: oauthIssuer(this.connection.oauthConfiguration) }
+              : {}),
           },
           expiresAt: account.expiresAt?.getTime(),
           revision: `${account.id}:${account.updatedAt.getTime()}`,
@@ -567,6 +627,9 @@ export class DenEnterpriseMcpOAuthPersistence implements EnterpriseMcpOAuthPersi
           token_type: this.connection.tokenType ?? "Bearer",
           refresh_token: this.connection.refreshToken ?? undefined,
           scope: this.connection.scope ?? undefined,
+          ...(oauthIssuer(this.connection.oauthConfiguration)
+            ? { issuer: oauthIssuer(this.connection.oauthConfiguration) }
+            : {}),
         },
         expiresAt: this.connection.expiresAt?.getTime(),
         revision: `${this.connection.id}:${this.connection.updatedAt.getTime()}`,
@@ -575,7 +638,7 @@ export class DenEnterpriseMcpOAuthPersistence implements EnterpriseMcpOAuthPersi
 
     save: async (input: {
       context: EnterpriseMcpPersistenceContext
-      tokens: OAuthTokens
+      tokens: StoredOAuthTokens
       expiresAt?: number
       source: "authorization-code" | "refresh"
       authorization?: EnterpriseMcpOAuthAuthorizationHandle
@@ -596,6 +659,16 @@ export class DenEnterpriseMcpOAuthPersistence implements EnterpriseMcpOAuthPersi
         if (!connection) throw new Error("The enterprise MCP connection no longer exists.")
         this.assertCurrentIdentity(connection)
         assertCommitActive(input.context)
+        const selectedIssuer = oauthIssuer(connection.oauthConfiguration)
+        if (input.tokens.issuer && selectedIssuer && input.tokens.issuer !== selectedIssuer) {
+          throw new EnterpriseMcpOAuthContractError(
+            "MCP_OAUTH_ISSUER_MISMATCH",
+            "The OAuth credential does not match the selected authorization server issuer.",
+          )
+        }
+        const issuerConfiguration = input.tokens.issuer && !selectedIssuer
+          ? oauthConfigurationWithIssuer(connection.oauthConfiguration, input.tokens.issuer)
+          : undefined
         const account = this.member
           ? (await tx
               .select()
@@ -661,6 +734,12 @@ export class DenEnterpriseMcpOAuthPersistence implements EnterpriseMcpOAuthPersi
           ? new Date(Math.max(Date.now(), account.connectedAt.getTime() + 1))
           : new Date()
         if (this.isPerMember && this.member) {
+          if (issuerConfiguration) {
+            await tx
+              .update(ExternalMcpConnectionTable)
+              .set({ oauthConfiguration: issuerConfiguration })
+              .where(eq(ExternalMcpConnectionTable.id, connection.id))
+          }
           if (account) {
             await tx
               .update(ConnectedAccountTable)
@@ -704,6 +783,7 @@ export class DenEnterpriseMcpOAuthPersistence implements EnterpriseMcpOAuthPersi
               credentialHealth: credentialHealth("ready", null),
               updatedAt,
               connectedAt: new Date(),
+              ...(issuerConfiguration ? { oauthConfiguration: issuerConfiguration } : {}),
             })
             .where(eq(ExternalMcpConnectionTable.id, connection.id))
         }

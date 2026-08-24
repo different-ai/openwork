@@ -1,9 +1,12 @@
 import { OAuthClientInformationFullSchema, OAuthClientInformationSchema, OAuthTokensSchema } from "@modelcontextprotocol/core"
+import { discoverAuthorizationServerMetadata, IssuerMismatchError } from "@modelcontextprotocol/client"
 import type {
-  OAuthClientInformationMixed,
+  AuthorizationServerMetadata,
+  OAuthClientInformationContext,
   OAuthClientProvider,
   OAuthDiscoveryState,
-  OAuthTokens,
+  StoredOAuthClientInformation,
+  StoredOAuthTokens,
 } from "@modelcontextprotocol/client"
 import type {
   EnterpriseMcpClock,
@@ -12,6 +15,7 @@ import type {
   EnterpriseMcpOAuthClientRegistration,
   EnterpriseMcpOAuthCredential,
   EnterpriseMcpOAuthConfiguration,
+  EnterpriseMcpFetch,
   EnterpriseMcpOAuthPersistence,
   EnterpriseMcpPersistenceContext,
 } from "./contracts.js"
@@ -22,6 +26,13 @@ type OAuthFlowContext =
   | { kind: "connect"; authorizationId?: string }
   | { kind: "callback"; authorizationId: string }
   | { kind: "runtime" }
+
+type VerifiedOAuthDiscoveryState = OAuthDiscoveryState & {
+  openworkMetadataVerification?: {
+    version: 1
+    issuer: string
+  }
+}
 
 const oauthClientInformationMixedSchema = OAuthClientInformationFullSchema.or(OAuthClientInformationSchema)
 
@@ -35,14 +46,14 @@ function assertFiniteEpoch(value: number, field: string): number {
   return value
 }
 
-function clientExpiration(clientInformation: OAuthClientInformationMixed): number | undefined {
+function clientExpiration(clientInformation: StoredOAuthClientInformation): number | undefined {
   const parsed = OAuthClientInformationFullSchema.safeParse(clientInformation)
   const seconds = parsed.success ? parsed.data.client_secret_expires_at : undefined
   if (seconds === undefined || seconds === 0) return undefined
   return assertFiniteEpoch(seconds * 1_000, "client expiration")
 }
 
-function tokenExpiration(tokens: OAuthTokens, now: number): number | undefined {
+function tokenExpiration(tokens: StoredOAuthTokens, now: number): number | undefined {
   if (tokens.expires_in === undefined) return undefined
   if (!Number.isFinite(tokens.expires_in) || tokens.expires_in < 0) {
     throw new EnterpriseMcpOAuthContractError(
@@ -66,10 +77,12 @@ export class EnterpriseMcpOAuthProvider implements OAuthClientProvider {
   private readonly applicationType: EnterpriseMcpOAuthConfiguration["applicationType"]
   private readonly authorizationServerIssuer: string | undefined
   private readonly requestedScopes: string[]
+  private readonly fetch: EnterpriseMcpFetch
   readonly clientMetadataUrl: string | undefined
   private loadedClient: EnterpriseMcpOAuthClientRegistration | undefined
   private loadedCredential: EnterpriseMcpOAuthCredential | undefined
   private loadedDiscovery: OAuthDiscoveryState | undefined
+  private verifiedAuthorizationServerMetadata: AuthorizationServerMetadata | undefined
   private authorizationHandle: EnterpriseMcpOAuthAuthorizationHandle | undefined
   authorizeUrl: string | null = null
 
@@ -83,6 +96,7 @@ export class EnterpriseMcpOAuthProvider implements OAuthClientProvider {
     lifecycle: EnterpriseMcpLifecycle
     authorizationTransactionTtlMs: number
     expirationSkewMs: number
+    fetch: EnterpriseMcpFetch
     oauthConfiguration?: EnterpriseMcpOAuthConfiguration
   }) {
     this.redirectUri = input.redirectUri
@@ -98,6 +112,7 @@ export class EnterpriseMcpOAuthProvider implements OAuthClientProvider {
     this.clientMetadataUrl = input.oauthConfiguration?.clientMetadataUrl
     this.authorizationServerIssuer = input.oauthConfiguration?.authorizationServerIssuer
     this.requestedScopes = [...new Set(input.oauthConfiguration?.requestedScopes ?? [])]
+    this.fetch = input.fetch
   }
 
   private context(): EnterpriseMcpPersistenceContext {
@@ -161,18 +176,132 @@ export class EnterpriseMcpOAuthProvider implements OAuthClientProvider {
     }
   }
 
-  async discoveryState(): Promise<OAuthDiscoveryState | undefined> {
-    const state = await this.persistence.discovery?.load(this.context())
+  private expectedCredentialIssuer(context?: OAuthClientInformationContext): string | undefined {
+    const boundIssuer = this.authorizationServerIssuer
+      ?? this.loadedDiscovery?.authorizationServerMetadata?.issuer
+      ?? this.loadedDiscovery?.authorizationServerUrl
+    if (context?.issuer && boundIssuer && context.issuer !== boundIssuer) {
+      throw new EnterpriseMcpOAuthContractError(
+        "MCP_OAUTH_ISSUER_MISMATCH",
+        "The OAuth credential context does not match the selected authorization server issuer.",
+      )
+    }
+    return boundIssuer ?? context?.issuer
+  }
+
+  private assertStoredIssuer(issuer: string | undefined, expectedIssuer: string | undefined): void {
+    if (issuer === undefined || expectedIssuer === undefined || issuer === expectedIssuer) return
+    throw new EnterpriseMcpOAuthContractError(
+      "MCP_OAUTH_ISSUER_MISMATCH",
+      "The stored OAuth credential does not match the selected authorization server issuer.",
+    )
+  }
+
+  private storedClientInformation(
+    clientInformation: StoredOAuthClientInformation,
+    context?: OAuthClientInformationContext,
+  ): StoredOAuthClientInformation {
+    const expectedIssuer = this.expectedCredentialIssuer(context)
+    this.assertStoredIssuer(clientInformation.issuer, expectedIssuer)
+    const validated = oauthClientInformationMixedSchema.parse(clientInformation)
+    const issuer = clientInformation.issuer ?? expectedIssuer
+    return { ...validated, ...(issuer ? { issuer } : {}) }
+  }
+
+  private storedTokens(tokens: StoredOAuthTokens, context?: OAuthClientInformationContext): StoredOAuthTokens {
+    const expectedIssuer = this.expectedCredentialIssuer(context)
+    this.assertStoredIssuer(tokens.issuer, expectedIssuer)
+    const validated = OAuthTokensSchema.parse(tokens)
+    const issuer = tokens.issuer ?? expectedIssuer
+    return { ...validated, ...(issuer ? { issuer } : {}) }
+  }
+
+  private async canonicalAuthorizationServerMetadata(): Promise<AuthorizationServerMetadata | undefined> {
+    const selectedIssuer = this.authorizationServerIssuer
+    if (!selectedIssuer) return undefined
+    if (this.verifiedAuthorizationServerMetadata?.issuer === selectedIssuer) {
+      return this.verifiedAuthorizationServerMetadata
+    }
+
+    let metadata: AuthorizationServerMetadata | undefined
+    try {
+      metadata = await discoverAuthorizationServerMetadata(selectedIssuer, { fetchFn: this.fetch })
+    } catch (error) {
+      if (error instanceof IssuerMismatchError) {
+        throw new EnterpriseMcpOAuthContractError(
+          "MCP_OAUTH_ISSUER_MISMATCH",
+          "The selected OAuth issuer could not be verified against its canonical metadata.",
+        )
+      }
+      throw error
+    }
+    if (!metadata) {
+      throw new Error(`No OAuth metadata was found for the selected issuer ${selectedIssuer}.`)
+    }
+    this.verifiedAuthorizationServerMetadata = metadata
+    return metadata
+  }
+
+  private hasCurrentMetadataVerification(state: OAuthDiscoveryState, selectedIssuer: string): boolean {
+    const verifiedState = state as VerifiedOAuthDiscoveryState
+    return verifiedState.openworkMetadataVerification?.version === 1
+      && verifiedState.openworkMetadataVerification.issuer === selectedIssuer
+      && state.authorizationServerUrl === selectedIssuer
+      && state.authorizationServerMetadata?.issuer === selectedIssuer
+  }
+
+  private async normalizeDiscoveryState(state: OAuthDiscoveryState | undefined): Promise<VerifiedOAuthDiscoveryState | undefined> {
+    const selectedIssuer = this.authorizationServerIssuer
+    if (!selectedIssuer) return state
     if (state) {
       this.assertDiscoveryBinding(state)
+      if (this.hasCurrentMetadataVerification(state, selectedIssuer)) {
+        this.verifiedAuthorizationServerMetadata = state.authorizationServerMetadata
+        return state
+      }
+    }
+    const metadata = await this.canonicalAuthorizationServerMetadata()
+    if (!metadata) return state
+
+    const normalized: VerifiedOAuthDiscoveryState = {
+      ...state,
+      authorizationServerUrl: selectedIssuer,
+      authorizationServerMetadata: metadata,
+      openworkMetadataVerification: {
+        version: 1,
+        issuer: selectedIssuer,
+      },
+    }
+    this.assertDiscoveryBinding(normalized)
+    return normalized
+  }
+
+  async discoveryState(): Promise<OAuthDiscoveryState | undefined> {
+    const persistedState = await this.persistence.discovery?.load(this.context())
+    const state = await this.normalizeDiscoveryState(persistedState)
+    if (state) {
+      this.assertDiscoveryBinding(state)
+      if (
+        persistedState
+        && (
+          persistedState.authorizationServerUrl !== state.authorizationServerUrl
+          || JSON.stringify(persistedState.authorizationServerMetadata) !== JSON.stringify(state.authorizationServerMetadata)
+          || !(persistedState as VerifiedOAuthDiscoveryState).openworkMetadataVerification
+        )
+      ) {
+        await this.persistence.discovery?.save({ context: this.context(), state })
+      }
       this.loadedDiscovery = state
     }
     return state
   }
 
   async saveDiscoveryState(state: OAuthDiscoveryState): Promise<void> {
+    let normalizedState: OAuthDiscoveryState | undefined
     try {
-      this.assertDiscoveryBinding(state)
+      normalizedState = await this.normalizeDiscoveryState(state)
+      if (!normalizedState) throw new Error("OAuth discovery state was unavailable.")
+      this.assertDiscoveryBinding(normalizedState)
     } catch (error) {
       await this.persistence.discovery?.invalidate({
         context: this.context(),
@@ -180,11 +309,11 @@ export class EnterpriseMcpOAuthProvider implements OAuthClientProvider {
       })
       throw error
     }
-    await this.persistence.discovery?.save({ context: this.context(), state })
-    this.loadedDiscovery = state
+    await this.persistence.discovery?.save({ context: this.context(), state: normalizedState })
+    this.loadedDiscovery = normalizedState
   }
 
-  async clientInformation(): Promise<OAuthClientInformationMixed | undefined> {
+  async clientInformation(context?: OAuthClientInformationContext): Promise<StoredOAuthClientInformation | undefined> {
     const record = await this.persistence.clientRegistrations.load(this.context())
     if (!record) {
       this.loadedClient = undefined
@@ -198,7 +327,7 @@ export class EnterpriseMcpOAuthProvider implements OAuthClientProvider {
       }
       return undefined
     }
-    oauthClientInformationMixedSchema.parse(record.clientInformation)
+    const clientInformation = this.storedClientInformation(record.clientInformation, context)
     if (!record.revision.trim()) {
       throw new EnterpriseMcpOAuthContractError(
         "MCP_OAUTH_PERSISTENCE_INVALID",
@@ -216,11 +345,14 @@ export class EnterpriseMcpOAuthProvider implements OAuthClientProvider {
       }
     }
     this.loadedClient = record
-    return record.clientInformation
+    return clientInformation
   }
 
-  async saveClientInformation(clientInformation: OAuthClientInformationMixed): Promise<void> {
-    const validated = oauthClientInformationMixedSchema.parse(clientInformation)
+  async saveClientInformation(
+    clientInformation: StoredOAuthClientInformation,
+    context?: OAuthClientInformationContext,
+  ): Promise<void> {
+    const validated = this.storedClientInformation(clientInformation, context)
     const source = this.clientMetadataUrl === validated.client_id ? "client-metadata" : "dynamic"
     const saved = await this.persistence.clientRegistrations.save({
       context: this.context(),
@@ -238,13 +370,13 @@ export class EnterpriseMcpOAuthProvider implements OAuthClientProvider {
     this.loadedClient = saved
   }
 
-  async tokens(): Promise<OAuthTokens | undefined> {
+  async tokens(context?: OAuthClientInformationContext): Promise<StoredOAuthTokens | undefined> {
     const record = await this.persistence.credentials.load(this.context())
     if (!record) {
       this.loadedCredential = undefined
       return undefined
     }
-    const tokens = OAuthTokensSchema.parse(record.tokens)
+    const tokens = this.storedTokens(record.tokens, context)
     if (!record.revision.trim()) {
       throw new EnterpriseMcpOAuthContractError(
         "MCP_OAUTH_PERSISTENCE_INVALID",
@@ -265,8 +397,8 @@ export class EnterpriseMcpOAuthProvider implements OAuthClientProvider {
     return tokens
   }
 
-  async saveTokens(tokens: OAuthTokens): Promise<void> {
-    const validated = OAuthTokensSchema.parse(tokens)
+  async saveTokens(tokens: StoredOAuthTokens, context?: OAuthClientInformationContext): Promise<void> {
+    const validated = this.storedTokens(tokens, context)
     const source = this.authorizationHandle ? "authorization-code" : "refresh"
     const existing = source === "refresh"
       ? (this.loadedCredential ?? await this.persistence.credentials.load(this.context()))

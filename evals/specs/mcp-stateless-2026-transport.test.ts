@@ -34,8 +34,29 @@ test("OpenWork Connect and the agent endpoint implement stateless MCP 2026", ({ 
   expect(connect.output).toContain("discovers a 2026 stateless server without an initialize handshake")
   expect(connect.output).toContain("negotiates the stateless protocol without initialize or a session id")
   expect(connect.output).toContain("does not downgrade the discovery probe after HTTP 401")
-  expect(connect.output).toContain("tests 16")
+  expect(connect.output).toContain("tests 18")
   expect(connect.output).toContain("fail 0")
+
+  const oauthMetadataBinding = run("pnpm", [
+    "--filter",
+    "@openwork/enterprise-mcp-client",
+    "exec",
+    "tsx",
+    "--test",
+    "--test-name-pattern",
+    "ignores endpoints from a resource alias|rejects a resource alias when the claimed canonical issuer does not verify|replaces resource-alias endpoints with strictly discovered canonical metadata|preserves a cached issuer mismatch through the modern discovery probe|rejects stored OAuth clients and tokens stamped for another issuer",
+    "test/requirements-discovery.test.ts",
+    "test/enterprise-mcp-client.test.ts",
+  ])
+  expect(oauthMetadataBinding.error, oauthMetadataBinding.output).toBeUndefined()
+  expect(oauthMetadataBinding.status, oauthMetadataBinding.output).toBe(0)
+  expect(oauthMetadataBinding.output).toContain("ignores endpoints from a resource alias and uses strictly bound canonical metadata")
+  expect(oauthMetadataBinding.output).toContain("rejects a resource alias when the claimed canonical issuer does not verify")
+  expect(oauthMetadataBinding.output).toContain("replaces resource-alias endpoints with strictly discovered canonical metadata")
+  expect(oauthMetadataBinding.output).toContain("preserves a cached issuer mismatch through the modern discovery probe")
+  expect(oauthMetadataBinding.output).toContain("rejects stored OAuth clients and tokens stamped for another issuer")
+  expect(oauthMetadataBinding.output).toContain("tests 5")
+  expect(oauthMetadataBinding.output).toContain("fail 0")
 
   const scopes = run("pnpm", [
     "--filter",
@@ -88,6 +109,21 @@ test("OpenWork Connect and the agent endpoint implement stateless MCP 2026", ({ 
   expect(managedGateway.output).toContain("0 fail")
   expect(managedGateway.output).toContain("28 expect() calls")
 
+  const diagnosticPrecedence = run("pnpm", [
+    "--filter",
+    "@openwork-ee/den-api",
+    "exec",
+    "bun",
+    "test",
+    "--test-name-pattern",
+    "preserves an application-owned OAuth issuer mismatch over a captured HTTP 401",
+    "test/external-mcp-diagnostics.test.ts",
+  ])
+  expect(diagnosticPrecedence.error, diagnosticPrecedence.output).toBeUndefined()
+  expect(diagnosticPrecedence.status, diagnosticPrecedence.output).toBe(0)
+  expect(diagnosticPrecedence.output).toContain("1 pass")
+  expect(diagnosticPrecedence.output).toContain("0 fail")
+
   evidence.recordAssertionEvidence(
     "OpenWork Connect negotiates the current stateless protocol",
     "The outbound client uses automatic SDK negotiation, reaches a 2026-07-28 server through server/discover without initialize or Mcp-Session-Id, and does not misclassify authorization or server failures as legacy-protocol signals.",
@@ -105,7 +141,7 @@ test("OpenWork Connect and the agent endpoint implement stateless MCP 2026", ({ 
   )
   evidence.recordAssertionEvidence(
     "Protocol and authorization boundaries fail closed",
-    "The server rejects a protocol header/body mismatch with JSON-RPC error -32020. OAuth prefers resource-specific scopes over unrelated authorization-server scopes, preserves a narrower administrator selection, and rejects selections advertised by neither party before registration.",
+    "The server rejects a protocol header/body mismatch with JSON-RPC error -32020. OAuth prefers resource-specific scopes, rejects unadvertised selections, independently verifies a canonical issuer behind a resource discovery alias, discards alias-supplied endpoints, binds persisted client and token records to their issuer, and preserves issuer-mismatch diagnostics over a captured HTTP 401.",
     true,
   )
   evidence.recordAssertionEvidence(

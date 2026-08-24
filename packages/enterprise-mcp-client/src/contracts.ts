@@ -1,12 +1,14 @@
 import type {
   Client,
   Implementation,
-  OAuthClientInformationMixed,
   OAuthDiscoveryState,
-  OAuthTokens,
   ServerCapabilities,
+  StoredOAuthClientInformation,
+  StoredOAuthTokens,
   Tool,
 } from "@modelcontextprotocol/client"
+
+export type { StoredOAuthClientInformation, StoredOAuthTokens } from "@modelcontextprotocol/client"
 
 /** Epoch milliseconds. The package never reads a database or environment clock. */
 export type EnterpriseMcpEpochMs = number
@@ -34,7 +36,7 @@ export type EnterpriseMcpPersistenceContext = {
 }
 
 export type EnterpriseMcpOAuthClientRegistration = {
-  clientInformation: OAuthClientInformationMixed
+  clientInformation: StoredOAuthClientInformation
   /** Opaque adapter-owned compare-and-swap revision. */
   revision: string
   /** Absolute client/client-secret expiration, when the provider declares one. */
@@ -50,7 +52,7 @@ export interface EnterpriseMcpOAuthClientRegistrationPort {
    */
   save(input: {
     context: EnterpriseMcpPersistenceContext
-    clientInformation: OAuthClientInformationMixed
+    clientInformation: StoredOAuthClientInformation
     /** The redirect URI used for this client registration attempt. */
     redirectUri: string
     expiresAt?: EnterpriseMcpEpochMs
@@ -75,7 +77,7 @@ export interface EnterpriseMcpOAuthDiscoveryPort {
 }
 
 export type EnterpriseMcpOAuthCredential = {
-  tokens: OAuthTokens
+  tokens: StoredOAuthTokens
   /** Absolute access-token expiration, computed when tokens are committed. */
   expiresAt?: EnterpriseMcpEpochMs
   /** Opaque adapter-owned compare-and-swap revision. */
@@ -124,7 +126,7 @@ export interface EnterpriseMcpOAuthCredentialPort {
    */
   save(input: {
     context: EnterpriseMcpPersistenceContext
-    tokens: OAuthTokens
+    tokens: StoredOAuthTokens
     expiresAt?: EnterpriseMcpEpochMs
     source: "authorization-code" | "refresh"
     authorization?: EnterpriseMcpOAuthAuthorizationHandle

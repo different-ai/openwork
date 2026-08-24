@@ -14,6 +14,16 @@ function isResourceScopedDiscoveryAlias(state: OAuthDiscoveryBindingState, expec
     && advertisedIssuers?.some((issuer) => isEquivalentOAuthDiscoveryAlias(issuer, state.authorizationServerUrl)) === true
 }
 
+function advertisesExpectedIssuerOrResourceAlias(
+  state: OAuthDiscoveryBindingState,
+  expectedIssuer: string,
+): boolean {
+  const advertisedIssuers = state.resourceMetadata?.authorization_servers
+  if (advertisedIssuers === undefined) return true
+  return advertisedIssuers.some((issuer) => isEquivalentOAuthDiscoveryAlias(issuer, expectedIssuer))
+    || advertisedIssuers.some((issuer) => isEquivalentOAuthDiscoveryAlias(issuer, state.resourceMetadata?.resource))
+}
+
 /**
  * Bind OAuth metadata to either its advertised issuer or the constrained
  * resource-scoped discovery alias advertised by the protected resource.
@@ -23,10 +33,8 @@ export function isAuthorizationServerDiscoveryBound(
   state: OAuthDiscoveryBindingState,
   expectedIssuer: string,
 ): boolean {
-  const advertisedIssuers = state.resourceMetadata?.authorization_servers
   const directBinding = isEquivalentOAuthDiscoveryAlias(state.authorizationServerUrl, expectedIssuer)
-    && (advertisedIssuers === undefined
-      || advertisedIssuers.some((issuer) => isEquivalentOAuthDiscoveryAlias(issuer, expectedIssuer)))
+    && advertisesExpectedIssuerOrResourceAlias(state, expectedIssuer)
   const discoveryBinding = directBinding || isResourceScopedDiscoveryAlias(state, expectedIssuer)
   return discoveryBinding
     && (state.authorizationServerMetadata?.issuer === undefined

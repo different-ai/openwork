@@ -256,10 +256,12 @@ describe("Den enterprise MCP OAuth persistence adapter", () => {
         client_secret: "encrypted-client-secret",
         registration_access_token: "must-not-enter-json",
         token_endpoint_auth_method: "client_secret_post",
+        issuer: "https://login.example.test",
       },
       source: "dynamic",
     })
     expect(saved.clientInformation.client_id).toBe("registered-client")
+    expect(saved.clientInformation.issuer).toBe("https://login.example.test")
     const rows = await db
       .select()
       .from(schema.OrgOAuthClientTable)
@@ -318,6 +320,7 @@ describe("Den enterprise MCP OAuth persistence adapter", () => {
         refresh_token: "callback-refresh-token",
         token_type: "Bearer",
         expires_in: 3_600,
+        issuer: "https://login.example.test",
       },
       expiresAt: Date.now() + 3_600_000,
       source: "authorization-code",
@@ -326,6 +329,21 @@ describe("Den enterprise MCP OAuth persistence adapter", () => {
     })
     expect(await persistence.authorizations.load({ context: context(), id: "signed-state-a" })).toBeUndefined()
     expect(await persistence.authorizations.load({ context: context(), id: "signed-state-b" })).toBeDefined()
+    expect((await persistence.credentials.load(context()))?.tokens).toMatchObject({
+      access_token: "callback-access-token",
+      issuer: "https://login.example.test",
+    })
+    const currentCredential = await persistence.credentials.load(context())
+    await expect(persistence.credentials.save({
+      context: context(),
+      tokens: {
+        access_token: "wrong-issuer-token",
+        token_type: "Bearer",
+        issuer: "https://attacker.example.test",
+      },
+      source: "refresh",
+      expectedCredentialRevision: currentCredential?.revision,
+    })).rejects.toMatchObject({ code: "MCP_OAUTH_ISSUER_MISMATCH" })
     expect((await persistence.credentials.load(context()))?.tokens.access_token).toBe("callback-access-token")
 
     await expect(persistence.credentials.save({

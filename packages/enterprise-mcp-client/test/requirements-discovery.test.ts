@@ -229,6 +229,18 @@ describe("enterprise MCP requirements discovery", () => {
           scopes_supported: ["mcp_api", "refresh_token"],
         })
       }
+      if (target.origin === "https://login.salesforce.example" && target.pathname === "/.well-known/oauth-authorization-server") {
+        return Response.json({
+          issuer: "https://login.salesforce.example",
+          authorization_endpoint: "https://login.salesforce.example/services/oauth2/authorize",
+          token_endpoint: "https://login.salesforce.example/services/oauth2/token",
+          response_types_supported: ["code"],
+          grant_types_supported: ["authorization_code", "refresh_token"],
+          token_endpoint_auth_methods_supported: ["none", "client_secret_post"],
+          code_challenge_methods_supported: ["S256"],
+          scopes_supported: ["mcp_api", "refresh_token"],
+        })
+      }
       return new Response(null, { status: 401 })
     }
 
@@ -269,6 +281,18 @@ describe("enterprise MCP requirements discovery", () => {
           code_challenge_methods_supported: ["S256"],
         })
       }
+      if (target.origin === "https://vercel.example" && target.pathname === "/.well-known/oauth-authorization-server") {
+        return Response.json({
+          issuer: "https://vercel.example",
+          authorization_endpoint: "https://vercel.example/oauth/authorize",
+          token_endpoint: "https://vercel.example/oauth/token",
+          registration_endpoint: "https://vercel.example/oauth/register",
+          response_types_supported: ["code"],
+          grant_types_supported: ["authorization_code", "refresh_token"],
+          token_endpoint_auth_methods_supported: ["none"],
+          code_challenge_methods_supported: ["S256"],
+        })
+      }
       return new Response(null, {
         status: 401,
         headers: {
@@ -293,6 +317,82 @@ describe("enterprise MCP requirements discovery", () => {
       selectedIssuer: "https://unrelated.example",
       requirements: result,
     }), undefined)
+  })
+
+  it("ignores endpoints from a resource alias and uses strictly bound canonical metadata", async () => {
+    const resource = "https://mcp.example.test/mcp"
+    const issuer = "https://identity.example.test"
+    const fetch: EnterpriseMcpFetch = async (url) => {
+      const target = new URL(url)
+      if (target.origin === "https://mcp.example.test" && target.pathname === "/.well-known/oauth-protected-resource/mcp") {
+        return Response.json({ resource, authorization_servers: [resource] })
+      }
+      if (target.origin === "https://mcp.example.test" && target.pathname === "/.well-known/oauth-authorization-server/mcp") {
+        return Response.json({
+          issuer,
+          authorization_endpoint: "https://attacker.example.test/authorize",
+          token_endpoint: "https://attacker.example.test/token",
+          registration_endpoint: "https://attacker.example.test/register",
+          response_types_supported: ["code"],
+        })
+      }
+      if (target.origin === "https://identity.example.test" && target.pathname === "/.well-known/oauth-authorization-server") {
+        return Response.json({
+          issuer,
+          authorization_endpoint: `${issuer}/authorize`,
+          token_endpoint: `${issuer}/token`,
+          response_types_supported: ["code"],
+        })
+      }
+      return new Response(null, {
+        status: 401,
+        headers: { "www-authenticate": "Bearer resource_metadata=\"https://mcp.example.test/.well-known/oauth-protected-resource/mcp\"" },
+      })
+    }
+
+    const result = await discoverConnectionRequirements({ serverUrl: resource, fetch })
+
+    assert.equal(result.authentication.authorizationServers[0]?.issuer, issuer)
+    assert.equal(result.authentication.authorizationServers[0]?.authorizationEndpoint, `${issuer}/authorize`)
+    assert.equal(result.authentication.authorizationServers[0]?.tokenEndpoint, `${issuer}/token`)
+    assert.equal(result.authentication.authorizationServers[0]?.registrationEndpoint, undefined)
+  })
+
+  it("rejects a resource alias when the claimed canonical issuer does not verify", async () => {
+    const resource = "https://mcp.example.test/mcp"
+    const fetch: EnterpriseMcpFetch = async (url) => {
+      const target = new URL(url)
+      if (target.origin === "https://mcp.example.test" && target.pathname === "/.well-known/oauth-protected-resource/mcp") {
+        return Response.json({ resource, authorization_servers: [resource] })
+      }
+      if (target.origin === "https://mcp.example.test" && target.pathname === "/.well-known/oauth-authorization-server/mcp") {
+        return Response.json({
+          issuer: "https://identity.example.test",
+          authorization_endpoint: "https://attacker.example.test/authorize",
+          token_endpoint: "https://attacker.example.test/token",
+          response_types_supported: ["code"],
+        })
+      }
+      if (target.origin === "https://identity.example.test" && target.pathname === "/.well-known/oauth-authorization-server") {
+        return Response.json({
+          issuer: "https://different.example.test",
+          authorization_endpoint: "https://attacker.example.test/authorize",
+          token_endpoint: "https://attacker.example.test/token",
+          response_types_supported: ["code"],
+        })
+      }
+      return new Response(null, {
+        status: 401,
+        headers: { "www-authenticate": "Bearer resource_metadata=\"https://mcp.example.test/.well-known/oauth-protected-resource/mcp\"" },
+      })
+    }
+
+    const result = await discoverConnectionRequirements({ serverUrl: resource, fetch })
+
+    assert.equal(result.authentication.authorizationServers.length, 0)
+    assert.equal(result.authentication.authorizationServers.some((server) => server.tokenEndpoint?.includes("attacker.example.test")), false)
+    assert.equal(result.warnings.some((warning) => warning.code === "oauth_issuer_mismatch"), true)
+    assert.equal(result.status, "manual_action_required")
   })
 
   it("accepts an authorization-server root issuer with an equivalent trailing slash", async () => {

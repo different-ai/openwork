@@ -1124,6 +1124,32 @@ describe("external MCP diagnostics", () => {
     })
   })
 
+  test("preserves an application-owned OAuth issuer mismatch over a captured HTTP 401", async () => {
+    const tracker = new ExternalMcpDiagnosticTracker("req_issuer_mismatch")
+    const diagnosticFetch = createExternalMcpDiagnosticFetch({
+      endpoint: "https://mcp.example.invalid/mcp",
+      tracker,
+      fetch: async () => new Response(null, { status: 401 }),
+    })
+    await diagnosticFetch("https://mcp.example.invalid/mcp", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} }),
+    })
+    const oauthError = Object.assign(new Error("Authorization server metadata issuer mismatch."), {
+      code: "MCP_OAUTH_ISSUER_MISMATCH",
+    })
+
+    expect(tracker.error(oauthError).diagnostic).toMatchObject({
+      phase: "AUTH_ISSUER_DISCOVERY",
+      category: "oauth_issuer_mismatch",
+      code: "MCP_OAUTH_ISSUER_MISMATCH",
+      retryable: false,
+      actionOwner: "organization_admin",
+      httpStatus: 401,
+    })
+  })
+
   test("maps bounded SDK protocol incompatibility errors to MCP_VERSION", () => {
     const tracker = new ExternalMcpDiagnosticTracker("req_version")
     tracker.passed("MCP_TRANSPORT", "reachable")

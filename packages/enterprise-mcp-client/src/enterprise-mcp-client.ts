@@ -280,6 +280,7 @@ export function createEnterpriseMcpClient(options: EnterpriseMcpClientOptions): 
           },
           authorizationTransactionTtlMs,
           expirationSkewMs,
+          fetch: observer.fetch,
           oauthConfiguration,
         })
       : undefined
