@@ -304,6 +304,9 @@ importers:
 
   apps/desktop:
     dependencies:
+      '@modelcontextprotocol/client':
+        specifier: ^2.0.0
+        version: 2.0.0(patch_hash=04f6fc6886d1ec78bc1b163d09d9e1e19377b1747baba25373ed21bb54537000)
       '@modelcontextprotocol/sdk':
         specifier: ^1.29.0
         version: 1.29.0(patch_hash=b9b29e6a319e94ea968476aa440eb8586b5da9db6b8011ce749c384d186f8a10)(zod@4.3.6)
