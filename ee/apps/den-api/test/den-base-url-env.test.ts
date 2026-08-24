@@ -104,6 +104,23 @@ describe("DEN_BASE_URL environment defaults", () => {
     })
   })
 
+  test("supports explicit shared cookie domains for sibling web and API hosts", () => {
+    expect(probeDenUrls({
+      BETTER_AUTH_URL: "https://app.openworklabs.com",
+      DEN_API_PUBLIC_URL: "https://api.openworklabs.com",
+      DEN_BETTER_AUTH_COOKIE_DOMAIN: "openworklabs.com",
+      CORS_ORIGINS: "https://app.openworklabs.com,https://api.openworklabs.com,https://api.app.openworklabs.com",
+    })).toMatchObject({
+      betterAuthUrl: "https://app.openworklabs.com",
+      betterAuthCookieDomain: "openworklabs.com",
+      webUrl: "https://app.openworklabs.com",
+      apiPublicUrl: "https://api.openworklabs.com",
+      corsOrigins: ["https://app.openworklabs.com", "https://api.openworklabs.com", "https://api.app.openworklabs.com"],
+      betterAuthTrustedOrigins: ["https://app.openworklabs.com"],
+      webAppHosts: ["app.openworklabs.com"],
+    })
+  })
+
   test("exposes only the public web origin when BETTER_AUTH_URL includes URL components", () => {
     expect(probeDenUrls({
       BETTER_AUTH_URL: "https://user:secret@legacy.example.com/auth/path?token=hidden#fragment",

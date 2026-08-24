@@ -39,6 +39,9 @@ data:
   {{ if .Values.config.public.betterAuthTrustedOrigins }}
   DEN_BETTER_AUTH_TRUSTED_ORIGINS: {{ .Values.config.public.betterAuthTrustedOrigins | quote }}
   {{ end }}
+  {{ if .Values.config.public.betterAuthCookieDomain }}
+  DEN_BETTER_AUTH_COOKIE_DOMAIN: {{ .Values.config.public.betterAuthCookieDomain | quote }}
+  {{ end }}
   {{ if .Values.config.public.webAppHosts }}
   DEN_WEB_APP_HOSTS: {{ .Values.config.public.webAppHosts | quote }}
   {{ end }}

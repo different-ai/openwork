@@ -39,6 +39,7 @@ config:
     mcpClaimNamespace: ""
     desktopDenBaseUrl: ""
     corsOrigins: ""
+    betterAuthCookieDomain: ""
     betterAuthTrustedOrigins: ""
     webAppHosts: ""
     bootstrapAdminEmails: ""

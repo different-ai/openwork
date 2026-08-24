@@ -24,6 +24,7 @@ const EnvSchema = z.object({
   DATABASE_REDIS_ALLOW_INSECURE_INTERNAL: z.string().optional(),
   DEN_MCP_RESOURCE_URL: z.string().optional(),
   DEN_MCP_ADDITIONAL_RESOURCES: z.string().optional(),
+  DEN_BETTER_AUTH_COOKIE_DOMAIN: z.string().optional(),
   DEN_BETTER_AUTH_TRUSTED_ORIGINS: z.string().optional(),
   DEN_WEB_APP_HOSTS: z.string().optional(),
   GITHUB_CLIENT_ID: z.string().optional(),
@@ -567,7 +568,29 @@ function deriveBetterAuthCookieDomain(input: { webOrigin: string; apiPublicUrl: 
   const apiHost = api.hostname.toLowerCase()
   return apiHost.endsWith(`.${webHost}`) ? webHost : undefined
 }
-const betterAuthCookieDomain = deriveBetterAuthCookieDomain({
+function normalizeBetterAuthCookieDomain(value: string | undefined) {
+  const configured = optionalString(value)
+  if (!configured) return undefined
+
+  const domain = configured.replace(/^\.+/, "").trim().toLowerCase()
+  if (!domain) {
+    throw new Error("DEN_BETTER_AUTH_COOKIE_DOMAIN must be a domain name, not an empty value.")
+  }
+
+  let parsedDomain: URL
+  try {
+    parsedDomain = new URL(`https://${domain}`)
+  } catch {
+    throw new Error("DEN_BETTER_AUTH_COOKIE_DOMAIN must be a valid domain name without protocol, path, query, or fragment.")
+  }
+
+  if (parsedDomain.hostname !== domain || parsedDomain.port || parsedDomain.username || parsedDomain.password || parsedDomain.pathname !== "/" || parsedDomain.search || parsedDomain.hash) {
+    throw new Error("DEN_BETTER_AUTH_COOKIE_DOMAIN must be a valid domain name without protocol, path, query, or fragment.")
+  }
+
+  return domain
+}
+const betterAuthCookieDomain = normalizeBetterAuthCookieDomain(parsed.DEN_BETTER_AUTH_COOKIE_DOMAIN) ?? deriveBetterAuthCookieDomain({
   webOrigin: betterAuthPublicWebOrigin,
   apiPublicUrl,
 })
