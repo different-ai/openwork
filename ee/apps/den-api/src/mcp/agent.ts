@@ -1,6 +1,11 @@
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
-import { ErrorCode, McpError, type ToolAnnotations } from "@modelcontextprotocol/sdk/types.js"
-import { StreamableHTTPTransport } from "@hono/mcp"
+import {
+  McpServer,
+  ProtocolError,
+  ProtocolErrorCode,
+  SdkError,
+  SdkErrorCode,
+  type ToolAnnotations,
+} from "@modelcontextprotocol/server"
 import { eq } from "@openwork-ee/den-db/drizzle"
 import { OrganizationTable } from "@openwork-ee/den-db/schema"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
@@ -16,9 +21,9 @@ import { getMcpResourceContext, verifyMcpRequest } from "./auth.js"
 import { DEN_MCP_APP_HOST_SCOPE, DEN_MCP_WRITE_SCOPE } from "./scopes.js"
 import { getCatalog, protectedResourceMetadata } from "./index.js"
 import { preflightMcpJsonRpcRequest } from "./json-rpc-preflight.js"
+import { createAgentMcpHttpHandler } from "./agent-http.js"
 import { rejectStandaloneSseResponse } from "./standalone-sse.js"
 import { appLogger } from "../observability/logger.js"
-import { normalizeMcpProtocolVersionHeader } from "./protocol-version.js"
 import {
   compareCapabilityMatches,
   EXECUTE_CAPABILITY_TOOL_NAME,
@@ -91,7 +96,7 @@ import {
   PluginArchRouteFailure,
 } from "../routes/org/plugin-system/store.js"
 
-const protocolVersionLogger = appLogger.child({ component: "mcp_protocol_version" })
+const agentMcpLogger = appLogger.child({ component: "agent_mcp" })
 
 export { externalToolContent } from "./tool-content.js"
 export { externalCapabilityErrorToolResult, externalCapabilitySuccessToolResult }
@@ -251,7 +256,7 @@ function capabilityTimeoutResult(capability: string): ExecuteCapabilityToolResul
 }
 
 function isTimeoutError(error: unknown): boolean {
-  if (error instanceof McpError && error.code === ErrorCode.RequestTimeout) {
+  if (error instanceof SdkError && error.code === SdkErrorCode.RequestTimeout) {
     return true
   }
   if (error instanceof DOMException && (error.name === "TimeoutError" || error.name === "AbortError")) {
@@ -334,7 +339,9 @@ export function registerAgentSkillResources(input: {
         ?? (marketplaceResult?.ok && marketplaceResult.result.kind === "skill"
           ? marketplaceResult.result.content
           : null)
-      if (typeof source !== "string") throw new McpError(ErrorCode.InvalidRequest, "Skill is no longer available")
+      if (typeof source !== "string") {
+        throw new ProtocolError(ProtocolErrorCode.InvalidRequest, "Skill is no longer available")
+      }
       return {
         contents: [{
           uri: skill.location,
@@ -366,6 +373,13 @@ export function registerAgentSkillResources(input: {
  * operations are not individually callable on this endpoint.
  */
 export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables & Record<string, unknown> }>(app: Hono<T>) {
+  const serverByRequest = new WeakMap<Request, McpServer>()
+  const handler = createAgentMcpHttpHandler((request) => {
+    const server = serverByRequest.get(request)
+    if (!server) throw new Error("Agent MCP request server was not prepared.")
+    return server
+  }, (error) => agentMcpLogger.warn("Agent MCP transport error", { error }))
+
   app.get("/.well-known/oauth-protected-resource/mcp/agent", publicRoute, (c) =>
     c.json(protectedResourceMetadata(c.req.raw, "agent")))
   app.get("/mcp/agent/.well-known/oauth-protected-resource", publicRoute, (c) =>
@@ -390,10 +404,6 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
     if (preflightResponse) {
       return preflightResponse
     }
-
-    normalizeMcpProtocolVersionHeader(c.req.raw.headers, "agent", requestId, (message, fields) => {
-      protocolVersionLogger.warn(message, fields)
-    })
 
     const catalog = await getCatalog(app as unknown as Hono, c.env)
     // External MCP connections are scoped to the calling MEMBER (grants +
@@ -440,7 +450,8 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
     const { externalMcpConnectionsEnabled } = capabilityContext
     let remoteSkills: RemoteSkillDescriptor[] = []
     let libraryContext: PluginArchActorContext | null = null
-    const appCatalogMethod = method === "initialize"
+    const appCatalogMethod = method === "server/discover"
+      || method === "initialize"
       || method === "tools/list"
       || method === "tools/call"
       || method === "resources/list"
@@ -462,7 +473,7 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
       }
     }
     const artifactContext = codemodeEnabled ? libraryContext : null
-    if (method === "initialize" || method === "resources/list" || method === "resources/read") {
+    if (method === "server/discover" || method === "initialize" || method === "resources/list" || method === "resources/read") {
       remoteSkills = [
         ...listBuiltinSkillDescriptors(),
         ...(await listAccessibleMarketplaceSkillDescriptors({
@@ -474,7 +485,7 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
         .sort((a, b) => a.name.localeCompare(b.name) || a.capability.localeCompare(b.capability))
     }
     const server = createAgentMcpServer()
-    if (method === "initialize" || method === "resources/list" || method === "resources/read") {
+    if (method === "server/discover" || method === "initialize" || method === "resources/list" || method === "resources/read") {
       if (memberIdentity) {
         registerConnectMcpServerIndex({
           server,
@@ -859,6 +870,10 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
           save: (request) => saveArtifactViewRevision({ context: artifactContext, ...request }),
           activate: (request) => activateArtifactViewRevision({ context: artifactContext, ...request }),
           retire: (request) => retireArtifactView({ context: artifactContext, ...request }),
+          notifyCatalogChanged: () => {
+            handler.notify.toolsChanged()
+            handler.notify.resourcesChanged()
+          },
         })
 
         const exactResource = requestInfo.resourceUri ? parseArtifactViewResourceUri(requestInfo.resourceUri) : null
@@ -934,9 +949,11 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
       )
     }
 
-    const transport = new StreamableHTTPTransport()
-    await server.connect(transport)
-    const response = await transport.handleRequest(c)
-    return response ?? new Response(null, { status: 204 })
+    serverByRequest.set(c.req.raw, server)
+    try {
+      return await handler.fetch(c.req.raw)
+    } finally {
+      serverByRequest.delete(c.req.raw)
+    }
   })
 }

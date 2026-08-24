@@ -25,8 +25,8 @@ import {
   assertEnterpriseMcpResourceResult,
   collectEnterpriseMcpResources,
 } from "../src/resource-catalog.js"
-import type { OAuthClientInformationMixed, OAuthTokens } from "@modelcontextprotocol/sdk/shared/auth.js"
-import { selectClientAuthMethod, type OAuthDiscoveryState } from "@modelcontextprotocol/sdk/client/auth.js"
+import { selectClientAuthMethod } from "@modelcontextprotocol/client"
+import type { OAuthClientInformationMixed, OAuthDiscoveryState, OAuthTokens } from "@modelcontextprotocol/client"
 
 const rpcRequestSchema = z.object({
   id: z.union([z.string(), z.number()]).optional(),
@@ -208,6 +208,7 @@ async function startOAuthMcpServer(options: {
   rejectAuthenticatedToolsList?: boolean
   clientMetadataSupported?: boolean
   scopeLessChallenge?: boolean
+  advertisedScopes?: string[]
 } = {}) {
   let origin = ""
   let capturedRegistration: Record<string, unknown> | null = null
@@ -218,7 +219,7 @@ async function startOAuthMcpServer(options: {
         sendJson(response, 200, {
           resource: `${origin}/mcp`,
           authorization_servers: [origin],
-          scopes_supported: ["tools.read"],
+          scopes_supported: options.advertisedScopes ?? ["tools.read"],
           bearer_methods_supported: ["header"],
         })
         return
@@ -233,7 +234,7 @@ async function startOAuthMcpServer(options: {
           grant_types_supported: ["authorization_code", "refresh_token"],
           token_endpoint_auth_methods_supported: ["none"],
           code_challenge_methods_supported: ["S256"],
-          scopes_supported: ["tools.read"],
+          scopes_supported: options.advertisedScopes ?? ["tools.read"],
           ...(options.clientMetadataSupported ? { client_id_metadata_document_supported: true } : {}),
         })
         return
@@ -552,7 +553,7 @@ describe("enterprise MCP client", () => {
         assert.ok(error instanceof EnterpriseMcpClientError)
         assert.equal(error.code, "MCP_CONNECTION_HANDSHAKE_FAILED")
         assert.equal(error.operationPhase, "connection-handshake")
-        assert.equal(error.requestPhase, "mcp-initialize")
+        assert.equal(error.requestPhase, "mcp-discovery")
         assert.match(error.message, /MCP connection handshake/)
         return true
       },
@@ -1452,6 +1453,36 @@ describe("enterprise MCP OAuth persistence contract", () => {
         connection,
         redirectUri: "https://den.example.test/v1/mcp-connections/oauth/callback",
         authorizationId: "signed-fallback-state",
+      })
+      assert.equal(started.status, "needs_auth")
+      if (started.status !== "needs_auth") throw new Error("Expected OAuth authorization to be required.")
+      assert.equal(new URL(started.authorizeUrl).searchParams.get("scope"), "tools.read")
+      assert.equal(server.registration()?.scope, "tools.read")
+    } finally {
+      await server.close()
+    }
+  })
+
+  it("keeps an administrator's selected scopes narrower than a scope-less provider advertisement", async () => {
+    const server = await startOAuthMcpServer({
+      scopeLessChallenge: true,
+      advertisedScopes: ["tools.read", "tools.write"],
+    })
+    try {
+      const client = createEnterpriseMcpClient({ fetch })
+      const connection: EnterpriseMcpConnection = {
+        id: "oauth-selected-scope",
+        serverUrl: `${server.origin}/mcp`,
+        authorization: {
+          type: "oauth",
+          persistence: new MemoryOAuthPersistence(),
+          configuration: { applicationType: "web", requestedScopes: ["tools.read"] },
+        },
+      }
+      const started = await client.connect({
+        connection,
+        redirectUri: "https://den.example.test/v1/mcp-connections/oauth/callback",
+        authorizationId: "signed-selected-scope-state",
       })
       assert.equal(started.status, "needs_auth")
       if (started.status !== "needs_auth") throw new Error("Expected OAuth authorization to be required.")

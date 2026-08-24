@@ -2,9 +2,9 @@ import {
   RESOURCE_MIME_TYPE,
   registerAppResource,
   registerAppTool,
-} from "@modelcontextprotocol/ext-apps/server"
+} from "./mcp-app-v2.js"
 import type { McpUiResourceMeta } from "@modelcontextprotocol/ext-apps"
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
+import type { McpServer } from "@modelcontextprotocol/server"
 import { pluginFlowAppHtml } from "@openwork/mcp-apps/plugin-flow"
 import {
   pluginFlowAppSchemaVersion,

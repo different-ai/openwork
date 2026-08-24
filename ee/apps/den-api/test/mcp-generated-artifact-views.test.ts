@@ -1,7 +1,5 @@
-import { Client } from "@modelcontextprotocol/sdk/client/index.js"
-import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js"
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
-import { ResourceListChangedNotificationSchema, ToolListChangedNotificationSchema } from "@modelcontextprotocol/sdk/types.js"
+import { Client, InMemoryTransport } from "@modelcontextprotocol/client"
+import { McpServer } from "@modelcontextprotocol/server"
 import { expect, test } from "bun:test"
 import { createHash } from "node:crypto"
 import type { GeneratedArtifactView, WorkflowArtifactPayload } from "@openwork/types/workflows"
@@ -93,6 +91,10 @@ async function withClient<T>(
     save: overrides.save ?? (async () => view),
     activate: overrides.activate ?? (async ({ revisionId }) => ({ ...view, activeRevisionId: revisionId })),
     retire: overrides.retire ?? (async () => ({ ...view, status: "retired", activeRevisionId: null })),
+    notifyCatalogChanged: () => {
+      server.sendToolListChanged()
+      server.sendResourceListChanged()
+    },
   })
   const client = new Client({ name: "host", version: "1.0.0" }, { capabilities: {} })
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
@@ -162,8 +164,8 @@ test("activation and rollback refresh the render tool to each exact immutable UR
   await withClient(async (client) => {
     let changed = 0
     let resourcesChanged = 0
-    client.setNotificationHandler(ToolListChangedNotificationSchema, () => { changed += 1 })
-    client.setNotificationHandler(ResourceListChangedNotificationSchema, () => { resourcesChanged += 1 })
+    client.setNotificationHandler("notifications/tools/list_changed", () => { changed += 1 })
+    client.setNotificationHandler("notifications/resources/list_changed", () => { resourcesChanged += 1 })
     await client.callTool({
       name: "activate_artifact_view_revision",
       arguments: { artifactViewId: viewId, revisionId: draftRevisionId },
@@ -194,8 +196,8 @@ test("save and retirement refresh the same session's resources and tools", async
   await withClient(async (client) => {
     let changed = 0
     let resourcesChanged = 0
-    client.setNotificationHandler(ToolListChangedNotificationSchema, () => { changed += 1 })
-    client.setNotificationHandler(ResourceListChangedNotificationSchema, () => { resourcesChanged += 1 })
+    client.setNotificationHandler("notifications/tools/list_changed", () => { changed += 1 })
+    client.setNotificationHandler("notifications/resources/list_changed", () => { resourcesChanged += 1 })
     const saved = await client.callTool({
       name: "save_artifact_view",
       arguments: {

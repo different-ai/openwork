@@ -1,7 +1,6 @@
 import { Buffer } from "node:buffer"
-import type { Client } from "@modelcontextprotocol/sdk/client/index.js"
-import type { RequestOptions } from "@modelcontextprotocol/sdk/shared/protocol.js"
-import type { Tool } from "@modelcontextprotocol/sdk/types.js"
+import type { RequestOptions } from "@modelcontextprotocol/client"
+import type { EnterpriseMcpTool } from "./contracts.js"
 import { EnterpriseMcpCatalogError, type EnterpriseMcpCatalogErrorCode } from "./errors.js"
 
 export const ENTERPRISE_MCP_TOOL_PAGE_LIMIT = 20
@@ -14,7 +13,10 @@ export const ENTERPRISE_MCP_TOOL_SCHEMA_DEPTH_LIMIT = 64
 export const ENTERPRISE_MCP_CURSOR_LIMIT_BYTES = 16 * 1024
 export const ENTERPRISE_MCP_CATALOG_LIMIT_BYTES = 8 * 1024 * 1024
 
-type ToolPage = Awaited<ReturnType<Client["listTools"]>>
+type ToolPage = {
+  tools: EnterpriseMcpTool[]
+  nextCursor?: string
+}
 
 function serializedBytes(value: unknown): number {
   const serialized = JSON.stringify(value)
@@ -65,7 +67,7 @@ function assertSchema(schema: unknown): void {
   }
 }
 
-function assertTool(tool: Tool): void {
+function assertTool(tool: EnterpriseMcpTool): void {
   assertStringLimit(tool.name, ENTERPRISE_MCP_TOOL_NAME_LIMIT_BYTES, "MCP_CATALOG_TOOL_NAME_LIMIT")
   assertStringLimit(tool.title, ENTERPRISE_MCP_TOOL_TITLE_LIMIT_BYTES, "MCP_CATALOG_TOOL_TITLE_LIMIT")
   assertStringLimit(tool.description, ENTERPRISE_MCP_TOOL_DESCRIPTION_LIMIT_BYTES, "MCP_CATALOG_TOOL_DESCRIPTION_LIMIT")
@@ -76,8 +78,8 @@ function assertTool(tool: Tool): void {
 export async function collectEnterpriseMcpTools(input: {
   listPage: (cursor: string | undefined, options: RequestOptions) => Promise<ToolPage>
   requestOptions: RequestOptions
-}): Promise<Tool[]> {
-  const tools: Tool[] = []
+}): Promise<EnterpriseMcpTool[]> {
+  const tools: EnterpriseMcpTool[] = []
   const names = new Set<string>()
   const cursors = new Set<string>()
   let cursor: string | undefined

@@ -89,6 +89,7 @@ overrides:
 
 patchedDependencies:
   '@better-auth/drizzle-adapter@1.7.0-beta.10': cd64da0c48130585986f4c25fac25093e761675db1885d837df7dc31c358f7f8
+  '@modelcontextprotocol/client@2.0.0': 04f6fc6886d1ec78bc1b163d09d9e1e19377b1747baba25373ed21bb54537000
   '@modelcontextprotocol/sdk': b9b29e6a319e94ea968476aa440eb8586b5da9db6b8011ce749c384d186f8a10
 
 importers:
@@ -495,6 +496,9 @@ importers:
       '@modelcontextprotocol/sdk':
         specifier: ^1.29.0
         version: 1.29.0(patch_hash=b9b29e6a319e94ea968476aa440eb8586b5da9db6b8011ce749c384d186f8a10)(zod@4.3.6)
+      '@modelcontextprotocol/server':
+        specifier: ^2.0.0
+        version: 2.0.0
       '@opentelemetry/api':
         specifier: 1.9.1
         version: 1.9.1
@@ -643,6 +647,9 @@ importers:
         specifier: ^4.3.6
         version: 4.3.6
     devDependencies:
+      '@modelcontextprotocol/client':
+        specifier: ^2.0.0
+        version: 2.0.0(patch_hash=04f6fc6886d1ec78bc1b163d09d9e1e19377b1747baba25373ed21bb54537000)
       '@sentry/cli':
         specifier: 3.6.0
         version: 3.6.0
@@ -1142,9 +1149,12 @@ importers:
 
   packages/enterprise-mcp-client:
     dependencies:
-      '@modelcontextprotocol/sdk':
-        specifier: ^1.29.0
-        version: 1.29.0(patch_hash=b9b29e6a319e94ea968476aa440eb8586b5da9db6b8011ce749c384d186f8a10)(zod@4.3.6)
+      '@modelcontextprotocol/client':
+        specifier: ^2.0.0
+        version: 2.0.0(patch_hash=04f6fc6886d1ec78bc1b163d09d9e1e19377b1747baba25373ed21bb54537000)
+      '@modelcontextprotocol/core':
+        specifier: ^2.0.0
+        version: 2.0.0
       zod:
         specifier: ^4.3.6
         version: 4.3.6
@@ -2700,6 +2710,14 @@ packages:
   '@marijn/find-cluster-break@1.0.3':
     resolution: {integrity: sha512-FY+MKLBoTsLNJF/eLWaOsXGdz6uh3Iu1axjPf6TUq92IYumcTcXWHoS747JARLkcdlJ/Waiaxc5wQfFO8jC6NA==}
 
+  '@modelcontextprotocol/client@2.0.0':
+    resolution: {integrity: sha512-8f1OghQ2rjzIOfqgUCP+8GiUWqRs89njoWLNqAe8kWmDePv3s1fZXseej+QXemssEuuOvLLmLO/kqM3IQHtISw==}
+    engines: {node: '>=20'}
+
+  '@modelcontextprotocol/core@2.0.0':
+    resolution: {integrity: sha512-pJCEwGG7Lfr/+PQp9ZTwKXNeO5wzbfKL7H3MYpCorM4oFBoQrdjnBgEoqG+RjhsvS1FKrDbKux+M1HhlnGWqcA==}
+    engines: {node: '>=20'}
+
   '@modelcontextprotocol/ext-apps@1.7.5':
     resolution: {integrity: sha512-TjPH2S2y5UEGKhmI6+XGFuqfqOV4ppe1x6DA3txnUaEWkgtA4G5vo14jGKFZmegdkZ1H4QMLyujLvoU1BEdnAg==}
     engines: {node: '>=20'}
@@ -2723,6 +2741,10 @@ packages:
     peerDependenciesMeta:
       '@cfworker/json-schema':
         optional: true
+
+  '@modelcontextprotocol/server@2.0.0':
+    resolution: {integrity: sha512-YhHWdHfpFMQfd0prsEnxKeS3Qz3ytIGmsS0sth4KDjnacIT7hxk6hXHkJ9KysxlkvTM+WZAtQbbcUhdoP4Hvtw==}
+    engines: {node: '>=20'}
 
   '@msgpackr-extract/msgpackr-extract-darwin-arm64@3.0.4':
     resolution: {integrity: sha512-LCkGo6JDfaBhgST7UpPWgNgLINpcpabaHfyz5OBx75nUYxBsaEPxjnyNjWpeb/xBup/682QnBfRBy2/LvPutZQ==}
@@ -10662,6 +10684,20 @@ snapshots:
 
   '@marijn/find-cluster-break@1.0.3': {}
 
+  '@modelcontextprotocol/client@2.0.0(patch_hash=04f6fc6886d1ec78bc1b163d09d9e1e19377b1747baba25373ed21bb54537000)':
+    dependencies:
+      '@modelcontextprotocol/core': 2.0.0
+      cross-spawn: 7.0.6
+      eventsource: 3.0.7
+      eventsource-parser: 3.0.6
+      jose: 6.2.8
+      pkce-challenge: 5.0.1
+      zod: 4.3.6
+
+  '@modelcontextprotocol/core@2.0.0':
+    dependencies:
+      zod: 4.3.6
+
   '@modelcontextprotocol/ext-apps@1.7.5(@modelcontextprotocol/sdk@1.29.0(patch_hash=b9b29e6a319e94ea968476aa440eb8586b5da9db6b8011ce749c384d186f8a10)(zod@4.3.6))(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(zod@4.3.6)':
     dependencies:
       '@modelcontextprotocol/sdk': 1.29.0(patch_hash=b9b29e6a319e94ea968476aa440eb8586b5da9db6b8011ce749c384d186f8a10)(zod@4.3.6)
@@ -10714,6 +10750,11 @@ snapshots:
       zod-to-json-schema: 3.25.2(zod@4.3.6)
     transitivePeerDependencies:
       - supports-color
+
+  '@modelcontextprotocol/server@2.0.0':
+    dependencies:
+      '@modelcontextprotocol/core': 2.0.0
+      zod: 4.3.6
 
   '@msgpackr-extract/msgpackr-extract-darwin-arm64@3.0.4':
     optional: true

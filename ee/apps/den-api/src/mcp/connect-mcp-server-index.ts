@@ -1,4 +1,4 @@
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
+import type { McpServer } from "@modelcontextprotocol/server"
 import type { ExternalMcpConnectionRow } from "../capability-sources/external-mcp-connections.js"
 
 export const CONNECT_MCP_SERVER_INDEX_URI = "openwork://connect/mcp-servers/index.json"

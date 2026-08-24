@@ -1,11 +1,10 @@
-import type { OAuthClientProvider, OAuthDiscoveryState } from "@modelcontextprotocol/sdk/client/auth.js"
-import {
-  OAuthClientInformationFullSchema,
-  OAuthClientInformationSchema,
-  OAuthTokensSchema,
-  type OAuthClientInformationMixed,
-  type OAuthTokens,
-} from "@modelcontextprotocol/sdk/shared/auth.js"
+import { OAuthClientInformationFullSchema, OAuthClientInformationSchema, OAuthTokensSchema } from "@modelcontextprotocol/core"
+import type {
+  OAuthClientInformationMixed,
+  OAuthClientProvider,
+  OAuthDiscoveryState,
+  OAuthTokens,
+} from "@modelcontextprotocol/client"
 import type {
   EnterpriseMcpClock,
   EnterpriseMcpLifecycle,

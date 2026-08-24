@@ -3,9 +3,9 @@ import {
   RESOURCE_MIME_TYPE,
   registerAppResource,
   registerAppTool,
-} from "@modelcontextprotocol/ext-apps/server"
+} from "./mcp-app-v2.js"
 import type { McpUiResourceMeta } from "@modelcontextprotocol/ext-apps"
-import type { McpServer, RegisteredResource, RegisteredTool } from "@modelcontextprotocol/sdk/server/mcp.js"
+import type { McpServer, RegisteredResource, RegisteredTool } from "@modelcontextprotocol/server"
 import {
   workflowArtifactPayloadSchema,
   generatedArtifactViewSchema,
@@ -47,13 +47,6 @@ function resourceMeta(csp: GeneratedArtifactViewCsp, digest: string): { ui: McpU
 
 function digest(value: string): string {
   return `sha256:${createHash("sha256").update(value).digest("hex")}`
-}
-
-async function sendCatalogChanged(extra: {
-  sendNotification: (notification: { method: "notifications/tools/list_changed" | "notifications/resources/list_changed" }) => Promise<void>
-}) {
-  await extra.sendNotification({ method: "notifications/tools/list_changed" })
-  await extra.sendNotification({ method: "notifications/resources/list_changed" })
 }
 
 export function registerGeneratedArtifactResource(input: {
@@ -167,6 +160,7 @@ export function registerAgentGeneratedArtifactViews(input: {
   }) => Promise<GeneratedArtifactView>
   activate: (request: { artifactViewId: string; revisionId: string }) => Promise<GeneratedArtifactView>
   retire: (request: { artifactViewId: string }) => Promise<GeneratedArtifactView>
+  notifyCatalogChanged: () => void
 }) {
   const registeredResources = new Map<string, RegisteredResource>()
   const registeredTools = new Map<string, { revisionId: string; registration: RegisteredTool }>()
@@ -233,7 +227,7 @@ export function registerAgentGeneratedArtifactViews(input: {
       }),
       outputSchema: saveOutputSchema,
     },
-    async (request, extra) => {
+    async (request) => {
       let view: GeneratedArtifactView
       try {
         view = await input.save(request)
@@ -259,7 +253,7 @@ export function registerAgentGeneratedArtifactViews(input: {
         )
       }
       syncView(view)
-      await sendCatalogChanged(extra)
+      input.notifyCatalogChanged()
       const displayInstruction = `Call ${view.status === "active" && view.activeRevisionId === revision.id
         ? `render_artifact_${view.id}`
         : `preview_artifact_${view.id}`} to display that revision.`
@@ -279,10 +273,10 @@ export function registerAgentGeneratedArtifactViews(input: {
       inputSchema: z.object({ artifactViewId: idSchema, revisionId: idSchema }),
       outputSchema: saveOutputSchema,
     },
-    async (request, extra) => {
+    async (request) => {
       const view = await input.activate(request)
       syncView(view)
-      await sendCatalogChanged(extra)
+      input.notifyCatalogChanged()
       return {
         content: [{
           type: "text" as const,
@@ -302,10 +296,10 @@ export function registerAgentGeneratedArtifactViews(input: {
       inputSchema: z.object({ artifactViewId: idSchema }),
       outputSchema: saveOutputSchema,
     },
-    async (request, extra) => {
+    async (request) => {
       const view = await input.retire(request)
       syncView(view)
-      await sendCatalogChanged(extra)
+      input.notifyCatalogChanged()
       return {
         content: [{ type: "text" as const, text: `Retired Artifact view ${request.artifactViewId}. Its revision resources remain immutable.` }],
         structuredContent: { view },

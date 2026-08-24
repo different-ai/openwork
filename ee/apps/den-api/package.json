@@ -37,6 +37,7 @@
     "@hono/standard-validator": "^0.2.2",
     "@hono/swagger-ui": "^0.6.1",
     "@modelcontextprotocol/ext-apps": "^1.7.5",
+    "@modelcontextprotocol/server": "^2.0.0",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@opentelemetry/api": "1.9.1",
     "@opentelemetry/api-logs": "0.220.0",
@@ -89,6 +90,7 @@
     "zod": "^4.3.6"
   },
   "devDependencies": {
+    "@modelcontextprotocol/client": "^2.0.0",
     "@sentry/cli": "3.6.0",
     "@types/json-schema": "^7.0.15",
     "@types/node": "^20.11.30",

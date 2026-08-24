@@ -1,7 +1,12 @@
-import type { OAuthDiscoveryState } from "@modelcontextprotocol/sdk/client/auth.js"
-import type { OAuthClientInformationMixed, OAuthTokens } from "@modelcontextprotocol/sdk/shared/auth.js"
-import type { Client } from "@modelcontextprotocol/sdk/client/index.js"
-import type { Implementation, ServerCapabilities, Tool } from "@modelcontextprotocol/sdk/types.js"
+import type {
+  Client,
+  Implementation,
+  OAuthClientInformationMixed,
+  OAuthDiscoveryState,
+  OAuthTokens,
+  ServerCapabilities,
+  Tool,
+} from "@modelcontextprotocol/client"
 
 /** Epoch milliseconds. The package never reads a database or environment clock. */
 export type EnterpriseMcpEpochMs = number
@@ -155,6 +160,7 @@ export type EnterpriseMcpRequestPhase =
   | "oauth-client-registration"
   | "oauth-token-exchange"
   | "oauth-token-refresh"
+  | "mcp-discovery"
   | "mcp-initialize"
   | "mcp-tool-discovery"
   | "mcp-tool-execution"
@@ -184,7 +190,8 @@ export type EnterpriseMcpDiagnosticEvent =
     durationMs?: number
     httpStatus?: number
     responseBodyExcerpt?: string
-    protocolVersionFallback?: string
+    protocolEra?: "modern" | "legacy"
+    protocolVersion?: string
   }
   | {
     kind: "credential-invalidation"
@@ -266,6 +273,10 @@ export type EnterpriseMcpListResourceTemplatesInput = {
 }
 
 export type EnterpriseMcpToolResult = Awaited<ReturnType<Client["callTool"]>>
+export type EnterpriseMcpTool = Omit<Tool, "inputSchema" | "outputSchema"> & {
+  inputSchema: Record<string, unknown>
+  outputSchema?: Record<string, unknown>
+}
 export type EnterpriseMcpResourceList = Awaited<ReturnType<Client["listResources"]>>["resources"]
 export type EnterpriseMcpResourceTemplateList = Awaited<ReturnType<Client["listResourceTemplates"]>>["resourceTemplates"]
 export type EnterpriseMcpResourceResult = Awaited<ReturnType<Client["readResource"]>>
@@ -304,7 +315,9 @@ export type EnterpriseMcpConnectionRequirements = {
   status: "ready" | "manual_action_required" | "unsupported" | "unreachable"
   server: {
     url: string
+    protocolEra?: "modern" | "legacy"
     protocolVersion?: string
+    /** Protocol-negotiation status; the field name is retained for API compatibility. */
     initialize: "succeeded" | "authentication_required" | "failed"
   }
   authentication: {
@@ -361,7 +374,7 @@ export interface EnterpriseMcpClient {
   connect(input: EnterpriseMcpConnectInput): Promise<EnterpriseMcpConnectResult>
   completeAuthorization(input: EnterpriseMcpCompleteAuthorizationInput): Promise<void>
   abandonAuthorization(input: EnterpriseMcpAbandonAuthorizationInput): Promise<void>
-  listTools(input: EnterpriseMcpListToolsInput): Promise<Tool[]>
+  listTools(input: EnterpriseMcpListToolsInput): Promise<EnterpriseMcpTool[]>
   callTool(input: EnterpriseMcpCallToolInput): Promise<EnterpriseMcpToolResult>
   callToolRaw(input: EnterpriseMcpCallToolInput): Promise<EnterpriseMcpToolResult>
   listResources(input: EnterpriseMcpListResourcesInput): Promise<EnterpriseMcpResourceList>

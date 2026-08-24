@@ -1,6 +1,5 @@
-import { Client } from "@modelcontextprotocol/sdk/client/index.js"
-import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js"
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
+import { Client, InMemoryTransport } from "@modelcontextprotocol/client"
+import { McpServer } from "@modelcontextprotocol/server"
 import { expect, test } from "bun:test"
 import {
   LEGACY_WORKFLOW_ARTIFACT_TOOL_NAME,

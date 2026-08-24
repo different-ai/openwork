@@ -1,4 +1,4 @@
-import type { OAuthDiscoveryState } from "@modelcontextprotocol/sdk/client/auth.js"
+import type { OAuthDiscoveryState } from "@modelcontextprotocol/client"
 import { isEquivalentOAuthDiscoveryAlias } from "./oauth-resource-alias.js"
 
 type OAuthDiscoveryBindingState = Pick<OAuthDiscoveryState, "authorizationServerUrl"> & {

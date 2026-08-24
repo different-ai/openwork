@@ -1,11 +1,11 @@
 import {
+  Client,
   discoverAuthorizationServerMetadata,
   discoverOAuthProtectedResourceMetadata,
   extractWWWAuthenticateParams,
-} from "@modelcontextprotocol/sdk/client/auth.js"
-import { Client } from "@modelcontextprotocol/sdk/client/index.js"
-import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js"
-import type { AuthorizationServerMetadata } from "@modelcontextprotocol/sdk/shared/auth.js"
+  StreamableHTTPClientTransport,
+} from "@modelcontextprotocol/client"
+import type { AuthorizationServerMetadata } from "@modelcontextprotocol/client"
 import type {
   DiscoverEnterpriseMcpConnectionRequirementsInput,
   EnterpriseMcpAuthorizationServerRequirement,
@@ -198,13 +198,20 @@ export async function discoverConnectionRequirements(
   const warnings: EnterpriseMcpConnectionRequirements["warnings"] = []
   const tools: NonNullable<EnterpriseMcpConnectionRequirements["tools"]["items"]> = []
   let initialize: EnterpriseMcpConnectionRequirements["server"]["initialize"] = "failed"
+  let protocolEra: EnterpriseMcpConnectionRequirements["server"]["protocolEra"]
+  let protocolVersion: string | undefined
   let authenticationRequired = false
   let client: Client | undefined
   try {
-    client = new Client({ name: "OpenWork requirements discovery", version: "1.0.0" }, { capabilities: {} })
+    client = new Client(
+      { name: "OpenWork requirements discovery", version: "1.0.0" },
+      { capabilities: {}, versionNegotiation: { mode: "auto" } },
+    )
     const transport = new StreamableHTTPClientTransport(serverUrl, { fetch })
     await client.connect(transport, { signal: controller.signal })
     initialize = "succeeded"
+    protocolEra = client.getProtocolEra()
+    protocolVersion = client.getNegotiatedProtocolVersion()
     let cursor: string | undefined
     const maxTools = input.maxTools ?? DEFAULT_MAX_TOOLS
     for (let page = 0; page < MAX_TOOL_PAGES && tools.length < maxTools; page += 1) {
@@ -259,7 +266,15 @@ export async function discoverConnectionRequirements(
   const authorizationServers: EnterpriseMcpAuthorizationServerRequirement[] = []
   for (const issuer of advertisedIssuers) {
     try {
-      const metadata = await discoverAuthorizationServerMetadata(issuer, { fetchFn: fetch })
+      // Some providers advertise the protected resource itself as their OAuth
+      // discovery alias. The SDK's strict issuer echo check cannot recognize
+      // that shape, so defer the comparison to metadataRequirement below,
+      // which accepts only an exact issuer, a root-slash alias, or this
+      // protected resource's own discovery alias.
+      const metadata = await discoverAuthorizationServerMetadata(issuer, {
+        fetchFn: fetch,
+        skipIssuerValidation: true,
+      })
       if (!metadata) {
         warnings.push({ code: "oauth_server_metadata_unavailable", message: `No OAuth metadata was found for issuer ${issuer}.` })
         continue
@@ -312,7 +327,12 @@ export async function discoverConnectionRequirements(
   try {
     return {
       status,
-      server: { url: serverUrl.toString(), initialize },
+      server: {
+        url: serverUrl.toString(),
+        initialize,
+        ...(protocolEra ? { protocolEra } : {}),
+        ...(protocolVersion ? { protocolVersion } : {}),
+      },
       authentication: {
         kind: initialize === "succeeded" ? "none" : oauthDetected ? "oauth" : authenticationRequired ? "manual_bearer" : "unknown",
         resource: resourceMetadata?.resource,

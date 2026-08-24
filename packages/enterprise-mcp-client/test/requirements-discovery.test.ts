@@ -47,6 +47,65 @@ function unauthenticatedMcpFetch(): EnterpriseMcpFetch {
 }
 
 describe("enterprise MCP requirements discovery", () => {
+  it("discovers a 2026 stateless server without an initialize handshake", async () => {
+    const methods: string[] = []
+    const fetch: EnterpriseMcpFetch = async (_url, init) => {
+      assert.equal(typeof init?.body, "string")
+      const request = rpcRequestSchema.parse(JSON.parse(init?.body as string))
+      methods.push(request.method)
+      assert.equal(new Headers(init?.headers).get("mcp-protocol-version"), "2026-07-28")
+      assert.equal(new Headers(init?.headers).has("mcp-session-id"), false)
+      if (request.method === "server/discover") {
+        return Response.json({
+          jsonrpc: "2.0",
+          id: request.id,
+          result: {
+            supportedVersions: ["2026-07-28"],
+            capabilities: { tools: {} },
+            resultType: "complete",
+            ttlMs: 0,
+            cacheScope: "private",
+            _meta: {
+              "io.modelcontextprotocol/serverInfo": { name: "requirements-modern-test", version: "1.0.0" },
+            },
+          },
+        })
+      }
+      if (request.method === "tools/list") {
+        return Response.json({
+          jsonrpc: "2.0",
+          id: request.id,
+          result: {
+            resultType: "complete",
+            ttlMs: 0,
+            cacheScope: "private",
+            tools: [{
+              name: "read-modern-record",
+              inputSchema: { type: "object" },
+              annotations: { readOnlyHint: true, destructiveHint: false },
+            }],
+            _meta: {
+              "io.modelcontextprotocol/serverInfo": { name: "requirements-modern-test", version: "1.0.0" },
+            },
+          },
+        })
+      }
+      return new Response(null, { status: 404 })
+    }
+
+    const result = await discoverConnectionRequirements({
+      serverUrl: "https://mcp.example.test/mcp",
+      fetch,
+    })
+
+    assert.deepEqual(methods, ["server/discover", "tools/list"])
+    assert.equal(result.status, "ready")
+    assert.equal(result.server.initialize, "succeeded")
+    assert.equal(result.server.protocolEra, "modern")
+    assert.equal(result.server.protocolVersion, "2026-07-28")
+    assert.equal(result.tools.items?.[0]?.name, "read-modern-record")
+  })
+
   it("initializes and lists tools without creating registration state", async () => {
     const result = await discoverConnectionRequirements({
       serverUrl: "https://mcp.example.test/mcp",
