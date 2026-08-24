@@ -9,10 +9,13 @@ import {
 } from "node:crypto";
 import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
+import {
+  OAuthError,
+  RegistrationRejectedError,
+  SdkHttpError,
+} from "@modelcontextprotocol/client";
 import type { OAuthDiscoveryState } from "@modelcontextprotocol/sdk/client/auth.js";
-import { StreamableHTTPError } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
-import { OAuthError } from "@modelcontextprotocol/sdk/server/auth/errors.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import type { OAuthClientInformationMixed } from "@modelcontextprotocol/sdk/shared/auth.js";
 import {
@@ -164,6 +167,7 @@ const MANAGED_MCP_CONNECTION_FAILED_MESSAGE =
   "OpenWork could not connect to this MCP server. Check its OAuth settings and availability, then try again.";
 const EXTERNAL_HANDSHAKE_REQUEST_PHASES = new Set<EnterpriseMcpRequestPhase>([
   "oauth-client-registration",
+  "mcp-discovery",
   "mcp-initialize",
 ]);
 const vaultQueueByPath = new Map<string, Promise<void>>();
@@ -1028,7 +1032,9 @@ function hasConcreteRequestCause(error: EnterpriseMcpClientError, diagnostic: Co
   if (diagnostic.httpStatus !== undefined) {
     return diagnostic.httpStatus >= 400
       && diagnostic.httpStatus <= 599
-      && chain.some((cause) => cause instanceof OAuthError || cause instanceof StreamableHTTPError);
+      && chain.some((cause) => cause instanceof OAuthError
+        || cause instanceof RegistrationRejectedError
+        || cause instanceof SdkHttpError);
   }
   return chain.some((cause) => cause instanceof LocalManagedMcpPrivateUrlError
     || (cause instanceof TypeError && cause.message === "fetch failed")

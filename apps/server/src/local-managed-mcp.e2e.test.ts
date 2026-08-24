@@ -98,7 +98,7 @@ async function startOAuthProvider(port: number): Promise<string> {
   return baseUrl;
 }
 
-type HandshakeFailure = "oauth-client-registration" | "mcp-initialize" | "unexpected-sdk-failure";
+type HandshakeFailure = "oauth-client-registration" | "mcp-discovery" | "mcp-initialize" | "unexpected-sdk-failure";
 
 function startHandshakeFailureProvider(failure: HandshakeFailure): string {
   const nestedSecret = `${failure}-nested-secret`;
@@ -182,6 +182,12 @@ function startHandshakeFailureProvider(failure: HandshakeFailure): string {
         const body: unknown = await request.json().catch(() => null);
         const method = typeof body === "object" && body !== null && "method" in body ? body.method : null;
         const id = typeof body === "object" && body !== null && "id" in body ? body.id : null;
+        if (method === "server/discover" && failure === "mcp-discovery") {
+          return Response.json({
+            error: "provider_discovery_failed",
+            cause: { client_secret: nestedSecret },
+          }, { status: 503 });
+        }
         if (method === "initialize") {
           if (failure === "mcp-initialize") {
             return Response.json({
@@ -325,7 +331,7 @@ describe("OpenWork-managed local MCP OAuth gateway", () => {
     }
   });
 
-  test("returns safe connection errors for DCR reconnect and callback initialize failures", async () => {
+  test("returns safe connection errors for DCR and protocol negotiation failures", async () => {
     const previousRuntimeDb = process.env.OPENWORK_RUNTIME_DB;
     const previousDevMode = process.env.OPENWORK_DEV_MODE;
     const previousTelemetry = globalThis.__openworkDesktopTelemetry;
@@ -419,6 +425,43 @@ describe("OpenWork-managed local MCP OAuth gateway", () => {
         lastError: expectedMessage,
         hasCredential: false,
       });
+
+      const discoveryProvider = startHandshakeFailureProvider("mcp-discovery");
+      await createLocalManagedMcpConnection(config, {
+        workspaceId: "ws_managed",
+        name: "discovery-failure",
+        serverUrl: `${discoveryProvider}/mcp`,
+        oauth: { applicationType: "native", requestedScopes: ["mcp:read"] },
+      });
+      const discoveryStarted = await fetch(
+        `${openworkBaseUrl}/workspace/ws_managed/mcp/discovery-failure/managed/connect`,
+        { method: "POST", headers: clientHeaders(config.token) },
+      );
+      expect(discoveryStarted.status).toBe(200);
+      const discoveryStartedBody: unknown = await discoveryStarted.json();
+      if (typeof discoveryStartedBody !== "object" || discoveryStartedBody === null
+        || !("authorizeUrl" in discoveryStartedBody) || typeof discoveryStartedBody.authorizeUrl !== "string") {
+        throw new Error("Expected an OAuth authorization URL.");
+      }
+      const discoveryAuthorization = await fetch(discoveryStartedBody.authorizeUrl, { redirect: "manual" });
+      expect(discoveryAuthorization.status).toBe(302);
+      const discoveryCallback = await fetch(discoveryAuthorization.headers.get("location")!);
+      expect(discoveryCallback.status).toBe(502);
+      const discoveryCallbackBody = await discoveryCallback.json();
+      expect(discoveryCallbackBody).toEqual({
+        code: "managed_mcp_connection_failed",
+        message: expectedMessage,
+      });
+      expect(JSON.stringify(discoveryCallbackBody)).not.toContain("mcp-discovery-nested-secret");
+      const discoveryStatus = await fetch(
+        `${openworkBaseUrl}/workspace/ws_managed/mcp/discovery-failure/managed`,
+        { headers: clientHeaders(config.token) },
+      );
+      expect(await discoveryStatus.json()).toMatchObject({
+        status: "reconnect_required",
+        lastError: expectedMessage,
+        hasCredential: false,
+      });
       expect(captured).toEqual([]);
 
       const internalProvider = startHandshakeFailureProvider("unexpected-sdk-failure");
@@ -442,7 +485,7 @@ describe("OpenWork-managed local MCP OAuth gateway", () => {
       expect(captured[0]).not.toBeInstanceOf(ApiError);
       expect(captured[0]).toMatchObject({
         code: "MCP_CONNECTION_HANDSHAKE_FAILED",
-        requestPhase: "mcp-initialize",
+        requestPhase: "mcp-discovery",
       });
     } finally {
       globalThis.__openworkDesktopTelemetry = previousTelemetry;
