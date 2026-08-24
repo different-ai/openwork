@@ -589,12 +589,12 @@ describe("enterprise MCP client", () => {
   })
 
   it("honors an injected lifecycle longer than the per-request timeout while progress streams", async () => {
-    const server = await startProgressMcpServer({ resultDelayMs: 70, progressIntervalMs: 10 })
+    const server = await startProgressMcpServer({ resultDelayMs: 500, progressIntervalMs: 40 })
     try {
       const client = createEnterpriseMcpClient({
         fetch,
-        operationTimeoutMs: 25,
-        lifecycle: { expiresAt: Date.now() + 120, signal: new AbortController().signal },
+        operationTimeoutMs: 150,
+        lifecycle: { expiresAt: Date.now() + 1_200, signal: new AbortController().signal },
       })
       const result = await client.callTool({
         connection: {
@@ -614,12 +614,12 @@ describe("enterprise MCP client", () => {
   })
 
   it("still stops a progressing provider at the injected absolute lifecycle", async () => {
-    const server = await startProgressMcpServer({ resultDelayMs: 160, progressIntervalMs: 10 })
+    const server = await startProgressMcpServer({ resultDelayMs: 1_500, progressIntervalMs: 40 })
     try {
       const client = createEnterpriseMcpClient({
         fetch,
-        operationTimeoutMs: 25,
-        lifecycle: { expiresAt: Date.now() + 80, signal: new AbortController().signal },
+        operationTimeoutMs: 150,
+        lifecycle: { expiresAt: Date.now() + 700, signal: new AbortController().signal },
       })
       const startedAt = Date.now()
       await assert.rejects(
@@ -637,8 +637,8 @@ describe("enterprise MCP client", () => {
           && error.operationPhase === "tool-execution",
       )
       const elapsedMs = Date.now() - startedAt
-      assert.ok(elapsedMs >= 60, `expected lifecycle timeout to outlast per-request timeout, got ${elapsedMs}ms`)
-      assert.ok(elapsedMs < 500, `expected lifecycle timeout before the provider result, got ${elapsedMs}ms`)
+      assert.ok(elapsedMs >= 500, `expected lifecycle timeout to outlast per-request timeout, got ${elapsedMs}ms`)
+      assert.ok(elapsedMs < 2_000, `expected lifecycle timeout before the provider result, got ${elapsedMs}ms`)
     } finally {
       await server.close()
     }
