@@ -21,7 +21,7 @@ import { getMcpResourceContext, verifyMcpRequest } from "./auth.js"
 import { DEN_MCP_APP_HOST_SCOPE, DEN_MCP_WRITE_SCOPE } from "./scopes.js"
 import { getCatalog, protectedResourceMetadata } from "./index.js"
 import { preflightMcpJsonRpcRequest } from "./json-rpc-preflight.js"
-import { createAgentMcpHttpHandler } from "./agent-http.js"
+import { createScopedAgentMcpHttpHandlers } from "./agent-http.js"
 import { rejectStandaloneSseResponse } from "./standalone-sse.js"
 import { appLogger } from "../observability/logger.js"
 import {
@@ -373,12 +373,9 @@ export function registerAgentSkillResources(input: {
  * operations are not individually callable on this endpoint.
  */
 export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables & Record<string, unknown> }>(app: Hono<T>) {
-  const serverByRequest = new WeakMap<Request, McpServer>()
-  const handler = createAgentMcpHttpHandler((request) => {
-    const server = serverByRequest.get(request)
-    if (!server) throw new Error("Agent MCP request server was not prepared.")
-    return server
-  }, (error) => agentMcpLogger.warn("Agent MCP transport error", { error }))
+  const handlers = createScopedAgentMcpHttpHandlers(
+    (error) => agentMcpLogger.warn("Agent MCP transport error", { error }),
+  )
 
   app.get("/.well-known/oauth-protected-resource/mcp/agent", publicRoute, (c) =>
     c.json(protectedResourceMetadata(c.req.raw, "agent")))
@@ -413,6 +410,7 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
       userId: principal.userId,
       organizationId: principal.organizationId,
     })
+    const notificationScope = `${principal.organizationId}\0${principal.userId}`
     const organizationId = normalizeDenTypeId("organization", principal.organizationId)
     const organizationRows = await db
       .select({ metadata: OrganizationTable.metadata })
@@ -871,8 +869,8 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
           activate: (request) => activateArtifactViewRevision({ context: artifactContext, ...request }),
           retire: (request) => retireArtifactView({ context: artifactContext, ...request }),
           notifyCatalogChanged: () => {
-            handler.notify.toolsChanged()
-            handler.notify.resourcesChanged()
+            handlers.notify.toolsChanged(notificationScope)
+            handlers.notify.resourcesChanged(notificationScope)
           },
         })
 
@@ -949,11 +947,6 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
       )
     }
 
-    serverByRequest.set(c.req.raw, server)
-    try {
-      return await handler.fetch(c.req.raw)
-    } finally {
-      serverByRequest.delete(c.req.raw)
-    }
+    return await handlers.fetch(notificationScope, c.req.raw, server)
   })
 }

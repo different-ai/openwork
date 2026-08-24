@@ -110,6 +110,11 @@ function resultRecord(payload: Record<string, unknown>) {
   return payload.result
 }
 
+function errorRecord(payload: Record<string, unknown>) {
+  if (!isRecord(payload.error)) throw new Error("Expected JSON-RPC error")
+  return payload.error
+}
+
 function listedToolNames(payload: Record<string, unknown>): string[] {
   const tools = resultRecord(payload).tools
   if (!Array.isArray(tools)) throw new Error("Expected MCP tools list")
@@ -163,8 +168,7 @@ test("rejects guessed generated-view tool calls while keeping Workflows enabled"
   organizationMetadata = { capabilities: { workflows: true } }
   for (const name of ["save_artifact_view", "activate_artifact_view_revision", "retire_artifact_view"]) {
     const payload = await rpc(buildApp(), "tools/call", { name, arguments: {} })
-    expect(resultRecord(payload).isError).toBe(true)
-    expect(JSON.stringify(payload)).toContain("not found")
+    expect(errorRecord(payload)).toMatchObject({ code: -32602, message: expect.stringContaining("not found") })
   }
 })
 

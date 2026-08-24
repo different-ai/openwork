@@ -209,6 +209,8 @@ async function startOAuthMcpServer(options: {
   clientMetadataSupported?: boolean
   scopeLessChallenge?: boolean
   advertisedScopes?: string[]
+  resourceAdvertisedScopes?: string[]
+  authorizationAdvertisedScopes?: string[]
 } = {}) {
   let origin = ""
   let capturedRegistration: Record<string, unknown> | null = null
@@ -219,7 +221,7 @@ async function startOAuthMcpServer(options: {
         sendJson(response, 200, {
           resource: `${origin}/mcp`,
           authorization_servers: [origin],
-          scopes_supported: options.advertisedScopes ?? ["tools.read"],
+          scopes_supported: options.resourceAdvertisedScopes ?? options.advertisedScopes ?? ["tools.read"],
           bearer_methods_supported: ["header"],
         })
         return
@@ -234,7 +236,7 @@ async function startOAuthMcpServer(options: {
           grant_types_supported: ["authorization_code", "refresh_token"],
           token_endpoint_auth_methods_supported: ["none"],
           code_challenge_methods_supported: ["S256"],
-          scopes_supported: options.advertisedScopes ?? ["tools.read"],
+          scopes_supported: options.authorizationAdvertisedScopes ?? options.advertisedScopes ?? ["tools.read"],
           ...(options.clientMetadataSupported ? { client_id_metadata_document_supported: true } : {}),
         })
         return
@@ -1463,10 +1465,42 @@ describe("enterprise MCP OAuth persistence contract", () => {
     }
   })
 
+  it("prefers protected-resource scopes over unrelated authorization-server scopes", async () => {
+    const server = await startOAuthMcpServer({
+      scopeLessChallenge: true,
+      resourceAdvertisedScopes: ["tools.read"],
+      authorizationAdvertisedScopes: ["openid", "profile"],
+    })
+    try {
+      const client = createEnterpriseMcpClient({ fetch })
+      const connection: EnterpriseMcpConnection = {
+        id: "oauth-resource-scope-fallback",
+        serverUrl: `${server.origin}/mcp`,
+        authorization: {
+          type: "oauth",
+          persistence: new MemoryOAuthPersistence(),
+          configuration: { applicationType: "web", requestedScopes: [] },
+        },
+      }
+      const started = await client.connect({
+        connection,
+        redirectUri: "https://den.example.test/v1/mcp-connections/oauth/callback",
+        authorizationId: "signed-resource-scope-state",
+      })
+      assert.equal(started.status, "needs_auth")
+      if (started.status !== "needs_auth") throw new Error("Expected OAuth authorization to be required.")
+      assert.equal(new URL(started.authorizeUrl).searchParams.get("scope"), "tools.read")
+      assert.equal(server.registration()?.scope, "tools.read")
+    } finally {
+      await server.close()
+    }
+  })
+
   it("keeps an administrator's selected scopes narrower than a scope-less provider advertisement", async () => {
     const server = await startOAuthMcpServer({
       scopeLessChallenge: true,
-      advertisedScopes: ["tools.read", "tools.write"],
+      resourceAdvertisedScopes: ["tools.read", "tools.write"],
+      authorizationAdvertisedScopes: ["openid", "profile"],
     })
     try {
       const client = createEnterpriseMcpClient({ fetch })
@@ -1488,6 +1522,36 @@ describe("enterprise MCP OAuth persistence contract", () => {
       if (started.status !== "needs_auth") throw new Error("Expected OAuth authorization to be required.")
       assert.equal(new URL(started.authorizeUrl).searchParams.get("scope"), "tools.read")
       assert.equal(server.registration()?.scope, "tools.read")
+    } finally {
+      await server.close()
+    }
+  })
+
+  it("rejects selected scopes that neither the resource nor authorization server advertises", async () => {
+    const server = await startOAuthMcpServer({
+      scopeLessChallenge: true,
+      resourceAdvertisedScopes: ["tools.read"],
+      authorizationAdvertisedScopes: ["openid", "profile"],
+    })
+    try {
+      const client = createEnterpriseMcpClient({ fetch })
+      const connection: EnterpriseMcpConnection = {
+        id: "oauth-unsupported-selected-scope",
+        serverUrl: `${server.origin}/mcp`,
+        authorization: {
+          type: "oauth",
+          persistence: new MemoryOAuthPersistence(),
+          configuration: { applicationType: "web", requestedScopes: ["admin.write"] },
+        },
+      }
+      await assert.rejects(client.connect({
+        connection,
+        redirectUri: "https://den.example.test/v1/mcp-connections/oauth/callback",
+        authorizationId: "signed-unsupported-scope-state",
+      }), (error: unknown) => error instanceof EnterpriseMcpClientError
+        && error.cause instanceof Error
+        && error.cause.message.includes("selected OAuth scope is not advertised"))
+      assert.equal(server.registration(), null)
     } finally {
       await server.close()
     }

@@ -10,7 +10,10 @@ import { Client as LegacyClient } from "@modelcontextprotocol/sdk/client/index.j
 import { StreamableHTTPClientTransport as LegacyStreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js"
 import { expect, test } from "bun:test"
 import { z } from "zod"
-import { createAgentMcpHttpHandler } from "../src/mcp/agent-http.js"
+import {
+  createAgentMcpHttpHandler,
+  createScopedAgentMcpHttpHandlers,
+} from "../src/mcp/agent-http.js"
 
 type ObservedExchange = {
   body: Record<string, unknown>
@@ -160,6 +163,32 @@ test("keeps the 2025 stateless fallback for existing clients", async () => {
   }
 })
 
+test("keeps a prepared request-local server bound through legacy request cloning", async () => {
+  const handlers = createScopedAgentMcpHttpHandlers()
+  let serverInstances = 0
+  const transport = new LegacyStreamableHTTPClientTransport(new URL("https://openwork.example.test/mcp/agent"), {
+    fetch: async (url, init) => {
+      const instance = ++serverInstances
+      const server = new McpServer({ name: "openwork-agent-legacy-binding-test", version: "1.0.0" })
+      server.registerTool("legacy_request_instance", { inputSchema: z.object({}) }, async () => ({
+        content: [{ type: "text", text: String(instance) }],
+      }))
+      return handlers.fetch("org-a\0user-a", new Request(url, init), server)
+    },
+  })
+  const client = new LegacyClient({ name: "legacy-request-binding-test", version: "1.0.0" })
+
+  try {
+    await client.connect(transport)
+    const result = await client.callTool({ name: "legacy_request_instance", arguments: {} })
+    expect(result.content[0]).toMatchObject({ type: "text", text: expect.any(String) })
+    expect(serverInstances).toBeGreaterThan(1)
+  } finally {
+    await client.close()
+    await handlers.close()
+  }
+})
+
 test("delivers modern list changes through subscriptions/listen", async () => {
   const handler = createAgentMcpHttpHandler(() => new McpServer(
     { name: "openwork-agent-subscription-test", version: "1.0.0" },
@@ -188,5 +217,80 @@ test("delivers modern list changes through subscriptions/listen", async () => {
   } finally {
     await client.close()
     await handler.close()
+  }
+})
+
+test("isolates list-change subscriptions by authenticated catalog audience", async () => {
+  const handlers = createScopedAgentMcpHttpHandlers()
+  const requestServer = (toolName: string) => {
+    const server = new McpServer(
+      { name: "openwork-agent-scoped-subscription-test", version: "1.0.0" },
+      { capabilities: { tools: { listChanged: true }, resources: { listChanged: true } } },
+    )
+    server.registerTool(toolName, { inputSchema: z.object({}) }, async () => ({
+      content: [{ type: "text", text: toolName }],
+    }))
+    return server
+  }
+  const clientFor = (scopeKey: string, toolName: string) => {
+    const transport = new StreamableHTTPClientTransport(new URL("https://openwork.example.test/mcp/agent"), {
+      fetch: async (url, init) => handlers.fetch(scopeKey, new Request(url, init), requestServer(toolName)),
+    })
+    const client = new Client(
+      { name: `stateless-scoped-subscription-${scopeKey}`, version: "1.0.0" },
+      { capabilities: {}, versionNegotiation: { mode: "auto" } },
+    )
+    return { client, transport }
+  }
+  const first = clientFor("org-a\0user-a", "scope_a_tool")
+  const second = clientFor("org-b\0user-b", "scope_b_tool")
+  const firstChanges = { tools: 0, resources: 0 }
+  const secondChanges = { tools: 0, resources: 0 }
+  first.client.setNotificationHandler("notifications/tools/list_changed", () => {
+    firstChanges.tools += 1
+  })
+  first.client.setNotificationHandler("notifications/resources/list_changed", () => {
+    firstChanges.resources += 1
+  })
+  second.client.setNotificationHandler("notifications/tools/list_changed", () => {
+    secondChanges.tools += 1
+  })
+  second.client.setNotificationHandler("notifications/resources/list_changed", () => {
+    secondChanges.resources += 1
+  })
+
+  try {
+    await Promise.all([
+      first.client.connect(first.transport),
+      second.client.connect(second.transport),
+    ])
+    const [firstTools, secondTools] = await Promise.all([
+      first.client.listTools(),
+      second.client.listTools(),
+    ])
+    expect(firstTools.tools.map((tool) => tool.name)).toEqual(["scope_a_tool"])
+    expect(secondTools.tools.map((tool) => tool.name)).toEqual(["scope_b_tool"])
+    const [firstSubscription, secondSubscription] = await Promise.all([
+      first.client.listen({ toolsListChanged: true, resourcesListChanged: true }),
+      second.client.listen({ toolsListChanged: true, resourcesListChanged: true }),
+    ])
+    try {
+      handlers.notify.toolsChanged("org-a\0user-a")
+      handlers.notify.resourcesChanged("org-a\0user-a")
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      expect(firstChanges).toEqual({ tools: 1, resources: 1 })
+      expect(secondChanges).toEqual({ tools: 0, resources: 0 })
+
+      handlers.notify.toolsChanged("org-b\0user-b")
+      handlers.notify.resourcesChanged("org-b\0user-b")
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      expect(firstChanges).toEqual({ tools: 1, resources: 1 })
+      expect(secondChanges).toEqual({ tools: 1, resources: 1 })
+    } finally {
+      await Promise.all([firstSubscription.close(), secondSubscription.close()])
+    }
+  } finally {
+    await Promise.all([first.client.close(), second.client.close()])
+    await handlers.close()
   }
 })

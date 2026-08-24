@@ -50,8 +50,8 @@ export function registerAppTool<
 
   return server.registerTool(
     name,
-    { ...config, _meta: normalizedMeta } as never,
-    callback as never,
+    { ...config, _meta: normalizedMeta },
+    callback,
   )
 }
 
