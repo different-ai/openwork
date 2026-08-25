@@ -10,20 +10,6 @@ const repoRoot = resolve(import.meta.dirname, "../..");
 test("MCP OAuth grants outlive login sessions and revoke with consent", ({ evidence }) => {
   const reportDir = mkdtempSync(join(tmpdir(), "openwork-mcp-grant-liveness-"));
   try {
-    // The witnesses exercise real den-api modules whose import chains reach
-    // @openwork-ee/utils and @openwork-ee/den-db. Bun resolves those package
-    // exports through dist, which the eval lane does not prebuild.
-    for (const workspacePackage of ["@openwork-ee/utils", "@openwork-ee/den-db"]) {
-      const build = spawnSync("pnpm", ["--filter", workspacePackage, "build"], {
-        cwd: repoRoot,
-        encoding: "utf8",
-        maxBuffer: 10 * 1024 * 1024,
-        timeout: 120_000,
-      });
-      expect(build.error, `${workspacePackage} build`).toBeUndefined();
-      expect(build.status, `${build.stdout}${build.stderr}`).toBe(0);
-    }
-
     const witnesses = [
       { file: "test/mcp-grant-request-liveness.test.ts", tests: 4 },
       { file: "test/mcp-oauth-grant-policy.test.ts", tests: 6 },
@@ -38,6 +24,11 @@ test("MCP OAuth grants outlive login sessions and revoke with consent", ({ evide
         "@openwork-ee/den-api",
         "exec",
         "bun",
+        // Resolve @openwork-ee/utils and @openwork-ee/den-db from their source
+        // export condition: shared dist output is rebuilt (and briefly
+        // removed) by concurrently running specs, so the witnesses must not
+        // depend on it.
+        "--conditions=development",
         "test",
         witness.file,
         "--reporter=junit",
