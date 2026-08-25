@@ -46,6 +46,37 @@ function plural(count: number, singular: string, pluralForm = `${singular}s`): s
   return `${count} ${count === 1 ? singular : pluralForm}`
 }
 
+export function getAggregateCountSummary(parts: AnyToolPart[]): string {
+  const commands = parts.filter((part) => getToolFamily(part) === "command").length
+  const editPaths = new Set<string>()
+  let editCalls = 0
+  const readPaths = new Set<string>()
+  let readCalls = 0
+  let searches = 0
+
+  for (const part of parts) {
+    const family = getToolFamily(part)
+    if (family === "edit") {
+      editCalls += 1
+      const path = filePathOf(part)
+      if (path) editPaths.add(path)
+    } else if (family === "read") {
+      readCalls += 1
+      const path = filePathOf(part)
+      if (path) readPaths.add(path)
+    } else if (family === "search") {
+      searches += 1
+    }
+  }
+
+  const pieces: string[] = []
+  if (editCalls > 0) pieces.push(plural(editPaths.size > 0 ? editPaths.size : editCalls, "file edit"))
+  if (commands > 0) pieces.push(plural(commands, "command"))
+  if (readCalls > 0) pieces.push(plural(readPaths.size > 0 ? readPaths.size : readCalls, "file read"))
+  if (searches > 0) pieces.push(plural(searches, "search", "searches"))
+  return pieces.join(", ")
+}
+
 /**
  * "Editing 3 files, running 8 commands" / "Edited 3 files, ran 8 commands".
  * File counts are unique paths; searches and commands are call counts.

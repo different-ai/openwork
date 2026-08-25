@@ -1,12 +1,14 @@
 "use client"
 
 import { useState } from "react"
-import { ChevronRight } from "lucide-react"
+import { AlertTriangle, ChevronRight, CirclePause } from "lucide-react"
 
 import { FileChip } from "@/components/chat/file-chip"
+import { useCurrentToolLifecycleResolver } from "@/components/chat/current-tool-lifecycle-context"
 import { DotMatrixLoader } from "@/components/ui/dot-matrix-loader"
 import {
   getAggregateNowLabel,
+  getAggregateCountSummary,
   getAggregateRowFile,
   getAggregateRowLabel,
   getAggregateSummary,
@@ -27,7 +29,7 @@ type ToolAggregateGroupProps = {
   className?: string
 }
 
-function rowStatus(part: AnyToolPart): "running" | "failed" | "done" {
+function persistedRowStatus(part: AnyToolPart): "running" | "failed" | "done" {
   if (isToolPartInFlight(part)) return "running"
   if (part.state === "output-error") return "failed"
   return "done"
@@ -50,6 +52,7 @@ export function ToolAggregateGroup({ parts, className }: ToolAggregateGroupProps
   const latestToolCallId = parts.at(-1)?.toolCallId ?? groupKey
   const [expanded, setExpandedState] = useState(() => expandedByGroupKey.get(groupKey) ?? false)
   const [showAll, setShowAllState] = useState(() => showAllByGroupKey.get(groupKey) ?? false)
+  const resolveLifecycle = useCurrentToolLifecycleResolver()
 
   const setExpanded = (value: boolean) => {
     expandedByGroupKey.set(groupKey, value)
@@ -60,10 +63,23 @@ export function ToolAggregateGroup({ parts, className }: ToolAggregateGroupProps
     setShowAllState(value)
   }
 
+  const inFlightPart = parts.find((part) => isToolPartInFlight(part))
+  const currentLifecycle = resolveLifecycle(
+    inFlightPart?.toolCallId ?? "",
+    Boolean(inFlightPart),
+  )
   const anyRunning = parts.some((part) => isToolPartInFlight(part))
+  const visiblyRunning = anyRunning
+    && currentLifecycle !== "waiting"
+    && currentLifecycle !== "interrupted"
   const failedCount = parts.filter((part) => part.state === "output-error").length
-  const summary = getAggregateSummary(parts, anyRunning ? "present" : "past")
-  const nowLabel = anyRunning ? getAggregateNowLabel(parts) : null
+  const countSummary = getAggregateCountSummary(parts)
+  const summary = currentLifecycle === "waiting"
+    ? `Waiting for your action · ${countSummary}`
+    : currentLifecycle === "interrupted"
+      ? `Task interrupted · ${countSummary}`
+      : getAggregateSummary(parts, visiblyRunning ? "present" : "past")
+  const nowLabel = visiblyRunning ? getAggregateNowLabel(parts) : null
 
   // Track durations for every part so each is frozen the moment it completes.
   const durations = parts.map((part) => trackToolCallDuration(part))
@@ -71,7 +87,11 @@ export function ToolAggregateGroup({ parts, className }: ToolAggregateGroupProps
   const hiddenCount = parts.length - visibleParts.length
 
   return (
-    <div className={className} data-tool-aggregate={latestToolCallId}>
+    <div
+      className={className}
+      data-tool-aggregate={latestToolCallId}
+      data-tool-lifecycle={currentLifecycle ?? (visiblyRunning ? "running" : "settled")}
+    >
       <button
         type="button"
         onClick={() => setExpanded(!expanded)}
@@ -93,6 +113,20 @@ export function ToolAggregateGroup({ parts, className }: ToolAggregateGroupProps
         ) : null}
       </button>
 
+      {currentLifecycle === "waiting" ? (
+        <div className="mt-1 flex items-center gap-1.5 ps-5 text-xs text-amber-11" role="status">
+          <CirclePause aria-hidden="true" className="size-3.5 shrink-0" />
+          <span>Choose an option or approve the request to continue.</span>
+        </div>
+      ) : null}
+
+      {currentLifecycle === "interrupted" ? (
+        <div className="mt-1 flex items-center gap-1.5 ps-5 text-xs text-destructive" role="alert">
+          <AlertTriangle aria-hidden="true" className="size-3.5 shrink-0" />
+          <span>This step stopped before it finished. Retry to continue.</span>
+        </div>
+      ) : null}
+
       {nowLabel ? (
         <div className="mt-1 flex min-w-0 items-center gap-2 ps-5 text-sm text-muted-foreground">
           <DotMatrixLoader label={nowLabel} className="text-muted-foreground" />
@@ -106,7 +140,8 @@ export function ToolAggregateGroup({ parts, className }: ToolAggregateGroupProps
       {expanded ? (
         <div className="mt-1.5 flex flex-col gap-1 ps-5">
           {visibleParts.map((part, index) => {
-            const status = rowStatus(part)
+            const lifecycle = resolveLifecycle(part.toolCallId, isToolPartInFlight(part))
+            const status = lifecycle ?? persistedRowStatus(part)
             const reason = failureReason(part)
             return (
               <div key={part.toolCallId} className="flex min-w-0 flex-col gap-0.5">
@@ -115,6 +150,12 @@ export function ToolAggregateGroup({ parts, className }: ToolAggregateGroupProps
                     <span className="flex size-3.5 shrink-0 items-center justify-center">
                       <DotMatrixLoader label="Running" className="size-3 text-muted-foreground" />
                     </span>
+                  ) : null}
+                  {status === "waiting" ? (
+                    <CirclePause aria-label="Waiting" className="size-3.5 shrink-0 text-amber-11" />
+                  ) : null}
+                  {status === "interrupted" ? (
+                    <AlertTriangle aria-label="Interrupted" className="size-3.5 shrink-0 text-destructive" />
                   ) : null}
                   {(() => {
                     const file = getAggregateRowFile(part)

@@ -295,6 +295,39 @@ function createChatTranscriptEvalMessages(sessionId: string) {
   return { messages };
 }
 
+function createSessionLifecycleEvalMessages(sessionId: string): UIMessage[] {
+  const now = Date.now();
+  return [
+    {
+      id: `${sessionId}:eval-lifecycle-user`,
+      role: "user",
+      parts: [{ type: "text", text: "Inspect the repository state." }],
+      metadata: { opencode: { created: now } },
+    },
+    {
+      id: `${sessionId}:eval-lifecycle-assistant`,
+      role: "assistant",
+      parts: [
+        {
+          type: "dynamic-tool",
+          toolName: "bash",
+          toolCallId: "eval-lifecycle-bash",
+          state: "input-streaming",
+          input: { command: "git status --short --branch", description: "Check repository state" },
+        },
+        {
+          type: "dynamic-tool",
+          toolName: "read",
+          toolCallId: "eval-lifecycle-read",
+          state: "input-streaming",
+          input: { filePath: "/tmp/openwork-eval/brief.md" },
+        },
+      ],
+      metadata: { opencode: { created: now + 1 } },
+    },
+  ];
+}
+
 export type SessionSurfaceProps = {
   client: OpenworkServerClient;
   environmentClient?: OpenworkServerClient | null;
@@ -998,6 +1031,48 @@ export function SessionSurface(props: SessionSurfaceProps) {
     };
   }, [props.sessionId]);
   useControlAction(props.isControlTarget ? seedChatTranscriptControlAction : null);
+  const seedSessionLifecycleControlAction = useMemo<OpenworkControlAction | null>(() => {
+    if (!import.meta.env.DEV) return null;
+
+    return {
+      id: "eval.session_lifecycle.seed_unfinished_tools",
+      label: "Seed unfinished tool lifecycle proof",
+      description: "Dev-only eval hook that reconciles unfinished current-turn tools with the active task lifecycle.",
+      sideEffect: "mutation",
+      disabled: !props.sessionId,
+      execute: (args) => {
+        const lifecycle = typeof args === "object" && args !== null && "lifecycle" in args
+          ? args.lifecycle
+          : "idle";
+        if (lifecycle !== "active" && lifecycle !== "waiting" && lifecycle !== "idle") {
+          throw new Error(`Unsupported lifecycle: ${String(lifecycle)}`);
+        }
+
+        setEvalMarkdownMessages(createSessionLifecycleEvalMessages(props.sessionId));
+        const activity = useSessionActivityStore.getState();
+        activity.replaceWaitingRequests(props.workspaceId, props.sessionId, "permission", []);
+        activity.replaceWaitingRequests(props.workspaceId, props.sessionId, "question", []);
+        activity.clearError(props.workspaceId, props.sessionId);
+        activity.setCompacting(props.workspaceId, props.sessionId, false);
+        activity.setRunStatus(
+          props.workspaceId,
+          props.sessionId,
+          lifecycle === "active" ? { type: "busy" } : { type: "idle" },
+        );
+        if (lifecycle === "waiting") {
+          activity.setWaitingRequest(
+            props.workspaceId,
+            props.sessionId,
+            "question",
+            "eval-session-lifecycle-question",
+            true,
+          );
+        }
+        return { ok: true, lifecycle };
+      },
+    };
+  }, [props.sessionId, props.workspaceId]);
+  useControlAction(props.isControlTarget ? seedSessionLifecycleControlAction : null);
   const openTargets = useMemo(() => deriveOpenTargets(renderedMessages), [renderedMessages]);
   const openTargetsFingerprint = useMemo(
     () => openTargets.map((target) => `${target.kind}:${target.value}:${target.confidence}`).join("|"),
@@ -2113,6 +2188,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
                       <MessageList
                         messages={renderedMessages}
                         status={status}
+                        activityStatus={effectiveActivityStatus}
                         retryStatus={liveStatus.type === "retry" ? liveStatus : null}
                       />
                     </MessageListProvider>
