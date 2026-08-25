@@ -412,6 +412,7 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
     orgSlug: activeOrg?.slug,
   });
   const mcpConnectionsEnabled = orgContext?.capabilities.mcpConnections === true;
+  const orgManagedDashboardsEnabled = orgContext?.capabilities.orgManagedDashboards === true;
   const workflowsEnabled = orgContext?.capabilities.workflows === true;
   // Web access is backed by the existing hosted cloud capability. The org
   // payload only reports `cloud` after the server rollout helper has verified
@@ -493,11 +494,13 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
           icon: GitFork,
           badge: "Alpha",
         },
-        {
-          href: getManagedDashboardsRoute(activeOrg.slug),
-          label: "Dashboards",
-          icon: LayoutDashboard,
-        },
+        ...(orgManagedDashboardsEnabled
+          ? [{
+              href: getManagedDashboardsRoute(activeOrg.slug),
+              label: "Dashboards",
+              icon: LayoutDashboard,
+            }]
+          : []),
         ...(modelsGroup ? [modelsGroup] : []),
       ]
     : [];

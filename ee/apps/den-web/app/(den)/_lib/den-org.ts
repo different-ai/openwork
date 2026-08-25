@@ -238,8 +238,9 @@ export type DenOrgEntitlements = {
   analytics: boolean;
 };
 
-/** Per-org feature flags controlled by platform admins; everything defaults to off. */
+/** Server-advertised and per-org capabilities; optional fields default to off. */
 export type DenOrgCapabilities = {
+  orgManagedDashboards: boolean;
   installLinks: boolean;
   mcpConnections: boolean;
   /** Always on: Workflows/Code Mode shipped for every organization. Older servers may still return false. */
@@ -938,10 +939,11 @@ function parseOrgAuthMethods(value: unknown): DenOrgAuthMethods {
 
 function parseOrgCapabilities(value: unknown): DenOrgCapabilities {
   if (!isRecord(value)) {
-    return { installLinks: false, mcpConnections: false, workflows: true, cloud: false };
+    return { orgManagedDashboards: false, installLinks: false, mcpConnections: false, workflows: true, cloud: false };
   }
 
   return {
+    orgManagedDashboards: value.orgManagedDashboards === true,
     installLinks: value.installLinks === true,
     mcpConnections: value.mcpConnections === true,
     // Workflows are enabled everywhere on current servers; only an explicit

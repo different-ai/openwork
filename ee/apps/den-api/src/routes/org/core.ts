@@ -707,6 +707,11 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
         plan: parseOrganizationPlan(payload.organization.metadata),
         entitlements: getOrganizationEntitlements(payload.organization.metadata),
         capabilities: {
+          // Protocol capability: clients must see this explicit signal before
+          // calling the dashboard routes. Older Den versions omit the field,
+          // allowing newer Desktop builds to fail closed during a staggered
+          // rollout instead of calling an endpoint that does not exist yet.
+          orgManagedDashboards: true,
           // Expose the effective value, not the raw stored flag: Connect is
           // member-facing default-on unless an explicit org kill switch says no.
           mcpConnections: memberFacingMcpConnectionsEnabled(payload.organization.metadata, {

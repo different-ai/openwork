@@ -2926,6 +2926,18 @@ export function createDenClient(options: { baseUrl: string; apiBaseUrl?: string 
 
     /** Organization-managed dashboards granted to the signed-in member. */
     async listGrantedDashboards(orgId: string): Promise<DenGrantedDashboard[]> {
+      const context = await requestJson<unknown>(baseUrls, "/v1/org", {
+        method: "GET",
+        token,
+        organizationId: orgId,
+      });
+      const capabilities = isRecord(context) && isRecord(context.capabilities)
+        ? context.capabilities
+        : null;
+      // Missing means unsupported. This makes a newer Desktop safe against a
+      // Den deployment that predates the managed-dashboard API.
+      if (capabilities?.orgManagedDashboards !== true) return [];
+
       const payload = await requestJson<unknown>(baseUrls, "/v1/me/dashboards", {
         method: "GET",
         token,
