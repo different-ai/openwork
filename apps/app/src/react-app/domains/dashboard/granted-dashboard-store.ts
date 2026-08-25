@@ -23,8 +23,43 @@ export function grantedConsentScopeKey(userId: string | null, organizationId: st
   return `${CONSENT_STORAGE_PREFIX}.${userId?.trim() || "local"}.${organizationId?.trim() || "none"}`;
 }
 
+// Canonical JSON (sorted object keys) so the consent fingerprint is stable
+// across property-order differences in the wire payload.
+function canonicalize(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalize).join(",")}]`;
+  if (typeof value === "object" && value !== null) {
+    const record = value as Record<string, unknown>;
+    return `{${Object.keys(record).sort().map((key) => `${JSON.stringify(key)}:${canonicalize(record[key])}`).join(",")}}`;
+  }
+  return JSON.stringify(value) ?? "null";
+}
+
+// FNV-1a over the element's material launch fields.
+function consentFingerprint(input: string): string {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < input.length; i += 1) {
+    hash ^= input.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return hash.toString(16).padStart(8, "0");
+}
+
+/**
+ * Consent identity for a granted element. Every field that changes what a
+ * launch actually invokes (connection, tool, resource, launch arguments) is
+ * part of the id, so an admin edit to any of them discards this user's stored
+ * approval and auto-launch — the changed app must be run manually again.
+ */
 export function grantedEntryId(dashboardId: string, element: DenDashboardElement): string {
-  return `granted:${dashboardId}:mcp:${element.serverName}:${element.toolName}`;
+  const material = canonicalize({
+    serverName: element.serverName,
+    connectionId: element.connectionId ?? null,
+    toolName: element.toolName,
+    projectedToolName: element.projectedToolName,
+    resourceUri: element.resourceUri,
+    launchArguments: element.launchArguments ?? null,
+  });
+  return `granted:${dashboardId}:mcp:${element.serverName}:${element.toolName}:${consentFingerprint(material)}`;
 }
 
 /** A granted element as an ordinary dashboard entry, with this user's consent applied. */
