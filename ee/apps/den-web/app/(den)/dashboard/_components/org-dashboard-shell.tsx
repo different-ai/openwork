@@ -13,6 +13,7 @@ import {
   GitFork,
   Globe,
   Home,
+  LayoutDashboard,
   LibraryBig,
   LogOut,
   Menu,
@@ -39,6 +40,7 @@ import {
   getCustomLlmProvidersRoute,
   getDiagnosticsRoute,
   getDesktopPoliciesRoute,
+  getManagedDashboardsRoute,
   getOrgAccessFlags,
   getIntegrationsRoute,
   getInferenceRoute,
@@ -299,6 +301,9 @@ function getDashboardPageTitle(pathname: string, orgSlug: string | null) {
   if (pathname.startsWith(getMcpConnectionsRoute(orgSlug))) {
     return "Connectors";
   }
+  if (pathname.startsWith(getManagedDashboardsRoute(orgSlug))) {
+    return "Dashboards";
+  }
   if (pathname.startsWith(getYourConnectionsRoute(orgSlug))) {
     return "Your Connections";
   }
@@ -487,6 +492,11 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
           label: "Sources",
           icon: GitFork,
           badge: "Alpha",
+        },
+        {
+          href: getManagedDashboardsRoute(activeOrg.slug),
+          label: "Dashboards",
+          icon: LayoutDashboard,
         },
         ...(modelsGroup ? [modelsGroup] : []),
       ]

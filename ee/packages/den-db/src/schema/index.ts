@@ -1,4 +1,5 @@
 export * from "./auth"
+export * from "./dashboards"
 export * from "./desktop-policies"
 export * from "./diagnostics"
 export * from "./inference"

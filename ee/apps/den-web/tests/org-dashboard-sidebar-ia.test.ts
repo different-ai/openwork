@@ -36,6 +36,7 @@ describe("Den org sidebar information architecture", () => {
     const pluginDirectory = indexOfNeedle('label: "Plugin Directory"');
     const connectors = indexOfNeedle('label: "Connectors"');
     const sources = indexOfNeedle('label: "Sources"');
+    const managedDashboards = indexOfNeedle('label: "Dashboards"');
     const workflowRuns = indexOfNeedle('label: "Workflow Runs"');
     const analytics = indexOfNeedle('label: "Analytics"');
     const workSection = indexOfNeedle('{ label: "Work", items: workItems }');
@@ -46,6 +47,7 @@ describe("Den org sidebar information architecture", () => {
     expect(marketplace).toBeLessThan(pluginDirectory);
     expect(pluginDirectory).toBeLessThan(connectors);
     expect(connectors).toBeLessThan(sources);
+    expect(sources).toBeLessThan(managedDashboards);
     expect(workflowRuns).toBeLessThan(analytics);
     expect(workSection).toBeLessThan(manageSection);
     expect(manageSection).toBeLessThan(observabilitySection);

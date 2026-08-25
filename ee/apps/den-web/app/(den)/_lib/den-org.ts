@@ -546,6 +546,14 @@ export function getLlmProvidersRoute(orgSlug?: string | null): string {
   return getCustomLlmProvidersRoute(orgSlug);
 }
 
+export function getManagedDashboardsRoute(orgSlug?: string | null): string {
+  return `${getOrgDashboardRoute(orgSlug)}/dashboards`;
+}
+
+export function getManagedDashboardRoute(orgSlug: string | null | undefined, dashboardId: string): string {
+  return `${getManagedDashboardsRoute(orgSlug)}/${encodeURIComponent(dashboardId)}`;
+}
+
 export function getDesktopPoliciesRoute(orgSlug?: string | null): string {
   return `${getOrgDashboardRoute(orgSlug)}/desktop-policies`;
 }

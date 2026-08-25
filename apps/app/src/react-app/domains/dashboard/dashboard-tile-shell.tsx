@@ -9,7 +9,8 @@ type DashboardTileShellProps = {
   subtitle?: string;
   badge?: ReactNode;
   onRefresh?: () => void;
-  onRemove: () => void;
+  /** Absent for organization-managed tiles, which members cannot remove. */
+  onRemove?: () => void;
   children: ReactNode;
 };
 
@@ -27,9 +28,11 @@ export function DashboardTileShell({ title, subtitle, badge, onRefresh, onRemove
             <RefreshCw className="size-4" />
           </Button>
         ) : null}
-        <Button variant="ghost" size="icon" aria-label={`Remove ${title}`} title="Remove" onClick={onRemove}>
-          <X className="size-4" />
-        </Button>
+        {onRemove ? (
+          <Button variant="ghost" size="icon" aria-label={`Remove ${title}`} title="Remove" onClick={onRemove}>
+            <X className="size-4" />
+          </Button>
+        ) : null}
       </header>
       <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-3 pb-3">{children}</div>
     </section>

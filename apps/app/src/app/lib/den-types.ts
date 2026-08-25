@@ -22,6 +22,30 @@ export type DenUser = {
   name: string | null;
 };
 
+/**
+ * One MCP App element of an organization-managed dashboard, in the same
+ * reference shape as local desktop dashboard entries. Per-user launch consent
+ * (auto-launch, write-tool approval) is never part of the wire shape.
+ */
+export type DenDashboardElement = {
+  serverName: string;
+  connectionId?: string;
+  toolName: string;
+  projectedToolName: string;
+  resourceUri: string;
+  title: string;
+  launchArguments?: Record<string, unknown>;
+  requiresApproval?: boolean;
+};
+
+/** An organization-managed dashboard granted to the signed-in member. */
+export type DenGrantedDashboard = {
+  id: string;
+  name: string;
+  elements: DenDashboardElement[];
+  updatedAt: string | null;
+};
+
 export type DenPluginConfigObjectType =
   | "skill"
   | "agent"
