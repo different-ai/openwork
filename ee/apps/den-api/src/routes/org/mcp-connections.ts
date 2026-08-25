@@ -71,7 +71,6 @@ import {
 } from "../../capability-sources/external-mcp-connections.js"
 import { evaluateToolPolicy } from "../../capability-sources/external-mcp-tool-policy.js"
 import { memberFacingMcpConnectionsEnabled } from "../../capability-sources/external-mcp-rollout.js"
-import { remoteMcpAppsEnabled } from "../../capability-sources/remote-mcp-apps-rollout.js"
 import { externalMcpAppResourceUri } from "../../mcp/external-capabilities.js"
 import { EXECUTE_CAPABILITY_TOOL_NAME, SEARCH_CAPABILITIES_TOOL_NAME } from "../../mcp/search.js"
 import { listNativeProviderUsableEntries } from "../../capability-sources/native-provider-connections.js"
@@ -1934,13 +1933,13 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
     describeRoute({
       tags: ["Capability Sources"],
       summary: "List MCP Apps exposed by an External MCP Connection",
-      description: "Enumerates the connection's app-visible MCP App launch tools in the exact reference shape desktop dashboard tiles use, so organization Dashboards can add them as elements. Admin-only; requires the MCP Apps rollout for the organization.",
+      description: "Enumerates the connection's app-visible MCP App launch tools in the exact reference shape desktop dashboard tiles use, so organization Dashboards can add them as elements. Admin-only.",
       responses: {
         200: jsonResponse("MCP Apps available from this connection.", connectionMcpAppListResponseSchema),
         401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
         403: jsonResponse("Only workspace owners and admins can list connection MCP Apps.", forbiddenSchema),
         404: jsonResponse("Unknown connection.", connectionNotFoundSchema),
-        409: jsonResponse("The connection or MCP Apps rollout is not ready.", connectionNotReadySchema),
+        409: jsonResponse("The connection has no usable credential for this member.", connectionNotReadySchema),
         502: jsonResponse("The upstream MCP tool catalog could not be read.", connectionToolListFailedSchema),
       },
     }),
@@ -1948,12 +1947,6 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
     paramValidator(connectionParamsSchema),
     async (c) => {
       const payload = c.get("organizationContext")
-      if (!remoteMcpAppsEnabled(payload.organization.metadata, { deploymentEnabled: env.remoteMcpAppsEnabled })) {
-        return c.json({
-          error: "connection_not_ready",
-          message: "MCP Apps are not enabled for this organization.",
-        }, 409)
-      }
       const { connectionId } = c.req.valid("param")
       const externalMcpConnectionId = normalizeDenTypeId("externalMcpConnection", connectionId)
       const connection = await getExternalMcpConnection({
