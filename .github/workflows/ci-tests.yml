@@ -137,6 +137,12 @@ jobs:
         run: pnpm --dir evals install --frozen-lockfile --prefer-offline
 
       - name: Run eval spec lane
+        # The 3-core macOS runner cannot host three parallel eval workers plus
+        # their build subprocesses: worker RPC misses vitest's deadline and the
+        # lane fails with "Timeout calling onTaskUpdate" after every test
+        # passed. Cap it like other constrained environments.
+        env:
+          OPENWORK_EVAL_MAX_WORKERS: ${{ runner.os == 'macOS' && '2' || '' }}
         run: pnpm --dir evals run test:pr
 
       - name: Run app unit tests
