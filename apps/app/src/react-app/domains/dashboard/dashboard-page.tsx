@@ -72,7 +72,7 @@ export function DashboardPage({ fallbackEndpoints }: {
   );
   const grantedReady = denAuth.isSignedIn && Boolean(denClient && activeOrgId);
   const grantedQuery = useQuery({
-    queryKey: ["den", "granted-dashboards", activeOrgId],
+    queryKey: ["den", "granted-dashboards", denAuth.user?.id ?? null, activeOrgId],
     queryFn: () => {
       if (!denClient || !activeOrgId) return Promise.resolve([]);
       return denClient.listGrantedDashboards(activeOrgId);
