@@ -29,6 +29,7 @@ describe("grantedEntryId", () => {
       { ...element, resourceUri: "ui://vendor/other" },
       { ...element, projectedToolName: "connect_abc_other" },
       { ...element, launchArguments: { region: "us", team: "ops" } },
+      { ...element, requiresApproval: true },
       (() => {
         const { launchArguments: _omitted, ...rest } = element;
         return rest;
