@@ -65,7 +65,7 @@ import { buildDenFeedbackUrl } from "../../_lib/feedback";
 import { OrgSelectionScreen } from "../_features/org-selection/org-selection-screen";
 import { UserProfileDialog } from "./user-profile-dialog";
 
-const OPENWORK_DOCS_URL = "/docs";
+const OPENWORK_DOCS_URL = "https://openworklabs.com/docs";
 
 type DashboardNavChild = {
   href: string;
