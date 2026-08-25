@@ -59,8 +59,7 @@ function launchFailureMessage(content: Array<Record<string, unknown>>): string |
 
 export function McpAppTile({ entry, onRemove, onApprovedLaunch, onFirstRunCompleted, fallbackEndpoints }: {
   entry: DashboardMcpAppEntry;
-  /** Absent for organization-granted tiles, which members cannot remove. */
-  onRemove?: () => void;
+  onRemove: () => void;
   /** Persists the user's one-time launch approval on the stored entry. */
   onApprovedLaunch?: () => void;
   /** Persists that the user has run this tile once, unlocking automatic launches. */

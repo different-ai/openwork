@@ -47,11 +47,24 @@ export type ConnectionMcpApp = DashboardElement & {
 };
 
 export const orgDashboardsQueryKeys = {
-  all: ["org-dashboards"],
-  list: () => [...orgDashboardsQueryKeys.all, "list"],
-  detail: (dashboardId: string) => [...orgDashboardsQueryKeys.all, "detail", dashboardId],
-  access: (dashboardId: string) => [...orgDashboardsQueryKeys.all, "access", dashboardId],
-  connectionApps: (connectionId: string) => [...orgDashboardsQueryKeys.all, "connection-apps", connectionId],
+  all: ["org-dashboards"] as const,
+  organization: (organizationId: string) => [...orgDashboardsQueryKeys.all, organizationId] as const,
+  list: (organizationId: string) => [...orgDashboardsQueryKeys.organization(organizationId), "list"] as const,
+  detail: (organizationId: string, dashboardId: string) => [
+    ...orgDashboardsQueryKeys.organization(organizationId),
+    "detail",
+    dashboardId,
+  ] as const,
+  access: (organizationId: string, dashboardId: string) => [
+    ...orgDashboardsQueryKeys.organization(organizationId),
+    "access",
+    dashboardId,
+  ] as const,
+  connectionApps: (organizationId: string, connectionId: string) => [
+    ...orgDashboardsQueryKeys.organization(organizationId),
+    "connection-apps",
+    connectionId,
+  ] as const,
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -134,8 +147,11 @@ function parseConnectionApp(value: unknown): ConnectionMcpApp | null {
 }
 
 export function useManagedDashboards() {
+  const { orgContext } = useOrgDashboard();
+  const organizationId = orgContext?.organization.id ?? "";
   return useQuery({
-    queryKey: orgDashboardsQueryKeys.list(),
+    enabled: Boolean(organizationId),
+    queryKey: orgDashboardsQueryKeys.list(organizationId),
     queryFn: async (): Promise<ManagedDashboard[]> => {
       const { response, payload } = await requestJson("/v1/dashboards", { method: "GET" }, 15000);
       if (!response.ok) {
@@ -148,9 +164,11 @@ export function useManagedDashboards() {
 }
 
 export function useManagedDashboard(dashboardId: string) {
+  const { orgContext } = useOrgDashboard();
+  const organizationId = orgContext?.organization.id ?? "";
   return useQuery({
-    enabled: Boolean(dashboardId),
-    queryKey: orgDashboardsQueryKeys.detail(dashboardId),
+    enabled: Boolean(organizationId && dashboardId),
+    queryKey: orgDashboardsQueryKeys.detail(organizationId, dashboardId),
     queryFn: async (): Promise<ManagedDashboard> => {
       const { response, payload } = await requestJson(
         `/v1/dashboards/${encodeURIComponent(dashboardId)}`,
@@ -169,7 +187,8 @@ export function useManagedDashboard(dashboardId: string) {
 
 export function useCreateDashboard() {
   const queryClient = useQueryClient();
-  const { runReauthableAction } = useOrgDashboard();
+  const { orgContext, runReauthableAction } = useOrgDashboard();
+  const organizationId = orgContext?.organization.id ?? "";
   return useMutation({
     mutationFn: async (input: { name: string }): Promise<ManagedDashboard> => {
       let created: ManagedDashboard | null = null;
@@ -188,14 +207,15 @@ export function useCreateDashboard() {
       return created;
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: orgDashboardsQueryKeys.list() });
+      queryClient.invalidateQueries({ queryKey: orgDashboardsQueryKeys.list(organizationId) });
     },
   });
 }
 
 export function useUpdateDashboard() {
   const queryClient = useQueryClient();
-  const { runReauthableAction } = useOrgDashboard();
+  const { orgContext, runReauthableAction } = useOrgDashboard();
+  const organizationId = orgContext?.organization.id ?? "";
   return useMutation({
     mutationFn: async (input: { dashboardId: string; name?: string; elements?: DashboardElement[] }) => {
       await runReauthableAction("update-dashboard", async () => {
@@ -217,15 +237,16 @@ export function useUpdateDashboard() {
       return input.dashboardId;
     },
     onSuccess: (dashboardId) => {
-      queryClient.invalidateQueries({ queryKey: orgDashboardsQueryKeys.list() });
-      queryClient.invalidateQueries({ queryKey: orgDashboardsQueryKeys.detail(dashboardId) });
+      queryClient.invalidateQueries({ queryKey: orgDashboardsQueryKeys.list(organizationId) });
+      queryClient.invalidateQueries({ queryKey: orgDashboardsQueryKeys.detail(organizationId, dashboardId) });
     },
   });
 }
 
 export function useDeleteDashboard() {
   const queryClient = useQueryClient();
-  const { runReauthableAction } = useOrgDashboard();
+  const { orgContext, runReauthableAction } = useOrgDashboard();
+  const organizationId = orgContext?.organization.id ?? "";
   return useMutation({
     mutationFn: async (input: { dashboardId: string }) => {
       await runReauthableAction("delete-dashboard", async () => {
@@ -240,15 +261,17 @@ export function useDeleteDashboard() {
       });
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: orgDashboardsQueryKeys.list() });
+      queryClient.invalidateQueries({ queryKey: orgDashboardsQueryKeys.list(organizationId) });
     },
   });
 }
 
 export function useDashboardAccess(dashboardId: string) {
+  const { orgContext } = useOrgDashboard();
+  const organizationId = orgContext?.organization.id ?? "";
   return useQuery({
-    enabled: Boolean(dashboardId),
-    queryKey: orgDashboardsQueryKeys.access(dashboardId),
+    enabled: Boolean(organizationId && dashboardId),
+    queryKey: orgDashboardsQueryKeys.access(organizationId, dashboardId),
     queryFn: async (): Promise<DashboardAccessGrant[]> => {
       const { response, payload } = await requestJson(
         `/v1/dashboards/${encodeURIComponent(dashboardId)}/access`,
@@ -273,7 +296,8 @@ type GrantDashboardAccessBody =
 
 export function useGrantDashboardAccess() {
   const queryClient = useQueryClient();
-  const { runReauthableAction } = useOrgDashboard();
+  const { orgContext, runReauthableAction } = useOrgDashboard();
+  const organizationId = orgContext?.organization.id ?? "";
   return useMutation({
     mutationFn: async (input: { dashboardId: string; body: GrantDashboardAccessBody }) => {
       await runReauthableAction("grant-dashboard-access", async () => {
@@ -289,14 +313,15 @@ export function useGrantDashboardAccess() {
       return input.dashboardId;
     },
     onSuccess: (dashboardId) => {
-      queryClient.invalidateQueries({ queryKey: orgDashboardsQueryKeys.access(dashboardId) });
+      queryClient.invalidateQueries({ queryKey: orgDashboardsQueryKeys.access(organizationId, dashboardId) });
     },
   });
 }
 
 export function useRevokeDashboardAccess() {
   const queryClient = useQueryClient();
-  const { runReauthableAction } = useOrgDashboard();
+  const { orgContext, runReauthableAction } = useOrgDashboard();
+  const organizationId = orgContext?.organization.id ?? "";
   return useMutation({
     mutationFn: async (input: { dashboardId: string; grantId: string }) => {
       await runReauthableAction("revoke-dashboard-access", async () => {
@@ -312,16 +337,18 @@ export function useRevokeDashboardAccess() {
       return input.dashboardId;
     },
     onSuccess: (dashboardId) => {
-      queryClient.invalidateQueries({ queryKey: orgDashboardsQueryKeys.access(dashboardId) });
+      queryClient.invalidateQueries({ queryKey: orgDashboardsQueryKeys.access(organizationId, dashboardId) });
     },
   });
 }
 
 /** MCP Apps one connection can launch cold, ready to add as dashboard elements. */
 export function useConnectionMcpApps(connectionId: string | null) {
+  const { orgContext } = useOrgDashboard();
+  const organizationId = orgContext?.organization.id ?? "";
   return useQuery({
-    enabled: Boolean(connectionId),
-    queryKey: orgDashboardsQueryKeys.connectionApps(connectionId ?? "none"),
+    enabled: Boolean(organizationId && connectionId),
+    queryKey: orgDashboardsQueryKeys.connectionApps(organizationId, connectionId ?? "none"),
     queryFn: async (): Promise<ConnectionMcpApp[]> => {
       const { response, payload } = await requestJson(
         `/v1/mcp-connections/${encodeURIComponent(connectionId ?? "")}/mcp-apps`,
