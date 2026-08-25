@@ -121,6 +121,14 @@ export function getAggregateRowLabel(part: AnyToolPart): string {
   return getToolActivityLabel(part)
 }
 
+/** Raw output for an expandable aggregate row. other families keep their current one-line behavior. **/
+export function getAggregateRowOutput(part: AnyToolPart): string | null {
+  if (!isBashToolPart(part)) return null
+  if (part.state !== "output-available") return null
+  const output = part.output
+  return typeof output === "string" && output.length > 0 ? output : null
+}
+
 /** Label for the single latest in-flight call — the self-replacing "Now:" line. */
 export function getAggregateNowLabel(parts: AnyToolPart[]): string | null {
   for (let index = parts.length - 1; index >= 0; index -= 1) {
