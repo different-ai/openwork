@@ -1079,6 +1079,35 @@ export function SessionSurface(props: SessionSurfaceProps) {
     };
   }, [props.sessionId, props.workspaceId]);
   useControlAction(props.isControlTarget ? seedSessionLifecycleControlAction : null);
+  const refreshCurrentSessionControlAction = useMemo<OpenworkControlAction | null>(() => {
+    if (!import.meta.env.DEV) return null;
+
+    return {
+      id: "eval.composer_focus.refresh_current_session",
+      label: "Refresh current session while composing",
+      description: "Dev-only eval hook that exercises a same-session snapshot refresh without changing tasks.",
+      sideEffect: "none",
+      disabled: !props.sessionId,
+      execute: async () => {
+        const editor = composerShellRef.current?.querySelector<HTMLElement>(
+          '[contenteditable="true"][data-lexical-editor="true"]',
+        );
+        const wasFocused = editor === document.activeElement;
+        const result = await snapshotQuery.refetch();
+        await new Promise<void>((resolve) => {
+          window.requestAnimationFrame(() => window.requestAnimationFrame(() => resolve()));
+        });
+
+        return {
+          ok: result.status === "success",
+          wasFocused,
+          remainsFocused: editor === document.activeElement,
+          editable: editor?.getAttribute("contenteditable") === "true",
+        };
+      },
+    };
+  }, [props.sessionId, snapshotQuery.refetch]);
+  useControlAction(props.isControlTarget ? refreshCurrentSessionControlAction : null);
   const openTargets = useMemo(() => deriveOpenTargets(renderedMessages), [renderedMessages]);
   const openTargetsFingerprint = useMemo(
     () => openTargets.map((target) => `${target.kind}:${target.value}:${target.confidence}`).join("|"),

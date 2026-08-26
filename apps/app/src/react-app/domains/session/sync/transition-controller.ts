@@ -55,7 +55,11 @@ export function deriveSessionRenderModel(input: {
   return {
     intendedSessionId: input.intendedSessionId,
     renderedSessionId: input.renderedSessionId,
-    transitionState: input.isFetching ? "switching" : "idle",
+    // A background refresh of the session already on screen is not a session
+    // switch. Keeping it idle prevents the composer from becoming temporarily
+    // non-editable (and losing focus) when a tool call or final message causes
+    // the current snapshot to refetch.
+    transitionState: "idle",
     renderSource: "live",
   };
 }
