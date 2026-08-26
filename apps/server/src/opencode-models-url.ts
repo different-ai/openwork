@@ -1,7 +1,8 @@
 import { loopbackFetch } from "./server-fetch.js";
 
 const LOCAL_MODELS_URL = "http://localhost:8791/models";
-const PRODUCTION_MODELS_URL = "https://models.openworklabs.com/";
+const LIVE_MODELS_URL = "https://models.dev/";
+const MIRROR_MODELS_URL = "https://models.openworklabs.com/";
 
 type ResolveOpencodeModelsUrlOptions = {
   env?: NodeJS.ProcessEnv;
@@ -14,7 +15,21 @@ export async function resolveOpencodeModelsUrl(
   const env = options.env ?? process.env;
   const override = env.OPENCODE_MODELS_URL?.trim();
   if (override) return override;
-  if (env.OPENWORK_DEV_MODE !== "1") return PRODUCTION_MODELS_URL;
+  if (env.OPENWORK_DEV_MODE !== "1") {
+    // Prefer the live models.dev catalog so freshly released models are usable
+    // without waiting for the first-party mirror snapshot to be rebuilt, and
+    // fall back to the mirror when models.dev is unreachable (corporate
+    // proxies, outages).
+    try {
+      const response = await (options.fetchModels ?? fetch)(`${LIVE_MODELS_URL}api.json`, {
+        signal: AbortSignal.timeout(1_000),
+      });
+      if (response.ok) return LIVE_MODELS_URL;
+    } catch {
+      // Unreachable catalogs fall through to the mirror below.
+    }
+    return MIRROR_MODELS_URL;
+  }
 
   try {
     const response = await (options.fetchModels ?? loopbackFetch)(`${LOCAL_MODELS_URL}/api.json`, {
@@ -25,5 +40,5 @@ export async function resolveOpencodeModelsUrl(
     // A standalone desktop dev session does not run the local inference stack.
   }
 
-  return PRODUCTION_MODELS_URL;
+  return MIRROR_MODELS_URL;
 }

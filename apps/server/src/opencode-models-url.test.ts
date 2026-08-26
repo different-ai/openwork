@@ -39,8 +39,27 @@ describe("resolveOpencodeModelsUrl", () => {
     })).toBe("https://catalog.example.test/models");
   });
 
-  test("uses the production catalog outside development", async () => {
-    expect(await resolveOpencodeModelsUrl({ env: {} })).toBe("https://models.openworklabs.com/");
+  test("uses the live models.dev catalog outside development", async () => {
+    expect(await resolveOpencodeModelsUrl({
+      env: {},
+      fetchModels: async () => new Response(null, { status: 200 }),
+    })).toBe("https://models.dev/");
+  });
+
+  test("falls back to the mirror when models.dev is unreachable", async () => {
+    expect(await resolveOpencodeModelsUrl({
+      env: {},
+      fetchModels: async () => new Response(null, { status: 503 }),
+    })).toBe("https://models.openworklabs.com/");
+  });
+
+  test("falls back to the mirror when models.dev errors", async () => {
+    expect(await resolveOpencodeModelsUrl({
+      env: {},
+      fetchModels: async () => {
+        throw new TypeError("network down");
+      },
+    })).toBe("https://models.openworklabs.com/");
   });
 
   test("uses the local catalog when the development server is available", async () => {
@@ -50,7 +69,7 @@ describe("resolveOpencodeModelsUrl", () => {
     })).toBe("http://localhost:8791/models");
   });
 
-  test("falls back to the production catalog when the development server is unavailable", async () => {
+  test("falls back to the mirror when the development server is unavailable", async () => {
     expect(await resolveOpencodeModelsUrl({
       env: { OPENWORK_DEV_MODE: "1" },
       fetchModels: async () => new Response(null, { status: 503 }),

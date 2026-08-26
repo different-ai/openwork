@@ -1,6 +1,10 @@
 name: Update Models
 
 on:
+  schedule:
+    # Keep the first-party catalog mirror fresh; without this the mirror only
+    # updates when someone runs the workflow by hand.
+    - cron: "17 6 * * *"
   workflow_dispatch:
     inputs:
       base_branch:
@@ -20,7 +24,7 @@ concurrency:
 env:
   MODELS_PATH: ee/apps/inference/src/models/base.json
   MODELS_URL: https://models.dev/api.json
-  BASE_BRANCH: ${{ inputs.base_branch }}
+  BASE_BRANCH: ${{ inputs.base_branch || 'dev' }}
   BRANCH_NAME: automation/update-models-${{ github.run_id }}-${{ github.run_attempt }}
 
 jobs:
