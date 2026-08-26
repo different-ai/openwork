@@ -11,6 +11,11 @@ test("UI control commands never activate the desktop window implicitly", async (
 
   assert.match(source, /webContents\.executeJavaScript/);
   assert.doesNotMatch(source, /\bwin\.(?:show|restore|focus)\(/);
+  assert.match(source, /\/webmcp\/tools/);
+  assert.match(source, /\/webmcp\/execute/);
+  assert.ok(source.includes(
+    "await executeWebMcpTool(await readJsonRequestBody(request), { signal: controller.signal })",
+  ));
 });
 
 test("UI control failures are logged locally without exposing exception details", async () => {

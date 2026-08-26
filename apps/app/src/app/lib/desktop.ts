@@ -192,6 +192,8 @@ declare global {
         selectTab?: (tabId: string) => Promise<string>;
         reorderTabs?: (tabIds: string[]) => Promise<BrowserPanelTab[]>;
         listTabs?: () => Promise<BrowserPanelTab[]>;
+        listWebMcpTools?: (args?: { tabId?: string }) => Promise<unknown>;
+        executeWebMcpTool?: (args: { toolId: string; input?: unknown }) => Promise<unknown>;
         setProxy?: (proxy?: string | null) => Promise<BrowserProxyState>;
         getProxy?: () => Promise<BrowserProxyState>;
         showTabContextMenu?: (tabId: string, point?: { x: number; y: number }) => Promise<void>;

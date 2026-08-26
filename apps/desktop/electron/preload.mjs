@@ -178,6 +178,8 @@ contextBridge.exposeInMainWorld("__OPENWORK_ELECTRON__", {
     selectTab(tabId) { return ipcRenderer.invoke("openwork:browser:selectTab", tabId); },
     reorderTabs(tabIds) { return ipcRenderer.invoke("openwork:browser:reorderTabs", tabIds); },
     listTabs() { return ipcRenderer.invoke("openwork:browser:listTabs"); },
+    listWebMcpTools(args) { return ipcRenderer.invoke("openwork:browser:webmcpListTools", args); },
+    executeWebMcpTool(args) { return ipcRenderer.invoke("openwork:browser:webmcpExecuteTool", args); },
     setProxy(proxy) { return ipcRenderer.invoke("openwork:browser:setProxy", proxy); },
     getProxy() { return ipcRenderer.invoke("openwork:browser:getProxy"); },
     showTabContextMenu(tabId, point) { return ipcRenderer.invoke("openwork:browser:tabContextMenu", tabId, point); },

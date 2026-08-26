@@ -384,6 +384,23 @@ function BrowserPanelContent({
                 <Globe />
               </InputGroupAddon>
             </InputGroup>
+            {tab.siteToolCount > 0 ? (
+              <Tooltip>
+                <TooltipTrigger
+                  render={(
+                    <span
+                      className="inline-flex h-6 shrink-0 items-center rounded-md border border-border bg-muted/60 px-2 text-[11px] font-medium text-foreground"
+                      aria-label={`${tab.siteToolCount} site ${tab.siteToolCount === 1 ? "tool" : "tools"} available`}
+                    >
+                      {tab.siteToolCount} {tab.siteToolCount === 1 ? "tool" : "tools"}
+                    </span>
+                  )}
+                />
+                <TooltipContent>
+                  This website exposes {tab.siteToolCount} WebMCP {tab.siteToolCount === 1 ? "tool" : "tools"} to OpenWork.
+                </TooltipContent>
+              </Tooltip>
+            ) : null}
           </>
         ) : (
           <p className="px-2 text-sm text-muted-foreground">
