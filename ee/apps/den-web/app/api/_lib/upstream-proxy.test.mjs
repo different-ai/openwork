@@ -11,17 +11,20 @@ const previousDenWebPublicOrigin = process.env.DEN_WEB_PUBLIC_ORIGIN;
 describe("Den upstream proxy", () => {
   let server;
   let observed = null;
+  let upstreamRequestCount = 0;
   let logs = [];
 
   beforeAll(() => {
     server = Bun.serve({
       port: 0,
       async fetch(request) {
+        upstreamRequestCount += 1;
         const url = new URL(request.url);
         observed = {
           method: request.method,
           path: `${url.pathname}${url.search}`,
           body: await request.text(),
+          contentType: request.headers.get("content-type"),
           cookie: request.headers.get("cookie"),
           authorization: request.headers.get("authorization"),
           custom: request.headers.get("x-custom-proxy-test"),
@@ -97,6 +100,8 @@ describe("Den upstream proxy", () => {
   beforeEach(() => {
     delete process.env.DEN_BASE_URL;
     delete process.env.DEN_WEB_PUBLIC_ORIGIN;
+    observed = null;
+    upstreamRequestCount = 0;
     logs = [];
     setStructuredLogSink({
       log(level, message, fields) {
@@ -126,6 +131,141 @@ describe("Den upstream proxy", () => {
   });
 
   const INSTANCE_ORIGIN = "https://8787-2bnptanfwxs5j8vu.daytonaproxy01.net";
+  const TEST_BODY_LIMIT = 12;
+  const limitedProxyOptions = { routePrefix: "/api/den", maxRequestBodyBytes: TEST_BODY_LIMIT };
+
+  test("rejects an oversized declared body before contacting Den", async () => {
+    const { proxyUpstream } = await import("./upstream-proxy.ts");
+    const request = new NextRequest("https://app.example.com/api/den/v1/me", {
+      method: "POST",
+      headers: {
+        "content-length": String(TEST_BODY_LIMIT + 1),
+        "content-type": "application/json",
+        "x-request-id": "declared-limit-request",
+        authorization: "Bearer must-not-log",
+        origin: INSTANCE_ORIGIN,
+      },
+      body: "{}",
+    });
+
+    const response = await proxyUpstream(request, [], limitedProxyOptions);
+
+    expect(response.status).toBe(413);
+    expect(response.headers.get("x-request-id")).toBe("declared-limit-request");
+    expect(response.headers.get("access-control-allow-origin")).toBe(INSTANCE_ORIGIN);
+    expect(await response.json()).toEqual({
+      error: "request_too_large",
+      requestId: "declared-limit-request",
+      maxBytes: TEST_BODY_LIMIT,
+      declaredBytes: TEST_BODY_LIMIT + 1,
+    });
+    expect(upstreamRequestCount).toBe(0);
+    expect(observed).toBeNull();
+    expect(logs).toHaveLength(1);
+    expect(logs[0]).toMatchObject({
+      level: "warn",
+      message: "den-web upstream proxy rejected request body",
+      fields: {
+        route_prefix: "/api/den",
+        method: "POST",
+        status: 413,
+        max_bytes: TEST_BODY_LIMIT,
+        declared_bytes: TEST_BODY_LIMIT + 1,
+      },
+    });
+    expect(JSON.stringify(logs[0])).not.toContain("must-not-log");
+  });
+
+  test("stops an oversized chunked body and does not contact Den", async () => {
+    const { proxyUpstream } = await import("./upstream-proxy.ts");
+    const encoder = new TextEncoder();
+    let cancelled = false;
+    const body = new ReadableStream({
+      start(controller) {
+        controller.enqueue(encoder.encode("12345678"));
+        controller.enqueue(encoder.encode("90123"));
+        controller.enqueue(encoder.encode("secret multipart filename.png"));
+      },
+      cancel() {
+        cancelled = true;
+      },
+    });
+    const request = new NextRequest("https://app.example.com/api/den/v1/me", {
+      method: "POST",
+      headers: { "x-request-id": "chunked-limit-request" },
+      body,
+      duplex: "half",
+    });
+    expect(request.headers.get("content-length")).toBeNull();
+
+    const response = await proxyUpstream(request, [], limitedProxyOptions);
+
+    expect(response.status).toBe(413);
+    expect(await response.json()).toEqual({
+      error: "request_too_large",
+      requestId: "chunked-limit-request",
+      maxBytes: TEST_BODY_LIMIT,
+      observedBytes: TEST_BODY_LIMIT + 1,
+    });
+    expect(cancelled).toBe(true);
+    expect(upstreamRequestCount).toBe(0);
+    expect(observed).toBeNull();
+    expect(logs).toHaveLength(1);
+    expect(logs[0]).toMatchObject({
+      level: "warn",
+      message: "den-web upstream proxy rejected request body",
+      fields: {
+        route_prefix: "/api/den",
+        method: "POST",
+        status: 413,
+        max_bytes: TEST_BODY_LIMIT,
+        observed_bytes: TEST_BODY_LIMIT + 1,
+      },
+    });
+    const serializedLog = JSON.stringify(logs[0]);
+    expect(serializedLog).not.toContain("secret");
+    expect(serializedLog).not.toContain("filename.png");
+  });
+
+  test("accepts request bodies exactly at and immediately below the limit", async () => {
+    const { proxyUpstream } = await import("./upstream-proxy.ts");
+
+    for (const size of [TEST_BODY_LIMIT - 1, TEST_BODY_LIMIT]) {
+      const body = "x".repeat(size);
+      const request = new NextRequest("https://app.example.com/api/den/v1/me", {
+        method: "POST",
+        headers: { "content-length": String(size) },
+        body,
+      });
+
+      const response = await proxyUpstream(request, [], limitedProxyOptions);
+
+      expect(response.status).toBe(207);
+      expect(observed.body).toBe(body);
+    }
+    expect(upstreamRequestCount).toBe(2);
+  });
+
+  test("continues to proxy ordinary multipart requests without logging their contents", async () => {
+    const { proxyUpstream } = await import("./upstream-proxy.ts");
+    const body = new FormData();
+    body.set("logo", new File(["multipart-private-content"], "private-brand-name.png", { type: "image/png" }));
+    const request = new NextRequest("https://app.example.com/api/den/v1/org/brand-assets", {
+      method: "POST",
+      body,
+    });
+
+    const response = await proxyUpstream(request, [], { routePrefix: "/api/den" });
+
+    expect(response.status).toBe(207);
+    expect(observed.contentType).toStartWith("multipart/form-data; boundary=");
+    expect(observed.body).toContain("private-brand-name.png");
+    expect(observed.body).toContain("multipart-private-content");
+    expect(upstreamRequestCount).toBe(1);
+    const serializedLog = JSON.stringify(logs[0]);
+    expect(serializedLog).not.toContain("private-brand-name.png");
+    expect(serializedLog).not.toContain("multipart-private-content");
+  });
 
   test("answers the preflight for a rotating Cloud instance origin", async () => {
     const { proxyUpstream } = await import("./upstream-proxy.ts");
@@ -335,6 +475,7 @@ describe("Den upstream proxy", () => {
       method: "POST",
       path: "/v1/me?include=org",
       body: JSON.stringify({ ok: true }),
+      contentType: "application/json",
       cookie: "ow_session=sess_test",
       authorization: "Bearer tok_test",
       custom: "kept",
