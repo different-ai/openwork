@@ -46,6 +46,8 @@ config:
     installLinksGatingEnabled: "false"
     # Self-hosted Automations are opt-in. Hosted OpenWork Cloud enables them.
     automationsEnabled: "false"
+    # Self-hosted Dashboards are opt-in. Hosted environments use the same Den flag.
+    dashboardsEnabled: "false"
     # Preserve the Den runtime for published legacy Desktops during upgrades.
     # Set false only after every Desktop is v0.18.35+ to hard-disable Automations.
     automationsRuntimeEnabled: "true"

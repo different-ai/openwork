@@ -778,6 +778,7 @@ export async function server(options: ServerOptions): Promise<Den> {
       // deployment path. Rollout specs override this to prove disabled UI.
       DEN_AUTOMATIONS_ENABLED: "true",
       DEN_AUTOMATIONS_RUNTIME_ENABLED: "true",
+      DEN_DASHBOARDS_ENABLED: "false",
       DEN_GENERATED_ARTIFACT_VIEWS_ENABLED:
         process.env.OPENWORK_EVAL_GENERATED_ARTIFACT_VIEWS_E2E_TEST === "1" ? "true" : "false",
       OPENWORK_DEV_MODE: "1",

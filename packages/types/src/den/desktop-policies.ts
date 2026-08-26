@@ -202,6 +202,7 @@ export const desktopConfigSchema = desktopPolicyValueSchema
     brandIconUrl: z.string().url().max(2048).optional(),
     brandAccentColor: z.enum(brandAccentColorValues).optional(),
     automationsEnabled: z.boolean().optional(),
+    dashboardEnabled: z.boolean().optional(),
     connectEnabled: z.boolean().optional(),
     onboardingPrompts: onboardingPromptsSchema.optional(),
     onboardingPromptDescriptions: onboardingPromptDescriptionsSchema.optional(),
@@ -555,6 +556,10 @@ export function normalizeDesktopConfig(value: unknown): DesktopConfig {
     typeof raw?.automationsEnabled === "boolean"
       ? raw.automationsEnabled
       : undefined;
+  const dashboardEnabled =
+    typeof raw?.dashboardEnabled === "boolean"
+      ? raw.dashboardEnabled
+      : undefined;
   const connectEnabled =
     typeof raw?.connectEnabled === "boolean" ? raw.connectEnabled : undefined;
   const onboardingPromptConfig = normalizeOnboardingPromptConfig(raw);
@@ -567,6 +572,7 @@ export function normalizeDesktopConfig(value: unknown): DesktopConfig {
     ...(brandIconUrl !== undefined ? { brandIconUrl } : {}),
     ...(brandAccentColor !== undefined ? { brandAccentColor } : {}),
     ...(automationsEnabled !== undefined ? { automationsEnabled } : {}),
+    ...(dashboardEnabled !== undefined ? { dashboardEnabled } : {}),
     ...(connectEnabled !== undefined ? { connectEnabled } : {}),
     ...(onboardingPromptConfig !== undefined ? onboardingPromptConfig : {}),
   };

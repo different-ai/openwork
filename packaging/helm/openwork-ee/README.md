@@ -181,6 +181,23 @@ and Desktop versions never observe an unintended flag state:
 New installations with no legacy Desktop clients can hard-disable Automations
 immediately by setting both values to false.
 
+### Dashboards rollout
+
+The organization-managed Dashboard is unavailable by default. Enable it for a
+self-hosted or customer-managed deployment with:
+
+```yaml
+config:
+  public:
+    dashboardsEnabled: "true"
+```
+
+The chart renders this value as `DEN_DASHBOARDS_ENABLED`. Raw environment-based
+deployments can set the same variable directly. Hosted environments use that
+same flag, so Dashboard availability does not depend on a per-device preference.
+Desktop reads `dashboardEnabled` from `/v1/me/desktop-config` and hides both the
+sidebar entry and route unless the server explicitly returns `true`.
+
 Provider-specific starter guides:
 
 - AWS EKS:

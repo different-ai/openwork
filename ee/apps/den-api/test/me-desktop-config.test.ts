@@ -302,6 +302,7 @@ function expectConnectEnabled(body: Record<string, unknown>, metadata: Record<st
 test("GET /v1/me/desktop-config exposes the effective connectEnabled org flag", async () => {
   const flatBody = await requestDesktopConfig(organizationId)
   expect(flatBody.automationsEnabled).toBe(false)
+  expect(flatBody.dashboardEnabled).toBe(false)
   expectConnectEnabled(flatBody, flatConnectMetadata)
   expect(flatBody.brandAppName).toBe(flatConnectMetadata.brandAppName)
   expect(flatBody.brandLogoUrl).toBe(flatConnectMetadata.brandLogoUrl)

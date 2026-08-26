@@ -149,6 +149,9 @@ describe("Den desktop config client", () => {
     expect(normalizeDenDesktopConfig({ automationsEnabled: true }).automationsEnabled).toBe(true);
     expect(normalizeDenDesktopConfig({ automationsEnabled: "false" }).automationsEnabled).toBeUndefined();
     expect(normalizeDenDesktopConfig({}).automationsEnabled).toBeUndefined();
+    expect(normalizeDenDesktopConfig({ dashboardEnabled: false }).dashboardEnabled).toBe(false);
+    expect(normalizeDenDesktopConfig({ dashboardEnabled: true }).dashboardEnabled).toBe(true);
+    expect(normalizeDenDesktopConfig({ dashboardEnabled: "true" }).dashboardEnabled).toBeUndefined();
   });
 
   test("selects targeted onboarding prompts by priority before default fallback", () => {
