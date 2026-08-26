@@ -554,6 +554,13 @@
       "when": 1787858067776,
       "tag": "0079_stale_thanos",
       "breakpoints": true
+    },
+    {
+      "idx": 80,
+      "version": "5",
+      "when": 1787865994901,
+      "tag": "0080_flowery_riptide",
+      "breakpoints": true
     }
   ]
 }

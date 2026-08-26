@@ -3,7 +3,7 @@ import { boolean, index, int, mysqlEnum, mysqlTable, timestamp, uniqueIndex, var
 import { denTypeIdColumn, timestamps } from "../columns"
 import { MemberTable, OrganizationTable } from "./org"
 
-export const OrgSubscriptionType = ["inference", "seat"] as const
+export const OrgSubscriptionType = ["inference", "seat", "web"] as const
 export const OrgSubscriptionStatus = [
   "incomplete",
   "incomplete_expired",
@@ -32,6 +32,7 @@ export const OrgSubscriptionTable = mysqlTable(
     current_period_start: timestamp("current_period_start", { fsp: 3 }),
     current_period_end: timestamp("current_period_end", { fsp: 3 }),
     cancel_at_period_end: boolean("cancel_at_period_end").notNull().default(false),
+    payment_failed: boolean("payment_failed").notNull().default(false),
     canceled_at: timestamp("canceled_at", { fsp: 3 }),
     ended_at: timestamp("ended_at", { fsp: 3 }),
     last_event_id: varchar("last_event_id", { length: 255 }),

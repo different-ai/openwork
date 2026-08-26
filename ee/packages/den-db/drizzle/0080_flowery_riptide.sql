@@ -1,0 +1,2 @@
+ALTER TABLE `org_subscriptions` MODIFY COLUMN `type` enum('inference','seat','web') NOT NULL;--> statement-breakpoint
+ALTER TABLE `org_subscriptions` ADD `payment_failed` boolean DEFAULT false NOT NULL;

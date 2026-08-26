@@ -3,7 +3,7 @@ import { MemberTable, OrganizationTable } from "@openwork-ee/den-db/schema"
 import { cache } from "./cache.js"
 import { db } from "./db.js"
 import { syncInferenceAfterMemberChange } from "./inference.js"
-import { syncInferenceSubscriptionQuantityAfterMemberChange, syncSeatSubscriptionQuantityAfterMemberChange } from "./stripe-billing.js"
+import { syncInferenceSubscriptionQuantityAfterMemberChange, syncSeatSubscriptionQuantityAfterMemberChange, syncWebSubscriptionQuantityAfterMemberChange } from "./stripe-billing.js"
 
 type OrgId = typeof OrganizationTable.$inferSelect.id
 type MemberId = typeof MemberTable.$inferSelect.id
@@ -22,6 +22,7 @@ type OrganizationMemberChangeHook = (input: OrganizationMemberChangeHookInput) =
 const organizationMemberChangeHooks: OrganizationMemberChangeHook[] = [
   syncSeatSubscriptionQuantityAfterMemberChange,
   syncInferenceSubscriptionQuantityAfterMemberChange,
+  syncWebSubscriptionQuantityAfterMemberChange,
   syncInferenceAfterMemberChange,
 ]
 

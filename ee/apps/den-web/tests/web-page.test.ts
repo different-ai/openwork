@@ -1,9 +1,17 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import { readFileSync } from "node:fs";
 
 import { DEFAULT_OPENWORK_WEB_URL } from "../app/(den)/_lib/runtime-config";
-import { getWebPageAccessState, WebOpenButton } from "../app/(den)/dashboard/web/page";
+import {
+  getWebPageAccessState,
+  hasOngoingWebSubscription,
+  isExistingWebSubscriptionResponse,
+  WebOpenButton,
+  WebPurchaseButton,
+} from "../app/(den)/dashboard/web/page";
+import { type StripeWebBilling } from "../app/(den)/dashboard/_lib/stripe-web-billing";
 import { GET } from "../app/api/runtime-config/route";
 
 const originalEnv = {
@@ -39,20 +47,59 @@ afterEach(() => {
 });
 
 describe("Web dashboard page", () => {
-  test("uses the existing cloud capability gate", () => {
+  const webBilling: StripeWebBilling = {
+    configured: true,
+    priceId: "price_web",
+    unitAmount: 5000,
+    currency: "usd",
+    interval: "month",
+    quantityDefinition: "joined_non_removed_members",
+    quantity: 3,
+    expectedMonthlyTotal: 15000,
+    hasEligibleSubscription: false,
+    subscription: null,
+  };
+
+  const accessInput = {
+    orgBusy: false,
+    hasOrgContext: true,
+    activeOrgId: "org_1",
+    cloudEnabled: true,
+    runtimeConfigLoaded: true,
+    billingOrgId: "org_1",
+    billing: webBilling,
+    billingError: null,
+    confirming: false,
+  };
+
+  test("uses the existing cloud capability gate and fails closed while billing resolves", () => {
     expect(getWebPageAccessState({
-      orgBusy: false,
-      hasOrgContext: true,
+      ...accessInput,
       cloudEnabled: false,
-      runtimeConfigLoaded: true,
     })).toBe("not-found");
 
     expect(getWebPageAccessState({
-      orgBusy: false,
-      hasOrgContext: true,
-      cloudEnabled: true,
-      runtimeConfigLoaded: true,
-    })).toBe("ready");
+      ...accessInput,
+      billing: null,
+      billingOrgId: null,
+    })).toBe("loading");
+
+    expect(getWebPageAccessState({
+      ...accessInput,
+      billingOrgId: "org_2",
+    })).toBe("loading");
+
+    expect(getWebPageAccessState({
+      ...accessInput,
+      billingError: "Billing failed",
+    })).toBe("error");
+
+    expect(getWebPageAccessState(accessInput)).toBe("unsubscribed");
+    expect(getWebPageAccessState({ ...accessInput, confirming: true })).toBe("confirming");
+    expect(getWebPageAccessState({
+      ...accessInput,
+      billing: { ...webBilling, hasEligibleSubscription: true },
+    })).toBe("eligible");
   });
 
   test("renders the external Web button with the configured href", () => {
@@ -64,6 +111,79 @@ describe("Web dashboard page", () => {
     expect(html).toContain('target="_blank"');
     expect(html).toContain('rel="noopener noreferrer"');
     expect(html).toContain("Open OpenWork Web");
+  });
+
+  test("renders the exact per-user purchase action", () => {
+    const html = renderToStaticMarkup(createElement(WebPurchaseButton, {
+      disabled: false,
+      loading: false,
+      onClick: () => undefined,
+    }));
+
+    expect(html).toContain("Purchase OpenWork Web — $50 per user/month");
+  });
+
+  test("does not offer a second checkout for an ineligible ongoing subscription", () => {
+    expect(hasOngoingWebSubscription({
+      ...webBilling,
+      subscription: {
+        status: "past_due",
+        quantity: 3,
+        currentPeriodStart: "2026-08-01T00:00:00.000Z",
+        currentPeriodEnd: "2026-09-01T00:00:00.000Z",
+        cancelAtPeriodEnd: false,
+        paymentStatus: "past_due",
+      },
+    })).toBeTrue();
+    for (const status of ["canceled", "expired", "incomplete_expired"]) {
+      expect(hasOngoingWebSubscription({
+        ...webBilling,
+        subscription: {
+          status,
+          quantity: 3,
+          currentPeriodStart: "2026-08-01T00:00:00.000Z",
+          currentPeriodEnd: "2026-08-15T00:00:00.000Z",
+          cancelAtPeriodEnd: false,
+          paymentStatus: "terminated",
+        },
+      })).toBeFalse();
+    }
+  });
+
+  test("recognizes the server duplicate guard so a checkout race refreshes billing", () => {
+    expect(isExistingWebSubscriptionResponse(
+      new Response(null, { status: 409 }),
+      { error: "stripe_subscription_exists" },
+    )).toBeTrue();
+    expect(isExistingWebSubscriptionResponse(
+      new Response(null, { status: 409 }),
+      { error: "different_error" },
+    )).toBeFalse();
+    expect(isExistingWebSubscriptionResponse(
+      new Response(null, { status: 500 }),
+      { error: "stripe_subscription_exists" },
+    )).toBeFalse();
+  });
+
+  test("pins checkout and confirmation to Web billing and never unlocks from the redirect alone", () => {
+    const source = readFileSync(new URL("../app/(den)/dashboard/web/page.tsx", import.meta.url), "utf8");
+    const checking = readFileSync(new URL("../app/(den)/dashboard/(admin)/billing/stripe/checking/page.tsx", import.meta.url), "utf8");
+
+    expect(source).toContain('"/v1/billing/web"');
+    expect(source).toContain('"/v1/billing/stripe/checkout"');
+    expect(source).toContain('"/v1/billing/stripe/checkout/sync"');
+    expect(source).toContain("JSON.stringify({ type: OPENWORK_WEB_CHECKOUT_TYPE })");
+    expect(source).toContain("JSON.stringify({ sessionId, type: OPENWORK_WEB_CHECKOUT_TYPE })");
+    expect(source).toContain("headers: { [ORG_SCOPE_HEADER]: orgId }");
+    expect(source).toContain("nextBilling?.hasEligibleSubscription");
+    expect(source).toContain("OpenWork Web remains locked");
+    expect(source).toContain("Ask a workspace owner or admin");
+    expect(source).toContain("Before payment:");
+    expect(source).toContain("Stripe will show");
+    expect(source).toContain("Access unlocks only after Stripe confirms the subscription and payment.");
+    expect(source).toContain("await requestWebBilling(orgId, false)");
+    expect(checking).toContain('returnTarget === "web"');
+    expect(checking).toContain("?stripe_checkout=web&session_id=");
   });
 
   test("runtime config exposes the default Web URL and deployment override", async () => {

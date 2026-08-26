@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { AlertCircle, CreditCard, Loader2 } from "lucide-react";
 import { DashboardPageTemplate } from "../../../../../_components/ui/dashboard-page-template";
 import { DenButton } from "../../../../../_components/ui/button";
-import { getBillingRoute, getInferenceRoute } from "../../../../../_lib/den-org";
+import { getBillingRoute, getInferenceRoute, getWebRoute } from "../../../../../_lib/den-org";
 import { requestJson } from "../../../../../_lib/den-flow";
 import { useOrgDashboard } from "../../../../_providers/org-dashboard-provider";
 
@@ -34,11 +34,21 @@ export default function StripeCheckingPage() {
   const returnTarget = typeof window !== "undefined"
     ? new URLSearchParams(window.location.search).get("return")
     : null;
-  const billingRoute = returnTarget === "models"
+  const sessionId = typeof window !== "undefined"
+    ? new URLSearchParams(window.location.search).get("session_id")?.trim() ?? ""
+    : "";
+  const destinationRoute = returnTarget === "models"
     ? getInferenceRoute(activeOrg?.slug)
-    : getBillingRoute(activeOrg?.slug);
+    : returnTarget === "web"
+      ? `${getWebRoute(activeOrg?.slug)}?stripe_checkout=web&session_id=${encodeURIComponent(sessionId)}`
+      : getBillingRoute(activeOrg?.slug);
 
   useEffect(() => {
+    if (returnTarget === "web") {
+      router.replace(destinationRoute);
+      return;
+    }
+
     let cancelled = false;
 
     function stop() {
@@ -56,7 +66,7 @@ export default function StripeCheckingPage() {
         if (cancelled) return;
         if (response.ok && hasActiveStripeSubscription(payload)) {
           stop();
-          router.replace(billingRoute);
+          router.replace(destinationRoute);
           return;
         }
       } catch {
@@ -75,7 +85,7 @@ export default function StripeCheckingPage() {
       cancelled = true;
       stop();
     };
-  }, [billingRoute, router]);
+  }, [destinationRoute, returnTarget, router]);
 
   return (
     <DashboardPageTemplate
@@ -93,7 +103,9 @@ export default function StripeCheckingPage() {
               If your payment went through, refresh the billing page or contact{" "}
               <a className="font-medium text-blue-600 hover:underline" href="mailto:team@openworklabs.com">team@openworklabs.com</a>.
             </p>
-            <DenButton onClick={() => router.replace(billingRoute)}>Return to Billing</DenButton>
+            <DenButton onClick={() => router.replace(destinationRoute)}>
+              {returnTarget === "web" ? "Return to OpenWork Web" : "Return to Billing"}
+            </DenButton>
           </>
         ) : (
           <>
