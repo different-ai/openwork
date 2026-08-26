@@ -1,12 +1,17 @@
 /** @jsxImportSource react */
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Download, ExternalLink, FolderOpen, PanelLeftClose, PanelLeftOpen, X } from "lucide-react";
+import { Download, Ellipsis, ExternalLink, FolderOpen, PanelLeftClose, PanelLeftOpen, X } from "lucide-react";
 
-import type { OpenworkServerClient } from "@/app/lib/openwork-server";
-import { getDesktopFileIcon, openDesktopPath, revealDesktopItemInDir } from "@/app/lib/desktop";
-import { isElectronRuntime } from "@/app/utils";
+import type { OpenworkServerClient, OpenworkWorkspaceCatalogEntry } from "@/app/lib/openwork-server";
+import { openDesktopPath, revealDesktopItemInDir } from "@/app/lib/desktop";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { toast } from "@/components/ui/sonner";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { usePlatform } from "@/react-app/kernel/platform";
@@ -106,9 +111,14 @@ function ArtifactPanelView({ sessionId, client, workspaceId, workspaceRoot, isRe
   const [draft, setDraft] = useState("");
   const lastSyncedRef = useRef<string | null>(null);
   const failedDraftRef = useRef<string | null>(null);
-  const isDirectTextEdit = isTextContent(target) && target.preview === "markdown" && !isMarkdownPrimitiveEvalArtifact(target);
-  const externalPath = useMemo(() => target.kind === "file" ? absoluteWorkspacePath(workspaceRoot, target.value) : target.value, [target.kind, target.value, workspaceRoot]);
-  const canUseDesktopFileActions = target.kind === "file" && !isRemoteWorkspace && platform.capabilities.revealInFileManager;
+  // Markdown and plain text open straight into the CodeMirror editor, and
+  // code opens straight into Pierre's highlighted editor. Only HTML stays
+  // behind the Edit toggle, because its default view is the rendered page.
+  const isDirectTextEdit = isTextContent(target) &&
+    (target.preview === "text" || (target.preview === "markdown" && !isMarkdownPrimitiveEvalArtifact(target)));
+  const isDirectCodeEdit = target.kind === "file" && target.preview === "code";
+  const canUseDesktopWorkspaceActions = !isRemoteWorkspace && platform.capabilities.revealInFileManager;
+  const canUseDesktopFileActions = target.kind === "file" && canUseDesktopWorkspaceActions;
   const workspaceName = workspaceRoot.split(/[/\\]/).filter(Boolean).pop() ?? "Workspace";
 
   const openWorkspaceFile = (entry: { path: string; size: number; mtimeMs: number }) => {
@@ -122,14 +132,6 @@ function ArtifactPanelView({ sessionId, client, workspaceId, workspaceRoot, isRe
       target: nextTarget,
     });
   };
-
-  const { data: fileIcon } = useQuery<string | null>({
-    queryKey: ["desktop-file-icon", externalPath] as const,
-    queryFn: async () => getDesktopFileIcon(externalPath, "small"),
-    enabled: canUseDesktopFileActions && isElectronRuntime(),
-    staleTime: Infinity,
-    gcTime: 5 * 60 * 1000,
-  });
 
   const { data, error, isError, isLoading } = useQuery<ArtifactQueryState>({
     queryKey: ["artifact-panel", workspaceId, target.id, target.updatedAt ?? null] as const,
@@ -222,20 +224,47 @@ function ArtifactPanelView({ sessionId, client, workspaceId, workspaceRoot, isRe
     },
   });
 
-  const download = async () => {
-    if (target.kind === "url") {
-      return;
-    }
-    
-    const result = await client.downloadWorkspaceFile(workspaceId, target.value);
+  const downloadFile = async (path: string, name: string) => {
+    const result = await client.downloadWorkspaceFile(workspaceId, path);
     const url = URL.createObjectURL(new Blob([result.data], { type: result.contentType ?? "application/octet-stream" }));
     const anchor = document.createElement("a");
 
     anchor.href = url;
-    anchor.download = target.name;
+    anchor.download = name;
     anchor.click();
 
     window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
+
+  const openFileExternally = async (path: string) => {
+    if (isRemoteWorkspace) {
+      await downloadFile(path, path.split(/[/\\]/).pop() ?? path);
+
+      return;
+    }
+
+    try {
+      await openDesktopPath(absoluteWorkspacePath(workspaceRoot, path));
+    } catch (cause) {
+      toast.error(cause instanceof Error ? cause.message : "Could not open this file.");
+    }
+  };
+
+  const revealFile = async (path: string) => {
+    if (isRemoteWorkspace) return;
+    try {
+      await revealDesktopItemInDir(absoluteWorkspacePath(workspaceRoot, path));
+    } catch (cause) {
+      toast.error(cause instanceof Error ? cause.message : "Could not show this file in your file manager.");
+    }
+  };
+
+  const download = async () => {
+    if (target.kind === "url") {
+      return;
+    }
+
+    await downloadFile(target.value, target.name);
   };
 
   const openExternal = async () => {
@@ -244,36 +273,24 @@ function ArtifactPanelView({ sessionId, client, workspaceId, workspaceRoot, isRe
 
       return;
     }
-    else if (!isRemoteWorkspace) {
-      try {
-        await openDesktopPath(externalPath);
-      } catch (cause) {
-        toast.error(cause instanceof Error ? cause.message : "Could not open this file.");
-      }
 
-      return;
-    }
-
-    await download();
+    await openFileExternally(target.value);
   };
 
   const revealExternal = async () => {
-    if (target.kind !== "file" || isRemoteWorkspace) return;
-    try {
-      await revealDesktopItemInDir(externalPath);
-    } catch (cause) {
-      toast.error(cause instanceof Error ? cause.message : "Could not show this file in your file manager.");
-    }
+    if (target.kind !== "file") return;
+    await revealFile(target.value);
   };
 
   const isTextEditing = data?.kind === "text" && (editing || isDirectTextEdit);
+  const isEditingSurface = data?.kind === "text" && (editing || isDirectTextEdit || isDirectCodeEdit);
   const isDirty = data?.kind === "text" && draft !== data.data;
 
   useEffect(() => {
     if (
       target.kind !== "file" ||
       data?.kind !== "text" ||
-      !(editing || isDirectTextEdit) ||
+      !(editing || isDirectTextEdit || isDirectCodeEdit) ||
       isSaving ||
       draft === data.data ||
       draft === failedDraftRef.current
@@ -286,7 +303,7 @@ function ArtifactPanelView({ sessionId, client, workspaceId, workspaceRoot, isRe
     }, 600);
 
     return () => window.clearTimeout(timer);
-  }, [draft, data, editing, isDirectTextEdit, isSaving, target.kind, mutate]);
+  }, [draft, data, editing, isDirectTextEdit, isDirectCodeEdit, isSaving, target.kind, mutate]);
 
   const saveSpreadsheetContent = async (payload: Data) => {
     if (target.kind !== "file") {
@@ -302,30 +319,27 @@ function ArtifactPanelView({ sessionId, client, workspaceId, workspaceRoot, isRe
   return (
     <div className="flex h-full min-h-0 flex-col bg-background">
       <div className="shrink-0 border-b border-border bg-background mac:bg-background/80 mac:backdrop-blur-2xl mac:backdrop-saturate-150">
-        <div className="flex h-10 items-center gap-2 pe-2 ps-4">
+        <div className="flex h-10 items-center gap-2 pe-2 ps-2">
+          <Tooltip>
+            <TooltipTrigger
+              render={(
+                <Button variant="ghost" size="icon-sm" onClick={() => setTreeOpen((value) => !value)} aria-label={treeOpen ? "Hide workspace files" : "Show workspace files"}>
+                  {treeOpen ? <PanelLeftClose /> : <PanelLeftOpen />}
+                </Button>
+              )}
+            />
+            <TooltipContent>{treeOpen ? "Hide workspace files" : "Show workspace files"}</TooltipContent>
+          </Tooltip>
           <div className="min-w-0 flex-1 flex items-center gap-1.5">
-            {fileIcon ? (
-              <img src={fileIcon} alt="" className="h-4 w-4 shrink-0 object-contain" />
-            ) : null}
             <h3 className="min-w-0 truncate text-sm font-medium text-foreground">
               {target.name}
             </h3>
             <span className="shrink-0 text-xs text-muted-foreground">
-              {target.exists === false ? "missing" : isTextEditing ? (isSaving || isDirty ? "Saving\u2026" : "Saved") : ""}
+              {target.exists === false ? "missing" : isEditingSurface ? (isSaving || isDirty ? "Saving\u2026" : "Saved") : ""}
             </span>
           </div>
-          <div className="flex shrink-0 items-center gap-2">
-            <Tooltip>
-              <TooltipTrigger
-                render={(
-                  <Button variant="ghost" size="icon-sm" onClick={() => setTreeOpen((value) => !value)} aria-label={treeOpen ? "Hide workspace files" : "Show workspace files"}>
-                    {treeOpen ? <PanelLeftClose /> : <PanelLeftOpen />}
-                  </Button>
-                )}
-              />
-              <TooltipContent>{treeOpen ? "Hide workspace files" : "Show workspace files"}</TooltipContent>
-            </Tooltip>
-            {isTextContent(target) && data?.kind === "text" && !isDirectTextEdit ? (
+          <div className="flex shrink-0 items-center gap-1">
+            {isTextContent(target) && data?.kind === "text" && !isDirectTextEdit && !isDirectCodeEdit ? (
               <Tooltip>
                 <TooltipTrigger
                   render={(
@@ -335,52 +349,44 @@ function ArtifactPanelView({ sessionId, client, workspaceId, workspaceRoot, isRe
                 <TooltipContent>{editing ? "Stop editing" : "Edit artifact"}</TooltipContent>
               </Tooltip>
             ) : null}
-          {target.kind === "file" ? (
+            {target.kind === "file" || target.kind === "url" ? (
+              <DropdownMenu>
+                <DropdownMenuTrigger
+                  render={(
+                    <Button variant="ghost" size="icon-sm" aria-label="Artifact actions">
+                      <Ellipsis />
+                    </Button>
+                  )}
+                />
+                <DropdownMenuContent align="end">
+                  {target.kind === "file" ? (
+                    <DropdownMenuItem onClick={() => void download()}>
+                      <Download /> Download
+                    </DropdownMenuItem>
+                  ) : null}
+                  {canUseDesktopFileActions ? (
+                    <DropdownMenuItem onClick={() => void revealExternal()}>
+                      <FolderOpen /> Show in folder
+                    </DropdownMenuItem>
+                  ) : null}
+                  {target.kind === "url" || canUseDesktopFileActions ? (
+                    <DropdownMenuItem onClick={() => void openExternal()}>
+                      <ExternalLink /> Open externally
+                    </DropdownMenuItem>
+                  ) : null}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            ) : null}
             <Tooltip>
               <TooltipTrigger
                 render={(
-                  <Button variant="ghost" size="icon-sm" onClick={() => void download()} aria-label="Download artifact">
-                    <Download />
+                  <Button variant="ghost" size="icon-sm" onClick={onClose} aria-label="Close artifact">
+                    <X />
                   </Button>
                 )}
               />
-              <TooltipContent>Download artifact</TooltipContent>
+              <TooltipContent>Close artifact</TooltipContent>
             </Tooltip>
-          ) : null}
-          {canUseDesktopFileActions ? (
-            <Tooltip>
-              <TooltipTrigger
-                render={(
-                  <Button variant="ghost" size="icon-sm" onClick={() => void revealExternal()} aria-label="Show in folder">
-                    <FolderOpen />
-                  </Button>
-                )}
-              />
-              <TooltipContent>Show in folder</TooltipContent>
-            </Tooltip>
-          ) : null}
-          {target.kind === "url" || isRemoteWorkspace || canUseDesktopFileActions ? (
-            <Tooltip>
-              <TooltipTrigger
-                render={(
-                  <Button variant="ghost" size="icon-sm" onClick={() => void openExternal()} aria-label={isRemoteWorkspace ? "Download artifact" : "Open externally"}>
-                    <ExternalLink />
-                  </Button>
-                )}
-              />
-              <TooltipContent>{isRemoteWorkspace ? "Download artifact" : "Open externally"}</TooltipContent>
-            </Tooltip>
-          ) : null}
-          <Tooltip>
-            <TooltipTrigger
-              render={(
-                <Button variant="ghost" size="icon-sm" onClick={onClose} aria-label="Close artifact">
-                  <X />
-                </Button>
-              )}
-            />
-            <TooltipContent>Close artifact</TooltipContent>
-          </Tooltip>
           </div>
         </div>
       </div>
@@ -393,6 +399,15 @@ function ArtifactPanelView({ sessionId, client, workspaceId, workspaceRoot, isRe
               workspaceName={workspaceName}
               selectedPath={target.value}
               onOpenFile={openWorkspaceFile}
+              fileActions={[
+                { id: "download", label: "Download", run: (entry) => void downloadFile(entry.path, entry.path.split(/[/\\]/).pop() ?? entry.path) },
+                ...(canUseDesktopWorkspaceActions
+                  ? [
+                    { id: "reveal", label: "Show in folder", run: (entry: OpenworkWorkspaceCatalogEntry) => void revealFile(entry.path) },
+                    { id: "open-external", label: "Open externally", run: (entry: OpenworkWorkspaceCatalogEntry) => void openFileExternally(entry.path) },
+                  ]
+                  : []),
+              ]}
             />
           </Suspense>
         ) : null}
@@ -407,7 +422,13 @@ function ArtifactPanelView({ sessionId, client, workspaceId, workspaceRoot, isRe
           <MarkdownPreview content={data.data} />
         ) : target.preview === "code" && data?.kind === "text" ? (
           <Suspense fallback={<PreviewLoading />}>
-            <ArtifactCodeView name={target.name} path={target.value} content={data.data} />
+            <ArtifactCodeView
+              name={target.name}
+              path={target.value}
+              content={data.data}
+              editable={isDirectCodeEdit}
+              onChange={setDraft}
+            />
           </Suspense>
         ) : target.preview === "sheet" ? (
           <SheetEditor

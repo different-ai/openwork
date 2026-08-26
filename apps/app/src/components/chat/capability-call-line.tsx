@@ -35,7 +35,12 @@ function ConnectorMark({ connector }: { connector: ConnectorToolIdentity }) {
     <span
       data-connector-icon={connector.id}
       data-connector-name={connector.name}
-      className="flex size-5 shrink-0 items-center justify-center overflow-hidden rounded-md bg-muted text-[10px] font-semibold text-foreground"
+      className={cn(
+        "flex size-5 shrink-0 items-center justify-center overflow-hidden rounded-md",
+        // The muted chip only exists to make the single-letter fallback read
+        // as an avatar; real brand icons render without a background.
+        !showImage && "bg-muted text-[10px] font-semibold text-foreground",
+      )}
       title={connector.name}
       aria-hidden="true"
     >
@@ -171,10 +176,6 @@ export function CapabilityCallLine({
           className="group flex min-w-0 max-w-full cursor-pointer items-center gap-2 text-start text-sm text-muted-foreground transition-colors hover:text-foreground"
           aria-label={open ? `${sentence.past}. Hide failure details` : `${sentence.past} failed. Show what to do next`}
         >
-          <ChevronRight
-            aria-hidden="true"
-            className={cn("size-3.5 shrink-0 text-muted-foreground/70 transition-transform duration-150", open && "rotate-90")}
-          />
           {connector ? <ConnectorMark connector={connector} /> : null}
           <span className="min-w-0 truncate">{sentence.past}</span>
           <span className="shrink-0 text-xs font-medium text-destructive">failed</span>

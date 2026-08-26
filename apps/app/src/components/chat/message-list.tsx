@@ -1259,21 +1259,34 @@ export function MessageList({ messages, status, activityStatus, retryStatus }: M
   const runActive = status === "submitted" || status === "streaming" || status === "retrying"
   const runStartedAtRef = React.useRef<number | null>(null)
   const [runElapsedSeconds, setRunElapsedSeconds] = React.useState(0)
+  // Anchor the counter to the user message that started the run (server
+  // timestamp), so switching sessions and back doesn't reset it to 0 on
+  // remount. Optimistic messages without metadata fall back to first-mount
+  // wall clock.
+  const runStartedAt = React.useMemo(() => {
+    if (!runActive) return null
+    for (let index = messages.length - 1; index >= 0; index--) {
+      const message = messages[index]
+      if (message && message.role === "user") return getMessageCreated(message)
+    }
+    return null
+  }, [messages, runActive])
   React.useEffect(() => {
     if (!runActive) {
       runStartedAtRef.current = null
       setRunElapsedSeconds(0)
       return
     }
-    if (runStartedAtRef.current === null) runStartedAtRef.current = Date.now()
+    if (runStartedAt !== null) runStartedAtRef.current = runStartedAt
+    else if (runStartedAtRef.current === null) runStartedAtRef.current = Date.now()
     const updateElapsed = () => {
       const startedAt = runStartedAtRef.current
-      if (startedAt !== null) setRunElapsedSeconds(Math.floor((Date.now() - startedAt) / 1000))
+      if (startedAt !== null) setRunElapsedSeconds(Math.max(0, Math.floor((Date.now() - startedAt) / 1000)))
     }
     updateElapsed()
     const interval = window.setInterval(updateElapsed, 1000)
     return () => window.clearInterval(interval)
-  }, [runActive])
+  }, [runActive, runStartedAt])
   const items = React.useMemo(() => groupMessages(messages, status), [messages, status]);
   const error = useSessionErrorMessage();
   const hasSessionErrorMessage = React.useMemo(() => messages.some(isSessionErrorMessage), [messages])

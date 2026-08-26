@@ -31,6 +31,21 @@ export function trackToolCallDuration(part: AnyToolPart): string | null {
   return formatToolCallDuration(elapsed)
 }
 
+/**
+ * Epoch ms when this call was first seen in flight, registering it if this
+ * is the first sighting. Module-scoped, so live elapsed counters survive
+ * component unmounts (e.g. switching sessions and back). Null once settled.
+ */
+export function getToolCallStartedAt(part: AnyToolPart): number | null {
+  if (!isToolPartInFlight(part)) return null
+  const callId = part.toolCallId
+  const existing = startedAtByCallId.get(callId)
+  if (existing !== undefined) return existing
+  const now = Date.now()
+  startedAtByCallId.set(callId, now)
+  return now
+}
+
 export function formatToolCallDuration(ms: number): string {
   const seconds = ms / 1000
   if (seconds < 10) return `${Math.max(0.1, Number(seconds.toFixed(1)))}s`

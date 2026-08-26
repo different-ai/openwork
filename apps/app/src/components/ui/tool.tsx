@@ -20,7 +20,6 @@ import {
   Bot,
   BookOpenCheck,
   Check,
-  ChevronDown,
   CircleAlert,
   Copy,
   ExternalLink,
@@ -200,17 +199,14 @@ const Tool = ({
         <CollapsibleTrigger
           className="group text-muted-foreground hover:text-foreground flex min-w-0 flex-1 cursor-pointer items-center justify-start gap-2 overflow-hidden text-start text-sm transition-colors"
         >
-          <span className="relative inline-flex size-4 shrink-0 items-center justify-center">
-            <span className="transition-opacity group-hover:opacity-0">
-              {inFlight ? (
-                <LoaderCircle className="size-4 animate-spin" />
-              ) : isError ? (
-                <CircleAlert className="text-destructive size-4" />
-              ) : (
-                <Icon className={cn("size-3.5", isSkill && "text-violet-11")} />
-              )}
-            </span>
-            <ChevronDown className="absolute size-4 opacity-0 transition-opacity group-hover:opacity-100 group-data-panel-open:rotate-180" />
+          <span className="inline-flex size-4 shrink-0 items-center justify-center">
+            {inFlight ? (
+              <LoaderCircle className="size-4 animate-spin" />
+            ) : isError ? (
+              <CircleAlert className="text-destructive size-4" />
+            ) : (
+              <Icon className={cn("size-3.5", isSkill && "text-violet-11")} />
+            )}
           </span>
           <span className="min-w-0 truncate">{label}</span>
           {isError && !errorAttribution ? (

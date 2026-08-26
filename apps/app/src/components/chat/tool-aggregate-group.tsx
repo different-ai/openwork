@@ -1,7 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import { AlertTriangle, ChevronRight, CirclePause, MoreHorizontal } from "lucide-react"
+import { AlertTriangle, CirclePause, MoreHorizontal } from "lucide-react"
 
 import { FileChip } from "@/components/chat/file-chip"
 import { useCurrentToolLifecycleResolver } from "@/components/chat/current-tool-lifecycle-context"
@@ -100,13 +100,6 @@ export function ToolAggregateGroup({ parts, className }: ToolAggregateGroupProps
         aria-expanded={expanded}
         className="group flex min-w-0 max-w-full cursor-pointer items-center gap-1.5 text-start text-sm text-muted-foreground transition-colors hover:text-foreground"
       >
-        <ChevronRight
-          aria-hidden="true"
-          className={cn(
-            "size-3.5 shrink-0 text-muted-foreground/70 transition-transform duration-150",
-            expanded && "rotate-90",
-          )}
-        />
         <span className="min-w-0 truncate">{summary}</span>
         {singleCommandDuration ? (
           <span className="shrink-0 tabular-nums text-xs text-muted-foreground/70">
@@ -121,21 +114,21 @@ export function ToolAggregateGroup({ parts, className }: ToolAggregateGroupProps
       </button>
 
       {currentLifecycle === "waiting" ? (
-        <div className="mt-1 flex items-center gap-1.5 ps-5 text-xs text-amber-11" role="status">
+        <div className="mt-1 flex items-center gap-1.5 text-xs text-amber-11" role="status">
           <CirclePause aria-hidden="true" className="size-3.5 shrink-0" />
           <span>Choose an option or approve the request to continue.</span>
         </div>
       ) : null}
 
       {currentLifecycle === "interrupted" ? (
-        <div className="mt-1 flex items-center gap-1.5 ps-5 text-xs text-destructive" role="alert">
+        <div className="mt-1 flex items-center gap-1.5 text-xs text-destructive" role="alert">
           <AlertTriangle aria-hidden="true" className="size-3.5 shrink-0" />
           <span>This step stopped before it finished. Retry to continue.</span>
         </div>
       ) : null}
 
       {nowLabel ? (
-        <div data-tool-aggregate-now className="mt-1 min-w-0 ps-5 text-sm text-muted-foreground">
+        <div data-tool-aggregate-now className="mt-1 min-w-0 text-sm text-muted-foreground">
           <span className="block min-w-0 truncate">
             <span className="ow-text-shimmer">Now: </span>
             {nowLabel}
@@ -144,7 +137,7 @@ export function ToolAggregateGroup({ parts, className }: ToolAggregateGroupProps
       ) : null}
 
       {expanded ? (
-        <div className="mt-1.5 flex flex-col gap-1 ps-5">
+        <div className="mt-1.5 flex flex-col gap-1">
           {visibleParts.map((part, index) => {
             const lifecycle = resolveLifecycle(part.toolCallId, isToolPartInFlight(part))
             const status = lifecycle ?? persistedRowStatus(part)

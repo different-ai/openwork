@@ -11,7 +11,7 @@ import {
 import { useMessageList } from "@/components/chat/message-list-provider"
 import { taskChildSessionId, type TaskToolPart } from "@/lib/build-in-tools"
 import { isToolPartInFlight } from "@/lib/tool-activity"
-import { trackToolCallDuration } from "@/lib/tool-call-duration"
+import { getToolCallStartedAt, trackToolCallDuration } from "@/lib/tool-call-duration"
 import { cn } from "@/lib/utils"
 
 type SubagentRunLineProps = {
@@ -43,15 +43,18 @@ export function SubagentRunLine({ part, className }: SubagentRunLineProps) {
   const isFailed = part.state === "output-error"
   const duration = trackToolCallDuration(part)
   const [elapsedSeconds, setElapsedSeconds] = useState(0)
+  // First-seen-in-flight time lives in a module map, so remounting (like
+  // switching sessions and back) resumes the counter instead of restarting.
+  const startedAt = getToolCallStartedAt(part)
   useEffect(() => {
-    if (!inFlight) return
-    const startedAt = Date.now()
-    setElapsedSeconds(0)
-    const interval = window.setInterval(() => {
-      setElapsedSeconds(Math.floor((Date.now() - startedAt) / 1000))
-    }, 1000)
+    if (!inFlight || startedAt === null) return
+    const update = () => {
+      setElapsedSeconds(Math.max(0, Math.floor((Date.now() - startedAt) / 1000)))
+    }
+    update()
+    const interval = window.setInterval(update, 1000)
     return () => window.clearInterval(interval)
-  }, [inFlight, part.toolCallId])
+  }, [inFlight, startedAt, part.toolCallId])
   const title = part.input?.description?.trim() || "Sub-agent task"
   const agent = agentName(part.input?.subagent_type ?? "")
   const status = inFlight
