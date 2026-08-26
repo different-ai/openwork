@@ -171,6 +171,30 @@ describe("gateway runtime mode", () => {
     });
   });
 
+  test("keeps the OpenWork server snapshot stable when options have not changed", () => {
+    installWindow({ origin: "https://web.openworklabs.com", gateway: true });
+    const store = createTestOpenworkServerStore();
+    const initialSnapshot = store.getSnapshot();
+    let notifications = 0;
+    const unsubscribe = store.subscribe(() => {
+      notifications += 1;
+    });
+
+    store.syncFromOptions();
+
+    expect(store.getSnapshot()).toBe(initialSnapshot);
+    expect(notifications).toBe(0);
+
+    store.updateOpenworkServerSettings({
+      urlOverride: "https://instance.example.com",
+      token: "instance-token",
+    });
+
+    expect(store.getSnapshot()).not.toBe(initialSnapshot);
+    expect(notifications).toBe(1);
+    unsubscribe();
+  });
+
   test("keeps Den web on the configured origin and Den API calls on the gateway origin", () => {
     const storage = installWindow({ origin: "https://gw.example", gateway: true });
     storage.setItem("openwork.den.baseUrl", "https://app.openworklabs.com");

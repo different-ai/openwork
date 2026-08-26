@@ -522,10 +522,137 @@ select:disabled {
   background-color: rgb(var(--dls-secondary-rgb) / 0.22);
 }
 
+/* The running-work mark used to advance these frames with a React interval,
+   causing every mounted loader to commit about five times per second. Opacity
+   animation keeps the same four frames on the compositor instead. */
+.ow-dot-matrix-dot {
+  animation-duration: 720ms;
+  animation-iteration-count: infinite;
+  animation-timing-function: step-end;
+}
+
+.ow-dot-matrix-on {
+  opacity: 0.9;
+}
+
+.ow-dot-matrix-off {
+  opacity: 0.25;
+}
+
+@keyframes ow-dot-matrix-a {
+  0%,
+  75%,
+  100% {
+    opacity: 0.9;
+  }
+  25%,
+  50% {
+    opacity: 0.25;
+  }
+}
+
+@keyframes ow-dot-matrix-b {
+  0%,
+  50% {
+    opacity: 0.25;
+  }
+  25%,
+  75%,
+  100% {
+    opacity: 0.9;
+  }
+}
+
+@keyframes ow-dot-matrix-c {
+  0%,
+  25%,
+  75%,
+  100% {
+    opacity: 0.25;
+  }
+  50% {
+    opacity: 0.9;
+  }
+}
+
+@keyframes ow-dot-matrix-d {
+  0%,
+  25%,
+  100% {
+    opacity: 0.9;
+  }
+  50%,
+  75% {
+    opacity: 0.25;
+  }
+}
+
+@keyframes ow-dot-matrix-e {
+  0%,
+  50%,
+  75%,
+  100% {
+    opacity: 0.9;
+  }
+  25% {
+    opacity: 0.25;
+  }
+}
+
+@keyframes ow-dot-matrix-f {
+  0%,
+  75%,
+  100% {
+    opacity: 0.25;
+  }
+  25%,
+  50% {
+    opacity: 0.9;
+  }
+}
+
+@keyframes ow-dot-matrix-g {
+  0%,
+  25%,
+  75%,
+  100% {
+    opacity: 0.9;
+  }
+  50% {
+    opacity: 0.25;
+  }
+}
+
+.ow-dot-matrix-frame-a {
+  animation-name: ow-dot-matrix-a;
+}
+.ow-dot-matrix-frame-b {
+  animation-name: ow-dot-matrix-b;
+}
+.ow-dot-matrix-frame-c {
+  animation-name: ow-dot-matrix-c;
+}
+.ow-dot-matrix-frame-d {
+  animation-name: ow-dot-matrix-d;
+}
+.ow-dot-matrix-frame-e {
+  animation-name: ow-dot-matrix-e;
+}
+.ow-dot-matrix-frame-f {
+  animation-name: ow-dot-matrix-f;
+}
+.ow-dot-matrix-frame-g {
+  animation-name: ow-dot-matrix-g;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .ow-dot-ticker {
     animation: none;
     background-color: rgb(var(--dls-accent-rgb) / 0.6);
+  }
+
+  .ow-dot-matrix-dot {
+    animation: none;
   }
 }
 
