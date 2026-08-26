@@ -29,6 +29,8 @@ test("UI control failures are logged locally without exposing exception details"
     appName: "OpenWork",
     appIdentifier: "com.differentai.openwork",
     getWindow: async () => { throw failure; },
+    listWebMcpTools: () => ({ ok: false, error: "The built-in browser is not ready." }),
+    executeWebMcpTool: () => ({ ok: false, error: "The built-in browser is not ready." }),
   });
 
   try {

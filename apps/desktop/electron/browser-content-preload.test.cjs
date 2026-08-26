@@ -3,7 +3,7 @@ const test = require("node:test");
 
 const { installWebMcpRuntime } = require("./browser-content-preload.cjs");
 
-function createRealm() {
+function createRealm(policy = null) {
   class TestDocument {
     constructor() {
       this.defaultView = null;
@@ -26,6 +26,7 @@ function createRealm() {
     window: globalThis.window,
   };
   const window = new TestWindow("https://example.test");
+  if (policy) window.__openworkWebMcpPolicyV1 = { check: async () => policy };
   globalThis.Document = TestDocument;
   globalThis.document = window.document;
   globalThis.window = window;
@@ -136,6 +137,50 @@ test("executeTool propagates cancellation to the website callback", async () => 
     controller.abort();
     await assert.rejects(execution, (error) => error?.name === "AbortError");
     assert.equal(callbackSignal.aborted, true);
+  } finally {
+    realm.restore();
+  }
+});
+
+test("the page API enforces native frame policy before registering tools", async () => {
+  const denied = createRealm({ allowed: false, originKeyed: true });
+  try {
+    await assert.rejects(
+      denied.window.document.modelContext.registerTool({
+        name: "blocked",
+        description: "Must not register.",
+        execute: async () => ({}),
+      }),
+      (error) => error instanceof DOMException && error.name === "NotAllowedError",
+    );
+  } finally {
+    denied.restore();
+  }
+
+  const nonOriginKeyed = createRealm({ allowed: true, originKeyed: false });
+  try {
+    await assert.rejects(
+      nonOriginKeyed.window.document.modelContext.getTools(),
+      (error) => error instanceof DOMException && error.name === "SecurityError",
+    );
+  } finally {
+    nonOriginKeyed.restore();
+  }
+});
+
+test("aborting while registration is pending rejects and unregisters atomically", async () => {
+  const realm = createRealm();
+  try {
+    const controller = new AbortController();
+    const registration = realm.window.document.modelContext.registerTool({
+      name: "pending",
+      description: "Pending registration.",
+      execute: async () => ({}),
+    }, { signal: controller.signal });
+    await Promise.resolve();
+    controller.abort();
+    await assert.rejects(registration, (error) => error?.name === "AbortError");
+    assert.deepEqual(await realm.window.document.modelContext.getTools(), []);
   } finally {
     realm.restore();
   }

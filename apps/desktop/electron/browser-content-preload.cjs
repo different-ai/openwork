@@ -18,6 +18,7 @@ function installWebMcpRuntime() {
   }
 
   const INTERNAL = Symbol.for("webmcp.model-context.internal");
+  const POLICY_BRIDGE = "__openworkWebMcpPolicyV1";
   const contexts = new WeakMap();
   const TOOL_NAME = /^[A-Za-z0-9_.-]{1,128}$/;
 
@@ -27,6 +28,21 @@ function installWebMcpRuntime() {
 
   function abortReason(signal) {
     return signal?.reason ?? domError("The operation was aborted.", "AbortError");
+  }
+
+  async function assertPolicy(targetWindow = window) {
+    const check = targetWindow?.[POLICY_BRIDGE]?.check;
+    if (typeof check !== "function") return;
+    const policy = await check({
+      originAgentCluster: targetWindow.originAgentCluster !== false,
+      domainMatchesHost: targetWindow.document.domain === targetWindow.location.hostname,
+    });
+    if (!policy?.originKeyed) {
+      throw domError("WebMCP requires an origin-keyed document.", "SecurityError");
+    }
+    if (!policy?.allowed) {
+      throw domError("WebMCP is disabled by the tools Permissions Policy.", "NotAllowedError");
+    }
   }
 
   function serializeJson(value, label) {
@@ -127,6 +143,7 @@ function installWebMcpRuntime() {
       if (!state.ownerDocument.defaultView || !state.ownerDocument.defaultView.document) {
         throw domError("The document is not fully active.", "InvalidStateError");
       }
+      await assertPolicy(state.ownerDocument.defaultView);
       if (!tool || typeof tool !== "object") throw new TypeError("A WebMCP tool dictionary is required.");
       const name = String(tool.name ?? "");
       const description = String(tool.description ?? "");
@@ -171,12 +188,17 @@ function installWebMcpRuntime() {
       }
       state.tools.set(name, registration);
       await notifyToolChange(state.ownerDocument, exposedOrigins);
+      if (signal?.aborted) {
+        if (state.tools.get(name) === registration) state.tools.delete(name);
+        throw abortReason(signal);
+      }
     }
 
     async getTools(options = {}) {
       const state = this[INTERNAL];
       const ownerWindow = state.ownerDocument.defaultView;
       if (!ownerWindow) throw domError("The document is not fully active.", "InvalidStateError");
+      await assertPolicy(ownerWindow);
       const callerOrigin = ownerWindow.location.origin;
       const requestedOrigins = parseOrigins(options?.fromOrigins, "fromOrigins");
       const tools = [];
@@ -210,6 +232,7 @@ function installWebMcpRuntime() {
       if (!state.ownerDocument.defaultView) {
         throw domError("The document is not fully active.", "InvalidStateError");
       }
+      await assertPolicy(state.ownerDocument.defaultView);
       if (!tool || typeof tool !== "object") throw new TypeError("A registered WebMCP tool is required.");
       if (!inputObject || typeof inputObject !== "object") {
         throw domError("WebMCP tool input must be an object.", "DataError");
@@ -302,6 +325,11 @@ function installToolChangeRelay() {
 
 if (typeof window !== "undefined" && typeof document !== "undefined") {
   try {
+    if (typeof contextBridge?.exposeInMainWorld === "function" && ipcRenderer?.invoke) {
+      contextBridge.exposeInMainWorld("__openworkWebMcpPolicyV1", {
+        check: (runtimePolicy) => ipcRenderer.invoke("openwork:webmcp:frame-policy", runtimePolicy),
+      });
+    }
     if (typeof contextBridge?.executeInMainWorld === "function") {
       contextBridge.executeInMainWorld({ func: installWebMcpRuntime });
     } else if (typeof webFrame?.executeJavaScript === "function") {

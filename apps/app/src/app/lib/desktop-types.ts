@@ -66,4 +66,19 @@ export type BrowserPanelTab = {
   canGoBack: boolean;
   canGoForward: boolean;
   siteToolCount: number;
+  siteTools: Array<{
+    toolId?: string;
+    name: string;
+    title: string;
+    origin: string;
+    readOnly: boolean;
+  }>;
+  siteToolActivity: Array<{
+    at: string;
+    name: string;
+    origin: string;
+    readOnly: boolean;
+    status: "completed" | "failed";
+    code?: string;
+  }>;
 };
