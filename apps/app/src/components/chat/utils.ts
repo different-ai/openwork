@@ -1,6 +1,8 @@
 import { isReasoningUIPart, isToolUIPart, type DynamicToolUIPart, type FileUIPart, type ToolUIPart, type UIMessage } from "ai"
 import type { ThreadStatus } from "@/lib/messages"
-import { isAggregatableToolPart } from "@/lib/tool-aggregate"
+// Relative so the pure grouping contract stays importable from alias-free
+// test workspaces (evals specs import this module directly).
+import { isAggregatableToolPart } from "../../lib/tool-aggregate"
 
 const DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 const PPTX_MIME = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
@@ -295,12 +297,15 @@ export function getAssistantRenderGroups(
 
     if (isToolUIPart(part)) {
       // Paper aggregation rule: consecutive command/edit/read/search calls
-      // collapse into one aggregate group. Prose, files, and other tools
-      // break the run; reasoning does not — thinking models emit a
-      // reasoning part before nearly every call, and letting it split the
-      // run degrades every aggregate to a single call.
+      // collapse into one aggregate group. Prose, files, other tools, and
+      // visible reasoning all break the run: a thought stays between the
+      // calls it separated, so the transcript reads chronologically instead
+      // of absorbing later calls into the aggregate above the thought.
+      // Hidden reasoning (showThinking off) and whitespace-only reasoning
+      // never form a group, so they keep the run — and its compact
+      // aggregate — intact.
       if (isAggregatableToolPart(part)) {
-        const previous = groups.findLast((group) => group.kind !== "reasoning")
+        const previous = groups.at(-1)
         if (previous?.kind === "tool-aggregate") {
           previous.parts.push(part)
         } else {

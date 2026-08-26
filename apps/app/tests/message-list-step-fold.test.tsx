@@ -125,7 +125,7 @@ describe("finished turn step fold (single OpenCode message per turn)", () => {
     expect(markup).toContain("Done.");
   });
 
-  test("reasoning between calls does not fragment the aggregate", () => {
+  test("reasoning between calls splits the aggregate so thoughts stay in order", () => {
     const assistant: UIMessage = {
       id: "assistant-3",
       role: "assistant",
@@ -142,6 +142,17 @@ describe("finished turn step fold (single OpenCode message per turn)", () => {
 
     const markup = renderList([userMessage, assistant]);
 
-    expect(markup).toContain("Ran 2 commands");
+    // The second call is not absorbed into the aggregate above the thought.
+    expect(markup).not.toContain("Ran 2 commands");
+
+    // Thought, call, thought, call — chronological in the rendered output.
+    const firstThought = markup.indexOf("Thought");
+    const firstRun = markup.indexOf("Ran command", firstThought);
+    const secondThought = markup.indexOf("Thought", firstRun);
+    const secondRun = markup.indexOf("Ran command", secondThought);
+    expect(firstThought).toBeGreaterThan(-1);
+    expect(firstRun).toBeGreaterThan(firstThought);
+    expect(secondThought).toBeGreaterThan(firstRun);
+    expect(secondRun).toBeGreaterThan(secondThought);
   });
 });

@@ -52,7 +52,7 @@ describe("getAssistantRenderGroups tool aggregation", () => {
     }
   });
 
-  test("reasoning between tool calls does not break the run (thinking models)", () => {
+  test("visible reasoning between tool calls breaks the run so thoughts stay chronological", () => {
     const groups = getAssistantRenderGroups(
       [
         reasoningPart("let me look"),
@@ -66,14 +66,52 @@ describe("getAssistantRenderGroups tool aggregation", () => {
       true
     );
 
+    // Thought, calls, thought, calls… in the order the model produced them —
+    // later calls are never absorbed into an aggregate above a thought.
+    expect(groups.map((group) => group.kind)).toEqual([
+      "reasoning",
+      "tool-aggregate",
+      "reasoning",
+      "tool-aggregate",
+      "reasoning",
+      "tool-aggregate",
+      "text",
+    ]);
     const aggregates = groups.filter((group) => group.kind === "tool-aggregate");
-    expect(aggregates).toHaveLength(1);
-    if (aggregates[0].kind === "tool-aggregate") {
-      expect(aggregates[0].parts.map((part) => part.toolCallId)).toEqual(["c1", "c2", "c3"]);
+    expect(
+      aggregates.map((group) => (group.kind === "tool-aggregate" ? group.parts.map((part) => part.toolCallId) : []))
+    ).toEqual([["c1"], ["c2"], ["c3"]]);
+  });
+
+  test("hidden reasoning keeps the run as one compact aggregate", () => {
+    const groups = getAssistantRenderGroups(
+      [
+        reasoningPart("let me look"),
+        bashPart("c1"),
+        reasoningPart("now edit"),
+        editPart("c2", "/tmp/a.ts"),
+        bashPart("c3"),
+        textPart("Done."),
+      ],
+      false
+    );
+
+    expect(groups.map((group) => group.kind)).toEqual(["tool-aggregate", "text"]);
+    if (groups[0].kind === "tool-aggregate") {
+      expect(groups[0].parts.map((part) => part.toolCallId)).toEqual(["c1", "c2", "c3"]);
     }
-    // Reasoning still renders, just without splitting the aggregate.
-    expect(groups.filter((group) => group.kind === "reasoning").length).toBeGreaterThan(0);
-    expect(groups.at(-1)?.kind).toBe("text");
+  });
+
+  test("whitespace-only reasoning does not break the run", () => {
+    const groups = getAssistantRenderGroups(
+      [bashPart("c1"), reasoningPart("  \n"), bashPart("c2")],
+      true
+    );
+
+    expect(groups.map((group) => group.kind)).toEqual(["tool-aggregate"]);
+    if (groups[0].kind === "tool-aggregate") {
+      expect(groups[0].parts.map((part) => part.toolCallId)).toEqual(["c1", "c2"]);
+    }
   });
 
   test("prose between tool calls breaks the run", () => {

@@ -8,8 +8,8 @@ import {
   isGrepToolPart,
   isReadToolPart,
   isWriteToolPart,
-} from "@/lib/build-in-tools"
-import { getToolActivityLabel, isToolPartInFlight } from "@/lib/tool-activity"
+} from "./build-in-tools"
+import { getToolActivityLabel, isToolPartInFlight } from "./tool-activity"
 
 export type AnyToolPart = ToolUIPart | DynamicToolUIPart
 

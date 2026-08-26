@@ -15,8 +15,8 @@ import {
   isWebFetchToolPart,
   isWebSearchToolPart,
   isWriteToolPart,
-} from "@/lib/build-in-tools"
-import { parseFilename, truncateText } from "@/components/tools/path"
+} from "./build-in-tools"
+import { parseFilename, truncateText } from "../components/tools/path"
 
 type AnyToolPart = ToolUIPart | DynamicToolUIPart
 
