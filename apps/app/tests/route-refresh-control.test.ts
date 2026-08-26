@@ -1,7 +1,9 @@
 import { describe, expect, test } from "bun:test";
 
 import {
+  commitRouteWorkspaceSelection,
   createLatestWorkspaceCommitter,
+  createRouteWorkspaceSelectionCommitter,
   createRouteRefreshLifecycle,
   planRouteConnectionGap,
   planRouteWorkspaceLoads,
@@ -47,6 +49,87 @@ describe("createLatestWorkspaceCommitter", () => {
     await committer.settled();
 
     expect(committed).toEqual(["ws_1"]);
+  });
+});
+
+describe("route workspace selection handoff", () => {
+  test("keeps the Settings destination behind an in-flight session commit", async () => {
+    const committed: string[] = [];
+    let releaseSessionCommit: () => void = () => undefined;
+    const sessionCommitBlocked = new Promise<void>((resolve) => {
+      releaseSessionCommit = resolve;
+    });
+    const committer = createRouteWorkspaceSelectionCommitter();
+
+    committer.request("ws_1", async (workspaceId) => {
+      committed.push(`session:${workspaceId}:start`);
+      await sessionCommitBlocked;
+      committed.push(`session:${workspaceId}:end`);
+    });
+    committer.request("ws_2", async (workspaceId) => {
+      committed.push(`session:${workspaceId}`);
+    });
+    committer.request("ws_2", async (workspaceId) => {
+      committed.push(`settings:${workspaceId}`);
+    });
+
+    expect(committed).toEqual(["session:ws_1:start"]);
+    releaseSessionCommit();
+    await committer.settled();
+
+    expect(committed).toEqual([
+      "session:ws_1:start",
+      "session:ws_1:end",
+      "settings:ws_2",
+    ]);
+  });
+
+  test("retries the same destination with the newer route callback after a failed commit", async () => {
+    const committed: string[] = [];
+    let releaseFailedCommit: () => void = () => undefined;
+    const failedCommitBlocked = new Promise<void>((resolve) => {
+      releaseFailedCommit = resolve;
+    });
+    const committer = createRouteWorkspaceSelectionCommitter();
+
+    committer.request("ws_2", async () => {
+      committed.push("session:ws_2");
+      await failedCommitBlocked;
+      throw new Error("stale connection");
+    });
+    committer.request("ws_2", async () => {
+      committed.push("settings:ws_2");
+    });
+
+    releaseFailedCommit();
+    await committer.settled();
+    expect(committed).toEqual(["session:ws_2", "settings:ws_2"]);
+  });
+});
+
+describe("commitRouteWorkspaceSelection", () => {
+  test("serializes desktop mutations before server activation", async () => {
+    const calls: string[] = [];
+    await commitRouteWorkspaceSelection({
+      workspaceId: " ws_2 ",
+      desktopRuntime: true,
+      setDesktopSelected: async (workspaceId) => { calls.push(`selected:${workspaceId}`); },
+      setDesktopRuntimeActive: async (workspaceId) => { calls.push(`runtime:${workspaceId}`); },
+      activateWorkspace: async (workspaceId) => { calls.push(`server:${workspaceId}`); },
+    });
+    expect(calls).toEqual(["selected:ws_2", "runtime:ws_2", "server:ws_2"]);
+  });
+
+  test("continues after a desktop persistence failure", async () => {
+    const calls: string[] = [];
+    await commitRouteWorkspaceSelection({
+      workspaceId: "ws_2",
+      desktopRuntime: true,
+      setDesktopSelected: async () => { throw new Error("write failed"); },
+      setDesktopRuntimeActive: async (workspaceId) => { calls.push(`runtime:${workspaceId}`); },
+      activateWorkspace: async (workspaceId) => { calls.push(`server:${workspaceId}`); },
+    });
+    expect(calls).toEqual(["runtime:ws_2", "server:ws_2"]);
   });
 });
 

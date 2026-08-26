@@ -48,10 +48,11 @@ import {
 } from "./desktop-local-openwork";
 import { resolveOpenworkConnection } from "./openwork-connection";
 import {
-  createLatestWorkspaceCommitter,
+  commitRouteWorkspaceSelection,
   createRouteRefreshLifecycle,
   planRouteConnectionGap,
   planRouteWorkspaceLoads,
+  routeWorkspaceSelectionCommitter,
 } from "./route-refresh-control";
 import {
   classifyRouteSessionReadError,
@@ -421,23 +422,21 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
   );
   const workspaceSelectionCommitRef = useRef<(workspaceId: string) => Promise<void>>(async () => undefined);
   workspaceSelectionCommitRef.current = async (workspaceId) => {
-    if (isDesktopRuntime()) {
-      await workspaceSetSelected(workspaceId).catch(() => undefined);
-      await workspaceSetRuntimeActive(workspaceId).catch(() => undefined);
-    }
-    const workspace = workspacesRef.current.find((item) => item.id === workspaceId) ?? null;
-    const endpoint = endpointForWorkspace(workspace);
-    if (!endpoint) return;
-    if (workspace?.workspaceType === "local" && serverActiveWorkspaceIdRef.current === workspaceId) return;
-    await endpoint.client.activateWorkspace(endpoint.workspaceId, { persist: true });
-    if (workspace?.workspaceType === "local") serverActiveWorkspaceIdRef.current = workspaceId;
+    await commitRouteWorkspaceSelection({
+      workspaceId,
+      desktopRuntime: isDesktopRuntime(),
+      setDesktopSelected: workspaceSetSelected,
+      setDesktopRuntimeActive: workspaceSetRuntimeActive,
+      activateWorkspace: async (selectedId) => {
+        const workspace = workspacesRef.current.find((item) => item.id === selectedId) ?? null;
+        const endpoint = endpointForWorkspace(workspace);
+        if (!endpoint) throw new Error(`Workspace endpoint unavailable for ${selectedId}.`);
+        if (workspace?.workspaceType === "local" && serverActiveWorkspaceIdRef.current === selectedId) return;
+        await endpoint.client.activateWorkspace(endpoint.workspaceId, { persist: true });
+        if (workspace?.workspaceType === "local") serverActiveWorkspaceIdRef.current = selectedId;
+      },
+    });
   };
-  const workspaceSelectionCommitterRef = useRef<ReturnType<typeof createLatestWorkspaceCommitter> | null>(null);
-  if (!workspaceSelectionCommitterRef.current) {
-    workspaceSelectionCommitterRef.current = createLatestWorkspaceCommitter(
-      (workspaceId) => workspaceSelectionCommitRef.current(workspaceId),
-    );
-  }
 
   const refreshRouteState = useCallback(async (options?: { supersede?: boolean }) => {
     // Dedupe: if a refresh is already running, skip this call. Fast workspace
@@ -681,7 +680,10 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
 
     workspaceSelectionCommitTimerRef.current = window.setTimeout(() => {
       workspaceSelectionCommitTimerRef.current = null;
-      workspaceSelectionCommitterRef.current?.request(routeWorkspaceId);
+      routeWorkspaceSelectionCommitter.request(
+        routeWorkspaceId,
+        (workspaceId) => workspaceSelectionCommitRef.current(workspaceId),
+      );
     }, ROUTE_WORKSPACE_ACTIVATION_SETTLE_MS);
     // On navigation only the routed workspace needs a load: boot already
     // scheduled background loads for every other unloaded workspace.

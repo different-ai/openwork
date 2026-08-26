@@ -3,6 +3,7 @@ import { describe, expect, test } from "bun:test";
 import {
   classifyRouteSessionReadError,
   mergeRouteWorkspaces,
+  readRouteSessionsWithRetry,
   refreshRouteWorkspaceListState,
 } from "../src/react-app/shell/route-workspaces";
 import {
@@ -85,8 +86,45 @@ describe("workspace route session read errors", () => {
     expect(classifyRouteSessionReadError(Object.assign(new Error("missing"), { status: 404, code: "session_not_found" }))).toBe("not-found");
     expect(classifyRouteSessionReadError(Object.assign(new Error("workspace missing"), { status: 404, code: "workspace_not_found" }))).toBe("error");
     expect(classifyRouteSessionReadError(Object.assign(new Error("upstream"), { status: 502 }))).toBe("retryable");
+    expect(classifyRouteSessionReadError(Object.assign(new Error("engine starting"), { status: 400, code: "opencode_unconfigured" }))).toBe("retryable");
     expect(classifyRouteSessionReadError(new Error("request timed out"))).toBe("retryable");
     expect(classifyRouteSessionReadError(Object.assign(new Error("forbidden"), { status: 403 }))).toBe("error");
+  });
+
+  test("retries a bounded runtime startup gap and returns the recovered sessions", async () => {
+    let attempts = 0;
+    const waits: number[] = [];
+    const sessions = await readRouteSessionsWithRetry({
+      load: async () => {
+        attempts += 1;
+        if (attempts < 3) {
+          throw Object.assign(new Error("engine starting"), {
+            status: 400,
+            code: "opencode_unconfigured",
+          });
+        }
+        return ["session-1"];
+      },
+      retryDelaysMs: [250, 750, 1_500],
+      wait: async (delayMs) => { waits.push(delayMs); },
+    });
+
+    expect(sessions).toEqual(["session-1"]);
+    expect(attempts).toBe(3);
+    expect(waits).toEqual([250, 750]);
+  });
+
+  test("does not retry a terminal authorization failure", async () => {
+    let attempts = 0;
+    await expect(readRouteSessionsWithRetry({
+      load: async () => {
+        attempts += 1;
+        throw Object.assign(new Error("forbidden"), { status: 403 });
+      },
+      retryDelaysMs: [250, 750],
+      wait: async () => undefined,
+    })).rejects.toMatchObject({ status: 403 });
+    expect(attempts).toBe(1);
   });
 });
 

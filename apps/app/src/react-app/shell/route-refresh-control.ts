@@ -36,6 +36,15 @@ export type LatestWorkspaceCommitter = {
   settled(): Promise<void>;
 };
 
+export type RouteWorkspaceSelectionCommit = (workspaceId: string) => Promise<void>;
+
+export type RouteWorkspaceSelectionCommitter = {
+  /** Queue the newest route selection, including the route's live commit implementation. */
+  request(workspaceId: string, commit: RouteWorkspaceSelectionCommit): void;
+  /** Resolve after the current commit and any newer queued route selection finish. */
+  settled(): Promise<void>;
+};
+
 /**
  * Serialize workspace-selection side effects while retaining only the newest
  * request. Desktop persistence and server activation cannot safely race: an
@@ -44,17 +53,42 @@ export type LatestWorkspaceCommitter = {
 export function createLatestWorkspaceCommitter(
   commit: (workspaceId: string) => Promise<void>,
 ): LatestWorkspaceCommitter {
-  let pendingWorkspaceId: string | null = null;
+  const committer = createRouteWorkspaceSelectionCommitter();
+
+  return {
+    request(workspaceId) {
+      committer.request(workspaceId, commit);
+    },
+    settled: () => committer.settled(),
+  };
+}
+
+/**
+ * Serialize workspace selection across route lifetimes. A component-local
+ * queue disappears when navigation unmounts the session route, which lets a
+ * pending session selection race the Settings route's first runtime reads.
+ * Each request carries its route's live commit callback so the shared queue
+ * can outlive either component while retaining only the newest destination.
+ */
+export function createRouteWorkspaceSelectionCommitter(): RouteWorkspaceSelectionCommitter {
+  let pending: { workspaceId: string; commit: RouteWorkspaceSelectionCommit } | null = null;
   let running: Promise<void> | null = null;
 
   const drain = async () => {
-    while (pendingWorkspaceId !== null) {
-      const workspaceId = pendingWorkspaceId;
-      pendingWorkspaceId = null;
-      await commit(workspaceId).catch(() => undefined);
-      // A duplicate request received while this commit was running is already
-      // satisfied. A different id remains queued and runs next.
-      if (pendingWorkspaceId === workspaceId) pendingWorkspaceId = null;
+    while (pending !== null) {
+      const request = pending;
+      pending = null;
+      let succeeded = true;
+      try {
+        await request.commit(request.workspaceId);
+      } catch {
+        succeeded = false;
+      }
+      // A newer request for the same workspace is satisfied only when this
+      // commit succeeded. After a failure, retain the newer route's callback
+      // because it may hold a freshly resolved connection.
+      const newerRequest = pending as { workspaceId: string; commit: RouteWorkspaceSelectionCommit } | null;
+      if (succeeded && newerRequest?.workspaceId === request.workspaceId) pending = null;
     }
   };
 
@@ -62,21 +96,46 @@ export function createLatestWorkspaceCommitter(
     if (running) return;
     running = drain().finally(() => {
       running = null;
-      if (pendingWorkspaceId !== null) start();
+      if (pending !== null) start();
     });
   };
 
   return {
-    request(workspaceId) {
+    request(workspaceId, commit) {
       const id = workspaceId.trim();
       if (!id) return;
-      pendingWorkspaceId = id;
+      pending = { workspaceId: id, commit };
       start();
     },
     async settled() {
       while (running) await running;
     },
   };
+}
+
+/** One last-selection-wins queue shared by session, Settings, and extensions routes. */
+export const routeWorkspaceSelectionCommitter = createRouteWorkspaceSelectionCommitter();
+
+/**
+ * Apply the three workspace-selection side effects in a stable order. The
+ * desktop store implements selected and runtime-active as separate read/write
+ * mutations, so issuing them concurrently can make the last writer restore
+ * stale fields from its earlier read.
+ */
+export async function commitRouteWorkspaceSelection(input: {
+  workspaceId: string;
+  desktopRuntime: boolean;
+  setDesktopSelected: (workspaceId: string) => Promise<unknown>;
+  setDesktopRuntimeActive: (workspaceId: string) => Promise<unknown>;
+  activateWorkspace: (workspaceId: string) => Promise<unknown>;
+}): Promise<void> {
+  const workspaceId = input.workspaceId.trim();
+  if (!workspaceId) return;
+  if (input.desktopRuntime) {
+    await input.setDesktopSelected(workspaceId).catch(() => undefined);
+    await input.setDesktopRuntimeActive(workspaceId).catch(() => undefined);
+  }
+  await input.activateWorkspace(workspaceId);
 }
 
 /**
