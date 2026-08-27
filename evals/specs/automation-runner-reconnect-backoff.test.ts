@@ -27,6 +27,8 @@ test("desktop Automation runner retires rejected credentials without changing tr
   expect(unit.stdout).toContain("repeated HTTP 502 responses retain exponential runner reconnect backoff");
   expect(unit.stdout).toContain("HTTP 401 from work retires exactly that credential without reconnecting");
   expect(unit.stdout).toContain("HTTP 403 from work retires exactly that credential without reconnecting");
+  expect(unit.stdout).toContain("HTTP 429 runner_unauthorized retires exactly that credential without reconnecting");
+  expect(unit.stdout).toContain("an unrelated HTTP 429 retains generic backoff without requesting a credential remint");
   expect(unit.stdout).toContain("HTTP 401 and 403 from every assignment route retire the credential");
   expect(unit.stdout).toContain("a new credential reconciles immediately and a late rejection cannot retire it");
   expect(unit.stdout).toContain("a late rejection retires a newer generation that reused the same credential");
@@ -42,8 +44,8 @@ test("desktop Automation runner retires rejected credentials without changing tr
   expect(unit.stdout).toContain("cancellation during execution preserves the local thread and reaches a terminal completion");
   expect(unit.stdout).toContain("an explicit assistant provider failure terminates immediately with its local thread");
   expect(unit.stdout).not.toContain("not ok");
-  expect(unit.stdout).toMatch(/# tests 30\b/);
-  expect(unit.stdout).toMatch(/# pass 30\b/);
+  expect(unit.stdout).toMatch(/# tests 33\b/);
+  expect(unit.stdout).toMatch(/# pass 33\b/);
   expect(unit.stdout).toMatch(/# fail 0\b/);
   expect(unit.stdout).toMatch(/# skipped 0\b/);
   expect(unit.stdout).toMatch(/# todo 0\b/);
@@ -65,7 +67,7 @@ test("desktop Automation runner retires rejected credentials without changing tr
   expect(bridgeOutput).toContain("0 fail");
   evidence.recordAssertionEvidence(
     "Rejected runner credentials stop and remint without disrupting valid work",
-    "The runner and bridge suites passed 42 tests covering one-shot 401/403 retirement on every runner route, fresh-token remint backoff, generation races, active assignments, in-flight claims, wake-time work polling, bounded idle polls, cancellation, provider and workspace failures, durable failed-thread linkage, tool-only completion, and work-only polling.",
+    "The runner and bridge suites passed 45 tests covering one-shot 401/403 and runner_unauthorized 429 retirement, unrelated 429 backoff, fresh-token remint backoff, generation races, active assignments, in-flight claims, wake-time work polling, bounded idle polls, cancellation, provider and workspace failures, durable failed-thread linkage, tool-only completion, and work-only polling.",
     true,
   );
 

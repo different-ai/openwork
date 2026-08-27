@@ -5,6 +5,7 @@ import {
   classifyAutomationExecutionError,
   createDesktopAutomationRunner,
   executeDesktopAutomation,
+  isAutomationRunnerCredentialRejection,
   normalizeRunnerBaseUrl,
   runnerTokenAudience,
 } from "./automation-runner.mjs"
@@ -27,16 +28,18 @@ function legacyRunnerToken() {
 
 const EXPECTED_RECONNECT_DELAYS = [500, 1_000, 2_000, 4_000, 8_000, 16_000, 30_000, 30_000, 30_000, 30_000]
 
-async function observeHttpFailureBackoff(status) {
+/** @param {Record<string, string>} [payload] */
+async function observeHttpFailureBackoff(status, payload = { message: "injected HTTP failure" }) {
   const paths = []
   const delays = []
+  const rejections = []
   const done = new AbortController()
   let runner = null
   runner = createDesktopAutomationRunner({
     getLocalRuntime: async () => ({ baseUrl: "http://127.0.0.1:3000", token: "local" }),
     fetchImpl: async (url) => {
       paths.push(new URL(url).pathname)
-      return Response.json({ message: "injected HTTP failure" }, { status })
+      return Response.json(payload, { status })
     },
     random: () => 0.5,
     waitBeforeReconnect: async (ms) => {
@@ -47,6 +50,7 @@ async function observeHttpFailureBackoff(status) {
         done.abort()
       }
     },
+    onCredentialRejected: () => { rejections.push(status) },
   })
   runner.configure({
     baseUrl: "https://den.example.com",
@@ -56,7 +60,7 @@ async function observeHttpFailureBackoff(status) {
   if (!done.signal.aborted) {
     await new Promise((resolve) => done.signal.addEventListener("abort", resolve, { once: true }))
   }
-  return { paths, delays }
+  return { paths, delays, rejections }
 }
 
 async function flushTasks() {
@@ -75,7 +79,12 @@ function withTimeout(promise, message) {
   })
 }
 
-async function observeCredentialRejection(status, deniedRequest) {
+/** @param {Record<string, string>} [payload] */
+async function observeCredentialRejection(
+  status,
+  deniedRequest,
+  payload = { message: "invalid runner credential" },
+) {
   const paths = []
   const delays = []
   const rejections = []
@@ -87,7 +96,7 @@ async function observeCredentialRejection(status, deniedRequest) {
       const path = new URL(url).pathname
       paths.push(path)
       if (path === deniedRequest) {
-        return Response.json({ message: "invalid runner credential" }, { status })
+        return Response.json(payload, { status, headers: { "Retry-After": "60" } })
       }
       if (path === "/v1/automation-runner/work") return Response.json({ items: [] })
       return new Promise((resolve, reject) => {
@@ -258,6 +267,14 @@ test("runner credentials retain their signed Den audience", () => {
   assert.equal(runnerTokenAudience(runnerTokenFor("http://attacker.example.com")), null)
 })
 
+test("runner credential rejection classification distinguishes auth throttles", () => {
+  assert.equal(isAutomationRunnerCredentialRejection({ status: 401 }), true)
+  assert.equal(isAutomationRunnerCredentialRejection({ status: 403 }), true)
+  assert.equal(isAutomationRunnerCredentialRejection({ status: 429, code: "runner_unauthorized" }), true)
+  assert.equal(isAutomationRunnerCredentialRejection({ status: 429, code: "rate_limited" }), false)
+  assert.equal(isAutomationRunnerCredentialRejection({ status: 429 }), false)
+})
+
 test("a renderer-supplied non-https base URL never receives the runner token", async () => {
   const attempted = []
   const runner = createDesktopAutomationRunner({
@@ -367,6 +384,24 @@ test("repeated HTTP 502 responses retain exponential runner reconnect backoff", 
   assert.deepEqual(delays, EXPECTED_RECONNECT_DELAYS)
   assert.equal(paths.filter((path) => path === "/v1/automation-runner/work").length, 10)
   assert.equal(paths.filter((path) => path === "/v1/automation-runners/events").length, 0)
+})
+
+test("HTTP 429 runner_unauthorized retires exactly that credential without reconnecting", async () => {
+  const { paths, delays, rejections } = await observeCredentialRejection(
+    429,
+    "/v1/automation-runner/work",
+    { error: "runner_unauthorized" },
+  )
+  assert.equal(paths.filter((path) => path === "/v1/automation-runner/work").length, 1)
+  assert.deepEqual(delays, [])
+  assert.deepEqual(rejections, [429])
+})
+
+test("an unrelated HTTP 429 retains generic backoff without requesting a credential remint", async () => {
+  const { paths, delays, rejections } = await observeHttpFailureBackoff(429, { error: "rate_limited" })
+  assert.deepEqual(delays, EXPECTED_RECONNECT_DELAYS)
+  assert.equal(paths.filter((path) => path === "/v1/automation-runner/work").length, 10)
+  assert.deepEqual(rejections, [])
 })
 
 for (const status of [401, 403]) {

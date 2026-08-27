@@ -32,8 +32,13 @@ import {
 } from "../../middleware/index.js"
 import { invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
 import { automationService, type AutomationService } from "../../automations/service.js"
-import { automationRunnerAudienceFromRequest, automationRunnerAuth } from "../../automations/runner-auth.js"
+import { AutomationRunnerAuth, automationRunnerAudienceFromRequest } from "../../automations/runner-auth.js"
+import {
+  AutomationRunnerRejectionLimiter,
+  AutomationRunnerRequestAuthenticator,
+} from "../../automations/runner-rejection-protection.js"
 import { env } from "../../env.js"
+import { appLogger } from "../../observability/logger.js"
 import {
   RUNNER_KEEPALIVE_INTERVAL_MS,
   RUNNER_NOTIFICATION_POLL_MIN_MS,
@@ -50,6 +55,9 @@ const paginationSchema = z.object({
 const runListSchema = z.object({ items: z.array(automationRunSchema), nextCursor: z.string().nullable() })
 const runResponseSchema = z.object({ run: automationRunSchema })
 const runnerClaimResponseSchema = z.object({ assignment: automationDesktopRunnerAssignmentSchema.nullable() })
+const RUNNER_REJECTION_MAX_FAILURES = 20
+const RUNNER_REJECTION_WINDOW_MS = 60_000
+const RUNNER_REJECTION_MAX_ENTRIES = 4_096
 type McpDescribeRouteOptions = DescribeRouteOptions & { "x-mcp": true }
 const describeMcpRoute = (options: McpDescribeRouteOptions) => describeRoute(options)
 // Runner-credential routes must never surface as MCP tools; an MCP caller with
@@ -116,6 +124,7 @@ export function registerAutomationRoutes<T extends { Variables: RouteVariables }
 ) {
   if (options.enabled === false) return
   const service = options.service ?? automationService
+  const automationRunnerAuth = new AutomationRunnerAuth(env.betterAuthSecret)
 
   app.post(
     "/v1/automation-runners/token",
@@ -167,16 +176,27 @@ export function registerAutomationRoutes<T extends { Variables: RouteVariables }
 
   // Runner tokens are stateless 12h credentials, so authorization is re-derived
   // per request: a signed token is honored only while its owner remains an
-  // active organization member.
-  const authenticateRunner = async (c: { req: { header(name: string): string | undefined } }) => {
-    const identity = automationRunnerAuth.authenticate(c.req.header("Authorization"))
-    if (!identity) return null
-    return (await service.isActiveRunnerOwner(identity)) ? identity : null
-  }
+  // active organization member. Rejected credentials are bounded in-process so
+  // a stale desktop cannot sustain unbounded database checks or warning logs.
+  const runnerRequestAuthenticator = new AutomationRunnerRequestAuthenticator({
+    auth: automationRunnerAuth,
+    limiter: new AutomationRunnerRejectionLimiter({
+      maxFailures: RUNNER_REJECTION_MAX_FAILURES,
+      windowMs: RUNNER_REJECTION_WINDOW_MS,
+      maxEntries: RUNNER_REJECTION_MAX_ENTRIES,
+    }),
+    audienceFromRequest: (request) => automationRunnerAudienceFromRequest(request, {
+      trustedOrigins: env.publicProxyTrustedOrigins,
+    }),
+    isActiveOwner: (identity) => service.isActiveRunnerOwner(identity),
+    logRejection: (fields) => appLogger.warn("automation runner credential rejected", fields),
+  })
+  const authenticateRunner = (c: { req: { raw: Request } }) => runnerRequestAuthenticator.authenticate(c.req.raw)
 
   app.get("/v1/automation-runners/events", async (c) => {
-    const identity = await authenticateRunner(c)
-    if (!identity) return c.json({ error: "runner_unauthorized" }, 401)
+    const authentication = await authenticateRunner(c)
+    if (!authentication.ok) return authentication.response
+    const identity = authentication.identity
     const requestedCursor = Number(c.req.header("Last-Event-ID") ?? "0")
     let cursor = Number.isSafeInteger(requestedCursor) && requestedCursor >= 0 ? requestedCursor : 0
     return streamSSE(c, async (stream) => {
@@ -225,21 +245,24 @@ export function registerAutomationRoutes<T extends { Variables: RouteVariables }
   })
 
   app.get("/v1/automation-runner/work", async (c) => {
-    const identity = await authenticateRunner(c)
-    if (!identity) return c.json({ error: "runner_unauthorized" }, 401)
+    const authentication = await authenticateRunner(c)
+    if (!authentication.ok) return authentication.response
+    const identity = authentication.identity
     return c.json(automationRunnerWorkResponseSchema.parse({ items: await service.discoverDesktopRunnerWork(identity) }))
   })
 
   app.post("/v1/automation-runs/:id/claim", paramValidator(automationRunParamsSchema), async (c) => {
-    const identity = await authenticateRunner(c)
-    if (!identity) return c.json({ error: "runner_unauthorized" }, 401)
+    const authentication = await authenticateRunner(c)
+    if (!authentication.ok) return authentication.response
+    const identity = authentication.identity
     const assignment = await service.claimDesktopRunner(identity, c.req.valid("param").id)
     return c.json(runnerClaimResponseSchema.parse({ assignment }))
   })
 
   app.post("/v1/automation-runs/:id/heartbeat", paramValidator(automationRunParamsSchema), jsonValidator(automationRunnerHeartbeatRequestSchema), async (c) => {
-    const identity = await authenticateRunner(c)
-    if (!identity) return c.json({ error: "runner_unauthorized" }, 401)
+    const authentication = await authenticateRunner(c)
+    if (!authentication.ok) return authentication.response
+    const identity = authentication.identity
     const heartbeat = await service.heartbeatDesktopRunner(identity, c.req.valid("param").id, c.req.valid("json").attempt)
     return heartbeat
       ? c.json(automationRunnerHeartbeatResponseSchema.parse(heartbeat))
@@ -250,8 +273,9 @@ export function registerAutomationRoutes<T extends { Variables: RouteVariables }
     "/v1/automation-runs/:id/events",
     paramValidator(automationRunParamsSchema), jsonValidator(automationRunnerEventRequestSchema),
     async (c) => {
-      const identity = await authenticateRunner(c)
-      if (!identity) return c.json({ error: "runner_unauthorized" }, 401)
+      const authentication = await authenticateRunner(c)
+      if (!authentication.ok) return authentication.response
+      const identity = authentication.identity
       try {
         return c.json({ event: await service.appendDesktopRunnerEvent(
           identity,
@@ -274,8 +298,9 @@ export function registerAutomationRoutes<T extends { Variables: RouteVariables }
     "/v1/automation-runs/:id/complete",
     paramValidator(automationRunParamsSchema), jsonValidator(automationDesktopRunnerResultSchema),
     async (c) => {
-      const identity = await authenticateRunner(c)
-      if (!identity) return c.json({ error: "runner_unauthorized" }, 401)
+      const authentication = await authenticateRunner(c)
+      if (!authentication.ok) return authentication.response
+      const identity = authentication.identity
       try {
         return c.json({ run: await service.completeDesktopRunner(
           identity,

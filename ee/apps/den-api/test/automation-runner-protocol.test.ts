@@ -233,9 +233,10 @@ test("every runner endpoint re-checks that the token owner is still an active me
   const directAuthenticateCalls = routesSource.match(/automationRunnerAuth\.authenticate\(/g) ?? []
   assert.equal(
     directAuthenticateCalls.length,
-    1,
-    "runner endpoints must authorize through authenticateRunner (token + live membership), not the raw token check",
+    0,
+    "runner endpoints must authorize through the rejection-protected request authenticator, not the raw token check",
   )
+  assert.match(routesSource, /new AutomationRunnerRequestAuthenticator/)
   const sse = routesSource.slice(
     routesSource.indexOf("/v1/automation-runners/events\", async"),
     routesSource.indexOf("/v1/automation-runner/work"),
