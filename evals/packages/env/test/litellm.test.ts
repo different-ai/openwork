@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { liteLlm, liteLlmSandboxName } from "../src/litellm.ts";
+import { SkipError } from "../src/needs.ts";
 import type { DaytonaExec } from "@openwork/hosts";
 import type { LiteLlmUpstreamRequest, Place } from "../src/index.ts";
 
@@ -139,6 +140,23 @@ test("LiteLLM Daytona sandbox names are safe and unique", () => {
 
   assert.match(first, /^openwork-litellm-eval-[0-9]+-[a-z0-9]+-[0-9a-f]{8}$/);
   assert.notEqual(first, second);
+});
+
+test("LiteLLM database mode skips Daytona placement before provisioning", async () => {
+  const fake = makeFake();
+  await assert.rejects(
+    liteLlm({
+      place: daytonaPlace,
+      modelId: MODEL_ID,
+      reply: "deterministic reply",
+      database: true,
+      daytonaExec: fake.exec,
+      fetchImpl: fake.fetchImpl,
+    }),
+    (error: unknown) => error instanceof SkipError
+      && error.reason === "LiteLLM database mode currently requires docker placement",
+  );
+  assert.equal(fake.calls.length, 0);
 });
 
 test("Daytona LiteLLM pins its image, verifies bounded uploads, exposes both ports, and uses sequence cursors", async () => {
