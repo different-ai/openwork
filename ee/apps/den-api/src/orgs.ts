@@ -5,6 +5,7 @@ import {
   ConnectedAccountTable,
   InvitationTable,
   LlmProviderAccessTable,
+  LlmProviderMemberCredentialTable,
   MemberTable,
   OrganizationRoleTable,
   OrganizationTable,
@@ -2000,6 +2001,13 @@ export async function removeOrganizationMember(input: {
       .where(and(
         eq(ConnectedAccountTable.organizationId, input.organizationId),
         eq(ConnectedAccountTable.orgMembershipId, member.id),
+      ))
+
+    await tx
+      .delete(LlmProviderMemberCredentialTable)
+      .where(and(
+        eq(LlmProviderMemberCredentialTable.organizationId, input.organizationId),
+        eq(LlmProviderMemberCredentialTable.orgMembershipId, member.id),
       ))
 
     await tx

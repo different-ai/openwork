@@ -547,6 +547,13 @@
       "when": 1787667476277,
       "tag": "0078_premium_mastermind",
       "breakpoints": true
+    },
+    {
+      "idx": 79,
+      "version": "5",
+      "when": 1787858067776,
+      "tag": "0079_stale_thanos",
+      "breakpoints": true
     }
   ]
 }

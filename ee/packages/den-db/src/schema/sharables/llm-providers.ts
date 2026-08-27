@@ -1,6 +1,7 @@
 import { relations, sql } from "drizzle-orm"
 import {
   index,
+  int,
   json,
   mysqlEnum,
   mysqlTable,
@@ -30,6 +31,12 @@ export const LlmProviderTable = mysqlTable(
     providerConfig: json("provider_config")
       .$type<Record<string, unknown>>()
       .notNull(),
+    /**
+     * How the provider credential relates to people. Shared providers use the
+     * org-level apiKey below; per-member providers resolve a credential from
+     * LlmProviderMemberCredentialTable for the calling member.
+     */
+    credentialMode: mysqlEnum("credential_mode", ["shared", "per_member"]).notNull().default("shared"),
     apiKey: encryptedTextColumn("api_key"),
     createdAt: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { fsp: 3 })
@@ -90,6 +97,40 @@ export const LlmProviderAccessTable = mysqlTable(
   ],
 )
 
+/**
+ * One member-scoped credential for a per-member LLM provider. The encrypted
+ * secret uses the same scalar-or-env-map encoding as LlmProviderTable.apiKey.
+ */
+export const LlmProviderMemberCredentialTable = mysqlTable(
+  "llm_provider_member_credential",
+  {
+    id: denTypeIdColumn("llmProviderMemberCredential", "id").notNull().primaryKey(),
+    organizationId: denTypeIdColumn(
+      "organization",
+      "organization_id",
+    ).notNull(),
+    llmProviderId: denTypeIdColumn("llmProvider", "llm_provider_id").notNull(),
+    orgMembershipId: denTypeIdColumn("member", "org_membership_id").notNull(),
+    secret: encryptedTextColumn("secret").notNull(),
+    externalPrincipalId: varchar("external_principal_id", { length: 255 }),
+    externalCredentialId: varchar("external_credential_id", { length: 255 }),
+    state: mysqlEnum("state", ["active", "blocked", "stale", "error"]).notNull().default("active"),
+    version: int("version").notNull().default(1),
+    createdBy: mysqlEnum("created_by", ["member", "admin", "provisioner"]).notNull(),
+    createdAt: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { fsp: 3 })
+      .notNull()
+      .default(sql`CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)`),
+  },
+  (table) => [
+    index("llm_provider_member_credential_organization_id").on(table.organizationId),
+    uniqueIndex("llm_provider_member_credential_member_provider").on(
+      table.orgMembershipId,
+      table.llmProviderId,
+    ),
+  ],
+)
+
 export const llmProviderRelations = relations(LlmProviderTable, ({ many, one }) => ({
   organization: one(OrganizationTable, {
     fields: [LlmProviderTable.organizationId],
@@ -101,6 +142,7 @@ export const llmProviderRelations = relations(LlmProviderTable, ({ many, one }) 
   }),
   models: many(LlmProviderModelTable),
   accessLinks: many(LlmProviderAccessTable),
+  memberCredentials: many(LlmProviderMemberCredentialTable),
 }))
 
 export const llmProviderModelRelations = relations(
@@ -131,6 +173,25 @@ export const llmProviderAccessRelations = relations(
   }),
 )
 
+export const llmProviderMemberCredentialRelations = relations(
+  LlmProviderMemberCredentialTable,
+  ({ one }) => ({
+    organization: one(OrganizationTable, {
+      fields: [LlmProviderMemberCredentialTable.organizationId],
+      references: [OrganizationTable.id],
+    }),
+    llmProvider: one(LlmProviderTable, {
+      fields: [LlmProviderMemberCredentialTable.llmProviderId],
+      references: [LlmProviderTable.id],
+    }),
+    orgMembership: one(MemberTable, {
+      fields: [LlmProviderMemberCredentialTable.orgMembershipId],
+      references: [MemberTable.id],
+    }),
+  }),
+)
+
 export const llmProvider = LlmProviderTable
 export const llmProviderModel = LlmProviderModelTable
 export const llmProviderAccess = LlmProviderAccessTable
+export const llmProviderMemberCredential = LlmProviderMemberCredentialTable

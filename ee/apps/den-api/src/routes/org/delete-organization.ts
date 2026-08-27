@@ -31,6 +31,7 @@ import {
   InstallLinkTable,
   InvitationTable,
   LlmProviderAccessTable,
+  LlmProviderMemberCredentialTable,
   LlmProviderModelTable,
   LlmProviderTable,
   MarketplaceAccessGrantTable,
@@ -487,6 +488,7 @@ export function registerDeleteOrganizationRoutes<T extends { Variables: OrgRoute
 
         await tx.delete(OrgOAuthClientTable).where(eq(OrgOAuthClientTable.organizationId, organizationId))
         await tx.delete(ConnectedAccountTable).where(eq(ConnectedAccountTable.organizationId, organizationId))
+        await tx.delete(LlmProviderMemberCredentialTable).where(eq(LlmProviderMemberCredentialTable.organizationId, organizationId))
         await tx.delete(ExternalMcpConnectionAccessGrantTable).where(eq(ExternalMcpConnectionAccessGrantTable.organizationId, organizationId))
         await tx.delete(PluginMcpRequirementBindingTable).where(eq(PluginMcpRequirementBindingTable.organizationId, organizationId))
         await tx.delete(ExternalMcpConnectionTable).where(eq(ExternalMcpConnectionTable.organizationId, organizationId))

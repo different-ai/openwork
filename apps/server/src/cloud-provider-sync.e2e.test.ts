@@ -316,6 +316,48 @@ describe("cloud provider sync gateway", () => {
     expect(engineRequests).toContain("PUT /auth/lpr_test");
   });
 
+  test("skips a per-member provider that needs the member's key", async () => {
+    const root = await createRoot();
+    const config = serverConfig(root, "https://engine.example.test");
+    config.workspaces = [];
+    const provider = buildProvider([{ id: "model-a", name: "Model A", config: {} }]);
+    const den = Bun.serve({
+      port: 0,
+      fetch(request) {
+        const url = new URL(request.url);
+        if (url.pathname === "/v1/llm-providers") {
+          return Response.json({ llmProviders: [provider] });
+        }
+        return Response.json(
+          { error: "needs_key", credentialState: "missing" },
+          { status: 409 },
+        );
+      },
+    });
+    stops.push(() => den.stop(true));
+    const sync = new CloudProviderSync({
+      config,
+      env: new EnvService({ path: process.env.OPENWORK_ENV_STORE }),
+      reloadEngine: async () => undefined,
+      intervalMs: 3_600_000,
+    });
+    stops.push(() => sync.stop());
+
+    sync.setSession({
+      baseUrl: `http://127.0.0.1:${den.port}`,
+      token: "den-token",
+      orgId: "org_test",
+    });
+    expect((await sync.run("needs-key")).status).toBe("applied");
+    expect(sync.status().providers).toEqual([]);
+    expect(sync.status().skippedProviders).toEqual([{
+      cloudProviderId: provider.id,
+      providerId: provider.id,
+      name: provider.name,
+      reason: "needs_key",
+    }]);
+  });
+
   test("materializes Den providers globally, reconciles changes, and sweeps the session", async () => {
     const root = await createRoot();
     const engineRequests: string[] = [];

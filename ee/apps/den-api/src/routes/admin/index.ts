@@ -13,6 +13,7 @@ import {
   InferenceOrgUsageBucketTable,
   InferenceUsageLedgerBucketChargeTable,
   InferenceUsageLedgerEntryTable,
+  LlmProviderMemberCredentialTable,
   MemberTable,
   OAuthAccessTokenTable,
   OAuthClientTable,
@@ -1483,6 +1484,10 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
         if (membershipRows.length > 0) {
           await tx.delete(ConnectedAccountTable).where(inArray(
             ConnectedAccountTable.orgMembershipId,
+            membershipRows.map((member) => member.id),
+          ))
+          await tx.delete(LlmProviderMemberCredentialTable).where(inArray(
+            LlmProviderMemberCredentialTable.orgMembershipId,
             membershipRows.map((member) => member.id),
           ))
         }
