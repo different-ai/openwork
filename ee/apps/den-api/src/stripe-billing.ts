@@ -1196,6 +1196,19 @@ function stripeResourceId(resource: string | { id: string } | null | undefined) 
   return typeof resource === "string" ? resource : resource?.id ?? null
 }
 
+async function expireNonWebSubscriptionAfterPaymentFailure(
+  row: NonNullable<Awaited<ReturnType<typeof findOrgSubscriptionByStripeId>>>,
+  eventId: string,
+) {
+  await db
+    .update(OrgSubscriptionTable)
+    .set({ status: "expired", last_event_id: eventId, updated_at: new Date() })
+    .where(eq(OrgSubscriptionTable.id, row.id))
+  if (row.type === INFERENCE_SUBSCRIPTION_TYPE) {
+    await setInferenceEnabled({ organizationId: row.organization_id, enabled: false })
+  }
+}
+
 async function syncPaymentStateFromInvoiceEvent(input: {
   invoice: Stripe.Invoice
   eventType: "invoice.paid" | "invoice.payment_failed"
@@ -1206,19 +1219,9 @@ async function syncPaymentStateFromInvoiceEvent(input: {
     return null
   }
 
-  async function expireNonWebSubscription(row: NonNullable<Awaited<ReturnType<typeof findOrgSubscriptionByStripeId>>>) {
-    await db
-      .update(OrgSubscriptionTable)
-      .set({ status: "expired", last_event_id: input.eventId, updated_at: new Date() })
-      .where(eq(OrgSubscriptionTable.id, row.id))
-    if (row.type === INFERENCE_SUBSCRIPTION_TYPE) {
-      await setInferenceEnabled({ organizationId: row.organization_id, enabled: false })
-    }
-  }
-
   const existingRow = await findOrgSubscriptionByStripeId(subscriptionId)
   if (input.eventType === "invoice.payment_failed" && existingRow && existingRow.type !== WEB_SUBSCRIPTION_TYPE) {
-    await expireNonWebSubscription(existingRow)
+    await expireNonWebSubscriptionAfterPaymentFailure(existingRow, input.eventId)
     return null
   }
 
@@ -1227,7 +1230,7 @@ async function syncPaymentStateFromInvoiceEvent(input: {
   if (subscriptionType !== WEB_SUBSCRIPTION_TYPE) {
     const row = await syncCurrentStripeSubscription(subscription.id, input.eventId)
     if (input.eventType === "invoice.payment_failed" && row) {
-      await expireNonWebSubscription(row)
+      await expireNonWebSubscriptionAfterPaymentFailure(row, input.eventId)
       return null
     }
     return row
@@ -1275,9 +1278,25 @@ export async function handleStripeWebhook(input: { payload: string; signature: s
 
   const event = stripe().webhooks.constructEvent(input.payload, input.signature, env.stripe.webhookSecret)
   switch (event.type) {
-    case "checkout.session.completed":
-    case "checkout.session.async_payment_succeeded":
     case "checkout.session.async_payment_failed": {
+      const session = event.data.object as Stripe.Checkout.Session
+      if (typeof session.subscription === "string") {
+        const subscription = await stripe().subscriptions.retrieve(session.subscription)
+        let row = await syncCurrentStripeSubscription(subscription.id, event.id)
+        if (row?.type === WEB_SUBSCRIPTION_TYPE) {
+          row = await syncOpenWorkWebPaymentStateFromCurrentInvoice({
+            row,
+            stripeSubscriptionId: subscription.id,
+            eventId: event.id,
+          })
+        } else if (row) {
+          await expireNonWebSubscriptionAfterPaymentFailure(row, event.id)
+        }
+      }
+      break
+    }
+    case "checkout.session.completed":
+    case "checkout.session.async_payment_succeeded": {
       const session = event.data.object as Stripe.Checkout.Session
       if (session.mode === "setup") {
         await createSeatSubscriptionFromSetupCheckoutSession(session, event.id)

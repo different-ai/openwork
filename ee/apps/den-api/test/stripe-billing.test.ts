@@ -8,6 +8,7 @@ const customerCreates: RecordedCall[] = []
 const checkoutCreates: RecordedCall[] = []
 const subscriptionItemUpdates: RecordedCall[] = []
 const databaseUpdates: RecordedCall[] = []
+const inferenceEnableCalls: RecordedCall[] = []
 let customerSearchResults: Array<Record<string, unknown>> = []
 let customerListResults: Array<Record<string, unknown>> = []
 let checkoutSessionResults: Array<Record<string, unknown>> = []
@@ -123,7 +124,10 @@ mock.module("../src/env.js", () => ({
 }))
 
 mock.module("../src/inference.js", () => ({
-  setInferenceEnabled: () => Promise.resolve(),
+  setInferenceEnabled: (input: RecordedCall) => {
+    inferenceEnableCalls.push(input)
+    return Promise.resolve()
+  },
 }))
 
 const loggerStub = {
@@ -242,6 +246,7 @@ beforeEach(() => {
   checkoutCreates.length = 0
   subscriptionItemUpdates.length = 0
   databaseUpdates.length = 0
+  inferenceEnableCalls.length = 0
   customerSearchResults = []
   customerListResults = []
   checkoutSessionResults = []
@@ -644,6 +649,40 @@ test("an asynchronous Checkout failure locks an otherwise active Web subscriptio
     last_event_id: "evt_checkout_async_failed",
   })
   expect(subscriptionItemUpdates).toHaveLength(0)
+})
+
+test("an asynchronous Checkout failure expires inference without enabling access", async () => {
+  const subscription = inferenceSubscription()
+  retrievedSubscriptions = { sub_inference: subscription }
+  webhookEvent = {
+    id: "evt_inference_checkout_async_failed",
+    type: "checkout.session.async_payment_failed",
+    data: {
+      object: {
+        id: "cs_inference_async_failed",
+        mode: "subscription",
+        payment_status: "unpaid",
+        subscription: "sub_inference",
+        metadata: { org_id: "org_test", subscription_type: "inference" },
+      },
+    },
+  }
+  const row = {
+    ...webSubscriptionRow(),
+    type: "inference",
+    stripe_subscription_id: "sub_inference",
+    stripe_price_id: "price_inference_fake",
+    stripe_subscription_item_id: "si_inference",
+  }
+  selectResults.push([row])
+
+  await handleStripeWebhook({ payload: "{}", signature: "test_signature" })
+
+  expect(databaseUpdates.at(-1)).toMatchObject({
+    status: "expired",
+    last_event_id: "evt_inference_checkout_async_failed",
+  })
+  expect(inferenceEnableCalls).toEqual([{ organizationId: "org_test", enabled: false }])
 })
 
 test("an asynchronous Checkout success clears payment failure and reconciles Web quantity", async () => {
