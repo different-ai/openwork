@@ -57,6 +57,7 @@ function makeFake(options: FakeOptions = {}): {
   masterKey(): string;
   upstreamKey(): string;
   controlKey(): string;
+  modelInfo(): Record<string, unknown>;
 } {
   const calls: ExecCall[] = [];
   const uploads = new Map<string, string>();
@@ -64,6 +65,7 @@ function makeFake(options: FakeOptions = {}): {
   let masterKey = "";
   let upstreamKey = "";
   let controlKey = "";
+  let modelInfo: Record<string, unknown> = {};
   let deleteAttempts = 0;
   const exec: DaytonaExec = async (args, opts) => {
     calls.push({ args: [...args], opts });
@@ -101,6 +103,7 @@ function makeFake(options: FakeOptions = {}): {
         const params = models[0] && isRecord(models[0].litellm_params) ? models[0].litellm_params : {};
         masterKey = typeof general.master_key === "string" ? general.master_key : "";
         upstreamKey = typeof params.api_key === "string" ? params.api_key : "";
+        modelInfo = models[0] && isRecord(models[0].model_info) ? models[0].model_info : {};
       }
     }
     if (script.includes("tail -80")) {
@@ -131,6 +134,7 @@ function makeFake(options: FakeOptions = {}): {
     masterKey: () => masterKey,
     upstreamKey: () => upstreamKey,
     controlKey: () => controlKey,
+    modelInfo: () => modelInfo,
   };
 }
 
@@ -172,6 +176,8 @@ test("Daytona LiteLLM pins its image, verifies bounded uploads, exposes both por
     place: daytonaPlace,
     modelId: MODEL_ID,
     reply: "deterministic reply",
+    maxInputTokens: 96_000,
+    maxOutputTokens: 12_345,
     daytonaExec: fake.exec,
     fetchImpl: fake.fetchImpl,
   });
@@ -220,6 +226,15 @@ test("Daytona LiteLLM pins its image, verifies bounded uploads, exposes both por
     [{ port: "4000", expires: "7200" }, { port: "4001", expires: "7200" }],
   );
   assert.equal(gateway.baseUrl, "https://port-4000.example.test/v1");
+  assert.deepEqual(fake.modelInfo(), {
+    max_input_tokens: 96_000,
+    max_output_tokens: 12_345,
+    supports_function_calling: true,
+    supports_vision: true,
+    supports_reasoning: false,
+    supports_response_schema: true,
+    supported_openai_params: ["temperature", "tools", "response_format"],
+  });
   assert.equal(await gateway.checkpoint(), 3);
   assert.deepEqual((await gateway.upstreamRequests({ after: 1 })).map((request) => request.sequence), [2, 3]);
   assert.equal((await gateway.waitForUpstreamRequest({

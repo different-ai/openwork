@@ -14,10 +14,44 @@ import { pathToFileURL } from "node:url";
  */
 
 /**
- * @typedef {object} ReconcileSummary
+ * @typedef {object} MemberCredentialSummary
  * @property {string} orgMembershipId
  * @property {"provisioned"} action
  * @property {string} externalCredentialId
+ */
+
+/**
+ * @typedef {object} ModelMetadataSummary
+ * @property {string} id
+ * @property {number} maxInputTokens
+ * @property {number} maxOutputTokens
+ */
+
+/**
+ * @typedef {object} ModelMetadataResult
+ * @property {"unchanged" | "updated"} action
+ * @property {ModelMetadataSummary[]} models
+ */
+
+/**
+ * @typedef {object} ReconcileResult
+ * @property {ModelMetadataResult} modelMetadata
+ * @property {MemberCredentialSummary[]} memberCredentials
+ */
+
+/**
+ * @typedef {object} CurrentProviderModel
+ * @property {string} id
+ * @property {string} name
+ * @property {Record<string, unknown>} config
+ */
+
+/**
+ * @typedef {object} LiteLlmModelMetadata
+ * @property {string} id
+ * @property {number} maxInputTokens
+ * @property {number} maxOutputTokens
+ * @property {Record<string, unknown>} facts
  */
 
 /**
@@ -38,6 +72,17 @@ function requireString(value, label) {
     throw new Error(`${label} must be a non-empty string.`);
   }
   return value.trim();
+}
+
+/**
+ * @param {unknown} value
+ * @param {string} label
+ */
+function requirePositiveNumber(value, label) {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+    throw new Error(`${label} must be a finite positive number.`);
+  }
+  return value;
 }
 
 /** @param {unknown} value */
@@ -107,6 +152,231 @@ function denHeaders(input) {
 }
 
 /**
+ * @param {ProvisionerConfig} input
+ */
+function configuredModels(input) {
+  const models = [...new Set(input.models.map((model) => requireString(model, "model")))];
+  if (models.length === 0) throw new Error("models must contain at least one model id.");
+  return models;
+}
+
+/**
+ * @param {unknown} value
+ * @param {string} providerId
+ */
+function manageableProvider(value, providerId) {
+  if (!isRecord(value) || !Array.isArray(value.llmProviders)) {
+    throw new Error("Den manageable provider response had an invalid shape.");
+  }
+  const provider = value.llmProviders.filter(isRecord).find((entry) => entry.id === providerId);
+  if (!provider) throw new Error(`Den provider ${providerId} was not found in the manageable provider list.`);
+  if (provider.source !== "custom") throw new Error(`Den provider ${providerId} must have source custom.`);
+  if (provider.credentialMode !== "per_member") throw new Error(`Den provider ${providerId} must have credentialMode per_member.`);
+  return provider;
+}
+
+/**
+ * @param {Record<string, unknown>} provider
+ * @returns {CurrentProviderModel[]}
+ */
+function currentProviderModels(provider) {
+  if (!Array.isArray(provider.models)) throw new Error("Den manageable provider did not include models.");
+  return provider.models.map((value) => {
+    if (!isRecord(value) || !isRecord(value.config)) {
+      throw new Error("Den manageable provider included an invalid model config.");
+    }
+    return {
+      id: requireString(value.id, "Den model id"),
+      name: requireString(value.name, `Den model ${String(value.id)} name`),
+      config: value.config,
+    };
+  });
+}
+
+/**
+ * @param {Record<string, unknown>} provider
+ */
+function currentProviderAccess(provider) {
+  if (!isRecord(provider.access)
+    || typeof provider.access.allMembers !== "boolean"
+    || !Array.isArray(provider.access.members)
+    || !Array.isArray(provider.access.teams)) {
+    throw new Error("Den manageable provider did not include a valid access summary.");
+  }
+  const memberIds = provider.access.members.map((entry) => {
+    if (!isRecord(entry)) throw new Error("Den manageable provider included an invalid member access grant.");
+    return requireString(entry.orgMembershipId, "Den member access orgMembershipId");
+  });
+  const teamIds = provider.access.teams.map((entry) => {
+    if (!isRecord(entry)) throw new Error("Den manageable provider included an invalid team access grant.");
+    return requireString(entry.teamId, "Den team access teamId");
+  });
+  return {
+    allMembers: provider.access.allMembers,
+    memberIds: [...new Set(memberIds)].sort(),
+    teamIds: [...new Set(teamIds)].sort(),
+  };
+}
+
+/**
+ * @param {unknown} value
+ * @param {string[]} models
+ * @returns {LiteLlmModelMetadata[]}
+ */
+function liteLlmModelMetadata(value, models) {
+  if (!isRecord(value) || !Array.isArray(value.data)) {
+    throw new Error("LiteLLM /model_group/info response had an invalid shape.");
+  }
+  const entries = value.data.filter(isRecord);
+  return models.map((id) => {
+    const matches = entries.filter((entry) => entry.model_group === id);
+    if (matches.length === 0) {
+      throw new Error(`LiteLLM /model_group/info did not include requested model_group ${id}.`);
+    }
+    if (matches.length > 1) {
+      throw new Error(`LiteLLM /model_group/info included duplicate metadata for model_group ${id}.`);
+    }
+    const facts = matches[0];
+    if (!facts) throw new Error(`LiteLLM /model_group/info did not include requested model_group ${id}.`);
+    return {
+      id,
+      maxInputTokens: requirePositiveNumber(
+        facts.max_input_tokens,
+        `LiteLLM model_group ${id} max_input_tokens`,
+      ),
+      maxOutputTokens: requirePositiveNumber(
+        facts.max_output_tokens,
+        `LiteLLM model_group ${id} max_output_tokens`,
+      ),
+      facts,
+    };
+  });
+}
+
+/**
+ * @param {CurrentProviderModel} model
+ * @param {LiteLlmModelMetadata | undefined} metadata
+ */
+function synchronizedModelConfig(model, metadata) {
+  if (!metadata) return { ...model.config, id: model.id, name: model.name };
+  const currentLimit = isRecord(model.config.limit) ? model.config.limit : {};
+  /** @type {Record<string, unknown>} */
+  const config = {
+    ...model.config,
+    id: model.id,
+    name: model.name,
+    limit: {
+      ...currentLimit,
+      context: metadata.maxInputTokens,
+      input: metadata.maxInputTokens,
+      output: metadata.maxOutputTokens,
+    },
+  };
+  if (typeof metadata.facts.supports_function_calling === "boolean") {
+    config.tool_call = metadata.facts.supports_function_calling;
+  }
+  if (typeof metadata.facts.supports_reasoning === "boolean") {
+    config.reasoning = metadata.facts.supports_reasoning;
+  }
+  if (typeof metadata.facts.supports_vision === "boolean") {
+    config.attachment = metadata.facts.supports_vision;
+  }
+  if (typeof metadata.facts.supports_response_schema === "boolean") {
+    config.structured_output = metadata.facts.supports_response_schema;
+  }
+  if (Array.isArray(metadata.facts.supported_openai_params)) {
+    config.temperature = metadata.facts.supported_openai_params.includes("temperature");
+  }
+  return config;
+}
+
+/**
+ * @param {unknown} value
+ * @returns {unknown}
+ */
+function canonicalJson(value) {
+  if (Array.isArray(value)) return value.map(canonicalJson);
+  if (!isRecord(value)) return value;
+  return Object.fromEntries(
+    Object.keys(value).sort().map((key) => [key, canonicalJson(value[key])]),
+  );
+}
+
+/**
+ * Synchronize the configured Den model limits and capability facts from the
+ * live LiteLLM model-group metadata endpoint.
+ *
+ * @param {ProvisionerConfig} input
+ * @returns {Promise<ModelMetadataResult>}
+ */
+export async function syncProviderModelMetadata(input) {
+  const denApiUrl = cleanBaseUrl(input.denApiUrl);
+  const liteLlmBaseUrl = liteLlmAdminBaseUrl(input.liteLlmBaseUrl);
+  const rawProviderId = requireString(input.providerId, "providerId");
+  const providerId = encodeURIComponent(rawProviderId);
+  const models = configuredModels(input);
+  const secrets = [input.denToken, input.liteLlmMasterKey];
+  const providerList = await requestJson(
+    `${denApiUrl}/v1/llm-providers?scope=manageable`,
+    { headers: denHeaders(input) },
+    secrets,
+  );
+  const provider = manageableProvider(providerList, rawProviderId);
+  const providerName = requireString(provider.name, "Den provider name");
+  if (!isRecord(provider.providerConfig)) {
+    throw new Error(`Den provider ${rawProviderId} did not include providerConfig.`);
+  }
+  const currentModels = currentProviderModels(provider);
+  for (const model of models) {
+    if (!currentModels.some((current) => current.id === model)) {
+      throw new Error(`Den provider ${rawProviderId} does not configure requested model ${model}.`);
+    }
+  }
+  const metadataResponse = await requestJson(
+    `${liteLlmBaseUrl}/model_group/info`,
+    { headers: { authorization: `Bearer ${input.liteLlmMasterKey}` } },
+    secrets,
+  );
+  const metadata = liteLlmModelMetadata(metadataResponse, models);
+  const metadataById = new Map(metadata.map((entry) => [entry.id, entry]));
+  const access = currentProviderAccess(provider);
+  const currentCustomConfig = {
+    ...provider.providerConfig,
+    models: currentModels.map((model) => synchronizedModelConfig(model, undefined)),
+  };
+  const desiredCustomConfig = {
+    ...provider.providerConfig,
+    models: currentModels.map((model) => synchronizedModelConfig(model, metadataById.get(model.id))),
+  };
+  const current = {
+    name: providerName,
+    source: "custom",
+    customConfig: currentCustomConfig,
+    credentialMode: "per_member",
+    ...access,
+  };
+  const desired = { ...current, customConfig: desiredCustomConfig };
+  const summaries = metadata.map((entry) => ({
+    id: entry.id,
+    maxInputTokens: entry.maxInputTokens,
+    maxOutputTokens: entry.maxOutputTokens,
+  }));
+  if (JSON.stringify(canonicalJson(current)) === JSON.stringify(canonicalJson(desired))) {
+    return { action: "unchanged", models: summaries };
+  }
+  await requestJson(
+    `${denApiUrl}/v1/llm-providers/${providerId}`,
+    {
+      method: "PATCH",
+      headers: denHeaders(input),
+      body: JSON.stringify(desired),
+    },
+    secrets,
+  );
+  return { action: "updated", models: summaries };
+}
+
+/**
  * @param {unknown} value
  * @returns {Record<string, unknown>[]}
  */
@@ -137,21 +407,21 @@ function externalCredentialId(value) {
  * Mint a LiteLLM virtual key for every granted Den member whose binding is missing.
  *
  * @param {ProvisionerConfig} input
- * @returns {Promise<ReconcileSummary[]>}
+ * @returns {Promise<ReconcileResult>}
  */
 export async function reconcileMemberKeys(input) {
+  const modelMetadata = await syncProviderModelMetadata(input);
   const denApiUrl = cleanBaseUrl(input.denApiUrl);
   const liteLlmBaseUrl = liteLlmAdminBaseUrl(input.liteLlmBaseUrl);
   const providerId = encodeURIComponent(requireString(input.providerId, "providerId"));
-  const models = input.models.map((model) => requireString(model, "model"));
-  if (models.length === 0) throw new Error("models must contain at least one model id.");
+  const models = configuredModels(input);
   const secrets = [input.denToken, input.liteLlmMasterKey];
   const listed = await requestJson(
     `${denApiUrl}/v1/llm-providers/${providerId}/member-credentials`,
     { headers: denHeaders(input) },
     secrets,
   );
-  /** @type {ReconcileSummary[]} */
+  /** @type {MemberCredentialSummary[]} */
   const summary = [];
 
   for (const entry of memberCredentials(listed)) {
@@ -192,7 +462,7 @@ export async function reconcileMemberKeys(input) {
     summary.push({ orgMembershipId, action: "provisioned", externalCredentialId: credentialId });
   }
 
-  return summary;
+  return { modelMetadata, memberCredentials: summary };
 }
 
 /**

@@ -20,7 +20,11 @@ Run reconciliation after granting provider access:
 node provision.mjs reconcile
 ```
 
-The script lists Den member credential states, mints a LiteLLM virtual key for each `missing` member, and writes the key to Den with LiteLLM's `token_id` as `externalCredentialId`. Summaries never contain member keys.
+Before provisioning keys, the script reads the existing custom, `per_member` provider from Den and reconciles its configured model metadata from LiteLLM `GET /model_group/info` using master-key authentication. It preserves the provider config, model names and unknown model fields, and current member/team access while updating token limits. When LiteLLM supplies the corresponding facts, it also maps function calling, reasoning, vision, response schemas, and temperature support to Den's `tool_call`, `reasoning`, `attachment`, `structured_output`, and `temperature` model fields. It only PATCHes Den when those values changed.
+
+Every model in `LITELLM_MODELS` must have an exact `model_group` match with finite, positive `max_input_tokens` and `max_output_tokens`. Reconciliation fails closed before creating member keys if LiteLLM omits a requested model or either limit. The example never guesses token limits or falls back to a generic value.
+
+After metadata is synchronized, the script lists Den member credential states, mints a LiteLLM virtual key for each `missing` member, and writes the key to Den with LiteLLM's `token_id` as `externalCredentialId`. Summaries report the metadata action and safe model limits but never contain member keys.
 
 Offboard a member by organization membership ID:
 

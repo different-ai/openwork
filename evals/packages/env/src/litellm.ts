@@ -32,6 +32,8 @@ const DAYTONA_LOG = "/tmp/openwork-litellm.log";
 const DAYTONA_WITNESS_LOG = "/tmp/openwork-litellm-witness.log";
 const BASE64_CHUNK_LENGTH = 8 * 1_024;
 const MAX_DAYTONA_COMMAND_LENGTH = 12 * 1_024;
+const DEFAULT_MAX_INPUT_TOKENS = 128_000;
+const DEFAULT_MAX_OUTPUT_TOKENS = 16_384;
 
 const DAYTONA_DOCKERFILE = `FROM ${IMAGE}
 USER root
@@ -478,7 +480,14 @@ function startWitness(
   });
 }
 
-function liteLlmConfig(modelId: string, apiBase: string, masterKey: string, upstreamKey: string): string {
+function liteLlmConfig(
+  modelId: string,
+  apiBase: string,
+  masterKey: string,
+  upstreamKey: string,
+  maxInputTokens: number,
+  maxOutputTokens: number,
+): string {
   return JSON.stringify({
     model_list: [{
       model_name: modelId,
@@ -487,9 +496,23 @@ function liteLlmConfig(modelId: string, apiBase: string, masterKey: string, upst
         api_base: apiBase,
         api_key: upstreamKey,
       },
+      model_info: {
+        max_input_tokens: maxInputTokens,
+        max_output_tokens: maxOutputTokens,
+        supports_function_calling: true,
+        supports_vision: true,
+        supports_reasoning: false,
+        supports_response_schema: true,
+        supported_openai_params: ["temperature", "tools", "response_format"],
+      },
     }],
     general_settings: { master_key: masterKey },
   }, null, 2);
+}
+
+function positiveTokenLimit(value: number, label: string): number {
+  if (!Number.isFinite(value) || value <= 0) throw new Error(`${label} must be a finite positive number.`);
+  return value;
 }
 
 async function mappedPort(container: string): Promise<number> {
@@ -600,7 +623,13 @@ async function waitForPostgres(container: string): Promise<void> {
 }
 
 async function startLocalLiteLlm(
-  input: { modelId: string; reply: string; database?: boolean },
+  input: {
+    modelId: string;
+    reply: string;
+    database?: boolean;
+    maxInputTokens: number;
+    maxOutputTokens: number;
+  },
   secrets: LiteLlmSecrets,
 ): Promise<LiteLlmHandle> {
   try {
@@ -633,6 +662,8 @@ async function startLocalLiteLlm(
         `http://host.docker.internal:${startedWitness.port}/v1`,
         secrets.masterKey,
         secrets.upstreamKey,
+        input.maxInputTokens,
+        input.maxOutputTokens,
       ),
       { mode: 0o600 },
     );
@@ -853,7 +884,14 @@ echo detached`;
 }
 
 async function startDaytonaLiteLlm(
-  input: { modelId: string; reply: string; daytonaExec?: DaytonaExec; fetchImpl?: typeof fetch },
+  input: {
+    modelId: string;
+    reply: string;
+    maxInputTokens: number;
+    maxOutputTokens: number;
+    daytonaExec?: DaytonaExec;
+    fetchImpl?: typeof fetch;
+  },
   secrets: LiteLlmSecrets,
 ): Promise<LiteLlmHandle> {
   const exec = input.daytonaExec ?? defaultDaytonaExec;
@@ -890,6 +928,8 @@ async function startDaytonaLiteLlm(
       `http://127.0.0.1:${DAYTONA_WITNESS_PORT}/v1`,
       secrets.masterKey,
       secrets.upstreamKey,
+      input.maxInputTokens,
+      input.maxOutputTokens,
     );
     const uploads = [
       ...uploadCommands(config, DAYTONA_CONFIG),
@@ -947,6 +987,8 @@ export async function liteLlm(input: {
   modelId: string;
   reply: string;
   database?: boolean;
+  maxInputTokens?: number;
+  maxOutputTokens?: number;
   daytonaExec?: DaytonaExec;
   fetchImpl?: typeof fetch;
 }): Promise<LiteLlmHandle> {
@@ -958,7 +1000,12 @@ export async function liteLlm(input: {
   if (input.database && input.place.kind === "daytona") {
     throw new SkipError("LiteLLM database mode currently requires docker placement");
   }
+  const normalizedInput = {
+    ...input,
+    maxInputTokens: positiveTokenLimit(input.maxInputTokens ?? DEFAULT_MAX_INPUT_TOKENS, "maxInputTokens"),
+    maxOutputTokens: positiveTokenLimit(input.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS, "maxOutputTokens"),
+  };
   return input.place.kind === "daytona"
-    ? startDaytonaLiteLlm(input, secrets)
-    : startLocalLiteLlm(input, secrets);
+    ? startDaytonaLiteLlm(normalizedInput, secrets)
+    : startLocalLiteLlm(normalizedInput, secrets);
 }

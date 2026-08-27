@@ -36,8 +36,25 @@ interface ProvisionerConfig {
 }
 
 interface ProvisionerModule {
-  reconcileMemberKeys(input: ProvisionerConfig): Promise<unknown[]>;
+  syncProviderModelMetadata(input: ProvisionerConfig): Promise<ModelMetadataResult>;
+  reconcileMemberKeys(input: ProvisionerConfig): Promise<ReconcileResult>;
   offboardMember(input: ProvisionerConfig & { orgMembershipId: string }): Promise<unknown>;
+}
+
+interface ModelMetadataResult {
+  action: "unchanged" | "updated";
+  models: Array<{ id: string; maxInputTokens: number; maxOutputTokens: number }>;
+}
+
+interface ReconcileResult {
+  modelMetadata: ModelMetadataResult;
+  memberCredentials: unknown[];
+}
+
+interface LiveModelMetadata {
+  maxInputTokens: number;
+  maxOutputTokens: number;
+  capabilities: Record<string, boolean>;
 }
 
 interface ChatResult {
@@ -51,6 +68,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function isProvisionerModule(value: unknown): value is ProvisionerModule {
   return isRecord(value)
+    && typeof value.syncProviderModelMetadata === "function"
     && typeof value.reconcileMemberKeys === "function"
     && typeof value.offboardMember === "function";
 }
@@ -108,7 +126,12 @@ async function createProvider(admin: DenSession, orgId: string, baseUrl: string)
         npm: "@ai-sdk/openai-compatible",
         env: [PROVIDER_ENV],
         api: baseUrl,
-        models: [{ id: MODEL_ID, name: MODEL_NAME }],
+        models: [{
+          id: MODEL_ID,
+          name: MODEL_NAME,
+          family: "preserved-witness-family",
+          limit: { context: 32_000, input: 32_000, output: 32_000 },
+        }],
       },
       credentialMode: "per_member",
       allMembers: true,
@@ -156,6 +179,58 @@ function memberCredentials(value: unknown): Record<string, unknown>[] {
     throw new Error("Member credential response had an invalid shape.");
   }
   return value.memberCredentials.filter(isRecord);
+}
+
+async function manageableProvider(admin: DenSession, orgId: string, providerId: string): Promise<Record<string, unknown>> {
+  const result = await denFetch(admin, "/v1/llm-providers?scope=manageable", {
+    headers: orgHeaders(admin, orgId),
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+  });
+  const providers = isRecord(result.body) && Array.isArray(result.body.llmProviders)
+    ? result.body.llmProviders.filter(isRecord)
+    : [];
+  const provider = providers.find((entry) => entry.id === providerId);
+  if (!result.response.ok || !provider) {
+    throw new Error(`Finding manageable provider ${providerId} failed: HTTP ${result.response.status} ${result.text.slice(0, 500)}`);
+  }
+  return provider;
+}
+
+function providerModelConfig(provider: Record<string, unknown>, modelId: string): Record<string, unknown> {
+  const models = Array.isArray(provider.models) ? provider.models.filter(isRecord) : [];
+  const model = models.find((entry) => entry.id === modelId);
+  if (!model || !isRecord(model.config)) throw new Error(`Manageable provider did not include model config ${modelId}.`);
+  return model.config;
+}
+
+async function liveModelMetadata(baseUrl: string, apiKey: string): Promise<LiveModelMetadata> {
+  const adminBaseUrl = baseUrl.replace(/\/+$/, "").replace(/\/v1$/, "");
+  const response = await fetch(`${adminBaseUrl}/model_group/info`, {
+    headers: { authorization: `Bearer ${apiKey}` },
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+  });
+  const body: unknown = await response.json();
+  const entries = isRecord(body) && Array.isArray(body.data) ? body.data.filter(isRecord) : [];
+  const metadata = entries.find((entry) => entry.model_group === MODEL_ID);
+  if (!response.ok
+    || !metadata
+    || typeof metadata.max_input_tokens !== "number"
+    || typeof metadata.max_output_tokens !== "number") {
+    throw new Error(`LiteLLM model-group metadata was unavailable for ${MODEL_ID}: HTTP ${response.status}.`);
+  }
+  const capabilities: Record<string, boolean> = {};
+  if (typeof metadata.supports_function_calling === "boolean") capabilities.tool_call = metadata.supports_function_calling;
+  if (typeof metadata.supports_reasoning === "boolean") capabilities.reasoning = metadata.supports_reasoning;
+  if (typeof metadata.supports_vision === "boolean") capabilities.attachment = metadata.supports_vision;
+  if (typeof metadata.supports_response_schema === "boolean") capabilities.structured_output = metadata.supports_response_schema;
+  if (Array.isArray(metadata.supported_openai_params)) {
+    capabilities.temperature = metadata.supported_openai_params.includes("temperature");
+  }
+  return {
+    maxInputTokens: metadata.max_input_tokens,
+    maxOutputTokens: metadata.max_output_tokens,
+    capabilities,
+  };
 }
 
 async function chat(baseUrl: string, apiKey: string): Promise<ChatResult> {
@@ -244,8 +319,59 @@ test.skipIf(missingRequirements.length > 0)(title, { timeout: 30 * 60_000 }, asy
     liteLlmMasterKey: gateway.apiKey,
     models: [MODEL_ID],
   };
+  const gatewayMetadata = await liveModelMetadata(gateway.baseUrl, gateway.apiKey);
+  expect(gatewayMetadata).toEqual({
+    maxInputTokens: 128_000,
+    maxOutputTokens: 16_384,
+    capabilities: {
+      tool_call: true,
+      reasoning: false,
+      attachment: true,
+      temperature: true,
+    },
+  });
   const reconcileSummary = await imported.reconcileMemberKeys(provisionerConfig);
-  expect(reconcileSummary.length).toBeGreaterThanOrEqual(2);
+  expect(reconcileSummary.modelMetadata).toEqual({
+    action: "updated",
+    models: [{ id: MODEL_ID, maxInputTokens: 128_000, maxOutputTokens: 16_384 }],
+  });
+  expect(reconcileSummary.memberCredentials.length).toBeGreaterThanOrEqual(2);
+
+  const syncedProvider = await manageableProvider(den.admin, orgId, providerId);
+  const syncedModel = providerModelConfig(syncedProvider, MODEL_ID);
+  expect(syncedModel).toMatchObject({
+    family: "preserved-witness-family",
+    limit: { context: 128_000, input: 128_000, output: 16_384 },
+    ...gatewayMetadata.capabilities,
+  });
+  expect(syncedProvider.access).toMatchObject({ allMembers: true });
+  const syncedLimit = isRecord(syncedModel.limit) ? syncedModel.limit : null;
+  const metadataCameFromGateway = syncedLimit?.context === gatewayMetadata.maxInputTokens
+    && syncedLimit.input === gatewayMetadata.maxInputTokens
+    && syncedLimit.output === gatewayMetadata.maxOutputTokens
+    && Object.entries(gatewayMetadata.capabilities).every(([key, value]) => syncedModel[key] === value)
+    && syncedModel.family === "preserved-witness-family";
+  expect(metadataCameFromGateway).toBe(true);
+  evidence.recordAssertionEvidence(
+    "The provisioner synchronizes model limits and capabilities from the live LiteLLM gateway without dropping existing model fields or access",
+    "LiteLLM /model_group/info reported 128000 input and 16384 output tokens plus capability facts; Den replaced the intentionally wrong 32000 limits with those exact values, preserved the witness family, and retained all-member access.",
+    metadataCameFromGateway
+      && isRecord(syncedProvider.access)
+      && syncedProvider.access.allMembers === true,
+  );
+
+  const secondReconcile = await imported.reconcileMemberKeys(provisionerConfig);
+  expect(secondReconcile.modelMetadata).toEqual({
+    action: "unchanged",
+    models: [{ id: MODEL_ID, maxInputTokens: 128_000, maxOutputTokens: 16_384 }],
+  });
+  expect(secondReconcile.memberCredentials).toEqual([]);
+  evidence.recordAssertionEvidence(
+    "Repeated reconciliation does not rewrite model metadata that is already synchronized",
+    "The second real provisioner run returned modelMetadata.action=unchanged and provisioned no additional member credentials.",
+    secondReconcile.modelMetadata.action === "unchanged"
+      && secondReconcile.memberCredentials.length === 0,
+  );
 
   const [aliceConnect, bobConnect] = await Promise.all([
     connect(alice, orgId, providerId),
