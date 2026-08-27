@@ -97,8 +97,8 @@ export function parseStripeWebBilling(payload: unknown): StripeWebBilling | null
 
 export function getOpenWorkWebQuantityDescription(quantity: number): string {
   const memberLabel = quantity === 1 ? "member" : "members";
-  return `${quantity} joined, non-removed organization ${memberLabel}`;
+  return `${quantity} ${memberLabel}`;
 }
 
 export const OPENWORK_WEB_QUANTITY_EXPLANATION =
-  "Every joined, non-removed organization member counts, including the owner. Pending invitations do not count.";
+  "Billed for each joined member of your organization, including the owner. Pending invitations are not billed.";

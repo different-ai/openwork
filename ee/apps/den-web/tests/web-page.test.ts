@@ -120,7 +120,7 @@ describe("Web dashboard page", () => {
       onClick: () => undefined,
     }));
 
-    expect(html).toContain("Purchase OpenWork Web — $50 per user/month");
+    expect(html).toContain("Purchase OpenWork Web — $50 per member/month");
   });
 
   test("does not offer a second checkout for an ineligible ongoing subscription", () => {
@@ -178,9 +178,9 @@ describe("Web dashboard page", () => {
     expect(source).toContain("nextBilling?.hasEligibleSubscription");
     expect(source).toContain("OpenWork Web remains locked");
     expect(source).toContain("Ask a workspace owner or admin");
-    expect(source).toContain("Before payment:");
-    expect(source).toContain("Stripe will show");
-    expect(source).toContain("Access unlocks only after Stripe confirms the subscription and payment.");
+    expect(source).toContain("Access opens as soon as your payment is confirmed.");
+    expect(source).toContain("pending invitations are never billed");
+    expect(source).not.toContain("Stripe will show");
     expect(source).toContain("await requestWebBilling(orgId, false)");
     expect(checking).toContain('returnTarget === "web"');
     expect(checking).toContain("?stripe_checkout=web&session_id=");

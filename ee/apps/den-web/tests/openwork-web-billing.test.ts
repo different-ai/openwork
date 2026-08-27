@@ -77,11 +77,11 @@ describe("OpenWork Web billing data", () => {
   test("billing presents plan, quantity definition, unit-total math, lifecycle, and management", () => {
     const source = readFileSync(new URL("../app/(den)/dashboard/_components/billing-dashboard-screen.tsx", import.meta.url), "utf8");
 
-    expect(OPENWORK_WEB_QUANTITY_EXPLANATION).toContain("Pending invitations do not count");
+    expect(OPENWORK_WEB_QUANTITY_EXPLANATION).toContain("Pending invitations are not billed");
     expect(source).toContain('data-testid="billing-openwork-web-card"');
     expect(source).toContain('label="Plan" value="OpenWork Web"');
     expect(source).toContain('label="Unit price"');
-    expect(source).toContain('label="Billable users"');
+    expect(source).toContain('label="Members billed"');
     expect(source).toContain('label="Expected monthly total"');
     expect(source).toContain('data-testid="billing-openwork-web-lifecycle"');
     expect(source).toContain('label="Subscription status"');

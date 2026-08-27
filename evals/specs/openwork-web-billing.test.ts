@@ -98,7 +98,7 @@ briefTest(testBrief({
   expect(stripeSource).toContain("isNotNull(MemberTable.joinedAt)");
   expect(stripeSource).toContain("isNull(MemberTable.removedAt)");
   expect(memberHooksSource).toContain("syncWebSubscriptionQuantityAfterMemberChange");
-  expect(OPENWORK_WEB_QUANTITY_EXPLANATION).toContain("Pending invitations do not count");
+  expect(OPENWORK_WEB_QUANTITY_EXPLANATION).toContain("Pending invitations are not billed");
   prove.quantityContract(
     true,
     "Two joined and retained members produced quantity 2 and a $100 monthly total; the pending invitation and removed member were excluded, with no free-seat subtraction.",
@@ -222,16 +222,16 @@ briefTest(testBrief({
     hasEligibleSubscription: false,
     subscription: { status: "active", paymentStatus: "payment_failed" },
   });
-  expect(webPageSource).toContain("Purchase OpenWork Web — $50 per user/month");
+  expect(webPageSource).toContain("Purchase OpenWork Web — $50 per member/month");
   expect(webPageSource).toContain("hasEligibleSubscription");
   expect(webPageSource).toContain("Confirming your OpenWork Web subscription");
   expect(webPageSource).toContain('data-testid="openwork-web-purchase"');
   expect(webPageSource).toContain('data-testid="openwork-web-eligible"');
   expect(webPageSource).toContain("OpenWork Web remains locked");
   expect(webPageSource).toContain("hasOngoingWebSubscription");
-  expect(webPageSource).toContain("Manage the existing subscription instead of starting another checkout");
-  expect(webPageSource).toContain("Stripe will show");
-  expect(webPageSource).toContain("Access unlocks only after Stripe confirms the subscription and payment.");
+  expect(webPageSource).toContain("Manage the existing subscription from Billing");
+  expect(webPageSource).toContain("Access opens as soon as your payment is confirmed.");
+  expect(webPageSource).not.toContain("Stripe will show");
   expect(webPageSource).toContain("isExistingWebSubscriptionResponse");
   expect(webPageSource).toContain("const cloudEnabled = orgContext?.capabilities.cloud === true");
   expect(stripeReturnSource).toContain("?stripe_checkout=web&session_id=");
@@ -240,7 +240,7 @@ briefTest(testBrief({
   expect(billingPageSource).toContain('data-testid="billing-openwork-web-card"');
   expect(billingPageSource).toContain('data-testid="billing-openwork-web-lifecycle"');
   expect(billingPageSource).toContain('label="Unit price"');
-  expect(billingPageSource).toContain("Billable users");
+  expect(billingPageSource).toContain("Members billed");
   expect(billingPageSource).toContain("Expected monthly total");
   expect(billingPageSource).toContain('label={webCancelling ? "Access ends" : "Next renewal"}');
   expect(billingPageSource).toMatch(/Payment|payment/);

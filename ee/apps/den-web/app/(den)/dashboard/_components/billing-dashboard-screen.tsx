@@ -546,7 +546,7 @@ export function BillingDashboardScreen() {
         <DenCard className="mb-6" data-testid="billing-openwork-web-card">
           <DenSectionHeader
             title="OpenWork Web"
-            description="Browser access billed at $50 per joined, non-removed organization member each month."
+            description="Browser access for your organization — $50 per joined member each month."
             action={
               !webBilling || !webConfigured
                 ? <DenBadge tone="neutral">Not billed</DenBadge>
@@ -577,14 +577,14 @@ export function BillingDashboardScreen() {
                     ? "OpenWork Web billing is not configured for this deployment."
                     : webPaymentFailed
                       ? webPaymentStatus === "payment_failed"
-                        ? "Stripe reports the latest payment as failed. OpenWork Web remains locked until the subscription is eligible again."
-                        : `Stripe reports the payment as ${formatSubscriptionStatus(webPaymentStatus ?? "failed").toLowerCase()}. OpenWork Web remains locked until the subscription is eligible again.`
+                        ? "The latest payment failed, so OpenWork Web is locked. Update the payment method to restore access."
+                        : `The payment is ${formatSubscriptionStatus(webPaymentStatus ?? "failed").toLowerCase()}, so OpenWork Web is locked. Update the payment method to restore access.`
                       : webCancelling
-                        ? `Cancellation is scheduled. Access continues through ${webRenewsOn ?? "the end of the current billing period"}; the subscription can be reactivated in Stripe before then.`
+                        ? `Cancellation is scheduled. Access continues through ${webRenewsOn ?? "the end of the current billing period"}; the subscription can be reactivated any time before then.`
                         : webEligible
-                          ? "This organization has an eligible OpenWork Web subscription."
+                          ? "OpenWork Web is active for this organization."
                           : webSubscribed
-                            ? `Stripe reports this subscription as ${formatSubscriptionStatus(webStatus ?? "unknown").toLowerCase()}. OpenWork Web remains locked until it becomes eligible.`
+                            ? `This subscription is ${formatSubscriptionStatus(webStatus ?? "unknown").toLowerCase()}, so OpenWork Web is locked.`
                             : "No OpenWork Web subscription is active. Purchase it from the OpenWork Web page."
                 }
               />
@@ -593,18 +593,18 @@ export function BillingDashboardScreen() {
                 {OPENWORK_WEB_QUANTITY_EXPLANATION}
               </p>
               <div className="mt-4 rounded-2xl border border-gray-200 bg-gray-50 p-4" data-testid="billing-openwork-web-price-breakdown">
-                <p className="text-[14px] text-gray-600">
-                  {getOpenWorkWebQuantityDescription(webBilling.quantity)} × {webPrice} per {webBilling.interval}
+                <p className="text-[22px] font-semibold tracking-[-0.03em] text-gray-950">
+                  {getOpenWorkWebQuantityDescription(webBilling.quantity)} × {webPrice}
                 </p>
-                <p className="mt-1 text-[22px] font-semibold tracking-[-0.03em] text-gray-950">
-                  {webChargeLabel} expected per {webBilling.interval}
+                <p className="mt-1 text-[14px] text-gray-600">
+                  {webChargeLabel} per {webBilling.interval}
                 </p>
               </div>
 
               <div className="mt-5 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
                 <BillingStat label="Plan" value="OpenWork Web" />
-                <BillingStat label="Unit price" value={`${webPrice ?? "—"} / user / month`} />
-                <BillingStat label="Billable users" value={String(webBilling.quantity)} />
+                <BillingStat label="Unit price" value={`${webPrice ?? "—"} / member / month`} />
+                <BillingStat label="Members billed" value={String(webBilling.quantity)} />
                 <BillingStat label="Expected monthly total" value={webChargeLabel ?? "—"} />
               </div>
 
@@ -621,13 +621,13 @@ export function BillingDashboardScreen() {
                 <DenNotice
                   className="mt-5"
                   tone="info"
-                  message={`Your organization currently has ${webBilling.quantity} billable users. Stripe still reports ${webSubscription?.quantity ?? 0}; the quantity update is being reconciled.`}
+                  message={`Your organization now has ${webBilling.quantity} members; billing updates to match shortly.`}
                 />
               ) : null}
 
               <DenActionList className="mt-5">
                 <DenActionRow
-                  description="Manage joined members to change the OpenWork Web quantity. Pending invitations are not billed."
+                  description="Add or remove members to change what your organization is billed. Pending invitations are never billed."
                   action={<DenButton variant="secondary" onClick={goToMembers}>Manage members</DenButton>}
                 />
                 {webSubscribed ? (
@@ -650,7 +650,7 @@ export function BillingDashboardScreen() {
                   />
                 ) : (
                   <DenActionRow
-                    description={`Review the ${webBilling.quantity} ${webBilling.quantity === 1 ? "user" : "users"} and ${webChargeLabel} monthly total before opening Stripe Checkout.`}
+                    description={`Purchase from the OpenWork Web page — ${getOpenWorkWebQuantityDescription(webBilling.quantity)} × ${webPrice} per ${webBilling.interval}.`}
                     action={<DenButton onClick={() => router.push(getWebRoute(activeOrg?.slug))}>View OpenWork Web</DenButton>}
                   />
                 )}

@@ -81,7 +81,7 @@ function CheckingWorkspaceAccess({ message = "Checking workspace access" }: { me
           </div>
           <div>
             <p className="text-[15px] font-medium text-gray-950">{message}</p>
-            <p className="mt-1 text-[13px] leading-5 text-gray-500">OpenWork Web stays locked until this organization’s subscription is confirmed.</p>
+            <p className="mt-1 text-[13px] leading-5 text-gray-500">Loading this organization’s subscription.</p>
           </div>
         </div>
       </div>
@@ -100,7 +100,7 @@ export function WebOpenButton({ openworkWebUrl }: { openworkWebUrl: string }) {
 export function WebPurchaseButton({ disabled, loading, onClick }: { disabled: boolean; loading: boolean; onClick: () => void }) {
   return (
     <DenButton disabled={disabled} loading={loading} onClick={onClick}>
-      Purchase OpenWork Web — $50 per user/month
+      Purchase OpenWork Web — $50 per member/month
     </DenButton>
   );
 }
@@ -193,7 +193,7 @@ export default function WebPage() {
       setReturnChecking(false);
       setErrorRecord({
         orgId,
-        message: "Checkout was canceled before Stripe confirmed a subscription. OpenWork Web remains locked; you can try again.",
+        message: "Checkout was canceled and no payment was made. You can purchase whenever you're ready.",
       });
       clearStripeReturnParameters();
       return;
@@ -231,7 +231,7 @@ export default function WebPage() {
           syncedSessionsRef.current.set(syncKey, syncPromise);
         }
         const synced = await syncPromise;
-        if (!synced) throw new Error("Stripe has not confirmed this checkout for the current organization.");
+        if (!synced) throw new Error("This checkout could not be confirmed for the current organization. If you completed payment, access opens shortly.");
       } catch (error) {
         if (!stopped && mountedRef.current && currentOrgIdRef.current === expectedOrgId) {
           setReturnChecking(false);
@@ -258,7 +258,7 @@ export default function WebPage() {
           setReturnChecking(false);
           setErrorRecord({
             orgId: expectedOrgId,
-            message: "Stripe has not activated OpenWork Web yet. It remains locked while confirmation is pending. Try again shortly.",
+            message: "Your payment is still being confirmed. Access opens automatically once confirmation completes — check back in a moment.",
           });
           clearStripeReturnParameters();
           return;
@@ -375,7 +375,7 @@ export default function WebPage() {
               <div>
                 <p className="text-[18px] font-medium text-gray-950">Confirming your OpenWork Web subscription</p>
                 <p className="mt-2 text-[14px] leading-6 text-gray-500">
-                  We’re waiting for Stripe and the organization entitlement to agree. OpenWork Web stays locked until confirmation completes.
+                  This usually takes a moment. Access opens automatically as soon as your payment is confirmed.
                 </p>
               </div>
             </div>
@@ -388,18 +388,16 @@ export default function WebPage() {
             <h2 className="mt-2 text-[22px] font-semibold tracking-[-0.03em] text-gray-950">Browser access for your organization</h2>
             <p className="mt-3 text-[14px] leading-6 text-gray-600">{OPENWORK_WEB_QUANTITY_EXPLANATION}</p>
             <div className="mt-5 rounded-2xl border border-gray-200 bg-gray-50 p-4" data-testid="openwork-web-price-breakdown">
-              <p className="text-[14px] text-gray-600">
-                {getOpenWorkWebQuantityDescription(billing.quantity)} × {unitPrice} per {billing.interval}
+              <p className="text-[22px] font-semibold tracking-[-0.03em] text-gray-950">
+                {getOpenWorkWebQuantityDescription(billing.quantity)} × {unitPrice}
               </p>
-              <p className="mt-1 text-[22px] font-semibold tracking-[-0.03em] text-gray-950">
+              <p className="mt-1 text-[14px] text-gray-600">
                 {expectedTotal} per {billing.interval}
               </p>
             </div>
-            <div className="mt-5 grid gap-2 text-[13px] leading-5 text-gray-600" data-testid="openwork-web-checkout-explainer">
-              <p><span className="font-medium text-gray-950">Before payment:</span> Stripe will show {billing.quantity} billable {billing.quantity === 1 ? "user" : "users"} at {unitPrice} each.</p>
-              <p><span className="font-medium text-gray-950">After purchase:</span> Access unlocks only after Stripe confirms the subscription and payment.</p>
-              <p><span className="font-medium text-gray-950">As your team changes:</span> Joined members are reconciled to the subscription quantity; pending invitations are never billed.</p>
-            </div>
+            <p className="mt-5 text-[13px] leading-5 text-gray-600" data-testid="openwork-web-checkout-explainer">
+              Access opens as soon as your payment is confirmed. Billing follows your joined member count automatically as your team changes — pending invitations are never billed.
+            </p>
             {!billing.configured ? (
               <DenNotice className="mt-5" tone="neutral" message="OpenWork Web billing is not configured for this deployment." />
             ) : hasOngoingSubscription ? (
@@ -407,8 +405,8 @@ export default function WebPage() {
                 <DenNotice
                   tone="warning"
                   message={billing.subscription?.paymentStatus === "payment_failed"
-                    ? "This organization already has an OpenWork Web subscription, but Stripe reports that its latest payment failed. Access remains locked; update the payment method from Billing instead of starting another checkout."
-                    : `This organization already has an OpenWork Web subscription. Stripe reports it as ${formatSubscriptionStatus(billing.subscription?.status ?? "unknown").toLowerCase()}, so access remains locked. Manage the existing subscription instead of starting another checkout.`}
+                    ? "This organization already has an OpenWork Web subscription with a failed payment. Update the payment method from Billing to restore access."
+                    : `This organization already has an OpenWork Web subscription (${formatSubscriptionStatus(billing.subscription?.status ?? "unknown").toLowerCase()}). Manage the existing subscription from Billing.`}
                 />
                 <DenButton variant="secondary" href={getBillingRoute(activeOrg?.slug)}>View billing</DenButton>
               </div>
@@ -420,7 +418,7 @@ export default function WebPage() {
               <DenNotice
                 className="mt-5"
                 tone="warning"
-                message="Ask a workspace owner or admin to purchase OpenWork Web for this organization. You will receive access after Stripe confirms the organization subscription."
+                message="Ask a workspace owner or admin to purchase OpenWork Web for this organization. You'll get access as soon as it's active."
               />
             )}
           </DenCard>
@@ -431,7 +429,7 @@ export default function WebPage() {
             <p className="text-[12px] font-semibold uppercase tracking-[0.12em] text-emerald-700">Subscription active</p>
             <h2 className="mt-2 text-[22px] font-semibold tracking-[-0.03em] text-gray-950">OpenWork Web is ready</h2>
             <p className="mt-3 text-[14px] leading-6 text-gray-600">
-              This organization has confirmed access for {getOpenWorkWebQuantityDescription(billing.quantity)}.
+              OpenWork Web is active for {getOpenWorkWebQuantityDescription(billing.quantity)} in this organization.
             </p>
             <div className="mt-5 flex flex-wrap gap-3">
               <WebOpenButton openworkWebUrl={runtimeConfig.openworkWebUrl} />

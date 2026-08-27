@@ -1,12 +1,14 @@
 # OpenWork Web billing review frames
 
-These screenshots supplement the executable proof for the OpenWork Web billing pull request. They were captured from an isolated local Den database with the existing Cloud capability enabled for a demo organization containing 17 joined members and 3 pending invitations.
+These screenshots supplement the executable proof for the OpenWork Web billing pull request. They were captured from an isolated local Den with the existing Cloud capability enabled for a demo organization containing 17 joined members and 3 pending invitations, after the test-mode Stripe Product/Price was configured and a hosted test-mode Checkout had been completed against this stack.
 
-- `01-purchase-boundary.jpg` shows the pre-Checkout definition and math: pending invitations are excluded, 17 joined members are billed at $50 each, the expected total is $850/month, and access waits for Stripe confirmation.
-- `02-active-billing.jpg` shows the active plan, unit price, billable quantity, monthly total, payment status, and renewal date.
-- `03-payment-failed-lock.jpg` shows that an existing subscription with a failed payment stays locked and routes the administrator to Billing instead of presenting a duplicate Checkout action.
-- `04-cancellation-scheduled.jpg` shows continued access through the current period, the access-end date, and the Stripe reactivation boundary.
+The customer-facing copy leads with members × unit price (`17 members × $50.00`) and keeps the monthly total secondary, per review.
+
+- `01-purchase-boundary.jpg` shows the purchase page before any subscription: the quantity definition, `17 members × $50.00` with the secondary monthly total, and the single purchase action.
+- `02-active-billing.jpg` shows the active Billing card: plan, unit price, members billed, expected monthly total, subscription and payment status, and management actions.
+- `03-payment-failed-lock.jpg` shows that a subscription with a failed payment stays locked and routes the administrator to Billing instead of presenting a duplicate purchase action.
+- `04-cancellation-scheduled.jpg` shows scheduled cancellation on Billing: access continues through the current period and the subscription can be reactivated before then.
 
 These rendered frames are supplementary and do not decide pass/fail. The pull request's `@openwork/testkit` spec and focused suites cover pricing, authoritative quantity, organization association, webhook idempotency, Checkout confirmation, payment failure and recovery, cancellation, terminal revocation, reactivation, and duplicate-subscription prevention.
 
-No live Stripe payment was submitted during this local pass. Test-mode Stripe Product/Price configuration, the hosted Checkout review, Billing Portal configuration, and the launch decision remain explicit pre-launch gates.
+Live-mode Stripe resources, production configuration, and the launch decision remain explicit pre-launch gates.
