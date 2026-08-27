@@ -253,6 +253,46 @@ test("per-member provider credentials resolve, redact, block, purge, and clean u
   expect(blockedConnect.status).toBe(409)
   await expect(blockedConnect.json()).resolves.toEqual({ error: "needs_key", credentialState: "blocked" })
 
+  // A blocked binding is admin-owned: the member can neither overwrite it
+  // back to active nor delete it to re-create a fresh active row.
+  const blockedSelfWrite = await request(memberTwoCookie, `/v1/llm-providers/${llmProviderId}/my-credential`, {
+    method: "PUT",
+    body: JSON.stringify({ apiKey: "sk-member-two-sneaky" }),
+  })
+  expect(blockedSelfWrite.status).toBe(409)
+  await expect(blockedSelfWrite.json()).resolves.toEqual({ error: "credential_blocked" })
+  const blockedSelfDelete = await request(memberTwoCookie, `/v1/llm-providers/${llmProviderId}/my-credential`, {
+    method: "DELETE",
+  })
+  expect(blockedSelfDelete.status).toBe(409)
+  await expect(blockedSelfDelete.json()).resolves.toEqual({ error: "credential_blocked" })
+  const stillBlockedConnect = await request(memberTwoCookie, `/v1/llm-providers/${llmProviderId}/connect`)
+  expect(stillBlockedConnect.status).toBe(409)
+  await expect(stillBlockedConnect.json()).resolves.toEqual({ error: "needs_key", credentialState: "blocked" })
+
+  // Admin re-provisioning is the explicit unblock path.
+  const adminUnblock = await request(
+    ownerCookie,
+    `/v1/llm-providers/${llmProviderId}/member-credentials/${memberTwoId}`,
+    {
+      method: "PUT",
+      body: JSON.stringify({ apiKey: "sk-member-two-restored" }),
+    },
+  )
+  expect(adminUnblock.status).toBe(200)
+  await expect(adminUnblock.json()).resolves.toMatchObject({ state: "active" })
+  const restoredConnect = await request(memberTwoCookie, `/v1/llm-providers/${llmProviderId}/connect`)
+  expect(restoredConnect.status).toBe(200)
+  await expect(restoredConnect.json()).resolves.toMatchObject({
+    llmProvider: { apiKey: "sk-member-two-restored" },
+  })
+  const reBlockResponse = await request(
+    ownerCookie,
+    `/v1/llm-providers/${llmProviderId}/member-credentials/${memberTwoId}/block`,
+    { method: "POST" },
+  )
+  expect(reBlockResponse.status).toBe(200)
+
   const sharedKey = "sk-shared-regression"
   const sharedCreateResponse = await request(ownerCookie, "/v1/llm-providers", {
     method: "POST",

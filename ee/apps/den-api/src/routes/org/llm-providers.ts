@@ -224,6 +224,9 @@ const versionConflictSchema = z.object({
 const notPerMemberSchema = z.object({
   error: z.literal("not_per_member"),
 }).meta({ ref: "LlmProviderNotPerMemberError" })
+const credentialBlockedSchema = z.object({
+  error: z.literal("credential_blocked"),
+}).meta({ ref: "LlmProviderCredentialBlockedError" })
 const memberCredentialBadRequestSchema = z.union([
   invalidRequestSchema,
   notPerMemberSchema,
@@ -394,6 +397,8 @@ type MemberCredentialWriteResult = {
   credential: LlmProviderMemberCredentialRow
 } | {
   status: "version_conflict"
+} | {
+  status: "blocked"
 }
 
 async function upsertMemberCredential(input: {
@@ -402,6 +407,12 @@ async function upsertMemberCredential(input: {
   orgMembershipId: MemberId
   secret: string
   createdBy: LlmProviderMemberCredentialRow["createdBy"]
+  /**
+   * A blocked binding is admin-owned: member self-service must not overwrite
+   * it back to active. Admin provisioning passes true, which is the explicit
+   * unblock path.
+   */
+  allowBlockedOverwrite: boolean
   externalPrincipalId?: string
   externalCredentialId?: string
   expectedVersion?: number
@@ -418,6 +429,9 @@ async function upsertMemberCredential(input: {
       .limit(1)
       .for("update")
     const existing = rows[0]
+    if (existing?.state === "blocked" && !input.allowBlockedOverwrite) {
+      return { status: "blocked" }
+    }
     if (input.expectedVersion !== undefined && existing?.version !== input.expectedVersion) {
       return { status: "version_conflict" }
     }
@@ -1023,6 +1037,7 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
         401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
         403: jsonResponse("The caller has not been granted this provider.", forbiddenSchema),
         404: jsonResponse("The provider could not be found.", notFoundSchema),
+        409: jsonResponse("The credential is blocked and only an admin can replace it.", credentialBlockedSchema),
       },
     }),
     orgMemberRoute(),
@@ -1064,7 +1079,11 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
         orgMembershipId: payload.currentMember.id,
         secret,
         createdBy: "member",
+        allowBlockedOverwrite: false,
       })
+      if (result.status === "blocked") {
+        return c.json({ error: "credential_blocked" }, 409)
+      }
       if (result.status !== "ok") {
         throw new Error("member_credential_write_unexpected_conflict")
       }
@@ -1083,6 +1102,7 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
         401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
         403: jsonResponse("The caller has not been granted this provider.", forbiddenSchema),
         404: jsonResponse("The provider could not be found.", notFoundSchema),
+        409: jsonResponse("The credential is blocked and only an admin can remove it.", credentialBlockedSchema),
       },
     }),
     orgMemberRoute(),
@@ -1109,11 +1129,28 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
         return c.json({ error: "not_per_member" }, 400)
       }
 
-      await db.delete(LlmProviderMemberCredentialTable).where(and(
-        eq(LlmProviderMemberCredentialTable.organizationId, payload.organization.id),
-        eq(LlmProviderMemberCredentialTable.llmProviderId, llmProviderId),
-        eq(LlmProviderMemberCredentialTable.orgMembershipId, payload.currentMember.id),
-      ))
+      // A blocked binding is admin-owned: deleting it here would let the
+      // member re-create an active one, bypassing the block.
+      const deleted = await db.transaction(async (tx) => {
+        const rows = await tx
+          .select({ id: LlmProviderMemberCredentialTable.id, state: LlmProviderMemberCredentialTable.state })
+          .from(LlmProviderMemberCredentialTable)
+          .where(and(
+            eq(LlmProviderMemberCredentialTable.organizationId, payload.organization.id),
+            eq(LlmProviderMemberCredentialTable.llmProviderId, llmProviderId),
+            eq(LlmProviderMemberCredentialTable.orgMembershipId, payload.currentMember.id),
+          ))
+          .limit(1)
+          .for("update")
+        const existing = rows[0]
+        if (!existing) return { status: "ok" as const }
+        if (existing.state === "blocked") return { status: "blocked" as const }
+        await tx.delete(LlmProviderMemberCredentialTable).where(eq(LlmProviderMemberCredentialTable.id, existing.id))
+        return { status: "ok" as const }
+      })
+      if (deleted.status === "blocked") {
+        return c.json({ error: "credential_blocked" }, 409)
+      }
       return c.json({ ok: true })
     },
   )
@@ -1233,12 +1270,16 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
         orgMembershipId,
         secret,
         createdBy: "admin",
+        allowBlockedOverwrite: true,
         externalPrincipalId: input.externalPrincipalId,
         externalCredentialId: input.externalCredentialId,
         expectedVersion: input.expectedVersion,
       })
       if (result.status === "version_conflict") {
         return c.json({ error: "version_conflict" }, 409)
+      }
+      if (result.status !== "ok") {
+        throw new Error("member_credential_admin_write_unexpected_conflict")
       }
       return c.json(memberCredentialSummary(result.credential))
     },
