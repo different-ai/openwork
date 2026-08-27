@@ -81,6 +81,11 @@ import {
   setOpenworkSentrySession,
 } from "./sentry.mjs";
 import { installStdioErrorHandlers } from "./stdio-errors.mjs";
+import {
+  createRendererCrashRecovery,
+  installSocketTypeOfServiceGuard,
+  runDetachedTask,
+} from "./process-resilience.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const APP_ROOT = path.resolve(__dirname, "../../..");
@@ -125,6 +130,7 @@ const BLANK_SLATE_LAUNCH = resolveBlankSlateLaunch({
 const APP_NAME = BLANK_SLATE_LAUNCH.appName;
 let currentDisplayAppName = APP_NAME;
 installStdioErrorHandlers();
+installSocketTypeOfServiceGuard();
 await initOpenworkSentry({
   app,
   distribution: DESKTOP_DISTRIBUTION,
@@ -683,7 +689,7 @@ function showDesktopNotification(input) {
   try {
     const notification = new ElectronNotification(options);
     notification.on("click", () => {
-      void focusMainWindowFromNotification();
+      runDetachedTask("focus window from notification", focusMainWindowFromNotification);
     });
     notification.show();
     return { ok: true };
@@ -1325,7 +1331,7 @@ function showShutdownScreen() {
   if (!win || win.isDestroyed()) return;
   try {
     win.show();
-    win.webContents.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(`<!doctype html>
+    void win.webContents.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(`<!doctype html>
 <html>
   <head>
     <meta charset="utf-8" />
@@ -1346,7 +1352,7 @@ function showShutdownScreen() {
       <div class="body">Closing local workers and background services...</div>
     </main>
   </body>
-</html>`)}`);
+</html>`)}`).catch(() => undefined);
   } catch {
     // Ignore renderer teardown races during quit.
   }
@@ -2523,12 +2529,28 @@ async function createMainWindow() {
     mainWindow = null;
   });
 
+  const recoverRendererCrash = createRendererCrashRecovery({
+    reload: () => {
+      if (!mainWindow || mainWindow.isDestroyed()) return;
+      mainWindow.webContents.reload();
+    },
+    onRepeatedCrash: (details) => {
+      dialog.showErrorBox(
+        `${APP_NAME} could not recover`,
+        `The app renderer stopped repeatedly (${details.reason ?? "unknown reason"}). Quit and reopen OpenWork. Your workspace files were not deleted.`,
+      );
+    },
+  });
+  mainWindow.webContents.on("render-process-gone", (_event, details) => {
+    recoverRendererCrash(details);
+  });
+
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     if (url.startsWith("file://")) {
       try {
-        void shell.openPath(fileURLToPath(url));
+        runDetachedTask("open local file", () => shell.openPath(fileURLToPath(url)));
       } catch {
-        void openExternalUrl(url);
+        runDetachedTask("open local file externally", () => openExternalUrl(url));
       }
 
       return { action: "deny" };
@@ -2538,7 +2560,7 @@ async function createMainWindow() {
       url.startsWith("http://127.0.0.1") ||
       url.startsWith("http://localhost");
     if (!local) {
-      void openExternalUrl(url);
+      runDetachedTask("open external URL", () => openExternalUrl(url));
       return { action: "deny" };
     }
     return { action: "allow" };
@@ -2699,34 +2721,38 @@ or use: pnpm dev:worktree`);
     if (runtimeDisposeInProgress) return;
     showShutdownScreen();
     desktopAutomationRunner.stop();
-    void Promise.all([
-      disposeRuntimeBeforeQuit(),
-      uiControlServer.stop(),
-    ]).finally(() => {
-      scheduleBlankSlateProfileCleanup();
-      app.quit();
+    runDetachedTask("stop services before quit", async () => {
+      try {
+        await Promise.all([
+          disposeRuntimeBeforeQuit(),
+          uiControlServer.stop(),
+        ]);
+      } finally {
+        scheduleBlankSlateProfileCleanup();
+        app.quit();
+      }
     });
   });
 
-  app.on("second-instance", async (_event, argv) => {
-    const win = await createMainWindow();
-    if (win.isMinimized()) {
-      win.restore();
-    }
-    win.show();
-    win.focus();
-    queueDeepLinks(forwardedDeepLinks(argv));
+  app.on("second-instance", (_event, argv) => {
+    runDetachedTask("focus second instance", async () => {
+      const win = await createMainWindow();
+      if (win.isMinimized()) win.restore();
+      win.show();
+      win.focus();
+      queueDeepLinks(forwardedDeepLinks(argv));
+    });
   });
 
-  app.on("open-url", async (event, url) => {
+  app.on("open-url", (event, url) => {
     event.preventDefault();
-    const win = await createMainWindow();
-    if (win.isMinimized()) {
-      win.restore();
-    }
-    win.show();
-    win.focus();
-    queueDeepLinks([url]);
+    runDetachedTask("open deep link", async () => {
+      const win = await createMainWindow();
+      if (win.isMinimized()) win.restore();
+      win.show();
+      win.focus();
+      queueDeepLinks([url]);
+    });
   });
 
   app.whenReady().then(async () => {
@@ -2804,17 +2830,22 @@ or use: pnpm dev:worktree`);
     // Initialize the packaged updater after the window is up so the user sees
     // a working app first. Renderer-owned checks pass the selected release
     // channel explicitly, avoiding stale stable-feed results for alpha users.
-    void ensureAutoUpdater();
+    runDetachedTask("initialize updater", ensureAutoUpdater);
+  }).catch((error) => {
+    console.error("[desktop] startup failed", error);
+    dialog.showErrorBox(
+      `${APP_NAME} could not start`,
+      "OpenWork hit an unexpected startup error. Quit and reopen the app. If it continues, switch to a Stable build and share the diagnostics with support.",
+    );
+    app.quit();
   });
 
-  app.on("activate", async () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
-      await createMainWindow();
-      return;
-    }
-    const win = await createMainWindow();
-    win.show();
-    win.focus();
+  app.on("activate", () => {
+    runDetachedTask("activate window", async () => {
+      const win = await createMainWindow();
+      win.show();
+      win.focus();
+    });
   });
 
   app.on("window-all-closed", () => {
