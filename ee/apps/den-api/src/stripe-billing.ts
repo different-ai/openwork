@@ -1121,9 +1121,9 @@ export async function syncStripeCheckoutSession(input: { organizationId: OrgId; 
   const eventId = `checkout-session-sync:${session.id}`
   let row = await syncCurrentStripeSubscription(subscription.id, eventId)
   if (row?.type === WEB_SUBSCRIPTION_TYPE) {
-    row = await setOpenWorkWebPaymentConfirmation({
+    row = await syncOpenWorkWebPaymentStateFromCurrentInvoice({
       row,
-      paymentFailed: !checkoutSessionConfirmsPayment(session),
+      stripeSubscriptionId: subscription.id,
       eventId,
     })
   }
@@ -1152,25 +1152,41 @@ async function syncCurrentStripeSubscription(stripeSubscriptionId: string, event
   return upsertOrgSubscriptionFromStripe(subscription, eventId)
 }
 
-async function setOpenWorkWebPaymentConfirmation(input: {
+async function syncOpenWorkWebPaymentStateFromCurrentInvoice(input: {
   row: Awaited<ReturnType<typeof findOrgSubscriptionByStripeId>>
-  paymentFailed: boolean
+  stripeSubscriptionId: string
   eventId: string
 }) {
-  if (!input.row || input.row.type !== WEB_SUBSCRIPTION_TYPE) {
+  if (
+    !input.row
+    || input.row.type !== WEB_SUBSCRIPTION_TYPE
+    || input.row.stripe_subscription_id !== input.stripeSubscriptionId
+  ) {
     return input.row
   }
 
+  const subscription = await stripe().subscriptions.retrieve(input.stripeSubscriptionId)
+  if (subscription.id !== input.stripeSubscriptionId) {
+    return input.row
+  }
+
+  const latestInvoiceId = stripeResourceId(subscription.latest_invoice)
+  if (!latestInvoiceId) {
+    return input.row
+  }
+
+  const currentInvoice = await stripe().invoices.retrieve(latestInvoiceId)
+  if (currentInvoice.id !== latestInvoiceId) {
+    return input.row
+  }
+
+  const paymentFailed = currentInvoice.status !== "paid"
   await db
     .update(OrgSubscriptionTable)
-    .set({ payment_failed: input.paymentFailed, last_event_id: input.eventId, updated_at: new Date() })
+    .set({ payment_failed: paymentFailed, last_event_id: input.eventId, updated_at: new Date() })
     .where(eq(OrgSubscriptionTable.id, input.row.id))
 
-  return { ...input.row, payment_failed: input.paymentFailed }
-}
-
-function checkoutSessionConfirmsPayment(session: Stripe.Checkout.Session) {
-  return session.payment_status === "paid" || session.payment_status === "no_payment_required"
+  return { ...input.row, payment_failed: paymentFailed }
 }
 
 function stripeResourceId(resource: string | { id: string } | null | undefined) {
@@ -1266,10 +1282,9 @@ export async function handleStripeWebhook(input: { payload: string; signature: s
         const subscription = await stripe().subscriptions.retrieve(session.subscription)
         let row = await syncCurrentStripeSubscription(subscription.id, event.id)
         if (row?.type === WEB_SUBSCRIPTION_TYPE) {
-          row = await setOpenWorkWebPaymentConfirmation({
+          row = await syncOpenWorkWebPaymentStateFromCurrentInvoice({
             row,
-            paymentFailed: event.type === "checkout.session.async_payment_failed"
-              || (event.type === "checkout.session.completed" && !checkoutSessionConfirmsPayment(session)),
+            stripeSubscriptionId: subscription.id,
             eventId: event.id,
           })
         }

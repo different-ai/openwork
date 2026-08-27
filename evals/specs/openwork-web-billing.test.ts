@@ -149,14 +149,16 @@ briefTest(testBrief({
   expect(stripeSource).toContain('case "customer.subscription.deleted"');
   expect(stripeSource).toContain('case "checkout.session.async_payment_succeeded"');
   expect(stripeSource).toContain('case "checkout.session.async_payment_failed"');
-  expect(stripeSource).toContain("checkoutSessionConfirmsPayment");
+  expect(stripeSource).toContain("syncOpenWorkWebPaymentStateFromCurrentInvoice");
+  expect(stripeSource).toContain('input.row.stripe_subscription_id !== input.stripeSubscriptionId');
+  expect(stripeSource).toContain('currentInvoice.status !== "paid"');
   expect(stripeSource).toContain("onDuplicateKeyUpdate");
   expect(subscriptionSchemaSource).toContain('uniqueIndex("org_subscriptions_org_type").on(table.organization_id, table.type)');
   expect(billingRoutesSource).toContain('z.enum(["inference", "seat", "web"])');
   expect(billingRoutesSource).toContain("syncStripeCheckoutSession");
   prove.checkoutContract(
     true,
-    "Checkout uses an organization-, quantity-, and prior-session-scoped idempotency key; all nonterminal statuses (including persisted payment failure) block duplicates while terminal states permit repurchase; org-checked sync/webhooks upsert one organization/type entitlement row.",
+    "Checkout uses an organization-, quantity-, and prior-session-scoped idempotency key; all nonterminal statuses block duplicates; org-checked sync/webhooks upsert one organization/type row, and only the current subscription invoice can change its payment lock.",
   );
 
   const parsedBilling = parseStripeWebBilling({

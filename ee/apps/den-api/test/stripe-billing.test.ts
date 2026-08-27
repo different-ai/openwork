@@ -525,6 +525,7 @@ test("checkout sync keeps an active Web subscription locked until Checkout confi
     metadata: { org_id: "org_test", subscription_type: "web" },
   }
   retrievedSubscription = webSubscription({ status: "active" })
+  retrievedInvoices = { in_web: { id: "in_web", status: "open" } }
   const pendingRow = webSubscriptionRow({ paymentFailed: true })
   selectResults.push([], [], [pendingRow])
 
@@ -547,6 +548,7 @@ test("checkout sync unlocks an active Web subscription after Checkout confirms p
     metadata: { org_id: "org_test", subscription_type: "web" },
   }
   retrievedSubscription = webSubscription({ status: "active" })
+  retrievedInvoices = { in_web: { id: "in_web", status: "paid" } }
   const pendingRow = webSubscriptionRow({ paymentFailed: true })
   selectResults.push([], [], [pendingRow])
 
@@ -559,9 +561,33 @@ test("checkout sync unlocks an active Web subscription after Checkout confirms p
   })
 })
 
+test("a stale paid Checkout sync cannot clear a failure on the current invoice", async () => {
+  retrievedCheckoutSession = {
+    id: "cs_stale_paid",
+    status: "complete",
+    payment_status: "paid",
+    mode: "subscription",
+    subscription: "sub_web",
+    metadata: { org_id: "org_test", subscription_type: "web" },
+  }
+  retrievedSubscription = webSubscription({ status: "active" })
+  retrievedInvoices = { in_web: { id: "in_web", status: "open" } }
+  const failedRow = webSubscriptionRow({ paymentFailed: true })
+  selectResults.push([], [], [failedRow])
+
+  const row = await syncStripeCheckoutSession({ organizationId: "org_test", sessionId: "cs_stale_paid" })
+
+  expect(row?.payment_failed).toBe(true)
+  expect(databaseUpdates.at(-1)).toMatchObject({
+    payment_failed: true,
+    last_event_id: "checkout-session-sync:cs_stale_paid",
+  })
+})
+
 test("an asynchronous Checkout failure locks an otherwise active Web subscription", async () => {
   const subscription = webSubscription({ status: "active" })
   retrievedSubscriptions = { sub_web: subscription }
+  retrievedInvoices = { in_web: { id: "in_web", status: "open" } }
   webhookEvent = {
     id: "evt_checkout_async_failed",
     type: "checkout.session.async_payment_failed",
@@ -590,6 +616,7 @@ test("an asynchronous Checkout failure locks an otherwise active Web subscriptio
 test("an asynchronous Checkout success clears payment failure and reconciles Web quantity", async () => {
   const subscription = webSubscription({ status: "active" })
   retrievedSubscriptions = { sub_web: subscription }
+  retrievedInvoices = { in_web: { id: "in_web", status: "paid" } }
   webhookEvent = {
     id: "evt_checkout_async_succeeded",
     type: "checkout.session.async_payment_succeeded",
@@ -612,6 +639,35 @@ test("an asynchronous Checkout success clears payment failure and reconciles Web
   expect(databaseUpdates.at(-1)).toMatchObject({
     payment_failed: false,
     last_event_id: "evt_checkout_async_succeeded",
+  })
+  expect(subscriptionItemUpdates).toHaveLength(0)
+})
+
+test("a delayed asynchronous Checkout success cannot clear a later invoice failure", async () => {
+  const subscription = webSubscription({ status: "active" })
+  retrievedSubscriptions = { sub_web: subscription }
+  retrievedInvoices = { in_web: { id: "in_web", status: "open" } }
+  webhookEvent = {
+    id: "evt_stale_checkout_success",
+    type: "checkout.session.async_payment_succeeded",
+    data: {
+      object: {
+        id: "cs_stale_success",
+        mode: "subscription",
+        payment_status: "paid",
+        subscription: "sub_web",
+        metadata: { org_id: "org_test", subscription_type: "web" },
+      },
+    },
+  }
+  const failedRow = webSubscriptionRow({ paymentFailed: true })
+  selectResults.push([failedRow], [failedRow], [failedRow], [failedRow])
+
+  await handleStripeWebhook({ payload: "{}", signature: "test_signature" })
+
+  expect(databaseUpdates.at(-1)).toMatchObject({
+    payment_failed: true,
+    last_event_id: "evt_stale_checkout_success",
   })
   expect(subscriptionItemUpdates).toHaveLength(0)
 })
