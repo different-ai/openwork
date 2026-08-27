@@ -230,4 +230,17 @@ describe("Web dashboard page", () => {
     expect(readStringProperty(derivedPayload, "denApiUrl")).toBe("https://api.den.example.test");
     expect(JSON.stringify(derivedPayload)).not.toContain("openwork-ee-den-api");
   });
+
+  test("runtime config derives the public API URL from the request during deployment migration", async () => {
+    delete process.env.DEN_API_PUBLIC_URL;
+    delete process.env.DEN_BASE_URL;
+    process.env.DEN_API_BASE = "http://openwork-ee-den-api:8788";
+
+    const response = await GET(new Request("https://app.openworklabs.com/api/runtime-config"));
+    const payload: unknown = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(readStringProperty(payload, "denApiUrl")).toBe("https://api.app.openworklabs.com");
+    expect(JSON.stringify(payload)).not.toContain("openwork-ee-den-api");
+  });
 });

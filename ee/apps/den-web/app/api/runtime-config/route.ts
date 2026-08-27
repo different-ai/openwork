@@ -13,8 +13,20 @@ function readOrgMode() {
   return readPublicRuntimeEnv("DEN_ORG_MODE") === "multi_org" ? "multi_org" : "single_org";
 }
 
-function readDenApiUrl() {
-  return readBaseUrlEnv(process.env, "DEN_API_PUBLIC_URL") ?? denUrls(process.env).api;
+function readDenApiUrl(request?: Request) {
+  const configuredPublicUrl = readBaseUrlEnv(process.env, "DEN_API_PUBLIC_URL");
+  if (configuredPublicUrl) {
+    return configuredPublicUrl;
+  }
+
+  try {
+    return denUrls(process.env).api;
+  } catch {
+    if (!request) {
+      return "";
+    }
+    return denUrls({ DEN_BASE_URL: new URL(request.url).origin }).api;
+  }
 }
 
 function readBooleanEnv(name: string, defaultValue: boolean) {
@@ -68,13 +80,13 @@ async function readSingleOrgSsoConfigured(orgMode: string) {
   }
 }
 
-export async function GET() {
+export async function GET(request?: Request) {
   const orgMode = readOrgMode();
   const singleOrgSsoConfigured = await readSingleOrgSsoConfigured(orgMode);
 
   return NextResponse.json(
     {
-      denApiUrl: readDenApiUrl(),
+      denApiUrl: readDenApiUrl(request),
       openworkAppConnectUrl: readPublicRuntimeEnv("DEN_WEB_OPENWORK_APP_CONNECT_URL"),
       openworkWebUrl: readPublicRuntimeEnv("DEN_WEB_OPENWORK_WEB_URL") || DEFAULT_OPENWORK_WEB_URL,
       openworkAuthCallbackUrl: readPublicRuntimeEnv("DEN_WEB_OPENWORK_AUTH_CALLBACK_URL"),
