@@ -111,6 +111,7 @@ type DenProvider = {
 type DenProviderConnection = DenProvider & {
   apiKey: string | null;
   apiKeys: Record<string, string> | null;
+  memberCredentialState: "missing" | "active" | "blocked" | "stale" | "error" | null;
 };
 
 type EnvEntry = {
@@ -129,11 +130,6 @@ type PreparedMaterialization = {
   fingerprint: string;
   providers: MaterializedProvider[];
   envEntries: EnvEntry[];
-  skipped: CloudProviderSyncSkippedProvider[];
-};
-
-type FetchedProviders = {
-  providers: DenProviderConnection[];
   skipped: CloudProviderSyncSkippedProvider[];
 };
 
@@ -289,10 +285,23 @@ function parseProviderConnection(payload: unknown, expectedId: string): DenProvi
   if (!provider || provider.id !== expectedId) {
     throw new Error(`den_llm_provider_connect_invalid_response_${expectedId}`);
   }
+  const memberCredential = payload.llmProvider.memberCredential;
+  const memberCredentialState = isRecord(memberCredential)
+    && (memberCredential.state === "missing"
+      || memberCredential.state === "active"
+      || memberCredential.state === "blocked"
+      || memberCredential.state === "stale"
+      || memberCredential.state === "error")
+    ? memberCredential.state
+    : null;
+  if (memberCredential !== undefined && memberCredentialState === null) {
+    throw new Error(`den_llm_provider_connect_invalid_response_${expectedId}`);
+  }
   return {
     ...provider,
     apiKey: typeof payload.llmProvider.apiKey === "string" ? payload.llmProvider.apiKey : null,
     apiKeys: parseApiKeys(payload.llmProvider.apiKeys),
+    memberCredentialState,
   };
 }
 
@@ -315,7 +324,6 @@ async function requestJson(
   fetchImpl: typeof globalThis.fetch,
   session: CloudProviderDenSession,
   path: string,
-  options: { allowNeedsKey?: boolean } = {},
 ): Promise<unknown> {
   let response: Response;
   try {
@@ -330,52 +338,27 @@ async function requestJson(
   } catch (error) {
     throw new Error(error instanceof Error ? `den_request_failed: ${error.message}` : "den_request_failed");
   }
-  if (!response.ok && !(options.allowNeedsKey && response.status === 409)) {
-    throw new Error(`den_request_failed_${response.status}`);
-  }
-  let payload: unknown;
+  if (!response.ok) throw new Error(`den_request_failed_${response.status}`);
   try {
-    payload = await response.json();
+    const payload: unknown = await response.json();
+    return payload;
   } catch {
     throw new Error("den_request_invalid_json");
   }
-  if (!response.ok && (!isRecord(payload) || payload.error !== "needs_key")) {
-    throw new Error(`den_request_failed_${response.status}`);
-  }
-  return payload;
 }
 
 async function fetchProviders(
   fetchImpl: typeof globalThis.fetch,
   session: CloudProviderDenSession,
-): Promise<FetchedProviders> {
+): Promise<DenProviderConnection[]> {
   const providers = parseProviderList(await requestJson(fetchImpl, session, "/v1/llm-providers"));
-  const results = await Promise.all(
-    providers.map(async (provider): Promise<DenProviderConnection | CloudProviderSyncSkippedProvider> => {
-      const payload = await requestJson(
-        fetchImpl,
-        session,
-        `/v1/llm-providers/${encodeURIComponent(provider.id)}/connect`,
-        { allowNeedsKey: true },
-      );
-      if (isRecord(payload) && payload.error === "needs_key") {
-        return {
-          cloudProviderId: provider.id,
-          providerId: runtimeProviderId(provider),
-          name: provider.name,
-          reason: "needs_key",
-        };
-      }
-      return parseProviderConnection(payload, provider.id);
-    }),
+  return Promise.all(
+    providers.map(async (provider) =>
+      parseProviderConnection(
+        await requestJson(fetchImpl, session, `/v1/llm-providers/${encodeURIComponent(provider.id)}/connect`),
+        provider.id,
+      )),
   );
-  const connections: DenProviderConnection[] = [];
-  const skipped: CloudProviderSyncSkippedProvider[] = [];
-  for (const result of results) {
-    if ("reason" in result) skipped.push(result);
-    else connections.push(result);
-  }
-  return { providers: connections, skipped };
 }
 
 function stableValue(value: unknown): unknown {
@@ -484,10 +467,19 @@ function buildProviderConfig(provider: DenProviderConnection): JsonRecord {
   return config;
 }
 
-function prepareMaterialization(input: FetchedProviders): PreparedMaterialization {
+function prepareMaterialization(providers: DenProviderConnection[]): PreparedMaterialization {
   const materialized: MaterializedProvider[] = [];
-  const skipped = [...input.skipped];
-  for (const provider of input.providers) {
+  const skipped: CloudProviderSyncSkippedProvider[] = [];
+  for (const provider of providers) {
+    if (provider.memberCredentialState && provider.memberCredentialState !== "active") {
+      skipped.push({
+        cloudProviderId: provider.id,
+        providerId: runtimeProviderId(provider),
+        name: provider.name,
+        reason: "needs_key",
+      });
+      continue;
+    }
     const envEntries = providerEnvEntries(provider);
     const envNames = readProviderEnvNames(provider.providerConfig);
     if (envNames.length > 0 && !envEntries.some((entry) => envNames.includes(entry.key))) {

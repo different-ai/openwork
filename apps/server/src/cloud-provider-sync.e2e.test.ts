@@ -328,10 +328,14 @@ describe("cloud provider sync gateway", () => {
         if (url.pathname === "/v1/llm-providers") {
           return Response.json({ llmProviders: [provider] });
         }
-        return Response.json(
-          { error: "needs_key", credentialState: "missing" },
-          { status: 409 },
-        );
+        return Response.json({
+          llmProvider: {
+            ...provider,
+            apiKey: null,
+            apiKeys: null,
+            memberCredential: { state: "missing" },
+          },
+        });
       },
     });
     stops.push(() => den.stop(true));

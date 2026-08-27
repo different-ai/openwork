@@ -174,8 +174,10 @@ test("per-member provider credentials resolve, redact, block, purge, and clean u
 
   for (const cookie of [memberOneCookie, memberTwoCookie]) {
     const missingResponse = await request(cookie, `/v1/llm-providers/${llmProviderId}/connect`)
-    expect(missingResponse.status).toBe(409)
-    await expect(missingResponse.json()).resolves.toEqual({ error: "needs_key", credentialState: "missing" })
+    expect(missingResponse.status).toBe(200)
+    await expect(missingResponse.json()).resolves.toMatchObject({
+      llmProvider: { apiKey: null, apiKeys: null, memberCredential: { state: "missing" } },
+    })
   }
 
   const initialListResponse = await request(memberOneCookie, "/v1/llm-providers")
@@ -193,12 +195,20 @@ test("per-member provider credentials resolve, redact, block, purge, and clean u
   const memberOneConnectPayload: unknown = await memberOneConnect.json()
   expect(memberOneConnect.status).toBe(200)
   expect(memberOneConnectPayload).toMatchObject({
-    llmProvider: { id: llmProviderId, credentialMode: "per_member", apiKey: memberOneKey, apiKeys: null },
+    llmProvider: {
+      id: llmProviderId,
+      credentialMode: "per_member",
+      apiKey: memberOneKey,
+      apiKeys: null,
+      memberCredential: { state: "active" },
+    },
   })
   expect(JSON.stringify(memberOneConnectPayload)).not.toContain(organizationKey)
   const memberTwoStillMissing = await request(memberTwoCookie, `/v1/llm-providers/${llmProviderId}/connect`)
-  expect(memberTwoStillMissing.status).toBe(409)
-  await expect(memberTwoStillMissing.json()).resolves.toEqual({ error: "needs_key", credentialState: "missing" })
+  expect(memberTwoStillMissing.status).toBe(200)
+  await expect(memberTwoStillMissing.json()).resolves.toMatchObject({
+    llmProvider: { apiKey: null, apiKeys: null, memberCredential: { state: "missing" } },
+  })
 
   const updatedListResponse = await request(memberOneCookie, "/v1/llm-providers")
   await expect(updatedListResponse.json()).resolves.toMatchObject({
@@ -250,8 +260,10 @@ test("per-member provider credentials resolve, redact, block, purge, and clean u
   expect(blockResponse.status).toBe(200)
   await expect(blockResponse.json()).resolves.toMatchObject({ state: "blocked", version: 2 })
   const blockedConnect = await request(memberTwoCookie, `/v1/llm-providers/${llmProviderId}/connect`)
-  expect(blockedConnect.status).toBe(409)
-  await expect(blockedConnect.json()).resolves.toEqual({ error: "needs_key", credentialState: "blocked" })
+  expect(blockedConnect.status).toBe(200)
+  await expect(blockedConnect.json()).resolves.toMatchObject({
+    llmProvider: { apiKey: null, apiKeys: null, memberCredential: { state: "blocked" } },
+  })
 
   // A blocked binding is admin-owned: the member can neither overwrite it
   // back to active nor delete it to re-create a fresh active row.
@@ -267,8 +279,10 @@ test("per-member provider credentials resolve, redact, block, purge, and clean u
   expect(blockedSelfDelete.status).toBe(409)
   await expect(blockedSelfDelete.json()).resolves.toEqual({ error: "credential_blocked" })
   const stillBlockedConnect = await request(memberTwoCookie, `/v1/llm-providers/${llmProviderId}/connect`)
-  expect(stillBlockedConnect.status).toBe(409)
-  await expect(stillBlockedConnect.json()).resolves.toEqual({ error: "needs_key", credentialState: "blocked" })
+  expect(stillBlockedConnect.status).toBe(200)
+  await expect(stillBlockedConnect.json()).resolves.toMatchObject({
+    llmProvider: { apiKey: null, apiKeys: null, memberCredential: { state: "blocked" } },
+  })
 
   // Admin re-provisioning is the explicit unblock path.
   const adminUnblock = await request(
@@ -284,7 +298,7 @@ test("per-member provider credentials resolve, redact, block, purge, and clean u
   const restoredConnect = await request(memberTwoCookie, `/v1/llm-providers/${llmProviderId}/connect`)
   expect(restoredConnect.status).toBe(200)
   await expect(restoredConnect.json()).resolves.toMatchObject({
-    llmProvider: { apiKey: "sk-member-two-restored" },
+    llmProvider: { apiKey: "sk-member-two-restored", memberCredential: { state: "active" } },
   })
   const reBlockResponse = await request(
     ownerCookie,
@@ -307,9 +321,14 @@ test("per-member provider credentials resolve, redact, block, purge, and clean u
   const sharedProviderId = readProviderId(await sharedCreateResponse.json())
   expect(sharedCreateResponse.status).toBe(201)
   const sharedConnect = await request(memberOneCookie, `/v1/llm-providers/${sharedProviderId}/connect`)
-  await expect(sharedConnect.json()).resolves.toMatchObject({
+  const sharedConnectPayload: unknown = await sharedConnect.json()
+  expect(sharedConnectPayload).toMatchObject({
     llmProvider: { id: sharedProviderId, credentialMode: "shared", apiKey: sharedKey, apiKeys: null },
   })
+  if (!isRecord(sharedConnectPayload) || !isRecord(sharedConnectPayload.llmProvider)) {
+    throw new Error("Shared provider connect response had an invalid shape")
+  }
+  expect("memberCredential" in sharedConnectPayload.llmProvider).toBe(false)
   const sharedSelfWrite = await request(memberOneCookie, `/v1/llm-providers/${sharedProviderId}/my-credential`, {
     method: "PUT",
     body: JSON.stringify({ apiKey: memberOneKey }),

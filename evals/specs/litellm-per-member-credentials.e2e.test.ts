@@ -142,6 +142,15 @@ function connectKey(value: unknown): string {
   return provider.apiKey;
 }
 
+function connectCredentialState(value: unknown): string {
+  const provider = isRecord(value) && isRecord(value.llmProvider) ? value.llmProvider : null;
+  const memberCredential = provider && isRecord(provider.memberCredential) ? provider.memberCredential : null;
+  if (!memberCredential || typeof memberCredential.state !== "string") {
+    throw new Error("Provider connect response did not include memberCredential.state.");
+  }
+  return memberCredential.state;
+}
+
 function memberCredentials(value: unknown): Record<string, unknown>[] {
   if (!isRecord(value) || !Array.isArray(value.memberCredentials)) {
     throw new Error("Member credential response had an invalid shape.");
@@ -205,15 +214,20 @@ test.skipIf(missingRequirements.length > 0)(title, { timeout: 30 * 60_000 }, asy
   const providerId = await createProvider(den.admin, orgId, gateway.baseUrl);
 
   const aliceMissing = await connect(alice, orgId, providerId);
-  expect(aliceMissing.response.status).toBe(409);
-  expect(aliceMissing.body).toEqual({ error: "needs_key", credentialState: "missing" });
+  expect(aliceMissing.response.status).toBe(200);
+  expect(aliceMissing.body).toMatchObject({
+    llmProvider: { apiKey: null, apiKeys: null, memberCredential: { state: "missing" } },
+  });
   evidence.recordAssertionEvidence(
-    "A granted member without a binding receives the needs_key contract",
-    "Alice's connect request returned HTTP 409 with credentialState=missing.",
-    aliceMissing.response.status === 409
+    "A granted member without a binding receives a compatible missing-credential payload",
+    "Alice's connect request returned HTTP 200 with null credentials and memberCredential.state=missing.",
+    aliceMissing.response.status === 200
       && isRecord(aliceMissing.body)
-      && aliceMissing.body.error === "needs_key"
-      && aliceMissing.body.credentialState === "missing",
+      && isRecord(aliceMissing.body.llmProvider)
+      && aliceMissing.body.llmProvider.apiKey === null
+      && aliceMissing.body.llmProvider.apiKeys === null
+      && isRecord(aliceMissing.body.llmProvider.memberCredential)
+      && aliceMissing.body.llmProvider.memberCredential.state === "missing",
   );
 
   const imported: unknown = await import(new URL(
@@ -239,6 +253,8 @@ test.skipIf(missingRequirements.length > 0)(title, { timeout: 30 * 60_000 }, asy
   ]);
   expect(aliceConnect.response.status).toBe(200);
   expect(bobConnect.response.status).toBe(200);
+  expect(connectCredentialState(aliceConnect.body)).toBe("active");
+  expect(connectCredentialState(bobConnect.body)).toBe("active");
   const aliceKey = connectKey(aliceConnect.body);
   const bobKey = connectKey(bobConnect.body);
   expect(aliceKey).toMatch(/^sk-/);
@@ -307,8 +323,10 @@ test.skipIf(missingRequirements.length > 0)(title, { timeout: 30 * 60_000 }, asy
   const bobRejected = await chat(gateway.baseUrl, bobKey);
   expect(bobRejected.status).not.toBe(200);
   const bobBlocked = await connect(bob, orgId, providerId);
-  expect(bobBlocked.response.status).toBe(409);
-  expect(bobBlocked.body).toEqual({ error: "needs_key", credentialState: "blocked" });
+  expect(bobBlocked.response.status).toBe(200);
+  expect(bobBlocked.body).toMatchObject({
+    llmProvider: { apiKey: null, apiKeys: null, memberCredential: { state: "blocked" } },
+  });
   const bobSelfWrite = await denFetch(bob, `/v1/llm-providers/${encodeURIComponent(providerId)}/my-credential`, {
     method: "PUT",
     headers: orgHeaders(bob, orgId),
@@ -322,11 +340,10 @@ test.skipIf(missingRequirements.length > 0)(title, { timeout: 30 * 60_000 }, asy
   expect(aliceStillWorks.reply).toContain(REPLY);
   evidence.recordAssertionEvidence(
     "Offboarding revokes only the selected upstream key and leaves the block admin-owned",
-    "Bob's LiteLLM key was rejected, Den returned blocked, Bob could not self-unblock, and Alice's key still received the deterministic reply.",
+    "Bob's LiteLLM key was rejected, Den returned a blocked credential state, Bob could not self-unblock, and Alice's key still received the deterministic reply.",
     bobRejected.status !== 200
-      && bobBlocked.response.status === 409
-      && isRecord(bobBlocked.body)
-      && bobBlocked.body.credentialState === "blocked"
+      && bobBlocked.response.status === 200
+      && connectCredentialState(bobBlocked.body) === "blocked"
       && bobSelfWrite.response.status === 409
       && isRecord(bobSelfWrite.body)
       && bobSelfWrite.body.error === "credential_blocked"

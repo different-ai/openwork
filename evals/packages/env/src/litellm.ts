@@ -17,6 +17,7 @@ import type { Place } from "./place.ts";
 import type { DaytonaExec, DaytonaExecResult } from "@openwork/hosts";
 
 const IMAGE = "ghcr.io/berriai/litellm:v1.97.0@sha256:468c25f35f3e5ec4e414974f00deab93337b1b4d9953cabcfd3722e59415f834";
+const POSTGRES_IMAGE = "postgres:16-alpine@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685";
 const COMMAND_TIMEOUT_MS = 180_000;
 const STARTUP_TIMEOUT_MS = 90_000;
 const DATABASE_STARTUP_TIMEOUT_MS = 300_000;
@@ -642,7 +643,7 @@ async function startLocalLiteLlm(
         "--env", `POSTGRES_PASSWORD=${postgresPassword}`,
         "--env", "POSTGRES_DB=litellm",
         "--publish", "127.0.0.1::5432",
-        "postgres:16-alpine",
+        POSTGRES_IMAGE,
       ]);
       await run("docker", ["start", postgresContainer], 30_000);
       postgresPort = await mappedPostgresPort(postgresContainer);

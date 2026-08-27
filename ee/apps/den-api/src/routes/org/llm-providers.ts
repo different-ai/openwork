@@ -181,8 +181,13 @@ const llmProviderListResponseSchema = z.object({
   llmProviders: z.array(z.object({}).passthrough()),
 }).meta({ ref: "LlmProviderListResponse" })
 
+const memberCredentialConnectionSchema = z.object({
+  state: z.enum(["missing", "active", "blocked", "stale", "error"]),
+})
 const llmProviderResponseSchema = z.object({
-  llmProvider: z.object({}).passthrough(),
+  llmProvider: z.object({
+    memberCredential: memberCredentialConnectionSchema.optional(),
+  }).passthrough(),
 }).meta({ ref: "LlmProviderResponse" })
 
 const providerCatalogUnavailableSchema = z.object({
@@ -214,10 +219,6 @@ const memberCredentialListResponseSchema = z.object({
 const memberCredentialDeleteResponseSchema = z.object({
   ok: z.literal(true),
 }).meta({ ref: "LlmProviderMemberCredentialDeleteResponse" })
-const needsKeySchema = z.object({
-  error: z.literal("needs_key"),
-  credentialState: z.enum(["missing", "blocked", "stale", "error"]),
-}).meta({ ref: "LlmProviderNeedsKeyError" })
 const versionConflictSchema = z.object({
   error: z.literal("version_conflict"),
 }).meta({ ref: "LlmProviderCredentialVersionConflictError" })
@@ -934,7 +935,6 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
         401: jsonResponse("The caller must be signed in to connect to an organization LLM provider.", unauthorizedSchema),
         403: jsonResponse("Only members with access can connect to this provider.", forbiddenSchema),
         404: jsonResponse("The provider could not be found.", notFoundSchema),
-        409: jsonResponse("The calling member must add or repair their provider credential.", needsKeySchema),
       },
     }),
     orgMemberRoute(),
@@ -982,7 +982,8 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
         .from(LlmProviderModelTable)
         .where(eq(LlmProviderModelTable.llmProviderId, llmProviderId))
 
-      let storedCredential = provider.apiKey
+      let credential = decodeProviderCredential(provider.apiKey)
+      let memberCredential: z.infer<typeof memberCredentialConnectionSchema> | null = null
       if (provider.credentialMode === "per_member") {
         const bindingRows = await db
           .select()
@@ -995,23 +996,25 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
           .limit(1)
         const binding = bindingRows[0]
         const credentialState = binding?.state ?? "missing"
-        if (credentialState !== "active") {
-          return c.json({ error: "needs_key", credentialState }, 409)
-        }
-        storedCredential = binding.secret
+        memberCredential = { state: credentialState }
+        credential = credentialState === "active" && binding
+          ? decodeProviderCredential(binding.secret)
+          : { apiKey: null, apiKeys: null }
       }
 
+      // This route must stay 200 for granted callers: published desktop builds
+      // fail the entire sync on non-OK connect responses, while null credentials
+      // already make those clients skip only this provider.
       // Decode the stored credential so the wire format stays additive: legacy
       // single-secret providers keep returning `apiKey`, multi-env providers
       // return `apiKeys` with `apiKey: null` so old clients fail with their
       // missing-credential error instead of applying a JSON blob as the key.
-      const credential = decodeProviderCredential(storedCredential)
-
       return c.json({
         llmProvider: {
           ...provider,
           apiKey: credential.apiKey,
           apiKeys: credential.apiKeys,
+          ...(memberCredential ? { memberCredential } : {}),
           models: models
             .map((model) => ({
               id: model.modelId,

@@ -127,13 +127,10 @@ function generatedKey(value) {
 
 /**
  * @param {unknown} value
- * @param {string} keyAlias
  */
-function externalCredentialId(value, keyAlias) {
-  if (!isRecord(value)) return keyAlias;
-  if (typeof value.token_id === "string" && value.token_id) return value.token_id;
-  if (typeof value.token === "string" && value.token) return value.token;
-  return keyAlias;
+function externalCredentialId(value) {
+  if (isRecord(value) && typeof value.token_id === "string" && value.token_id) return value.token_id;
+  throw new Error("LiteLLM key generation response did not include token_id; refusing to persist an unsafe credential identifier.");
 }
 
 /**
@@ -178,7 +175,7 @@ export async function reconcileMemberKeys(input) {
       secrets,
     );
     const apiKey = generatedKey(generated);
-    const credentialId = externalCredentialId(generated, keyAlias);
+    const credentialId = externalCredentialId(generated);
     const userId = isRecord(generated) && typeof generated.user_id === "string" && generated.user_id
       ? generated.user_id
       : null;
