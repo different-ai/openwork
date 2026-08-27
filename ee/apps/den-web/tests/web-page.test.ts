@@ -64,7 +64,7 @@ describe("Web dashboard page", () => {
     orgBusy: false,
     hasOrgContext: true,
     activeOrgId: "org_1",
-    cloudEnabled: true,
+    webAvailable: true,
     runtimeConfigLoaded: true,
     billingOrgId: "org_1",
     billing: webBilling,
@@ -72,10 +72,10 @@ describe("Web dashboard page", () => {
     confirming: false,
   };
 
-  test("uses the existing cloud capability gate and fails closed while billing resolves", () => {
+  test("uses the deployment Web offer and fails closed while billing resolves", () => {
     expect(getWebPageAccessState({
       ...accessInput,
-      cloudEnabled: false,
+      webAvailable: false,
     })).toBe("not-found");
 
     expect(getWebPageAccessState({
@@ -182,6 +182,9 @@ describe("Web dashboard page", () => {
     expect(source).toContain("pending invitations are never billed");
     expect(source).not.toContain("Stripe will show");
     expect(source).toContain("await requestWebBilling(orgId, false)");
+    expect(source).toContain('runtimeConfig.orgMode === "multi_org"');
+    expect(source).toContain("orgContext?.capabilities.openworkWeb === true");
+    expect(source).not.toContain("orgContext?.capabilities.cloud");
     expect(checking).toContain('returnTarget === "web"');
     expect(checking).toContain("?stripe_checkout=web&session_id=");
   });

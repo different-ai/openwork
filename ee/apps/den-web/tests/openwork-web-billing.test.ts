@@ -91,5 +91,10 @@ describe("OpenWork Web billing data", () => {
     expect(source).toContain("reactivate before access ends");
     expect(source).toContain("stripeBillingOrgId === activeOrgId");
     expect(source).toContain("currentOrgIdRef.current !== expectedOrgId");
+    expect(source).toContain('runtimeConfig.orgMode === "multi_org"');
+    expect(source).toContain("orgContext?.capabilities.openworkWeb === true");
+    expect(source).not.toContain("orgContext?.capabilities.cloud");
+    expect(source).toContain('description={webFeatureEnabled');
+    expect(source).toContain("Team seats and built-in AI model access are separate purchases.");
   });
 });

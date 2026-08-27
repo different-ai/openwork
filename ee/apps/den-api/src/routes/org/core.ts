@@ -19,6 +19,7 @@ import { authenticatedRoute, jsonValidator, orgMemberRoute, orgRoleRoute, public
 import { denTypeIdSchema, enterprisePlanRequiredSchema, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
 import { validateInvitationAcceptVerification } from "../../organization-join-verification.js"
 import { normalizeOrganizationMetadata } from "../../organization-limits.js"
+import { isOpenWorkWebAvailable } from "../../openwork-web-availability.js"
 import {
   acceptInvitationForUser,
   createOrganizationForUser,
@@ -723,6 +724,11 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
           installLinks: organizationInstallLinksEnabled(payload.organization.metadata, {
             gatingEnabled: env.installLinksGatingEnabled,
           }),
+          // Deployment capability: OpenWork Web is generally available to all
+          // organizations only when a hosted-style multi-org Den has the
+          // dedicated Stripe Web product configured. This is never read from
+          // mutable organization metadata.
+          openworkWeb: isOpenWorkWebAvailable(),
           ...(cloudEnabled ? { cloud: true } : {}),
         },
         authMethods: {

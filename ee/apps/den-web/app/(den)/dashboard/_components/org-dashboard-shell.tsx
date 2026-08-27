@@ -414,11 +414,12 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
   const mcpConnectionsEnabled = orgContext?.capabilities.mcpConnections === true;
   const orgManagedDashboardsEnabled = orgContext?.capabilities.orgManagedDashboards === true;
   const workflowsEnabled = orgContext?.capabilities.workflows === true;
-  // Web access is backed by the existing hosted cloud capability. The org
-  // payload only reports `cloud` after the server rollout helper has verified
-  // the multi-org deployment gate, so the sidebar stays hidden by default until
-  // both config and org context load.
-  const showWeb = runtimeConfigLoaded && orgContext?.capabilities.cloud === true;
+  // Web is a deployment offer rather than an organization rollout flag. Den API
+  // advertises it only when the Web Stripe product is configured, and the
+  // runtime tenancy check keeps self-hosted single-org deployments fail-closed.
+  const showWeb = runtimeConfigLoaded
+    && runtimeConfig.orgMode === "multi_org"
+    && orgContext?.capabilities.openworkWeb === true;
 
   // One nav, two audiences. Members see Work only. Admins add Manage
   // (catalog + connectors + models), Observability, and Team. Connections
@@ -446,7 +447,6 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
           href: activeOrg ? getWebRoute(activeOrg.slug) : "#",
           label: "OpenWork Web",
           icon: Globe,
-          badge: "Alpha",
         }]
       : []),
   ];

@@ -108,6 +108,7 @@ mock.module("../src/db.js", () => ({
 
 mock.module("../src/env.js", () => ({
   env: {
+    orgMode: "multi_org",
     stripe: {
       secretKey: "sk_test_fake",
       webhookSecret: "whsec_test_fake",
@@ -152,6 +153,8 @@ const {
   syncWebSubscriptionQuantityAfterMemberChange,
   upsertOrgSubscriptionFromStripe,
 } = await import("../src/stripe-billing.js")
+const { env } = await import("../src/env.js")
+const { openWorkWebDeploymentAvailable } = await import("../src/openwork-web-availability.js")
 
 function webSubscription(input?: { status?: string; quantity?: number; organizationId?: string }) {
   const organizationId = input?.organizationId ?? "org_test"
@@ -228,6 +231,7 @@ function webSubscriptionRow(input?: { status?: string; paymentFailed?: boolean; 
 }
 
 beforeEach(() => {
+  env.orgMode = "multi_org"
   selectResults.length = 0
   insertedSubscriptions.length = 0
   customerCreates.length = 0
@@ -276,6 +280,27 @@ test("only active and trialing Web subscriptions are eligible", () => {
   for (const status of ["incomplete", "incomplete_expired", "past_due", "canceled", "unpaid", "paused", "expired"]) {
     expect(isEligibleOpenWorkWebSubscriptionStatus(status)).toBe(false)
   }
+})
+
+test("Web is offered only by a multi-org deployment with complete Stripe Web configuration", () => {
+  expect(openWorkWebDeploymentAvailable({
+    orgMode: "multi_org",
+    stripeSecretKey: "sk_test_fake",
+    openWorkWebPriceId: "price_web_fake",
+  })).toBe(true)
+  expect(openWorkWebDeploymentAvailable({
+    orgMode: "single_org",
+    stripeSecretKey: "sk_test_fake",
+    openWorkWebPriceId: "price_web_fake",
+  })).toBe(false)
+  expect(openWorkWebDeploymentAvailable({
+    orgMode: "multi_org",
+    openWorkWebPriceId: "price_web_fake",
+  })).toBe(false)
+  expect(openWorkWebDeploymentAvailable({
+    orgMode: "multi_org",
+    stripeSecretKey: "sk_test_fake",
+  })).toBe(false)
 })
 
 test("ongoing Web statuses suppress duplicate checkout until the subscription is terminal", () => {
@@ -361,6 +386,13 @@ test("Web checkout uses the configured monthly price and authoritative joined-me
   expect(checkoutCreates[0]?.options).toEqual({
     idempotencyKey: openWorkWebCheckoutIdempotencyKey({ organizationId: "org_test", quantity: 2 }),
   })
+})
+
+test("single-org deployments cannot create a Web checkout even when Stripe Web billing is configured", async () => {
+  env.orgMode = "single_org"
+
+  await expect(createOpenWorkWebCheckout(checkoutInput())).rejects.toThrow("stripe_openwork_web_not_available")
+  expect(checkoutCreates).toHaveLength(0)
 })
 
 test("Web checkout rejects a configured price that is not exactly $50 per licensed user each month", async () => {

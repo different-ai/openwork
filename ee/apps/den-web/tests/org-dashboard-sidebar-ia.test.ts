@@ -29,6 +29,10 @@ describe("Den org sidebar information architecture", () => {
     expect(shell).toContain("access.isAdmin && activeOrg");
     expect(shell).toContain("manageItems.length > 0");
     expect(shell).toContain("observabilityItems.length > 0");
+    expect(shell).toContain('runtimeConfig.orgMode === "multi_org"');
+    expect(shell).toContain("orgContext?.capabilities.openworkWeb === true");
+    expect(shell).not.toContain("orgContext?.capabilities.cloud");
+    expect(shell).not.toMatch(/label: "OpenWork Web"[\s\S]{0,120}badge:/);
   });
 
   test("admins see Manage then Observability then Team, with Models as a Providers category", () => {

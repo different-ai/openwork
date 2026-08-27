@@ -164,7 +164,7 @@ function parsePolarBilling(payload: unknown): PolarBilling | null {
 
 export function BillingDashboardScreen() {
   const router = useRouter();
-  const { sessionHydrated, user } = useDenFlow();
+  const { runtimeConfig, runtimeConfigLoaded, sessionHydrated, user } = useDenFlow();
   const { activeOrg, orgContext, runReauthableAction } = useOrgDashboard();
   const activeOrgId = orgContext?.organization.id ?? null;
   const [stripeBillingValue, setStripeBillingValue] = useState<StripeBilling | null>(null);
@@ -336,7 +336,9 @@ export function BillingDashboardScreen() {
   // page must not quote prices or threaten future charges.
   const aiConfigured = stripeBilling?.configured === true;
   const seatsConfigured = seatBilling?.configured === true;
-  const webFeatureEnabled = orgContext?.capabilities.cloud === true;
+  const webFeatureEnabled = runtimeConfigLoaded
+    && runtimeConfig.orgMode === "multi_org"
+    && orgContext?.capabilities.openworkWeb === true;
   const webConfigured = webBilling?.configured === true;
 
   const aiActive = stripeBilling?.hasActiveSubscription === true;
@@ -381,7 +383,9 @@ export function BillingDashboardScreen() {
       <DashboardPageTemplate
         icon={CreditCard}
         title="Billing"
-        description="OpenWork Web, team seats, and built-in AI model access are separate purchases. Your expected monthly total reflects the subscriptions shown below."
+        description={webFeatureEnabled
+          ? "OpenWork Web, team seats, and built-in AI model access are separate purchases. Your expected monthly total reflects the subscriptions shown below."
+          : "Team seats and built-in AI model access are separate purchases. Your expected monthly total reflects the subscriptions shown below."}
         colors={["#F5F3FF", "#312E81", "#635BFF", "#C4B5FD"]}
       >
       {stripeError && stripeBilling ? (
@@ -444,7 +448,9 @@ export function BillingDashboardScreen() {
         <DenSectionHeader
           className="p-6 pb-4"
           title="Your subscriptions"
-          description="Each plan is billed separately. OpenWork Web is $50 per joined organization member each month."
+          description={webFeatureEnabled
+            ? "Each plan is billed separately. OpenWork Web is $50 per joined organization member each month."
+            : "Each plan is billed separately."}
           action={
             <DenButton variant="secondary" size="sm" icon={RefreshCw} loading={stripeBusy} onClick={() => void refreshStripeBilling(false)}>
               Refresh

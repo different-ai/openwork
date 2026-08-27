@@ -2646,7 +2646,7 @@ export function DenAdminPanel() {
                     <p className="mt-1 text-xs text-slate-400">On by default. Turn off to hide member-facing org connections, marketplace capabilities on the agent rail, and the desktop Connect tab.</p>
                     <p className="mt-1 text-xs text-slate-400">Confined multi-tool scripts run server-side for this organization.</p>
                     <p className="mt-1 text-xs text-slate-400">Off by default. Requires the deployment master switch and exposes native provider MCP Apps and imported Apps for this organization.</p>
-                    <p className="mt-1 text-xs text-slate-400">Off by default. Turn on to show Cloud alpha access in this organization.</p>
+                    <p className="mt-1 text-xs text-slate-400">Off by default. Turn on organization-scoped Cloud workers and remote Cloud capabilities.</p>
                   </div>
 
                   <div className="mt-4 grid gap-3 border-t border-slate-200 pt-4 lg:grid-cols-[12rem_10rem_auto] lg:items-end">

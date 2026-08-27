@@ -23,6 +23,9 @@ briefTest(testBrief({
     priceContract: claim("OpenWork Web has a dedicated recurring USD monthly price contract", {
       never: "reuse the generic seat product or silently drift from $50 per user each month",
     }),
+    availabilityContract: claim("every organization sees Web only on a multi-org deployment with configured Stripe Web billing", {
+      never: "surface Web on single-org self-deployments, incomplete billing configuration, or an organization rollout flag",
+    }),
     quantityContract: claim("billing quantity counts joined, non-removed organization members", {
       never: "charge for pending invitations, removed members, roles, or free-seat offsets",
     }),
@@ -50,21 +53,28 @@ briefTest(testBrief({
     openWorkWebCheckoutIdempotencyKey,
     openWorkWebPaymentStatus,
   } = await import("../../ee/apps/den-api/src/stripe-billing");
+  const { openWorkWebDeploymentAvailable } = await import("../../ee/apps/den-api/src/openwork-web-availability");
   const [
     environmentSource,
+    availabilitySource,
     subscriptionSchemaSource,
     stripeSource,
     memberHooksSource,
     billingRoutesSource,
+    orgCoreSource,
+    dashboardShellSource,
     webPageSource,
     stripeReturnSource,
     billingPageSource,
   ] = await Promise.all([
     readFile(join(repoRoot, "ee", "apps", "den-api", "src", "env.ts"), "utf8"),
+    readFile(join(repoRoot, "ee", "apps", "den-api", "src", "openwork-web-availability.ts"), "utf8"),
     readFile(join(repoRoot, "ee", "packages", "den-db", "src", "schema", "subscriptions.ts"), "utf8"),
     readFile(join(repoRoot, "ee", "apps", "den-api", "src", "stripe-billing.ts"), "utf8"),
     readFile(join(repoRoot, "ee", "apps", "den-api", "src", "organization-member-hooks.ts"), "utf8"),
     readFile(join(repoRoot, "ee", "apps", "den-api", "src", "routes", "org", "billing.ts"), "utf8"),
+    readFile(join(repoRoot, "ee", "apps", "den-api", "src", "routes", "org", "core.ts"), "utf8"),
+    readFile(join(repoRoot, "ee", "apps", "den-web", "app", "(den)", "dashboard", "_components", "org-dashboard-shell.tsx"), "utf8"),
     readFile(join(repoRoot, "ee", "apps", "den-web", "app", "(den)", "dashboard", "web", "page.tsx"), "utf8"),
     readFile(join(repoRoot, "ee", "apps", "den-web", "app", "(den)", "dashboard", "(admin)", "billing", "stripe", "checking", "page.tsx"), "utf8"),
     readFile(join(repoRoot, "ee", "apps", "den-web", "app", "(den)", "dashboard", "_components", "billing-dashboard-screen.tsx"), "utf8"),
@@ -82,6 +92,42 @@ briefTest(testBrief({
   prove.priceContract(
     true,
     "The dedicated web subscription type and STRIPE_OPENWORK_WEB_PRICE_ID are separate from generic seats; runtime price validation requires recurring USD $50/month.",
+  );
+
+  expect(openWorkWebDeploymentAvailable({
+    orgMode: "multi_org",
+    stripeSecretKey: "sk_test_openwork",
+    openWorkWebPriceId: "price_openwork_web",
+  })).toBe(true);
+  expect(openWorkWebDeploymentAvailable({
+    orgMode: "single_org",
+    stripeSecretKey: "sk_test_openwork",
+    openWorkWebPriceId: "price_openwork_web",
+  })).toBe(false);
+  expect(openWorkWebDeploymentAvailable({
+    orgMode: "multi_org",
+    openWorkWebPriceId: "price_openwork_web",
+  })).toBe(false);
+  expect(openWorkWebDeploymentAvailable({
+    orgMode: "multi_org",
+    stripeSecretKey: "sk_test_openwork",
+  })).toBe(false);
+  expect(availabilitySource).toContain('input.orgMode === "multi_org"');
+  expect(availabilitySource).toContain("input.stripeSecretKey && input.openWorkWebPriceId");
+  expect(orgCoreSource).toContain("openworkWeb: isOpenWorkWebAvailable()");
+  expect(dashboardShellSource).toContain('runtimeConfig.orgMode === "multi_org"');
+  expect(dashboardShellSource).toContain("orgContext?.capabilities.openworkWeb === true");
+  expect(dashboardShellSource).not.toContain("orgContext?.capabilities.cloud");
+  expect(webPageSource).toContain('runtimeConfig.orgMode === "multi_org"');
+  expect(webPageSource).toContain("orgContext?.capabilities.openworkWeb === true");
+  expect(webPageSource).not.toContain("orgContext?.capabilities.cloud");
+  expect(billingPageSource).toContain('runtimeConfig.orgMode === "multi_org"');
+  expect(billingPageSource).toContain("orgContext?.capabilities.openworkWeb === true");
+  expect(billingRoutesSource).toContain("openwork_web_not_available");
+  expect(billingRoutesSource).toContain('subscriptionType === "web" && !isOpenWorkWebAvailable()');
+  prove.availabilityContract(
+    true,
+    "The deployment gate passed only with multi_org plus both the Stripe secret and dedicated Web price; single_org and either incomplete Stripe configuration failed closed, while every organization reads one server-advertised Web capability instead of mutable org metadata.",
   );
 
   const now = new Date("2026-08-25T00:00:00.000Z");
@@ -235,7 +281,7 @@ briefTest(testBrief({
   expect(webPageSource).toContain("Access opens as soon as your payment is confirmed.");
   expect(webPageSource).not.toContain("Stripe will show");
   expect(webPageSource).toContain("isExistingWebSubscriptionResponse");
-  expect(webPageSource).toContain("const cloudEnabled = orgContext?.capabilities.cloud === true");
+  expect(webPageSource).toContain("const webAvailable = runtimeConfigLoaded");
   expect(stripeReturnSource).toContain("?stripe_checkout=web&session_id=");
   expect(stripeReturnSource).toContain('if (returnTarget === "web")');
   expect(billingPageSource).toContain("OpenWork Web");
@@ -250,6 +296,6 @@ briefTest(testBrief({
   expect(billingPageSource).toContain("Manage or cancel");
   prove.surfaceContract(
     true,
-    "The paywall retains the existing cloud feature gate, waits for confirmed subscription state, and offers the exact $50/user/month purchase; Billing parses and labels plan, users, unit price, total, payment status, renewal/end date, and Stripe management.",
+    "The paywall uses the deployment Web offer, waits for confirmed subscription state, and offers the exact $50/user/month purchase; Billing parses and labels plan, users, unit price, total, payment status, renewal/end date, and Stripe management.",
   );
 });

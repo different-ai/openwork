@@ -8,6 +8,7 @@ import { forbiddenSchema, jsonResponse, unauthorizedSchema } from "../../openapi
 import { getRequiredUserEmail } from "../../user.js"
 import { env } from "../../env.js"
 import { ORGANIZATION_SUPER_ADMIN_ROLE, organizationRoleValueSatisfies } from "../../organization-role-hierarchy.js"
+import { isOpenWorkWebAvailable } from "../../openwork-web-availability.js"
 import type { OrgRouteVariables } from "./shared.js"
 import { ensureOrganizationAdmin, ensureOrganizationSuperAdmin, orgAccessFailureStatus } from "./shared.js"
 
@@ -17,6 +18,17 @@ const stripeCheckoutResponseSchema = z.object({ url: z.string() }).meta({ ref: "
 const stripeCheckoutSyncRequestSchema = z.object({ sessionId: z.string().trim().min(1) })
 const stripeCheckoutSyncResponseSchema = z.object({ synced: z.boolean() }).meta({ ref: "OrgStripeCheckoutSyncResponse" })
 const stripePortalResponseSchema = z.object({ url: z.string() }).meta({ ref: "OrgStripePortalResponse" })
+const openWorkWebUnavailableSchema = z.object({
+  error: z.literal("openwork_web_not_available"),
+  message: z.string(),
+}).meta({ ref: "OpenWorkWebUnavailableError" })
+
+function openWorkWebUnavailableResponse(): { error: "openwork_web_not_available"; message: string } {
+  return {
+    error: "openwork_web_not_available",
+    message: "OpenWork Web is not available on this deployment.",
+  }
+}
 
 function getRequestOrigin(c: { req: { raw: Request } }) {
   const url = new URL(c.req.raw.url)
@@ -116,10 +128,14 @@ export function registerOrgBillingRoutes<T extends { Variables: OrgRouteVariable
       responses: {
         200: jsonResponse("OpenWork Web billing eligibility returned successfully.", stripeBillingResponseSchema),
         401: jsonResponse("The caller must be an organization member.", unauthorizedSchema),
+        404: jsonResponse("OpenWork Web is not available on this deployment.", openWorkWebUnavailableSchema),
       },
     }),
     orgRoleRoute(["member"]),
     async (c) => {
+      if (!isOpenWorkWebAvailable()) {
+        return c.json(openWorkWebUnavailableResponse(), 404)
+      }
       const payload = c.get("organizationContext")
       const web = await getOpenWorkWebBillingSummary(payload.organization.id)
       return c.json({ billing: { stripe: { web } } })
@@ -177,6 +193,7 @@ export function registerOrgBillingRoutes<T extends { Variables: OrgRouteVariable
         200: jsonResponse("Stripe Checkout session created successfully.", stripeCheckoutResponseSchema),
         401: jsonResponse("The caller must be signed in to start billing.", unauthorizedSchema),
         403: jsonResponse("Only workspace owners and admins can start billing.", forbiddenSchema),
+        404: jsonResponse("OpenWork Web is not available on this deployment.", openWorkWebUnavailableSchema),
       },
     }),
     orgRoleRoute(["admin"]),
@@ -197,6 +214,9 @@ export function registerOrgBillingRoutes<T extends { Variables: OrgRouteVariable
       }
       const payload = c.get("organizationContext")
       const subscriptionType = parsed.data.type ?? "inference"
+      if (subscriptionType === "web" && !isOpenWorkWebAvailable()) {
+        return c.json(openWorkWebUnavailableResponse(), 404)
+      }
       const createCheckoutSession = subscriptionType === "seat"
         ? createSeatCheckoutSession
         : subscriptionType === "web"

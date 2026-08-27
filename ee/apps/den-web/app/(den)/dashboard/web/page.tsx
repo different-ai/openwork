@@ -46,7 +46,7 @@ export function getWebPageAccessState({
   orgBusy,
   hasOrgContext,
   activeOrgId,
-  cloudEnabled,
+  webAvailable,
   runtimeConfigLoaded,
   billingOrgId,
   billing,
@@ -56,7 +56,7 @@ export function getWebPageAccessState({
   orgBusy: boolean;
   hasOrgContext: boolean;
   activeOrgId: string | null;
-  cloudEnabled: boolean;
+  webAvailable: boolean;
   runtimeConfigLoaded: boolean;
   billingOrgId: string | null;
   billing: StripeWebBilling | null;
@@ -64,7 +64,7 @@ export function getWebPageAccessState({
   confirming: boolean;
 }): WebPageAccessState {
   if (orgBusy || !hasOrgContext || !activeOrgId || !runtimeConfigLoaded) return "loading";
-  if (!cloudEnabled) return "not-found";
+  if (!webAvailable) return "not-found";
   if (billingError) return "error";
   if (billingOrgId !== activeOrgId || !billing) return "loading";
   if (confirming) return "confirming";
@@ -120,7 +120,9 @@ export default function WebPage() {
   const { orgContext, orgBusy, activeOrg, runReauthableAction } = useOrgDashboard();
   const { runtimeConfig, runtimeConfigLoaded } = useDenFlow();
   const orgId = orgContext?.organization.id ?? null;
-  const cloudEnabled = orgContext?.capabilities.cloud === true;
+  const webAvailable = runtimeConfigLoaded
+    && runtimeConfig.orgMode === "multi_org"
+    && orgContext?.capabilities.openworkWeb === true;
   const [billingRecord, setBillingRecord] = useState<{ orgId: string; billing: StripeWebBilling } | null>(null);
   const [errorRecord, setErrorRecord] = useState<{ orgId: string; message: string } | null>(null);
   const [checkoutBusy, setCheckoutBusy] = useState(false);
@@ -177,14 +179,14 @@ export default function WebPage() {
   }, []);
 
   useEffect(() => {
-    if (!orgId || orgBusy || !cloudEnabled) return;
+    if (!orgId || orgBusy || !webAvailable) return;
     setReturnChecking(false);
     setErrorRecord(null);
     void requestWebBilling(orgId, false);
-  }, [orgId, orgBusy, cloudEnabled]);
+  }, [orgId, orgBusy, webAvailable]);
 
   useEffect(() => {
-    if (!orgId || orgBusy || !cloudEnabled || typeof window === "undefined") return;
+    if (!orgId || orgBusy || !webAvailable || typeof window === "undefined") return;
     const params = new URLSearchParams(window.location.search);
     if (params.get("stripe_checkout") !== OPENWORK_WEB_CHECKOUT_TYPE) return;
 
@@ -274,7 +276,7 @@ export default function WebPage() {
       stopped = true;
       if (timer !== null) window.clearTimeout(timer);
     };
-  }, [orgId, orgBusy, cloudEnabled]);
+  }, [orgId, orgBusy, webAvailable]);
 
   async function startWebCheckout() {
     if (!orgId || checkoutStartingRef.current) return;
@@ -335,7 +337,7 @@ export default function WebPage() {
     orgBusy,
     hasOrgContext: Boolean(orgContext),
     activeOrgId: orgId,
-    cloudEnabled,
+    webAvailable,
     runtimeConfigLoaded,
     billingOrgId: billingRecord?.orgId ?? null,
     billing,

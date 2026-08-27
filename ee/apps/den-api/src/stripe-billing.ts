@@ -13,6 +13,7 @@ import { env } from "./env.js"
 import type { DenOrgMode } from "./env.js"
 import { setInferenceEnabled } from "./inference.js"
 import { appLogger } from "./observability/logger.js"
+import { isOpenWorkWebAvailable } from "./openwork-web-availability.js"
 
 type OrgId = typeof OrganizationTable.$inferSelect.id
 type MemberId = typeof MemberTable.$inferSelect.id
@@ -64,10 +65,11 @@ function requireSeatPriceId() {
 }
 
 function requireOpenWorkWebPriceId() {
-  if (!env.stripe.openworkWebPriceId) {
-    throw new Error("stripe_openwork_web_price_id_missing")
+  const priceId = env.stripe.openworkWebPriceId
+  if (!isOpenWorkWebAvailable() || !priceId) {
+    throw new Error("stripe_openwork_web_not_available")
   }
-  return env.stripe.openworkWebPriceId
+  return priceId
 }
 
 function requirePriceIdForSubscriptionType(subscriptionType: StripeCheckoutSubscriptionType) {
@@ -910,7 +912,7 @@ async function loadOpenWorkWebBillingSummary(organizationId: OrgId) {
   return {
     row,
     summary: {
-      configured: Boolean(env.stripe.secretKey && env.stripe.openworkWebPriceId),
+      configured: isOpenWorkWebAvailable(),
       unitAmount: OPENWORK_WEB_UNIT_AMOUNT,
       currency: OPENWORK_WEB_CURRENCY,
       interval: OPENWORK_WEB_INTERVAL,
