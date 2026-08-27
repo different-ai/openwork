@@ -15,6 +15,7 @@ function seedAppLessDenEnvironment() {
   process.env.DEN_DB_ENCRYPTION_KEY ??= "x".repeat(32);
   process.env.BETTER_AUTH_SECRET ??= "y".repeat(32);
   process.env.BETTER_AUTH_URL ??= "http://127.0.0.1:8790";
+  process.env.DEN_OPENWORK_WEB_ENABLED ??= "true";
 }
 
 briefTest(testBrief({
@@ -23,8 +24,8 @@ briefTest(testBrief({
     priceContract: claim("OpenWork Web has a dedicated recurring USD monthly price contract", {
       never: "reuse the generic seat product or silently drift from $50 per user each month",
     }),
-    availabilityContract: claim("every organization sees Web only on a multi-org deployment with configured Stripe Web billing", {
-      never: "surface Web on single-org self-deployments, incomplete billing configuration, or an organization rollout flag",
+    availabilityContract: claim("every organization sees Web only when the deployment explicitly enables it", {
+      never: "surface Web when the flag is missing or false, or infer availability from tenancy, Stripe configuration, or organization metadata",
     }),
     quantityContract: claim("billing quantity counts joined, non-removed organization members", {
       never: "charge for pending invitations, removed members, roles, or free-seat offsets",
@@ -66,6 +67,8 @@ briefTest(testBrief({
     webPageSource,
     stripeReturnSource,
     billingPageSource,
+    helmValuesSource,
+    helmConfigMapSource,
   ] = await Promise.all([
     readFile(join(repoRoot, "ee", "apps", "den-api", "src", "env.ts"), "utf8"),
     readFile(join(repoRoot, "ee", "apps", "den-api", "src", "openwork-web-availability.ts"), "utf8"),
@@ -78,6 +81,8 @@ briefTest(testBrief({
     readFile(join(repoRoot, "ee", "apps", "den-web", "app", "(den)", "dashboard", "web", "page.tsx"), "utf8"),
     readFile(join(repoRoot, "ee", "apps", "den-web", "app", "(den)", "dashboard", "(admin)", "billing", "stripe", "checking", "page.tsx"), "utf8"),
     readFile(join(repoRoot, "ee", "apps", "den-web", "app", "(den)", "dashboard", "_components", "billing-dashboard-screen.tsx"), "utf8"),
+    readFile(join(repoRoot, "packaging", "helm", "openwork-ee", "values.yaml"), "utf8"),
+    readFile(join(repoRoot, "packaging", "helm", "openwork-ee", "templates", "configmap.yaml"), "utf8"),
   ]);
 
   expect(subscriptionSchemaSource).toMatch(/OrgSubscriptionType\s*=\s*\[[^\]]*"web"/s);
@@ -94,40 +99,32 @@ briefTest(testBrief({
     "The dedicated web subscription type and STRIPE_OPENWORK_WEB_PRICE_ID are separate from generic seats; runtime price validation requires recurring USD $50/month.",
   );
 
-  expect(openWorkWebDeploymentAvailable({
-    orgMode: "multi_org",
-    stripeSecretKey: "sk_test_openwork",
-    openWorkWebPriceId: "price_openwork_web",
-  })).toBe(true);
-  expect(openWorkWebDeploymentAvailable({
-    orgMode: "single_org",
-    stripeSecretKey: "sk_test_openwork",
-    openWorkWebPriceId: "price_openwork_web",
-  })).toBe(false);
-  expect(openWorkWebDeploymentAvailable({
-    orgMode: "multi_org",
-    openWorkWebPriceId: "price_openwork_web",
-  })).toBe(false);
-  expect(openWorkWebDeploymentAvailable({
-    orgMode: "multi_org",
-    stripeSecretKey: "sk_test_openwork",
-  })).toBe(false);
-  expect(availabilitySource).toContain('input.orgMode === "multi_org"');
-  expect(availabilitySource).toContain("input.stripeSecretKey && input.openWorkWebPriceId");
+  expect(openWorkWebDeploymentAvailable(true)).toBe(true);
+  expect(openWorkWebDeploymentAvailable(false)).toBe(false);
+  expect(environmentSource).toContain("DEN_OPENWORK_WEB_ENABLED: z.string().optional()");
+  expect(environmentSource).toContain('parseBooleanFlag(parsed.DEN_OPENWORK_WEB_ENABLED ?? "false")');
+  expect(availabilitySource).toContain("env.openworkWebEnabled");
+  expect(availabilitySource).not.toContain("orgMode");
+  expect(availabilitySource).not.toContain("stripeSecretKey");
+  expect(availabilitySource).not.toContain("openWorkWebPriceId");
+  expect(helmValuesSource).toContain('openworkWebEnabled: "false"');
+  expect(helmConfigMapSource).toContain("DEN_OPENWORK_WEB_ENABLED: {{ .Values.config.public.openworkWebEnabled | quote }}");
   expect(orgCoreSource).toContain("openworkWeb: isOpenWorkWebAvailable()");
-  expect(dashboardShellSource).toContain('runtimeConfig.orgMode === "multi_org"');
+  expect(dashboardShellSource).toContain("const showWeb = runtimeConfigLoaded\n    && orgContext?.capabilities.openworkWeb === true");
+  expect(dashboardShellSource).not.toMatch(/const showWeb =[\s\S]{0,160}runtimeConfig\.orgMode/);
   expect(dashboardShellSource).toContain("orgContext?.capabilities.openworkWeb === true");
   expect(dashboardShellSource).not.toContain("orgContext?.capabilities.cloud");
-  expect(webPageSource).toContain('runtimeConfig.orgMode === "multi_org"');
+  expect(webPageSource).not.toContain('runtimeConfig.orgMode === "multi_org"');
   expect(webPageSource).toContain("orgContext?.capabilities.openworkWeb === true");
   expect(webPageSource).not.toContain("orgContext?.capabilities.cloud");
-  expect(billingPageSource).toContain('runtimeConfig.orgMode === "multi_org"');
+  expect(billingPageSource).not.toContain('runtimeConfig.orgMode === "multi_org"');
   expect(billingPageSource).toContain("orgContext?.capabilities.openworkWeb === true");
   expect(billingRoutesSource).toContain("openwork_web_not_available");
   expect(billingRoutesSource).toContain('subscriptionType === "web" && !isOpenWorkWebAvailable()');
+  expect(stripeSource).toContain("Boolean(env.stripe.secretKey && env.stripe.openworkWebPriceId)");
   prove.availabilityContract(
     true,
-    "The deployment gate passed only with multi_org plus both the Stripe secret and dedicated Web price; single_org and either incomplete Stripe configuration failed closed, while every organization reads one server-advertised Web capability instead of mutable org metadata.",
+    "The deployment gate passed only for an explicit enabled value; the environment and Helm defaults are false, every organization reads one server-advertised capability, and tenancy, Stripe presence, and mutable org metadata do not decide availability.",
   );
 
   const now = new Date("2026-08-25T00:00:00.000Z");

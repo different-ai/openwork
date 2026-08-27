@@ -49,6 +49,7 @@ data:
   DEN_INSTALL_LINKS_GATING_ENABLED: {{ .Values.config.public.installLinksGatingEnabled | quote }}
   DEN_AUTOMATIONS_ENABLED: {{ .Values.config.public.automationsEnabled | quote }}
   DEN_DASHBOARDS_ENABLED: {{ .Values.config.public.dashboardsEnabled | quote }}
+  DEN_OPENWORK_WEB_ENABLED: {{ .Values.config.public.openworkWebEnabled | quote }}
   DEN_AUTOMATIONS_RUNTIME_ENABLED: {{ .Values.config.public.automationsRuntimeEnabled | quote }}
   DEN_GENERATED_ARTIFACT_VIEWS_ENABLED: {{ .Values.config.public.generatedArtifactViewsEnabled | quote }}
   DEN_CONNECT_LINK_MODE: {{ .Values.config.public.connectLinkMode | quote }}

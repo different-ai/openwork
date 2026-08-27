@@ -198,6 +198,31 @@ same flag, so Dashboard availability does not depend on a per-device preference.
 Desktop reads `dashboardEnabled` from `/v1/me/desktop-config` and hides both the
 sidebar entry and route unless the server explicitly returns `true`.
 
+### OpenWork Web rollout
+
+OpenWork Web is unavailable by default for self-hosted and customer-managed
+deployments. OpenWork Cloud enables it in its deployment values with:
+
+```yaml
+config:
+  public:
+    openworkWebEnabled: "true"
+```
+
+The chart renders this value as `DEN_OPENWORK_WEB_ENABLED`. A raw environment
+deployment can set the same variable directly. Missing, blank, false, or an
+unrecognized value fails closed: Den omits Web from its advertised
+capabilities, the sidebar and Billing offer stay hidden, and Web billing routes
+return the deployment-unavailable response. Availability is deployment-wide;
+it does not depend on organization mode, Stripe-variable presence, or mutable
+organization metadata.
+
+Enabling the flag advertises the hosted product. The deployment must also
+configure `STRIPE_SECRET_KEY` and `STRIPE_OPENWORK_WEB_PRICE_ID` before the
+purchase action becomes available. This separate billing-readiness check keeps
+a partially configured hosted rollout visible but non-purchasable instead of
+mistaking secrets for an availability signal.
+
 Provider-specific starter guides:
 
 - AWS EKS:

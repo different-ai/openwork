@@ -415,10 +415,8 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
   const orgManagedDashboardsEnabled = orgContext?.capabilities.orgManagedDashboards === true;
   const workflowsEnabled = orgContext?.capabilities.workflows === true;
   // Web is a deployment offer rather than an organization rollout flag. Den API
-  // advertises it only when the Web Stripe product is configured, and the
-  // runtime tenancy check keeps self-hosted single-org deployments fail-closed.
+  // advertises it only when the operator explicitly enables OpenWork Web.
   const showWeb = runtimeConfigLoaded
-    && runtimeConfig.orgMode === "multi_org"
     && orgContext?.capabilities.openworkWeb === true;
 
   // One nav, two audiences. Members see Work only. Admins add Manage

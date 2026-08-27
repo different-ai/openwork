@@ -109,6 +109,7 @@ mock.module("../src/db.js", () => ({
 mock.module("../src/env.js", () => ({
   env: {
     orgMode: "multi_org",
+    openworkWebEnabled: true,
     stripe: {
       secretKey: "sk_test_fake",
       webhookSecret: "whsec_test_fake",
@@ -232,6 +233,9 @@ function webSubscriptionRow(input?: { status?: string; paymentFailed?: boolean; 
 
 beforeEach(() => {
   env.orgMode = "multi_org"
+  env.openworkWebEnabled = true
+  env.stripe.secretKey = "sk_test_fake"
+  env.stripe.openworkWebPriceId = "price_web_fake"
   selectResults.length = 0
   insertedSubscriptions.length = 0
   customerCreates.length = 0
@@ -282,25 +286,12 @@ test("only active and trialing Web subscriptions are eligible", () => {
   }
 })
 
-test("Web is offered only by a multi-org deployment with complete Stripe Web configuration", () => {
-  expect(openWorkWebDeploymentAvailable({
-    orgMode: "multi_org",
-    stripeSecretKey: "sk_test_fake",
-    openWorkWebPriceId: "price_web_fake",
-  })).toBe(true)
-  expect(openWorkWebDeploymentAvailable({
-    orgMode: "single_org",
-    stripeSecretKey: "sk_test_fake",
-    openWorkWebPriceId: "price_web_fake",
-  })).toBe(false)
-  expect(openWorkWebDeploymentAvailable({
-    orgMode: "multi_org",
-    openWorkWebPriceId: "price_web_fake",
-  })).toBe(false)
-  expect(openWorkWebDeploymentAvailable({
-    orgMode: "multi_org",
-    stripeSecretKey: "sk_test_fake",
-  })).toBe(false)
+test("Web availability follows only the explicit deployment flag", () => {
+  expect(openWorkWebDeploymentAvailable(true)).toBe(true)
+  expect(openWorkWebDeploymentAvailable(false)).toBe(false)
+
+  env.orgMode = "single_org"
+  expect(openWorkWebDeploymentAvailable(env.openworkWebEnabled)).toBe(true)
 })
 
 test("ongoing Web statuses suppress duplicate checkout until the subscription is terminal", () => {
@@ -347,6 +338,16 @@ test("member-readable Web billing summary omits Stripe identifiers and portal ac
   expect(summary.subscription).not.toHaveProperty("stripeSubscriptionId")
 })
 
+test("the Web flag controls availability while Stripe readiness controls purchasing", async () => {
+  env.stripe.secretKey = ""
+  selectResults.push([], [{ count: 2 }])
+
+  const summary = await getOpenWorkWebBillingSummary("org_test")
+
+  expect(openWorkWebDeploymentAvailable(env.openworkWebEnabled)).toBe(true)
+  expect(summary.configured).toBe(false)
+})
+
 test("an active Web subscription with a failed payment remains locked", async () => {
   selectResults.push([{
     status: "active",
@@ -388,8 +389,8 @@ test("Web checkout uses the configured monthly price and authoritative joined-me
   })
 })
 
-test("single-org deployments cannot create a Web checkout even when Stripe Web billing is configured", async () => {
-  env.orgMode = "single_org"
+test("deployments without the Web flag cannot create a checkout even when Stripe billing is configured", async () => {
+  env.openworkWebEnabled = false
 
   await expect(createOpenWorkWebCheckout(checkoutInput())).rejects.toThrow("stripe_openwork_web_not_available")
   expect(checkoutCreates).toHaveLength(0)

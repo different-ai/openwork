@@ -912,7 +912,8 @@ async function loadOpenWorkWebBillingSummary(organizationId: OrgId) {
   return {
     row,
     summary: {
-      configured: isOpenWorkWebAvailable(),
+      configured: isOpenWorkWebAvailable()
+        && Boolean(env.stripe.secretKey && env.stripe.openworkWebPriceId),
       unitAmount: OPENWORK_WEB_UNIT_AMOUNT,
       currency: OPENWORK_WEB_CURRENCY,
       interval: OPENWORK_WEB_INTERVAL,

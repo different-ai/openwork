@@ -121,7 +121,6 @@ export default function WebPage() {
   const { runtimeConfig, runtimeConfigLoaded } = useDenFlow();
   const orgId = orgContext?.organization.id ?? null;
   const webAvailable = runtimeConfigLoaded
-    && runtimeConfig.orgMode === "multi_org"
     && orgContext?.capabilities.openworkWeb === true;
   const [billingRecord, setBillingRecord] = useState<{ orgId: string; billing: StripeWebBilling } | null>(null);
   const [errorRecord, setErrorRecord] = useState<{ orgId: string; message: string } | null>(null);

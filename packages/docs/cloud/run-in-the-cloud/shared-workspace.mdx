@@ -4,7 +4,7 @@ description: "Run a full OpenWork workspace in the browser, hosted by OpenWork"
 ---
 
 <Warning>
-**Hosted access.** OpenWork Web is available to every organization on an OpenWork-hosted deployment with Web billing configured. It costs **$50 per joined organization member per month**; pending invitations are not billed until they are accepted.
+**Hosted access.** OpenWork Web is available to every organization when an OpenWork-hosted deployment explicitly enables it. Web billing must also be configured before an owner or admin can purchase it. It costs **$50 per joined organization member per month**; pending invitations are not billed until they are accepted.
 </Warning>
 
 OpenWork Web gives your team a full OpenWork workspace in the browser, hosted and managed for you — nothing to install. An organization owner or admin can purchase it directly from the organization dashboard.
@@ -31,7 +31,7 @@ Use OpenWork Web when your team needs a hosted OpenWork runtime, a stable place 
 
 ## Notes
 
-- OpenWork Web appears on hosted multi-organization deployments after Web billing is configured. It does not use an organization rollout flag.
+- OpenWork Web appears only when the deployment sets `DEN_OPENWORK_WEB_ENABLED=true`. Missing or false keeps self-hosted deployments fail-closed; organization mode, Stripe-variable presence, and organization metadata do not act as rollout signals.
 - A workspace must be `Ready` before it can be opened.
 - Hosted workspace limits follow your OpenWork plan.
 - If you prefer to self-host a runtime instead, run `openwork-server` and connect the desktop app to that server URL.

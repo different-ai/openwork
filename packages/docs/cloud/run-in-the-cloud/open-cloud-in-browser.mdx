@@ -4,7 +4,7 @@ description: "Open a full OpenWork instance in your browser with nothing to inst
 ---
 
 <Warning>
-**Hosted access.** OpenWork Web is available to every organization on an OpenWork-hosted deployment with Web billing configured. It costs **$50 per joined organization member per month**; pending invitations are not billed until they are accepted.
+**Hosted access.** OpenWork Web is available to every organization when an OpenWork-hosted deployment explicitly enables it. Web billing must also be configured before an owner or admin can purchase it. It costs **$50 per joined organization member per month**; pending invitations are not billed until they are accepted.
 </Warning>
 
 Open `/dashboard/web` to see the price, billable member quantity, expected monthly total, and purchase action. Access opens only after the organization's subscription is confirmed.
@@ -13,7 +13,7 @@ Open `/dashboard/web` to see the price, billable member quantity, expected month
 
 Every joined member can see OpenWork Web when the hosted deployment offers it. An organization owner or admin purchases the subscription; all joined members receive access after it becomes active.
 
-Self-hosted single-organization deployments do not show OpenWork Web. If you use an OpenWork-hosted organization and do not see it in the sidebar, email [team@openworklabs.com](mailto:team@openworklabs.com) so the deployment configuration can be checked.
+Self-hosted deployments do not show OpenWork Web by default: a missing or false `DEN_OPENWORK_WEB_ENABLED` value fails closed. If you use an OpenWork-hosted organization and do not see it in the sidebar, email [team@openworklabs.com](mailto:team@openworklabs.com) so the deployment configuration can be checked.
 
 ## Open OpenWork Web
 

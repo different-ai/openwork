@@ -48,6 +48,8 @@ config:
     automationsEnabled: "false"
     # Self-hosted Dashboards are opt-in. Hosted environments use the same Den flag.
     dashboardsEnabled: "false"
+    # OpenWork Web is hosted-only by default. OpenWork Cloud enables it explicitly.
+    openworkWebEnabled: "false"
     # Preserve the Den runtime for published legacy Desktops during upgrades.
     # Set false only after every Desktop is v0.18.35+ to hard-disable Automations.
     automationsRuntimeEnabled: "true"

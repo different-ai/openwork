@@ -245,7 +245,7 @@ export type DenOrgCapabilities = {
   mcpConnections: boolean;
   /** Always on: Workflows/Code Mode shipped for every organization. Older servers may still return false. */
   workflows: boolean;
-  /** Deployment-wide Web offer; true only for multi-org Den with configured Stripe Web billing. */
+  /** Deployment-wide Web offer; true only when Den explicitly enables OpenWork Web. */
   openworkWeb: boolean;
   cloud: boolean;
 };

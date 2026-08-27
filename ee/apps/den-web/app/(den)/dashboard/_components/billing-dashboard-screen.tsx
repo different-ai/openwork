@@ -337,7 +337,6 @@ export function BillingDashboardScreen() {
   const aiConfigured = stripeBilling?.configured === true;
   const seatsConfigured = seatBilling?.configured === true;
   const webFeatureEnabled = runtimeConfigLoaded
-    && runtimeConfig.orgMode === "multi_org"
     && orgContext?.capabilities.openworkWeb === true;
   const webConfigured = webBilling?.configured === true;
 

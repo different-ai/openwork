@@ -182,7 +182,7 @@ describe("Web dashboard page", () => {
     expect(source).toContain("pending invitations are never billed");
     expect(source).not.toContain("Stripe will show");
     expect(source).toContain("await requestWebBilling(orgId, false)");
-    expect(source).toContain('runtimeConfig.orgMode === "multi_org"');
+    expect(source).not.toContain('runtimeConfig.orgMode === "multi_org"');
     expect(source).toContain("orgContext?.capabilities.openworkWeb === true");
     expect(source).not.toContain("orgContext?.capabilities.cloud");
     expect(checking).toContain('returnTarget === "web"');
