@@ -50,7 +50,12 @@ import {
   persistConnectLinkBranding,
 } from "./connect-link-branding.mjs";
 import { resolveConnectLinkPublicKeys } from "./connect-link-keys.mjs";
-import { openExternalUrl } from "./open-external.mjs";
+import {
+  isLoopbackHttpUrl,
+  isSupportedExternalUrl,
+  openExternalUrl,
+  routeOpenworkDeepLink,
+} from "./open-external.mjs";
 import { resolveAppIdentifier, resolveUserDataPath } from "./dev-profile.mjs";
 import { fetchAgentContextDiagnosticsResponse } from "./agent-context-diagnostics-fetch.mjs";
 import { downloadBinaryToPath, uploadMultipartFromBytes } from "./binary-transfer.mjs";
@@ -2526,22 +2531,23 @@ async function createMainWindow() {
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     if (url.startsWith("file://")) {
       try {
-        void shell.openPath(fileURLToPath(url));
-      } catch {
-        void openExternalUrl(url);
+        const targetPath = fileURLToPath(url);
+        void shell.openPath(targetPath).then((error) => {
+          if (error?.trim()) console.error(`[shell] openPath failed for "${targetPath}":`, error);
+        }).catch((error) => {
+          console.error(`[shell] openPath failed for "${targetPath}":`, error);
+        });
+      } catch (error) {
+        console.error("[shell] invalid file URL:", error);
       }
 
       return { action: "deny" };
     }
 
-    const local =
-      url.startsWith("http://127.0.0.1") ||
-      url.startsWith("http://localhost");
-    if (!local) {
-      void openExternalUrl(url);
-      return { action: "deny" };
-    }
-    return { action: "allow" };
+    if (isLoopbackHttpUrl(url)) return { action: "allow" };
+    if (routeOpenworkDeepLink(url, queueDeepLinks)) return { action: "deny" };
+    if (isSupportedExternalUrl(url)) void openExternalUrl(url);
+    return { action: "deny" };
   });
 
   mainWindow.webContents.on("will-navigate", (event, url) => {

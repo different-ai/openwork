@@ -6,6 +6,7 @@ let sentry = null;
 let initialized = false;
 let telemetryActive = false;
 const __dirname = dirname(fileURLToPath(import.meta.url));
+const GPU_ABNORMAL_EXIT_WINDOW_MS = 60_000;
 
 function envFlagEnabled(name) {
   const value = process.env[name]?.trim().toLowerCase();
@@ -15,6 +16,26 @@ function envFlagEnabled(name) {
 function normalizeIdentifier(value) {
   const trimmed = String(value ?? "").trim();
   return trimmed || null;
+}
+
+export function isNoisyGpuAbnormalExitEvent(event) {
+  return event?.level === "warning"
+    && event?.message === "'GPU' process exited with 'abnormal-exit'"
+    && event?.tags?.["event.process"] === "GPU";
+}
+
+export function createGpuAbnormalExitSuppressor({
+  now = Date.now,
+  windowMs = GPU_ABNORMAL_EXIT_WINDOW_MS,
+} = {}) {
+  let suppressedAt = null;
+  return (event) => {
+    if (!isNoisyGpuAbnormalExitEvent(event)) return false;
+    const observedAt = now();
+    if (suppressedAt !== null && observedAt - suppressedAt < windowMs) return false;
+    suppressedAt = observedAt;
+    return true;
+  };
 }
 
 export function resolveOpenworkSentryAppVersion({ app, packageMetadata }) {
@@ -60,6 +81,7 @@ export async function initOpenworkSentry({ app, distribution, packageMetadata })
   const appVersion = resolveOpenworkSentryAppVersion({ app, packageMetadata });
   const release = resolveOpenworkSentryRelease({ appVersion });
   const sampleRate = buildConfig.tracesSampleRate;
+  const suppressGpuAbnormalExit = createGpuAbnormalExitSuppressor();
 
   sentry.init({
     dsn,
@@ -70,7 +92,7 @@ export async function initOpenworkSentry({ app, distribution, packageMetadata })
       (integration) => !["BrowserWindowSession", "ElectronMinidump", "MainProcessSession", "SentryMinidump"].includes(integration.name),
     ),
     tracesSampler: () => telemetryActive ? sampleRate : 0,
-    beforeSend: (event) => telemetryActive ? event : null,
+    beforeSend: (event) => telemetryActive && !suppressGpuAbnormalExit(event) ? event : null,
     beforeSendTransaction: (event) => telemetryActive ? event : null,
     initialScope: {
       tags: {

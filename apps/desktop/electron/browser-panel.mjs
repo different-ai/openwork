@@ -4,7 +4,15 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { app, WebContentsView, clipboard, session, shell } from "electron";
+import { app, WebContentsView, clipboard, session } from "electron";
+
+import {
+  isLoopbackWebUrl,
+  isSupportedExternalUrl,
+  loadBrowserTabUrl,
+  openExternalUrl,
+  routeOpenworkDeepLink,
+} from "./open-external.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const BROWSER_SESSION_PARTITION = "persist:openwork-browser";
@@ -93,7 +101,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink }) {
     if (url.startsWith("file://") || url.startsWith("data:")) return true;
     try {
       const target = new URL(url);
-      if (target.hostname === "127.0.0.1" || target.hostname === "localhost" || target.hostname === "[::1]") return true;
+      if (isLoopbackWebUrl(url)) return true;
       const currentUrl = window()?.webContents.getURL();
       if (!currentUrl || currentUrl === "about:blank") return true;
       const current = new URL(currentUrl);
@@ -152,10 +160,10 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink }) {
       throw new Error(`Browser provider is not available yet: ${requestedProvider}`);
     }
     const url = normalizeBrowserUrl(rawUrl);
-    const tab = createBrowserTab("about:blank", { select: true });
+    const tab = createBrowserTab("about:blank", { select: true, load: false });
     await tab.view.webContents.loadURL(browserTargetMarkerUrl(tab.tabId));
     const targetId = await resolveBrowserCdpTargetId(tab.tabId);
-    await tab.view.webContents.loadURL(url);
+    await loadBrowserTabUrl(url, (targetUrl) => tab.view.webContents.loadURL(targetUrl));
     return {
       provider: "builtin",
       browser_url: cdpBrowserUrl(),
@@ -399,7 +407,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink }) {
         if (request.url) clipboard.writeText(request.url);
         break;
       case "open-external":
-        if (request.url && isHttpUrl(request.url)) void shell.openExternal(request.url);
+        if (request.url && isHttpUrl(request.url)) void openExternalUrl(request.url);
         break;
       case "close-tab":
         if (tab) closeBrowserTab(tab.tabId);
@@ -469,7 +477,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink }) {
     callback(browserProxy.username, browserProxy.password);
   });
 
-  function createBrowserTab(url = "about:blank", { select = true } = {}) {
+  function createBrowserTab(url = "about:blank", { select = true, load = true } = {}) {
     const tabId = createBrowserTabId();
     const view = new WebContentsView({
       webPreferences: {
@@ -484,11 +492,10 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink }) {
     const tab = { tabId, view, favicon: null };
     browserTabs.set(tabId, tab);
     browserTabOrder.push(tabId);
-    // Load about:blank immediately to preempt persistent-session restore.
-    // Cookies live on the session object, not the document — they survive this.
-    view.webContents.loadURL("about:blank");
     view.webContents.setWindowOpenHandler(({ url: targetUrl }) => {
-      void shell.openExternal(targetUrl);
+      if (!routeOpenworkDeepLink(targetUrl, onDeepLink) && isSupportedExternalUrl(targetUrl)) {
+        void openExternalUrl(targetUrl);
+      }
       return { action: "deny" };
     });
     view.webContents.on("did-start-navigation", (_event, targetUrl, isInPlace, isMainFrame) => {
@@ -499,10 +506,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink }) {
       if (target === "about:blank" || target.startsWith("data:")) return;
       // Intercept openwork:// deep links (e.g. den-auth handoff grants) so
       // in-app browser auth works without the system protocol handler.
-      if (target.startsWith("openwork://") || target.startsWith("openwork-dev://")) {
-        if (typeof onDeepLink === "function") {
-          onDeepLink([target]);
-        }
+      if (routeOpenworkDeepLink(target, onDeepLink)) {
         // Navigate the tab to about:blank to prevent the custom-scheme load
         // from erroring, then hide the panel. Avoid closing the tab
         // synchronously during a navigation event to prevent renderer crashes.
@@ -549,8 +553,13 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink }) {
       sendBrowserState();
     }
     const finalUrl = normalizeBrowserUrl(url, "about:blank");
-    if (finalUrl !== "about:blank") {
-      view.webContents.loadURL(finalUrl);
+    // Loading once both preempts persistent-session restore and avoids aborting
+    // an initial about:blank promise when this tab has an immediate destination.
+    // Cookies live on the session object, not the document — they survive this.
+    if (load) {
+      void loadBrowserTabUrl(finalUrl, (targetUrl) => view.webContents.loadURL(targetUrl)).catch((error) => {
+        console.warn(`[browser] failed to load tab URL "${finalUrl}"`, error);
+      });
     }
     return tab;
   }
@@ -748,8 +757,9 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink }) {
     ipcMain.handle("openwork:browser:hide", () => hideBrowserView());
     ipcMain.handle("openwork:browser:openUrl", (_event, url, provider) => openBrowserUrlForAutomation(url, provider));
     ipcMain.handle("openwork:browser:navigate", (_event, url) => {
-      const view = getActiveBrowserView() ?? createBrowserTab("about:blank", { select: true }).view;
-      view.webContents.loadURL(normalizeBrowserUrl(url));
+      const view = getActiveBrowserView() ?? createBrowserTab("about:blank", { select: true, load: false }).view;
+      const targetUrl = normalizeBrowserUrl(url);
+      return loadBrowserTabUrl(targetUrl, (nextUrl) => view.webContents.loadURL(nextUrl));
     });
     ipcMain.handle("openwork:browser:back", () => {
       const webContents = getActiveWebContents();

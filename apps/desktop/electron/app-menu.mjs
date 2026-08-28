@@ -3,7 +3,9 @@
 // and Windows/Linux menu-bar visibility. Extracted from main.mjs as a
 // factory (createRuntimeManager pattern); the NATIVE_MENU_* channels are
 // consumed by the preload bridge.
-import { BrowserWindow, Menu, shell } from "electron";
+import { BrowserWindow, Menu } from "electron";
+
+import { openExternalUrl } from "./open-external.mjs";
 
 const NATIVE_MENU_OPEN_SETTINGS_EVENT = "openwork:native-menu:open-settings";
 const NATIVE_MENU_TOGGLE_SIDEBAR_EVENT = "openwork:native-menu:toggle-sidebar";
@@ -207,8 +209,8 @@ export function createApplicationMenu({ appName, docsUrl, getWindow }) {
               ]),
           {
             label: "Docs",
-            click: async () => {
-              await shell.openExternal(docsUrl);
+            click: () => {
+              void openExternalUrl(docsUrl);
             },
           },
         ],
