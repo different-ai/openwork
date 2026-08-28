@@ -1104,7 +1104,10 @@ test("desktop Automation execution creates a normal visible local OpenWork threa
   assert.equal(result.workspaceId, "workspace-1")
   assert.equal(result.resultSummary, "Desktop runner result")
   assert.deepEqual(result.usage, { inputTokens: 12, outputTokens: 7, costMicros: null })
-  const localRequests = requests.filter((request) => request.path !== "/workspaces")
+  const localRequests = requests.filter((request) => ![
+    "/workspaces",
+    "/workspace/workspace-1/opencode/config",
+  ].includes(request.path))
   assert.deepEqual(localRequests.slice(0, 2).map(({ path, method, body }) => ({ path, method, body })), [
     {
       path: sessionPaths.create,
@@ -1167,6 +1170,99 @@ test("desktop Automation execution accepts a completed tool-only assistant turn"
     resultSummary: null,
     usage: { inputTokens: 9, outputTokens: 3, costMicros: null },
   })
+})
+
+test("desktop Automation execution rejects a disabled provider before creating a thread", async () => {
+  const requests = []
+  const sessionPaths = opencodeSessionPaths("workspace-1", "session-never-created")
+  const fetchImpl = async (url, options = {}) => {
+    const parsed = new URL(url)
+    requests.push({ path: parsed.pathname, method: options.method ?? "GET" })
+    if (parsed.pathname === "/workspaces") {
+      return Response.json({ items: [{ id: "workspace-1" }], activeId: "workspace-1" })
+    }
+    if (parsed.pathname === "/workspace/workspace-1/opencode/config") {
+      return Response.json({ disabled_providers: ["opencode"] })
+    }
+    throw new Error(`Unexpected request ${parsed.pathname}`)
+  }
+
+  await assert.rejects(
+    executeDesktopAutomation(testAssignment(), {
+      getLocalRuntime: async () => ({ baseUrl: "http://127.0.0.1:3000", token: "local-client-token" }),
+      fetchImpl,
+      signal: new AbortController().signal,
+    }),
+    (error) => error instanceof Error
+      && Reflect.get(error, "code") === "model_access_lost"
+      && Reflect.get(error, "workspaceId") === "workspace-1"
+      && Reflect.get(error, "sessionId") === undefined
+      && error.message.includes("opencode/big-pickle")
+      && error.message.includes("provider opencode is disabled"),
+  )
+  assert.equal(requests.some((request) => request.path === sessionPaths.create), false)
+  assert.equal(requests.some((request) => request.path === sessionPaths.prompt), false)
+})
+
+test("disabled-provider preflight reaches a failed Den completion without a local thread", async () => {
+  let offered = false
+  const completions = []
+  const localRequests = []
+  let resolveCompleted
+  const completed = new Promise((resolve) => { resolveCompleted = resolve })
+  const sessionPaths = opencodeSessionPaths("workspace-1", "session-never-created")
+  const runner = createDesktopAutomationRunner({
+    getLocalRuntime: async () => ({ baseUrl: "http://127.0.0.1:3000", token: "local-client-token" }),
+    fetchImpl: async (url, options = {}) => {
+      const parsed = new URL(url)
+      if (parsed.origin === "http://127.0.0.1:3000") {
+        localRequests.push(parsed.pathname)
+        if (parsed.pathname === "/workspaces") {
+          return Response.json({ items: [{ id: "workspace-1" }], activeId: "workspace-1" })
+        }
+        if (parsed.pathname === "/workspace/workspace-1/opencode/config") {
+          return Response.json({ disabled_providers: ["opencode"] })
+        }
+        throw new Error("Unexpected local request " + parsed.pathname)
+      }
+      if (parsed.pathname === "/v1/automation-runner/work") {
+        if (offered) return Response.json({ items: [] })
+        offered = true
+        return Response.json({ items: [{ runId: "run-1" }] })
+      }
+      if (parsed.pathname.endsWith("/claim")) return Response.json({ assignment: testAssignment() })
+      if (parsed.pathname.endsWith("/events")) return Response.json({ ok: true })
+      if (parsed.pathname.endsWith("/complete")) {
+        completions.push(JSON.parse(options.body))
+        resolveCompleted()
+        return Response.json({ ok: true })
+      }
+      throw new Error("Unexpected Den request " + parsed.pathname)
+    },
+  })
+  runner.configure({
+    baseUrl: "https://den.example.com",
+    token: runnerTokenFor("https://den.example.com"),
+    runnerId: "runner-1",
+  })
+  await withTimeout(completed, "disabled-provider completion timed out")
+  runner.stop()
+
+  assert.deepEqual(completions, [{
+    status: "failed",
+    sessionId: null,
+    workspaceId: "workspace-1",
+    resultSummary: null,
+    usage: { inputTokens: null, outputTokens: null, costMicros: null },
+    error: {
+      code: "model_access_lost",
+      message: "The selected model opencode/big-pickle is not available on this desktop runner because provider opencode is disabled. Choose a supported model to resume this Automation.",
+      retryable: false,
+    },
+    attempt: 1,
+  }])
+  assert.equal(localRequests.includes(sessionPaths.create), false)
+  assert.equal(localRequests.includes(sessionPaths.prompt), false)
 })
 
 test("failed desktop assignments retain their created local thread in the Den completion", async () => {
