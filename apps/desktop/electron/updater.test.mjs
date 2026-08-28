@@ -1,7 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdtempSync, readFileSync } from "node:fs";
+import { constants as fsConstants, mkdtempSync, readFileSync } from "node:fs";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -59,7 +59,7 @@ function fakeUpdaterHarness({ version }) {
   return { updater, listeners, calls, feeds, downloadFeeds };
 }
 
-async function registerFakeUpdaterIpc({ version }) {
+async function registerFakeUpdaterIpc({ version, registerOptions = {} }) {
   const tempDir = mkdtempSync(path.join(os.tmpdir(), "openwork-updater-test-"));
   const handlers = new Map();
   const harness = fakeUpdaterHarness({ version });
@@ -80,6 +80,7 @@ async function registerFakeUpdaterIpc({ version }) {
     ipcMain: { handle: (name, handler) => handlers.set(name, handler) },
     getMainWindow: () => null,
     loadAutoUpdater: async () => ({ autoUpdater: harness.updater }),
+    ...registerOptions,
   });
   return { tempDir, handlers, ...harness };
 }
@@ -505,6 +506,107 @@ describe("installAndRestart", () => {
 });
 
 describe("downloaded update lifecycle", () => {
+  it("blocks downloads when the AppImage directory lacks replacement permissions", async () => {
+    const accessCalls = [];
+    const { tempDir, handlers, updater, calls } = await registerFakeUpdaterIpc({
+      version: "0.17.1",
+      registerOptions: {
+        platform: "linux",
+        env: { APPIMAGE: "/usr/local/bin/openwork" },
+        checkPathAccess: async (target, mode) => {
+          accessCalls.push([target, mode]);
+          if ((mode & fsConstants.X_OK) !== 0) throw new Error("EACCES");
+        },
+      },
+    });
+    try {
+      assert.equal((await handlers.get("openwork:updater:check")(null, "stable")).available, true);
+      const result = await handlers.get("openwork:updater:download")();
+
+      assert.equal(result.ok, false);
+      assert.match(result.reason, /AppImage folder is not writable: \/usr\/local\/bin/);
+      assert.match(result.reason, /Copy or download the AppImage/);
+      assert.match(result.reason, /~\/\.local\/bin/);
+      assert.match(result.reason, /Administrator access may be required to remove the original/);
+      assert.deepEqual(accessCalls, [["/usr/local/bin", fsConstants.W_OK | fsConstants.X_OK]]);
+      assert.deepEqual(calls, []);
+      assert.equal(updater.autoInstallOnAppQuit, false);
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("rechecks AppImage permissions before restarting after download", async () => {
+    let accessChecks = 0;
+    const { tempDir, handlers, updater, calls } = await registerFakeUpdaterIpc({
+      version: "0.17.1",
+      registerOptions: {
+        platform: "linux",
+        env: { APPIMAGE: "/usr/local/bin/openwork" },
+        checkPathAccess: async () => {
+          accessChecks += 1;
+          if (accessChecks > 1) throw new Error("EACCES");
+        },
+      },
+    });
+    try {
+      assert.equal((await handlers.get("openwork:updater:check")(null, "stable")).available, true);
+      assert.deepEqual(await handlers.get("openwork:updater:download")(), { ok: true });
+      assert.equal(updater.autoInstallOnAppQuit, false);
+      const result = await handlers.get("openwork:updater:installAndRestart")();
+
+      assert.equal(result.ok, false);
+      assert.match(result.reason, /AppImage folder is not writable/);
+      assert.equal(accessChecks, 2);
+      assert.deepEqual(calls, ["download"]);
+      assert.equal(updater.autoInstallOnAppQuit, false);
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("installs writable AppImages only through the guarded restart path", async () => {
+    let accessChecks = 0;
+    const { tempDir, handlers, updater, calls } = await registerFakeUpdaterIpc({
+      version: "0.17.1",
+      registerOptions: {
+        platform: "linux",
+        env: { APPIMAGE: "/home/test/.local/bin/openwork" },
+        checkPathAccess: async () => { accessChecks += 1; },
+      },
+    });
+    try {
+      assert.equal((await handlers.get("openwork:updater:check")(null, "stable")).available, true);
+      assert.deepEqual(await handlers.get("openwork:updater:download")(), { ok: true });
+      assert.equal(updater.autoInstallOnAppQuit, false);
+      assert.deepEqual(await handlers.get("openwork:updater:installAndRestart")(), { ok: true });
+      assert.equal(accessChecks, 2);
+      assert.deepEqual(calls, ["download", "quitAndInstall"]);
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps non-AppImage Linux updater behavior unchanged", async () => {
+    const { tempDir, handlers, updater, calls } = await registerFakeUpdaterIpc({
+      version: "0.17.1",
+      registerOptions: {
+        platform: "linux",
+        env: {},
+        checkPathAccess: async () => { throw new Error("unexpected access check"); },
+      },
+    });
+    try {
+      assert.equal((await handlers.get("openwork:updater:check")(null, "stable")).available, true);
+      assert.deepEqual(await handlers.get("openwork:updater:download")(), { ok: true });
+      assert.equal(updater.autoInstallOnAppQuit, true);
+      assert.deepEqual(await handlers.get("openwork:updater:installAndRestart")(), { ok: true });
+      assert.deepEqual(calls, ["download", "quitAndInstall"]);
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it("a transient failed check does not invalidate a downloaded update", async () => {
     const { tempDir, handlers, updater, calls } = await registerFakeUpdaterIpc({
       version: "0.17.1",
@@ -519,6 +621,7 @@ describe("downloaded update lifecycle", () => {
 
       assert.equal((await check(null, "stable")).available, true);
       assert.deepEqual(await download(), { ok: true });
+      assert.equal(updater.autoInstallOnAppQuit, true);
       updater.checkForUpdates = async () => {
         throw new Error("network flake");
       };
@@ -581,6 +684,103 @@ describe("downloaded update lifecycle", () => {
       });
     } finally {
       await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("AppImage recovery installation", () => {
+  it("blocks recovery before downloading or restarting from an unwritable directory", async () => {
+    const userData = await mkdtemp(path.join(os.tmpdir(), "openwork-appimage-recovery-"));
+    const handlers = new Map();
+    const harness = fakeUpdaterHarness({ version: "1.9.0" });
+    const manifest = `version: 1.9.0
+files:
+  - url: openwork-linux-x86_64-1.9.0.AppImage
+    sha512: verified-checksum
+`;
+    try {
+      isolatedUpdaterImportId += 1;
+      const isolated = await import(`./updater.mjs?appimage-recovery=${isolatedUpdaterImportId}`);
+      isolated.registerUpdaterIpc({
+        app: {
+          isPackaged: true,
+          getVersion: () => "2.0.0",
+          getPath: (key) => path.join(userData, key),
+        },
+        ipcMain: { handle: (name, handler) => handlers.set(name, handler) },
+        getMainWindow: () => null,
+        loadAutoUpdater: async () => ({ autoUpdater: harness.updater }),
+        electronNet: { fetch: async () => new Response(manifest) },
+        platform: "linux",
+        arch: "x64",
+        distribution: "public",
+        env: { APPIMAGE: "/usr/local/bin/openwork" },
+        checkPathAccess: async () => { throw new Error("EACCES"); },
+      });
+
+      const listed = await handlers.get("openwork:recovery:list")(null, {
+        versions: ["1.9.0"],
+        minimumVersion: "0.0.0",
+      });
+      assert.deepEqual(listed.releases, [{ id: "1.9.0", version: "1.9.0", marking: null }]);
+      const result = await handlers.get("openwork:recovery:use")(null, "1.9.0");
+
+      assert.equal(result.ok, false);
+      assert.match(result.reason, /AppImage folder is not writable/);
+      assert.deepEqual(harness.calls, []);
+      assert.equal(harness.updater.autoInstallOnAppQuit, false);
+    } finally {
+      await rm(userData, { recursive: true, force: true });
+    }
+  });
+
+  it("rechecks recovery permissions after download before restarting", async () => {
+    const userData = await mkdtemp(path.join(os.tmpdir(), "openwork-appimage-recovery-"));
+    const handlers = new Map();
+    const harness = fakeUpdaterHarness({ version: "1.9.0" });
+    const manifest = `version: 1.9.0
+files:
+  - url: openwork-linux-x86_64-1.9.0.AppImage
+    sha512: verified-checksum
+`;
+    let accessChecks = 0;
+    try {
+      isolatedUpdaterImportId += 1;
+      const isolated = await import(`./updater.mjs?appimage-recovery=${isolatedUpdaterImportId}`);
+      isolated.registerUpdaterIpc({
+        app: {
+          isPackaged: true,
+          getVersion: () => "2.0.0",
+          getPath: (key) => path.join(userData, key),
+        },
+        ipcMain: { handle: (name, handler) => handlers.set(name, handler) },
+        getMainWindow: () => null,
+        loadAutoUpdater: async () => ({ autoUpdater: harness.updater }),
+        electronNet: { fetch: async () => new Response(manifest) },
+        platform: "linux",
+        arch: "x64",
+        distribution: "public",
+        env: { APPIMAGE: "/usr/local/bin/openwork" },
+        checkPathAccess: async () => {
+          accessChecks += 1;
+          if (accessChecks > 1) throw new Error("EACCES");
+        },
+      });
+
+      const listed = await handlers.get("openwork:recovery:list")(null, {
+        versions: ["1.9.0"],
+        minimumVersion: "0.0.0",
+      });
+      assert.deepEqual(listed.releases, [{ id: "1.9.0", version: "1.9.0", marking: null }]);
+      const result = await handlers.get("openwork:recovery:use")(null, "1.9.0");
+
+      assert.equal(result.ok, false);
+      assert.match(result.reason, /AppImage folder is not writable/);
+      assert.equal(accessChecks, 2);
+      assert.deepEqual(harness.calls, ["download"]);
+      assert.equal(harness.updater.autoInstallOnAppQuit, false);
+    } finally {
+      await rm(userData, { recursive: true, force: true });
     }
   });
 });
