@@ -274,6 +274,9 @@ export function createSessionDraftStore(options: DraftStoreOptions) {
       replaceCache(latestDocument);
       return { status: "conflict", snapshot: currentSnapshot(key) };
     }
+    if (latest?.text === snapshot.text && latest.mode === snapshot.mode) {
+      return { status: "saved", snapshot: currentSnapshot(key) };
+    }
 
     const revision = latestDocument.nextRevision;
     const drafts = {

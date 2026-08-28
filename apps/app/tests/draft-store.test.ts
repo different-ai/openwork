@@ -119,6 +119,22 @@ describe("session draft storage v2", () => {
     expect(firstChanges).toBe(2);
   });
 
+  test("does not notify subscribers when saving an unchanged draft", () => {
+    const shared = sharedStorageContexts();
+    const store = createSessionDraftStore(shared.context("writer"));
+    let changes = 0;
+    store.subscribe(() => changes += 1);
+
+    store.save(aliceOps, "workspace-a", "session-a", { text: "stable", mode: "prompt" });
+    const firstSnapshot = store.get(aliceOps, "workspace-a", "session-a");
+    const changesAfterInitialSave = changes;
+    const result = store.save(aliceOps, "workspace-a", "session-a", { text: "stable", mode: "prompt" });
+
+    expect(result).toEqual({ status: "saved", snapshot: firstSnapshot });
+    expect(store.get(aliceOps, "workspace-a", "session-a")).toBe(firstSnapshot);
+    expect(changes).toBe(changesAfterInitialSave);
+  });
+
   test("rejects a stale writer instead of silently overwriting a newer stored draft", () => {
     const shared = sharedStorageContexts();
     const firstContext = shared.context("first");

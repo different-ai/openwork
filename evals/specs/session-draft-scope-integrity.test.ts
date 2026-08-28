@@ -102,7 +102,20 @@ test("composer drafts stay private per identity and safe under concurrent tabs",
   expect(tabB.get(aliceOps, "workspace-a", "session-b")?.text).toBe("from tab A");
   expect(tabBChanges).toBe(1);
 
-  // Negative half 2 (stale writes): a tab holding an old revision can neither
+  // Negative half 2 (render stability): persisting the same composer value is
+  // a no-op. It retains the observable snapshot identity and does not notify
+  // subscribers, preventing a persistence/render feedback loop.
+  const stableSnapshot = tabA.get(aliceOps, "workspace-a", "session-b");
+  let tabAChanges = 0;
+  tabA.subscribe(() => {
+    tabAChanges += 1;
+  });
+  expect(tabA.save(aliceOps, "workspace-a", "session-b", { text: "from tab A", mode: "prompt" }))
+    .toEqual({ status: "saved", snapshot: stableSnapshot });
+  expect(tabA.get(aliceOps, "workspace-a", "session-b")).toBe(stableSnapshot);
+  expect(tabAChanges).toBe(0);
+
+  // Negative half 3 (stale writes): a tab holding an old revision can neither
   // overwrite a newer draft nor clear it; both operations surface the newer
   // snapshot as a conflict instead of silently losing it. After observing a
   // conflict the tab is resynchronized, so its next operation acts on the
@@ -125,7 +138,7 @@ test("composer drafts stay private per identity and safe under concurrent tabs",
   expect(staleClearTab.clear(aliceOps, "workspace-a", "session-b").status).toBe("saved");
   expect(tabA.get(aliceOps, "workspace-a", "session-b")).toBeNull();
 
-  // Negative half 3 (legacy storage): v1 drafts carry no identity boundary,
+  // Negative half 4 (legacy storage): v1 drafts carry no identity boundary,
   // so they are dropped fail-closed instead of being exposed to any scope.
   const legacy = sharedStorageContexts();
   legacy.values.set(LEGACY_SESSION_DRAFT_STORAGE_KEY, JSON.stringify({
@@ -136,7 +149,7 @@ test("composer drafts stay private per identity and safe under concurrent tabs",
   expect(migrated.get(aliceOps, "workspace-a", "session-a")).toBeNull();
   expect(legacy.values.has(LEGACY_SESSION_DRAFT_STORAGE_KEY)).toBe(false);
 
-  // Negative half 4 (untrusted storage): malformed documents read as empty
+  // Negative half 5 (untrusted storage): malformed documents read as empty
   // and repair on the next valid save; a storage that throws never crashes
   // the composer and reports the write as unavailable rather than saved.
   const corrupt = sharedStorageContexts();
@@ -168,7 +181,7 @@ test("composer drafts stay private per identity and safe under concurrent tabs",
 
   evidence.recordAssertionEvidence(
     "Composer drafts are private and conflict-safe",
-    "Drafts survive reloads within one verified identity scope; other accounts, organizations, the local scope, and unverified credentials read nothing; concurrent tabs reconcile via storage events; stale writers and clears conflict instead of overwriting; legacy v1 data is dropped fail-closed; corrupt or denied storage degrades safely.",
+    "Drafts survive reloads within one verified identity scope; other accounts, organizations, the local scope, and unverified credentials read nothing; concurrent tabs reconcile via storage events; unchanged saves preserve snapshot identity without notifying subscribers; stale writers and clears conflict instead of overwriting; legacy v1 data is dropped fail-closed; corrupt or denied storage degrades safely.",
     true,
   );
 });
