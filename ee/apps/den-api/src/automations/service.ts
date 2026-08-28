@@ -19,6 +19,13 @@ import { automationRepository } from "./repository.js"
 import { validateWorkflowAutomationAction } from "../workflows.js"
 import type { CloudAgentExecution, CloudAgentExecutorInput } from "./cloud-agent-executor.js"
 import { appLogger } from "../observability/logger.js"
+import {
+  getOpenWorkWebRuntimeAccess,
+  OPENWORK_WEB_ACCESS_REQUIRED_CODE,
+  OPENWORK_WEB_ACCESS_REQUIRED_MESSAGE,
+  requireOpenWorkWebRuntimeAccess,
+  type OpenWorkWebRuntimeAccessResolver,
+} from "../openwork-web-runtime-access.js"
 
 const schedulerOwner = `den:${process.pid}:${randomUUID()}`
 const logger = appLogger.child({ component: "automations" })
@@ -76,8 +83,17 @@ export function configureCloudAgentExecutor(input: {
   cloudAgentRuntimeAvailable = input.runtimeAvailable
 }
 
+export type AutomationServiceOptions = {
+  getOpenWorkWebAccess?: OpenWorkWebRuntimeAccessResolver
+}
+
 export class AutomationService {
   private readonly cloudExecutions = new Map<string, Promise<void>>()
+  private readonly getOpenWorkWebAccess: OpenWorkWebRuntimeAccessResolver
+
+  constructor(options: AutomationServiceOptions = {}) {
+    this.getOpenWorkWebAccess = options.getOpenWorkWebAccess ?? getOpenWorkWebRuntimeAccess
+  }
 
   async list(scope: OwnerScope, input: { cursor?: string; limit?: number }) {
     const page = await automationRepository.list({ ...scope, cursor: input.cursor, limit: input.limit ?? 50 })
@@ -117,6 +133,7 @@ export class AutomationService {
       if (definition.executionTarget !== "cloud") {
         throw new Error("automation_action_target_mismatch")
       }
+      await requireOpenWorkWebRuntimeAccess(scope.organizationId, this.getOpenWorkWebAccess)
       if (definition.action.kind === "agent") {
         // Action-based creation is Cloud placement. The legacy Zen exception
         // exists only for already-published Desktop clients.
@@ -139,6 +156,9 @@ export class AutomationService {
   async update(scope: OwnerScope, automationId: string, changes: UpdateAutomation) {
     const current = await this.get(scope, automationId)
     if (!current) return null
+    if ((current.revision.executionTarget ?? "desktop") === "cloud") {
+      await requireOpenWorkWebRuntimeAccess(scope.organizationId, this.getOpenWorkWebAccess)
+    }
     if (changes.executionTarget !== undefined
       && changes.executionTarget !== (current.revision.executionTarget ?? "desktop")) {
       throw new Error("automation_action_target_mismatch")
@@ -173,6 +193,9 @@ export class AutomationService {
   async activate(scope: OwnerScope, automationId: string) {
     const current = await this.get(scope, automationId)
     if (!current) return null
+    if ((current.revision.executionTarget ?? "desktop") === "cloud") {
+      await requireOpenWorkWebRuntimeAccess(scope.organizationId, this.getOpenWorkWebAccess)
+    }
     if (current.revision.action?.kind === "saved_script") {
       if (!await isActiveAutomationOwner(scope)) throw new Error("automation_owner_inactive")
     } else {
@@ -202,6 +225,14 @@ export class AutomationService {
   async runNow(scope: OwnerScope, automationId: string): Promise<AutomationRun | null> {
     const current = await this.get(scope, automationId)
     if (!current || current.automation.state === "archived") return null
+    // Cloud Automations execute on an OpenWork VM, so a manual run is gated
+    // like every other VM boundary. Desktop-target Automations are untouched.
+    // openwork_web_access_required is already part of the shared Automation
+    // contract (packages/types/src/automations.ts) and published desktops
+    // surface the returned message in the Automations page action toast.
+    if ((current.revision.executionTarget ?? "desktop") === "cloud") {
+      await requireOpenWorkWebRuntimeAccess(scope.organizationId, this.getOpenWorkWebAccess)
+    }
     let blocked = current.automation.needsAttentionReason
     if (current.revision.action?.kind === "saved_script") {
       if (!await isActiveAutomationOwner(scope)) throw new Error("automation_owner_inactive")
@@ -551,6 +582,27 @@ export class AutomationService {
       now: Date.now(),
     })
     if (!claimed) return
+    const webAccess = await this.getOpenWorkWebAccess(claimed.automation.organizationId)
+    if (!webAccess.hasAccess) {
+      const now = Date.now()
+      await automationRepository.skipRun({
+        runId: claimed.run.id,
+        code: OPENWORK_WEB_ACCESS_REQUIRED_CODE,
+        message: OPENWORK_WEB_ACCESS_REQUIRED_MESSAGE,
+        now,
+      })
+      await automationRepository.markNeedsAttention({
+        automationId: claimed.automation.id,
+        expectedRevisionId: claimed.revision.id,
+        reason: {
+          code: OPENWORK_WEB_ACCESS_REQUIRED_CODE,
+          message: OPENWORK_WEB_ACCESS_REQUIRED_MESSAGE,
+          occurredAt: now,
+        },
+        now,
+      })
+      return
+    }
     if (claimed.revision.action?.kind === "agent") {
       await this.executeCloudAgentRun(claimed, leaseOwner)
       return
@@ -748,8 +800,9 @@ export class AutomationService {
         "model_access_lost",
         "provider_unavailable",
         "connect_access_unavailable",
+        "openwork_web_access_required",
         "execution_runtime_unavailable",
-      ].includes(result.code) ? result.code as "owner_membership_lost" | "model_access_lost" | "provider_unavailable" | "connect_access_unavailable" | "execution_runtime_unavailable" : "execution_runtime_unavailable"
+      ].includes(result.code) ? result.code as "owner_membership_lost" | "model_access_lost" | "provider_unavailable" | "connect_access_unavailable" | "openwork_web_access_required" | "execution_runtime_unavailable" : "execution_runtime_unavailable"
       await automationRepository.markNeedsAttention({
         automationId: claimed.automation.id,
         expectedRevisionId: claimed.revision.id,

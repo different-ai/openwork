@@ -7,6 +7,7 @@ import { z } from "zod"
 import { db } from "../../db.js"
 import { jsonValidator, orgMemberRoute, paramValidator, queryValidator } from "../../middleware/index.js"
 import { denTypeIdSchema, emptyResponse, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
+import { getOpenWorkWebRuntimeAccess, openWorkWebAccessRequiredPayload } from "../../openwork-web-runtime-access.js"
 import { getOrganizationLimitStatus } from "../../organization-limits.js"
 import { getRequiredUserEmail } from "../../user.js"
 import type { WorkerRouteVariables } from "./shared.js"
@@ -125,6 +126,11 @@ const paymentRequiredSchema = z.object({
   message: z.string(),
 }).meta({ ref: "WorkerPaymentRequiredError" })
 
+const openWorkWebAccessRequiredSchema = z.object({
+  error: z.literal("openwork_web_access_required"),
+  message: z.string(),
+}).meta({ ref: "WorkerOpenWorkWebAccessRequiredError" })
+
 const userEmailRequiredSchema = z.object({
   error: z.literal("user_email_required"),
 }).meta({ ref: "WorkerUserEmailRequiredError" })
@@ -194,6 +200,7 @@ export function registerWorkerCoreRoutes<T extends { Variables: WorkerRouteVaria
         400: jsonResponse("The worker creation payload was invalid.", z.union([invalidRequestSchema, organizationUnavailableSchema, workspacePathRequiredSchema, userEmailRequiredSchema])),
         401: jsonResponse("The caller must be signed in to create workers.", unauthorizedSchema),
         402: jsonResponse("The caller needs an active cloud plan before launching a cloud worker.", paymentRequiredSchema),
+        403: jsonResponse("OpenWork Web access is required to launch a cloud worker.", openWorkWebAccessRequiredSchema),
         409: jsonResponse("The organization has reached its worker limit.", orgLimitReachedSchema),
       },
     }),
@@ -213,6 +220,10 @@ export function registerWorkerCoreRoutes<T extends { Variables: WorkerRouteVaria
     }
 
     if (input.destination === "cloud") {
+      const webAccess = await getOpenWorkWebRuntimeAccess(orgId)
+      if (!webAccess.hasAccess) {
+        return c.json(openWorkWebAccessRequiredPayload(), 403)
+      }
       const email = getRequiredUserEmail(user)
       if (!email) {
         return c.json({ error: "user_email_required" }, 400)
@@ -446,6 +457,7 @@ export function registerWorkerCoreRoutes<T extends { Variables: WorkerRouteVaria
         200: jsonResponse("Worker connection tokens returned successfully.", workerTokensResponseSchema),
         400: jsonResponse("The worker token path parameters were invalid.", invalidRequestSchema),
         401: jsonResponse("The caller must be signed in to request worker tokens.", unauthorizedSchema),
+        403: jsonResponse("OpenWork Web access is required to use cloud worker tokens.", openWorkWebAccessRequiredSchema),
         404: jsonResponse("The worker could not be found.", notFoundSchema),
         409: jsonResponse("The worker is not ready to return connection tokens yet.", workerRuntimeUnavailableSchema),
       },

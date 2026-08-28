@@ -45,6 +45,9 @@ briefTest(testBrief({
     surfaceContract: claim("the Web paywall and Billing page explain purchase, quantity, total, status, renewal, and management", {
       never: "unlock before confirmed eligibility or hide cancellation and payment-failure state",
     }),
+    runtimeContract: claim("every OpenWork VM entry point requires current server-resolved Web access before it can provision, wake, proxy, create a thread, send a turn, or dispatch an Automation", {
+      never: "treat the Web UI paywall as authorization, let a durable schedule bypass revocation, or gate Desktop/local work and cleanup that do not execute in an OpenWork VM",
+    }),
   },
 }), async ({ prove }) => {
   seedAppLessDenEnvironment();
@@ -87,7 +90,14 @@ briefTest(testBrief({
     adminRoutesSource,
     adminPanelSource,
     auditEventsSource,
+    runtimeAccessSource,
     cloudRoutesSource,
+    automationServiceSource,
+    automationExecutorSource,
+    remoteSessionSource,
+    compatibilityProxySource,
+    workerSharedSource,
+    workerCoreSource,
     gatewaySource,
     denClientSource,
     appRootSource,
@@ -111,7 +121,14 @@ briefTest(testBrief({
     readFile(join(repoRoot, "ee", "apps", "den-api", "src", "routes", "admin", "index.ts"), "utf8"),
     readFile(join(repoRoot, "ee", "apps", "den-web", "components", "den-admin-panel.tsx"), "utf8"),
     readFile(join(repoRoot, "ee", "apps", "den-api", "src", "audit-events.ts"), "utf8"),
+    readFile(join(repoRoot, "ee", "apps", "den-api", "src", "openwork-web-runtime-access.ts"), "utf8"),
     readFile(join(repoRoot, "ee", "apps", "den-api", "src", "routes", "cloud", "index.ts"), "utf8"),
+    readFile(join(repoRoot, "ee", "apps", "den-api", "src", "automations", "service.ts"), "utf8"),
+    readFile(join(repoRoot, "ee", "apps", "den-api", "src", "automations", "cloud-agent-executor.ts"), "utf8"),
+    readFile(join(repoRoot, "ee", "apps", "den-api", "src", "mcp", "remote-session-capabilities.ts"), "utf8"),
+    readFile(join(repoRoot, "ee", "apps", "den-api", "src", "workers", "worker-compatibility-proxy.ts"), "utf8"),
+    readFile(join(repoRoot, "ee", "apps", "den-api", "src", "routes", "workers", "shared.ts"), "utf8"),
+    readFile(join(repoRoot, "ee", "apps", "den-api", "src", "routes", "workers", "core.ts"), "utf8"),
     readFile(join(repoRoot, "ee", "apps", "den-gateway", "src", "app.ts"), "utf8"),
     readFile(join(repoRoot, "apps", "app", "src", "app", "lib", "den.ts"), "utf8"),
     readFile(join(repoRoot, "apps", "app", "src", "react-app", "shell", "app-root.tsx"), "utf8"),
@@ -523,5 +540,34 @@ briefTest(testBrief({
   prove.surfaceContract(
     true,
     "The paywall uses the server-advertised effective organization offer, waits for server-resolved access, renders complimentary access without a purchase action or charge, and otherwise offers the exact $50/user/month purchase; Billing keeps paid lifecycle management while labeling complimentary members as covered rather than billed.",
+  );
+
+  expect(runtimeAccessSource).toContain("getOpenWorkWebAccess");
+  expect(runtimeAccessSource).toContain("throw new OpenWorkWebAccessRequiredError()");
+  expect(cloudRoutesSource).toMatch(/getOpenWorkWebAccess\(payload\.organization\.id\)[\s\S]*resolveCloudInstanceForMember/);
+  expect(cloudRoutesSource).toMatch(/getOpenWorkWebAccess\(payload\.organization\.id\)[\s\S]*resolveCloudInstanceForGateway/);
+  expect(automationServiceSource).toMatch(/async create[\s\S]*requireOpenWorkWebRuntimeAccess/);
+  expect(automationServiceSource).toMatch(/async activate[\s\S]*requireOpenWorkWebRuntimeAccess/);
+  expect(automationServiceSource).toMatch(/async runNow[\s\S]*requireOpenWorkWebRuntimeAccess/);
+  expect(automationServiceSource).toMatch(/executeCloudRun[\s\S]*getOpenWorkWebAccess[\s\S]*skipRun/);
+  expect(automationExecutorSource).toMatch(/currentAgentAuthority[\s\S]*getOpenWorkWebRuntimeAccess/);
+  expect(automationExecutorSource).toMatch(/currentAgentAuthority\(input\)[\s\S]*resolveCloudAgentReadyWorker/);
+  expect(automationExecutorSource).toMatch(/currentAgentAuthority\(input\)[\s\S]*createThread/);
+  expect(automationExecutorSource).toMatch(/currentAgentAuthority\(input\)[\s\S]*sendTurn/);
+  expect(remoteSessionSource).toMatch(/const webAccess = await deps\.getOpenWorkWebAccess\(input\.organizationId\)[\s\S]*target === "desktop"[\s\S]*commandStore\.enqueue[\s\S]*resolveRuntime/);
+  expect(remoteSessionSource).not.toMatch(/commandStore\.enqueue[\s\S]*const webAccess = await deps\.getOpenWorkWebAccess/);
+  expect(compatibilityProxySource).toMatch(/getOpenWorkWebAccess[\s\S]*resolveCloudAccess/);
+  expect(workerSharedSource).toMatch(/destination === "cloud"[\s\S]*getOpenWorkWebAccess[\s\S]*getWorkerRuntimeAccess/);
+  expect(workerSharedSource).toMatch(/requireOpenWorkWebRuntimeAccess[\s\S]*withProvisioningHeartbeat/);
+  expect(workerSharedSource).toMatch(/getWorkerTokensAndConnect[\s\S]*destination === "cloud"[\s\S]*getOpenWorkWebAccess/);
+  expect(workerCoreSource).toMatch(/input\.destination === "cloud"[\s\S]*getOpenWorkWebRuntimeAccess[\s\S]*requireCloudAccessOrPayment/);
+  expect(appRootSource).toMatch(/OpenWorkWebAccessGate[\s\S]*CloudWorkspaceStatusProvider/);
+  expect(productAccessGateSource).toContain("resolveOpenWorkWebAccessGateState");
+  expect(productAccessGateSource).toContain('state: access.hasAccess ? "granted" : "denied"');
+  expect(automationServiceSource).toMatch(/executionTarget[^\n]*=== "cloud"/);
+  expect(workerSharedSource).toMatch(/worker\.destination === "cloud"/);
+  prove.runtimeContract(
+    true,
+    "The exact head uses one authoritative paid-or-complimentary access resolver at every VM boundary: initial Web boot and gateway resolution, legacy cloud-worker creation/tokens/runtime/proxying, remote cloud thread create/send/read, Cloud Automation create/edit/activate/manual run, scheduled dispatch, and executor rechecks before worker resolution, native thread creation, and turn submission. Desktop/local execution, read history, cancellation, deactivation, archive, worker listing, and destructive cleanup remain available.",
   );
 });

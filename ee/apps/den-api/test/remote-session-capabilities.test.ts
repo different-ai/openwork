@@ -65,6 +65,7 @@ function readyDeps(client: Partial<RemoteSessionThreadClient>): RemoteSessionExe
   }
   return {
     ...inactiveDesktopDeps,
+    getOpenWorkWebAccess: async () => ({ hasAccess: true }),
     resolveRuntime: async () => ({ ok: true, runtime: RUNTIME }),
     createClient: () => ({
       createThread: client.createThread ?? failing,
@@ -152,6 +153,64 @@ test("create reports an offline desktop target with an actionable error", async 
   )
   expect(result.isError).toBe(true)
   expect(payload(result).error).toBe("desktop_offline")
+})
+
+test("cloud thread creation requires Web access before the runtime is resolved", async () => {
+  let runtimeResolutions = 0
+  const result = await executeRemoteSessionCapability(
+    executeInput("create", { title: "Paid boundary" }),
+    {
+      ...inactiveDesktopDeps,
+      getOpenWorkWebAccess: async () => ({ hasAccess: false }),
+      resolveRuntime: async () => {
+        runtimeResolutions += 1
+        return { ok: true, runtime: RUNTIME }
+      },
+      createClient: () => {
+        throw new Error("the Cloud client must not be created without Web access")
+      },
+    },
+  )
+
+  expect(result.isError).toBe(true)
+  expect(payload(result)).toMatchObject({
+    error: "openwork_web_access_required",
+    retryable: false,
+  })
+  expect(runtimeResolutions).toBe(0)
+})
+
+test("desktop session queuing requires Web access before presence is probed or a command is queued", async () => {
+  // Remote control of a connected desktop is an execution boundary, not a
+  // read; without Web access it must neither observe presence nor enqueue.
+  let presenceProbes = 0
+  let enqueued = 0
+  const result = await executeRemoteSessionCapability(
+    executeInput("create", { target: "desktop", title: "Paid boundary" }),
+    {
+      ...readyDeps({}),
+      getOpenWorkWebAccess: async () => ({ hasAccess: false }),
+      desktopPresence: async () => {
+        presenceProbes += 1
+        return { connected: true, ownerMemberId: "member_fixture" }
+      },
+      commandStore: {
+        ...unavailableCommandStore,
+        enqueue: async () => {
+          enqueued += 1
+          throw new Error("a desktop command must not be queued without Web access")
+        },
+      },
+    },
+  )
+
+  expect(result.isError).toBe(true)
+  expect(payload(result)).toMatchObject({
+    error: "openwork_web_access_required",
+    retryable: false,
+  })
+  expect(presenceProbes).toBe(0)
+  expect(enqueued).toBe(0)
 })
 
 test("create rejects titles longer than the desktop assignment limit", async () => {
@@ -273,6 +332,7 @@ test("a waking runtime is reported as retryable without touching the client", as
     executeInput("create", {}),
     {
       ...inactiveDesktopDeps,
+      getOpenWorkWebAccess: async () => ({ hasAccess: true }),
       resolveRuntime: async () => ({
         ok: false,
         error: "cloud_runtime_waking",
@@ -321,6 +381,7 @@ test("an unreachable healthy runtime is retryable and is not mislabeled as wakin
     executeInput("create", {}),
     {
       ...inactiveDesktopDeps,
+      getOpenWorkWebAccess: async () => ({ hasAccess: true }),
       resolveRuntime: async () => ({
         ok: false,
         error: "cloud_runtime_unreachable",
@@ -343,6 +404,7 @@ test("a member without a cloud workspace gets the needs-setup action", async () 
     executeInput("create", {}),
     {
       ...inactiveDesktopDeps,
+      getOpenWorkWebAccess: async () => ({ hasAccess: true }),
       resolveRuntime: async () => ({
         ok: false,
         error: "needs_cloud_setup",

@@ -1,6 +1,11 @@
 import { and, eq, inArray, isNull } from "@openwork-ee/den-db/drizzle"
 import { WorkerTable, WorkerTokenTable } from "@openwork-ee/den-db/schema"
 import { db } from "../db.js"
+import {
+  getOpenWorkWebRuntimeAccess,
+  openWorkWebAccessRequiredPayload,
+  type OpenWorkWebRuntimeAccessResolver,
+} from "../openwork-web-runtime-access.js"
 import { resolveCloudRuntimeAccess } from "./worker-access.js"
 
 type WorkerId = typeof WorkerTable.$inferSelect.id
@@ -20,6 +25,7 @@ type ResolveCloudAccess = typeof resolveCloudRuntimeAccess
 
 export type CloudWorkerCompatibilityOptions = {
   authenticate?: AuthenticateWorkerRequest
+  getOpenWorkWebAccess?: OpenWorkWebRuntimeAccessResolver
   resolveCloudAccess?: ResolveCloudAccess
   fetchImpl?: typeof fetch
   maxActiveRequestsPerWorker?: number
@@ -163,6 +169,16 @@ function jsonError(
   })
 }
 
+function openWorkWebAccessRequiredResponse() {
+  return Response.json(openWorkWebAccessRequiredPayload(), {
+    status: 403,
+    headers: {
+      "Cache-Control": "no-store",
+      Pragma: "no-cache",
+    },
+  })
+}
+
 function acquireWorkerRequest(workerId: WorkerId, maximum: number) {
   const active = activeRequestsByWorker.get(workerId) ?? 0
   if (active >= maximum) return null
@@ -245,6 +261,18 @@ export async function proxyCloudWorkerCompatibilityRequest(input: {
   if (!authorization || (!isReadMethod(input.request.method.toUpperCase()) && authorization.scope !== "host")) {
     return jsonError(401, "unauthorized")
   }
+
+  // The stable /v1/cloud/workers/:id URL, token handling, and response shape are
+  // unchanged. Published desktops connect here only after OpenWorkWebAccessGate
+  // (v0.18.42+) granted Web access; the recheck terminates a worker token into a
+  // live VM, so it enforces the same entitlement as provisioning and tokens.
+  let webAccess
+  try {
+    webAccess = await (options.getOpenWorkWebAccess ?? getOpenWorkWebRuntimeAccess)(authorization.organizationId)
+  } catch {
+    return jsonError(503, "worker_runtime_unavailable")
+  }
+  if (!webAccess.hasAccess) return openWorkWebAccessRequiredResponse()
 
   const maximum = Math.max(1, options.maxActiveRequestsPerWorker ?? DEFAULT_MAX_ACTIVE_REQUESTS_PER_WORKER)
   const release = acquireWorkerRequest(input.workerId, maximum)

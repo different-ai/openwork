@@ -7,6 +7,12 @@ import { desktopRunnerConnected } from "@openwork/automations"
 import { REMOTE_SESSION_DESKTOP_RUNNER_CAPABILITY } from "@openwork/types/automations"
 import { db } from "../db.js"
 import { env } from "../env.js"
+import {
+  getOpenWorkWebRuntimeAccess,
+  OPENWORK_WEB_ACCESS_REQUIRED_CODE,
+  OPENWORK_WEB_ACCESS_REQUIRED_MESSAGE,
+  type OpenWorkWebRuntimeAccessResolver,
+} from "../openwork-web-runtime-access.js"
 // The automation repository is the presence source of truth. Importing the
 // automation service instead would pull the codemode execution graph (and
 // its `effect` dependency) into every spec that imports this module, which
@@ -204,6 +210,7 @@ export type RemoteSessionRuntimeResult =
 export type RemoteSessionThreadClient = Pick<AgentSessionClient, "createThread" | "sendTurn" | "getThreadSnapshot">
 
 export type RemoteSessionExecuteDeps = {
+  getOpenWorkWebAccess: OpenWorkWebRuntimeAccessResolver
   resolveRuntime: (scope: { organizationId: DenTypeId<"organization">; userId: string }) => Promise<RemoteSessionRuntimeResult>
   createClient: (runtime: RemoteSessionRuntime) => RemoteSessionThreadClient
   commandStore: RemoteSessionCommandStore
@@ -397,6 +404,7 @@ async function defaultDesktopPresence(scope: {
 }
 
 export const DEFAULT_REMOTE_SESSION_DEPS: RemoteSessionExecuteDeps = {
+  getOpenWorkWebAccess: getOpenWorkWebRuntimeAccess,
   resolveRuntime: defaultResolveRuntime,
   createClient: defaultCreateClient,
   commandStore: databaseRemoteSessionCommandStore,
@@ -479,6 +487,41 @@ export async function executeRemoteSessionCapability(
     })
   }
 
+  if (input.action === "read") {
+    const body = readBodySchema.parse(parsedBody.data)
+    if (body.commandId) {
+      const command = await deps.commandStore.get({
+        commandId: body.commandId,
+        organizationId: input.organizationId,
+        createdByUserId: input.userId,
+      })
+      if (!command) return errorResult({ error: "unknown_command" })
+      return jsonResult({
+        commandId: command.id,
+        target: "desktop",
+        state: command.status,
+        sessionId: command.sessionId,
+        workspaceId: command.workspaceId,
+        resultSummary: command.resultSummary,
+        error: command.error,
+        expiresAt: command.expiresAt,
+      })
+    }
+  }
+
+  // Entitlement precedes every execution branch. Queuing a remote session for a
+  // connected desktop is remote control of that machine, so it is gated like
+  // Cloud execution; only the status read of an already queued command above
+  // stays available without Web access.
+  const webAccess = await deps.getOpenWorkWebAccess(input.organizationId)
+  if (!webAccess.hasAccess) {
+    return errorResult({
+      error: OPENWORK_WEB_ACCESS_REQUIRED_CODE,
+      message: OPENWORK_WEB_ACCESS_REQUIRED_MESSAGE,
+      retryable: false,
+    })
+  }
+
   if (input.action === "create") {
     const body = createBodySchema.parse(parsedBody.data)
     if (body.target === "desktop") {
@@ -503,28 +546,6 @@ export async function executeRemoteSessionCapability(
         target: "desktop",
         state: "queued",
         commandId: command.id,
-        expiresAt: command.expiresAt,
-      })
-    }
-  }
-
-  if (input.action === "read") {
-    const body = readBodySchema.parse(parsedBody.data)
-    if (body.commandId) {
-      const command = await deps.commandStore.get({
-        commandId: body.commandId,
-        organizationId: input.organizationId,
-        createdByUserId: input.userId,
-      })
-      if (!command) return errorResult({ error: "unknown_command" })
-      return jsonResult({
-        commandId: command.id,
-        target: "desktop",
-        state: command.status,
-        sessionId: command.sessionId,
-        workspaceId: command.workspaceId,
-        resultSummary: command.resultSummary,
-        error: command.error,
         expiresAt: command.expiresAt,
       })
     }

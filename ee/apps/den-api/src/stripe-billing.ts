@@ -956,6 +956,18 @@ async function loadOpenWorkWebBillingSummary(organizationId: OrgId) {
   }
 }
 
+export async function getOpenWorkWebAccess(organizationId: OrgId) {
+  const [row, complimentaryAccess] = await Promise.all([
+    findWebSubscriptionByOrg(organizationId),
+    organizationOpenWorkWebComplimentaryAccess(organizationId),
+  ])
+  return resolveOpenWorkWebAccess({
+    deploymentAvailable: isOpenWorkWebAvailable(),
+    hasEligibleSubscription: isEligibleOpenWorkWebSubscriptionRow(row),
+    complimentaryAccess,
+  })
+}
+
 export async function getOpenWorkWebBillingSummary(organizationId: OrgId) {
   return (await loadOpenWorkWebBillingSummary(organizationId)).summary
 }

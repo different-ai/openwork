@@ -644,6 +644,7 @@ test("every dispatch path revalidates the owner's model access", () => {
   const executorSource = readFileSync(join(import.meta.dir, "../src/automations/cloud-agent-executor.ts"), "utf8")
   const execution = executorSource.slice(executorSource.indexOf("export async function executeCloudAgent"))
   assert.match(executorSource, /currentAgentAuthority[\s\S]*resolveAutomationModelAccess\(/)
+  assert.match(executorSource, /currentAgentAuthority[\s\S]*getOpenWorkWebRuntimeAccess\(input\.organizationId\)/)
   assert.match(execution, /currentAgentAuthority\(input\)[\s\S]*resolveCloudAgentReadyWorker/)
   assert.match(execution, /currentAgentAuthority\(input\)[\s\S]*createThread/)
   assert.match(execution, /currentAgentAuthority\(input\)[\s\S]*abortAndObserve\(client, nativeThreadId\)[\s\S]*sendTurn/)

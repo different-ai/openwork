@@ -1146,7 +1146,7 @@ export class DenAutomationRepository implements AutomationRepository {
   /** Durably skips a run that must not execute (e.g. revoked model access). */
   async skipRun(input: {
     runId: string
-    code: "owner_membership_lost" | "model_access_lost" | "provider_unavailable"
+    code: "owner_membership_lost" | "model_access_lost" | "provider_unavailable" | "openwork_web_access_required"
     message: string
     now: number
   }): Promise<void> {
