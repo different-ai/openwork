@@ -69,6 +69,8 @@ const geometryExpression = `(() => {
     position: getComputedStyle(toggle).position,
     left: toggleRect.left,
     right: toggleRect.right,
+    width: toggleRect.width,
+    height: toggleRect.height,
     headingLeft: headingRect ? headingRect.left : null,
     headingText: heading instanceof HTMLElement ? (heading.textContent ?? "").trim() : "",
     overlapsHeading: headingRect ? toggleRect.right > headingRect.left : false,
@@ -82,6 +84,8 @@ interface Geometry {
   position: string;
   left: number;
   right: number;
+  width: number;
+  height: number;
   headingLeft: number | null;
   headingText: string;
   overlapsHeading: boolean;
@@ -96,11 +100,13 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function geometry(value: unknown, label: string): Geometry {
   if (!isRecord(value)) throw new Error(`${label} was not readable: ${JSON.stringify(value)}`);
   if (value.found !== true) throw new Error(`${label} found no painted sidebar toggle: ${JSON.stringify(value)}`);
-  const { position, left, right, headingLeft, headingText, overlapsHeading, hitsToggle, hitTag } = value;
+  const { position, left, right, width, height, headingLeft, headingText, overlapsHeading, hitsToggle, hitTag } = value;
   if (
     typeof position !== "string" ||
     typeof left !== "number" ||
     typeof right !== "number" ||
+    typeof width !== "number" ||
+    typeof height !== "number" ||
     typeof headingText !== "string" ||
     typeof overlapsHeading !== "boolean" ||
     typeof hitsToggle !== "boolean" ||
@@ -109,7 +115,7 @@ function geometry(value: unknown, label: string): Geometry {
   ) {
     throw new Error(`${label} returned an unexpected shape: ${JSON.stringify(value)}`);
   }
-  return { found: true, position, left, right, headingLeft, headingText, overlapsHeading, hitsToggle, hitTag };
+  return { found: true, position, left, right, width, height, headingLeft, headingText, overlapsHeading, hitsToggle, hitTag };
 }
 
 /**
@@ -201,6 +207,26 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
     true,
   );
 
+  // Compact desktop widths apply a generic 44px touch target to sidebar
+  // triggers. The floating macOS titlebar control must remain the native-sized
+  // 32px variant or it crowds the session title despite keeping the same left
+  // offset.
+  await app.client.send("Emulation.setDeviceMetricsOverride", {
+    width: 900,
+    height: 700,
+    deviceScaleFactor: 1,
+    mobile: false,
+  });
+  await waitForTitleSettled(app, "compact desktop width");
+  const compact = geometry(await evalIn(app, geometryExpression), "sidebar toggle at compact desktop width");
+  expect(compact.width).toBe(32);
+  expect(compact.height).toBe(32);
+  evidence.recordAssertionEvidence(
+    "The macOS titlebar toggle stays compact at narrower desktop widths",
+    `At 900px wide the painted titlebar toggle remains ${compact.width}×${compact.height}px instead of inheriting the generic enlarged touch target.`,
+    true,
+  );
+
   await setSidebar(app, "collapsed");
   const collapsed = geometry(await evalIn(app, geometryExpression), "sidebar toggle while collapsed");
 
@@ -233,6 +259,32 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   evidence.recordAssertionEvidence(
     "Clicking the cleared toggle still shows and hides the sidebar",
     `Clicking the floating toggle drove the sidebar collapsed and back to ${JSON.stringify(reopened)}.`,
+    true,
+  );
+
+  // Thin/custom shells can intentionally remove the sidebar and therefore the
+  // floating toggle. Their title still needs the same traffic-light clearance.
+  await evalIn(
+    app,
+    `(() => {
+      const key = "openwork.shell-config";
+      const current = JSON.parse(localStorage.getItem(key) ?? "{}");
+      localStorage.setItem(key, JSON.stringify({ ...current, sidebar: false }));
+      location.reload();
+      return true;
+    })()`,
+  ).catch(() => undefined);
+  await waitFor(app, `Boolean(document.querySelector("header h1"))`, {
+    timeoutMs: 60_000,
+    label: "session header restored without sidebar",
+  });
+  await waitForTitleSettled(app, "sidebar hidden");
+  const titleWithoutSidebar = await evalIn(app, titleLeftExpression);
+  if (typeof titleWithoutSidebar !== "number") throw new Error("The sidebar-free title had no measurable position.");
+  expect(titleWithoutSidebar).toBeGreaterThanOrEqual(136);
+  evidence.recordAssertionEvidence(
+    "Sidebar-free macOS shells keep titles clear of the traffic lights",
+    `With the sidebar and floating toggle disabled, the session title starts at ${titleWithoutSidebar}px, beyond the 136px reserved titlebar area.`,
     true,
   );
 });
