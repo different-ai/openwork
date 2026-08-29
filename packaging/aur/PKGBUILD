@@ -40,7 +40,7 @@ package() {
   cp -a "${bundle_dir}/." "${pkgdir}/opt/openwork/"
 
   install -d "${pkgdir}/usr/bin"
-  ln -s /opt/openwork/@openworkdesktop "${pkgdir}/usr/bin/openwork"
+  ln -s /opt/openwork/openwork "${pkgdir}/usr/bin/openwork"
 
   install -Dm644 "${pkgdir}/opt/openwork/resources/app-dist/openwork-logo-square.svg" \
     "${pkgdir}/usr/share/icons/hicolor/scalable/apps/openwork.svg"
