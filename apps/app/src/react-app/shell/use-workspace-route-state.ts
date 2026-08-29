@@ -51,6 +51,7 @@ import { resolveOpenworkConnection } from "./openwork-connection";
 import {
   commitRouteWorkspaceSelection,
   createRouteRefreshLifecycle,
+  createRouteWorkspaceLoadCoalescer,
   mapRouteWorkspaceLoads,
   planRouteConnectionGap,
   planRouteWorkspaceLoads,
@@ -233,7 +234,7 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
   const startupRetryTimerRef = useRef<number | null>(null);
   const [retryingWorkspaceIds, setRetryingWorkspaceIds] = useState<string[]>([]);
   const reconnectAttemptedWorkspaceIdRef = useRef("");
-  const backgroundSessionLoadInFlight = useRef<Map<string, number>>(new Map());
+  const backgroundSessionLoadCoalescerRef = useRef(createRouteWorkspaceLoadCoalescer());
   const loadedWorkspaceIdsRef = useRef(new Set<string>());
   const serverActiveWorkspaceIdRef = useRef("");
   const workspaceSelectionCommitTimerRef = useRef<number | null>(null);
@@ -308,7 +309,7 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
       const MAX_ATTEMPTS = 6;
       const backoffMs = (attempt: number) => Math.min(500 * Math.pow(2, attempt), 4_000);
 
-      const fetchOnce = async (workspace: RouteWorkspace, attempt: number): Promise<void> => {
+      const fetchWithRetries = async (workspace: RouteWorkspace, attempt: number): Promise<void> => {
         const isRemoteOpenworkWorkspace = workspace.workspaceType === "remote" && workspace.remoteType !== "opencode";
         const endpoint = endpointForWorkspace(workspace);
         if (!endpoint) {
@@ -329,10 +330,6 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
           }
           return;
         }
-        const startedAt = backgroundSessionLoadInFlight.current.get(workspace.id) ?? 0;
-        if (startedAt && Date.now() - startedAt < 5_000) return;
-        const requestStartedAt = Date.now();
-        backgroundSessionLoadInFlight.current.set(workspace.id, requestStartedAt);
         if (isRemoteOpenworkWorkspace) {
           setWorkspaceConnectionOverrides((current) => ({
             ...current,
@@ -385,9 +382,11 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
           // empty while the managed engine finishes starting.
           if (items.length === 0 && attempt === 0) {
             window.setTimeout(() => {
-              if (backgroundSessionLoadInFlight.current.get(workspace.id)) return;
-              backgroundSessionLoadInFlight.current.delete(workspace.id);
-              void fetchOnce(workspace, 1);
+              if (backgroundSessionLoadCoalescerRef.current.isInFlight(workspace.id)) return;
+              void backgroundSessionLoadCoalescerRef.current.run(
+                workspace.id,
+                () => fetchWithRetries(workspace, 1),
+              );
             }, 3_000);
           }
         } catch (error) {
@@ -399,11 +398,8 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
           // in the meantime instead of flashing "error" next to the
           // workspace name.
           if (attempt + 1 < MAX_ATTEMPTS && classifyRouteSessionReadError(error) === "retryable") {
-            if (backgroundSessionLoadInFlight.current.get(workspace.id) === requestStartedAt) {
-              backgroundSessionLoadInFlight.current.delete(workspace.id);
-            }
             await new Promise((r) => window.setTimeout(r, backoffMs(attempt)));
-            await fetchOnce(workspace, attempt + 1);
+            await fetchWithRetries(workspace, attempt + 1);
             return;
           }
           // Final failure: keep local workspace startup quiet, but give
@@ -424,14 +420,15 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
           setRetryingWorkspaceIds((current) =>
             current.includes(workspace.id) ? current.filter((id) => id !== workspace.id) : current,
           );
-        } finally {
-          if (backgroundSessionLoadInFlight.current.get(workspace.id) === requestStartedAt) {
-            backgroundSessionLoadInFlight.current.delete(workspace.id);
-          }
         }
       };
 
-      await mapRouteWorkspaceLoads(workspaces, (workspace) => fetchOnce(workspace, 0));
+      await mapRouteWorkspaceLoads(workspaces, (workspace) =>
+        backgroundSessionLoadCoalescerRef.current.run(
+          workspace.id,
+          () => fetchWithRetries(workspace, 0),
+        ),
+      );
     },
     [endpointForWorkspace, mergeFetchedSessionsWithPending],
   );

@@ -29,6 +29,16 @@ export type RouteRefreshLifecycle = {
   isInFlight(): boolean;
 };
 
+export type RouteWorkspaceLoadCoalescer = {
+  /**
+   * Run at most one session-list request chain per workspace. Concurrent
+   * callers share the active chain until it settles, including its backoff
+   * waits and retries.
+   */
+  run(workspaceId: string, load: () => Promise<void>): Promise<void>;
+  isInFlight(workspaceId: string): boolean;
+};
+
 export type LatestWorkspaceCommitter = {
   /** Queue the route's newest workspace. Intermediate requests are discarded. */
   request(workspaceId: string): void;
@@ -148,6 +158,33 @@ export async function mapRouteWorkspaceLoads<T, R>(
     results.push(...await Promise.all(workspaces.slice(offset, offset + batchSize).map(load)));
   }
   return results;
+}
+
+/**
+ * Coalesce the complete session-list load chain for each workspace.
+ *
+ * Cold OpenCode reads can legitimately outlive a fixed staleness threshold.
+ * Keeping ownership until the promise settles prevents route, settings, and
+ * visibility refreshes from starting overlapping retries for the same
+ * workspace while still allowing different workspaces to load concurrently.
+ */
+export function createRouteWorkspaceLoadCoalescer(): RouteWorkspaceLoadCoalescer {
+  const inFlight = new Map<string, Promise<void>>();
+
+  return {
+    run(workspaceId, load) {
+      const existing = inFlight.get(workspaceId);
+      if (existing) return existing;
+
+      const request = Promise.resolve().then(load);
+      const tracked = request.finally(() => {
+        if (inFlight.get(workspaceId) === tracked) inFlight.delete(workspaceId);
+      });
+      inFlight.set(workspaceId, tracked);
+      return tracked;
+    },
+    isInFlight: (workspaceId) => inFlight.has(workspaceId),
+  };
 }
 
 /**

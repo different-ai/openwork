@@ -7,7 +7,10 @@ import {
   refreshRouteWorkspaceListState,
   stabilizeRouteWorkspaceOrder,
 } from "../src/react-app/shell/route-workspaces";
-import { mapRouteWorkspaceLoads } from "../src/react-app/shell/route-refresh-control";
+import {
+  createRouteWorkspaceLoadCoalescer,
+  mapRouteWorkspaceLoads,
+} from "../src/react-app/shell/route-refresh-control";
 import {
   mergeWorkspaceRouteSession,
   preserveWorkspaceRouteSession,
@@ -157,6 +160,39 @@ describe("workspace route session load budget", () => {
 
     expect(await resultPromise).toEqual(workspaces.map((workspace) => `workspace-${workspace}`));
     expect(peak).toBe(4);
+  });
+
+  test("coalesces one workspace load until its complete retry chain settles", async () => {
+    const coalescer = createRouteWorkspaceLoadCoalescer();
+    const starts: string[] = [];
+    let releaseWorkspaceA: (() => void) | undefined;
+
+    const firstWorkspaceA = coalescer.run("workspace-a", async () => {
+      starts.push("workspace-a");
+      await new Promise<void>((resolve) => {
+        releaseWorkspaceA = resolve;
+      });
+    });
+    const duplicateWorkspaceA = coalescer.run("workspace-a", async () => {
+      starts.push("workspace-a-duplicate");
+    });
+    const workspaceB = coalescer.run("workspace-b", async () => {
+      starts.push("workspace-b");
+    });
+
+    await Bun.sleep(0);
+    expect(duplicateWorkspaceA).toBe(firstWorkspaceA);
+    expect(starts).toEqual(["workspace-a", "workspace-b"]);
+    expect(coalescer.isInFlight("workspace-a")).toBe(true);
+
+    releaseWorkspaceA?.();
+    await Promise.all([firstWorkspaceA, duplicateWorkspaceA, workspaceB]);
+    expect(coalescer.isInFlight("workspace-a")).toBe(false);
+
+    await coalescer.run("workspace-a", async () => {
+      starts.push("workspace-a-after-settle");
+    });
+    expect(starts).toEqual(["workspace-a", "workspace-b", "workspace-a-after-settle"]);
   });
 });
 
