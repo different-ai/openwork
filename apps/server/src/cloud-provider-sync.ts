@@ -140,6 +140,7 @@ type CloudProviderSyncLogger = {
 
 type CloudProviderSyncRequest = {
   contextKey: string;
+  generation: number;
   session: CloudProviderDenSession;
   reason?: string;
 };
@@ -153,6 +154,11 @@ type CloudProviderSyncTrailingRun = CloudProviderSyncRun & {
   request: CloudProviderSyncRequest;
   resolve: (result: CloudProviderSyncRunResult) => void;
   reject: (error: unknown) => void;
+};
+
+type CloudProviderSyncPendingSession = {
+  contextKey: string;
+  promise: Promise<void>;
 };
 
 export type CloudProviderSyncOptions = {
@@ -585,6 +591,8 @@ export class CloudProviderSync {
   private importedAtByCloudProviderId = new Map<string, number>();
   private reloadPending = false;
   private queue: Promise<void> = Promise.resolve();
+  private contextGeneration = 0;
+  private pendingSession: CloudProviderSyncPendingSession | null = null;
   private activeRun: CloudProviderSyncRun | null = null;
   private trailingRun: CloudProviderSyncTrailingRun | null = null;
   private interval: ReturnType<typeof setInterval> | null = null;
@@ -602,15 +610,59 @@ export class CloudProviderSync {
     this.reloadRetryMs = configuredReloadRetryMs();
   }
 
-  setSession(session: CloudProviderDenSession): void {
+  setSession(session: CloudProviderDenSession): Promise<void> {
     const contextKey = this.sessionContextKey(session);
-    if (this.session && this.sessionContextKey(this.session) === contextKey) return;
-    this.session = session;
-    this.startInterval();
-    void this.run("den_session_updated");
+    if (this.session && this.sessionContextKey(this.session) === contextKey) return Promise.resolve();
+    if (this.pendingSession?.contextKey === contextKey) return this.pendingSession.promise;
+
+    const hasMaterializedContext = this.session !== null
+      || this.managedProviderIds.size > 0
+      || this.ownedEnvKeys.size > 0;
+    this.contextGeneration += 1;
+
+    if (!hasMaterializedContext) {
+      this.session = session;
+      this.startInterval();
+      void this.run("den_session_updated");
+      return Promise.resolve();
+    }
+
+    const generation = this.contextGeneration;
+    this.session = null;
+    this.stopInterval();
+    this.stopReloadRetry();
+    const trailing = this.trailingRun;
+    this.trailingRun = null;
+    trailing?.resolve({ status: "no_session" });
+    this.lastRun = null;
+    this.providers = [];
+    this.skippedProviders = [];
+
+    const promise = this.enqueue(async () => {
+      if (generation !== this.contextGeneration) return;
+      await this.sweep({ forceReload: true });
+      this.resetMaterializationState();
+      if (generation !== this.contextGeneration) return;
+      this.session = session;
+      this.startInterval();
+      void this.run("den_session_updated");
+    });
+    const pending = { contextKey, promise };
+    this.pendingSession = pending;
+    void promise.then(
+      () => {
+        if (this.pendingSession === pending) this.pendingSession = null;
+      },
+      () => {
+        if (this.pendingSession === pending) this.pendingSession = null;
+      },
+    );
+    return promise;
   }
 
   async clearSession(): Promise<void> {
+    this.contextGeneration += 1;
+    this.pendingSession = null;
     this.session = null;
     this.stopInterval();
     const trailing = this.trailingRun;
@@ -618,19 +670,13 @@ export class CloudProviderSync {
     trailing?.resolve({ status: "no_session" });
     await this.enqueue(async () => {
       try {
-        await this.sweep();
+        await this.sweep({ forceReload: true });
       } catch (error) {
         this.logger?.error("cloud provider sweep failed", {
           message: error instanceof Error ? error.message : "cloud_provider_sweep_failed",
         });
       } finally {
-        this.lastRun = null;
-        this.providers = [];
-        this.skippedProviders = [];
-        this.fingerprint = null;
-        this.ownedEnvKeys.clear();
-        this.managedProviderIds.clear();
-        this.importedAtByCloudProviderId.clear();
+        this.resetMaterializationState();
       }
     });
   }
@@ -640,6 +686,7 @@ export class CloudProviderSync {
     if (!session) return Promise.resolve({ status: "no_session" });
     const request = {
       contextKey: this.sessionContextKey(session),
+      generation: this.contextGeneration,
       session,
       reason,
     };
@@ -694,6 +741,16 @@ export class CloudProviderSync {
 
   private sessionContextKey(session: CloudProviderDenSession): string {
     return `${session.baseUrl}\u0000${session.orgId}\u0000${session.token}`;
+  }
+
+  private resetMaterializationState(): void {
+    this.lastRun = null;
+    this.providers = [];
+    this.skippedProviders = [];
+    this.fingerprint = null;
+    this.ownedEnvKeys.clear();
+    this.managedProviderIds.clear();
+    this.importedAtByCloudProviderId.clear();
   }
 
   private createTrailingRun(request: CloudProviderSyncRequest): Promise<CloudProviderSyncRunResult> {
@@ -818,6 +875,7 @@ export class CloudProviderSync {
     const { reason, session } = request;
     try {
       const prepared = prepareMaterialization(await fetchProviders(this.fetchImpl, session));
+      if (request.generation !== this.contextGeneration) return { status: "no_session" };
       const { changed, detail, reloadError } = await this.apply(prepared);
       // The materialization itself succeeded (config + env writes landed), so
       // record it even when the engine reload failed: hiding the providers
@@ -835,6 +893,7 @@ export class CloudProviderSync {
       this.lastRun = { at: new Date().toISOString(), status, detail };
       return { status };
     } catch (error) {
+      if (request.generation !== this.contextGeneration) return { status: "no_session" };
       const message = error instanceof Error ? error.message : "cloud_provider_sync_failed";
       this.lastRun = { at: new Date().toISOString(), status: "failed", message };
       this.logger?.warn("cloud provider sync failed", { reason, message });
@@ -1006,7 +1065,7 @@ export class CloudProviderSync {
     });
   }
 
-  private async sweep(): Promise<void> {
+  private async sweep(options: { forceReload?: boolean } = {}): Promise<void> {
     const providerPatch = Object.fromEntries([...this.managedProviderIds].map((providerId) => [providerId, null]));
     let providerChanged = false;
     if (Object.keys(providerPatch).length > 0) {
@@ -1033,7 +1092,7 @@ export class CloudProviderSync {
       || authResult.delivered.length > 0
       || authResult.removed.length > 0;
     let reloadError: unknown;
-    if (this.reloadPending && (await this.reloadDeferredByActivity())) {
+    if (this.reloadPending && !options.forceReload && (await this.reloadDeferredByActivity())) {
       this.scheduleReloadRetry();
     } else if (this.reloadPending) {
       try {

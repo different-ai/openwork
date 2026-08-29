@@ -2594,7 +2594,7 @@ function createRoutes(
     ensureWritable(config);
     const session = parseCloudProviderDenSession(await readJsonBody(ctx.request));
     if (!session) throw new ApiError(400, "invalid_payload", "baseUrl, token, and orgId are required");
-    cloudProviderSync.setSession(session);
+    await cloudProviderSync.setSession(session);
     return new Response(null, { status: 204 });
   });
 

@@ -232,15 +232,16 @@ describe("cloud provider sync gateway", () => {
       expect((await putSession("org_first")).status).toBe(204);
       const sameContextRuns = [runSync(base, "app_launch"), runSync(base, "app_resume")];
 
-      expect((await putSession("org_changed")).status).toBe(204);
-      const changedContextRuns = [runSync(base, "sign_in"), runSync(base, "focus")];
+      const changedSessionResponse = putSession("org_changed");
       await Bun.sleep(25);
       expect(listOrgIds).toEqual(["org_first"]);
       expect(maxListRequestsInFlight).toBe(1);
 
       releaseFirstList();
+      expect((await changedSessionResponse).status).toBe(204);
+      const changedContextRuns = [runSync(base, "sign_in"), runSync(base, "focus")];
       const results = await Promise.all([...sameContextRuns, ...changedContextRuns]);
-      expect(results.map((result) => result.status)).toEqual(["applied", "applied", "noop", "noop"]);
+      expect(results.map((result) => result.status)).toEqual(["no_session", "no_session", "applied", "applied"]);
       expect(listOrgIds).toEqual(["org_first", "org_changed"]);
       expect(maxListRequestsInFlight).toBe(1);
 
@@ -250,6 +251,77 @@ describe("cloud provider sync gateway", () => {
     } finally {
       releaseFirstList();
     }
+  });
+
+  test("quarantines the old organization before a failing new-organization sync", async () => {
+    const root = await createRoot();
+    const provider: FakeProvider = {
+      ...buildProvider([{ id: "model-context", name: "Context model", config: {} }]),
+      id: "lpr_context",
+      name: "Context provider",
+      apiKey: "sk-org-a",
+      providerConfig: {
+        env: ["CONTEXT_PROVIDER_API_KEY"],
+        npm: "@ai-sdk/openai-compatible",
+      },
+    };
+    const config = serverConfig(root, "https://engine.example.test");
+    let engineBusy = false;
+    let reloads = 0;
+    const fetchImpl = Object.assign(async (
+      input: Parameters<typeof globalThis.fetch>[0],
+      init?: Parameters<typeof globalThis.fetch>[1],
+    ) => {
+      const url = new URL(String(input));
+      if (url.hostname === "den.example.test") {
+        const orgId = new Headers(init?.headers).get("x-openwork-legacy-org-id");
+        if (orgId === "org_b") return Response.json({ error: "not_found" }, { status: 404 });
+        if (url.pathname === "/v1/llm-providers") return Response.json({ llmProviders: [provider] });
+        if (url.pathname === `/v1/llm-providers/${provider.id}/connect`) {
+          return Response.json({ llmProvider: provider });
+        }
+      }
+      if (url.hostname === "engine.example.test" && url.pathname === `/auth/${provider.id}`) {
+        return Response.json(true);
+      }
+      return Response.json({ error: "not_found" }, { status: 404 });
+    }, { preconnect: globalThis.fetch.preconnect });
+    const env = new EnvService({ path: process.env.OPENWORK_ENV_STORE });
+    const sync = new CloudProviderSync({
+      config,
+      env,
+      fetchImpl,
+      engineBusy: async () => engineBusy,
+      reloadEngine: async () => {
+        reloads += 1;
+      },
+      intervalMs: 3_600_000,
+    });
+    stops.push(() => sync.stop());
+
+    await sync.setSession({
+      baseUrl: "https://den.example.test",
+      token: "token-a",
+      orgId: "org_a",
+    });
+    expect((await sync.run("org-a")).status).toBe("applied");
+    expect(runtimeProviderMap(await readGlobalRuntimeOpencodeConfig(config)).lpr_context).toBeDefined();
+    expect((await env.list()).some((entry) => entry.key === "CONTEXT_PROVIDER_API_KEY")).toBe(true);
+    expect(reloads).toBe(1);
+
+    engineBusy = true;
+    await sync.setSession({
+      baseUrl: "https://den.example.test",
+      token: "token-b",
+      orgId: "org_b",
+    });
+    expect((await sync.run("org-b")).status).toBe("failed");
+
+    expect(runtimeProviderMap(await readGlobalRuntimeOpencodeConfig(config)).lpr_context).toBeUndefined();
+    expect((await env.list()).some((entry) => entry.key === "CONTEXT_PROVIDER_API_KEY")).toBe(false);
+    expect(sync.status().providers).toEqual([]);
+    expect(sync.status().lastRun?.message).toBe("den_request_failed_404");
+    expect(reloads).toBe(2);
   });
 
   test("materializes providers before the first workspace exists and finishes setup later", async () => {
