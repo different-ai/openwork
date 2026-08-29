@@ -113,6 +113,36 @@ afterEach(() => {
 });
 
 describe("session run status ordering", () => {
+  test("preserves the activity snapshot when workspace seeds are unchanged", () => {
+    const store = useSessionActivityStore.getState();
+    store.seedWorkspaceSessions(workspaceId, [{ id: sessionId, status: { type: "idle" } }]);
+    const before = useSessionActivityStore.getState();
+    let notifications = 0;
+    const unsubscribe = useSessionActivityStore.subscribe(() => {
+      notifications += 1;
+    });
+
+    for (let index = 0; index < 60; index += 1) {
+      useSessionActivityStore.getState().seedWorkspaceSessions(
+        workspaceId,
+        [{ id: sessionId, status: { type: "idle" } }],
+      );
+    }
+
+    expect(useSessionActivityStore.getState()).toBe(before);
+    expect(notifications).toBe(0);
+
+    useSessionActivityStore.getState().seedWorkspaceSessions(
+      workspaceId,
+      [{ id: sessionId, status: { type: "busy" } }],
+    );
+    unsubscribe();
+
+    expect(useSessionActivityStore.getState()).not.toBe(before);
+    expect(useSessionActivityStore.getState().getStatus(workspaceId, sessionId)).toBe("thinking");
+    expect(notifications).toBe(1);
+  });
+
   test("does not publish duplicate activity observations", () => {
     useSessionActivityStore.getState().setRunStatus(workspaceId, sessionId, { type: "busy" });
     useSessionActivityStore.getState().markMessageRole(workspaceId, sessionId, "assistant-1", "assistant");

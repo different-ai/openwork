@@ -219,32 +219,30 @@ export const useSessionActivityStore = create<SessionActivityStore>((set, get) =
     const id = workspaceId.trim();
     if (!id) return;
     set((state) => {
-      let nextState = state;
+      let nextState: Pick<SessionActivityStore, "recordsByWorkspaceId" | "statusesByWorkspaceId"> = state;
       for (const session of sessions) {
         const sessionId = session.id.trim();
         if (!sessionId) continue;
         const status = sessionRunStatus(session);
         if (status === undefined || status === null) continue;
-        nextState = {
-          ...nextState,
-          ...updateRecord(nextState, id, sessionId, (record) => {
-            const normalized = normalizeRunStatus(status);
-            const runActive = normalized === "running" || normalized === "retry";
-            if (!runActive && record.status !== "idle") return record;
-            return {
-              ...record,
-              runActive,
-              assistantOutput: runActive && record.runActive ? record.assistantOutput : false,
-              errorActive: runActive ? false : record.errorActive,
-              errorMessage: runActive ? null : record.errorMessage,
-              compacting: runActive ? record.compacting : false,
-              waitingPermissionIds: runActive ? record.waitingPermissionIds : [],
-              waitingQuestionIds: runActive ? record.waitingQuestionIds : [],
-            };
-          }),
-        };
+        nextState = updateRecord(nextState, id, sessionId, (record) => {
+          const normalized = normalizeRunStatus(status);
+          const runActive = normalized === "running" || normalized === "retry";
+          if (!runActive && record.status !== "idle") return record;
+          return {
+            ...record,
+            runActive,
+            assistantOutput: runActive && record.runActive ? record.assistantOutput : false,
+            errorActive: runActive ? false : record.errorActive,
+            errorMessage: runActive ? null : record.errorMessage,
+            compacting: runActive ? record.compacting : false,
+            waitingPermissionIds: runActive ? record.waitingPermissionIds : [],
+            waitingQuestionIds: runActive ? record.waitingQuestionIds : [],
+          };
+        });
       }
-      return nextState;
+      if (nextState === state) return state;
+      return { ...state, ...nextState };
     });
   },
   seedSessionRun: (workspaceId, sessionId, status, assistantOutput, options) => {
