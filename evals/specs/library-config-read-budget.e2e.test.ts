@@ -17,6 +17,7 @@ const IDLE_WINDOW_MS = 20_000;
 // navigation). The regression this guards against produced a project+global
 // pair on every settings re-render: 8+ requests in the same window.
 const IDLE_READ_BUDGET = 2;
+const LIFECYCLE_READ_BUDGET = 10;
 
 test(title, { timeout: 300_000 }, async ({ evidence }) => {
   needs(requirements);
@@ -33,6 +34,7 @@ test(title, { timeout: 300_000 }, async ({ evidence }) => {
     if (window.__opencodeConfigReads !== undefined) return true;
     window.__opencodeConfigReads = 0;
     window.__librarySkillReads = 0;
+    window.__libraryLifecycleReads = 0;
     const originalFetch = window.fetch;
     window.fetch = function (...args) {
       const target = typeof args[0] === "string" ? args[0] : args[0]?.url;
@@ -41,6 +43,14 @@ test(title, { timeout: 300_000 }, async ({ evidence }) => {
       }
       if (typeof target === "string" && target.includes("/skills/browser-automation")) {
         window.__librarySkillReads += 1;
+      }
+      if (typeof target === "string" && (
+        target.includes("/cloud-provider-sync/status")
+        || target.includes("/opencode/config?")
+        || target.endsWith("/mcp")
+        || target.endsWith("/den-session")
+      )) {
+        window.__libraryLifecycleReads += 1;
       }
       return originalFetch.apply(this, args);
     };
@@ -126,6 +136,7 @@ test(title, { timeout: 300_000 }, async ({ evidence }) => {
   expect(typeof settledSkillReads).toBe("number");
   await evalIn(app, `(() => {
     window.__libraryDetailContentMissing = false;
+    window.__libraryLifecycleReads = 0;
     window.__libraryPolicyTick = 0;
     window.__libraryDetailWatcher = window.setInterval(() => {
       if (!document.body.innerText.includes("known-good smoke prompt")) {
@@ -148,10 +159,12 @@ test(title, { timeout: 300_000 }, async ({ evidence }) => {
       skillReads: window.__librarySkillReads,
       contentMissing: window.__libraryDetailContentMissing,
       contentVisible: document.body.innerText.includes("known-good smoke prompt"),
+      lifecycleReads: window.__libraryLifecycleReads,
       policyTicks: window.__libraryPolicyTick,
       stable: window.__librarySkillReads === ${Number(settledSkillReads)}
         && !window.__libraryDetailContentMissing
         && document.body.innerText.includes("known-good smoke prompt")
+        && window.__libraryLifecycleReads <= ${LIFECYCLE_READ_BUDGET}
         && window.__libraryPolicyTick > 0,
     };
   })()`);
@@ -167,6 +180,7 @@ test(title, { timeout: 300_000 }, async ({ evidence }) => {
     contentVisible: true,
     stable: true,
   });
+  expect(detailResult).toMatchObject({ lifecycleReads: expect.any(Number) });
   expect(detailResult).toMatchObject({ policyTicks: expect.any(Number) });
   expect(detailResult).not.toMatchObject({ policyTicks: 0 });
 });
