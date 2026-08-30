@@ -18,7 +18,7 @@ const IDLE_WINDOW_MS = 20_000;
 // pair on every settings re-render: 8+ requests in the same window.
 const IDLE_READ_BUDGET = 2;
 
-test(title, { timeout: 300_000 }, async () => {
+test(title, { timeout: 300_000 }, async ({ evidence }) => {
   needs(requirements);
 
   await using app = await desktop({ name: "library-config-read-budget" });
@@ -87,6 +87,11 @@ test(title, { timeout: 300_000 }, async () => {
   expect(typeof afterIdle).toBe("number");
 
   const idleReads = Number(afterIdle) - Number(settled);
+  evidence.recordAssertionEvidence(
+    "Idle Library config reads stay bounded",
+    `${idleReads} opencode-config reads during a ${IDLE_WINDOW_MS / 1000}s settled idle window; budget ${IDLE_READ_BUDGET}.`,
+    idleReads <= IDLE_READ_BUDGET,
+  );
   expect(
     idleReads,
     `opencode-config was read ${idleReads} times during a ${IDLE_WINDOW_MS / 1000}s idle window (budget ${IDLE_READ_BUDGET}); the Library page is refetching config on unrelated re-renders`,
@@ -137,9 +142,15 @@ test(title, { timeout: 300_000 }, async () => {
       contentVisible: document.body.innerText.includes("known-good smoke prompt"),
     };
   })()`);
-  expect(detailResult).toEqual({
+  const expectedDetailResult = {
     skillReads: settledSkillReads,
     contentMissing: false,
     contentVisible: true,
-  });
+  };
+  evidence.recordAssertionEvidence(
+    "Open Library skill details stay visible without refetching",
+    `Settled reads: ${String(settledSkillReads)}; observed after ${IDLE_WINDOW_MS / 1000}s: ${JSON.stringify(detailResult)}.`,
+    JSON.stringify(detailResult) === JSON.stringify(expectedDetailResult),
+  );
+  expect(detailResult).toEqual(expectedDetailResult);
 });
