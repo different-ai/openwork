@@ -861,6 +861,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const pasteParts = useComposerStateStore((state) => getComposerPasteParts(state, props.sessionId));
   const setComposerDraft = useComposerStateStore((state) => state.setDraft);
   const replaceComposerDraft = useComposerStateStore((state) => state.replaceDraft);
+  const hydrateComposerDraft = useComposerStateStore((state) => state.hydrateDraft);
   const clearComposerRevertTarget = useComposerStateStore((state) => state.clearRevertTarget);
   const setComposerAttachments = useComposerStateStore((state) => state.setAttachments);
   const setComposerMentions = useComposerStateStore((state) => state.setMentions);
@@ -902,9 +903,8 @@ export function SessionSurface(props: SessionSurfaceProps) {
     for (const attachment of getComposerAttachments(currentState, props.sessionId)) {
       revokeAttachmentPreview(attachment);
     }
-    clearComposerSession(props.sessionId);
-    if (nextDraft) replaceComposerDraft(props.sessionId, nextDraft);
-  }, [clearComposerSession, persistedDraftKey, persistedDraftSnapshot, props.sessionId, replaceComposerDraft]);
+    hydrateComposerDraft(props.sessionId, nextDraft);
+  }, [hydrateComposerDraft, persistedDraftKey, persistedDraftSnapshot, props.sessionId]);
   const inputHistory = useComposerStateStore((state) => getComposerHistory(state, props.sessionId));
   const appendComposerHistory = useComposerStateStore((state) => state.appendHistory);
   // Queued follow-up drafts live in the shared composer store keyed by session
