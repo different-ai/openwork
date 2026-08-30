@@ -23,6 +23,8 @@ import {
 import { formatRelativeTime } from "@/app/utils";
 import {
   createSessionSearcher,
+  dedupeSearchableSessions,
+  searchableSessionKey,
   type SearchableSession,
   type SessionMessageFetcher,
   type SessionSearchMatch,
@@ -117,6 +119,7 @@ export function SessionSearchDialog(props: SessionSearchDialogProps) {
 
   const debouncedQuery = useDebouncedValue(query.trim(), DEBOUNCE_MS);
   const deepQuery = debouncedQuery.length >= MIN_QUERY_LENGTH ? debouncedQuery : "";
+  const sessions = useMemo(() => dedupeSearchableSessions(props.sessions), [props.sessions]);
 
   // The searcher caches transcripts by session id + updatedAt, so it must
   // outlive individual keystrokes and dialog open/close cycles.
@@ -140,7 +143,7 @@ export function SessionSearchDialog(props: SessionSearchDialogProps) {
     const collected: SessionSearchMatch[] = [];
     const run = searcher.search({
       query: deepQuery,
-      sessions: props.sessions,
+      sessions,
       onMatch: (match) => {
         collected.push(match);
         setMatches([...collected]);
@@ -148,12 +151,12 @@ export function SessionSearchDialog(props: SessionSearchDialogProps) {
       onProgress: setProgress,
     });
     return () => run.cancel();
-  }, [props.open, props.sessions, searcher, deepQuery]);
+  }, [props.open, sessions, searcher, deepQuery]);
 
   const groups = useMemo<ResultGroup[]>(() => {
     const trimmed = query.trim();
     if (!trimmed) {
-      const recent = [...props.sessions]
+      const recent = [...sessions]
         .sort((a, b) => b.updatedAt - a.updatedAt)
         .slice(0, RECENT_LIMIT)
         .map((session) => ({
@@ -169,13 +172,13 @@ export function SessionSearchDialog(props: SessionSearchDialogProps) {
     const seen = new Set<string>();
 
     const titleItems: ResultItem[] = [];
-    const titleHits = fuzzysort.go(trimmed, props.sessions, {
+    const titleHits = fuzzysort.go(trimmed, sessions, {
       keys: ["title", "workspaceTitle"],
       limit: TITLE_LIMIT,
     });
     for (const hit of titleHits) {
       const session = hit.obj;
-      seen.add(session.sessionId);
+      seen.add(searchableSessionKey(session));
       titleItems.push({
         id: `title:${session.workspaceId}:${session.sessionId}`,
         kind: "title",
@@ -188,8 +191,9 @@ export function SessionSearchDialog(props: SessionSearchDialogProps) {
       (a, b) => b.session.updatedAt - a.session.updatedAt,
     );
     for (const match of messageHits) {
-      if (seen.has(match.session.sessionId)) continue;
-      seen.add(match.session.sessionId);
+      const sessionKey = searchableSessionKey(match.session);
+      if (seen.has(sessionKey)) continue;
+      seen.add(sessionKey);
       if (titleItems.length + messageItems.length >= RESULT_LIMIT) break;
       messageItems.push({
         id: `message:${match.session.workspaceId}:${match.session.sessionId}`,
@@ -209,7 +213,7 @@ export function SessionSearchDialog(props: SessionSearchDialogProps) {
       out.push({ value: "Messages", kind: "message", items: messageItems });
     }
     return out;
-  }, [matches, props.sessions, query]);
+  }, [matches, query, sessions]);
 
   const resultCount = useMemo(
     () => groups.reduce((sum, group) => sum + group.items.length, 0),

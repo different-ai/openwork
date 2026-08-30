@@ -21,6 +21,7 @@ import {
   resolveProposalModel,
 } from "@/react-app/domains/automations/automation-model-options"
 import { automationsRoute } from "@/react-app/shell/workspace-routes"
+import { useWorkspaceMaybe } from "@/react-app/shell/workspace-provider"
 
 function parseOutputValue(output: unknown): unknown {
   if (typeof output !== "string") return output
@@ -57,6 +58,7 @@ export function OpenWorkAutomationProposalTool({ part }: { part: DynamicToolUIPa
   const navigate = useNavigate()
   const denAuth = useDenAuth()
   const automationsEnabled = useAutomationDeploymentEnabled()
+  const workspaceContext = useWorkspaceMaybe()
   const [created, setCreated] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
 
@@ -82,6 +84,11 @@ export function OpenWorkAutomationProposalTool({ part }: { part: DynamicToolUIPa
     return <Tool toolPart={part} title="Proposed an Automation" />
   }
 
+  // Pin the workspace of the pane this card renders in — renderer-owned state.
+  // The proposal's own workspaceId is agent-supplied and deliberately ignored:
+  // a manipulated agent must not be able to retarget the Automation.
+  const pinnedWorkspaceId = workspaceContext?.workspaceId?.trim() || null
+
   const blocker = !automationsEnabled
     ? "Automations are disabled for this deployment."
     : !signedIn
@@ -101,6 +108,10 @@ export function OpenWorkAutomationProposalTool({ part }: { part: DynamicToolUIPa
           providerId: AUTOMATION_FREE_MODEL.providerId,
           modelId: AUTOMATION_FREE_MODEL.modelId,
         },
+        // Pin the proposal's originating workspace, falling back to the pane
+        // this card renders in, so the Automation keeps running there instead
+        // of following whichever workspace is active at run time.
+        ...(pinnedWorkspaceId ? { workspaceId: pinnedWorkspaceId } : {}),
       })
       setCreated(detail.automation.id)
       toast.success("Automation created and active")
@@ -142,6 +153,7 @@ export function OpenWorkAutomationProposalTool({ part }: { part: DynamicToolUIPa
           <p className="truncate text-sm font-medium text-dls-primary" title={proposal.name}>{proposal.name}</p>
           <p className="text-xs text-dls-secondary">{formatAutomationSchedule(proposal.schedule)}</p>
           {modelLabel ? <p className="text-xs text-dls-secondary">Runs with {modelLabel}</p> : null}
+          {pinnedWorkspaceId ? <p className="text-xs text-dls-secondary" data-automation-pinned-workspace={pinnedWorkspaceId}>Runs in this workspace</p> : null}
         </div>
         <p className="whitespace-pre-wrap text-sm text-dls-secondary">{proposal.instructions}</p>
       </div>

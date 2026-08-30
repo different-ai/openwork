@@ -23,6 +23,11 @@ import { materializeCloudWorkerProviders } from "../../llm/cloud-provider-materi
 import { deprovisionWorker, provisionWorker } from "../../workers/provisioner.js"
 import { withProvisionDeadline } from "../../workers/provision-deadline.js"
 import { touchProvisioningWorker, withProvisioningHeartbeat } from "../../workers/provisioning-heartbeat.js"
+import {
+  cloudStartupFailureUpdate,
+  createCloudStartupFailure,
+  type CloudStartupFailure,
+} from "../../workers/cloud-failure.js"
 import { customDomainForWorker } from "../../workers/vanity-domain.js"
 import { resolveCloudRuntimeAccess } from "../../workers/worker-access.js"
 import { CLOUD_INSTANCE_BACKEND } from "../../workers/cloud-constants.js"
@@ -78,6 +83,7 @@ type CloudProvisioningStore = {
     workerId: WorkerId
     status: WorkerStatus
     imageVersion?: string | null
+    failure?: CloudStartupFailure | null
     onlyWhenStatus?: WorkerStatus
     onlyWhenStatusIn?: WorkerStatus[]
   }) => Promise<void>
@@ -104,9 +110,11 @@ const databaseCloudProvisioningStore: CloudProvisioningStore = {
         ? eq(WorkerTable.status, input.onlyWhenStatus)
         : undefined
 
-    const update = input.imageVersion === undefined
-      ? { status: input.status }
-      : { status: input.status, image_version: input.imageVersion }
+    const update = {
+      status: input.status,
+      ...(input.imageVersion === undefined ? {} : { image_version: input.imageVersion }),
+      ...(input.failure === undefined ? {} : cloudStartupFailureUpdate(input.failure)),
+    }
 
     await db
       .update(WorkerTable)
@@ -478,6 +486,7 @@ async function runCloudProvisioning(input: {
           workerId: input.workerId,
           status: provisioned.status,
           imageVersion: provisioned.imageVersion,
+          failure: null,
           onlyWhenStatusIn: provisioningSuccessWritableStatuses,
         })
 
@@ -485,9 +494,21 @@ async function runCloudProvisioning(input: {
       },
     })
   } catch (error) {
-    await store.updateWorkerStatus({ workerId: input.workerId, status: "failed", onlyWhenStatus: "provisioning" })
+    const failure = createCloudStartupFailure({ stage: "provisioning", error })
+    await store.updateWorkerStatus({
+      workerId: input.workerId,
+      status: "failed",
+      failure,
+      onlyWhenStatus: "provisioning",
+    })
 
-    logger.error("worker provisioning failed", { worker_id: input.workerId, error })
+    logger.error("worker provisioning failed", {
+      worker_id: input.workerId,
+      failure_code: failure.code,
+      failure_stage: failure.stage,
+      failure_reference: failure.reference,
+      error,
+    })
   }
 }
 

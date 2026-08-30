@@ -270,9 +270,16 @@ function exportTableNames(statements: string[]) {
 // Columns that migrations ADD to tables the migration chain does not create
 // (those tables are seeded from the current export before replay, so the
 // seeded CREATE TABLE must not already contain the columns the replay adds).
-// worker: added by 0002. oauth*: added by 0056.
+// worker: added by 0002 and 0084. oauth*: added by 0056.
 const SEED_COLUMN_STRIPS: Record<string, string[]> = {
-  worker: ["last_heartbeat_at", "last_active_at"],
+  worker: [
+    "last_heartbeat_at",
+    "last_active_at",
+    "cloud_failure_code",
+    "cloud_failure_stage",
+    "cloud_failure_reference",
+    "cloud_failure_at",
+  ],
   oauthClient: [
     "backchannel_logout_uri",
     "backchannel_logout_session_required",
@@ -312,6 +319,24 @@ function statementForSeed(statement: string) {
   }
   return seeded
 }
+
+test("worker seed strips every column added by committed migrations", async () => {
+  const migrationEntries = (await readdir(migrationsFolder))
+    .filter((entry) => entry.endsWith(".sql"))
+  const addedWorkerColumns: string[] = []
+
+  for (const entry of migrationEntries) {
+    const sql = await readFile(join(migrationsFolder, entry), "utf8")
+    for (const match of sql.matchAll(/ALTER\s+TABLE\s+`worker`\s+ADD\s+`([^`]+)`/gi)) {
+      addedWorkerColumns.push(match[1])
+    }
+  }
+
+  assert.deepEqual(
+    addedWorkerColumns.filter((column) => !SEED_COLUMN_STRIPS.worker.includes(column)),
+    [],
+  )
+})
 
 function seedShouldSkipIndex(statement: string) {
   return /^CREATE\s+INDEX\s+`worker_last_(?:heartbeat|active)_at`\s+ON\s+`worker`/i.test(statement)

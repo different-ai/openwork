@@ -90,7 +90,8 @@ function makeDaytonaRuntime(lookupName: string, visibleAtLookup: number | null) 
     state: "started",
     target: "us-test",
     async refreshData() {},
-    async start() {},
+    async start() { sandbox.state = "started"; },
+    async stop() { sandbox.state = "stopped"; },
     async delete() {},
     async getSignedPreviewUrl() {
       return { url: "https://late-visible.preview.example.test" };

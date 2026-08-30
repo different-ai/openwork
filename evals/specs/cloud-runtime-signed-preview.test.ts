@@ -71,7 +71,6 @@ test("Cloud runtime access refreshes signed previews behind stable legacy routin
   }, {
     loadWorker: async () => runtimeWorker,
     store: runtimeStore,
-    continueProvisioning: async () => {},
     getSandboxRecord: async () => ({
       signed_preview_url: "https://expired.preview.example.test",
       signed_preview_url_expires_at: new Date("2026-08-27T09:00:00.000Z"),

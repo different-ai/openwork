@@ -58,6 +58,7 @@ export type DaytonaSandboxRuntime = {
   target: string | null
   refreshData: () => Promise<unknown>
   start: (timeout?: number) => Promise<unknown>
+  stop: (timeout?: number) => Promise<unknown>
   delete: (timeout?: number) => Promise<unknown>
   getSignedPreviewUrl: (port: number, expiresInSeconds?: number) => Promise<{ url: string }>
   process: {
@@ -93,6 +94,7 @@ const signedPreviewRefreshLeadMs = 5 * 60 * 1000
 const wakeStartMaxAttempts = 3
 const wakeStartRetryBackoffMs = 250
 const wakeStartStateChangeTimeoutMs = 60_000
+const healthRequestTimeoutMs = 5_000
 const createConflictLookupMaxAttempts = 6
 const createConflictLookupBackoffMs = 2_000
 const logger = appLogger.child({ component: "daytona_provisioner" })
@@ -219,6 +221,13 @@ function daytonaSandboxLookupNames(input: ProvisionInput) {
     }
   }
   return names
+}
+
+function recoveryDaytonaSandboxName(input: SandboxNameInput) {
+  const suffix = randomUUID().replace(/-/g, "").slice(0, 8)
+  const base = currentDaytonaSandboxName(input)
+  const baseLength = Math.max(1, 63 - suffix.length - 10)
+  return slug(`${base.slice(0, baseLength)}-recovery-${suffix}`).slice(0, 63)
 }
 
 function isStoppedSandboxState(state: string | null) {
@@ -656,12 +665,16 @@ async function cleanupWorkerDataOnDaytona(daytona: Daytona, workerId: WorkerId) 
   }
 }
 
-async function waitForHealth(url: string, timeoutMs: number, sandbox: DaytonaSandboxRuntime, sessionId: string, commandId: string) {
+export async function waitForHealth(url: string, timeoutMs: number, sandbox: DaytonaSandboxRuntime, sessionId: string, commandId: string) {
   const startedAt = Date.now()
 
   while (Date.now() - startedAt < timeoutMs) {
     try {
-      const response = await fetch(`${url.replace(/\/$/, "")}/health`, { method: "GET" })
+      const remainingMs = timeoutMs - (Date.now() - startedAt)
+      const response = await fetch(`${url.replace(/\/$/, "")}/health`, {
+        method: "GET",
+        signal: AbortSignal.timeout(Math.max(1, Math.min(remainingMs, healthRequestTimeoutMs))),
+      })
       if (response.ok) {
         return
       }
@@ -689,7 +702,10 @@ async function waitForHealth(url: string, timeoutMs: number, sandbox: DaytonaSan
       }
     }
 
-    await sleep(env.daytona.pollIntervalMs)
+    const remainingAfterProbeMs = timeoutMs - (Date.now() - startedAt)
+    if (remainingAfterProbeMs > 0) {
+      await sleep(Math.min(env.daytona.pollIntervalMs, remainingAfterProbeMs))
+    }
   }
 
   const logs = await sandbox.process.getSessionCommandLogs(sessionId, commandId).catch(
@@ -862,6 +878,7 @@ function toDaytonaSandboxRuntime(sandbox: Sandbox): DaytonaSandboxRuntime {
     },
     refreshData: () => sandbox.refreshData(),
     start: (timeout) => sandbox.start(timeout),
+    stop: (timeout) => sandbox.stop(timeout),
     delete: (timeout) => sandbox.delete(timeout),
     getSignedPreviewUrl: (port, expiresInSeconds) => sandbox.getSignedPreviewUrl(port, expiresInSeconds),
     process: {
@@ -1164,9 +1181,14 @@ async function wakeExistingDaytonaSandbox(input: {
   dataVolumeId: string
   imageVersion?: string | null
 }) {
-  if (isStoppedSandboxState(input.sandbox.state)) {
-    await startDaytonaSandboxForWake({ workerId: input.provisionInput.workerId, sandbox: input.sandbox })
+  if (isStartedSandboxState(input.sandbox.state)) {
+    // A failed health probe means an already-running OpenWork process cannot be
+    // trusted. Restart the sandbox before launching a new process so recovery
+    // cannot leave two servers competing for the same port and state files.
+    await input.sandbox.stop(env.daytona.stopTimeoutSeconds ?? env.daytona.deleteTimeoutSeconds)
+    await input.sandbox.refreshData()
   }
+  await startDaytonaSandboxForWake({ workerId: input.provisionInput.workerId, sandbox: input.sandbox })
 
   return startOpenWorkOnDaytonaSandbox({
     provisionInput: input.provisionInput,
@@ -1187,12 +1209,18 @@ async function recycleDaytonaSandbox(input: {
   oldWorkspaceVolumeId: string
   oldDataVolumeId: string
   oldImageVersion: string | null
+  replacementName?: string
+  requireRestoreMarker?: boolean
 }): Promise<ProvisionedInstance> {
   let replacementSandbox: DaytonaSandboxRuntime | null = null
 
   try {
     replacementSandbox = await input.runtime.createSandbox(
-      buildDaytonaCreateParams(input.provisionInput, currentDaytonaSandboxName(input.provisionInput), input.sharedVolume),
+      buildDaytonaCreateParams(
+        input.provisionInput,
+        input.replacementName ?? currentDaytonaSandboxName(input.provisionInput),
+        input.sharedVolume,
+      ),
     )
     const started = await startOpenWorkProcessOnDaytonaSandbox({
       provisionInput: input.provisionInput,
@@ -1200,7 +1228,9 @@ async function recycleDaytonaSandbox(input: {
       sandbox: replacementSandbox,
       sessionId: `openwork-recycle-${workerHint(input.provisionInput.workerId)}-${Date.now()}`,
     })
-    const restored = await input.runtime.verifyRestoreMarker(replacementSandbox)
+    const restored = input.requireRestoreMarker === false
+      ? true
+      : await input.runtime.verifyRestoreMarker(replacementSandbox)
     if (!restored) {
       throw new Error("Daytona replacement did not restore an OpenWork checkpoint")
     }
@@ -1383,14 +1413,40 @@ export async function wakeWorkerOnDaytonaWithRuntime(
     }
   }
 
-  return wakeExistingDaytonaSandbox({
-    provisionInput: input,
-    runtime,
-    sandbox,
-    workspaceVolumeId: record.workspace_volume_id,
-    dataVolumeId: record.data_volume_id,
-    imageVersion: workerImageVersion,
-  })
+  try {
+    return await wakeExistingDaytonaSandbox({
+      provisionInput: input,
+      runtime,
+      sandbox,
+      workspaceVolumeId: record.workspace_volume_id,
+      dataVolumeId: record.data_volume_id,
+      imageVersion: workerImageVersion,
+    })
+  } catch (wakeError) {
+    const sharedVolume = await getSharedDaytonaVolume(runtime)
+    const hasCheckpoint = await runtime.checkpointExists({ workerId: input.workerId, sharedVolume })
+    if (!hasCheckpoint && workerImageVersion !== null) {
+      throw wakeError
+    }
+
+    logger.warn("Daytona sandbox wake failed; replacing the unhealthy sandbox", {
+      worker_id: input.workerId,
+      sandbox_id: sandbox.id,
+      checkpoint_available: hasCheckpoint,
+      error: wakeError,
+    })
+    return recycleDaytonaSandbox({
+      provisionInput: input,
+      runtime,
+      oldSandbox: sandbox,
+      sharedVolume,
+      oldWorkspaceVolumeId: record.workspace_volume_id,
+      oldDataVolumeId: record.data_volume_id,
+      oldImageVersion: workerImageVersion,
+      replacementName: recoveryDaytonaSandboxName(input),
+      requireRestoreMarker: hasCheckpoint,
+    })
+  }
 }
 
 export async function wakeWorkerOnDaytona(

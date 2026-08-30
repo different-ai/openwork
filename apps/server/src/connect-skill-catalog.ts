@@ -10,7 +10,7 @@ import {
   type McpFetch,
 } from "./connect-mcp-transport.js";
 import { readConnectCloudMcp, writeConnectCloudMcp } from "./connect-state.js";
-import { readRuntimeMcpConfig } from "./runtime-opencode-config-store.js";
+import { readGlobalRuntimeMcpConfig, readRuntimeMcpConfig } from "./runtime-opencode-config-store.js";
 import { externalFetch } from "./server-fetch.js";
 import type { ServerConfig } from "./types.js";
 
@@ -89,8 +89,8 @@ async function readIndexCached(cloud: Record<string, unknown>, fetcher: McpFetch
 
 /**
  * Resolve the skill catalog from the first *working* openwork-cloud config.
- * Candidates are tried in order: the server-scoped connect-state copy, then
- * each workspace runtime row (legacy scope). Stale rows — e.g. a revoked token
+ * Candidates are tried in order: the global runtime row, the server-scoped
+ * connect-state cache, then each workspace runtime row (legacy scope). Stale rows — e.g. a revoked token
  * or a dead local Den URL left behind by an old session — are skipped instead
  * of shadowing a valid config, and the winning workspace copy is promoted to
  * server scope so Connect stays account-level.
@@ -102,6 +102,8 @@ export async function readOpenWorkConnectSkillCatalog(
   try {
     const serverCloud = await readConnectCloudMcp(config);
     const candidates: Array<{ cloud: Record<string, unknown>; source: "server" | "workspace" }> = [];
+    const globalCloud = await readGlobalRuntimeMcpConfig(config, OPENWORK_CLOUD_MCP_NAME);
+    if (globalCloud) candidates.push({ cloud: globalCloud, source: "server" });
     if (serverCloud) candidates.push({ cloud: serverCloud, source: "server" });
     for (const workspace of config.workspaces) {
       const cloud = await readRuntimeMcpConfig(config, workspace.id, OPENWORK_CLOUD_MCP_NAME);

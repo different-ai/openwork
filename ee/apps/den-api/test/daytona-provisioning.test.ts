@@ -46,11 +46,13 @@ function makeSandbox(input: {
   state: string
   startError?: Error
   startErrors?: Error[]
+  stopError?: Error
   refreshStates?: string[]
   onSignedPreview?: () => void
 }) {
   let state = input.state
   let startCalls = 0
+  let stopCalls = 0
   let deleteCalls = 0
   let refreshCalls = 0
   const sandbox = {
@@ -75,6 +77,11 @@ function makeSandbox(input: {
         throw startError
       }
       state = "started"
+    },
+    async stop() {
+      stopCalls += 1
+      if (input.stopError) throw input.stopError
+      state = "stopped"
     },
     async delete() {
       deleteCalls += 1
@@ -101,6 +108,9 @@ function makeSandbox(input: {
     sandbox,
     get startCalls() {
       return startCalls
+    },
+    get stopCalls() {
+      return stopCalls
     },
     get deleteCalls() {
       return deleteCalls
@@ -206,6 +216,46 @@ function makeRuntime(input: {
   }
 }
 
+describe("Daytona Cloud health deadline", () => {
+  test("aborts a hung health request within the remaining readiness budget", async () => {
+    const originalFetch = globalThis.fetch
+    let aborted = false
+    Object.defineProperty(globalThis, "fetch", {
+      configurable: true,
+      value: ((_input: RequestInfo | URL, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
+        const signal = init?.signal
+        if (!signal) {
+          reject(new Error("health request did not receive an abort signal"))
+          return
+        }
+        const onAbort = () => {
+          aborted = true
+          reject(signal.reason)
+        }
+        if (signal.aborted) onAbort()
+        else signal.addEventListener("abort", onAbort, { once: true })
+      })) satisfies typeof fetch,
+    })
+    const sandbox = makeSandbox({ id: "sbx_hung_health", state: "started" })
+    const startedAt = Date.now()
+
+    try {
+      await expect(daytona.waitForHealth(
+        "https://hung.preview.example.test",
+        20,
+        sandbox.sandbox,
+        "session_hung_health",
+        "command_hung_health",
+      )).rejects.toThrow("Timed out waiting for Daytona worker health")
+    } finally {
+      Object.defineProperty(globalThis, "fetch", { configurable: true, value: originalFetch })
+    }
+
+    expect(aborted).toBe(true)
+    expect(Date.now() - startedAt).toBeLessThan(500)
+  })
+})
+
 describe("Daytona Cloud provisioning adoption", () => {
   test("adopts the existing sandbox when create races and Daytona returns a conflict", async () => {
     const input = provisionInput()
@@ -255,6 +305,8 @@ describe("Daytona Cloud provisioning adoption", () => {
     expect(runtime.nameLookups.filter((name) => name === sandboxName)).toHaveLength(7)
     expect(sleeps).toEqual([2_000, 2_000, 2_000, 2_000, 2_000])
     expect(runtime.upserts[0]?.sandboxId).toBe("sbx_late_visible")
+    expect(existing.stopCalls).toBe(1)
+    expect(existing.startCalls).toBe(1)
   })
 
   test("bounds create-conflict rechecks when the sandbox stays missing", async () => {
@@ -382,7 +434,7 @@ describe("Daytona Cloud version-aware recycle", () => {
     expect(replacement.deleteCalls).toBe(0)
   })
 
-  test("does not recycle a stale running sandbox", async () => {
+  test("restarts rather than duplicates the process on a stale running sandbox", async () => {
     const input = provisionInput()
     const old = makeSandbox({ id: "sbx_running", state: "started" })
     const runtime = makeRuntime({
@@ -402,8 +454,96 @@ describe("Daytona Cloud version-aware recycle", () => {
     expect(result.imageVersion).toBe("openwork-0.18.7")
     expect(runtime.createCalls).toBe(0)
     expect(runtime.checkpointChecks).toBe(0)
+    expect(old.stopCalls).toBe(1)
+    expect(old.startCalls).toBe(1)
     expect(old.deleteCalls).toBe(0)
     expect(runtime.upserts[0]?.sandboxId).toBe("sbx_running")
+  })
+
+  test("replaces an unrecoverable running sandbox when a checkpoint can restore it", async () => {
+    const input = provisionInput()
+    const old = makeSandbox({
+      id: "sbx_unrecoverable",
+      state: "started",
+      stopError: new Error("provider refused sandbox stop"),
+    })
+    const replacement = makeSandbox({ id: "sbx_recovery_replacement", state: "started" })
+    const runtime = makeRuntime({
+      createdSandbox: replacement.sandbox,
+      checkpointExists: true,
+      restoreMarkerVerified: true,
+    })
+
+    const result = await daytona.wakeWorkerOnDaytonaWithRuntime(input, {
+      ...runtime.runtime,
+      async getSandbox() {
+        return old.sandbox
+      },
+    }, {
+      sandbox_id: old.sandbox.id,
+      workspace_volume_id: "vol_shared",
+      data_volume_id: "vol_shared",
+    }, "openwork-0.18.8")
+
+    expect(result.status).toBe("healthy")
+    expect(runtime.createCalls).toBe(1)
+    expect(runtime.createInputs[0]?.name).toContain("recovery")
+    expect(runtime.checkpointChecks).toBe(1)
+    expect(runtime.restoreMarkerChecks).toBe(1)
+    expect(old.stopCalls).toBe(1)
+    expect(old.deleteCalls).toBe(1)
+    expect(replacement.deleteCalls).toBe(0)
+    expect(runtime.upserts[0]?.sandboxId).toBe("sbx_recovery_replacement")
+  })
+
+  test("does not destroy an established workspace when failed wake has no checkpoint", async () => {
+    const input = provisionInput()
+    const wakeError = new Error("provider refused sandbox stop")
+    const old = makeSandbox({ id: "sbx_unrecoverable_no_checkpoint", state: "started", stopError: wakeError })
+    const runtime = makeRuntime({ checkpointExists: false })
+
+    await expect(daytona.wakeWorkerOnDaytonaWithRuntime(input, {
+      ...runtime.runtime,
+      async getSandbox() {
+        return old.sandbox
+      },
+    }, {
+      sandbox_id: old.sandbox.id,
+      workspace_volume_id: "vol_shared",
+      data_volume_id: "vol_shared",
+    }, "openwork-0.18.8")).rejects.toBe(wakeError)
+
+    expect(runtime.checkpointChecks).toBe(1)
+    expect(runtime.createCalls).toBe(0)
+    expect(old.deleteCalls).toBe(0)
+  })
+
+  test("replaces a never-healthy sandbox even before its first checkpoint", async () => {
+    const input = provisionInput()
+    const old = makeSandbox({
+      id: "sbx_initial_failure",
+      state: "started",
+      stopError: new Error("provider refused sandbox stop"),
+    })
+    const replacement = makeSandbox({ id: "sbx_initial_replacement", state: "started" })
+    const runtime = makeRuntime({ createdSandbox: replacement.sandbox, checkpointExists: false })
+
+    const result = await daytona.wakeWorkerOnDaytonaWithRuntime(input, {
+      ...runtime.runtime,
+      async getSandbox() {
+        return old.sandbox
+      },
+    }, {
+      sandbox_id: old.sandbox.id,
+      workspace_volume_id: "vol_shared",
+      data_volume_id: "vol_shared",
+    }, null)
+
+    expect(result.status).toBe("healthy")
+    expect(runtime.createCalls).toBe(1)
+    expect(runtime.restoreMarkerChecks).toBe(0)
+    expect(old.deleteCalls).toBe(1)
+    expect(runtime.upserts[0]?.sandboxId).toBe("sbx_initial_replacement")
   })
 
   test("does not recycle a stale stopped sandbox before a checkpoint exists", async () => {

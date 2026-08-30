@@ -7,6 +7,7 @@ import {
   executeDesktopAutomation,
   executeDesktopRemoteSession,
   normalizeRunnerBaseUrl,
+  resolveAssignmentWorkspace,
   runnerTokenAudience,
 } from "./automation-runner.mjs"
 
@@ -1130,6 +1131,65 @@ test("desktop Automation execution creates a normal visible local OpenWork threa
   )
   assert.ok(requests.every((request) => request.options.signal instanceof AbortSignal))
   assert.ok(localRequests.every((request) => new Headers(request.options.headers).get("Authorization") === "Bearer local-client-token"))
+})
+
+test("a pinned workspace wins over the active workspace", () => {
+  const listed = {
+    items: [{ id: "workspace-pinned" }, { id: "workspace-active" }],
+    activeId: "workspace-active",
+  }
+  assert.equal(resolveAssignmentWorkspace(listed, "workspace-pinned").id, "workspace-pinned")
+})
+
+test("an unpinned assignment keeps the legacy active-workspace fallback", () => {
+  const listed = {
+    items: [{ id: "workspace-first" }, { id: "workspace-active" }],
+    activeId: "workspace-active",
+  }
+  assert.equal(resolveAssignmentWorkspace(listed, null).id, "workspace-active")
+  assert.equal(resolveAssignmentWorkspace({ items: [{ id: "workspace-first" }] }, null).id, "workspace-first")
+})
+
+test("a pinned workspace missing locally fails instead of silently retargeting", () => {
+  const listed = { items: [{ id: "workspace-active" }], activeId: "workspace-active" }
+  assert.throws(
+    () => resolveAssignmentWorkspace(listed, "workspace-gone"),
+    (error) => error instanceof Error && Reflect.get(error, "code") === "execution_runtime_unavailable",
+  )
+})
+
+test("desktop Automation execution runs in the assignment's pinned workspace", async () => {
+  const sessionPaths = opencodeSessionPaths("workspace-pinned", "session-pinned")
+  const fetchImpl = async (url, options = {}) => {
+    const parsed = new URL(url)
+    if (parsed.pathname === "/workspaces") {
+      return Response.json({
+        items: [{ id: "workspace-pinned" }, { id: "workspace-active" }],
+        activeId: "workspace-active",
+      })
+    }
+    if (parsed.pathname === sessionPaths.create && options.method === "POST") {
+      return Response.json({ id: "session-pinned" }, { status: 201 })
+    }
+    if (parsed.pathname === sessionPaths.prompt) return new Response(null, { status: 204 })
+    if ([sessionPaths.get, sessionPaths.messages, sessionPaths.todo, sessionPaths.status].includes(parsed.pathname)) {
+      return respondToSnapshotRequest(parsed, sessionPaths, {
+        messages: [{
+          info: { id: "msg-pinned", role: "assistant", tokens: { input: 5, output: 2 } },
+          parts: [{ id: "part-pinned", type: "text", text: "Pinned result" }],
+        }],
+      })
+    }
+    throw new Error(`Unexpected request ${parsed.pathname}`)
+  }
+
+  const result = await executeDesktopAutomation({ ...testAssignment(), workspaceId: "workspace-pinned" }, {
+    getLocalRuntime: async () => ({ baseUrl: "http://127.0.0.1:3000", token: "local-client-token" }),
+    fetchImpl,
+    signal: new AbortController().signal,
+  })
+  assert.equal(result.workspaceId, "workspace-pinned")
+  assert.equal(result.sessionId, "session-pinned")
 })
 
 test("desktop Automation execution accepts a completed tool-only assistant turn", async () => {

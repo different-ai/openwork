@@ -65,6 +65,8 @@ export type CloudAgentExecutorInput = OwnerScope & {
   previousReceipt: Record<string, unknown> | null
   signal: AbortSignal
   onAdmitted: (receipt: Record<string, unknown>) => Promise<void>
+  /** Workspace pinned on the revision; null falls back to the worker's active workspace. */
+  workspaceId?: string | null
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -455,7 +457,9 @@ export async function executeCloudAgent(input: CloudAgentExecutorInput): Promise
       return { ok: false, status: "failed", code: "execution_runtime_unavailable", message: "The Cloud worker changed while this Automation run was recovering.", retryable: false, needsAttention: true }
     }
 
-    const workspaceId = previousReceipt?.workspaceId ?? runtime.workspaceId
+    // Recovery keeps the receipt's workspace (the turn may already be running
+    // there); otherwise the revision pin wins over the worker's active workspace.
+    const workspaceId = previousReceipt?.workspaceId ?? input.workspaceId ?? runtime.workspaceId
     const connect = await connectHealth({ ...runtime, workspaceId, action: input.action, signal })
     if (!connect.ok) {
       return { ok: false, status: "failed", code: connect.code, message: connect.message, retryable: false, needsAttention: true }

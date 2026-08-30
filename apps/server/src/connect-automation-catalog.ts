@@ -3,7 +3,7 @@ import { z } from "zod";
 
 import { escapeXml, readMcpResourceText, type McpFetch } from "./connect-mcp-transport.js";
 import { readConnectCloudMcp } from "./connect-state.js";
-import { readRuntimeMcpConfig } from "./runtime-opencode-config-store.js";
+import { readGlobalRuntimeMcpConfig, readRuntimeMcpConfig } from "./runtime-opencode-config-store.js";
 import { externalFetch } from "./server-fetch.js";
 import type { ServerConfig } from "./types.js";
 
@@ -80,6 +80,8 @@ export async function readOpenWorkAutomationCatalog(
 ): Promise<OpenWorkAutomationIndex | null> {
   try {
     const candidates: Array<Record<string, unknown>> = [];
+    const globalCloud = await readGlobalRuntimeMcpConfig(config, OPENWORK_CLOUD_MCP_NAME);
+    if (globalCloud) candidates.push(globalCloud);
     const serverCloud = await readConnectCloudMcp(config);
     if (serverCloud) candidates.push(serverCloud);
     for (const workspace of config.workspaces) {

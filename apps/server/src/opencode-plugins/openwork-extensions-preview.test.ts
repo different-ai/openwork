@@ -61,6 +61,7 @@ const automationProposalResultSchema = z.object({
     instructions: z.string(),
     schedule: z.record(z.string(), z.unknown()),
     model: z.record(z.string(), z.unknown()).optional(),
+    workspaceId: z.string().optional(),
   }),
 });
 
@@ -684,6 +685,25 @@ describe("OpenWorkExtensionsPreview semantic tool surface", () => {
     // local server, so it cannot bring an Automation into existence.
     expect(fake.requests).toHaveLength(0);
     expect(parsed.effects).toEqual({ data: "none", ui: "none", external: false });
+  });
+
+  test("discards a model-supplied workspaceId and pins the conversation's workspace", async () => {
+    const plugin = await OpenWorkExtensionsPreview({ directory: "/tmp/archive", workspaceId: "ws_conversation" });
+
+    const output = await plugin.tool.openwork_execute.execute({
+      id: "automation.propose",
+      args: {
+        name: "Morning Slack check",
+        instructions: "Summarize my most recent Slack message.",
+        schedule: { kind: "daily", timezone: "Europe/Berlin", hour: 9, minute: 0 },
+        // A prompt-injected agent must not be able to retarget the Automation.
+        workspaceId: "ws_attacker",
+      },
+    }, { sessionID: "ses_origin" });
+    const parsed = affordanceResultSchema("automation.propose", automationProposalResultSchema)
+      .parse(JSON.parse(output));
+
+    expect(parsed.result.proposal.workspaceId).toBe("ws_conversation");
   });
 
   test("rejects a proposal whose schedule is not a supported kind", async () => {

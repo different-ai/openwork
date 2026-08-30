@@ -62,6 +62,8 @@ export const AutomationRevisionTable = mysqlTable(
     model_variant: varchar("model_variant", { length: 60 }),
     action: encryptedJsonColumn<AutomationAction>("action"),
     execution_target: mysqlEnum("execution_target", ["desktop", "cloud"]).notNull().default("desktop"),
+    /** Pinned target workspace; null keeps the legacy run-time active-workspace fallback. */
+    workspace_id: varchar("workspace_id", { length: 240 }),
     maximum_runtime_ms: int("maximum_runtime_ms").notNull(),
     digest: varchar("digest", { length: 128 }).notNull(),
     created_at: timestamp("created_at", { fsp: 3 }).notNull().default(sql`CURRENT_TIMESTAMP(3)`),

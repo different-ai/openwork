@@ -11,7 +11,7 @@ import {
   startServer,
   syncAllWorkspacesRuntimeMcpToEngine,
 } from "./server.js";
-import { readRuntimeOpencodeConfig, writeRuntimeOpencodeConfig } from "./runtime-opencode-config-store.js";
+import { readRuntimeOpencodeConfig, writeGlobalRuntimeOpencodeConfig, writeRuntimeOpencodeConfig } from "./runtime-opencode-config-store.js";
 import type { ServerConfig } from "./types.js";
 
 type Served = { port: number; stop: (closeActiveConnections?: boolean) => void | Promise<void> };
@@ -1108,6 +1108,10 @@ describe("runtime MCP engine sync", () => {
 
       await writeRuntimeOpencodeConfig(config, "ws_1", (current) => ({ ...current, mcp: { posthog: POSTHOG_CONFIG } }));
       await writeRuntimeOpencodeConfig(config, "ws_2", (current) => ({ ...current, mcp: { stripe: POSTHOG_CONFIG } }));
+      await writeGlobalRuntimeOpencodeConfig(config, (current) => ({
+        ...current,
+        mcp: { ...current.mcp, "openwork-cloud": POSTHOG_CONFIG },
+      }));
 
       await syncAllWorkspacesRuntimeMcpToEngine(config);
 
@@ -1115,6 +1119,11 @@ describe("runtime MCP engine sync", () => {
       const byName = new Map(syncs.map((entry) => [(entry.body as { name?: string } | null)?.name, entry.search]));
       expect(byName.get("posthog")).toContain(`directory=${encodeURIComponent(rootA)}`);
       expect(byName.get("stripe")).toContain(`directory=${encodeURIComponent(rootB)}`);
+      const cloudSyncs = syncs.filter((entry) => (entry.body as { name?: string } | null)?.name === "openwork-cloud");
+      expect(cloudSyncs.map((entry) => entry.search).sort()).toEqual([
+        `?directory=${encodeURIComponent(rootA)}`,
+        `?directory=${encodeURIComponent(rootB)}`,
+      ].sort());
     } finally {
       if (previousDb === undefined) delete process.env.OPENWORK_RUNTIME_DB;
       else process.env.OPENWORK_RUNTIME_DB = previousDb;

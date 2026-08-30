@@ -1,0 +1,1 @@
+ALTER TABLE `automation_revision` ADD `workspace_id` varchar(240);

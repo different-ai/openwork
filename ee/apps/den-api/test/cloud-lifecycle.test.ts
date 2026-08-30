@@ -145,6 +145,9 @@ function makeDaytonaWakeRuntime(input: {
       }
       state = "started"
     },
+    async stop() {
+      state = "stopped"
+    },
     async delete() {},
     async getSignedPreviewUrl() {
       return { url: "https://wake.preview.example.test" }
@@ -306,11 +309,12 @@ describe("cloud lifecycle wake", () => {
       deadlineMs: 20,
     })
 
-    expect(updates).toContainEqual({
+    expect(updates).toContainEqual(expect.objectContaining({
       workerId: worker.id,
       status: "failed",
+      failure: expect.objectContaining({ code: "provisioning_timeout", stage: "recovery" }),
       onlyWhenStatus: "provisioning",
-    })
+    }))
   })
 
   test("records a fast successful wake without a failed write", async () => {
@@ -339,6 +343,7 @@ describe("cloud lifecycle wake", () => {
       workerId: worker.id,
       status: "healthy",
       imageVersion: "openwork-0.18.8",
+      failure: null,
       onlyWhenStatus: "provisioning",
     })
     expect(updates.some((update) => update.status === "failed")).toBe(false)

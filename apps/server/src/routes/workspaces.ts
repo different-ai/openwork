@@ -26,11 +26,12 @@ interface RegisterWorkspaceRoutesOptions {
   ensureWritable: (config: ServerConfig) => void;
   resolveWorkspace: (config: ServerConfig, id: string) => Promise<WorkspaceInfo>;
   serializeWorkspace: (workspace: ServerConfig["workspaces"][number]) => unknown;
-  reloadOpencodeEngine: (
-    config: ServerConfig,
-    workspace: WorkspaceInfo,
-    options?: { awaitPostRefreshSync?: boolean },
-  ) => Promise<void>;
+  /**
+   * Dispose-free re-attach of the workspace's runtime MCPs via the engine's
+   * dynamic push. The injected engine config file is workspace-independent,
+   * so activation never reloads or disposes an engine instance.
+   */
+  syncWorkspaceRuntimeMcp: (config: ServerConfig, workspace: WorkspaceInfo) => Promise<void>;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -250,7 +251,7 @@ export function registerWorkspaceRoutes(options: RegisterWorkspaceRoutesOptions)
     ensureWritable,
     resolveWorkspace,
     serializeWorkspace,
-    reloadOpencodeEngine,
+    syncWorkspaceRuntimeMcp,
   } = options;
 
   const resolveWorkspaceForRegistry = async (id: string): Promise<WorkspaceInfo> => {
@@ -477,9 +478,11 @@ export function registerWorkspaceRoutes(options: RegisterWorkspaceRoutesOptions)
       summary: "Switched active workspace",
       timestamp: Date.now(),
     });
-    // Re-activating the already-active workspace must not dispose its engine instance; switch reloads stay (#870).
+    // The injected engine config file is workspace-independent, so activation
+    // never disposes or reloads an engine instance. Fire-and-forget re-attach
+    // of the activated workspace's runtime MCPs via the dynamic push.
     if (!wasActive && workspace.workspaceType === "local" && resolveWorkspaceOpencodeConnection(config, workspace).baseUrl?.trim()) {
-      await reloadOpencodeEngine(config, workspace, { awaitPostRefreshSync: false });
+      void syncWorkspaceRuntimeMcp(config, workspace).catch(() => undefined);
     }
     return jsonResponse({ activeId: workspace.id, workspace: serializeWorkspace(workspace), persisted });
   });

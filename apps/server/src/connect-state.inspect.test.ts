@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { inspectConnectSnapshot, inspectConnectState } from "./connect-state.js";
+import { ENGINE_GLOBAL_RUNTIME_CONFIG_ID } from "./runtime-opencode-config-store.js";
 import type { ServerConfig } from "./types.js";
 
 function serverConfig(root: string): ServerConfig {
@@ -28,7 +29,7 @@ function serverConfig(root: string): ServerConfig {
 }
 
 describe("Connect state inspection", () => {
-  test("treats server-scoped cloudMcp as present without scanning workspaces", async () => {
+  test("does not treat the legacy host cache as desired runtime config", async () => {
     const root = await mkdtemp(join(tmpdir(), "openwork-connect-state-server-mcp-"));
     const previousDb = process.env.OPENWORK_RUNTIME_DB;
     process.env.OPENWORK_RUNTIME_DB = join(root, "runtime.sqlite");
@@ -48,8 +49,17 @@ describe("Connect state inspection", () => {
         status: "available",
         snapshot: {
           connectEnabled: true,
-          cloudMcpPresent: true,
+          cloudMcpPresent: false,
         },
+      });
+
+      const sqlite = new Database(process.env.OPENWORK_RUNTIME_DB, { create: true });
+      sqlite.run("CREATE TABLE runtime_opencode_configs (workspace_id TEXT PRIMARY KEY NOT NULL, config_json TEXT NOT NULL, updated_at INTEGER NOT NULL)");
+      sqlite.query("INSERT INTO runtime_opencode_configs (workspace_id, config_json, updated_at) VALUES (?, ?, ?)")
+        .run(ENGINE_GLOBAL_RUNTIME_CONFIG_ID, JSON.stringify({ mcp: { "openwork-cloud": { type: "remote" } } }), 124);
+      sqlite.close();
+      expect(await inspectConnectSnapshot(config)).toMatchObject({
+        snapshot: { cloudMcpPresent: true },
       });
     } finally {
       if (previousDb === undefined) delete process.env.OPENWORK_RUNTIME_DB;

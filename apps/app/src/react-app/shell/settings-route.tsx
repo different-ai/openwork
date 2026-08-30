@@ -2081,12 +2081,39 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
       enablementContext,
       isBuiltInConnected: extensionController.isConnected,
     }),
-    [connectionsSnapshot.mcpServers, enablementContext, extensionController, extensionsSnapshot, extensionsStore, orgMcpConnections.connections, quickConnectCatalog],
+    [connectionsSnapshot.mcpServers, enablementContext, extensionController.isConnected, extensionsSnapshot, extensionsStore, orgMcpConnections.connections, quickConnectCatalog],
   );
   // Every connection the organization provisioned for this member, connected
   // or not: one that still needs the member's sign-in is the whole reason the
   // "Needs your attention" group exists, so it must not be filtered out here.
   const orgMcpConnectionItems = extensionItems.orgMcpConnectionItems;
+  const librarySkills = useMemo(
+    () => [
+      ...extensionItems.installedSkills,
+      ...connectCapabilities.skills.filter(
+        (skill) => !extensionItems.installedSkills.some(
+          (installed) => installed.name.toLowerCase() === skill.name.toLowerCase(),
+        ),
+      ),
+    ],
+    [connectCapabilities.skills, extensionItems.installedSkills],
+  );
+  const libraryConnectMcpServers = useMemo(
+    () => connectCapabilities.mcpServers.filter(
+      (entry) => !orgMcpConnectionItems.some((item) =>
+        item.name.localeCompare(entry.name, undefined, { sensitivity: "accent" }) === 0
+      ),
+    ),
+    [connectCapabilities.mcpServers, orgMcpConnectionItems],
+  );
+  const libraryConnectPlugins = useMemo(
+    () => connectPluginsForComposer(connectCapabilities.plugins),
+    [connectCapabilities.plugins],
+  );
+  const readLibrarySkill = useCallback(
+    (name: string) => extensionsStore.readSkill(name),
+    [extensionsStore],
+  );
   const organizationConnectionsProbe = resolveOrganizationConnectionsProbe({
     signedIn: cloudSession.isSignedIn,
     activeOrganizationId: cloudSession.activeOrganization?.id,
@@ -2504,24 +2531,13 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
                     : undefined
                 }
                 readConfigFile={readMcpConfigFile}
-                installedSkills={[
-                  ...extensionItems.installedSkills,
-                  ...connectCapabilities.skills.filter(
-                    (skill) => !extensionItems.installedSkills.some(
-                      (installed) => installed.name.toLowerCase() === skill.name.toLowerCase(),
-                    ),
-                  ),
-                ]}
+                installedSkills={librarySkills}
                 installedCommands={libraryCommands}
                 installedAgents={libraryAgents}
-                availableConnectMcpServers={connectCapabilities.mcpServers.filter(
-                  (entry) => !orgMcpConnectionItems.some((item) =>
-                    item.name.localeCompare(entry.name, undefined, { sensitivity: "accent" }) === 0
-                  ),
-                )}
+                availableConnectMcpServers={libraryConnectMcpServers}
                 availableConnectMcpStatuses={connectCapabilities.mcpStatuses}
                 inventoryLoading={connectCapabilitiesLoading || (orgMcpConnections.loading && !orgMcpConnections.loaded)}
-                installedPlugins={connectPluginsForComposer(connectCapabilities.plugins)}
+                installedPlugins={libraryConnectPlugins}
                 orgMcpItems={orgMcpConnectionItems}
                 organizationName={cloudSession.activeOrgName}
                 orgMcpError={orgMcpConnections.error}
@@ -2532,7 +2548,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
                 reconnectOrgMcp={(connectionId) => { void orgMcpConnections.connect(connectionId, { forceFreshAuthorization: true }); }}
                 orgMcpDisconnectingId={orgMcpConnections.disconnectingId}
                 disconnectOrgMcp={(connectionId) => { void orgMcpConnections.disconnect(connectionId); }}
-                readSkill={(name) => extensionsStore.readSkill(name)}
+                readSkill={readLibrarySkill}
                 previewClaudePlugin={(url) => extensionsStore.previewClaudePlugin(url)}
                 installClaudePlugin={(url) => extensionsStore.installClaudePlugin(url)}
                 createLibraryItem={(kind, input) => extensionsStore.createLibraryItem(kind, input)}

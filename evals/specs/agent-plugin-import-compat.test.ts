@@ -19,6 +19,8 @@ function runBunTests(input: {
     "exec",
     "bun",
     "test",
+    "--conditions",
+    "development",
     ...input.files,
     "--reporter=junit",
     `--reporter-outfile=${input.reportPath}`,

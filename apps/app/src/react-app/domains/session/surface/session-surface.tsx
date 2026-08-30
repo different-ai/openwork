@@ -861,6 +861,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const pasteParts = useComposerStateStore((state) => getComposerPasteParts(state, props.sessionId));
   const setComposerDraft = useComposerStateStore((state) => state.setDraft);
   const replaceComposerDraft = useComposerStateStore((state) => state.replaceDraft);
+  const hydrateComposerDraft = useComposerStateStore((state) => state.hydrateDraft);
   const clearComposerRevertTarget = useComposerStateStore((state) => state.clearRevertTarget);
   const setComposerAttachments = useComposerStateStore((state) => state.setAttachments);
   const setComposerMentions = useComposerStateStore((state) => state.setMentions);
@@ -875,6 +876,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
     scopeKey: string;
     snapshot: typeof persistedDraftSnapshot;
   } | null>(null);
+  const [hydratedDraftScopeKey, setHydratedDraftScopeKey] = useState<string | null>(null);
 
   // Layout timing is intentional: an account/org boundary must replace the
   // previous scope's in-memory Zustand draft before the browser can paint it.
@@ -892,19 +894,21 @@ export function SessionSurface(props: SessionSurfaceProps) {
     const currentState = useComposerStateStore.getState();
     const currentDraft = getComposerDraft(currentState, props.sessionId);
     const nextDraft = persistedDraftSnapshot?.text ?? "";
-    if (!composerDraftNeedsHydration({
+    const needsHydration = composerDraftNeedsHydration({
       claimedScopeKey,
       nextScopeKey: persistedDraftKey,
       currentText: currentDraft,
       storedText: nextDraft,
-    })) return;
+    });
 
-    for (const attachment of getComposerAttachments(currentState, props.sessionId)) {
-      revokeAttachmentPreview(attachment);
+    if (needsHydration) {
+      for (const attachment of getComposerAttachments(currentState, props.sessionId)) {
+        revokeAttachmentPreview(attachment);
+      }
+      hydrateComposerDraft(props.sessionId, nextDraft);
     }
-    clearComposerSession(props.sessionId);
-    if (nextDraft) replaceComposerDraft(props.sessionId, nextDraft);
-  }, [clearComposerSession, persistedDraftKey, persistedDraftSnapshot, props.sessionId, replaceComposerDraft]);
+    setHydratedDraftScopeKey(persistedDraftKey);
+  }, [hydrateComposerDraft, persistedDraftKey, persistedDraftSnapshot, props.sessionId]);
   const inputHistory = useComposerStateStore((state) => getComposerHistory(state, props.sessionId));
   const appendComposerHistory = useComposerStateStore((state) => state.appendHistory);
   // Queued follow-up drafts live in the shared composer store keyed by session
@@ -1894,10 +1898,12 @@ export function SessionSurface(props: SessionSurfaceProps) {
   }, [props.cloudMcpSubmissionState.status, props.sessionId]);
 
   useEffect(() => {
+    if (hydratedDraftScopeKey !== persistedDraftKey) return;
     const nextDraft = buildDraft(draft, attachments);
-    persistDraft({ text: persistableComposerDraftText(nextDraft.text), mode: nextDraft.mode });
+    const persistableText = persistableComposerDraftText(nextDraft.text);
+    persistDraft({ text: persistableText, mode: nextDraft.mode });
     props.onDraftChange(nextDraft);
-  }, [attachments, buildDraft, draft, persistDraft, props.onDraftChange]);
+  }, [attachments, buildDraft, draft, hydratedDraftScopeKey, persistDraft, persistedDraftKey, props.onDraftChange]);
 
   const handleAttachFiles = useCallback((files: File[]) => {
     if (!props.attachmentsEnabled) {

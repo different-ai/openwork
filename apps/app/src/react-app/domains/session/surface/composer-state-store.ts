@@ -34,6 +34,7 @@ export type ComposerStateStore = {
   history: Record<string, string[]>;
   setDraft: (sessionId: string, draft: string) => void;
   replaceDraft: (sessionId: string, draft: string, revertMessageId?: string | null) => void;
+  hydrateDraft: (sessionId: string, draft: string) => void;
   clearRevertTarget: (sessionId: string) => void;
   setAttachments: (sessionId: string, attachments: ComposerAttachment[]) => void;
   setMentions: (sessionId: string, mentions: Record<string, ComposerMentionKind>) => void;
@@ -113,6 +114,28 @@ export const useComposerStateStore = create<ComposerStateStore>((set) => ({
     const target = revertMessageId?.trim() || null;
     if (current.draft === draft && current.revertMessageId === target) return state;
     return { sessions: { ...state.sessions, [sessionId]: { ...current, draft, revertMessageId: target } } };
+  }),
+  hydrateDraft: (sessionId, draft) => set((state) => {
+    const current = state.sessions[sessionId];
+    if (!draft) {
+      if (!current) return state;
+      const sessions = { ...state.sessions };
+      delete sessions[sessionId];
+      return { sessions };
+    }
+    if (
+      current?.draft === draft
+      && current.attachments.length === 0
+      && Object.keys(current.mentions).length === 0
+      && current.pasteParts.length === 0
+      && current.revertMessageId === null
+    ) return state;
+    return {
+      sessions: {
+        ...state.sessions,
+        [sessionId]: { ...createEmptyComposerSession(), draft },
+      },
+    };
   }),
   clearRevertTarget: (sessionId) => set((state) => {
     const current = state.sessions[sessionId];

@@ -117,6 +117,16 @@ export const automationSchema = z.object({
 })
 export type Automation = z.infer<typeof automationSchema>
 
+/**
+ * The workspace an Automation is pinned to at creation/update time.
+ *
+ * Before this field existed, both executors resolved the runner's *currently
+ * active* workspace at run time, so activating a different workspace silently
+ * retargeted every automation. A pinned id makes targeting explicit; null
+ * keeps the legacy active-workspace fallback for existing records.
+ */
+export const automationWorkspaceIdSchema = z.string().trim().min(1).max(240)
+
 export const automationRevisionSchema = z.object({
   id: idSchema,
   automationId: idSchema,
@@ -126,6 +136,7 @@ export const automationRevisionSchema = z.object({
   model: automationModelSchema,
   action: automationActionSchema.optional(),
   executionTarget: z.enum(["desktop", "cloud"]).optional(),
+  workspaceId: automationWorkspaceIdSchema.nullable().optional(),
   maximumRuntimeMs: z.number().int().min(10_000).max(60 * 60 * 1_000),
   digest: z.string().trim().min(16).max(128),
   createdAt: timestampSchema,
@@ -284,6 +295,8 @@ export const automationDesktopRunnerAssignmentSchema = z.object({
   timeoutMs: z.number().int().min(10_000).max(60 * 60 * 1_000),
   leaseExpiresAt: timestampSchema,
   attempt: z.number().int().positive(),
+  /** Pinned target workspace; absent for records created before pinning existed. */
+  workspaceId: automationWorkspaceIdSchema.nullable().optional(),
 })
 export type AutomationDesktopRunnerAssignment = z.infer<typeof automationDesktopRunnerAssignmentSchema>
 
@@ -378,6 +391,7 @@ const legacyCreateAutomationSchema = z.object({
   instructions: z.string().trim().min(1).max(100_000),
   schedule: automationScheduleSchema,
   model: automationModelSchema,
+  workspaceId: automationWorkspaceIdSchema.nullable().optional(),
 })
 
 const actionCreateAutomationSchema = z.object({
@@ -426,6 +440,8 @@ export const automationProposalSchema = z.object({
   instructions: z.string().trim().min(1).max(100_000),
   schedule: automationScheduleSchema,
   model: automationModelSchema.optional(),
+  /** Workspace the proposing conversation ran in; the renderer pins it on create. */
+  workspaceId: automationWorkspaceIdSchema.optional(),
 })
 export type AutomationProposal = z.infer<typeof automationProposalSchema>
 
@@ -437,6 +453,8 @@ export const updateAutomationSchema = z.object({
   action: automationActionSchema.optional(),
   /** Accepted for round-tripping; execution placement itself is immutable. */
   executionTarget: automationExecutionTargetSchema.optional(),
+  /** Re-pin to a different workspace; null clears the pin (legacy active-workspace fallback). */
+  workspaceId: automationWorkspaceIdSchema.nullable().optional(),
 }).strict().refine(
   (input) => Object.keys(input).length > 0,
   "At least one behavior-changing field is required",

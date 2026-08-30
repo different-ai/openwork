@@ -8,6 +8,7 @@ on:
     workflows:
       - Nightly Critical-Path E2E Journey
       - Daytona E2E Regression Suite
+      - Nightly Flake Report
     types:
       - completed
 
@@ -46,6 +47,7 @@ jobs:
           case "$RUN_NAME" in
             "Nightly Critical-Path E2E Journey") issue_title="Nightly critical-path E2E journey failed" ;;
             "Daytona E2E Regression Suite") issue_title="Daytona E2E regression suite failed" ;;
+            "Nightly Flake Report") issue_title="Nightly flake report found unreliable specs" ;;
             *) echo "Unexpected workflow: $RUN_NAME" >&2; exit 1 ;;
           esac
 

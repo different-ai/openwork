@@ -4,6 +4,7 @@ import { z } from "zod";
 import { readMcpResourceText, type McpFetch } from "./connect-mcp-transport.js";
 import { readActivatedEnterpriseDenOrigin } from "./enterprise-den-origin.js";
 import {
+  readGlobalRuntimeMcpConfig,
   readRuntimeMcpConfig,
   runtimeMcpMap,
   writeRuntimeOpencodeConfig,
@@ -252,7 +253,8 @@ export async function refreshOpenWorkConnectMcpAppHostCatalog(
   workspaceId: string,
   fetcher?: McpFetch,
 ): Promise<{ status: "synced" | "unavailable"; appHostNames: string[] }> {
-  const cloudMcp = await readRuntimeMcpConfig(config, workspaceId, "openwork-cloud");
+  const cloudMcp = await readGlobalRuntimeMcpConfig(config, "openwork-cloud")
+    ?? await readRuntimeMcpConfig(config, workspaceId, "openwork-cloud");
   if (!cloudMcp || !await trustedAppHostCloudEndpoint(cloudMcp)) {
     return { status: "unavailable", appHostNames: [] };
   }

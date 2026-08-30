@@ -12,8 +12,17 @@ import {
 } from "./daytona.js"
 import { recoverClaimedCloudWorker, wakeCloudWorker } from "./cloud-lifecycle.js"
 import { fetchWithConnectRetry, previewFetch } from "./preview-fetch.js"
+import {
+  cloudStartupFailureFromWorker,
+  cloudStartupFailureUpdate,
+  createKnownCloudStartupFailure,
+  type CloudStartupFailure,
+} from "./cloud-failure.js"
 
-export type CloudRuntimeWorker = Pick<typeof WorkerTable.$inferSelect, "id" | "name" | "status"> & {
+export type CloudRuntimeWorker = Pick<typeof WorkerTable.$inferSelect, "id" | "name" | "status"> & Partial<Pick<
+  typeof WorkerTable.$inferSelect,
+  "cloud_failure_code" | "cloud_failure_stage" | "cloud_failure_reference" | "cloud_failure_at"
+>> & {
   image_version?: typeof WorkerTable.$inferSelect.image_version
 }
 export type CloudRuntimeToken = Pick<typeof WorkerTokenTable.$inferSelect, "scope" | "token">
@@ -26,21 +35,13 @@ export type CloudRuntimeStore = {
   claimFailedWorker: (workerId: CloudRuntimeWorker["id"]) => Promise<boolean>
   claimRecycleWorker: (workerId: CloudRuntimeWorker["id"]) => Promise<boolean>
   getActiveTokens: (workerId: CloudRuntimeWorker["id"]) => Promise<CloudRuntimeToken[]>
-  markProvisioningWorkerFailed: (workerId: CloudRuntimeWorker["id"]) => Promise<void>
-  markHealthyWorkerFailed: (workerId: CloudRuntimeWorker["id"]) => Promise<void>
+  markProvisioningWorkerFailed: (workerId: CloudRuntimeWorker["id"], failure?: CloudStartupFailure) => Promise<void>
+  markHealthyWorkerFailed: (workerId: CloudRuntimeWorker["id"], failure?: CloudStartupFailure) => Promise<void>
 }
 
 type OrganizationId = typeof WorkerTable.$inferSelect.org_id
 type UserId = NonNullable<typeof WorkerTable.$inferSelect.created_by_user_id>
 type WorkerId = typeof WorkerTable.$inferSelect.id
-type ContinueProvisioning = (input: {
-  workerId: WorkerId
-  orgId?: OrganizationId
-  name: string
-  hostToken: string
-  clientToken: string
-  activityToken: string
-}) => Promise<void>
 type GetSandboxRecord = (workerId: WorkerId) => Promise<CloudRuntimeSandboxRecord | null>
 type InspectSandbox = (workerId: WorkerId) => Promise<CloudRuntimeSandboxInspection>
 type RefreshSignedPreview = (workerId: WorkerId) => Promise<CloudRuntimeSandboxRecord | null>
@@ -53,9 +54,9 @@ export type CloudRuntimeOwnership =
 
 export type CloudRuntimeState =
   | { status: "ready"; url: string; expiresAt: Date }
-  | { status: "waking"; url: null; reason?: "stopped" | "recovering" | "reprovisioning" | "unreachable" }
-  | { status: "provisioning"; url: null; reason?: "unreachable" }
-  | { status: "failed"; url: null; reason?: "missing_tokens" | "unreachable" | "preview_expired" }
+  | { status: "waking"; url: null; reason?: "stopped" | "recovering" | "reprovisioning" | "unreachable"; failure?: CloudStartupFailure }
+  | { status: "provisioning"; url: null; reason?: "unreachable"; failure?: CloudStartupFailure }
+  | { status: "failed"; url: null; reason?: "missing_tokens" | "unreachable" | "preview_expired"; failure?: CloudStartupFailure }
 
 export type CloudWorkerAccess = {
   url: string
@@ -67,13 +68,12 @@ export type CloudWorkerAccess = {
 
 export type CloudRuntimeAccessResult =
   | ({ status: "ready" } & CloudWorkerAccess)
-  | { status: "waking"; workerId: WorkerId; reason?: "stopped" | "recovering" | "reprovisioning" | "unreachable" }
-  | { status: "provisioning"; workerId: WorkerId; reason?: "unreachable" }
-  | { status: "failed"; workerId: WorkerId; reason?: "missing_tokens" | "unreachable" | "preview_expired" }
+  | { status: "waking"; workerId: WorkerId; reason?: "stopped" | "recovering" | "reprovisioning" | "unreachable"; failure?: CloudStartupFailure }
+  | { status: "provisioning"; workerId: WorkerId; reason?: "unreachable"; failure?: CloudStartupFailure }
+  | { status: "failed"; workerId: WorkerId; reason?: "missing_tokens" | "unreachable" | "preview_expired"; failure?: CloudStartupFailure }
   | { status: "missing" }
 
 export type ResolveCloudRuntimeStateOptions = {
-  continueProvisioning: ContinueProvisioning
   refreshSignedPreview: RefreshSignedPreview
   getSandboxRecord: GetSandboxRecord
   inspectSandbox: InspectSandbox
@@ -82,6 +82,7 @@ export type ResolveCloudRuntimeStateOptions = {
   startRecovery: StartWake
   store: CloudRuntimeStore
   now: () => number
+  forceFailedRecovery?: boolean
 }
 
 export type ResolveCloudRuntimeAccessOptions = Partial<ResolveCloudRuntimeStateOptions> & {
@@ -95,9 +96,10 @@ type UpdateResultRecord = {
 
 const logger = appLogger.child({ component: "cloud_runtime_access" })
 const failedHealCooldownMs = 60_000
+const explicitFailedHealCooldownMs = 60_000
 const signedPreviewProbeTimeoutMs = 2_500
 const signedPreviewHealthCacheMs = 15_000
-const failedHealAttempts = new Map<WorkerId, number>()
+const explicitFailedHealAttempts = new Map<WorkerId, number>()
 const signedPreviewHealthCache = new Map<WorkerId, { url: string; healthyUntilMs: number }>()
 const wakingWorkers = new Set<WorkerId>()
 const unreachableWorkers = new Set<WorkerId>()
@@ -143,14 +145,20 @@ const databaseCloudRuntimeStore: CloudRuntimeStore = {
       .where(and(eq(WorkerTokenTable.worker_id, workerId), isNull(WorkerTokenTable.revoked_at)))
       .orderBy(asc(WorkerTokenTable.created_at))
   },
-  async markProvisioningWorkerFailed(workerId) {
-    await db.update(WorkerTable).set({ status: "failed" }).where(and(
+  async markProvisioningWorkerFailed(workerId, failure) {
+    await db.update(WorkerTable).set({
+      status: "failed",
+      ...(failure ? cloudStartupFailureUpdate(failure) : {}),
+    }).where(and(
       eq(WorkerTable.id, workerId),
       eq(WorkerTable.status, "provisioning"),
     ))
   },
-  async markHealthyWorkerFailed(workerId) {
-    await db.update(WorkerTable).set({ status: "failed" }).where(and(
+  async markHealthyWorkerFailed(workerId, failure) {
+    await db.update(WorkerTable).set({
+      status: "failed",
+      ...(failure ? cloudStartupFailureUpdate(failure) : {}),
+    }).where(and(
       eq(WorkerTable.id, workerId),
       eq(WorkerTable.status, "healthy"),
     ))
@@ -166,6 +174,10 @@ async function loadOwnedCloudWorker(ownership: CloudRuntimeOwnership) {
     name: WorkerTable.name,
     status: WorkerTable.status,
     image_version: WorkerTable.image_version,
+    cloud_failure_code: WorkerTable.cloud_failure_code,
+    cloud_failure_stage: WorkerTable.cloud_failure_stage,
+    cloud_failure_reference: WorkerTable.cloud_failure_reference,
+    cloud_failure_at: WorkerTable.cloud_failure_at,
   }).from(WorkerTable).where(and(
     eq(WorkerTable.org_id, ownership.organizationId),
     ownershipPredicate,
@@ -200,11 +212,6 @@ export async function probeCloudRuntimeSignedPreview(signedPreviewUrl: string) {
   }
 }
 
-async function defaultContinueProvisioning(input: Parameters<ContinueProvisioning>[0]) {
-  const { continueCloudProvisioning } = await import("../routes/workers/shared.js")
-  return continueCloudProvisioning(input)
-}
-
 function startDefaultWake(workerId: WorkerId) {
   if (wakingWorkers.has(workerId)) return
   wakingWorkers.add(workerId)
@@ -229,64 +236,50 @@ function rememberHealthyPreview(workerId: WorkerId, url: string, now: number, ex
   })
 }
 
-async function startFailedCloudHeal(input: {
+async function startClaimedCloudRecovery(input: {
   worker: CloudRuntimeWorker
-  orgId: OrganizationId
-  continueProvisioning: ContinueProvisioning
+  startRecovery: StartWake
   store: CloudRuntimeStore
 }) {
   const claimed = await input.store.claimFailedWorker(input.worker.id)
   if (!claimed) return false
-
-  void (async () => {
-    const tokens = await input.store.getActiveTokens(input.worker.id)
-    const hostToken = tokenByScope(tokens, "host")
-    const clientToken = tokenByScope(tokens, "client")
-    const activityToken = tokenByScope(tokens, "activity")
-    if (!hostToken || !clientToken || !activityToken) {
-      await input.store.markProvisioningWorkerFailed(input.worker.id)
-      logger.error("cloud failed-worker heal failed", { worker_id: input.worker.id, reason: "missing_worker_tokens" })
-      return
-    }
-    await input.continueProvisioning({
-      workerId: input.worker.id,
-      orgId: input.orgId,
-      name: input.worker.name,
-      hostToken,
-      clientToken,
-      activityToken,
-    })
-  })().catch(async (error) => {
-    await input.store.markProvisioningWorkerFailed(input.worker.id).catch(() => undefined)
-    logger.error("cloud failed-worker heal failed", { worker_id: input.worker.id, error })
-  })
+  input.startRecovery(input.worker.id)
   return true
+}
+
+function recoveryFailureIsCoolingDown(worker: CloudRuntimeWorker, now: number) {
+  if (worker.cloud_failure_stage !== "recovery") return false
+  const failedAt = worker.cloud_failure_at
+  if (!(failedAt instanceof Date)) return false
+  const elapsedMs = now - failedAt.getTime()
+  return elapsedMs >= 0 && elapsedMs < failedHealCooldownMs
 }
 
 async function resolveFailedCloudRuntime(input: {
   worker: CloudRuntimeWorker
-  orgId: OrganizationId
-  continueProvisioning: ContinueProvisioning
   getSandboxRecord: GetSandboxRecord
   startRecovery: StartWake
   store: CloudRuntimeStore
   now: () => number
+  forceRecovery?: boolean
 }): Promise<CloudRuntimeState> {
   const now = input.now()
-  const lastAttempt = failedHealAttempts.get(input.worker.id)
-  if (lastAttempt !== undefined && now - lastAttempt < failedHealCooldownMs) {
-    return { status: "failed", url: null }
+  const failure = cloudStartupFailureFromWorker(input.worker) ?? undefined
+  const lastExplicitAttempt = explicitFailedHealAttempts.get(input.worker.id)
+  if (input.forceRecovery) {
+    if (lastExplicitAttempt !== undefined && now - lastExplicitAttempt < explicitFailedHealCooldownMs) {
+      return { status: "failed", url: null, ...(failure ? { failure } : {}) }
+    }
+    explicitFailedHealAttempts.set(input.worker.id, now)
+  } else if (recoveryFailureIsCoolingDown(input.worker, now)) {
+    return { status: "failed", url: null, ...(failure ? { failure } : {}) }
   }
-  failedHealAttempts.set(input.worker.id, now)
   const sandbox = await input.getSandboxRecord(input.worker.id)
-  if (sandbox) {
-    const claimed = await input.store.claimFailedWorker(input.worker.id)
-    if (!claimed) return { status: "failed", url: null }
-    input.startRecovery(input.worker.id)
-    return { status: "waking", url: null, reason: "recovering" }
-  }
-  const started = await startFailedCloudHeal(input)
-  return started ? { status: "provisioning", url: null } : { status: "failed", url: null }
+  const started = await startClaimedCloudRecovery(input)
+  if (!started) return { status: "failed", url: null, ...(failure ? { failure } : {}) }
+  return sandbox
+    ? { status: "waking", url: null, reason: "recovering", ...(failure ? { failure } : {}) }
+    : { status: "provisioning", url: null, ...(failure ? { failure } : {}) }
 }
 
 async function readyFromSignedPreview(input: {
@@ -365,8 +358,6 @@ async function startStaleStoppedRecycle(input: {
 
 async function recoverUnhealthyCloudSandbox(input: {
   worker: CloudRuntimeWorker
-  orgId: OrganizationId
-  continueProvisioning: ContinueProvisioning
   inspectSandbox: InspectSandbox
   startRecovery: StartWake
   store: CloudRuntimeStore
@@ -384,9 +375,10 @@ async function recoverUnhealthyCloudSandbox(input: {
     return { status: "waking", url: null, reason: "stopped" }
   }
   unreachableWorkers.add(input.worker.id)
-  await input.store.markHealthyWorkerFailed(input.worker.id)
-  await startFailedCloudHeal(input)
-  return { status: "waking", url: null, reason: "unreachable" }
+  const failure = createKnownCloudStartupFailure({ code: "runtime_unreachable", stage: "runtime" })
+  await input.store.markHealthyWorkerFailed(input.worker.id, failure)
+  await startClaimedCloudRecovery(input)
+  return { status: "waking", url: null, reason: "unreachable", failure }
 }
 
 export async function resolveCloudRuntimeState(input: {
@@ -396,12 +388,11 @@ export async function resolveCloudRuntimeState(input: {
   if (input.worker.status === "failed") {
     return resolveFailedCloudRuntime({
       worker: input.worker,
-      orgId: input.organizationId,
-      continueProvisioning: options.continueProvisioning,
       getSandboxRecord: options.getSandboxRecord,
       startRecovery: options.startRecovery,
       store: options.store,
       now: options.now,
+      forceRecovery: options.forceFailedRecovery,
     })
   }
   if (input.worker.status === "stopped") {
@@ -424,14 +415,14 @@ export async function resolveCloudRuntimeState(input: {
   }
   if (!sandbox) {
     if (input.worker.status === "healthy") {
-      await options.store.markHealthyWorkerFailed(input.worker.id)
-      await startFailedCloudHeal({
+      const failure = createKnownCloudStartupFailure({ code: "sandbox_missing", stage: "runtime" })
+      await options.store.markHealthyWorkerFailed(input.worker.id, failure)
+      await startClaimedCloudRecovery({
         worker: input.worker,
-        orgId: input.organizationId,
-        continueProvisioning: options.continueProvisioning,
+        startRecovery: options.startRecovery,
         store: options.store,
       })
-      return { status: "waking", url: null, reason: "reprovisioning" }
+      return { status: "waking", url: null, reason: "reprovisioning", failure }
     }
     return { status: "provisioning", url: null }
   }
@@ -459,11 +450,14 @@ export async function resolveCloudRuntimeState(input: {
     probeSignedPreview: options.probeSignedPreview,
     now: options.now,
   })
+  if (refreshedReady?.status === "failed") {
+    const failure = createKnownCloudStartupFailure({ code: "preview_expired", stage: "runtime" })
+    await options.store.markHealthyWorkerFailed(input.worker.id, failure)
+    return { ...refreshedReady, failure }
+  }
   if (refreshedReady) return refreshedReady
   return recoverUnhealthyCloudSandbox({
     worker: input.worker,
-    orgId: input.organizationId,
-    continueProvisioning: options.continueProvisioning,
     inspectSandbox: options.inspectSandbox,
     startRecovery: options.startRecovery,
     store: options.store,
@@ -474,12 +468,12 @@ export async function resolveCloudRuntimeAccess(
   ownership: CloudRuntimeOwnership,
   options: ResolveCloudRuntimeAccessOptions = {},
 ): Promise<CloudRuntimeAccessResult> {
-  const worker = await (options.loadWorker ?? loadOwnedCloudWorker)(ownership)
+  const loadWorker = options.loadWorker ?? loadOwnedCloudWorker
+  const worker = await loadWorker(ownership)
   if (!worker) return { status: "missing" }
 
   const store = options.store ?? databaseCloudRuntimeStore
   const state = await resolveCloudRuntimeState({ worker, organizationId: ownership.organizationId }, {
-    continueProvisioning: options.continueProvisioning ?? defaultContinueProvisioning,
     refreshSignedPreview: options.refreshSignedPreview ?? refreshDaytonaSignedPreview,
     getSandboxRecord: options.getSandboxRecord ?? getDaytonaSandboxRecord,
     inspectSandbox: options.inspectSandbox ?? inspectDaytonaSandbox,
@@ -488,31 +482,42 @@ export async function resolveCloudRuntimeAccess(
     startRecovery: options.startRecovery ?? startDefaultRecovery,
     store,
     now: options.now ?? Date.now,
+    forceFailedRecovery: options.forceFailedRecovery,
   })
+  const failure = state.status === "ready" ? null : state.failure ?? cloudStartupFailureFromWorker(worker)
   if (state.status === "provisioning") {
     const reason: "unreachable" | undefined = unreachableWorkers.has(worker.id) ? "unreachable" : undefined
     return {
       status: "provisioning",
       workerId: worker.id,
       ...(reason ? { reason } : {}),
+      ...(failure ? { failure } : {}),
     }
   }
   if (state.status === "waking") {
     const reason = state.reason ?? (unreachableWorkers.has(worker.id) ? "unreachable" : undefined)
-    return { status: "waking", workerId: worker.id, ...(reason ? { reason } : {}) }
+    return { status: "waking", workerId: worker.id, ...(reason ? { reason } : {}), ...(failure ? { failure } : {}) }
   }
   if (state.status === "failed") {
     const reason = state.reason ?? (unreachableWorkers.has(worker.id) ? "unreachable" : undefined)
-    return { status: "failed", workerId: worker.id, ...(reason ? { reason } : {}) }
+    return { status: "failed", workerId: worker.id, ...(reason ? { reason } : {}), ...(failure ? { failure } : {}) }
   }
 
   unreachableWorkers.delete(worker.id)
+  explicitFailedHealAttempts.delete(worker.id)
   const tokens = await store.getActiveTokens(worker.id)
   const clientToken = tokenByScope(tokens, "client")
   const hostToken = tokenByScope(tokens, "host")
   if (!clientToken || !hostToken) {
-    logger.error("cloud runtime ready instance missing access token", { worker_id: worker.id })
-    return { status: "failed", workerId: worker.id, reason: "missing_tokens" }
+    const accessFailure = createKnownCloudStartupFailure({ code: "access_tokens_missing", stage: "runtime" })
+    await store.markHealthyWorkerFailed(worker.id, accessFailure)
+    logger.error("cloud runtime ready instance missing access token", {
+      worker_id: worker.id,
+      failure_code: accessFailure.code,
+      failure_stage: accessFailure.stage,
+      failure_reference: accessFailure.reference,
+    })
+    return { status: "failed", workerId: worker.id, reason: "missing_tokens", failure: accessFailure }
   }
   return { status: "ready", workerId: worker.id, url: state.url, expiresAt: state.expiresAt, clientToken, hostToken }
 }

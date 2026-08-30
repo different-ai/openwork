@@ -27,7 +27,7 @@ import { runtimeStorageDir } from "./runtime-db.js";
 import {
   onRuntimeOpencodeConfigWrite,
   isEngineGlobalRuntimeConfigId,
-  readEffectiveRuntimeOpencodeConfig,
+  readGlobalRuntimeOpencodeConfig,
   runtimeDisabledProviderList,
   runtimeMcpMap,
   runtimeProviderMap,
@@ -89,9 +89,13 @@ Never persist secrets, credentials, API keys, tokens, or sensitive PII into a me
 
 export async function buildOpenworkRuntimeConfigObject(
   config?: ServerConfig,
-  workspaceId?: string,
 ): Promise<Record<string, unknown>> {
-  const runtimeConfig = config && workspaceId ? await readEffectiveRuntimeOpencodeConfig(config, workspaceId) : {};
+  // Workspace-independent by design: the injected engine config file is
+  // rendered from the ENGINE_GLOBAL runtime row plus static built-ins only,
+  // so workspace activation rewrites identical bytes and never varies the
+  // engine-pool fingerprint. Per-workspace MCPs reach the engine through the
+  // dynamic push path instead.
+  const runtimeConfig = config ? await readGlobalRuntimeOpencodeConfig(config) : {};
   return buildOpenworkRuntimeConfigObjectFromSnapshot(runtimeConfig);
 }
 
@@ -156,8 +160,8 @@ function stableStringify(value: unknown): string {
   return JSON.stringify(stableJsonValue(value));
 }
 
-export async function buildOpenworkRuntimeConfig(config?: ServerConfig, workspaceId?: string): Promise<string> {
-  return stableStringify(await buildOpenworkRuntimeConfigObject(config, workspaceId));
+export async function buildOpenworkRuntimeConfig(config?: ServerConfig): Promise<string> {
+  return stableStringify(await buildOpenworkRuntimeConfigObject(config));
 }
 
 export function openworkRuntimeConfigFilePath(config: ServerConfig): string {
@@ -181,11 +185,10 @@ const fileWriteQueue = new Map<string, Promise<OpenworkRuntimeConfigWriteResult>
  */
 export async function writeOpenworkRuntimeConfigFile(
   config: ServerConfig,
-  workspaceId: string,
 ): Promise<OpenworkRuntimeConfigWriteResult> {
   const path = openworkRuntimeConfigFilePath(config);
   const job = async () => {
-    const content = await buildOpenworkRuntimeConfig(config, workspaceId);
+    const content = await buildOpenworkRuntimeConfig(config);
     const current = await readFile(path, "utf8").catch(() => undefined);
     if (current === content) return { path, changed: false };
     await mkdir(runtimeStorageDir(config), { recursive: true });
@@ -205,9 +208,9 @@ export async function writeOpenworkRuntimeConfigFile(
  * instance rebuild reads fresh state instead of a spawn-time snapshot.
  * Returns an unsubscribe function.
  */
-export function keepOpenworkRuntimeConfigFileFresh(config: ServerConfig, workspaceId: string): () => void {
+export function keepOpenworkRuntimeConfigFileFresh(config: ServerConfig): () => void {
   return onRuntimeOpencodeConfigWrite((writeConfig, writtenWorkspaceId) => {
-    if (writtenWorkspaceId !== workspaceId && !isEngineGlobalRuntimeConfigId(writtenWorkspaceId)) return;
-    void writeOpenworkRuntimeConfigFile(writeConfig, workspaceId).catch(() => undefined);
+    if (!isEngineGlobalRuntimeConfigId(writtenWorkspaceId)) return;
+    void writeOpenworkRuntimeConfigFile(writeConfig).catch(() => undefined);
   });
 }

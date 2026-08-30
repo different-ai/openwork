@@ -92,6 +92,7 @@ function mapRevision(row: RevisionRow): AutomationRevision {
     model: { providerId: row.provider_id, modelId: row.model_id, variant: row.model_variant ?? null },
     action,
     executionTarget: row.execution_target,
+    workspaceId: row.workspace_id ?? null,
     maximumRuntimeMs: row.maximum_runtime_ms,
     digest: row.digest,
     createdAt: row.created_at.getTime(),
@@ -154,6 +155,7 @@ function normalizedDefinition(definition: Parameters<AutomationRepository["creat
       executionTarget: definition.executionTarget,
       instructions: definition.action.kind === "agent" ? definition.action.instructions : "Execute the pinned Workflow.",
       model,
+      workspaceId: null,
     }
   }
   return {
@@ -163,6 +165,7 @@ function normalizedDefinition(definition: Parameters<AutomationRepository["creat
     executionTarget: "desktop" as const,
     instructions: definition.instructions,
     model: definition.model,
+    workspaceId: definition.workspaceId ?? null,
   }
 }
 
@@ -250,6 +253,7 @@ export class DenAutomationRepository implements AutomationRepository {
       action: definition.action,
       executionTarget: definition.executionTarget,
       maximumRuntimeMs,
+      ...(definition.workspaceId ? { workspaceId: definition.workspaceId } : {}),
     })
     const nextDueAt = nextAutomationOccurrence(definition.schedule, input.now)
     await db.transaction(async (tx) => {
@@ -266,6 +270,7 @@ export class DenAutomationRepository implements AutomationRepository {
         model_variant: definition.model.variant ?? null,
         action: definition.action,
         execution_target: definition.executionTarget,
+        workspace_id: definition.workspaceId,
         maximum_runtime_ms: maximumRuntimeMs,
         digest,
         created_at: now,
@@ -324,6 +329,9 @@ export class DenAutomationRepository implements AutomationRepository {
       const model = action.kind === "agent"
         ? action.model
         : { providerId: AUTOMATION_FREE_MODEL.providerId, modelId: AUTOMATION_FREE_MODEL.modelId, variant: null }
+      const workspaceId = input.changes.workspaceId !== undefined
+        ? input.changes.workspaceId
+        : current.workspace_id ?? null
       const newRevisionId = createDenTypeId("automationRevision")
       const digest = automationRevisionDigest({
         instructions,
@@ -332,6 +340,7 @@ export class DenAutomationRepository implements AutomationRepository {
         action,
         executionTarget,
         maximumRuntimeMs: current.maximum_runtime_ms,
+        ...(workspaceId ? { workspaceId } : {}),
       })
       if (digest === current.digest) {
         await tx.update(AutomationTable).set({
@@ -353,6 +362,7 @@ export class DenAutomationRepository implements AutomationRepository {
         model_variant: model.variant ?? null,
         action,
         execution_target: executionTarget,
+        workspace_id: workspaceId,
         maximum_runtime_ms: current.maximum_runtime_ms,
         digest,
         created_at: new Date(input.now),

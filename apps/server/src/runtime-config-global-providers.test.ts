@@ -99,7 +99,7 @@ describe("global runtime providers", () => {
     const globalRuntime = await readGlobalRuntimeOpencodeConfig(config);
     expect(runtimeProviderMap(globalRuntime)).toEqual({ lpr_openrouter: openrouter });
 
-    const { path } = await writeOpenworkRuntimeConfigFile(config, "ws_1");
+    const { path } = await writeOpenworkRuntimeConfigFile(config);
     expect(path).toBe(openworkRuntimeConfigFilePath(config));
     const raw = await readFile(path, "utf8");
     const parsed: unknown = JSON.parse(raw);

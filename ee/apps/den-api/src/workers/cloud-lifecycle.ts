@@ -16,6 +16,12 @@ import {
 } from "./daytona.js"
 import { withProvisionDeadline } from "./provision-deadline.js"
 import { touchProvisioningWorker, withProvisioningHeartbeat } from "./provisioning-heartbeat.js"
+import {
+  cloudStartupFailureUpdate,
+  createCloudStartupFailure,
+  createKnownCloudStartupFailure,
+  type CloudStartupFailure,
+} from "./cloud-failure.js"
 
 type WorkerId = typeof WorkerTable.$inferSelect.id
 type WorkerStatus = typeof WorkerTable.$inferSelect.status
@@ -31,7 +37,13 @@ type CloudLifecycleStore = {
   listIdleWorkers: (input: { idleBefore: Date; limit: number }) => Promise<CloudWorker[]>
   reserveWake: (workerId: WorkerId) => Promise<boolean>
   reserveIdleStop: (input: { workerId: WorkerId; idleBefore: Date }) => Promise<boolean>
-  updateWorkerStatus: (input: { workerId: WorkerId; status: WorkerStatus; imageVersion?: string | null; onlyWhenStatus?: WorkerStatus }) => Promise<void>
+  updateWorkerStatus: (input: {
+    workerId: WorkerId
+    status: WorkerStatus
+    imageVersion?: string | null
+    failure?: CloudStartupFailure | null
+    onlyWhenStatus?: WorkerStatus
+  }) => Promise<void>
   touchProvisioningWorker: (workerId: WorkerId) => Promise<void>
 }
 
@@ -146,9 +158,11 @@ const databaseCloudLifecycleStore: CloudLifecycleStore = {
     return automationUpdateChangedRows(result)
   },
   async updateWorkerStatus(input) {
-    const update = input.imageVersion === undefined
-      ? { status: input.status }
-      : { status: input.status, image_version: input.imageVersion }
+    const update = {
+      status: input.status,
+      ...(input.imageVersion === undefined ? {} : { image_version: input.imageVersion }),
+      ...(input.failure === undefined ? {} : cloudStartupFailureUpdate(input.failure)),
+    }
 
     await db
       .update(WorkerTable)
@@ -168,15 +182,19 @@ export function isCloudWorkerIdleForStop(worker: Pick<CloudWorker, "last_active_
   return cloudWorkerIdleReferenceTime(worker).getTime() < idleBefore.getTime()
 }
 
-async function markWorkerFailed(store: CloudLifecycleStore, workerId: WorkerId) {
-  await store.updateWorkerStatus({ workerId, status: "failed", onlyWhenStatus: "provisioning" })
+async function markWorkerFailed(store: CloudLifecycleStore, workerId: WorkerId, failure: CloudStartupFailure) {
+  await store.updateWorkerStatus({ workerId, status: "failed", failure, onlyWhenStatus: "provisioning" })
 }
 
-async function safelyMarkWorkerFailed(store: CloudLifecycleStore, workerId: WorkerId) {
+async function safelyMarkWorkerFailed(store: CloudLifecycleStore, workerId: WorkerId, failure: CloudStartupFailure) {
   try {
-    await markWorkerFailed(store, workerId)
+    await markWorkerFailed(store, workerId, failure)
   } catch (error) {
-    logger.error("worker wake status update failed", { worker_id: workerId, error })
+    logger.error("worker wake status update failed", {
+      worker_id: workerId,
+      failure_reference: failure.reference,
+      error,
+    })
   }
 }
 
@@ -206,8 +224,14 @@ async function runClaimedCloudWorkerRecovery(workerId: WorkerId, options: WakeCl
     const activityToken = tokenByScope(tokens, "activity")
 
     if (!hostToken || !clientToken || !activityToken) {
-      await safelyMarkWorkerFailed(store, workerId)
-      logger.error("worker wake failed", { worker_id: workerId, reason: "missing_worker_tokens" })
+      const failure = createKnownCloudStartupFailure({ code: "access_tokens_missing", stage: "recovery" })
+      await safelyMarkWorkerFailed(store, workerId, failure)
+      logger.error("worker wake failed", {
+        worker_id: workerId,
+        failure_code: failure.code,
+        failure_stage: failure.stage,
+        failure_reference: failure.reference,
+      })
       return
     }
 
@@ -258,12 +282,25 @@ async function runClaimedCloudWorkerRecovery(workerId: WorkerId, options: WakeCl
           }
         }
 
-        await store.updateWorkerStatus({ workerId, status: woken.status, imageVersion: woken.imageVersion, onlyWhenStatus: "provisioning" })
+        await store.updateWorkerStatus({
+          workerId,
+          status: woken.status,
+          imageVersion: woken.imageVersion,
+          failure: null,
+          onlyWhenStatus: "provisioning",
+        })
       },
     })
   } catch (error) {
-    await safelyMarkWorkerFailed(store, workerId)
-    logger.error("worker wake failed", { worker_id: workerId, error })
+    const failure = createCloudStartupFailure({ stage: "recovery", error })
+    await safelyMarkWorkerFailed(store, workerId, failure)
+    logger.error("worker wake failed", {
+      worker_id: workerId,
+      failure_code: failure.code,
+      failure_stage: failure.stage,
+      failure_reference: failure.reference,
+      error,
+    })
   }
 }
 

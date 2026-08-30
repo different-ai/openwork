@@ -140,7 +140,7 @@ function LoadingState() {
   )
 }
 
-export function AutomationsPage(props: { providerCatalog?: AutomationProviderCatalog } = {}) {
+export function AutomationsPage(props: { providerCatalog?: AutomationProviderCatalog; workspaceId?: string | null } = {}) {
   const denAuth = useDenAuth()
   const navigate = useNavigate()
   const queryClient = useQueryClient()
@@ -316,7 +316,13 @@ export function AutomationsPage(props: { providerCatalog?: AutomationProviderCat
           onSave={async (input) => {
             setBusyAction("create")
             try {
-              const detail = await client.createAutomation(organizationId, input)
+              // Pin the workspace the person is creating from; targeting must
+              // not follow whichever workspace happens to be active at run time.
+              const workspaceId = props.workspaceId?.trim() || null
+              const detail = await client.createAutomation(organizationId, {
+                ...input,
+                ...(workspaceId ? { workspaceId } : {}),
+              })
               await refresh()
               openAutomation(detail.automation.id)
               toast.success("Automation created and active")

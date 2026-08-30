@@ -619,7 +619,7 @@ describe("den-gateway proxy", () => {
     expect(upstream.observed.requests).toHaveLength(1)
   })
 
-  test("returns non-ready JSON status and does not proxy", async () => {
+  test("returns a typed retryable error for a non-ready workspace and does not proxy", async () => {
     const upstream = startUpstream()
     const denApi = startDenApi(() => ({ status: "waking", url: null, clientToken: null, hostToken: null, expiresAt: null }))
     const gateway = startGateway({ denApiBase: serverBase(denApi.server), gatewayKey: "gateway-secret" })
@@ -628,12 +628,51 @@ describe("den-gateway proxy", () => {
     const response = await fetch(`${base}/status`, { headers: { Authorization: "Bearer den-token" } })
     const second = await fetch(`${base}/status`, { headers: { Authorization: "Bearer den-token" } })
 
-    expect(response.status).toBe(200)
-    await expect(response.json()).resolves.toEqual({ status: "waking" })
-    expect(second.status).toBe(200)
-    await expect(second.json()).resolves.toEqual({ status: "waking" })
+    expect(response.status).toBe(503)
+    expect(response.headers.get("retry-after")).toBe("5")
+    await expect(response.json()).resolves.toEqual({ error: "workspace_not_ready", status: "waking" })
+    expect(second.status).toBe(503)
+    await expect(second.json()).resolves.toEqual({ error: "workspace_not_ready", status: "waking" })
     expect(upstream.observed.requests).toHaveLength(0)
     expect(denApi.observed.calls).toBe(2)
+  })
+
+  test("forwards safe startup diagnostics without exposing runtime credentials", async () => {
+    const upstream = startUpstream()
+    const denApi = startDenApi(() => ({
+      status: "failed",
+      url: null,
+      clientToken: null,
+      hostToken: null,
+      expiresAt: null,
+      failure: {
+        code: "runtime_health_timeout",
+        stage: "recovery",
+        reference: "cwf_test-reference",
+        occurredAt: "2026-08-28T12:00:00.000Z",
+      },
+    }))
+    const gateway = startGateway({ denApiBase: serverBase(denApi.server), gatewayKey: "gateway-secret" })
+
+    const response = await fetch(`${serverBase(gateway)}/workspaces`, {
+      headers: { Authorization: "Bearer browser-session-secret" },
+    })
+    const body = await response.json()
+
+    expect(response.status).toBe(503)
+    expect(body).toEqual({
+      error: "workspace_not_ready",
+      status: "failed",
+      failure: {
+        code: "runtime_health_timeout",
+        stage: "recovery",
+        reference: "cwf_test-reference",
+        occurredAt: "2026-08-28T12:00:00.000Z",
+      },
+    })
+    expect(JSON.stringify(body)).not.toContain("browser-session-secret")
+    expect(JSON.stringify(body)).not.toContain("clientToken")
+    expect(upstream.observed.requests).toHaveLength(0)
   })
 
   test("streams SSE without buffering and strips stale compression headers", async () => {

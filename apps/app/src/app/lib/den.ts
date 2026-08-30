@@ -279,6 +279,14 @@ export type DenCloudInstance = {
   imageVersion: string | null;
   instanceName?: string | null;
   latestVersion: string | null;
+  failure?: DenCloudStartupFailure;
+};
+
+export type DenCloudStartupFailure = {
+  code: string;
+  stage: "provisioning" | "recovery" | "runtime";
+  reference: string;
+  occurredAt: string;
 };
 
 export type DenCloudInstanceUpdateResult =
@@ -1934,12 +1942,31 @@ function parseCloudInstance(payload: unknown): DenCloudInstance | null {
     return null;
   }
 
+  const failurePayload = isRecord(payload.failure) ? payload.failure : null;
+  const failureStage = failurePayload?.stage;
+  const failureCode = typeof failurePayload?.code === "string" ? failurePayload.code.trim() : "";
+  const failureReference = typeof failurePayload?.reference === "string" ? failurePayload.reference.trim() : "";
+  const failureOccurredAt = typeof failurePayload?.occurredAt === "string" ? failurePayload.occurredAt : "";
+  const failure: DenCloudStartupFailure | null = failurePayload
+    && failureCode
+    && (failureStage === "provisioning" || failureStage === "recovery" || failureStage === "runtime")
+    && failureReference
+    && Number.isFinite(Date.parse(failureOccurredAt))
+    ? {
+        code: failureCode,
+        stage: failureStage,
+        reference: failureReference,
+        occurredAt: failureOccurredAt,
+      }
+    : null;
+
   return {
     status: payload.status,
     url: payload.url,
     imageVersion: typeof payload.imageVersion === "string" ? payload.imageVersion : null,
     ...(typeof payload.instanceName === "string" ? { instanceName: payload.instanceName } : {}),
     latestVersion: typeof payload.latestVersion === "string" ? payload.latestVersion : null,
+    ...(failure ? { failure } : {}),
   };
 }
 
@@ -3098,6 +3125,33 @@ export function createDenClient(options: { baseUrl: string; apiBaseUrl?: string 
       const instance = parseCloudInstance(payload);
       if (!instance) {
         throw new DenApiError(500, "invalid_cloud_instance_payload", "Cloud instance response was invalid.");
+      }
+      return instance;
+    },
+
+    async retryCloudInstance(orgId: string): Promise<DenCloudInstance> {
+      let payload: unknown;
+      try {
+        payload = await requestJson<unknown>(baseUrls, "/v1/cloud/instance/retry", {
+          method: "POST",
+          token,
+          organizationId: orgId,
+          body: {},
+        });
+      } catch (error) {
+        // Desktop releases can reach a Den that predates explicit recovery.
+        // Fall back to the established status request so the Retry action stays
+        // safe during staggered rollouts; newer Dens still bypass the cooldown.
+        if (!(error instanceof DenApiError) || error.status !== 404) throw error;
+        payload = await requestJson<unknown>(baseUrls, "/v1/cloud/instance", {
+          method: "GET",
+          token,
+          organizationId: orgId,
+        });
+      }
+      const instance = parseCloudInstance(payload);
+      if (!instance) {
+        throw new DenApiError(500, "invalid_cloud_instance_payload", "Cloud retry response was invalid.");
       }
       return instance;
     },

@@ -13,6 +13,7 @@ import { googleWorkspaceLegacyConfigured } from "./extensions/google-workspace.j
 import { readBoundedRegularTextFile } from "./jsonc.js";
 import { runtimeStorageDir } from "./runtime-db.js";
 import {
+  ENGINE_GLOBAL_RUNTIME_CONFIG_ID,
   inspectRuntimeOpencodeConfigState,
   runtimeMcpMap,
 } from "./runtime-opencode-config-store.js";
@@ -342,8 +343,16 @@ async function inspectConnectRuntime(
   config: ServerConfig,
   options?: ConnectStateInspectionOptions,
 ): Promise<{ cloudMcpPresent: boolean; complete: boolean }> {
-  const serverCloudMcp = await readConnectCloudMcp(config);
-  if (serverCloudMcp) return { cloudMcpPresent: true, complete: true };
+  const globalInspection = await inspectRuntimeOpencodeConfigState(config, ENGINE_GLOBAL_RUNTIME_CONFIG_ID, {
+    maxBytes: options?.runtimeConfigMaxBytes,
+    signal: options?.signal,
+  });
+  if (globalInspection.status === "unreadable" || globalInspection.status === "invalid-row") {
+    return { cloudMcpPresent: false, complete: false };
+  }
+  if (Object.hasOwn(runtimeMcpMap(globalInspection.config), OPENWORK_CLOUD_MCP_NAME)) {
+    return { cloudMcpPresent: true, complete: true };
+  }
 
   const configuredMaxRows = options?.maxRuntimeRows;
   const maxRuntimeRows = typeof configuredMaxRows === "number"

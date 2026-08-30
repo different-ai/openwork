@@ -87,13 +87,12 @@ type RuntimeStatus = {
 type RuntimeStatusInput = {
   clientConnected: boolean;
   openworkServerStatus: OpenworkServerStatus;
-  loading?: boolean;
   initializing: boolean;
   reloadBusy?: boolean;
   reloadError?: string | null;
 };
 
-function resolveRuntimeStatus(input: RuntimeStatusInput): RuntimeStatus {
+export function resolveRuntimeStatus(input: RuntimeStatusInput): RuntimeStatus {
   if (input.reloadBusy) {
     return {
       variant: "loading",
@@ -104,7 +103,10 @@ function resolveRuntimeStatus(input: RuntimeStatusInput): RuntimeStatus {
   if (input.reloadError) {
     return { variant: "disconnected", label: t("system.reload_failed"), detail: input.reloadError };
   }
-  if (input.loading || (input.openworkServerStatus === "disconnected" && input.initializing)) {
+  // This row renders app-scoped facts only. Per-session loading (messages
+  // still fetching, a model verdict still pending) stays in the pane and the
+  // composer — one session's state must not paint the whole app as booting.
+  if (input.openworkServerStatus === "disconnected" && input.initializing) {
     return {
       variant: "loading",
       label: t("session.preparing_workspace"),
@@ -188,7 +190,6 @@ export type AccountStatusMenuProps = {
   showConnectionStatus: boolean;
   providerConnectedIds: string[];
   mcpConnectedCount: number;
-  loading?: boolean;
   reloadBusy?: boolean;
   reloadError?: string | null;
   openWorkConnectState?: SessionCloudMcpMaintenanceState;
@@ -283,7 +284,6 @@ export function AccountStatusMenu(props: AccountStatusMenuProps) {
     ? resolveRuntimeStatus({
       clientConnected: props.clientConnected,
       openworkServerStatus: props.openworkServerStatus,
-      loading: props.loading,
       initializing,
       reloadBusy: props.reloadBusy,
       reloadError: props.reloadError,

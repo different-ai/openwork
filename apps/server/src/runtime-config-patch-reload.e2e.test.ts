@@ -3,6 +3,8 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { buildOpenworkRuntimeConfig } from "./openwork-runtime-config.js";
+import { readGlobalRuntimeOpencodeConfig, readRuntimeOpencodeConfig } from "./runtime-opencode-config-store.js";
 import { startServer } from "./server.js";
 import type { ReloadEvent, ServerConfig } from "./types.js";
 
@@ -57,7 +59,7 @@ async function startOpenworkServer(workspaceRoot: string) {
   };
   const server = await startServer(config);
   stops.push(() => server.stop());
-  return { base: `http://127.0.0.1:${server.port}`, token: config.token };
+  return { base: `http://127.0.0.1:${server.port}`, token: config.token, config };
 }
 
 async function patchConfig(base: string, token: string, payload: Record<string, unknown>): Promise<void> {
@@ -112,5 +114,41 @@ describe("workspace config patch reload events", () => {
 
     const secondEvents = await readEvents(base, token);
     expect(secondEvents).toHaveLength(1);
+  });
+
+  test("workspace provider patches land in the global row and the injected engine file", async () => {
+    const root = await createWorkspaceRoot();
+    const { base, token, config } = await startOpenworkServer(root);
+    await patchConfig(base, token, {
+      opencode: {
+        provider: {
+          "user-lmstudio": {
+            npm: "@ai-sdk/openai-compatible",
+            options: { baseURL: "https://lmstudio.example/v1" },
+            models: { "model-a": { id: "model-a", name: "Model A" } },
+          },
+        },
+      },
+    });
+
+    // The provider must reach the ENGINE_GLOBAL row — a workspace-row write
+    // would never reach the engine because the injected file is global-only.
+    const globalRuntime = await readGlobalRuntimeOpencodeConfig(config);
+    expect(globalRuntime.provider?.["user-lmstudio"]).toMatchObject({ npm: "@ai-sdk/openai-compatible" });
+    expect((await readRuntimeOpencodeConfig(config, "ws_1")).provider).toBeUndefined();
+
+    const injected = JSON.parse(await buildOpenworkRuntimeConfig(config)) as Record<string, unknown>;
+    const providers = injected.provider as Record<string, unknown>;
+    expect(providers["user-lmstudio"]).toMatchObject({ npm: "@ai-sdk/openai-compatible" });
+
+    // The UI-facing effective config read keeps seeing the provider.
+    const read = await fetch(`${base}/workspace/ws_1/config`, { headers: auth(token) });
+    expect(read.status).toBe(200);
+    const body = await read.json() as { opencode?: { provider?: Record<string, unknown> } };
+    expect(body.opencode?.provider?.["user-lmstudio"]).toBeDefined();
+
+    // Explicit null deletes from the global row.
+    await patchConfig(base, token, { opencode: { provider: { "user-lmstudio": null } } });
+    expect((await readGlobalRuntimeOpencodeConfig(config)).provider?.["user-lmstudio"]).toBeUndefined();
   });
 });

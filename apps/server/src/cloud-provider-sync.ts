@@ -884,7 +884,7 @@ export class CloudProviderSync {
     const workspaceCleanup = await this.cleanupWorkspaceTakeovers();
     const engineWorkspace = findManagedEngineWorkspace(this.config.workspaces) ?? this.config.workspaces[0];
     const runtimeFileChanged = engineWorkspace
-      ? (await writeOpenworkRuntimeConfigFile(this.config, engineWorkspace.id)).changed
+      ? (await writeOpenworkRuntimeConfigFile(this.config)).changed
       : false;
     // Deliver credentials before disposing the current provider instances.
     // OpenCode constructs and caches SDK clients from config + auth together;
@@ -1020,7 +1020,7 @@ export class CloudProviderSync {
 
     const engineWorkspace = findManagedEngineWorkspace(this.config.workspaces) ?? this.config.workspaces[0];
     if (engineWorkspace) {
-      const fileResult = await writeOpenworkRuntimeConfigFile(this.config, engineWorkspace.id);
+      const fileResult = await writeOpenworkRuntimeConfigFile(this.config);
       this.reloadPending = this.reloadPending || providerChanged || fileResult.changed;
     }
     const authResult = await syncManagedProviderAuth({

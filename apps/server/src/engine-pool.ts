@@ -58,8 +58,8 @@ export type EnginePoolHooks = {
   engineBusy: (config: ServerConfig, workspace: WorkspaceInfo) => Promise<boolean>;
   /** Re-register runtime MCPs and reconcile cloud MCP against a fresh engine. */
   postRefreshSync: (config: ServerConfig, workspace: WorkspaceInfo) => Promise<void>;
-  /** Rebuild the engine-visible runtime config file. */
-  writeRuntimeConfigFile: (config: ServerConfig, workspaceId: string) => Promise<{ path: string }>;
+  /** Rebuild the engine-visible runtime config file (workspace-independent). */
+  writeRuntimeConfigFile: (config: ServerConfig) => Promise<{ path: string }>;
   registerTrusted: (config: ServerConfig, generation: { baseUrl: string; identity: string; isAlive: () => boolean }) => void;
   clearTrusted: (config: ServerConfig, identity: string) => void;
   spawn?: (template: EngineSpawnTemplate) => Promise<ManagedOpencodeServer>;
@@ -577,7 +577,7 @@ export class EnginePool {
     const { workspace, reason, manual, awaitPostRefreshSync, forceStandby } = request;
     // The standby reads config from disk at spawn, so make sure the file is
     // current before deciding anything.
-    await this.hooks.writeRuntimeConfigFile(this.config, workspace.id).catch(() => undefined);
+    await this.hooks.writeRuntimeConfigFile(this.config).catch(() => undefined);
     const fingerprint = await this.currentFingerprint();
     const primary = this.generations.find((entry) => entry.status === "primary") ?? null;
 

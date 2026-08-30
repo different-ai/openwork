@@ -146,7 +146,6 @@ import {
   type ModelEntitlementOption,
 } from "@/react-app/domains/connections/provider-auth/provider-policy";
 import {
-  isManagedModelAvailabilityPending,
   isOrganizationModelsEmpty,
   shouldAutoOpenUnavailableModelPicker,
 } from "@/react-app/domains/connections/provider-auth/managed-models-recovery";
@@ -1072,9 +1071,6 @@ export function SessionRoute() {
     window.addEventListener(openModelPickerEvent, handler);
     return () => window.removeEventListener(openModelPickerEvent, handler);
   }, []);
-  const selectedModelUsesCloudProvider = Boolean(
-    local.prefs.defaultModel && isCloudManagedProviderKey(local.prefs.defaultModel.providerID),
-  );
   const entitledOrgDefaultModel = useMemo(() => {
     const runtimeOptions = providerListModelEntitlementOptions(
       cloudProviderList ?? providerListQuery.data,
@@ -1098,12 +1094,6 @@ export function SessionRoute() {
   useEffect(() => {
     if (entitledOrgDefaultModel) writeStoredDefaultModel(entitledOrgDefaultModel);
   }, [entitledOrgDefaultModel]);
-  const selectedModelAvailabilityPending = isManagedModelAvailabilityPending({
-    signedIn: denAuth.isSignedIn,
-    selectedModelUsesCloudProvider,
-    cloudProviderSyncReady,
-    openWorkModelsSyncing,
-  });
   // Availability is resolved per effective model identity: the New Task
   // composer validates the global default while each conversation validates
   // its OWN remembered provider/model against the current workspace's
@@ -1206,18 +1196,22 @@ export function SessionRoute() {
     modelPicker.setOpen(true);
   }, [activeComposerTargetsSession, cloudProviderSyncReady, denAuth.isSignedIn, entitledOrgDefaultModel, modelPicker.setCompactOpen, modelPicker.setOpen, modelPicker.setQuery, modelPicker.setRecentProviderIds, organizationModelsEmpty, selectedModelUnavailableKey, selectedSessionId]);
 
+  // Optimistic model selection: a remembered model is treated as valid until
+  // the availability gate CONFIRMS it absent (selectedModelUnavailable).
+  // A merely-pending verdict (cloud sync settling, catalog reloading) never
+  // blocks task creation or paints loading chrome — if the optimism turns out
+  // wrong, the send-time re-check and the composer's model-unavailable pill
+  // surface it where the person can act on it.
   const hasUsableModel = Boolean(
     local.prefs.defaultModel &&
-      !selectedModelUnavailable &&
-      !selectedModelAvailabilityPending,
+      !selectedModelUnavailable,
   );
   const canCreateTask = Boolean(
     opencodeClient &&
       selectedWorkspaceId &&
       !loading &&
       !selectedWorkspaceError &&
-      !selectedModelUnavailable &&
-      !selectedModelAvailabilityPending,
+      !selectedModelUnavailable,
   );
 
   const {
@@ -1239,12 +1233,6 @@ export function SessionRoute() {
     : selectedModelUnavailable
       ? t("models.model_unavailable_short")
       : null;
-  const showPreparingStatus =
-    !organizationModelsEmpty &&
-    (effectiveLoading ||
-      selectedModelAvailabilityPending ||
-      (!canCreateTask && !routeError && !selectedWorkspaceError));
-
   useEffect(() => {
     if (!opencodeClient) {
       setProviders([]);
@@ -3219,7 +3207,7 @@ export function SessionRoute() {
       }
       primaryTitle={automationsRouteActive ? "Automations" : dashboardRouteActive ? "Dashboard" : undefined}
       primarySlot={automationsRouteActive ? (
-        <AutomationsPage providerCatalog={providerCatalog} />
+        <AutomationsPage providerCatalog={providerCatalog} workspaceId={selectedWorkspaceId} />
       ) : dashboardRouteActive ? (
         <WorkspaceProvider
           client={opencodeClient}
@@ -3438,7 +3426,9 @@ export function SessionRoute() {
       }
       onArchiveSession={opencodeClient ? handleArchiveSession : undefined}
       statusBar={{
-        loading: showPreparingStatus,
+        // No per-session loading state here: the account row renders only
+        // app-scoped facts. Session loading lives in the pane; an unresolved
+        // model surfaces in the composer where the person can act on it.
         reloadBusy: reloadCoordinator.reloadBusy,
         reloadError: reloadCoordinator.reloadError,
         openWorkConnectState: sessionMcpMaintenance,

@@ -6,7 +6,12 @@ import { readJsoncFile } from "./jsonc.js";
 import { opencodeConfigPath, projectPluginsDir } from "./workspace-files.js";
 import { exists } from "./utils.js";
 import { validatePluginSpec } from "./validators.js";
-import { readRuntimeOpencodeConfig, runtimePluginList, writeRuntimeOpencodeConfig } from "./runtime-opencode-config-store.js";
+import {
+  readEffectiveRuntimeOpencodeConfig,
+  readGlobalRuntimeOpencodeConfig,
+  runtimePluginList,
+  writeGlobalRuntimeOpencodeConfig,
+} from "./runtime-opencode-config-store.js";
 
 export function normalizePluginSpec(spec: string): string {
   const trimmed = spec.trim();
@@ -53,7 +58,7 @@ async function listPluginFiles(dir: string, scope: "project" | "global", workspa
 export async function listPlugins(serverConfig: ServerConfig, workspaceId: string, workspaceRoot: string, includeGlobal: boolean): Promise<{ items: PluginItem[]; loadOrder: string[] }> {
   const { data: config } = await readJsoncFile(opencodeConfigPath(workspaceRoot), {} as Record<string, unknown>, { allowInvalid: true });
   const pluginSpecs = pluginListFromConfig(config);
-  const runtimeSpecs = runtimePluginList(await readRuntimeOpencodeConfig(serverConfig, workspaceId));
+  const runtimeSpecs = runtimePluginList(await readEffectiveRuntimeOpencodeConfig(serverConfig, workspaceId));
   const items: PluginItem[] = pluginSpecs.map((spec) => ({
     spec,
     source: "config",
@@ -86,24 +91,26 @@ export async function listPlugins(serverConfig: ServerConfig, workspaceId: strin
   };
 }
 
-export async function addPlugin(serverConfig: ServerConfig, workspaceId: string, spec: string): Promise<boolean> {
+// Runtime-managed plugins are engine-global: the injected engine config file
+// is rendered from the ENGINE_GLOBAL row only, so plugin writes target it.
+export async function addPlugin(serverConfig: ServerConfig, spec: string): Promise<boolean> {
   validatePluginSpec(spec);
-  const runtimeConfig = await readRuntimeOpencodeConfig(serverConfig, workspaceId);
+  const runtimeConfig = await readGlobalRuntimeOpencodeConfig(serverConfig);
   const pluginSpecs = runtimePluginList(runtimeConfig);
   const normalized = normalizePluginSpec(spec);
   const existing = pluginSpecs.find((item) => normalizePluginSpec(item) === normalized);
   if (existing) return false;
   pluginSpecs.push(spec);
-  await writeRuntimeOpencodeConfig(serverConfig, workspaceId, (current) => ({ ...current, plugin: pluginSpecs }));
+  await writeGlobalRuntimeOpencodeConfig(serverConfig, (current) => ({ ...current, plugin: pluginSpecs }));
   return true;
 }
 
-export async function removePlugin(serverConfig: ServerConfig, workspaceId: string, name: string): Promise<boolean> {
-  const runtimeConfig = await readRuntimeOpencodeConfig(serverConfig, workspaceId);
+export async function removePlugin(serverConfig: ServerConfig, name: string): Promise<boolean> {
+  const runtimeConfig = await readGlobalRuntimeOpencodeConfig(serverConfig);
   const pluginSpecs = runtimePluginList(runtimeConfig);
   const normalized = normalizePluginSpec(name);
   const filtered = pluginSpecs.filter((item) => normalizePluginSpec(item) !== normalized);
   if (filtered.length === pluginSpecs.length) return false;
-  await writeRuntimeOpencodeConfig(serverConfig, workspaceId, (current) => ({ ...current, plugin: filtered }));
+  await writeGlobalRuntimeOpencodeConfig(serverConfig, (current) => ({ ...current, plugin: filtered }));
   return true;
 }

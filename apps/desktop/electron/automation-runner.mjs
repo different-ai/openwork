@@ -122,6 +122,30 @@ function assistantFailure(snapshot) {
   return null
 }
 
+/**
+ * Picks the assignment's target workspace.
+ *
+ * A pinned workspace must exist locally: running the Automation in whatever
+ * workspace happens to be active would silently retarget it, which is the
+ * exact bug pinning exists to prevent. Unpinned (legacy) assignments keep the
+ * historical active-workspace fallback.
+ */
+export function resolveAssignmentWorkspace(listed, pinnedWorkspaceId) {
+  const workspaces = Array.isArray(listed?.items) ? listed.items : []
+  if (pinnedWorkspaceId) {
+    const pinned = workspaces.find((item) => item?.id === pinnedWorkspaceId)
+    if (!pinned?.id) {
+      const error = new Error(`The Automation's pinned workspace is not available on this desktop`)
+      Object.defineProperty(error, "code", { value: "execution_runtime_unavailable" })
+      throw error
+    }
+    return pinned
+  }
+  const workspace = workspaces.find((item) => item?.id === listed?.activeId) ?? workspaces[0]
+  if (!workspace?.id) throw new Error("No local workspace is available")
+  return workspace
+}
+
 /** Runs the assignment as a normal visible local OpenWork thread. */
 export async function executeDesktopAutomation(assignment, options) {
   const local = await options.getLocalRuntime()
@@ -134,9 +158,7 @@ export async function executeDesktopAutomation(assignment, options) {
     { ...request, signal: options.signal },
   )
   const listed = await localRequest("/workspaces")
-  const workspaces = Array.isArray(listed?.items) ? listed.items : []
-  const workspace = workspaces.find((item) => item?.id === listed?.activeId) ?? workspaces[0]
-  if (!workspace?.id) throw new Error("No local workspace is available")
+  const workspace = resolveAssignmentWorkspace(listed, assignment.workspaceId ?? null)
   const workspaceId = String(workspace.id)
   const client = createWorkspaceSessionClient(local, workspaceId, options.fetchImpl ?? fetch)
   const created = await client.createThread({

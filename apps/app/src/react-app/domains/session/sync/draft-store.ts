@@ -375,11 +375,20 @@ export function useSessionDraftState(
     () => sessionDraftScopeKey(scopeId, workspaceId, sessionId),
     [scopeId, workspaceId, sessionId],
   );
-  const snapshot = useSyncExternalStore(
+  const serializedSnapshot = useSyncExternalStore(
     subscribeBrowserDraftStore,
-    () => key ? getSessionDraft(scopeId, workspaceId, sessionId) : null,
-    () => null,
+    () => {
+      const current = key ? getSessionDraft(scopeId, workspaceId, sessionId) : null;
+      return current ? JSON.stringify(current) : "";
+    },
+    () => "",
   );
+  const snapshot = useMemo(() => {
+    if (!serializedSnapshot) return null;
+    const parsed: unknown = JSON.parse(serializedSnapshot);
+    if (!isRecord(parsed) || typeof parsed.text !== "string" || !isPromptMode(parsed.mode)) return null;
+    return { text: parsed.text, mode: parsed.mode };
+  }, [serializedSnapshot]);
 
   const save = useCallback(
     (nextSnapshot: SessionDraftSnapshot) => saveSessionDraft(scopeId, workspaceId, sessionId, nextSnapshot),

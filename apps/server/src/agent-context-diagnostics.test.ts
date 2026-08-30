@@ -38,6 +38,7 @@ import {
   syncAllWorkspacesRuntimeMcpToEngine,
 } from "./server.js";
 import {
+  writeGlobalRuntimeOpencodeConfig,
   writeRuntimeOpencodeConfig,
   type RuntimeOpencodeConfig,
 } from "./runtime-opencode-config-store.js";
@@ -261,7 +262,18 @@ async function createFixture(options?: {
     logRequests: false,
   };
   if (options?.withRuntime !== false) {
-    await writeRuntimeOpencodeConfig(config, workspace.id, () => options?.runtime ?? diagnosticRuntimeConfig());
+    const runtime = options?.runtime ?? diagnosticRuntimeConfig();
+    await writeRuntimeOpencodeConfig(config, workspace.id, () => runtime);
+    // Plugin specs and the default agent are engine-global: the injected
+    // engine config file is rendered from the ENGINE_GLOBAL row only.
+    const { plugin, default_agent: defaultAgent } = runtime;
+    if (plugin !== undefined || defaultAgent !== undefined) {
+      await writeGlobalRuntimeOpencodeConfig(config, (current) => ({
+        ...current,
+        ...(plugin !== undefined ? { plugin } : {}),
+        ...(defaultAgent !== undefined ? { default_agent: defaultAgent } : {}),
+      }));
+    }
   }
   return { root, workspaceRoot, workspace, config };
 }

@@ -9,6 +9,12 @@ import { createInstanceFetch, fetchWithConnectRetry, type FetchLike } from "./in
 
 type InstanceStatus = "provisioning" | "waking" | "ready" | "failed"
 type NonReadyStatus = "provisioning" | "waking" | "failed"
+type StartupFailure = {
+  code: string
+  stage: "provisioning" | "recovery" | "runtime"
+  reference: string
+  occurredAt: string
+}
 
 type ResolvePayload = {
   status: InstanceStatus
@@ -16,11 +22,12 @@ type ResolvePayload = {
   clientToken: string | null
   hostToken: string | null
   expiresAt: string | null
+  failure?: StartupFailure
 }
 
 type InstanceResolution =
   | { kind: "ready"; url: string; clientToken: string; hostToken: string; expiresAtMs: number }
-  | { kind: "not_ready"; status: NonReadyStatus }
+  | { kind: "not_ready"; status: NonReadyStatus; failure?: StartupFailure }
   | { kind: "error"; statusCode: number; error: string }
 
 type ReadyCacheEntry = {
@@ -141,6 +148,17 @@ function readStatus(value: unknown): InstanceStatus | null {
   return null
 }
 
+function readStartupFailure(value: unknown): StartupFailure | null {
+  if (!isRecord(value)) return null
+  const code = typeof value.code === "string" ? value.code.trim() : ""
+  const stage = value.stage
+  const reference = typeof value.reference === "string" ? value.reference.trim() : ""
+  const occurredAt = typeof value.occurredAt === "string" ? value.occurredAt : ""
+  if (!code || !reference || !Number.isFinite(Date.parse(occurredAt))) return null
+  if (stage !== "provisioning" && stage !== "recovery" && stage !== "runtime") return null
+  return { code, stage, reference, occurredAt }
+}
+
 function readResolvePayload(value: unknown): ResolvePayload | null {
   if (!isRecord(value)) {
     return null
@@ -155,7 +173,8 @@ function readResolvePayload(value: unknown): ResolvePayload | null {
     return null
   }
 
-  return { status, url, clientToken, hostToken, expiresAt }
+  const failure = readStartupFailure(value.failure)
+  return { status, url, clientToken, hostToken, expiresAt, ...(failure ? { failure } : {}) }
 }
 
 function isUsableUpstreamUrl(value: string) {
@@ -169,7 +188,7 @@ function isUsableUpstreamUrl(value: string) {
 
 function parseResolvedInstance(payload: ResolvePayload, now: number): InstanceResolution {
   if (payload.status !== "ready") {
-    return { kind: "not_ready", status: payload.status }
+    return { kind: "not_ready", status: payload.status, ...(payload.failure ? { failure: payload.failure } : {}) }
   }
 
   const expiresAtMs = payload.expiresAt ? Date.parse(payload.expiresAt) : Number.NaN
@@ -623,7 +642,13 @@ async function handleProxy(input: {
 
   const resolution = await resolveInstance({ config: input.config, cache: input.cache, bearer })
   if (resolution.kind === "not_ready") {
-    return jsonResponse({ status: resolution.status })
+    const response = jsonResponse({
+      error: "workspace_not_ready",
+      status: resolution.status,
+      ...(resolution.failure ? { failure: resolution.failure } : {}),
+    }, 503)
+    response.headers.set("Retry-After", "5")
+    return response
   }
   if (resolution.kind === "error") {
     return jsonResponse({ error: resolution.error }, resolution.statusCode)

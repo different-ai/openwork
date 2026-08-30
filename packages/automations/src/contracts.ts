@@ -9,10 +9,16 @@ function canonical(value: unknown): string {
   return JSON.stringify(value)
 }
 
-/** Portable stable digest; persistence may additionally use a cryptographic digest. */
+/**
+ * Portable stable digest; persistence may additionally use a cryptographic digest.
+ *
+ * Callers must include `workspaceId` only when it is set: a pinned workspace is
+ * behavior-changing, but records created before pinning existed must keep their
+ * digests byte-identical.
+ */
 export function automationRevisionDigest(
   revision: Pick<AutomationRevision, "instructions" | "schedule" | "model" | "maximumRuntimeMs">
-    & Partial<Pick<AutomationRevision, "action" | "executionTarget">>,
+    & Partial<Pick<AutomationRevision, "action" | "executionTarget" | "workspaceId">>,
 ): string {
   const input = canonical(revision)
   let left = 0x811c9dc5

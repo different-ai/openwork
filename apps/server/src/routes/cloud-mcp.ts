@@ -1,5 +1,6 @@
 import type { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
 import {
+  isTrustedCloudMcpEndpointForGlobalPersist,
   OPENWORK_CLOUD_MCP_NAME,
   readOpenworkCloudMcpHealth,
   reconcileOpenworkCloudMcp,
@@ -156,6 +157,14 @@ export function registerCloudMcpRoutes(options: RegisterCloudMcpRoutesOptions): 
       throw new ApiError(400, "invalid_payload", "JSON object body is required");
     }
     assertStrictBody(body, workspace);
+    // Reconcile persists the account-global desired config (it reconfigures
+    // Connect for every workspace). Collaborator scope suffices only for
+    // trusted endpoints; anything else needs the owner.
+    const configBody = isRecord(body.config) ? body.config : body;
+    const endpointUrl = typeof configBody.url === "string" ? configBody.url : "";
+    if (!await isTrustedCloudMcpEndpointForGlobalPersist(endpointUrl)) {
+      requireClientScope(ctx, "owner");
+    }
     const health = await reconcileOpenworkCloudMcp({
       config,
       workspace,

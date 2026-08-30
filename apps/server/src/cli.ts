@@ -23,6 +23,8 @@ import {
 import { ensureLocalWorkspaceFiles } from "./workspace-init.js";
 import { findManagedEngineWorkspace } from "./workspaces.js";
 import { keepOpenworkRuntimeConfigFileFresh, writeOpenworkRuntimeConfigFile } from "./openwork-runtime-config.js";
+import { migrateOpenworkCloudMcpRuntimeConfig } from "./cloud-mcp-health.js";
+import { migrateWorkspaceRuntimeConfigToEngineGlobal } from "./runtime-opencode-config-store.js";
 import { resolveOpencodeModelsUrl } from "./opencode-models-url.js";
 import { startWorkerActivityHeartbeat } from "./worker-activity-heartbeat.js";
 import pkg from "../package.json" with { type: "json" };
@@ -48,6 +50,8 @@ let enginePool: EnginePool | null = null;
 
 if (!config.readOnly) {
   await ensureLocalWorkspaceFiles(config.workspaces);
+  await migrateOpenworkCloudMcpRuntimeConfig(config);
+  await migrateWorkspaceRuntimeConfigToEngineGlobal(config);
 }
 
 // Bind the HTTP server before spawning the engine: serve-node may fall back
@@ -68,8 +72,8 @@ if (!config.opencodeBaseUrl && process.env.OPENWORK_MANAGE_OPENCODE === "1") {
     // Server-managed config file: the engine re-reads it from disk on every
     // instance rebuild, and keepOpenworkRuntimeConfigFileFresh synchronizes it
     // on every runtime-DB write — so disposes always pick up current state.
-    const { path: runtimeConfigPath } = await writeOpenworkRuntimeConfigFile(config, workspace.id);
-    keepOpenworkRuntimeConfigFileFresh(config, workspace.id);
+    const { path: runtimeConfigPath } = await writeOpenworkRuntimeConfigFile(config);
+    keepOpenworkRuntimeConfigFileFresh(config);
     const managedOpencodeCwd = process.env.OPENWORK_MANAGED_OPENCODE_CWD?.trim() || workspace.path;
     await mkdir(managedOpencodeCwd, { recursive: true });
     const opencodeModelsUrl = await resolveOpencodeModelsUrl();
