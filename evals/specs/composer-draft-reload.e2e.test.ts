@@ -38,27 +38,34 @@ test.skipIf(!e2eTestsEnabled)(title, { timeout: 600_000 }, async ({ evidence, pl
     { timeoutMs: 10_000, label: "composer draft persisted" },
   );
 
-  const previousTimeOrigin = await evalIn(app, "performance.timeOrigin");
-  await evalIn(app, "location.reload(); true").catch(() => undefined);
-  await waitFor(app, `performance.timeOrigin !== ${JSON.stringify(previousTimeOrigin)}`, {
-    timeoutMs: 30_000,
-    label: "renderer reloaded",
-  });
-  await new Promise((resolve) => setTimeout(resolve, 2_000));
+  const revisionBeforeReloads = await evalIn(app, `JSON.parse(
+    localStorage.getItem("openwork.session-drafts.v2") ?? "{}"
+  ).nextRevision`);
+  for (let reload = 1; reload <= 3; reload += 1) {
+    const previousTimeOrigin = await evalIn(app, "performance.timeOrigin");
+    await evalIn(app, "location.reload(); true").catch(() => undefined);
+    await waitFor(app, `performance.timeOrigin !== ${JSON.stringify(previousTimeOrigin)}`, {
+      timeoutMs: 30_000,
+      label: `renderer reload ${reload}`,
+    });
+    await waitFor(app, `document.querySelector("#root")?.childElementCount > 0
+      && document.body.innerText.trim().length > 40
+      && Boolean(document.querySelector('[contenteditable="true"][data-lexical-editor="true"]'))`, {
+      timeoutMs: 30_000,
+      label: `stable composer after reload ${reload}`,
+    });
 
-  const rendererState = await evalIn(app, `({
-    rootChildren: document.querySelector("#root")?.childElementCount ?? 0,
-    bodyTextLength: document.body.innerText.trim().length,
-  })`);
-  const composerState = await readComposerState(app);
-
-  expect(rendererState.rootChildren).toBeGreaterThan(0);
-  expect(rendererState.bodyTextLength).toBeGreaterThan(40);
-  expect(composerState.composerEditable).toBe(true);
-  expect(composerState.draftText.trim()).toBe(persistedDraft);
+    const composerState = await readComposerState(app);
+    expect(composerState.composerEditable).toBe(true);
+    expect(composerState.draftText.trim()).toBe(persistedDraft);
+  }
+  const revisionAfterReloads = await evalIn(app, `JSON.parse(
+    localStorage.getItem("openwork.session-drafts.v2") ?? "{}"
+  ).nextRevision`);
+  expect(revisionAfterReloads).toBe(revisionBeforeReloads);
   evidence.recordAssertionEvidence(
     "A persisted composer draft survives renderer reload without unmounting the app",
-    `Session ${sessionId} reloaded with a non-empty root and preserved the exact draft text.`,
+    `Session ${sessionId} survived three reloads with an editable composer, the exact draft text, and no draft revision churn.`,
     true,
   );
 });

@@ -21,6 +21,11 @@ test("persisted composer draft hydration is idempotent", () => {
   setMentions("session-a", { "@notes": "file" });
   setPasteParts("session-a", [{ id: "paste-a", label: "Pasted text", text: "notes", lines: 1 }]);
 
+  const notificationsBeforeHydration = notifications;
+  const observedSessions: unknown[] = [];
+  const unsubscribeObserved = useComposerStateStore.subscribe((state) => {
+    observedSessions.push(state.sessions["session-a"]);
+  });
   hydrateDraft("session-a", "persisted draft");
   const hydratedState = useComposerStateStore.getState();
   const notificationsAfterHydration = notifications;
@@ -33,7 +38,10 @@ test("persisted composer draft hydration is idempotent", () => {
     pasteParts: [],
     revertMessageId: null,
   });
+  expect(notificationsAfterHydration).toBe(notificationsBeforeHydration + 1);
+  expect(observedSessions).toEqual([hydratedState.sessions["session-a"]]);
   expect(useComposerStateStore.getState()).toBe(hydratedState);
   expect(notifications).toBe(notificationsAfterHydration);
+  unsubscribeObserved();
   unsubscribe();
 });
