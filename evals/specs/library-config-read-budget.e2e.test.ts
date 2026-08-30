@@ -126,31 +126,47 @@ test(title, { timeout: 300_000 }, async ({ evidence }) => {
   expect(typeof settledSkillReads).toBe("number");
   await evalIn(app, `(() => {
     window.__libraryDetailContentMissing = false;
+    window.__libraryPolicyTick = 0;
     window.__libraryDetailWatcher = window.setInterval(() => {
       if (!document.body.innerText.includes("known-good smoke prompt")) {
         window.__libraryDetailContentMissing = true;
       }
     }, 50);
+    window.__libraryPolicyWatcher = window.setInterval(() => {
+      window.__libraryPolicyTick += 1;
+      window.__openworkApplyDesktopConfig?.({
+        allowZenModel: window.__libraryPolicyTick % 2 === 0,
+      });
+    }, 100);
     return true;
   })()`);
   await new Promise((resolve) => setTimeout(resolve, IDLE_WINDOW_MS));
   const detailResult = await evalIn(app, `(() => {
     window.clearInterval(window.__libraryDetailWatcher);
+    window.clearInterval(window.__libraryPolicyWatcher);
     return {
       skillReads: window.__librarySkillReads,
       contentMissing: window.__libraryDetailContentMissing,
       contentVisible: document.body.innerText.includes("known-good smoke prompt"),
+      policyTicks: window.__libraryPolicyTick,
+      stable: window.__librarySkillReads === ${Number(settledSkillReads)}
+        && !window.__libraryDetailContentMissing
+        && document.body.innerText.includes("known-good smoke prompt")
+        && window.__libraryPolicyTick > 0,
     };
   })()`);
-  const expectedDetailResult = {
-    skillReads: settledSkillReads,
-    contentMissing: false,
-    contentVisible: true,
-  };
+  const detailStable = JSON.stringify(detailResult).includes('"stable":true');
   evidence.recordAssertionEvidence(
     "Open Library skill details stay visible without refetching",
     `Settled reads: ${String(settledSkillReads)}; observed after ${IDLE_WINDOW_MS / 1000}s: ${JSON.stringify(detailResult)}.`,
-    JSON.stringify(detailResult) === JSON.stringify(expectedDetailResult),
+    detailStable,
   );
-  expect(detailResult).toEqual(expectedDetailResult);
+  expect(detailResult).toMatchObject({
+    skillReads: settledSkillReads,
+    contentMissing: false,
+    contentVisible: true,
+    stable: true,
+  });
+  expect(detailResult).toMatchObject({ policyTicks: expect.any(Number) });
+  expect(detailResult).not.toMatchObject({ policyTicks: 0 });
 });
