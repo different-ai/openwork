@@ -876,6 +876,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
     scopeKey: string;
     snapshot: typeof persistedDraftSnapshot;
   } | null>(null);
+  const pendingHydratedDraftRef = useRef<{ scopeKey: string; text: string } | null>(null);
 
   // Layout timing is intentional: an account/org boundary must replace the
   // previous scope's in-memory Zustand draft before the browser can paint it.
@@ -903,6 +904,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
     for (const attachment of getComposerAttachments(currentState, props.sessionId)) {
       revokeAttachmentPreview(attachment);
     }
+    pendingHydratedDraftRef.current = { scopeKey: persistedDraftKey, text: nextDraft };
     hydrateComposerDraft(props.sessionId, nextDraft);
   }, [hydrateComposerDraft, persistedDraftKey, persistedDraftSnapshot, props.sessionId]);
   const inputHistory = useComposerStateStore((state) => getComposerHistory(state, props.sessionId));
@@ -1895,9 +1897,15 @@ export function SessionSurface(props: SessionSurfaceProps) {
 
   useEffect(() => {
     const nextDraft = buildDraft(draft, attachments);
-    persistDraft({ text: persistableComposerDraftText(nextDraft.text), mode: nextDraft.mode });
+    const persistableText = persistableComposerDraftText(nextDraft.text);
+    const pendingHydration = pendingHydratedDraftRef.current;
+    if (pendingHydration?.scopeKey === persistedDraftKey) {
+      pendingHydratedDraftRef.current = null;
+      if (persistableText !== pendingHydration.text) return;
+    }
+    persistDraft({ text: persistableText, mode: nextDraft.mode });
     props.onDraftChange(nextDraft);
-  }, [attachments, buildDraft, draft, persistDraft, props.onDraftChange]);
+  }, [attachments, buildDraft, draft, persistDraft, persistedDraftKey, props.onDraftChange]);
 
   const handleAttachFiles = useCallback((files: File[]) => {
     if (!props.attachmentsEnabled) {
