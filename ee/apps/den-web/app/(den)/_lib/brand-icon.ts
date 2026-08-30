@@ -36,7 +36,12 @@ const SIMPLE_ICON_SLUG_BY_APEX: Record<string, string> = {
 };
 
 export function safeBrandImageUrl(value?: string): string | undefined {
-  const trimmed = value?.trim();
+  if (!value) return undefined;
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if (code <= 31 || (code >= 127 && code <= 159) || code === 92) return undefined;
+  }
+  const trimmed = value.trim();
   if (!trimmed) return undefined;
   if (trimmed.startsWith("/") && !trimmed.startsWith("//")) return trimmed;
   try {

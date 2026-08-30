@@ -3,7 +3,9 @@ import {
   createInferenceBearerKey,
   INFERENCE_BEARER_KEY_RANDOM_BYTES,
   inferenceBearerKeyLookupDigest,
+  inferenceBearerKeyLookupDigests,
   inferenceBearerKey,
+  inferenceBearerKeyStorageDigest,
   legacyInferenceBearerKeyLookupDigest,
 } from "./inference-bearer-key"
 
@@ -31,5 +33,15 @@ describe("inference bearer keys", () => {
   test("retains lookup compatibility for previously issued keys", async () => {
     expect(await legacyInferenceBearerKeyLookupDigest(inferenceBearerKey("ow_inf_test")))
       .toBe("7ec741b641b37c90e595b382831e2eea8d8a359e99b90b81031ffc81a0045c28")
+  })
+
+  test("keeps new writes readable by SHA-256-only deployments during rollout", async () => {
+    const key = inferenceBearerKey("ow_inf_test")
+    const hmacDigest = await inferenceBearerKeyLookupDigest(key)
+    const legacyDigest = await legacyInferenceBearerKeyLookupDigest(key)
+
+    expect(hmacDigest).not.toBe(legacyDigest)
+    expect(await inferenceBearerKeyStorageDigest(key)).toBe(legacyDigest)
+    expect(await inferenceBearerKeyLookupDigests(key)).toEqual([hmacDigest, legacyDigest])
   })
 })

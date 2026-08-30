@@ -13,8 +13,8 @@ import {
 import { createDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
 import {
   createInferenceBearerKey,
-  inferenceBearerKeyLookupDigest,
   inferenceBearerKeyPrefix,
+  inferenceBearerKeyStorageDigest,
   type InferenceBearerKey,
 } from "@openwork-ee/utils/inference-bearer-key"
 import {
@@ -145,7 +145,7 @@ async function createMemberInferenceKey(input: { organizationId: OrgId; memberId
     organization_id: input.organizationId,
     org_membership_id: input.memberId,
     name: "OpenWork Models",
-    key_hash: await inferenceBearerKeyLookupDigest(key),
+    key_hash: await inferenceBearerKeyStorageDigest(key),
     key_prefix: inferenceBearerKeyPrefix(key),
     status: "active",
   })

@@ -3,6 +3,7 @@ import { describe, expect, test } from "bun:test";
 import { getImportPluginRoute } from "../app/(den)/_lib/den-org";
 import {
   clearPluginImportDraft,
+  loadPluginImportDraft,
   minimizePluginImportDraft,
   normalizePublicGitHubPluginUrl,
   parsePluginImportPreview,
@@ -63,11 +64,11 @@ describe("plugin import flow", () => {
     }
   });
 
-  test("persists only selected non-sensitive import metadata", () => {
+  test("persists and migrates selected non-sensitive import metadata across fresh reloads", () => {
     const sourceDraft: PluginImportDraft = {
       version: 1,
-      authType: "oauth",
-      credentialMode: "per_member",
+      authType: "none",
+      credentialMode: "shared",
       githubUrl: "https://github.com/acme/plugin/tree/main/sales",
       preview: {
         repositoryFullName: "acme/plugin",
@@ -101,6 +102,7 @@ describe("plugin import flow", () => {
       configurable: true,
       value: {
         sessionStorage: {
+          getItem: (key: string) => storedValues.get(key) ?? null,
           setItem: (key: string, value: string) => storedValues.set(key, value),
           removeItem: (key: string) => storedValues.delete(key),
         },
@@ -109,9 +111,29 @@ describe("plugin import flow", () => {
     try {
       savePluginImportDraft(sourceDraft);
       const persisted = [...storedValues.values()][0] ?? "";
-      expect(persisted).not.toContain("authType");
-      expect(persisted).not.toContain("credentialMode");
+      expect(persisted).toContain('"authType":"none"');
+      expect(persisted).toContain('"credentialMode":"shared"');
       expect(persisted).not.toContain("mcp.example.com");
+      expect(loadPluginImportDraft()).toMatchObject({
+        authType: "none",
+        credentialMode: "shared",
+      });
+
+      storedValues.set("openwork.plugin-import-draft.v1", JSON.stringify({
+        version: draft.version,
+        githubUrl: draft.githubUrl,
+        preview: draft.preview,
+        selectedServerKeys: draft.selectedServerKeys,
+        selectedSkillKeys: draft.selectedSkillKeys,
+      }));
+      expect(loadPluginImportDraft()).toMatchObject({
+        authType: "oauth",
+        credentialMode: "per_member",
+        githubUrl: draft.githubUrl,
+        selectedServerKeys: ["crm"],
+        selectedSkillKeys: ["research"],
+      });
+      expect(storedValues.has("openwork.plugin-import-draft.v1")).toBe(true);
       clearPluginImportDraft();
     } finally {
       if (originalWindow) Object.defineProperty(globalThis, "window", originalWindow);

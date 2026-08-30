@@ -1016,7 +1016,7 @@ test("public OAuth callback scopes the signed connection lookup to its organizat
   expect(body).toEqual({ error: "invalid_request", message: "Unknown authorization transaction." })
 })
 
-test("public OAuth callback validates state and renders a safe provider-denial diagnostic", async () => {
+test("public OAuth callback accepts a signed pre-hash binding and renders a safe provider-denial diagnostic", async () => {
   const issuer = "https://identity.example.test/tenant"
   await db
     .update(schema.ExternalMcpConnectionTable)
@@ -1041,11 +1041,11 @@ test("public OAuth callback validates state and renders a safe provider-denial d
     organizationId,
     orgMembershipId: memberId,
     providerId: seededConnectionId(),
-    binding: externalMcpIdentityBinding({
-      url: "http://127.0.0.1:9/mcp",
-      authType: "oauth",
-      credentialMode: "per_member",
-    }),
+    binding: Buffer.from(JSON.stringify([
+      "http://127.0.0.1:9/mcp",
+      "oauth",
+      "per_member",
+    ])).toString("base64url"),
     version: 2,
     callbackMode: "shared-v1",
     authorizationServerIssuer: issuer,

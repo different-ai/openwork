@@ -2,8 +2,7 @@ import { timingSafeEqual } from "node:crypto"
 import { and, eq, inArray, isNull } from "@openwork-ee/den-db/drizzle"
 import { InferenceKeyTable, InferenceOrgUpstreamProviderKeyTable, MemberTable } from "@openwork-ee/den-db"
 import {
-  inferenceBearerKeyLookupDigest,
-  legacyInferenceBearerKeyLookupDigest,
+  inferenceBearerKeyLookupDigests,
   type InferenceBearerKey,
 } from "@openwork-ee/utils/inference-bearer-key"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
@@ -16,14 +15,13 @@ export function constantTimeEquals(a: string, b: string) {
 }
 
 export async function findActiveInferenceKey(key: InferenceBearerKey) {
-  const keyHash = await inferenceBearerKeyLookupDigest(key)
-  const legacyKeyHash = await legacyInferenceBearerKeyLookupDigest(key)
+  const keyHashes = await inferenceBearerKeyLookupDigests(key)
   const [row] = await db
     .select({ inferenceKey: InferenceKeyTable })
     .from(InferenceKeyTable)
     .innerJoin(MemberTable, eq(InferenceKeyTable.org_membership_id, MemberTable.id))
     .where(and(
-      inArray(InferenceKeyTable.key_hash, [keyHash, legacyKeyHash]),
+      inArray(InferenceKeyTable.key_hash, keyHashes),
       eq(InferenceKeyTable.status, "active"),
       eq(MemberTable.organizationId, InferenceKeyTable.organization_id),
       isNull(MemberTable.removedAt),

@@ -38,6 +38,7 @@ import {
 } from "../../middleware/index.js"
 import { emptyResponse, forbiddenSchema, htmlResponse, invalidRequestSchema, jsonResponse, unauthorizedSchema } from "../../openapi.js"
 import { createOAuthStateToken, verifyOAuthStateToken } from "../../capability-sources/generic-oauth.js"
+import { matchesLegacyExternalMcpOAuthStateIdentityBinding } from "../../capability-sources/external-mcp-oauth-state-identity.js"
 import {
   abandonLegacyExternalMcpAuth,
   abandonExternalMcpAuth,
@@ -1311,7 +1312,9 @@ async function handleExternalMcpOAuthCallback(input: {
       || !Array.isArray(discovery.resourceMetadata.authorization_servers)
       || discovery.resourceMetadata.authorization_servers.length <= 1)
   if (
-    statePayload.binding !== externalMcpIdentityBinding(connection)
+    (statePayload.binding === undefined
+      || (statePayload.binding !== externalMcpIdentityBinding(connection)
+        && !matchesLegacyExternalMcpOAuthStateIdentityBinding(connection, statePayload.binding)))
     || callbackMode !== (connection.oauthConfiguration?.callbackMode ?? "legacy-v1")
     || (statePayload.version === 2
       && (statePayload.authorizationServerIssuer ?? null)

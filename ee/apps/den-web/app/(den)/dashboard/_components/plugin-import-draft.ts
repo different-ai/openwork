@@ -47,7 +47,6 @@ const CREDENTIAL_QUERY_KEYS = new Set([
   "secret",
   "token",
 ]);
-let volatileImportOptions: Pick<PluginImportDraft, "authType" | "credentialMode"> | null = null;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
@@ -140,6 +139,12 @@ function parseStoredDraft(value: unknown): PluginImportDraft | null {
   if (!isRecord(value) || value.version !== 1 || typeof value.githubUrl !== "string" || !isRecord(value.preview)) {
     return null;
   }
+  // Older version-one drafts omitted these fields. Default them to OAuth with
+  // per-member credentials so a reload never broadens credential sharing.
+  const authType = value.authType === undefined ? "oauth" : value.authType;
+  const credentialMode = value.credentialMode === undefined ? "per_member" : value.credentialMode;
+  if (authType !== "oauth" && authType !== "none") return null;
+  if (credentialMode !== "per_member" && credentialMode !== "shared") return null;
   if (!Array.isArray(value.selectedServerKeys) || !value.selectedServerKeys.every((entry) => typeof entry === "string")) return null;
   if (!Array.isArray(value.selectedSkillKeys) || !value.selectedSkillKeys.every((entry) => typeof entry === "string")) return null;
 
@@ -149,8 +154,8 @@ function parseStoredDraft(value: unknown): PluginImportDraft | null {
     if (preview.servers.some((server) => server.url !== null)) return null;
     return {
       version: 1,
-      authType: volatileImportOptions?.authType ?? "oauth",
-      credentialMode: volatileImportOptions?.credentialMode ?? "per_member",
+      authType,
+      credentialMode,
       githubUrl,
       preview,
       selectedServerKeys: value.selectedServerKeys,
@@ -213,21 +218,10 @@ export function minimizePluginImportDraft(draft: PluginImportDraft): PluginImpor
 
 export function savePluginImportDraft(draft: PluginImportDraft): void {
   const minimized = minimizePluginImportDraft(draft);
-  volatileImportOptions = {
-    authType: minimized.authType,
-    credentialMode: minimized.credentialMode,
-  };
-  window.sessionStorage.setItem(STORAGE_KEY, JSON.stringify({
-    version: minimized.version,
-    githubUrl: minimized.githubUrl,
-    preview: minimized.preview,
-    selectedServerKeys: minimized.selectedServerKeys,
-    selectedSkillKeys: minimized.selectedSkillKeys,
-  }));
+  window.sessionStorage.setItem(STORAGE_KEY, JSON.stringify(minimized));
 }
 
 export function clearPluginImportDraft(): void {
-  volatileImportOptions = null;
   if (typeof window !== "undefined") window.sessionStorage.removeItem(STORAGE_KEY);
 }
 

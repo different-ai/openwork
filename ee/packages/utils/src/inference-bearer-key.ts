@@ -37,6 +37,22 @@ export async function legacyInferenceBearerKeyLookupDigest(key: InferenceBearerK
   return Buffer.from(digest).toString("hex")
 }
 
+/**
+ * Storage digest kept compatible with SHA-256-only readers during the staged
+ * HMAC rollout. Switch this only after old inference deployments and rollback
+ * versions have been retired.
+ */
+export async function inferenceBearerKeyStorageDigest(key: InferenceBearerKey): Promise<string> {
+  return legacyInferenceBearerKeyLookupDigest(key)
+}
+
+export async function inferenceBearerKeyLookupDigests(key: InferenceBearerKey): Promise<string[]> {
+  return Promise.all([
+    inferenceBearerKeyLookupDigest(key),
+    legacyInferenceBearerKeyLookupDigest(key),
+  ])
+}
+
 export function inferenceBearerKeyPrefix(key: InferenceBearerKey): string {
   return key.value.slice(0, 16)
 }
