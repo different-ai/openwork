@@ -9,7 +9,7 @@ const requirements: TestNeeds = { optIn: ["OPENWORK_EVAL_E2E_TESTS"] };
 const missingRequirements = unmetNeeds(requirements, process.env);
 const title = missingRequirements.length > 0
   ? `library config read budget skipped — needs: ${missingRequirements.join(", ")}`
-  : "an idle Library page keeps opencode-config reads bounded";
+  : "an idle Library page keeps config reads bounded and skill details stable";
 const repoRoot = fileURLToPath(new URL("../..", import.meta.url));
 
 const IDLE_WINDOW_MS = 20_000;
@@ -32,11 +32,15 @@ test(title, { timeout: 300_000 }, async () => {
   const installed = await evalIn(app, `(() => {
     if (window.__opencodeConfigReads !== undefined) return true;
     window.__opencodeConfigReads = 0;
+    window.__librarySkillReads = 0;
     const originalFetch = window.fetch;
     window.fetch = function (...args) {
       const target = typeof args[0] === "string" ? args[0] : args[0]?.url;
       if (typeof target === "string" && target.includes("/opencode-config")) {
         window.__opencodeConfigReads += 1;
+      }
+      if (typeof target === "string" && target.includes("/skills/browser-automation")) {
+        window.__librarySkillReads += 1;
       }
       return originalFetch.apply(this, args);
     };
@@ -94,4 +98,48 @@ test(title, { timeout: 300_000 }, async () => {
     `window.location.hash.includes("/settings/extensions")`,
   );
   expect(stillOnLibrary).toBe(true);
+
+  // Opening a local skill reads its body once. Unrelated server health ticks
+  // must not recreate the Library's derived arrays/callback and repeatedly
+  // clear + reload the detail body.
+  const openedSkill = await evalIn(app, `(() => {
+    const skill = [...document.querySelectorAll("button")]
+      .find((button) => button.textContent?.includes("browser-automation"));
+    if (!skill) return false;
+    skill.click();
+    return true;
+  })()`);
+  expect(openedSkill).toBe(true);
+  await waitFor(
+    app,
+    `window.location.hash.includes("skill%3Abrowser-automation")
+      && document.body.innerText.includes("known-good smoke prompt")`,
+    { timeoutMs: 30_000, label: "browser automation skill detail" },
+  );
+
+  const settledSkillReads = await evalIn(app, `window.__librarySkillReads`);
+  expect(typeof settledSkillReads).toBe("number");
+  await evalIn(app, `(() => {
+    window.__libraryDetailContentMissing = false;
+    window.__libraryDetailWatcher = window.setInterval(() => {
+      if (!document.body.innerText.includes("known-good smoke prompt")) {
+        window.__libraryDetailContentMissing = true;
+      }
+    }, 50);
+    return true;
+  })()`);
+  await new Promise((resolve) => setTimeout(resolve, IDLE_WINDOW_MS));
+  const detailResult = await evalIn(app, `(() => {
+    window.clearInterval(window.__libraryDetailWatcher);
+    return {
+      skillReads: window.__librarySkillReads,
+      contentMissing: window.__libraryDetailContentMissing,
+      contentVisible: document.body.innerText.includes("known-good smoke prompt"),
+    };
+  })()`);
+  expect(detailResult).toEqual({
+    skillReads: settledSkillReads,
+    contentMissing: false,
+    contentVisible: true,
+  });
 });
