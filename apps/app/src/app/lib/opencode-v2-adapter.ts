@@ -741,7 +741,7 @@ export function createClientV2(
       const modelResult = await request(
         "POST",
         `/api/session/${encodeURIComponent(parameters.sessionID)}/model`,
-        { providerID: parameters.model.providerID, id: parameters.model.modelID },
+        { model: { providerID: parameters.model.providerID, id: parameters.model.modelID } },
         options?.signal,
       );
       if (!modelResult.response.ok) return failedResult(modelResult);
