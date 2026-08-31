@@ -499,11 +499,13 @@ export function DesktopConfigProvider({ children }: DesktopConfigProviderProps) 
     };
   }, [applyDesktopConfigActions]);
 
+  const configRef = useRef(config);
+  configRef.current = config;
+  const checkRestriction = useCallback<DesktopAppRestrictionChecker>(
+    ({ restriction }) => checkDesktopAppRestriction({ config: configRef.current, restriction }),
+    [],
+  );
   const value = useMemo<DesktopConfigStore>(() => {
-    // Bind the checker to the latest `config` so callers see the most
-    // recent org restrictions without having to recompute every render.
-    const checkRestriction: DesktopAppRestrictionChecker = ({ restriction }) =>
-      checkDesktopAppRestriction({ config, restriction });
     return {
       config,
       freshConfigStatus,
@@ -513,7 +515,7 @@ export function DesktopConfigProvider({ children }: DesktopConfigProviderProps) 
       checkRestriction,
       connectPolicySync,
     };
-  }, [config, freshConfigStatus, loading, refresh, refreshFresh, connectPolicySync]);
+  }, [checkRestriction, config, freshConfigStatus, loading, refresh, refreshFresh, connectPolicySync]);
 
   return (
     <DesktopConfigContext.Provider value={value}>
