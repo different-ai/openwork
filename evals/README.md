@@ -156,65 +156,55 @@ endpoint without creating test evidence.
 
 ## Worlds
 
-A world is a declarative topology managed by root `@openwork/world`.
-`@openwork/env` keeps the eval-only topology schema and injects its Den/desktop
-runtime adapter into the shared shell.
-`defineWorld()` validates a `WorldTopology` and returns a definition that can be
-deep-patched with `.with()`. The topology has:
+A world is a plain executable TypeScript file under `worlds/`. Each script
+creates concrete async resources in dependency order, registers them with a
+native `AsyncDisposableStack`, and calls `hold()` after it is ready. Typical
+resources are `server`, `createAdmin`, `createOrg`, `inviteMember`, `app`,
+`mcpMock`, `liteLlm`, and `launchHeadlessWeb`.
 
-- `den.orgs`: named organizations, each with an optional admin and named members.
-- `den.env`: optional environment variables for the Den server. `den.web` and
-  `den.substrate` also configure that server; `den.ports` fixes API and Web
-  ports, and `den.seed` selects the supported demo seed.
-- `apps`: optional named desktop apps with their target org/member, workspace,
-  model, sessions, and optional local server delay.
-- `witnesses`: optional named MCP or database-backed LiteLLM witnesses. Organizations can bind LiteLLM witnesses through `llmProviders` declarations.
+Every checked-in script is guarded by `if (import.meta.main)`. Importing one is
+therefore side-effect-free until a caller invokes an exported builder. Specs,
+docs tooling, and the script entry point use those same builders; there is no
+second lifecycle layer.
 
-The shipped definitions are `soloWorkspace`, `supportOrg`, `acmeDemo`,
-`acmeDocs`, and `desktopProductionLive`; their CLI names are `solo`,
-`support-org`, `acme-demo`, `acme-docs`, and `desktop-prod-live`. `startWorld()` boots the Den, organizations, witnesses, and apps in
-dependency order and disposes them together. `fromSnapshot()` validates
-generated snapshot JSON and returns the name and topology needed to start an
-equivalent fresh world.
+Useful ready-made scripts include `worlds/solo.ts`, `worlds/acme-demo.ts`,
+`worlds/acme-docs.ts`, and `worlds/desktop-prod-live.ts`. `support-org` no
+longer exists. See `pnpm world list` for the complete current set.
 
-Each started world writes a snapshot to
-`evals/results/.worlds/<name>.json`. Snapshots contain the validated topology
-plus resolved Den and app endpoints. They are generated, never hand-written.
-Snapshots are untrusted input: `rebuild` and `resume` allowlist Den environment
-keys, database names, ports, paths, models and faults, and require loopback-only
-resolved CDP URLs before starting, attaching to, or tearing down resources.
+Detached scripts write PID ownership receipts to
+`evals/results/.worlds/scripts/<name>.json`. A receipt records the script path,
+PID, creation time, and non-secret outputs. It is lifecycle metadata, not a
+recipe for recreating resources.
 
 ### World CLI
 
 The root `pnpm world` command requires Node 24+. Its interactive lifecycle is:
 
 ```bash
-pnpm world up support-org          # boot a world; stays up until Ctrl-C
-pnpm world up acme-demo --name acme-demo --keep
-                                    # keep resources after exit
-pnpm world resume acme-demo        # attach to that running world
-pnpm world resume acme-demo --teardown
-                                    # attach and stop it
-pnpm world rebuild <snapshot>      # rebuild the world a failed run was in
+pnpm world up solo                 # foreground; Ctrl-C disposes its stack
+pnpm world up acme-demo --detach   # background; waits for its receipt
+pnpm world up acme-docs --detach --timeout 600000
+pnpm world down acme-demo          # signal it and wait for native disposal
 pnpm world list
 pnpm world forget <name>
+pnpm world help
 
-# Path definitions use the filename as their name and can default to detached.
+# A path or the filename-derived name selects the same script.
 pnpm world up ./worlds/dev-headless.ts
 pnpm world up ./worlds/litellm-per-member.ts
-pnpm world up ./worlds/headless-prod-live.ts --allow-shared-state
 
-# Explicit macOS-only live sharing with the installed production stores.
-pnpm world up ./worlds/desktop-prod-live.ts --allow-shared-state
+# Script-specific arguments must follow the separator.
+pnpm world up dev-headless --detach -- --replace --keep-tokens
+pnpm world up headless-prod-live -- --allow-shared-state
+pnpm world up desktop-prod-live -- --allow-shared-state
 ```
 
-`up` also accepts `--name <name>`. Without `--keep`, Ctrl-C tears down the
-resources; with `--keep`, Ctrl-C leaves them detached. `resume` accepts a world
-name or snapshot path and detaches on Ctrl-C unless `--teardown` is present.
-`forget` removes snapshot metadata without stopping detached services. `help`
-and `list` auto-discover `worlds/*.ts`. Path definitions may select detached mode,
-so the checked-in headless and production-live definitions return after health
-without requiring `--name`, `--keep`, or `--detach`.
+The generic `up` options are only `--detach` and, with detached mode,
+`--timeout <ms>`. Everything after `--` is passed unchanged to the selected
+script. `down` sends the script a termination signal and waits while its
+`AsyncDisposableStack` releases owned resources. `forget` removes receipt
+metadata only; it does not stop the process. `help` and `list` discover
+`worlds/*.ts`.
 
 `desktop-prod-live` is a deliberately dangerous local-only mode. It launches
 source Electron through `pnpm dev` with isolated Electron userData, app
@@ -223,31 +213,19 @@ installed production `OPENWORK_DATA_DIR` and channel-aware `OPENCODE_DB` only at
 launch time. It never copies or symlinks those stores, does not boot or modify a
 Den, and does not seed a workspace, session, or sign-in. Production may remain
 running, but concurrent writes from production and dev are unsupported and may
-corrupt state. `up` and every `rebuild` require `--allow-shared-state`; `resume`
-only attaches to the already-running isolated dev process. Snapshots retain the
-symbolic `desktopState` source/mode plus CDP/workspace metadata, never resolved
-production paths or tokens. Teardown stops only the dev process and does not
-delete shared stores.
+corrupt state. Its parser requires exactly `--allow-shared-state`, after the
+`world up` argument separator. Disposal stops only the source dev process and
+does not delete shared stores.
 
 `headless-prod-live` applies the same symbolic state selection to source Vite +
 `openwork-server` without Electron. Its production tokens, server state, config,
 OpenWork data, and OpenCode database are resolved in place and never copied into
-the owner-only world snapshot. It refuses remote access, public hosts, and
-non-loopback host bindings. Named headless worlds use separate runtime/config/log
-directories and a launch identity, and their detached supervisor tears down the
-remaining sibling if Vite or the backend exits.
+the receipt. It requires the same exact script argument and refuses remote
+access, public hosts, and non-loopback host bindings.
 
-World v1 has deliberate limits:
-
-- Apps may sign in only to the first (primary) organization; an app without
-  `signedInTo` remains fresh and signed out.
-- Witnesses are MCP mocks only.
-- `onKind()` runs a real Helm Den on the shared `openwork-kube-lab` kind cluster.
-  Kind worlds can boot local Electron apps signed in as the seeded Acme admin;
-  they do not yet accept witnesses, extra organizations, seed overrides, custom
-  port-forwards, or non-local placement.
-
-Run the opt-in proof on a machine with local Docker, kind, kubectl, and Helm:
+`worlds/den-split-origin-kind.ts` attaches to the shared
+`openwork-kube-lab` kind substrate and owns only its local port-forwards. Run its
+opt-in proof on a machine with local Docker, kind, kubectl, and Helm:
 
 ```bash
 OPENWORK_EVAL_E2E_TESTS=1 OPENWORK_EVAL_KIND_E2E=1 pnpm --dir evals exec vitest run --config vitest.config.ts --project e2e specs/world-kind-den.e2e.test.ts
@@ -257,62 +235,46 @@ Daytona cannot host this substrate: its sandbox has no Docker binary or daemon,
 reports `CapEff: 0000000000000000`, and blocks `unshare -Urm`, so no container
 runtime can start kind there.
 
-### Reproducing a failure
-
-A failed local run's world snapshot can be rebuilt with:
-
-```bash
-pnpm world rebuild evals/results/.worlds/<name>.json
-```
-
 ## Recipes
 
 ### Drive the app
 
-Use `startWorld()` and select named surfaces with `world.app("name")`. Compose
-journeys from `@openwork/behaviors`; executable coverage belongs in `evals/specs`.
+Import the script's builder, create one disposal stack, and call the builder.
+Compose journeys from `@openwork/behaviors`; executable coverage belongs in
+`evals/specs`.
 
 ```ts
-import { startWorld, supportOrg } from "@openwork/testkit";
+import { bootAcmeDocs } from "../../worlds/acme-docs.ts";
 
-await using world = await startWorld(supportOrg, { place });
-const alice = world.app("alice"); // signed in
-const bob = world.app("bob"); // fresh, not signed in
+await using stack = new AsyncDisposableStack();
+const world = await bootAcmeDocs(stack, place);
+const docs = world.app("docs");
 ```
 
 ### Provision a fresh setup
 
-Create a topology with `defineWorld()` or patch a preset with `.with()`. Use
-`pnpm world up <preset>` interactively and `startWorld()` in specs.
+Compose the same concrete builders directly. The stack owns each resource added
+with `use()` and disposes it in reverse order.
 
 ```ts
-const slowSupport = supportOrg.with({ apps: { bob: { localServerDelayMs: 500 } } });
-```
-
-### Reproduce network conditions
-
-Declare provider faults at `witnesses.<name>.fault` in the topology; fault proxy
-controls live in `faults.ts`. Use `localServerDelayMs` on apps for delayed local
-server startup.
-
-```ts
-const faulted = acmeDocs.with({
-  witnesses: { slack: { profileId: "slack-user-mcp", fault: "provider-throttled" } },
-});
+await using stack = new AsyncDisposableStack();
+const den = stack.use(await server({ place, provision: false, web: true }));
+await createAdmin(den, {});
+const org = stack.use(await createOrg(den, "Acme"));
+const desktop = stack.use(await app({ den, place, as: "admin" }));
 ```
 
 ### Reproduce a failure
 
-Take the snapshot from the failed run and rebuild its topology in a fresh world:
-
-```bash
-pnpm world rebuild evals/results/.worlds/<name>.json
-```
+Run the relevant script or exact spec again with the same explicit inputs.
+Receipts cannot recreate a run; use their PID, script path, outputs, and paired
+log only to inspect or stop the existing detached process.
 
 ### Docs screenshots and demos
 
-The same `startWorld()` lifecycle powers docs shots and demos, so docs, CI, and
-reproduction cannot diverge. Use the `acmeDocs` and `acmeDemo` presets.
+Docs tooling imports `bootAcmeDocs`; demos use `bootAcmeDemo`. Their standalone
+scripts call the same builders, so importing, CLI use, and specs share one
+implementation.
 
 ## Ambient evidence and verdicts
 

@@ -55,9 +55,9 @@ even before a dedicated UI exists.
  `tmp/dev-headless-web.json` for the owner-only runtime manifest.
  It does not use `~/.config/openwork/server.json`. Stop a running script with
  `pnpm world down dev-headless`; pass script options after `--`, for example
- `pnpm world up dev-headless --detach -- --replace --keep-tokens`. Cloud sign-in is copy/paste handoff (Den cannot
- redirect grants to localhost): Account → Sign in → copy OpenWork link on Den
- → Paste sign-in code in Settings.
+ `pnpm world up dev-headless --detach -- --replace --keep-tokens`. Cloud sign-in
+ is copy/paste handoff (Den cannot redirect grants to localhost): Account → Sign
+ in → copy OpenWork link on Den → Paste sign-in code in Settings.
 
 ## Coding
 
