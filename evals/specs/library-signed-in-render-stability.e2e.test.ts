@@ -48,6 +48,12 @@ test.skipIf(!enabled)(title, { timeout: 10 * 60_000 }, async ({ evidence, place 
     { timeoutMs: 60_000, label: "signed-in Library" },
   );
 
+  await waitFor(
+    desktopApp,
+    `[...document.querySelectorAll("button")]
+      .some((button) => button.textContent?.includes("browser-automation"))`,
+    { timeoutMs: 120_000, label: "browser automation skill card" },
+  );
   const openedSkill = await evalIn(desktopApp, `(() => {
     const skill = [...document.querySelectorAll("button")]
       .find((button) => button.textContent?.includes("browser-automation"));
