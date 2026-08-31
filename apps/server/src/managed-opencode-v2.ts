@@ -45,6 +45,7 @@ export interface ManagedOpencodeV2Server {
   health(): Promise<OpencodeV2Health>;
   fetchJson(path: string, init?: { method?: string; body?: unknown; directory?: string }): Promise<{ status: number; json: unknown }>;
   injectProvider(spec: OpencodeV2ProviderSpec): Promise<void>;
+  setProviders(specs: OpencodeV2ProviderSpec[]): Promise<void>;
   close(): Promise<void>;
 }
 
@@ -160,6 +161,33 @@ export async function createManagedOpencodeV2Server(
     return { healthy, version, pid };
   }
 
+  async function writeProviders(): Promise<void> {
+    const providerConfig: Record<string, unknown> = {};
+    for (const provider of providers.values()) {
+      const models: Record<string, unknown> = {};
+      for (const model of provider.models) {
+        models[model.id] = {
+          name: model.name,
+          capabilities: { tools: true, input: ["text"], output: ["text"] },
+          limit: { context: 128_000, output: 8_192 },
+        };
+      }
+      providerConfig[provider.id] = {
+        name: provider.name,
+        package: "@opencode-ai/ai/providers/openai-compatible",
+        settings: { baseURL: provider.baseUrl, apiKey: provider.apiKey, name: provider.id },
+        models,
+      };
+    }
+    const target = join(configDir, "opencode.json");
+    const temporary = `${target}.tmp-${randomBytes(8).toString("hex")}`;
+    await writeFile(temporary, `${JSON.stringify({
+      $schema: "https://opencode.ai/config.json",
+      providers: providerConfig,
+    }, null, 2)}\n`);
+    await rename(temporary, target);
+  }
+
   async function close(): Promise<void> {
     if (child.exitCode !== null || child.signalCode !== null) return;
     const exit = new Promise<void>((resolve) => child.once("exit", () => resolve()));
@@ -192,30 +220,14 @@ export async function createManagedOpencodeV2Server(
     fetchJson,
     async injectProvider(spec) {
       providers.set(spec.id, spec);
-      const providerConfig: Record<string, unknown> = {};
-      for (const provider of providers.values()) {
-        const models: Record<string, unknown> = {};
-        for (const model of provider.models) {
-          models[model.id] = {
-            name: model.name,
-            capabilities: { tools: true, input: ["text"], output: ["text"] },
-            limit: { context: 128_000, output: 8_192 },
-          };
-        }
-        providerConfig[provider.id] = {
-          name: provider.name,
-          package: "@opencode-ai/ai/providers/openai-compatible",
-          settings: { baseURL: provider.baseUrl, apiKey: provider.apiKey, name: provider.id },
-          models,
-        };
+      await writeProviders();
+    },
+    async setProviders(specs) {
+      providers.clear();
+      for (const spec of specs) {
+        providers.set(spec.id, spec);
       }
-      const target = join(configDir, "opencode.json");
-      const temporary = `${target}.tmp-${randomBytes(8).toString("hex")}`;
-      await writeFile(temporary, `${JSON.stringify({
-        $schema: "https://opencode.ai/config.json",
-        providers: providerConfig,
-      }, null, 2)}\n`);
-      await rename(temporary, target);
+      await writeProviders();
     },
     close,
   };

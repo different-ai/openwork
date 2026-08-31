@@ -2615,6 +2615,14 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
             }}
             cloudMcpHealth={cloudMcpHealth}
             refreshCloudMcpHealth={refreshCloudMcpHealth}
+            getEngineV2PreviewStatus={async () => {
+              if (!openworkClient) throw new Error("OpenWork server is not connected.");
+              return openworkClient.getEngineV2PreviewStatus();
+            }}
+            setEngineV2PreviewEnabled={async (enabled) => {
+              if (!openworkClient) throw new Error("OpenWork server is not connected.");
+              return openworkClient.setEngineV2PreviewEnabled(enabled);
+            }}
             organizationServer={denSession}
           />
         );

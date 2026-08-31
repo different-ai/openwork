@@ -1,5 +1,5 @@
 /** @jsxImportSource react */
-import { useState, type ComponentProps, type ReactNode } from "react";
+import { useEffect, useState, type ComponentProps, type ReactNode } from "react";
 import { CircleAlert, Cpu, Info, RefreshCcw, Server } from "lucide-react";
 
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Field, FieldLabel } from "@/components/ui/field";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
-import type { OpenworkCloudMcpHealth, OpenworkRuntimeConfigStatus, OpenworkServerStatus } from "@/app/lib/openwork-server";
+import type { EngineV2PreviewStatus, OpenworkCloudMcpHealth, OpenworkRuntimeConfigStatus, OpenworkServerStatus } from "@/app/lib/openwork-server";
 import { sanitizeCloudMcpHealthDiagnostic, sanitizeDiagnosticRecord } from "@/app/lib/diagnostic-sanitizer";
 import {
   DEFAULT_DEN_API_BASE_URL,
@@ -766,6 +766,93 @@ export function AdvancedFeatureFlagsSection(props: AdvancedFeatureFlagsSectionPr
             />
           </LayoutSectionItemHeaderActions>
         </LayoutSectionItemHeader>
+      </LayoutSectionItem>
+    </LayoutSection>
+  );
+}
+
+interface AdvancedEngineV2PreviewSectionProps {
+  getStatus: () => Promise<EngineV2PreviewStatus>;
+  setEnabled: (enabled: boolean) => Promise<EngineV2PreviewStatus>;
+}
+
+export function AdvancedEngineV2PreviewSection(props: AdvancedEngineV2PreviewSectionProps) {
+  const [status, setStatus] = useState<EngineV2PreviewStatus | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let mounted = true;
+    void props.getStatus().then((nextStatus) => {
+      if (mounted) {
+        setStatus(nextStatus);
+        setLoadError(null);
+      }
+    }).catch((error: unknown) => {
+      if (mounted) setLoadError(error instanceof Error ? error.message : "Failed to load OpenCode v2 engine preview status.");
+    });
+    return () => {
+      mounted = false;
+    };
+  }, [props.getStatus]);
+
+  useEffect(() => {
+    if (!status?.enabled) return;
+    let mounted = true;
+    const interval = window.setInterval(() => {
+      void props.getStatus().then((nextStatus) => {
+        if (mounted) setStatus(nextStatus);
+      }).catch(() => undefined);
+    }, 5_000);
+    return () => {
+      mounted = false;
+      window.clearInterval(interval);
+    };
+  }, [props.getStatus, status?.enabled]);
+
+  const setEnabled = async (enabled: boolean) => {
+    setBusy(true);
+    setLoadError(null);
+    try {
+      setStatus(await props.setEnabled(enabled));
+    } catch (error) {
+      setLoadError(error instanceof Error ? error.message : "Failed to update OpenCode v2 engine preview.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const skippedCount = status?.skippedProviderIds.length ?? 0;
+  const runningStatus = status?.enabled && status.running
+    ? `Running v${status.version ?? "unknown"} (pid ${status.pid ?? "unknown"}) — ${status.mirroredProviderIds.length} providers mirrored, ${status.catalogModelIds.length} models${skippedCount ? `, ${skippedCount} skipped` : ""}`
+    : null;
+  const error = (status?.enabled && !status.running ? status.lastError : null) ?? loadError;
+  const starting = status?.enabled && !status.running && !error ? "Starting the OpenCode v2 sidecar…" : null;
+
+  return (
+    <LayoutSection>
+      <LayoutSectionHeader>
+        <LayoutSectionTitle>Experimental engine</LayoutSectionTitle>
+      </LayoutSectionHeader>
+
+      <LayoutSectionItem>
+        <LayoutSectionItemHeader>
+          <LayoutSectionItemTitle>OpenCode v2 engine preview</LayoutSectionItemTitle>
+          <LayoutSectionItemDescription>
+            Experimental: runs the OpenCode v2 engine as a parallel sidecar and mirrors provider changes into it live — no engine reload. The app keeps using the current engine.
+          </LayoutSectionItemDescription>
+          <LayoutSectionItemHeaderActions>
+            <Switch
+              aria-label="OpenCode v2 engine preview"
+              checked={status?.enabled ?? false}
+              disabled={busy || !status || !isDesktopRuntime()}
+              onCheckedChange={(enabled) => { void setEnabled(enabled); }}
+            />
+          </LayoutSectionItemHeaderActions>
+        </LayoutSectionItemHeader>
+        {runningStatus ? <div className="text-xs text-gray-11">{runningStatus}</div> : null}
+        {starting ? <div className="text-xs text-gray-11">{starting}</div> : null}
+        {error ? <div className="text-xs text-red-11">{error}</div> : null}
       </LayoutSectionItem>
     </LayoutSection>
   );
