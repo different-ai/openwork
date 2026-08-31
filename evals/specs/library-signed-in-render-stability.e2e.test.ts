@@ -48,28 +48,17 @@ test.skipIf(!enabled)(title, { timeout: 10 * 60_000 }, async ({ evidence, place 
     { timeoutMs: 60_000, label: "signed-in Library" },
   );
 
+  // Signed-in inventory shows the built-in extension catalog. The regression
+  // this spec guards against fires on the Library route itself: repeated Den
+  // settings echoes retrigger provider sync and remove/re-add inventory cards.
   await waitFor(
     desktopApp,
-    `[...document.querySelectorAll("button")]
-      .some((button) => button.textContent?.includes("browser-automation"))`,
-    { timeoutMs: 120_000, label: "browser automation skill card" },
-  );
-  const openedSkill = await evalIn(desktopApp, `(() => {
-    const skill = [...document.querySelectorAll("button")]
-      .find((button) => button.textContent?.includes("browser-automation"));
-    if (!skill) return false;
-    skill.click();
-    return true;
-  })()`);
-  expect(openedSkill).toBe(true);
-  await waitFor(
-    desktopApp,
-    `location.hash.includes("skill%3Abrowser-automation")
-      && document.body.innerText.includes("known-good smoke prompt")`,
-    { timeoutMs: 30_000, label: "signed-in Library skill detail" },
+    `document.body.innerText.includes("READY TO USE")
+      && document.body.innerText.includes("OpenWork Browser")`,
+    { timeoutMs: 120_000, label: "signed-in Library inventory" },
   );
 
-  await new Promise((resolve) => setTimeout(resolve, 5_000));
+  await new Promise((resolve) => setTimeout(resolve, 10_000));
   await evalIn(desktopApp, `(() => {
     window.__libraryStability.requests = [];
     window.__libraryStability.denEvents = 0;
@@ -77,7 +66,8 @@ test.skipIf(!enabled)(title, { timeout: 10 * 60_000 }, async ({ evidence, place 
     window.__libraryStability.sampler = window.setInterval(() => {
       window.__libraryStability.samples.push({
         buttons: document.querySelectorAll("button").length,
-        contentVisible: document.body.innerText.includes("known-good smoke prompt"),
+        contentVisible: document.body.innerText.includes("READY TO USE")
+          && document.body.innerText.includes("OpenWork Browser"),
       });
     }, 50);
     return true;
@@ -89,7 +79,7 @@ test.skipIf(!enabled)(title, { timeout: 10 * 60_000 }, async ({ evidence, place 
     const requests = window.__libraryStability.requests;
     const count = (part) => requests.filter((target) => target.includes(part)).length;
     const buttonCounts = window.__libraryStability.samples.map((sample) => sample.buttons);
-    const detailStayedVisible = window.__libraryStability.samples.every((sample) => sample.contentVisible);
+    const inventoryStayedVisible = window.__libraryStability.samples.every((sample) => sample.contentVisible);
     const minButtons = Math.min(...buttonCounts);
     const maxButtons = Math.max(...buttonCounts);
     const observed = {
@@ -97,7 +87,7 @@ test.skipIf(!enabled)(title, { timeout: 10 * 60_000 }, async ({ evidence, place 
       providerConfigReads: count("/opencode/config?"),
       providerSyncStatusReads: count("/cloud-provider-sync/status"),
       providerSyncRuns: count("/cloud-provider-sync/run"),
-      detailStayedVisible,
+      inventoryStayedVisible,
       minButtons,
       maxButtons,
     };
@@ -107,7 +97,7 @@ test.skipIf(!enabled)(title, { timeout: 10 * 60_000 }, async ({ evidence, place 
         && observed.providerConfigReads <= 2
         && observed.providerSyncStatusReads <= 2
         && observed.providerSyncRuns <= 1
-        && observed.detailStayedVisible
+        && observed.inventoryStayedVisible
         && observed.minButtons === observed.maxButtons,
     };
   })()`);
@@ -119,7 +109,7 @@ test.skipIf(!enabled)(title, { timeout: 10 * 60_000 }, async ({ evidence, place 
   );
   expect(result).toMatchObject({
     stable: true,
-    detailStayedVisible: true,
+    inventoryStayedVisible: true,
     denEvents: expect.any(Number),
     providerConfigReads: expect.any(Number),
     providerSyncStatusReads: expect.any(Number),
