@@ -314,7 +314,10 @@ export function normalizeDirectoryQueryPath(input?: string | null) {
 export function normalizeDirectoryPath(input?: string | null) {
   const normalized = normalizeDirectoryQueryPath(input);
   if (!normalized) return "";
-  return isWindowsPlatform() || isMacPlatform() ? normalized.toLowerCase() : normalized;
+  if (isMacPlatform()) {
+    return normalized.replace(/^\/private\/tmp(?=\/|$)/, "/tmp").toLowerCase();
+  }
+  return isWindowsPlatform() ? normalized.toLowerCase() : normalized;
 }
 
 export function normalizeEvent(raw: unknown): OpencodeEvent | null {

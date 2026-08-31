@@ -351,12 +351,11 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
                 normalizeDirectoryPath(session?.directory ?? "") === workspaceRoot,
               )
             : fetchedItems;
-          setSessionsByWorkspaceId((current) => {
-            const nextItems = mergeFetchedSessionsWithPending(workspace.id, items, current[workspace.id] ?? []);
-            const next = { ...current, [workspace.id]: nextItems };
-            sessionsByWorkspaceIdRef.current = next;
-            return next;
-          });
+          const current = sessionsByWorkspaceIdRef.current;
+          const nextItems = mergeFetchedSessionsWithPending(workspace.id, items, current[workspace.id] ?? []);
+          const next = { ...current, [workspace.id]: nextItems };
+          sessionsByWorkspaceIdRef.current = next;
+          setSessionsByWorkspaceId(next);
           loadedWorkspaceIdsRef.current.add(workspace.id);
           setErrorsByWorkspaceId((current) => ({ ...current, [workspace.id]: null }));
           setWorkspaceConnectionOverrides((current) => {
@@ -436,6 +435,12 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
     },
     [endpointForWorkspace, mergeFetchedSessionsWithPending],
   );
+  const reloadWorkspaceSessions = useCallback(async (workspaceId: string): Promise<void> => {
+    const workspace = workspacesRef.current.find((item) => item.id === workspaceId);
+    if (!workspace) return;
+    loadedWorkspaceIdsRef.current.delete(workspaceId);
+    await loadWorkspaceSessionsInBackground([workspace]);
+  }, [loadWorkspaceSessionsInBackground]);
   const workspaceSelectionCommitRef = useRef<(workspaceId: string) => Promise<void>>(async () => undefined);
   workspaceSelectionCommitRef.current = async (workspaceId) => {
     await commitRouteWorkspaceSelection({
@@ -1235,6 +1240,7 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
     routeNotFoundMessage,
     endpointForWorkspace,
     refreshRouteState,
+    reloadWorkspaceSessions,
     loadWorkspaceSessionsInBackground,
     rememberPendingCreatedSession,
     handleRuntimeSessionCreated,

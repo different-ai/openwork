@@ -463,6 +463,7 @@ export function SessionRoute() {
     routeNotFoundMessage,
     endpointForWorkspace,
     refreshRouteState,
+    reloadWorkspaceSessions,
     rememberPendingCreatedSession,
     handleRuntimeSessionCreated,
     handleRuntimeSessionUpdated,
@@ -2687,13 +2688,20 @@ export function SessionRoute() {
   const handleArchiveSession = useCallback(
     async (sessionId: string, archived: boolean) => {
       if (!opencodeClient) return;
+      // The sidebar lists sessions from every workspace, so resolve the
+      // session's owning workspace instead of assuming the selected one —
+      // session.update needs the directory the session actually lives in.
+      const ownerWorkspace = workspaceSessionGroups.find((group) =>
+        group.sessions.some((session) => session?.id === sessionId),
+      )?.workspace;
       try {
         await setSessionArchived(
           opencodeClient,
           sessionId,
           archived,
-          selectedWorkspaceRoot || undefined,
+          ownerWorkspace?.path || selectedWorkspaceRoot || undefined,
         );
+        if (ownerWorkspace) await reloadWorkspaceSessions(ownerWorkspace.id);
         await refreshRouteState();
       } catch (error) {
         console.error("[session-route] archive session failed", error);
@@ -2705,7 +2713,7 @@ export function SessionRoute() {
         );
       }
     },
-    [opencodeClient, refreshRouteState, selectedWorkspaceRoot],
+    [opencodeClient, refreshRouteState, reloadWorkspaceSessions, selectedWorkspaceRoot, workspaceSessionGroups],
   );
 
   const handleCreateWorkspace = useCallback(async (
