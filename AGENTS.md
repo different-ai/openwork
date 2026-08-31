@@ -48,14 +48,14 @@ even before a dedicated UI exists.
   say why and give exact repro steps.
 ## Local headless web (agents)
 
-- `pnpm world up ./worlds/dev-headless.ts` launches an isolated browser UI +
- local `openwork-server` without Electron, detached by the world definition.
+- `pnpm world up dev-headless --detach` launches an isolated browser UI +
+ local `openwork-server` without Electron as a detached script world.
  `pnpm dev:headless-web` remains a compatibility alias with its prior foreground
  default (`--detach` still works). Read
- `tmp/dev-headless-web.json` for `webUrl`, tokens, logs, and Den proxy URLs.
- It does not use `~/.config/openwork/server.json`. Re-running reuses a healthy
- instance; `--replace` restarts it with fresh tokens (`--keep-tokens` to
- keep the previous ones). Cloud sign-in is copy/paste handoff (Den cannot
+ `tmp/dev-headless-web.json` for the owner-only runtime manifest.
+ It does not use `~/.config/openwork/server.json`. Stop a running script with
+ `pnpm world down dev-headless`; pass script options after `--`, for example
+ `pnpm world up dev-headless --detach -- --replace --keep-tokens`. Cloud sign-in is copy/paste handoff (Den cannot
  redirect grants to localhost): Account → Sign in → copy OpenWork link on Den
  → Paste sign-in code in Settings.
 

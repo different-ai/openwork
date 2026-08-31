@@ -113,26 +113,35 @@ If a second instance cannot get the profile lock it now says so and exits, inste
 To run the OpenWork UI in a browser against a local `openwork-server` (no desktop shell):
 
 ```bash
-pnpm world up ./worlds/dev-headless.ts
+pnpm world up dev-headless --detach
 ```
 
-`pnpm dev:headless-web` is a compatibility alias for the same world-managed
-surface. The path-based command gets its `dev-headless` name and detached
-lifecycle from the world file, so common usage needs no `--name` or `--detach`
-flags. For compatibility, the alias remains foreground by default and accepts
-`--detach`.
+`pnpm dev:headless-web` is a compatibility alias for the same script. The alias
+remains foreground by default and accepts `--detach`; `world up` is foreground
+unless `--detach` is explicit.
 
 This is an isolated launcher:
 
 - Writes `tmp/headless-server.json` and never reads `~/.config/openwork/server.json`
 - Authorizes the chosen workspace root automatically, and merges (never rewrites) that config on relaunch, so workspaces you add through the UI survive `--replace`
-- Starts Vite + `openwork-server` with a stable owner bearer forced into the UI. Crash-restarts reuse that bearer so open tabs keep working; `--replace` mints fresh tokens (pass `--keep-tokens` to preserve them). The privileged host token stays on the server process and is never inlined into the Vite bundle.
+- Starts Vite + `openwork-server` with a stable owner bearer forced into the UI. Crash-restarts keep open tabs working. The privileged host token stays on the server process and is never inlined into the Vite bundle.
 - Proxies Den Cloud calls same-origin: Vite serves `/api/den` (forwarded to the Den control plane) and the app pins its Den API there via `VITE_DEN_API_BASE_URL`, so Cloud calls are never CORS-blocked and stale `localStorage` base URLs are cleared on load
-- Publishes agent-facing URLs/tokens at `tmp/dev-headless-web.json` (owner-only, `0600`), and allows browser calls to the local server only from the web app's own origins — not every site you visit
+- Publishes an owner-only runtime manifest at `tmp/dev-headless-web.json` (`0600`), and allows browser calls to the local server only from the web app's own origins — not every site you visit
 - Uses stable ports by default (web `5178`, server `8778`; falls back to free ports when taken, override with `OPENWORK_WEB_PORT` / `OPENWORK_PORT`)
-- Is single-instance per world name: re-running the same name reuses its healthy instance, while `--name` can launch another isolated stack; stale instances are cleaned up automatically and `--replace` forces a restart
-- Keeps Vite and the backend under a detached supervisor, so either sibling exiting stops the other instead of leaving an orphan
-- Starts detached through `world up`, waits for health, prints the URLs, and exits; the compatibility alias preserves its previous foreground default
+- Is single-instance as `dev-headless`; stop it with `pnpm world down dev-headless` before launching it again
+- Keeps Vite and the backend under one script lifecycle, so either sibling exiting stops the other instead of leaving an orphan
+- In detached mode, waits for health, prints non-secret outputs and receipt/log paths, and exits
+
+Script-specific options must follow `--`:
+
+```bash
+pnpm world up dev-headless --detach -- --replace
+pnpm world up dev-headless --detach -- --replace --keep-tokens
+```
+
+`--replace` restarts the headless runtime with fresh tokens; add
+`--keep-tokens` to retain the previous tokens. `--rotate-tokens` is also
+accepted by this script. These are not generic `world` options.
 
 Open the printed Web URL. Cloud sign-in in headless web uses the **copy/paste** handoff (hosted Den cannot redirect session grants back to `http://127.0.0.1`):
 
@@ -143,9 +152,10 @@ Open the printed Web URL. Cloud sign-in in headless web uses the **copy/paste** 
 
 Point Den at a local stack with `OPENWORK_DEV_DEN_PROXY_TARGET=http://127.0.0.1:3005` while `pnpm dev:web-local` is running. Set `OPENWORK_DEV_HEADLESS_WEB_DEN_PROXY=0` to disable the Den wiring.
 
-The other checked-in world files are `worlds/headless-prod-live.ts` and
+The other checked-in scripts include `worlds/headless-prod-live.ts` and
 `worlds/desktop-prod-live.ts`. Both intentionally share installed production
-state and therefore require `--allow-shared-state` on every launch. List saved
-worlds and auto-discovered definitions with `pnpm world list`. The headless
+state and require their script-specific opt-in after `--`, for example
+`pnpm world up desktop-prod-live -- --allow-shared-state`. List scripts and
+running receipts with `pnpm world list`. The headless
 production world is hard-limited to loopback; remote-access/public-host settings
 are refused because its browser session uses production credentials.

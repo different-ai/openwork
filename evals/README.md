@@ -13,16 +13,14 @@ Use the skills in this order:
 3. `diagnose-a-red-run` when the run fails
 4. `publish-evidence` for the existing ambient test evidence
 
-Demo-driven features start from a preset or world plus a spec in `evals/specs`.
+Demo-driven features start from a world script plus a spec in `evals/specs`.
 
 ## Glossary
 
 | Term | Meaning |
 | --- | --- |
-| world | A declarative environment and the resources started from it. |
-| topology | The `WorldTopology` shape: Den organizations, environment, web, substrate, ports, and seed, plus apps and witnesses. |
-| preset | Code: a typed, composable, reviewed world definition. |
-| snapshot | A generated receipt of one run. It is data and untrusted input. |
+| world | An executable TypeScript script that creates and holds concrete resources. |
+| receipt | PID ownership metadata for a detached script world. |
 | place | Where launched resources run: `local` or `daytona`. |
 | substrate | What runs the Den control plane: local processes or `kind`. |
 | witness | A deterministic provider stand-in that records what it saw. |
@@ -31,18 +29,14 @@ Demo-driven features start from a preset or world plus a spec in `evals/specs`.
 | origin | Whether a resource is launched or attached. See below. |
 | live | A spec attached to a live shared substrate; red is an incident signal about the service, not a verdict on the diff. |
 
-### Origin: launch vs attach
+### Resource ownership
 
-Every world resource has an origin. *Launched* resources are created by the
-world, owned by it, and disposed with it; plain nouns in a topology mean
-launched. *Attached* resources pre-exist the world; the world binds to them and
-never creates or destroys them. The law: **you own what you launch; you never
-own what you attach.** Dispose, cleanup, and `world rebuild` follow from it:
-rebuild relaunches launched resources and reattaches attached ones.
-
-The term is `attach`, not `connect` (`connections` already names org-to-provider
-bindings in topology), and not `reuse` or `prepared` (legacy names in
-`@openwork/env` internals that will migrate to attach).
+The script's `AsyncDisposableStack` owns what the script creates and disposes it
+in reverse order. Attached or shared resources expose handles whose disposers
+release only script-owned additions, such as local port-forwards or an
+organization created for that run; they do not stop or delete the shared
+substrate. The rule is: **the stack owns what the script creates, not what it
+attaches to.**
 
 ## Skills map
 
@@ -133,7 +127,7 @@ This is enforced by `pnpm --dir evals run lint:layers`.
 | L0 | `@openwork/matchers` | Turn supplied facts into pure findings; no I/O. |
 | L1 | `@openwork/cdp`, `@openwork/labs` | Provide protocol and lab primitives; do not own journeys or test lifecycle. |
 | L2 | `@openwork/behaviors` | Provide framework-free actions and observations over narrow handles. |
-| L3 | root `@openwork/world` + `@openwork/env` | The shared package owns definitions/CLI/state/surfaces; env injects the eval-only Den/desktop runtime adapter. Neither depends on Vitest. |
+| L3 | root `@openwork/world` + `@openwork/env` | The shared package owns script discovery, CLI receipts, and the headless-web surface; env provides concrete eval resources. Neither depends on Vitest. |
 | L4 | `@openwork/testkit` and `evals/bin/evals.mjs` | Adapt environments to specs, Vitest, and evidence. |
 
 ## Composable packages and diagnostics
@@ -143,8 +137,8 @@ executable coverage is always assembled as a test under `specs/`.
 
 | Package | Owns |
 | --- | --- |
-| root `@openwork/world` | generic definitions, path discovery, CLI lifecycle, local state store, and headless-web surface |
-| `@openwork/env` | eval runtime adapter: places, Den server, desktop apps, mocks, eval snapshots, and kind stack |
+| root `@openwork/world` | script discovery, CLI lifecycle receipts, local state store, `hold()`, and headless-web surface |
+| `@openwork/env` | places and concrete Den, desktop, mock, LiteLLM, and kind resources |
 | `@openwork/testkit` | thin Vitest adapter: fixture, needs/skip mapping, evidence bridging, and spec-facing re-exports |
 | `@openwork/cdp` | raw CDP client, targets, `Surface`, and `attachSurface` |
 | `@openwork/labs` | egress, identity-provider, release-feed, and mock-MCP labs |
