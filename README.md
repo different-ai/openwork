@@ -90,6 +90,57 @@ Versions released before this license was adopted remain under their original li
 
 [Read the OpenWork docs.](https://openworklabs.com/docs)
 
+## Getting started (contributors)
+
+The fastest path from a fresh clone to a running dev build.
+
+### Prerequisites
+
+- **Node 24** — pinned in [`.nvmrc`](./.nvmrc) (`nvm use` picks it up).
+- **pnpm 11** — pinned in `package.json` (`packageManager`); run `corepack enable` to use the pinned version automatically. Never use npm or yarn.
+- **Git with DCO sign-off** — every commit needs a `Signed-off-by` trailer (`git commit -s`). See [CONTRIBUTING.md](./CONTRIBUTING.md).
+
+### First run
+
+```bash
+git clone https://github.com/different-ai/openwork.git
+cd openwork
+corepack enable
+pnpm install
+pnpm dev   # launches the Electron desktop app with hot reload
+```
+
+### Repository layout
+
+| Path | What lives there |
+| --- | --- |
+| `apps/` | the desktop app: React UI (`apps/app`), Electron shell (`apps/desktop`), and `openwork-server` (`apps/server`) (MIT) |
+| `packages/` | shared core packages (MIT) |
+| `ee/` | OpenWork Den — the org control plane, MCP gateway, and inference (EE License, see [Licensing](#licensing)) |
+| `evals/` | executable test specs built on `@openwork/testkit` — see [`evals/README.md`](./evals/README.md) |
+| `worlds/` | declarative dev/test environment definitions for `pnpm world` |
+| `docs/` | operator, feature, and release docs |
+| `.opencode/skills/` | repository agent skills (testing, release, Daytona, and more) |
+
+### Testing
+
+All executable coverage lives in `evals/specs/**/*.test.ts`; app-driving journeys use `.e2e.test.ts`.
+
+```bash
+pnpm --dir evals install --frozen-lockfile   # once
+pnpm evals:pr specs/<name>.test.ts           # app-less PR-lane spec
+pnpm evals:e2e <name> --local                # app-driving E2E journey, run locally
+```
+
+Runtime-observable changes need test evidence on the PR. `AGENTS.md` and [`evals/README.md`](./evals/README.md) describe the verification contract and vocabulary.
+
+### Sending a pull request
+
+1. Branch from `dev` (the default branch) and open your PR against `dev`.
+2. Sign off every commit: `git commit -s`.
+3. Keep the diff as small as possible, and include or update test evidence for runtime-observable changes.
+4. Read [CONTRIBUTING.md](./CONTRIBUTING.md) for the DCO and licensing rules — contributions under `ee/` additionally require a CLA.
+
 ## Local development
 
 For one checkout, keep using `pnpm dev`; with no extra environment variables it reuses the existing shared dev profile.
@@ -104,7 +155,7 @@ That sets `OPENWORK_DEV_PROFILE=auto`, derives a stable profile name from the wo
 
 `dev:worktree` also defaults `OPENWORK_ELECTRON_USE_MOCK_KEYCHAIN=1`. A brand-new profile has no stored credentials, so on macOS the real keychain prompts as soon as Chromium persists an authenticated cookie, and that modal blocks Electron's main loop until it is dismissed. Set `OPENWORK_ELECTRON_USE_MOCK_KEYCHAIN=0` if you specifically want the system keychain in an isolated profile.
 
-Dev startup prints a banner like `[openwork] dev profile=... cdp=http://127.0.0.1:9223`; use it to find the profile directory and pass the CDP URL to local tooling.
+Dev startup prints a banner like `[openwork] dev profile=... cdp=http://127.0.0.1:9823`; use it to find the profile directory and pass the CDP URL to local tooling.
 
 If a second instance cannot get the profile lock it now says so and exits, instead of lingering with an open CDP port and no window.
 
