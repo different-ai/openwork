@@ -264,7 +264,9 @@ jobs:
           export PATH="$PNPM_HOME/bin:$PNPM_HOME:$PATH"
           mkdir -p "$PNPM_HOME/bin"
           pnpm add --global --ignore-scripts opencode-ai@1.18.18
-          (cd "$(pnpm root -g)/opencode-ai" && node postinstall.mjs)
+          package_dir="$(pnpm list --global --parseable opencode-ai)"
+          [ -n "$package_dir" ]
+          (cd "$package_dir" && node postinstall.mjs)
           opencode --version
           echo "$PNPM_HOME/bin" >> "$GITHUB_PATH"
           echo "$PNPM_HOME" >> "$GITHUB_PATH"
