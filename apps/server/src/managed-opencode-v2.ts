@@ -6,6 +6,8 @@ import { mkdir, rename, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { join } from "node:path";
 
+import { loopbackFetch } from "./server-fetch.js";
+
 export interface OpencodeV2ModelSpec {
   id: string;
   name: string;
@@ -131,7 +133,7 @@ export async function createManagedOpencodeV2Server(
     const requestPath = init.directory === undefined
       ? path
       : `${path}${separator}location%5Bdirectory%5D=${encodeURIComponent(init.directory)}`;
-    const response = await fetch(`${url}${requestPath}`, {
+    const response = await loopbackFetch(`${url}${requestPath}`, {
       method: init.method,
       headers: {
         authorization,
