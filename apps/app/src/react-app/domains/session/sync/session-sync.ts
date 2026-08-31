@@ -724,6 +724,12 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
       useSessionActivityStore.getState().setError(workspaceId, sessionId, errorText);
       if (isTrackedSession(entry, sessionId)) {
         flushSessionDeltas(entry, workspaceId, sessionId);
+        // The activity store treats session.error as terminal (setError
+        // lowers runActive), but the chat surface derives its thread status
+        // from this react-query cache. An engine that errors without a
+        // following idle event otherwise leaves the transcript's "Working…"
+        // row ticking forever beside the error card. Mirror the idle write.
+        queryClient.setQueryData(statusKey(workspaceId, sessionId), idleStatus);
         queryClient.setQueryData<UIMessage[]>(transcriptKey(workspaceId, sessionId), (current = []) => {
           // Key the error to the latest assistant turn so it lands beside the
           // turn that failed and a later turn's error becomes its own message
@@ -745,6 +751,10 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
           exact: true,
         });
       }
+      // An errored run is over: give status listeners (like the queued-send
+      // drainer) the same idle edge session.idle would have delivered, so
+      // queued messages are not wedged behind a run that will never finish.
+      for (const listener of entry.sessionStatusListeners.keys()) listener({ sessionId, status: idleStatus });
     }
     return;
   }

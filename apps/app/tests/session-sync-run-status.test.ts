@@ -180,6 +180,44 @@ describe("session run status ordering", () => {
     cleanup();
   });
 
+  test("clears the busy status cache when a run errors without a following idle", () => {
+    const statusUpdates: SessionStatus[] = [];
+    const input = {
+      workspaceId,
+      baseUrl: "https://run-status.example/opencode",
+      openworkToken: "token",
+      onSessionStatus: (update: { sessionId: string; status: SessionStatus }) => {
+        statusUpdates.push(update.status);
+      },
+    };
+    syncInputs.push(input);
+    const cleanup = __createWorkspaceSessionSyncForTest(input);
+    const releaseSession = trackWorkspaceSessionSync(input, sessionId);
+
+    applyStatus(input, { type: "busy" });
+    expect(getReactQueryClient().getQueryData(statusKey(workspaceId, sessionId))).toEqual({ type: "busy" });
+
+    __applySessionSyncEventForTest(input, {
+      type: "session.error",
+      properties: {
+        sessionID: sessionId,
+        error: { name: "UnknownError", data: { message: "provider exploded" } },
+      },
+    });
+
+    // The chat surface derives its thread status from this cache: an errored
+    // run must stop reading busy, or the "Working…" row ticks forever beside
+    // the error card when the engine never sends a follow-up idle event.
+    expect(getReactQueryClient().getQueryData(statusKey(workspaceId, sessionId))).toEqual({ type: "idle" });
+    expect(useSessionActivityStore.getState().recordsByWorkspaceId[workspaceId]?.[sessionId]?.status).toBe("error");
+    // Status listeners (like the queued-send drainer) get the same idle edge
+    // session.idle would have delivered, so queued sends are not wedged.
+    expect(statusUpdates.at(-1)).toEqual({ type: "idle" });
+
+    releaseSession();
+    cleanup();
+  });
+
   test("does not resurrect a finished run from a stale busy snapshot", () => {
     const { input, cleanup, releaseSession } = createTestSync();
     const snapshot = createSnapshot({ type: "busy" });
