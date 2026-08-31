@@ -261,11 +261,12 @@ jobs:
         run: |
           set -euo pipefail
           export PNPM_HOME="$RUNNER_TEMP/pnpm-global"
-          export PATH="$PNPM_HOME:$PATH"
-          mkdir -p "$PNPM_HOME"
+          export PATH="$PNPM_HOME/bin:$PNPM_HOME:$PATH"
+          mkdir -p "$PNPM_HOME/bin"
           pnpm add --global --ignore-scripts opencode-ai@1.18.18
           (cd "$(pnpm root -g)/opencode-ai" && node postinstall.mjs)
           opencode --version
+          echo "$PNPM_HOME/bin" >> "$GITHUB_PATH"
           echo "$PNPM_HOME" >> "$GITHUB_PATH"
 
       # The eval harness shells out to the daytona CLI (testkit daytonaAvailable
