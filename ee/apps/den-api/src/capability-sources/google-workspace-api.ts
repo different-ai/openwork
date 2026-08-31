@@ -69,6 +69,7 @@ type GmailBodyState = {
 
 const GMAIL_QUOTE_BODY_LIMIT = 10_000
 const GMAIL_HTML_INPUT_BYTE_LIMIT = 1_000_000
+const GMAIL_MESSAGE_BODY_LIMIT = 100_000
 const UTC_WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
 const UTC_MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
 
@@ -277,7 +278,7 @@ export function extractGmailMessage(payloadJson: unknown): GoogleWorkspaceGmailM
   const state: GmailBodyState = { plain: null, html: null, attachments: [] }
   collectGmailPart(payload, state)
   const snippet = readString(message, "snippet")
-  const body = truncateText(state.plain ?? state.html ?? snippet, 100_000).text
+  const body = truncateText(state.plain ?? state.html ?? snippet, GMAIL_MESSAGE_BODY_LIMIT).text
 
   return {
     id: readString(message, "id"),

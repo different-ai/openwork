@@ -40,12 +40,15 @@ const CALENDAR_EVENTS_SCOPE = "https://www.googleapis.com/auth/calendar.events"
 const DRIVE_FILE_SCOPE = "https://www.googleapis.com/auth/drive.file"
 const DRIVE_READ_SCOPE = "https://www.googleapis.com/auth/drive.readonly"
 const DRIVE_FULL_SCOPE = "https://www.googleapis.com/auth/drive"
+const DRIVE_FOLDER_MIME_TYPE = "application/vnd.google-apps.folder"
 const GOOGLE_WORKSPACE_API_TIMEOUT_MS = 30_000
-const MAX_DRIVE_FILE_CONTENT_BYTES = 10 * 1024 * 1024
+const MAX_DRIVE_FILE_CONTENT_BYTES = 64 * 1024
+const DRIVE_TEXT_CHARACTER_LIMIT = 200_000
 const DIRECT_UPLOAD_MAX_BYTES = 4 * 1024 * 1024
 const DIRECT_UPLOAD_BODY_MAX_BYTES = DIRECT_UPLOAD_MAX_BYTES + (256 * 1024)
 const DIRECT_UPLOAD_MAX_FILES = 10
 const GMAIL_REPLY_SUBJECT_RE = /^\s*(re|fwd?)\s*:/i
+const GMAIL_METADATA_CONCURRENCY = 4
 
 const CONNECT_GOOGLE_ACCOUNT_MESSAGE = "Connect your Google account first: open Settings > Connect and use Connect your account on the Google Workspace row, or connect from the OpenWork Cloud dashboard."
 
@@ -317,6 +320,8 @@ function driveApiBase(): string {
 export function missingScope(account: ConnectedAccountRow, anyOf: string[]): boolean {
   const scopes = account.scopes
   if (!Array.isArray(scopes) || scopes.length === 0) {
+    // Some legacy connections predate recorded scopes. Preserve their existing behavior;
+    // general Drive retrieval uses the stricter, fail-closed check below.
     return false
   }
   return !anyOf.some((scope) => scopes.includes(scope))
@@ -324,6 +329,25 @@ export function missingScope(account: ConnectedAccountRow, anyOf: string[]): boo
 
 function missingPermissionMessage(label: string): string {
   return `Your connected Google account is missing the ${label} permission. An admin can enable it on the Google Workspace connector in OpenWork Cloud -> Connectors; then reconnect your account in Settings -> Extensions.`
+}
+
+function driveReadPermissionMessage(account: ConnectedAccountRow): string | null {
+  const scopes = account.scopes
+  if (!Array.isArray(scopes) || scopes.length === 0) {
+    return "OpenWork could not verify the Google Drive permissions granted to this connection. An organization admin must enable Read all Drive files, then reconnect Google Workspace and grant Drive read access."
+  }
+  const grantedScopes = new Set(scopes)
+  if (grantedScopes.has(DRIVE_READ_SCOPE) || grantedScopes.has(DRIVE_FULL_SCOPE)) return null
+  return "Your connected Google account does not grant Read all Drive files. The selected-file Drive permission can upload or share files created through OpenWork, but it cannot search or read your general Drive. An organization admin must enable Read all Drive files, then reconnect Google Workspace and grant Drive read access."
+}
+
+function isDeclaredTextFile(mimeType: string): boolean {
+  return mimeType.startsWith("text/")
+    || mimeType === "application/json"
+    || mimeType === "application/xml"
+    || mimeType === "application/javascript"
+    || mimeType.endsWith("+json")
+    || mimeType.endsWith("+xml")
 }
 
 async function googleWorkspaceToken(input: {
@@ -376,14 +400,141 @@ async function googleWorkspaceToken(input: {
 
 async function googleApiError(operation: string, response: Response) {
   const text = await response.text()
-  return { error: "google_api_error", message: `${operation} failed: ${response.status} ${text.slice(0, 300)}` }
+  return { error: "google_api_error" as const, message: `${operation} failed: ${response.status} ${text.slice(0, 300)}` }
+}
+
+function isRecordValue(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+}
+
+function googleAuthorizationReasons(text: string): Set<string> {
+  const reasons = new Set<string>()
+  try {
+    const payload: unknown = JSON.parse(text)
+    if (!isRecordValue(payload) || !isRecordValue(payload.error)) return reasons
+    const errors = Array.isArray(payload.error.errors) ? payload.error.errors : []
+    const details = Array.isArray(payload.error.details) ? payload.error.details : []
+    for (const value of [...errors, ...details]) {
+      if (isRecordValue(value) && typeof value.reason === "string") reasons.add(value.reason)
+    }
+  } catch {
+    // Non-JSON provider errors retain the ordinary upstream-error path.
+  }
+  return reasons
+}
+
+function isGoogleAuthorizationFailure(status: number, text: string): boolean {
+  if (status === 401) return true
+  if (status !== 403) return false
+  const reasons = googleAuthorizationReasons(text)
+  return reasons.has("authError")
+    || reasons.has("insufficientPermissions")
+    || reasons.has("ACCESS_TOKEN_SCOPE_INSUFFICIENT")
+}
+
+async function googleDriveApiError(
+  operation: string,
+  response: Response,
+  options: { generalRead?: boolean } = {},
+): Promise<{
+  status: 409 | 502
+  body: { error: "needs_connection" | "google_api_error"; message: string }
+}> {
+  const text = await response.text()
+  const error = { error: "google_api_error" as const, message: `${operation} failed: ${response.status} ${text.slice(0, 300)}` }
+  const isFileReadOperation = operation === "Google Drive file metadata" || operation === "Google Drive file content"
+  if (response.status === 404 && isFileReadOperation) {
+    return {
+      status: 502,
+      body: {
+        error: "google_api_error",
+        message: `${operation} failed because Google Drive could not find the requested item. The connected account may not be able to see it, the file ID may be incorrect, or the item may have been deleted.`,
+      },
+    }
+  }
+  if (!isGoogleAuthorizationFailure(response.status, text)) return { status: 502, body: error }
+  return {
+    status: 409,
+    body: {
+      error: "needs_connection",
+      message: options.generalRead
+        ? "Google rejected this connection's Drive authorization. An organization admin must enable Read all Drive files, then reconnect Google Workspace and grant Drive read access."
+        : "Google rejected this connection's Drive authorization. Reconnect Google Workspace and grant the enabled Drive permissions, then retry.",
+    },
+  }
 }
 
 async function googleWorkspaceApiFetch(input: Parameters<typeof fetch>[0], init?: RequestInit): Promise<Response> {
+  const timeoutSignal = AbortSignal.timeout(GOOGLE_WORKSPACE_API_TIMEOUT_MS)
+  const signal = init?.signal ? AbortSignal.any([init.signal, timeoutSignal]) : timeoutSignal
   return fetch(input, {
     ...init,
-    signal: AbortSignal.timeout(GOOGLE_WORKSPACE_API_TIMEOUT_MS),
+    signal,
   })
+}
+
+type GmailMetadataFetchResult =
+  | { ok: true; json: unknown }
+  | { ok: false; error: { error: "google_api_error"; message: string } }
+
+async function fetchGmailMetadata(
+  ids: readonly string[],
+  accessToken: string,
+  signal: AbortSignal,
+): Promise<
+  | { ok: true; json: unknown[] }
+  | { ok: false; error: { error: "google_api_error"; message: string } }
+> {
+  const results = new Array<unknown>(ids.length)
+  const controller = new AbortController()
+  const metadataSignal = AbortSignal.any([signal, controller.signal])
+  let nextIndex = 0
+  let stopped = false
+  let firstError: GmailMetadataFetchResult & { ok: false } | undefined
+  const stop = (error: GmailMetadataFetchResult & { ok: false }) => {
+    if (firstError) return
+    firstError = error
+    stopped = true
+    controller.abort()
+  }
+  const workerCount = Math.min(GMAIL_METADATA_CONCURRENCY, ids.length)
+  const workers = Array.from({ length: workerCount }, async () => {
+    while (!stopped && nextIndex < ids.length) {
+      const index = nextIndex
+      nextIndex += 1
+      const id = ids[index]
+      if (id === undefined) continue
+      try {
+        const messageUrl = new URL(`${gmailApiBase()}/gmail/v1/users/me/messages/${encodeURIComponent(id)}`)
+        messageUrl.searchParams.set("format", "metadata")
+        messageUrl.searchParams.append("metadataHeaders", "From")
+        messageUrl.searchParams.append("metadataHeaders", "To")
+        messageUrl.searchParams.append("metadataHeaders", "Bcc")
+        messageUrl.searchParams.append("metadataHeaders", "Subject")
+        messageUrl.searchParams.append("metadataHeaders", "Date")
+        const response = await googleWorkspaceApiFetch(messageUrl, {
+          headers: { authorization: `Bearer ${accessToken}` },
+          signal: metadataSignal,
+        })
+        if (!response.ok) {
+          stop({ ok: false, error: await googleApiError("Gmail message metadata", response) })
+          continue
+        }
+        results[index] = await readJson(response)
+      } catch {
+        stop({
+          ok: false,
+          error: {
+            error: "google_api_error",
+            message: "Gmail message metadata failed before Google returned a response.",
+          },
+        })
+      }
+    }
+  })
+  await Promise.all(workers)
+  if (firstError) return firstError
+  return { ok: true, json: results }
 }
 
 async function readJson(response: Response): Promise<unknown> {
@@ -609,6 +760,7 @@ export function registerGoogleWorkspaceRoutes<T extends { Variables: OrgRouteVar
       const boundary = `openwork-${randomUUID()}`
       const url = new URL(`${driveApiBase()}/upload/drive/v3/files`)
       url.searchParams.set("uploadType", "multipart")
+      url.searchParams.set("supportsAllDrives", "true")
       url.searchParams.set("fields", "id,name,mimeType,modifiedTime,webViewLink,size")
       const uploadBody = buildDriveMultipartUpload({
         metadata,
@@ -627,7 +779,8 @@ export function registerGoogleWorkspaceRoutes<T extends { Variables: OrgRouteVar
         body: uploadBodyBytes,
       })
       if (!response.ok) {
-        return c.json(await googleApiError("Google Drive file upload", response), 502)
+        const error = await googleDriveApiError("Google Drive file upload", response)
+        return error.status === 409 ? c.json(error.body, 409) : c.json(error.body, 502)
       }
       const uploadedFile = extractDriveFiles({ files: [await readJson(response)] })[0]
       if (!uploadedFile?.id) {
@@ -729,23 +882,13 @@ export function registerGoogleWorkspaceRoutes<T extends { Variables: OrgRouteVar
       }
 
       const ids = extractGmailMessageIds(await readJson(listResponse), 25)
-      const messages: z.infer<typeof gmailMessageSummarySchema>[] = []
-      for (const id of ids) {
-        const messageUrl = new URL(`${gmailApiBase()}/gmail/v1/users/me/messages/${encodeURIComponent(id)}`)
-        messageUrl.searchParams.set("format", "metadata")
-        messageUrl.searchParams.append("metadataHeaders", "From")
-        messageUrl.searchParams.append("metadataHeaders", "To")
-        messageUrl.searchParams.append("metadataHeaders", "Bcc")
-        messageUrl.searchParams.append("metadataHeaders", "Subject")
-        messageUrl.searchParams.append("metadataHeaders", "Date")
-        const messageResponse = await googleWorkspaceApiFetch(messageUrl, {
-          headers: { authorization: `Bearer ${token.accessToken}` },
-        })
-        if (!messageResponse.ok) {
-          return c.json(await googleApiError("Gmail message metadata", messageResponse), 502)
-        }
-        const message = extractGmailMessage(await readJson(messageResponse))
-        messages.push({
+      const metadata = await fetchGmailMetadata(ids, token.accessToken, c.req.raw.signal)
+      if (!metadata.ok) {
+        return c.json(metadata.error, 502)
+      }
+      const messages: z.infer<typeof gmailMessageSummarySchema>[] = metadata.json.map((json) => {
+        const message = extractGmailMessage(json)
+        return {
           id: message.id,
           threadId: message.threadId,
           from: message.from,
@@ -754,8 +897,8 @@ export function registerGoogleWorkspaceRoutes<T extends { Variables: OrgRouteVar
           subject: message.subject,
           date: message.date,
           snippet: message.snippet,
-        })
-      }
+        }
+      })
 
       return c.json({ ok: true, messages })
     },
@@ -1065,21 +1208,27 @@ export function registerGoogleWorkspaceRoutes<T extends { Variables: OrgRouteVar
       if (token.kind === "needs_connection") {
         return c.json({ error: "needs_connection", message: token.message }, 409)
       }
-      if (missingScope(token.account, [DRIVE_READ_SCOPE, DRIVE_FULL_SCOPE, DRIVE_FILE_SCOPE])) {
-        return c.json({ error: "needs_connection", message: missingPermissionMessage("Google Drive read") }, 409)
+      const permissionMessage = driveReadPermissionMessage(token.account)
+      if (permissionMessage) {
+        return c.json({ error: "needs_connection", message: permissionMessage }, 409)
       }
 
       const query = c.req.valid("query")
       const url = new URL(`${driveApiBase()}/drive/v3/files`)
       url.searchParams.set("q", buildDriveSearchQuery(query.query))
       url.searchParams.set("pageSize", String(query.maxResults))
+      url.searchParams.set("corpora", "allDrives")
+      url.searchParams.set("spaces", "drive")
+      url.searchParams.set("supportsAllDrives", "true")
+      url.searchParams.set("includeItemsFromAllDrives", "true")
       url.searchParams.set("fields", "files(id,name,mimeType,modifiedTime,webViewLink,size)")
 
       const response = await googleWorkspaceApiFetch(url, {
         headers: { authorization: `Bearer ${token.accessToken}` },
       })
       if (!response.ok) {
-        return c.json(await googleApiError("Google Drive files search", response), 502)
+        const error = await googleDriveApiError("Google Drive files search", response, { generalRead: true })
+        return error.status === 409 ? c.json(error.body, 409) : c.json(error.body, 502)
       }
 
       return c.json({ ok: true, files: extractDriveFiles(await readJson(response)) })
@@ -1091,9 +1240,10 @@ export function registerGoogleWorkspaceRoutes<T extends { Variables: OrgRouteVar
     describeRoute({
       tags: ["Capability Sources"],
       summary: "Read a Google Drive file's text or binary content as the calling member",
-      description: "Reads one Google Drive file, exporting Google Docs editors files as plain text. Downloaded files are content-sniffed with strict UTF-8 detection, so text is returned regardless of MIME type; binary content is returned as standard base64 up to 10 MiB.",
+      description: "Reads one Google Drive file, exporting Google Docs editors files as plain text. Downloaded files are content-sniffed with strict UTF-8 detection; declared text is bounded, and binary content is returned as standard base64 only up to the internal model-safety limit.",
       responses: {
         200: jsonResponse("Google Drive file returned.", driveFileResponseSchema),
+        400: jsonResponse("The Drive item is not a readable file.", invalidRequestSchema),
         401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
         409: jsonResponse("The calling member has not connected their Google account or is missing permission.", needsConnectionSchema),
         502: jsonResponse("Google rejected the request.", upstreamErrorSchema),
@@ -1113,27 +1263,41 @@ export function registerGoogleWorkspaceRoutes<T extends { Variables: OrgRouteVar
       if (token.kind === "needs_connection") {
         return c.json({ error: "needs_connection", message: token.message }, 409)
       }
-      if (missingScope(token.account, [DRIVE_READ_SCOPE, DRIVE_FULL_SCOPE, DRIVE_FILE_SCOPE])) {
-        return c.json({ error: "needs_connection", message: missingPermissionMessage("Google Drive read") }, 409)
+      const permissionMessage = driveReadPermissionMessage(token.account)
+      if (permissionMessage) {
+        return c.json({ error: "needs_connection", message: permissionMessage }, 409)
       }
 
       const { fileId } = c.req.valid("param")
       const metadataUrl = new URL(`${driveApiBase()}/drive/v3/files/${encodeURIComponent(fileId)}`)
+      metadataUrl.searchParams.set("supportsAllDrives", "true")
       metadataUrl.searchParams.set("fields", "id,name,mimeType,modifiedTime,webViewLink,size")
       const metadataResponse = await googleWorkspaceApiFetch(metadataUrl, {
         headers: { authorization: `Bearer ${token.accessToken}` },
       })
       if (!metadataResponse.ok) {
-        return c.json(await googleApiError("Google Drive file metadata", metadataResponse), 502)
+        const error = await googleDriveApiError("Google Drive file metadata", metadataResponse, { generalRead: true })
+        return error.status === 409 ? c.json(error.body, 409) : c.json(error.body, 502)
       }
 
       const file = extractDriveFiles({ files: [await readJson(metadataResponse)] })[0]
       if (!file?.id) {
         return c.json({ error: "google_api_error", message: "Google Drive returned no file id." }, 502)
       }
+      if (file.mimeType === DRIVE_FOLDER_MIME_TYPE) {
+        return c.json({
+          error: "invalid_request",
+          details: [{ message: "The requested Drive item is a folder, not a readable file. Folder traversal is not supported by this file-read operation." }],
+        }, 400)
+      }
 
       const isGoogleAppsFile = file.mimeType.startsWith("application/vnd.google-apps")
-      if (!isGoogleAppsFile && file.size !== null && Number(file.size) > MAX_DRIVE_FILE_CONTENT_BYTES) {
+      if (
+        !isGoogleAppsFile
+        && !isDeclaredTextFile(file.mimeType)
+        && file.size !== null
+        && Number(file.size) > MAX_DRIVE_FILE_CONTENT_BYTES
+      ) {
         return c.json({
           ok: true,
           file: {
@@ -1154,17 +1318,19 @@ export function registerGoogleWorkspaceRoutes<T extends { Variables: OrgRouteVar
         contentUrl.searchParams.set("mimeType", "text/plain")
       } else {
         contentUrl.searchParams.set("alt", "media")
+        contentUrl.searchParams.set("supportsAllDrives", "true")
       }
 
       const contentResponse = await googleWorkspaceApiFetch(contentUrl, {
         headers: { authorization: `Bearer ${token.accessToken}` },
       })
       if (!contentResponse.ok) {
-        return c.json(await googleApiError("Google Drive file content", contentResponse), 502)
+        const error = await googleDriveApiError("Google Drive file content", contentResponse, { generalRead: true })
+        return error.status === 409 ? c.json(error.body, 409) : c.json(error.body, 502)
       }
 
       if (isGoogleAppsFile) {
-        const content = truncateText(await contentResponse.text(), 200_000)
+        const content = truncateText(await contentResponse.text(), DRIVE_TEXT_CHARACTER_LIMIT)
         return c.json({
           ok: true,
           file: {
@@ -1180,7 +1346,7 @@ export function registerGoogleWorkspaceRoutes<T extends { Variables: OrgRouteVar
 
       const bytes = new Uint8Array(await contentResponse.arrayBuffer())
       const content = decodeFileContent(bytes, {
-        maxTextCharacters: 200_000,
+        maxTextCharacters: DRIVE_TEXT_CHARACTER_LIMIT,
         maxBinaryBytes: MAX_DRIVE_FILE_CONTENT_BYTES,
       })
       if (content.kind === "text") {
@@ -1269,6 +1435,7 @@ export function registerGoogleWorkspaceRoutes<T extends { Variables: OrgRouteVar
 
       const url = new URL(`${driveApiBase()}/drive/v3/files/${encodeURIComponent(fileId)}/permissions`)
       url.searchParams.set("sendNotificationEmail", String(input.sendNotificationEmail))
+      url.searchParams.set("supportsAllDrives", "true")
       url.searchParams.set("fields", "id,type,role")
       const response = await googleWorkspaceApiFetch(url, {
         method: "POST",
@@ -1279,7 +1446,8 @@ export function registerGoogleWorkspaceRoutes<T extends { Variables: OrgRouteVar
         body: JSON.stringify(permissionPayload),
       })
       if (!response.ok) {
-        return c.json(await googleApiError("Google Drive file share", response), 502)
+        const error = await googleDriveApiError("Google Drive file share", response)
+        return error.status === 409 ? c.json(error.body, 409) : c.json(error.body, 502)
       }
 
       const permission = extractDrivePermission(await readJson(response))

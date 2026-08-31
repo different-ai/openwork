@@ -101,7 +101,17 @@ let calendarCreateCount = 0
 let lastDraftPayload: unknown = null
 let lastGmailThreadUrl: string | null = null
 let forceDriveUploadError = false
+let forceDriveAuthorizationError = false
+let forceDriveShareForbidden = false
 let largeDriveContentHitCount = 0
+let gmailListMessageIds = ["msg_1"]
+let gmailMetadataDelayMs = 0
+let gmailMetadataFailureId: string | null = null
+let activeGmailMetadataRequests = 0
+let maxActiveGmailMetadataRequests = 0
+let gmailMessageBody = "Plain Gmail body"
+let driveFileText = "Drive file text"
+let driveDocumentText = "Exported doc text"
 
 function resetFakeGoogle() {
   lastAuthorization = null
@@ -121,7 +131,17 @@ function resetFakeGoogle() {
   lastDraftPayload = null
   lastGmailThreadUrl = null
   forceDriveUploadError = false
+  forceDriveAuthorizationError = false
+  forceDriveShareForbidden = false
   largeDriveContentHitCount = 0
+  gmailListMessageIds = ["msg_1"]
+  gmailMetadataDelayMs = 0
+  gmailMetadataFailureId = null
+  activeGmailMetadataRequests = 0
+  maxActiveGmailMetadataRequests = 0
+  gmailMessageBody = "Plain Gmail body"
+  driveFileText = "Drive file text"
+  driveDocumentText = "Exported doc text"
 }
 
 // Trailing high bytes force base64url output ("-"/"_") to differ from standard base64 ("+"/"/").
@@ -129,11 +149,12 @@ const attachmentBytes = Buffer.concat([Buffer.from("%PDF-1.4 fake attachment", "
 const binaryDriveBytes = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0xfb, 0xef, 0xbe, 0xff]), Buffer.from("binary fixture", "utf8")])
 const dxfDriveText = "0\nSECTION\n2\nHEADER\n0\nENDSEC\n0\nEOF\n"
 
-function gmailMessagePayload() {
+function gmailMessagePayload(id = "msg_1") {
+  const messageNumber = id.replace(/^msg_/, "")
   return {
-    id: "msg_1",
-    threadId: "thread_1",
-    snippet: "Gmail snippet",
+    id,
+    threadId: `thread_${messageNumber}`,
+    snippet: id === "msg_1" ? "Gmail snippet" : `Gmail snippet ${id}`,
     payload: {
       mimeType: "multipart/mixed",
       headers: [
@@ -144,7 +165,7 @@ function gmailMessagePayload() {
         { name: "Date", value: "Tue, 07 Jul 2026 10:00:00 +0000" },
       ],
       parts: [
-        { mimeType: "text/plain", body: { data: base64Url("Plain Gmail body") } },
+        { mimeType: "text/plain", body: { data: base64Url(gmailMessageBody) } },
         { filename: "plan.pdf", mimeType: "application/pdf", body: { attachmentId: "att_1", size: 123 } },
       ],
     },
@@ -170,10 +191,25 @@ const fakeGoogleServer = Bun.serve({
     }
 
     if (url.pathname === "/gmail/v1/users/me/messages") {
-      return json({ messages: [{ id: "msg_1", threadId: "thread_1" }] })
+      return json({ messages: gmailListMessageIds.map((id) => ({ id, threadId: `thread_${id.replace(/^msg_/, "")}` })) })
     }
-    if (url.pathname === "/gmail/v1/users/me/messages/msg_1") {
-      return json(gmailMessagePayload())
+    const gmailMessageMatch = url.pathname.match(/^\/gmail\/v1\/users\/me\/messages\/([^/]+)$/)
+    if (gmailMessageMatch?.[1]) {
+      if (url.searchParams.get("format") === "metadata") {
+        activeGmailMetadataRequests += 1
+        maxActiveGmailMetadataRequests = Math.max(maxActiveGmailMetadataRequests, activeGmailMetadataRequests)
+        try {
+          if (gmailMessageMatch[1] === gmailMetadataFailureId) {
+            return new Response("metadata exploded", { status: 500 })
+          }
+          if (gmailMetadataDelayMs > 0) {
+            await new Promise((resolve) => setTimeout(resolve, gmailMetadataDelayMs))
+          }
+        } finally {
+          activeGmailMetadataRequests -= 1
+        }
+      }
+      return json(gmailMessagePayload(gmailMessageMatch[1]))
     }
     if (url.pathname === "/gmail/v1/users/me/messages/msg_1/attachments/att_1") {
       return json({ attachmentId: "att_1", size: attachmentBytes.byteLength, data: attachmentBytes.toString("base64url") })
@@ -270,6 +306,16 @@ const fakeGoogleServer = Bun.serve({
 
     if (url.pathname === "/drive/v3/files") {
       lastDriveQuery = url.searchParams.get("q")
+      if (forceDriveAuthorizationError) {
+        return json({
+          error: {
+            code: 403,
+            message: `${"x".repeat(400)} Insufficient Permission`,
+            status: "PERMISSION_DENIED",
+            errors: [{ reason: "insufficientPermissions" }],
+          },
+        }, 403)
+      }
       return json({
         files: [
           {
@@ -302,6 +348,9 @@ const fakeGoogleServer = Bun.serve({
       const body: unknown = await request.json()
       lastDriveSharePayload = body
       lastDriveShareUrl = request.url
+      if (forceDriveShareForbidden) {
+        return json({ error: { code: 403, message: "The target file cannot be shared.", status: "PERMISSION_DENIED" } }, 403)
+      }
       const payload = isRecord(body) ? body : {}
       return json({
         id: readString(payload, "type") === "domain" ? "perm_domain_1" : "perm_user_1",
@@ -310,7 +359,7 @@ const fakeGoogleServer = Bun.serve({
       })
     }
     if (url.pathname === "/drive/v3/files/file_1" && url.searchParams.get("alt") === "media") {
-      return new Response("Drive file text", { headers: { "content-type": "text/plain" } })
+      return new Response(driveFileText, { headers: { "content-type": "text/plain" } })
     }
     if (url.pathname === "/drive/v3/files/file_1") {
       return json({
@@ -320,6 +369,32 @@ const fakeGoogleServer = Bun.serve({
         modifiedTime: "2026-07-08T11:00:00Z",
         webViewLink: "https://drive.google.com/file/d/file_1/view",
         size: "42",
+      })
+    }
+    if (url.pathname === "/drive/v3/files/user_created_file" && url.searchParams.get("alt") === "media") {
+      return new Response("Created directly in My Drive", { headers: { "content-type": "text/plain" } })
+    }
+    if (url.pathname === "/drive/v3/files/user_created_file") {
+      return json({
+        id: "user_created_file",
+        name: "Created in My Drive.txt",
+        mimeType: "text/plain",
+        modifiedTime: "2026-08-31T12:00:00Z",
+        webViewLink: "https://drive.google.com/file/d/user_created_file/view",
+        size: "28",
+      })
+    }
+    if (url.pathname === "/drive/v3/files/missing_file") {
+      return json({ error: { code: 404, message: "File not found: missing_file.", status: "NOT_FOUND" } }, 404)
+    }
+    if (url.pathname === "/drive/v3/files/folder_1") {
+      return json({
+        id: "folder_1",
+        name: "Planning folder",
+        mimeType: "application/vnd.google-apps.folder",
+        modifiedTime: "2026-08-31T12:00:00Z",
+        webViewLink: "https://drive.google.com/drive/folders/folder_1",
+        size: null,
       })
     }
     if (url.pathname === "/drive/v3/files/binary_file" && url.searchParams.get("alt") === "media") {
@@ -359,7 +434,7 @@ const fakeGoogleServer = Bun.serve({
         mimeType: "application/octet-stream",
         modifiedTime: "2026-07-08T11:00:00Z",
         webViewLink: "https://drive.google.com/file/d/large_file/view",
-        size: "20971520",
+        size: String(128 * 1024),
       })
     }
     if (url.pathname === "/drive/v3/files/doc_1") {
@@ -373,7 +448,7 @@ const fakeGoogleServer = Bun.serve({
       })
     }
     if (url.pathname === "/drive/v3/files/doc_1/export") {
-      return new Response("Exported doc text", { headers: { "content-type": "text/plain" } })
+      return new Response(driveDocumentText, { headers: { "content-type": "text/plain" } })
     }
 
     return new Response(`Unhandled fake Google route: ${url.pathname}`, { status: 404 })
@@ -442,6 +517,38 @@ function requestForm(path: string, form: FormData) {
   })
 }
 
+async function mcpToolCall(name: string, args: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const response = await app.request("http://den-api.local/mcp/agent", {
+    method: "POST",
+    headers: {
+      accept: "application/json, text/event-stream",
+      authorization: `Bearer ${directUploadMcpToken}`,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "tools/call",
+      params: { name, arguments: args },
+    }),
+  })
+  expect(response.status).toBe(200)
+  const responseText = await response.text()
+  const dataLine = responseText.split("\n").find((line) => line.startsWith("data: "))
+  const payload: unknown = JSON.parse(dataLine?.slice("data: ".length) ?? responseText)
+  const envelope = expectRecord(payload, "MCP JSON-RPC response")
+  return expectRecord(envelope.result, "MCP tool result")
+}
+
+function mcpText(result: Record<string, unknown>): string {
+  const content = Array.isArray(result.content) ? result.content : []
+  for (const part of content) {
+    const record = isRecord(part) ? part : null
+    if (record?.type === "text" && typeof record.text === "string") return record.text
+  }
+  throw new Error("Expected MCP text result")
+}
+
 beforeAll(async () => {
   mock.restore()
   const realDb = (await import("@openwork-ee/den-db")).createDenDb({
@@ -492,13 +599,20 @@ beforeAll(async () => {
     token: authSessionToken,
     expiresAt: new Date(Date.now() + 60 * 60 * 1000),
   })
+  await credentialsMod.upsertOrgOAuthClient({
+    organizationId,
+    providerId: "google-workspace",
+    clientId: "gws-caps-client",
+    clientSecret: "gws-caps-secret",
+    createdByOrgMembershipId: memberId,
+  })
   const tokenResponse = await app.request("http://den-api.local/v1/mcp/token", {
     method: "POST",
     headers: {
       authorization: `Bearer ${authSessionToken}`,
       "content-type": "application/json",
     },
-    body: JSON.stringify({ scopes: ["mcp:write"] }),
+    body: JSON.stringify({ scopes: ["mcp:read", "mcp:write"] }),
   })
   expect(tokenResponse.status).toBe(200)
   const tokenBody: unknown = await tokenResponse.json()
@@ -513,6 +627,7 @@ beforeEach(async () => {
 
 afterAll(async () => {
   await db.delete(schema.ConnectedAccountTable).where(drizzle.eq(schema.ConnectedAccountTable.organizationId, organizationId))
+  await db.delete(schema.OrgOAuthClientTable).where(drizzle.eq(schema.OrgOAuthClientTable.organizationId, organizationId))
   await db.delete(schema.OAuthAccessTokenTable).where(drizzle.eq(schema.OAuthAccessTokenTable.referenceId, organizationId))
   await db.delete(schema.AuthSessionTable).where(drizzle.eq(schema.AuthSessionTable.id, authSessionId))
   await db.delete(schema.MemberTable).where(drizzle.eq(schema.MemberTable.organizationId, organizationId))
@@ -662,6 +777,42 @@ test("gmail list returns metadata-mapped messages", async () => {
       },
     ],
   })
+})
+
+test("gmail list overlaps metadata requests with bounded concurrency and preserves list order", async () => {
+  gmailListMessageIds = ["msg_1", "msg_2", "msg_3", "msg_4", "msg_5", "msg_6"]
+  gmailMetadataDelayMs = 40
+  const response = await request("/v1/capabilities/google-workspace/gmail-messages?maxResults=6")
+  expect(response.status).toBe(200)
+  const body = expectRecord(await response.json(), "concurrent Gmail response")
+  const messages = Array.isArray(body.messages) ? body.messages.map((message) => expectRecord(message, "Gmail message")) : []
+  expect(messages.map((message) => message.id)).toEqual(gmailListMessageIds)
+  expect(maxActiveGmailMetadataRequests).toBeGreaterThan(1)
+  expect(maxActiveGmailMetadataRequests).toBeLessThanOrEqual(4)
+})
+
+test("gmail metadata failure stops new work and returns the existing upstream error shape", async () => {
+  gmailListMessageIds = ["msg_1", "msg_2", "msg_3", "msg_4", "msg_5", "msg_6", "msg_7", "msg_8"]
+  gmailMetadataFailureId = "msg_2"
+  gmailMetadataDelayMs = 40
+  const response = await request("/v1/capabilities/google-workspace/gmail-messages?maxResults=8")
+  expect(response.status).toBe(502)
+  const metadataCalls = googleCallUrls.filter((value) => new URL(value).searchParams.get("format") === "metadata")
+  expect(metadataCalls).toHaveLength(4)
+  expect(metadataCalls.some((value) => value.includes("/msg_5"))).toBe(false)
+  expect(await response.json()).toEqual({
+    error: "google_api_error",
+    message: "Gmail message metadata failed: 500 metadata exploded",
+  })
+})
+
+test("gmail message body retains the existing retrieval limit before MCP serialization", async () => {
+  gmailMessageBody = "g".repeat(120_000)
+  const response = await request("/v1/capabilities/google-workspace/gmail-message/msg_1")
+  expect(response.status).toBe(200)
+  const body = expectRecord(await response.json(), "bounded Gmail response")
+  const message = expectRecord(body.message, "bounded Gmail message")
+  expect(expectString(message.body, "bounded Gmail body")).toHaveLength(100_000)
 })
 
 test("gmail attachment download returns standard base64 bytes and sends the member token", async () => {
@@ -920,6 +1071,119 @@ test("drive search returns mapped files", async () => {
       },
     ],
   })
+
+  const url = new URL(expectString(googleCallUrls.at(-1), "Drive search URL"))
+  expect(url.searchParams.get("pageSize")).toBe("3")
+  expect(url.searchParams.get("corpora")).toBe("allDrives")
+  expect(url.searchParams.get("spaces")).toBe("drive")
+  expect(url.searchParams.get("supportsAllDrives")).toBe("true")
+  expect(url.searchParams.get("includeItemsFromAllDrives")).toBe("true")
+  expect(url.searchParams.get("orderBy")).toBeNull()
+  expect(url.searchParams.get("fields")).toBe("files(id,name,mimeType,modifiedTime,webViewLink,size)")
+})
+
+test("Google Drive authorization failures become an actionable connector response", async () => {
+  forceDriveAuthorizationError = true
+  const response = await request("/v1/capabilities/google-workspace/drive-files?query=quarterly")
+  expect(response.status).toBe(409)
+  const body = expectRecord(await response.json(), "Google Drive authorization error")
+  expect(body.error).toBe("needs_connection")
+  expect(expectMessage(body)).toContain("enable Read all Drive files")
+  expect(expectMessage(body)).toContain("reconnect Google Workspace")
+})
+
+test("drive.file alone cannot execute general Drive search", async () => {
+  await seedConnectedAccount([DRIVE_FILE_SCOPE])
+  resetFakeGoogle()
+  const response = await request("/v1/capabilities/google-workspace/drive-files?query=quarterly&maxResults=3")
+  expect(response.status).toBe(409)
+  expect(googleCallCount).toBe(0)
+  const body: unknown = await response.json()
+  expect(expectRecord(body, "Drive authorization response").error).toBe("needs_connection")
+  expect(expectMessage(body)).toContain("does not grant Read all Drive files")
+  expect(expectMessage(body)).toContain("reconnect Google Workspace")
+})
+
+test("drive.file alone cannot execute general Drive read", async () => {
+  await seedConnectedAccount([DRIVE_FILE_SCOPE])
+  resetFakeGoogle()
+  const response = await request("/v1/capabilities/google-workspace/drive-file/file_1")
+  expect(response.status).toBe(409)
+  expect(googleCallCount).toBe(0)
+  expect(expectMessage(await response.json())).toContain("does not grant Read all Drive files")
+})
+
+test("Drive read scope matching rejects URL lookalikes", async () => {
+  await seedConnectedAccount([`${DRIVE_READ_SCOPE}.lookalike`, `prefix.${DRIVE_FULL_SCOPE}`])
+  resetFakeGoogle()
+  const response = await request("/v1/capabilities/google-workspace/drive-files?query=quarterly")
+  expect(response.status).toBe(409)
+  expect(googleCallCount).toBe(0)
+  expect(expectMessage(await response.json())).toContain("does not grant Read all Drive files")
+})
+
+test("missing or empty recorded scopes fail closed for general Drive search and read", async () => {
+  for (const scopes of [null, []] as const) {
+    for (const path of [
+      "/v1/capabilities/google-workspace/drive-files?query=quarterly",
+      "/v1/capabilities/google-workspace/drive-file/user_created_file",
+    ]) {
+      await seedConnectedAccount(scopes)
+      resetFakeGoogle()
+      const response = await request(path)
+      expect(response.status).toBe(409)
+      expect(googleCallCount).toBe(0)
+      expect(expectMessage(await response.json())).toContain("could not verify the Google Drive permissions")
+    }
+  }
+})
+
+test("a file created directly in My Drive requires read-all scope for the same file id", async () => {
+  await seedConnectedAccount([DRIVE_FILE_SCOPE])
+  resetFakeGoogle()
+  const denied = await request("/v1/capabilities/google-workspace/drive-file/user_created_file")
+  expect(denied.status).toBe(409)
+  expect(googleCallCount).toBe(0)
+  expect(expectMessage(await denied.json())).toContain("does not grant Read all Drive files")
+
+  for (const scope of [DRIVE_READ_SCOPE, DRIVE_FULL_SCOPE]) {
+    await seedConnectedAccount([scope])
+    resetFakeGoogle()
+    const allowed = await request("/v1/capabilities/google-workspace/drive-file/user_created_file")
+    expect(allowed.status).toBe(200)
+    expect(googleCallCount).toBe(2)
+    const file = expectRecord(expectRecord(await allowed.json(), "user-created Drive response").file, "user-created Drive file")
+    expect(file.id).toBe("user_created_file")
+    expect(file.content).toBe("Created directly in My Drive")
+  }
+})
+
+test("Drive 404 remains an ambiguous item error when full read access is recorded", async () => {
+  await seedConnectedAccount([DRIVE_FULL_SCOPE])
+  resetFakeGoogle()
+  const response = await request("/v1/capabilities/google-workspace/drive-file/missing_file")
+  expect(response.status).toBe(502)
+  expect(googleCallCount).toBe(1)
+  const body = expectRecord(await response.json(), "Drive not-found response")
+  expect(body.error).toBe("google_api_error")
+  const message = expectMessage(body)
+  expect(message).toContain("connected account may not be able to see it")
+  expect(message).toContain("file ID may be incorrect")
+  expect(message).toContain("item may have been deleted")
+  expect(message).not.toContain("Read all Drive files")
+  expect(message.length).toBeLessThan(300)
+})
+
+test("Drive file read rejects folders after metadata without attempting content download", async () => {
+  const response = await request("/v1/capabilities/google-workspace/drive-file/folder_1")
+  expect(response.status).toBe(400)
+  expect(googleCallCount).toBe(1)
+  const body = expectRecord(await response.json(), "Drive folder response")
+  expect(body.error).toBe("invalid_request")
+  const details = Array.isArray(body.details) ? body.details : []
+  const detail = expectRecord(details[0], "Drive folder diagnostic")
+  expect(detail.message).toContain("folder, not a readable file")
+  expect(detail.message).toContain("Folder traversal is not supported")
 })
 
 test("drive file read returns strict UTF-8 text metadata", async () => {
@@ -933,6 +1197,10 @@ test("drive file read returns strict UTF-8 text metadata", async () => {
   expect(file.encoding).toBe("text")
   expect(file.contentBase64).toBeNull()
   expect(file.contentUnavailableReason).toBeNull()
+  const metadataUrl = new URL(expectString(googleCallUrls[0], "Drive metadata URL"))
+  const contentUrl = new URL(expectString(googleCallUrls[1], "Drive content URL"))
+  expect(metadataUrl.searchParams.get("supportsAllDrives")).toBe("true")
+  expect(contentUrl.searchParams.get("supportsAllDrives")).toBe("true")
 })
 
 test("drive file read preserves binary bytes through standard base64", async () => {
@@ -978,6 +1246,16 @@ test("drive file read keeps the Google Apps text export branch", async () => {
   expect(file.content).toBe("Exported doc text")
 })
 
+test("drive text retains the existing retrieval limit before MCP serialization", async () => {
+  driveDocumentText = "d".repeat(210_000)
+  const response = await request("/v1/capabilities/google-workspace/drive-file/doc_1")
+  expect(response.status).toBe(200)
+  const body = expectRecord(await response.json(), "bounded Drive response")
+  const file = expectRecord(body.file, "bounded Drive file")
+  expect(expectString(file.content, "bounded Drive content")).toHaveLength(200_000)
+  expect(file.truncated).toBe(true)
+})
+
 test("direct Drive upload preserves exact multipart bytes and returns the user-facing link", async () => {
   await seedConnectedAccount([DRIVE_FILE_SCOPE])
   resetFakeGoogle()
@@ -988,6 +1266,8 @@ test("direct Drive upload preserves exact multipart bytes and returns the user-f
   const response = await requestForm("/v1/direct-uploads/google-workspace/drive-files", form)
   expect(response.status).toBe(200)
   expect(lastAuthorization).toBe("Bearer gws-token")
+  const uploadUrl = new URL(expectString(googleCallUrls[0], "Drive upload URL"))
+  expect(uploadUrl.searchParams.get("supportsAllDrives")).toBe("true")
   const contentType = expectString(lastDriveUploadContentType, "drive upload content type")
   const boundary = contentType.match(/boundary=(.+)$/)?.[1]
   if (!boundary) {
@@ -1038,6 +1318,7 @@ test("drive share grants user access and sends notification by default", async (
   const url = new URL(expectString(lastDriveShareUrl, "drive share URL"))
   expect(url.pathname).toBe("/drive/v3/files/file_1/permissions")
   expect(url.searchParams.get("sendNotificationEmail")).toBe("true")
+  expect(url.searchParams.get("supportsAllDrives")).toBe("true")
   expect(url.searchParams.get("fields")).toBe("id,type,role")
   const body: unknown = await response.json()
   expect(body).toEqual({ ok: true, fileId: "file_1", permissionId: "perm_user_1", type: "user", role: "reader" })
@@ -1069,6 +1350,21 @@ test("drive share validates user email before calling Google", async () => {
   expect(expectRecord(body, "invalid share response").error).toBe("invalid_request")
 })
 
+test("ordinary Drive share permission failures are not misclassified as missing OAuth scope", async () => {
+  await seedConnectedAccount([DRIVE_FILE_SCOPE])
+  resetFakeGoogle()
+  forceDriveShareForbidden = true
+  const response = await request("/v1/capabilities/google-workspace/drive-file-share/file_1", {
+    method: "POST",
+    body: { type: "user", emailAddress: "raghav@openworklabs.com" },
+  })
+  expect(response.status).toBe(502)
+  const body = expectRecord(await response.json(), "Drive share forbidden response")
+  expect(body.error).toBe("google_api_error")
+  expect(expectMessage(body)).toContain("target file cannot be shared")
+  expect(expectMessage(body)).not.toContain("Read all Drive files")
+})
+
 test("drive upload returns google_api_error when Google rejects the upload", async () => {
   await seedConnectedAccount([DRIVE_FILE_SCOPE])
   resetFakeGoogle()
@@ -1083,6 +1379,101 @@ test("drive upload returns google_api_error when Google rejects the upload", asy
     error: "google_api_error",
     message: "Google Drive file upload failed: 500 upload exploded",
   })
+})
+
+test("existing MCP search and execute path enforces Drive scope and bounds model-visible content", async () => {
+  const searchResult = await mcpToolCall("search_capabilities", { query: "drive files", limit: 10 })
+  const capabilityName = "native:google-workspace:getCapabilitiesGoogleWorkspaceDriveFiles"
+  expect(mcpText(searchResult)).toContain(capabilityName)
+
+  resetFakeGoogle()
+  const successfulSearch = await mcpToolCall("execute_capability", {
+    name: capabilityName,
+    query: { query: "quarterly", maxResults: 3 },
+  })
+  expect(successfulSearch.isError).not.toBe(true)
+  expect(mcpText(successfulSearch)).toContain("Quarterly Plan.txt")
+  const providerUrl = new URL(expectString(googleCallUrls[0], "MCP Drive search URL"))
+  expect(providerUrl.searchParams.get("supportsAllDrives")).toBe("true")
+  expect(providerUrl.searchParams.get("includeItemsFromAllDrives")).toBe("true")
+
+  resetFakeGoogle()
+  const rawBinary = binaryDriveBytes.toString("base64")
+  const binaryResult = await mcpToolCall("execute_capability", {
+    name: "native:google-workspace:getCapabilitiesGoogleWorkspaceDriveFile",
+    path: { fileId: "binary_file" },
+  })
+  const binaryText = mcpText(binaryResult)
+  expect(binaryText).toContain(rawBinary)
+  expect(binaryText).not.toContain("contentBase64Omitted")
+  expect(Buffer.byteLength(binaryText, "utf8")).toBeLessThan(2_000)
+
+  resetFakeGoogle()
+  const largeBinaryResult = await mcpToolCall("execute_capability", {
+    name: "native:google-workspace:getCapabilitiesGoogleWorkspaceDriveFile",
+    path: { fileId: "large_file" },
+  })
+  const largeBinaryText = mcpText(largeBinaryResult)
+  expect(largeBinaryText).toContain('"contentBase64": null')
+  expect(largeBinaryText).not.toContain("contentBase64Omitted")
+  expect(largeBinaryText).toContain("file_too_large")
+  expect(largeDriveContentHitCount).toBe(0)
+
+  resetFakeGoogle()
+  driveDocumentText = "d".repeat(25_000)
+  const textResult = await mcpToolCall("execute_capability", {
+    name: "native:google-workspace:getCapabilitiesGoogleWorkspaceDriveFile",
+    path: { fileId: "doc_1" },
+  })
+  const modelText = mcpText(textResult)
+  expect(modelText).toContain("[truncated]")
+  expect(modelText).not.toContain("d".repeat(20_001))
+  expect(Buffer.byteLength(modelText, "utf8")).toBeLessThan(22_000)
+
+  resetFakeGoogle()
+  gmailMessageBody = "g".repeat(25_000)
+  const gmailTextResult = await mcpToolCall("execute_capability", {
+    name: "native:google-workspace:getCapabilitiesGoogleWorkspaceGmailMessage",
+    path: { messageId: "msg_1" },
+  })
+  const gmailModelText = mcpText(gmailTextResult)
+  expect(gmailModelText).toContain("[truncated]")
+  expect(gmailModelText).not.toContain("g".repeat(20_001))
+  expect(Buffer.byteLength(gmailModelText, "utf8")).toBeLessThan(22_000)
+
+  resetFakeGoogle()
+  const attachmentResult = await mcpToolCall("execute_capability", {
+    name: "native:google-workspace:getCapabilitiesGoogleWorkspaceGmailAttachment",
+    path: { messageId: "msg_1", attachmentId: "att_1" },
+  })
+  expect(mcpText(attachmentResult)).toContain(attachmentBytes.toString("base64"))
+
+  await seedConnectedAccount([DRIVE_FILE_SCOPE])
+  resetFakeGoogle()
+  const deniedSearch = await mcpToolCall("execute_capability", {
+    name: capabilityName,
+    query: { query: "quarterly", maxResults: 3 },
+  })
+  expect(deniedSearch.isError).toBe(true)
+  expect(mcpText(deniedSearch)).toContain("does not grant Read all Drive files")
+  expect(googleCallCount).toBe(0)
+})
+
+test("legacy accounts without recorded scopes retain existing non-Drive behavior", async () => {
+  await seedConnectedAccount(null)
+  resetFakeGoogle()
+  const gmail = await request("/v1/capabilities/google-workspace/gmail-messages")
+  expect(gmail.status).toBe(200)
+  expect(googleCallCount).toBe(2)
+
+  await seedConnectedAccount(null)
+  resetFakeGoogle()
+  const share = await request("/v1/capabilities/google-workspace/drive-file-share/file_1", {
+    method: "POST",
+    body: { type: "user", emailAddress: "raghav@openworklabs.com" },
+  })
+  expect(share.status).toBe(200)
+  expect(googleCallCount).toBe(1)
 })
 
 test("no connected account returns needs_connection", async () => {
