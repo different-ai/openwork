@@ -24,7 +24,6 @@ const allowedCategories = new Set([
 ]);
 const productFailuresThatMustRemainEligible = [
   "active-session-workspace-storm.e2e.test.ts",
-  "automation-proposal-model-resolution.e2e.test.ts",
   "composer-model-picker-no-subscribe-promo.e2e.test.ts",
   "responsive-session-layout.e2e.test.ts",
 ];
@@ -109,6 +108,7 @@ test("Daytona E2E regression profile excludes only audited shared-topology incom
   expect(categoryByTest.get("dashboard-deployment-gate.e2e.test.ts")).toBe("per-test-den-env");
   expect(categoryByTest.get("automation-desktop-lifecycle.e2e.test.ts")).toBe("per-test-den-env");
   expect(categoryByTest.get("automation-model-needs-attention.e2e.test.ts")).toBe("per-test-den-env");
+  expect(categoryByTest.get("automation-proposal-model-resolution.e2e.test.ts")).toBe("per-test-den-env");
   expect(categoryByTest.get("automations-den-hosted.e2e.test.ts")).toBe("per-test-den-env");
   expect(categoryByTest.get("opencode-mcp-agent-oauth.e2e.test.ts")).toBe("fresh-den-url");
   expect(categoryByTest.get("library-advanced-refresh.e2e.test.ts")).toBe("fault-proxy");
@@ -121,8 +121,8 @@ test("Daytona E2E regression profile excludes only audited shared-topology incom
 
   expect(inventory.all).toHaveLength(146);
   expect(inventory.rawDesktop).toHaveLength(52);
-  expect(inventory.profile).toHaveLength(73);
-  expect(inventory.eligible).toHaveLength(20);
+  expect(inventory.profile).toHaveLength(74);
+  expect(inventory.eligible).toHaveLength(19);
   expect(inventory.rawDesktop).toContain("den-litellm-provider.e2e.test.ts");
   expect(inventory.eligible).not.toContain("org-team-lifecycle-critical-path.e2e.test.ts");
   expect(inventory.eligible).not.toContain("library-mcp-connect-error.e2e.test.ts");

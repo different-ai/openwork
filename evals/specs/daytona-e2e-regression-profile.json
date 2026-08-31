@@ -28,6 +28,11 @@
       "reason": "requires test-specific Den Automation model-attention and runner configuration before Den starts"
     },
     {
+      "test": "automation-proposal-model-resolution.e2e.test.ts",
+      "category": "per-test-den-env",
+      "reason": "requires its per-test tool-capable model mock; the shared prewarmed Den exposes only deepseek-v4-flash"
+    },
+    {
       "test": "automation-runtime-placement.e2e.test.ts",
       "category": "fresh-den-url",
       "reason": "requires a freshly booted Den Web/API origin for its browser-side Cloud Automation flow"
