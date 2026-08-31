@@ -35,6 +35,19 @@ test(title, async ({ evidence, place }) => {
     return true;
   })()`);
   expect(compactOpened).toBe(true);
+  await waitFor(desktop, `Boolean(document.querySelector('[data-slot="model-select-root"]'))`, {
+    timeoutMs: 20_000,
+    label: "model quick controls",
+  });
+  const modelPaneOpened = await evalIn(desktop, `(() => {
+    const root = document.querySelector('[data-slot="model-select-root"]');
+    const model = root && [...root.querySelectorAll('button')]
+      .find((button) => button.querySelector('span')?.textContent?.trim() === 'Model');
+    if (!(model instanceof HTMLButtonElement)) return false;
+    model.click();
+    return true;
+  })()`);
+  expect(modelPaneOpened).toBe(true);
   await waitFor(desktop, `Boolean(document.querySelector('[data-slot="popover-content"] input[placeholder="Search models..."]'))`, {
     timeoutMs: 20_000,
     label: "compact model picker",
