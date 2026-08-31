@@ -94,15 +94,28 @@ function compareOldest(left, right) {
   return created || left.name.localeCompare(right.name)
 }
 
-export function selectDevSnapshotPrunes({
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+}
+
+// Release snapshots are named `<base>-<version>` from validated release tags
+// (see release-daytona-snapshot.yml), so scope on that exact shape. Per-push
+// dev snapshots (`<base>-dev-<sha>`) can never match because "dev" is not a
+// version number.
+function releaseSnapshotPattern(nameBase) {
+  return new RegExp(
+    `^${escapeRegExp(nameBase)}-\\d+\\.\\d+\\.\\d+([.-][0-9A-Za-z.-]+)?$`,
+  )
+}
+
+function selectSnapshotPrunes({
   snapshots,
   sandboxes,
-  nameBase,
+  inScope,
   keepNames,
   keepCount,
 }) {
-  const prefix = `${nameBase}-dev-`
-  const scoped = snapshots.filter((snapshot) => snapshot.name.startsWith(prefix))
+  const scoped = snapshots.filter((snapshot) => inScope(snapshot.name))
   const recentNames = new Set(
     [...scoped].sort(compareNewest).slice(0, keepCount).map((snapshot) => snapshot.name),
   )
@@ -136,6 +149,53 @@ export function selectDevSnapshotPrunes({
   }
 
   return { prune, keep }
+}
+
+export function selectDevSnapshotPrunes({
+  snapshots,
+  sandboxes,
+  nameBase,
+  keepNames,
+  keepCount,
+}) {
+  const prefix = `${nameBase}-dev-`
+  return selectSnapshotPrunes({
+    snapshots,
+    sandboxes,
+    keepNames,
+    keepCount,
+    inScope: (name) => name.startsWith(prefix),
+  })
+}
+
+export function selectReleaseSnapshotPrunes({
+  snapshots,
+  sandboxes,
+  nameBase,
+  keepNames,
+  keepCount,
+}) {
+  const pattern = releaseSnapshotPattern(nameBase)
+  return selectSnapshotPrunes({
+    snapshots,
+    sandboxes,
+    keepNames,
+    keepCount,
+    inScope: (name) => pattern.test(name),
+  })
+}
+
+const CHANNELS = {
+  dev: { select: selectDevSnapshotPrunes, defaultKeepCount: 5 },
+  release: { select: selectReleaseSnapshotPrunes, defaultKeepCount: 20 },
+}
+
+function validateChannel(channel) {
+  if (!Object.hasOwn(CHANNELS, channel)) {
+    throw new Error(`Invalid channel ${JSON.stringify(channel)}. Use dev or release.`)
+  }
+
+  return channel
 }
 
 async function readSnapshots({ apiUrl, apiKey, fetchImpl }) {
@@ -204,25 +264,27 @@ async function readSandboxes({ apiUrl, apiKey, fetchImpl }) {
   throw new Error("Daytona API sandbox pagination exceeded 100 pages.")
 }
 
-export async function pruneDaytonaDevSnapshots({
+export async function pruneDaytonaSnapshots({
   apiUrl = DEFAULT_API_URL,
+  channel = "dev",
   nameBase = "openwork",
   keepNames,
-  keepCount = 5,
+  keepCount,
   dryRun = false,
   apiKey,
   fetchImpl = globalThis.fetch,
   log = console.log,
 }) {
   const baseUrl = requiredValue(apiUrl, "Missing Daytona API URL.").replace(/\/+$/, "")
+  const scope = CHANNELS[validateChannel(channel)]
   const base = requiredValue(nameBase, "Missing snapshot name base.")
   const protectedNames = keepNames.map(validateSnapshotName)
-  const recentCount = validateKeepCount(keepCount)
+  const recentCount = validateKeepCount(keepCount ?? scope.defaultKeepCount)
   authorizationHeaders(apiKey)
 
   const snapshots = await readSnapshots({ apiUrl: baseUrl, apiKey, fetchImpl })
   const sandboxes = await readSandboxes({ apiUrl: baseUrl, apiKey, fetchImpl })
-  const selection = selectDevSnapshotPrunes({
+  const selection = scope.select({
     snapshots,
     sandboxes,
     nameBase: base,
@@ -272,6 +334,9 @@ export async function pruneDaytonaDevSnapshots({
   return result
 }
 
+// Compatibility alias for callers that predate the release channel.
+export const pruneDaytonaDevSnapshots = pruneDaytonaSnapshots
+
 function optionValue(args, index, option) {
   const value = args[index + 1]
   if (!value || value.startsWith("--")) {
@@ -280,16 +345,20 @@ function optionValue(args, index, option) {
   return value
 }
 
-export const USAGE = `Prune old per-push Daytona dev snapshots.
+export const USAGE = `Prune old Daytona engine snapshots.
 
 Usage:
-  node scripts/prune-daytona-dev-snapshots.mjs [--api-url <url>] [--name-base <base>] --keep <name> [--keep <name> ...] [--keep-count <n>] [--dry-run]
+  node scripts/prune-daytona-dev-snapshots.mjs [--api-url <url>] [--channel dev|release] [--name-base <base>] --keep <name> [--keep <name> ...] [--keep-count <n>] [--dry-run]
 
 Options:
   --api-url <url>       Daytona API base URL (default: https://app.daytona.io/api).
+  --channel <channel>   Snapshot family to prune: dev scopes to per-push
+                        <base>-dev-* snapshots, release scopes to tagged
+                        <base>-<version> snapshots (default: dev).
   --name-base <base>    Snapshot name base (default: openwork).
   --keep <name>         Snapshot name to protect; may be repeated.
-  --keep-count <n>      Protect the newest n dev snapshots (default: 5).
+  --keep-count <n>      Protect the newest n in-scope snapshots
+                        (default: 5 for dev, 20 for release).
   --dry-run             Fetch and report without deleting snapshots.
   -h, --help            Show this help.
 
@@ -299,9 +368,10 @@ Environment:
 export function parseArgs(args) {
   const options = {
     apiUrl: DEFAULT_API_URL,
+    channel: "dev",
     nameBase: "openwork",
     keepNames: [],
-    keepCount: 5,
+    keepCount: undefined,
     dryRun: false,
     help: false,
   }
@@ -310,6 +380,9 @@ export function parseArgs(args) {
     const argument = args[index]
     if (argument === "--api-url") {
       options.apiUrl = optionValue(args, index, argument)
+      index += 1
+    } else if (argument === "--channel") {
+      options.channel = validateChannel(optionValue(args, index, argument))
       index += 1
     } else if (argument === "--name-base") {
       options.nameBase = optionValue(args, index, argument)
@@ -350,7 +423,7 @@ export async function main(args, environment = process.env) {
     return { status: "help" }
   }
 
-  return pruneDaytonaDevSnapshots({
+  return pruneDaytonaSnapshots({
     ...options,
     apiKey: environment.DAYTONA_API_KEY,
   })

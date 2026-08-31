@@ -242,3 +242,65 @@ jobs:
             echo
             echo "Triggered a den-api deploy so the new pin takes effect."
           } >> "$GITHUB_STEP_SUMMARY"
+
+      # Tagged release snapshots accumulate forever without this: nothing else
+      # deletes them and the dev pruner is scoped to `<base>-dev-*` names only.
+      # Keep the just-published snapshot, the current production pin, the 20
+      # newest releases, in-flight builds, and anything an active sandbox still
+      # references. Checked out at the workflow SHA (not the release tag) so
+      # older tags without release-channel support still get pruned.
+      - name: Checkout snapshot prune automation
+        if: steps.publish.outcome == 'success'
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ github.sha }}
+          path: .snapshot-prune-automation
+          sparse-checkout: |
+            scripts/prune-daytona-dev-snapshots.mjs
+            scripts/update-daytona-snapshot-pin.mjs
+          sparse-checkout-cone-mode: false
+
+      - name: Prune old release snapshots
+        if: steps.publish.outcome == 'success'
+        shell: bash
+        env:
+          DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
+          DAYTONA_API_URL: ${{ vars.DAYTONA_API_URL }}
+          DAYTONA_CLOUD_ENV_GROUP_ID: ${{ vars.DAYTONA_CLOUD_ENV_GROUP_ID }}
+          DAYTONA_PIN_CHANNEL: ${{ vars.DAYTONA_PIN_CHANNEL }}
+          DAYTONA_SNAPSHOT_NAME_BASE: ${{ vars.DAYTONA_SNAPSHOT_NAME_BASE }}
+          DAYTONA_SNAPSHOT_NAME: ${{ steps.resolve.outputs.snapshot_name }}
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+        run: |
+          set -euo pipefail
+
+          keep_args=(--keep "$DAYTONA_SNAPSHOT_NAME")
+          current_pin=""
+          if [ -n "${DAYTONA_CLOUD_ENV_GROUP_ID:-}" ] && [ -n "${RENDER_API_KEY:-}" ]; then
+            current_pin="$(node .snapshot-prune-automation/scripts/update-daytona-snapshot-pin.mjs \
+              --env-group-id "$DAYTONA_CLOUD_ENV_GROUP_ID" --read || true)"
+          fi
+          if [ -n "$current_pin" ]; then
+            keep_args+=(--keep "$current_pin")
+          elif [ "${DAYTONA_PIN_CHANNEL:-}" != "dev" ]; then
+            # The production pin may be a release snapshot on this channel;
+            # never prune blind to it.
+            echo "::warning::release snapshot prune skipped: current production pin unknown while the engine channel pins releases"
+            echo "release snapshot prune skipped: current production pin unknown" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          result="$(node .snapshot-prune-automation/scripts/prune-daytona-dev-snapshots.mjs \
+            ${DAYTONA_API_URL:+--api-url "$DAYTONA_API_URL"} \
+            --channel release \
+            --name-base "${DAYTONA_SNAPSHOT_NAME_BASE:-openwork}" \
+            "${keep_args[@]}" \
+            --keep-count 20)"
+          echo "$result"
+          {
+            echo "### Daytona release snapshot prune"
+            echo
+            echo '```'
+            echo "$result"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
