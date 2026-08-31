@@ -1,9 +1,10 @@
 import { execFile } from "node:child_process";
-import { writeFile, mkdir, mkdtemp, rm } from "node:fs/promises";
+import { access, writeFile, mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { createServer } from "node:http";
 import type { ServerResponse } from "node:http";
 import { arch, cpus, platform, tmpdir, totalmem } from "node:os";
 import { join } from "node:path";
+import { promisify } from "node:util";
 import { clickButton, createAndSelectWorkspace, evalIn, readComposerState } from "@openwork/behaviors";
 import type { Surface } from "@openwork/cdp";
 import { desktop, localHost } from "@openwork/hosts";
@@ -12,16 +13,19 @@ import { eventually, needs, test } from "@openwork/testkit";
 import { timeline } from "../packages/timeline/src/index.ts";
 import { expect } from "vitest";
 
+const execFileAsync = promisify(execFile);
 const enabled = process.env.OPENWORK_EVAL_E2E_TESTS === "1";
+const benchEngine = process.env.OPENWORK_BENCH_ENGINE === "v2" ? "v2" : "v1";
 const title = enabled
-  ? "OpenWork Electron v1 engine completes the CDP benchmark with faithful witness traffic"
-  : "OpenWork Electron v1 benchmark skipped — needs: set OPENWORK_EVAL_E2E_TESTS=1";
+  ? `OpenWork Electron ${benchEngine} engine completes the CDP benchmark with faithful witness traffic`
+  : `OpenWork Electron ${benchEngine} benchmark skipped — needs: set OPENWORK_EVAL_E2E_TESTS=1`;
 const providerId = "bench-witness";
 const modelId = "bench-model";
 const modelName = "Bench Model";
 const pacingMs = 20;
 const tokenCount = 20;
 const pollResolutionMs = 50;
+const rendererRoutingPollMs = 15_500;
 const longMessageChars = 200_000;
 
 interface WitnessRequest {
@@ -82,11 +86,65 @@ interface Chat {
   title: string;
 }
 
+interface ServerInfo {
+  baseUrl: string;
+  token: string;
+}
+
+interface EngineV2PreviewStatus {
+  enabled: boolean;
+  running: boolean;
+  chatRouting: boolean;
+  mirroredProviderIds: string[];
+  catalogModelIds: string[];
+}
+
+interface V1SessionFreezeCheck {
+  workspaceId: string;
+  before: number;
+  after: number;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
+async function exists(path: string): Promise<boolean> {
+  try {
+    await access(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function resolveOpencodeV2Bin(): Promise<string> {
+  const override = process.env.OPENWORK_EVAL_OPENCODE2_BIN;
+  if (typeof override === "string" && override.trim() !== "") return override;
+
+  const constants: unknown = JSON.parse(await readFile(join(import.meta.dirname, "../../constants.json"), "utf8"));
+  if (!isRecord(constants) || typeof constants.opencodeV2Version !== "string") {
+    throw new Error("constants.json must define a string opencodeV2Version");
+  }
+  const cache = join(tmpdir(), "openwork-opencode-v2-cache", constants.opencodeV2Version);
+  const binary = join(cache, "node_modules", ".bin", "opencode2");
+  if (!(await exists(binary))) {
+    await mkdir(cache, { recursive: true });
+    const packageJson = join(cache, "package.json");
+    if (!(await exists(packageJson))) await writeFile(packageJson, '{"private":true}\n');
+    await execFileAsync(
+      "pnpm",
+      ["add", "--ignore-workspace", "--save-exact", `@opencode-ai/cli@${constants.opencodeV2Version}`],
+      { cwd: cache, timeout: 180_000 },
+    );
+  }
+  if (!(await exists(binary))) {
+    throw new Error(`OpenCode v2 binary was not installed at ${binary}; set OPENWORK_EVAL_OPENCODE2_BIN to a working opencode2 binary`);
+  }
+  return binary;
+}
 
 function bodyFromJson(raw: string): unknown {
   try {
@@ -246,6 +304,144 @@ async function writeProviderConfig(workspacePath: string, witnessUrl: string): P
   }, null, 2)}\n`);
 }
 
+async function readServerInfo(app: Surface): Promise<ServerInfo> {
+  const value = await evalIn(app, `(async () => {
+    let baseUrl = "";
+    let token = "";
+    try {
+      const invokeDesktop = window.__OPENWORK_ELECTRON__ && window.__OPENWORK_ELECTRON__.invokeDesktop;
+      if (invokeDesktop) {
+        const info = await invokeDesktop("openworkServerInfo");
+        if (info && info.running === true) {
+          baseUrl = String(info.baseUrl ?? info.connectUrl ?? "").trim().replace(/\\\/+$/, "");
+          token = String(info.ownerToken ?? info.clientToken ?? "").trim();
+        }
+      }
+    } catch {}
+    if (!baseUrl || !token) {
+      const port = (localStorage.getItem("openwork.server.port") ?? "").trim();
+      baseUrl = port ? "http://127.0.0.1:" + port : baseUrl;
+      token = token || (localStorage.getItem("openwork.server.token") ?? "").trim();
+    }
+    return { baseUrl, token };
+  })()`, { awaitPromise: true, timeoutMs: 15_000 });
+  if (!isRecord(value) || typeof value.baseUrl !== "string" || !value.baseUrl || typeof value.token !== "string" || !value.token) {
+    throw new Error(`Local server credentials are unavailable: ${JSON.stringify(value)}`);
+  }
+  return { baseUrl: value.baseUrl, token: value.token };
+}
+
+function authHeaders(info: ServerInfo): { Authorization: string } {
+  return { Authorization: `Bearer ${info.token}` };
+}
+
+function stringArray(value: unknown, field: string): string[] {
+  if (!Array.isArray(value) || !value.every((entry) => typeof entry === "string")) {
+    throw new Error(`Engine v2 status ${field} was not a string array: ${JSON.stringify(value)}`);
+  }
+  return value;
+}
+
+function parseStatus(value: unknown): EngineV2PreviewStatus {
+  if (
+    !isRecord(value)
+    || typeof value.enabled !== "boolean"
+    || typeof value.running !== "boolean"
+    || typeof value.chatRouting !== "boolean"
+  ) {
+    throw new Error(`Unexpected engine v2 preview status: ${JSON.stringify(value)}`);
+  }
+  return {
+    enabled: value.enabled,
+    running: value.running,
+    chatRouting: value.chatRouting,
+    mirroredProviderIds: stringArray(value.mirroredProviderIds, "mirroredProviderIds"),
+    catalogModelIds: stringArray(value.catalogModelIds, "catalogModelIds"),
+  };
+}
+
+async function readStatus(info: ServerInfo): Promise<EngineV2PreviewStatus> {
+  const response = await fetch(`${info.baseUrl}/experimental/engine-v2-preview/status`, {
+    headers: authHeaders(info),
+    signal: AbortSignal.timeout(15_000),
+  });
+  const value: unknown = await response.json();
+  if (response.status !== 200) throw new Error(`Engine v2 status returned ${response.status}: ${JSON.stringify(value)}`);
+  return parseStatus(value);
+}
+
+async function untilStatus(
+  info: ServerInfo,
+  predicate: (status: EngineV2PreviewStatus) => boolean,
+  timeoutMs: number,
+  label: string,
+): Promise<EngineV2PreviewStatus> {
+  const deadline = Date.now() + timeoutMs;
+  let last = await readStatus(info);
+  while (Date.now() < deadline) {
+    if (predicate(last)) return last;
+    await sleep(1_000);
+    last = await readStatus(info);
+  }
+  throw new Error(`Timed out waiting for ${label}; last status: ${JSON.stringify(last)}`);
+}
+
+async function setupV2Routing(app: Surface, workspaceId: string, witnessUrl: string): Promise<ServerInfo> {
+  const info = await readServerInfo(app);
+  const enableResponse = await fetch(`${info.baseUrl}/experimental/engine-v2-preview`, {
+    method: "PUT",
+    headers: { ...authHeaders(info), "content-type": "application/json" },
+    body: JSON.stringify({ enabled: true, chatRouting: true }),
+    signal: AbortSignal.timeout(15_000),
+  });
+  const enableValue: unknown = await enableResponse.json();
+  if (enableResponse.status !== 200) {
+    throw new Error(`Enabling engine v2 routing returned ${enableResponse.status}: ${JSON.stringify(enableValue)}`);
+  }
+  parseStatus(enableValue);
+  await untilStatus(info, (status) => status.running && status.chatRouting, 120_000, "engine v2 routed lane to start");
+
+  const patchResponse = await fetch(`${info.baseUrl}/workspace/${encodeURIComponent(workspaceId)}/config`, {
+    method: "PATCH",
+    headers: { ...authHeaders(info), "content-type": "application/json" },
+    body: JSON.stringify({
+      opencode: {
+        provider: {
+          [providerId]: {
+            npm: "@ai-sdk/openai-compatible",
+            name: "Bench Witness",
+            options: { baseURL: `${witnessUrl}/v1`, apiKey: "bench-key-app" },
+            models: { [modelId]: { name: modelName } },
+          },
+        },
+      },
+    }),
+    signal: AbortSignal.timeout(15_000),
+  });
+  const patchValue: unknown = await patchResponse.json();
+  if (patchResponse.status !== 200) {
+    throw new Error(`Provisioning the v2 benchmark provider returned ${patchResponse.status}: ${JSON.stringify(patchValue)}`);
+  }
+  await untilStatus(
+    info,
+    (status) => status.mirroredProviderIds.includes(providerId),
+    60_000,
+    "the benchmark provider to be mirrored into v2",
+  );
+  return info;
+}
+
+async function v1EngineSessionCount(info: ServerInfo, workspaceId: string): Promise<number> {
+  const response = await fetch(
+    `${info.baseUrl}/workspace/${encodeURIComponent(workspaceId)}/opencode/session`,
+    { headers: authHeaders(info), signal: AbortSignal.timeout(15_000) },
+  );
+  const value: unknown = await response.json();
+  if (!response.ok) throw new Error(`v1 session list returned ${response.status}: ${JSON.stringify(value)}`);
+  if (!Array.isArray(value)) throw new Error(`Unexpected v1 session list: ${JSON.stringify(value)}`);
+  return value.length;
+}
+
 async function pollExpression(
   app: Surface,
   expression: string,
@@ -323,11 +519,109 @@ async function selectBenchModel(app: Surface): Promise<void> {
   );
 }
 
+async function closeModelPicker(app: Surface): Promise<void> {
+  await app.client.send("Input.dispatchKeyEvent", {
+    type: "keyDown",
+    key: "Escape",
+    code: "Escape",
+    windowsVirtualKeyCode: 27,
+    nativeVirtualKeyCode: 27,
+  });
+  await app.client.send("Input.dispatchKeyEvent", {
+    type: "keyUp",
+    key: "Escape",
+    code: "Escape",
+    windowsVirtualKeyCode: 27,
+    nativeVirtualKeyCode: 27,
+  });
+}
+
+async function selectBenchModelV2(app: Surface): Promise<void> {
+  const deadline = Date.now() + 60_000;
+  await pollExpression(
+    app,
+    `Boolean(document.querySelector('button[aria-label="Change model"]'))`,
+    "v2 bench model picker trigger",
+    60_000,
+  );
+  let lastItems: string[] = [];
+  while (Date.now() < deadline) {
+    const opened = await evalIn(app, `(() => {
+      if (document.querySelector('[data-slot="popover-content"]')) return true;
+      const trigger = document.querySelector('button[aria-label="Change model"]');
+      if (!(trigger instanceof HTMLButtonElement)) return false;
+      trigger.click();
+      return true;
+    })()`);
+    if (opened === true) {
+      await sleep(300);
+      await evalIn(app, `(() => {
+        const popover = document.querySelector('[data-slot="popover-content"]');
+        if (!(popover instanceof HTMLElement)) return false;
+        const matches = (text) => text.includes(${JSON.stringify(modelName)}) || text.includes(${JSON.stringify(modelId)});
+        if ([...popover.querySelectorAll('[data-slot="command-item"]')]
+          .some((item) => matches(item.textContent ?? ""))) return true;
+        const modelButton = [...popover.querySelectorAll('button')]
+          .find((button) => (button.textContent ?? "").trim().startsWith("Model"));
+        if (!(modelButton instanceof HTMLButtonElement)) return false;
+        modelButton.click();
+        return true;
+      })()`);
+      await sleep(200);
+      const items = await evalIn(app, `(() => {
+        const popover = document.querySelector('[data-slot="popover-content"]');
+        if (!(popover instanceof HTMLElement)) return [];
+        return [...popover.querySelectorAll('[data-slot="command-item"]')]
+          .map((item) => (item.textContent ?? "").trim());
+      })()`);
+      if (Array.isArray(items) && items.every((item) => typeof item === "string")) {
+        lastItems = items;
+        if (items.some((item) => item.includes(modelName) || item.includes(modelId))) {
+          const picked = await evalIn(app, `(() => {
+            const popover = document.querySelector('[data-slot="popover-content"]');
+            const item = [...(popover?.querySelectorAll('[data-slot="command-item"]') ?? [])]
+              .find((candidate) => {
+                const text = candidate.textContent ?? "";
+                return text.includes(${JSON.stringify(modelName)}) || text.includes(${JSON.stringify(modelId)});
+              });
+            if (!(item instanceof HTMLElement)) return false;
+            item.click();
+            return true;
+          })()`);
+          expect(picked).toBe(true);
+          const remaining = Math.max(1, deadline - Date.now());
+          await pollExpression(
+            app,
+            `(() => {
+              const text = document.querySelector('button[aria-label="Change model"]')?.textContent ?? "";
+              return text.includes(${JSON.stringify(modelName)}) || text.includes(${JSON.stringify(modelId)});
+            })()`,
+            "v2 Bench Model selected",
+            remaining,
+          );
+          return;
+        }
+      }
+    }
+    await closeModelPicker(app);
+    await sleep(700);
+  }
+  throw new Error(`Timed out waiting for the v2 bench model in the picker; last items: ${JSON.stringify(lastItems)}`);
+}
+
 async function ensureBenchModel(app: Surface): Promise<boolean> {
   await waitForComposerReady(app, "composer before checking persisted model");
   const state = await readComposerState(app);
   if (state.selectedModelLabel.includes(modelName)) return false;
   await selectBenchModel(app);
+  return true;
+}
+
+async function ensureBenchModelV2(app: Surface): Promise<boolean> {
+  await waitForComposerReady(app, "composer before checking persisted v2 model");
+  const state = await readComposerState(app);
+  if (state.selectedModelLabel.includes(modelName) || state.selectedModelLabel.includes(modelId)) return false;
+  await selectBenchModelV2(app);
   return true;
 }
 
@@ -634,6 +928,7 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
   needs({ optIn: ["OPENWORK_EVAL_E2E_TESTS"] });
   const iterations = Number(process.env.OPENWORK_BENCH_ITERATIONS ?? "1");
   expect(Number.isInteger(iterations) && iterations > 0, "OPENWORK_BENCH_ITERATIONS must be a positive integer").toBe(true);
+  const opencodeV2Bin = benchEngine === "v2" ? await resolveOpencodeV2Bin() : undefined;
   const runNonce = `${Date.now().toString(36)}-${process.pid}`;
   const results: BenchmarkResults = {
     cold_boot_to_composer: [],
@@ -651,6 +946,7 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
   const switchTargetChecks: boolean[] = [];
   const switchIsolationChecks: boolean[] = [];
   const longMessageChecks: boolean[] = [];
+  const v1SessionFreezeChecks: V1SessionFreezeCheck[] = [];
   let modelReselectedPerSession = false;
   let uiCompactionAvailable = false;
   const host = localHost();
@@ -659,17 +955,22 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
     for (let coldIndex = 0; coldIndex < iterations; coldIndex += 1) {
       const witnessNonce = `${runNonce}-cold-${coldIndex}`;
       const witness = await startWitness(witnessNonce);
-      const profileDir = await mkdtemp(join(tmpdir(), "openwork-bench-v1-profile-"));
-      const workspaceAPath = await mkdtemp(join(tmpdir(), "openwork-bench-v1-workspace-a-"));
+      const profileDir = await mkdtemp(join(tmpdir(), `openwork-bench-${benchEngine}-profile-`));
+      const workspaceAPath = await mkdtemp(join(tmpdir(), `openwork-bench-${benchEngine}-workspace-a-`));
       const workspaceBPath = coldIndex === iterations - 1
-        ? await mkdtemp(join(tmpdir(), "openwork-bench-v1-workspace-b-"))
+        ? await mkdtemp(join(tmpdir(), `openwork-bench-${benchEngine}-workspace-b-`))
         : null;
+      // Keep the project provider file in both modes so workspace setup stays
+      // symmetric and the v1 picker remains deterministic. The v2 routed lane
+      // receives the identical provider separately through the runtime PATCH.
       await writeProviderConfig(workspaceAPath, witness.url);
       if (workspaceBPath) await writeProviderConfig(workspaceBPath, witness.url);
       let app: DesktopHandle | undefined;
+      let serverInfo: ServerInfo | undefined;
+      const v1SessionSnapshots = new Map<string, number>();
 
       try {
-        const appName = `bench-openwork-app-v1-${coldIndex}`;
+        const appName = `bench-openwork-app-${benchEngine}-${coldIndex}`;
         const timelineStart = timeline().length;
         const coldStartedAt = Date.now();
         app = await desktop({
@@ -683,6 +984,7 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
             GOOGLE_GENERATIVE_AI_API_KEY: "",
             OPENWORK_API_KEY: "",
             OPENWORK_INFERENCE_BASE_URL: "",
+            ...(opencodeV2Bin === undefined ? {} : { OPENWORK_OPENCODE2_BIN: opencodeV2Bin }),
           },
         });
         const appInteractive = Date.now() - coldStartedAt;
@@ -704,7 +1006,19 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
         if (appReadinessMs !== undefined) coldTiming.appReadinessMs = appReadinessMs;
         results.cold_boot_to_composer.push(coldTiming);
 
-        await selectBenchModel(app);
+        if (benchEngine === "v2") {
+          serverInfo = await setupV2Routing(app, workspaceA.workspaceId, witness.url);
+          await sleep(rendererRoutingPollMs);
+          await selectBenchModelV2(app);
+          v1SessionSnapshots.set(
+            workspaceA.workspaceId,
+            await v1EngineSessionCount(serverInfo, workspaceA.workspaceId),
+          );
+          await createNewSession(app);
+          if (await ensureBenchModelV2(app)) modelReselectedPerSession = true;
+        } else {
+          await selectBenchModel(app);
+        }
         const warmupPrompt = `bench first send cold ${coldIndex} ${witnessNonce}`;
         const warmup = await sendMessage(app, warmupPrompt, witnessNonce);
         results.first_send_cold.push(warmup.timing.complete);
@@ -717,7 +1031,19 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
           if (!workspaceBPath) throw new Error("Last cold instance has no second workspace directory.");
           const workspaceBId = await createSecondWorkspaceViaUi(app, workspaceA.workspaceId, workspaceBPath);
           expect(workspaceBId).not.toBe(workspaceA.workspaceId);
-          await selectBenchModel(app);
+          if (benchEngine === "v2") {
+            if (!serverInfo) throw new Error("The v2 benchmark server connection was not initialized.");
+            await sleep(rendererRoutingPollMs);
+            await selectBenchModelV2(app);
+            v1SessionSnapshots.set(workspaceBId, await v1EngineSessionCount(serverInfo, workspaceBId));
+            // The workspace switch can leave the pre-flip v1 session selected.
+            // Create the routed session after the untimed switch boundary, then
+            // reselect the v2 model before any workspace B send is measured.
+            await createNewSession(app);
+            if (await ensureBenchModelV2(app)) modelReselectedPerSession = true;
+          } else {
+            await selectBenchModel(app);
+          }
           const bNonces: string[] = [];
           const setupNonce = `bench-b-setup-${witnessNonce}`;
           bNonces.push(setupNonce);
@@ -730,7 +1056,11 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
             const created = await createNewSession(app);
             results.new_session_ready.push(created.ms);
             newSessionIds.push(created.sessionId);
-            if (await ensureBenchModel(app)) modelReselectedPerSession = true;
+            if (benchEngine === "v2") {
+              if (await ensureBenchModelV2(app)) modelReselectedPerSession = true;
+            } else if (await ensureBenchModel(app)) {
+              modelReselectedPerSession = true;
+            }
 
             const messageNonce = `${witnessNonce}-message-${warmIndex}`;
             const message = `bench message ${warmIndex} ${messageNonce}`;
@@ -744,7 +1074,11 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
             expect(messageComplete).toBe(true);
 
             await createNewSession(app);
-            if (await ensureBenchModel(app)) modelReselectedPerSession = true;
+            if (benchEngine === "v2") {
+              if (await ensureBenchModelV2(app)) modelReselectedPerSession = true;
+            } else if (await ensureBenchModel(app)) {
+              modelReselectedPerSession = true;
+            }
             const longMessage = deterministicLongMessage(warmIndex, witnessNonce);
             bNonces.push(longMessage.marker);
             const beforeLong = await readComposerState(app);
@@ -772,13 +1106,25 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
             title: "workspace A warmup",
           };
           await switchAndMeasure(app, workspaceAChat);
+          if (benchEngine === "v2") {
+            await sleep(rendererRoutingPollMs);
+            await selectBenchModelV2(app);
+          }
           for (let switchIndex = 0; switchIndex < iterations; switchIndex += 1) {
             const aToB = await switchAndMeasure(app, latestBChat);
             const bTexts = await visibleUserTexts(app);
             const bTargetVisible = bTexts.some((text) => text.includes(latestBMarker));
+            if (benchEngine === "v2") {
+              await sleep(rendererRoutingPollMs);
+              await selectBenchModelV2(app);
+            }
             const bToA = await switchAndMeasure(app, workspaceAChat);
             const aTexts = await visibleUserTexts(app);
             const aIsolated = bNonces.every((nonce) => aTexts.every((text) => !text.includes(nonce)));
+            if (benchEngine === "v2") {
+              await sleep(rendererRoutingPollMs);
+              await selectBenchModelV2(app);
+            }
             results.workspace_switch.push({ aToB, bToA });
             switchTargetChecks.push(bTargetVisible);
             switchIsolationChecks.push(aIsolated);
@@ -799,6 +1145,15 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
           })()`);
           uiCompactionAvailable = compactionProbe === true;
         }
+
+        if (benchEngine === "v2") {
+          if (!serverInfo) throw new Error("The v2 benchmark server connection was not initialized.");
+          for (const [workspaceId, before] of v1SessionSnapshots) {
+            const after = await v1EngineSessionCount(serverInfo, workspaceId);
+            v1SessionFreezeChecks.push({ workspaceId, before, after });
+            expect(after, `v1 sessions stayed frozen for ${workspaceId}`).toBe(before);
+          }
+        }
       } finally {
         try {
           if (app) await app.stop();
@@ -818,13 +1173,13 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
     expect(warmupCompletions).toHaveLength(iterations);
     expect(warmupCompletions.every(Boolean)).toBe(true);
     evidence.recordAssertionEvidence(
-      "Each cold v1 desktop reaches a ready composer from a fresh profile and workspace",
+      `Each cold ${benchEngine} desktop reaches a ready composer from a fresh profile and workspace`,
       `${iterations} unique workspaces reached appInteractive, workspaceReady and composerReady. No profile or workspace was reused.`,
       results.cold_boot_to_composer.length === iterations
         && new Set(coldWorkspaceIds).size === iterations,
     );
     evidence.recordAssertionEvidence(
-      "Each cold v1 engine's first send completes after the untimed model selection",
+      `Each cold ${benchEngine} engine's first send completes after the untimed model selection`,
       `${iterations} first sends rendered exact user messages and the final token-20 witness nonce; completion ms=${JSON.stringify(results.first_send_cold)}. No first send was incomplete.`,
       results.first_send_cold.length === iterations && warmupCompletions.every(Boolean),
     );
@@ -877,14 +1232,25 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
     ));
     expect(unfaithfulRequests).toEqual([]);
     evidence.recordAssertionEvidence(
-      "All v1 app completions use only the file-provisioned Bench Witness model and key",
+      `All ${benchEngine} app completions use only the Bench Witness model and key`,
       `${allWitnessRequests.length} completion requests all carried Bearer bench-key-app and model bench-model; mismatches=${JSON.stringify(unfaithfulRequests)}. No request escaped to another configured provider.`,
       allWitnessRequests.length > 0 && unfaithfulRequests.length === 0,
     );
 
+    if (benchEngine === "v2") {
+      expect(v1SessionFreezeChecks).toHaveLength(iterations + 1);
+      expect(v1SessionFreezeChecks.every((check) => check.after === check.before)).toBe(true);
+      evidence.recordAssertionEvidence(
+        "Routed v2 benchmark scenarios never create a session in the v1 engine",
+        `${v1SessionFreezeChecks.length} workspace snapshots remained unchanged after their routed scenarios: ${JSON.stringify(v1SessionFreezeChecks)}.`,
+        v1SessionFreezeChecks.length === iterations + 1
+          && v1SessionFreezeChecks.every((check) => check.after === check.before),
+      );
+    }
+
     const cpuList = cpus();
     const report = {
-      lane: "app-v1",
+      lane: `app-${benchEngine}`,
       createdAt: new Date().toISOString(),
       machine: {
         platform: platform(),
@@ -910,10 +1276,10 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
     };
     const resultsDir = process.env.OPENWORK_BENCH_RESULTS_DIR ?? tmpdir();
     await mkdir(resultsDir, { recursive: true });
-    const resultsPath = join(resultsDir, `bench-openwork-app-v1-${Date.now()}.json`);
+    const resultsPath = join(resultsDir, `bench-openwork-app-${benchEngine}-${Date.now()}.json`);
     await writeFile(resultsPath, `${JSON.stringify(report, null, 2)}\n`);
-    console.info(`[bench-openwork-app-v1] medians\n${medianTable(results)}`);
-    console.info(`[bench-openwork-app-v1] results=${resultsPath} uiCompactionAvailable=${uiCompactionAvailable}`);
+    console.info(`[bench-openwork-app-${benchEngine}] medians\n${medianTable(results)}`);
+    console.info(`[bench-openwork-app-${benchEngine}] results=${resultsPath} uiCompactionAvailable=${uiCompactionAvailable}`);
   } finally {
     await host.stop();
   }

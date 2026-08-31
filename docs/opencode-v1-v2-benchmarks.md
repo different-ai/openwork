@@ -6,6 +6,7 @@ ranges below are calculated directly from the sample arrays in:
 
 - `evals/bench/results/2026-08-31-m3max-engines.json`
 - `evals/bench/results/2026-08-31-m3max-app-v1.json`
+- `evals/bench/results/2026-09-01-m3max-app-v2.json`
 
 ## What was asked and what each lane answers
 
@@ -40,15 +41,15 @@ witness.
 
 This isolates the engine boundary from OpenWork renderer and Electron costs.
 
-### Why there is no pure-CDP v2 app lane
+### Why the pure-CDP v2 app lane arrived through the adapter
 
-OpenWork's UI cannot run on v2 until the server-to-engine dialect adapter lands.
-That adapter is stage 3 in
-[`docs/opencode-v2-parallel-lane.md`](opencode-v2-parallel-lane.md#3-server-to-engine-dialect)
-and is not part of the current parallel sidecar.
+OpenWork's UI now routes chat through v2 behind the preview flag and the
+**Route chat through OpenCode v2** toggle from
+`feat/opencode-v2-chat-routing`. Lane A was rerun in that mode with
+`OPENWORK_BENCH_ENGINE=v2`, using the server-to-engine dialect adapter.
 
-The v2 stack's own drivable surface is not a substitute. Its web UI, bundled
-in the `opencode2` binary, crashes on `/new-session` with:
+Historically, the v2 stack's own drivable surface was not a substitute. Its web
+UI, bundled in the `opencode2` binary, crashed on `/new-session` with:
 
 ```text
 Error: TitlebarRight must be used within TitlebarRightProvider
@@ -58,10 +59,9 @@ That failure was reproduced through CDP in Chrome 152 on 2026-08-30 with both
 0.0.0-beta-18707 and 0.0.0-dev-18710. A narrow-viewport layout crashed the same
 way. The older 0.0.0-beta-17823 home screen never opened a session view.
 
-Building the v2 desktop app from source would benchmark a different app, not
-the proposed engine swap inside OpenWork. Lane B is therefore the fair engine
-comparison available today. Lane A should be rerun on both engines after the
-adapter lands.
+Building the v2 desktop app from source would have benchmarked a different app,
+not the proposed engine swap inside OpenWork. That is why the app lane arrived
+through OpenWork's adapter rather than through the v2 web or desktop UI.
 
 ## Method
 
@@ -257,29 +257,79 @@ deltas stated above.
 `uiCompactionAvailable=false`: OpenWork has no user-facing compact or summarize
 control in this UI today. Engine-side compaction is covered in Lane B.
 
+## Lane A results: OpenWork app on v2 (adapter preview), pure CDP (medians, N=5)
+
+Delta is app on v2 minus app on v1. Negative means v2 completed this boundary
+sooner.
+
+| Metric | App on v1 median (min-max) | App on v2 median (min-max) | Delta |
+| --- | ---: | ---: | ---: |
+| `cold_boot_to_composer.appInteractive` | 27089 (27022-36513) | 20100 (19217-22136) | -6989 |
+| `cold_boot_to_composer.workspaceReady` | 38536 (38489-51020) | 31499 (26839-35337) | -7037 |
+| `cold_boot_to_composer.composerReady` | 38537 (38490-51020) | 31499 (26840-35338) | -7038 |
+| `cold_boot_to_composer.appReadinessMs` | 7025 (6821-7690) | 5075 (4284-6456) | -1950 |
+| `first_send_cold.complete` | 2885 (2325-3583) | 602 (581-649) | -2283 |
+| `new_session_ready` | 355 (335-403) | 291 (183-396) | -64 |
+| `message_rtt.userRendered` | 76 (75-83) | 588 (568-636) | +512 |
+| `message_rtt.firstToken` | 92 (88-133) | 589 (569-640) | +497 |
+| `message_rtt.complete` | 506 (490-523) | 589 (569-641) | +83 |
+| `workspace_switch.aToB` | 107 (97-133) | 170 (151-438) | +63 |
+| `workspace_switch.bToA` | 93 (89-132) | 127 (98-142) | +34 |
+| `long_message.insertMs` | 43 (42-50) | 57 (55-118) | +14 |
+| `long_message.userRendered` | 108 (94-124) | 589 (570-716) | +481 |
+| `long_message.firstToken` | 167 (131-167) | 592 (571-718) | +425 |
+| `long_message.complete` | 540 (524-552) | 593 (572-718) | +53 |
+
+### Interpretation
+
+- **First send cold:** v2 takes 602 ms versus v1's 2885 ms, about 4.8x
+  faster to the first-ever reply. V2 needs no runtime npm provider install;
+  v1 installs `@ai-sdk/openai-compatible` on first use.
+- **New session ready:** v2 takes 291 ms versus v1's 355 ms.
+- **Streaming gap (v0 finding):** on v2, `userRendered`, `firstToken`, and
+  `complete` are approximately equal in every iteration, at roughly 570-640
+  ms. The adapter currently renders complete turns rather than incremental
+  tokens. V1 renders the user message at about 76 ms, the first token at about
+  92 ms, and completion at about 506 ms. **Hypothesis:** the adapter's
+  `promptAsync` performs a model-switch round trip before the prompt POST,
+  delaying the optimistic user render. **Hypothesis:** delta events lack an
+  established part anchor until the cumulative `part.updated` at `text.ended`,
+  so token deltas do not paint incrementally. This is the top adapter follow-up;
+  engine-side completion is equivalent (Lane B: 452 ms versus 517 ms over a
+  400 ms pacing floor).
+- **Workspace switch:** v2 takes about 170 ms A→B and 127 ms B→A versus v1's
+  107 ms and 93 ms, respectively. It is slightly slower. **Hypothesis:** extra
+  preview-status and lane checks account for part of the difference.
+- **Cold boot:** the lanes are comparable and dev-build-dominated. The dev-build
+  warning above applies to both; these values do not predict packaged startup.
+- **Setup asymmetry:** v2 mode provisions the witness through the runtime
+  provider path, mirrored to the sidecar, and enables the preview flag through
+  the API as untimed scaffolding. All measured interactions remain pure CDP in
+  both app lanes.
+
 ## Answers to the five questions
 
-| Question | Metric today: v1 app and engine | V2 engine equivalent | Likely user-visible change after adoption |
+| Question | Metric today: v1 app and engine | V2 preview app and engine | Likely user-visible change after adoption |
 | --- | --- | --- | --- |
-| First session, load, and send | DEV composer ready 38537 ms; cold first send 2885 ms; engine API usable 683 ms | API usable 520 ms; cold first prompt 4502 ms | Packaged app must be measured separately; provider changes no longer require reload |
-| Ready session | App ready 355 ms; engine create 7 ms | Engine create 55 ms | About +48 ms engine-side, likely hidden by current UI work |
-| Workspace switch | 107 ms A→B and 93 ms B→A; unseen-directory engine touch 13 ms | Unseen-directory touch 49 ms | About +36 ms on first directory touch; revisits need an app-lane rerun |
-| Message response | Visible first token 92 ms, complete 506 ms; engine complete 452 ms | Engine complete 517 ms | Warm flow is broadly equivalent; UI streaming cannot be claimed until Lane A runs on v2 |
-| Long message and compaction | Exact 200000 chars complete in 540 ms; no UI compaction control; engine summarize 469 ms | Exact long prompt complete 525 ms; compact 452 ms | Long sends and witness-backed compaction are equivalent at this pacing floor |
+| First session, load, and send | DEV composer ready 38537 ms; cold first send 2885 ms; engine API usable 683 ms | DEV composer ready 31499 ms; cold first send 602 ms; API usable 520 ms; cold first engine prompt 4502 ms | Packaged startup must be measured separately; first send is about 4.8x faster because v2 avoids the runtime provider install |
+| Ready session | App ready 355 ms; engine create 7 ms | App ready 291 ms; engine create 55 ms | The measured v2 preview is 64 ms faster at the app boundary |
+| Workspace switch | 107 ms A→B and 93 ms B→A; unseen-directory engine touch 13 ms | 170 ms A→B and 127 ms B→A; unseen-directory touch 49 ms | Preview app revisits are slightly slower, as is first directory touch |
+| Message response | User visible 76 ms, first token 92 ms, complete 506 ms; engine complete 452 ms | User visible 588 ms, first token 589 ms, complete 589 ms; engine complete 517 ms | Completion remains close, but the preview adapter currently paints complete turns instead of streaming incrementally |
+| Long message and compaction | Exact 200000 chars insert in 43 ms and complete in 540 ms; no UI compaction control; engine summarize 469 ms | Exact 200000 chars insert in 57 ms and complete in 593 ms; engine compact 452 ms; compaction unsupported in the preview adapter because it has no UI control | Long-message completion is close at this pacing floor; compaction remains engine-only |
 
-The strongest expected UX difference is not a benchmark-table win. V2 can
-apply provider changes without reloading the engine. Session create adds about
-50 ms engine-side and first directory touch adds about 35 ms, both small beside
-today's UI boundaries. Message flows are equivalent for practical purposes in
-this sample.
+V2 can apply provider changes without reloading the engine, reflected in the
+much faster cold first send. Warm engine completion remains broadly equivalent,
+but the preview adapter's lack of incremental painting is a clear user-visible
+regression. Session create adds about 50 ms engine-side while the app's new-task
+boundary is 64 ms faster; workspace revisits are slightly slower.
 
 ## Follow-ups
 
-- Rerun Lane A against v2 after the stage 3 OpenWork adapter in
-  [`docs/opencode-v2-parallel-lane.md`](opencode-v2-parallel-lane.md#rollout-stages)
-  exists. That will produce the true v2 app-perspective comparison.
+- Fix incremental streaming in the v2 adapter, including part anchoring and
+  optimistic user render, then re-measure `message_rtt`.
 - Report the `/new-session` web UI crash upstream against the anomalyco/opencode
   v2 branch, including the exact provider error and affected builds above.
+- Per-engine app numbers still need to be rerun on packaged builds.
 - N=5 on one machine is directional evidence, not a population study. Treat
   single-digit-millisecond deltas as noise. The 400 ms pacing floor dominates
   completion metrics by design.
