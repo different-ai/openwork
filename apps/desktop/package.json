@@ -40,6 +40,7 @@
     "better-sqlite3": "^13.0.2",
     "drizzle-orm": "^0.45.2",
     "electron-updater": "^6.3.9",
+    "htmlparser2": "8.0.2",
     "jsonc-parser": "^3.2.1",
     "minimatch": "^10.2.5",
     "node-pty": "npm:@lydell/node-pty@1.2.0-beta.12",

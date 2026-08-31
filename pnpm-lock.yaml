@@ -358,6 +358,9 @@ importers:
       electron-updater:
         specifier: ^6.3.9
         version: 6.8.3
+      htmlparser2:
+        specifier: 8.0.2
+        version: 8.0.2
       jsonc-parser:
         specifier: ^3.2.1
         version: 3.3.1
