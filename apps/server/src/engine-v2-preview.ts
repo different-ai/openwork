@@ -24,6 +24,7 @@ const UNSET_API_KEY = "openwork-engine-v2-preview-unset";
 
 export interface EngineV2PreviewStatus {
   enabled: boolean;
+  chatRouting: boolean;
   running: boolean;
   version?: string;
   pid?: number;
@@ -48,7 +49,14 @@ export interface RuntimeProviderRecordLike {
 export interface EngineV2Preview {
   status(): EngineV2PreviewStatus;
   setEnabled(enabled: boolean): Promise<EngineV2PreviewStatus>;
+  setChatRouting(chatRouting: boolean): Promise<EngineV2PreviewStatus>;
+  connection(): { url: string; username: string; password: string } | undefined;
   stop(): Promise<void>;
+}
+
+export interface EngineV2PreviewState {
+  enabled: boolean;
+  chatRouting?: boolean;
 }
 
 interface ResolvedBinary {
@@ -68,18 +76,28 @@ function statePath(config: ServerConfig): string {
   return join(runtimeStorageDir(config), PREVIEW_STATE_FILE);
 }
 
-function readEnabled(config: ServerConfig): boolean {
+export function readEngineV2PreviewState(config: ServerConfig): EngineV2PreviewState {
   try {
     const parsed: unknown = JSON.parse(readFileSync(statePath(config), "utf8"));
-    return isRecord(parsed) && parsed.enabled === true;
+    if (
+      !isRecord(parsed)
+      || typeof parsed.enabled !== "boolean"
+      || (parsed.chatRouting !== undefined && typeof parsed.chatRouting !== "boolean")
+    ) {
+      return { enabled: false, chatRouting: false };
+    }
+    return { enabled: parsed.enabled, chatRouting: parsed.chatRouting === true };
   } catch {
-    return false;
+    return { enabled: false, chatRouting: false };
   }
 }
 
-async function persistEnabled(config: ServerConfig, enabled: boolean): Promise<void> {
+export async function writeEngineV2PreviewState(
+  config: ServerConfig,
+  state: EngineV2PreviewState,
+): Promise<void> {
   await mkdir(runtimeStorageDir(config), { recursive: true });
-  await writeFile(statePath(config), `${JSON.stringify({ enabled }, null, 2)}\n`, "utf8");
+  await writeFile(statePath(config), `${JSON.stringify(state, null, 2)}\n`, "utf8");
 }
 
 function exec(file: string, args: string[], options: { cwd?: string; timeout?: number } = {}): Promise<void> {
@@ -209,7 +227,9 @@ export function createEngineV2Preview(options: { config: ServerConfig }): Engine
   const { config } = options;
   const rootDir = join(runtimeStorageDir(config), "opencode-v2", "state");
   const workspaceDir = join(rootDir, "workspace");
-  let enabled = readEnabled(config);
+  const persistedState = readEngineV2PreviewState(config);
+  let enabled = persistedState.enabled;
+  let chatRouting = persistedState.chatRouting === true;
   let allowRunning = true;
   let running = false;
   let version: string | undefined;
@@ -229,6 +249,7 @@ export function createEngineV2Preview(options: { config: ServerConfig }): Engine
   function status(): EngineV2PreviewStatus {
     return {
       enabled,
+      chatRouting,
       running,
       ...(version === undefined ? {} : { version }),
       ...(pid === undefined ? {} : { pid }),
@@ -363,7 +384,7 @@ export function createEngineV2Preview(options: { config: ServerConfig }): Engine
 
   async function setEnabled(nextEnabled: boolean): Promise<EngineV2PreviewStatus> {
     if (nextEnabled && enabled && running) return status();
-    await persistEnabled(config, nextEnabled);
+    await writeEngineV2PreviewState(config, { enabled: nextEnabled, chatRouting });
     enabled = nextEnabled;
     if (!enabled) {
       await stopRuntime();
@@ -378,10 +399,21 @@ export function createEngineV2Preview(options: { config: ServerConfig }): Engine
     return status();
   }
 
+  async function setChatRouting(nextChatRouting: boolean): Promise<EngineV2PreviewStatus> {
+    await writeEngineV2PreviewState(config, { enabled, chatRouting: nextChatRouting });
+    chatRouting = nextChatRouting;
+    return status();
+  }
+
+  function connection(): { url: string; username: string; password: string } | undefined {
+    if (!running || !sidecar) return undefined;
+    return { url: sidecar.url, username: sidecar.username, password: sidecar.password };
+  }
+
   async function stop(): Promise<void> {
     await stopRuntime();
   }
 
   if (enabled) void start().catch(recordStartError);
-  return { status, setEnabled, stop };
+  return { status, setEnabled, setChatRouting, connection, stop };
 }

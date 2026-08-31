@@ -23,6 +23,7 @@ import {
   type WorkspaceList,
 } from "@/app/lib/desktop";
 import { createClient } from "@/app/lib/opencode";
+import { createClientV2 } from "@/app/lib/opencode-v2-adapter";
 import { getNativeSession } from "@/app/lib/opencode-session-native";
 import { createOpenworkServerClient, type OpenworkServerClient } from "@/app/lib/openwork-server";
 import { readDenBootstrapConfig } from "@/app/lib/den";
@@ -180,6 +181,7 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
   const [client, setClient] = useState<OpenworkServerClient | null>(null);
   const [baseUrl, setBaseUrl] = useState("");
   const [token, setToken] = useState("");
+  const [engineV2ChatRouting, setEngineV2ChatRouting] = useState(false);
   const [workspaces, setWorkspaces] = useState<RouteWorkspace[]>([]);
   const [workspaceOrderIds, setWorkspaceOrderIds] = useState<string[]>(() => readWorkspaceOrderIds());
   const [sessionsByWorkspaceId, setSessionsByWorkspaceId] = useState<Record<string, RouteSession[]>>({});
@@ -997,7 +999,34 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
   // local workspaces it's the user's local OpenWork server.
   const selectedWorkspaceEndpoint = useWorkspaceServerClient(selectedWorkspace, { baseUrl, token });
   const selectedWorkspaceServerToken = selectedWorkspaceEndpoint?.token ?? "";
-  const opencodeBaseUrl = selectedWorkspaceEndpoint?.opencodeBaseUrl ?? "";
+  const defaultOpencodeBaseUrl = selectedWorkspaceEndpoint?.opencodeBaseUrl ?? "";
+  const opencode2BaseUrl = selectedWorkspaceEndpoint ? `${selectedWorkspaceEndpoint.mountedBaseUrl}/opencode2` : "";
+  useEffect(() => {
+    const openworkClient = selectedWorkspaceEndpoint?.client;
+    if (!openworkClient) {
+      setEngineV2ChatRouting(false);
+      return;
+    }
+    let cancelled = false;
+    const refresh = async () => {
+      try {
+        const status = await openworkClient.getEngineV2PreviewStatus();
+        if (!cancelled) setEngineV2ChatRouting(status.enabled && status.running && status.chatRouting);
+      } catch (error) {
+        if (cancelled) return;
+        setEngineV2ChatRouting(false);
+        console.warn("[opencode-v2] failed to read chat routing status; retaining the current engine", error);
+      }
+    };
+    setEngineV2ChatRouting(false);
+    void refresh();
+    const interval = window.setInterval(() => { void refresh(); }, 15_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [selectedWorkspaceEndpoint?.baseUrl, selectedWorkspaceEndpoint?.client, selectedWorkspaceEndpoint?.workspaceId]);
+  const opencodeBaseUrl = engineV2ChatRouting ? opencode2BaseUrl : defaultOpencodeBaseUrl;
   const selectedWorkspaceError = errorsByWorkspaceId[selectedWorkspaceId] ?? null;
   const selectedSessionKnown = Boolean(
     selectedSessionId &&
@@ -1127,12 +1156,16 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
   const opencodeClient = useMemo(
     () =>
       opencodeBaseUrl && selectedWorkspaceServerToken && !selectedWorkspaceError
-        ? createClient(opencodeBaseUrl, selectedWorkspaceRoot || undefined, {
-            token: selectedWorkspaceServerToken,
-            mode: "openwork",
-          })
+        ? engineV2ChatRouting
+          ? createClientV2(opencodeBaseUrl, selectedWorkspaceRoot || undefined, {
+              token: selectedWorkspaceServerToken,
+            })
+          : createClient(opencodeBaseUrl, selectedWorkspaceRoot || undefined, {
+              token: selectedWorkspaceServerToken,
+              mode: "openwork",
+            })
         : null,
-    [opencodeBaseUrl, selectedWorkspaceError, selectedWorkspaceRoot, selectedWorkspaceServerToken],
+    [engineV2ChatRouting, opencodeBaseUrl, selectedWorkspaceError, selectedWorkspaceRoot, selectedWorkspaceServerToken],
   );
   useEffect(() => {
     if (!developerMode || !opencodeClient) return;
