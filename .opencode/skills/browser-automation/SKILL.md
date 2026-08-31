@@ -48,7 +48,7 @@ OPENWORK_ELECTRON_REMOTE_DEBUG_PORT=0 pnpm dev
 Use a detached launch when the user wants the app running in the background:
 
 ```sh
-nohup pnpm dev > /var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/openwork-dev.log 2>&1 &
+nohup pnpm dev > /tmp/openwork-dev.log 2>&1 &
 ```
 
 Then wait for the CDP port:
