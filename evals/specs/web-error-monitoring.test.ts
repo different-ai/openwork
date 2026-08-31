@@ -7,6 +7,7 @@ import {
   buildSentryEnvelope,
   buildWebErrorEvent,
   parseSentryDsn,
+  sanitizePageUrl,
   shouldMonitorWebErrors,
 } from "../../apps/app/src/app/lib/error-monitoring";
 
@@ -21,7 +22,7 @@ briefTest(testBrief({
       never: "activate for desktop builds, builds without a DSN, or after the in-app monitor takes over",
     }),
     runtimeMonitorContract: claim("the web bundle starts error monitoring before any bootstrap await and reports only error identity plus coarse context", {
-      never: "run inside Electron, run for desktop deployments, send chat or file content, or bypass the analytics preference",
+      never: "run inside Electron, run for desktop deployments, send chat or file content, report a URL query string or fragment that could carry sign-in credentials, or bypass the analytics preference",
     }),
     billingWebhookContract: claim("a Stripe webhook processing failure is captured to observability while still returning its error response to Stripe", {
       never: "swallow a webhook processing error unreported or capture routine signature-validation 400s as incidents",
@@ -43,9 +44,11 @@ briefTest(testBrief({
   expect(indexHtmlSource).toContain("WebBootLoadFailure");
   expect(indexHtmlSource).toContain("unhandledrejection");
   expect(indexHtmlSource).toContain("analyticsAllowed");
+  expect(indexHtmlSource).toContain("request: { url: location.origin + location.pathname }");
+  expect(indexHtmlSource).not.toContain("url: location.href");
   prove.bootBeaconContract(
     true,
-    "The inline beacon only arms when the built page carries a replaced web deployment marker and a real DSN — an unreplaced %VITE_% placeholder or desktop flavor short-circuits — caps at three events, respects the analytics preference, and stands down once the app monitor sets its handover flag.",
+    "The inline beacon only arms when the built page carries a replaced web deployment marker and a real DSN — an unreplaced %VITE_% placeholder or desktop flavor short-circuits — caps at three events, respects the analytics preference, reports only origin plus path so sign-in grant or token query parameters never leave the page, and stands down once the app monitor sets its handover flag.",
   );
 
   // Runtime monitor: gated pure logic, wired first in the entry, minimal payload.
@@ -82,13 +85,19 @@ briefTest(testBrief({
   const envelopeLines = buildSentryEnvelope(event).split("\n");
   expect(envelopeLines).toHaveLength(3);
   expect(JSON.parse(envelopeLines[1])).toEqual({ type: "event" });
+  expect(
+    sanitizePageUrl("https://app.openworklabs.com/signin?grant=secret-grant&openworkToken=tok#accessToken=at"),
+  ).toBe("https://app.openworklabs.com/signin");
+  expect(sanitizePageUrl("not a url")).toBe("");
   expect(entrySource).toMatch(/startWebErrorMonitoring\(\);[\s\S]*await initializeDenBootstrapConfig\(\)/);
   expect(monitorSource).toContain("if (!isAnalyticsEnabled()) return;");
   expect(monitorSource).toContain("MAX_EVENTS_PER_SESSION");
   expect(monitorSource).toContain('window.addEventListener("unhandledrejection"');
+  expect(monitorSource).toContain("sanitizePageUrl(window.location.href)");
+  expect(monitorSource).not.toContain("url: window.location.href");
   prove.runtimeMonitorContract(
     true,
-    "The gate opened only for the exact web-deployment, non-Electron, valid-DSN combination and refused desktop, Electron, blank, and unreplaced-placeholder inputs; monitoring starts before the bootstrap await so a failed boot is itself reported; the event shape carries only error identity, page URL, release, and boot phase with bounded sizes; and delivery checks the analytics preference and a per-session cap.",
+    "The gate opened only for the exact web-deployment, non-Electron, valid-DSN combination and refused desktop, Electron, blank, and unreplaced-placeholder inputs; monitoring starts before the bootstrap await so a failed boot is itself reported; the event shape carries only error identity, sanitized origin-plus-path page URL (grant, openworkToken, and accessToken query parameters and fragments are stripped, unparseable input reports empty), release, and boot phase with bounded sizes; and delivery checks the analytics preference and a per-session cap.",
   );
 
   // Stripe webhook: 500-path capture, 400 signature noise excluded.

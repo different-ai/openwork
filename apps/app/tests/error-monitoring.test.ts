@@ -4,6 +4,7 @@ import {
   buildSentryEnvelope,
   buildWebErrorEvent,
   parseSentryDsn,
+  sanitizePageUrl,
   shouldMonitorWebErrors,
 } from "../src/app/lib/error-monitoring";
 
@@ -44,6 +45,22 @@ describe("shouldMonitorWebErrors", () => {
     expect(
       shouldMonitorWebErrors({ dsn: "%VITE_OPENWORK_SENTRY_DSN%", deployment: "web", electronRuntime: false }),
     ).toBe(false);
+  });
+});
+
+describe("sanitizePageUrl", () => {
+  test("strips credential-bearing query strings and fragments", () => {
+    expect(
+      sanitizePageUrl("https://app.openworklabs.com/signin?grant=secret-grant&openworkToken=tok#accessToken=at"),
+    ).toBe("https://app.openworklabs.com/signin");
+    expect(sanitizePageUrl("https://app.openworklabs.com/chat/abc?accessToken=x")).toBe(
+      "https://app.openworklabs.com/chat/abc",
+    );
+  });
+
+  test("returns empty for unparseable input instead of leaking it", () => {
+    expect(sanitizePageUrl("not a url")).toBe("");
+    expect(sanitizePageUrl("")).toBe("");
   });
 });
 

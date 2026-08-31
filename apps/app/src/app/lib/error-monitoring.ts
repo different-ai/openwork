@@ -54,6 +54,20 @@ export function shouldMonitorWebErrors(input: WebErrorMonitoringGate): boolean {
   return input.deployment === "web" && !input.electronRuntime && parseSentryDsn(input.dsn) !== null;
 }
 
+/**
+ * Strip query and fragment before reporting: sign-in and deep-link URLs can
+ * carry credentials (`grant`, `openworkToken`, `accessToken`) that must never
+ * leave the page.
+ */
+export function sanitizePageUrl(href: string): string {
+  try {
+    const url = new URL(href);
+    return `${url.origin}${url.pathname}`;
+  } catch {
+    return "";
+  }
+}
+
 export type WebErrorInput = {
   type: string;
   message: string;
@@ -129,8 +143,8 @@ function deliver(target: SentryDsnTarget, input: WebErrorInput) {
 }
 
 function resourceUrl(target: EventTarget | null): string | null {
-  if (target instanceof HTMLScriptElement && target.src) return target.src;
-  if (target instanceof HTMLLinkElement && target.href) return target.href;
+  if (target instanceof HTMLScriptElement && target.src) return sanitizePageUrl(target.src) || null;
+  if (target instanceof HTMLLinkElement && target.href) return sanitizePageUrl(target.href) || null;
   return null;
 }
 
@@ -165,7 +179,7 @@ export function startWebErrorMonitoring() {
         deliver(target, {
           type: "ResourceLoadFailure",
           message: `failed to load ${failedResource}`,
-          url: window.location.href,
+          url: sanitizePageUrl(window.location.href),
           release,
           phase: "runtime",
         });
@@ -176,7 +190,7 @@ export function startWebErrorMonitoring() {
         type: event.error instanceof Error ? event.error.name : "Error",
         message: event.message,
         stack: event.error instanceof Error ? event.error.stack : undefined,
-        url: window.location.href,
+        url: sanitizePageUrl(window.location.href),
         release,
         phase: "runtime",
       });
@@ -190,7 +204,7 @@ export function startWebErrorMonitoring() {
       type: reason instanceof Error ? reason.name : "UnhandledRejection",
       message: reason instanceof Error ? reason.message : String(reason),
       stack: reason instanceof Error ? reason.stack : undefined,
-      url: window.location.href,
+      url: sanitizePageUrl(window.location.href),
       release,
       phase: "runtime",
     });

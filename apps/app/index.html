@@ -68,7 +68,9 @@
               level: "error",
               environment: "web",
               tags: { boot_phase: "boot" },
-              request: { url: location.href },
+              // Origin + path only: sign-in and deep-link URLs can carry
+              // credentials in the query string that must never leave the page.
+              request: { url: location.origin + location.pathname },
               exception: { values: [{ type: type, value: String(message).slice(0, 1000) }] },
             };
             var body =
@@ -85,7 +87,7 @@
               var t = e.target;
               var src = t && (t.tagName === "SCRIPT" ? t.src : t.tagName === "LINK" ? t.href : "");
               if (src) {
-                send("WebBootLoadFailure", "failed to load " + src);
+                send("WebBootLoadFailure", "failed to load " + String(src).split("?")[0].split("#")[0]);
                 return;
               }
               if (e.message) send("WebBootError", e.message);
