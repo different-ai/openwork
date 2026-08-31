@@ -144,6 +144,7 @@ import { buildOpenworkRuntimeConfigObject, openworkRuntimeConfigFilePath, writeO
 import { findManagedEngineWorkspace } from "./workspaces.js";
 import { startThreadApprovalReplayer, type ThreadApprovalReplayer } from "./thread-approvals.js";
 import { CloudProviderSync, parseCloudProviderDenSession } from "./cloud-provider-sync.js";
+import { createEngineV2Preview, type EngineV2Preview } from "./engine-v2-preview.js";
 import pkg from "../package.json" with { type: "json" };
 import constants from "../../../constants.json" with { type: "json" };
 
@@ -999,6 +1000,7 @@ export async function startServer(config: ServerConfig): Promise<ServeResult> {
     },
     logger: toManagedProviderAuthLogger(logger),
   });
+  const engineV2Preview = createEngineV2Preview({ config });
   const routes = createRoutes(
     config,
     approvals,
@@ -1008,6 +1010,7 @@ export async function startServer(config: ServerConfig): Promise<ServeResult> {
     engineMcpServerState,
     logger,
     cloudProviderSync,
+    engineV2Preview,
   );
 
   const serverOptions: {
@@ -1214,6 +1217,7 @@ export async function startServer(config: ServerConfig): Promise<ServeResult> {
   } catch (error) {
     captureServerException(error, { method: "START", route: "startServer" });
     cloudProviderSync.stop();
+    await engineV2Preview.stop().catch(() => undefined);
     engineInstanceReaper.close();
     clearEngineInstanceReaperForConfig(config);
     invalidateEngineMcpServerState(config, engineMcpServerState);
@@ -1254,6 +1258,7 @@ export async function startServer(config: ServerConfig): Promise<ServeResult> {
     ...server,
     stop: async () => {
       cloudProviderSync.stop();
+      await engineV2Preview.stop().catch(() => undefined);
       engineInstanceReaper.close();
       clearEngineInstanceReaperForConfig(config);
       invalidateEngineMcpServerState(config, engineMcpServerState);
@@ -2182,6 +2187,7 @@ function createRoutes(
   engineMcpServerState: EngineMcpServerState,
   logger: ServerLogger,
   cloudProviderSync: CloudProviderSync,
+  engineV2Preview: EngineV2Preview,
 ): Route[] {
   const routes: Route[] = [];
   // A rollover-capable pool can apply this immediately without disposing
@@ -2744,6 +2750,20 @@ function createRoutes(
 
   addRoute(routes, "GET", "/cloud-provider-sync/status", "client", async () => {
     return jsonResponse(cloudProviderSync.status());
+  });
+
+  addRoute(routes, "GET", "/experimental/engine-v2-preview/status", "client", async () => {
+    return jsonResponse(engineV2Preview.status());
+  });
+
+  addRoute(routes, "PUT", "/experimental/engine-v2-preview", "client", async (ctx) => {
+    ensureWritable(config);
+    requireClientScope(ctx, "collaborator");
+    const body = await readJsonBody(ctx.request);
+    if (!isRecord(body) || typeof body.enabled !== "boolean") {
+      throw new ApiError(400, "invalid_payload", "enabled must be a boolean");
+    }
+    return jsonResponse(await engineV2Preview.setEnabled(body.enabled));
   });
 
   addRoute(routes, "PATCH", "/runtime-config/providers", "host-token", async (ctx) => {

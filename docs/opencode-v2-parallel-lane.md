@@ -23,7 +23,15 @@ This PR adds a parallel prototype lane in
 `apps/server/src/managed-opencode-v2.ts`, pins it through
 `constants.json` `opencodeV2Version`, and adds the proof spec
 `evals/specs/opencode-v2-provider-hot-inject.test.ts`.
-It changes zero v1 behavior.
+
+It also ships the testing surface: an experimental Settings feature flag
+("OpenCode v2 engine preview", Settings > Advanced, default off) backed by
+`apps/server/src/engine-v2-preview.ts`. When enabled, openwork-server runs the
+v2 engine as a parallel sidecar and hot-mirrors every provider change from the
+runtime provider store into it with no reload, while the app keeps using the
+v1 engine. Live status (`GET /experimental/engine-v2-preview/status`) reports
+pid, mirrored and skipped providers, and the sidecar's ingested model ids.
+With the flag off (the default), nothing starts and zero v1 behavior changes.
 
 ## Why now
 
@@ -260,6 +268,21 @@ The equivalent manual smoke produced the same result:
 - The engine PID did not change.
 - Stdout contained one `server listening on` line.
 
+The feature flag has its own proof,
+`evals/specs/engine-v2-preview-flag.e2e.test.ts` (app-driving):
+
+| Claim | Observable proof |
+| --- | --- |
+| F1 | A fresh desktop reports the flag disabled with no sidecar pid, and the Settings switch renders unchecked. |
+| F2 | Enabling from Settings > Advanced boots the sidecar (status turns running with a pid) while the v1 server keeps serving. |
+| F3 | A provider added through the product config path is mirrored into the running sidecar: its model id appears in the sidecar catalog, a baseURL-less record lands in skipped (never mirrored), and the sidecar pid is unchanged. |
+| F4 | Disabling from Settings stops the sidecar and it stays stopped. |
+
+The pure v1-to-v2 provider mapping is unit-covered in
+`apps/server/src/engine-v2-preview.test.ts`.
+The end-to-end completion round trip is deliberately proven in the app-less
+spec, not the e2e spec, so the e2e run needs no witness endpoint.
+
 ## How a full OpenWork-on-v2 lane would work (design)
 
 ### 1. Spawn and handshake
@@ -338,16 +361,18 @@ That is the proposed continuity path for sessions and credentials.
 
 ### Rollout stages
 
-1. This PR: land the pinned parallel lane and proof spec in
-   `apps/server/src/managed-opencode-v2.ts`, `constants.json`, and
-   `evals/specs/opencode-v2-provider-hot-inject.test.ts`.
-2. Add opt-in `OPENWORK_ENGINE_LANE=v2` selection to openwork-server boot for
-   headless worlds, beside the current manager at
-   `apps/server/src/managed-opencode.ts:147-248`.
-3. Add a desktop dev-mode toggle through the existing boot chain
-   (`apps/desktop/electron/main.mjs:1385-1445`,
-   `apps/desktop/electron/runtime.mjs:1882-2028`,
-   `apps/server/src/embedded.ts:190-281`).
+1. This PR: land the pinned parallel lane, the proof specs, and the
+   experimental Settings flag that runs the v2 sidecar with live provider
+   mirroring (`apps/server/src/managed-opencode-v2.ts`,
+   `apps/server/src/engine-v2-preview.ts`, `constants.json`,
+   `evals/specs/opencode-v2-provider-hot-inject.test.ts`,
+   `evals/specs/engine-v2-preview-flag.e2e.test.ts`).
+2. Dogfood the flag; extend mirroring coverage (headers, model limits,
+   disabled providers) and bridge sidecar SSE events into diagnostics.
+3. Add a v2 dialect adapter behind the four server-to-engine touchpoints so a
+   workspace can select the v2 lane end to end
+   (`apps/server/src/server.ts:1246-1280`, `:1302+`, `:3930-3942`,
+   `apps/server/src/managed-provider-auth.ts:256,295`).
 4. On the v2 lane, remove the provider settings call to
    `refreshProviders({dispose:true})` at
    `apps/app/src/react-app/domains/connections/provider-auth/store.ts:1623-1651`.

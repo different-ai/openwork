@@ -66,6 +66,44 @@ export type OpenworkCloudProviderSyncStatus = {
   skippedProviders: OpenworkCloudProviderSyncSkippedProvider[];
 };
 
+export interface EngineV2PreviewStatus {
+  enabled: boolean;
+  running: boolean;
+  version?: string;
+  pid?: number;
+  binSource?: string;
+  mirroredProviderIds: string[];
+  skippedProviderIds: string[];
+  catalogModelIds: string[];
+  lastMirroredAt?: string;
+  lastError?: string;
+}
+
+function parseEngineV2PreviewStatus(value: unknown): EngineV2PreviewStatus {
+  if (
+    !value || typeof value !== "object" ||
+    !("enabled" in value) || typeof value.enabled !== "boolean" ||
+    !("running" in value) || typeof value.running !== "boolean" ||
+    !("mirroredProviderIds" in value) || !Array.isArray(value.mirroredProviderIds) || !value.mirroredProviderIds.every((item) => typeof item === "string") ||
+    !("skippedProviderIds" in value) || !Array.isArray(value.skippedProviderIds) || !value.skippedProviderIds.every((item) => typeof item === "string") ||
+    !("catalogModelIds" in value) || !Array.isArray(value.catalogModelIds) || !value.catalogModelIds.every((item) => typeof item === "string")
+  ) {
+    throw new Error("Invalid OpenCode v2 engine preview status response.");
+  }
+  return {
+    enabled: value.enabled,
+    running: value.running,
+    version: "version" in value && typeof value.version === "string" ? value.version : undefined,
+    pid: "pid" in value && typeof value.pid === "number" ? value.pid : undefined,
+    binSource: "binSource" in value && typeof value.binSource === "string" ? value.binSource : undefined,
+    mirroredProviderIds: value.mirroredProviderIds,
+    skippedProviderIds: value.skippedProviderIds,
+    catalogModelIds: value.catalogModelIds,
+    lastMirroredAt: "lastMirroredAt" in value && typeof value.lastMirroredAt === "string" ? value.lastMirroredAt : undefined,
+    lastError: "lastError" in value && typeof value.lastError === "string" ? value.lastError : undefined,
+  };
+}
+
 function parseCloudProviderSyncRun(value: unknown): OpenworkCloudProviderSyncRun {
   if (!value || typeof value !== "object" || !("status" in value)) throw new Error("Invalid cloud provider sync response.");
   const status = value.status;
@@ -1544,6 +1582,18 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
     getCloudProviderSyncStatus: async () =>
       parseCloudProviderSyncStatus(await requestJson<unknown>(baseUrl, "/cloud-provider-sync/status", {
         token,
+        timeoutMs: timeouts.config,
+      })),
+    getEngineV2PreviewStatus: async (): Promise<EngineV2PreviewStatus> =>
+      parseEngineV2PreviewStatus(await requestJson<unknown>(baseUrl, "/experimental/engine-v2-preview/status", {
+        token,
+        timeoutMs: timeouts.config,
+      })),
+    setEngineV2PreviewEnabled: async (enabled: boolean): Promise<EngineV2PreviewStatus> =>
+      parseEngineV2PreviewStatus(await requestJson<unknown>(baseUrl, "/experimental/engine-v2-preview", {
+        token,
+        method: "PUT",
+        body: { enabled },
         timeoutMs: timeouts.config,
       })),
     setConnectState: (connectEnabled: boolean) => requestJson<OpenworkConnectState>(baseUrl, "/experimental/connect/state", { token, hostToken, method: "PUT", body: { connectEnabled }, timeoutMs: timeouts.config }),

@@ -4,7 +4,7 @@ import { useEffect, useReducer, useState } from "react";
 import { Separator } from "@/components/ui/separator";
 
 import type { OpencodeConnectStatus } from "@/app/types";
-import type { OpenworkCloudMcpHealth, OpenworkRuntimeConfigStatus, OpenworkServerStatus } from "@/app/lib/openwork-server";
+import type { EngineV2PreviewStatus, OpenworkCloudMcpHealth, OpenworkRuntimeConfigStatus, OpenworkServerStatus } from "@/app/lib/openwork-server";
 import { t } from "@/i18n";
 import { LayoutStack } from "../settings-layout";
 import type { useDenSession } from "../cloud/use-den-session";
@@ -12,6 +12,7 @@ import type { useDenSession } from "../cloud/use-den-session";
 import { advancedLocalReducer, initialAdvancedLocalState } from "./advanced-view-state";
 import {
   AdvancedDeveloperSection,
+  AdvancedEngineV2PreviewSection,
   AdvancedCloudMcpDiagnosticsSection,
   AdvancedOrganizationServerSection,
   AdvancedRuntimeConfigSourcesSection,
@@ -47,6 +48,8 @@ export type AdvancedViewProps = {
   cloudMcpUrl: string | null;
   cloudMcpHealth: OpenworkCloudMcpHealth | null;
   refreshCloudMcpHealth: () => Promise<OpenworkCloudMcpHealth | null>;
+  getEngineV2PreviewStatus: () => Promise<EngineV2PreviewStatus>;
+  setEngineV2PreviewEnabled: (enabled: boolean) => Promise<EngineV2PreviewStatus>;
 };
 
 type AdvancedStatusTone = "ready" | "warning" | "error" | "neutral";
@@ -191,6 +194,11 @@ export function AdvancedView(props: AdvancedViewProps) {
         configStatusBusy={configStatusBusy}
         configStatusError={configStatusError}
         onRefresh={refreshRuntimeConfigStatus}
+      />
+
+      <AdvancedEngineV2PreviewSection
+        getStatus={props.getEngineV2PreviewStatus}
+        setEnabled={props.setEngineV2PreviewEnabled}
       />
 
       <AdvancedDeveloperSection
