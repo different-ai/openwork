@@ -11,7 +11,7 @@ import {
 import { useMessageList } from "@/components/chat/message-list-provider"
 import { taskChildSessionId, type TaskToolPart } from "@/lib/build-in-tools"
 import { isToolPartInFlight } from "@/lib/tool-activity"
-import { getToolCallStartedAt, trackToolCallDuration } from "@/lib/tool-call-duration"
+import { formatElapsedSeconds, getToolCallStartedAt, trackToolCallDuration } from "@/lib/tool-call-duration"
 import { cn } from "@/lib/utils"
 
 type SubagentRunLineProps = {
@@ -58,7 +58,7 @@ export function SubagentRunLine({ part, className }: SubagentRunLineProps) {
   const title = part.input?.description?.trim() || "Sub-agent task"
   const agent = agentName(part.input?.subagent_type ?? "")
   const status = inFlight
-    ? `Working ${elapsedSeconds}s`
+    ? `Working ${formatElapsedSeconds(elapsedSeconds)}`
     : isFailed
       ? part.errorText?.split("\n")[0]?.trim() || "Failed"
       : "Completed"

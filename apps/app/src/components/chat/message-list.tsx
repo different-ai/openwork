@@ -110,7 +110,7 @@ import {
 } from "@/lib/build-in-tools"
 import type { ThreadStatus } from "@/lib/messages"
 import type { SessionActivityStatus } from "@/react-app/domains/session/status/session-activity-store"
-import { formatToolCallDuration } from "@/lib/tool-call-duration"
+import { formatElapsedSeconds, formatToolCallDuration } from "@/lib/tool-call-duration"
 import { collectLatestAssistantToolParts } from "@/lib/latest-assistant-tool-parts"
 import { isToolPartInFlight } from "@/lib/tool-activity"
 import { faviconUrlForHref } from "@/lib/favicon"
@@ -841,7 +841,7 @@ MessageComponent.displayName = "MessageComponent"
 const LoadingMessage = React.memo(({ elapsedSeconds }: { elapsedSeconds: number }) => (
     <Message className="mx-auto flex w-full max-w-3xl flex-col items-start gap-2 px-2 md:px-10">
       <div data-loading-message="working" className="py-1 text-sm text-muted-foreground">
-        <span className="ow-text-shimmer tabular-nums">Working {elapsedSeconds}s</span>
+        <span className="ow-text-shimmer tabular-nums">Working {formatElapsedSeconds(elapsedSeconds)}</span>
       </div>
     </Message>
 ))
