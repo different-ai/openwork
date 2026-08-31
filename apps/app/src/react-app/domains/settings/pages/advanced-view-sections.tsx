@@ -774,6 +774,7 @@ export function AdvancedFeatureFlagsSection(props: AdvancedFeatureFlagsSectionPr
 interface AdvancedEngineV2PreviewSectionProps {
   getStatus: () => Promise<EngineV2PreviewStatus>;
   setEnabled: (enabled: boolean) => Promise<EngineV2PreviewStatus>;
+  setChatRouting: (enabled: boolean) => Promise<EngineV2PreviewStatus>;
 }
 
 export function AdvancedEngineV2PreviewSection(props: AdvancedEngineV2PreviewSectionProps) {
@@ -822,9 +823,21 @@ export function AdvancedEngineV2PreviewSection(props: AdvancedEngineV2PreviewSec
     }
   };
 
+  const setChatRouting = async (enabled: boolean) => {
+    setBusy(true);
+    setLoadError(null);
+    try {
+      setStatus(await props.setChatRouting(enabled));
+    } catch (error) {
+      setLoadError(error instanceof Error ? error.message : "Failed to update OpenCode v2 chat routing.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const skippedCount = status?.skippedProviderIds.length ?? 0;
   const runningStatus = status?.enabled && status.running
-    ? `Running v${status.version ?? "unknown"} (pid ${status.pid ?? "unknown"}) — ${status.mirroredProviderIds.length} providers mirrored, ${status.catalogModelIds.length} models${skippedCount ? `, ${skippedCount} skipped` : ""}`
+    ? `Running v${status.version ?? "unknown"} (pid ${status.pid ?? "unknown"}) — ${status.mirroredProviderIds.length} providers mirrored, ${status.catalogModelIds.length} models${skippedCount ? `, ${skippedCount} skipped` : ""}${status.chatRouting ? " — chat routed to v2" : ""}`
     : null;
   const error = (status?.enabled && !status.running ? status.lastError : null) ?? loadError;
   const starting = status?.enabled && !status.running && !error ? "Starting the OpenCode v2 sidecar…" : null;
@@ -839,7 +852,7 @@ export function AdvancedEngineV2PreviewSection(props: AdvancedEngineV2PreviewSec
         <LayoutSectionItemHeader>
           <LayoutSectionItemTitle>OpenCode v2 engine preview</LayoutSectionItemTitle>
           <LayoutSectionItemDescription>
-            Experimental: runs the OpenCode v2 engine as a parallel sidecar and mirrors provider changes into it live — no engine reload. The app keeps using the current engine.
+            Experimental: runs the OpenCode v2 engine as a parallel sidecar and mirrors provider changes into it live — no engine reload.
           </LayoutSectionItemDescription>
           <LayoutSectionItemHeaderActions>
             <Switch
@@ -854,6 +867,25 @@ export function AdvancedEngineV2PreviewSection(props: AdvancedEngineV2PreviewSec
         {starting ? <div className="text-xs text-gray-11">{starting}</div> : null}
         {error ? <div className="text-xs text-red-11">{error}</div> : null}
       </LayoutSectionItem>
+
+      {status?.enabled ? (
+        <LayoutSectionItem>
+          <LayoutSectionItemHeader>
+            <LayoutSectionItemTitle>Route chat through OpenCode v2</LayoutSectionItemTitle>
+            <LayoutSectionItemDescription>
+              Text chat uses the preview sidecar. Unsupported commands, tools, permissions, and file search remain unavailable in this preview.
+            </LayoutSectionItemDescription>
+            <LayoutSectionItemHeaderActions>
+              <Switch
+                aria-label="Route chat through OpenCode v2"
+                checked={status.chatRouting}
+                disabled={!status.running || busy}
+                onCheckedChange={(enabled) => { void setChatRouting(enabled); }}
+              />
+            </LayoutSectionItemHeaderActions>
+          </LayoutSectionItemHeader>
+        </LayoutSectionItem>
+      ) : null}
     </LayoutSection>
   );
 }

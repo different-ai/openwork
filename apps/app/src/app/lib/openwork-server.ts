@@ -69,6 +69,7 @@ export type OpenworkCloudProviderSyncStatus = {
 export interface EngineV2PreviewStatus {
   enabled: boolean;
   running: boolean;
+  chatRouting: boolean;
   version?: string;
   pid?: number;
   binSource?: string;
@@ -93,6 +94,7 @@ function parseEngineV2PreviewStatus(value: unknown): EngineV2PreviewStatus {
   return {
     enabled: value.enabled,
     running: value.running,
+    chatRouting: "chatRouting" in value && typeof value.chatRouting === "boolean" ? value.chatRouting : false,
     version: "version" in value && typeof value.version === "string" ? value.version : undefined,
     pid: "pid" in value && typeof value.pid === "number" ? value.pid : undefined,
     binSource: "binSource" in value && typeof value.binSource === "string" ? value.binSource : undefined,
@@ -1568,6 +1570,13 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         token,
         method: "PUT",
         body: { enabled },
+        timeoutMs: timeouts.config,
+      })),
+    setEngineV2PreviewChatRouting: async (chatRouting: boolean): Promise<EngineV2PreviewStatus> =>
+      parseEngineV2PreviewStatus(await requestJson<unknown>(baseUrl, "/experimental/engine-v2-preview", {
+        token,
+        method: "PUT",
+        body: { chatRouting },
         timeoutMs: timeouts.config,
       })),
     setConnectState: (connectEnabled: boolean) => requestJson<OpenworkConnectState>(baseUrl, "/experimental/connect/state", { token, hostToken, method: "PUT", body: { connectEnabled }, timeoutMs: timeouts.config }),

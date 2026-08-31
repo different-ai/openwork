@@ -1,0 +1,654 @@
+import { execFile } from "node:child_process";
+import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { createServer } from "node:http";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { promisify } from "node:util";
+
+import { clickButton, createAndSelectWorkspace, evalIn, go, waitFor } from "@openwork/behaviors";
+import type { Surface } from "@openwork/cdp";
+import { desktop, localHost } from "@openwork/hosts";
+import { needs, test } from "@openwork/testkit";
+import { expect } from "vitest";
+
+const execFileAsync = promisify(execFile);
+const enabled = process.env.OPENWORK_EVAL_E2E_TESTS === "1";
+const title = enabled
+  ? "chat routing switches live between OpenCode v1 and the v2 preview sidecar"
+  : "OpenCode v2 chat routing skipped — needs: set OPENWORK_EVAL_E2E_TESTS=1";
+const keyV1 = "key-v1";
+const keyV2 = "key-v2";
+const modelIdV1 = "witness-model-v1";
+const modelIdV2 = "witness-model-v2";
+const modelNameV1 = "Witness Model V1";
+const modelNameV2 = "Witness Model V2";
+
+interface ServerInfo {
+  baseUrl: string;
+  token: string;
+}
+
+interface EngineV2PreviewStatus {
+  enabled: boolean;
+  running: boolean;
+  chatRouting: boolean;
+  pid?: number;
+  mirroredProviderIds: string[];
+  skippedProviderIds: string[];
+  catalogModelIds: string[];
+  lastError?: string;
+}
+
+interface WitnessRequest {
+  at: number;
+  auth: string;
+  model: string;
+  stream: boolean;
+  nonce: string;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
+async function exists(path: string): Promise<boolean> {
+  try {
+    await access(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function resolveOpencodeV2Bin(): Promise<string> {
+  const override = process.env.OPENWORK_EVAL_OPENCODE2_BIN;
+  if (typeof override === "string" && override.trim() !== "") return override;
+
+  const constants: unknown = JSON.parse(await readFile(join(import.meta.dirname, "../../constants.json"), "utf8"));
+  if (!isRecord(constants) || typeof constants.opencodeV2Version !== "string") {
+    throw new Error("constants.json must define a string opencodeV2Version");
+  }
+  const cache = join(tmpdir(), "openwork-opencode-v2-cache", constants.opencodeV2Version);
+  const binary = join(cache, "node_modules", ".bin", "opencode2");
+  if (!(await exists(binary))) {
+    await mkdir(cache, { recursive: true });
+    const packageJson = join(cache, "package.json");
+    if (!(await exists(packageJson))) await writeFile(packageJson, '{"private":true}\n');
+    await execFileAsync(
+      "pnpm",
+      ["add", "--ignore-workspace", "--save-exact", `@opencode-ai/cli@${constants.opencodeV2Version}`],
+      { cwd: cache, timeout: 180_000 },
+    );
+  }
+  if (!(await exists(binary))) {
+    throw new Error(`OpenCode v2 binary was not installed at ${binary}; set OPENWORK_EVAL_OPENCODE2_BIN to a working opencode2 binary`);
+  }
+  return binary;
+}
+
+async function readServerInfo(app: Surface): Promise<ServerInfo> {
+  const value = await evalIn(app, `(async () => {
+    let baseUrl = "";
+    let token = "";
+    try {
+      const invokeDesktop = window.__OPENWORK_ELECTRON__ && window.__OPENWORK_ELECTRON__.invokeDesktop;
+      if (invokeDesktop) {
+        const info = await invokeDesktop("openworkServerInfo");
+        if (info && info.running === true) {
+          baseUrl = String(info.baseUrl ?? info.connectUrl ?? "").trim().replace(/\\\/+$/, "");
+          token = String(info.ownerToken ?? info.clientToken ?? "").trim();
+        }
+      }
+    } catch {}
+    if (!baseUrl || !token) {
+      const port = (localStorage.getItem("openwork.server.port") ?? "").trim();
+      baseUrl = port ? "http://127.0.0.1:" + port : baseUrl;
+      token = token || (localStorage.getItem("openwork.server.token") ?? "").trim();
+    }
+    return { baseUrl, token };
+  })()`, { awaitPromise: true, timeoutMs: 15_000 });
+  if (!isRecord(value) || typeof value.baseUrl !== "string" || !value.baseUrl || typeof value.token !== "string" || !value.token) {
+    throw new Error(`Local server credentials are unavailable: ${JSON.stringify(value)}`);
+  }
+  return { baseUrl: value.baseUrl, token: value.token };
+}
+
+function authHeaders(info: ServerInfo): { Authorization: string } {
+  return { Authorization: `Bearer ${info.token}` };
+}
+
+function stringArray(value: unknown, field: string): string[] {
+  if (!Array.isArray(value) || !value.every((entry) => typeof entry === "string")) {
+    throw new Error(`Engine v2 status ${field} was not a string array: ${JSON.stringify(value)}`);
+  }
+  return value;
+}
+
+function parseStatus(value: unknown): EngineV2PreviewStatus {
+  if (
+    !isRecord(value)
+    || typeof value.enabled !== "boolean"
+    || typeof value.running !== "boolean"
+    || typeof value.chatRouting !== "boolean"
+  ) {
+    throw new Error(`Unexpected engine v2 preview status: ${JSON.stringify(value)}`);
+  }
+  if (value.pid !== undefined && typeof value.pid !== "number") {
+    throw new Error(`Unexpected engine v2 pid: ${JSON.stringify(value.pid)}`);
+  }
+  return {
+    enabled: value.enabled,
+    running: value.running,
+    chatRouting: value.chatRouting,
+    ...(typeof value.pid === "number" ? { pid: value.pid } : {}),
+    mirroredProviderIds: stringArray(value.mirroredProviderIds, "mirroredProviderIds"),
+    skippedProviderIds: stringArray(value.skippedProviderIds, "skippedProviderIds"),
+    catalogModelIds: stringArray(value.catalogModelIds, "catalogModelIds"),
+    ...(typeof value.lastError === "string" ? { lastError: value.lastError } : {}),
+  };
+}
+
+async function readStatus(info: ServerInfo): Promise<EngineV2PreviewStatus> {
+  const response = await fetch(`${info.baseUrl}/experimental/engine-v2-preview/status`, {
+    headers: authHeaders(info),
+    signal: AbortSignal.timeout(15_000),
+  });
+  const value: unknown = await response.json();
+  if (response.status !== 200) throw new Error(`Engine v2 status returned ${response.status}: ${JSON.stringify(value)}`);
+  return parseStatus(value);
+}
+
+async function untilStatus(
+  info: ServerInfo,
+  predicate: (status: EngineV2PreviewStatus) => boolean,
+  timeoutMs: number,
+  label: string,
+): Promise<EngineV2PreviewStatus> {
+  const deadline = Date.now() + timeoutMs;
+  let last = await readStatus(info);
+  while (Date.now() < deadline) {
+    if (predicate(last)) return last;
+    await sleep(1_000);
+    last = await readStatus(info);
+  }
+  throw new Error(`Timed out waiting for ${label}; last status: ${JSON.stringify(last)}`);
+}
+
+async function engineSessionCount(info: ServerInfo, workspaceId: string, lane: "opencode" | "opencode2"): Promise<number> {
+  const path = lane === "opencode" ? "opencode/session?limit=100" : "opencode2/api/session";
+  const response = await fetch(`${info.baseUrl}/workspace/${encodeURIComponent(workspaceId)}/${path}`, {
+    headers: authHeaders(info),
+    signal: AbortSignal.timeout(15_000),
+  });
+  if (lane === "opencode2" && response.status === 503) return -1;
+  const value: unknown = await response.json();
+  if (!response.ok) throw new Error(`${lane} session list returned ${response.status}: ${JSON.stringify(value)}`);
+  if (lane === "opencode") {
+    if (!Array.isArray(value)) throw new Error(`Unexpected v1 session list: ${JSON.stringify(value)}`);
+    return value.length;
+  }
+  if (!isRecord(value) || !Array.isArray(value.data)) {
+    throw new Error(`Unexpected v2 session list: ${JSON.stringify(value)}`);
+  }
+  return value.data.length;
+}
+
+async function clickSwitch(app: Surface, ariaLabel: string): Promise<void> {
+  const point = await evalIn(app, `(() => {
+    const control = [...document.querySelectorAll(${JSON.stringify(`[aria-label="${ariaLabel}"]`)})]
+      .find((candidate) => {
+        const rect = candidate.getBoundingClientRect();
+        return rect.width > 0 && rect.height > 0
+          && candidate.getAttribute("aria-disabled") !== "true"
+          && !candidate.hasAttribute("data-disabled");
+      });
+    if (!(control instanceof HTMLElement)) return null;
+    control.scrollIntoView({ block: "center", behavior: "instant" });
+    const rect = control.getBoundingClientRect();
+    return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+  })()`);
+  if (!isRecord(point) || typeof point.x !== "number" || typeof point.y !== "number") {
+    throw new Error(`Could not resolve enabled switch ${ariaLabel}: ${JSON.stringify(point)}`);
+  }
+  await app.client.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: point.x, y: point.y });
+  await app.client.send("Input.dispatchMouseEvent", { type: "mousePressed", x: point.x, y: point.y, button: "left", clickCount: 1 });
+  await app.client.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: point.x, y: point.y, button: "left", clickCount: 1 });
+}
+
+async function closeModelPicker(app: Surface): Promise<void> {
+  await app.client.send("Input.dispatchKeyEvent", {
+    type: "keyDown",
+    key: "Escape",
+    code: "Escape",
+    windowsVirtualKeyCode: 27,
+    nativeVirtualKeyCode: 27,
+  });
+  await app.client.send("Input.dispatchKeyEvent", {
+    type: "keyUp",
+    key: "Escape",
+    code: "Escape",
+    windowsVirtualKeyCode: 27,
+    nativeVirtualKeyCode: 27,
+  });
+}
+
+async function waitForModelInPicker(app: Surface, expected: string, timeoutMs = 45_000): Promise<void> {
+  await waitFor(app, `Boolean(document.querySelector('button[aria-label="Change model"]'))`, {
+    timeoutMs: 30_000,
+    label: "composer model picker",
+  });
+  const deadline = Date.now() + timeoutMs;
+  let lastItems: string[] = [];
+  while (Date.now() < deadline) {
+    const opened = await evalIn(app, `(() => {
+      if (document.querySelector('[data-slot="popover-content"]')) return true;
+      const trigger = document.querySelector('button[aria-label="Change model"]');
+      if (!(trigger instanceof HTMLButtonElement)) return false;
+      trigger.click();
+      return true;
+    })()`);
+    if (opened === true) {
+      await sleep(300);
+      await evalIn(app, `(() => {
+        const popover = document.querySelector('[data-slot="popover-content"]');
+        if (!(popover instanceof HTMLElement)) return false;
+        if ([...popover.querySelectorAll('[data-slot="command-item"]')]
+          .some((item) => (item.textContent ?? "").includes(${JSON.stringify(expected)}))) return true;
+        const modelButton = [...popover.querySelectorAll('button')]
+          .find((button) => (button.textContent ?? "").trim().startsWith("Model"));
+        if (!(modelButton instanceof HTMLButtonElement)) return false;
+        modelButton.click();
+        return true;
+      })()`);
+      await sleep(200);
+      const items = await evalIn(app, `(() => {
+        const popover = document.querySelector('[data-slot="popover-content"]');
+        if (!(popover instanceof HTMLElement)) return [];
+        return [...popover.querySelectorAll('[data-slot="command-item"]')]
+          .map((item) => (item.textContent ?? "").trim());
+      })()`);
+      if (Array.isArray(items) && items.every((item) => typeof item === "string")) {
+        lastItems = items;
+        if (items.some((item) => item.includes(expected))) return;
+      }
+    }
+    await closeModelPicker(app);
+    await sleep(700);
+  }
+  throw new Error(`Timed out waiting for ${expected} in the model picker; last items: ${JSON.stringify(lastItems)}`);
+}
+
+async function selectModel(app: Surface, modelName: string): Promise<void> {
+  await waitForModelInPicker(app, modelName);
+  const picked = await evalIn(app, `(() => {
+    const popover = document.querySelector('[data-slot="popover-content"]');
+    const item = [...(popover?.querySelectorAll('[data-slot="command-item"]') ?? [])]
+      .find((candidate) => (candidate.textContent ?? "").includes(${JSON.stringify(modelName)}));
+    if (!(item instanceof HTMLElement)) return false;
+    item.click();
+    return true;
+  })()`);
+  expect(picked).toBe(true);
+  await waitFor(app, `(document.querySelector('button[aria-label="Change model"]')?.textContent ?? "").includes(${JSON.stringify(modelName)})`, {
+    timeoutMs: 15_000,
+    label: `${modelName} selected`,
+  });
+}
+
+async function typeIntoComposer(app: Surface, text: string): Promise<void> {
+  await waitFor(app, `(() => {
+    const editor = document.querySelector('[contenteditable="true"][data-lexical-editor="true"]');
+    return editor instanceof HTMLElement && (editor.innerText ?? "").trim() === "";
+  })()`, { timeoutMs: 30_000, label: "empty composer ready" });
+  const focused = await evalIn(app, `(() => {
+    const editor = document.querySelector('[contenteditable="true"][data-lexical-editor="true"]');
+    if (!(editor instanceof HTMLElement)) return false;
+    editor.focus();
+    return true;
+  })()`);
+  expect(focused).toBe(true);
+  await app.client.send("Input.insertText", { text });
+  await waitFor(app, `(document.querySelector('[contenteditable="true"][data-lexical-editor="true"]')?.innerText ?? "").trim() === ${JSON.stringify(text)}`, {
+    timeoutMs: 10_000,
+    label: `composer contains ${text}`,
+  });
+}
+
+async function createNewSessionThroughSidebar(app: Surface): Promise<string> {
+  const previousValue = await evalIn(app, `document.querySelector('[data-session-surface-id]')?.getAttribute('data-session-surface-id') ?? ""`);
+  const previous = typeof previousValue === "string" ? previousValue : "";
+  await waitFor(app, `(() => {
+    const button = document.querySelector('[data-sidebar-new-chat]');
+    return button instanceof HTMLButtonElement && !button.disabled;
+  })()`, { timeoutMs: 30_000, label: "enabled sidebar New task control" });
+  const clicked = await evalIn(app, `(() => {
+    const button = document.querySelector('[data-sidebar-new-chat]');
+    if (!(button instanceof HTMLButtonElement) || button.disabled) return false;
+    button.click();
+    return true;
+  })()`);
+  expect(clicked).toBe(true);
+  await waitFor(app, `(() => {
+    const id = document.querySelector('[data-session-surface-id]')?.getAttribute('data-session-surface-id') ?? "";
+    return id.startsWith("ses_") && id !== ${JSON.stringify(previous)}
+      && window.location.hash.includes("/session/" + id);
+  })()`, { timeoutMs: 60_000, label: "new session created by the active engine client" });
+  const value = await evalIn(app, `document.querySelector('[data-session-surface-id]')?.getAttribute('data-session-surface-id') ?? ""`);
+  if (typeof value !== "string" || !value.startsWith("ses_")) throw new Error(`New session id was unavailable: ${String(value)}`);
+  return value;
+}
+
+async function waitForWitnessRequest(
+  requests: WitnessRequest[],
+  predicate: (request: WitnessRequest) => boolean,
+  label: string,
+): Promise<WitnessRequest> {
+  const deadline = Date.now() + 90_000;
+  while (Date.now() < deadline) {
+    const match = requests.find(predicate);
+    if (match) return match;
+    await sleep(100);
+  }
+  throw new Error(`Timed out waiting for ${label}; requests: ${JSON.stringify(requests)}`);
+}
+
+async function sendAndWaitForNonce(
+  app: Surface,
+  requests: WitnessRequest[],
+  prompt: string,
+  auth: string,
+  model: string,
+  notBefore: number,
+  round: string,
+): Promise<{ request: WitnessRequest; latencyMs: number }> {
+  await typeIntoComposer(app, prompt);
+  const sentAt = Date.now();
+  await clickButton(app, "Run task", { timeoutMs: 30_000 });
+  const request = await waitForWitnessRequest(
+    requests,
+    (candidate) => candidate.stream && candidate.at >= sentAt && candidate.at >= notBefore
+      && candidate.auth === auth && candidate.model === model,
+    `${round} streamed witness request`,
+  );
+  await waitFor(app, `[...document.querySelectorAll('[data-message-role="assistant"]')]
+    .some((message) => message.textContent?.includes(${JSON.stringify(request.nonce)}))`, {
+    timeoutMs: 120_000,
+    label: `${round} transcript nonce ${request.nonce}`,
+  });
+  const latencyMs = Date.now() - sentAt;
+  console.info(`[opencode-v2-chat-routing] ${round} send-to-nonce latency: ${latencyMs}ms`);
+  return { request, latencyMs };
+}
+
+test.skipIf(!enabled)(title, { timeout: 600_000 }, async ({ evidence }) => {
+  needs({ optIn: ["OPENWORK_EVAL_E2E_TESTS"] });
+
+  const binPath = await resolveOpencodeV2Bin();
+  const witnessRequests: WitnessRequest[] = [];
+  const validAuth = new Set([`Bearer ${keyV1}`, `Bearer ${keyV2}`]);
+  const witness = createServer((request, response) => {
+    const url = request.url ?? "";
+    const auth = request.headers.authorization ?? "";
+    if (!validAuth.has(auth)) {
+      response.writeHead(401, { "content-type": "application/json" });
+      response.end(JSON.stringify({ error: { message: "invalid witness key" } }));
+      return;
+    }
+    if (request.method === "GET" && url.startsWith("/v1/models")) {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({
+        object: "list",
+        data: [modelIdV1, modelIdV2].map((id) => ({ id, object: "model" })),
+      }));
+      return;
+    }
+    if (request.method !== "POST" || (url !== "/v1/chat/completions" && url !== "/chat/completions")) {
+      response.writeHead(404, { "content-type": "application/json" });
+      response.end(JSON.stringify({ error: { message: "not found" } }));
+      return;
+    }
+
+    request.setEncoding("utf8");
+    let rawBody = "";
+    request.on("data", (chunk: string) => {
+      rawBody += chunk;
+    });
+    request.on("end", () => {
+      let body: unknown;
+      try {
+        body = JSON.parse(rawBody);
+      } catch {
+        body = null;
+      }
+      const model = isRecord(body) && typeof body.model === "string" ? body.model : "";
+      const stream = isRecord(body) && body.stream === true;
+      const nonce = "OPENWORK-V2-ROUTING-NONCE";
+      witnessRequests.push({ at: Date.now(), auth, model, stream, nonce });
+      const id = `chatcmpl-opencode-v2-routing-${witnessRequests.length}`;
+      if (!stream) {
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end(JSON.stringify({
+          id,
+          object: "chat.completion",
+          created: Math.floor(Date.now() / 1_000),
+          model,
+          choices: [{ index: 0, message: { role: "assistant", content: "Witness title" }, finish_reason: "stop" }],
+        }));
+        return;
+      }
+      response.writeHead(200, {
+        "content-type": "text/event-stream",
+        "cache-control": "no-cache",
+        connection: "keep-alive",
+      });
+      const chunk = (delta: Record<string, string>, finishReason: string | null): void => {
+        response.write(`data: ${JSON.stringify({
+          id,
+          object: "chat.completion.chunk",
+          model,
+          choices: [{ index: 0, delta, finish_reason: finishReason }],
+        })}\n\n`);
+      };
+      chunk({ role: "assistant" }, null);
+      chunk({ content: nonce }, null);
+      chunk({}, "stop");
+      response.end("data: [DONE]\n\n");
+    });
+  });
+  await new Promise<void>((resolve, reject) => {
+    witness.once("error", reject);
+    witness.listen(0, "127.0.0.1", resolve);
+  });
+  const address = witness.address();
+  if (!address || typeof address === "string") throw new Error("Witness server did not bind a TCP port");
+  const witnessBaseUrl = `http://127.0.0.1:${address.port}/v1`;
+  const profileDir = await mkdtemp(join(tmpdir(), "openwork-v2-chat-routing-eval-"));
+  const workspacePath = join(profileDir, "workspace");
+  await mkdir(workspacePath, { recursive: true });
+  await writeFile(join(workspacePath, "opencode.json"), `${JSON.stringify({
+    $schema: "https://opencode.ai/config.json",
+    provider: {
+      "witness-v1": {
+        npm: "@ai-sdk/openai-compatible",
+        name: "Witness V1",
+        options: { baseURL: witnessBaseUrl, apiKey: keyV1 },
+        models: { [modelIdV1]: { name: modelNameV1 } },
+      },
+    },
+  }, null, 2)}\n`);
+
+  await using host = localHost();
+  let app: Awaited<ReturnType<typeof desktop>> | undefined;
+  try {
+    app = await desktop({
+      name: "opencode-v2-chat-routing",
+      host,
+      profileDir,
+      env: {
+        OPENWORK_OPENCODE2_BIN: binPath,
+        ANTHROPIC_API_KEY: "",
+        OPENAI_API_KEY: "",
+        OPENROUTER_API_KEY: "",
+        GOOGLE_GENERATIVE_AI_API_KEY: "",
+        OPENWORK_API_KEY: "",
+        OPENWORK_INFERENCE_BASE_URL: "",
+      },
+    });
+    const { workspaceId } = await createAndSelectWorkspace(app, { path: workspacePath });
+    const serverInfo = await readServerInfo(app);
+
+    await selectModel(app, modelNameV1);
+    const v2BeforeEnable = await engineSessionCount(serverInfo, workspaceId, "opencode2");
+    expect(v2BeforeEnable).toBe(-1);
+    const r1 = await sendAndWaitForNonce(
+      app,
+      witnessRequests,
+      "hello r1",
+      `Bearer ${keyV1}`,
+      modelIdV1,
+      0,
+      "R1 v1",
+    );
+    expect(r1.request.auth).toBe(`Bearer ${keyV1}`);
+    expect(r1.request.model).toBe(modelIdV1);
+    expect(witnessRequests.some((request) => request.auth === `Bearer ${keyV2}`)).toBe(false);
+    evidence.recordAssertionEvidence(
+      "R1 chat stays on v1 before the preview is enabled",
+      `The transcript streamed ${r1.request.nonce} from ${modelIdV1} with Bearer ${keyV1} in ${r1.latencyMs}ms; the v2 proxy returned 503 and no request used Bearer ${keyV2}.`,
+      true,
+    );
+
+    await go(app, `/workspace/${workspaceId}/settings/advanced`);
+    await waitFor(app, `(() => {
+      const control = document.querySelector('[aria-label="OpenCode v2 engine preview"]');
+      return control?.getAttribute("aria-checked") === "false"
+        && control.getAttribute("aria-disabled") !== "true";
+    })()`, { timeoutMs: 60_000, label: "ready OpenCode v2 preview switch" });
+    await clickSwitch(app, "OpenCode v2 engine preview");
+    const runningStatus = await untilStatus(
+      serverInfo,
+      (status) => status.enabled && status.running && typeof status.pid === "number",
+      120_000,
+      "the OpenCode v2 sidecar to start",
+    );
+    const pid0 = runningStatus.pid;
+    if (pid0 === undefined) throw new Error("Running OpenCode v2 status did not contain a pid");
+
+    await waitFor(app, `(() => {
+      const control = document.querySelector('[aria-label="Route chat through OpenCode v2"]');
+      return control?.getAttribute("aria-checked") === "false"
+        && control.getAttribute("aria-disabled") !== "true";
+    })()`, { timeoutMs: 30_000, label: "ready OpenCode v2 chat routing switch" });
+    await clickSwitch(app, "Route chat through OpenCode v2");
+    await untilStatus(serverInfo, (status) => status.chatRouting, 30_000, "chat routing to be enabled");
+    const routedOnAt = Date.now();
+
+    const patchResponse = await fetch(`${serverInfo.baseUrl}/workspace/${encodeURIComponent(workspaceId)}/config`, {
+      method: "PATCH",
+      headers: { ...authHeaders(serverInfo), "content-type": "application/json" },
+      body: JSON.stringify({
+        opencode: {
+          provider: {
+            "witness-v2": {
+              npm: "@ai-sdk/openai-compatible",
+              name: "Witness V2",
+              options: { baseURL: witnessBaseUrl, apiKey: keyV2 },
+              models: { [modelIdV2]: { name: modelNameV2 } },
+            },
+          },
+        },
+      }),
+      signal: AbortSignal.timeout(15_000),
+    });
+    expect(patchResponse.status).toBe(200);
+    const mirroredStatus = await untilStatus(
+      serverInfo,
+      (status) => status.mirroredProviderIds.includes("witness-v2") && status.catalogModelIds.includes(modelIdV2),
+      60_000,
+      "the v2 witness provider to be mirrored",
+    );
+    expect(mirroredStatus.pid).toBe(pid0);
+
+    await go(app, `/workspace/${workspaceId}/session`);
+    await waitForModelInPicker(app, modelNameV2, 45_000);
+    await closeModelPicker(app);
+    const v1BeforeR2 = await engineSessionCount(serverInfo, workspaceId, "opencode");
+    const v2BeforeR2 = await engineSessionCount(serverInfo, workspaceId, "opencode2");
+    expect(v2BeforeR2).toBeGreaterThanOrEqual(0);
+
+    // New task uses the selected workspace's currently swapped client. This
+    // avoids sending a v2 prompt to the pre-toggle v1 session id.
+    await createNewSessionThroughSidebar(app);
+    await selectModel(app, modelNameV2);
+    const r2 = await sendAndWaitForNonce(
+      app,
+      witnessRequests,
+      "hello r2",
+      `Bearer ${keyV2}`,
+      modelIdV2,
+      routedOnAt,
+      "R2 v2",
+    );
+    const v1AfterR2 = await engineSessionCount(serverInfo, workspaceId, "opencode");
+    const v2AfterR2 = await engineSessionCount(serverInfo, workspaceId, "opencode2");
+    expect(v2AfterR2).toBeGreaterThan(v2BeforeR2);
+    expect(v1AfterR2).toBe(v1BeforeR2);
+    expect(r2.request.at).toBeGreaterThanOrEqual(routedOnAt);
+    expect(r2.request.auth).toBe(`Bearer ${keyV2}`);
+    expect(r2.request.model).toBe(modelIdV2);
+    evidence.recordAssertionEvidence(
+      "R2 routed chat creates and streams through v2 without touching v1",
+      `The v2 transcript streamed ${r2.request.nonce} from ${modelIdV2} with Bearer ${keyV2} in ${r2.latencyMs}ms; v2 sessions grew ${v2BeforeR2}→${v2AfterR2}, while v1 stayed frozen at ${v1BeforeR2}.`,
+      true,
+    );
+
+    const statusAfterR2 = await readStatus(serverInfo);
+    expect(statusAfterR2.running).toBe(true);
+    expect(statusAfterR2.pid).toBe(pid0);
+    evidence.recordAssertionEvidence(
+      "R3 routing chat does not restart the v2 sidecar",
+      `The routed send completed while the sidecar remained running at pid ${pid0}; no replacement pid appeared.`,
+      true,
+    );
+
+    await go(app, `/workspace/${workspaceId}/settings/advanced`);
+    await waitFor(app, `document.querySelector('[aria-label="Route chat through OpenCode v2"]')?.getAttribute("aria-checked") === "true"`, {
+      timeoutMs: 30_000,
+      label: "enabled chat routing switch before reversal",
+    });
+    await clickSwitch(app, "Route chat through OpenCode v2");
+    await untilStatus(serverInfo, (status) => !status.chatRouting, 30_000, "chat routing to be disabled");
+    const routedOffAt = Date.now();
+    await go(app, `/workspace/${workspaceId}/session`);
+    await waitForModelInPicker(app, modelNameV1, 45_000);
+    await closeModelPicker(app);
+    await createNewSessionThroughSidebar(app);
+    await selectModel(app, modelNameV1);
+    const r4 = await sendAndWaitForNonce(
+      app,
+      witnessRequests,
+      "hello r4",
+      `Bearer ${keyV1}`,
+      modelIdV1,
+      routedOffAt,
+      "R4 v1",
+    );
+    const v2AfterR4 = await engineSessionCount(serverInfo, workspaceId, "opencode2");
+    expect(r4.request.at).toBeGreaterThanOrEqual(routedOffAt);
+    expect(r4.request.auth).toBe(`Bearer ${keyV1}`);
+    expect(r4.request.model).toBe(modelIdV1);
+    expect(v2AfterR4).toBe(v2AfterR2);
+    evidence.recordAssertionEvidence(
+      "R4 disabling routing returns new chat to v1 without mutating v2",
+      `After routing was disabled, the transcript streamed ${r4.request.nonce} from ${modelIdV1} with Bearer ${keyV1} in ${r4.latencyMs}ms; v2 sessions stayed frozen at ${v2AfterR2}.`,
+      true,
+    );
+  } finally {
+    if (app !== undefined) await app.stop();
+    witness.closeAllConnections();
+    await new Promise<void>((resolve, reject) => witness.close((error) => error ? reject(error) : resolve()));
+    await rm(profileDir, { recursive: true, force: true });
+  }
+});
