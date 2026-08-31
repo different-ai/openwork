@@ -1,25 +1,52 @@
-import { defineHeadlessWebWorld } from "../packages/world/src/index.ts";
+import { fileURLToPath } from "node:url";
+import { hold } from "../packages/world/src/hold.ts";
+import { launchHeadlessWeb } from "../packages/world/src/headless-web.ts";
+import type { HeadlessWebHandle } from "../packages/world/src/headless-web.ts";
+
+const REPO_ROOT = fileURLToPath(new URL("..", import.meta.url));
+const REMOTE_SESSION_NAME = "remote-session";
+const REMOTE_SESSION_WORKSPACE = "/tmp/openwork-remote-session-world";
+
+export interface RemoteSessionOptions {
+  name?: string;
+  workspace?: string;
+  replace?: boolean;
+  keepTokens?: boolean;
+  rotateTokens?: boolean;
+}
 
 /**
- * Remote-session world: the real scenario behind the `remote-session:*`
- * gateway capabilities (docs/remote-chat-over-mcp-architecture.md).
- *
- * It launches the same stack OpenWork Web users run — a source-first
- * openwork-server plus the browser UI — in an isolated workspace. The
- * runtime manifest (tmp/…/dev-headless-web.json for this world name)
- * publishes `openworkUrl`, `token`, and `hostToken`: exactly the runtime a
- * resolved Cloud worker hands the gateway. An agent-side caller can then
- * execute `remote-session:create/send/read` against a real session store and
- * a human can open `webUrl` to watch the same sessions live.
- *
- * Launch: `pnpm world up ./worlds/remote-session.ts`
- * Proof:  `evals/specs/remote-session-real-server.e2e.test.ts` (launches its
- *         own named instance of this world).
+ * Real source-first openwork-server and browser UI used by remote-session
+ * gateway capabilities and their real-server spec.
  */
-export const remoteSession = defineHeadlessWebWorld({
-  state: "isolated",
-  workspace: "/tmp/openwork-remote-session-world",
-  detached: true,
-});
+export async function bootRemoteSession(
+  stack: AsyncDisposableStack,
+  options: RemoteSessionOptions = {},
+): Promise<HeadlessWebHandle> {
+  const handle = await launchHeadlessWeb({
+    repoRoot: REPO_ROOT,
+    name: options.name ?? REMOTE_SESSION_NAME,
+    state: "isolated",
+    workspace: options.workspace ?? REMOTE_SESSION_WORKSPACE,
+    replace: options.replace,
+    keepTokens: options.keepTokens,
+    rotateTokens: options.rotateTokens,
+  });
+  return stack.adopt(handle, (headless) => headless.stop());
+}
 
-export default remoteSession;
+export async function main(): Promise<void> {
+  await using stack = new AsyncDisposableStack();
+  const handle = await bootRemoteSession(stack);
+  await hold({
+    name: REMOTE_SESSION_NAME,
+    outputs: {
+      webUrl: handle.manifest.webUrl,
+      openworkUrl: handle.manifest.openworkUrl,
+      workspace: handle.manifest.workspace,
+      runtimeManifest: handle.manifest.runtimeManifestPath,
+    },
+  });
+}
+
+if (import.meta.main) await main();

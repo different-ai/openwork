@@ -6,15 +6,11 @@ import {
   eventually,
   needs,
   queryDenDatabase,
-  startWorld,
   test,
   unmetNeeds,
 } from "@openwork/testkit";
 import type { TestNeeds } from "@openwork/testkit";
-import {
-  CLOUD_MODEL_INFRA_ORG,
-  cloudModelInfra,
-} from "../../worlds/cloud-model-infra.ts";
+import { bootCloudModelInfra } from "../../worlds/cloud-model-infra.ts";
 
 const REQUEST_TIMEOUT_MS = 30_000;
 const requirements: TestNeeds = {
@@ -61,22 +57,6 @@ function orgHeaders(session: DenSession, orgId: string): Record<string, string> 
   return { ...auth(session), "x-openwork-org-id": orgId };
 }
 
-async function organizationId(session: DenSession): Promise<string> {
-  const result = await denFetch(session, "/v1/me/orgs", {
-    headers: auth(session),
-    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-  });
-  const organizations = isRecord(result.body) && Array.isArray(result.body.orgs)
-    ? result.body.orgs.filter(isRecord)
-    : [];
-  const organization = organizations.find((entry) => entry.name === CLOUD_MODEL_INFRA_ORG);
-  const id = organization && typeof organization.id === "string" ? organization.id : "";
-  if (!result.response.ok || !id) {
-    throw new Error(`Finding the world organization failed: HTTP ${result.response.status} ${result.text.slice(0, 500)}`);
-  }
-  return id;
-}
-
 async function mintMcpToken(session: DenSession, orgId: string): Promise<string> {
   const result = await denFetch(session, "/v1/mcp/token", {
     method: "POST",
@@ -119,12 +99,12 @@ async function parseResponse(response: Response): Promise<HttpResult> {
 
 test.skipIf(missingRequirements.length > 0)(title, { timeout: 15 * 60_000 }, async ({ evidence, place }) => {
   needs(requirements);
-  await using world = await startWorld(cloudModelInfra, {
-    place,
-    name: `remote-session-desktop-${Date.now().toString(36)}`,
+  await using stack = new AsyncDisposableStack();
+  const world = await bootCloudModelInfra(stack, place, {
+    daytonaApiUrl: "http://127.0.0.1:9/daytona-guard",
   });
-  const admin = world.den.admin;
-  const orgId = await organizationId(admin);
+  const admin = world.admin;
+  const orgId = world.org.id;
   const mcpToken = await mintMcpToken(admin, orgId);
   const databaseUrl = world.den.database?.url;
   if (!databaseUrl) throw new Error("The remote-session desktop world did not expose its database.");

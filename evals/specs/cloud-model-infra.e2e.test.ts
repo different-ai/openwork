@@ -1,37 +1,23 @@
 import { randomBytes } from "node:crypto";
 import { createServer } from "node:http";
 import type { Server } from "node:http";
-import { mkdir } from "node:fs/promises";
-import { join } from "node:path";
-import { fileURLToPath } from "node:url";
-import { expect, onTestFinished } from "vitest";
+import { expect } from "vitest";
 import { denFetch } from "@openwork/behaviors";
 import type { DenSession } from "@openwork/behaviors";
 import {
   eventually,
   needs,
   queryDenDatabase,
-  startWorld,
   test,
   unmetNeeds,
 } from "@openwork/testkit";
 import type { TestNeeds } from "@openwork/testkit";
 import {
-  createHeadlessWebAdapter,
-  main,
-  readHeadlessRuntimeManifest,
-  resolveHeadlessWorldRuntimePaths,
-  stopHeadlessRuntime,
-  WorldStateStore,
-} from "@openwork/world";
-import {
+  bootCloudModelInfra,
   CLOUD_MODEL_INFRA_GATEWAY_KEY,
-  CLOUD_MODEL_INFRA_ORG,
-  cloudModelInfra,
 } from "../../worlds/cloud-model-infra.ts";
+import { bootCloudModelInfraWorker } from "../../worlds/cloud-model-infra-worker.ts";
 
-const REPO_ROOT = fileURLToPath(new URL("../..", import.meta.url));
-const WORLDS_DIRECTORY = join(REPO_ROOT, "worlds");
 const WORKER_WORKSPACE = "/tmp/openwork-cloud-model-infra-worker";
 
 const PROVIDER_KEY = "cloud-model-infra-witness";
@@ -197,22 +183,6 @@ async function startDaytonaLedger(): Promise<RequestLedger> {
   };
 }
 
-async function organizationId(session: DenSession): Promise<string> {
-  const result = await denFetch(session, "/v1/me/orgs", {
-    headers: auth(session),
-    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-  });
-  const organizations = isRecord(result.body) && Array.isArray(result.body.orgs)
-    ? result.body.orgs.filter(isRecord)
-    : [];
-  const organization = organizations.find((entry) => entry.name === CLOUD_MODEL_INFRA_ORG);
-  const id = organization && typeof organization.id === "string" ? organization.id : "";
-  if (!result.response.ok || !id) {
-    throw new Error(`Finding the world organization failed: HTTP ${result.response.status} ${result.text.slice(0, 500)}`);
-  }
-  return id;
-}
-
 interface WorkerRuntime {
   openworkUrl: string;
   clientToken: string;
@@ -281,40 +251,24 @@ test.skipIf(missingRequirements.length > 0)(title, { timeout: 20 * 60_000 }, asy
   // ── Deterministic witnesses: model provider + Daytona request ledger ──
   await using witness = await startModelWitness();
   await using daytonaLedger = await startDaytonaLedger();
+  await using stack = new AsyncDisposableStack();
 
   // ── A fresh Cloud-enabled Den whose Daytona endpoint is the ledger ──
-  await using world = await startWorld(
-    cloudModelInfra.with({ den: { env: { DAYTONA_API_URL: daytonaLedger.url } } }),
-    { place, name: `cloud-model-infra-${Date.now().toString(36)}` },
-  );
+  const world = await bootCloudModelInfra(stack, place, { daytonaApiUrl: daytonaLedger.url });
   const databaseUrl = world.den.database?.url;
   if (!databaseUrl) throw new Error("The cloud model infra world did not expose its ephemeral database.");
-  const admin = world.den.admin;
-  const orgId = await organizationId(admin);
+  const admin = world.admin;
+  const orgId = world.org.id;
 
   // ── A real worker runtime: source-first openwork-server + managed engine ──
-  await mkdir(WORKER_WORKSPACE, { recursive: true });
-  const adapter = createHeadlessWebAdapter(REPO_ROOT);
   const workerWorldName = `cloud-model-infra-worker-${process.pid}`;
-  const cleanupWorkerWorld = async (): Promise<void> => {
-    const paths = resolveHeadlessWorldRuntimePaths(REPO_ROOT, workerWorldName);
-    const manifest = await readHeadlessRuntimeManifest(paths.runtimeManifestPath);
-    if (manifest) await stopHeadlessRuntime(manifest);
-    await new WorldStateStore(adapter.snapshotDirectory).forget(workerWorldName);
-  };
-  onTestFinished(cleanupWorkerWorld);
-  await cleanupWorkerWorld();
-  const workerWorldPath = join(WORLDS_DIRECTORY, "cloud-model-infra-worker.ts");
-  const workerUp = await main(["up", workerWorldPath, "--name", workerWorldName, "--replace"], {
-    cwd: REPO_ROOT,
-    worldsDirectory: WORLDS_DIRECTORY,
-    adapters: [adapter],
-    print: () => {},
+  const worker = await bootCloudModelInfraWorker(stack, {
+    name: workerWorldName,
+    workspace: WORKER_WORKSPACE,
+    replace: true,
   });
-  expect(workerUp).toBe(0);
-  const workerPaths = resolveHeadlessWorldRuntimePaths(REPO_ROOT, workerWorldName);
-  const workerManifest = await readHeadlessRuntimeManifest(workerPaths.runtimeManifestPath);
-  if (!workerManifest) throw new Error("The worker world did not publish its runtime manifest.");
+  expect(worker.reused).toBe(false);
+  const workerManifest = worker.manifest;
   const runtime: WorkerRuntime = {
     openworkUrl: workerManifest.openworkUrl,
     clientToken: workerManifest.token,

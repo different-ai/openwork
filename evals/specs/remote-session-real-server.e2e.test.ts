@@ -1,23 +1,15 @@
 import { mkdir } from "node:fs/promises";
-import { join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { eventually, test } from "@openwork/testkit";
-import {
-  createHeadlessWebAdapter,
-  main,
-  readHeadlessRuntimeManifest,
-  resolveHeadlessWorldRuntimePaths,
-  stopHeadlessRuntime,
-  WorldStateStore,
-} from "@openwork/world";
-import { expect, onTestFinished } from "vitest";
+import { readHeadlessRuntimeManifest } from "@openwork/world";
+import { expect } from "vitest";
 import type {
+  RemoteSessionExecuteInput,
   RemoteSessionRuntime,
+  RemoteSessionRuntimeResult,
   RemoteSessionToolResult,
 } from "../../ee/apps/den-api/src/mcp/remote-session-capabilities.js";
+import { bootRemoteSession } from "../../worlds/remote-session.ts";
 
-const REPO_ROOT = fileURLToPath(new URL("../..", import.meta.url));
-const WORLDS_DIRECTORY = join(REPO_ROOT, "worlds");
 const WORLD_WORKSPACE = "/tmp/openwork-remote-session-world";
 
 type RemoteSessionModule = typeof import("../../ee/apps/den-api/src/mcp/remote-session-capabilities.js");
@@ -35,8 +27,13 @@ function seedDenApiEnv() {
   process.env.DEN_API_PUBLIC_URL = process.env.DEN_API_PUBLIC_URL ?? "http://127.0.0.1:8790";
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 function payload(result: RemoteSessionToolResult): Record<string, unknown> {
-  return JSON.parse(result.content[0]?.text ?? "{}") as Record<string, unknown>;
+  const value: unknown = JSON.parse(result.content[0]?.text ?? "{}");
+  return isRecord(value) ? value : {};
 }
 
 function workerHeaders(runtime: RemoteSessionRuntime): Record<string, string> {
@@ -56,29 +53,10 @@ test(
 
     // ── Launch the remote-session world: real openwork-server + web UI ──
     await mkdir(WORLD_WORKSPACE, { recursive: true });
-    const adapter = createHeadlessWebAdapter(REPO_ROOT);
     const worldName = `remote-session-e2e-${process.pid}`;
-    const cleanup = async (): Promise<void> => {
-      const paths = resolveHeadlessWorldRuntimePaths(REPO_ROOT, worldName);
-      const manifest = await readHeadlessRuntimeManifest(paths.runtimeManifestPath);
-      if (manifest) await stopHeadlessRuntime(manifest);
-      await new WorldStateStore(adapter.snapshotDirectory).forget(worldName);
-    };
-    onTestFinished(cleanup);
-    await cleanup();
-
-    const cliOptions = {
-      cwd: REPO_ROOT,
-      worldsDirectory: WORLDS_DIRECTORY,
-      adapters: [adapter],
-      print: () => {},
-    };
-    const worldPath = join(WORLDS_DIRECTORY, "remote-session.ts");
-    expect(await main(["up", worldPath, "--name", worldName, "--replace"], cliOptions)).toBe(0);
-
-    const paths = resolveHeadlessWorldRuntimePaths(REPO_ROOT, worldName);
-    const manifest = await readHeadlessRuntimeManifest(paths.runtimeManifestPath);
-    if (!manifest) throw new Error("The remote-session world did not publish its runtime manifest.");
+    await using stack = new AsyncDisposableStack();
+    const headless = await bootRemoteSession(stack, { name: worldName, replace: true });
+    const manifest = headless.manifest;
     await eventually(
       async () => (await fetch(manifest.healthUrl).catch(() => null))?.ok === true,
       { within: 60_000, intervalMs: 500, label: "world openwork-server healthy" },
@@ -99,15 +77,20 @@ test(
     };
     const workspacesResponse = await fetch(`${runtime.baseUrl}/workspaces`, { headers: workerHeaders(runtime) });
     expect(workspacesResponse.ok).toBe(true);
-    const workspaces = (await workspacesResponse.json()) as { activeId?: string | null };
-    if (!workspaces.activeId) throw new Error("The world server reported no active workspace.");
+    const workspaces: unknown = await workspacesResponse.json();
+    if (!isRecord(workspaces) || typeof workspaces.activeId !== "string" || workspaces.activeId.length === 0) {
+      throw new Error("The world server reported no active workspace.");
+    }
     runtime.workspaceId = workspaces.activeId;
 
+    const resolveRuntime = async (): Promise<RemoteSessionRuntimeResult> => ({ ok: true, runtime });
     const deps = {
-      resolveRuntime: async () => ({ ok: true as const, runtime }),
+      resolveRuntime,
       createClient: module.DEFAULT_REMOTE_SESSION_DEPS.createClient,
+      commandStore: module.DEFAULT_REMOTE_SESSION_DEPS.commandStore,
+      desktopPresence: module.DEFAULT_REMOTE_SESSION_DEPS.desktopPresence,
     };
-    const input = (action: "create" | "send" | "read", body: unknown) => ({
+    const input = (action: "create" | "send" | "read", body: unknown): RemoteSessionExecuteInput => ({
       action,
       organizationId: "org_remote_session_world",
       userId: "user_remote_session_world",
@@ -142,7 +125,8 @@ test(
       { headers: workerHeaders(runtime) },
     );
     expect(listResponse.ok).toBe(true);
-    const list = (await listResponse.json()) as Array<{ id?: string; title?: string | null }>;
+    const listBody: unknown = await listResponse.json();
+    const list = Array.isArray(listBody) ? listBody.filter(isRecord) : [];
     const listed = list.find((item) => item.id === sessionId);
     expect(listed, `session ${sessionId} missing from workspace session list`).toBeDefined();
     expect(listed?.title).toBe("Remote session via MCP");
@@ -169,8 +153,13 @@ test(
     await eventually(async () => {
       const read = await module.executeRemoteSessionCapability(input("read", { sessionId }), deps);
       if (read.isError) return false;
-      const messages = payload(read).messages as Array<{ role?: string; text?: string }>;
-      return messages.some((message) => message.role === "user" && message.text?.includes("pong"));
+      const messages = payload(read).messages;
+      return Array.isArray(messages) && messages.some((message) => (
+        isRecord(message)
+        && message.role === "user"
+        && typeof message.text === "string"
+        && message.text.includes("pong")
+      ));
     }, { within: 60_000, intervalMs: 1_000, label: "user turn visible through remote-session:read" });
     // The world's engine runs with the environment's real provider
     // credentials, so this is a full round trip: an actual model reply
@@ -179,8 +168,13 @@ test(
       const read = await module.executeRemoteSessionCapability(input("read", { sessionId }), deps);
       if (read.isError) return false;
       const body = payload(read);
-      const messages = body.messages as Array<{ role?: string; text?: string }>;
-      return body.status === "idle" && messages.some((message) => message.role === "assistant" && (message.text ?? "").length > 0);
+      const messages = body.messages;
+      return body.status === "idle" && Array.isArray(messages) && messages.some((message) => (
+        isRecord(message)
+        && message.role === "assistant"
+        && typeof message.text === "string"
+        && message.text.length > 0
+      ));
     }, { within: 120_000, intervalMs: 2_000, label: "assistant reply readable through remote-session:read" });
     const read = await module.executeRemoteSessionCapability(input("read", { sessionId }), deps);
     expect(read.isError).toBeUndefined();
@@ -205,5 +199,12 @@ test(
       "Reading a session id that does not exist in the caller's workspace returned unknown_session from the real openwork-server, not an existence leak.",
       true,
     );
+
+    await stack.disposeAsync();
+    await eventually(
+      async () => await readHeadlessRuntimeManifest(manifest.runtimeManifestPath) === null,
+      { within: 10_000, intervalMs: 100, label: "remote-session runtime disposed" },
+    );
+    await expect(fetch(manifest.healthUrl)).rejects.toThrow();
   },
 );

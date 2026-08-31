@@ -4,20 +4,16 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { eventually, test } from "@openwork/testkit";
 import {
-  createHeadlessWebAdapter,
-  main,
   readHeadlessRuntimeManifest,
   resolveHeadlessWorldRuntimePaths,
   stopHeadlessRuntime,
-  WorldStateStore,
 } from "@openwork/world";
 import { expect, onTestFinished } from "vitest";
+import { bootDevHeadless } from "../../worlds/dev-headless.ts";
 
 const REPO_ROOT = fileURLToPath(new URL("../..", import.meta.url));
-const WORLDS_DIRECTORY = join(REPO_ROOT, "worlds");
 
 test("a world owns and supervises the real headless web and backend lifecycle", { timeout: 180_000 }, async ({ evidence }) => {
-  const adapter = createHeadlessWebAdapter(REPO_ROOT);
   const firstName = `headless-world-e2e-${process.pid}`;
   const supervisedName = `headless-supervisor-e2e-${process.pid}`;
   const names = [firstName, supervisedName];
@@ -27,24 +23,16 @@ test("a world owns and supervises the real headless web and backend lifecycle", 
       const paths = resolveHeadlessWorldRuntimePaths(REPO_ROOT, name);
       const manifest = await readHeadlessRuntimeManifest(paths.runtimeManifestPath);
       if (manifest) await stopHeadlessRuntime(manifest);
-      await new WorldStateStore(adapter.snapshotDirectory).forget(name);
     }
   };
   onTestFinished(cleanup);
   await cleanup();
 
-  const cliOptions = {
-    cwd: REPO_ROOT,
-    worldsDirectory: WORLDS_DIRECTORY,
-    adapters: [adapter],
-    print: () => {},
-  };
-  const worldPath = join(WORLDS_DIRECTORY, "dev-headless.ts");
-  expect(await main(["up", worldPath, "--name", firstName, "--replace"], cliOptions)).toBe(0);
-
+  await using stack = new AsyncDisposableStack();
+  const first = await bootDevHeadless(stack, { name: firstName, replace: true });
   const firstPaths = resolveHeadlessWorldRuntimePaths(REPO_ROOT, firstName);
-  const firstManifest = await readHeadlessRuntimeManifest(firstPaths.runtimeManifestPath);
-  if (!firstManifest) throw new Error("The launched headless world did not publish its runtime manifest.");
+  const firstManifest = first.manifest;
+  expect(first.reused).toBe(false);
   expect(firstManifest.world?.name).toBe(firstName);
   expect(firstManifest.world?.launchId).toMatch(/^[0-9a-f-]{36}$/i);
   expect(firstManifest.runtimeManifestPath).toBe(firstPaths.runtimeManifestPath);
@@ -54,18 +42,49 @@ test("a world owns and supervises the real headless web and backend lifecycle", 
   expect(health.ok).toBe(true);
   expect(web.ok).toBe(true);
 
-  expect(await main(["resume", firstName, "--teardown"], cliOptions)).toBe(0);
+  const reused = await bootDevHeadless(stack, { name: firstName });
+  expect(reused.reused).toBe(true);
+  expect(reused.manifest.world?.launchId).toBe(firstManifest.world?.launchId);
+  expect(reused.manifest.pids).toEqual(firstManifest.pids);
+  expect(reused.manifest.token).toBe(firstManifest.token);
+  expect(reused.manifest.hostToken).toBe(firstManifest.hostToken);
+
+  const keptTokens = await bootDevHeadless(stack, {
+    name: firstName,
+    replace: true,
+    keepTokens: true,
+  });
+  expect(keptTokens.reused).toBe(false);
+  expect(keptTokens.manifest.world?.launchId).not.toBe(firstManifest.world?.launchId);
+  expect(keptTokens.manifest.token).toBe(firstManifest.token);
+  expect(keptTokens.manifest.hostToken).toBe(firstManifest.hostToken);
+
+  const replaced = await bootDevHeadless(stack, {
+    name: firstName,
+    replace: true,
+    keepTokens: true,
+    rotateTokens: true,
+  });
+  expect(replaced.reused).toBe(false);
+  expect(replaced.manifest.world?.launchId).not.toBe(keptTokens.manifest.world?.launchId);
+  expect(replaced.manifest.token).not.toBe(keptTokens.manifest.token);
+  expect(replaced.manifest.hostToken).not.toBe(keptTokens.manifest.hostToken);
+  expect(await readHeadlessRuntimeManifest(firstPaths.runtimeManifestPath)).toEqual(replaced.manifest);
+
+  await stack.disposeAsync();
   await eventually(
     async () => await readHeadlessRuntimeManifest(firstPaths.runtimeManifestPath) === null,
     { within: 10_000, intervalMs: 100, label: "owned runtime manifest removed after teardown" },
   );
-  await expect(fetch(firstManifest.healthUrl)).rejects.toThrow();
+  await expect(fetch(replaced.manifest.healthUrl)).rejects.toThrow();
+  await expect(fetch(replaced.manifest.webUrl)).rejects.toThrow();
 
-  expect(await main(["up", worldPath, "--name", supervisedName, "--replace"], cliOptions)).toBe(0);
+  await using supervisedStack = new AsyncDisposableStack();
+  const supervised = await bootDevHeadless(supervisedStack, { name: supervisedName, replace: true });
   const supervisedPaths = resolveHeadlessWorldRuntimePaths(REPO_ROOT, supervisedName);
-  const supervisedManifest = await readHeadlessRuntimeManifest(supervisedPaths.runtimeManifestPath);
-  const webPid = supervisedManifest?.pids.web;
-  if (!supervisedManifest || !webPid) {
+  const supervisedManifest = supervised.manifest;
+  const webPid = supervisedManifest.pids.web;
+  if (!webPid) {
     throw new Error("The supervised headless world did not publish its owned web process.");
   }
   expect(webPid).toBeGreaterThan(0);
@@ -82,10 +101,11 @@ test("a world owns and supervises the real headless web and backend lifecycle", 
     intervalMs: 200,
     label: "detached supervisor stopped the backend after the web process exited",
   });
+  await supervisedStack.disposeAsync();
 
   evidence.recordAssertionEvidence(
-    "The shared world engine owns the real headless surface lifecycle",
-    "A named world launched healthy Vite and openwork-server processes, published a launch-bound snapshot, and removed its runtime manifest and listeners on teardown.",
+    "The direct world builder owns the real headless surface lifecycle",
+    "A named direct-script builder launched healthy Vite and openwork-server processes, reused them without rotating credentials, replaced them with requested token behavior, and removed its runtime manifest and listeners on disposal.",
     true,
   );
   evidence.recordAssertionEvidence(
@@ -130,7 +150,6 @@ test("the dev:headless-web alias remains foreground and Ctrl-C owns teardown", {
     const manifest = await readHeadlessRuntimeManifest(paths.runtimeManifestPath);
     if (manifest) await stopHeadlessRuntime(manifest);
     if (launcher.exitCode === null) launcher.kill("SIGTERM");
-    await new WorldStateStore(join(REPO_ROOT, "tmp", "worlds")).forget("dev-headless");
   });
 
   const manifest = await eventually(async () => {
@@ -148,9 +167,10 @@ test("the dev:headless-web alias remains foreground and Ctrl-C owns teardown", {
     intervalMs: 200,
     label: `foreground compatibility launch\n${output.join("")}`,
   });
+  if (!manifest) throw new Error("dev:headless-web did not publish a healthy runtime manifest.");
   expect(launcher.exitCode).toBeNull();
   await eventually(
-    () => output.join("").includes("Stays up until Ctrl-C; Ctrl-C tears everything down."),
+    () => output.join("").includes("Ctrl-C (or pnpm world down dev-headless) tears it down."),
     {
       within: 15_000,
       intervalMs: 100,

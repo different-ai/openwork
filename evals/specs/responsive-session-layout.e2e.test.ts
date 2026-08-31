@@ -1,13 +1,15 @@
 import { expect } from "vitest";
-import { control, evalIn, go, listSessions, waitFor } from "@openwork/behaviors";
+import { control, evalIn, go, listSessions, seedSessions, waitFor } from "@openwork/behaviors";
 import type { Surface } from "@openwork/cdp";
 import { setViewport } from "@openwork/cdp";
 import {
   localMysqlIsRunning,
   localRedisIsRunning,
   needs,
-  soloWorkspace,
-  startWorld,
+  app as launchApp,
+  createAdmin,
+  createOrg,
+  server,
   test,
 } from "@openwork/testkit";
 
@@ -106,14 +108,15 @@ async function openFilesPanel(app: Surface) {
 test.skipIf(!runnable)(
   `narrow session panes stay selectable, synchronized, and inside the viewport${skipSuffix}`,
   { timeout: 600_000 },
-  async ({ evidence }) => {
+  async ({ evidence, place }) => {
     needs({ optIn: ["OPENWORK_EVAL_E2E_TESTS"] });
 
-    const runId = Date.now();
-    await using world = await startWorld(soloWorkspace.with({
-      apps: { main: { sessions: [...sessionTitles] } },
-    }), { name: `responsive-session-layout-${runId}` });
-    const app = world.app("main");
+    await using stack = new AsyncDisposableStack();
+    const den = stack.use(await server({ place, provision: false, web: true }));
+    await createAdmin(den, {});
+    stack.use(await createOrg(den, "acme"));
+    const app = stack.use(await launchApp({ den, place, as: "admin" }));
+    await seedSessions(app, sessionTitles);
     const workspaceId = app.workspaceId;
     if (!workspaceId) throw new Error("The responsive session world did not resolve a workspace.");
 

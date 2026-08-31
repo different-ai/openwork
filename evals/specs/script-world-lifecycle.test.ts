@@ -49,8 +49,6 @@ test("detached script worlds own one runtime through launch, isolation, and grac
   const options: WorldCliOptions = {
     cwd: root,
     worldsDirectory,
-    presets: {},
-    adapters: [],
     print(line) {
       printedLines.push(line);
     },
@@ -139,7 +137,7 @@ if (import.meta.main) await main();
 
     const unknownDown = await run(["down", "unknown-name"]);
     assert.equal(unknownDown.code, 1);
-    assert.match(unknownDown.lines.join("\n"), /World snapshot "unknown-name" does not exist/);
+    assert.match(unknownDown.lines.join("\n"), /World receipt "unknown-name" does not exist/);
     assert.equal(await exists(snapshotPath), true);
     assert.equal(await probe(snapshot.outputs.url), 200);
     assert.equal(await exists(sentinelPath), false);

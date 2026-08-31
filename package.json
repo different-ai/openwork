@@ -25,7 +25,7 @@
     "dev:den-docker": "bash packaging/docker/den-dev-up.sh",
     "dev:den:seed-demo": "pnpm --filter @openwork-ee/den-api seed:demo-org",
     "dev:den:seed-demo:reset": "pnpm --filter @openwork-ee/den-api run seed:demo-org -- --reset",
-    "dev:headless-web": "OPENWORK_DEV_MODE=1 bun scripts/dev-headless-web.ts",
+    "dev:headless-web": "OPENWORK_DEV_MODE=1 node scripts/dev-headless-web.ts",
     "build": "node scripts/build.mjs",
     "build:ui": "pnpm --filter @openwork/app build",
     "build:web": "pnpm --filter @openwork-ee/den-web build",

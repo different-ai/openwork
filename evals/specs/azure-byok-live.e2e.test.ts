@@ -19,15 +19,18 @@ import {
   app,
   eventually,
   needs,
-  startWorld,
   test,
   unmetNeeds,
 } from "@openwork/testkit";
 import type { TestNeeds } from "@openwork/testkit";
-import { azureByok } from "../../worlds/azure-byok.ts";
+import {
+  AZURE_BYOK_ADMIN_EMAIL,
+  AZURE_BYOK_ORGANIZATION,
+  bootAzureByok,
+} from "../../worlds/azure-byok.ts";
 
-const ORGANIZATION_NAME = "Azure BYOK Repro";
-const ADMIN_EMAIL = "provider-admin@azure-repro.test";
+const ORGANIZATION_NAME = AZURE_BYOK_ORGANIZATION;
+const ADMIN_EMAIL = AZURE_BYOK_ADMIN_EMAIL;
 const ADMIN_PASSWORD = "OpenWorkEval123!";
 const RESOURCE_ENV = "AZURE_RESOURCE_NAME";
 const API_KEY_ENV = "AZURE_FOUNDRY_API_KEY";
@@ -349,20 +352,17 @@ test.skipIf(missingRequirements.length > 0)(title, { timeout: 30 * 60_000 }, asy
   const deploymentId = requiredEnv(DEPLOYMENT_ENV);
   expect(resourceName).not.toBe(apiKey);
 
-  await using world = await startWorld(azureByok, {
-    place,
-    name: `azure-byok-live-${Date.now().toString(36)}`,
-  });
-  expect(Object.keys(world.apps)).toHaveLength(0);
-  expect(world.topology.apps).toBeUndefined();
-  expect(world.den.admin.email).toBe(ADMIN_EMAIL);
-  expect(Object.keys(world.topology.den.orgs)).toEqual([ORGANIZATION_NAME]);
+  await using stack = new AsyncDisposableStack();
+  const world = await bootAzureByok(stack, place);
+  expect(Object.keys(world).sort()).toEqual(["admin", "den", "org"]);
+  expect(world.admin.email).toBe(ADMIN_EMAIL);
+  expect(world.org.name).toBe(ORGANIZATION_NAME);
   evidence.recordAssertionEvidence(
     "The live reproduction starts only a fresh isolated self-hosted Den",
     `The world has zero app surfaces and provisions ${ORGANIZATION_NAME} with the expected provider admin.`,
-    Object.keys(world.apps).length === 0
-      && world.topology.apps === undefined
-      && world.den.admin.email === ADMIN_EMAIL,
+    Object.keys(world).length === 3
+      && world.admin.email === ADMIN_EMAIL
+      && world.org.name === ORGANIZATION_NAME,
   );
 
   await using browser = await chrome({

@@ -121,11 +121,11 @@ async function assertNoRunningSnapshot(path: string, name: string): Promise<void
   await rm(path, { force: true });
 }
 
-async function waitForChild(path: string, env: NodeJS.ProcessEnv): Promise<number> {
+async function waitForChild(path: string, args: readonly string[], env: NodeJS.ProcessEnv): Promise<number> {
   const ignoreSigint = (): void => {};
   process.on("SIGINT", ignoreSigint);
   try {
-    const child = spawn(process.execPath, [path], { env, stdio: "inherit" });
+    const child = spawn(process.execPath, [path, ...args], { env, stdio: "inherit" });
     return await new Promise<number>((done, reject) => {
       child.once("error", reject);
       child.once("close", (code) => done(code ?? 1));
@@ -147,6 +147,7 @@ async function lastLogLines(path: string): Promise<string[]> {
 export interface LaunchScriptWorldOptions {
   path: string;
   name: string;
+  args: readonly string[];
   snapshotDirectory: string;
   detach: boolean;
   timeoutMs?: number;
@@ -159,7 +160,7 @@ export async function launchScriptWorld(options: LaunchScriptWorldOptions): Prom
   const env = { ...process.env, OPENWORK_WORLD_SNAPSHOT_DIR: options.snapshotDirectory };
   await assertNoRunningSnapshot(snapshotPath, options.name);
 
-  if (!options.detach) return waitForChild(path, env);
+  if (!options.detach) return waitForChild(path, options.args, env);
 
   const logPath = scriptWorldLogPath(options.snapshotDirectory, options.name);
   await mkdir(options.snapshotDirectory, { recursive: true });
@@ -167,7 +168,7 @@ export async function launchScriptWorld(options: LaunchScriptWorldOptions): Prom
   await chmod(logPath, 0o600);
   const child = await (async () => {
     try {
-      return spawn(process.execPath, [path], {
+      return spawn(process.execPath, [path, ...options.args], {
         detached: true,
         env,
         stdio: ["ignore", log.fd, log.fd],

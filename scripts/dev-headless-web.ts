@@ -1,3 +1,8 @@
-import { runDevHeadlessWebCompatibility } from "../packages/world/src/index.ts";
+import { detachDevHeadless, main } from "../worlds/dev-headless.ts";
 
-process.exitCode = await runDevHeadlessWebCompatibility(process.argv.slice(2), process.cwd());
+if (import.meta.main) {
+  const argv = process.argv.slice(2);
+  await (argv.includes("--detach")
+    ? detachDevHeadless(argv.filter((argument) => argument !== "--detach"))
+    : main(argv));
+}

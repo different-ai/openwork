@@ -1,28 +1,41 @@
-import { createWorldDefinition } from "../packages/world/src/index.ts";
-import {
-  parseWorldTopology,
-  usesLiveSharedProductionState,
-} from "../evals/packages/env/src/topology.ts";
+import { localHost, resolveInstalledProductionDesktopState } from "../evals/packages/hosts/src/index.ts";
+import type { InstalledProductionDesktopState } from "../evals/packages/hosts/src/index.ts";
+import { liveSharedProductionApp } from "../evals/packages/env/src/desktop-app.ts";
+import type { App } from "../evals/packages/env/src/desktop-app.ts";
+import { hold } from "../packages/world/src/hold.ts";
 
-/** Eval runtime topology: isolated source Electron pointed at installed production state. */
-export const desktopProductionLiveTopology: {
-  den: { orgs: Record<string, never>; substrate: "local" };
-  apps: {
-    main: {
-      desktopState: { source: "installed-production"; mode: "live-shared" };
-    };
-  };
-} = {
-  den: { orgs: {}, substrate: "local" },
-  apps: {
-    main: {
-      desktopState: { source: "installed-production", mode: "live-shared" },
-    },
-  },
-};
+export interface DesktopProductionLiveOptions {
+  allowSharedState: true;
+  resolveInstalledProductionState?: () => Promise<InstalledProductionDesktopState>;
+}
 
-export default createWorldDefinition(desktopProductionLiveTopology, (topology) => ({
-  adapter: "eval",
-  detached: true,
-  requiresSharedState: usesLiveSharedProductionState(topology),
-}), parseWorldTopology);
+/** Launch source Electron against installed production state after explicit consent. */
+export async function desktopProductionLive(options: DesktopProductionLiveOptions): Promise<App> {
+  if (options?.allowSharedState !== true) {
+    throw new Error("Refusing LIVE SHARED PRODUCTION STATE launch without explicit allowSharedState: true consent.");
+  }
+  const state = await (
+    options.resolveInstalledProductionState ?? resolveInstalledProductionDesktopState
+  )();
+  return liveSharedProductionApp({
+    host: localHost(),
+    name: "world-desktop-production-live",
+    state,
+  });
+}
+
+function parseArgs(argv: readonly string[]): DesktopProductionLiveOptions {
+  if (argv.length !== 1 || argv[0] !== "--allow-shared-state") {
+    throw new Error("Launch desktop-prod-live with exactly --allow-shared-state.");
+  }
+  return { allowSharedState: true };
+}
+
+export async function main(argv: readonly string[] = process.argv.slice(2)): Promise<void> {
+  await using desktop = await desktopProductionLive(parseArgs(argv));
+  await hold({ outputs: { cdp: desktop.handle.cdpUrl } });
+}
+
+if (import.meta.main) {
+  await main();
+}

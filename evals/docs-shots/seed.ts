@@ -1,27 +1,24 @@
 import { denFetch } from "@openwork/behaviors";
 import type { DenSession } from "@openwork/behaviors";
-import { acmeDocs, resolvePlace, startWorld } from "@openwork/testkit/stack";
-import type { Den, Place, World } from "@openwork/testkit/stack";
+import { resolvePlace } from "@openwork/testkit/stack";
+import type { Den, Place } from "@openwork/testkit/stack";
+import {
+  ACME_DOCS_APP,
+  ACME_DOCS_MEMBER,
+  ACME_DOCS_ORGANIZATION_NAME,
+  ACME_DOCS_PROMPT_CARDS,
+  bootAcmeDocs,
+} from "../../worlds/acme-docs.ts";
+import type { AcmeDocsWorld } from "../../worlds/acme-docs.ts";
 import { provider } from "./ctx.ts";
 
-const docsOrganization = Object.entries(acmeDocs.topology.den.orgs)[0];
-if (!docsOrganization) throw new Error("The acmeDocs preset must define an organization.");
-export const DOCS_ORGANIZATION_NAME = docsOrganization[0];
-const docsOrganizationDefinition = docsOrganization[1];
-const docsPolicy = docsOrganizationDefinition.desktopPolicies?.[0];
-if (!docsPolicy) throw new Error("The acmeDocs preset must define a desktop policy.");
-export const DOCS_PROMPT_CARDS = docsPolicy.promptCards ?? [];
-if (DOCS_PROMPT_CARDS.length < 2) throw new Error("The acmeDocs preset must define at least two prompt cards.");
-const docsMember = docsPolicy.members?.[0];
-if (!docsMember) throw new Error("The acmeDocs desktop policy must target a member.");
-export const DOCS_MEMBER = docsMember;
-const docsApp = Object.entries(acmeDocs.topology.apps ?? {})
-  .find((entry) => entry[1].signedInTo?.as === DOCS_MEMBER);
-if (!docsApp) throw new Error("The acmeDocs preset must define an app signed in as its desktop policy member.");
-export const DOCS_APP = docsApp[0];
+export const DOCS_ORGANIZATION_NAME = ACME_DOCS_ORGANIZATION_NAME;
+export const DOCS_PROMPT_CARDS = ACME_DOCS_PROMPT_CARDS;
+export const DOCS_MEMBER = ACME_DOCS_MEMBER;
+export const DOCS_APP = ACME_DOCS_APP;
 
 export interface SeededOrg {
-  world: World;
+  world: AcmeDocsWorld;
   den: Den;
   place: Place;
   orgId: string;
@@ -56,41 +53,23 @@ async function mintMcpToken(admin: DenSession, orgId: string): Promise<string> {
   return token;
 }
 
-async function readPluginIds(den: Den, orgId: string): Promise<string[]> {
-  const pluginIds: string[] = [];
-  for (const plugin of docsOrganizationDefinition.plugins ?? []) {
-    const { response, body, text } = await denFetch(
-      den.admin,
-      `/v1/plugins?q=${encodeURIComponent(plugin.name)}&limit=20`,
-      {
-        headers: {
-          authorization: `Bearer ${den.admin.token}`,
-          "x-openwork-org-id": orgId,
-        },
-      },
-    );
-    const items = isRecord(body) && Array.isArray(body.items) ? body.items.filter(isRecord) : [];
-    const item = items.find((entry) => entry.name === plugin.name);
-    const id = item && typeof item.id === "string" ? item.id : "";
-    if (!response.ok || !id) {
-      throw new Error(`Resolving plugin ${JSON.stringify(plugin.name)} failed: HTTP ${response.status} ${text.slice(0, 300)}`);
-    }
-    pluginIds.push(id);
-  }
-  return pluginIds;
-}
-
 export const org = provider(async (ctx) => {
   const place = resolvePlace(process.env);
-  const world = await startWorld(acmeDocs, { place });
-  ctx.onDispose(() => world[Symbol.asyncDispose]());
-  const orgId = await readOrganizationId(world.den.admin);
-  return {
-    world,
-    den: world.den,
-    place,
-    orgId,
-    pluginIds: await readPluginIds(world.den, orgId),
-    mcpToken: await mintMcpToken(world.den.admin, orgId),
-  };
+  const stack = new AsyncDisposableStack();
+  try {
+    const world = await bootAcmeDocs(stack, place);
+    ctx.onDispose(() => stack.disposeAsync());
+    const orgId = await readOrganizationId(world.den.admin);
+    return {
+      world,
+      den: world.den,
+      place,
+      orgId,
+      pluginIds: world.pluginIds,
+      mcpToken: await mintMcpToken(world.den.admin, orgId),
+    };
+  } catch (error) {
+    await stack.disposeAsync();
+    throw error;
+  }
 });

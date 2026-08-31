@@ -1,34 +1,19 @@
 import { mkdir } from "node:fs/promises";
-import { join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { denFetch } from "@openwork/behaviors";
 import type { DenSession } from "@openwork/behaviors";
 import {
   eventually,
   needs,
   queryDenDatabase,
-  startWorld,
   test,
   unmetNeeds,
 } from "@openwork/testkit";
 import type { TestNeeds } from "@openwork/testkit";
-import {
-  createHeadlessWebAdapter,
-  main,
-  readHeadlessRuntimeManifest,
-  resolveHeadlessWorldRuntimePaths,
-  stopHeadlessRuntime,
-  WorldStateStore,
-} from "@openwork/world";
-import { expect, onTestFinished } from "vitest";
+import { expect } from "vitest";
 import { createDesktopAutomationRunner } from "../../apps/desktop/electron/automation-runner.mjs";
-import {
-  CLOUD_MODEL_INFRA_ORG,
-  cloudModelInfra,
-} from "../../worlds/cloud-model-infra.ts";
+import { bootCloudModelInfra } from "../../worlds/cloud-model-infra.ts";
+import { bootRemoteSession } from "../../worlds/remote-session.ts";
 
-const REPO_ROOT = fileURLToPath(new URL("../..", import.meta.url));
-const WORLDS_DIRECTORY = join(REPO_ROOT, "worlds");
 const WORLD_WORKSPACE = "/tmp/openwork-remote-session-world";
 const REQUEST_TIMEOUT_MS = 30_000;
 const requirements: TestNeeds = {
@@ -58,22 +43,6 @@ function orgHeaders(session: DenSession, orgId: string): Record<string, string> 
   return { ...auth(session), "x-openwork-org-id": orgId };
 }
 
-async function organizationId(session: DenSession): Promise<string> {
-  const result = await denFetch(session, "/v1/me/orgs", {
-    headers: auth(session),
-    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-  });
-  const organizations = isRecord(result.body) && Array.isArray(result.body.orgs)
-    ? result.body.orgs.filter(isRecord)
-    : [];
-  const organization = organizations.find((entry) => entry.name === CLOUD_MODEL_INFRA_ORG);
-  const id = organization && typeof organization.id === "string" ? organization.id : "";
-  if (!result.response.ok || !id) {
-    throw new Error(`Finding the world organization failed: HTTP ${result.response.status} ${result.text.slice(0, 500)}`);
-  }
-  return id;
-}
-
 function parseMcpToolResult(result: unknown): McpToolResult {
   if (!isRecord(result)) throw new Error(`MCP tools/call returned a non-object result: ${JSON.stringify(result)}`);
   const content = Array.isArray(result.content) ? result.content.filter(isRecord) : [];
@@ -87,36 +56,24 @@ function parseMcpToolResult(result: unknown): McpToolResult {
 
 test.skipIf(missingRequirements.length > 0)(title, { timeout: 15 * 60_000 }, async ({ evidence, place }) => {
   needs(requirements);
-  await using world = await startWorld(cloudModelInfra, {
-    place,
-    name: `remote-session-runner-den-${Date.now().toString(36)}`,
+  await using stack = new AsyncDisposableStack();
+  const world = await bootCloudModelInfra(stack, place, {
+    daytonaApiUrl: "http://127.0.0.1:9/daytona-guard",
   });
-  const admin = world.den.admin;
-  const orgId = await organizationId(admin);
+  const admin = world.admin;
+  const orgId = world.org.id;
   const databaseUrl = world.den.database?.url;
   if (!databaseUrl) throw new Error("The remote-session runner world did not expose its database.");
 
   await mkdir(WORLD_WORKSPACE, { recursive: true });
-  const adapter = createHeadlessWebAdapter(REPO_ROOT);
   const workerWorldName = `remote-session-runner-worker-${process.pid}`;
-  const cleanupWorkerWorld = async (): Promise<void> => {
-    const paths = resolveHeadlessWorldRuntimePaths(REPO_ROOT, workerWorldName);
-    const manifest = await readHeadlessRuntimeManifest(paths.runtimeManifestPath);
-    if (manifest) await stopHeadlessRuntime(manifest);
-    await new WorldStateStore(adapter.snapshotDirectory).forget(workerWorldName);
-  };
-  onTestFinished(cleanupWorkerWorld);
-  await cleanupWorkerWorld();
-  const workerWorldPath = join(WORLDS_DIRECTORY, "remote-session.ts");
-  expect(await main(["up", workerWorldPath, "--name", workerWorldName, "--replace"], {
-    cwd: REPO_ROOT,
-    worldsDirectory: WORLDS_DIRECTORY,
-    adapters: [adapter],
-    print: () => {},
-  })).toBe(0);
-  const workerPaths = resolveHeadlessWorldRuntimePaths(REPO_ROOT, workerWorldName);
-  const manifest = await readHeadlessRuntimeManifest(workerPaths.runtimeManifestPath);
-  if (!manifest) throw new Error("The desktop worker world did not publish its runtime manifest.");
+  const worker = await bootRemoteSession(stack, {
+    name: workerWorldName,
+    workspace: WORLD_WORKSPACE,
+    replace: true,
+  });
+  expect(worker.reused).toBe(false);
+  const manifest = worker.manifest;
   const localHeaders = {
     Accept: "application/json",
     Authorization: `Bearer ${manifest.token}`,
@@ -166,7 +123,7 @@ test.skipIf(missingRequirements.length > 0)(title, { timeout: 15 * 60_000 }, asy
     fetchImpl: fetch,
     log: (message: string) => runnerLogs.push(message),
   });
-  onTestFinished(() => runner.stop());
+  stack.defer(() => runner.stop());
   runner.configure({ baseUrl: world.den.ref.apiUrl, token: runnerToken, runnerId });
 
   const mcpTokenResult = await denFetch(admin, "/v1/mcp/token", {

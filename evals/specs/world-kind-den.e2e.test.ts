@@ -6,15 +6,15 @@ import { promisify } from "node:util";
 import { expect } from "vitest";
 import { denFetch } from "@openwork/behaviors";
 import {
-  defineWorld,
+  app,
   ensureKubeStack,
   eventually,
+  kindServer,
   KUBE_CLUSTER_NAME,
   KUBE_CONTEXT,
   needs,
-  onKind,
   readDenClientState,
-  startWorld,
+  resolvePlace,
   test,
 } from "@openwork/testkit";
 
@@ -55,32 +55,23 @@ test("a kind world serves its seeded admin and disposes only its port-forwards",
     log: (message) => console.error(`[openwork/testkit] ${message}`),
   });
 
-  const definition = onKind(defineWorld({
-    den: {
-      orgs: {
-        "Acme Robotics": {
-          admin: {
-            email: "alex@acme.test",
-            name: "Alex Chen",
-            password: "OpenWorkDemo123!",
-          },
-        },
-      },
-    },
-    apps: {
-      main: { signedInTo: { org: "Acme Robotics", as: "admin" } },
-    },
-  }));
-
-  const world = await startWorld(definition, { name: `kind-den-${Date.now().toString(36)}` });
-  const apiPort = endpointPort(world.den.ref.apiUrl);
-  const webPort = endpointPort(world.den.ref.webUrl);
-  try {
-    const health = await fetch(`${world.den.ref.apiUrl}/health`);
+  let apiPort = 0;
+  let webPort = 0;
+  {
+    await using stack = new AsyncDisposableStack();
+    const den = stack.use(await kindServer());
+    const desktop = stack.use(await app({
+      den,
+      place: resolvePlace({}),
+      as: "admin",
+    }));
+    apiPort = endpointPort(den.ref.apiUrl);
+    webPort = endpointPort(den.ref.webUrl);
+    const health = await fetch(`${den.ref.apiUrl}/health`);
     expect(health.status).toBe(200);
 
-    const organizations = await denFetch(world.den.admin, "/v1/me/orgs", {
-      headers: auth(world.den.admin.token),
+    const organizations = await denFetch(den.admin, "/v1/me/orgs", {
+      headers: auth(den.admin.token),
     });
     expect(organizations.response.status).toBe(200);
     expect(organizations.body).toMatchObject({
@@ -88,11 +79,11 @@ test("a kind world serves its seeded admin and disposes only its port-forwards",
     });
     evidence.recordAssertionEvidence(
       "The kind Den answers health and an authenticated seeded-admin route",
-      `GET /health returned ${health.status}; GET /v1/me/orgs returned ${organizations.response.status} for ${world.den.admin.email}.`,
+      `GET /health returned ${health.status}; GET /v1/me/orgs returned ${organizations.response.status} for ${den.admin.email}.`,
       true,
     );
 
-    const clientState = await eventually(() => readDenClientState(world.app("main")), {
+    const clientState = await eventually(() => readDenClientState(desktop), {
       within: 30_000,
       label: "Electron app signed in to the kind Den",
       until: (state) => state.authTokenPresent && state.activeOrgName === "Acme Robotics",
@@ -104,21 +95,15 @@ test("a kind world serves its seeded admin and disposes only its port-forwards",
       true,
     );
 
-    const snapshot: unknown = JSON.parse(await readFile(world.snapshotPath, "utf8"));
-    expect(snapshot).toMatchObject({
-      topology: { den: { substrate: "kind" } },
-      resolved: { den: { substrate: "kind" } },
-    });
+    expect(den.ports).toEqual({ api: apiPort, web: webPort });
     evidence.recordAssertionEvidence(
-      "The world snapshot records the kind substrate",
-      "Both topology.den.substrate and resolved.den.substrate equal kind.",
+      "The direct Kind server exposes its concrete endpoint ports",
+      `The Den handle reports API port ${apiPort} and web port ${webPort}.`,
       true,
     );
 
     expect(Number(await readFile(apiPidPath, "utf8"))).toBeGreaterThan(0);
     expect(Number(await readFile(webPidPath, "utf8"))).toBeGreaterThan(0);
-  } finally {
-    await world[Symbol.asyncDispose]();
   }
 
   await expect(access(apiPidPath)).rejects.toMatchObject({ code: "ENOENT" });

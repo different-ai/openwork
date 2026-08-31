@@ -334,7 +334,7 @@ function run(options) {
     const snapshots = worldSnapshotsSince(runStartedAt);
     if (snapshots.length > 0) {
       const paths = snapshots.map((path) => relative(repoRoot, path).split(sep).join("/"));
-      process.stderr.write(`world snapshots from this run: ${paths.join(", ")} — rebuild with: pnpm world rebuild ${paths[0]}\n`);
+      process.stderr.write(`world receipt metadata from this run: ${paths.join(", ")}\n`);
     }
   }
   process.stdout.write(`${JSON.stringify({

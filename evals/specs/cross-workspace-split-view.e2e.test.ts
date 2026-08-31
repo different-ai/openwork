@@ -3,14 +3,13 @@ import { control, evalIn, go, waitFor } from "@openwork/behaviors";
 import type { Surface } from "@openwork/cdp";
 import { screenshot } from "@openwork/test-evidence";
 import {
-  defineWorld,
   localMysqlIsRunning,
   localRedisIsRunning,
   needs,
   sleep,
-  startWorld,
   test,
 } from "@openwork/testkit";
+import { bootCrossWorkspaceSplitView } from "../../worlds/cross-workspace-split-view.ts";
 
 const e2eTestsEnabled = process.env.OPENWORK_EVAL_E2E_TESTS === "1";
 const daytonaEnabled = process.env.OPENWORK_EVAL_DAYTONA === "1";
@@ -308,34 +307,31 @@ async function readSplitFacts(app: Surface, primary: SplitCandidate, secondary: 
 test.skipIf(!runnable)(
   `same-workspace and cross-workspace split sessions retain visible ownership${skipSuffix}`,
   { timeout: 10 * 60_000 },
-  async ({ evidence }) => {
+  async ({ evidence, place }) => {
     needs({ optIn: ["OPENWORK_EVAL_E2E_TESTS"] });
     const runId = `${Date.now().toString(36)}-${process.pid}`;
-    const worldDefinition = defineWorld({
-      den: {
-        orgs: {
-          "Cross Workspace Split View": {
-            admin: { name: "Split View Admin", email: `split-view-admin-${runId}@openwork.test` },
-          },
-        },
-      },
-      apps: {
-        main: {
-          signedInTo: { org: "Cross Workspace Split View", as: "admin" },
-          workspacePath: `/tmp/openwork-cross-workspace-split-${runId}-a`,
-        },
-      },
+    const primaryTitle = `Primary workspace anchor ${runId}`;
+    const sameWorkspaceTitle = `Primary workspace peer ${runId}`;
+    const crossWorkspaceTitle = `Secondary workspace peer ${runId}`;
+    await using stack = new AsyncDisposableStack();
+    const world = await bootCrossWorkspaceSplitView(stack, place, {
+      adminEmail: `split-view-admin-${runId}@openwork.test`,
+      workspacePath: `/tmp/openwork-cross-workspace-split-${runId}-a`,
+      sessionTitles: [primaryTitle, sameWorkspaceTitle],
     });
-
-    await using world = await startWorld(worldDefinition, { name: `cross-workspace-split-${runId}` });
-    const app = world.app("main");
+    const app = world.desktop;
     const workspaceA = app.workspaceId;
     if (!workspaceA) throw new Error("World app did not resolve a primary workspace id.");
 
-    const primary = await createSessionInWorkspace(app, workspaceA, "Primary workspace anchor");
-    const sameWorkspacePeer = await createSessionInWorkspace(app, workspaceA, "Primary workspace peer");
+    const seededPrimary = world.sessions[0];
+    const seededSameWorkspacePeer = world.sessions[1];
+    if (!seededPrimary || !seededSameWorkspacePeer) {
+      throw new Error("The split-view world did not seed both primary-workspace sessions.");
+    }
+    const primary = { workspaceId: workspaceA, ...seededPrimary };
+    const sameWorkspacePeer = { workspaceId: workspaceA, ...seededSameWorkspacePeer };
     const workspaceB = await createWorkspace(app, `/tmp/openwork-cross-workspace-split-${runId}-b`);
-    const crossWorkspacePeer = await createSessionInWorkspace(app, workspaceB, "Secondary workspace peer");
+    const crossWorkspacePeer = await createSessionInWorkspace(app, workspaceB, crossWorkspaceTitle);
     expect(primary.workspaceId).not.toBe(crossWorkspacePeer.workspaceId);
 
     await openSessionRoute(app, primary);

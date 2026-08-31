@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { access, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import {
@@ -10,29 +10,22 @@ import {
   resolveInstalledProductionDesktopState,
 } from "@openwork/hosts";
 import {
-  buildSnapshot,
-  desktopProductionLive,
-  resolvePlace,
-  startWorld,
   test,
 } from "@openwork/testkit";
+import { desktopProductionLive } from "../../worlds/desktop-prod-live.ts";
 
-test("live shared production desktop state is explicit, local, symbolic, and cleanup-safe", async ({ evidence }) => {
+test("live shared production desktop state requires consent and selects state without mutating it", async ({ evidence }) => {
+  let stateAcquisitions = 0;
   await assert.rejects(
-    () => startWorld(desktopProductionLive, {
-      place: resolvePlace({}),
-      name: "shared-state-refused",
-    }),
-    /without explicit --allow-shared-state opt-in/,
+    () => Reflect.apply(desktopProductionLive, undefined, [{
+      resolveInstalledProductionState: async () => {
+        stateAcquisitions += 1;
+        throw new Error("Installed production state must not be acquired without consent.");
+      },
+    }]),
+    /without explicit allowSharedState: true consent/,
   );
-  await assert.rejects(
-    () => startWorld(desktopProductionLive, {
-      place: resolvePlace({ OPENWORK_EVAL_DAYTONA: "1" }),
-      name: "shared-state-remote-refused",
-      allowSharedState: true,
-    }),
-    /requires local placement/,
-  );
+  assert.equal(stateAcquisitions, 0);
 
   const fixtureRoot = await mkdtemp(join(tmpdir(), "openwork-prod-live-state-"));
   try {
@@ -103,28 +96,6 @@ test("live shared production desktop state is explicit, local, symbolic, and cle
     assert.equal(launchEnv.OPENWORK_ELECTRON_APP_IDENTIFIER, "com.differentai.openwork.eval.production-live");
     assert.equal(launchEnv.OPENWORK_ELECTRON_REMOTE_DEBUG_PORT, "31002");
 
-    const snapshot = buildSnapshot({
-      name: "prod-live-fixture",
-      createdAt: "2026-08-25T12:00:00.000Z",
-      place: "local",
-      topology: desktopProductionLive.topology,
-      resolved: {
-        den: { origin: "none" },
-        apps: {
-          main: {
-            cdpUrl: "http://127.0.0.1:31002",
-            workspaceId: null,
-            sessions: [],
-          },
-        },
-      },
-    });
-    const serialized = JSON.stringify(snapshot);
-    assert.match(serialized, /"source":"installed-production"/);
-    assert.match(serialized, /"mode":"live-shared"/);
-    assert.doesNotMatch(serialized, new RegExp(fixtureRoot.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
-    assert.doesNotMatch(serialized, /OPENCODE_DB|OPENWORK_DATA_DIR/);
-
     await removeOwnedSurfaceFiles({
       name: "production-live",
       kind: "electron",
@@ -136,10 +107,12 @@ test("live shared production desktop state is explicit, local, symbolic, and cle
     await assert.rejects(() => access(isolatedProfile));
     await access(dataDir);
     await access(opencodeDb);
+    assert.equal(await readFile(opencodeDb, "utf8"), "fixture");
+    assert.equal(await readFile(join(configDir, "desktop-bootstrap.json"), "utf8"), "{}\n");
 
     evidence.recordAssertionEvidence(
-      "Live production state requires explicit local opt-in",
-      "Launch was refused without --allow-shared-state and under remote Daytona placement.",
+      "Live production state requires explicit consent before state acquisition",
+      "The direct builder refused an omitted allowSharedState: true value without invoking its installed-state resolver.",
       true,
     );
     evidence.recordAssertionEvidence(
@@ -148,13 +121,8 @@ test("live shared production desktop state is explicit, local, symbolic, and cle
       true,
     );
     evidence.recordAssertionEvidence(
-      "World snapshots do not persist production paths or credentials",
-      "The snapshot retained only the symbolic installed-production/live-shared selector and omitted resolved production paths and environment names.",
-      true,
-    );
-    evidence.recordAssertionEvidence(
-      "Cleanup owns only the isolated dev profile",
-      "Cleanup removed the eval profile while the production OpenWork directory and OpenCode database remained present.",
+      "Cleanup owns only the isolated dev profile and does not mutate selected production state",
+      "Cleanup removed the eval profile while preserving the production bootstrap content and OpenCode database bytes.",
       true,
     );
   } finally {

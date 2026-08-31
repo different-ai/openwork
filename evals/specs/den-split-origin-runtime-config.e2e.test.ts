@@ -6,11 +6,10 @@ import {
   ensureKubeStack,
   KUBE_CONTEXT,
   KUBE_RELEASE_NAME,
+  kindServer,
   needs,
-  startWorld,
   test,
 } from "@openwork/testkit";
-import { denSplitOriginKind } from "../../worlds/den-split-origin-kind.ts";
 
 const FETCH_RECORD_KEY = "openwork:eval:den-split-origin-fetches";
 const INTERNAL_API_URL = `http://${KUBE_RELEASE_NAME}-den-api:8788`;
@@ -189,9 +188,7 @@ test("Den Web sends browser auth and API traffic to the public API origin", { ti
     "--timeout=300s",
   ], 360_000);
 
-  await using world = await startWorld(denSplitOriginKind, {
-    name: `den-split-origin-${Date.now().toString(36)}`,
-  });
+  await using den = await kindServer();
 
   const configMapText = await runCommand("kubectl", [
     "--context",
@@ -206,16 +203,16 @@ test("Den Web sends browser auth and API traffic to the public API origin", { ti
   const configData = readRequiredRecord(configMap, "data", "Helm ConfigMap");
   const internalApiUrl = readRequiredString(configData, "DEN_API_BASE", "Helm ConfigMap.data");
   const publicApiUrl = readRequiredString(configData, "DEN_API_PUBLIC_URL", "Helm ConfigMap.data");
-  const configMapIsSplit = internalApiUrl === INTERNAL_API_URL && publicApiUrl === world.den.ref.apiUrl;
+  const configMapIsSplit = internalApiUrl === INTERNAL_API_URL && publicApiUrl === den.ref.apiUrl;
   evidence.recordAssertionEvidence(
     "The Helm ConfigMap keeps the server-only API base separate from the browser-facing API URL",
     `DEN_API_BASE=${internalApiUrl}; DEN_API_PUBLIC_URL=${publicApiUrl}.`,
     configMapIsSplit,
   );
   expect(internalApiUrl).toBe(INTERNAL_API_URL);
-  expect(publicApiUrl).toBe(world.den.ref.apiUrl);
+  expect(publicApiUrl).toBe(den.ref.apiUrl);
 
-  const readyResponse = await fetch(`${world.den.ref.webUrl}/api/ready`, {
+  const readyResponse = await fetch(`${den.ref.webUrl}/api/ready`, {
     signal: AbortSignal.timeout(15_000),
   });
   const readyPayload = parseJson(await readyResponse.text(), "Den Web readiness response");
@@ -230,7 +227,7 @@ test("Den Web sends browser auth and API traffic to the public API origin", { ti
   expect(readyResponse.status).toBe(200);
   expect(upstreamStatus).toBe("ok");
 
-  const runtimeResponse = await fetch(`${world.den.ref.webUrl}/api/runtime-config`, {
+  const runtimeResponse = await fetch(`${den.ref.webUrl}/api/runtime-config`, {
     signal: AbortSignal.timeout(15_000),
   });
   const runtimeText = await runtimeResponse.text();
@@ -238,7 +235,7 @@ test("Den Web sends browser auth and API traffic to the public API origin", { ti
   const runtimeApiUrl = readRequiredString(runtimeConfig, "denApiUrl", "Den Web runtime config");
   const internalHostname = new URL(internalApiUrl).hostname;
   const runtimeConfigIsPublic = runtimeResponse.status === 200
-    && runtimeApiUrl === world.den.ref.apiUrl
+    && runtimeApiUrl === den.ref.apiUrl
     && runtimeApiUrl !== internalApiUrl
     && !runtimeText.includes(internalHostname);
   evidence.recordAssertionEvidence(
@@ -247,7 +244,7 @@ test("Den Web sends browser auth and API traffic to the public API origin", { ti
     runtimeConfigIsPublic,
   );
   expect(runtimeResponse.status).toBe(200);
-  expect(runtimeApiUrl).toBe(world.den.ref.apiUrl);
+  expect(runtimeApiUrl).toBe(den.ref.apiUrl);
   expect(runtimeApiUrl).not.toBe(internalApiUrl);
   expect(runtimeText).not.toContain(internalHostname);
 
@@ -261,7 +258,7 @@ test("Den Web sends browser auth and API traffic to the public API origin", { ti
   await browser.client.send("Page.addScriptToEvaluateOnNewDocument", {
     source: fetchRecorderSource(),
   });
-  await signInInBrowser(browser, `${world.den.ref.webUrl}/dashboard`, {
+  await signInInBrowser(browser, `${den.ref.webUrl}/dashboard`, {
     email: "alex@acme.test",
     password: "OpenWorkDemo123!",
   });
@@ -274,7 +271,7 @@ test("Den Web sends browser auth and API traffic to the public API origin", { ti
   const signedInOutcomeObserved = dashboardPath.startsWith("/dashboard") || signedInText;
   expect(signedInOutcomeObserved).toBe(true);
 
-  const publicApiOrigin = new URL(world.den.ref.apiUrl).origin;
+  const publicApiOrigin = new URL(den.ref.apiUrl).origin;
   const meUrl = `${publicApiOrigin}/v1/me`;
   const meValue = await evalIn(browser, `(async () => {
     const token = localStorage.getItem("openwork:web:auth-token")?.trim() ?? "";
