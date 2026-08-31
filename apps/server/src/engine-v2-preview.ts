@@ -1,0 +1,387 @@
+import { execFile } from "node:child_process";
+import { readFileSync } from "node:fs";
+import { access, mkdir, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+
+import constants from "../../../constants.json" with { type: "json" };
+import {
+  createManagedOpencodeV2Server,
+  type ManagedOpencodeV2Server,
+  type OpencodeV2ProviderSpec,
+} from "./managed-opencode-v2.js";
+import { runtimeStorageDir } from "./runtime-db.js";
+import {
+  isEngineGlobalRuntimeConfigId,
+  onRuntimeOpencodeConfigWrite,
+  readGlobalRuntimeOpencodeConfig,
+  runtimeProviderMap,
+} from "./runtime-opencode-config-store.js";
+import type { ServerConfig } from "./types.js";
+
+const OPENCODE_V2_VERSION = constants.opencodeV2Version;
+const PREVIEW_STATE_FILE = "engine-v2-preview.json";
+const UNSET_API_KEY = "openwork-engine-v2-preview-unset";
+
+export interface EngineV2PreviewStatus {
+  enabled: boolean;
+  running: boolean;
+  version?: string;
+  pid?: number;
+  binSource?: "env" | "path" | "cache";
+  mirroredProviderIds: string[];
+  skippedProviderIds: string[];
+  catalogModelIds: string[];
+  lastMirroredAt?: string;
+  lastError?: string;
+}
+
+export interface RuntimeProviderRecordLike {
+  name?: string;
+  npm?: string;
+  options?: {
+    baseURL?: string;
+    apiKey?: string;
+  };
+  models?: Record<string, unknown>;
+}
+
+export interface EngineV2Preview {
+  status(): EngineV2PreviewStatus;
+  setEnabled(enabled: boolean): Promise<EngineV2PreviewStatus>;
+  stop(): Promise<void>;
+}
+
+interface ResolvedBinary {
+  bin: string;
+  source: "env" | "path" | "cache";
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function statePath(config: ServerConfig): string {
+  return join(runtimeStorageDir(config), PREVIEW_STATE_FILE);
+}
+
+function readEnabled(config: ServerConfig): boolean {
+  try {
+    const parsed: unknown = JSON.parse(readFileSync(statePath(config), "utf8"));
+    return isRecord(parsed) && parsed.enabled === true;
+  } catch {
+    return false;
+  }
+}
+
+async function persistEnabled(config: ServerConfig, enabled: boolean): Promise<void> {
+  await mkdir(runtimeStorageDir(config), { recursive: true });
+  await writeFile(statePath(config), `${JSON.stringify({ enabled }, null, 2)}\n`, "utf8");
+}
+
+function exec(file: string, args: string[], options: { cwd?: string; timeout?: number } = {}): Promise<void> {
+  return new Promise((resolve, reject) => {
+    execFile(file, args, options, (error) => {
+      if (error) reject(error);
+      else resolve();
+    });
+  });
+}
+
+async function pathExists(path: string): Promise<boolean> {
+  try {
+    await access(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function resolveBinary(config: ServerConfig): Promise<ResolvedBinary> {
+  const override = process.env.OPENWORK_OPENCODE2_BIN?.trim();
+  if (override) return { bin: override, source: "env" };
+
+  let pathError = "not found";
+  try {
+    await exec("opencode2", ["--version"]);
+    return { bin: "opencode2", source: "path" };
+  } catch (error) {
+    pathError = errorMessage(error);
+  }
+
+  const cacheDir = join(runtimeStorageDir(config), "opencode-v2", OPENCODE_V2_VERSION);
+  const binary = join(cacheDir, "node_modules", ".bin", "opencode2");
+  try {
+    await mkdir(cacheDir, { recursive: true });
+    const packageJson = join(cacheDir, "package.json");
+    if (!(await pathExists(packageJson))) await writeFile(packageJson, '{"private":true}\n', "utf8");
+    if (!(await pathExists(binary))) {
+      await exec(
+        "npm",
+        ["install", "--no-fund", "--no-audit", "--no-save", `@opencode-ai/cli@${OPENCODE_V2_VERSION}`],
+        { cwd: cacheDir, timeout: 180_000 },
+      );
+    }
+    if (!(await pathExists(binary))) throw new Error(`installation did not create ${binary}`);
+    return { bin: binary, source: "cache" };
+  } catch (error) {
+    throw new Error(
+      `Unable to resolve OpenCode v2 (${pathError}; cache install: ${errorMessage(error)}). Set OPENWORK_OPENCODE2_BIN to a working opencode2 binary.`,
+    );
+  }
+}
+
+export function mapRuntimeProvidersToV2Specs(
+  providerMap: Record<string, unknown>,
+): { specs: OpencodeV2ProviderSpec[]; skippedProviderIds: string[] } {
+  const specs: OpencodeV2ProviderSpec[] = [];
+  const skippedProviderIds: string[] = [];
+
+  for (const [id, value] of Object.entries(providerMap)) {
+    if (!isRecord(value) || !isRecord(value.options)) {
+      skippedProviderIds.push(id);
+      continue;
+    }
+    const baseUrl = value.options.baseURL;
+    if (typeof baseUrl !== "string" || baseUrl.trim() === "") {
+      skippedProviderIds.push(id);
+      continue;
+    }
+
+    const models = isRecord(value.models)
+      ? Object.entries(value.models)
+        .map(([modelId, model]) => ({
+          id: modelId,
+          name: isRecord(model) && typeof model.name === "string" ? model.name : modelId,
+        }))
+        .sort((left, right) => left.id.localeCompare(right.id))
+      : [];
+    specs.push({
+      id,
+      name: typeof value.name === "string" ? value.name : id,
+      baseUrl,
+      apiKey: typeof value.options.apiKey === "string" && value.options.apiKey !== ""
+        ? value.options.apiKey
+        : UNSET_API_KEY,
+      models,
+    });
+  }
+
+  specs.sort((left, right) => left.id.localeCompare(right.id));
+  skippedProviderIds.sort((left, right) => left.localeCompare(right));
+  return { specs, skippedProviderIds };
+}
+
+function catalogModelIds(payload: unknown, mirroredProviderIds: string[]): string[] {
+  const mirrored = new Set(mirroredProviderIds);
+  const ids = new Set<string>();
+
+  function visit(value: unknown, withinMirroredProvider: boolean): void {
+    if (Array.isArray(value)) {
+      for (const entry of value) visit(entry, withinMirroredProvider);
+      return;
+    }
+    if (!isRecord(value)) return;
+
+    const providerId = typeof value.providerID === "string"
+      ? value.providerID
+      : typeof value.providerId === "string"
+        ? value.providerId
+        : undefined;
+    const withinProvider = withinMirroredProvider || (providerId !== undefined && mirrored.has(providerId));
+    if (withinProvider && typeof value.id === "string" && !mirrored.has(value.id)) ids.add(value.id);
+    if (withinProvider && isRecord(value.models)) {
+      for (const modelId of Object.keys(value.models)) ids.add(modelId);
+    }
+    for (const [key, child] of Object.entries(value)) {
+      visit(child, withinProvider || mirrored.has(key));
+    }
+  }
+
+  visit(payload, false);
+  return [...ids].sort((left, right) => left.localeCompare(right));
+}
+
+export function createEngineV2Preview(options: { config: ServerConfig }): EngineV2Preview {
+  const { config } = options;
+  const rootDir = join(runtimeStorageDir(config), "opencode-v2", "state");
+  const workspaceDir = join(rootDir, "workspace");
+  let enabled = readEnabled(config);
+  let allowRunning = true;
+  let running = false;
+  let version: string | undefined;
+  let pid: number | undefined;
+  let binSource: EngineV2PreviewStatus["binSource"];
+  let mirroredProviderIds: string[] = [];
+  let skippedProviderIds: string[] = [];
+  let currentCatalogModelIds: string[] = [];
+  let lastMirroredAt: string | undefined;
+  let lastError: string | undefined;
+  let sidecar: ManagedOpencodeV2Server | undefined;
+  let unsubscribe: (() => void) | undefined;
+  let startPromise: Promise<void> | undefined;
+  let mirrorInFlight: Promise<void> | undefined;
+  let mirrorDirty = false;
+
+  function status(): EngineV2PreviewStatus {
+    return {
+      enabled,
+      running,
+      ...(version === undefined ? {} : { version }),
+      ...(pid === undefined ? {} : { pid }),
+      ...(binSource === undefined ? {} : { binSource }),
+      mirroredProviderIds: [...mirroredProviderIds],
+      skippedProviderIds: [...skippedProviderIds],
+      catalogModelIds: [...currentCatalogModelIds],
+      ...(lastMirroredAt === undefined ? {} : { lastMirroredAt }),
+      ...(lastError === undefined ? {} : { lastError }),
+    };
+  }
+
+  async function mirrorProviders(): Promise<void> {
+    const active = sidecar;
+    if (!active) return;
+    const providerMap = runtimeProviderMap(await readGlobalRuntimeOpencodeConfig(config));
+    const mapped = mapRuntimeProvidersToV2Specs(providerMap);
+    await active.setProviders(mapped.specs);
+    const nextMirroredProviderIds = mapped.specs.map((spec) => spec.id);
+    const expectedModelIds = mapped.specs.flatMap((spec) => spec.models.map((model) => model.id));
+    const deadline = Date.now() + 15_000;
+    let catalog = await active.fetchJson("/api/model", { directory: workspaceDir });
+    let nextCatalogModelIds = catalogModelIds(catalog.json, nextMirroredProviderIds);
+    while (expectedModelIds.some((modelId) => !nextCatalogModelIds.includes(modelId)) && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      catalog = await active.fetchJson("/api/model", { directory: workspaceDir });
+      nextCatalogModelIds = catalogModelIds(catalog.json, nextMirroredProviderIds);
+    }
+    currentCatalogModelIds = nextCatalogModelIds;
+    mirroredProviderIds = nextMirroredProviderIds;
+    skippedProviderIds = [...mapped.skippedProviderIds];
+    lastMirroredAt = new Date().toISOString();
+    lastError = undefined;
+  }
+
+  function scheduleMirror(): void {
+    mirrorDirty = true;
+    if (mirrorInFlight) return;
+    mirrorInFlight = (async () => {
+      try {
+        while (mirrorDirty && allowRunning && sidecar) {
+          mirrorDirty = false;
+          try {
+            await mirrorProviders();
+          } catch (error) {
+            lastError = errorMessage(error);
+          }
+        }
+      } finally {
+        mirrorInFlight = undefined;
+        if (mirrorDirty && allowRunning && sidecar) scheduleMirror();
+      }
+    })();
+    void mirrorInFlight;
+  }
+
+  async function closeSidecar(): Promise<void> {
+    const active = sidecar;
+    sidecar = undefined;
+    running = false;
+    version = undefined;
+    pid = undefined;
+    if (!active) return;
+    try {
+      await active.close();
+    } catch (error) {
+      lastError = errorMessage(error);
+    }
+  }
+
+  async function startSidecar(): Promise<void> {
+    const resolved = await resolveBinary(config);
+    binSource = resolved.source;
+    if (!enabled || !allowRunning) return;
+    await mkdir(workspaceDir, { recursive: true });
+    const managed = await createManagedOpencodeV2Server({ bin: resolved.bin, rootDir });
+    sidecar = managed;
+    if (!enabled || !allowRunning) {
+      await closeSidecar();
+      return;
+    }
+    try {
+      const health = await managed.health();
+      version = health.version;
+      pid = health.pid;
+      running = health.healthy;
+      unsubscribe = onRuntimeOpencodeConfigWrite((_writeConfig, workspaceId) => {
+        if (!isEngineGlobalRuntimeConfigId(workspaceId)) return;
+        scheduleMirror();
+      });
+      scheduleMirror();
+      if (mirrorInFlight) await mirrorInFlight;
+      if (!enabled || !allowRunning) {
+        await closeSidecar();
+        return;
+      }
+    } catch (error) {
+      await closeSidecar();
+      throw error;
+    }
+  }
+
+  async function start(): Promise<void> {
+    if (sidecar) return;
+    if (startPromise) {
+      await startPromise;
+      return;
+    }
+    const pending = startSidecar();
+    startPromise = pending;
+    try {
+      await pending;
+    } finally {
+      if (startPromise === pending) startPromise = undefined;
+    }
+  }
+
+  function recordStartError(error: unknown): void {
+    running = false;
+    lastError = `${errorMessage(error)} Set OPENWORK_OPENCODE2_BIN to a working opencode2 binary to override resolution.`;
+  }
+
+  async function stopRuntime(): Promise<void> {
+    allowRunning = false;
+    unsubscribe?.();
+    unsubscribe = undefined;
+    mirrorDirty = false;
+    if (startPromise) await startPromise.catch(() => undefined);
+    if (mirrorInFlight) await mirrorInFlight;
+    await closeSidecar();
+  }
+
+  async function setEnabled(nextEnabled: boolean): Promise<EngineV2PreviewStatus> {
+    if (nextEnabled && enabled && running) return status();
+    await persistEnabled(config, nextEnabled);
+    enabled = nextEnabled;
+    if (!enabled) {
+      await stopRuntime();
+      return status();
+    }
+    allowRunning = true;
+    lastError = undefined;
+    // Fire and forget: binary resolution can install from npm and boot can take
+    // tens of seconds, while renderer config requests time out after 10s. The
+    // status endpoint reports progress and records failures via lastError.
+    void start().catch(recordStartError);
+    return status();
+  }
+
+  async function stop(): Promise<void> {
+    await stopRuntime();
+  }
+
+  if (enabled) void start().catch(recordStartError);
+  return { status, setEnabled, stop };
+}
