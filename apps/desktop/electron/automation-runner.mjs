@@ -174,9 +174,23 @@ export async function executeDesktopAutomation(assignment, options) {
   options.signal.addEventListener("abort", abort, { once: true })
   try {
     const startedAt = Date.now()
+    const deadlineAt = startedAt + assignment.timeoutMs
     while (true) {
-      if (Date.now() - startedAt > assignment.timeoutMs) throw new Error("Desktop Automation execution timed out")
-      const snapshot = await client.getThreadSnapshot(sessionId, { signal: options.signal, limit: 200 })
+      if (Date.now() > deadlineAt) throw new Error("Desktop Automation execution timed out")
+      // The wall-clock check above only runs between awaits. A machine that
+      // suspends mid-request can leave this socket half-open with no error,
+      // which would make the assignment timeout unreachable: bound each poll
+      // by the remaining execution budget so the deadline always fires.
+      let snapshot
+      try {
+        snapshot = await client.getThreadSnapshot(sessionId, {
+          signal: AbortSignal.any([options.signal, AbortSignal.timeout(Math.max(1, deadlineAt - Date.now()))]),
+          limit: 200,
+        })
+      } catch (error) {
+        if (!options.signal.aborted && Date.now() >= deadlineAt) throw new Error("Desktop Automation execution timed out")
+        throw error
+      }
       const output = assistantResult(snapshot)
       const snapshotError = assistantFailure(snapshot)
       if (snapshotError) {
@@ -300,7 +314,10 @@ export function createDesktopAutomationRunner(options) {
   const random = options.random ?? Math.random
   const waitBeforeReconnect = options.waitBeforeReconnect ?? sleep
   const heartbeatIntervalMs = options.heartbeatIntervalMs ?? 10_000
+  const heartbeatTimeoutMs = options.heartbeatTimeoutMs ?? 8_000
+  const heartbeatMissLimit = options.heartbeatMissLimit ?? 3
   const workPollTimeoutMs = options.workPollTimeoutMs ?? 30_000
+  const lifecycleRequestTimeoutMs = options.lifecycleRequestTimeoutMs ?? 30_000
   const legacyBaseUrls = new Set((options.legacyBaseUrls ?? [])
     .map((value) => normalizeRunnerBaseUrl(value))
     .filter(Boolean))
@@ -369,13 +386,18 @@ export function createDesktopAutomationRunner(options) {
     }
   }
 
-  const heartbeat = async (state) => {
-    const active = state.active
-    if (!active || !isCurrent(state)) return
+  const heartbeat = async (state, active) => {
+    if (state.active !== active || !isCurrent(state)) return
     const response = await runnerRequest(
       state,
       `/v1/automation-runs/${encodeURIComponent(active.assignment.runId)}/heartbeat`,
-      { method: "POST", body: { attempt: active.assignment.attempt } },
+      {
+        method: "POST",
+        body: { attempt: active.assignment.attempt },
+        // Bounded below the interval so a hung probe settles before the next
+        // one is due instead of pinning the lease refresh on a dead socket.
+        signal: AbortSignal.timeout(heartbeatTimeoutMs),
+      },
     )
     if (state.active === active && (response.cancelRequested || response.leaseValid !== true)) {
       active.controller.abort(new Error("Automation run cancelled or lease lost"))
@@ -392,9 +414,37 @@ export function createDesktopAutomationRunner(options) {
     const event = (type, payload) => runnerRequest(
       state,
       `/v1/automation-runs/${encodeURIComponent(assignment.runId)}/events`,
-      { method: "POST", body: { attempt: assignment.attempt, sequence: ++sequence, type, payload, createdAt: Date.now() } },
+      {
+        method: "POST",
+        body: { attempt: assignment.attempt, sequence: ++sequence, type, payload, createdAt: Date.now() },
+        signal: AbortSignal.timeout(lifecycleRequestTimeoutMs),
+      },
     )
-    const heartbeatTimer = setInterval(() => void heartbeat(state).catch((error) => controller.abort(error)), heartbeatIntervalMs)
+    // Self-scheduling instead of setInterval: the next probe is armed only
+    // after the current one settles, so a slow heartbeat can never overlap
+    // the next tick. One transient failure must not kill a healthy run, so
+    // the run aborts only after consecutive misses outlast the lease.
+    let heartbeatTimer = null
+    let heartbeatStopped = false
+    let heartbeatMisses = 0
+    const heartbeatTick = async () => {
+      try {
+        await heartbeat(state, active)
+        heartbeatMisses = 0
+      } catch (error) {
+        heartbeatMisses += 1
+        if (heartbeatMisses >= heartbeatMissLimit) {
+          controller.abort(new Error(`Automation run heartbeat failed ${heartbeatMisses} times: ${serializedError(error)}`))
+          return
+        }
+        options.log?.(`runner heartbeat missed (${heartbeatMisses}/${heartbeatMissLimit}): ${serializedError(error)}`)
+      }
+      if (!heartbeatStopped && state.active === active && !controller.signal.aborted) scheduleHeartbeat()
+    }
+    const scheduleHeartbeat = () => {
+      heartbeatTimer = setTimeout(() => void heartbeatTick(), heartbeatIntervalMs)
+    }
+    scheduleHeartbeat()
     let result
     try {
       await event("user", { text: assignment.instructions, executionTarget: "desktop" })
@@ -428,14 +478,37 @@ export function createDesktopAutomationRunner(options) {
         },
       }
     } finally {
-      clearInterval(heartbeatTimer)
+      heartbeatStopped = true
+      clearTimeout(heartbeatTimer)
+    }
+    // Terminal delivery must terminate: reconcile (and with it the whole
+    // runner) waits on this step, so a hung or transiently failing request
+    // here would otherwise wedge the desktop until the app restarts. Each
+    // request gets its own deadline plus one retry, and a failed terminal
+    // event never skips the completion POST.
+    const deliver = async (label, send) => {
+      for (let attempt = 1; attempt <= 2; attempt += 1) {
+        try {
+          await send()
+          return
+        } catch (error) {
+          const retry = attempt === 1 && isCurrent(state)
+          options.log?.(`runner ${label} delivery failed${retry ? ", retrying" : ""}: ${serializedError(error)}`)
+          if (!retry) return
+        }
+      }
     }
     try {
-      await event("terminal", { status: result.status, executionTarget: "desktop", sessionId: result.sessionId })
-      await runnerRequest(state, `/v1/automation-runs/${encodeURIComponent(assignment.runId)}/complete`, {
+      await deliver("terminal event", () => event("terminal", {
+        status: result.status,
+        executionTarget: "desktop",
+        sessionId: result.sessionId,
+      }))
+      await deliver("completion", () => runnerRequest(state, `/v1/automation-runs/${encodeURIComponent(assignment.runId)}/complete`, {
         method: "POST",
         body: { ...result, attempt: assignment.attempt },
-      })
+        signal: AbortSignal.timeout(lifecycleRequestTimeoutMs),
+      }))
     } finally {
       if (state.active === active) state.active = null
       if (isCurrent(state) && pendingConfiguration) {
@@ -476,6 +549,7 @@ export function createDesktopAutomationRunner(options) {
       await runnerRequest(state, `/v1/remote-session-commands/${encodeURIComponent(assignment.commandId)}/complete`, {
         method: "POST",
         body: result,
+        signal: AbortSignal.timeout(lifecycleRequestTimeoutMs),
       })
     } finally {
       if (state.active === active) state.active = null
@@ -508,7 +582,7 @@ export function createDesktopAutomationRunner(options) {
             claimed = await runnerRequest(
               state,
               `/v1/remote-session-commands/${encodeURIComponent(item.commandId)}/claim`,
-              { method: "POST", body: {} },
+              { method: "POST", body: {}, signal: AbortSignal.timeout(lifecycleRequestTimeoutMs) },
             )
           } catch (error) {
             if (error?.status === 409) continue
@@ -524,7 +598,11 @@ export function createDesktopAutomationRunner(options) {
         state.claimInFlight = true
         let claimed
         try {
-          claimed = await runnerRequest(state, `/v1/automation-runs/${encodeURIComponent(item.runId)}/claim`, { method: "POST", body: {} })
+          claimed = await runnerRequest(state, `/v1/automation-runs/${encodeURIComponent(item.runId)}/claim`, {
+            method: "POST",
+            body: {},
+            signal: AbortSignal.timeout(lifecycleRequestTimeoutMs),
+          })
         } finally {
           state.claimInFlight = false
         }
