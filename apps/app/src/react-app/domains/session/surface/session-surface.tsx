@@ -76,6 +76,7 @@ import { interruptedTaskRecoveryPrompt } from "@/react-app/domains/session/sync/
 import { useLocal } from "@/react-app/kernel/local-provider";
 import { resolveAttachmentFileMetadata } from "@/react-app/domains/session/sync/attachment-file-part";
 import { deriveSessionRenderModel } from "@/react-app/domains/session/sync/transition-controller";
+import { setQueuedSendContext } from "@/react-app/domains/session/sync/queued-send-context";
 import { useSessionScrollController } from "./scroll-controller";
 import { SessionScrollOverlay } from "./scroll-overlay";
 import { SessionFindBar } from "./find-bar";
@@ -916,6 +917,32 @@ export function SessionSurface(props: SessionSurfaceProps) {
   // session B when the route swaps the same surface component to another
   // session.
   const queuedItems = useComposerStateStore((state) => getComposerQueuedDrafts(state, props.sessionId));
+  useEffect(() => {
+    if (queuedItems.length === 0) return;
+    setQueuedSendContext(props.sessionId, {
+      workspaceId: props.workspaceId,
+      workspaceRoot: props.workspaceRoot,
+      opencodeBaseUrl: props.opencodeBaseUrl,
+      openworkToken: props.openworkToken,
+      client: props.client,
+      agent: props.selectedAgent,
+      variant: props.modelVariant,
+      model: props.selectedModel,
+      environmentRuntimeKey: props.environmentRuntimeKey ?? null,
+    });
+  }, [
+    props.client,
+    props.environmentRuntimeKey,
+    props.modelVariant,
+    props.opencodeBaseUrl,
+    props.openworkToken,
+    props.selectedAgent,
+    props.selectedModel,
+    props.sessionId,
+    props.workspaceId,
+    props.workspaceRoot,
+    queuedItems.length,
+  ]);
   const appendQueuedDraft = useComposerStateStore((state) => state.appendQueuedDraft);
   const removeQueuedDraftFromStore = useComposerStateStore((state) => state.removeQueuedDraft);
   const updateQueuedDraftInStore = useComposerStateStore((state) => state.updateQueuedDraft);
