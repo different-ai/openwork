@@ -186,6 +186,14 @@ describe("cloud provider sync gateway", () => {
     const firstListReleased = new Promise<void>((resolve) => {
       releaseFirstList = resolve;
     });
+    let markSecondListReached: () => void = () => undefined;
+    const secondListReached = new Promise<void>((resolve) => {
+      markSecondListReached = resolve;
+    });
+    let releaseSecondList: () => void = () => undefined;
+    const secondListReleased = new Promise<void>((resolve) => {
+      releaseSecondList = resolve;
+    });
     const listOrgIds: string[] = [];
     let listRequestsInFlight = 0;
     let maxListRequestsInFlight = 0;
@@ -197,12 +205,16 @@ describe("cloud provider sync gateway", () => {
           return Response.json({ error: "not_found" }, { status: 404 });
         }
         listOrgIds.push(request.headers.get("x-openwork-legacy-org-id") ?? "");
+        const listIndex = listOrgIds.length;
         listRequestsInFlight += 1;
         maxListRequestsInFlight = Math.max(maxListRequestsInFlight, listRequestsInFlight);
         try {
-          if (listOrgIds.length === 1) {
+          if (listIndex === 1) {
             markFirstListReached();
             await firstListReleased;
+          } else if (listIndex === 2) {
+            markSecondListReached();
+            await secondListReleased;
           }
           return Response.json({ llmProviders: [] });
         } finally {
@@ -239,7 +251,12 @@ describe("cloud provider sync gateway", () => {
 
       releaseFirstList();
       expect((await changedSessionResponse).status).toBe(204);
+      // The replacement session fires its own sync pass; hold its Den list open
+      // so both explicit runs deterministically join that active pass.
+      await secondListReached;
       const changedContextRuns = [runSync(base, "sign_in"), runSync(base, "focus")];
+      await Bun.sleep(25);
+      releaseSecondList();
       const results = await Promise.all([...sameContextRuns, ...changedContextRuns]);
       expect(results.map((result) => result.status)).toEqual(["no_session", "no_session", "applied", "applied"]);
       expect(listOrgIds).toEqual(["org_first", "org_changed"]);
@@ -250,6 +267,7 @@ describe("cloud provider sync gateway", () => {
       expect(listOrgIds).toEqual(["org_first", "org_changed"]);
     } finally {
       releaseFirstList();
+      releaseSecondList();
     }
   });
 
