@@ -111,9 +111,21 @@ describe("plugin import flow", () => {
     try {
       savePluginImportDraft(sourceDraft);
       const persisted = [...storedValues.values()][0] ?? "";
-      expect(persisted).toContain('"authType":"none"');
-      expect(persisted).toContain('"credentialMode":"shared"');
+      expect(persisted).toContain('"serverMode":"none"');
+      expect(persisted).toContain('"accountScope":"shared"');
+      expect(persisted).not.toContain('"authType"');
+      expect(persisted).not.toContain('"credentialMode"');
       expect(persisted).not.toContain("mcp.example.com");
+      expect(loadPluginImportDraft()).toMatchObject({
+        authType: "none",
+        credentialMode: "shared",
+      });
+
+      storedValues.set("openwork.plugin-import-draft.v1", JSON.stringify({
+        ...draft,
+        authType: "none",
+        credentialMode: "shared",
+      }));
       expect(loadPluginImportDraft()).toMatchObject({
         authType: "none",
         credentialMode: "shared",

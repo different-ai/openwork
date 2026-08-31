@@ -95,7 +95,7 @@ test("Agent Plugins import stays portable across current schemas and MCP transpo
     })
     expect(web.error, web.output).toBeUndefined()
     expect(web.status, web.output).toBe(0)
-    const webReport = expectCleanReport(webReportPath, 3)
+    const webReport = expectCleanReport(webReportPath, 6)
     expect(webReport).toContain('name="preserves Agent Plugin compatibility warnings in the draft"')
 
     const mcpReportPath = join(reportDir, "mcp-junit.xml")

@@ -1,9 +1,0 @@
-metric,result,evidence
-baseline_open_findings,44,dev baseline assessed 2026-08-28
-baseline_high_findings,33,GitHub CodeQL
-baseline_medium_findings,11,GitHub CodeQL
-resolved_by_code,41,pull request 4220
-reviewed_false_positives,3,alerts 247 248 and 249
-final_open_findings,0,pull request 4220 CodeQL run 33215989567
-codeql_run_status,passed,https://github.com/different-ai/openwork/actions/runs/33215989567
-release_candidate_scan,pending,required after merge

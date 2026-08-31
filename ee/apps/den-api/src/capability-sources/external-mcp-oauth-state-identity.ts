@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto"
+import { createHash, createHmac } from "node:crypto"
 import type {
   ExternalMcpAuthType,
   ExternalMcpConnectionKind,
@@ -28,34 +28,48 @@ export function normalizeExternalMcpIdentityUrl(value: string): string {
   }
 }
 
-function nonSecretOAuthStateIdentity(source: ExternalMcpOAuthStateIdentitySource): NonSecretExternalMcpOAuthStateIdentity {
+function connectionIdentityFields(source: ExternalMcpOAuthStateIdentitySource): NonSecretExternalMcpOAuthStateIdentity {
   const url = normalizeExternalMcpIdentityUrl(source.url)
+  const authType: ExternalMcpAuthType = source.authType === "oauth"
+    ? "oauth"
+    : source.authType === "apikey"
+      ? "apikey"
+      : "none"
+  const credentialMode: ExternalMcpCredentialMode = source.credentialMode === "shared" ? "shared" : "per_member"
   if (source.kind === "native_provider") {
-    return [source.id, url, source.authType, source.credentialMode]
+    return [source.id, url, authType, credentialMode]
   }
-  return [url, source.authType, source.credentialMode]
+  return [url, authType, credentialMode]
 }
 
 /**
  * Binds signed OAuth state to connection identity fields without embedding
- * them in the state. Credential values are deliberately outside this input
- * type, while hashing also protects sensitive values present in URL queries.
+ * them in the state. The deployment-stable state-signing secret makes URL
+ * query values opaque even when they have low entropy.
  */
-export function externalMcpIdentityBinding(source: ExternalMcpOAuthStateIdentitySource): string {
-  return createHash("sha256")
-    .update(JSON.stringify(nonSecretOAuthStateIdentity(source)))
+export function createExternalMcpIdentityBinding(
+  source: ExternalMcpOAuthStateIdentitySource,
+  secret: string,
+): string {
+  return createHmac("sha256", secret)
+    .update("openwork:external-mcp-identity:v2\0")
+    .update(JSON.stringify(connectionIdentityFields(source)))
     .digest("base64url")
 }
 
 /**
- * Accepts the reversible binding emitted before identity hashing. Call only
- * after the containing OAuth state token's signature has been verified.
+ * Accepts the SHA-256 and reversible bindings emitted before keyed binding.
+ * Call only after the containing OAuth state token's signature is verified.
  */
 export function matchesLegacyExternalMcpOAuthStateIdentityBinding(
   source: ExternalMcpOAuthStateIdentitySource,
   signedStateBinding: string,
 ): boolean {
+  const serializedIdentity = JSON.stringify(connectionIdentityFields(source))
+  const previousDigest = createHash("sha256").update(serializedIdentity).digest("base64url")
+  if (signedStateBinding === previousDigest) return true
+
   const decoded = Buffer.from(signedStateBinding, "base64url")
   return decoded.toString("base64url") === signedStateBinding
-    && decoded.toString("utf8") === JSON.stringify(nonSecretOAuthStateIdentity(source))
+    && decoded.toString("utf8") === serializedIdentity
 }

@@ -20,11 +20,20 @@ import {
 } from "@openwork-ee/den-db/schema"
 import { createDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
 import { db } from "../db.js"
+import { env } from "../env.js"
 import { declaredPluginMcpAuthType, requiredPluginMcpAuthType } from "./external-mcp-auth-policy.js"
-import { externalMcpIdentityBinding, normalizeExternalMcpIdentityUrl } from "./external-mcp-oauth-state-identity.js"
+import {
+  createExternalMcpIdentityBinding,
+  normalizeExternalMcpIdentityUrl,
+  type ExternalMcpOAuthStateIdentitySource,
+} from "./external-mcp-oauth-state-identity.js"
 import { normalizeConnectedAccountScopes, normalizeOAuthClientExtra } from "./oauth-credentials.js"
 
-export { externalMcpIdentityBinding, normalizeExternalMcpIdentityUrl } from "./external-mcp-oauth-state-identity.js"
+export { normalizeExternalMcpIdentityUrl } from "./external-mcp-oauth-state-identity.js"
+
+export function externalMcpIdentityBinding(source: ExternalMcpOAuthStateIdentitySource): string {
+  return createExternalMcpIdentityBinding(source, env.betterAuthSecret)
+}
 
 /**
  * CRUD for ExternalMcpConnectionTable and its access grants — the "add any
@@ -567,7 +576,7 @@ export type RepairExternalMcpOAuthIssuerResult =
  * verified the replacement through fresh protected-resource discovery.
  * Non-admin recovery may not invalidate another member's credentials.
  */
-export async function repairExternalMcpOAuthIssuer(input: {
+export async function repairExternalMcpIssuerConfiguration(input: {
   organizationId: OrganizationId
   connectionId: ExternalMcpConnectionId
   expectedIdentityBinding: string

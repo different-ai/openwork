@@ -59,6 +59,27 @@ function skippedServerReason(value: unknown): PluginImportServer["skippedReason"
   return null;
 }
 
+function storedImportOptions(value: Record<string, unknown>): Pick<PluginImportDraft, "authType" | "credentialMode"> | null {
+  const authType = value.serverMode === undefined
+    ? (value.authType === undefined ? "oauth" : value.authType)
+    : value.serverMode === "oauth"
+      ? "oauth"
+      : value.serverMode === "none"
+        ? "none"
+        : null;
+  const credentialMode = value.accountScope === undefined
+    ? (value.credentialMode === undefined ? "per_member" : value.credentialMode)
+    : value.accountScope === "shared"
+      ? "shared"
+      : value.accountScope === "member"
+        ? "per_member"
+        : null;
+  if ((authType !== "oauth" && authType !== "none") || (credentialMode !== "per_member" && credentialMode !== "shared")) {
+    return null;
+  }
+  return { authType, credentialMode };
+}
+
 function hasCredentialQuery(url: URL): boolean {
   return Array.from(url.searchParams.keys()).some((key) =>
     CREDENTIAL_QUERY_KEYS.has(key.toLowerCase().replaceAll("-", "").replaceAll("_", "")),
@@ -139,12 +160,10 @@ function parseStoredDraft(value: unknown): PluginImportDraft | null {
   if (!isRecord(value) || value.version !== 1 || typeof value.githubUrl !== "string" || !isRecord(value.preview)) {
     return null;
   }
-  // Older version-one drafts omitted these fields. Default them to OAuth with
-  // per-member credentials so a reload never broadens credential sharing.
-  const authType = value.authType === undefined ? "oauth" : value.authType;
-  const credentialMode = value.credentialMode === undefined ? "per_member" : value.credentialMode;
-  if (authType !== "oauth" && authType !== "none") return null;
-  if (credentialMode !== "per_member" && credentialMode !== "shared") return null;
+  // Current drafts store only allowlisted, non-sensitive option labels. Older
+  // version-one drafts used the internal field names or omitted the options.
+  const options = storedImportOptions(value);
+  if (!options) return null;
   if (!Array.isArray(value.selectedServerKeys) || !value.selectedServerKeys.every((entry) => typeof entry === "string")) return null;
   if (!Array.isArray(value.selectedSkillKeys) || !value.selectedSkillKeys.every((entry) => typeof entry === "string")) return null;
 
@@ -154,8 +173,8 @@ function parseStoredDraft(value: unknown): PluginImportDraft | null {
     if (preview.servers.some((server) => server.url !== null)) return null;
     return {
       version: 1,
-      authType,
-      credentialMode,
+      authType: options.authType,
+      credentialMode: options.credentialMode,
       githubUrl,
       preview,
       selectedServerKeys: value.selectedServerKeys,
@@ -218,7 +237,15 @@ export function minimizePluginImportDraft(draft: PluginImportDraft): PluginImpor
 
 export function savePluginImportDraft(draft: PluginImportDraft): void {
   const minimized = minimizePluginImportDraft(draft);
-  window.sessionStorage.setItem(STORAGE_KEY, JSON.stringify(minimized));
+  window.sessionStorage.setItem(STORAGE_KEY, JSON.stringify({
+    version: minimized.version,
+    serverMode: minimized.authType === "none" ? "none" : "oauth",
+    accountScope: minimized.credentialMode === "shared" ? "shared" : "member",
+    githubUrl: minimized.githubUrl,
+    preview: minimized.preview,
+    selectedServerKeys: minimized.selectedServerKeys,
+    selectedSkillKeys: minimized.selectedSkillKeys,
+  }));
 }
 
 export function clearPluginImportDraft(): void {

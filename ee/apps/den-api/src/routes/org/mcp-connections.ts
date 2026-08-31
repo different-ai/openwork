@@ -64,7 +64,7 @@ import {
   markExternalMcpOAuthIssuerReviewRequired,
   memberCanUseExternalMcpConnection,
   normalizeExternalMcpIdentityUrl,
-  repairExternalMcpOAuthIssuer,
+  repairExternalMcpIssuerConfiguration,
   replaceExternalMcpConnectionAccess,
   setExternalMcpConnectionToolPolicy,
   updateExternalMcpConnection,
@@ -2944,7 +2944,7 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
             })
             throw error
           }
-          const repair = await repairExternalMcpOAuthIssuer({
+          const repair = await repairExternalMcpIssuerConfiguration({
             organizationId: payload.organization.id,
             connectionId: externalMcpConnectionId,
             expectedIdentityBinding: externalMcpIdentityBinding(connection),

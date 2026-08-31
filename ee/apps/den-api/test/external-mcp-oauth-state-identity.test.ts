@@ -1,9 +1,13 @@
 import { expect, test } from "bun:test"
 import {
-  externalMcpIdentityBinding,
+  createExternalMcpIdentityBinding,
   matchesLegacyExternalMcpOAuthStateIdentityBinding,
   type ExternalMcpOAuthStateIdentitySource,
 } from "../src/capability-sources/external-mcp-oauth-state-identity.js"
+
+const BINDING_SECRET = "deployment-stable-oauth-state-secret"
+const externalMcpIdentityBinding = (source: ExternalMcpOAuthStateIdentitySource) =>
+  createExternalMcpIdentityBinding(source, BINDING_SECRET)
 
 test("OAuth state identity binding excludes connection credentials", () => {
   const connection = {
@@ -29,6 +33,7 @@ test("OAuth state identity binding excludes connection credentials", () => {
     refreshToken: "different-refresh-token",
   })).toBe(binding)
   expect(externalMcpIdentityBinding({ ...connection, url: "https://other.example.test/api" })).not.toBe(binding)
+  expect(createExternalMcpIdentityBinding(connection, "a-different-deployment-secret")).not.toBe(binding)
   expect(binding).toMatch(/^[A-Za-z0-9_-]+$/)
   expect(binding).toHaveLength(43)
 })
@@ -78,8 +83,11 @@ test("signed OAuth callbacks can match pre-hash identity bindings without emitti
     "oauth",
     "per_member",
   ])).toString("base64url")
+  // SHA-256 binding emitted immediately before deployment-keyed bindings.
+  const previousDigestBinding = "zAHAL4Yvrvzm3ut1qYtgAgXztMNEzzL4gPpGAoIxX4Y"
 
   expect(matchesLegacyExternalMcpOAuthStateIdentityBinding(source, legacyBinding)).toBe(true)
+  expect(matchesLegacyExternalMcpOAuthStateIdentityBinding(source, previousDigestBinding)).toBe(true)
   expect(matchesLegacyExternalMcpOAuthStateIdentityBinding(source, externalMcpIdentityBinding(source))).toBe(false)
   expect(matchesLegacyExternalMcpOAuthStateIdentityBinding({ ...source, authType: "none" }, legacyBinding)).toBe(false)
   expect(externalMcpIdentityBinding(source)).not.toBe(legacyBinding)
