@@ -7,6 +7,7 @@ import type { ApprovalRequest, Capabilities, ServerConfig, WorkspaceInfo, Actor,
 import { agentContextDiagnosticsRequestSchema } from "./agent-context-diagnostics-schema.js";
 import { ApprovalService } from "./approvals.js";
 import {
+  BoundedSseFrameBuffer,
   EnginePool,
   enginePoolForConfig,
   isEngineConnectionFailure,
@@ -1656,27 +1657,29 @@ function mergedEventBody(input: {
         close();
       };
       const pump = async (entry: typeof readers[number]) => {
-        const decoder = new TextDecoder();
-        let buffered = "";
+        const frameBuffer = new BoundedSseFrameBuffer();
         try {
           while (!cancelled) {
             const chunk = await entry.reader.read();
             if (chunk.done) break;
-            buffered += decoder.decode(chunk.value, { stream: true });
-            while (true) {
-              const delimiter = buffered.match(/\r?\n\r?\n/);
-              if (!delimiter || delimiter.index === undefined) break;
-              const frame = buffered.slice(0, delimiter.index);
-              buffered = buffered.slice(delimiter.index + delimiter[0].length);
+            const parsed = frameBuffer.push(chunk.value);
+            for (const frame of parsed.frames) {
               if (input.pool.shouldForwardEvent(entry.connection.generationId, parseSsePayload(frame))) {
                 controller.enqueue(encoder.encode(`${frame}\n\n`));
               }
+            }
+            if (parsed.overflow) {
+              // A frame that never terminates would buffer without bound;
+              // drop this connection and let the client reconnect.
+              await entry.reader.cancel(new Error("SSE frame exceeded the size limit")).catch(() => undefined);
+              break;
             }
           }
         } catch {
           // A generation flip intentionally aborts these readers. The client
           // reconnects and the next stream fans in every live generation.
         } finally {
+          entry.reader.releaseLock();
           finish();
         }
       };
@@ -1697,6 +1700,13 @@ function mergedEventBody(input: {
   });
 }
 
+// Read lazily so tests can shrink the deadline at runtime. Matches the 5s
+// bound proxyEngineAggregateRead puts on its per-connection fan-out.
+function engineEventStreamEstablishTimeoutMs(): number {
+  const parsed = Number(process.env.OPENWORK_ENGINE_EVENT_ESTABLISH_TIMEOUT_MS ?? "5000");
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 5_000;
+}
+
 async function proxyEngineEventStreams(input: {
   pool: EnginePool;
   connections: EnginePoolConnection[];
@@ -1707,30 +1717,57 @@ async function proxyEngineEventStreams(input: {
 }): Promise<Response> {
   const lease = input.pool.openEventProxy(input.clientSignal);
   const settled = await Promise.allSettled(input.connections.map(async (connection) => {
-    const response = await loopbackFetch(buildOpencodeProxyUrl(connection.baseUrl, input.proxyPath, input.search), {
-      method: "GET",
-      headers: headersForEngineConnection(input.headers, connection),
-      signal: lease.signal,
-    });
-    return { connection, response };
+    // Bound establishment (headers) only: a connection that accepts the
+    // socket but never answers must not stall the whole fan-out. The timer is
+    // cleared as soon as the response resolves so the long-lived body stream
+    // itself is never put on a deadline; lease aborts tear the body down
+    // through the merged-stream reader cancellation instead.
+    const establish = new AbortController();
+    const onLeaseAbort = () => establish.abort(lease.signal.reason);
+    lease.signal.addEventListener("abort", onLeaseAbort, { once: true });
+    if (lease.signal.aborted) onLeaseAbort();
+    const timer = setTimeout(
+      () => establish.abort(new Error("OpenCode event stream establishment timed out")),
+      engineEventStreamEstablishTimeoutMs(),
+    );
+    timer.unref?.();
+    try {
+      const response = await loopbackFetch(buildOpencodeProxyUrl(connection.baseUrl, input.proxyPath, input.search), {
+        method: "GET",
+        headers: headersForEngineConnection(input.headers, connection),
+        signal: establish.signal,
+      });
+      return { connection, response };
+    } finally {
+      clearTimeout(timer);
+      lease.signal.removeEventListener("abort", onLeaseAbort);
+    }
   }));
   const successful = settled
     .filter((entry): entry is PromiseFulfilledResult<{ connection: EnginePoolConnection; response: Response }> =>
       entry.status === "fulfilled")
     .map((entry) => entry.value);
+  // Established fetches are no longer tied to any abort signal, so bodies the
+  // merged stream will not own must be cancelled here instead of leaking.
+  const discard = (entries: Array<{ response: Response }>) => {
+    for (const entry of entries) void entry.response.body?.cancel().catch(() => undefined);
+  };
   const primary = successful.find((entry) => entry.connection.role === "primary");
   if (!primary) {
     lease.release();
+    discard(successful);
     throw new ApiError(502, "opencode_unreachable", "The primary OpenCode event stream is unavailable");
   }
   if (!primary.response.ok || !primary.response.body) {
     lease.release();
+    discard(successful.filter((entry) => entry !== primary));
     return sanitizeProxyResponse(primary.response);
   }
   const streams = successful
     .flatMap((entry) => entry.response.ok && entry.response.body
       ? [{ connection: entry.connection, body: entry.response.body }]
       : []);
+  discard(successful.filter((entry) => entry !== primary && !(entry.response.ok && entry.response.body)));
   const headers = new Headers(primary.response.headers);
   headers.delete("content-length");
   headers.delete("content-encoding");

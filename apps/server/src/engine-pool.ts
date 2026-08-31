@@ -289,6 +289,40 @@ function eventIdentifiers(payload: unknown): { sessionIds: Set<string>; requestI
   return { sessionIds, requestIds };
 }
 
+/**
+ * Cap on the text one unterminated SSE frame may buffer before the stream is
+ * treated as malformed. Sized well above any legitimate single engine event
+ * (large tool outputs included) so real frames are never truncated; only a
+ * stream that stops terminating frames hits it.
+ */
+export const ENGINE_SSE_FRAME_MAX_CHARS = 4 * 1024 * 1024;
+
+/**
+ * Incremental SSE frame splitter shared by the client event fan-in and the
+ * drain activity watch. It bounds the memory a single unterminated frame can
+ * hold: completed frames are always returned, and `overflow` turns true once
+ * the pending remainder exceeds the cap so the caller can drop that
+ * connection instead of buffering it forever.
+ */
+export class BoundedSseFrameBuffer {
+  private readonly decoder = new TextDecoder();
+  private buffered = "";
+
+  constructor(private readonly maxFrameChars = ENGINE_SSE_FRAME_MAX_CHARS) {}
+
+  push(chunk: Uint8Array): { frames: string[]; overflow: boolean } {
+    this.buffered += this.decoder.decode(chunk, { stream: true });
+    const frames: string[] = [];
+    while (true) {
+      const delimiter = this.buffered.match(/\r?\n\r?\n/);
+      if (!delimiter || delimiter.index === undefined) break;
+      frames.push(this.buffered.slice(0, delimiter.index));
+      this.buffered = this.buffered.slice(delimiter.index + delimiter[0].length);
+    }
+    return { frames, overflow: this.buffered.length > this.maxFrameChars };
+  }
+}
+
 /** Decode one SSE frame's `data:` payload; null when the frame carries none. */
 function sseFramePayload(frame: string): unknown {
   const data = frame
@@ -855,23 +889,22 @@ export class EnginePool {
     signal: AbortSignal,
   ): Promise<void> {
     const reader = body.getReader();
-    const decoder = new TextDecoder();
-    let buffered = "";
+    const frameBuffer = new BoundedSseFrameBuffer();
     try {
       while (!signal.aborted && generation.status === "draining") {
         const chunk = await reader.read();
         if (chunk.done) return;
-        buffered += decoder.decode(chunk.value, { stream: true });
-        while (true) {
-          const delimiter = buffered.match(/\r?\n\r?\n/);
-          if (!delimiter || delimiter.index === undefined) break;
-          const frame = buffered.slice(0, delimiter.index);
-          buffered = buffered.slice(delimiter.index + delimiter[0].length);
+        const parsed = frameBuffer.push(chunk.value);
+        for (const frame of parsed.frames) {
           this.noteDrainActivity(generation, sseFramePayload(frame));
         }
+        // A frame that never terminates would buffer without bound; drop the
+        // stream and let the watch loop reconnect.
+        if (parsed.overflow) return;
       }
     } finally {
       await reader.cancel().catch(() => undefined);
+      reader.releaseLock();
     }
   }
 
