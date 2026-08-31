@@ -50,6 +50,7 @@ export type AdvancedViewProps = {
   refreshCloudMcpHealth: () => Promise<OpenworkCloudMcpHealth | null>;
   getEngineV2PreviewStatus: () => Promise<EngineV2PreviewStatus>;
   setEngineV2PreviewEnabled: (enabled: boolean) => Promise<EngineV2PreviewStatus>;
+  setEngineV2PreviewChatRouting: (enabled: boolean) => Promise<EngineV2PreviewStatus>;
 };
 
 type AdvancedStatusTone = "ready" | "warning" | "error" | "neutral";
@@ -199,6 +200,7 @@ export function AdvancedView(props: AdvancedViewProps) {
       <AdvancedEngineV2PreviewSection
         getStatus={props.getEngineV2PreviewStatus}
         setEnabled={props.setEngineV2PreviewEnabled}
+        setChatRouting={props.setEngineV2PreviewChatRouting}
       />
 
       <AdvancedDeveloperSection

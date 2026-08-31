@@ -6,6 +6,7 @@ import { getReactQueryClient } from "../../../infra/query-client";
 import { captureAnalyticsEvent, takeTaskRunStart } from "@/app/lib/analytics";
 import { trackTaskCompleted, trackTaskFailed } from "@/app/lib/den-telemetry";
 import { createClient, unwrap } from "@/app/lib/opencode";
+import { createClientV2, isOpencodeV2BaseUrl } from "@/app/lib/opencode-v2-adapter";
 import { isGeneratedSessionTitle } from "@/app/lib/session-title";
 import { normalizeEvent } from "@/app/utils";
 import { SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX, type OpencodeEvent, type PendingPermission, type PendingQuestion } from "@/app/types";
@@ -144,14 +145,20 @@ type SessionStatusFetcher = (
   signal: AbortSignal,
 ) => Promise<Record<string, SessionStatus>>;
 
+function createSyncClient(baseUrl: string, openworkToken: string) {
+  return isOpencodeV2BaseUrl(baseUrl)
+    ? createClientV2(baseUrl, undefined, { token: openworkToken })
+    : createClient(baseUrl, undefined, { token: openworkToken, mode: "openwork" });
+}
+
 const defaultSyncSubscriptionFactory: SyncSubscriptionFactory = async (baseUrl, openworkToken, signal) => {
-  const client = createClient(baseUrl, undefined, { token: openworkToken, mode: "openwork" });
+  const client = createSyncClient(baseUrl, openworkToken);
   const subscription = await client.event.subscribe(undefined, { signal });
   return subscription.stream;
 };
 
 const defaultSessionStatusFetcher: SessionStatusFetcher = async (baseUrl, openworkToken, signal) => {
-  const client = createClient(baseUrl, undefined, { token: openworkToken, mode: "openwork" });
+  const client = createSyncClient(baseUrl, openworkToken);
   const result = await client.session.status(undefined, { signal });
   if (result.data !== undefined) return result.data;
   throw result.error;
@@ -1242,7 +1249,7 @@ export function ensureWorkspaceSessionSync(input: SyncOptions) {
   };
   created.titleRecovery = createSessionTitleRecovery({
     fetch: async (sessionId) => {
-      const client = createClient(input.baseUrl, undefined, { token: created.openworkToken, mode: "openwork" });
+      const client = createSyncClient(input.baseUrl, created.openworkToken);
       const [session, messages] = await Promise.all([
         client.session.get({ sessionID: sessionId }).then(unwrap),
         client.session.messages({ sessionID: sessionId, limit: 20 }).then(unwrap),

@@ -2623,6 +2623,10 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
               if (!openworkClient) throw new Error("OpenWork server is not connected.");
               return openworkClient.setEngineV2PreviewEnabled(enabled);
             }}
+            setEngineV2PreviewChatRouting={async (enabled) => {
+              if (!openworkClient) throw new Error("OpenWork server is not connected.");
+              return openworkClient.setEngineV2PreviewChatRouting(enabled);
+            }}
             organizationServer={denSession}
           />
         );
