@@ -264,7 +264,10 @@ jobs:
           export PATH="$PNPM_HOME/bin:$PNPM_HOME:$PATH"
           mkdir -p "$PNPM_HOME/bin"
           pnpm add --global --ignore-scripts opencode-ai@1.18.18
-          package_dir="$(pnpm list --global --parseable opencode-ai)"
+          package_dir=""
+          while IFS= read -r candidate; do
+            package_dir="$candidate"
+          done < <(pnpm list --global --parseable opencode-ai)
           [ -n "$package_dir" ]
           (cd "$package_dir" && node postinstall.mjs)
           opencode --version
