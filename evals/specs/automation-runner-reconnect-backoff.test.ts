@@ -57,9 +57,16 @@ test("desktop Automation runner retires rejected credentials without changing tr
   expect(unit.stdout).toContain("an unpinned assignment keeps the legacy active-workspace fallback");
   expect(unit.stdout).toContain("a pinned workspace missing locally fails instead of silently retargeting");
   expect(unit.stdout).toContain("desktop Automation execution runs in the assignment's pinned workspace");
+  expect(unit.stdout).toContain("a heartbeat slower than its interval never overlaps the next probe");
+  expect(unit.stdout).toContain("a hung completion request is bounded and the runner keeps claiming new work");
+  expect(unit.stdout).toContain("transient heartbeat failures below the miss threshold do not abort the run");
+  expect(unit.stdout).toContain("consecutive heartbeat misses abort the run and still deliver terminal and completion");
+  expect(unit.stdout).toContain("a snapshot poll left hanging by a suspended machine still honors the assignment timeout");
+  expect(unit.stdout).toContain("a late heartbeat verdict for a finished run cannot cancel its successor");
+  expect(unit.stdout).toContain("stopping the runner during terminal delivery aborts it without further requests");
   expect(unit.stdout).not.toContain("not ok");
-  expect(unit.stdout).toMatch(/# tests 38\b/);
-  expect(unit.stdout).toMatch(/# pass 38\b/);
+  expect(unit.stdout).toMatch(/# tests 45\b/);
+  expect(unit.stdout).toMatch(/# pass 45\b/);
   expect(unit.stdout).toMatch(/# fail 0\b/);
   expect(unit.stdout).toMatch(/# skipped 0\b/);
   expect(unit.stdout).toMatch(/# todo 0\b/);
@@ -81,7 +88,7 @@ test("desktop Automation runner retires rejected credentials without changing tr
   expect(bridgeOutput).toContain("0 fail");
   evidence.recordAssertionEvidence(
     "Rejected runner credentials stop and remint without disrupting valid work",
-    "The runner and bridge suites passed 45 tests covering one-shot 401/403 retirement on every runner route, fresh-token remint backoff, generation races, active assignments, in-flight claims, wake-time work polling, bounded idle polls, cancellation, provider and workspace failures, durable failed-thread linkage, tool-only completion, remote-session delivery and failure receipts, and work-only polling.",
+    "The runner and bridge suites passed 57 tests covering one-shot 401/403 retirement on every runner route, fresh-token remint backoff, generation races, active assignments, in-flight claims, wake-time work polling, bounded idle polls, serialized bounded heartbeats with a consecutive-miss threshold, bounded terminal and completion delivery, cancellation, provider and workspace failures, durable failed-thread linkage, tool-only completion, remote-session delivery and failure receipts, and work-only polling.",
     true,
   );
 
