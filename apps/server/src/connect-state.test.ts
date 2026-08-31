@@ -7,6 +7,7 @@ import { OPENWORK_CLOUD_EXPECTED_TOOLS, OPENWORK_CLOUD_PLUGIN_CANARIES } from ".
 import { writeRuntimeOpencodeConfig } from "./runtime-opencode-config-store.js";
 import { startServer } from "./server.js";
 import type { ServerConfig, WorkspaceInfo } from "./types.js";
+import { closeWorkspaceKvDbsForTests } from "./workspace-kv-store.js";
 
 const CLIENT_TOKEN = "owt_connect_state_client";
 const HOST_TOKEN = "owt_connect_state_host";
@@ -16,6 +17,7 @@ const roots: string[] = [];
 
 afterEach(async () => {
   while (stops.length) await stops.pop()?.();
+  await closeWorkspaceKvDbsForTests();
   while (roots.length) await rm(roots.pop() ?? "", { recursive: true, force: true });
   if (previousRuntimeDb === undefined) delete process.env.OPENWORK_RUNTIME_DB;
   else process.env.OPENWORK_RUNTIME_DB = previousRuntimeDb;
@@ -167,5 +169,23 @@ describe("connect state Cloud health scoping", () => {
     expect(unknown.cloudMcpPresent).toBe(false);
     expect(unknown.cloudHealth).toBeNull();
     expect(requireRecord(unknown.workspace, "workspace").resolution).toBe("unknown");
+
+    // Test Windows-specific path variations
+    const rootAUpper = rootA.toUpperCase();
+    const rootABackslashes = rootA.replace(/\//g, "\\");
+    const rootATrailingSlash = rootABackslashes.endsWith("\\") ? rootABackslashes : rootABackslashes + "\\";
+    const rootAExtendedLength = "\\\\?\\" + rootABackslashes;
+
+    const upperRes = await responseRecord(await fetch(`${openwork.base}/experimental/connect/state?directory=${encodeURIComponent(rootAUpper)}`, { headers: clientHeaders() }));
+    expect(requireRecord(upperRes.workspace, "workspace").id).toBe("ws_a");
+
+    const backslashesRes = await responseRecord(await fetch(`${openwork.base}/experimental/connect/state?directory=${encodeURIComponent(rootABackslashes)}`, { headers: clientHeaders() }));
+    expect(requireRecord(backslashesRes.workspace, "workspace").id).toBe("ws_a");
+
+    const trailingSlashRes = await responseRecord(await fetch(`${openwork.base}/experimental/connect/state?directory=${encodeURIComponent(rootATrailingSlash)}`, { headers: clientHeaders() }));
+    expect(requireRecord(trailingSlashRes.workspace, "workspace").id).toBe("ws_a");
+
+    const extendedLengthRes = await responseRecord(await fetch(`${openwork.base}/experimental/connect/state?directory=${encodeURIComponent(rootAExtendedLength)}`, { headers: clientHeaders() }));
+    expect(requireRecord(extendedLengthRes.workspace, "workspace").id).toBe("ws_a");
   });
 });

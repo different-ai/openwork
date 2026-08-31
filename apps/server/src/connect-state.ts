@@ -198,7 +198,14 @@ export async function writeConnectCloudMcp(
 }
 
 function normalizeDirectory(directory: string): string {
-  return directory.trim().replace(/[\/]+$/, "");
+  let cleaned = directory.trim();
+  if (process.platform === "win32") {
+    cleaned = cleaned.replace(/^\\\\\?\\/, "").replace(/^\/\/\?\//, "");
+    cleaned = cleaned.replace(/\\/g, "/").toLowerCase();
+  } else {
+    cleaned = cleaned.replace(/\/+$/, "");
+  }
+  return cleaned.replace(/\/+$/, "");
 }
 
 function workspaceDirectory(workspace: WorkspaceInfo, resolveOpencodeDirectory?: (workspace: WorkspaceInfo) => string | null): string | null {
