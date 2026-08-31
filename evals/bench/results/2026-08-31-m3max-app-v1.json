@@ -1,0 +1,158 @@
+{
+  "lane": "app-v1",
+  "createdAt": "2026-08-31T04:30:19.876Z",
+  "machine": {
+    "platform": "darwin",
+    "arch": "arm64",
+    "cpus": 16,
+    "cpuModel": "Apple M3 Max",
+    "memGB": 48,
+    "node": "v24.15.0"
+  },
+  "appCommit": "8d8d0105fd9e5bea4b7ff254833ee649b604e691",
+  "iterations": 5,
+  "pacingMs": 20,
+  "tokens": 20,
+  "pollResolutionMs": 50,
+  "executionPlan": {
+    "coldInstances": 5,
+    "warmIterations": 5,
+    "warmScenariosRunIn": "last cold instance only"
+  },
+  "modelReselectedPerSession": false,
+  "uiCompactionAvailable": false,
+  "results": {
+    "cold_boot_to_composer": [
+      {
+        "appInteractive": 36513,
+        "workspaceReady": 51020,
+        "composerReady": 51020,
+        "desktopTotalMs": 36513,
+        "appReadinessMs": 7690
+      },
+      {
+        "appInteractive": 27089,
+        "workspaceReady": 38536,
+        "composerReady": 38537,
+        "desktopTotalMs": 27089,
+        "appReadinessMs": 7025
+      },
+      {
+        "appInteractive": 27022,
+        "workspaceReady": 38489,
+        "composerReady": 38490,
+        "desktopTotalMs": 27022,
+        "appReadinessMs": 6958
+      },
+      {
+        "appInteractive": 27039,
+        "workspaceReady": 38495,
+        "composerReady": 38495,
+        "desktopTotalMs": 27039,
+        "appReadinessMs": 7448
+      },
+      {
+        "appInteractive": 27439,
+        "workspaceReady": 38923,
+        "composerReady": 38924,
+        "desktopTotalMs": 27439,
+        "appReadinessMs": 6821
+      }
+    ],
+    "first_send_cold": [
+      2382,
+      3433,
+      2885,
+      2325,
+      3583
+    ],
+    "new_session_ready": [
+      372,
+      403,
+      335,
+      355,
+      346
+    ],
+    "message_rtt": [
+      {
+        "userRendered": 75,
+        "firstToken": 133,
+        "complete": 500
+      },
+      {
+        "userRendered": 76,
+        "firstToken": 96,
+        "complete": 490
+      },
+      {
+        "userRendered": 80,
+        "firstToken": 89,
+        "complete": 523
+      },
+      {
+        "userRendered": 76,
+        "firstToken": 92,
+        "complete": 522
+      },
+      {
+        "userRendered": 83,
+        "firstToken": 88,
+        "complete": 506
+      }
+    ],
+    "workspace_switch": [
+      {
+        "aToB": 133,
+        "bToA": 92
+      },
+      {
+        "aToB": 97,
+        "bToA": 93
+      },
+      {
+        "aToB": 107,
+        "bToA": 94
+      },
+      {
+        "aToB": 105,
+        "bToA": 89
+      },
+      {
+        "aToB": 109,
+        "bToA": 132
+      }
+    ],
+    "long_message": [
+      {
+        "insertMs": 50,
+        "userRendered": 124,
+        "firstToken": 131,
+        "complete": 524
+      },
+      {
+        "insertMs": 43,
+        "userRendered": 94,
+        "firstToken": 159,
+        "complete": 535
+      },
+      {
+        "insertMs": 42,
+        "userRendered": 108,
+        "firstToken": 167,
+        "complete": 544
+      },
+      {
+        "insertMs": 43,
+        "userRendered": 110,
+        "firstToken": 167,
+        "complete": 552
+      },
+      {
+        "insertMs": 46,
+        "userRendered": 108,
+        "firstToken": 167,
+        "complete": 540
+      }
+    ]
+  }
+}
