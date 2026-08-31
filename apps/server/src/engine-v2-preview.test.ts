@@ -1,6 +1,67 @@
 import { expect, test } from "bun:test";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
-import { mapRuntimeProvidersToV2Specs } from "./engine-v2-preview.js";
+import {
+  createEngineV2Preview,
+  mapRuntimeProvidersToV2Specs,
+  readEngineV2PreviewState,
+  writeEngineV2PreviewState,
+} from "./engine-v2-preview.js";
+import type { ServerConfig } from "./types.js";
+
+function testConfig(root: string): ServerConfig {
+  return {
+    host: "127.0.0.1",
+    port: 0,
+    token: "client-token",
+    hostToken: "host-token",
+    configPath: join(root, "openwork-server.json"),
+    approval: { mode: "manual", timeoutMs: 1_000 },
+    corsOrigins: [],
+    workspaces: [],
+    authorizedRoots: [root],
+    readOnly: false,
+    startedAt: Date.now(),
+    tokenSource: "cli",
+    hostTokenSource: "cli",
+    logFormat: "pretty",
+    logRequests: false,
+  };
+}
+
+test("round trips enabled and chat routing state and defaults corrupt state", async () => {
+  const root = await mkdtemp(join(tmpdir(), "openwork-engine-v2-preview-"));
+  const config = testConfig(root);
+  try {
+    await writeEngineV2PreviewState(config, { enabled: true, chatRouting: true });
+    expect(readEngineV2PreviewState(config)).toEqual({ enabled: true, chatRouting: true });
+
+    await writeFile(join(root, "engine-v2-preview.json"), "{invalid", "utf8");
+    expect(readEngineV2PreviewState(config)).toEqual({ enabled: false, chatRouting: false });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("persists chat routing and includes it in preview status without starting the engine", async () => {
+  const root = await mkdtemp(join(tmpdir(), "openwork-engine-v2-preview-"));
+  const config = testConfig(root);
+  const preview = createEngineV2Preview({ config });
+  try {
+    expect(preview.status().chatRouting).toBe(false);
+    const status = await preview.setChatRouting(true);
+    expect(status.chatRouting).toBe(true);
+    expect(status.enabled).toBe(false);
+    expect(status.running).toBe(false);
+    expect(preview.connection()).toBeUndefined();
+    expect(readEngineV2PreviewState(config)).toEqual({ enabled: false, chatRouting: true });
+  } finally {
+    await preview.stop();
+    await rm(root, { recursive: true, force: true });
+  }
+});
 
 test("maps runtime provider fields and models to an OpenCode v2 spec", () => {
   expect(mapRuntimeProvidersToV2Specs({
