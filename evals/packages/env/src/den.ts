@@ -46,6 +46,7 @@ export interface ServerOptions {
   place: Place;
   mocks?: Record<string, MockBoot>;
   org?: OrgShape;
+  /** Set to false for an infra-only Den boot that creates no default organization or accounts. */
   provision?: boolean;
   web?: boolean;
   env?: Record<string, string | undefined>;
@@ -78,6 +79,12 @@ export interface Den extends AsyncDisposable {
    * whoever runs that server. Parsing belongs to the caller.
    */
   apiLog(): Promise<string>;
+}
+
+export interface DenOrgHandle extends AsyncDisposable {
+  id: string;
+  name: string;
+  admin: DenSession;
 }
 
 interface SpawnedService {
@@ -374,6 +381,36 @@ async function createOrganization(admin: DenSession, name: string): Promise<stri
     throw new Error(`Organization create failed: HTTP ${created.response.status} ${created.text.slice(0, 500)}`);
   }
   return organizationId;
+}
+
+export async function createAdmin(den: Den, person: PersonShape): Promise<DenSession> {
+  const runId = `${Date.now().toString(36)}${process.pid.toString(36)}`;
+  const admin = await createOrSignInAccount(
+    den.ref,
+    personDefaults("admin", person, runId),
+    den.database?.url,
+  );
+  den.admin = admin;
+  return admin;
+}
+
+export async function createOrg(den: Den, name: string): Promise<DenOrgHandle> {
+  if (!den.admin.token.trim()) {
+    throw new Error("createOrg requires an authenticated den.admin; call createAdmin after server({ provision: false }).");
+  }
+  const admin = den.admin;
+  const id = await createOrganization(admin, name);
+  let disposed = false;
+  return {
+    id,
+    name,
+    admin,
+    async [Symbol.asyncDispose](): Promise<void> {
+      if (disposed) return;
+      disposed = true;
+      await deleteCreatedOrganization(admin, id);
+    },
+  };
 }
 
 async function createMember(

@@ -25,6 +25,7 @@ import type { Den } from "./den.ts";
 import { DEMO_PASSWORD, ensureKindDenReady, exposeEndpointHandles, kubeProfileConfig } from "./kind-stack.ts";
 import { liteLlm } from "./litellm.ts";
 import type { LiteLlmHandle } from "./litellm.ts";
+import { liteLlmPerMemberProvider } from "./litellm-provider.ts";
 import { mcpMock } from "./mock.ts";
 import { resolvePlace, validateDatabaseName } from "./place.ts";
 import type { Place } from "./place.ts";
@@ -398,53 +399,6 @@ function auth(token: string): Record<string, string> {
   return { authorization: `Bearer ${token}` };
 }
 
-interface ExampleProvisionerModule {
-  reconcileMemberKeys(input: {
-    denApiUrl: string;
-    denToken: string;
-    orgId: string;
-    providerId: string;
-    liteLlmBaseUrl: string;
-    liteLlmMasterKey: string;
-    models: string[];
-  }): Promise<unknown>;
-}
-
-function isExampleProvisionerModule(value: unknown): value is ExampleProvisionerModule {
-  return isRecord(value) && typeof value.reconcileMemberKeys === "function";
-}
-
-async function exampleProvisioner(): Promise<ExampleProvisionerModule> {
-  const url = new URL("../../../../examples/litellm-per-member-keys/provision.mjs", import.meta.url).href;
-  const imported: unknown = await import(url);
-  if (!isExampleProvisionerModule(imported)) {
-    throw new Error("The LiteLLM per-member example did not export reconcileMemberKeys.");
-  }
-  return imported;
-}
-
-function metadataResult(value: unknown, modelId: string): {
-  action: "updated" | "unchanged";
-  maxInputTokens: number;
-  maxOutputTokens: number;
-} {
-  const metadata = isRecord(value) && isRecord(value.modelMetadata) ? value.modelMetadata : null;
-  const models = metadata && Array.isArray(metadata.models) ? metadata.models.filter(isRecord) : [];
-  const model = models.find((entry) => entry.id === modelId);
-  if (!metadata
-    || (metadata.action !== "updated" && metadata.action !== "unchanged")
-    || !model
-    || typeof model.maxInputTokens !== "number"
-    || typeof model.maxOutputTokens !== "number") {
-    throw new Error(`LiteLLM example reconciliation returned invalid metadata for model ${JSON.stringify(modelId)}.`);
-  }
-  return {
-    action: metadata.action,
-    maxInputTokens: model.maxInputTokens,
-    maxOutputTokens: model.maxOutputTokens,
-  };
-}
-
 async function provisionWorldLlmProviders(
   den: Den,
   organizationId: string,
@@ -454,7 +408,6 @@ async function provisionWorldLlmProviders(
 ): Promise<Record<string, WorldLlmProviderRuntime>> {
   const providers = org.llmProviders ?? [];
   if (providers.length === 0) return {};
-  const provisioner = await exampleProvisioner();
   const realized: Record<string, WorldLlmProviderRuntime> = {};
   for (const provider of providers) {
     const witness = topology.witnesses?.[provider.witness];
@@ -462,59 +415,24 @@ async function provisionWorldLlmProviders(
     if (!witness || witness.kind !== "litellm" || !gateway) {
       throw new Error(`LiteLLM witness ${JSON.stringify(provider.witness)} was not booted for provider ${JSON.stringify(provider.name)}.`);
     }
-    const route = "/v1/llm-providers";
-    const created = await denFetch(den.admin, route, {
-      method: "POST",
-      headers: {
-        ...auth(den.admin.token),
-        "content-type": "application/json",
-        "x-openwork-org-id": organizationId,
-      },
-      body: JSON.stringify({
-        name: provider.name,
-        source: "custom",
-        customConfig: {
-          id: provider.providerId,
-          name: provider.name,
-          npm: "@ai-sdk/openai-compatible",
-          env: [provider.env],
-          api: gateway.baseUrl,
-          models: [{ id: witness.modelId, name: provider.modelName ?? witness.modelId }],
-        },
-        credentialMode: "per_member",
-        allMembers: true,
-        memberIds: [],
-        teamIds: [],
-      }),
-    });
-    const createdProvider = isRecord(created.body) && isRecord(created.body.llmProvider)
-      ? created.body.llmProvider
-      : null;
-    const providerRecordId = createdProvider && typeof createdProvider.id === "string"
-      ? createdProvider.id
-      : "";
-    if (created.response.status !== 201 || !providerRecordId) {
-      throw new Error(`POST ${route} failed for provider ${JSON.stringify(provider.name)}: HTTP ${created.response.status} ${created.text.slice(0, 500)}`);
-    }
-    const reconciled = await provisioner.reconcileMemberKeys({
-      denApiUrl: den.ref.apiUrl,
-      denToken: den.admin.token,
+    const provisioned = await liteLlmPerMemberProvider(den.admin, {
+      gateway,
       orgId: organizationId,
-      providerId: providerRecordId,
-      liteLlmBaseUrl: gateway.baseUrl,
-      liteLlmMasterKey: gateway.apiKey,
-      models: [witness.modelId],
-    });
-    const metadata = metadataResult(reconciled, witness.modelId);
-    realized[provider.providerId] = {
       providerId: provider.providerId,
-      providerRecordId,
-      witness: provider.witness,
-      baseUrl: gateway.baseUrl,
+      name: provider.name,
+      envVar: provider.env,
       modelId: witness.modelId,
-      maxInputTokens: metadata.maxInputTokens,
-      maxOutputTokens: metadata.maxOutputTokens,
-      metadataAction: metadata.action,
+      modelName: provider.modelName,
+    });
+    realized[provider.providerId] = {
+      providerId: provisioned.providerId,
+      providerRecordId: provisioned.providerRecordId,
+      witness: provider.witness,
+      baseUrl: provisioned.baseUrl,
+      modelId: provisioned.modelId,
+      maxInputTokens: provisioned.maxInputTokens,
+      maxOutputTokens: provisioned.maxOutputTokens,
+      metadataAction: provisioned.metadataAction,
     };
   }
   return realized;

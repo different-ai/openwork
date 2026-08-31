@@ -1,13 +1,39 @@
 import assert from "node:assert/strict";
-import { readdir } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { basename, join } from "node:path";
+import { tmpdir } from "node:os";
 import { desktopProductionLive, test } from "@openwork/testkit";
 import { discoverWorlds, loadWorldFile, main } from "@openwork/world";
-import type { LoadedWorld, WorldRuntimeAdapter } from "@openwork/world";
+import type { LoadedDefinitionWorld, WorldRuntimeAdapter } from "@openwork/world";
 
 const REPO_ROOT = fileURLToPath(new URL("../..", import.meta.url));
 const WORLDS_DIRECTORY = join(REPO_ROOT, "worlds");
+
+test("world discovery, list, and help never import world modules", async () => {
+  const root = await mkdtemp(join(tmpdir(), "openwork-world-discovery-"));
+  try {
+    const worldsDirectory = join(root, "worlds");
+    await mkdir(worldsDirectory);
+    await writeFile(join(worldsDirectory, "unguarded.ts"), 'throw new Error("world module was imported");\n', "utf8");
+
+    assert.deepEqual(await discoverWorlds(worldsDirectory), [{
+      kind: "unknown",
+      name: "unguarded",
+      path: join(worldsDirectory, "unguarded.ts"),
+    }]);
+    for (const command of [["list"], ["help"]]) {
+      assert.equal(await main(command, {
+        cwd: root,
+        worldsDirectory,
+        adapters: [],
+        print: () => {},
+      }), 0);
+    }
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
 
 test("shared world files are discovered, path-loadable, consent-gated, and detached by default", async ({ evidence }) => {
   // Discovery must mirror the worlds/ directory itself. The listing is derived
@@ -23,11 +49,13 @@ test("shared world files are discovered, path-loadable, consent-gated, and detac
     worldFileNames.map((entry) => ({ name: basename(entry, ".ts"), path: join(WORLDS_DIRECTORY, entry) })),
   );
 
-  // Every discovered world must load from its path and satisfy the launch
-  // contract. A new world file is covered here automatically.
-  const loadedWorlds = new Map<string, LoadedWorld>();
+  // Discovery stays import-free and explicit loads classify each world. Definition
+  // worlds additionally satisfy the adapter launch contract.
+  const loadedWorlds = new Map<string, LoadedDefinitionWorld>();
   for (const world of discovered) {
+    assert.equal(world.kind, "unknown", `world ${world.name} must remain unclassified during discovery`);
     const loaded = await loadWorldFile(world.path);
+    if (loaded.kind !== "definition") continue;
     loadedWorlds.set(world.name, loaded);
     assert.equal(loaded.defaultName, world.name);
     assert.equal(typeof loaded.definition.adapter, "string");
@@ -40,7 +68,7 @@ test("shared world files are discovered, path-loadable, consent-gated, and detac
     );
     assert.ok("topology" in loaded.definition, `world ${world.name} must carry a topology`);
   }
-  const loadedWorld = (name: string): LoadedWorld => {
+  const loadedWorld = (name: string): LoadedDefinitionWorld => {
     const loaded = loadedWorlds.get(name);
     assert.ok(loaded, `expected a root world file named ${name}`);
     return loaded;
@@ -70,10 +98,11 @@ test("shared world files are discovered, path-loadable, consent-gated, and detac
 
   // Every world that touches live shared state must refuse to launch without
   // explicit consent, before any runtime adapter is started.
-  const sharedStateWorlds = discovered.filter((world) => loadedWorld(world.name).definition.requiresSharedState);
+  const definitionWorlds = discovered.filter((world) => loadedWorlds.has(world.name));
+  const sharedStateWorlds = definitionWorlds.filter((world) => loadedWorld(world.name).definition.requiresSharedState);
   assert.ok(sharedStateWorlds.length > 0, "expected at least one shared-state world to exercise the consent gate");
   const refusalAdapters: WorldRuntimeAdapter[] = [...new Set(
-    discovered.map((world) => loadedWorld(world.name).definition.adapter),
+    definitionWorlds.map((world) => loadedWorld(world.name).definition.adapter),
   )].map((id) => ({
     id,
     snapshotDirectory: join(REPO_ROOT, "tmp", "spec-worlds"),
@@ -135,7 +164,7 @@ test("shared world files are discovered, path-loadable, consent-gated, and detac
 
   evidence.recordAssertionEvidence(
     "Root world files are auto-discovered and path-loadable",
-    `Discovery mirrored the worlds/ directory listing (${discovered.length} files) and every file loaded with a valid launch contract, so new worlds are covered without editing this spec.`,
+    `Import-free discovery mirrored the worlds/ directory listing (${discovered.length} files), and every explicitly loaded definition had a valid launch contract.`,
     true,
   );
   evidence.recordAssertionEvidence(

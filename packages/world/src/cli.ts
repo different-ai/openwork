@@ -1,7 +1,15 @@
 import { readFile } from "node:fs/promises";
-import { join, relative, resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { discoverWorlds, displayWorldPath, loadWorldSource } from "./loader.ts";
 import { assertWorldName, WorldStateStore } from "./store.ts";
+import {
+  downScriptWorld,
+  isProcessAlive,
+  launchScriptWorld,
+  readScriptWorldSnapshot,
+  scriptWorldSnapshotDirectory,
+  scriptWorldSnapshotPath,
+} from "./script-world.ts";
 import type { LaunchableWorldDefinition } from "./definition.ts";
 
 export type WorldCommand =
@@ -16,9 +24,11 @@ export type WorldCommand =
       keepTokens?: boolean;
       rotateTokens?: boolean;
       silent?: boolean;
+      timeoutMs?: number;
     }
   | { kind: "rebuild"; snapshotPath: string; allowSharedState?: boolean; replace?: boolean }
   | { kind: "resume"; nameOrSnapshotPath: string; teardown?: boolean }
+  | { kind: "down"; name: string }
   | { kind: "list" }
   | { kind: "forget"; name: string }
   | { kind: "help"; error?: string };
@@ -84,7 +94,7 @@ function helpError(message: string): WorldCommand {
 }
 
 function flagError(): WorldCommand {
-  return helpError("Use --name <name>, --detach, --keep, --allow-shared-state, and supported compatibility flags after the world source.");
+  return helpError("Use --name <name>, --detach, --timeout <ms>, --keep, --allow-shared-state, and supported compatibility flags after the world source.");
 }
 
 export function parseWorldArgs(argv: string[]): WorldCommand {
@@ -103,6 +113,7 @@ export function parseWorldArgs(argv: string[]): WorldCommand {
     let keepTokens = false;
     let rotateTokens = false;
     let silent = false;
+    let timeoutMs: number | undefined;
     for (let index = 0; index < options.length; index += 1) {
       const option = options[index];
       if (option === "--name" && name === undefined) {
@@ -119,9 +130,18 @@ export function parseWorldArgs(argv: string[]): WorldCommand {
       if (option === "--keep-tokens" && !keepTokens) { keepTokens = true; continue; }
       if (option === "--rotate-tokens" && !rotateTokens) { rotateTokens = true; continue; }
       if (option === "--silent" && !silent) { silent = true; continue; }
+      if (option === "--timeout" && timeoutMs === undefined) {
+        const value = options[index + 1];
+        const parsed = value === undefined ? Number.NaN : Number(value);
+        if (!Number.isSafeInteger(parsed) || parsed <= 0) return helpError("Use --timeout followed by a positive number of milliseconds.");
+        timeoutMs = parsed;
+        index += 1;
+        continue;
+      }
       return flagError();
     }
     if (keep && detach) return helpError("Use either --keep or --detach, not both.");
+    if (timeoutMs !== undefined && !detach) return helpError("Use --timeout only with --detach.");
     return {
       kind: "up",
       source,
@@ -133,6 +153,7 @@ export function parseWorldArgs(argv: string[]): WorldCommand {
       ...(keepTokens ? { keepTokens: true } : {}),
       ...(rotateTokens ? { rotateTokens: true } : {}),
       ...(silent ? { silent: true } : {}),
+      ...(timeoutMs === undefined ? {} : { timeoutMs }),
     };
   }
   if (command === "rebuild") {
@@ -159,12 +180,16 @@ export function parseWorldArgs(argv: string[]): WorldCommand {
     return helpError("Use only --teardown after the world name or snapshot path.");
   }
   if (command === "list") return args.length === 0 ? { kind: "list" } : helpError("The list command does not take arguments.");
+  if (command === "down") {
+    return args.length === 1 && args[0]
+      ? { kind: "down", name: args[0] }
+      : helpError("The down command needs exactly one world name.");
+  }
   if (command === "forget") {
     return args.length === 1 && args[0]
       ? { kind: "forget", name: args[0] }
       : helpError("The forget command needs exactly one world name.");
   }
-  if (command === "down") return helpError('Unknown command "down"; use `world resume <name> --teardown`.');
   return helpError(`Unknown command ${JSON.stringify(command)}.`);
 }
 
@@ -288,14 +313,16 @@ async function helpText(options: WorldCliOptions): Promise<string> {
     ...discovered.map((world) => displayWorldPath(world.path, options.cwd)),
   ];
   return `Usage:
-  pnpm world up <preset-or-world-path> [--name <name>] [--allow-shared-state]
+  pnpm world up <preset-or-world-path> [--name <name>] [--detach] [--timeout <ms>] [--allow-shared-state]
+  pnpm world down <name>
   pnpm world rebuild <snapshot-path> [--allow-shared-state]
   pnpm world resume <name-or-snapshot-path> [--teardown]
   pnpm world list
   pnpm world forget <name>
   pnpm world help
 
-World files default their name from the filename and may default to detached mode.
+Script world files run in the foreground by default; use --detach to launch them in the background.
+Definition world files default their name from the filename and may default to detached mode.
 Available worlds: ${sources.join(", ") || "(none)"}`;
 }
 
@@ -336,6 +363,31 @@ function isMissingFile(error: unknown): boolean {
     && error.code === "ENOENT";
 }
 
+async function runResume(
+  nameOrSnapshotPath: string,
+  teardown: boolean,
+  options: WorldCliOptions,
+  io: { print: (line: string) => void; onExit: () => Promise<void>; load: (path: string) => Promise<string> },
+): Promise<number> {
+  const saved = await loadNamedSnapshot(options.adapters, nameOrSnapshotPath, io.load);
+  const runtime = await saved.adapter.resume(saved.text, { teardown });
+  printStarted(
+    runtime,
+    "resumed from snapshot",
+    displayWorldPath(saved.path, options.cwd),
+    teardown ? "Teardown requested; stopping resolved services." : "Attached mode: Ctrl-C detaches; the world keeps running.",
+    io.print,
+  );
+  if (teardown) {
+    for (const line of await runtime.teardown()) io.print(line);
+    return 0;
+  }
+  await io.onExit();
+  await runtime.detach();
+  io.print(`Detached from world ${JSON.stringify(runtime.name)}; it is still running.`);
+  return 0;
+}
+
 export async function main(argv: string[], options: WorldCliOptions): Promise<number> {
   const print = options.print ?? console.log;
   const onExit = options.onExit ?? defaultOnExit;
@@ -353,6 +405,28 @@ export async function main(argv: string[], options: WorldCliOptions): Promise<nu
         worldsDirectory: options.worldsDirectory,
         presets: options.presets ?? {},
       });
+      if (loaded.kind === "script") {
+        if (
+          command.name !== undefined
+          || command.keep === true
+          || command.allowSharedState === true
+          || command.replace === true
+          || command.keepTokens === true
+          || command.rotateTokens === true
+          || command.silent === true
+        ) {
+          throw new Error("Script worlds support only --detach and --timeout.");
+        }
+        return await launchScriptWorld({
+          path: loaded.path,
+          name: loaded.name,
+          snapshotDirectory: scriptWorldSnapshotDirectory(options.cwd),
+          detach: command.detach === true,
+          ...(command.timeoutMs === undefined ? {} : { timeoutMs: command.timeoutMs }),
+          print,
+        });
+      }
+      if (command.timeoutMs !== undefined) throw new Error("--timeout is supported only for detached script worlds.");
       if (loaded.definition.requiresSharedState && command.allowSharedState !== true) {
         throw new Error("Refusing LIVE SHARED PRODUCTION STATE launch without explicit --allow-shared-state opt-in.");
       }
@@ -403,22 +477,22 @@ export async function main(argv: string[], options: WorldCliOptions): Promise<nu
   }
   if (command.kind === "resume") {
     try {
-      const saved = await loadNamedSnapshot(options.adapters, command.nameOrSnapshotPath, load);
-      const runtime = await saved.adapter.resume(saved.text, { teardown: command.teardown === true });
-      printStarted(
-        runtime,
-        "resumed from snapshot",
-        displayWorldPath(saved.path, options.cwd),
-        command.teardown ? "Teardown requested; stopping resolved services." : "Attached mode: Ctrl-C detaches; the world keeps running.",
-        print,
-      );
-      if (command.teardown) {
-        for (const line of await runtime.teardown()) print(line);
-        return 0;
+      return await runResume(command.nameOrSnapshotPath, command.teardown === true, options, { print, onExit, load });
+    } catch (error) {
+      print(messageText(error));
+      return 1;
+    }
+  }
+  if (command.kind === "down") {
+    try {
+      const scriptPath = scriptWorldSnapshotPath(scriptWorldSnapshotDirectory(options.cwd), command.name);
+      const result = await downScriptWorld(scriptPath);
+      if (!result.found) return await runResume(command.name, true, options, { print, onExit, load });
+      if (result.forced) {
+        print(`World ${JSON.stringify(command.name)} teardown was forced (pid ${result.pid}).`);
+      } else {
+        print(`World ${JSON.stringify(command.name)} torn down.`);
       }
-      await onExit();
-      await runtime.detach();
-      print(`Detached from world ${JSON.stringify(runtime.name)}; it is still running.`);
       return 0;
     } catch (error) {
       print(messageText(error));
@@ -427,7 +501,7 @@ export async function main(argv: string[], options: WorldCliOptions): Promise<nu
   }
   if (command.kind === "list") {
     const discovered = await discoverWorlds(options.worldsDirectory);
-    print(`World definitions: ${discovered.map((world) => `${world.name} (${displayWorldPath(world.path, options.cwd)})`).join(", ") || "(none)"}`);
+    print(`World files: ${discovered.map((world) => `${world.name} (${displayWorldPath(world.path, options.cwd)}, unclassified)`).join(", ") || "(none)"}`);
     let count = 0;
     for (const adapter of options.adapters) {
       for (const path of await new WorldStateStore(adapter.snapshotDirectory).list()) {
@@ -440,9 +514,25 @@ export async function main(argv: string[], options: WorldCliOptions): Promise<nu
         }
       }
     }
+    const scriptsDirectory = scriptWorldSnapshotDirectory(options.cwd);
+    for (const path of await new WorldStateStore(scriptsDirectory).list()) {
+      try {
+        const snapshot = await readScriptWorldSnapshot(path);
+        if (!snapshot) continue;
+        print(`${snapshot.name}  ${snapshot.createdAt}  script  ${isProcessAlive(snapshot.pid) ? "alive" : `dead(pid ${snapshot.pid})`}`);
+        count += 1;
+      } catch (error) {
+        print(`Warning: skipped ${displayWorldPath(path, options.cwd)}: ${messageText(error)}`);
+      }
+    }
     if (count === 0) print("No world snapshots.");
     return 0;
   }
+  const scriptStore = new WorldStateStore(scriptWorldSnapshotDirectory(options.cwd));
+  const scriptSnapshotExists = await scriptStore.read(command.name).then(() => true, (error: unknown) => {
+    if (isMissingFile(error)) return false;
+    throw error;
+  });
   const stores: { adapter: WorldRuntimeAdapter; store: WorldStateStore }[] = [];
   for (const adapter of options.adapters) {
     const store = new WorldStateStore(adapter.snapshotDirectory);
@@ -453,7 +543,7 @@ export async function main(argv: string[], options: WorldCliOptions): Promise<nu
       if (!isMissingFile(error)) throw error;
     }
   }
-  if (stores.length === 0) {
+  if (stores.length === 0 && !scriptSnapshotExists) {
     print(`World snapshot ${JSON.stringify(command.name)} does not exist.`);
     return 1;
   }
@@ -462,8 +552,8 @@ export async function main(argv: string[], options: WorldCliOptions): Promise<nu
     return 1;
   }
   const matchedStore = stores[0];
-  if (!matchedStore) throw new Error("World snapshot store resolution failed.");
-  await matchedStore.store.forget(command.name);
+  if (matchedStore) await matchedStore.store.forget(command.name);
+  if (scriptSnapshotExists) await scriptStore.forget(command.name);
   print(`Removed snapshot metadata for ${JSON.stringify(command.name)}. Detached services were not stopped.`);
   return 0;
 }

@@ -1,11 +1,11 @@
 import { expect } from "vitest";
 import { denFetch } from "@openwork/behaviors";
-import { needs, startWorld, test, unmetNeeds } from "@openwork/testkit";
+import { needs, test, unmetNeeds } from "@openwork/testkit";
 import type { TestNeeds } from "@openwork/testkit";
 import {
+  bootLiteLlmPerMember,
   LITELLM_WORLD_MODEL,
   LITELLM_WORLD_PROVIDER,
-  liteLlmPerMember,
 } from "../../worlds/litellm-per-member.ts";
 
 const REPLY = "The database-backed per-member LiteLLM world is working.";
@@ -21,13 +21,9 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 test.skipIf(missingRequirements.length > 0)(title, { timeout: 30 * 60_000 }, async ({ evidence, place }) => {
   needs(requirements);
-  await using world = await startWorld(liteLlmPerMember, {
-    place,
-    name: `litellm-per-member-world-${Date.now().toString(36)}`,
-  });
+  await using stack = new AsyncDisposableStack();
+  const { provider: providerRuntime, den, desktop } = await bootLiteLlmPerMember(stack, place);
 
-  const providerRuntime = world.llmProviders[LITELLM_WORLD_PROVIDER];
-  if (!providerRuntime) throw new Error("The world did not realize its LiteLLM provider.");
   expect(providerRuntime).toMatchObject({
     providerId: LITELLM_WORLD_PROVIDER,
     modelId: LITELLM_WORLD_MODEL,
@@ -37,8 +33,8 @@ test.skipIf(missingRequirements.length > 0)(title, { timeout: 30 * 60_000 }, asy
   });
   expect(providerRuntime.baseUrl).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/v1$/);
 
-  const listed = await denFetch(world.den.admin, "/v1/llm-providers?scope=manageable", {
-    headers: { authorization: `Bearer ${world.den.admin.token}` },
+  const listed = await denFetch(den.admin, "/v1/llm-providers?scope=manageable", {
+    headers: { authorization: `Bearer ${den.admin.token}` },
   });
   const providers = isRecord(listed.body) && Array.isArray(listed.body.llmProviders)
     ? listed.body.llmProviders.filter(isRecord)
@@ -52,9 +48,9 @@ test.skipIf(missingRequirements.length > 0)(title, { timeout: 30 * 60_000 }, asy
   });
 
   const connected = await denFetch(
-    world.den.admin,
+    den.admin,
     `/v1/llm-providers/${encodeURIComponent(providerRuntime.providerRecordId)}/connect`,
-    { headers: { authorization: `Bearer ${world.den.admin.token}` } },
+    { headers: { authorization: `Bearer ${den.admin.token}` } },
   );
   const connectedProvider = isRecord(connected.body) && isRecord(connected.body.llmProvider)
     ? connected.body.llmProvider
@@ -82,7 +78,7 @@ test.skipIf(missingRequirements.length > 0)(title, { timeout: 30 * 60_000 }, asy
   const message = choices[0] && isRecord(choices[0].message) ? choices[0].message : null;
   expect(response.status).toBe(200);
   expect(message?.content).toBe(REPLY);
-  expect(world.app("desktop").handle.cdpUrl).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
+  expect(desktop.handle.cdpUrl).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
   evidence.recordAssertionEvidence(
     "One world starts a signed-in Desktop with a database-backed, metadata-synchronized per-member LiteLLM provider",
     `The world booted Desktop CDP, created Den provider ${providerRuntime.providerRecordId}, synchronized 128000/16384 limits, provisioned the admin member key, and returned the deterministic LiteLLM reply.`,

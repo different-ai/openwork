@@ -1,9 +1,30 @@
-import { createWorldDefinition } from "../packages/world/src/index.ts";
-import { parseWorldTopology } from "../evals/packages/env/src/topology.ts";
+import { app } from "../evals/packages/env/src/desktop-app.ts";
+import type { App } from "../evals/packages/env/src/desktop-app.ts";
+import { createAdmin, createOrg, inviteMember, server } from "../evals/packages/env/src/den.ts";
+import type { Den, DenOrgHandle } from "../evals/packages/env/src/den.ts";
+import { liteLlmPerMemberProvider } from "../evals/packages/env/src/litellm-provider.ts";
+import { liteLlm } from "../evals/packages/env/src/litellm.ts";
+import type { LiteLlmHandle } from "../evals/packages/env/src/litellm.ts";
+import { resolvePlace } from "../evals/packages/env/src/place.ts";
+import type { Place } from "../evals/packages/env/src/place.ts";
+import { hold } from "../packages/world/src/hold.ts";
 
 export const LITELLM_WORLD_ORG = "LiteLLM Per-Member World";
 export const LITELLM_WORLD_PROVIDER = "openwork-litellm-per-member";
 export const LITELLM_WORLD_MODEL = "openwork-litellm-per-member-model";
+export const LITELLM_WORLD_PASSWORD = "OpenWorkEval123!";
+
+const REPLY = "The database-backed per-member LiteLLM world is working.";
+
+export interface LiteLlmPerMemberWorld {
+  gateway: LiteLlmHandle;
+  den: Den;
+  org: DenOrgHandle;
+  admin: Awaited<ReturnType<typeof createAdmin>>;
+  alice: Awaited<ReturnType<typeof inviteMember>>;
+  provider: Awaited<ReturnType<typeof liteLlmPerMemberProvider>>;
+  desktop: App;
+}
 
 /**
  * Local Desktop + Den + database-backed LiteLLM world for manually exercising
@@ -12,44 +33,63 @@ export const LITELLM_WORLD_MODEL = "openwork-litellm-per-member-model";
  *
  * Launch: `pnpm world up ./worlds/litellm-per-member.ts`
  */
-export const liteLlmPerMember = createWorldDefinition({
-  den: {
-    orgs: {
-      [LITELLM_WORLD_ORG]: {
-        admin: { name: "LiteLLM Admin", email: "litellm-admin@openwork.test" },
-        members: {
-          alice: { name: "Alice LiteLLM", email: "alice-litellm@openwork.test" },
-        },
-        llmProviders: [{
-          kind: "litellm-per-member",
-          name: "Per-Member LiteLLM Gateway",
-          providerId: LITELLM_WORLD_PROVIDER,
-          env: "LITELLM_PER_MEMBER_API_KEY",
-          witness: "litellm",
-          modelName: "Per-Member LiteLLM Witness",
-        }],
-      },
-    },
-  },
-  apps: {
-    desktop: {
-      signedInTo: { org: LITELLM_WORLD_ORG, as: "admin" },
-      workspacePath: "/tmp/openwork-litellm-per-member-world",
-      model: `${LITELLM_WORLD_PROVIDER}/${LITELLM_WORLD_MODEL}`,
-    },
-  },
-  witnesses: {
-    litellm: {
-      kind: "litellm",
-      modelId: LITELLM_WORLD_MODEL,
-      reply: "The database-backed per-member LiteLLM world is working.",
-      maxInputTokens: 128_000,
-      maxOutputTokens: 16_384,
-    },
-  },
-}, {
-  adapter: "eval",
-  detached: false,
-}, parseWorldTopology);
+export async function bootLiteLlmPerMember(
+  stack: AsyncDisposableStack,
+  place: Place,
+): Promise<LiteLlmPerMemberWorld> {
+  const gateway = stack.use(await liteLlm({
+    place,
+    modelId: LITELLM_WORLD_MODEL,
+    reply: REPLY,
+    database: true,
+    maxInputTokens: 128_000,
+    maxOutputTokens: 16_384,
+  }));
+  const den = stack.use(await server({ place, provision: false, web: true }));
+  const admin = await createAdmin(den, {
+    name: "LiteLLM Admin",
+    email: "litellm-admin@openwork.test",
+    password: LITELLM_WORLD_PASSWORD,
+  });
+  const org = stack.use(await createOrg(den, LITELLM_WORLD_ORG));
+  const alice = await inviteMember(den, "alice", {
+    name: "Alice LiteLLM",
+    email: "alice-litellm@openwork.test",
+    password: LITELLM_WORLD_PASSWORD,
+  });
+  const provider = await liteLlmPerMemberProvider(admin, {
+    gateway,
+    orgId: org.id,
+    providerId: LITELLM_WORLD_PROVIDER,
+    name: "Per-Member LiteLLM Gateway",
+    envVar: "LITELLM_PER_MEMBER_API_KEY",
+    modelId: LITELLM_WORLD_MODEL,
+    modelName: "Per-Member LiteLLM Witness",
+  });
+  const desktop = stack.use(await app({
+    den,
+    place,
+    as: "admin",
+    workspacePath: "/tmp/openwork-litellm-per-member-world",
+    model: `${LITELLM_WORLD_PROVIDER}/${LITELLM_WORLD_MODEL}`,
+  }));
+  return { gateway, den, org, admin, alice, provider, desktop };
+}
 
-export default liteLlmPerMember;
+async function main(): Promise<void> {
+  await using stack = new AsyncDisposableStack();
+  const place = resolvePlace();
+  const { gateway, den, desktop } = await bootLiteLlmPerMember(stack, place);
+  await hold({
+    outputs: {
+      denWeb: den.ref.webUrl,
+      denApi: den.ref.apiUrl,
+      litellm: gateway.baseUrl,
+      cdp: desktop.handle.cdpUrl,
+    },
+  });
+}
+
+if (import.meta.main) {
+  await main();
+}

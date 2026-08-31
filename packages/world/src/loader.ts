@@ -5,16 +5,26 @@ import { isWorldDefinition } from "./definition.ts";
 import type { LaunchableWorldDefinition } from "./definition.ts";
 
 export interface DiscoveredWorld {
+  kind: "unknown";
   name: string;
   path: string;
 }
 
-export interface LoadedWorld {
+export interface LoadedDefinitionWorld {
+  kind: "definition";
   definition: LaunchableWorldDefinition;
   defaultName?: string;
   description: string;
   sourcePath?: string;
 }
+
+export interface LoadedScriptWorld {
+  kind: "script";
+  path: string;
+  name: string;
+}
+
+export type LoadedWorld = LoadedDefinitionWorld | LoadedScriptWorld;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -45,7 +55,7 @@ export async function discoverWorlds(directory: string): Promise<DiscoveredWorld
   return entries
     .filter((name) => name.endsWith(".ts") && !name.endsWith(".test.ts"))
     .sort()
-    .map((name) => ({ name: worldName(name), path: join(directory, name) }));
+    .map((name) => ({ kind: "unknown", name: worldName(name), path: join(directory, name) }));
 }
 
 export async function loadWorldFile(path: string): Promise<LoadedWorld> {
@@ -53,9 +63,10 @@ export async function loadWorldFile(path: string): Promise<LoadedWorld> {
   const loaded: unknown = await import(pathToFileURL(absolutePath).href);
   const definition = definitionFromModule(loaded);
   if (!definition) {
-    throw new Error(`World file ${JSON.stringify(path)} must export a world definition as default or as \`world\`.`);
+    return { kind: "script", path: absolutePath, name: worldName(absolutePath) };
   }
   return {
+    kind: "definition",
     definition,
     defaultName: worldName(absolutePath),
     description: `world file ${path}`,
@@ -72,7 +83,7 @@ export async function loadWorldSource(
   },
 ): Promise<LoadedWorld> {
   const preset = options.presets[source];
-  if (preset) return { definition: preset, description: `preset ${source}` };
+  if (preset) return { kind: "definition", definition: preset, description: `preset ${source}` };
 
   const requestedPath = isAbsolute(source) ? source : resolve(options.cwd, source);
   if (await exists(requestedPath)) return loadWorldFile(requestedPath);
