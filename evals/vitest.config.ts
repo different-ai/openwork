@@ -1,9 +1,14 @@
 import { defineConfig } from "vitest/config";
+import { fileURLToPath } from "node:url";
 import { shouldPrepareSuite, suiteWorkerCount } from "./runner/stack-suite.ts";
 
 const common = {
   environment: "node",
   testTimeout: 120_000,
+};
+const appSource = fileURLToPath(new URL("../apps/app/src/", import.meta.url));
+const appResolve = {
+  alias: [{ find: /^@\//, replacement: appSource }],
 };
 
 const prepareSuite = shouldPrepareSuite(process.argv);
@@ -28,6 +33,7 @@ export default defineConfig({
         },
       },
       {
+        resolve: appResolve,
         test: {
           ...common,
           name: "e2e",

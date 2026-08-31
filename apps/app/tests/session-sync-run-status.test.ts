@@ -15,6 +15,7 @@ import {
   snapshotKey,
   statusKey,
   trackWorkspaceSessionSync,
+  transcriptKey,
 } from "../src/react-app/domains/session/sync/session-sync";
 import { getReactQueryClient } from "../src/react-app/infra/query-client";
 
@@ -98,6 +99,64 @@ function applyStatus(input: SyncInput, status: SessionStatus) {
     type: "session.status",
     properties: { sessionID: sessionId, status },
   });
+}
+
+function applyCompletedToolAndFinalAnswer(input: SyncInput) {
+  __applySessionSyncEventForTest(input, {
+    type: "message.updated",
+    properties: {
+      info: {
+        id: "assistant-tool",
+        role: "assistant",
+        sessionID: sessionId,
+        time: { created: 1, completed: 2 },
+      },
+    },
+  } as any);
+  __applySessionSyncEventForTest(input, {
+    type: "message.part.updated",
+    properties: {
+      part: {
+        id: "part-tool",
+        sessionID: sessionId,
+        messageID: "assistant-tool",
+        type: "tool",
+        callID: "call-tool",
+        tool: "lookup",
+        state: {
+          status: "completed",
+          input: { query: "fixture" },
+          output: "fixture result",
+          title: "Lookup",
+          metadata: {},
+          time: { start: 1, end: 2 },
+        },
+      },
+    },
+  } as any);
+  __applySessionSyncEventForTest(input, {
+    type: "message.updated",
+    properties: {
+      info: {
+        id: "assistant-final",
+        role: "assistant",
+        sessionID: sessionId,
+        time: { created: 3, completed: 4 },
+      },
+    },
+  } as any);
+  __applySessionSyncEventForTest(input, {
+    type: "message.part.updated",
+    properties: {
+      part: {
+        id: "part-final",
+        sessionID: sessionId,
+        messageID: "assistant-final",
+        type: "text",
+        text: "The final answer is visible.",
+      },
+    },
+  } as any);
 }
 
 afterEach(() => {
@@ -340,6 +399,32 @@ describe("session run status reconnect reconciliation", () => {
     releaseSession();
   });
 
+  test("does not resurrect an idle run from an older reconnect snapshot", async () => {
+    __setWorkspaceSessionSyncSubscriptionFactoryForTest(createSubscription);
+    let resolveStatuses: (statuses: Record<string, SessionStatus>) => void = () => {};
+    __setWorkspaceSessionSyncStatusFetcherForTest(() => new Promise((resolve) => {
+      resolveStatuses = resolve;
+    }));
+    setSystemTime(100);
+    const input = createSyncInput();
+    ensureWorkspaceSessionSync(input);
+    const releaseSession = trackWorkspaceSessionSync(input, sessionId);
+    await waitForSubscriptions(1);
+    await flushMicrotasks();
+
+    setSystemTime(200);
+    applyStatus(input, { type: "busy" });
+    setSystemTime(300);
+    applyStatus(input, { type: "idle" });
+    resolveStatuses({ [sessionId]: { type: "busy" } });
+    await flushMicrotasks();
+
+    expect(useSessionActivityStore.getState().recordsByWorkspaceId[workspaceId]?.[sessionId]?.runActive).toBe(false);
+    expect(getReactQueryClient().getQueryData(statusKey(workspaceId, sessionId))).toEqual({ type: "idle" });
+
+    releaseSession();
+  });
+
   test("heals an active record when a reconnect reports no active run", async () => {
     __setWorkspaceSessionSyncSubscriptionFactoryForTest(createSubscription);
     __setWorkspaceSessionSyncStatusFetcherForTest(async () => ({}));
@@ -383,5 +468,173 @@ describe("session run status reconnect reconciliation", () => {
     expect(subscriptions).toHaveLength(2);
     expect(subscriptions[1]?.signal.aborted).toBe(false);
     expect(useSessionActivityStore.getState().recordsByWorkspaceId[workspaceId]?.[sessionId]?.runActive).toBe(true);
+  });
+});
+
+describe("active session status reconciliation", () => {
+  test("converges a missed terminal edge to idle without losing the completed tool or final answer", async () => {
+    jest.useFakeTimers();
+    setSystemTime(100);
+    let statusFetches = 0;
+    __setWorkspaceSessionSyncStatusFetcherForTest(async () => {
+      statusFetches += 1;
+      return {};
+    });
+    const { input, cleanup, releaseSession } = createTestSync();
+    const queryClient = getReactQueryClient();
+    queryClient.setQueryData(snapshotKey(workspaceId, sessionId), createSnapshot({ type: "busy" }));
+
+    applyStatus(input, { type: "busy" });
+    applyCompletedToolAndFinalAnswer(input);
+
+    const before = queryClient.getQueryData<any[]>(transcriptKey(workspaceId, sessionId));
+    expect(before?.[0]?.parts[0]).toMatchObject({
+      type: "dynamic-tool",
+      state: "output-available",
+      output: "fixture result",
+    });
+    expect(before?.[1]?.parts[0]).toMatchObject({
+      type: "text",
+      text: "The final answer is visible.",
+    });
+    expect(useSessionActivityStore.getState().getStatus(workspaceId, sessionId)).toBe("responding");
+
+    // No session.status idle or session.idle event arrives. The long-lived
+    // stream remains open; only the authoritative status level reports that
+    // the run has ended.
+    setSystemTime(350);
+    jest.advanceTimersByTime(250);
+    await flushMicrotasks();
+
+    expect(statusFetches).toBe(1);
+    expect(useSessionActivityStore.getState().getStatus(workspaceId, sessionId)).toBe("idle");
+    expect(queryClient.getQueryData(statusKey(workspaceId, sessionId))).toEqual({ type: "idle" });
+    expect(queryClient.getQueryState(snapshotKey(workspaceId, sessionId))?.isInvalidated).toBe(true);
+    const after = queryClient.getQueryData<any[]>(transcriptKey(workspaceId, sessionId));
+    expect(after?.[1]?.parts[0]).toMatchObject({
+      type: "text",
+      text: "The final answer is visible.",
+    });
+
+    releaseSession();
+    cleanup();
+  });
+
+  test("keeps genuine tool, retry, waiting, and compaction work active until status is authoritatively idle", async () => {
+    jest.useFakeTimers();
+    setSystemTime(100);
+    let status: Record<string, SessionStatus> = { [sessionId]: { type: "busy" } };
+    __setWorkspaceSessionSyncStatusFetcherForTest(async () => status);
+    const { input, cleanup, releaseSession } = createTestSync();
+
+    applyStatus(input, { type: "busy" });
+    useSessionActivityStore.getState().setWaitingRequest(
+      workspaceId,
+      sessionId,
+      "permission",
+      "permission-1",
+      true,
+    );
+    jest.advanceTimersByTime(250);
+    await flushMicrotasks();
+    expect(useSessionActivityStore.getState().getStatus(workspaceId, sessionId)).toBe("waiting");
+
+    useSessionActivityStore.getState().setWaitingRequest(
+      workspaceId,
+      sessionId,
+      "permission",
+      "permission-1",
+      false,
+    );
+    useSessionActivityStore.getState().setCompacting(workspaceId, sessionId, true);
+    status = {
+      [sessionId]: {
+        type: "retry",
+        attempt: 1,
+        message: "retrying",
+        next: 1_000,
+      },
+    };
+    jest.advanceTimersByTime(250);
+    await flushMicrotasks();
+    expect(useSessionActivityStore.getState().getStatus(workspaceId, sessionId)).toBe("compacting");
+    expect(useSessionActivityStore.getState().recordsByWorkspaceId[workspaceId]?.[sessionId]?.runActive).toBe(true);
+
+    status = {};
+    jest.advanceTimersByTime(250);
+    await flushMicrotasks();
+    expect(useSessionActivityStore.getState().getStatus(workspaceId, sessionId)).toBe("idle");
+
+    releaseSession();
+    cleanup();
+  });
+
+  test("keeps a newer busy edge when an older idle poll resolves after a queued follow-up starts", async () => {
+    jest.useFakeTimers();
+    setSystemTime(100);
+    let resolveStatuses: (statuses: Record<string, SessionStatus>) => void = () => {};
+    __setWorkspaceSessionSyncStatusFetcherForTest(() => new Promise((resolve) => {
+      resolveStatuses = resolve;
+    }));
+    const { input, cleanup, releaseSession } = createTestSync();
+
+    applyStatus(input, { type: "busy" });
+    setSystemTime(350);
+    jest.advanceTimersByTime(250);
+    await flushMicrotasks();
+
+    // A queued follow-up starts while the older status request is in flight.
+    // Its live edge must win over the stale empty snapshot.
+    setSystemTime(Date.now() + 100);
+    applyStatus(input, { type: "busy" });
+    resolveStatuses({});
+    await flushMicrotasks();
+
+    expect(useSessionActivityStore.getState().recordsByWorkspaceId[workspaceId]?.[sessionId]?.runActive).toBe(true);
+    expect(getReactQueryClient().getQueryData(statusKey(workspaceId, sessionId))).toEqual({ type: "busy" });
+
+    releaseSession();
+    cleanup();
+  });
+
+  test("accepts terminal-before-close, reordered final content, and duplicate terminal events", async () => {
+    __setWorkspaceSessionSyncSubscriptionFactoryForTest(createSubscription);
+    __setWorkspaceSessionSyncStatusFetcherForTest(async () => ({}));
+    setSystemTime(100);
+    const input = createSyncInput();
+    ensureWorkspaceSessionSync(input);
+    const releaseSession = trackWorkspaceSessionSync(input, sessionId);
+    await waitForSubscriptions(1);
+    await flushMicrotasks();
+
+    applyStatus(input, { type: "busy" });
+    setSystemTime(200);
+    __applySessionSyncEventForTest(input, {
+      type: "session.idle",
+      properties: { sessionID: sessionId },
+    });
+
+    // The event transport is intentionally still open when terminal status
+    // arrives, and final content is delivered after it.
+    expect(subscriptions[0]?.signal.aborted).toBe(false);
+    expect(useSessionActivityStore.getState().getStatus(workspaceId, sessionId)).toBe("idle");
+    applyCompletedToolAndFinalAnswer(input);
+
+    // Duplicate modern and deprecated terminal events remain idempotent.
+    applyStatus(input, { type: "idle" });
+    __applySessionSyncEventForTest(input, {
+      type: "session.idle",
+      properties: { sessionID: sessionId },
+    });
+
+    const transcript = getReactQueryClient().getQueryData<any[]>(transcriptKey(workspaceId, sessionId));
+    expect(transcript?.[1]?.parts[0]).toMatchObject({
+      type: "text",
+      text: "The final answer is visible.",
+    });
+    expect(useSessionActivityStore.getState().getStatus(workspaceId, sessionId)).toBe("idle");
+    expect(subscriptions[0]?.signal.aborted).toBe(false);
+
+    releaseSession();
   });
 });

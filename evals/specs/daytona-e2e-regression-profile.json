@@ -293,6 +293,11 @@
       "reason": "requires local self-hosted Den placement and local MySQL"
     },
     {
+      "test": "session-completion-reconciliation.e2e.test.ts",
+      "category": "raw-or-local-placement",
+      "reason": "requires local placement with an actual OpenCode process and a loopback deterministic provider"
+    },
+    {
       "test": "settings-visit-live-run-continuity.e2e.test.ts",
       "category": "unavailable-secret-or-docker",
       "reason": "requires ANTHROPIC_API_KEY, which is unavailable to this lane"
