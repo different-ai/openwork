@@ -1,4 +1,4 @@
-import { readFile, writeFile, rm, stat } from "node:fs/promises";
+import { readFile, realpath, writeFile, rm, stat } from "node:fs/promises";
 import { homedir, hostname } from "node:os";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
@@ -802,6 +802,53 @@ function normalizeOpencodeProxyPath(proxyPath: string): string {
   return normalized || "/";
 }
 
+function proxiedSessionReadId(method: string, proxyPath: string): string | null {
+  if (method.toUpperCase() !== "GET" && method.toUpperCase() !== "HEAD") return null;
+  const match = normalizeOpencodeProxyPath(proxyPath).match(/^\/(?:api\/)?session\/([^/]+)(?:\/|$)/);
+  if (!match?.[1]) return null;
+  let sessionId = match[1];
+  try {
+    sessionId = decodeURIComponent(sessionId);
+  } catch {
+    // Let OpenCode answer malformed identifiers without weakening the gate for valid IDs.
+  }
+  return sessionId === "status" ? null : sessionId;
+}
+
+async function assertWorkspaceOwnsProxiedSessionRead(
+  config: ServerConfig,
+  workspace: WorkspaceInfo,
+  method: string,
+  proxyPath: string,
+): Promise<void> {
+  const sessionId = proxiedSessionReadId(method, proxyPath);
+  const directory = resolveOpencodeDirectory(workspace);
+  if (!sessionId || !directory) return;
+
+  const result = await createWorkspaceOpencodeClient(config, workspace, { sessionId }).session.get({ sessionID: sessionId });
+  if (result.error !== undefined) {
+    if (result.response?.status === 404) {
+      throw new ApiError(404, "session_not_found", "Session not found");
+    }
+    throw new ApiError(502, "opencode_request_failed", "OpenCode request failed", {
+      ...(result.response ? { status: result.response.status } : {}),
+      body: result.error,
+      path: `/session/${encodeURIComponent(sessionId)}`,
+    });
+  }
+
+  const sessionDirectory = result.data?.directory?.trim();
+  const [expectedDirectory, actualDirectory] = workspace.workspaceType === "local" && sessionDirectory
+    ? await Promise.all([
+        realpath(directory).catch(() => directory),
+        realpath(sessionDirectory).catch(() => sessionDirectory),
+      ])
+    : [directory, sessionDirectory];
+  if (!actualDirectory || actualDirectory !== expectedDirectory) {
+    throw new ApiError(404, "session_not_found", "Session not found");
+  }
+}
+
 export function assertOpencodeProxyAllowed(actor: Actor, method: string, proxyPath: string) {
   const m = method.toUpperCase();
   const scope = actor.scope ?? "viewer";
@@ -985,6 +1032,7 @@ export async function startServer(config: ServerConfig): Promise<ServeResult> {
           const actor = await requireClient(request, config, tokens);
           assertOpencodeProxyAllowed(actor, request.method, mount.restPath);
           const workspace = await resolveWorkspaceWithoutBootstrap(config, mount.workspaceId);
+          await assertWorkspaceOwnsProxiedSessionRead(config, workspace, request.method, mount.restPath);
           proxyService = "opencode";
           proxyBaseUrl = workspace.baseUrl?.trim() || undefined;
           const response = await proxyOpencodeRequest({ config, request, url, workspace, proxyPath: mount.restPath });
@@ -1042,7 +1090,11 @@ export async function startServer(config: ServerConfig): Promise<ServeResult> {
           const actor = await requireClient(request, config, tokens);
           assertOpencodeProxyAllowed(actor, request.method, url.pathname);
           proxyService = "opencode";
-          const response = await proxyOpencodeRequest({ config, request, url, workspace: config.workspaces[0] });
+          const workspace = config.workspaces[0];
+          if (workspace) {
+            await assertWorkspaceOwnsProxiedSessionRead(config, workspace, request.method, url.pathname);
+          }
+          const response = await proxyOpencodeRequest({ config, request, url, workspace });
           return finalize(response);
         } catch (error) {
           const requestCanceled = isExpectedRequestCancellation(error, request.signal);

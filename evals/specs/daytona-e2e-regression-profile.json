@@ -193,6 +193,11 @@
       "reason": "requires desktop resolved-plugin traffic to traverse a per-test fault proxy"
     },
     {
+      "test": "library-mcp-connect-error.e2e.test.ts",
+      "category": "raw-or-local-placement",
+      "reason": "requires a connector mock with no Daytona sandbox adapter"
+    },
+    {
       "test": "library-view.e2e.test.ts",
       "category": "raw-or-local-placement",
       "reason": "requires externally attached fixed Den API/Web URLs and pre-seeded credentials"
@@ -206,6 +211,11 @@
       "test": "litellm-per-member-world.e2e.test.ts",
       "category": "unavailable-secret-or-docker",
       "reason": "requires Docker-backed LiteLLM database mode, unavailable on this runner"
+    },
+    {
+      "test": "local-managed-mcp-oauth.e2e.test.ts",
+      "category": "raw-or-local-placement",
+      "reason": "requires local placement and currently self-skips in the Daytona sandbox"
     },
     {
       "test": "login-rate-limit-shared-domain.e2e.test.ts",
@@ -286,6 +296,11 @@
       "test": "skill-authoring-session-freshness.e2e.test.ts",
       "category": "raw-or-local-placement",
       "reason": "requires local placement without an attached Den URL and local MySQL"
+    },
+    {
+      "test": "slack-style-mcp-connector.e2e.test.ts",
+      "category": "raw-or-local-placement",
+      "reason": "requires a Slack-style MCP mock with no Daytona sandbox adapter"
     },
     {
       "test": "sso-domain-verification.e2e.test.ts",

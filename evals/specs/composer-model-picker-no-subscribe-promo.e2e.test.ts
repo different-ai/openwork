@@ -21,13 +21,15 @@ test(title, async ({ evidence, place }) => {
   await using desktop = await app({ den, as: "admin", place });
 
   await go(desktop, `/workspace/${desktop.workspaceId}/session`);
-  await waitFor(desktop, `Boolean(document.querySelector('button[aria-label="Change model"]'))`, {
+  await waitFor(desktop, `[...document.querySelectorAll('button[aria-label="Change model"]')]
+    .some((trigger) => trigger instanceof HTMLButtonElement && trigger.getClientRects().length > 0)`, {
     timeoutMs: 60_000,
     label: "composer model selector",
   });
 
   const compactOpened = await evalIn(desktop, `(() => {
-    const trigger = document.querySelector('button[aria-label="Change model"]');
+    const trigger = [...document.querySelectorAll('button[aria-label="Change model"]')]
+      .find((candidate) => candidate instanceof HTMLButtonElement && candidate.getClientRects().length > 0);
     if (!(trigger instanceof HTMLButtonElement)) return false;
     trigger.click();
     return true;

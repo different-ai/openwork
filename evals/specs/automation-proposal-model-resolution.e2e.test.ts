@@ -13,7 +13,7 @@ import {
 } from "@openwork/behaviors";
 import type { DenSession } from "@openwork/behaviors";
 import type { Surface } from "@openwork/cdp";
-import { app, needs, server, test } from "@openwork/testkit";
+import { app, eventually, needs, server, test } from "@openwork/testkit";
 
 const REQUEST_TIMEOUT_MS = 10_000;
 const MODEL_TURN_TIMEOUT_MS = 5 * 60_000;
@@ -215,7 +215,14 @@ test("chat Automation proposals map Den providers and disclose a safe fallback",
     label: "session composer",
   });
   const evalModel = process.env.OPENWORK_EVAL_MODEL?.trim() ?? "";
-  const models = await readAvailableModels(desktop);
+  const models = await eventually(() => readAvailableModels(desktop), {
+    within: 120_000,
+    intervalMs: 2_000,
+    label: `selectable eval model ${evalModel}`,
+    until: (available) => available.some((model) =>
+      model.selectable && (model.id === evalModel || model.id.endsWith(`/${evalModel}`))
+    ),
+  });
   const evalModelOption = models.find((model) =>
     model.selectable && (model.id === evalModel || model.id.endsWith(`/${evalModel}`))
   );

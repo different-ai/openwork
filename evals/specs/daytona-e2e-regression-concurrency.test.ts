@@ -115,18 +115,19 @@ test("Daytona E2E regression profile excludes only audited shared-topology incom
   expect(categoryByTest.get("headless-world-lifecycle.e2e.test.ts")).toBe("local-bun-world");
   expect(categoryByTest.get("model-lands-mid-run.e2e.test.ts")).toBe("unavailable-secret-or-docker");
   expect(categoryByTest.get("connect-state-provenance.e2e.test.ts")).toBe("raw-or-local-placement");
+  expect(categoryByTest.get("library-mcp-connect-error.e2e.test.ts")).toBe("raw-or-local-placement");
+  expect(categoryByTest.get("local-managed-mcp-oauth.e2e.test.ts")).toBe("raw-or-local-placement");
+  expect(categoryByTest.get("slack-style-mcp-connector.e2e.test.ts")).toBe("raw-or-local-placement");
 
   expect(inventory.all).toHaveLength(146);
   expect(inventory.rawDesktop).toHaveLength(52);
-  expect(inventory.profile).toHaveLength(70);
-  expect(inventory.eligible).toHaveLength(23);
+  expect(inventory.profile).toHaveLength(73);
+  expect(inventory.eligible).toHaveLength(20);
   expect(inventory.rawDesktop).toContain("den-litellm-provider.e2e.test.ts");
   expect(inventory.eligible).not.toContain("org-team-lifecycle-critical-path.e2e.test.ts");
-  expect(inventory.eligible).toEqual(expect.arrayContaining([
-    "library-mcp-connect-error.e2e.test.ts",
-    "local-managed-mcp-oauth.e2e.test.ts",
-    "slack-style-mcp-connector.e2e.test.ts",
-  ]));
+  expect(inventory.eligible).not.toContain("library-mcp-connect-error.e2e.test.ts");
+  expect(inventory.eligible).not.toContain("local-managed-mcp-oauth.e2e.test.ts");
+  expect(inventory.eligible).not.toContain("slack-style-mcp-connector.e2e.test.ts");
   expect(inventory.eligible).toEqual(expect.arrayContaining(productFailuresThatMustRemainEligible));
 
   evidence.recordAssertionEvidence(

@@ -80,7 +80,7 @@ async function pressPaneKey(app: Surface, pane: "chat" | "split" | "panel", key:
   expect(pressed).toBe(true);
 }
 
-async function openToolsPanel(app: Surface) {
+async function openFilesPanel(app: Surface) {
   const openedMenu = await evalIn(app, `(() => {
     const button = document.querySelector('button[aria-label="More actions"]');
     if (!(button instanceof HTMLButtonElement)) return false;
@@ -89,13 +89,13 @@ async function openToolsPanel(app: Surface) {
   })()`);
   expect(openedMenu).toBe(true);
   await waitFor(app, `Boolean([...document.querySelectorAll('[role="menuitem"]')]
-    .find((item) => (item.textContent ?? '').trim().startsWith('Artifacts')))`, {
+    .find((item) => (item.textContent ?? '').trim().startsWith('Files')))`, {
     timeoutMs: 15_000,
-    label: "Artifacts menu item",
+    label: "Files menu item",
   });
   const openedPanel = await evalIn(app, `(() => {
     const item = [...document.querySelectorAll('[role="menuitem"]')]
-      .find((candidate) => (candidate.textContent ?? '').trim().startsWith('Artifacts'));
+      .find((candidate) => (candidate.textContent ?? '').trim().startsWith('Files'));
     if (!(item instanceof HTMLElement)) return false;
     item.click();
     return true;
@@ -238,7 +238,7 @@ test.skipIf(!runnable)(
       true,
     );
 
-    await openToolsPanel(app);
+    await openFilesPanel(app);
     await waitFor(app, `document.querySelector('[data-narrow-pane="panel"]')?.getAttribute('aria-selected') === 'true'
       && Boolean(document.getElementById('narrow-session-pane-panel'))`, {
       timeoutMs: 30_000,

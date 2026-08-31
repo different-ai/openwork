@@ -35,7 +35,7 @@ function auth(token: string) {
   return { Authorization: `Bearer ${token}` };
 }
 
-function startMockOpencode(input?: { holdCommand?: Promise<void> }) {
+function startMockOpencode(input?: { holdCommand?: Promise<void>; foreignSessionDirectory?: string }) {
   const requests: Array<{ pathname: string; search: string; directory: string | null; method: string; body?: unknown }> = [];
   const server = Bun.serve({
     hostname: "127.0.0.1",
@@ -87,6 +87,24 @@ function startMockOpencode(input?: { holdCommand?: Promise<void> }) {
           directory: request.headers.get("x-opencode-directory"),
           time: { created: 100, updated: 200 },
         });
+      }
+
+      if (url.pathname === "/session/ses_foreign") {
+        return Response.json({
+          id: "ses_foreign",
+          title: "Foreign session",
+          slug: "foreign-session",
+          directory: input?.foreignSessionDirectory,
+          time: { created: 100, updated: 200 },
+        });
+      }
+
+      if (url.pathname === "/session/ses_foreign/message") {
+        return Response.json([{ info: { id: "msg_foreign", sessionID: "ses_foreign" }, parts: [] }]);
+      }
+
+      if (url.pathname === "/session/ses_foreign/todo") {
+        return Response.json([{ content: "Foreign todo", status: "pending", priority: "high" }]);
       }
 
       if (url.pathname === "/session/ses_1/message") {
@@ -301,6 +319,36 @@ describe("workspace OpenCode proxy", () => {
 
     const lastRequest = mock.requests.find((request) => request.pathname === "/session");
     expect(new URLSearchParams(lastRequest?.search).get("roots")).toBe("true");
+  });
+
+  test("returns 404 for every cross-workspace session read even when OpenCode resolves the foreign id", async () => {
+    const workspaceRoot = await createWorkspaceRoot();
+    const secondWorkspaceRoot = await createWorkspaceRoot();
+    const mock = startMockOpencode({ foreignSessionDirectory: secondWorkspaceRoot });
+    const openwork = await startOpenworkServer({
+      workspaceRoot,
+      secondWorkspaceRoot,
+      opencodeBaseUrl: `http://127.0.0.1:${mock.server.port}`,
+    });
+    const base = `http://127.0.0.1:${openwork.server.port}`;
+
+    for (const path of [
+      "/session/ses_foreign",
+      "/session/ses_foreign/message?limit=50",
+      "/session/ses_foreign/todo",
+    ]) {
+      const response = await fetch(`${base}/workspace/ws_1/opencode${path}`, { headers: auth(openwork.token) });
+      expect({ path, status: response.status }).toEqual({ path, status: 404 });
+      await expect(response.json()).resolves.toMatchObject({ code: "session_not_found" });
+    }
+
+    const ownerResponse = await fetch(`${base}/workspace/ws_2/opencode/session/ses_foreign/message`, {
+      headers: auth(openwork.token),
+    });
+    expect(ownerResponse.status).toBe(200);
+    await expect(ownerResponse.json()).resolves.toEqual([
+      { info: { id: "msg_foreign", sessionID: "ses_foreign" }, parts: [] },
+    ]);
   });
 
   test("scopes spoofed directories on POST proxy requests without touching the body", async () => {
