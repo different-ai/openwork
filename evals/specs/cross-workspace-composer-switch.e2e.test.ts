@@ -126,15 +126,24 @@ async function createSession(appSurface: App): Promise<string> {
 }
 
 async function clickSessionRow(appSurface: App, chat: Chat): Promise<void> {
-  const clicked = await evalIn(appSurface, `(() => {
+  await waitFor(appSurface, `(() => {
     const row = document.querySelector(${JSON.stringify(`[data-sidebar-session-id="${chat.sessionId}"][data-sidebar-session-workspace-id="${chat.workspaceId}"]`)});
     const controlEl = row?.querySelector(${JSON.stringify(`[data-session-tab-id="${chat.sessionId}"]`)});
-    if (!(row instanceof HTMLElement) || !(controlEl instanceof HTMLElement)) return false;
+    return row instanceof HTMLElement
+      && controlEl instanceof HTMLButtonElement
+      && !controlEl.disabled;
+  })()`, { timeoutMs: 60_000, label: `clickable sidebar row for ${chat.title}` });
+
+  await evalIn(appSurface, `(() => {
+    const row = document.querySelector(${JSON.stringify(`[data-sidebar-session-id="${chat.sessionId}"][data-sidebar-session-workspace-id="${chat.workspaceId}"]`)});
+    const controlEl = row?.querySelector(${JSON.stringify(`[data-session-tab-id="${chat.sessionId}"]`)});
+    if (!(row instanceof HTMLElement) || !(controlEl instanceof HTMLButtonElement) || controlEl.disabled) {
+      throw new Error(${JSON.stringify(`clickable sidebar row disappeared for ${chat.title} (${chat.workspaceId}/${chat.sessionId})`)});
+    }
     row.scrollIntoView({ block: "center" });
     controlEl.click();
     return true;
   })()`);
-  expect(clicked, `sidebar row for ${chat.title} (${chat.workspaceId}/${chat.sessionId})`).toBe(true);
 }
 
 async function waitForChatSurface(appSurface: App, chat: Chat): Promise<void> {
