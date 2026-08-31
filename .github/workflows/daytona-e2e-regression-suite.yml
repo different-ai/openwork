@@ -1,7 +1,8 @@
 # Runs the eligible E2E tests in three balanced Daytona batches. Each batch keeps
 # one prewarmed Den + desktop pair and reuses it across its assigned tests.
-# The checked-in lane profile removes legitimate skips before the matrix is built.
-# The critical-path journey is excluded because its nightly workflow owns it.
+# The checked-in lane profile removes only topology/dependency skips before the
+# matrix is built; compatible product regressions remain in the matrix.
+# The critical-path journey remains owned by its dedicated nightly workflow.
 # Tests that drive raw desktop() from @openwork/hosts are excluded dynamically:
 # they spawn Electron on the caller's machine (correct inside a VNC sandbox or
 # on a dev workstation, impossible on a headless runner) and need a follow-up
@@ -129,23 +130,33 @@ jobs:
           # Raw desktop() tests spawn Electron on the Vitest host itself; on a
           # headless runner that dies before CDP. Exclude them until the
           # in-sandbox vitest lane exists, and surface the list in the summary.
-          raw_desktop="$(
-             grep -l '"@openwork/hosts"' evals/specs/*.e2e.test.ts 2>/dev/null \
-               | xargs grep -l '\bdesktop(' 2>/dev/null \
-               | sed 's#^evals/specs/##' \
-               | sort \
-               || true
-           )"
+          raw_desktop="$(node evals/scripts/list-daytona-raw-desktop-tests.mjs)"
           # The checked-in profile is the explicit contract for this lane.
           # Raw desktop() detection remains as a guard for newly added tests
           # that have not been classified yet.
           profile='evals/specs/daytona-e2e-regression-profile.json'
+          profile_excluded_json="$(jq -c '[.excluded[].test]' "$profile")"
+          raw_desktop_json="$(printf '%s\n' "$raw_desktop" | jq -Rsc 'split("\n") | map(select(length > 0))')"
+          dedicated_workflow_json='["org-team-lifecycle-critical-path.e2e.test.ts"]'
           excluded="$(
-            printf '%s\n' "$raw_desktop" "$(jq -r '.excluded[].test' "$profile")" \
+            printf '%s\n' "$raw_desktop" "$(echo "$profile_excluded_json" | jq -r '.[]')" \
+              "$(echo "$dedicated_workflow_json" | jq -r '.[]')" \
               | sed '/^$/d' \
               | sort -u
           )"
           excluded_json="$(printf '%s\n' "$excluded" | jq -Rsc 'split("\n") | map(select(length > 0))')"
+
+          all_tests="$(
+            printf '%s\n' evals/specs/*.e2e.test.ts \
+              | sed 's#^evals/specs/##' \
+              | jq -Rsc 'split("\n") | map(select(length > 0))'
+          )"
+          eligible_tests="$(
+            echo "$all_tests" \
+              | jq -c --argjson excluded "$excluded_json" '
+                  map(select(. as $test | $excluded | index($test) | not))
+                '
+          )"
 
           if [ "$EVENT_NAME" = "workflow_run" ]; then
             matched_tests="$(node evals/scripts/spec-impact.mjs --base "$BASE_SHA" --head "$HEAD_SHA" --matched-tests)"
@@ -156,14 +167,9 @@ jobs:
           fi
 
           tests="$(
-            printf '%s\n' evals/specs/*.e2e.test.ts \
-              | sed 's#^evals/specs/##' \
-              | jq -Rsc --arg only "$only_filter" --argjson matched "$matched_tests" --argjson excluded "$excluded_json" '
-                  split("\n")
-                  | map(select(length > 0))
-                  | map(select(. != "org-team-lifecycle-critical-path.e2e.test.ts"))
-                  | map(select(. as $test | $excluded | index($test) | not))
-                  | map(select(($matched | length == 0) or (. as $test | ($matched | index($test)) != null)))
+            echo "$eligible_tests" \
+              | jq -c --arg only "$only_filter" --argjson matched "$matched_tests" '
+                  map(select(($matched | length == 0) or (. as $test | ($matched | index($test)) != null)))
                   | map(select($only == "" or contains($only)))
                 '
           )"
@@ -189,16 +195,22 @@ jobs:
           {
             echo "### Daytona E2E regression plan"
             echo
+            echo "Inventory: $(echo "$all_tests" | jq 'length') total; $(echo "$excluded_json" | jq 'length') excluded; $(echo "$eligible_tests" | jq 'length') eligible for the shared topology"
+            echo "- Profile exclusions: $(echo "$profile_excluded_json" | jq 'length')"
+            echo "- Raw desktop() exclusions: $(echo "$raw_desktop_json" | jq 'length')"
+            echo "- Dedicated-workflow exclusions: $(echo "$dedicated_workflow_json" | jq 'length')"
+            echo
             echo "Matrix tests: $(echo "$tests" | jq 'length') across $(echo "$batches" | jq 'length') batches"
             if [ "$EVENT_NAME" = "workflow_run" ] && [ "$(echo "$tests" | jq 'length')" -eq 0 ]; then
               echo "Warden suggestion: add or update an evals/specs/<feature>.e2e.test.ts test for this PR."
             fi
             echo "$batches" | jq -r '.[] | "- `\(.name)`: \(.tests | length) E2E tests"'
             echo
-            echo "Excluded (profile-incompatible or raw desktop()): $(echo "$excluded_json" | jq 'length')"
-            echo "$excluded_json" | jq -r --slurpfile profile "$profile" '
+            echo "Excluded (profile-incompatible, raw desktop(), or dedicated workflow): $(echo "$excluded_json" | jq 'length')"
+            echo "$excluded_json" | jq -r --slurpfile profile "$profile" --argjson dedicated "$dedicated_workflow_json" '
               .[] as $test
-              | (($profile[0].excluded | map(select(.test == $test)) | first | .reason) // "raw desktop() topology") as $reason
+              | (($profile[0].excluded | map(select(.test == $test)) | first | .reason)
+                // (if $dedicated | index($test) then "owned by the dedicated nightly critical-path workflow" else "raw desktop() topology" end)) as $reason
               | "- `\($test)`: \($reason)"
             '
           } >> "$GITHUB_STEP_SUMMARY"
@@ -350,12 +362,12 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
           echo "Vitest exit code: $vitest_status"
 
-          if [ "$result" = "failed" ]; then
+          if [ "$result" != "passed" ]; then
             exit 1
           fi
 
       - name: Judge deferred vision claims
-        if: steps.run.outputs.result != 'failed'
+        if: steps.run.outputs.result == 'passed'
         shell: bash
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
@@ -394,9 +406,9 @@ jobs:
             echo "## Daytona E2E Regression Suite"
             echo
             echo "E2E matrix result: **$E2E_RESULT**."
-            echo "A successful matrix means no eligible test failed; exclusions mean this is not a full suite, and any skipped tests make the verdict Incomplete, not Passed."
+            echo "Only a successful, non-skipped matrix passes; an empty or skipped matrix is Incomplete and fails this required check."
           } >> "$GITHUB_STEP_SUMMARY"
 
-          if [ "$E2E_RESULT" = "failure" ]; then
+          if [ "$E2E_RESULT" != "success" ]; then
             exit 1
           fi
