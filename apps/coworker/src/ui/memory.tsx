@@ -1,14 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { workbot, type BotMemoryFile, type BotSummary } from "@/lib/bridge";
+import { coworkerBridge, type CoworkerMemoryFile, type CoworkerSummary } from "@/lib/bridge";
 import { Button, Empty, ErrorNote, Section } from "@/ui/kit";
 
 /**
- * Memory is files, on purpose: the worker maintains `memory/working.md`
+ * Memory is files, on purpose: the coworker maintains `memory/working.md`
  * itself, long-term memories are separate Markdown documents behind a small
  * always-loaded index, and everything is inspectable and editable here.
  */
-export function MemoryPanel({ bot }: { bot: BotSummary }) {
-  const [files, setFiles] = useState<BotMemoryFile[]>([]);
+export function MemoryPanel({ coworker }: { coworker: CoworkerSummary }) {
+  const [files, setFiles] = useState<CoworkerMemoryFile[]>([]);
   const [selectedId, setSelectedId] = useState("working");
   const [content, setContent] = useState("");
   const [savedContent, setSavedContent] = useState("");
@@ -16,12 +16,12 @@ export function MemoryPanel({ bot }: { bot: BotSummary }) {
 
   const refreshFiles = useCallback(async () => {
     try {
-      setFiles(await workbot.files.list(bot.slug));
+      setFiles(await coworkerBridge.files.list(coworker.slug));
       setError("");
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     }
-  }, [bot.slug]);
+  }, [coworker.slug]);
 
   useEffect(() => {
     setSelectedId("working");
@@ -33,8 +33,8 @@ export function MemoryPanel({ bot }: { bot: BotSummary }) {
   useEffect(() => {
     if (!selected) return;
     let cancelled = false;
-    void workbot.files
-      .read(bot.slug, selected.path)
+    void coworkerBridge.files
+      .read(coworker.slug, selected.path)
       .then((text) => {
         if (cancelled) return;
         setContent(text);
@@ -46,17 +46,17 @@ export function MemoryPanel({ bot }: { bot: BotSummary }) {
     return () => {
       cancelled = true;
     };
-  }, [bot.slug, selected]);
+  }, [coworker.slug, selected]);
 
-  // The worker edits these files while it works. Follow along live, but never
+  // The coworker edits these files while it works. Follow along live, but never
   // overwrite unsaved human edits.
   const editorState = useRef({ content: "", savedContent: "" });
   editorState.current = { content, savedContent };
   useEffect(() => {
     if (!selected) return;
     const timer = window.setInterval(() => {
-      void workbot.files
-        .read(bot.slug, selected.path)
+      void coworkerBridge.files
+        .read(coworker.slug, selected.path)
         .then((text) => {
           const { content: currentContent, savedContent: currentSaved } = editorState.current;
           const dirty = currentContent !== currentSaved;
@@ -68,12 +68,12 @@ export function MemoryPanel({ bot }: { bot: BotSummary }) {
         .catch(() => undefined);
     }, 5000);
     return () => window.clearInterval(timer);
-  }, [bot.slug, selected]);
+  }, [coworker.slug, selected]);
 
   async function save() {
     if (!selected) return;
     try {
-      await workbot.files.write(bot.slug, selected.path, content);
+      await coworkerBridge.files.write(coworker.slug, selected.path, content);
       setSavedContent(content);
       setError("");
     } catch (cause) {
@@ -121,8 +121,8 @@ export function MemoryPanel({ bot }: { bot: BotSummary }) {
             onChange={(event) => setContent(event.target.value)}
           />
           <p className="mt-2 text-xs text-mist">
-            The worker edits its own working memory while it works; you can edit or prune anything
-            here too. Files live in {bot.path}.
+            The coworker edits its own working memory while it works; you can edit or prune anything
+            here too. Files live in {coworker.path}.
           </p>
         </div>
       </div>

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { workbot, type BotSummary, type RuntimeInfo } from "@/lib/bridge";
-import { createBotThreads, type EngineModelOption, type ThreadListItem } from "@/lib/threads";
+import { coworkerBridge, type CoworkerSummary, type RuntimeInfo } from "@/lib/bridge";
+import { createCoworkerThreads, type EngineModelOption, type ThreadListItem } from "@/lib/threads";
 import { Button, Empty, ErrorNote, Section, inputClass } from "@/ui/kit";
 
 type TranscriptMessage = {
@@ -12,26 +12,26 @@ type TranscriptMessage = {
 
 export function ThreadsPanel({
   runtime,
-  bot,
-  onBotChanged,
+  coworker,
+  onCoworkerChanged,
   onRefreshRuntime,
 }: {
   runtime: RuntimeInfo;
-  bot: BotSummary;
-  onBotChanged: (bot: BotSummary) => void;
+  coworker: CoworkerSummary;
+  onCoworkerChanged: (coworker: CoworkerSummary) => void;
   onRefreshRuntime: () => Promise<void>;
 }) {
   const threads = useMemo(
     () =>
-      bot.workspaceId
-        ? createBotThreads({
+      coworker.workspaceId
+        ? createCoworkerThreads({
             serverUrl: runtime.serverUrl,
-            workspaceId: bot.workspaceId,
+            workspaceId: coworker.workspaceId,
             token: runtime.ownerToken,
-            model: bot.model,
+            model: coworker.model,
           })
         : null,
-    [runtime.serverUrl, runtime.ownerToken, bot.workspaceId, bot.model],
+    [runtime.serverUrl, runtime.ownerToken, coworker.workspaceId, coworker.model],
   );
   const [items, setItems] = useState<ThreadListItem[]>([]);
   const [models, setModels] = useState<EngineModelOption[]>([]);
@@ -48,7 +48,7 @@ export function ThreadsPanel({
     }
   }, [threads]);
 
-  // Worker switches remount this panel (keyed by slug), so this only re-runs
+  // Coworker switches remount this panel (keyed by slug), so this only re-runs
   // for client changes (token/model refresh) where the open thread stays valid.
   useEffect(() => {
     void refresh();
@@ -75,11 +75,11 @@ export function ThreadsPanel({
       Model
       <select
         className="max-w-56 rounded-md border border-line bg-ink px-2 py-1 text-xs text-snow focus:border-spark/60 focus:outline-none"
-        value={bot.model}
+        value={coworker.model}
         onChange={(event) => {
           void (async () => {
             try {
-              onBotChanged(await workbot.bots.update(bot.slug, { model: event.target.value }));
+              onCoworkerChanged(await coworkerBridge.coworkers.update(coworker.slug, { model: event.target.value }));
             } catch (cause) {
               setError(cause instanceof Error ? cause.message : String(cause));
             }
@@ -87,8 +87,8 @@ export function ThreadsPanel({
         }}
       >
         <option value="">Engine default</option>
-        {bot.model && !models.some((option) => option.id === bot.model) ? (
-          <option value={bot.model}>{bot.model} (unavailable)</option>
+        {coworker.model && !models.some((option) => option.id === coworker.model) ? (
+          <option value={coworker.model}>{coworker.model} (unavailable)</option>
         ) : null}
         {models.map((option) => (
           <option key={option.id} value={option.id}>
@@ -103,7 +103,7 @@ export function ThreadsPanel({
     return (
       <Section title="Work">
         <div className="space-y-4">
-          <Empty>This worker's workspace is not registered yet.</Empty>
+          <Empty>This coworker's workspace is not registered yet.</Empty>
           {error ? <ErrorNote>{error}</ErrorNote> : null}
           <div className="flex justify-center">
             <Button
@@ -111,9 +111,9 @@ export function ThreadsPanel({
               onClick={() => {
                 void (async () => {
                   try {
-                    const repaired = await workbot.bots.ensureWorkspace(bot.slug);
+                    const repaired = await coworkerBridge.coworkers.ensureWorkspace(coworker.slug);
                     await onRefreshRuntime();
-                    onBotChanged(repaired);
+                    onCoworkerChanged(repaired);
                   } catch (cause) {
                     setError(cause instanceof Error ? cause.message : String(cause));
                   }
@@ -149,7 +149,7 @@ export function ThreadsPanel({
           setOpenThreadId(threadId);
         }}
         threads={threads}
-        botName={bot.name}
+        coworkerName={coworker.name}
         actions={modelSelect}
       />
       <Section
@@ -161,7 +161,7 @@ export function ThreadsPanel({
         }
       >
         {error ? <ErrorNote>{error}</ErrorNote> : null}
-        {items.length === 0 && !error ? <Empty>No work yet. Give {bot.name} its first assignment above.</Empty> : null}
+        {items.length === 0 && !error ? <Empty>No work yet. Give {coworker.name} its first assignment above.</Empty> : null}
         <ul className="divide-y divide-line">
           {items.map((item) => (
             <li key={item.id}>
@@ -184,12 +184,12 @@ export function ThreadsPanel({
 
 function NewAssignment({
   threads,
-  botName,
+  coworkerName,
   actions,
   onAssigned,
 }: {
-  threads: NonNullable<ReturnType<typeof createBotThreads>>;
-  botName: string;
+  threads: NonNullable<ReturnType<typeof createCoworkerThreads>>;
+  coworkerName: string;
   actions?: ReactNode;
   onAssigned: (threadId: string) => void;
 }) {
@@ -215,11 +215,11 @@ function NewAssignment({
   }
 
   return (
-    <Section title={`Give ${botName} work`} actions={actions}>
+    <Section title={`Give ${coworkerName} work`} actions={actions}>
       <div className="space-y-3">
         <textarea
           className={`${inputClass} min-h-20 resize-y`}
-          placeholder="Describe the assignment. The worker keeps its own memory, so context carries over."
+          placeholder="Describe the assignment. The coworker keeps its own memory, so context carries over."
           value={prompt}
           onChange={(event) => setPrompt(event.target.value)}
         />
@@ -239,7 +239,7 @@ function ThreadView({
   threadId,
   onBack,
 }: {
-  threads: NonNullable<ReturnType<typeof createBotThreads>>;
+  threads: NonNullable<ReturnType<typeof createCoworkerThreads>>;
   threadId: string;
   onBack: () => void;
 }) {
@@ -329,7 +329,7 @@ function ThreadView({
             }`}
           >
             <p className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-mist">
-              {message.role === "user" ? "You" : "Worker"}
+              {message.role === "user" ? "You" : "Coworker"}
             </p>
             {message.text || (message.toolCalls.length > 0 ? "" : "…")}
             {message.toolCalls.length > 0 ? (
@@ -343,7 +343,7 @@ function ThreadView({
       </div>
       {terminalError ? (
         <ErrorNote>
-          The worker's last turn failed — {terminalError}. Pick a different model above or try
+          The coworker's last turn failed — {terminalError}. Pick a different model above or try
           again.
         </ErrorNote>
       ) : null}

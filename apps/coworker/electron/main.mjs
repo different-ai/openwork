@@ -1,11 +1,11 @@
 /**
- * Work Bot desktop shell.
+ * Open Coworker desktop shell.
  *
  * A second product client on the OpenWork platform, not a second platform:
  * it embeds the same `openwork-server` bundle the OpenWork desktop embeds
  * (managed OpenCode engine, native sessions, MCP layering, workspace
- * registry) and adds only the Work Bot layer — filesystem bots and a
- * worker-centric renderer. It never talks to, or requires, the OpenWork
+ * registry) and adds only the Open Coworker layer — filesystem coworkers and
+ * a coworker-centric renderer. It never talks to, or requires, the OpenWork
  * desktop app process.
  */
 import { randomBytes } from "node:crypto";
@@ -13,25 +13,25 @@ import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { BrowserWindow, app, ipcMain, shell } from "electron";
+import { BrowserWindow, Menu, app, ipcMain, shell } from "electron";
 import { openworkConfigDir } from "@openwork/paths";
 import {
-  createBot,
-  defaultBotsDir,
-  deleteBot,
-  getBot,
-  listBots,
+  createCoworker,
+  defaultCoworkersDir,
+  deleteCoworker,
+  getCoworker,
+  listCoworkers,
   listMemoryFiles,
-  readBotFile,
-  updateBot,
-  writeBotFile,
-} from "./bots.mjs";
+  readCoworkerFile,
+  updateCoworker,
+  writeCoworkerFile,
+} from "./coworkers.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const isDev = !app.isPackaged || process.env.OPENWORK_DEV_MODE === "1";
 
-const APP_NAME = "Work Bot";
-const APP_IDENTIFIER = isDev ? "com.differentai.workbot.dev" : "com.differentai.workbot";
+const APP_NAME = "Open Coworker";
+const APP_IDENTIFIER = isDev ? "com.differentai.opencoworker.dev" : "com.differentai.opencoworker";
 const DEFAULT_SERVER_PORT = 8790;
 const DEFAULT_DEN_BASE_URL = "https://app.openworklabs.com";
 
@@ -41,9 +41,9 @@ if (process.platform === "win32") {
 }
 app.setPath("userData", path.join(app.getPath("appData"), APP_IDENTIFIER));
 
-const botsDir = process.env.WORKBOT_BOTS_DIR?.trim() || defaultBotsDir();
-const serverConfigPath = process.env.WORKBOT_SERVER_CONFIG?.trim()
-  || path.join(openworkConfigDir(), "workbot-server.json");
+const coworkersDir = process.env.COWORKER_HOME_DIR?.trim() || defaultCoworkersDir();
+const serverConfigPath = process.env.COWORKER_SERVER_CONFIG?.trim()
+  || path.join(openworkConfigDir(), "coworker-server.json");
 
 /** @type {{ url: string, stop: () => Promise<void>, managedOpencode: { pid: number | null, isAlive: () => boolean } | null } | null} */
 let serverHandle = null;
@@ -52,7 +52,7 @@ let engineError = "";
 let startingServer = null;
 
 function tokenFilePath() {
-  return path.join(app.getPath("userData"), "workbot-server-tokens.json");
+  return path.join(app.getPath("userData"), "coworker-server-tokens.json");
 }
 
 async function loadOrCreateTokens() {
@@ -138,7 +138,7 @@ async function issueOwnerToken(baseUrl, hostToken) {
       "Content-Type": "application/json",
       "X-OpenWork-Host-Token": hostToken,
     },
-    body: JSON.stringify({ scope: "owner", label: "Work Bot owner token" }),
+    body: JSON.stringify({ scope: "owner", label: "Open Coworker owner token" }),
   });
   const token = typeof payload?.token === "string" ? payload.token.trim() : "";
   if (!token) throw new Error("OpenWork server did not return an owner token");
@@ -148,11 +148,11 @@ async function issueOwnerToken(baseUrl, hostToken) {
 async function startPlatformServer() {
   const { startEmbeddedServer } = await import(pathToFileURL(embeddedServerPath()).href);
   const tokens = await loadOrCreateTokens();
-  await mkdir(botsDir, { recursive: true });
-  const bots = await listBots(botsDir);
+  await mkdir(coworkersDir, { recursive: true });
+  const coworkers = await listCoworkers(coworkersDir);
   // The registry file is the source of truth once it exists; seeds only shape
   // the very first boot (mirrors the OpenWork desktop's embedded-server use).
-  const seedWorkspaces = existsSync(serverConfigPath) ? [] : bots.map((bot) => bot.path);
+  const seedWorkspaces = existsSync(serverConfigPath) ? [] : coworkers.map((coworker) => coworker.path);
 
   const startOnce = async (manageOpencode) =>
     startEmbeddedServer({
@@ -207,19 +207,20 @@ function runtimeInfo() {
     version: app.getVersion(),
     serverUrl: serverHandle?.url ?? "",
     ownerToken,
-    botsDir,
-    denBaseUrl: process.env.WORKBOT_DEN_BASE_URL?.trim() || DEFAULT_DEN_BASE_URL,
+    coworkersDir,
+    denBaseUrl: process.env.COWORKER_DEN_BASE_URL?.trim() || DEFAULT_DEN_BASE_URL,
     engineManaged: Boolean(serverHandle?.managedOpencode),
     engineError,
-    // Work Bot requires the OpenWork Cloud connection as a product rule; this
-    // development-only escape exists so the local platform assembly (server,
-    // engine, bots, threads, memory) can be exercised without an account.
-    allowOffline: isDev && process.env.WORKBOT_ALLOW_OFFLINE === "1",
+    // Open Coworker requires the OpenWork Cloud connection as a product rule;
+    // this development-only escape exists so the local platform assembly
+    // (server, engine, coworkers, threads, memory) can be exercised without
+    // an account.
+    allowOffline: isDev && process.env.COWORKER_ALLOW_OFFLINE === "1",
   };
 }
 
-/** Register the bot directory as a native OpenWork workspace. */
-async function registerBotWorkspace(bot) {
+/** Register the coworker directory as a native OpenWork workspace. */
+async function registerCoworkerWorkspace(coworker) {
   const handle = await ensurePlatformServer();
   const tokens = await loadOrCreateTokens();
   const payload = await fetchJson(`${handle.url}/workspaces/local`, {
@@ -228,7 +229,7 @@ async function registerBotWorkspace(bot) {
       "Content-Type": "application/json",
       "X-OpenWork-Host-Token": tokens.hostToken,
     },
-    body: JSON.stringify({ folderPath: bot.path, name: bot.name, preset: "minimal" }),
+    body: JSON.stringify({ folderPath: coworker.path, name: coworker.name, preset: "minimal" }),
   });
   const workspaceId = typeof payload?.activeId === "string" ? payload.activeId : "";
   if (!workspaceId) throw new Error("Workspace registration did not return an id");
@@ -240,61 +241,61 @@ const commands = {
     await ensurePlatformServer();
     return runtimeInfo();
   },
-  "bots.list": async () => listBots(botsDir),
-  "bots.get": async ({ slug }) => getBot(botsDir, slug),
-  "bots.create": async ({ name, role, mission }) => {
+  "coworkers.list": async () => listCoworkers(coworkersDir),
+  "coworkers.get": async ({ slug }) => getCoworker(coworkersDir, slug),
+  "coworkers.create": async ({ name, role, mission }) => {
     await ensurePlatformServer();
     const hadEngine = Boolean(serverHandle?.managedOpencode);
-    const bot = await createBot(botsDir, { name, role, mission });
+    const coworker = await createCoworker(coworkersDir, { name, role, mission });
     // Registration is registry-level and works without an engine. Do it
     // first, then restart when no engine was managed yet: the engine only
     // spawns when the registry holds at least one workspace, so the restart
     // must happen after this workspace is persisted.
-    const workspaceId = await registerBotWorkspace(bot);
-    const updated = await updateBot(botsDir, bot.slug, { workspaceId });
+    const workspaceId = await registerCoworkerWorkspace(coworker);
+    const updated = await updateCoworker(coworkersDir, coworker.slug, { workspaceId });
     if (!hadEngine) {
       await restartPlatformServer();
     }
     return updated;
   },
-  "bots.ensureWorkspace": async ({ slug }) => {
+  "coworkers.ensureWorkspace": async ({ slug }) => {
     await ensurePlatformServer();
-    const bot = await getBot(botsDir, slug);
-    if (bot.workspaceId) {
+    const coworker = await getCoworker(coworkersDir, slug);
+    if (coworker.workspaceId) {
       if (!serverHandle?.managedOpencode) await restartPlatformServer();
-      return bot;
+      return coworker;
     }
-    const workspaceId = await registerBotWorkspace(bot);
-    const updated = await updateBot(botsDir, slug, { workspaceId });
+    const workspaceId = await registerCoworkerWorkspace(coworker);
+    const updated = await updateCoworker(coworkersDir, slug, { workspaceId });
     if (!serverHandle?.managedOpencode) {
       await restartPlatformServer();
     }
     return updated;
   },
-  "bots.update": async ({ slug, patch }) => updateBot(botsDir, slug, patch ?? {}),
-  "bots.delete": async ({ slug }) => {
+  "coworkers.update": async ({ slug, patch }) => updateCoworker(coworkersDir, slug, patch ?? {}),
+  "coworkers.delete": async ({ slug }) => {
     // Deregister the workspace first so the registry never points at a
     // directory that is about to disappear. Best effort: a failed
-    // deregistration must not leave the worker half-retired in the UI.
-    const bot = await getBot(botsDir, slug).catch(() => null);
-    if (bot?.workspaceId) {
+    // deregistration must not leave the coworker half-retired in the UI.
+    const coworker = await getCoworker(coworkersDir, slug).catch(() => null);
+    if (coworker?.workspaceId) {
       const handle = await ensurePlatformServer();
       const tokens = await loadOrCreateTokens();
-      await fetch(`${handle.url}/workspaces/${encodeURIComponent(bot.workspaceId)}`, {
+      await fetch(`${handle.url}/workspaces/${encodeURIComponent(coworker.workspaceId)}`, {
         method: "DELETE",
         headers: { "X-OpenWork-Host-Token": tokens.hostToken },
         signal: AbortSignal.timeout(8000),
       }).catch(() => undefined);
     }
-    await deleteBot(botsDir, slug);
+    await deleteCoworker(coworkersDir, slug);
     return { ok: true };
   },
-  "bots.files.list": async ({ slug }) => listMemoryFiles(botsDir, slug),
-  "bots.files.read": async ({ slug, path: relativePath }) => ({
-    content: await readBotFile(botsDir, slug, relativePath),
+  "coworkers.files.list": async ({ slug }) => listMemoryFiles(coworkersDir, slug),
+  "coworkers.files.read": async ({ slug, path: relativePath }) => ({
+    content: await readCoworkerFile(coworkersDir, slug, relativePath),
   }),
-  "bots.files.write": async ({ slug, path: relativePath, content }) => {
-    await writeBotFile(botsDir, slug, relativePath, content);
+  "coworkers.files.write": async ({ slug, path: relativePath, content }) => {
+    await writeCoworkerFile(coworkersDir, slug, relativePath, content);
     return { ok: true };
   },
   "shell.openExternal": async ({ url }) => {
@@ -308,11 +309,11 @@ const commands = {
 };
 
 function registerIpc() {
-  ipcMain.handle("workbot:invoke", async (_event, request) => {
+  ipcMain.handle("coworker:invoke", async (_event, request) => {
     const command = typeof request?.command === "string" ? request.command : "";
     const handler = commands[command];
     if (!handler) {
-      return { ok: false, error: `Unknown Work Bot command: ${command}` };
+      return { ok: false, error: `Unknown Open Coworker command: ${command}` };
     }
     try {
       const result = await handler(request?.payload ?? {});
@@ -323,8 +324,19 @@ function registerIpc() {
   });
 }
 
+function installApplicationMenu() {
+  const template = [
+    ...(process.platform === "darwin" ? [{ role: "appMenu" }] : []),
+    { role: "fileMenu" },
+    { role: "editMenu" },
+    { role: "viewMenu" },
+    { role: "windowMenu" },
+  ];
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+}
+
 function rendererUrl() {
-  const explicit = process.env.WORKBOT_START_URL?.trim();
+  const explicit = process.env.COWORKER_START_URL?.trim();
   if (explicit) return explicit;
   return pathToFileURL(path.resolve(__dirname, "..", "dist", "index.html")).href;
 }
@@ -366,6 +378,7 @@ if (!singleInstanceLock) {
   });
 
   app.whenReady().then(async () => {
+    installApplicationMenu();
     registerIpc();
     // Start the platform in the background; the renderer gates on runtime.info.
     void ensurePlatformServer().catch((error) => {

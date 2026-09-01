@@ -1,5 +1,5 @@
 /**
- * Integration proof of Work Bot's core composition claim: a bot directory
+ * Integration proof of Open Coworker's core composition claim: a coworker directory
  * created by the store becomes an ordinary OpenWork workspace on the same
  * embedded server bundle the desktop apps ship.
  *
@@ -14,29 +14,29 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { test } from "node:test";
-import { createBot, getBot, updateBot } from "./bots.mjs";
+import { createCoworker, getCoworker, updateCoworker } from "./coworkers.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const embeddedBundle = path.resolve(__dirname, "..", "..", "server", "dist", "embedded.js");
 
 test(
-  "bot directory registers as a native OpenWork workspace on the embedded server",
+  "coworker directory registers as a native OpenWork workspace on the embedded server",
   { skip: existsSync(embeddedBundle) ? false : "openwork-server dist is not built" },
   async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "workbot-platform-"));
-    const botsDir = path.join(root, "bots");
-    const configPath = path.join(root, "config", "workbot-server.json");
+    const root = await mkdtemp(path.join(tmpdir(), "coworker-platform-"));
+    const coworkersDir = path.join(root, "coworkers");
+    const configPath = path.join(root, "config", "coworker-server.json");
     // Isolate every derived config path (registry, runtime DB) inside the
     // temp root before the server module reads the environment.
     process.env.OPENWORK_SERVER_CONFIG = configPath;
 
-    const clientToken = "workbot-test-client-token";
-    const hostToken = "workbot-test-host-token";
+    const clientToken = "coworker-test-client-token";
+    const hostToken = "coworker-test-host-token";
     const requestedPort = 18790 + (process.pid % 977);
 
     const { startEmbeddedServer } = await import(pathToFileURL(embeddedBundle).href);
-    const bot = await createBot(botsDir, {
-      name: "Integration Bot",
+    const coworker = await createCoworker(coworkersDir, {
+      name: "Integration Coworker",
       role: "Integration",
       mission: "Prove the composition",
     });
@@ -64,20 +64,20 @@ test(
           "Content-Type": "application/json",
           "X-OpenWork-Host-Token": hostToken,
         },
-        body: JSON.stringify({ scope: "owner", label: "workbot platform test" }),
+        body: JSON.stringify({ scope: "owner", label: "coworker platform test" }),
       });
       assert.equal(tokenResponse.status, 201);
       const ownerToken = (await tokenResponse.json()).token;
       assert.ok(typeof ownerToken === "string" && ownerToken.length > 0);
 
-      // Register the bot directory exactly like the app's main process does.
+      // Register the coworker directory exactly like the app's main process does.
       const createResponse = await fetch(`${handle.url}/workspaces/local`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           "X-OpenWork-Host-Token": hostToken,
         },
-        body: JSON.stringify({ folderPath: bot.path, name: bot.name, preset: "minimal" }),
+        body: JSON.stringify({ folderPath: coworker.path, name: coworker.name, preset: "minimal" }),
       });
       assert.equal(createResponse.status, 201);
       const created = await createResponse.json();
@@ -91,11 +91,11 @@ test(
       const workspaces = Array.isArray(listed?.items) ? listed.items : [];
       const registered = workspaces.find((workspace) => workspace.id === created.activeId);
       assert.ok(registered, "created workspace should be listed");
-      assert.equal(path.resolve(registered.path), path.resolve(bot.path));
+      assert.equal(path.resolve(registered.path), path.resolve(coworker.path));
 
-      // The platform reference round-trips through bot.md frontmatter.
-      await updateBot(botsDir, bot.slug, { workspaceId: created.activeId });
-      const reread = await getBot(botsDir, bot.slug);
+      // The platform reference round-trips through coworker.md frontmatter.
+      await updateCoworker(coworkersDir, coworker.slug, { workspaceId: created.activeId });
+      const reread = await getCoworker(coworkersDir, coworker.slug);
       assert.equal(reread.workspaceId, created.activeId);
 
       // Registration is idempotent for the same directory: same workspace id.
@@ -105,7 +105,7 @@ test(
           "Content-Type": "application/json",
           "X-OpenWork-Host-Token": hostToken,
         },
-        body: JSON.stringify({ folderPath: bot.path, name: bot.name, preset: "minimal" }),
+        body: JSON.stringify({ folderPath: coworker.path, name: coworker.name, preset: "minimal" }),
       });
       assert.equal(repeatResponse.status, 201);
       const repeat = await repeatResponse.json();

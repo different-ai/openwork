@@ -1,5 +1,5 @@
 /**
- * Work Bot dev launcher: build the embedded OpenWork server bundle when it is
+ * Open Coworker dev launcher: build the embedded OpenWork server bundle when it is
  * missing, start the Vite renderer, then launch the Electron shell against it.
  */
 import { spawn } from "node:child_process";
@@ -47,11 +47,11 @@ async function waitForVite(url, timeoutMs = 60_000) {
 }
 
 if (!existsSync(serverBundle)) {
-  console.log("[workbot-dev] Building openwork-server (embedded bundle missing)…");
+  console.log("[coworker-dev] Building openwork-server (embedded bundle missing)…");
   await runOnce(pnpmCmd, ["--filter", "openwork-server", "build"], { cwd: repoRoot });
 }
 
-console.log(`[workbot-dev] Starting Vite on ${startUrl}`);
+console.log(`[coworker-dev] Starting Vite on ${startUrl}`);
 const vite = run(pnpmCmd, ["exec", "vite", "--port", String(devPort)], {
   cwd: appRoot,
   env: { ...process.env, PORT: String(devPort) },
@@ -69,7 +69,7 @@ function shutdown(code) {
 
 vite.on("exit", (code) => {
   if (!shuttingDown) {
-    console.error(`[workbot-dev] Vite exited (${code ?? "signal"}).`);
+    console.error(`[coworker-dev] Vite exited (${code ?? "signal"}).`);
     shutdown(code ?? 1);
   }
 });
@@ -77,16 +77,16 @@ vite.on("exit", (code) => {
 try {
   await waitForVite(startUrl);
 } catch (error) {
-  console.error(`[workbot-dev] ${error instanceof Error ? error.message : error}`);
+  console.error(`[coworker-dev] ${error instanceof Error ? error.message : error}`);
   shutdown(1);
 }
 
-console.log("[workbot-dev] Launching Work Bot…");
+console.log("[coworker-dev] Launching Open Coworker…");
 electron = run(pnpmCmd, ["exec", "electron", "./electron/main.mjs"], {
   cwd: appRoot,
   env: {
     ...process.env,
-    WORKBOT_START_URL: startUrl,
+    COWORKER_START_URL: startUrl,
     OPENWORK_DEV_MODE: "1",
   },
 });
