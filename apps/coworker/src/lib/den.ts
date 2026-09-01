@@ -1,9 +1,9 @@
 /**
- * Narrow Den (OpenWork Cloud) client for Work Bot.
+ * Narrow Den (OpenWork Cloud) client for Open Coworker.
  *
- * Work Bot is a Den client exactly like the OpenWork desktop: Den owns
+ * Open Coworker is a Den client exactly like the OpenWork desktop: Den owns
  * accounts, organizations, Automations, schedules, and run history. This
- * module implements only the slice Work Bot uses, typed by the shared
+ * module implements only the slice Open Coworker uses, typed by the shared
  * `@openwork/types/automations` wire contracts. Promoting the full desktop
  * Den client into a shared package is the designated follow-up extraction.
  */
@@ -18,7 +18,7 @@ import {
 } from "@openwork/types/automations";
 import { z } from "zod";
 
-const STORAGE_KEY = "workbot.den.session.v1";
+const STORAGE_KEY = "coworker.den.session.v1";
 const ORG_SCOPE_HEADER = "x-openwork-org-id";
 const ORG_PROXY_HEADER = "x-openwork-legacy-org-id";
 
@@ -62,10 +62,36 @@ function trimBase(url: string): string {
   return url.replace(/\/+$/, "");
 }
 
-/** `/v1/*` lives on the Den API mount; everything else on the web origin. */
-function requestBase(baseUrl: string, path: string): string {
+const HOSTED_DEN_APEX_HOST = "openworklabs.com";
+
+/**
+ * The deterministic API origin for a Den base URL — the same rule the
+ * OpenWork desktop applies: an explicit `api.*` host is already the API
+ * origin, hosted OpenWork Cloud (`*.openworklabs.com`) serves its API at the
+ * `api.`-prefixed host, and any other (self-hosted) Den is reached through
+ * its `/api/den` proxy path.
+ */
+function denApiBase(baseUrl: string): string {
   const web = trimBase(baseUrl);
-  return path.startsWith("/v1/") ? `${web}/api/den` : web;
+  try {
+    const url = new URL(web);
+    const hostname = url.hostname.toLowerCase();
+    const isExplicitApiHost = hostname === "api" || hostname.startsWith("api.");
+    const isHosted = hostname === HOSTED_DEN_APEX_HOST || hostname.endsWith(`.${HOSTED_DEN_APEX_HOST}`);
+    if (isExplicitApiHost) return url.origin;
+    if (isHosted) {
+      url.hostname = `api.${hostname}`;
+      return url.origin;
+    }
+  } catch {
+    // Fall through to the proxy-path shape.
+  }
+  return `${web}/api/den`;
+}
+
+/** `/v1/*` lives on the Den API origin; everything else on the web origin. */
+function requestBase(baseUrl: string, path: string): string {
+  return path.startsWith("/v1/") ? denApiBase(baseUrl) : trimBase(baseUrl);
 }
 
 export function buildDenSignInUrl(baseUrl: string): string {

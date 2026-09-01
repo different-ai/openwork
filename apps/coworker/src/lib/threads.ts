@@ -1,8 +1,8 @@
 /**
- * Work Bot threads are native OpenWork sessions in the bot's workspace,
+ * Open Coworker threads are native OpenWork sessions in the coworker's workspace,
  * driven through the shared `@openwork/headless-threads` client against the
  * embedded server's workspace-scoped engine proxy. Nothing here invents a
- * conversation type: a thread created in Work Bot opens in OpenWork.
+ * conversation type: a thread created in Open Coworker opens in OpenWork.
  */
 import { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
 import {
@@ -47,7 +47,7 @@ const providersSchema = z.object({
   ),
 });
 
-/** Parse a bot's persisted "providerId/modelId" preference. */
+/** Parse a coworker's persisted "providerId/modelId" preference. */
 export function parseModelPreference(value: string): { providerId: string; modelId: string } | undefined {
   const trimmed = value.trim();
   if (!trimmed) return undefined;
@@ -56,19 +56,19 @@ export function parseModelPreference(value: string): { providerId: string; model
   return { providerId: trimmed.slice(0, separator), modelId: trimmed.slice(separator + 1) };
 }
 
-export type BotThreads = {
+export type CoworkerThreads = {
   client: HeadlessThreadClient;
   listThreads: () => Promise<ThreadListItem[]>;
   listModels: () => Promise<EngineModelOption[]>;
 };
 
-export function createBotThreads(options: {
+export function createCoworkerThreads(options: {
   serverUrl: string;
   workspaceId: string;
   token: string;
   /** "providerId/modelId"; empty or invalid falls back to the engine default. */
   model?: string;
-}): BotThreads {
+}): CoworkerThreads {
   const client = createHeadlessThreadClient({
     baseUrl: options.serverUrl,
     workspaceId: options.workspaceId,
