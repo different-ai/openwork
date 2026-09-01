@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { coworkerBridge, type CoworkerSummary, type RuntimeInfo } from "@/lib/bridge";
 import { createCoworkerThreads, type ThreadListItem } from "@/lib/threads";
+import { CoworkerAvatar } from "@/ui/coworker-avatar";
 import { Button, Empty, ErrorNote, StatusDot } from "@/ui/kit";
 
 type TranscriptMessage = {
@@ -113,7 +114,7 @@ export function ThreadsPanel({
         key={openThreadId}
         threads={threads}
         threadId={openThreadId}
-        coworkerName={coworker.name}
+        coworker={coworker}
         onBack={() => {
           setOpenThreadId("");
           void refresh();
@@ -124,7 +125,7 @@ export function ThreadsPanel({
 
   return (
     <WorkOverview
-      coworkerName={coworker.name}
+      coworker={coworker}
       error={error}
       items={items}
       onOpen={setOpenThreadId}
@@ -135,13 +136,13 @@ export function ThreadsPanel({
 
 function WorkOverview({
   threads,
-  coworkerName,
+  coworker,
   items,
   error,
   onOpen,
 }: {
   threads: NonNullable<ReturnType<typeof createCoworkerThreads>>;
-  coworkerName: string;
+  coworker: CoworkerSummary;
   items: ThreadListItem[];
   error: string;
   onOpen: (threadId: string) => void;
@@ -171,7 +172,7 @@ function WorkOverview({
     <section className="flex h-full min-h-0 flex-col bg-ink">
       <header className="flex items-center justify-between gap-4 border-b border-line px-6 py-3">
         <div>
-          <h2 className="text-sm font-semibold text-snow">Work with {coworkerName}</h2>
+          <h2 className="text-sm font-semibold text-snow">Work with {coworker.name}</h2>
           <p className="text-xs text-mist">One assignment becomes a durable OpenWork thread.</p>
         </div>
       </header>
@@ -179,10 +180,14 @@ function WorkOverview({
         {error ? <ErrorNote>{error}</ErrorNote> : null}
         {items.length === 0 && !error ? (
           <div className="mx-auto flex h-full max-w-xl flex-col justify-center py-8 text-center">
-            <span className="mx-auto flex size-12 items-center justify-center rounded-2xl bg-panel text-lg font-semibold text-snow ring-1 ring-line">
-              {coworkerName.slice(0, 1).toUpperCase()}
-            </span>
-            <h3 className="mt-4 text-lg font-semibold text-snow">What should {coworkerName} own next?</h3>
+            <CoworkerAvatar
+              animated
+              color={coworker.avatarColor}
+              glasses={coworker.avatarGlasses}
+              name={coworker.name}
+              size={88}
+            />
+            <h3 className="mt-2 text-lg font-semibold text-snow">What should {coworker.name} own next?</h3>
             <p className="mx-auto mt-1 max-w-md text-sm leading-relaxed text-mist">
               Assign an outcome in your own words. Context and memory carry into future work.
             </p>
@@ -231,7 +236,7 @@ function WorkOverview({
         onSubmit={() => void assign()}
         busy={busy}
         error={assignError}
-        placeholder={`Assign work to ${coworkerName}…`}
+        placeholder={`Assign work to ${coworker.name}…`}
         submitLabel="Assign"
       />
     </section>
@@ -241,12 +246,12 @@ function WorkOverview({
 function ThreadView({
   threads,
   threadId,
-  coworkerName,
+  coworker,
   onBack,
 }: {
   threads: NonNullable<ReturnType<typeof createCoworkerThreads>>;
   threadId: string;
-  coworkerName: string;
+  coworker: CoworkerSummary;
   onBack: () => void;
 }) {
   const [messages, setMessages] = useState<TranscriptMessage[]>([]);
@@ -337,12 +342,12 @@ function ThreadView({
       <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5">
         <div className="mx-auto max-w-3xl space-y-3">
           {messages.map((message) => (
-            <MessageBubble key={message.id} message={message} coworkerName={coworkerName} />
+            <MessageBubble key={message.id} message={message} coworker={coworker} />
           ))}
           {working ? (
             <div className="flex items-center gap-2 px-1 py-2 text-xs text-mist">
               <span className="size-2 animate-pulse rounded-full bg-spark" />
-              {coworkerName} is working…
+              {coworker.name} is working…
             </div>
           ) : null}
           {messages.length === 0 && !error ? <Empty>Loading activity…</Empty> : null}
@@ -360,7 +365,7 @@ function ThreadView({
         onChange={setReply}
         onSubmit={() => void send()}
         busy={busy}
-        placeholder={`Message ${coworkerName}…`}
+        placeholder={`Message ${coworker.name}…`}
         submitLabel="Send"
         compact
       />
@@ -368,16 +373,25 @@ function ThreadView({
   );
 }
 
-function MessageBubble({ message, coworkerName }: { message: TranscriptMessage; coworkerName: string }) {
+function MessageBubble({ message, coworker }: { message: TranscriptMessage; coworker: CoworkerSummary }) {
   const user = message.role === "user";
   return (
-    <article className={`flex ${user ? "justify-end" : "justify-start"}`}>
+    <article className={`flex items-end gap-2 ${user ? "justify-end" : "justify-start"}`}>
+      {!user ? (
+        <CoworkerAvatar
+          animated={false}
+          color={coworker.avatarColor}
+          glasses={coworker.avatarGlasses}
+          name={coworker.name}
+          size={30}
+        />
+      ) : null}
       <div
         className={`max-w-[86%] rounded-2xl px-4 py-3 text-sm leading-relaxed whitespace-pre-wrap ${
           user ? "rounded-br-md bg-snow text-ink" : "rounded-bl-md bg-panel text-snow"
         }`}
       >
-        {!user ? <p className="mb-1 text-[11px] font-semibold text-mist">{coworkerName}</p> : null}
+        {!user ? <p className="mb-1 text-[11px] font-semibold text-mist">{coworker.name}</p> : null}
         {message.text || (message.toolCalls.length > 0 ? "" : "…")}
         {message.toolCalls.length > 0 ? (
           <ul className="mt-3 space-y-1.5">
@@ -422,7 +436,7 @@ function Composer({
     <div className="border-t border-line bg-ink px-5 py-4">
       <div className="mx-auto max-w-3xl">
         {error ? <div className="mb-2"><ErrorNote>{error}</ErrorNote></div> : null}
-        <div className="flex items-end gap-2 rounded-2xl border border-line bg-panel p-2 shadow-sm focus-within:border-spark/50">
+        <div className="flex items-end gap-2 rounded-2xl border border-line bg-panel p-2 focus-within:border-spark/50">
           {compact ? (
             <input
               className="min-w-0 flex-1 bg-transparent px-2 py-1.5 text-sm text-snow outline-none placeholder:text-mist/70"
