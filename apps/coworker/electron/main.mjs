@@ -49,6 +49,7 @@ const APP_NAME = "Open Coworker";
 const APP_IDENTIFIER = isDev ? "com.differentai.opencoworker.dev" : "com.differentai.opencoworker";
 const DEFAULT_SERVER_PORT = 8790;
 const DEFAULT_DEN_BASE_URL = "https://app.openworklabs.com";
+const APP_ICON_PATH = path.resolve(__dirname, "..", "resources", "icons", "icon.png");
 
 const explicitCdpPort = Number.parseInt(
   process.env.OPENWORK_ELECTRON_REMOTE_DEBUG_PORT?.trim() ?? "",
@@ -564,13 +565,14 @@ async function createMainWindow() {
         vibrancy: "under-window",
         visualEffectState: "active",
       }
-    : { backgroundColor: "#fbfaf7" };
+    : { backgroundColor: "#090c12" };
   const window = new BrowserWindow({
     width: 1280,
     height: 860,
     minWidth: 960,
     minHeight: 640,
     title: APP_NAME,
+    icon: APP_ICON_PATH,
     ...macWindowChrome,
     webPreferences: {
       preload: path.join(__dirname, "preload.mjs"),
@@ -601,6 +603,7 @@ if (!singleInstanceLock) {
   });
 
   app.whenReady().then(async () => {
+    if (process.platform === "darwin" && existsSync(APP_ICON_PATH)) app.dock.setIcon(APP_ICON_PATH);
     installApplicationMenu();
     registerIpc();
     // Start the platform in the background; the renderer gates on runtime.info.
