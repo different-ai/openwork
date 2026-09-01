@@ -23,6 +23,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/client": "^2.0.0",
+    "@modelcontextprotocol/ext-apps": "^1.7.5",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@opencode-ai/sdk": "^1.18.15",
     "@openwork/automations": "workspace:*",
