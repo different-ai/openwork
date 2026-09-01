@@ -16,7 +16,7 @@ function relativeTime(timestamp: number): string {
 
 function activityTone(activity: CoworkerActivity | undefined): "spark" | "mint" | "amber" | "rose" | "mist" {
   if (activity?.state === "working") return "spark";
-  if (activity?.state === "retrying") return "amber";
+  if (activity?.state === "retrying" || activity?.state === "attention") return "amber";
   if (activity?.state === "offline") return "rose";
   if (activity?.state === "recent") return "mint";
   return "mist";
