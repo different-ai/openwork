@@ -1,9 +1,10 @@
 import { useEffect, useRef, type AnchorHTMLAttributes, type ReactNode } from "react";
 
 export function Container({ children, className = "", wide = false }: { children: ReactNode; className?: string; wide?: boolean }) {
-  return <div className={`mx-auto w-full ${wide ? "max-w-[1280px]" : "max-w-[1120px]"} px-6 md:px-8 ${className}`}>{children}</div>;
+  return <div className={`mx-auto w-full ${wide ? "max-w-[1280px]" : "max-w-[1040px]"} px-6 md:px-8 ${className}`}>{children}</div>;
 }
 
+/** A section is a heading, one paragraph, and one thing to look at. */
 export function Section({
   id,
   eyebrow,
@@ -20,13 +21,13 @@ export function Section({
   className?: string;
 }) {
   return (
-    <section id={id} className={`scroll-mt-24 py-14 md:py-20 ${className}`}>
+    <section id={id} className={`scroll-mt-24 py-16 md:py-24 ${className}`}>
       <Container>
         <Reveal>
           <div className="max-w-2xl">
             {eyebrow ? <p className="eyebrow">{eyebrow}</p> : null}
-            <h2 className="mt-3 text-3xl font-semibold tracking-[-0.035em] text-snow md:text-[40px] md:leading-[1.1]">{title}</h2>
-            {lead ? <p className="mt-4 text-base leading-relaxed text-mist md:text-lg">{lead}</p> : null}
+            <h2 className="mt-3 text-[28px] font-semibold leading-[1.12] tracking-[-0.03em] text-snow md:text-[36px]">{title}</h2>
+            {lead ? <p className="mt-4 text-[15.5px] leading-relaxed text-mist md:text-[17px]">{lead}</p> : null}
           </div>
         </Reveal>
         {children}
@@ -114,14 +115,5 @@ export function ProductFrame({ title, children, className = "" }: { title?: stri
       </div>
       {children}
     </div>
-  );
-}
-
-export function SourceNote({ source }: { source: string }) {
-  return (
-    <p className="mt-3 min-w-0 max-w-full truncate font-mono text-[10.5px] text-mist/70" title={source}>
-      <span className="text-mist/50">from </span>
-      {source}
-    </p>
   );
 }
