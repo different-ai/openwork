@@ -1,10 +1,16 @@
 import { describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
 
 import {
   canRetryCloudProviderRow,
   resolveCloudProviderRowStatus,
   type CloudProviderRowStateInput,
 } from "../src/react-app/domains/settings/pages/cloud-providers-view";
+
+const viewSource = readFileSync(
+  new URL("../src/react-app/domains/settings/pages/cloud-providers-view.tsx", import.meta.url),
+  "utf8",
+);
 
 const ready: CloudProviderRowStateInput = {
   imported: true,
@@ -39,6 +45,25 @@ describe("Cloud provider status-only rows", () => {
     });
     expect(skipped).toBe("needs_credential");
     expect(canRetryCloudProviderRow(skipped)).toBe(false);
+  });
+
+  test("uses modern server materialization instead of Den's credential summary", () => {
+    // A Den provider without an org credential can still be materialized by
+    // the server from a matching local Desktop environment variable. When the
+    // server owns sync (serverSync !== null), the rows derive credential
+    // state only from the server's own skip list — Den's hasApiKey summary
+    // and legacy renderer sync errors are gated off at the call site.
+    expect(viewSource.includes(
+      "needsCredential: serverSync === null && !provider.hasApiKey && env.length > 0",
+    )).toBe(true);
+    expect(viewSource.includes(
+      "const syncError = serverSync === null ? lastSyncError[provider.id] ?? null : null;",
+    )).toBe(true);
+    // Server-materialized row: no legacy credential inputs, not skipped —
+    // Connected even though Den reports no organization credential.
+    expect(resolveCloudProviderRowStatus({ ...ready, skippedByServer: false })).toBe("connected");
+    // Server-side skip still wins over an otherwise connected-looking row.
+    expect(resolveCloudProviderRowStatus({ ...ready, skippedByServer: true })).toBe("needs_credential");
   });
 
   test("shows policy and workspace gates without retrying", () => {
