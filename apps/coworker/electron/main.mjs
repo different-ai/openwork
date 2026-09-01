@@ -34,6 +34,7 @@ import {
   deleteLocalResponsibility,
   finishLocalResponsibilityRun,
   listLocalResponsibilities,
+  reconcileInterruptedLocalRuns,
   setLocalResponsibilityActive,
 } from "./local-responsibilities.mjs";
 import { resolveBundledOpencodeBinary } from "./runtime-paths.mjs";
@@ -269,9 +270,19 @@ function localRunModel(coworker) {
 async function executeLocalResponsibility(slug, id, trigger) {
   const key = `${slug}:${id}`;
   try {
-    const coworker = await getCoworker(coworkersDir, slug);
-    if (!coworker.workspaceId) throw new Error("Coworker workspace is not ready");
-    const started = await beginLocalResponsibilityRun(coworkersDir, slug, id, { trigger });
+    // The coworker or responsibility can disappear between the due check and
+    // this point (retire, delete). That is not a run failure to record, only a
+    // run that never started; log it instead of rejecting a detached promise.
+    let coworker;
+    let started;
+    try {
+      coworker = await getCoworker(coworkersDir, slug);
+      if (!coworker.workspaceId) throw new Error("Coworker workspace is not ready");
+      started = await beginLocalResponsibilityRun(coworkersDir, slug, id, { trigger });
+    } catch (error) {
+      console.warn(`[open-coworker] local responsibility ${key} did not start`, error);
+      return;
+    }
     const runId = started.latestRun.id;
     try {
       const handle = await ensurePlatformServer();
@@ -317,22 +328,20 @@ function startLocalResponsibilityRun(slug, id, trigger) {
   return true;
 }
 
+function activeLocalRunIds(slug) {
+  const prefix = `${slug}:`;
+  return new Set([...activeLocalRuns].filter((key) => key.startsWith(prefix)).map((key) => key.slice(prefix.length)));
+}
+
 async function runDueLocalResponsibilities() {
   const now = Date.now();
   const coworkers = await listCoworkers(coworkersDir);
   for (const coworker of coworkers) {
-    const responsibilities = await listLocalResponsibilities(coworkersDir, coworker.slug).catch(() => []);
+    const responsibilities = await reconcileInterruptedLocalRuns(coworkersDir, coworker.slug, {
+      activeRunIds: activeLocalRunIds(coworker.slug),
+      now,
+    }).catch(() => []);
     for (const responsibility of responsibilities) {
-      const key = `${coworker.slug}:${responsibility.id}`;
-      if (responsibility.latestRun?.status === "running" && !activeLocalRuns.has(key)) {
-        await finishLocalResponsibilityRun(
-          coworkersDir,
-          coworker.slug,
-          responsibility.id,
-          responsibility.latestRun.id,
-          { status: "failed", error: "Open Coworker closed before this local run finished.", now },
-        ).catch(() => undefined);
-      }
       if (responsibility.state !== "active" || !responsibility.nextDueAt || responsibility.nextDueAt > now) continue;
       const trigger = now - responsibility.nextDueAt > 30_000 ? "recovery" : "scheduled";
       startLocalResponsibilityRun(coworker.slug, responsibility.id, trigger);
@@ -440,6 +449,12 @@ const commands = {
   },
   "coworkers.update": async ({ slug, patch }) => updateCoworker(coworkersDir, slug, patch ?? {}),
   "coworkers.delete": async ({ slug }) => {
+    const running = activeLocalRunIds(String(slug ?? "")).size;
+    if (running > 0) {
+      throw new Error(
+        `${running === 1 ? "A local responsibility is" : `${running} local responsibilities are`} still running for this coworker. Wait for it to finish or stop it before retiring.`,
+      );
+    }
     // Deregister the workspace first so the registry never points at a
     // directory that is about to disappear. Best effort: a failed
     // deregistration must not leave the coworker half-retired in the UI.
