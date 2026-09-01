@@ -14,7 +14,7 @@ export function Button({
   return (
     <button
       {...props}
-      className={`rounded-md px-3 py-1.5 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${styles[variant]} ${className}`}
+      className={`rounded-lg px-3 py-1.5 text-sm font-medium transition-colors duration-150 disabled:cursor-not-allowed disabled:opacity-40 ${styles[variant]} ${className}`}
     />
   );
 }
@@ -51,7 +51,7 @@ export function ErrorNote({ children }: { children: ReactNode }) {
   return <p className="rounded-md border border-rose/30 bg-rose/10 px-3 py-2 text-sm text-rose">{children}</p>;
 }
 
-export function StatusDot({ tone }: { tone: "mint" | "amber" | "rose" | "mist" }) {
-  const colors = { mint: "bg-mint", amber: "bg-amber", rose: "bg-rose", mist: "bg-mist" } as const;
+export function StatusDot({ tone }: { tone: "spark" | "mint" | "amber" | "rose" | "mist" }) {
+  const colors = { spark: "bg-spark", mint: "bg-mint", amber: "bg-amber", rose: "bg-rose", mist: "bg-mist" } as const;
   return <span className={`inline-block size-2 rounded-full ${colors[tone]}`} />;
 }
