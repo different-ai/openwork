@@ -11,7 +11,7 @@
  * No Electron imports here: this module is exercised directly by
  * `node --test electron/coworkers.test.mjs`.
  */
-import { mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { openworkConfigDir } from "@openwork/paths";
 
@@ -353,6 +353,131 @@ export async function updateCoworker(coworkersDir, slug, patch) {
 export async function deleteCoworker(coworkersDir, slug) {
   const root = coworkerPath(coworkersDir, slug);
   await rm(root, { recursive: true, force: true });
+}
+
+export const RETIRED_DIR_NAME = ".retired";
+
+function retiredRoot(coworkersDir) {
+  return path.join(coworkersDir, RETIRED_DIR_NAME);
+}
+
+function retiredPath(coworkersDir, archiveId) {
+  const cleaned = String(archiveId ?? "").trim();
+  if (!/^[a-z0-9][a-z0-9-]*$/.test(cleaned)) {
+    throw new Error(`Invalid retired coworker id: ${archiveId}`);
+  }
+  return path.join(retiredRoot(coworkersDir), cleaned);
+}
+
+async function patchFrontmatter(configPath, mutate) {
+  const { data, body } = parseFrontmatter(await readFile(configPath, "utf8"));
+  mutate(data);
+  await writeFile(configPath, serializeFrontmatter(data, body), "utf8");
+}
+
+async function countFiles(root) {
+  let count = 0;
+  const stack = [root];
+  while (stack.length > 0) {
+    const current = stack.pop();
+    let entries;
+    try {
+      entries = await readdir(current, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      if (entry.isDirectory()) stack.push(path.join(current, entry.name));
+      else if (entry.isFile()) count += 1;
+    }
+  }
+  return count;
+}
+
+/**
+ * Retirement is recoverable: the whole coworker home (identity, memory,
+ * workspace deliverables, local responsibilities) moves under
+ * `<coworkersDir>/.retired/<slug>-<timestamp>/`. Nothing is deleted until the
+ * archive is explicitly removed. `coworker.md` records where it came from so a
+ * restore needs no external bookkeeping.
+ */
+export async function retireCoworker(coworkersDir, slug, { now = Date.now() } = {}) {
+  const root = coworkerPath(coworkersDir, slug);
+  if (!(await pathExists(path.join(root, COWORKER_CONFIG_FILE)))) {
+    throw new Error(`Coworker "${slug}" does not exist`);
+  }
+  const retiredAt = new Date(now).toISOString();
+  const archiveId = `${slug}-${retiredAt.replace(/[^0-9]/g, "").slice(0, 14)}`;
+  const target = retiredPath(coworkersDir, archiveId);
+  if (await pathExists(target)) {
+    throw new Error(`A retired copy "${archiveId}" already exists`);
+  }
+  await patchFrontmatter(path.join(root, COWORKER_CONFIG_FILE), (data) => {
+    data.retiredSlug = slug;
+    data.retiredAt = retiredAt;
+  });
+  await mkdir(retiredRoot(coworkersDir), { recursive: true });
+  await rename(root, target);
+  return { slug, archiveId, path: target, retiredAt };
+}
+
+export async function listRetiredCoworkers(coworkersDir) {
+  const root = retiredRoot(coworkersDir);
+  if (!(await pathExists(root))) return [];
+  const entries = await readdir(root, { withFileTypes: true });
+  const retired = [];
+  for (const entry of entries) {
+    if (!entry.isDirectory() || !/^[a-z0-9][a-z0-9-]*$/.test(entry.name)) continue;
+    const archivePath = path.join(root, entry.name);
+    try {
+      const { data } = parseFrontmatter(await readFile(path.join(archivePath, COWORKER_CONFIG_FILE), "utf8"));
+      const slug = typeof data.retiredSlug === "string" && /^[a-z0-9][a-z0-9-]*$/.test(data.retiredSlug)
+        ? data.retiredSlug
+        : entry.name.replace(/-\d{8,14}$/, "");
+      retired.push({
+        archiveId: entry.name,
+        slug,
+        name: typeof data.name === "string" && data.name.trim() ? data.name.trim() : slug,
+        role: typeof data.role === "string" ? data.role : "",
+        avatarColor: avatarColor(data.avatarColor),
+        avatarGlasses: avatarGlasses(data.avatarGlasses),
+        retiredAt: typeof data.retiredAt === "string" ? data.retiredAt : "",
+        fileCount: await countFiles(archivePath),
+        canRestore: !(await pathExists(path.join(coworkersDir, slug))),
+      });
+    } catch {
+      // Not a coworker archive; leave it alone.
+    }
+  }
+  retired.sort((a, b) => b.retiredAt.localeCompare(a.retiredAt));
+  return retired;
+}
+
+/** Move a retired coworker home back into place. The workspace id is re-derived from the path by the server. */
+export async function restoreCoworker(coworkersDir, archiveId) {
+  const archivePath = retiredPath(coworkersDir, archiveId);
+  const configPath = path.join(archivePath, COWORKER_CONFIG_FILE);
+  if (!(await pathExists(configPath))) {
+    throw new Error(`Retired coworker "${archiveId}" does not exist`);
+  }
+  const { data } = parseFrontmatter(await readFile(configPath, "utf8"));
+  const slug = typeof data.retiredSlug === "string" ? data.retiredSlug : String(archiveId).replace(/-\d{8,14}$/, "");
+  const root = coworkerPath(coworkersDir, slug);
+  if (await pathExists(root)) {
+    throw new Error(`A coworker named "${slug}" already exists. Retire or rename it before restoring this one.`);
+  }
+  await patchFrontmatter(configPath, (record) => {
+    delete record.retiredSlug;
+    delete record.retiredAt;
+  });
+  await rename(archivePath, root);
+  return readCoworkerRecord(coworkersDir, slug);
+}
+
+/** Permanently remove a retired coworker archive. This is the only destructive step. */
+export async function deleteRetiredCoworker(coworkersDir, archiveId) {
+  const archivePath = retiredPath(coworkersDir, archiveId);
+  await rm(archivePath, { recursive: true, force: true });
 }
 
 export async function readCoworkerFile(coworkersDir, slug, relativePath) {

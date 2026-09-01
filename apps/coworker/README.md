@@ -47,6 +47,13 @@ The coworker directory is registered as an ordinary OpenWork workspace, so:
   do not pretend to be always-on Cloud work.
 - **Skills and MCP** come for free from the same engine configuration layering
   the OpenWork desktop uses.
+- **Retirement is recoverable.** Retiring a coworker deregisters its workspace
+  and moves the whole home to `~/.config/openwork/coworkers/.retired/<slug>-<timestamp>/`
+  with `retiredSlug`/`retiredAt` recorded in `coworker.md`. Nothing is deleted;
+  the Add coworker screen lists retired coworkers with Restore (re-registers the
+  same path, so the workspace id and native threads reattach) and a separately
+  armed permanent delete. Retirement is refused while one of the coworker's
+  local responsibilities is still running.
 
 ## Architecture
 

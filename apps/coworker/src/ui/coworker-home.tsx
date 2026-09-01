@@ -683,14 +683,18 @@ function CoworkerSettings({
 
       <section className="rounded-2xl border border-rose/25 bg-rose/5 p-4">
         <h3 className="text-sm font-semibold text-rose">Retire coworker</h3>
-        <p className="mt-1 text-xs leading-relaxed text-mist">Deletes this coworker and its local files. OpenWork thread records remain platform-native.</p>
+        <p className="mt-1 text-xs leading-relaxed text-mist">
+          Moves {coworker.name}'s identity, memory, workspace files, and local responsibilities to a Retired folder
+          inside your coworkers home and removes the workspace from the roster. Nothing is deleted; you can restore
+          or permanently remove it later from the Add coworker screen.
+        </p>
         {confirmingRetire ? (
           <div className="mt-3 space-y-2">
-            <p className="text-xs font-medium text-rose">Delete forever?</p>
+            <p className="text-xs font-medium text-rose">Retire {coworker.name}?</p>
             <div className="flex gap-2">
               <Button variant="ghost" className="flex-1" disabled={busy} onClick={() => setConfirmingRetire(false)}>Keep coworker</Button>
               <Button variant="danger" className="flex-1" disabled={busy || !confirmArmed} onClick={() => void retire()}>
-                {busy ? "Deleting…" : "Delete forever"}
+                {busy ? "Retiring…" : "Retire"}
               </Button>
             </div>
           </div>
