@@ -406,7 +406,7 @@ function createSessionLifecycleEvalMessages(sessionId: string): UIMessage[] {
   ];
 }
 
-function createSubagentActivityEvalMessages(sessionId: string): UIMessage[] {
+function createSubagentActivityEvalMessages(sessionId: string, childSessionId?: string): UIMessage[] {
   const now = Date.now();
   return [
     {
@@ -429,6 +429,7 @@ function createSubagentActivityEvalMessages(sessionId: string): UIMessage[] {
             prompt: "Reproduce the Azure failure in isolation.",
             subagent_type: "executor-deep",
           },
+          ...(childSessionId ? { callProviderMetadata: { openwork: { childSessionId } } } : {}),
         },
       ],
       metadata: { opencode: { created: now + 1 } },
@@ -500,6 +501,7 @@ export type SessionSurfaceProps = {
   isSandboxWorkspace: boolean;
   todos?: TodoItem[];
   activePermission?: PendingPermission | null;
+  activePermissionSourceTitle?: string | null;
   permissionReplyBusy?: boolean;
   respondPermission?: (requestID: string, reply: "once" | "always" | "reject") => void;
   activeQuestion?: PendingQuestion | null;
@@ -1409,14 +1411,19 @@ export function SessionSurface(props: SessionSurfaceProps) {
       description: "Dev-only eval hook that renders a deterministic running delegated-task row.",
       sideEffect: "mutation",
       disabled: !props.sessionId,
-      execute: () => {
-        setEvalMarkdownMessages(createSubagentActivityEvalMessages(props.sessionId));
+      args: [{ name: "childSessionId", type: "string", description: "Optional child session represented by the task row." }],
+      execute: (args) => {
+        const rawChildSessionId = args && typeof args === "object" ? Reflect.get(args, "childSessionId") : undefined;
+        const childSessionId = typeof rawChildSessionId === "string" && rawChildSessionId.trim()
+          ? rawChildSessionId.trim()
+          : undefined;
+        setEvalMarkdownMessages(createSubagentActivityEvalMessages(props.sessionId, childSessionId));
         useSessionActivityStore.getState().setRunStatus(
           props.workspaceId,
           props.sessionId,
           { type: "busy" },
         );
-        return { ok: true };
+        return { ok: true, childSessionId: childSessionId ?? null };
       },
     };
   }, [props.sessionId, props.workspaceId]);
@@ -2835,6 +2842,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
                 {props.activePermission ? (
                   <PermissionApprovalPanel
                     permission={props.activePermission}
+                    sourceTitle={props.activePermissionSourceTitle ?? undefined}
                     busy={props.permissionReplyBusy}
                     respondPermission={props.respondPermission}
                     safeStringify={props.safeStringify}

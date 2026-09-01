@@ -20,6 +20,7 @@ import { createClient, unwrap } from "@/app/lib/opencode";
 import { abortSessionSafe, forkSession, listCommands, revertSession, setSessionArchived, shellInSession, unrevertSession } from "@/app/lib/opencode-session";
 import { deleteNativeSession, getNativeSessionMessages } from "@/app/lib/opencode-session-native";
 import { useSessionManagementStore as sessionManagementStore } from "@/react-app/domains/session/sidebar/session-management-store";
+import { getSessionDescendantIds } from "@/react-app/domains/session/sidebar/utils";
 import {
   buildOpenworkWorkspaceBaseUrl,
   readOpenworkServerSettings,
@@ -54,6 +55,7 @@ import type {
   WorkspaceConnectionState,
   Client,
   ProviderListItem,
+  PendingPermission,
   WorkspaceDisplay,
   WorkspaceSessionGroup,
 } from "@/app/types";
@@ -107,6 +109,7 @@ import { buildOpenworkEnvSystemContext } from "@/react-app/domains/session/sync/
 import {
   applySessionRevert,
   applySessionUnrevert,
+  permissionKey,
 } from "@/react-app/domains/session/sync/session-sync";
 import { draftToParts } from "@/react-app/domains/session/sync/draft-parts";
 import { useSessionInteractions } from "@/react-app/domains/session/sync/use-session-interactions";
@@ -605,14 +608,22 @@ export function SessionRoute() {
         }),
     [sessionsByWorkspaceId],
   );
+  const selectedPermissionSessionIds = useMemo(() => {
+    const selected = selectedSessionId?.trim();
+    if (!selected) return [];
+    const sessions = sessionsByWorkspaceId[selectedWorkspaceId] ?? [];
+    return [selected, ...getSessionDescendantIds(sessions, selected)];
+  }, [selectedSessionId, selectedWorkspaceId, sessionsByWorkspaceId]);
   const activeSelectedWorkspaceSessionIds = useMemo(
-    () =>
-      (sessionsByWorkspaceId[selectedWorkspaceId] ?? []).flatMap((session) => {
+    () => Array.from(new Set([
+      ...selectedPermissionSessionIds,
+      ...(sessionsByWorkspaceId[selectedWorkspaceId] ?? []).flatMap((session) => {
         if (!isActiveSessionStatus(getSessionStatus(session))) return [];
         const id = String(session?.id ?? "").trim();
         return id ? [id] : [];
       }),
-    [selectedWorkspaceId, sessionsByWorkspaceId],
+    ])),
+    [selectedPermissionSessionIds, selectedWorkspaceId, sessionsByWorkspaceId],
   );
   const remoteAccessRestart = useRemoteAccessRestart({
     isEnabled: () => openworkServerSettings.remoteAccessEnabled === true,
@@ -1055,10 +1066,20 @@ export function SessionRoute() {
     todos,
   } = useSessionInteractions({
     client: opencodeClient,
-    workspaceId: selectedWorkspaceId,
+    // Match ReactSessionRuntime and SessionSurface: remote route IDs can carry
+    // a client-only prefix, while interaction caches use the server workspace.
+    workspaceId: selectedWorkspaceEndpoint?.workspaceId ?? selectedWorkspaceId,
     sessionId: selectedSessionId,
+    permissionSessionIds: selectedPermissionSessionIds,
     workspaceRoot: selectedWorkspaceRoot,
   });
+  const activePermissionSourceTitle = useMemo(() => {
+    if (!activePermission || activePermission.sessionID === selectedSessionId) return null;
+    const source = (sessionsByWorkspaceId[selectedWorkspaceId] ?? []).find(
+      (session) => session.id === activePermission.sessionID,
+    );
+    return String(source?.title ?? source?.slug ?? "").trim() || t("session.subagent_task");
+  }, [activePermission, selectedSessionId, selectedWorkspaceId, sessionsByWorkspaceId]);
   const modelUnavailableMessage = organizationModelsEmpty
     ? t("models.organization_models_empty")
     : selectedModelUnavailable
@@ -2360,6 +2381,71 @@ export function SessionRoute() {
   }, [selectedSessionId, selectedWorkspaceId]);
   useControlAction(seedActiveSessionSidebarControlAction);
 
+  const seedChildPermissionControlAction = useMemo<OpenworkControlAction | null>(() => {
+    if (!import.meta.env.DEV) return null;
+    return {
+      id: "eval.child_permission.seed",
+      label: "Seed a child session permission request",
+      description: "Dev-only eval hook that creates a child session blocked on a permission request.",
+      sideEffect: "mutation",
+      disabled: !selectedWorkspaceId || !selectedSessionId,
+      execute: () => {
+        if (!selectedWorkspaceId || !selectedSessionId) {
+          return { ok: false, error: "No session is selected." };
+        }
+        const parent = (sessionsByWorkspaceId[selectedWorkspaceId] ?? []).find(
+          (session) => session.id === selectedSessionId,
+        );
+        if (!parent) return { ok: false, error: "The selected session is unavailable." };
+
+        const childSessionId = `${selectedSessionId}:eval-child`;
+        const request: PendingPermission = {
+          id: `${selectedSessionId}:eval-child-permission`,
+          sessionID: childSessionId,
+          permission: "bash",
+          patterns: ["git status --short --branch"],
+          metadata: {
+            command: "git status --short --branch",
+            description: "Inspect the delegated task workspace",
+          },
+          always: [],
+          // Keep this deterministic proof request newer than any concurrent
+          // snapshot so the dev seam behaves like a live post-snapshot event.
+          receivedAt: Number.MAX_SAFE_INTEGER,
+          protocol: "legacy",
+          evaluation: true,
+        };
+        setSessionsByWorkspaceId((current) => ({
+          ...current,
+          [selectedWorkspaceId]: [
+            ...(current[selectedWorkspaceId] ?? []).filter((session) => session.id !== childSessionId),
+            {
+              ...parent,
+              id: childSessionId,
+              title: "Investigate the deployment failure",
+              parentID: selectedSessionId,
+              time: { ...parent.time, created: Date.now(), updated: Date.now() },
+            },
+          ],
+        }));
+        const runtimeWorkspaceId = selectedWorkspaceEndpoint?.workspaceId ?? selectedWorkspaceId;
+        getReactQueryClient().setQueryData<PendingPermission[]>(
+          permissionKey(runtimeWorkspaceId, childSessionId),
+          [request],
+        );
+        useSessionActivityStore.getState().setWaitingRequest(
+          runtimeWorkspaceId,
+          childSessionId,
+          "permission",
+          request.id,
+          true,
+        );
+        return { childSessionId };
+      },
+    };
+  }, [selectedSessionId, selectedWorkspaceEndpoint?.workspaceId, selectedWorkspaceId, sessionsByWorkspaceId, setSessionsByWorkspaceId]);
+  useControlAction(seedChildPermissionControlAction);
+
   const commandPaletteControlAction = useMemo<OpenworkControlAction>(() => ({
     id: "command_palette.open",
     label: "Open the command palette",
@@ -3229,6 +3315,7 @@ export function SessionRoute() {
           : null
       }
       activePermission={activePermission}
+      activePermissionSourceTitle={activePermissionSourceTitle}
       permissionReplyBusy={permissionReplyBusy}
       respondPermission={respondPermission}
       activeQuestion={activeQuestion}

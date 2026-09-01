@@ -9,8 +9,9 @@ import { unwrap } from "@/app/lib/opencode";
 import type { Client, PendingPermission, PendingQuestion, TodoItem } from "@/app/types";
 import { t } from "@/i18n";
 import { getReactQueryClient } from "@/react-app/infra/query-client";
-import { useQueryCacheState } from "@/react-app/infra/query-cache-state";
+import { useQueryCacheArrayState, useQueryCacheState } from "@/react-app/infra/query-cache-state";
 import { describeRouteError } from "@/react-app/shell/route-workspaces";
+import { useSessionActivityStore } from "../status/session-activity-store";
 import {
   permissionKey,
   questionKey,
@@ -27,6 +28,7 @@ export type UseSessionInteractionsInput = {
   client: Client | null;
   workspaceId: string;
   sessionId: string | null;
+  permissionSessionIds?: string[];
   workspaceRoot: string;
 };
 
@@ -38,13 +40,23 @@ export function useSessionInteractions(input: UseSessionInteractionsInput) {
   const [questionReplyBusy, setQuestionReplyBusy] = useState(false);
   const questionReplyBusyRef = useRef(false);
 
-  const permissionQueryKey = useMemo(
-    () => (workspaceId && sessionId ? permissionKey(workspaceId, sessionId) : null),
-    [sessionId, workspaceId],
+  const requestedPermissionSessionIdsKey = (input.permissionSessionIds ?? []).join("\u0000");
+  const permissionSessionIds = useMemo(() => {
+    if (!sessionId) return [];
+    const requested = requestedPermissionSessionIdsKey ? requestedPermissionSessionIdsKey.split("\u0000") : [];
+    return Array.from(new Set([sessionId, ...requested].map((id) => id.trim()).filter(Boolean)));
+  }, [requestedPermissionSessionIdsKey, sessionId]);
+  const permissionQueryKeys = useMemo(
+    () => workspaceId ? permissionSessionIds.map((id) => permissionKey(workspaceId, id)) : [],
+    [permissionSessionIds, workspaceId],
   );
-  const pendingPermissions = useQueryCacheState<PendingPermission[]>(
-    permissionQueryKey,
+  const cachedPermissions = useQueryCacheArrayState<PendingPermission>(
+    permissionQueryKeys,
     emptyPendingPermissions,
+  );
+  const pendingPermissions = useMemo(
+    () => [...cachedPermissions].sort((left, right) => left.receivedAt - right.receivedAt || left.id.localeCompare(right.id)),
+    [cachedPermissions],
   );
   const questionQueryKey = useMemo(
     () => (workspaceId && sessionId ? questionKey(workspaceId, sessionId) : null),
@@ -61,29 +73,41 @@ export function useSessionInteractions(input: UseSessionInteractionsInput) {
   const todos = useQueryCacheState<TodoItem[]>(todoQueryKey, emptyTodos);
 
   useEffect(() => {
-    if (!client || !workspaceId || !sessionId) return;
+    if (!client || !workspaceId || permissionSessionIds.length === 0) return;
     let cancelled = false;
     const directory = workspaceRoot || undefined;
     void (async () => {
       const snapshotStartedAt = Date.now();
       try {
-        const list: Parameters<typeof seedPermissionState>[2] = [];
-        let readSucceeded = false;
+        let legacyPermissions: Parameters<typeof seedPermissionState>[2] = [];
+        let legacyReadSucceeded = false;
         try {
-          list.push(...unwrap(await client.permission.list({ directory })));
-          readSucceeded = true;
+          legacyPermissions = unwrap(await client.permission.list({ directory }));
+          legacyReadSucceeded = true;
         } catch {
           // Older/newer OpenCode permission APIs can fail independently.
         }
-        try {
-          list.push(...unwrap(await client.v2.session.permission.list({ sessionID: sessionId })).data);
-          readSucceeded = true;
-        } catch {
-          // Keep the legacy snapshot if the v2 endpoint is unavailable.
-        }
-        if (!readSucceeded) return;
-        if (!cancelled) {
-          seedPermissionState(workspaceId, sessionId, list, { snapshotStartedAt });
+
+        const v2Reads = await Promise.all(permissionSessionIds.map(async (permissionSessionId) => {
+          try {
+            const permissions = unwrap(
+              await client.v2.session.permission.list({ sessionID: permissionSessionId }),
+            ).data;
+            return { permissionSessionId, permissions, succeeded: true };
+          } catch {
+            return { permissionSessionId, permissions: [], succeeded: false };
+          }
+        }));
+
+        if (cancelled) return;
+        for (const read of v2Reads) {
+          if (!legacyReadSucceeded && !read.succeeded) continue;
+          seedPermissionState(
+            workspaceId,
+            read.permissionSessionId,
+            [...legacyPermissions, ...read.permissions],
+            { snapshotStartedAt },
+          );
         }
       } catch {
         // Keep event-synced permission state if the snapshot read fails.
@@ -93,7 +117,7 @@ export function useSessionInteractions(input: UseSessionInteractionsInput) {
     return () => {
       cancelled = true;
     };
-  }, [client, sessionId, workspaceId, workspaceRoot]);
+  }, [client, permissionSessionIds, workspaceId, workspaceRoot]);
 
   useEffect(() => {
     if (!client || !workspaceId || !sessionId) return;
@@ -125,7 +149,9 @@ export function useSessionInteractions(input: UseSessionInteractionsInput) {
       setPermissionReplyBusy(true);
       try {
         const pendingPermission = pendingPermissions.find((permission) => permission.id === requestID);
-        if (pendingPermission?.protocol === "v2") {
+        if (pendingPermission?.evaluation) {
+          // A development-only proof request has no engine-side request to answer.
+        } else if (pendingPermission?.protocol === "v2") {
           const result = await client.v2.session.permission.reply({
             sessionID: pendingPermission.sessionID,
             requestID,
@@ -141,10 +167,21 @@ export function useSessionInteractions(input: UseSessionInteractionsInput) {
             }),
           );
         }
-        getReactQueryClient().setQueryData<PendingPermission[]>(
-          permissionKey(workspaceId, sessionId),
-          (current = []) => current.filter((permission) => permission.id !== requestID),
-        );
+        for (const permissionSessionId of permissionSessionIds) {
+          getReactQueryClient().setQueryData<PendingPermission[]>(
+            permissionKey(workspaceId, permissionSessionId),
+            (current = []) => current.filter((permission) => permission.id !== requestID),
+          );
+        }
+        if (pendingPermission) {
+          useSessionActivityStore.getState().setWaitingRequest(
+            workspaceId,
+            pendingPermission.sessionID,
+            "permission",
+            requestID,
+            false,
+          );
+        }
       } catch (error) {
         toast.error(t("app.error_request_failed"), {
           description: describeRouteError(error),
@@ -154,7 +191,7 @@ export function useSessionInteractions(input: UseSessionInteractionsInput) {
         setPermissionReplyBusy(false);
       }
     },
-    [client, pendingPermissions, sessionId, workspaceId, workspaceRoot],
+    [client, pendingPermissions, permissionSessionIds, sessionId, workspaceId, workspaceRoot],
   );
 
   const activeQuestion = pendingQuestions[0] ?? null;

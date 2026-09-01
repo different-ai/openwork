@@ -1,7 +1,10 @@
 import { describe, expect, test } from "bun:test";
 
 import type { SidebarSessionItem } from "../src/app/types";
-import { flattenSessionRows } from "../src/react-app/domains/session/sidebar/utils";
+import {
+  flattenSessionRows,
+  getSessionDescendantIds,
+} from "../src/react-app/domains/session/sidebar/utils";
 
 const sessions: SidebarSessionItem[] = [
   { id: "session-a", title: "Pinned root" },
@@ -10,6 +13,20 @@ const sessions: SidebarSessionItem[] = [
 ];
 
 describe("sidebar session rows", () => {
+  test("finds nested sub-agent sessions without including unrelated roots", () => {
+    const nested: SidebarSessionItem[] = [
+      ...sessions,
+      { id: "session-a-grandchild", title: "Nested child", parentID: "session-a-child" },
+      { id: "session-cycle-a", title: "Cycle A", parentID: "session-cycle-b" },
+      { id: "session-cycle-b", title: "Cycle B", parentID: "session-cycle-a" },
+    ];
+
+    expect(getSessionDescendantIds(nested, "session-a")).toEqual([
+      "session-a-child",
+      "session-a-grandchild",
+    ]);
+  });
+
   test("never emits sub-agent (child) sessions", () => {
     const rows = flattenSessionRows(sessions, Number.MAX_SAFE_INTEGER);
 

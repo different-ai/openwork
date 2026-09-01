@@ -241,6 +241,7 @@ export type SessionPageProps = {
   shareWorkspaceModal?: ShareWorkspaceModalProps | null;
   providerAuthModal?: ProviderAuthModalProps | null;
   activePermission?: PendingPermission | null;
+  activePermissionSourceTitle?: string | null;
   permissionReplyBusy?: boolean;
   respondPermission?: (requestID: string, reply: "once" | "always" | "reject") => void;
   safeStringify?: (value: unknown) => string;
@@ -1733,6 +1734,7 @@ export function SessionPage(props: SessionPageProps) {
                             openworkToken={reactSessionToken}
                             todos={props.todos}
                             activePermission={props.activePermission}
+                            activePermissionSourceTitle={props.activePermissionSourceTitle}
                             permissionReplyBusy={props.permissionReplyBusy}
                             respondPermission={props.respondPermission}
                             activeQuestion={props.activeQuestion}

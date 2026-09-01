@@ -4,6 +4,7 @@ import type { PermissionRequest, PermissionV2Request, QuestionRequest } from "@o
 
 import type { OpenworkSessionSnapshot } from "../src/app/lib/openwork-server";
 import { getReactQueryClient } from "../src/react-app/infra/query-client";
+import { useSessionActivityStore } from "../src/react-app/domains/session/status/session-activity-store";
 import {
   __applySessionSyncEventForTest,
   __createWorkspaceSessionSyncForTest,
@@ -105,6 +106,9 @@ function snapshotWithMessages(
 
 afterEach(() => {
   getReactQueryClient().clear();
+  for (const sessionId of ["session-a", "session-b", "session-child"]) {
+    useSessionActivityStore.getState().removeSession("workspace-a", sessionId);
+  }
 });
 
 describe("session permission sync", () => {
@@ -146,6 +150,7 @@ describe("session permission sync", () => {
     expect(getReactQueryClient().getQueryData(permissionKey("workspace-a", "session-a"))).toMatchObject([
       { id: "perm-live", sessionID: "session-a", permission: "bash" },
     ]);
+    expect(useSessionActivityStore.getState().getStatus("workspace-a", "session-a")).toBe("waiting");
   });
 
   test("drops stale permissions that predate a fresh snapshot", () => {
@@ -201,6 +206,31 @@ describe("session permission sync", () => {
       expect(getReactQueryClient().getQueryData(permissionKey("workspace-a", "session-a"))).toEqual([]);
     } finally {
       releaseSession();
+      cleanup();
+    }
+  });
+
+  test("keeps a child permission that arrives before the child session is tracked", () => {
+    const syncInput = { workspaceId: "workspace-a", baseUrl: "http://127.0.0.1:1234", openworkToken: "token" };
+    const cleanup = __createWorkspaceSessionSyncForTest(syncInput);
+
+    try {
+      __applySessionSyncEventForTest(syncInput, {
+        type: "permission.v2.asked",
+        properties: v2Permission("perm-child", "session-child"),
+      });
+
+      expect(getReactQueryClient().getQueryData(permissionKey("workspace-a", "session-child"))).toMatchObject([
+        { id: "perm-child", sessionID: "session-child", protocol: "v2" },
+      ]);
+
+      __applySessionSyncEventForTest(syncInput, {
+        type: "permission.v2.replied",
+        properties: { sessionID: "session-child", requestID: "perm-child", reply: "reject" },
+      });
+
+      expect(getReactQueryClient().getQueryData(permissionKey("workspace-a", "session-child"))).toEqual([]);
+    } finally {
       cleanup();
     }
   });

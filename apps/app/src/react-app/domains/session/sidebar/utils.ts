@@ -53,6 +53,38 @@ export const getRootSessions = (sessions: WorkspaceSessionGroup["sessions"]) => 
   });
 };
 
+/**
+ * Return every descendant of a session in stable session-list order. The
+ * visited set keeps malformed cyclic parent data from looping forever.
+ */
+export const getSessionDescendantIds = (
+  sessions: WorkspaceSessionGroup["sessions"],
+  sessionId: string,
+): string[] => {
+  const root = sessionId.trim();
+  if (!root) return [];
+
+  const descendants: string[] = [];
+  const visited = new Set([root]);
+  let parents = new Set([root]);
+
+  while (parents.size > 0) {
+    const nextParents = new Set<string>();
+    for (const session of sessions) {
+      const id = session.id.trim();
+      if (!id || visited.has(id)) continue;
+      const parentID = normalizeSessionParentID(session);
+      if (!parents.has(parentID)) continue;
+      visited.add(id);
+      descendants.push(id);
+      nextParents.add(id);
+    }
+    parents = nextParents;
+  }
+
+  return descendants;
+};
+
 /** Split sessions into active vs. archived. Archived sessions live in their own section. */
 export const partitionArchivedSessions = (sessions: WorkspaceSessionGroup["sessions"]) => {
   const active: SessionListItem[] = [];

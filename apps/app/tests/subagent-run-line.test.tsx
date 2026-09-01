@@ -3,17 +3,19 @@ import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import { MessageListProvider } from "../src/components/chat/message-list-provider";
-import { SubagentRunLine } from "../src/components/chat/subagent-run-line";
+import { SubagentRunLine, subagentRunActivity } from "../src/components/chat/subagent-run-line";
 import type { TaskToolPart } from "../src/lib/build-in-tools";
 
 const noop = () => {};
 
-function taskPart(state: "input-streaming" | "output-available"): TaskToolPart {
+function taskPart(state: "input-streaming" | "output-available", childSessionId?: string): TaskToolPart {
   const input = {
     description: "Build isolated Azure repro",
     prompt: "Reproduce the Azure failure in isolation.",
     subagent_type: "executor-deep",
   };
+
+  const callProviderMetadata = childSessionId ? { openwork: { childSessionId } } : undefined;
 
   return state === "output-available"
     ? {
@@ -23,6 +25,7 @@ function taskPart(state: "input-streaming" | "output-available"): TaskToolPart {
         state,
         input,
         output: "Completed the reproduction.",
+        callProviderMetadata,
       }
     : {
         type: "dynamic-tool",
@@ -30,6 +33,7 @@ function taskPart(state: "input-streaming" | "output-available"): TaskToolPart {
         toolCallId: "call-subagent",
         state,
         input,
+        callProviderMetadata,
       };
 }
 
@@ -74,5 +78,28 @@ describe("SubagentRunLine", () => {
     expect(html).toContain("Completed");
     expect(html).not.toContain("ow-text-shimmer");
     expect(html).not.toContain("animate-spin");
+  });
+
+  test("prioritizes a blocked permission over the running treatment", () => {
+    expect(subagentRunActivity({
+      permissionPending: true,
+      inFlight: true,
+      failed: false,
+    })).toBe("waiting-permission");
+  });
+
+  test("keeps a blocked permission ahead of a lost connection, which only downgrades the running treatment", () => {
+    expect(subagentRunActivity({
+      permissionPending: true,
+      syncDegraded: true,
+      inFlight: true,
+      failed: false,
+    })).toBe("waiting-permission");
+    expect(subagentRunActivity({
+      permissionPending: false,
+      syncDegraded: true,
+      inFlight: true,
+      failed: false,
+    })).toBe("reconnecting");
   });
 });

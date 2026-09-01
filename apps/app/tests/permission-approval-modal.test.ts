@@ -97,4 +97,17 @@ describe("permission approval modal helpers", () => {
     expect(html).toContain("Approve Todo write?");
     expect(html).not.toContain("Approve todowrite?");
   });
+
+  test("identifies a permission requested by a child session", () => {
+    const html = renderToStaticMarkup(
+      React.createElement(PermissionApprovalPanel, {
+        permission: pendingPermission({ sessionID: "session-child" }),
+        sourceTitle: "Investigate the deployment failure",
+        respondPermission: () => {},
+      }),
+    );
+
+    expect(html).toContain('data-permission-source="child-session"');
+    expect(html).toContain("Requested by Investigate the deployment failure");
+  });
 });

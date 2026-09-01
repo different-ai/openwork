@@ -588,15 +588,9 @@ export function seedPermissionState(
   permissions: PermissionSeed[],
   options: { snapshotStartedAt?: number } = {},
 ) {
-  useSessionActivityStore.getState().replaceWaitingRequests(
-    workspaceId,
-    sessionId,
-    "permission",
-    permissions.flatMap((permission) => permission.sessionID === sessionId ? [permission.id] : []),
-  );
   const queryClient = getReactQueryClient();
   const now = Date.now();
-  queryClient.setQueryData<PendingPermission[]>(permissionKey(workspaceId, sessionId), (current = []) => {
+  const nextPermissions = queryClient.setQueryData<PendingPermission[]>(permissionKey(workspaceId, sessionId), (current = []) => {
     const receivedAtById = new Map(current.map((permission) => [permission.id, permission.receivedAt]));
     const seeded = permissions.flatMap((permission) =>
       permission.sessionID === sessionId ? [permissionWithReceivedAt(permission, receivedAtById.get(permission.id) ?? now)] : [],
@@ -614,6 +608,12 @@ export function seedPermissionState(
         : [];
     return [...seeded, ...liveAfterSnapshot].sort(sortPermissions);
   });
+  useSessionActivityStore.getState().replaceWaitingRequests(
+    workspaceId,
+    sessionId,
+    "permission",
+    (nextPermissions ?? []).map((permission) => permission.id),
+  );
 }
 
 export function seedQuestionState(
@@ -910,7 +910,6 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
       detail: permissionNotificationDetail(permission),
     });
     useSessionActivityStore.getState().setWaitingRequest(workspaceId, permission.sessionID, "permission", permission.id, true);
-    if (!isTrackedSession(entry, permission.sessionID)) return;
     const receivedAt = Date.now();
     queryClient.setQueryData<PendingPermission[]>(permissionKey(workspaceId, permission.sessionID), (current = []) => {
       const existing = current.find((item) => item.id === permission.id);
@@ -932,7 +931,6 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
       detail: permissionNotificationDetail(permission),
     });
     useSessionActivityStore.getState().setWaitingRequest(workspaceId, permission.sessionID, "permission", permission.id, true);
-    if (!isTrackedSession(entry, permission.sessionID)) return;
     const receivedAt = Date.now();
     queryClient.setQueryData<PendingPermission[]>(permissionKey(workspaceId, permission.sessionID), (current = []) => {
       const existing = current.find((item) => item.id === permission.id);
@@ -949,7 +947,6 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
     const props = (event.properties ?? {}) as { sessionID?: string; requestID?: string };
     if (!props.sessionID || !props.requestID) return;
     useSessionActivityStore.getState().setWaitingRequest(workspaceId, props.sessionID, "permission", props.requestID, false);
-    if (!isTrackedSession(entry, props.sessionID)) return;
     queryClient.setQueryData<PendingPermission[]>(permissionKey(workspaceId, props.sessionID), (current = []) =>
       current.filter((permission) => permission.id !== props.requestID),
     );

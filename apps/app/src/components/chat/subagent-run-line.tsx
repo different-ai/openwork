@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { ArrowUpRight } from "lucide-react"
+import { ArrowUpRight, ShieldAlert } from "lucide-react"
 
 import {
   Collapsible,
@@ -13,10 +13,26 @@ import { taskChildSessionId, type TaskToolPart } from "@/lib/build-in-tools"
 import { isToolPartInFlight } from "@/lib/tool-activity"
 import { formatElapsedSeconds, getToolCallStartedAt, trackToolCallDuration } from "@/lib/tool-call-duration"
 import { cn } from "@/lib/utils"
+import { t } from "@/i18n"
+import { useSessionActivityStore } from "@/react-app/domains/session/status/session-activity-store"
 
 type SubagentRunLineProps = {
   part: TaskToolPart
   className?: string
+}
+
+export function subagentRunActivity(input: {
+  permissionPending: boolean
+  syncDegraded?: boolean
+  inFlight: boolean
+  failed: boolean
+}): "waiting-permission" | "reconnecting" | "shimmer" | "failed" | "completed" {
+  // A pending ask is the actionable state and does not depend on the stream
+  // ticking; a lost connection only downgrades the live "Working" treatment.
+  if (input.permissionPending) return "waiting-permission"
+  if (input.inFlight) return input.syncDegraded ? "reconnecting" : "shimmer"
+  if (input.failed) return "failed"
+  return "completed"
 }
 
 function agentName(slug: string): string {
@@ -37,10 +53,16 @@ function agentName(slug: string): string {
  */
 export function SubagentRunLine({ part, className }: SubagentRunLineProps) {
   const [open, setOpen] = useState(false)
-  const { onOpenSubagentSession, syncDegraded } = useMessageList()
+  const { onOpenSubagentSession, syncDegraded, workspaceId } = useMessageList()
   const childSessionId = taskChildSessionId(part)
+  const permissionPending = useSessionActivityStore((state) => (
+    childSessionId
+      ? (state.recordsByWorkspaceId[workspaceId]?.[childSessionId]?.waitingPermissionIds.length ?? 0) > 0
+      : false
+  ))
   const inFlight = isToolPartInFlight(part)
   const isFailed = part.state === "output-error"
+  const activity = subagentRunActivity({ permissionPending, syncDegraded, inFlight, failed: isFailed })
   const duration = trackToolCallDuration(part)
   const [elapsedSeconds, setElapsedSeconds] = useState(0)
   // First-seen-in-flight time lives in a module map, so remounting (like
@@ -59,7 +81,9 @@ export function SubagentRunLine({ part, className }: SubagentRunLineProps) {
   }, [inFlight, startedAt, part.toolCallId, syncDegraded])
   const title = part.input?.description?.trim() || "Sub-agent task"
   const agent = agentName(part.input?.subagent_type ?? "")
-  const status = inFlight
+  const status = permissionPending
+    ? t("session.subagent_permission_needed")
+    : inFlight
     ? syncDegraded
       ? "Connection lost — reconnecting…"
       : `Working ${formatElapsedSeconds(elapsedSeconds)}`
@@ -70,10 +94,17 @@ export function SubagentRunLine({ part, className }: SubagentRunLineProps) {
   const lines = (
     <>
       <span className="flex min-w-0 items-center gap-2">
-        <span className={cn("min-w-0 truncate", inFlight && !syncDegraded && "ow-text-shimmer")}>
+        <span className={cn("min-w-0 truncate", activity === "shimmer" && "ow-text-shimmer")}>
           {title}
           <span className="text-muted-foreground/70"> · {agent} agent</span>
         </span>
+        {permissionPending ? (
+          <ShieldAlert
+            data-subagent-permission-icon
+            aria-label={t("session.subagent_permission_needed")}
+            className="size-3.5 shrink-0 text-amber-10"
+          />
+        ) : null}
         {childSessionId && onOpenSubagentSession ? (
           <ArrowUpRight
             aria-hidden="true"
@@ -81,7 +112,7 @@ export function SubagentRunLine({ part, className }: SubagentRunLineProps) {
           />
         ) : null}
       </span>
-      <span className="min-w-0 truncate text-xs text-muted-foreground/70">
+      <span className={cn("min-w-0 truncate text-xs", permissionPending ? "font-medium text-amber-11" : "text-muted-foreground/70")}>
         {isFailed ? `Failed — ${status}` : status}
         {!inFlight && !isFailed && duration ? ` · ${duration}` : ""}
       </span>
@@ -93,7 +124,8 @@ export function SubagentRunLine({ part, className }: SubagentRunLineProps) {
       <div
         data-subagent-run={part.toolCallId}
         data-subagent-session-id={childSessionId}
-        data-subagent-activity={inFlight ? (syncDegraded ? "reconnecting" : "shimmer") : isFailed ? "failed" : "completed"}
+        data-subagent-activity={activity}
+        data-subagent-permission={permissionPending ? "pending" : undefined}
         className={className}
       >
         <button
@@ -111,7 +143,8 @@ export function SubagentRunLine({ part, className }: SubagentRunLineProps) {
   return (
     <Collapsible
       data-subagent-run={part.toolCallId}
-      data-subagent-activity={inFlight ? (syncDegraded ? "reconnecting" : "shimmer") : isFailed ? "failed" : "completed"}
+      data-subagent-activity={activity}
+      data-subagent-permission={permissionPending ? "pending" : undefined}
       open={open}
       onOpenChange={setOpen}
       className={className}
