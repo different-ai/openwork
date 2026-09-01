@@ -1,0 +1,332 @@
+/**
+ * Work Bot desktop shell.
+ *
+ * A second product client on the OpenWork platform, not a second platform:
+ * it embeds the same `openwork-server` bundle the OpenWork desktop embeds
+ * (managed OpenCode engine, native sessions, MCP layering, workspace
+ * registry) and adds only the Work Bot layer — filesystem bots and a
+ * worker-centric renderer. It never talks to, or requires, the OpenWork
+ * desktop app process.
+ */
+import { randomBytes } from "node:crypto";
+import { existsSync } from "node:fs";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import path from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { BrowserWindow, app, ipcMain, shell } from "electron";
+import { openworkConfigDir } from "@openwork/paths";
+import {
+  createBot,
+  defaultBotsDir,
+  deleteBot,
+  getBot,
+  listBots,
+  listMemoryFiles,
+  readBotFile,
+  updateBot,
+  writeBotFile,
+} from "./bots.mjs";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const isDev = !app.isPackaged || process.env.OPENWORK_DEV_MODE === "1";
+
+const APP_NAME = "Work Bot";
+const APP_IDENTIFIER = isDev ? "com.differentai.workbot.dev" : "com.differentai.workbot";
+const DEFAULT_SERVER_PORT = 8790;
+const DEFAULT_DEN_BASE_URL = "https://app.openworklabs.com";
+
+app.setName(APP_NAME);
+if (process.platform === "win32") {
+  app.setAppUserModelId(APP_IDENTIFIER);
+}
+app.setPath("userData", path.join(app.getPath("appData"), APP_IDENTIFIER));
+
+const botsDir = process.env.WORKBOT_BOTS_DIR?.trim() || defaultBotsDir();
+const serverConfigPath = process.env.WORKBOT_SERVER_CONFIG?.trim()
+  || path.join(openworkConfigDir(), "workbot-server.json");
+
+/** @type {{ url: string, stop: () => Promise<void>, managedOpencode: { pid: number | null, isAlive: () => boolean } | null } | null} */
+let serverHandle = null;
+let ownerToken = "";
+let engineError = "";
+let startingServer = null;
+
+function tokenFilePath() {
+  return path.join(app.getPath("userData"), "workbot-server-tokens.json");
+}
+
+async function loadOrCreateTokens() {
+  const file = tokenFilePath();
+  try {
+    const parsed = JSON.parse(await readFile(file, "utf8"));
+    if (typeof parsed?.clientToken === "string" && typeof parsed?.hostToken === "string") {
+      return parsed;
+    }
+  } catch {
+    // First launch or unreadable file: mint fresh credentials below.
+  }
+  const tokens = {
+    clientToken: randomBytes(24).toString("hex"),
+    hostToken: randomBytes(24).toString("hex"),
+  };
+  await mkdir(path.dirname(file), { recursive: true });
+  await writeFile(file, `${JSON.stringify(tokens, null, 2)}\n`, "utf8");
+  return tokens;
+}
+
+function embeddedServerPath() {
+  const candidates = [
+    path.resolve(__dirname, "..", "..", "server", "dist", "embedded.js"),
+    path.resolve(__dirname, "..", "server", "dist", "embedded.js"),
+    ...(process.resourcesPath
+      ? [path.resolve(process.resourcesPath, "server", "dist", "embedded.js")]
+      : []),
+  ];
+  const found = candidates.find((candidate) => existsSync(candidate));
+  if (!found) {
+    throw new Error(
+      `Cannot find the OpenWork embedded server bundle. Build it with \`pnpm --filter openwork-server build\`. Checked: ${candidates.join(", ")}`,
+    );
+  }
+  return found;
+}
+
+function resolveOpencodeBin() {
+  return process.env.OPENWORK_OPENCODE_BIN?.trim() || "opencode";
+}
+
+async function fetchJson(url, init, timeoutMs = 8000) {
+  const response = await fetch(url, { ...init, signal: AbortSignal.timeout(timeoutMs) });
+  const text = await response.text();
+  const json = text ? JSON.parse(text) : null;
+  if (!response.ok) {
+    const message = json && typeof json.message === "string" ? json.message : `HTTP ${response.status}`;
+    throw new Error(`${url} failed: ${message}`);
+  }
+  return json;
+}
+
+async function issueOwnerToken(baseUrl, hostToken) {
+  const payload = await fetchJson(`${baseUrl}/tokens`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-OpenWork-Host-Token": hostToken,
+    },
+    body: JSON.stringify({ scope: "owner", label: "Work Bot owner token" }),
+  });
+  const token = typeof payload?.token === "string" ? payload.token.trim() : "";
+  if (!token) throw new Error("OpenWork server did not return an owner token");
+  return token;
+}
+
+async function startPlatformServer() {
+  const { startEmbeddedServer } = await import(pathToFileURL(embeddedServerPath()).href);
+  const tokens = await loadOrCreateTokens();
+  await mkdir(botsDir, { recursive: true });
+  const bots = await listBots(botsDir);
+  // The registry file is the source of truth once it exists; seeds only shape
+  // the very first boot (mirrors the OpenWork desktop's embedded-server use).
+  const seedWorkspaces = existsSync(serverConfigPath) ? [] : bots.map((bot) => bot.path);
+
+  const startOnce = async (manageOpencode) =>
+    startEmbeddedServer({
+      host: "127.0.0.1",
+      port: DEFAULT_SERVER_PORT,
+      corsOrigins: ["*"],
+      approvalMode: "auto",
+      configPath: serverConfigPath,
+      workspaces: seedWorkspaces,
+      token: tokens.clientToken,
+      hostToken: tokens.hostToken,
+      manageOpencode,
+      opencodeBin: manageOpencode ? resolveOpencodeBin() : undefined,
+    });
+
+  engineError = "";
+  try {
+    serverHandle = await startOnce(true);
+  } catch (error) {
+    // Missing/broken engine binary must not take the whole product down:
+    // fall back to a server without a managed engine and surface the reason.
+    engineError = error instanceof Error ? error.message : String(error);
+    serverHandle = await startOnce(false);
+  }
+  ownerToken = await issueOwnerToken(serverHandle.url, tokens.hostToken);
+  return serverHandle;
+}
+
+async function ensurePlatformServer() {
+  if (serverHandle) return serverHandle;
+  startingServer ??= startPlatformServer().finally(() => {
+    startingServer = null;
+  });
+  return startingServer;
+}
+
+async function restartPlatformServer() {
+  if (serverHandle) {
+    const previous = serverHandle;
+    serverHandle = null;
+    await previous.stop().catch(() => undefined);
+  }
+  return ensurePlatformServer();
+}
+
+function runtimeInfo() {
+  return {
+    appName: APP_NAME,
+    version: app.getVersion(),
+    serverUrl: serverHandle?.url ?? "",
+    ownerToken,
+    botsDir,
+    denBaseUrl: process.env.WORKBOT_DEN_BASE_URL?.trim() || DEFAULT_DEN_BASE_URL,
+    engineManaged: Boolean(serverHandle?.managedOpencode),
+    engineError,
+    // Work Bot requires the OpenWork Cloud connection as a product rule; this
+    // development-only escape exists so the local platform assembly (server,
+    // engine, bots, threads, memory) can be exercised without an account.
+    allowOffline: isDev && process.env.WORKBOT_ALLOW_OFFLINE === "1",
+  };
+}
+
+/** Register the bot directory as a native OpenWork workspace. */
+async function registerBotWorkspace(bot) {
+  const handle = await ensurePlatformServer();
+  const tokens = await loadOrCreateTokens();
+  const payload = await fetchJson(`${handle.url}/workspaces/local`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-OpenWork-Host-Token": tokens.hostToken,
+    },
+    body: JSON.stringify({ folderPath: bot.path, name: bot.name, preset: "minimal" }),
+  });
+  const workspaceId = typeof payload?.activeId === "string" ? payload.activeId : "";
+  if (!workspaceId) throw new Error("Workspace registration did not return an id");
+  return workspaceId;
+}
+
+const commands = {
+  "runtime.info": async () => {
+    await ensurePlatformServer();
+    return runtimeInfo();
+  },
+  "bots.list": async () => listBots(botsDir),
+  "bots.get": async ({ slug }) => getBot(botsDir, slug),
+  "bots.create": async ({ name, role, mission }) => {
+    const hadEngine = Boolean(serverHandle?.managedOpencode);
+    const bot = await createBot(botsDir, { name, role, mission });
+    // The engine only spawns when at least one workspace exists, so the very
+    // first bot needs a server restart to bring the managed engine up.
+    if (!hadEngine) {
+      await restartPlatformServer();
+    }
+    const workspaceId = await registerBotWorkspace(bot);
+    return updateBot(botsDir, bot.slug, { workspaceId });
+  },
+  "bots.update": async ({ slug, patch }) => updateBot(botsDir, slug, patch ?? {}),
+  "bots.delete": async ({ slug }) => {
+    await deleteBot(botsDir, slug);
+    return { ok: true };
+  },
+  "bots.files.list": async ({ slug }) => listMemoryFiles(botsDir, slug),
+  "bots.files.read": async ({ slug, path: relativePath }) => ({
+    content: await readBotFile(botsDir, slug, relativePath),
+  }),
+  "bots.files.write": async ({ slug, path: relativePath, content }) => {
+    await writeBotFile(botsDir, slug, relativePath, content);
+    return { ok: true };
+  },
+  "shell.openExternal": async ({ url }) => {
+    const parsed = new URL(String(url ?? ""));
+    if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
+      throw new Error("Only http(s) URLs can be opened");
+    }
+    await shell.openExternal(parsed.toString());
+    return { ok: true };
+  },
+};
+
+function registerIpc() {
+  ipcMain.handle("workbot:invoke", async (_event, request) => {
+    const command = typeof request?.command === "string" ? request.command : "";
+    const handler = commands[command];
+    if (!handler) {
+      return { ok: false, error: `Unknown Work Bot command: ${command}` };
+    }
+    try {
+      const result = await handler(request?.payload ?? {});
+      return { ok: true, result };
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+}
+
+function rendererUrl() {
+  const explicit = process.env.WORKBOT_START_URL?.trim();
+  if (explicit) return explicit;
+  return pathToFileURL(path.resolve(__dirname, "..", "dist", "index.html")).href;
+}
+
+async function createMainWindow() {
+  const window = new BrowserWindow({
+    width: 1280,
+    height: 860,
+    minWidth: 960,
+    minHeight: 640,
+    title: APP_NAME,
+    backgroundColor: "#0c0d10",
+    webPreferences: {
+      preload: path.join(__dirname, "preload.mjs"),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false,
+      backgroundThrottling: false,
+    },
+  });
+  window.webContents.setWindowOpenHandler(({ url }) => {
+    if (/^https?:\/\//i.test(url)) void shell.openExternal(url);
+    return { action: "deny" };
+  });
+  await window.loadURL(rendererUrl());
+  return window;
+}
+
+const singleInstanceLock = app.requestSingleInstanceLock();
+if (!singleInstanceLock) {
+  app.quit();
+} else {
+  app.on("second-instance", () => {
+    const [window] = BrowserWindow.getAllWindows();
+    if (window) {
+      if (window.isMinimized()) window.restore();
+      window.focus();
+    }
+  });
+
+  app.whenReady().then(async () => {
+    registerIpc();
+    // Start the platform in the background; the renderer gates on runtime.info.
+    void ensurePlatformServer().catch((error) => {
+      engineError = error instanceof Error ? error.message : String(error);
+    });
+    await createMainWindow();
+    app.on("activate", () => {
+      if (BrowserWindow.getAllWindows().length === 0) void createMainWindow();
+    });
+  });
+
+  app.on("window-all-closed", () => {
+    if (process.platform !== "darwin") app.quit();
+  });
+
+  app.on("before-quit", (event) => {
+    if (!serverHandle) return;
+    event.preventDefault();
+    const handle = serverHandle;
+    serverHandle = null;
+    void handle.stop().catch(() => undefined).finally(() => app.quit());
+  });
+}
