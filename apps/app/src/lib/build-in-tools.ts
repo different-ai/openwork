@@ -398,3 +398,50 @@ export function taskChildSessionId(part: TaskToolPart): string | null {
   const value = part.callProviderMetadata?.openwork?.childSessionId;
   return typeof value === "string" && value.trim() ? value.trim() : null;
 }
+
+export type ToolPartChangedFileKind = "added" | "deleted" | "modified" | "moved";
+
+export interface ToolPartChangedFile {
+  file: string;
+  kind: ToolPartChangedFileKind;
+  additions: number | null;
+  deletions: number | null;
+}
+
+function changedFileKind(value: unknown): ToolPartChangedFileKind | null {
+  return value === "added" || value === "deleted" || value === "modified" || value === "moved" ? value : null;
+}
+
+function finiteCount(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+/**
+ * Files a completed edit/write/apply_patch tool call changed, with per-file
+ * diff stats when the engine reported them. Forwarded from tool state
+ * metadata by session sync (`callProviderMetadata.openwork.changedFiles`).
+ */
+export function toolPartChangedFiles(part: ToolUIPart | DynamicToolUIPart): ToolPartChangedFile[] {
+  const value = part.callProviderMetadata?.openwork?.changedFiles;
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((entry) => {
+    if (entry === null || typeof entry !== "object" || Array.isArray(entry)) return [];
+    const file = "file" in entry && typeof entry.file === "string" && entry.file.trim() ? entry.file.trim() : null;
+    const kind = changedFileKind("kind" in entry ? entry.kind : null);
+    if (!file || !kind) return [];
+    return [{
+      file,
+      kind,
+      additions: finiteCount("additions" in entry ? entry.additions : null),
+      deletions: finiteCount("deletions" in entry ? entry.deletions : null),
+    }];
+  });
+}
+
+/**
+ * The exit status of a completed bash tool call. Forwarded from bash state
+ * metadata by session sync (`callProviderMetadata.openwork.exitCode`).
+ */
+export function bashExitCode(part: BashToolPart): number | null {
+  return finiteCount(part.callProviderMetadata?.openwork?.exitCode);
+}

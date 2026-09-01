@@ -65,6 +65,77 @@ function connectionActionMcpResultFromError(error: string): JSONValue | null {
   };
 }
 
+type ChangedFileKind = "added" | "deleted" | "modified" | "moved";
+
+function changedFileEntry(
+  file: unknown,
+  additions: unknown,
+  deletions: unknown,
+  kind: ChangedFileKind,
+): JSONValue | null {
+  if (typeof file !== "string" || !file.trim()) return null;
+  return {
+    file: file.trim(),
+    kind,
+    ...(typeof additions === "number" && Number.isFinite(additions) ? { additions } : {}),
+    ...(typeof deletions === "number" && Number.isFinite(deletions) ? { deletions } : {}),
+  };
+}
+
+function applyPatchChangeKind(type: unknown): ChangedFileKind {
+  if (type === "add") return "added";
+  if (type === "delete") return "deleted";
+  if (type === "move") return "moved";
+  return "modified";
+}
+
+// The engine reports per-file diff stats in completed edit/write/apply_patch
+// state metadata. Forward them so the thread panel can aggregate the
+// session's changed files without re-reading raw parts.
+function changedFilesMetadata(part: ToolPart, stateMetadata: Record<string, unknown>): JSONValue[] {
+  if (part.state.status !== "completed") return [];
+  const input = isRecord(part.state.input) ? part.state.input : {};
+
+  if (part.tool === "edit") {
+    const filediff = isRecord(stateMetadata.filediff) ? stateMetadata.filediff : null;
+    const entry = changedFileEntry(
+      filediff?.file ?? input.filePath,
+      filediff?.additions,
+      filediff?.deletions,
+      "modified",
+    );
+    return entry ? [entry] : [];
+  }
+
+  if (part.tool === "write") {
+    const file = typeof stateMetadata.filepath === "string" && stateMetadata.filepath.trim()
+      ? stateMetadata.filepath
+      : input.filePath;
+    // `exists` reports whether the file existed before the write.
+    const created = stateMetadata.exists !== true;
+    const content = typeof input.content === "string" ? input.content : null;
+    const additions = created && content !== null ? content.split("\n").length : undefined;
+    const entry = changedFileEntry(file, additions, created ? 0 : undefined, created ? "added" : "modified");
+    return entry ? [entry] : [];
+  }
+
+  if (part.tool === "apply_patch") {
+    const files = Array.isArray(stateMetadata.files) ? stateMetadata.files : [];
+    return files.flatMap((candidate) => {
+      if (!isRecord(candidate)) return [];
+      const entry = changedFileEntry(
+        candidate.relativePath ?? candidate.filePath,
+        candidate.additions,
+        candidate.deletions,
+        applyPatchChangeKind(candidate.type),
+      );
+      return entry ? [entry] : [];
+    });
+  }
+
+  return [];
+}
+
 function toolCallProviderMetadata(part: ToolPart): ProviderMetadata {
   const stateMetadata = "metadata" in part.state && isRecord(part.state.metadata) ? part.state.metadata : {};
   const persistedMcpResult = isJsonValue(stateMetadata.openworkMcpResult)
@@ -79,9 +150,19 @@ function toolCallProviderMetadata(part: ToolPart): ProviderMetadata {
   const childSessionId = part.tool === "task" && typeof stateMetadata.sessionId === "string" && stateMetadata.sessionId.trim()
     ? stateMetadata.sessionId.trim()
     : null;
+  const changedFiles = changedFilesMetadata(part, stateMetadata);
+  // The bash tool reports its exit status in completed state metadata.
+  const exitCode = part.tool === "bash"
+    && part.state.status === "completed"
+    && typeof stateMetadata.exit === "number"
+    && Number.isFinite(stateMetadata.exit)
+    ? stateMetadata.exit
+    : null;
   const openwork = {
     ...(mcpResult ? { mcpResult } : {}),
     ...(childSessionId ? { childSessionId } : {}),
+    ...(changedFiles.length > 0 ? { changedFiles } : {}),
+    ...(exitCode !== null ? { exitCode } : {}),
   };
   return {
     opencode: { partId: part.id },

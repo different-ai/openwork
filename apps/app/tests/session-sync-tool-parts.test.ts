@@ -169,8 +169,107 @@ describe("tool part mapper", () => {
     if (part.state.status !== "completed") throw new Error("Expected completed fixture");
     part.state.metadata = { sessionId: "ses_child_1" };
 
+    const metadata = parseDynamicToolUIPart(part)?.callProviderMetadata;
+    expect(metadata?.opencode).toEqual({ partId: "part-write" });
+    expect(metadata?.openwork?.childSessionId).toBeUndefined();
+  });
+
+  test("forwards the edit tool's per-file diff stats for the thread panel", () => {
+    const part = writeToolPart(
+      "completed",
+      { filePath: "src/a.ts", oldString: "a", newString: "b" },
+      { id: "part-edit", tool: "edit", callID: "call-edit" },
+    );
+    if (part.state.status !== "completed") throw new Error("Expected completed fixture");
+    part.state.metadata = {
+      diff: "--- a\n+++ b",
+      filediff: { file: "src/a.ts", patch: "@@", additions: 3, deletions: 1 },
+    };
+
+    expect(parseDynamicToolUIPart(part)?.callProviderMetadata).toEqual({
+      opencode: { partId: "part-edit" },
+      openwork: {
+        changedFiles: [{ file: "src/a.ts", kind: "modified", additions: 3, deletions: 1 }],
+      },
+    });
+  });
+
+  test("forwards a created write as an added file with its line count", () => {
+    const part = writeToolPart("completed", { filePath: "notes/plan.md", content: "one\ntwo\nthree" });
+    if (part.state.status !== "completed") throw new Error("Expected completed fixture");
+    part.state.metadata = { filepath: "notes/plan.md", exists: false, diagnostics: {} };
+
     expect(parseDynamicToolUIPart(part)?.callProviderMetadata).toEqual({
       opencode: { partId: "part-write" },
+      openwork: {
+        changedFiles: [{ file: "notes/plan.md", kind: "added", additions: 3, deletions: 0 }],
+      },
+    });
+  });
+
+  test("forwards an overwriting write as a modified file without counts", () => {
+    const part = writeToolPart("completed", { filePath: "notes/plan.md", content: "one" });
+    if (part.state.status !== "completed") throw new Error("Expected completed fixture");
+    part.state.metadata = { filepath: "notes/plan.md", exists: true, diagnostics: {} };
+
+    expect(parseDynamicToolUIPart(part)?.callProviderMetadata).toEqual({
+      opencode: { partId: "part-write" },
+      openwork: {
+        changedFiles: [{ file: "notes/plan.md", kind: "modified" }],
+      },
+    });
+  });
+
+  test("forwards apply_patch files with their change kinds", () => {
+    const part = writeToolPart(
+      "completed",
+      { patchText: "*** Begin Patch" },
+      { id: "part-patch", tool: "apply_patch", callID: "call-patch" },
+    );
+    if (part.state.status !== "completed") throw new Error("Expected completed fixture");
+    part.state.metadata = {
+      diff: "",
+      diagnostics: {},
+      files: [
+        { filePath: "/ws/src/a.ts", relativePath: "src/a.ts", type: "update", patch: "@@", additions: 2, deletions: 2 },
+        { filePath: "/ws/src/b.ts", relativePath: "src/b.ts", type: "add", patch: "@@", additions: 5, deletions: 0 },
+        { filePath: "/ws/src/c.ts", relativePath: "src/c.ts", type: "delete", patch: "@@", additions: 0, deletions: 4 },
+      ],
+    };
+
+    expect(parseDynamicToolUIPart(part)?.callProviderMetadata).toEqual({
+      opencode: { partId: "part-patch" },
+      openwork: {
+        changedFiles: [
+          { file: "src/a.ts", kind: "modified", additions: 2, deletions: 2 },
+          { file: "src/b.ts", kind: "added", additions: 5, deletions: 0 },
+          { file: "src/c.ts", kind: "deleted", additions: 0, deletions: 4 },
+        ],
+      },
+    });
+  });
+
+  test("forwards the bash tool's exit code and skips running calls", () => {
+    const completed = writeToolPart(
+      "completed",
+      { command: "ls", description: "List files" },
+      { id: "part-bash", tool: "bash", callID: "call-bash" },
+    );
+    if (completed.state.status !== "completed") throw new Error("Expected completed fixture");
+    completed.state.metadata = { output: "ok", exit: 0 };
+
+    expect(parseDynamicToolUIPart(completed)?.callProviderMetadata).toEqual({
+      opencode: { partId: "part-bash" },
+      openwork: { exitCode: 0 },
+    });
+
+    const running = writeToolPart(
+      "running",
+      { command: "ls" },
+      { id: "part-bash", tool: "bash", callID: "call-bash" },
+    );
+    expect(parseDynamicToolUIPart(running)?.callProviderMetadata).toEqual({
+      opencode: { partId: "part-bash" },
     });
   });
 

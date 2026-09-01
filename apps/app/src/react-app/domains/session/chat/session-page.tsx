@@ -2,7 +2,7 @@
 import type { CSSProperties } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { usePanelRef } from "react-resizable-panels";
-import { ArrowLeft, Cloud, FileText, Globe, Mic2, MoreHorizontal, PanelRight, TextSearch, X, Zap } from "lucide-react";
+import { ArrowLeft, Cloud, FileText, Globe, ListTree, Mic2, MoreHorizontal, PanelRight, TextSearch, X, Zap } from "lucide-react";
 
 import { resolveExtensionIconSrc } from "@/react-app/design-system/extension-icon-src";
 import { t } from "../../../../i18n";
@@ -77,9 +77,11 @@ import { resolveCollectibleOpenTarget } from "../artifacts/resolve-open-target";
 import type { OpenTargetOptions } from "@/lib/target-provider";
 import { VoicePanel } from "../voice/voice-panel";
 import { SidePanel } from "../panel/side-panel";
+import { ThreadPanel } from "../panel/thread-panel";
 import { getSidePanelSessionKey } from "../panel/side-panel-session";
 import { TerminalDock } from "../terminal/terminal-dock";
 import { useActivePanelTab, usePanelTabStore, useSessionPanelState } from "../panel/panel-tab-store";
+import { useSelectTab } from "../panel/use-side-panel-tabs";
 import { useWorkspaceShellLayout } from "../../../shell/workspace-shell-layout";
 import { useControlAction, type OpenworkControlAction } from "../../../shell/control/control-provider";
 import { getExtensionId, isOpenWorkExtensionEnabled, OPENWORK_EXTENSION_STATE_CHANGED } from "../../settings/extension-state";
@@ -459,6 +461,7 @@ export function SessionPage(props: SessionPageProps) {
   const sidePanelOpen = activeSidePanel !== null;
   const panelRailActive = activeSidePanel === "panel";
   const voiceRailActive = activeSidePanel === "voice";
+  const threadRailActive = activeSidePanel === "thread";
   const voiceExtension = useMemo(
     () => OPENWORK_EXTENSION_CATALOG.find((entry) => getExtensionId(entry) === "openwork-voice") ?? null,
     [],
@@ -820,6 +823,15 @@ export function SessionPage(props: SessionPageProps) {
   const openVoiceRailPane = useCallback(() => {
     toggleCurrentSidePanel("voice");
   }, [toggleCurrentSidePanel]);
+  const openThreadRailPane = useCallback(() => {
+    toggleCurrentSidePanel("thread");
+  }, [toggleCurrentSidePanel]);
+  const selectPanelTab = useSelectTab();
+  const openThreadBrowserTab = useCallback((tabId: string) => {
+    if (!props.selectedSessionId) return;
+    selectPanelTab(props.selectedSessionId, tabId);
+    setCurrentSidePanel("panel");
+  }, [props.selectedSessionId, selectPanelTab, setCurrentSidePanel]);
   const removeAccessibleTarget = useCallback((target: OpenTarget) => {
     const nextHiddenIds = new Set(hiddenAccessibleTargetIds);
     nextHiddenIds.add(target.id);
@@ -898,6 +910,36 @@ export function SessionPage(props: SessionPageProps) {
     } : null
   ), [activeSidePanel, setCurrentSidePanel, voiceExtensionEnabled]);
   useControlAction(closeVoicePanelControlAction);
+
+  const openThreadPanelControlAction = useMemo<OpenworkControlAction | null>(() => (
+    props.selectedSessionId ? {
+      id: "thread.panel.open",
+      label: "Open thread panel",
+      description: "Open the right-side thread panel summarizing this session's file changes, sub-agents, terminal commands, and browser tabs.",
+      effects: { data: "none", ui: "layout", external: false },
+      sideEffect: "none",
+      execute: () => {
+        setCurrentSidePanel("thread");
+        return { open: true };
+      },
+    } : null
+  ), [props.selectedSessionId, setCurrentSidePanel]);
+  useControlAction(openThreadPanelControlAction);
+
+  const closeThreadPanelControlAction = useMemo<OpenworkControlAction | null>(() => (
+    activeSidePanel === "thread" ? {
+      id: "thread.panel.close",
+      label: "Close thread panel",
+      description: "Close the thread right-side panel.",
+      effects: { data: "none", ui: "layout", external: false },
+      sideEffect: "none",
+      execute: () => {
+        setCurrentSidePanel(null);
+        return { open: false };
+      },
+    } : null
+  ), [activeSidePanel, setCurrentSidePanel]);
+  useControlAction(closeThreadPanelControlAction);
   const [showDelayedSessionLoadingState, setShowDelayedSessionLoadingState] = useState(false);
 
   const selectedSessionTitle = useMemo(
@@ -1327,6 +1369,14 @@ export function SessionPage(props: SessionPageProps) {
       onClose={closeRightPane}
       onOpenExtensions={props.settingsSlot ? () => setCurrentSidePanel("extensions") : undefined}
       onOpenVoice={voiceExtensionEnabled ? openVoiceRailPane : undefined}
+    />
+  ) : activeSidePanel === "thread" && props.selectedSessionId ? (
+    <ThreadPanel
+      workspaceId={props.runtimeWorkspaceId}
+      sessionId={props.selectedSessionId}
+      onClose={closeRightPane}
+      onOpenSubagentSession={openSubagentSession}
+      onOpenBrowserTab={openThreadBrowserTab}
     />
   ) : null;
 
@@ -1964,6 +2014,21 @@ export function SessionPage(props: SessionPageProps) {
                 <Mic2 size={15} />
               </Button>
             ) : null}
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              className={cn(
+                "rounded-xl transition-colors hover:bg-muted hover:text-foreground disabled:pointer-events-none disabled:opacity-35 disabled:hover:bg-transparent disabled:hover:text-muted-foreground",
+                threadRailActive && "bg-primary/10 text-primary hover:bg-primary/15 hover:text-primary",
+              )}
+              onClick={openThreadRailPane}
+              title="Thread"
+              aria-label="Thread"
+              aria-pressed={threadRailActive}
+              disabled={!props.selectedSessionId}
+            >
+              <ListTree size={15} />
+            </Button>
             <Button
               variant="ghost"
               size="icon-sm"
