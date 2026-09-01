@@ -1,26 +1,26 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { AutomationList, AutomationSchedule } from "@openwork/types/automations";
-import { workbot, type BotSummary } from "@/lib/bridge";
+import { coworkerBridge, type CoworkerSummary } from "@/lib/bridge";
 import { createDenAutomationsClient, describeSchedule, type DenSession } from "@/lib/den";
 import { Button, Empty, ErrorNote, Field, Section, StatusDot, inputClass } from "@/ui/kit";
 
 type AutomationEntry = AutomationList["items"][number];
 
 /**
- * Responsibilities are plain OpenWork Automations, re-presented worker-first.
- * The bot ⇄ automation association lives in the bot's own bot.md (and in the
+ * Responsibilities are plain OpenWork Automations, re-presented coworker-first.
+ * The coworker ⇄ automation association lives in the coworker's own coworker.md (and in the
  * automation's existing pinned workspaceId), never in a new Den column.
  */
 export function ResponsibilitiesPanel({
   session,
-  bots,
-  bot,
-  onBotChanged,
+  coworkers,
+  coworker,
+  onCoworkerChanged,
 }: {
   session: DenSession;
-  bots: BotSummary[];
-  bot: BotSummary;
-  onBotChanged: (bot: BotSummary) => void;
+  coworkers: CoworkerSummary[];
+  coworker: CoworkerSummary;
+  onCoworkerChanged: (coworker: CoworkerSummary) => void;
 }) {
   const den = useMemo(() => createDenAutomationsClient(session), [session]);
   const [entries, setEntries] = useState<AutomationEntry[]>([]);
@@ -43,20 +43,20 @@ export function ResponsibilitiesPanel({
   }, [refresh]);
 
   const belongsTo = useCallback(
-    (entry: AutomationEntry, candidate: BotSummary) =>
+    (entry: AutomationEntry, candidate: CoworkerSummary) =>
       candidate.automations.includes(entry.automation.id) ||
       Boolean(candidate.workspaceId && entry.revision.workspaceId === candidate.workspaceId),
     [],
   );
-  const owned = entries.filter((entry) => belongsTo(entry, bot));
+  const owned = entries.filter((entry) => belongsTo(entry, coworker));
   const others = entries.filter((entry) => !owned.includes(entry));
   const ownerOf = (entry: AutomationEntry) =>
-    bots.find((candidate) => candidate.slug !== bot.slug && belongsTo(entry, candidate)) ?? null;
+    coworkers.find((candidate) => candidate.slug !== coworker.slug && belongsTo(entry, candidate)) ?? null;
 
   async function associate(automationId: string) {
     try {
-      const updated = await workbot.bots.update(bot.slug, { automations: [...bot.automations, automationId] });
-      onBotChanged(updated);
+      const updated = await coworkerBridge.coworkers.update(coworker.slug, { automations: [...coworker.automations, automationId] });
+      onCoworkerChanged(updated);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     }
@@ -64,10 +64,10 @@ export function ResponsibilitiesPanel({
 
   async function release(automationId: string) {
     try {
-      const updated = await workbot.bots.update(bot.slug, {
-        automations: bot.automations.filter((id) => id !== automationId),
+      const updated = await coworkerBridge.coworkers.update(coworker.slug, {
+        automations: coworker.automations.filter((id) => id !== automationId),
       });
-      onBotChanged(updated);
+      onCoworkerChanged(updated);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     }
@@ -113,7 +113,7 @@ export function ResponsibilitiesPanel({
         ) : null}
         {owned.length === 0 ? (
           <Empty>
-            {bot.name} owns no recurring work yet. Create a responsibility, or assign an existing
+            {coworker.name} owns no recurring work yet. Create a responsibility, or assign an existing
             automation below.
           </Empty>
         ) : (
@@ -163,7 +163,7 @@ export function ResponsibilitiesPanel({
                     <span className="shrink-0 text-xs text-mist">Owned by {owner.name}</span>
                   ) : (
                     <Button variant="ghost" onClick={() => void associate(entry.automation.id)}>
-                      Assign to {bot.name}
+                      Assign to {coworker.name}
                     </Button>
                   )}
                 </li>

@@ -1,9 +1,9 @@
 {
-  "name": "@openwork/workbot",
+  "name": "@openwork/coworker",
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "Work Bot: standalone desktop app for persistent AI workers, powered by the OpenWork platform.",
+  "description": "Open Coworker: standalone desktop app for persistent AI coworkers, powered by the OpenWork platform.",
   "scripts": {
     "dev": "node ./scripts/dev.mjs",
     "build": "vite build",

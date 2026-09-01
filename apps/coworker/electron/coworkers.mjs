@@ -1,34 +1,34 @@
 /**
- * Filesystem bot store for Work Bot.
+ * Filesystem coworker store for Open Coworker.
  *
- * A bot is not a new platform object. It is a directory of human-readable
+ * A coworker is not a new platform object. It is a directory of human-readable
  * files under the user's OpenWork config home that composes existing
  * primitives: the directory doubles as an OpenWork workspace (threads are
- * native sessions there), `opencode.json` `instructions` feed the bot's soul
- * and active memory to the engine on every turn, and Den Automations are
- * referenced by id as the bot's responsibilities.
+ * native sessions there), `opencode.json` `instructions` feed the coworker's
+ * soul and active memory to the engine on every turn, and Den Automations are
+ * referenced by id as the coworker's responsibilities.
  *
  * No Electron imports here: this module is exercised directly by
- * `node --test electron/bots.test.mjs`.
+ * `node --test electron/coworkers.test.mjs`.
  */
 import { mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { openworkConfigDir } from "@openwork/paths";
 
-export const BOTS_DIR_NAME = "bots";
-const BOT_CONFIG_FILE = "bot.md";
+export const COWORKERS_DIR_NAME = "coworkers";
+const COWORKER_CONFIG_FILE = "coworker.md";
 const SOUL_FILE = "soul.md";
 const WORKING_MEMORY_FILE = path.join("memory", "working.md");
 const MEMORY_INDEX_FILE = path.join("memory", "index.md");
 const LONG_TERM_DIR = path.join("memory", "long-term");
 const WORKSPACE_DIR = "workspace";
 
-/** Resolve the shared bots home inside the existing OpenWork config dir. */
-export function defaultBotsDir(opts = {}) {
-  return path.join(openworkConfigDir(opts), BOTS_DIR_NAME);
+/** Resolve the shared coworkers home inside the existing OpenWork config dir. */
+export function defaultCoworkersDir(opts = {}) {
+  return path.join(openworkConfigDir(opts), COWORKERS_DIR_NAME);
 }
 
-export function slugifyBotName(name) {
+export function slugifyCoworkerName(name) {
   const slug = String(name ?? "")
     .trim()
     .toLowerCase()
@@ -36,13 +36,13 @@ export function slugifyBotName(name) {
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "")
     .slice(0, 60);
-  return slug || "bot";
+  return slug || "coworker";
 }
 
 /**
- * Minimal deterministic frontmatter codec. Work Bot is the only writer of
- * bot.md, so the accepted grammar is intentionally small: `key: value` lines
- * where value is a JSON string, JSON array, or a bare string.
+ * Minimal deterministic frontmatter codec. Open Coworker is the only writer
+ * of coworker.md, so the accepted grammar is intentionally small: `key: value`
+ * lines where value is a JSON string, JSON array, or a bare string.
  */
 export function parseFrontmatter(content) {
   const text = String(content ?? "");
@@ -88,23 +88,23 @@ export function serializeFrontmatter(data, body) {
   return `${lines.join("\n")}${String(body ?? "")}`;
 }
 
-function botPath(botsDir, slug) {
+function coworkerPath(coworkersDir, slug) {
   const cleaned = String(slug ?? "").trim();
   if (!/^[a-z0-9][a-z0-9-]*$/.test(cleaned)) {
-    throw new Error(`Invalid bot slug: ${slug}`);
+    throw new Error(`Invalid coworker slug: ${slug}`);
   }
-  return path.join(botsDir, cleaned);
+  return path.join(coworkersDir, cleaned);
 }
 
 /**
  * Containment guard for every renderer-supplied relative path. The renderer
- * may only touch files inside the bot's own directory.
+ * may only touch files inside the coworker's own directory.
  */
-export function resolveBotFile(botsDir, slug, relativePath) {
-  const root = botPath(botsDir, slug);
+export function resolveCoworkerFile(coworkersDir, slug, relativePath) {
+  const root = coworkerPath(coworkersDir, slug);
   const target = path.resolve(root, String(relativePath ?? ""));
   if (target !== root && !target.startsWith(`${root}${path.sep}`)) {
-    throw new Error(`Path escapes bot directory: ${relativePath}`);
+    throw new Error(`Path escapes coworker directory: ${relativePath}`);
   }
   return target;
 }
@@ -116,7 +116,7 @@ Stable identity. Edit deliberately; this loads on every turn.
 
 ## Role
 
-${role || "General-purpose persistent worker."}
+${role || "General-purpose persistent coworker."}
 
 ## Mission
 
@@ -137,10 +137,10 @@ ${mission || "Help with the work I am given, and own it over time."}
 }
 
 function agentsTemplate({ name }) {
-  return `# ${name} — worker contract
+  return `# ${name} — coworker contract
 
-You are ${name}, a persistent Work Bot worker. This directory is your home:
-your identity, memory, and workspace live here as plain files, and every
+You are ${name}, a persistent Open Coworker teammate. This directory is your
+home: your identity, memory, and workspace live here as plain files, and every
 conversation in this workspace is part of one continuous working relationship.
 
 ## Files
@@ -151,7 +151,7 @@ conversation in this workspace is part of one continuous working relationship.
 - \`memory/long-term/*.md\` — durable memories. Read the relevant file when
   the index shows one that matters for the current work.
 - \`workspace/\` — your working area for repositories, artifacts, and output.
-- \`bot.md\` — configuration owned by the Work Bot app. Do not edit it.
+- \`coworker.md\` — configuration owned by the Open Coworker app. Do not edit it.
 
 ## Working memory duty
 
@@ -214,7 +214,7 @@ function opencodeConfigTemplate() {
   )}\n`;
 }
 
-function botConfigTemplate({ name, role, mission, createdAt }) {
+function coworkerConfigTemplate({ name, role, mission, createdAt }) {
   return serializeFrontmatter(
     {
       name,
@@ -227,8 +227,8 @@ function botConfigTemplate({ name, role, mission, createdAt }) {
     },
     `# ${name}
 
-Owned by the Work Bot app. Identity lives in \`soul.md\`; memory lives in
-\`memory/\`. This file records the bot's platform references.
+Owned by the Open Coworker app. Identity lives in \`soul.md\`; memory lives in
+\`memory/\`. This file records the coworker's platform references.
 `,
   );
 }
@@ -242,9 +242,9 @@ async function pathExists(target) {
   }
 }
 
-async function readBotRecord(botsDir, slug) {
-  const root = botPath(botsDir, slug);
-  const configRaw = await readFile(path.join(root, BOT_CONFIG_FILE), "utf8");
+async function readCoworkerRecord(coworkersDir, slug) {
+  const root = coworkerPath(coworkersDir, slug);
+  const configRaw = await readFile(path.join(root, COWORKER_CONFIG_FILE), "utf8");
   const { data } = parseFrontmatter(configRaw);
   const automations = Array.isArray(data.automations)
     ? data.automations.filter((id) => typeof id === "string" && id.trim())
@@ -263,53 +263,53 @@ async function readBotRecord(botsDir, slug) {
   };
 }
 
-export async function listBots(botsDir) {
-  await mkdir(botsDir, { recursive: true });
-  const entries = await readdir(botsDir, { withFileTypes: true });
-  const bots = [];
+export async function listCoworkers(coworkersDir) {
+  await mkdir(coworkersDir, { recursive: true });
+  const entries = await readdir(coworkersDir, { withFileTypes: true });
+  const coworkers = [];
   for (const entry of entries) {
     if (!entry.isDirectory()) continue;
-    if (!(await pathExists(path.join(botsDir, entry.name, BOT_CONFIG_FILE)))) continue;
+    if (!(await pathExists(path.join(coworkersDir, entry.name, COWORKER_CONFIG_FILE)))) continue;
     try {
-      bots.push(await readBotRecord(botsDir, entry.name));
+      coworkers.push(await readCoworkerRecord(coworkersDir, entry.name));
     } catch {
-      // A malformed bot directory stays visible on disk but out of the app.
+      // A malformed coworker directory stays visible on disk but out of the app.
     }
   }
-  bots.sort((a, b) => a.name.localeCompare(b.name));
-  return bots;
+  coworkers.sort((a, b) => a.name.localeCompare(b.name));
+  return coworkers;
 }
 
-export async function getBot(botsDir, slug) {
-  return readBotRecord(botsDir, slug);
+export async function getCoworker(coworkersDir, slug) {
+  return readCoworkerRecord(coworkersDir, slug);
 }
 
-export async function createBot(botsDir, input) {
+export async function createCoworker(coworkersDir, input) {
   const name = String(input?.name ?? "").trim();
-  if (!name) throw new Error("Bot name is required");
+  if (!name) throw new Error("Coworker name is required");
   const role = String(input?.role ?? "").trim();
   const mission = String(input?.mission ?? "").trim();
-  const slug = slugifyBotName(name);
-  const root = botPath(botsDir, slug);
+  const slug = slugifyCoworkerName(name);
+  const root = coworkerPath(coworkersDir, slug);
   if (await pathExists(root)) {
-    throw new Error(`A bot named "${slug}" already exists`);
+    throw new Error(`A coworker named "${slug}" already exists`);
   }
   const createdAt = new Date().toISOString();
   await mkdir(path.join(root, LONG_TERM_DIR), { recursive: true });
   await mkdir(path.join(root, WORKSPACE_DIR), { recursive: true });
-  await writeFile(path.join(root, BOT_CONFIG_FILE), botConfigTemplate({ name, role, mission, createdAt }), "utf8");
+  await writeFile(path.join(root, COWORKER_CONFIG_FILE), coworkerConfigTemplate({ name, role, mission, createdAt }), "utf8");
   await writeFile(path.join(root, SOUL_FILE), soulTemplate({ name, role, mission }), "utf8");
   await writeFile(path.join(root, "AGENTS.md"), agentsTemplate({ name }), "utf8");
   await writeFile(path.join(root, "opencode.json"), opencodeConfigTemplate(), "utf8");
   await writeFile(path.join(root, WORKING_MEMORY_FILE), workingMemoryTemplate(name), "utf8");
   await writeFile(path.join(root, MEMORY_INDEX_FILE), memoryIndexTemplate(), "utf8");
-  return readBotRecord(botsDir, slug);
+  return readCoworkerRecord(coworkersDir, slug);
 }
 
-/** Patch platform references (workspaceId, automations) inside bot.md. */
-export async function updateBot(botsDir, slug, patch) {
-  const root = botPath(botsDir, slug);
-  const configPath = path.join(root, BOT_CONFIG_FILE);
+/** Patch platform references (workspaceId, automations, model) inside coworker.md. */
+export async function updateCoworker(coworkersDir, slug, patch) {
+  const root = coworkerPath(coworkersDir, slug);
+  const configPath = path.join(root, COWORKER_CONFIG_FILE);
   const { data, body } = parseFrontmatter(await readFile(configPath, "utf8"));
   if (typeof patch?.workspaceId === "string") data.workspaceId = patch.workspaceId.trim();
   if (Array.isArray(patch?.automations)) {
@@ -321,28 +321,28 @@ export async function updateBot(botsDir, slug, patch) {
   if (typeof patch?.role === "string") data.role = patch.role.trim();
   if (typeof patch?.model === "string") data.model = patch.model.trim();
   await writeFile(configPath, serializeFrontmatter(data, body), "utf8");
-  return readBotRecord(botsDir, slug);
+  return readCoworkerRecord(coworkersDir, slug);
 }
 
-export async function deleteBot(botsDir, slug) {
-  const root = botPath(botsDir, slug);
+export async function deleteCoworker(coworkersDir, slug) {
+  const root = coworkerPath(coworkersDir, slug);
   await rm(root, { recursive: true, force: true });
 }
 
-export async function readBotFile(botsDir, slug, relativePath) {
-  const target = resolveBotFile(botsDir, slug, relativePath);
+export async function readCoworkerFile(coworkersDir, slug, relativePath) {
+  const target = resolveCoworkerFile(coworkersDir, slug, relativePath);
   return readFile(target, "utf8");
 }
 
-export async function writeBotFile(botsDir, slug, relativePath, content) {
-  const target = resolveBotFile(botsDir, slug, relativePath);
+export async function writeCoworkerFile(coworkersDir, slug, relativePath, content) {
+  const target = resolveCoworkerFile(coworkersDir, slug, relativePath);
   await mkdir(path.dirname(target), { recursive: true });
   await writeFile(target, String(content ?? ""), "utf8");
 }
 
 /** The memory surface shown by the app: fixed files plus long-term entries. */
-export async function listMemoryFiles(botsDir, slug) {
-  const root = botPath(botsDir, slug);
+export async function listMemoryFiles(coworkersDir, slug) {
+  const root = coworkerPath(coworkersDir, slug);
   const files = [
     { id: "soul", label: "Soul", path: SOUL_FILE },
     { id: "working", label: "Working memory", path: WORKING_MEMORY_FILE },

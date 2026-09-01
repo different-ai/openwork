@@ -1,51 +1,51 @@
-import type { BotSummary } from "@/lib/bridge";
+import type { CoworkerSummary } from "@/lib/bridge";
 import type { DenSession } from "@/lib/den";
 import { Button, StatusDot } from "@/ui/kit";
 
-export function WorkerRail({
-  bots,
+export function CoworkerRail({
+  coworkers,
   selectedSlug,
   session,
   onSelect,
-  onNewWorker,
+  onNewCoworker,
   onConnect,
   onSignOut,
 }: {
-  bots: BotSummary[];
+  coworkers: CoworkerSummary[];
   selectedSlug: string;
   session: DenSession | null;
   onSelect: (slug: string) => void;
-  onNewWorker: () => void;
+  onNewCoworker: () => void;
   onConnect: () => void;
   onSignOut: () => void;
 }) {
   return (
     <aside className="flex h-full w-60 shrink-0 flex-col border-r border-line bg-panel">
       <div className="flex items-center justify-between px-4 py-3">
-        <span className="text-sm font-semibold tracking-wide text-snow">Workers</span>
-        <Button variant="ghost" onClick={onNewWorker} title="New worker">
+        <span className="text-sm font-semibold tracking-wide text-snow">Coworkers</span>
+        <Button variant="ghost" onClick={onNewCoworker} title="New coworker">
           +
         </Button>
       </div>
       <nav className="flex-1 space-y-0.5 overflow-y-auto px-2 pb-4">
-        {bots.map((bot) => (
+        {coworkers.map((coworker) => (
           <button
-            key={bot.slug}
-            onClick={() => onSelect(bot.slug)}
+            key={coworker.slug}
+            onClick={() => onSelect(coworker.slug)}
             className={`flex w-full items-center gap-2.5 rounded-md px-2.5 py-2 text-left text-sm transition-colors ${
-              bot.slug === selectedSlug ? "bg-panel-2 text-snow" : "text-mist hover:bg-panel-2/60 hover:text-snow"
+              coworker.slug === selectedSlug ? "bg-panel-2 text-snow" : "text-mist hover:bg-panel-2/60 hover:text-snow"
             }`}
           >
-            <span title={bot.workspaceId ? "Workspace ready" : "Workspace not registered yet"}>
-              <StatusDot tone={bot.workspaceId ? "mint" : "amber"} />
+            <span title={coworker.workspaceId ? "Workspace ready" : "Workspace not registered yet"}>
+              <StatusDot tone={coworker.workspaceId ? "mint" : "amber"} />
             </span>
             <span className="min-w-0 flex-1">
-              <span className="block truncate font-medium">{bot.name}</span>
-              {bot.role ? <span className="block truncate text-xs text-mist">{bot.role}</span> : null}
+              <span className="block truncate font-medium">{coworker.name}</span>
+              {coworker.role ? <span className="block truncate text-xs text-mist">{coworker.role}</span> : null}
             </span>
           </button>
         ))}
-        {bots.length === 0 ? <p className="px-2.5 py-4 text-xs text-mist">No workers yet.</p> : null}
+        {coworkers.length === 0 ? <p className="px-2.5 py-4 text-xs text-mist">No coworkers yet.</p> : null}
       </nav>
       <footer className="space-y-2 border-t border-line px-4 py-3">
         {session ? (
