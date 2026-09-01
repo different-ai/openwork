@@ -9,6 +9,7 @@ import {
 import { AvatarControls, CoworkerAvatar } from "@/ui/coworker-avatar";
 import { Button, ErrorNote, Field, inputClass } from "@/ui/kit";
 import { ModelPicker, type ModelSelection } from "@/ui/model-picker";
+import { RetiredCoworkers } from "@/ui/retired-coworkers";
 
 /**
  * Creation establishes only a durable identity and workspace. The first
@@ -112,7 +113,7 @@ export function NewCoworker({
   }
 
   return (
-    <div className="flex h-full items-center justify-center overflow-y-auto bg-ink/50 p-8">
+    <div className="flex h-full flex-col items-center justify-center overflow-y-auto bg-ink/50 p-8">
       <div className="creation-card grid w-full max-w-3xl overflow-hidden rounded-[30px] border border-line md:grid-cols-[290px_1fr]">
         <div className="avatar-stage flex min-h-[370px] flex-col items-center justify-center border-b border-line p-7 md:border-b-0 md:border-r">
           <CoworkerAvatar
@@ -204,6 +205,7 @@ export function NewCoworker({
           </p>
         </div>
       </div>
+      <RetiredCoworkers onRestored={onCreated} />
     </div>
   );
 }
