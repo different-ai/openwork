@@ -265,7 +265,9 @@ export function mergeRuntimeOpencodeConfigLayers(
     ...(Object.keys(mcp).length ? { mcp } : {}),
     ...(Object.keys(permission).length ? { permission } : {}),
     ...(Object.keys(provider).length ? { provider } : {}),
-    ...(base.run_mode || overlay.run_mode ? { run_mode: overlay.run_mode ?? base.run_mode } : {}),
+    // The run mode is owned by the ENGINE_GLOBAL row alone: a workspace row can
+    // never widen or narrow the engine posture chosen for the whole device.
+    ...(base.run_mode ? { run_mode: base.run_mode } : {}),
   });
 }
 
@@ -287,9 +289,10 @@ export async function readEffectiveRuntimeOpencodeConfig(
  * One-time (idempotent) startup migration for the workspace-independent
  * injected engine config file: fold per-workspace `permission.external_directory`
  * (union), `disabled_providers` (union), and `plugin` (union) into the
- * ENGINE_GLOBAL row, then remove those fields from the workspace rows. `mcp`
- * stays per-workspace — the dynamic engine push owns its delivery. No-op on
- * repeat runs and when the config is read-only.
+ * ENGINE_GLOBAL row, then remove those fields from the workspace rows. A
+ * workspace-row `run_mode` is removed without being folded up. `mcp` stays
+ * per-workspace — the dynamic engine push owns its delivery. No-op on repeat
+ * runs and when the config is read-only.
  */
 export async function migrateWorkspaceRuntimeConfigToEngineGlobal(
   config: ServerConfig,
@@ -302,6 +305,7 @@ export async function migrateWorkspaceRuntimeConfigToEngineGlobal(
       || runtimeDisabledProviderList(row.value).length > 0
       || Object.keys(runtimeExternalDirectory(row.value)).length > 0
       || Object.keys(runtimeProviderMap(row.value)).length > 0
+      || row.value.run_mode !== undefined
     ),
   );
   if (workspaceRows.length === 0 || config.readOnly) return { changed: false };
@@ -346,7 +350,9 @@ export async function migrateWorkspaceRuntimeConfigToEngineGlobal(
   changed = globalResult.changed;
   for (const row of workspaceRows) {
     const result = await writeRuntimeOpencodeConfig(config, row.workspaceId, (current) => {
-      const { plugin: _plugin, disabled_providers: _disabledProviders, provider: _provider, permission, ...rest } = current;
+      // `run_mode` is dropped rather than folded up: a stray workspace row must
+      // never switch the whole device to an approval-free posture.
+      const { plugin: _plugin, disabled_providers: _disabledProviders, provider: _provider, run_mode: _runMode, permission, ...rest } = current;
       // Strip only external_directory; any other permission keys stay put.
       const { external_directory: _externalDirectory, ...permissionRest } = isRecord(permission) ? permission : {};
       return {

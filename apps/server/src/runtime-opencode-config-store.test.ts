@@ -10,6 +10,7 @@ import {
   ENGINE_GLOBAL_RUNTIME_CONFIG_ID,
   migrateWorkspaceRuntimeConfigToEngineGlobal,
   onRuntimeOpencodeConfigWrite,
+  readEffectiveRuntimeOpencodeConfig,
   readGlobalRuntimeOpencodeConfig,
   readRuntimeOpencodeConfig,
   writeGlobalRuntimeOpencodeConfig,
@@ -273,6 +274,38 @@ describe("runtime OpenCode config store", () => {
       const second = await migrateWorkspaceRuntimeConfigToEngineGlobal(config);
       expect(second.changed).toBe(false);
       expect(await readGlobalRuntimeOpencodeConfig(config)).toEqual(globalRuntime);
+    });
+  });
+
+  test("a workspace-row run mode never reaches the effective config and is scrubbed by migration", async () => {
+    await withWorkspace(async ({ config }) => {
+      // A stray per-workspace row (nothing writes one today) must not be able
+      // to switch the device to an approval-free posture, nor to narrow it.
+      await writeRuntimeOpencodeConfig(config, "ws_a", () => ({ run_mode: "run-everything" }));
+      await writeRuntimeOpencodeConfig(config, "ws_b", () => ({
+        run_mode: "approve",
+        mcp: { notion: { type: "remote", url: "https://notion.example/mcp" } },
+      }));
+
+      expect((await readEffectiveRuntimeOpencodeConfig(config, "ws_a")).run_mode).toBeUndefined();
+      await writeGlobalRuntimeOpencodeConfig(config, () => ({ run_mode: "run-everything" }));
+      expect((await readEffectiveRuntimeOpencodeConfig(config, "ws_b")).run_mode).toBe("run-everything");
+
+      const migrated = await migrateWorkspaceRuntimeConfigToEngineGlobal(config);
+      expect(migrated.changed).toBe(true);
+      // Dropped, not folded: the global row keeps exactly what it had.
+      expect(await readRuntimeOpencodeConfig(config, "ws_a")).toEqual({});
+      const workspaceB = await readRuntimeOpencodeConfig(config, "ws_b");
+      expect(workspaceB.run_mode).toBeUndefined();
+      expect(workspaceB.mcp?.notion?.url).toBe("https://notion.example/mcp");
+      expect((await readGlobalRuntimeOpencodeConfig(config)).run_mode).toBe("run-everything");
+
+      // With only the global row set, migration has nothing left to do.
+      await writeGlobalRuntimeOpencodeConfig(config, () => ({}));
+      await writeRuntimeOpencodeConfig(config, "ws_c", () => ({ run_mode: "run-everything" }));
+      await migrateWorkspaceRuntimeConfigToEngineGlobal(config);
+      expect((await readGlobalRuntimeOpencodeConfig(config)).run_mode).toBeUndefined();
+      expect(await readRuntimeOpencodeConfig(config, "ws_c")).toEqual({});
     });
   });
 
