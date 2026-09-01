@@ -91,45 +91,47 @@ export function CoworkerAvatar({
           strokeWidth="1"
         />
 
-        <g className="coworker-avatar__features">
-          <g className="coworker-avatar__pointer-gaze">
-            <g className="coworker-avatar__gaze">
-              <g className="coworker-avatar__pupils" fill="#0b0e14">
-                <rect x="34.5" y="50" width="6" height="14" rx="3" />
-                <rect x="79.5" y="50" width="6" height="14" rx="3" />
+        <g className="coworker-avatar__pointer-features">
+          <g className="coworker-avatar__features">
+            <g className="coworker-avatar__pointer-gaze">
+              <g className="coworker-avatar__gaze">
+                <g className="coworker-avatar__pupils" fill="#0b0e14">
+                  <rect x="34.5" y="50" width="6" height="14" rx="3" />
+                  <rect x="79.5" y="50" width="6" height="14" rx="3" />
+                </g>
               </g>
             </g>
-          </g>
 
-          {glasses === "round" ? (
-            <g
-              className="coworker-avatar__glasses"
-              fill="none"
-              stroke="#11151d"
-              strokeLinecap="round"
-              strokeWidth="5"
-            >
-              <circle cx="37.5" cy="57" r="17.5" />
-              <circle cx="82.5" cy="57" r="17.5" />
-              <path d="M57.5 57c1.25-4 3.75-4 5 0" />
-              <path d="M15 57h4.5M100.5 57h4.5" strokeWidth="7" />
-            </g>
-          ) : null}
-          {glasses === "square" ? (
-            <g
-              className="coworker-avatar__glasses"
-              fill="none"
-              stroke="#11151d"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth="5"
-            >
-              <rect x="19.5" y="39" width="36" height="36" rx="10" />
-              <rect x="64.5" y="39" width="36" height="36" rx="10" />
-              <path d="M58 57c1-3.5 3-3.5 4 0" />
-              <path d="M15 57h4.5M100.5 57h4.5" strokeWidth="7" />
-            </g>
-          ) : null}
+            {glasses === "round" ? (
+              <g
+                className="coworker-avatar__glasses"
+                fill="none"
+                stroke="#11151d"
+                strokeLinecap="round"
+                strokeWidth="5"
+              >
+                <circle cx="37.5" cy="57" r="17.5" />
+                <circle cx="82.5" cy="57" r="17.5" />
+                <path d="M57.5 57c1.25-4 3.75-4 5 0" />
+                <path d="M15 57h4.5M100.5 57h4.5" strokeWidth="7" />
+              </g>
+            ) : null}
+            {glasses === "square" ? (
+              <g
+                className="coworker-avatar__glasses"
+                fill="none"
+                stroke="#11151d"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth="5"
+              >
+                <rect x="19.5" y="39" width="36" height="36" rx="10" />
+                <rect x="64.5" y="39" width="36" height="36" rx="10" />
+                <path d="M58 57c1-3.5 3-3.5 4 0" />
+                <path d="M15 57h4.5M100.5 57h4.5" strokeWidth="7" />
+              </g>
+            ) : null}
+          </g>
         </g>
       </g>
     </svg>
