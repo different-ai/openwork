@@ -2,7 +2,7 @@ import { execFile, spawn } from "node:child_process";
 import { constants, existsSync, openSync } from "node:fs";
 import { access, mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { delimiter, dirname, join } from "node:path";
+import { delimiter, dirname, join, resolve } from "node:path";
 import { allocateFreePort, allocateFreePorts, listTargets, waitForCdp } from "@openwork/cdp";
 import {
   desktopBootstrapPath,
@@ -75,6 +75,16 @@ interface SpawnDetachedOptions {
   cwd: string;
   env: NodeJS.ProcessEnv;
   logPath: string;
+}
+
+const liveProfileRoots = new Set<string>();
+
+export function registerLiveProfileRoot(profileRoot: string): void {
+  liveProfileRoots.add(resolve(profileRoot));
+}
+
+export function unregisterLiveProfileRoot(profileRoot: string): void {
+  liveProfileRoots.delete(resolve(profileRoot));
 }
 
 interface KillLocalPidOptions {
@@ -668,6 +678,35 @@ export async function stopOwnedElectronSurface(pid: number, profileDir: string):
   await rm(profileDir, { recursive: true, force: true });
 }
 
+export async function pruneStaleSurfaceProfiles(
+  rootDir: string,
+  options: {
+    live?: ReadonlySet<string>;
+    log?: (message: string) => void;
+    kill?: (path: string) => Promise<void>;
+  },
+): Promise<{ removed: string[]; kept: string[] }> {
+  const entries = await readdir(rootDir).catch(() => []);
+  const removed: string[] = [];
+  const kept: string[] = [];
+  const live = options.live ?? liveProfileRoots;
+  const kill = options.kill ?? ((path: string) => new Promise<void>((done) => {
+    execFile("pkill", ["-f", path], () => done());
+  }));
+  for (const entry of entries) {
+    const path = resolve(rootDir, entry);
+    if (live.has(path)) {
+      kept.push(path);
+      continue;
+    }
+    await kill(path);
+    await rm(path, { recursive: true, force: true });
+    removed.push(path);
+  }
+  options.log?.(`Cleared ${removed.length} stale profile director${removed.length === 1 ? "y" : "ies"} in ${rootDir} (kept ${kept.length} live).`);
+  return { removed, kept };
+}
+
 function explicitPort(url: string): number | null {
   try {
     const parsed = new URL(url);
@@ -779,20 +818,6 @@ async function ensureDisplay(repoRoot: string, env: NodeJS.ProcessEnv, log: (mes
  * `Runtime.evaluate` for 240s, which reads exactly like a broken app. Pruning
  * here is cheap and keeps that failure from being invented again.
  */
-async function clearStaleSurfaces(rootDir: string, log: (message: string) => void): Promise<void> {
-  await new Promise<void>((resolve) => {
-    execFile("pkill", ["--full", rootDir], () => resolve());
-  });
-  // The default root is worker-scoped, so parallel files cannot kill or remove
-  // another worker's desktop while pruning their own stale profiles.
-  const stale = await readdir(rootDir).catch(() => []);
-  let removed = 0;
-  for (const entry of stale) {
-    await rm(join(rootDir, entry), { recursive: true, force: true }).then(() => { removed += 1; }).catch(() => undefined);
-  }
-  log(`Cleared Electron processes and ${removed} stale profile director${removed === 1 ? "y" : "ies"} in ${rootDir}.`);
-}
-
   return {
     kind: "local",
     workspaceRoot: options.repoRoot,
@@ -808,8 +833,9 @@ async function clearStaleSurfaces(rootDir: string, log: (message: string) => voi
         throw new Error("Electron profileDir must not be empty.");
       }
       const callerOwnedProfile = opts.profileDir !== undefined;
-      if (!callerOwnedProfile) await clearStaleSurfaces(rootDir, log);
-      const profileRoot = opts.profileDir ?? join(rootDir, `${sanitizeSlug(name)}-${timestamp()}-${process.pid}`);
+      if (!callerOwnedProfile) await pruneStaleSurfaceProfiles(rootDir, { live: liveProfileRoots, log });
+      const profileRoot = opts.profileDir ?? resolve(rootDir, `${sanitizeSlug(name)}-${timestamp()}-${process.pid}`);
+      if (!callerOwnedProfile) registerLiveProfileRoot(profileRoot);
       const paths = electronProfilePaths(profileRoot);
       await ensureElectronProfile(paths);
       await writeBootstrap(paths.bootstrapPath, opts.bootstrap);
@@ -862,14 +888,16 @@ async function clearStaleSurfaces(rootDir: string, log: (message: string) => voi
         cdpUrl,
         pid: spawned.pid,
         profileDir: profileRoot,
-        meta: { vitePort: String(port), cdpPort: String(cdpPort), log: logPath, profileOwner: callerOwnedProfile ? "caller" : "host" },
+        meta: { vitePort: String(port), cdpPort: String(cdpPort), log: logPath, profileRoot, profileOwner: callerOwnedProfile ? "caller" : "host" },
       };
       spawnedSurfaces.add(handle);
       return handle;
     },
 
     async spawnChrome(name: string, opts: ChromeSurfaceOptions = {}): Promise<SurfaceHandle> {
-      const profileRoot = join(rootDir, `${sanitizeSlug(name)}-${timestamp()}-${process.pid}`);
+      await pruneStaleSurfaceProfiles(rootDir, { live: liveProfileRoots, log });
+      const profileRoot = resolve(rootDir, `${sanitizeSlug(name)}-${timestamp()}-${process.pid}`);
+      registerLiveProfileRoot(profileRoot);
       const profileDir = join(profileRoot, "chrome-profile");
       await mkdir(profileDir, { recursive: true });
       const cdpPort = await allocateFreePort();
@@ -906,7 +934,7 @@ async function clearStaleSurfaces(rootDir: string, log: (message: string) => voi
         cdpUrl,
         pid: spawned.pid,
         profileDir,
-        meta: { cdpPort: String(cdpPort), log: logPath },
+        meta: { cdpPort: String(cdpPort), log: logPath, profileRoot },
       };
       spawnedSurfaces.add(handle);
       return handle;
@@ -943,6 +971,7 @@ async function clearStaleSurfaces(rootDir: string, log: (message: string) => voi
       }
       await disposeKnownPorts(handle);
       await removeOwnedSurfaceFiles(handle);
+      if (handle.meta?.profileOwner !== "caller" && handle.meta?.profileRoot) unregisterLiveProfileRoot(handle.meta.profileRoot);
       spawnedSurfaces.delete(handle);
     },
 

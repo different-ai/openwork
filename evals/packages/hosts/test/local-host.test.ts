@@ -1,13 +1,13 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { access, chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { access, chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import test from "node:test";
 
 import { allocateFreePort } from "@openwork/cdp";
-import { electronProfilePaths, electronSurfaceEnv, freePort, resolveChromeBinary, stopOwnedElectronSurface } from "../src/local.ts";
+import { electronProfilePaths, electronSurfaceEnv, freePort, pruneStaleSurfaceProfiles, registerLiveProfileRoot, resolveChromeBinary, stopOwnedElectronSurface, unregisterLiveProfileRoot } from "../src/local.ts";
 
 const ENV_KEYS = [
   "APPDATA",
@@ -173,5 +173,81 @@ test("freePort kills a real child listener and releases its port", {
     });
   } finally {
     if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+  }
+});
+
+test("pruneStaleSurfaceProfiles removes untracked profiles and never touches live ones", async () => {
+  const rootDir = await mkdtemp(join(tmpdir(), "openwork-surface-prune-"));
+  const livePath = resolve(rootDir, "live-a");
+  const stalePath = resolve(rootDir, "stale-b");
+  const killed: string[] = [];
+  try {
+    await mkdir(livePath);
+    await mkdir(stalePath);
+    await writeFile(join(livePath, "marker.txt"), "keep", "utf8");
+    await writeFile(join(stalePath, "marker.txt"), "remove", "utf8");
+
+    const result = await pruneStaleSurfaceProfiles(rootDir, {
+      live: new Set([livePath]),
+      kill: async (path) => { killed.push(path); },
+    });
+
+    assert.deepEqual(result, { removed: [stalePath], kept: [livePath] });
+    assert.equal(await readFile(join(livePath, "marker.txt"), "utf8"), "keep");
+    await assert.rejects(access(stalePath));
+    assert.deepEqual(killed, [stalePath]);
+  } finally {
+    await rm(rootDir, { recursive: true, force: true });
+  }
+});
+
+test("pruneStaleSurfaceProfiles kills only processes tied to stale profiles", {
+  skip: process.platform !== "darwin" && process.platform !== "linux",
+}, async () => {
+  const rootDir = await mkdtemp(join(tmpdir(), "openwork-surface-process-prune-"));
+  const livePath = resolve(rootDir, "live-a");
+  const stalePath = resolve(rootDir, "stale-b");
+  await mkdir(livePath);
+  await mkdir(stalePath);
+  const liveChild = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)", livePath], { detached: true, stdio: "ignore" });
+  const staleChild = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)", stalePath], { detached: true, stdio: "ignore" });
+  if (!liveChild.pid || !staleChild.pid) throw new Error("Surface process fixtures did not start.");
+  const livePid = liveChild.pid;
+  const stalePid = staleChild.pid;
+  try {
+    await new Promise((done) => setTimeout(done, 100));
+    await pruneStaleSurfaceProfiles(rootDir, { live: new Set([livePath]) });
+    const deadline = Date.now() + 5_000;
+    while (staleChild.exitCode === null && staleChild.signalCode === null && Date.now() < deadline) {
+      await new Promise((done) => setTimeout(done, 50));
+    }
+
+    assert.notEqual(staleChild.signalCode, null, "stale profile process should be dead");
+    assert.doesNotThrow(() => process.kill(livePid, 0));
+  } finally {
+    try { process.kill(livePid, "SIGKILL"); } catch {}
+    try { process.kill(stalePid, "SIGKILL"); } catch {}
+    await rm(rootDir, { recursive: true, force: true });
+  }
+});
+
+test("disposing a surface unregisters its profile so a later prune can remove it", async () => {
+  const rootDir = await mkdtemp(join(tmpdir(), "openwork-surface-unregister-"));
+  const profilePath = resolve(rootDir, "live-a");
+  await mkdir(profilePath);
+  try {
+    registerLiveProfileRoot(profilePath);
+    assert.deepEqual(await pruneStaleSurfaceProfiles(rootDir, { kill: async () => undefined }), {
+      removed: [],
+      kept: [profilePath],
+    });
+    unregisterLiveProfileRoot(profilePath);
+    assert.deepEqual(await pruneStaleSurfaceProfiles(rootDir, { kill: async () => undefined }), {
+      removed: [profilePath],
+      kept: [],
+    });
+  } finally {
+    unregisterLiveProfileRoot(profilePath);
+    await rm(rootDir, { recursive: true, force: true });
   }
 });
