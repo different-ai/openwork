@@ -17,6 +17,12 @@ import {
   type AutomationSchedule,
 } from "@openwork/types/automations";
 import { z } from "zod";
+import {
+  cloudResponsibilityBody,
+  parseDenLlmProviders,
+  type CloudResponsibilityDraft,
+  type DenLlmProvider,
+} from "./cloud-responsibilities";
 
 const STORAGE_KEY = "coworker.den.session.v1";
 const ORG_SCOPE_HEADER = "x-openwork-org-id";
@@ -206,11 +212,7 @@ export async function exchangeGrant(baseUrl: string, grant: string): Promise<Den
   };
 }
 
-export type ResponsibilityDraft = {
-  name: string;
-  instructions: string;
-  schedule: AutomationSchedule;
-};
+export type ResponsibilityDraft = CloudResponsibilityDraft;
 
 export function createDenAutomationsClient(session: DenSession) {
   const { baseUrl, token, orgId } = session;
@@ -219,16 +221,21 @@ export function createDenAutomationsClient(session: DenSession) {
       const payload = await denRequest(baseUrl, "/v1/automations?limit=50", { token, orgId });
       return automationListSchema.parse(payload);
     },
+    /** Models a Cloud run may use: Den's member-scoped provider list. */
+    async listCloudProviders(): Promise<DenLlmProvider[]> {
+      return parseDenLlmProviders(await denRequest(baseUrl, "/v1/llm-providers", { token, orgId }));
+    },
+    /**
+     * Cloud placement is decided by the creation surface, so this must be the
+     * Cloud endpoint: the legacy `/v1/automations` body would create a
+     * desktop-placed Automation that Open Coworker cannot execute.
+     */
     async create(draft: ResponsibilityDraft): Promise<AutomationDetail> {
-      const payload = await denRequest(baseUrl, "/v1/automations", {
+      const payload = await denRequest(baseUrl, "/v1/cloud-automations", {
         method: "POST",
         token,
         orgId,
-        body: {
-          name: draft.name,
-          instructions: draft.instructions,
-          schedule: draft.schedule,
-        },
+        body: cloudResponsibilityBody(draft),
       });
       return automationDetailSchema.parse(payload);
     },

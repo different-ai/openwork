@@ -1,6 +1,14 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import type { AutomationList, AutomationSchedule } from "@openwork/types/automations";
+import type { AutomationList, AutomationModel, AutomationSchedule } from "@openwork/types/automations";
 import { coworkerBridge, type CoworkerSummary, type LocalResponsibility } from "@/lib/bridge";
+import {
+  cloudModelOptions,
+  describePlacement,
+  describeRunOutcome,
+  resolveCloudModel,
+  type CloudModelOption,
+  type DenLlmProvider,
+} from "@/lib/cloud-responsibilities";
 import { createDenAutomationsClient, describeSchedule, type DenSession } from "@/lib/den";
 import { Button, Empty, ErrorNote, Field, StatusDot, inputClass } from "@/ui/kit";
 
@@ -286,12 +294,17 @@ function CloudResponsibilitiesPanel({
     }
   }
 
-  async function runNow(automationId: string) {
+  async function runNow(entry: AutomationEntry) {
+    const automationId = entry.automation.id;
     setBusyId(automationId);
     setNotice("");
     try {
       await den.runNow(automationId);
-      setNotice("Run requested on OpenWork Cloud.");
+      setNotice(
+        entry.revision.executionTarget === "cloud"
+          ? "Run requested in OpenWork Cloud."
+          : "Run requested. It starts only when the OpenWork desktop app is open for your account; otherwise OpenWork records it as missed.",
+      );
       void refresh();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
@@ -317,16 +330,21 @@ function CloudResponsibilitiesPanel({
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between gap-3">
-        <p className="text-xs font-medium text-mist">Always-on through OpenWork Cloud</p>
+        <p className="text-xs font-medium text-mist">Runs in OpenWork Cloud, even when this Mac is off</p>
         <Button variant="ghost" className="px-2" onClick={() => setShowCreate((value) => !value)}>
           {showCreate ? "Close" : "+ New"}
         </Button>
+      </div>
+      <div className="rounded-xl border border-line bg-panel/45 px-3 py-2.5 text-[11px] leading-relaxed text-mist">
+        Cloud runs use models your organization authorizes and cannot read this coworker's local files or memory.
+        Use “This Mac” for work that must touch this coworker's home.
       </div>
 
       {error ? <ErrorNote>{error}</ErrorNote> : null}
       {notice ? <p className="rounded-lg bg-mint/10 px-3 py-2 text-xs text-mint">{notice}</p> : null}
       {showCreate ? (
         <CreateResponsibility
+          coworker={coworker}
           onCreated={async (automationId) => {
             setShowCreate(false);
             await associate(automationId);
@@ -346,6 +364,8 @@ function CloudResponsibilitiesPanel({
             const state = entry.automation.state;
             const needsAttention = state === "needs_attention";
             const tone = state === "active" ? "mint" : needsAttention ? "rose" : "mist";
+            const placement = describePlacement(entry.revision.executionTarget);
+            const lastRunFailed = Boolean(entry.latestRun && entry.latestRun.status !== "succeeded" && entry.latestRun.error);
             return (
               <li key={entry.automation.id} className={`rounded-2xl border bg-ink p-3 ${needsAttention ? "border-rose/30" : "border-line"}`}>
                 <div className="flex items-start gap-2.5">
@@ -358,8 +378,17 @@ function CloudResponsibilitiesPanel({
                       </span>
                     </div>
                     <p className="mt-1 text-xs leading-relaxed text-mist">{describeSchedule(entry.revision.schedule)}</p>
+                    <p className="mt-1 flex items-center gap-1.5 text-[11px] text-mist" title={placement.detail}>
+                      <span className={`rounded-full px-1.5 py-0.5 font-medium ${placement.target === "cloud" ? "bg-spark/10 text-spark" : "bg-amber/10 text-amber"}`}>
+                        {placement.label}
+                      </span>
+                    </p>
                   </div>
                 </div>
+
+                {placement.target !== "cloud" ? (
+                  <p className="mt-2 rounded-lg bg-amber/8 px-2.5 py-2 text-[11px] leading-relaxed text-amber">{placement.detail}</p>
+                ) : null}
 
                 {entry.automation.needsAttentionReason ? (
                   <p className="mt-2 rounded-lg bg-rose/8 px-2.5 py-2 text-xs leading-relaxed text-rose">
@@ -370,8 +399,11 @@ function CloudResponsibilitiesPanel({
                 <dl className="mt-3 grid grid-cols-2 gap-2 text-xs">
                   <div className="rounded-lg bg-panel px-2.5 py-2">
                     <dt className="text-mist">Last run</dt>
-                    <dd className="mt-0.5 truncate font-medium text-snow">
-                      {entry.latestRun ? `${stateLabel(entry.latestRun.status)} · ${formatWhen(entry.latestRun.finishedAt)}` : "Never"}
+                    <dd
+                      className={`mt-0.5 truncate font-medium ${lastRunFailed ? "text-amber" : "text-snow"}`}
+                      title={entry.latestRun ? `${describeRunOutcome(entry.latestRun)} · ${formatWhen(entry.latestRun.finishedAt)}` : undefined}
+                    >
+                      {entry.latestRun ? `${describeRunOutcome(entry.latestRun)} · ${formatWhen(entry.latestRun.finishedAt)}` : "Never"}
                     </dd>
                   </div>
                   <div className="rounded-lg bg-panel px-2.5 py-2">
@@ -387,7 +419,7 @@ function CloudResponsibilitiesPanel({
                     variant="primary"
                     className="text-xs"
                     disabled={busyId === entry.automation.id || needsAttention}
-                    onClick={() => void runNow(entry.automation.id)}
+                    onClick={() => void runNow(entry)}
                   >
                     {busyId === entry.automation.id ? "Working…" : "Run now"}
                   </Button>
@@ -503,9 +535,11 @@ function CreateLocalResponsibility({
 
 function CreateResponsibility({
   session,
+  coworker,
   onCreated,
 }: {
   session: DenSession;
+  coworker: CoworkerSummary;
   onCreated: (automationId: string) => Promise<void>;
 }) {
   const den = useMemo(() => createDenAutomationsClient(session), [session]);
@@ -515,8 +549,34 @@ function CreateResponsibility({
   const [time, setTime] = useState("09:00");
   const [cadence, setCadence] = useState<"daily" | "weekly">("daily");
   const [weekday, setWeekday] = useState(1);
+  const [providers, setProviders] = useState<DenLlmProvider[]>([]);
+  const [providersError, setProvidersError] = useState("");
+  const [modelId, setModelId] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+
+  const options: CloudModelOption[] = useMemo(() => cloudModelOptions(providers), [providers]);
+  const preferred = useMemo(
+    () => resolveCloudModel({ model: coworker.model, modelVariant: coworker.modelVariant }, providers, options),
+    [coworker.model, coworker.modelVariant, options, providers],
+  );
+  const preferredId = `${preferred.model.providerId}/${preferred.model.modelId}`;
+  const effectiveModelId = options.some((option) => option.id === modelId) ? modelId : preferredId;
+
+  useEffect(() => {
+    let cancelled = false;
+    den
+      .listCloudProviders()
+      .then((list) => {
+        if (!cancelled) setProviders(list);
+      })
+      .catch((cause: unknown) => {
+        if (!cancelled) setProvidersError(cause instanceof Error ? cause.message : String(cause));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [den]);
 
   async function create() {
     const [hourRaw, minuteRaw] = time.split(":");
@@ -526,14 +586,26 @@ function CreateResponsibility({
       setError("Add a name, instructions, and valid time.");
       return;
     }
+    const selected = options.find((option) => option.id === effectiveModelId);
+    if (!selected) {
+      setError("Choose a model your organization authorizes for OpenWork Cloud.");
+      return;
+    }
     const schedule: AutomationSchedule =
       cadence === "daily"
         ? { kind: "daily", timezone, hour, minute }
         : { kind: "weekly", timezone, daysOfWeek: [weekday], hour, minute };
+    // Keep the coworker's reasoning variant only when the Cloud model is the
+    // one its local preference resolved to; other models get the provider default.
+    const model: AutomationModel = {
+      providerId: selected.providerId,
+      modelId: selected.modelId,
+      variant: selected.id === preferredId ? preferred.model.variant ?? null : null,
+    };
     setBusy(true);
     setError("");
     try {
-      const detail = await den.create({ name: name.trim(), instructions: instructions.trim(), schedule });
+      const detail = await den.create({ name: name.trim(), instructions: instructions.trim(), schedule, model });
       await onCreated(detail.automation.id);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
@@ -550,6 +622,22 @@ function CreateResponsibility({
       <Field label="Instructions">
         <textarea className={`${inputClass} min-h-20 resize-y bg-panel`} value={instructions} placeholder="What should happen on every run?" onChange={(event) => setInstructions(event.target.value)} />
       </Field>
+      <Field label="Cloud model">
+        <select className={`${inputClass} bg-panel`} value={effectiveModelId} onChange={(event) => setModelId(event.target.value)}>
+          {options.map((option) => (
+            <option key={option.id} value={option.id}>
+              {option.providerName} · {option.modelName}
+              {option.accessKind === "free" ? " (free starter)" : ""}
+            </option>
+          ))}
+        </select>
+      </Field>
+      <p className="text-[11px] leading-relaxed text-mist">
+        {preferred.resolution === "default" && coworker.model
+          ? `${coworker.name}'s local model (${coworker.model}) is not authorized in OpenWork Cloud, so the free starter is preselected.`
+          : "Cloud runs can only use models your organization authorizes; this list comes from OpenWork, not the local engine."}
+      </p>
+      {providersError ? <ErrorNote>Could not read organization models: {providersError}</ErrorNote> : null}
       <div className="grid grid-cols-2 gap-2">
         <Field label="Cadence">
           <select className={`${inputClass} bg-panel`} value={cadence} onChange={(event) => setCadence(event.target.value === "weekly" ? "weekly" : "daily")}>
