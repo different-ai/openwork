@@ -16,9 +16,9 @@
     "build:electron": "node ./scripts/electron-build.mjs",
     "package:electron": "pnpm run build:electron && pnpm exec electron-builder --config electron-builder.yml",
     "package:electron:dir": "pnpm run build:electron && pnpm exec electron-builder --config electron-builder.yml --dir",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json --noEmit",
     "pretest": "pnpm --filter @openwork/automations build",
-    "test": "node --test electron/*.test.mjs",
+    "test": "node --test electron/*.test.mjs src/lib/*.test.ts",
     "electron": "pnpm exec electron ./electron/main.mjs"
   },
   "dependencies": {
