@@ -1,6 +1,5 @@
 import { useState } from "react";
 import type { CoworkerSummary } from "@/lib/bridge";
-import type { DenSession } from "@/lib/den";
 import type { CoworkerActivity } from "@/lib/threads";
 import { CoworkerAvatar } from "@/ui/coworker-avatar";
 import { Button, StatusDot } from "@/ui/kit";
@@ -23,24 +22,26 @@ function activityTone(activity: CoworkerActivity | undefined): "spark" | "mint" 
   return "mist";
 }
 
+function activityTextTone(activity: CoworkerActivity | undefined): string {
+  if (activity?.state === "working") return "text-spark";
+  if (activity?.state === "retrying" || activity?.state === "attention") return "text-amber";
+  if (activity?.state === "offline") return "text-rose";
+  if (activity?.state === "recent") return "text-mint";
+  return "text-mist";
+}
+
 export function CoworkerRail({
   coworkers,
   activityBySlug,
   selectedSlug,
-  session,
   onSelect,
   onNewCoworker,
-  onConnect,
-  onSignOut,
 }: {
   coworkers: CoworkerSummary[];
   activityBySlug: Record<string, CoworkerActivity>;
   selectedSlug: string;
-  session: DenSession | null;
   onSelect: (slug: string) => void;
   onNewCoworker: () => void;
-  onConnect: () => void;
-  onSignOut: () => void;
 }) {
   const [query, setQuery] = useState("");
   const visibleCoworkers = coworkers.filter((coworker) =>
@@ -68,20 +69,20 @@ export function CoworkerRail({
         />
       </div>
       <p className="px-4 pb-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-mist">Coworkers</p>
-      <nav className="flex-1 space-y-1 overflow-y-auto px-2 pb-4">
+      <nav className="flex-1 space-y-1 overflow-y-auto px-2 pb-5">
         {visibleCoworkers.map((coworker) => {
           const activity = activityBySlug[coworker.slug];
           return (
             <button
               key={coworker.slug}
               onClick={() => onSelect(coworker.slug)}
-              className={`window-no-drag group flex w-full items-center gap-3 rounded-2xl px-2.5 py-2.5 text-left transition-all duration-200 ${
+              className={`window-no-drag group flex w-full items-start gap-3 rounded-2xl px-2.5 py-3 text-left transition-all duration-200 ${
                 coworker.slug === selectedSlug
                   ? "bg-white/8 text-snow ring-1 ring-white/10"
                   : "text-mist hover:bg-white/5 hover:text-snow"
               }`}
             >
-              <span className="relative flex size-11 shrink-0 items-center justify-center">
+              <span className="mt-0.5 flex size-11 shrink-0 items-start justify-center">
                 <CoworkerAvatar
                   animated={coworker.slug === selectedSlug}
                   color={coworker.avatarColor}
@@ -90,17 +91,21 @@ export function CoworkerRail({
                   size={40}
                   working={activity?.state === "working"}
                 />
-                <span className="absolute -bottom-1 -right-1 rounded-full border-2 border-panel bg-panel leading-none">
-                  <StatusDot tone={activityTone(activity)} />
-                </span>
               </span>
               <span className="min-w-0 flex-1">
                 <span className="flex items-baseline justify-between gap-2">
                   <span className="truncate text-sm font-semibold text-snow">{coworker.name}</span>
                   <span className="shrink-0 text-[10px] text-mist">{relativeTime(activity?.updatedAt ?? 0)}</span>
                 </span>
-                <span className="mt-0.5 block truncate text-xs text-mist">
-                  {activity ? `${activity.label} · ${activity.detail}` : coworker.role || "Checking activity…"}
+                <span className={`mt-1 flex items-center gap-1.5 text-[11px] font-medium ${activityTextTone(activity)}`}>
+                  <StatusDot tone={activityTone(activity)} />
+                  <span>{activity?.label ?? "Checking status"}</span>
+                </span>
+                <span
+                  className="mt-1 block line-clamp-2 text-[11px] leading-[1.35] text-mist"
+                  title={activity?.detail || coworker.role || "Checking activity"}
+                >
+                  {activity?.detail || coworker.role || "Checking current activity…"}
                 </span>
               </span>
             </button>
@@ -109,24 +114,6 @@ export function CoworkerRail({
         {coworkers.length === 0 ? <p className="px-2.5 py-4 text-xs text-mist">No coworkers yet. Add your first teammate.</p> : null}
         {coworkers.length > 0 && visibleCoworkers.length === 0 ? <p className="px-2.5 py-4 text-xs text-mist">No matching coworkers.</p> : null}
       </nav>
-      <footer className="window-no-drag space-y-2 border-t border-line bg-white/12 px-4 py-3 backdrop-blur-xl">
-        {session ? (
-          <div className="flex items-center justify-between gap-2 text-xs">
-            <span className="flex min-w-0 items-center gap-1.5 text-mist" title={session.userEmail || session.orgName}>
-              <StatusDot tone="mint" />
-              <span className="truncate">{session.orgName || session.userEmail || "Connected"}</span>
-            </span>
-            <button className="shrink-0 text-mist hover:text-snow" onClick={onSignOut}>
-              Sign out
-            </button>
-          </div>
-        ) : (
-          <Button variant="primary" className="w-full text-xs" onClick={onConnect}>
-            Connect OpenWork account
-          </Button>
-        )}
-        <p className="text-[10px] font-medium uppercase tracking-[0.12em] text-mist">Powered by OpenWork</p>
-      </footer>
     </aside>
   );
 }

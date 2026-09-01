@@ -433,7 +433,7 @@ function Composer({
   compact?: boolean;
 }) {
   return (
-    <div className="border-t border-line bg-ink px-5 py-4">
+    <div className="border-t border-line bg-ink px-5 pb-2.5 pt-4">
       <div className="mx-auto max-w-3xl">
         {error ? <div className="mb-2"><ErrorNote>{error}</ErrorNote></div> : null}
         <div className="flex items-end gap-2 rounded-2xl border border-line bg-panel p-2 focus-within:border-spark/50">
@@ -462,7 +462,10 @@ function Composer({
             {busy ? `${submitLabel}ing…` : submitLabel}
           </Button>
         </div>
-        {!compact ? <p className="mt-1.5 px-1 text-[10px] text-mist">⌘ Enter to assign</p> : null}
+        <div className="mt-1.5 flex min-h-3 items-center justify-between gap-3 px-1 text-[9px] text-mist/65">
+          <span>{compact ? "" : "⌘ Enter to assign"}</span>
+          <span className="shrink-0 font-medium tracking-[0.06em]">Powered by OpenWork</span>
+        </div>
       </div>
     </div>
   );
