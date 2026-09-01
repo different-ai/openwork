@@ -33,6 +33,10 @@ function toToolCalls(message: HeadlessThreadMessage): HeadlessTranscriptToolCall
       name: part.tool ?? "",
       callId: part.callId ?? null,
       status: part.toolStatus ?? null,
+      input: part.toolInput ?? {},
+      output: part.toolOutput,
+      error: part.toolError ?? null,
+      metadata: part.toolMetadata ?? {},
     }));
 }
 

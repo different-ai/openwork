@@ -378,6 +378,37 @@ describe("getThreadSnapshot", () => {
 
     expect(snapshot.status).toEqual({ type: "idle" });
   });
+
+  test("preserves tool input, result, error, and MCP App metadata from the native wire state", async () => {
+    const appResult = { content: [{ type: "text", text: "Team pulse" }], _meta: { receipt: "fixed" } };
+    const double = createOpenworkDouble({
+      messages: [{
+        info: { id: "msg_tool", role: "assistant", time: { created: 1 } },
+        parts: [{
+          id: "prt_tool",
+          type: "tool",
+          tool: "chapter_notes_open_team_pulse",
+          callID: "call_tool",
+          state: {
+            status: "completed",
+            input: { team: "operations" },
+            output: "Team pulse",
+            error: "",
+            metadata: { openworkMcpApp: appResult },
+          },
+        }],
+      }],
+    });
+
+    const snapshot = await createClient(double).getThreadSnapshot(SESSION_ID);
+
+    expect(snapshot.messages[0]?.parts[0]).toMatchObject({
+      toolInput: { team: "operations" },
+      toolOutput: "Team pulse",
+      toolError: "",
+      toolMetadata: { openworkMcpApp: appResult },
+    });
+  });
 });
 
 describe("waitForThread", () => {
