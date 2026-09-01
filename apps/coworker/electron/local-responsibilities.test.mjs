@@ -5,11 +5,13 @@ import path from "node:path";
 import { after, test } from "node:test";
 import { createCoworker } from "./coworkers.mjs";
 import {
+  INTERRUPTED_RUN_MESSAGE,
   beginLocalResponsibilityRun,
   createLocalResponsibility,
   deleteLocalResponsibility,
   finishLocalResponsibilityRun,
   listLocalResponsibilities,
+  reconcileInterruptedLocalRuns,
   setLocalResponsibilityActive,
 } from "./local-responsibilities.mjs";
 
@@ -74,4 +76,47 @@ test("local responsibilities pause, resume, and delete", async () => {
   assert.equal(resumed.state, "active");
   await deleteLocalResponsibility(coworkersDir, "scout", created.id);
   assert.deepEqual(await listLocalResponsibilities(coworkersDir, "scout"), []);
+});
+
+test("interrupted runs are reconciled once, without replaying the advanced schedule", async () => {
+  const coworkersDir = await fixture();
+  const created = await createLocalResponsibility(coworkersDir, "scout", {
+    name: "Daily brief",
+    instructions: "Prepare a brief.",
+    schedule: { kind: "daily", timezone: "UTC", hour: 16, minute: 30 },
+  }, Date.UTC(2026, 8, 1, 15, 0));
+  const other = await createLocalResponsibility(coworkersDir, "scout", {
+    name: "Still running here",
+    instructions: "Keep going.",
+    schedule: { kind: "daily", timezone: "UTC", hour: 18, minute: 0 },
+  }, Date.UTC(2026, 8, 1, 15, 0));
+  const started = await beginLocalResponsibilityRun(coworkersDir, "scout", created.id, {
+    trigger: "scheduled",
+    now: Date.UTC(2026, 8, 1, 16, 30),
+  });
+  const live = await beginLocalResponsibilityRun(coworkersDir, "scout", other.id, {
+    trigger: "manual",
+    now: Date.UTC(2026, 8, 1, 16, 31),
+  });
+
+  const reconciled = await reconcileInterruptedLocalRuns(coworkersDir, "scout", {
+    activeRunIds: new Set([other.id]),
+    now: Date.UTC(2026, 8, 1, 17, 0),
+  });
+  const interrupted = reconciled.find((item) => item.id === created.id);
+  assert.equal(interrupted.latestRun.status, "failed");
+  assert.equal(interrupted.latestRun.error, INTERRUPTED_RUN_MESSAGE);
+  assert.equal(interrupted.latestRun.finishedAt, Date.UTC(2026, 8, 1, 17, 0));
+  assert.equal(interrupted.nextDueAt, started.nextDueAt, "reconciliation must not touch the advanced schedule");
+  const untouched = reconciled.find((item) => item.id === other.id);
+  assert.equal(untouched.latestRun.status, "running");
+  assert.equal(untouched.latestRun.id, live.latestRun.id);
+
+  const persisted = await listLocalResponsibilities(coworkersDir, "scout");
+  assert.deepEqual(persisted, reconciled);
+  const again = await reconcileInterruptedLocalRuns(coworkersDir, "scout", {
+    activeRunIds: new Set([other.id]),
+    now: Date.UTC(2026, 8, 1, 17, 5),
+  });
+  assert.deepEqual(again, reconciled, "a second pass is a no-op");
 });
