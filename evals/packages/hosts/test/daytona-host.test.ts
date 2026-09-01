@@ -178,7 +178,7 @@ test("spawnElectron starts isolated Daytona Electron profiles and writes bootstr
   });
   const bootstrap = { baseUrl: "https://den-web.example.test", apiBaseUrl: "https://den-api.example.test", requireSignin: true };
 
-  const first = await host.spawnElectron("owner", { bootstrap });
+  const first = await host.spawnElectron("owner", { bootstrap, devCommand: "dev:coworker" });
   const second = await host.spawnElectron("member");
 
   assert.equal(first.meta?.cdpPort, "9825");
@@ -208,6 +208,8 @@ test("spawnElectron starts isolated Daytona Electron profiles and writes bootstr
   assert(firstStart.includes("/workspace/.openwork-daytona/profiles/owner-"));
   assert(firstStart.includes("/electron-userdata"));
   assert(firstStart.includes("OPENWORK_DESKTOP_BOOTSTRAP_PATH="));
+  assert(firstStart.includes("OPENWORK_EVAL_ELECTRON_DEV_COMMAND="));
+  assert(firstStart.includes("dev:coworker"));
   assert(firstStart.includes("/workspace/.openwork-daytona/profiles/owner-"));
   assert(firstStart.includes("/bootstrap.json"));
   assert(firstStart.includes("DAYTONA_ELECTRON_LOG="));
