@@ -155,6 +155,16 @@ function rpcResponse(message: Record<string, unknown>): Record<string, unknown> 
 async function waitForMountedApp(app: Awaited<ReturnType<typeof coworker>>, timeoutMs = 60_000): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
+    const initialized = await evalIn(app, `document.querySelector(${json(`[data-mcp-app-resource="${resourceUri}"]`)})?.getAttribute("data-mcp-app-ready") === "true"`);
+    if (initialized === true) return true;
+
+    // Depending on Electron's site-isolation mode, a cross-origin App frame
+    // may stay inside the page target instead of appearing in /json/list.
+    // The accessibility tree spans those frames and proves visible content.
+    const accessibility = await app.client.send("Accessibility.getFullAXTree").catch(() => null);
+    const visibleText = JSON.stringify(accessibility);
+    if (visibleText.includes("Team pulse") && visibleText.includes("Ready for review")) return true;
+
     const targets = await listTargets(app.handle.cdpUrl);
     const sandbox = targets.find((target) => target.type === "iframe"
       && target.url.includes("/mcp-apps/sandbox.html")
@@ -311,9 +321,11 @@ test.skipIf(!enabled)(title, { timeout: 240_000 }, async ({ evidence }) => {
       && !frame.hasAttribute("srcdoc");
   })()`);
   expect(hostClaim).toBe(true);
-  expect(await waitForMountedApp(app)).toBe(true);
+  const mountedApp = await waitForMountedApp(app);
+  expect(mountedApp).toBe(true);
   expect(toolCalls).toBe(1);
   expect(resourceReads).toBeGreaterThanOrEqual(1);
+  await screenshot(app);
   evidence.recordAssertionEvidence(
     "A catalog App executes through OpenWork and mounts through the standard MCP Apps bridge",
     `Observed one read-only tools/call, ${resourceReads} resources/read request(s), a different-origin proxy iframe, stable sandbox flags, and visible Team pulse structured content.`,
