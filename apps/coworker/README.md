@@ -30,10 +30,18 @@ The coworker directory is registered as an ordinary OpenWork workspace, so:
   (`AGENTS.md` + `opencode.json` `instructions`); the coworker maintains
   `memory/working.md` with ordinary file tools. No memory backend.
 - **Responsibilities have two explicit placements.** OpenWork Cloud is the
-  recommended always-on lane and keeps using native Den Automations, pinned to
-  the coworker's workspace and associated in `coworker.md`. This Mac is a
-  local-first lane: schedules reuse `@openwork/automations` occurrence rules,
-  persist beside the coworker, and create native OpenWork threads through
+  recommended always-on lane: responsibilities are native Den Automations
+  created through the Cloud creation surface (`POST /v1/cloud-automations`),
+  so Den fixes their placement to OpenWork Cloud, they keep running with this
+  Mac off, and they use a model the organization authorizes
+  (`GET /v1/llm-providers` plus the free starter, resolved in
+  `src/lib/cloud-responsibilities.ts`). Because they execute in OpenWork
+  Cloud they cannot read the coworker's local files or memory; the UI says so
+  and labels any older desktop-placed Automation honestly (those run only
+  while the OpenWork desktop app is open — Open Coworker hosts no desktop
+  runner). Association stays in `coworker.md`. This Mac is a local-first
+  lane: schedules reuse `@openwork/automations` occurrence rules, persist
+  beside the coworker, and create native OpenWork threads through
   `@openwork/headless-threads`. Local responsibilities run while Open Coworker
   is available and recover at most one missed occurrence after relaunch; they
   do not pretend to be always-on Cloud work.
