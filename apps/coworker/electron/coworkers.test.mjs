@@ -69,6 +69,7 @@ test("createCoworker writes the minimal coworker filesystem representation", asy
   assert.equal(coworker.slug, "research-bot");
   assert.equal(coworker.name, "Research Bot");
   assert.equal(coworker.workspaceId, "");
+  assert.equal(coworker.conversationThreadId, "");
   assert.equal(coworker.modelVariant, "");
   assert.equal(coworker.avatarColor, "violet");
   assert.equal(coworker.avatarGlasses, "square");
@@ -101,6 +102,7 @@ test("updateCoworker patches profile and platform references", async () => {
   assert.equal(created.model, "");
   const updated = await updateCoworker(coworkersDir, "ops", {
     workspaceId: "ws_local_1",
+    conversationThreadId: "ses_discussion_1",
     automations: ["atm_a", "atm_a", " atm_b "],
     model: "anthropic/claude-haiku-4-5",
     modelVariant: "high",
@@ -108,6 +110,7 @@ test("updateCoworker patches profile and platform references", async () => {
     avatarGlasses: "none",
   });
   assert.equal(updated.workspaceId, "ws_local_1");
+  assert.equal(updated.conversationThreadId, "ses_discussion_1");
   assert.deepEqual(updated.automations, ["atm_a", "atm_b"]);
   assert.equal(updated.model, "anthropic/claude-haiku-4-5");
   assert.equal(updated.modelVariant, "high");
@@ -115,6 +118,7 @@ test("updateCoworker patches profile and platform references", async () => {
   assert.equal(updated.avatarGlasses, "none");
   const reread = await getCoworker(coworkersDir, "ops");
   assert.equal(reread.workspaceId, "ws_local_1");
+  assert.equal(reread.conversationThreadId, "ses_discussion_1");
   assert.equal(reread.model, "anthropic/claude-haiku-4-5");
   assert.equal(reread.modelVariant, "high");
   const cleared = await updateCoworker(coworkersDir, "ops", { model: "", modelVariant: "" });

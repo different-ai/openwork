@@ -9,6 +9,7 @@ import { CoworkerHome } from "@/ui/coworker-home";
 import { CoworkerRail } from "@/ui/coworker-rail";
 import { OnboardingWelcome } from "@/ui/onboarding";
 import { AppLoader, CoworkerMark } from "@/ui/brand";
+import { OpenWorkSettings } from "@/ui/openwork-settings";
 
 export default function App() {
   const [runtime, setRuntime] = useState<RuntimeInfo | null>(null);
@@ -19,8 +20,9 @@ export default function App() {
   const [creating, setCreating] = useState(false);
   const [connecting, setConnecting] = useState(false);
   const [onboardingReady, setOnboardingReady] = useState(false);
-  const [openConfigurationSignal, setOpenConfigurationSignal] = useState(0);
+  const [globalSettingsOpen, setGlobalSettingsOpen] = useState(false);
   const [activityBySlug, setActivityBySlug] = useState<Record<string, CoworkerActivity>>({});
+  const [liveActivityBySlug, setLiveActivityBySlug] = useState<Record<string, CoworkerActivity>>({});
   const [attentionBySlug, setAttentionBySlug] = useState<Record<string, string>>({});
 
   const boot = useCallback(async () => {
@@ -59,6 +61,7 @@ export default function App() {
               serverUrl: runtime.serverUrl,
               workspaceId: coworker.workspaceId,
               token: runtime.ownerToken,
+              conversationThreadId: coworker.conversationThreadId,
             }),
             coworkerBridge.localResponsibilities.list(coworker.slug).catch(() => []),
           ]);
@@ -153,6 +156,17 @@ export default function App() {
     setRuntime(info);
   }, []);
 
+  const updateSelectedLiveActivity = useCallback((activity: CoworkerActivity | null) => {
+    if (!selectedSlug) return;
+    setLiveActivityBySlug((current) => {
+      if (activity) return { ...current, [selectedSlug]: activity };
+      if (!(selectedSlug in current)) return current;
+      const next = { ...current };
+      delete next[selectedSlug];
+      return next;
+    });
+  }, [selectedSlug]);
+
   if (bootError) {
     return (
       <div className="window-shell window-drag flex h-full items-center justify-center p-8">
@@ -204,10 +218,28 @@ export default function App() {
   }
 
   const selected = coworkers.find((coworker) => coworker.slug === selectedSlug) ?? null;
+  if (globalSettingsOpen) {
+    return (
+      <OpenWorkSettings
+        runtime={runtime}
+        session={session}
+        coworkers={coworkers}
+        selectedCoworker={selected}
+        onClose={() => setGlobalSettingsOpen(false)}
+        onConnect={() => setConnecting(true)}
+        onSignOut={() => {
+          writeDenSession(null);
+          setSession(null);
+        }}
+        onRefreshRuntime={refreshRuntime}
+      />
+    );
+  }
   const visibleActivityBySlug: Record<string, CoworkerActivity> = {};
   for (const coworker of coworkers) {
     const attention = attentionBySlug[coworker.slug];
     const activity = activityBySlug[coworker.slug];
+    const liveActivity = liveActivityBySlug[coworker.slug];
     if (attention) {
       visibleActivityBySlug[coworker.slug] = {
         state: "attention",
@@ -216,6 +248,8 @@ export default function App() {
         updatedAt: activity?.updatedAt ?? 0,
         ...(activity?.last ? { last: activity.last } : {}),
       };
+    } else if (liveActivity) {
+      visibleActivityBySlug[coworker.slug] = liveActivity;
     } else if (activity) {
       visibleActivityBySlug[coworker.slug] = activity;
     }
@@ -229,7 +263,6 @@ export default function App() {
     const remaining = coworkers.filter((coworker) => coworker.slug !== slug);
     setBots(remaining);
     if (selectedSlug === slug) {
-      setOpenConfigurationSignal(0);
       setSelectedSlug(remaining[0]?.slug ?? "");
     }
   }
@@ -244,21 +277,12 @@ export default function App() {
         selectedSlug={creating ? "" : selectedSlug}
         onSelect={(slug) => {
           setCreating(false);
-          setOpenConfigurationSignal(0);
           setSelectedSlug(slug);
         }}
         onNewCoworker={() => {
-          setOpenConfigurationSignal(0);
           setCreating(true);
         }}
-        onOpenOpenWork={() => {
-          if (!selected) {
-            setConnecting(true);
-            return;
-          }
-          setCreating(false);
-          setOpenConfigurationSignal((value) => value + 1);
-        }}
+        onOpenOpenWork={() => setGlobalSettingsOpen(true)}
       />
       {creating || !selected ? (
         <div className="min-w-0 flex-1">
@@ -285,15 +309,11 @@ export default function App() {
           coworkers={coworkers}
           coworker={selected}
           activity={visibleActivityBySlug[selected.slug]}
+          onActivityChange={updateSelectedLiveActivity}
           onCoworkerChanged={updateCoworkerInList}
           onCoworkerRemoved={removeCoworkerFromList}
           onRefreshRuntime={refreshRuntime}
-          onConnect={() => setConnecting(true)}
-          onSignOut={() => {
-            writeDenSession(null);
-            setSession(null);
-          }}
-          openConfigurationSignal={openConfigurationSignal}
+          onOpenOpenWork={() => setGlobalSettingsOpen(true)}
         />
       )}
     </div>
