@@ -30,6 +30,7 @@ on:
       - "ee/apps/den-gateway/**"
       - "ee/apps/den-web/**"
       - "ee/apps/inference/**"
+      - "!ee/apps/inference/src/models/base.json"
       - "ee/packages/**"
       - "packages/automations/**"
       - "packages/codemode/**"

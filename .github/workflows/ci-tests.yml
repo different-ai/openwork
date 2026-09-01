@@ -10,9 +10,37 @@ on:
 
 permissions:
   contents: read
+  pull-requests: read
 
 jobs:
+  classify-changes:
+    runs-on: ubuntu-latest
+    outputs:
+      snapshot_only: ${{ steps.classify.outputs.snapshot_only }}
+    steps:
+      - name: Classify changed files
+        id: classify
+        uses: actions/github-script@v8
+        with:
+          script: |
+            if (context.eventName !== "pull_request") {
+              core.setOutput("snapshot_only", "false")
+              return
+            }
+
+            const files = await github.paginate(github.rest.pulls.listFiles, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.payload.pull_request.number,
+              per_page: 100,
+            })
+            const snapshotOnly = files.length === 1
+              && files[0].filename === "ee/apps/inference/src/models/base.json"
+            core.setOutput("snapshot_only", String(snapshotOnly))
+
   openwork-tests:
+    needs: classify-changes
+    if: needs.classify-changes.outputs.snapshot_only != 'true'
     runs-on: ${{ matrix.os }}
 
     strategy:
@@ -176,20 +204,98 @@ jobs:
       - name: Run e2e tests
         run: pnpm --filter @openwork/app test:e2e
 
+  validate-models-snapshot:
+    needs: classify-changes
+    if: needs.classify-changes.outputs.snapshot_only == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - name: Validate models snapshot
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import { readFile } from "node:fs/promises"
+
+          const path = "ee/apps/inference/src/models/base.json"
+          const fail = (message) => { throw new Error(`${path}: ${message}`) }
+          const isRecord = (value) => Boolean(value)
+            && typeof value === "object"
+            && !Array.isArray(value)
+          const isStringArray = (value) => Array.isArray(value)
+            && value.length > 0
+            && value.every((item) => typeof item === "string")
+
+          const parsed = JSON.parse(await readFile(path, "utf8"))
+          if (!isRecord(parsed)) fail("expected a JSON object")
+
+          const providers = Object.entries(parsed)
+          if (providers.length === 0) fail("expected at least one provider")
+
+          for (const [providerId, provider] of providers) {
+            if (!isRecord(provider)) fail(`provider ${providerId} was not an object`)
+            if (provider.id !== providerId) fail(`provider ${providerId} was missing a matching id`)
+            if (typeof provider.name !== "string" || provider.name.length === 0) {
+              fail(`provider ${providerId} was missing a name`)
+            }
+            if (!isRecord(provider.models) || Object.keys(provider.models).length === 0) {
+              fail(`provider ${providerId} did not include models`)
+            }
+
+            for (const [modelId, model] of Object.entries(provider.models)) {
+              if (!isRecord(model)) fail(`model ${providerId}.${modelId} was not an object`)
+              if (model.id !== modelId) fail(`model ${providerId}.${modelId} was missing a matching id`)
+              if (typeof model.name !== "string" || model.name.length === 0) {
+                fail(`model ${providerId}.${modelId} was missing a name`)
+              }
+              if (!isRecord(model.modalities)) {
+                fail(`model ${providerId}.${modelId} was missing modalities`)
+              }
+              if (!isStringArray(model.modalities.input)) {
+                fail(`model ${providerId}.${modelId} was missing input modalities`)
+              }
+              if (!isStringArray(model.modalities.output)) {
+                fail(`model ${providerId}.${modelId} was missing output modalities`)
+              }
+              if (!isRecord(model.limit)) fail(`model ${providerId}.${modelId} was missing limits`)
+            }
+          }
+          NODE
+
   # Single stable context for branch rulesets to require. Green only when
-  # every openwork-tests matrix leg succeeded; runs even when legs fail or
-  # are cancelled so the required check always reports instead of hanging.
+  # the lane selected by classification succeeds; always reports.
   openwork-tests-required:
-    needs: openwork-tests
+    needs: [classify-changes, openwork-tests, validate-models-snapshot]
     if: always()
     runs-on: ubuntu-latest
     steps:
-      - name: Require every openwork-tests matrix leg to pass
+      - name: Require the selected test lane to pass
         env:
-          RESULT: ${{ needs.openwork-tests.result }}
+          CLASSIFY_RESULT: ${{ needs.classify-changes.result }}
+          SNAPSHOT_ONLY: ${{ needs.classify-changes.outputs.snapshot_only }}
+          TEST_RESULT: ${{ needs.openwork-tests.result }}
+          SNAPSHOT_RESULT: ${{ needs.validate-models-snapshot.result }}
         run: |
-          echo "openwork-tests result: $RESULT"
-          if [ "$RESULT" != "success" ]; then
-            echo "One or more OpenWork Tests matrix legs did not succeed; blocking merge." >&2
+          echo "classification: $CLASSIFY_RESULT ($SNAPSHOT_ONLY)"
+          echo "openwork-tests: $TEST_RESULT"
+          echo "snapshot validation: $SNAPSHOT_RESULT"
+
+          if [ "$CLASSIFY_RESULT" != "success" ]; then
+            echo "Changed-file classification did not succeed; blocking merge." >&2
+            exit 1
+          fi
+
+          if [ "$SNAPSHOT_ONLY" = "true" ]; then
+            [ "$SNAPSHOT_RESULT" = "success" ] && [ "$TEST_RESULT" = "skipped" ] || exit 1
+          elif [ "$SNAPSHOT_ONLY" = "false" ]; then
+            [ "$TEST_RESULT" = "success" ] && [ "$SNAPSHOT_RESULT" = "skipped" ] || exit 1
+          else
+            echo "Changed-file classification returned an unexpected value; blocking merge." >&2
             exit 1
           fi
