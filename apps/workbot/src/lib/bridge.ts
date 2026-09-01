@@ -7,6 +7,8 @@ export type BotSummary = {
   role: string;
   mission: string;
   workspaceId: string;
+  /** Preferred model as "providerId/modelId"; empty means engine default. */
+  model: string;
   automations: string[];
   createdAt: string;
 };
@@ -54,7 +56,7 @@ export const workbot = {
     get: (slug: string) => invoke<BotSummary>("bots.get", { slug }),
     create: (input: { name: string; role: string; mission: string }) =>
       invoke<BotSummary>("bots.create", input),
-    update: (slug: string, patch: Partial<Pick<BotSummary, "workspaceId" | "automations" | "mission" | "role">>) =>
+    update: (slug: string, patch: Partial<Pick<BotSummary, "workspaceId" | "automations" | "mission" | "role" | "model">>) =>
       invoke<BotSummary>("bots.update", { slug, patch }),
     ensureWorkspace: (slug: string) => invoke<BotSummary>("bots.ensureWorkspace", { slug }),
     remove: (slug: string) => invoke<{ ok: boolean }>("bots.delete", { slug }),

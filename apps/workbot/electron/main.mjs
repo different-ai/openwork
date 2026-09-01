@@ -74,6 +74,31 @@ async function loadOrCreateTokens() {
   return tokens;
 }
 
+async function persistOwnerToken(token) {
+  const file = tokenFilePath();
+  const tokens = await loadOrCreateTokens();
+  await writeFile(file, `${JSON.stringify({ ...tokens, ownerToken: token }, null, 2)}\n`, "utf8");
+}
+
+/** Reuse the persisted owner token across restarts; mint only when invalid. */
+async function resolveOwnerToken(baseUrl, tokens) {
+  const persisted = typeof tokens.ownerToken === "string" ? tokens.ownerToken.trim() : "";
+  if (persisted) {
+    try {
+      const probe = await fetch(`${baseUrl}/workspaces`, {
+        headers: { Authorization: `Bearer ${persisted}` },
+        signal: AbortSignal.timeout(5000),
+      });
+      if (probe.ok) return persisted;
+    } catch {
+      // Unreachable or rejected: mint a fresh token below.
+    }
+  }
+  const minted = await issueOwnerToken(baseUrl, tokens.hostToken);
+  await persistOwnerToken(minted).catch(() => undefined);
+  return minted;
+}
+
 function embeddedServerPath() {
   const candidates = [
     path.resolve(__dirname, "..", "..", "server", "dist", "embedded.js"),
@@ -152,7 +177,7 @@ async function startPlatformServer() {
     engineError = error instanceof Error ? error.message : String(error);
     serverHandle = await startOnce(false);
   }
-  ownerToken = await issueOwnerToken(serverHandle.url, tokens.hostToken);
+  ownerToken = await resolveOwnerToken(serverHandle.url, tokens);
   return serverHandle;
 }
 
@@ -248,6 +273,19 @@ const commands = {
   },
   "bots.update": async ({ slug, patch }) => updateBot(botsDir, slug, patch ?? {}),
   "bots.delete": async ({ slug }) => {
+    // Deregister the workspace first so the registry never points at a
+    // directory that is about to disappear. Best effort: a failed
+    // deregistration must not leave the worker half-retired in the UI.
+    const bot = await getBot(botsDir, slug).catch(() => null);
+    if (bot?.workspaceId) {
+      const handle = await ensurePlatformServer();
+      const tokens = await loadOrCreateTokens();
+      await fetch(`${handle.url}/workspaces/${encodeURIComponent(bot.workspaceId)}`, {
+        method: "DELETE",
+        headers: { "X-OpenWork-Host-Token": tokens.hostToken },
+        signal: AbortSignal.timeout(8000),
+      }).catch(() => undefined);
+    }
     await deleteBot(botsDir, slug);
     return { ok: true };
   },

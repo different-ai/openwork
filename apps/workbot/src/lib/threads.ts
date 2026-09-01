@@ -29,20 +29,51 @@ const sessionListSchema = z.array(
     .loose(),
 );
 
+export type EngineModelOption = {
+  /** "providerId/modelId" */
+  id: string;
+  label: string;
+};
+
+const providersSchema = z.object({
+  providers: z.array(
+    z
+      .object({
+        id: z.string(),
+        name: z.string().optional(),
+        models: z.record(z.string(), z.unknown()).optional(),
+      })
+      .loose(),
+  ),
+});
+
+/** Parse a bot's persisted "providerId/modelId" preference. */
+export function parseModelPreference(value: string): { providerId: string; modelId: string } | undefined {
+  const trimmed = value.trim();
+  if (!trimmed) return undefined;
+  const separator = trimmed.indexOf("/");
+  if (separator <= 0 || separator === trimmed.length - 1) return undefined;
+  return { providerId: trimmed.slice(0, separator), modelId: trimmed.slice(separator + 1) };
+}
+
 export type BotThreads = {
   client: HeadlessThreadClient;
   listThreads: () => Promise<ThreadListItem[]>;
+  listModels: () => Promise<EngineModelOption[]>;
 };
 
 export function createBotThreads(options: {
   serverUrl: string;
   workspaceId: string;
   token: string;
+  /** "providerId/modelId"; empty or invalid falls back to the engine default. */
+  model?: string;
 }): BotThreads {
   const client = createHeadlessThreadClient({
     baseUrl: options.serverUrl,
     workspaceId: options.workspaceId,
     token: options.token,
+    defaultModel: parseModelPreference(options.model ?? ""),
   });
 
   const opencode = createOpencodeClient({
@@ -68,5 +99,26 @@ export function createBotThreads(options: {
       .sort((a, b) => b.updatedAt - a.updatedAt);
   }
 
-  return { client, listThreads };
+  async function listModels(): Promise<EngineModelOption[]> {
+    const response = await fetch(
+      `${options.serverUrl}/workspace/${encodeURIComponent(options.workspaceId)}/opencode/config/providers`,
+      { headers: { Authorization: `Bearer ${options.token}` } },
+    );
+    if (!response.ok) {
+      throw new Error(`Listing models failed (${response.status})`);
+    }
+    const parsed = providersSchema.parse(await response.json());
+    const models: EngineModelOption[] = [];
+    for (const provider of parsed.providers) {
+      for (const modelId of Object.keys(provider.models ?? {})) {
+        models.push({
+          id: `${provider.id}/${modelId}`,
+          label: `${provider.name?.trim() || provider.id} · ${modelId}`,
+        });
+      }
+    }
+    return models.sort((a, b) => a.label.localeCompare(b.label));
+  }
+
+  return { client, listThreads, listModels };
 }
