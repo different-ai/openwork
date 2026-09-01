@@ -180,17 +180,11 @@ export default function App() {
         coworkers={coworkers}
         activityBySlug={visibleActivityBySlug}
         selectedSlug={creating ? "" : selectedSlug}
-        session={session}
         onSelect={(slug) => {
           setCreating(false);
           setSelectedSlug(slug);
         }}
         onNewCoworker={() => setCreating(true)}
-        onConnect={() => setConnecting(true)}
-        onSignOut={() => {
-          writeDenSession(null);
-          setSession(null);
-        }}
       />
       {creating || !selected ? (
         <div className="min-w-0 flex-1">
@@ -215,10 +209,15 @@ export default function App() {
           session={session}
           coworkers={coworkers}
           coworker={selected}
+          activity={visibleActivityBySlug[selected.slug]}
           onCoworkerChanged={updateCoworkerInList}
           onCoworkerRemoved={removeCoworkerFromList}
           onRefreshRuntime={refreshRuntime}
           onConnect={() => setConnecting(true)}
+          onSignOut={() => {
+            writeDenSession(null);
+            setSession(null);
+          }}
         />
       )}
     </div>

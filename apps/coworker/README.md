@@ -77,8 +77,10 @@ pnpm --filter @openwork/coworker build     # renderer bundle
 
 First run: create a coworker, pick its model, give it work. Its identity and
 memory are plain files under `~/.config/openwork/coworkers/`. The dev launcher
-is usable before signing in; connect your OpenWork account from the rail
-(open sign-in → copy link → paste) to give coworkers cloud responsibilities.
+is usable before signing in; open the compact OpenWork control at the bottom of
+the coworker details panel (open sign-in → copy link → paste) to connect cloud
+responsibilities. The same panel reads the active engine's provider catalog so
+OpenWork model and provider changes stay visible without a second settings store.
 
 The managed engine binary resolves from `OPENWORK_OPENCODE_BIN` or `opencode`
 on PATH during development; packaged sidecar distribution follows the desktop
