@@ -239,12 +239,46 @@ async function registerCoworkerWorkspace(coworker) {
   return workspaceId;
 }
 
+/**
+ * Repair imported or pre-registration coworker records during normal startup.
+ * The filesystem home already exists; this completes its native OpenWork
+ * workspace registration and persists the platform id before the UI lists it.
+ */
+async function listPreparedCoworkers() {
+  const coworkers = await listCoworkers(coworkersDir);
+  if (!coworkers.some((coworker) => !coworker.workspaceId)) return coworkers;
+
+  await ensurePlatformServer();
+  let registeredWorkspace = false;
+  const prepared = [];
+  for (const coworker of coworkers) {
+    if (coworker.workspaceId) {
+      prepared.push(coworker);
+      continue;
+    }
+    try {
+      const workspaceId = await registerCoworkerWorkspace(coworker);
+      prepared.push(await updateCoworker(coworkersDir, coworker.slug, { workspaceId }));
+      registeredWorkspace = true;
+    } catch {
+      // Keep the coworker visible. Its explicit repair action remains the
+      // fallback when automatic registration is genuinely unavailable.
+      prepared.push(coworker);
+    }
+  }
+
+  if (registeredWorkspace && !serverHandle?.managedOpencode) {
+    await restartPlatformServer();
+  }
+  return prepared;
+}
+
 const commands = {
   "runtime.info": async () => {
     await ensurePlatformServer();
     return runtimeInfo();
   },
-  "coworkers.list": async () => listCoworkers(coworkersDir),
+  "coworkers.list": async () => listPreparedCoworkers(),
   "coworkers.get": async ({ slug }) => getCoworker(coworkersDir, slug),
   "coworkers.create": async ({ name, role, mission, avatarColor, avatarGlasses }) => {
     await ensurePlatformServer();
