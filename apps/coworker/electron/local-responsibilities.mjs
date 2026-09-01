@@ -170,6 +170,37 @@ export async function attachLocalResponsibilityThread(coworkersDir, slug, id, ru
   return updated;
 }
 
+export const INTERRUPTED_RUN_MESSAGE = "Open Coworker closed before this local run finished.";
+
+/**
+ * A run recorded as `running` with no live executor in this process was cut
+ * off by a quit, crash, or engine stop. Mark it failed with a plain reason so
+ * the UI never shows a phantom "Running" state and the next due occurrence
+ * can proceed. The schedule was already advanced when the run began, so no
+ * occurrence is replayed.
+ */
+export async function reconcileInterruptedLocalRuns(
+  coworkersDir,
+  slug,
+  { activeRunIds = new Set(), now = Date.now() } = {},
+) {
+  const items = await readStore(coworkersDir, slug);
+  const finishedAt = Math.max(0, Math.floor(now));
+  let changed = false;
+  const reconciled = items.map((item) => {
+    const run = item.latestRun;
+    if (!run || run.status !== "running" || activeRunIds.has(item.id)) return item;
+    changed = true;
+    return {
+      ...item,
+      latestRun: { ...run, status: "failed", finishedAt, error: INTERRUPTED_RUN_MESSAGE },
+      updatedAt: finishedAt,
+    };
+  });
+  if (changed) await writeStore(coworkersDir, slug, reconciled);
+  return reconciled;
+}
+
 export async function finishLocalResponsibilityRun(
   coworkersDir,
   slug,
