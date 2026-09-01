@@ -43,6 +43,7 @@
             "group": "Do work with it",
             "pages": [
               "start-here/do-work-with-it/control-the-browser",
+              "start-here/do-work-with-it/permissions-and-run-mode",
               "start-here/do-work-with-it/cross-chat-memory",
               "start-here/do-work-with-it/what-uses-tokens",
               "start-here/do-work-with-it/workflows",

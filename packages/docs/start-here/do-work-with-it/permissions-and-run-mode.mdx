@@ -1,0 +1,38 @@
+---
+title: "Permissions and run mode"
+description: "Where agents may work, and when they stop to ask you."
+---
+
+OpenWork does not decide tool calls itself. The OpenCode engine does, using its `permission` rules, and OpenWork writes the rules you choose in `Settings > Permissions` into the engine configuration it manages. Both controls on that page apply to every workspace on this device, including scheduled Automations that run here.
+
+## Authorized folders
+
+An agent works inside the workspace folder. Any tool that touches a path outside it — reading, editing, or a shell command that names another directory — stops and asks you first.
+
+Add a folder under `Authorized folders` to let agents use it without asking. Remove it to go back to prompting. The workspace root is always available and cannot be removed.
+
+## Run mode
+
+`Run mode` sets how much agents may do before a prompt interrupts them.
+
+### Approve each step
+
+The default. Agents follow your existing permission rules. With no rules of your own, the engine asks before:
+
+- working outside the workspace and your authorized folders,
+- reading `.env` files,
+- repeating an identical tool call.
+
+Everything else — shell commands, file edits inside the workspace, web fetches, and MCP tools — already runs without a prompt in this mode unless your own `opencode.json` says otherwise.
+
+### Run everything
+
+Skips the prompts configured in your global `opencode.json`. The three protections above still ask, stored deny rules still block, and rules in a workspace's own `opencode.json` are unchanged.
+
+Choose this only if you accept unattended tool runs in every workspace and Automation on this device. Deny rules in your global `opencode.json` can be overridden by this mode unless that file lists a `"*"` entry before them.
+
+Changing the mode takes effect immediately for every workspace on the device; a change made while a session is busy is applied on the next engine rollover.
+
+## Who can change these
+
+Only owners and collaborators can change authorized folders or the run mode. On a server started with `--approval manual`, each change also waits for host approval before it is saved.
