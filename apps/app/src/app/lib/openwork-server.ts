@@ -280,6 +280,32 @@ export type OpenworkAuthorizedFoldersResponse = {
   workspaceRoot: string;
 };
 
+export type OpenworkPermissionAction = "allow" | "ask" | "deny";
+export type OpenworkPermissionSource = "engine" | "global" | "openwork" | "workspace";
+export type OpenworkEffectivePermissionKey =
+  | "shell"
+  | "edit"
+  | "web"
+  | "mcp"
+  | "outside_folders"
+  | "env_files"
+  | "doom_loop";
+
+export type OpenworkEffectivePermissionRow = {
+  key: OpenworkEffectivePermissionKey;
+  permission: string;
+  action: OpenworkPermissionAction;
+  rule: { permission: string; pattern: string; action: OpenworkPermissionAction } | null;
+  source: OpenworkPermissionSource | null;
+  exceptions: number;
+};
+
+export type OpenworkEffectivePermissionsResponse = {
+  agent: string;
+  rows: OpenworkEffectivePermissionRow[];
+  files: { workspace: string; global: string };
+};
+
 export type OpenworkAuthorizedFoldersUpdateResponse = {
   folders: string[];
   hiddenCount: number;
@@ -1649,6 +1675,12 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
       requestJson<{ opencode: Record<string, unknown>; openwork: Record<string, unknown>; updatedAt?: number | null }>(
         baseUrl,
         `/workspace/${workspaceId}/config`,
+        { token, hostToken, timeoutMs: timeouts.config },
+      ),
+    getEffectivePermissions: (workspaceId: string) =>
+      requestJson<OpenworkEffectivePermissionsResponse>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/permissions/effective`,
         { token, hostToken, timeoutMs: timeouts.config },
       ),
     listAuthorizedFolders: (workspaceId: string) =>
