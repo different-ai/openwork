@@ -134,6 +134,7 @@ import {
 } from "./openwork-workspace-config-store.js";
 import { buildOpenworkRuntimeConfigObject, openworkRuntimeConfigFilePath, writeOpenworkRuntimeConfigFile } from "./openwork-runtime-config.js";
 import { findManagedEngineWorkspace } from "./workspaces.js";
+import { startThreadApprovalReplayer, type ThreadApprovalReplayer } from "./thread-approvals.js";
 import { CloudProviderSync, parseCloudProviderDenSession } from "./cloud-provider-sync.js";
 import pkg from "../package.json" with { type: "json" };
 import constants from "../../../constants.json" with { type: "json" };
@@ -4886,10 +4887,15 @@ export function createEnginePoolForConfig(input: {
   trustedIdentity: string | null;
 }): EnginePool {
   const { config } = input;
+  const logger = createServerLogger(config);
+  // Thread approvals live in OpenWork because the engine forgets an "always"
+  // reply whenever this pool rebuilds an instance or rolls over.
+  let threadApprovals: ThreadApprovalReplayer | null = null;
   const pool = new EnginePool({
     config,
     template: input.template,
     hooks: {
+      onDisposed: () => threadApprovals?.stop(),
       reloadInPlace: (poolConfig, workspace, options) =>
         reloadOpencodeEngineInPlace(poolConfig, workspace, undefined, options),
       engineBusy: (poolConfig, workspace) => engineHasActiveSessions(poolConfig, workspace),
@@ -4900,7 +4906,7 @@ export function createEnginePoolForConfig(input: {
       writeRuntimeConfigFile: (poolConfig) => writeOpenworkRuntimeConfigFile(poolConfig),
       registerTrusted: (poolConfig, generation) => registerTrustedOpencodeProcess(poolConfig, generation),
       clearTrusted: (poolConfig, identity) => clearTrustedOpencodeProcess(poolConfig, identity),
-      logger: createServerLogger(config),
+      logger,
     },
   });
   pool.adoptPrimary({
@@ -4910,6 +4916,22 @@ export function createEnginePoolForConfig(input: {
     trustedIdentity: input.trustedIdentity,
   });
   setEnginePoolForConfig(config, pool);
+  threadApprovals = startThreadApprovalReplayer({
+    config,
+    primary: () => pool.connections().find((entry) => entry.role === "primary") ?? null,
+    // The engine reports an instance by its canonical path (macOS resolves
+    // /tmp and /var through /private), so compare canonical forms.
+    workspaceIdForDirectory: async (directory) => {
+      const reported = await realpath(normalizeOpencodeDirectory(directory)).catch(() => normalizeOpencodeDirectory(directory));
+      for (const workspace of config.workspaces) {
+        const owned = resolveOpencodeDirectory(workspace);
+        if (!owned) continue;
+        if (owned === reported || (await realpath(owned).catch(() => owned)) === reported) return workspace.id;
+      }
+      return null;
+    },
+    logger,
+  });
   return pool;
 }
 
