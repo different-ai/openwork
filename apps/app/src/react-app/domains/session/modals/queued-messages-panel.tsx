@@ -230,7 +230,7 @@ function QueuedDraftRow(props: {
               setDraftText(props.item.draft.text);
               setEditing(true);
             }}
-            className="w-full rounded-md px-0.5 text-left text-sm leading-5 text-gray-11 hover:text-gray-12 disabled:pointer-events-none"
+            className="w-full whitespace-pre-wrap break-words rounded-md px-0.5 text-left text-sm leading-5 text-gray-11 hover:text-gray-12 disabled:pointer-events-none"
             title={t("composer.queued_edit")}
           >
             <QueuedDraftContent draft={props.item.draft} />
