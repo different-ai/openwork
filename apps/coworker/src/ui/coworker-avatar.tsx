@@ -30,6 +30,14 @@ function motionPhase(name: string) {
   return value % 3;
 }
 
+function blinkPhase(name: string) {
+  const value = [...name].reduce(
+    (sum, character, index) => sum + character.charCodeAt(0) * (index + 1),
+    0,
+  );
+  return value % 6;
+}
+
 export function CoworkerAvatar({
   name,
   color,
@@ -47,7 +55,7 @@ export function CoworkerAvatar({
 }) {
   const palette = PALETTES[color];
   const phase = motionPhase(name);
-  const motionClass = animated ? `is-animated motion-phase-${phase}` : "";
+  const motionClass = animated ? `is-animated motion-phase-${phase} blink-phase-${blinkPhase(name)}` : "";
   const avatarRef = useAvatarPointerGaze();
 
   return (

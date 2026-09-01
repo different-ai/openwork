@@ -108,6 +108,8 @@ body.is-resizing-context-panel * {
 
 .coworker-avatar {
   --avatar-motion-delay: 0s;
+  --avatar-blink-delay: 0s;
+  --avatar-blink-duration: 8.8s;
   --avatar-look-x: 0px;
   --avatar-look-y: 0px;
   display: block;
@@ -149,15 +151,15 @@ body.is-resizing-context-panel * {
 }
 
 .coworker-avatar.is-animated .coworker-avatar__pupils {
-  animation: coworker-blink 8.8s ease-in-out infinite;
+  animation: coworker-blink var(--avatar-blink-duration) ease-in-out infinite;
+  animation-delay: var(--avatar-blink-delay);
 }
 
 .coworker-avatar.is-animated :is(
   .coworker-avatar__body,
   .coworker-avatar__depth,
   .coworker-avatar__features,
-  .coworker-avatar__gaze,
-  .coworker-avatar__pupils
+  .coworker-avatar__gaze
 ) {
   animation-delay: var(--avatar-motion-delay);
 }
@@ -168,6 +170,36 @@ body.is-resizing-context-panel * {
 
 .coworker-avatar.motion-phase-2 {
   --avatar-motion-delay: -5.8s;
+}
+
+.coworker-avatar.blink-phase-0 {
+  --avatar-blink-delay: -1.4s;
+  --avatar-blink-duration: 8.2s;
+}
+
+.coworker-avatar.blink-phase-1 {
+  --avatar-blink-delay: -4.1s;
+  --avatar-blink-duration: 9.7s;
+}
+
+.coworker-avatar.blink-phase-2 {
+  --avatar-blink-delay: -6.8s;
+  --avatar-blink-duration: 11.3s;
+}
+
+.coworker-avatar.blink-phase-3 {
+  --avatar-blink-delay: -2.6s;
+  --avatar-blink-duration: 7.8s;
+}
+
+.coworker-avatar.blink-phase-4 {
+  --avatar-blink-delay: -8.2s;
+  --avatar-blink-duration: 10.5s;
+}
+
+.coworker-avatar.blink-phase-5 {
+  --avatar-blink-delay: -5.4s;
+  --avatar-blink-duration: 12.1s;
 }
 
 .coworker-mark {

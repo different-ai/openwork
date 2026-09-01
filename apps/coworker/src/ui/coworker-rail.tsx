@@ -95,7 +95,7 @@ export function CoworkerRail({
             >
               <span className="mt-0.5 flex size-11 shrink-0 items-start justify-center">
                 <CoworkerAvatar
-                  animated={coworker.slug === selectedSlug}
+                  animated
                   color={coworker.avatarColor}
                   glasses={coworker.avatarGlasses}
                   name={coworker.name}
