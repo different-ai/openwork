@@ -119,10 +119,17 @@ test("Daytona E2E regression profile excludes only audited shared-topology incom
   expect(categoryByTest.get("local-managed-mcp-oauth.e2e.test.ts")).toBe("raw-or-local-placement");
   expect(categoryByTest.get("slack-style-mcp-connector.e2e.test.ts")).toBe("raw-or-local-placement");
 
-  expect(inventory.all).toHaveLength(152);
-  expect(inventory.rawDesktop).toHaveLength(56);
-  expect(inventory.profile).toHaveLength(76);
-  expect(inventory.eligible).toHaveLength(19);
+  // The four buckets partition the inventory. Asserting the partition itself
+  // (instead of pinning each bucket's size to one moment of `dev`) keeps every
+  // spec accounted for without forcing each spec-adding PR to edit a shared
+  // counter that every concurrent PR also edits.
+  expect(inventory.all).toHaveLength(
+    inventory.rawDesktop.length
+      + inventory.profile.length
+      + dedicatedWorkflowTests.length
+      + inventory.eligible.length,
+  );
+  expect(inventory.eligible.length).toBeGreaterThanOrEqual(productFailuresThatMustRemainEligible.length);
   expect(inventory.rawDesktop).toContain("den-litellm-provider.e2e.test.ts");
   expect(inventory.eligible).not.toContain("org-team-lifecycle-critical-path.e2e.test.ts");
   expect(inventory.eligible).not.toContain("library-mcp-connect-error.e2e.test.ts");
