@@ -88,6 +88,9 @@ electron = run(pnpmCmd, ["exec", "electron", "./electron/main.mjs"], {
     ...process.env,
     COWORKER_START_URL: startUrl,
     OPENWORK_DEV_MODE: "1",
+    // Dev launches are usable before signing in; connect the OpenWork account
+    // from the rail whenever. Packaged builds keep the cloud requirement.
+    COWORKER_ALLOW_OFFLINE: process.env.COWORKER_ALLOW_OFFLINE ?? "1",
   },
 });
 
