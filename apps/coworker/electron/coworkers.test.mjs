@@ -59,10 +59,14 @@ test("createCoworker writes the minimal coworker filesystem representation", asy
     name: "Research Bot",
     role: "Research",
     mission: "Track competitors",
+    avatarColor: "violet",
+    avatarGlasses: "square",
   });
   assert.equal(coworker.slug, "research-bot");
   assert.equal(coworker.name, "Research Bot");
   assert.equal(coworker.workspaceId, "");
+  assert.equal(coworker.avatarColor, "violet");
+  assert.equal(coworker.avatarGlasses, "square");
   assert.deepEqual(coworker.automations, []);
 
   const soul = await readFile(path.join(coworker.path, "soul.md"), "utf8");
@@ -86,7 +90,7 @@ test("createCoworker rejects duplicate slugs", async () => {
   await assert.rejects(() => createCoworker(coworkersDir, { name: "Twin" }), /already exists/);
 });
 
-test("updateCoworker patches platform references and deduplicates automations", async () => {
+test("updateCoworker patches profile and platform references", async () => {
   const coworkersDir = await tempCoworkersDir();
   const created = await createCoworker(coworkersDir, { name: "Ops" });
   assert.equal(created.model, "");
@@ -94,15 +98,36 @@ test("updateCoworker patches platform references and deduplicates automations", 
     workspaceId: "ws_local_1",
     automations: ["atm_a", "atm_a", " atm_b "],
     model: "anthropic/claude-haiku-4-5",
+    avatarColor: "mint",
+    avatarGlasses: "none",
   });
   assert.equal(updated.workspaceId, "ws_local_1");
   assert.deepEqual(updated.automations, ["atm_a", "atm_b"]);
   assert.equal(updated.model, "anthropic/claude-haiku-4-5");
+  assert.equal(updated.avatarColor, "mint");
+  assert.equal(updated.avatarGlasses, "none");
   const reread = await getCoworker(coworkersDir, "ops");
   assert.equal(reread.workspaceId, "ws_local_1");
   assert.equal(reread.model, "anthropic/claude-haiku-4-5");
   const cleared = await updateCoworker(coworkersDir, "ops", { model: "" });
   assert.equal(cleared.model, "");
+});
+
+test("avatar settings fall back when stored or patched values are unknown", async () => {
+  const coworkersDir = await tempCoworkersDir();
+  const created = await createCoworker(coworkersDir, {
+    name: "Classic",
+    avatarColor: "chartreuse",
+    avatarGlasses: "monocle",
+  });
+  assert.equal(created.avatarColor, "blue");
+  assert.equal(created.avatarGlasses, "round");
+  const updated = await updateCoworker(coworkersDir, "classic", {
+    avatarColor: "unknown",
+    avatarGlasses: "unknown",
+  });
+  assert.equal(updated.avatarColor, "blue");
+  assert.equal(updated.avatarGlasses, "round");
 });
 
 test("memory files are listed and editable through the store", async () => {

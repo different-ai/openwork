@@ -246,10 +246,10 @@ const commands = {
   },
   "coworkers.list": async () => listCoworkers(coworkersDir),
   "coworkers.get": async ({ slug }) => getCoworker(coworkersDir, slug),
-  "coworkers.create": async ({ name, role, mission }) => {
+  "coworkers.create": async ({ name, role, mission, avatarColor, avatarGlasses }) => {
     await ensurePlatformServer();
     const hadEngine = Boolean(serverHandle?.managedOpencode);
-    const coworker = await createCoworker(coworkersDir, { name, role, mission });
+    const coworker = await createCoworker(coworkersDir, { name, role, mission, avatarColor, avatarGlasses });
     // Registration is registry-level and works without an engine. Do it
     // first, then restart when no engine was managed yet: the engine only
     // spawns when the registry holds at least one workspace, so the restart

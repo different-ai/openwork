@@ -22,6 +22,16 @@ const WORKING_MEMORY_FILE = path.join("memory", "working.md");
 const MEMORY_INDEX_FILE = path.join("memory", "index.md");
 const LONG_TERM_DIR = path.join("memory", "long-term");
 const WORKSPACE_DIR = "workspace";
+const AVATAR_COLORS = new Set(["blue", "violet", "mint", "orange", "rose", "slate"]);
+const AVATAR_GLASSES = new Set(["round", "square", "none"]);
+
+function avatarColor(value) {
+  return AVATAR_COLORS.has(value) ? value : "blue";
+}
+
+function avatarGlasses(value) {
+  return AVATAR_GLASSES.has(value) ? value : "round";
+}
 
 /** Resolve the shared coworkers home inside the existing OpenWork config dir. */
 export function defaultCoworkersDir(opts = {}) {
@@ -214,12 +224,14 @@ function opencodeConfigTemplate() {
   )}\n`;
 }
 
-function coworkerConfigTemplate({ name, role, mission, createdAt }) {
+function coworkerConfigTemplate({ name, role, mission, avatarColor: color, avatarGlasses: glasses, createdAt }) {
   return serializeFrontmatter(
     {
       name,
       role: role || "",
       mission: mission || "",
+      avatarColor: avatarColor(color),
+      avatarGlasses: avatarGlasses(glasses),
       workspaceId: "",
       model: "",
       automations: [],
@@ -255,6 +267,8 @@ async function readCoworkerRecord(coworkersDir, slug) {
     name: typeof data.name === "string" && data.name.trim() ? data.name.trim() : slug,
     role: typeof data.role === "string" ? data.role : "",
     mission: typeof data.mission === "string" ? data.mission : "",
+    avatarColor: avatarColor(data.avatarColor),
+    avatarGlasses: avatarGlasses(data.avatarGlasses),
     workspaceId: typeof data.workspaceId === "string" ? data.workspaceId.trim() : "",
     /** Preferred model as "providerId/modelId"; empty means engine default. */
     model: typeof data.model === "string" ? data.model.trim() : "",
@@ -289,6 +303,8 @@ export async function createCoworker(coworkersDir, input) {
   if (!name) throw new Error("Coworker name is required");
   const role = String(input?.role ?? "").trim();
   const mission = String(input?.mission ?? "").trim();
+  const color = avatarColor(input?.avatarColor);
+  const glasses = avatarGlasses(input?.avatarGlasses);
   const slug = slugifyCoworkerName(name);
   const root = coworkerPath(coworkersDir, slug);
   if (await pathExists(root)) {
@@ -297,7 +313,11 @@ export async function createCoworker(coworkersDir, input) {
   const createdAt = new Date().toISOString();
   await mkdir(path.join(root, LONG_TERM_DIR), { recursive: true });
   await mkdir(path.join(root, WORKSPACE_DIR), { recursive: true });
-  await writeFile(path.join(root, COWORKER_CONFIG_FILE), coworkerConfigTemplate({ name, role, mission, createdAt }), "utf8");
+  await writeFile(
+    path.join(root, COWORKER_CONFIG_FILE),
+    coworkerConfigTemplate({ name, role, mission, avatarColor: color, avatarGlasses: glasses, createdAt }),
+    "utf8",
+  );
   await writeFile(path.join(root, SOUL_FILE), soulTemplate({ name, role, mission }), "utf8");
   await writeFile(path.join(root, "AGENTS.md"), agentsTemplate({ name }), "utf8");
   await writeFile(path.join(root, "opencode.json"), opencodeConfigTemplate(), "utf8");
@@ -320,6 +340,8 @@ export async function updateCoworker(coworkersDir, slug, patch) {
   if (typeof patch?.mission === "string") data.mission = patch.mission.trim();
   if (typeof patch?.role === "string") data.role = patch.role.trim();
   if (typeof patch?.model === "string") data.model = patch.model.trim();
+  if (typeof patch?.avatarColor === "string") data.avatarColor = avatarColor(patch.avatarColor);
+  if (typeof patch?.avatarGlasses === "string") data.avatarGlasses = avatarGlasses(patch.avatarGlasses);
   await writeFile(configPath, serializeFrontmatter(data, body), "utf8");
   return readCoworkerRecord(coworkersDir, slug);
 }
