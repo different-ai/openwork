@@ -3,13 +3,20 @@ import { coworkerBridge, type CoworkerSummary } from "@/lib/bridge";
 import { Button, ErrorNote, Field, inputClass } from "@/ui/kit";
 
 /**
- * Creating a coworker is intentionally lightweight (§44 of the product brief):
- * files + workspace registration; every other capability is already there.
+ * Creation establishes only a durable identity and workspace. The first
+ * assignment remains the simplest way to teach a coworker what it should own.
  */
-export function NewCoworker({ onCreated, onCancel }: { onCreated: (coworker: CoworkerSummary) => void; onCancel: (() => void) | null }) {
+export function NewCoworker({
+  onCreated,
+  onCancel,
+}: {
+  onCreated: (coworker: CoworkerSummary) => void;
+  onCancel: (() => void) | null;
+}) {
   const [name, setName] = useState("");
   const [role, setRole] = useState("");
   const [mission, setMission] = useState("");
+  const [showDetails, setShowDetails] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
@@ -21,7 +28,13 @@ export function NewCoworker({ onCreated, onCancel }: { onCreated: (coworker: Cow
     setBusy(true);
     setError("");
     try {
-      onCreated(await coworkerBridge.coworkers.create({ name: name.trim(), role: role.trim(), mission: mission.trim() }));
+      onCreated(
+        await coworkerBridge.coworkers.create({
+          name: name.trim(),
+          role: role.trim(),
+          mission: mission.trim(),
+        }),
+      );
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
       setBusy(false);
@@ -29,45 +42,75 @@ export function NewCoworker({ onCreated, onCancel }: { onCreated: (coworker: Cow
   }
 
   return (
-    <div className="flex h-full items-center justify-center overflow-y-auto p-8">
-      <div className="w-full max-w-lg rounded-xl border border-line bg-panel p-8">
-        <h1 className="mb-1 text-xl font-semibold text-snow">New coworker</h1>
-        <p className="mb-6 text-sm text-mist">
-          A coworker is a persistent teammate: it keeps its identity, memory, and workspace in plain
-          files you can always inspect.
-        </p>
-        <div className="space-y-4">
+    <div className="flex h-full items-center justify-center overflow-y-auto bg-ink p-8">
+      <div className="w-full max-w-md">
+        <span className="mx-auto flex size-14 items-center justify-center rounded-2xl bg-panel text-xl font-semibold text-snow ring-1 ring-line">
+          {name.trim().slice(0, 1).toUpperCase() || "C"}
+        </span>
+        <div className="mt-5 text-center">
+          <h1 className="text-xl font-semibold text-snow">Add a coworker</h1>
+          <p className="mx-auto mt-1 max-w-sm text-sm leading-relaxed text-mist">
+            Start with a name. You can explain the job in the first assignment and refine it later.
+          </p>
+        </div>
+
+        <div className="mt-6 space-y-3 rounded-2xl border border-line bg-panel/60 p-4">
           <Field label="Name">
-            <input className={inputClass} value={name} placeholder="Research Coworker" onChange={(event) => setName(event.target.value)} />
-          </Field>
-          <Field label="Role (one line)">
             <input
-              className={inputClass}
-              value={role}
-              placeholder="Tracks the competitive landscape"
-              onChange={(event) => setRole(event.target.value)}
+              autoFocus
+              className={`${inputClass} bg-ink`}
+              value={name}
+              placeholder="Scout"
+              onChange={(event) => setName(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" && !showDetails) void create();
+              }}
             />
           </Field>
-          <Field label="Mission">
-            <textarea
-              className={`${inputClass} min-h-24 resize-y`}
-              value={mission}
-              placeholder="What should this coworker own over time?"
-              onChange={(event) => setMission(event.target.value)}
-            />
-          </Field>
+
+          <button
+            className="text-xs font-medium text-spark hover:underline"
+            onClick={() => setShowDetails((value) => !value)}
+          >
+            {showDetails ? "Hide optional details" : "Add a role and mission (optional)"}
+          </button>
+
+          {showDetails ? (
+            <div className="space-y-3 border-t border-line pt-3">
+              <Field label="Role">
+                <input
+                  className={`${inputClass} bg-ink`}
+                  value={role}
+                  placeholder="Research partner"
+                  onChange={(event) => setRole(event.target.value)}
+                />
+              </Field>
+              <Field label="Mission">
+                <textarea
+                  className={`${inputClass} min-h-24 resize-y bg-ink`}
+                  value={mission}
+                  placeholder="What should this coworker own over time?"
+                  onChange={(event) => setMission(event.target.value)}
+                />
+              </Field>
+            </div>
+          ) : null}
+
           {error ? <ErrorNote>{error}</ErrorNote> : null}
-          <div className="flex justify-end gap-2">
+
+          <div className="flex justify-end gap-2 pt-1">
             {onCancel ? (
-              <Button variant="ghost" onClick={onCancel}>
-                Cancel
-              </Button>
+              <Button variant="ghost" onClick={onCancel}>Cancel</Button>
             ) : null}
-            <Button variant="primary" disabled={busy} onClick={() => void create()}>
-              {busy ? "Creating…" : "Create coworker"}
+            <Button variant="primary" disabled={busy || !name.trim()} onClick={() => void create()}>
+              {busy ? "Adding…" : "Add coworker"}
             </Button>
           </div>
         </div>
+
+        <p className="mt-4 text-center text-[10px] font-medium uppercase tracking-[0.12em] text-mist">
+          Identity, memory, and workspace stay in inspectable files
+        </p>
       </div>
     </div>
   );
