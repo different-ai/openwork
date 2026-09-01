@@ -45,8 +45,42 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
     label: "Open Coworker welcome screen",
   });
   const welcomeText = await evalIn(app, "document.body.innerText");
-  expect(welcomeText).toContain("Connect OpenWork Cloud");
-  expect(welcomeText).toContain("Start locally");
+  expect(welcomeText).toContain("Continue with OpenWork");
+  expect(welcomeText).toContain("Use this Mac");
+  const welcomeLayout = await evalIn(app, `(() => {
+    const launcher = document.querySelector('[data-testid="onboarding-launcher"]');
+    const cloud = document.querySelector('[data-testid="onboarding-cloud-choice"]');
+    const local = document.querySelector('[data-testid="onboarding-local-choice"]');
+    if (!launcher || !cloud || !local) return null;
+    const launcherRect = launcher.getBoundingClientRect();
+    const cloudRect = cloud.getBoundingClientRect();
+    const localRect = local.getBoundingClientRect();
+    return {
+      launcherCenterOffset: Math.abs((launcherRect.left + launcherRect.width / 2) - window.innerWidth / 2),
+      launcherWidth: launcherRect.width,
+      cloudTop: cloudRect.top,
+      localTop: localRect.top,
+      cloudWidth: cloudRect.width,
+      localWidth: localRect.width,
+    };
+  })()`);
+  expect(welcomeLayout).toMatchObject({
+    launcherCenterOffset: expect.any(Number),
+    launcherWidth: expect.any(Number),
+    cloudTop: expect.any(Number),
+    localTop: expect.any(Number),
+    cloudWidth: expect.any(Number),
+    localWidth: expect.any(Number),
+  });
+  if (!isRecord(welcomeLayout)) throw new Error("Open Coworker welcome layout was unavailable.");
+  for (const key of ["launcherCenterOffset", "launcherWidth", "cloudTop", "localTop", "cloudWidth", "localWidth"]) {
+    if (typeof welcomeLayout[key] !== "number") throw new Error(`Open Coworker welcome layout did not report ${key}.`);
+  }
+  expect(welcomeLayout.launcherCenterOffset as number).toBeLessThan(4);
+  expect(welcomeLayout.launcherWidth as number).toBeGreaterThan(420);
+  expect(welcomeLayout.launcherWidth as number).toBeLessThanOrEqual(680);
+  expect(welcomeLayout.localTop as number).toBeGreaterThan(welcomeLayout.cloudTop as number);
+  expect(Math.abs((welcomeLayout.cloudWidth as number) - (welcomeLayout.localWidth as number))).toBeLessThan(2);
   const brandGaze = await evalIn(app, `(() => {
     const mark = document.querySelector('svg[aria-label="Open Coworker"].coworker-mark');
     if (!mark) return null;
@@ -60,8 +94,10 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
       const lookX = Number.parseFloat(mark.style.getPropertyValue("--avatar-look-x"));
       const lookY = Number.parseFloat(mark.style.getPropertyValue("--avatar-look-y"));
       resolve({
-        blueBadge: mark.querySelector('rect[fill="#5b8dff"]') !== null,
-        whiteBody: mark.querySelector('path[fill="#f7f8fa"]') !== null,
+        whiteTile: mark.querySelector('rect[fill="#f7f8fa"]') !== null,
+        blackOutline: mark.querySelector('path[fill="none"][stroke="#11151d"]') !== null,
+        offsetContour: mark.querySelector('path[fill="none"][stroke="#aeb5c0"]') !== null,
+        blueFill: mark.querySelector('[fill="#5b8dff"]') !== null,
         hasPointerLayer: pointerLayer !== null,
         lookX,
         lookY,
@@ -69,8 +105,10 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
     })));
   })()`, { awaitPromise: true });
   expect(brandGaze).toMatchObject({
-    blueBadge: true,
-    whiteBody: true,
+    whiteTile: true,
+    blackOutline: true,
+    offsetContour: true,
+    blueFill: false,
     hasPointerLayer: true,
     lookX: expect.any(Number),
     lookY: expect.any(Number),
@@ -82,12 +120,12 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   expect(brandGaze.lookX).toBeLessThanOrEqual(1.5);
   expect(Math.abs(brandGaze.lookY)).toBeLessThanOrEqual(0.9);
   evidence.recordAssertionEvidence(
-    "First run presents the blue Open Coworker badge with a restrained pointer-aware gaze",
-    "The welcome surface used the OpenWork-blue badge and centered white coworker mark, offered both cloud and local paths, and moved only the pupil layer toward the pointer within a 1.5px horizontal cap.",
+    "First run presents the monochrome Open Coworker line mark with a restrained pointer-aware gaze",
+    "The centered launch surface used a white tile, black coworker outline, and quiet offset contour, stacked a recommended Cloud path above a quieter local path, and moved only the pupil layer toward the pointer within a 1.5px horizontal cap.",
     true,
   );
 
-  await clickButtonContaining(app, "Start locally");
+  await clickButtonContaining(app, "Use this Mac");
   await waitForText(app, "Add a coworker", { timeoutMs: 60_000 });
   await fill(app, 'input[placeholder="Scout"]', "Scout");
   await waitFor(app, `(() => {
