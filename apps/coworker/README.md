@@ -81,6 +81,9 @@ is usable before signing in; open the compact OpenWork control at the bottom of
 the coworker details panel (open sign-in → copy link → paste) to connect cloud
 responsibilities. The same panel reads the active engine's provider catalog so
 OpenWork model and provider changes stay visible without a second settings store.
+Existing or manually copied coworker directories are registered as native
+OpenWork workspaces automatically when the app loads them; the manual prepare
+action is retained only as recovery when registration fails.
 
 The managed engine binary resolves from `OPENWORK_OPENCODE_BIN` or `opencode`
 on PATH during development; packaged sidecar distribution follows the desktop
