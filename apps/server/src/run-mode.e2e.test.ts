@@ -39,7 +39,30 @@ async function createTempRoot(prefix: string) {
   return root;
 }
 
+/**
+ * Stand-in engine: records instance rebuild requests so the test can assert
+ * that a run mode change is applied to the engine immediately instead of
+ * waiting for the next rebuild.
+ */
+function startFakeEngine(): { url: string; disposals: string[] } {
+  const disposals: string[] = [];
+  const engine = Bun.serve({
+    port: 0,
+    fetch(request) {
+      const url = new URL(request.url);
+      if (request.method === "POST" && url.pathname === "/instance/dispose") {
+        disposals.push(url.searchParams.get("directory") ?? "");
+        return new Response(JSON.stringify({ ok: true }), { headers: { "content-type": "application/json" } });
+      }
+      return new Response(JSON.stringify({ error: "not_found" }), { status: 404, headers: { "content-type": "application/json" } });
+    },
+  });
+  stops.push(() => engine.stop(true));
+  return { url: `http://127.0.0.1:${engine.port}`, disposals };
+}
+
 async function startOpenworkServer(workspaceRoot: string, options?: { readOnly?: boolean }) {
+  const engine = startFakeEngine();
   const config: ServerConfig = {
     host: "127.0.0.1",
     port: 0,
@@ -48,7 +71,7 @@ async function startOpenworkServer(workspaceRoot: string, options?: { readOnly?:
     hostToken: HOST_TOKEN,
     approval: { mode: "auto", timeoutMs: 1000 },
     corsOrigins: ["*"],
-    workspaces: [{ id: "ws_1", name: "Workspace", path: workspaceRoot, preset: "starter", workspaceType: "local" }],
+    workspaces: [{ id: "ws_1", name: "Workspace", path: workspaceRoot, preset: "starter", workspaceType: "local", baseUrl: engine.url }],
     authorizedRoots: [workspaceRoot],
     readOnly: options?.readOnly === true,
     startedAt: Date.now(),
@@ -59,7 +82,7 @@ async function startOpenworkServer(workspaceRoot: string, options?: { readOnly?:
   };
   const server = await startServer(config) as Served;
   stops.push(() => server.stop(true));
-  return { base: `http://127.0.0.1:${server.port}`, config };
+  return { base: `http://127.0.0.1:${server.port}`, config, engine };
 }
 
 async function readRenderedPermission(config: ServerConfig): Promise<Record<string, unknown>> {
@@ -112,7 +135,7 @@ describe("run mode routes", () => {
 
   test("run everything compiles auto-approval into the engine file while protections stay interactive", async () => {
     const root = resolve(await createTempRoot("openwork-run-mode-"));
-    const { base, config } = await startOpenworkServer(root);
+    const { base, config, engine } = await startOpenworkServer(root);
 
     // Authorized folders keep working as explicit external-directory grants.
     const folders = await fetch(`${base}/workspace/ws_1/authorized-folders`, {
@@ -121,6 +144,7 @@ describe("run mode routes", () => {
       body: JSON.stringify({ folders: ["/shared"] }),
     });
     expect(folders.status).toBe(200);
+    expect(engine.disposals).toHaveLength(0);
 
     const enable = await fetch(`${base}/workspace/ws_1/run-mode`, {
       method: "PUT",
@@ -128,7 +152,10 @@ describe("run mode routes", () => {
       body: JSON.stringify({ mode: "run-everything" }),
     });
     expect(enable.status).toBe(200);
-    expect(asRecord(await enable.json())).toMatchObject({ mode: "run-everything", changed: true });
+    expect(asRecord(await enable.json())).toMatchObject({ mode: "run-everything", changed: true, reload: "reloaded" });
+    // The change is applied to the engine before the route answers, not left
+    // for the next instance rebuild.
+    expect(engine.disposals).toEqual([root]);
 
     const readback = await fetch(`${base}/workspace/ws_1/run-mode`, { headers: clientAuth() });
     expect(asRecord(await readback.json())).toMatchObject({ mode: "run-everything" });
@@ -165,7 +192,9 @@ describe("run mode routes", () => {
       body: JSON.stringify({ mode: "approve" }),
     });
     expect(disable.status).toBe(200);
-    expect(asRecord(await disable.json())).toMatchObject({ mode: "approve", changed: true });
+    expect(asRecord(await disable.json())).toMatchObject({ mode: "approve", changed: true, reload: "reloaded" });
+    // The safety direction is applied just as promptly.
+    expect(engine.disposals).toEqual([root, root]);
 
     const restored = await readRenderedPermission(config);
     expect(restored["*"]).toBeUndefined();
@@ -179,7 +208,9 @@ describe("run mode routes", () => {
       headers: clientAuth(),
       body: JSON.stringify({ mode: "approve" }),
     });
-    expect(asRecord(await repeat.json())).toMatchObject({ mode: "approve", changed: false });
+    expect(asRecord(await repeat.json())).toMatchObject({ mode: "approve", changed: false, reload: "skipped" });
+    // An unchanged write never rebuilds the engine.
+    expect(engine.disposals).toEqual([root, root]);
   });
 
   test("requires client auth, collaborator scope, and writable server", async () => {

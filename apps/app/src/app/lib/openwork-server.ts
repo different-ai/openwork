@@ -296,6 +296,7 @@ export type OpenworkRunModeUpdateResponse = {
   mode: OpenworkRunMode;
   changed: boolean;
   updatedAt: number;
+  reload: "reloaded" | "deferred" | "skipped";
 };
 
 export type OpenworkRuntimeDisabledProvidersResult = {
@@ -1696,7 +1697,9 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
           hostToken,
           method: "PUT",
           body: { mode },
-          timeoutMs: timeouts.config,
+          // The server applies the change through an engine reload before
+          // answering, so this request is bounded like an explicit reload.
+          timeoutMs: ENGINE_RELOAD_TIMEOUT_MS,
         },
       ),
     setRuntimeDisabledProviders: (workspaceId: string, providers: string[]) =>

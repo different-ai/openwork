@@ -2645,11 +2645,28 @@ function createRoutes(
       timestamp: updatedAt,
     });
 
+    // A run mode change must reach every workspace's engine instance now, not
+    // on each instance's next rebuild: the UI reload coordinator only follows
+    // the active workspace and defers while sessions are busy, and the pool's
+    // idle path rebuilds one directory. Apply it the way provider changes are
+    // applied — through a fresh standby that every directory boots from.
+    let reload: "reloaded" | "deferred" | "skipped" = "skipped";
     if (result.changed) {
+      await writeOpenworkRuntimeConfigFile(config);
+      // Recorded before the direct reload so the UI coordinator still retries
+      // if that reload fails; a failure below surfaces as the route's error.
       emitReloadEvent(ctx.reloadEvents, workspace, "config", buildConfigTrigger(openworkRuntimeConfigFilePath(config)));
+      const engineWorkspace = resolveEngineRuntimeWorkspace(config);
+      const reloadDeferred = await shouldDeferInPlaceEngineReload(config, engineWorkspace, engineHasActiveSessions);
+      if (reloadDeferred) {
+        reload = "deferred";
+      } else {
+        await reloadOpencodeEngine(config, engineWorkspace, engineMcpServerState, { forceStandby: true });
+        reload = "reloaded";
+      }
     }
 
-    return jsonResponse({ mode, changed: result.changed, updatedAt });
+    return jsonResponse({ mode, changed: result.changed, updatedAt, reload });
   });
 
   addRoute(routes, "POST", "/workspace/:id/runtime-config/disabled-providers", "client", async (ctx) => {
