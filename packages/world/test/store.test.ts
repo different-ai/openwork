@@ -41,6 +41,7 @@ test("script world snapshots parse v1 and strict v2 receipts", () => {
     stage: "preview",
     recipeHash: "sha256:abc",
     place: "local",
+    outputMeta: { url: { secret: true, group: "Services", note: "primary" } },
   })), {
     version: 2,
     ...base,
@@ -48,10 +49,22 @@ test("script world snapshots parse v1 and strict v2 receipts", () => {
     stage: "preview",
     recipeHash: "sha256:abc",
     place: "local",
+    outputMeta: { url: { secret: true, group: "Services", note: "primary" } },
   });
   assert.throws(
     () => parseScriptWorldSnapshot(JSON.stringify({ version: 2, ...base, stage: 1 })),
     /not a valid script world snapshot/,
   );
+  for (const outputMeta of [
+    { url: { secret: "yes" } },
+    { url: { group: 1 } },
+    { url: { note: false } },
+    { url: { label: "extra" } },
+  ]) {
+    assert.throws(
+      () => parseScriptWorldSnapshot(JSON.stringify({ version: 2, ...base, outputMeta })),
+      /not a valid script world snapshot/,
+    );
+  }
   assert.throws(() => parseScriptWorldSnapshot("{}"), /not a valid script world snapshot/);
 });

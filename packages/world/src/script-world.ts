@@ -5,6 +5,7 @@ import { dirname, join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { EVENTS_ENV, eventsPath } from "./events.ts";
 import { LEDGER_ENV, ledgerPath } from "./ledger.ts";
+import { formatOutputLines, type OutputMeta } from "./outputs.ts";
 import { receiptName } from "./stage.ts";
 import { assertWorldName } from "./store.ts";
 import type { ScriptWorldSnapshot } from "./hold.ts";
@@ -21,6 +22,26 @@ function isStringRecord(value: unknown): value is Record<string, string> {
   return isRecord(value) && Object.values(value).every((entry) => typeof entry === "string");
 }
 
+function parseOutputMeta(value: unknown): Record<string, OutputMeta> | false {
+  if (!isRecord(value)) return false;
+  const outputMeta: Record<string, OutputMeta> = {};
+  for (const [key, entry] of Object.entries(value)) {
+    if (
+      !isRecord(entry)
+      || Object.keys(entry).some((name) => name !== "secret" && name !== "group" && name !== "note")
+      || (entry.secret !== undefined && typeof entry.secret !== "boolean")
+      || (entry.group !== undefined && typeof entry.group !== "string")
+      || (entry.note !== undefined && typeof entry.note !== "string")
+    ) return false;
+    outputMeta[key] = {
+      ...(typeof entry.secret === "boolean" ? { secret: entry.secret } : {}),
+      ...(typeof entry.group === "string" ? { group: entry.group } : {}),
+      ...(typeof entry.note === "string" ? { note: entry.note } : {}),
+    };
+  }
+  return outputMeta;
+}
+
 function recordedPid(text: string): number | undefined {
   const value: unknown = JSON.parse(text);
   if (!isRecord(value) || typeof value.pid !== "number" || !Number.isInteger(value.pid) || value.pid <= 0) {
@@ -31,6 +52,9 @@ function recordedPid(text: string): number | undefined {
 
 export function parseScriptWorldSnapshot(text: string): ScriptWorldSnapshot {
   const value: unknown = JSON.parse(text);
+  const outputMeta = isRecord(value) && value.outputMeta !== undefined
+    ? parseOutputMeta(value.outputMeta)
+    : undefined;
   if (
     !isRecord(value)
     || (value.version !== 1 && value.version !== 2)
@@ -42,6 +66,7 @@ export function parseScriptWorldSnapshot(text: string): ScriptWorldSnapshot {
     || value.pid <= 0
     || typeof value.sourcePath !== "string"
     || !isStringRecord(value.outputs)
+    || (value.outputMeta !== undefined && (value.version !== 2 || outputMeta === false))
     || (value.version === 2 && "stage" in value && value.stage !== undefined && typeof value.stage !== "string")
     || (value.version === 2 && "recipeHash" in value && value.recipeHash !== undefined && typeof value.recipeHash !== "string")
     || (value.version === 2 && "place" in value && value.place !== undefined && typeof value.place !== "string")
@@ -56,6 +81,7 @@ export function parseScriptWorldSnapshot(text: string): ScriptWorldSnapshot {
     pid: value.pid,
     sourcePath: value.sourcePath,
     outputs: value.outputs,
+    ...(outputMeta === undefined || outputMeta === false ? {} : { outputMeta }),
     ...(value.version === 2 && typeof value.stage === "string" ? { stage: value.stage } : {}),
     ...(value.version === 2 && typeof value.recipeHash === "string" ? { recipeHash: value.recipeHash } : {}),
     ...(value.version === 2 && typeof value.place === "string" ? { place: value.place } : {}),
@@ -249,7 +275,9 @@ export async function launchScriptWorld(options: LaunchScriptWorldOptions): Prom
     if (spawnError) throw spawnError;
     const snapshot = await readScriptWorldSnapshot(snapshotPath);
     if (snapshot) {
-      for (const [key, value] of Object.entries(snapshot.outputs)) options.print(`${key}  ${value}`);
+      for (const line of formatOutputLines(snapshot.outputs, snapshot.outputMeta ?? {}, { reveal: false })) {
+        options.print(line);
+      }
       options.print(`snapshot  ${snapshotPath}`);
       options.print(`log  ${logPath}`);
       return 0;

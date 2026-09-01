@@ -12,9 +12,12 @@ import {
   resolveStage,
   rewriteLedger,
   progress,
+  output,
+  secret,
   trackResource,
   type LedgerEntry,
   type Progress,
+  type WorldOutput,
 } from "@openwork/world";
 import { resolvePlace, type Place } from "./place.ts";
 
@@ -23,17 +26,19 @@ export interface RecipeTools {
   place: Place;
   stage: string;
   progress: Progress;
+  output: typeof output;
+  secret: typeof secret;
   stageName(base: string): string;
   track(entry: Omit<LedgerEntry, "at">): Promise<void>;
 }
 
-export interface WorldRecipe<O extends Record<string, string> = Record<string, string>> {
+export interface WorldRecipe<O extends Record<string, WorldOutput> = Record<string, WorldOutput>> {
   kind: "recipe";
   name: string;
   build(tools: RecipeTools): Promise<O>;
 }
 
-export function recipe<O extends Record<string, string>>(
+export function recipe<O extends Record<string, WorldOutput>>(
   name: string,
   build: (tools: RecipeTools) => Promise<O>,
 ): WorldRecipe<O> {
@@ -60,6 +65,8 @@ export async function runRecipe(def: WorldRecipe): Promise<void> {
         stack,
         place,
         progress: progress(),
+        output,
+        secret,
         stage,
         stageName: (base) => `${base} (${stage})`,
         track: trackResource,

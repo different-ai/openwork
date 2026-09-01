@@ -1,5 +1,6 @@
 import { appendFile, chmod, mkdir, readFile, stat } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import type { OutputMeta } from "./outputs.ts";
 
 export const EVENTS_ENV = "OPENWORK_WORLD_EVENTS";
 
@@ -17,7 +18,7 @@ export type WorldEvent = { t: string } & (
       log?: string;
     }
   | { type: "resource"; kind: string; id: string; label?: string }
-  | { type: "ready"; outputs: Record<string, string> }
+  | { type: "ready"; outputs: Record<string, string>; outputMeta?: Record<string, OutputMeta> }
   | { type: "note"; text: string }
 );
 
@@ -39,6 +40,26 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function optionalString(value: Record<string, unknown>, key: string): string | undefined | false {
   const entry = value[key];
   return entry === undefined || typeof entry === "string" ? entry : false;
+}
+
+function parseOutputMeta(value: unknown): Record<string, OutputMeta> | false {
+  if (!isRecord(value)) return false;
+  const outputMeta: Record<string, OutputMeta> = {};
+  for (const [key, entry] of Object.entries(value)) {
+    if (
+      !isRecord(entry)
+      || Object.keys(entry).some((name) => name !== "secret" && name !== "group" && name !== "note")
+      || (entry.secret !== undefined && typeof entry.secret !== "boolean")
+      || (entry.group !== undefined && typeof entry.group !== "string")
+      || (entry.note !== undefined && typeof entry.note !== "string")
+    ) return false;
+    outputMeta[key] = {
+      ...(typeof entry.secret === "boolean" ? { secret: entry.secret } : {}),
+      ...(typeof entry.group === "string" ? { group: entry.group } : {}),
+      ...(typeof entry.note === "string" ? { note: entry.note } : {}),
+    };
+  }
+  return outputMeta;
 }
 
 function parseEvent(line: string): WorldEvent | undefined {
@@ -88,7 +109,14 @@ function parseEvent(line: string): WorldEvent | undefined {
     for (const [key, entry] of Object.entries(value.outputs)) {
       if (typeof entry === "string") outputs[key] = entry;
     }
-    return { t: value.t, type: "ready", outputs };
+    const outputMeta = value.outputMeta === undefined ? undefined : parseOutputMeta(value.outputMeta);
+    if (outputMeta === false) return undefined;
+    return {
+      t: value.t,
+      type: "ready",
+      outputs,
+      ...(outputMeta === undefined ? {} : { outputMeta }),
+    };
   }
   if (value.type === "note" && typeof value.text === "string") {
     return { t: value.t, type: "note", text: value.text };

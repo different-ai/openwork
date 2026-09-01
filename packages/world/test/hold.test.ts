@@ -1,11 +1,13 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { access, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
 import { EVENTS_ENV, readEvents } from "../src/events.ts";
+import { MASK } from "../src/outputs.ts";
+import { parseScriptWorldSnapshot } from "../src/script-world.ts";
 
 function isAlive(pid: number): boolean {
   try {
@@ -32,9 +34,11 @@ test("hold keeps an otherwise idle world alive until SIGTERM", async () => {
   const receiptPath = join(snapshots, "hold-only.json");
   const eventPath = join(snapshots, "hold-only.events.jsonl");
   const holdUrl = new URL("../src/hold.ts", import.meta.url).href;
+  const outputsUrl = new URL("../src/outputs.ts", import.meta.url).href;
   await writeFile(worldPath, [
     `import { hold } from ${JSON.stringify(holdUrl)};`,
-    'await hold({ outputs: { ok: "1" } });',
+    `import { secret } from ${JSON.stringify(outputsUrl)};`,
+    'await hold({ outputs: { url: "http://x", token: secret("s3cr3t", { group: "Keys" }) } });',
     "",
   ].join("\n"), "utf8");
 
@@ -53,7 +57,19 @@ test("hold keeps an otherwise idle world alive until SIGTERM", async () => {
     );
     await delay(1_000);
     assert.equal(isAlive(pid), true, "world exited while hold was awaiting a signal");
-    assert.deepEqual((await readEvents(eventPath)).map((event) => event.type), ["ready"]);
+    const receiptText = await readFile(receiptPath, "utf8");
+    const receipt = parseScriptWorldSnapshot(receiptText);
+    assert.equal(receipt.version, 2);
+    assert.equal(receipt.outputs.token, "s3cr3t");
+    assert.equal(receipt.outputMeta?.token?.secret, true);
+    const events = await readEvents(eventPath);
+    assert.deepEqual(events, [{
+      t: events[0]?.t,
+      type: "ready",
+      outputs: { url: "http://x", token: MASK },
+      outputMeta: { token: { secret: true, group: "Keys" } },
+    }]);
+    assert.equal((await readFile(eventPath, "utf8")).includes("s3cr3t"), false);
 
     process.kill(pid, "SIGTERM");
     assert.equal(await waitFor(() => !isAlive(pid), 5_000), true, "world did not exit after SIGTERM");

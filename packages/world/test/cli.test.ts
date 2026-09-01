@@ -91,6 +91,25 @@ test("world arguments expose only script lifecycle flags and forward arguments a
     stage: "preview",
     plain: true,
   });
+  assert.deepEqual(parseWorldArgs(["outputs", "dev-headless"]), {
+    kind: "outputs",
+    name: "dev-headless",
+  });
+  assert.deepEqual(parseWorldArgs(["outputs", "dev-headless", "--stage", "preview", "--reveal", "--json"]), {
+    kind: "outputs",
+    name: "dev-headless",
+    stage: "preview",
+    reveal: true,
+    json: true,
+  });
+  const missingOutputsName = parseWorldArgs(["outputs"]);
+  assert.equal(missingOutputsName.kind, "help");
+  if (missingOutputsName.kind !== "help") throw new Error("expected help");
+  assert.match(missingOutputsName.error ?? "", /needs exactly one world name/);
+  const outputsPurge = parseWorldArgs(["outputs", "dev-headless", "--purge"]);
+  assert.equal(outputsPurge.kind, "help");
+  if (outputsPurge.kind !== "help") throw new Error("expected help");
+  assert.match(outputsPurge.error ?? "", /Unknown world CLI option "--purge"/);
   const missingAttachName = parseWorldArgs(["attach", "--plain"]);
   assert.equal(missingAttachName.kind, "help");
   if (missingAttachName.kind !== "help") throw new Error("expected help");

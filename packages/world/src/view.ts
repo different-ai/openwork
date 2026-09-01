@@ -1,5 +1,6 @@
 import { styleText } from "node:util";
 import type { WorldEvent } from "./events.ts";
+import { formatOutputLines, type OutputMeta } from "./outputs.ts";
 import type { PreflightResult } from "./preflight.ts";
 
 export interface ViewSink {
@@ -21,6 +22,7 @@ export interface WorldView {
   ready(input: {
     name: string;
     outputs: Record<string, string>;
+    outputMeta?: Record<string, OutputMeta>;
     elapsedMs: number;
     resources: number;
     downHint: string;
@@ -243,9 +245,11 @@ export function createWorldView(options: {
     ready(input): void {
       finish();
       const lines = [`${paint("green", "✔")} ${input.name} is up${options.mode === "tty" ? "  " : " "}(${formatElapsed(input.elapsedMs)} · ${input.resources} resources)`];
-      const width = Math.max(0, ...Object.keys(input.outputs).map((key) => key.length));
-      for (const [key, value] of Object.entries(input.outputs)) lines.push(`${key.padEnd(width)}  ${value}`);
-      lines.push(`Ctrl-C to stop · ${input.downHint}${input.log ? ` · log ${input.log}` : ""}`);
+      const outputMeta = input.outputMeta ?? {};
+      lines.push(...formatOutputLines(input.outputs, outputMeta, { reveal: false }));
+      const hasSecrets = Object.values(outputMeta).some((meta) => meta.secret === true);
+      const revealHint = input.downHint.replace("pnpm world down", "pnpm world outputs");
+      lines.push(`Ctrl-C to stop · ${input.downHint}${input.log ? ` · log ${input.log}` : ""}${hasSecrets ? ` · secrets: ${revealHint} --reveal` : ""}`);
       if (options.mode === "plain") {
         for (const line of lines) writeLine(line);
       } else {

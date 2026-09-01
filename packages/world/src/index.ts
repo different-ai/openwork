@@ -12,3 +12,4 @@ export * from "./standalone-cli.ts";
 export * from "./events.ts";
 export * from "./preflight.ts";
 export * from "./view.ts";
+export * from "./outputs.ts";

@@ -2,6 +2,7 @@ import { chmod, mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { basename, dirname, extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { appendEvent, EVENTS_ENV } from "./events.ts";
+import { formatOutputLines, maskOutputs, normalizeOutputs, type OutputMeta, type WorldOutput } from "./outputs.ts";
 import { receiptName, resolveStage } from "./stage.ts";
 import { assertWorldName } from "./store.ts";
 
@@ -22,6 +23,7 @@ export interface ScriptWorldSnapshot {
   pid: number;
   sourcePath: string;
   outputs: Record<string, string>;
+  outputMeta?: Record<string, OutputMeta>;
   stage?: string;
   recipeHash?: string;
   place?: string;
@@ -29,7 +31,7 @@ export interface ScriptWorldSnapshot {
 
 export interface HoldOptions {
   name?: string;
-  outputs?: Record<string, string>;
+  outputs?: Record<string, WorldOutput>;
   snapshotDir?: string;
 }
 
@@ -78,8 +80,9 @@ export async function hold(options: HoldOptions = {}): Promise<void> {
     );
   }
 
-  const outputs = options.outputs ?? {};
-  const version = stage !== undefined || recipeHash !== undefined || place !== undefined ? 2 : 1;
+  const { values: outputs, meta: outputMeta } = normalizeOutputs(options.outputs ?? {});
+  const hasOutputMeta = Object.keys(outputMeta).length > 0;
+  const version = stage !== undefined || recipeHash !== undefined || place !== undefined || hasOutputMeta ? 2 : 1;
   const snapshot: ScriptWorldSnapshot = {
     version,
     kind: "script",
@@ -88,6 +91,7 @@ export async function hold(options: HoldOptions = {}): Promise<void> {
     pid: process.pid,
     sourcePath,
     outputs,
+    ...(hasOutputMeta ? { outputMeta } : {}),
     ...(stage === undefined ? {} : { stage }),
     ...(recipeHash === undefined ? {} : { recipeHash }),
     ...(place === undefined ? {} : { place }),
@@ -97,10 +101,15 @@ export async function hold(options: HoldOptions = {}): Promise<void> {
   await chmod(snapshotPath, 0o600);
   const eventPath = process.env[EVENTS_ENV];
   if (eventPath !== undefined) {
-    await appendEvent(eventPath, { t: new Date().toISOString(), type: "ready", outputs });
+    await appendEvent(eventPath, {
+      t: new Date().toISOString(),
+      type: "ready",
+      outputs: maskOutputs(outputs, outputMeta),
+      ...(hasOutputMeta ? { outputMeta } : {}),
+    });
   }
 
-  for (const [key, value] of Object.entries(outputs)) console.log(`${key}  ${value}`);
+  for (const line of formatOutputLines(outputs, outputMeta, { reveal: false })) console.log(line);
   console.log(`World ${JSON.stringify(stagedName)} is up. Ctrl-C (or pnpm world down ${name}${stage ? ` --stage ${stage}` : ""}) tears it down.`);
 
   const keepAlive = setInterval(() => {}, 2_147_483_647);

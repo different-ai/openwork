@@ -4,6 +4,7 @@ import { styleText } from "node:util";
 import { eventsPath, readEvents, tailEvents, type WorldEvent } from "./events.ts";
 import { ledgerPath, readLedger } from "./ledger.ts";
 import { discoverWorlds, displayWorldPath, resolveWorldScript } from "./loader.ts";
+import { formatOutputLines, MASK } from "./outputs.ts";
 import { nodeCheck, runPreflight, type PreflightCheck } from "./preflight.ts";
 import { builtinReapers, reapLedger, type ReapReport, type Reaper } from "./reaper.ts";
 import { receiptName, resolveStage, sanitizeStage } from "./stage.ts";
@@ -34,6 +35,7 @@ export type WorldCommand =
     }
   | { kind: "attach"; name: string; stage?: string; plain?: true }
   | { kind: "down"; name: string; stage?: string; purge?: true }
+  | { kind: "outputs"; name: string; stage?: string; reveal?: true; json?: true }
   | { kind: "plan"; source: string; stage?: string }
   | { kind: "list" }
   | { kind: "forget"; name: string }
@@ -183,6 +185,43 @@ export function parseWorldArgs(argv: string[]): WorldCommand {
     if (parsed.error) return helpError(parsed.error);
     return { kind: "plan", source, ...(parsed.stage === undefined ? {} : { stage: parsed.stage }) };
   }
+  if (command === "outputs") {
+    const [name, ...options] = args;
+    if (!name || name === "--" || name.startsWith("--")) {
+      return helpError("The outputs command needs exactly one world name.");
+    }
+    let stage: string | undefined;
+    let reveal = false;
+    let json = false;
+    for (let index = 0; index < options.length; index += 1) {
+      const option = options[index];
+      if (option === "--stage" && stage === undefined) {
+        try {
+          stage = sanitizeStage(options[index + 1] ?? "");
+        } catch {
+          return helpError("Use --stage followed by a non-empty stage value.");
+        }
+        index += 1;
+        continue;
+      }
+      if (option === "--reveal" && !reveal) {
+        reveal = true;
+        continue;
+      }
+      if (option === "--json" && !json) {
+        json = true;
+        continue;
+      }
+      return helpError(`Unknown world CLI option ${JSON.stringify(option)}.`);
+    }
+    return {
+      kind: "outputs",
+      name,
+      ...(stage === undefined ? {} : { stage }),
+      ...(reveal ? { reveal: true } : {}),
+      ...(json ? { json: true } : {}),
+    };
+  }
   if (command === "list") {
     return args.length === 0 ? { kind: "list" } : helpError("The list command does not take arguments.");
   }
@@ -223,7 +262,7 @@ export function parseWorldArgs(argv: string[]): WorldCommand {
       ? { kind: "forget", name: args[0] }
       : helpError("The forget command needs exactly one world name.");
   }
-  return helpError(`Unknown command ${JSON.stringify(command)}. Script worlds support up, attach, plan, down, list, forget, and help.`);
+  return helpError(`Unknown command ${JSON.stringify(command)}. Script worlds support up, attach, outputs, plan, down, list, forget, and help.`);
 }
 
 function messageText(error: unknown): string {
@@ -236,6 +275,7 @@ async function helpText(options: WorldCliOptions): Promise<string> {
   return `Usage:
   pnpm world up <script-path-or-name> [--detach] [--timeout <ms>] [--stage <value>] [--place <local|daytona>] [--plain] [-- <script args...>]
   pnpm world attach <name> [--stage <value>] [--plain]
+  pnpm world outputs <name> [--stage <value>] [--reveal] [--json]
   pnpm world plan <script-path-or-name> [--stage <value>]
   pnpm world down <name> [--stage <value>] [--purge]
   pnpm world list
@@ -263,7 +303,9 @@ function printOutputs(
   snapshot: NonNullable<Awaited<ReturnType<typeof readScriptWorldSnapshot>>>,
   print: (line: string) => void,
 ): void {
-  for (const [key, value] of Object.entries(snapshot.outputs)) print(`${key}  ${value}`);
+  for (const line of formatOutputLines(snapshot.outputs, snapshot.outputMeta ?? {}, { reveal: false })) {
+    print(line);
+  }
 }
 
 async function pathExists(path: string): Promise<boolean> {
@@ -488,6 +530,7 @@ export async function main(argv: string[], options: WorldCliOptions): Promise<nu
         view.ready({
           name: stagedName,
           outputs: snapshot.outputs,
+          ...(snapshot.outputMeta === undefined ? {} : { outputMeta: snapshot.outputMeta }),
           elapsedMs: Date.now() - startedAt,
           resources: await resourceCount(worldLedgerPath),
           downHint: `pnpm world down ${script.name}${stage ? ` --stage ${stage}` : ""}`,
@@ -595,6 +638,7 @@ export async function main(argv: string[], options: WorldCliOptions): Promise<nu
       view.ready({
         name: candidate.stagedName,
         outputs: snapshot.outputs,
+        ...(snapshot.outputMeta === undefined ? {} : { outputMeta: snapshot.outputMeta }),
         elapsedMs: eventElapsed(events),
         resources: await resourceCount(ledgerPath(snapshotDirectory, candidate.stagedName)),
         downHint: `pnpm world down ${command.name}${snapshot.stage ? ` --stage ${snapshot.stage}` : ""}`,
@@ -627,6 +671,60 @@ export async function main(argv: string[], options: WorldCliOptions): Promise<nu
         alivePoll.unref();
         process.once("SIGINT", detach);
       });
+      return 0;
+    } catch (error) {
+      print(messageText(error));
+      return 1;
+    }
+  }
+  if (command.kind === "outputs") {
+    const snapshotDirectory = scriptWorldSnapshotDirectory(options.cwd);
+    const candidate = await stagedReceiptCandidate(
+      snapshotDirectory,
+      command.name,
+      command.stage,
+      print,
+    );
+    if (candidate.kind !== "found") {
+      if (candidate.kind === "multiple") return 1;
+      print(`World receipt ${JSON.stringify(receiptName(command.name, command.stage))} does not exist.`);
+      return 1;
+    }
+    try {
+      const snapshot = await readScriptWorldSnapshot(candidate.path);
+      if (!snapshot) {
+        print(`World receipt ${JSON.stringify(candidate.stagedName)} does not exist.`);
+        return 1;
+      }
+      const outputMeta = snapshot.outputMeta ?? {};
+      if (!command.json) {
+        for (const line of formatOutputLines(snapshot.outputs, outputMeta, { reveal: command.reveal === true })) {
+          print(line);
+        }
+        return 0;
+      }
+      const outputs: Record<string, {
+        value: string;
+        secret: boolean;
+        group?: string;
+        note?: string;
+      }> = {};
+      for (const [key, value] of Object.entries(snapshot.outputs)) {
+        const meta = outputMeta[key];
+        const isSecret = meta?.secret === true;
+        outputs[key] = {
+          value: command.reveal || !isSecret ? value : MASK,
+          secret: isSecret,
+          ...(meta?.group === undefined ? {} : { group: meta.group }),
+          ...(meta?.note === undefined ? {} : { note: meta.note }),
+        };
+      }
+      print(JSON.stringify({
+        name: candidate.stagedName,
+        ...(snapshot.stage === undefined ? {} : { stage: snapshot.stage }),
+        alive: isProcessAlive(snapshot.pid),
+        outputs,
+      }));
       return 0;
     } catch (error) {
       print(messageText(error));

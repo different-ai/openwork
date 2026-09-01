@@ -43,7 +43,7 @@ test("plain view emits stable event, ready, and failure lines without ANSI", () 
     "✖ Second — broken",
     "+ tmpdir  cache /tmp/a",
     "✔ demo is up (1m 04s · 1 resources)",
-    "url    http://localhost",
+    "url  http://localhost",
     "token  secret",
     "Ctrl-C to stop · pnpm world down demo · log /tmp/demo.log",
     "✖ demo failed at \"Second\" (12.3s)",
@@ -55,6 +55,30 @@ test("plain view emits stable event, ready, and failure lines without ANSI", () 
     "",
   ].join("\n"));
   assert.doesNotMatch(output, /\u001b/);
+});
+
+test("ready output masks secrets and adds the reveal hint", () => {
+  let output = "";
+  const sink: ViewSink = { write: (text) => { output += text; }, isTTY: false };
+  const view = createWorldView({ sink, mode: "plain", color: false });
+  view.ready({
+    name: "demo--preview",
+    outputs: { url: "http://localhost", token: "s3cr3t" },
+    outputMeta: { token: { secret: true } },
+    elapsedMs: 100,
+    resources: 0,
+    downHint: "pnpm world down demo --stage preview",
+    log: "/tmp/demo.log",
+  });
+  view.stop();
+  assert.equal(output, [
+    "✔ demo--preview is up (0.1s · 0 resources)",
+    "url  http://localhost",
+    `token  ••••••••`,
+    "Ctrl-C to stop · pnpm world down demo --stage preview · log /tmp/demo.log · secrets: pnpm world outputs demo --stage preview --reveal",
+    "",
+  ].join("\n"));
+  assert.equal(output.includes("s3cr3t"), false);
 });
 
 test("plain view emits a stalled-step heartbeat at most once per interval", async () => {

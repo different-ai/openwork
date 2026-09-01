@@ -1,5 +1,6 @@
 import { app } from "../evals/packages/env/src/desktop-app.ts";
 import type { App } from "../evals/packages/env/src/desktop-app.ts";
+import { denFetch } from "../evals/packages/behaviors/src/den.ts";
 import { createAdmin, createOrg, inviteMember, server } from "../evals/packages/env/src/den.ts";
 import type { Den, DenOrgHandle } from "../evals/packages/env/src/den.ts";
 import { liteLlmPerMemberProvider } from "../evals/packages/env/src/litellm-provider.ts";
@@ -14,6 +15,14 @@ export const LITELLM_WORLD_MODEL = "openwork-litellm-per-member-model";
 export const LITELLM_WORLD_PASSWORD = "OpenWorkEval123!";
 
 const REPLY = "The database-backed per-member LiteLLM world is working.";
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function messageText(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
 
 export interface LiteLlmPerMemberWorld {
   gateway: LiteLlmHandle;
@@ -83,11 +92,42 @@ export async function bootLiteLlmPerMember(
 
 export const litellmPerMember = recipe("litellm-per-member", async (tools) => {
   const world = await bootLiteLlmPerMember(tools.stack, tools.place, tools);
+  let aliceKey = tools.output("unavailable", { group: "Keys", note: "member key was not requested" });
+  try {
+    const connected = await denFetch(
+      world.alice,
+      `/v1/llm-providers/${encodeURIComponent(world.provider.providerRecordId)}/connect`,
+      { headers: { authorization: `Bearer ${world.alice.token}` } },
+    );
+    if (!connected.response.ok) {
+      throw new Error(`LiteLLM member connect failed (${connected.response.status}): ${connected.text}`);
+    }
+    const connectedProvider = isRecord(connected.body) && isRecord(connected.body.llmProvider)
+      ? connected.body.llmProvider
+      : null;
+    const memberKey = connectedProvider && typeof connectedProvider.apiKey === "string"
+      ? connectedProvider.apiKey
+      : null;
+    if (memberKey === null) throw new Error("LiteLLM member connect response did not include an API key");
+    aliceKey = tools.secret(memberKey, { group: "Keys", note: "per-member virtual key (Den connect)" });
+  } catch (error) {
+    aliceKey = tools.output("unavailable", { group: "Keys", note: messageText(error) });
+  }
   return {
-    denWeb: world.den.ref.webUrl,
-    denApi: world.den.ref.apiUrl,
-    litellm: world.gateway.baseUrl,
-    cdp: world.desktop.handle.cdpUrl,
+    denWeb: tools.output(world.den.ref.webUrl, { group: "URLs" }),
+    denApi: tools.output(world.den.ref.apiUrl, { group: "URLs" }),
+    litellm: tools.output(world.gateway.baseUrl, { group: "URLs" }),
+    cdp: tools.output(world.desktop.handle.cdpUrl, { group: "URLs" }),
+    adminEmail: tools.output("litellm-admin@openwork.test", { group: "Accounts" }),
+    adminPassword: tools.secret(LITELLM_WORLD_PASSWORD, { group: "Accounts" }),
+    aliceEmail: tools.output("alice-litellm@openwork.test", { group: "Accounts" }),
+    alicePassword: tools.secret(LITELLM_WORLD_PASSWORD, { group: "Accounts" }),
+    litellmMasterKey: tools.secret(world.gateway.apiKey, { group: "Keys", note: "LiteLLM admin key" }),
+    litellmUpstreamKey: tools.secret(world.gateway.upstreamKey, { group: "Keys", note: "witness upstream key" }),
+    aliceKey,
+    providerId: tools.output(LITELLM_WORLD_PROVIDER, { group: "Provider" }),
+    modelId: tools.output(LITELLM_WORLD_MODEL, { group: "Provider" }),
+    providerRecordId: tools.output(world.provider.providerRecordId, { group: "Provider" }),
   };
 });
 
