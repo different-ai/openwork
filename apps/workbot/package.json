@@ -1,0 +1,35 @@
+{
+  "name": "@openwork/workbot",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Work Bot: standalone desktop app for persistent AI workers, powered by the OpenWork platform.",
+  "scripts": {
+    "dev": "node ./scripts/dev.mjs",
+    "build": "vite build",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node --test electron/*.test.mjs",
+    "electron": "pnpm exec electron ./electron/main.mjs"
+  },
+  "dependencies": {
+    "@opencode-ai/sdk": "^1.18.15",
+    "@openwork/headless-threads": "workspace:*",
+    "@openwork/paths": "workspace:*",
+    "@openwork/types": "workspace:*",
+    "react": "catalog:",
+    "react-dom": "catalog:",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.3.3",
+    "@types/node": "^25.6.0",
+    "@types/react": "^19.2.2",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^5.0.4",
+    "electron": "^43.2.0",
+    "tailwindcss": "^4.3.3",
+    "typescript": "^5.6.3",
+    "vite": "^6.4.3"
+  },
+  "packageManager": "pnpm@10.27.0"
+}
