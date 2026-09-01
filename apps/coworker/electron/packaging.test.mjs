@@ -49,8 +49,10 @@ test("Open Coworker owns a branded boot surface and cross-platform icon set", as
   const logoSvg = await readFile(path.join(coworkerRoot, "public", "open-coworker.svg"), "utf8");
   assert.match(indexHtml, /class="boot-splash"/);
   assert.match(indexHtml, /href="\/open-coworker\.svg"/);
-  assert.match(logoSvg, /fill="#5b8dff"/);
   assert.match(logoSvg, /fill="#f7f8fa"/);
+  assert.match(logoSvg, /fill="none" stroke="#11151d"/);
+  assert.match(logoSvg, /stroke="#aeb5c0"/);
+  assert.doesNotMatch(logoSvg, /fill="#5b8dff"/);
   await Promise.all([
     "resources/icons/icon.png",
     "resources/icons/icon.icns",
