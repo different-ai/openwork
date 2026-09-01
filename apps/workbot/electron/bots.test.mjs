@@ -87,15 +87,21 @@ test("createBot rejects duplicate slugs", async () => {
 
 test("updateBot patches platform references and deduplicates automations", async () => {
   const botsDir = await tempBotsDir();
-  await createBot(botsDir, { name: "Ops" });
+  const created = await createBot(botsDir, { name: "Ops" });
+  assert.equal(created.model, "");
   const updated = await updateBot(botsDir, "ops", {
     workspaceId: "ws_local_1",
     automations: ["atm_a", "atm_a", " atm_b "],
+    model: "anthropic/claude-haiku-4-5",
   });
   assert.equal(updated.workspaceId, "ws_local_1");
   assert.deepEqual(updated.automations, ["atm_a", "atm_b"]);
+  assert.equal(updated.model, "anthropic/claude-haiku-4-5");
   const reread = await getBot(botsDir, "ops");
   assert.equal(reread.workspaceId, "ws_local_1");
+  assert.equal(reread.model, "anthropic/claude-haiku-4-5");
+  const cleared = await updateBot(botsDir, "ops", { model: "" });
+  assert.equal(cleared.model, "");
 });
 
 test("memory files are listed and editable through the store", async () => {

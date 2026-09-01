@@ -8,7 +8,16 @@ import { Button, ErrorNote, Field, inputClass } from "@/ui/kit";
  * asynchronous runs outlive the desktop session. Sign-in reuses the Den
  * desktop handoff — open Den, copy the sign-in link, paste it here.
  */
-export function SignInGate({ denBaseUrl, onSignedIn }: { denBaseUrl: string; onSignedIn: (session: DenSession) => void }) {
+export function SignInGate({
+  denBaseUrl,
+  onSignedIn,
+  onDismiss,
+}: {
+  denBaseUrl: string;
+  onSignedIn: (session: DenSession) => void;
+  /** Present only when the app can be used without signing in right now. */
+  onDismiss?: (() => void) | null;
+}) {
   const [pasted, setPasted] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -60,6 +69,11 @@ export function SignInGate({ denBaseUrl, onSignedIn }: { denBaseUrl: string; onS
           <Button className="w-full" disabled={busy || !pasted.trim()} onClick={() => void connect()}>
             {busy ? "Connecting…" : "Connect"}
           </Button>
+          {onDismiss ? (
+            <Button variant="ghost" className="w-full" onClick={onDismiss}>
+              Not now
+            </Button>
+          ) : null}
           <p className="text-center text-xs text-mist">Powered by OpenWork</p>
         </div>
       </div>
