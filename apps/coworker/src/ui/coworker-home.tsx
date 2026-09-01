@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { coworkerBridge, type CoworkerMemoryFile, type CoworkerSummary, type RuntimeInfo } from "@/lib/bridge";
 import { describeMemory, describeModelPreference, describeNow, relativeTime } from "@/lib/activity-summary";
 import type { DenSession } from "@/lib/den";
-import { createCoworkerThreads, type CoworkerActivity, type EngineModelOption } from "@/lib/threads";
+import type { CoworkerActivity } from "@/lib/threads";
 import { AvatarControls, CoworkerAvatar } from "@/ui/coworker-avatar";
 import { CapabilitiesPanel } from "@/ui/capabilities";
 import { Button, ErrorNote, Field, StatusDot, inputClass } from "@/ui/kit";
@@ -11,7 +11,7 @@ import { ResponsibilitiesPanel } from "@/ui/responsibilities";
 import { ThreadsPanel } from "@/ui/threads";
 import { ModelPicker, type ModelSelection } from "@/ui/model-picker";
 
-type ContextView = "overview" | "capabilities" | "memory" | "settings" | "openwork";
+type ContextView = "overview" | "capabilities" | "memory" | "settings";
 
 const CONTEXT_PANEL_WIDTH_KEY = "open-coworker.context-panel-width";
 const CONTEXT_PANEL_MIN_WIDTH = 320;
@@ -67,24 +67,22 @@ export function CoworkerHome({
   coworkers,
   coworker,
   activity,
+  onActivityChange,
   onCoworkerChanged,
   onCoworkerRemoved,
   onRefreshRuntime,
-  onConnect,
-  onSignOut,
-  openConfigurationSignal,
+  onOpenOpenWork,
 }: {
   runtime: RuntimeInfo;
   session: DenSession | null;
   coworkers: CoworkerSummary[];
   coworker: CoworkerSummary;
   activity?: CoworkerActivity;
+  onActivityChange: (activity: CoworkerActivity | null) => void;
   onCoworkerChanged: (coworker: CoworkerSummary) => void;
   onCoworkerRemoved: (slug: string) => void;
   onRefreshRuntime: () => Promise<void>;
-  onConnect: () => void;
-  onSignOut: () => void;
-  openConfigurationSignal: number;
+  onOpenOpenWork: () => void;
 }) {
   const [contextView, setContextView] = useState<ContextView>("overview");
   const [assignmentDraft, setAssignmentDraft] = useState<{ id: number; text: string } | null>(null);
@@ -96,9 +94,7 @@ export function CoworkerHome({
   const contextualPanelWidth = contextView === "capabilities" ? 430 : 360;
   const renderedContextPanelWidth = clampContextPanelWidth(contextPanelWidth ?? contextualPanelWidth);
 
-  useEffect(() => {
-    if (openConfigurationSignal > 0) setContextView("openwork");
-  }, [openConfigurationSignal]);
+  useEffect(() => () => onActivityChange(null), [onActivityChange]);
 
   useEffect(() => {
     if (!resizingContextPanel) return;
@@ -166,7 +162,7 @@ export function CoworkerHome({
             <h1 className="truncate text-base font-semibold text-snow">{coworker.name}</h1>
             <p className="truncate text-xs text-mist">{coworker.role || coworker.mission || "Persistent coworker"}</p>
           </div>
-          <span className={`flex shrink-0 items-center gap-2 text-xs ${runtime.engineManaged ? activityTextTone(activity) : "text-rose"}`} title={activity?.detail}>
+          <span data-testid="coworker-top-status" className={`flex shrink-0 items-center gap-2 text-xs ${runtime.engineManaged ? activityTextTone(activity) : "text-rose"}`} title={activity?.detail}>
             <StatusDot tone={runtime.engineManaged ? activityTone(activity) : "rose"} />
             {runtime.engineManaged ? (activity?.label ?? "Checking status") : "Engine offline"}
           </span>
@@ -187,6 +183,8 @@ export function CoworkerHome({
             onRefreshRuntime={onRefreshRuntime}
             assignmentDraft={assignmentDraft}
             openThreadRequest={openThreadRequest}
+            onOpenSettings={() => setContextView("settings")}
+            onActivityChange={onActivityChange}
           />
         </main>
       </div>
@@ -252,18 +250,14 @@ export function CoworkerHome({
                   ? "Apps & tools"
                 : contextView === "settings"
                   ? "Coworker settings"
-                  : contextView === "openwork"
-                    ? "OpenWork configuration"
-                    : "Activity"}
+                  : "Activity"}
             </h2>
             <p className="truncate text-xs text-mist">
               {contextView === "overview"
                 ? `${coworker.name}'s current and recent work`
                 : contextView === "capabilities"
                   ? `Available to ${coworker.name}`
-                : contextView === "openwork"
-                  ? "Shared account, engine, and providers"
-                  : coworker.name}
+                : coworker.name}
             </p>
           </div>
           {contextView === "overview" ? (
@@ -285,7 +279,7 @@ export function CoworkerHome({
               onOpenMemory={() => setContextView("memory")}
               onOpenCapabilities={() => setContextView("capabilities")}
               onOpenSettings={() => setContextView("settings")}
-              onOpenOpenWork={() => setContextView("openwork")}
+              onOpenOpenWork={onOpenOpenWork}
             />
           ) : null}
           {contextView === "memory" ? <MemoryPanel coworker={coworker} /> : null}
@@ -305,16 +299,6 @@ export function CoworkerHome({
               coworker={coworker}
               onCoworkerChanged={onCoworkerChanged}
               onCoworkerRemoved={onCoworkerRemoved}
-            />
-          ) : null}
-          {contextView === "openwork" ? (
-            <OpenWorkConfiguration
-              runtime={runtime}
-              session={session}
-              coworker={coworker}
-              onConnect={onConnect}
-              onSignOut={onSignOut}
-              onRefreshRuntime={onRefreshRuntime}
             />
           ) : null}
         </div>
@@ -485,135 +469,6 @@ function FactRow({
       </span>
       <span className="shrink-0 text-mist transition-colors group-hover:text-snow" aria-hidden="true">›</span>
     </button>
-  );
-}
-
-function OpenWorkConfiguration({
-  runtime,
-  session,
-  coworker,
-  onConnect,
-  onSignOut,
-  onRefreshRuntime,
-}: {
-  runtime: RuntimeInfo;
-  session: DenSession | null;
-  coworker: CoworkerSummary;
-  onConnect: () => void;
-  onSignOut: () => void;
-  onRefreshRuntime: () => Promise<void>;
-}) {
-  const threads = useMemo(
-    () =>
-      coworker.workspaceId
-        ? createCoworkerThreads({
-            serverUrl: runtime.serverUrl,
-            workspaceId: coworker.workspaceId,
-            token: runtime.ownerToken,
-            model: coworker.model,
-            modelVariant: coworker.modelVariant,
-          })
-        : null,
-    [runtime.serverUrl, runtime.ownerToken, coworker.workspaceId, coworker.model, coworker.modelVariant],
-  );
-  const [models, setModels] = useState<EngineModelOption[]>([]);
-  const [refreshing, setRefreshing] = useState(false);
-  const [error, setError] = useState("");
-
-  const refreshConfiguration = useCallback(async () => {
-    setRefreshing(true);
-    setError("");
-    try {
-      await onRefreshRuntime();
-      setModels(threads && runtime.engineManaged ? await threads.listModels() : []);
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
-    } finally {
-      setRefreshing(false);
-    }
-  }, [onRefreshRuntime, runtime.engineManaged, threads]);
-
-  useEffect(() => {
-    void refreshConfiguration();
-  }, [refreshConfiguration]);
-
-  const providers = new Set(models.map((model) => model.id.split("/")[0]).filter(Boolean));
-  const selectedModel = coworker.model
-    ? (models.find((model) => model.id === coworker.model)?.label ?? coworker.model)
-    : "OpenWork engine default";
-
-  return (
-    <div className="space-y-4">
-      <section className="rounded-2xl border border-line bg-ink p-4">
-        <div className="flex items-center justify-between gap-3">
-          <div>
-            <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-mist">Account</p>
-            <div className="mt-2 flex items-center gap-2 text-sm font-semibold text-snow">
-              <StatusDot tone={session ? "mint" : "mist"} />
-              {session ? "OpenWork connected" : "Local mode"}
-            </div>
-          </div>
-          {session ? (
-            <Button variant="ghost" className="text-xs" onClick={onSignOut}>Sign out</Button>
-          ) : (
-            <Button variant="primary" className="text-xs" onClick={onConnect}>Connect</Button>
-          )}
-        </div>
-        <p className="mt-2 truncate text-xs text-mist" title={session?.userEmail || undefined}>
-          {session?.orgName || session?.userEmail || "Connect for cloud responsibilities and schedules."}
-        </p>
-        {session ? (
-          <button
-            className="mt-2 text-xs font-medium text-spark hover:underline"
-            onClick={() => void coworkerBridge.openExternal(session.baseUrl)}
-          >
-            Open OpenWork
-          </button>
-        ) : null}
-      </section>
-
-      <section className="rounded-2xl border border-line bg-ink p-4">
-        <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-mist">Agent engine</p>
-        <div className="mt-2 flex items-center justify-between gap-3">
-          <span className="flex items-center gap-2 text-sm font-semibold text-snow">
-            <StatusDot tone={runtime.engineManaged ? "mint" : "rose"} />
-            {runtime.engineManaged ? "Running" : "Unavailable"}
-          </span>
-          <span className="text-[10px] text-mist">{runtime.engineManaged ? "Managed locally" : "Offline"}</span>
-        </div>
-        <p className="mt-2 text-xs leading-relaxed text-mist">
-          Coworker threads run through the same OpenWork engine and workspace-scoped tools.
-        </p>
-      </section>
-
-      <section className="rounded-2xl border border-line bg-ink p-4">
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-mist">Models & providers</p>
-            <p className="mt-2 text-sm font-semibold text-snow">
-              {models.length > 0
-                ? `${models.length} model${models.length === 1 ? "" : "s"} · ${providers.size} provider${providers.size === 1 ? "" : "s"}`
-                : runtime.engineManaged
-                  ? "Reading OpenWork configuration"
-                  : "Configuration unavailable"}
-            </p>
-          </div>
-          <Button variant="ghost" className="text-xs" disabled={refreshing} onClick={() => void refreshConfiguration()}>
-            {refreshing ? "Refreshing…" : "Refresh"}
-          </Button>
-        </div>
-        <p className="mt-2 text-xs leading-relaxed text-mist">
-          Provider connections are read live from OpenWork. Change them there, then refresh to use the updated catalog here.
-        </p>
-        <div className="mt-3 rounded-xl border border-line bg-panel/50 px-3 py-2.5">
-          <p className="text-[10px] uppercase tracking-[0.12em] text-mist">{coworker.name} uses</p>
-          <p className="mt-1 truncate text-xs font-medium text-snow" title={selectedModel}>{selectedModel}</p>
-          {coworker.modelVariant ? <p className="mt-0.5 text-[10px] text-mist">Reasoning · {coworker.modelVariant}</p> : null}
-        </div>
-      </section>
-
-      {error ? <ErrorNote>{error}</ErrorNote> : null}
-    </div>
   );
 }
 

@@ -10,6 +10,8 @@ export type CoworkerSummary = {
   avatarColor: AvatarColor;
   avatarGlasses: AvatarGlasses;
   workspaceId: string;
+  /** Native OpenWork session reserved for ongoing chat, separate from assignments. */
+  conversationThreadId: string;
   /** Preferred model as "providerId/modelId"; empty means engine default. */
   model: string;
   /** Optional reasoning/behavior variant for the preferred model. */
@@ -100,7 +102,7 @@ export const coworkerBridge = {
     get: (slug: string) => invoke<CoworkerSummary>("coworkers.get", { slug }),
     create: (input: { name: string; role: string; mission: string; avatarColor: AvatarColor; avatarGlasses: AvatarGlasses }) =>
       invoke<CoworkerSummary>("coworkers.create", input),
-    update: (slug: string, patch: Partial<Pick<CoworkerSummary, "workspaceId" | "automations" | "mission" | "role" | "model" | "modelVariant" | "avatarColor" | "avatarGlasses">>) =>
+    update: (slug: string, patch: Partial<Pick<CoworkerSummary, "workspaceId" | "conversationThreadId" | "automations" | "mission" | "role" | "model" | "modelVariant" | "avatarColor" | "avatarGlasses">>) =>
       invoke<CoworkerSummary>("coworkers.update", { slug, patch }),
     ensureWorkspace: (slug: string) => invoke<CoworkerSummary>("coworkers.ensureWorkspace", { slug }),
     /** Retire: archive the whole home under `.retired/`; nothing is deleted. */

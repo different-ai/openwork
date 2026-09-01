@@ -1,12 +1,19 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
+  assignmentThreads,
   connectedModelCatalog,
   describeInteractions,
   describePermission,
   hasPendingInteractions,
   parseModelPreference,
 } from "./threads.ts";
+
+test("assignmentThreads excludes the standing discussion without hiding real work", () => {
+  const threads = [{ id: "ses_chat", title: "Conversation" }, { id: "ses_work", title: "Launch brief" }];
+  assert.deepEqual(assignmentThreads(threads, "ses_chat"), [{ id: "ses_work", title: "Launch brief" }]);
+  assert.deepEqual(assignmentThreads(threads, ""), threads);
+});
 
 test("describePermission speaks plainly about what the coworker wants", () => {
   assert.equal(describePermission({ action: "bash", resources: [] }), "run a command");
