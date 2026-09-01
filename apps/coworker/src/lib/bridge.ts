@@ -6,12 +6,17 @@ export type CoworkerSummary = {
   name: string;
   role: string;
   mission: string;
+  avatarColor: AvatarColor;
+  avatarGlasses: AvatarGlasses;
   workspaceId: string;
   /** Preferred model as "providerId/modelId"; empty means engine default. */
   model: string;
   automations: string[];
   createdAt: string;
 };
+
+export type AvatarColor = "blue" | "violet" | "mint" | "orange" | "rose" | "slate";
+export type AvatarGlasses = "round" | "square" | "none";
 
 export type CoworkerMemoryFile = {
   id: string;
@@ -54,9 +59,9 @@ export const coworkerBridge = {
   coworkers: {
     list: () => invoke<CoworkerSummary[]>("coworkers.list"),
     get: (slug: string) => invoke<CoworkerSummary>("coworkers.get", { slug }),
-    create: (input: { name: string; role: string; mission: string }) =>
+    create: (input: { name: string; role: string; mission: string; avatarColor: AvatarColor; avatarGlasses: AvatarGlasses }) =>
       invoke<CoworkerSummary>("coworkers.create", input),
-    update: (slug: string, patch: Partial<Pick<CoworkerSummary, "workspaceId" | "automations" | "mission" | "role" | "model">>) =>
+    update: (slug: string, patch: Partial<Pick<CoworkerSummary, "workspaceId" | "automations" | "mission" | "role" | "model" | "avatarColor" | "avatarGlasses">>) =>
       invoke<CoworkerSummary>("coworkers.update", { slug, patch }),
     ensureWorkspace: (slug: string) => invoke<CoworkerSummary>("coworkers.ensureWorkspace", { slug }),
     remove: (slug: string) => invoke<{ ok: boolean }>("coworkers.delete", { slug }),

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { coworkerBridge, type CoworkerSummary, type RuntimeInfo } from "@/lib/bridge";
 import type { DenSession } from "@/lib/den";
 import { createCoworkerThreads, type EngineModelOption } from "@/lib/threads";
+import { AvatarControls, CoworkerAvatar } from "@/ui/coworker-avatar";
 import { Button, ErrorNote, Field, StatusDot, inputClass } from "@/ui/kit";
 import { MemoryPanel } from "@/ui/memory";
 import { ResponsibilitiesPanel } from "@/ui/responsibilities";
@@ -34,7 +35,14 @@ export function CoworkerHome({
     <div className="glass-main flex h-full min-w-0 flex-1">
       <div className="flex min-w-0 flex-1 flex-col">
         <header className="glass-header window-drag flex h-[78px] items-center justify-between gap-4 border-b border-line px-6 pt-2">
-          <div className="min-w-0">
+          <CoworkerAvatar
+            animated
+            color={coworker.avatarColor}
+            glasses={coworker.avatarGlasses}
+            name={coworker.name}
+            size={42}
+          />
+          <div className="min-w-0 flex-1">
             <h1 className="truncate text-base font-semibold text-snow">{coworker.name}</h1>
             <p className="truncate text-xs text-mist">{coworker.role || coworker.mission || "Persistent coworker"}</p>
           </div>
@@ -130,9 +138,13 @@ function CoworkerOverview({
     <div className="space-y-5">
       <section className="rounded-2xl border border-line bg-ink p-4">
         <div className="flex items-start gap-3">
-          <span className="flex size-11 shrink-0 items-center justify-center rounded-2xl bg-panel text-lg font-semibold text-snow ring-1 ring-line">
-            {coworker.name.slice(0, 1).toUpperCase()}
-          </span>
+          <CoworkerAvatar
+            animated
+            color={coworker.avatarColor}
+            glasses={coworker.avatarGlasses}
+            name={coworker.name}
+            size={68}
+          />
           <div className="min-w-0">
             <h3 className="truncate text-sm font-semibold text-snow">{coworker.name}</h3>
             <p className="mt-0.5 text-xs text-mist">{coworker.role || "Persistent coworker"}</p>
@@ -140,7 +152,7 @@ function CoworkerOverview({
         </div>
         {coworker.mission ? <p className="mt-3 text-sm leading-relaxed text-snow">{coworker.mission}</p> : null}
         <button className="mt-3 text-xs font-medium text-spark hover:underline" onClick={onOpenSettings}>
-          Edit role, mission, and model
+          Edit appearance, role, mission, and model
         </button>
       </section>
 
@@ -211,6 +223,8 @@ function CoworkerSettings({
   const [models, setModels] = useState<EngineModelOption[]>([]);
   const [role, setRole] = useState(coworker.role);
   const [mission, setMission] = useState(coworker.mission);
+  const [avatarColor, setAvatarColor] = useState(coworker.avatarColor);
+  const [avatarGlasses, setAvatarGlasses] = useState(coworker.avatarGlasses);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [confirmingRetire, setConfirmingRetire] = useState(false);
@@ -247,6 +261,8 @@ function CoworkerSettings({
         await coworkerBridge.coworkers.update(coworker.slug, {
           role: role.trim(),
           mission: mission.trim(),
+          avatarColor,
+          avatarGlasses,
         }),
       );
     } catch (cause) {
@@ -280,6 +296,22 @@ function CoworkerSettings({
   return (
     <div className="space-y-5">
       <section className="space-y-3 rounded-2xl border border-line bg-ink p-4">
+        <div className="avatar-stage flex min-h-40 items-center justify-center rounded-2xl border border-line">
+          <CoworkerAvatar
+            animated
+            color={avatarColor}
+            glasses={avatarGlasses}
+            name={coworker.name}
+            size={108}
+          />
+        </div>
+        <AvatarControls
+          color={avatarColor}
+          glasses={avatarGlasses}
+          onColorChange={setAvatarColor}
+          onGlassesChange={setAvatarGlasses}
+        />
+        <div className="border-t border-line pt-3" />
         <Field label="Name">
           <input className={`${inputClass} bg-panel`} value={coworker.name} disabled />
         </Field>
