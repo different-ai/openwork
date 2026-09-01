@@ -1,4 +1,5 @@
 import { existsSync } from "node:fs";
+import { normalizeEngineRunMode, type EngineRunMode } from "./run-mode.js";
 import { importNodeSqlite, runtimeDbPath } from "./runtime-db.js";
 import type { ServerConfig } from "./types.js";
 import { createWorkspaceKvStore, isRecord } from "./workspace-kv-store.js";
@@ -14,6 +15,7 @@ export type RuntimeOpencodeConfig = {
     external_directory?: Record<string, unknown>;
   };
   provider?: Record<string, unknown>;
+  run_mode?: EngineRunMode;
 };
 
 export const ENGINE_GLOBAL_RUNTIME_CONFIG_ID = "__openwork_engine_global__";
@@ -36,6 +38,7 @@ function normalizeRuntimeOpencodeConfig(value: unknown): RuntimeOpencodeConfig {
   const permission = isRecord(value.permission) ? value.permission : undefined;
   const externalDirectory = permission && isRecord(permission.external_directory) ? permission.external_directory : undefined;
   const provider = isRecord(value.provider) ? value.provider : undefined;
+  const runMode = normalizeEngineRunMode(value.run_mode);
   return {
     ...(defaultAgent ? { default_agent: defaultAgent } : {}),
     ...(plugin ? { plugin } : {}),
@@ -43,6 +46,7 @@ function normalizeRuntimeOpencodeConfig(value: unknown): RuntimeOpencodeConfig {
     ...(mcp ? { mcp } : {}),
     ...(externalDirectory ? { permission: { external_directory: externalDirectory } } : {}),
     ...(provider ? { provider } : {}),
+    ...(runMode ? { run_mode: runMode } : {}),
   };
 }
 
@@ -261,6 +265,7 @@ export function mergeRuntimeOpencodeConfigLayers(
     ...(Object.keys(mcp).length ? { mcp } : {}),
     ...(Object.keys(permission).length ? { permission } : {}),
     ...(Object.keys(provider).length ? { provider } : {}),
+    ...(base.run_mode || overlay.run_mode ? { run_mode: overlay.run_mode ?? base.run_mode } : {}),
   });
 }
 

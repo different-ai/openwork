@@ -133,6 +133,7 @@ import {
   writeOpenworkWorkspaceConfig,
 } from "./openwork-workspace-config-store.js";
 import { buildOpenworkRuntimeConfigObject, openworkRuntimeConfigFilePath, writeOpenworkRuntimeConfigFile } from "./openwork-runtime-config.js";
+import { DEFAULT_ENGINE_RUN_MODE, normalizeEngineRunMode } from "./run-mode.js";
 import { findManagedEngineWorkspace } from "./workspaces.js";
 import { CloudProviderSync, parseCloudProviderDenSession } from "./cloud-provider-sync.js";
 import pkg from "../package.json" with { type: "json" };
@@ -2597,6 +2598,58 @@ function createRoutes(
       updatedAt,
     };
     return jsonResponse(response);
+  });
+
+  addRoute(routes, "GET", "/workspace/:id/run-mode", "client", async (ctx) => {
+    await resolveWorkspace(config, ctx.params.id);
+    const runtime = await readGlobalRuntimeOpencodeConfig(config);
+    return jsonResponse({ mode: runtime.run_mode ?? DEFAULT_ENGINE_RUN_MODE });
+  });
+
+  addRoute(routes, "PUT", "/workspace/:id/run-mode", "client", async (ctx) => {
+    ensureWritable(config);
+    requireClientScope(ctx, "collaborator");
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const body = await readJsonBody(ctx.request);
+    const mode = normalizeEngineRunMode(body.mode);
+    if (!mode) {
+      throw new ApiError(400, "invalid_payload", 'mode must be "approve" or "run-everything"');
+    }
+
+    await requireApproval(ctx, {
+      workspaceId: workspace.id,
+      action: "config.run_mode.write",
+      summary: mode === "run-everything"
+        ? "Let agents run every tool without approval prompts"
+        : "Require approval before agents run risky tools",
+      paths: [openworkRuntimeConfigFilePath(config)],
+    });
+
+    // The run mode is engine-global: the injected engine config file is
+    // rendered from the ENGINE_GLOBAL row only, so one choice governs every
+    // workspace on this server. The default mode is stored as absence so a
+    // fresh install and an explicit "approve" stay byte-identical.
+    const result = await writeGlobalRuntimeOpencodeConfig(config, (current) => {
+      const { run_mode: _previousRunMode, ...rest } = current;
+      return mode === DEFAULT_ENGINE_RUN_MODE ? rest : { ...rest, run_mode: mode };
+    });
+
+    const updatedAt = Date.now();
+    await recordAudit(workspace.path, {
+      id: shortId(),
+      workspaceId: workspace.id,
+      actor: ctx.actor ?? { type: "remote" },
+      action: "config.run_mode.write",
+      target: openworkRuntimeConfigFilePath(config),
+      summary: `Set run mode to ${mode}`,
+      timestamp: updatedAt,
+    });
+
+    if (result.changed) {
+      emitReloadEvent(ctx.reloadEvents, workspace, "config", buildConfigTrigger(openworkRuntimeConfigFilePath(config)));
+    }
+
+    return jsonResponse({ mode, changed: result.changed, updatedAt });
   });
 
   addRoute(routes, "POST", "/workspace/:id/runtime-config/disabled-providers", "client", async (ctx) => {

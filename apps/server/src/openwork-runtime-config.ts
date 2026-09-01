@@ -23,6 +23,7 @@ import {
   openworkOfficeAttachmentsPluginPath,
 } from "./openwork-extensions-plugin-path.js";
 import type { ServerConfig } from "./types.js";
+import { compileRunEverythingPermission } from "./run-mode.js";
 import { runtimeStorageDir } from "./runtime-db.js";
 import {
   onRuntimeOpencodeConfigWrite,
@@ -104,8 +105,14 @@ export function buildOpenworkRuntimeConfigObjectFromSnapshot(
 ): Record<string, unknown> {
   const disabledProviders = runtimeDisabledProviderList(runtimeConfig);
   const provider = runtimeProviderMap(runtimeConfig);
+  // `run_mode` is OpenWork state, not engine config: strip it from the
+  // rendered file and compile it onto the engine's `permission` config.
+  const { run_mode: runMode, ...engineConfig } = runtimeConfig;
   return {
-    ...runtimeConfig,
+    ...engineConfig,
+    ...(runMode === "run-everything"
+      ? { permission: compileRunEverythingPermission(engineConfig.permission) }
+      : {}),
     default_agent: runtimeConfig.default_agent ?? "openwork",
     agent: {
       openwork: {

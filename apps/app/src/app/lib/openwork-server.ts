@@ -286,6 +286,18 @@ export type OpenworkAuthorizedFoldersUpdateResponse = {
   updatedAt: number;
 };
 
+export type OpenworkRunMode = "approve" | "run-everything";
+
+export type OpenworkRunModeResponse = {
+  mode: OpenworkRunMode;
+};
+
+export type OpenworkRunModeUpdateResponse = {
+  mode: OpenworkRunMode;
+  changed: boolean;
+  updatedAt: number;
+};
+
 export type OpenworkRuntimeDisabledProvidersResult = {
   ok: true;
   disabledProviders: string[];
@@ -1666,6 +1678,24 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
           hostToken,
           method: "PUT",
           body: { folders },
+          timeoutMs: timeouts.config,
+        },
+      ),
+    getRunMode: (workspaceId: string) =>
+      requestJson<OpenworkRunModeResponse>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/run-mode`,
+        { token, hostToken, timeoutMs: timeouts.config },
+      ),
+    setRunMode: (workspaceId: string, mode: OpenworkRunMode) =>
+      requestJson<OpenworkRunModeUpdateResponse>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/run-mode`,
+        {
+          token,
+          hostToken,
+          method: "PUT",
+          body: { mode },
           timeoutMs: timeouts.config,
         },
       ),
