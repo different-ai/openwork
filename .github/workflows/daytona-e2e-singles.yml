@@ -75,7 +75,7 @@ jobs:
             echo "$tests" | jq -r '.[] | "- `\(.)`"'
             echo
             echo "Denied from this lane:"
-            echo "- `capability-search-latency.e2e.test.ts`: its fault proxy is built on the driver machine's loopback in front of a driver-local mock MCP; a Daytona-hosted Den can never reach it, so it is local-placement-only."
+            echo "- \`capability-search-latency.e2e.test.ts\`: its fault proxy is built on the driver machine's loopback in front of a driver-local mock MCP; a Daytona-hosted Den can never reach it, so it is local-placement-only."
           } >> "$GITHUB_STEP_SUMMARY"
 
           echo "tests=$tests" >> "$GITHUB_OUTPUT"
