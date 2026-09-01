@@ -1,5 +1,6 @@
 export { createDesktopHandoffGrant, signInDesktopAs } from "@openwork/behaviors";
-export type { DesktopHandle } from "@openwork/hosts";
+export { coworker } from "@openwork/hosts";
+export type { CoworkerHandle, DesktopHandle } from "@openwork/hosts";
 export { test } from "./fixture.ts";
 export * from "@openwork/env";
 export * from "./brief.ts";

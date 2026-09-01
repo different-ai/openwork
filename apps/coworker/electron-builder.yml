@@ -1,0 +1,43 @@
+appId: com.differentai.opencoworker
+productName: Open Coworker
+artifactName: open-coworker-${os}-${arch}-${version}.${ext}
+directories:
+  output: dist-electron
+files:
+  - electron-dist/**/*
+  - dist/**/*
+  - server/**/*
+  - package.json
+extraMetadata:
+  main: electron-dist/main.mjs
+extraResources:
+  - from: resources/sidecars
+    to: sidecars
+    filter:
+      - opencode
+      - opencode.exe
+      - opencode-*
+      - versions.json
+      - versions.json-*
+asar: true
+npmRebuild: false
+mac:
+  icon: ../desktop/resources/icons/icon.icns
+  category: public.app-category.productivity
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  notarize: false
+  target:
+    - dmg
+    - zip
+linux:
+  executableName: open-coworker
+  icon: ../desktop/resources/icons/linux
+  syncDesktopName: true
+  target:
+    - AppImage
+    - tar.gz
+win:
+  icon: ../desktop/resources/icons/icon.ico
+  target:
+    - nsis

@@ -1,25 +1,44 @@
 {
   "name": "@openwork/coworker",
-  "version": "0.0.0",
+  "version": "0.0.0-dev",
   "private": true,
   "type": "module",
+  "desktopName": "com.differentai.opencoworker",
   "description": "Open Coworker: standalone desktop app for persistent AI coworkers, powered by the OpenWork platform.",
+  "author": {
+    "name": "OpenWork",
+    "email": "support@openworklabs.com"
+  },
+  "main": "electron/main.mjs",
   "scripts": {
     "dev": "node ./scripts/dev.mjs",
     "build": "vite build",
+    "build:electron": "node ./scripts/electron-build.mjs",
+    "package:electron": "pnpm run build:electron && pnpm exec electron-builder --config electron-builder.yml",
+    "package:electron:dir": "pnpm run build:electron && pnpm exec electron-builder --config electron-builder.yml --dir",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "pretest": "pnpm --filter @openwork/automations build",
     "test": "node --test electron/*.test.mjs",
     "electron": "pnpm exec electron ./electron/main.mjs"
   },
   "dependencies": {
+    "@modelcontextprotocol/client": "^2.0.0",
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "@opencode-ai/sdk": "^1.18.15",
     "@openwork/automations": "workspace:*",
+    "@openwork/enterprise-mcp-client": "workspace:*",
     "@openwork/headless-threads": "workspace:*",
     "@openwork/paths": "workspace:*",
     "@openwork/types": "workspace:*",
+    "better-sqlite3": "^13.0.2",
+    "drizzle-orm": "^0.45.2",
+    "htmlparser2": "8.0.2",
+    "jsonc-parser": "^3.2.1",
+    "minimatch": "^10.2.5",
     "react": "catalog:",
     "react-dom": "catalog:",
+    "undici": "6.28.0",
+    "yaml": "^2.9.0",
     "zod": "^4.3.6"
   },
   "devDependencies": {
@@ -29,6 +48,8 @@
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^5.0.4",
     "electron": "^43.2.0",
+    "electron-builder": "^26.15.3",
+    "esbuild": "0.25.12",
     "tailwindcss": "^4.3.3",
     "typescript": "^5.6.3",
     "vite": "^6.4.3"
