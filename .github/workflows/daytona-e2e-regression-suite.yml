@@ -3,6 +3,7 @@
 # The checked-in lane profile removes only topology/dependency skips before the
 # matrix is built; compatible product regressions remain in the matrix.
 # The critical-path journey remains owned by its dedicated nightly workflow.
+# A bi-daily schedule runs the full eligible suite unattended.
 # Tests that drive raw desktop() from @openwork/hosts are excluded dynamically:
 # they spawn Electron on the caller's machine (correct inside a VNC sandbox or
 # on a dev workstation, impossible on a headless runner) and need a follow-up
@@ -10,6 +11,8 @@
 name: Daytona E2E Regression Suite
 
 on:
+  schedule:
+    - cron: "0 6,18 * * *"
   workflow_run:
     workflows: [Warden]
     types: [completed]
@@ -34,6 +37,7 @@ jobs:
     if: >-
       github.repository == 'different-ai/openwork' &&
       (github.event_name == 'workflow_dispatch' ||
+      github.event_name == 'schedule' ||
       (github.event.workflow_run.event == 'pull_request' &&
       github.event.workflow_run.conclusion == 'success' &&
       github.event.workflow_run.head_repository.full_name == github.repository))
@@ -87,9 +91,14 @@ jobs:
         if: github.event_name == 'workflow_dispatch'
         run: echo "authorized=true" >> "$GITHUB_OUTPUT"
 
+      - name: Authorize scheduled E2E regression
+        id: authorize-scheduled
+        if: github.event_name == 'schedule'
+        run: echo "authorized=true" >> "$GITHUB_OUTPUT"
+
       - name: Check E2E regression configuration
         id: config
-        if: steps.authorize.outputs.authorized == 'true' || steps.authorize-manual.outputs.authorized == 'true'
+        if: steps.authorize.outputs.authorized == 'true' || steps.authorize-manual.outputs.authorized == 'true' || steps.authorize-scheduled.outputs.authorized == 'true'
         shell: bash
         env:
           DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
@@ -159,7 +168,8 @@ jobs:
           )"
 
           if [ "$EVENT_NAME" = "workflow_run" ]; then
-            matched_tests="$(node evals/scripts/spec-impact.mjs --base "$BASE_SHA" --head "$HEAD_SHA" --matched-tests)"
+            # spec-impact emits evals/specs/… paths; the matrix speaks basenames.
+            matched_tests="$(node evals/scripts/spec-impact.mjs --base "$BASE_SHA" --head "$HEAD_SHA" --matched-tests | jq -c 'map(sub("^evals/specs/"; ""))')"
             only_filter=""
           else
             matched_tests='[]'
@@ -227,8 +237,8 @@ jobs:
     needs: plan
     if: needs.plan.outputs.enabled == 'true' && needs.plan.outputs.has_tests == 'true'
     name: E2E (${{ matrix.batch.name }})
-    # Existing GitHub environment name retained for approval compatibility.
-    environment: pr-slow-specs
+    # Existing GitHub environment name retained for approval compatibility; scheduled runs use the unprotected scheduled-e2e-regression environment so they run unattended.
+    environment: ${{ github.event_name == 'schedule' && 'scheduled-e2e-regression' || 'pr-slow-specs' }}
     strategy:
       fail-fast: false
       max-parallel: 3
