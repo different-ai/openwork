@@ -610,6 +610,7 @@ export function createDaytonaHost(options: DaytonaHostOptions): DaytonaHost {
       env.set("OPENWORK_ELECTRON_USERDATA", userDataDir);
       env.set("OPENWORK_WORKSPACE_DIR", "/workspace");
       env.set("OPENWORK_GOOGLE_WORKSPACE_ALLOW_PLAINTEXT_VAULT", "1");
+      if (opts.devCommand) env.set("OPENWORK_EVAL_ELECTRON_DEV_COMMAND", opts.devCommand);
       const packagedBinary = process.env.OPENWORK_EVAL_ELECTRON_BINARY?.trim();
       if (packagedBinary) env.set("OPENWORK_EVAL_ELECTRON_BINARY", packagedBinary);
       if (opts.bootstrap) env.set("OPENWORK_DESKTOP_BOOTSTRAP_PATH", bootstrapPath);

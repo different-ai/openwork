@@ -46,7 +46,9 @@ The coworker directory is registered as an ordinary OpenWork workspace, so:
   instance). Boots the same `apps/server` embedded bundle the OpenWork desktop
   uses (`startEmbeddedServer`, managed OpenCode engine), against its own
   registry file `~/.config/openwork/coworker-server.json`, so both apps run
-  side by side. Open Coworker never requires the OpenWork desktop process.
+  side by side. Open Coworker never requires the OpenWork desktop process. The
+  packaged main process is bundled into plain ESM so workspace TypeScript is
+  never loaded from `app.asar` at runtime.
 - `electron/coworkers.mjs` — the filesystem coworker store (pure Node,
   unit-tested).
 - `src/` — Vite + React + Tailwind renderer: coworkers rail, coworker home
@@ -74,6 +76,16 @@ pnpm --filter @openwork/coworker dev       # Vite + Electron (builds server bund
 pnpm --filter @openwork/coworker test      # store + platform integration tests (node --test)
 pnpm --filter @openwork/coworker typecheck
 pnpm --filter @openwork/coworker build     # renderer bundle
+pnpm --filter @openwork/coworker package:electron:dir # unpacked native app
+pnpm --filter @openwork/coworker package:electron     # platform installers
+```
+
+The packaged local-first journey is a canonical `@openwork/testkit` spec. On
+macOS, prove the exact unpacked binary with:
+
+```bash
+OPENWORK_EVAL_ELECTRON_BINARY="apps/coworker/dist-electron/mac-arm64/Open Coworker.app/Contents/MacOS/Open Coworker" \
+  pnpm evals:e2e open-coworker-local-first --local
 ```
 
 First run: choose OpenWork Cloud or local mode, create a coworker, pick its
@@ -86,6 +98,8 @@ Existing or manually copied coworker directories are registered as native
 OpenWork workspaces automatically when the app loads them; the manual prepare
 action is retained only as recovery when registration fails.
 
-The managed engine binary resolves from `OPENWORK_OPENCODE_BIN` or `opencode`
-on PATH during development; packaged sidecar distribution follows the desktop
-app's pattern and is not wired yet.
+The managed engine binary resolves from `OPENWORK_OPENCODE_BIN`, the packaged
+target-specific OpenCode sidecar, or `opencode` on PATH, in that order. The
+Electron build mirrors the embedded server's runtime dependencies, prepares
+the same versioned sidecar used by OpenWork Desktop, and includes both as
+application resources.

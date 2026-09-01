@@ -13,7 +13,7 @@ export interface ElectronSurfaceOptions {
   };
   env?: Record<string, string>;
   /** Root package script used for a source Electron launch. Setting this bypasses OPENWORK_EVAL_ELECTRON_BINARY. */
-  devCommand?: "dev" | "dev:electron";
+  devCommand?: "dev" | "dev:electron" | "dev:coworker";
   /** Skip host-side sidecar/helper preparation when the caller intentionally uses existing resources. */
   prepareSharedResources?: boolean;
 }
