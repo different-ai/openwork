@@ -108,15 +108,18 @@ export function CloudProvidersView({
         restrictToCloud,
         checkRestriction: checkDesktopAppRestriction,
       });
-      const syncError = lastSyncError[provider.id] ?? null;
+      // Modern server sync owns credential resolution, including local
+      // Environment variables. Den's shared-credential summary and errors
+      // from the legacy renderer path are not authoritative in this mode.
+      const syncError = serverSync === null ? lastSyncError[provider.id] ?? null : null;
       const env = getCloudProviderEnv(provider.providerConfig);
       const status = resolveCloudProviderRowStatus({
         imported: Boolean(imported),
         outOfSync,
         allowed,
         importsUnavailable,
-        needsCredential: !provider.hasApiKey && env.length > 0,
-        needsServer: provider.hasApiKey && env.length > 1 && !openworkServerAvailable,
+        needsCredential: serverSync === null && !provider.hasApiKey && env.length > 0,
+        needsServer: serverSync === null && provider.hasApiKey && env.length > 1 && !openworkServerAvailable,
         syncError,
         skippedByServer: Boolean(serverSync?.skippedProviders[provider.id]),
         reloadPending: serverSync?.reloadPending === true,

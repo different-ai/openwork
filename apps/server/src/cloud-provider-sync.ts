@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 
 import type { EnvService } from "./env-file.js";
-import { syncManagedProviderAuth } from "./managed-provider-auth.js";
+import { selectPrimaryCredentialEnvName, syncManagedProviderAuth } from "./managed-provider-auth.js";
 import { writeOpenworkRuntimeConfigFile } from "./openwork-runtime-config.js";
 import {
   hasOpenworkWorkspaceConfig,
@@ -473,9 +473,13 @@ function buildProviderConfig(provider: DenProviderConnection): JsonRecord {
   return config;
 }
 
-function prepareMaterialization(providers: DenProviderConnection[]): PreparedMaterialization {
+function prepareMaterialization(
+  providers: DenProviderConnection[],
+  localEnvNames: Iterable<string>,
+): PreparedMaterialization {
   const materialized: MaterializedProvider[] = [];
   const skipped: CloudProviderSyncSkippedProvider[] = [];
+  const availableLocalEnvNames = [...localEnvNames];
   for (const provider of providers) {
     if (provider.memberCredentialState && provider.memberCredentialState !== "active") {
       skipped.push({
@@ -488,11 +492,17 @@ function prepareMaterialization(providers: DenProviderConnection[]): PreparedMat
     }
     const envEntries = providerEnvEntries(provider);
     const envNames = readProviderEnvNames(provider.providerConfig);
-    if (envNames.length > 0 && !envEntries.some((entry) => envNames.includes(entry.key))) {
+    const primaryCredentialName = provider.apiKey?.trim()
+      ? envNames[0] ?? null
+      : selectPrimaryCredentialEnvName(
+          envNames,
+          [...envEntries.map((entry) => entry.key), ...availableLocalEnvNames],
+        );
+    if (envNames.length > 0 && !primaryCredentialName) {
       // The provider declares credential env vars but the connect payload
-      // yielded no value for any of them. Materializing it would produce a
-      // provider whose every request fails with a missing API key, so it is
-      // skipped — loudly, so status readers can see why it never appeared.
+      // and the local Desktop environment yielded no primary credential.
+      // Materializing it would produce a provider whose every request fails
+      // with a missing API key, so it is skipped loudly.
       skipped.push({
         cloudProviderId: provider.id,
         providerId: runtimeProviderId(provider),
@@ -874,7 +884,16 @@ export class CloudProviderSync {
   private async runPass(request: CloudProviderSyncRequest): Promise<CloudProviderSyncRunResult> {
     const { reason, session } = request;
     try {
-      const prepared = prepareMaterialization(await fetchProviders(this.fetchImpl, session));
+      const [providers, storedEnv] = await Promise.all([
+        fetchProviders(this.fetchImpl, session),
+        this.env.list(),
+      ]);
+      // Local credentials only satisfy materialization eligibility. Never add
+      // their values to Den's env entries or cloud cleanup ownership.
+      const localEnvNames = storedEnv
+        .filter((entry) => entry.value.trim().length > 0 && !this.ownedEnvKeys.has(entry.key))
+        .map((entry) => entry.key);
+      const prepared = prepareMaterialization(providers, localEnvNames);
       if (request.generation !== this.contextGeneration) return { status: "no_session" };
       const { changed, detail, reloadError } = await this.apply(prepared);
       // The materialization itself succeeded (config + env writes landed), so

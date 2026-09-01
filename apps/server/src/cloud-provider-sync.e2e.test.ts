@@ -452,6 +452,108 @@ describe("cloud provider sync gateway", () => {
     }]);
   });
 
+  test("materializes a credential-less Den provider from a matching local Desktop environment key", async () => {
+    const root = await createRoot();
+    const credentialKey = "LOCAL_FALLBACK_API_KEY";
+    const localSecret = "sk-local-fallback-never-cloud-owned";
+    const provider: FakeProvider = {
+      ...buildProvider([{ id: "allowed-local-model", name: "Allowed Local Model", config: {} }]),
+      id: "lpr_local_fallback",
+      name: "Local Credential Provider",
+      apiKey: "",
+      apiKeys: null,
+      providerConfig: {
+        env: [credentialKey],
+        npm: "@ai-sdk/openai-compatible",
+      },
+    };
+    const denTraffic: Array<{ url: string; body: string | null }> = [];
+    const engineTraffic: Array<{ method: string; url: string; body: string | null }> = [];
+    const fetchImpl = Object.assign(async (
+      input: Parameters<typeof globalThis.fetch>[0],
+      init?: Parameters<typeof globalThis.fetch>[1],
+    ) => {
+      const url = new URL(String(input));
+      const body = typeof init?.body === "string" ? init.body : null;
+      if (url.hostname === "den.example.test") {
+        denTraffic.push({ url: url.toString(), body });
+        if (url.pathname === "/v1/llm-providers") return Response.json({ llmProviders: [provider] });
+        if (url.pathname === `/v1/llm-providers/${provider.id}/connect`) {
+          return Response.json({ llmProvider: provider });
+        }
+      }
+      if (url.hostname === "engine.example.test") {
+        engineTraffic.push({ method: init?.method ?? "GET", url: url.toString(), body });
+        return Response.json(true);
+      }
+      return Response.json({ error: "not_found" }, { status: 404 });
+    }, { preconnect: globalThis.fetch.preconnect });
+    const config = serverConfig(root, "https://engine.example.test");
+    const env = new EnvService({ path: process.env.OPENWORK_ENV_STORE });
+    const sync = new CloudProviderSync({
+      config,
+      env,
+      fetchImpl,
+      reloadEngine: async () => undefined,
+      intervalMs: 3_600_000,
+    });
+    stops.push(() => sync.stop());
+
+    await sync.setSession({
+      baseUrl: "https://den.example.test",
+      token: "den-token",
+      orgId: "org-local-fallback",
+    });
+    await sync.run("initial-missing");
+    expect(sync.status().providers).toEqual([]);
+    expect(sync.status().skippedProviders).toEqual([{
+      cloudProviderId: provider.id,
+      providerId: provider.id,
+      name: provider.name,
+      reason: "missing_credentials",
+    }]);
+
+    await env.upsertMany([{ key: "UNRELATED_API_KEY", value: "sk-unrelated" }]);
+    await sync.run("mismatched-local-key");
+    expect(sync.status().providers).toEqual([]);
+    expect(runtimeProviderMap(await readGlobalRuntimeOpencodeConfig(config))[provider.id]).toBeUndefined();
+
+    await env.upsertMany([{ key: credentialKey, value: localSecret }]);
+    expect((await sync.run("matching-local-key")).status).toBe("applied");
+    expect(sync.status().providers.map((entry) => entry.cloudProviderId)).toEqual([provider.id]);
+    expect(sync.status().skippedProviders).toEqual([]);
+    expect(sync.status().lastRun?.detail?.envUpserts).toBe(0);
+    const runtimeProvider = expectRecord(
+      runtimeProviderMap(await readGlobalRuntimeOpencodeConfig(config))[provider.id],
+      "local fallback runtime provider",
+    );
+    expect(Object.keys(expectRecord(runtimeProvider.models, "local fallback models"))).toEqual(["allowed-local-model"]);
+    expect(JSON.stringify(runtimeProvider)).not.toContain(localSecret);
+    expect(JSON.stringify(sync.status())).not.toContain(localSecret);
+    expect(JSON.stringify(denTraffic)).not.toContain(localSecret);
+    expect(engineTraffic.some((request) => request.method === "PUT" && request.body?.includes(localSecret))).toBe(true);
+    expect((await env.list()).find((entry) => entry.key === credentialKey)?.value).toBe(localSecret);
+
+    await sync.clearSession();
+    expect(runtimeProviderMap(await readGlobalRuntimeOpencodeConfig(config))[provider.id]).toBeUndefined();
+    expect((await env.list()).find((entry) => entry.key === credentialKey)?.value).toBe(localSecret);
+
+    await sync.setSession({
+      baseUrl: "https://den.example.test",
+      token: "den-token",
+      orgId: "org-local-fallback",
+    });
+    await sync.run("restore-with-local-key");
+    expect(sync.status().providers.map((entry) => entry.cloudProviderId)).toEqual([provider.id]);
+
+    await env.delete(credentialKey);
+    expect((await sync.run("local-key-removed")).status).toBe("applied");
+    expect(sync.status().providers).toEqual([]);
+    expect(sync.status().skippedProviders[0]?.reason).toBe("missing_credentials");
+    expect(runtimeProviderMap(await readGlobalRuntimeOpencodeConfig(config))[provider.id]).toBeUndefined();
+    expect((await env.list()).find((entry) => entry.key === "UNRELATED_API_KEY")?.value).toBe("sk-unrelated");
+  });
+
   test("materializes Den providers globally, reconciles changes, and sweeps the session", async () => {
     const root = await createRoot();
     const engineRequests: string[] = [];

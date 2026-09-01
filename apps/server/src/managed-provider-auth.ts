@@ -164,7 +164,10 @@ function credentialEnvRank(name: string): number | null {
   return null;
 }
 
-function selectPrimaryCredentialEnvName(envNames: string[], availableNames: Iterable<string>): string | null {
+export function selectPrimaryCredentialEnvName(
+  envNames: string[],
+  availableNames: Iterable<string>,
+): string | null {
   const available = new Set([...availableNames].filter((name) => name.trim().length > 0));
   const orderedNames = envNames.filter((name) => available.has(name));
   const ranked = orderedNames
