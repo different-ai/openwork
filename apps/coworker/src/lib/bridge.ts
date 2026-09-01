@@ -1,4 +1,5 @@
 /** Typed access to the Open Coworker main-process bridge. */
+import type { AutomationSchedule } from "@openwork/types/automations";
 
 export type CoworkerSummary = {
   slug: string;
@@ -11,6 +12,8 @@ export type CoworkerSummary = {
   workspaceId: string;
   /** Preferred model as "providerId/modelId"; empty means engine default. */
   model: string;
+  /** Optional reasoning/behavior variant for the preferred model. */
+  modelVariant: string;
   automations: string[];
   createdAt: string;
 };
@@ -24,6 +27,28 @@ export type CoworkerMemoryFile = {
   path: string;
 };
 
+export type LocalResponsibilityRun = {
+  id: string;
+  status: "running" | "succeeded" | "failed";
+  trigger: "scheduled" | "recovery" | "manual";
+  startedAt: number;
+  finishedAt: number | null;
+  threadId: string;
+  error: string;
+};
+
+export type LocalResponsibility = {
+  id: string;
+  name: string;
+  instructions: string;
+  schedule: AutomationSchedule;
+  state: "active" | "paused";
+  nextDueAt: number | null;
+  latestRun: LocalResponsibilityRun | null;
+  createdAt: number;
+  updatedAt: number;
+};
+
 export type RuntimeInfo = {
   appName: string;
   version: string;
@@ -33,7 +58,6 @@ export type RuntimeInfo = {
   denBaseUrl: string;
   engineManaged: boolean;
   engineError: string;
-  allowOffline: boolean;
 };
 
 type BridgeResponse = { ok: true; result: unknown } | { ok: false; error: string };
@@ -61,7 +85,7 @@ export const coworkerBridge = {
     get: (slug: string) => invoke<CoworkerSummary>("coworkers.get", { slug }),
     create: (input: { name: string; role: string; mission: string; avatarColor: AvatarColor; avatarGlasses: AvatarGlasses }) =>
       invoke<CoworkerSummary>("coworkers.create", input),
-    update: (slug: string, patch: Partial<Pick<CoworkerSummary, "workspaceId" | "automations" | "mission" | "role" | "model" | "avatarColor" | "avatarGlasses">>) =>
+    update: (slug: string, patch: Partial<Pick<CoworkerSummary, "workspaceId" | "automations" | "mission" | "role" | "model" | "modelVariant" | "avatarColor" | "avatarGlasses">>) =>
       invoke<CoworkerSummary>("coworkers.update", { slug, patch }),
     ensureWorkspace: (slug: string) => invoke<CoworkerSummary>("coworkers.ensureWorkspace", { slug }),
     remove: (slug: string) => invoke<{ ok: boolean }>("coworkers.delete", { slug }),
@@ -74,6 +98,16 @@ export const coworkerBridge = {
     },
     write: (slug: string, path: string, content: string) =>
       invoke<{ ok: boolean }>("coworkers.files.write", { slug, path, content }),
+  },
+  localResponsibilities: {
+    list: (slug: string) => invoke<LocalResponsibility[]>("localResponsibilities.list", { slug }),
+    create: (slug: string, input: { name: string; instructions: string; schedule: AutomationSchedule }) =>
+      invoke<LocalResponsibility>("localResponsibilities.create", { slug, ...input }),
+    setActive: (slug: string, id: string, active: boolean) =>
+      invoke<LocalResponsibility>("localResponsibilities.setActive", { slug, id, active }),
+    remove: (slug: string, id: string) => invoke<{ ok: boolean }>("localResponsibilities.delete", { slug, id }),
+    runNow: (slug: string, id: string) =>
+      invoke<{ accepted: boolean }>("localResponsibilities.runNow", { slug, id }),
   },
   openExternal: (url: string) => invoke<{ ok: boolean }>("shell.openExternal", { url }),
 };

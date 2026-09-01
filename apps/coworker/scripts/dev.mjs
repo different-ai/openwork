@@ -11,6 +11,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const appRoot = resolve(__dirname, "..");
 const repoRoot = resolve(appRoot, "../..");
 const serverBundle = resolve(repoRoot, "apps", "server", "dist", "embedded.js");
+const automationsBundle = resolve(repoRoot, "packages", "automations", "dist", "index.js");
 
 const pnpmCmd = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
 const portValue = Number.parseInt(process.env.PORT ?? "", 10);
@@ -51,6 +52,11 @@ if (!existsSync(serverBundle)) {
   await runOnce(pnpmCmd, ["--filter", "openwork-server", "build"], { cwd: repoRoot });
 }
 
+if (!existsSync(automationsBundle)) {
+  console.log("[coworker-dev] Building shared OpenWork scheduling contracts…");
+  await runOnce(pnpmCmd, ["--filter", "@openwork/automations", "build"], { cwd: repoRoot });
+}
+
 console.log(`[coworker-dev] Starting Vite on ${startUrl}`);
 const vite = run(pnpmCmd, ["exec", "vite", "--port", String(devPort)], {
   cwd: appRoot,
@@ -88,9 +94,6 @@ electron = run(pnpmCmd, ["exec", "electron", "./electron/main.mjs"], {
     ...process.env,
     COWORKER_START_URL: startUrl,
     OPENWORK_DEV_MODE: "1",
-    // Dev launches are usable before signing in; connect the OpenWork account
-    // from the rail whenever. Packaged builds keep the cloud requirement.
-    COWORKER_ALLOW_OFFLINE: process.env.COWORKER_ALLOW_OFFLINE ?? "1",
   },
 });
 

@@ -4,18 +4,22 @@ import {
   type AvatarColor,
   type AvatarGlasses,
   type CoworkerSummary,
+  type RuntimeInfo,
 } from "@/lib/bridge";
 import { AvatarControls, CoworkerAvatar } from "@/ui/coworker-avatar";
 import { Button, ErrorNote, Field, inputClass } from "@/ui/kit";
+import { ModelPicker, type ModelSelection } from "@/ui/model-picker";
 
 /**
  * Creation establishes only a durable identity and workspace. The first
  * assignment remains the simplest way to teach a coworker what it should own.
  */
 export function NewCoworker({
+  runtime,
   onCreated,
   onCancel,
 }: {
+  runtime: RuntimeInfo;
   onCreated: (coworker: CoworkerSummary) => void;
   onCancel: (() => void) | null;
 }) {
@@ -27,6 +31,9 @@ export function NewCoworker({
   const [showDetails, setShowDetails] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [created, setCreated] = useState<CoworkerSummary | null>(null);
+  const [modelRuntime, setModelRuntime] = useState(runtime);
+  const [selection, setSelection] = useState<ModelSelection>({ model: "", modelVariant: "" });
 
   async function create() {
     if (!name.trim()) {
@@ -36,19 +43,72 @@ export function NewCoworker({
     setBusy(true);
     setError("");
     try {
-      onCreated(
-        await coworkerBridge.coworkers.create({
+      const nextCoworker = await coworkerBridge.coworkers.create({
           name: name.trim(),
           role: role.trim(),
           mission: mission.trim(),
           avatarColor,
           avatarGlasses,
-        }),
-      );
+        });
+      setModelRuntime(await coworkerBridge.runtimeInfo());
+      setCreated(nextCoworker);
+      setBusy(false);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
       setBusy(false);
     }
+  }
+
+  async function finish() {
+    if (!created) return;
+    setBusy(true);
+    setError("");
+    try {
+      const updated = selection.model || selection.modelVariant
+        ? await coworkerBridge.coworkers.update(created.slug, selection)
+        : created;
+      onCreated(updated);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+      setBusy(false);
+    }
+  }
+
+  if (created) {
+    return (
+      <div className="flex h-full items-center justify-center overflow-y-auto bg-ink/50 p-8">
+        <div className="creation-card grid w-full max-w-3xl overflow-hidden rounded-[30px] border border-line md:grid-cols-[260px_1fr]">
+          <div className="avatar-stage flex min-h-[380px] flex-col items-center justify-center border-b border-line p-7 md:border-b-0 md:border-r">
+            <CoworkerAvatar animated color={created.avatarColor} glasses={created.avatarGlasses} name={created.name} size={132} />
+            <p className="mt-3 text-lg font-semibold tracking-[-0.025em] text-snow">{created.name}</p>
+            <p className="mt-1 text-center text-xs text-mist">Identity and workspace ready</p>
+          </div>
+          <div className="p-6 md:p-7">
+            <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-spark">How {created.name} works</p>
+            <h1 className="mt-1 text-2xl font-semibold tracking-[-0.035em] text-snow">Choose a model</h1>
+            <p className="mt-1 text-sm leading-relaxed text-mist">
+              Choose from providers connected to OpenWork, or follow the engine default. You can change this later.
+            </p>
+            <div className="mt-5">
+              <ModelPicker
+                runtime={modelRuntime}
+                coworker={created}
+                value={selection.model}
+                modelVariant={selection.modelVariant}
+                onChange={setSelection}
+              />
+            </div>
+            {error ? <div className="mt-3"><ErrorNote>{error}</ErrorNote></div> : null}
+            <div className="mt-5 flex items-center justify-between gap-3 border-t border-line pt-4">
+              <p className="text-[10px] uppercase tracking-[0.12em] text-mist/75">Step 2 of 2</p>
+              <Button variant="primary" disabled={busy} onClick={() => void finish()}>
+                {busy ? "Finishing…" : "Finish setup"}
+              </Button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
   }
 
   return (
