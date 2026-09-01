@@ -1,6 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { coworkerBridge, type CoworkerSummary, type RuntimeInfo } from "@/lib/bridge";
 import {
+  artifactKindLabel,
+  artifactsForToolCall,
+  type CoworkerArtifactKind,
+} from "@/lib/artifacts";
+import {
   createCoworkerMcpClient,
   gatewayMcpAppLaunch,
   preservedMcpAppResult,
@@ -557,6 +562,7 @@ function ToolReceipt({ call, client }: { call: TranscriptToolCall; client: Cowor
   const [app, setApp] = useState<CoworkerMcpAppResource | null>(null);
   const [appError, setAppError] = useState("");
   const presentation = toolPresentation(call);
+  const artifacts = artifactsForToolCall(call);
   const failed = call.status === "error" || call.status === "failed";
   const complete = call.status === "completed" || call.status === "success";
 
@@ -590,6 +596,30 @@ function ToolReceipt({ call, client }: { call: TranscriptToolCall; client: Cowor
         </details>
       </div>
       {call.error ? <p className="mt-2 pl-4 text-[10px] text-rose">{call.error}</p> : null}
+      {complete && artifacts.length > 0 ? (
+        <div className="mt-2 space-y-1.5 border-t border-line pt-2" data-testid="coworker-artifacts">
+          {artifacts.map((artifact) => (
+            <div key={`${artifact.kind}:${artifact.value}`} className="flex items-center gap-2 rounded-lg bg-white/[0.035] px-2.5 py-2">
+              <span className="flex size-7 shrink-0 items-center justify-center rounded-lg border border-white/8 bg-ink text-mist">
+                <ArtifactIcon kind={artifact.kind} />
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="block text-[9px] font-semibold uppercase tracking-[0.1em] text-mist">{artifactKindLabel(artifact.kind)}</span>
+                <span className="mt-0.5 block truncate text-[11px] font-medium text-snow" title={artifact.value}>{artifact.label}</span>
+              </span>
+              {artifact.openUrl ? (
+                <button
+                  type="button"
+                  className="rounded-lg border border-white/9 px-2 py-1 text-[10px] font-medium text-mist transition-colors hover:bg-white/6 hover:text-snow"
+                  onClick={() => void coworkerBridge.openExternal(artifact.openUrl ?? "")}
+                >
+                  Open
+                </button>
+              ) : null}
+            </div>
+          ))}
+        </div>
+      ) : null}
       {app && result ? (
         <div className="mt-2">
           <McpAppFrame
@@ -604,6 +634,30 @@ function ToolReceipt({ call, client }: { call: TranscriptToolCall; client: Cowor
       ) : null}
       {appError ? <p className="mt-2 pl-4 text-[10px] text-mist">Interactive view unavailable. {appError}</p> : null}
     </li>
+  );
+}
+
+function ArtifactIcon({ kind }: { kind: CoworkerArtifactKind }) {
+  if (kind === "browser") {
+    return (
+      <svg aria-hidden="true" viewBox="0 0 20 20" className="size-3.5 fill-none stroke-current" strokeWidth="1.4">
+        <circle cx="10" cy="10" r="6.7" />
+        <path d="M3.6 8h12.8M3.6 12h12.8M10 3.3c1.8 1.8 2.7 4 2.7 6.7s-.9 4.9-2.7 6.7M10 3.3C8.2 5.1 7.3 7.3 7.3 10s.9 4.9 2.7 6.7" />
+      </svg>
+    );
+  }
+  if (kind === "image") {
+    return (
+      <svg aria-hidden="true" viewBox="0 0 20 20" className="size-3.5 fill-none stroke-current" strokeWidth="1.4">
+        <rect x="3" y="3.5" width="14" height="13" rx="2" />
+        <circle cx="7.2" cy="7.4" r="1.2" /><path d="m4.5 14 3.8-3.8 2.4 2.4 1.7-1.7 3.1 3.1" />
+      </svg>
+    );
+  }
+  return (
+    <svg aria-hidden="true" viewBox="0 0 20 20" className="size-3.5 fill-none stroke-current" strokeWidth="1.4">
+      <path d="M5 2.8h6l4 4v10.4H5z" /><path d="M11 2.8v4h4M7.5 10h5M7.5 13h5" />
+    </svg>
   );
 }
 
