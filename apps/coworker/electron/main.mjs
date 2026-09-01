@@ -19,11 +19,14 @@ import { createHeadlessThreadClient } from "@openwork/headless-threads";
 import {
   createCoworker,
   defaultCoworkersDir,
-  deleteCoworker,
+  deleteRetiredCoworker,
   getCoworker,
   listCoworkers,
   listMemoryFiles,
+  listRetiredCoworkers,
   readCoworkerFile,
+  restoreCoworker,
+  retireCoworker,
   updateCoworker,
   writeCoworkerFile,
 } from "./coworkers.mjs";
@@ -468,7 +471,23 @@ const commands = {
         signal: AbortSignal.timeout(8000),
       }).catch(() => undefined);
     }
-    await deleteCoworker(coworkersDir, slug);
+    const retired = await retireCoworker(coworkersDir, slug);
+    return { ok: true, archiveId: retired.archiveId };
+  },
+  "coworkers.retired.list": async () => listRetiredCoworkers(coworkersDir),
+  "coworkers.restore": async ({ archiveId }) => {
+    // Restoring puts the home back at its original path; the server derives the
+    // same workspace id from that path, so registration is idempotent.
+    const restored = await restoreCoworker(coworkersDir, archiveId);
+    await ensurePlatformServer();
+    const hadEngine = Boolean(serverHandle?.managedOpencode);
+    const workspaceId = await registerCoworkerWorkspace(restored);
+    const updated = await updateCoworker(coworkersDir, restored.slug, { workspaceId });
+    if (!hadEngine) await restartPlatformServer();
+    return updated;
+  },
+  "coworkers.retired.delete": async ({ archiveId }) => {
+    await deleteRetiredCoworker(coworkersDir, archiveId);
     return { ok: true };
   },
   "coworkers.files.list": async ({ slug }) => listMemoryFiles(coworkersDir, slug),

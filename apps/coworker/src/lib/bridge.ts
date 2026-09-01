@@ -21,6 +21,19 @@ export type CoworkerSummary = {
 export type AvatarColor = "blue" | "violet" | "mint" | "orange" | "rose" | "slate";
 export type AvatarGlasses = "round" | "square" | "none";
 
+export type RetiredCoworker = {
+  archiveId: string;
+  slug: string;
+  name: string;
+  role: string;
+  avatarColor: AvatarColor;
+  avatarGlasses: AvatarGlasses;
+  retiredAt: string;
+  fileCount: number;
+  /** False while a live coworker already occupies this slug. */
+  canRestore: boolean;
+};
+
 export type CoworkerMemoryFile = {
   id: string;
   label: string;
@@ -88,7 +101,11 @@ export const coworkerBridge = {
     update: (slug: string, patch: Partial<Pick<CoworkerSummary, "workspaceId" | "automations" | "mission" | "role" | "model" | "modelVariant" | "avatarColor" | "avatarGlasses">>) =>
       invoke<CoworkerSummary>("coworkers.update", { slug, patch }),
     ensureWorkspace: (slug: string) => invoke<CoworkerSummary>("coworkers.ensureWorkspace", { slug }),
-    remove: (slug: string) => invoke<{ ok: boolean }>("coworkers.delete", { slug }),
+    /** Retire: archive the whole home under `.retired/`; nothing is deleted. */
+    remove: (slug: string) => invoke<{ ok: boolean; archiveId: string }>("coworkers.delete", { slug }),
+    listRetired: () => invoke<RetiredCoworker[]>("coworkers.retired.list"),
+    restore: (archiveId: string) => invoke<CoworkerSummary>("coworkers.restore", { archiveId }),
+    deleteRetired: (archiveId: string) => invoke<{ ok: boolean }>("coworkers.retired.delete", { archiveId }),
   },
   files: {
     list: (slug: string) => invoke<CoworkerMemoryFile[]>("coworkers.files.list", { slug }),
