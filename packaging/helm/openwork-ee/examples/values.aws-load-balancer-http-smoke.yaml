@@ -39,6 +39,11 @@ config:
     webAppHosts: "pending-web-nlb"
     bootstrapAdminEmails: "REPLACE_ADMIN_EMAIL"
     authCallbackUrl: "http://pending-web-nlb:3005"
+    # Automations are opt-in for self-hosted deployments and stay hidden until
+    # enabled. Set both values to "true" to turn them on. See the "Automations
+    # rollout" section in the chart README before changing either value.
+    automationsEnabled: "false"
+    automationsRuntimeEnabled: "true"
   provisioner:
     mode: stub
 
