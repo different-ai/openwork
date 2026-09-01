@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { coworkerBridge, type CoworkerSummary, type RuntimeInfo } from "@/lib/bridge";
-import { readDenSession, writeDenSession, type DenSession } from "@/lib/den";
+import { createDenAutomationsClient, readDenSession, writeDenSession, type DenSession } from "@/lib/den";
 import { readCoworkerActivity, type CoworkerActivity } from "@/lib/threads";
 import { Button, ErrorNote } from "@/ui/kit";
 import { NewCoworker } from "@/ui/new-coworker";
@@ -17,6 +17,7 @@ export default function App() {
   const [creating, setCreating] = useState(false);
   const [connecting, setConnecting] = useState(false);
   const [activityBySlug, setActivityBySlug] = useState<Record<string, CoworkerActivity>>({});
+  const [attentionBySlug, setAttentionBySlug] = useState<Record<string, string>>({});
 
   const boot = useCallback(async () => {
     try {
@@ -69,6 +70,42 @@ export default function App() {
     };
   }, [runtime, coworkers]);
 
+  useEffect(() => {
+    if (!session) {
+      setAttentionBySlug({});
+      return;
+    }
+    let cancelled = false;
+    const den = createDenAutomationsClient(session);
+    const refreshAttention = async () => {
+      try {
+        const list = await den.list();
+        const next: Record<string, string> = {};
+        for (const coworker of coworkers) {
+          const attention = list.items.find(
+            (entry) =>
+              entry.automation.state === "needs_attention" &&
+              (coworker.automations.includes(entry.automation.id) ||
+                Boolean(coworker.workspaceId && entry.revision.workspaceId === coworker.workspaceId)),
+          );
+          if (attention) {
+            next[coworker.slug] =
+              attention.automation.needsAttentionReason?.message || attention.automation.name;
+          }
+        }
+        if (!cancelled) setAttentionBySlug(next);
+      } catch {
+        // The responsibilities rail presents connection errors in context.
+      }
+    };
+    void refreshAttention();
+    const timer = window.setInterval(() => void refreshAttention(), 15_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [session, coworkers]);
+
   const refreshRuntime = useCallback(async () => {
     const info = await coworkerBridge.runtimeInfo();
     setRuntime(info);
@@ -111,6 +148,21 @@ export default function App() {
   }
 
   const selected = coworkers.find((coworker) => coworker.slug === selectedSlug) ?? null;
+  const visibleActivityBySlug: Record<string, CoworkerActivity> = {};
+  for (const coworker of coworkers) {
+    const attention = attentionBySlug[coworker.slug];
+    const activity = activityBySlug[coworker.slug];
+    if (attention) {
+      visibleActivityBySlug[coworker.slug] = {
+        state: "attention",
+        label: "Needs you",
+        detail: attention,
+        updatedAt: activity?.updatedAt ?? 0,
+      };
+    } else if (activity) {
+      visibleActivityBySlug[coworker.slug] = activity;
+    }
+  }
 
   function updateCoworkerInList(updated: CoworkerSummary) {
     setBots((current) => current.map((coworker) => (coworker.slug === updated.slug ? updated : coworker)));
@@ -126,7 +178,7 @@ export default function App() {
     <div className="flex h-full">
       <CoworkerRail
         coworkers={coworkers}
-        activityBySlug={activityBySlug}
+        activityBySlug={visibleActivityBySlug}
         selectedSlug={creating ? "" : selectedSlug}
         session={session}
         onSelect={(slug) => {
