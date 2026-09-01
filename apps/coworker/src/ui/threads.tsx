@@ -52,9 +52,10 @@ export function ThreadsPanel({
             workspaceId: coworker.workspaceId,
             token: runtime.ownerToken,
             model: coworker.model,
+            modelVariant: coworker.modelVariant,
           })
         : null,
-    [runtime.serverUrl, runtime.ownerToken, coworker.workspaceId, coworker.model],
+    [runtime.serverUrl, runtime.ownerToken, coworker.workspaceId, coworker.model, coworker.modelVariant],
   );
   const [items, setItems] = useState<ThreadListItem[]>([]);
   const [openThreadId, setOpenThreadId] = useState("");
