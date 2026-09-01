@@ -6,6 +6,7 @@ import {
   type EngineModelOption,
 } from "@/lib/threads";
 import { Button, ErrorNote, Field, StatusDot, inputClass } from "@/ui/kit";
+import { InlineLoader } from "@/ui/brand";
 
 export type ModelSelection = { model: string; modelVariant: string };
 
@@ -121,8 +122,8 @@ export function ModelPicker({
               value={query}
               onChange={(event) => setQuery(event.target.value)}
             />
-            <Button variant="ghost" className="shrink-0 text-xs" disabled={loading} onClick={() => void refresh()}>
-              {loading ? "…" : "Refresh"}
+            <Button aria-busy={loading} variant="ghost" className="shrink-0 text-xs" disabled={loading} onClick={() => void refresh()}>
+              {loading ? "Refreshing" : "Refresh"}
             </Button>
           </div>
           <div className="max-h-64 overflow-y-auto p-2">
@@ -170,6 +171,10 @@ export function ModelPicker({
                 ))}
               </div>
             ))}
+
+            {loading && catalog.models.length === 0 ? (
+              <div className="p-4 text-xs text-mist"><InlineLoader label="Reading connected models" /></div>
+            ) : null}
 
             {!loading && runtime.engineManaged && catalog.models.length === 0 ? (
               <p className="p-3 text-xs leading-relaxed text-mist">

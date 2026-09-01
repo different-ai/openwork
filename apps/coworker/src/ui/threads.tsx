@@ -17,6 +17,7 @@ import {
 } from "@/lib/threads";
 import { InteractionCards } from "@/ui/interactions";
 import { CoworkerAvatar } from "@/ui/coworker-avatar";
+import { InlineLoader } from "@/ui/brand";
 import { Button, Empty, ErrorNote, StatusDot } from "@/ui/kit";
 import { McpAppFrame } from "@/ui/mcp-app-frame";
 
@@ -455,7 +456,7 @@ function ThreadView({
               {coworker.name} is working…
             </div>
           ) : null}
-          {messages.length === 0 && !error ? <Empty>Loading activity…</Empty> : null}
+          {messages.length === 0 && !error ? <Empty><InlineLoader label="Loading activity" /></Empty> : null}
           {terminalError ? (
             <ErrorNote>
               The last turn failed — {terminalError}. Choose another model in coworker details or try again.
@@ -651,7 +652,7 @@ function Composer({
               }}
             />
           )}
-          <Button variant="primary" className="rounded-xl" disabled={busy || !value.trim()} onClick={onSubmit}>
+          <Button aria-busy={busy} variant="primary" className="rounded-xl" disabled={busy || !value.trim()} onClick={onSubmit}>
             {busy ? `${submitLabel}ing…` : submitLabel}
           </Button>
         </div>

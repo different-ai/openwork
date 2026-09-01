@@ -1,4 +1,5 @@
 import type { AvatarColor, AvatarGlasses } from "@/lib/bridge";
+import { useAvatarPointerGaze } from "@/ui/use-avatar-pointer-gaze";
 
 const AVATAR_COLORS: Array<{ id: AvatarColor; label: string; swatch: string }> = [
   { id: "blue", label: "OpenWork blue", swatch: "#b8c9f0" },
@@ -47,9 +48,11 @@ export function CoworkerAvatar({
   const palette = PALETTES[color];
   const phase = motionPhase(name);
   const motionClass = animated ? `is-animated motion-phase-${phase}` : "";
+  const avatarRef = useAvatarPointerGaze();
 
   return (
     <svg
+      ref={avatarRef}
       aria-label={`${name || "Coworker"} avatar`}
       className={`coworker-avatar ${motionClass} ${working ? "is-working" : ""}`}
       role="img"
@@ -81,10 +84,12 @@ export function CoworkerAvatar({
         />
 
         <g className="coworker-avatar__features">
-          <g className="coworker-avatar__gaze">
-            <g className="coworker-avatar__pupils" fill="#0b0e14">
-              <rect x="34.5" y="50" width="6" height="14" rx="3" />
-              <rect x="79.5" y="50" width="6" height="14" rx="3" />
+          <g className="coworker-avatar__pointer-gaze">
+            <g className="coworker-avatar__gaze">
+              <g className="coworker-avatar__pupils" fill="#0b0e14">
+                <rect x="34.5" y="50" width="6" height="14" rx="3" />
+                <rect x="79.5" y="50" width="6" height="14" rx="3" />
+              </g>
             </g>
           </g>
 
