@@ -2435,6 +2435,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
                 onOpenAccount={openCloudAccountSettings}
                 refreshCloudOrgProviders={providerAuthStore.refreshCloudOrgProviders}
                 runCloudProviderSync={providerAuthStore.runCloudProviderSync}
+                saveCloudProviderMemberCredential={providerAuthStore.saveCloudProviderMemberCredential}
                 serverSync={providerAuthSnapshot.cloudProviderServerSync}
               />
             }
@@ -2590,6 +2591,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
             onOpenAccount={openCloudAccountSettings}
             refreshCloudOrgProviders={providerAuthStore.refreshCloudOrgProviders}
             runCloudProviderSync={providerAuthStore.runCloudProviderSync}
+            saveCloudProviderMemberCredential={providerAuthStore.saveCloudProviderMemberCredential}
             serverSync={providerAuthSnapshot.cloudProviderServerSync}
           />
         );

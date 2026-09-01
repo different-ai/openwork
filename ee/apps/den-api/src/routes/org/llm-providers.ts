@@ -22,6 +22,7 @@ import {
   listConfiguredEnvKeys,
   readProviderEnvNames,
   resolveProviderCredential,
+  selectPrimaryCredentialEnvName,
 } from "../../llm/provider-credentials.js"
 import {
   jsonValidator,
@@ -144,6 +145,17 @@ const adminMemberCredentialWriteSchema = z.object({
   externalCredentialId: z.string().trim().min(1).max(255).optional(),
   expectedVersion: z.number().int().positive().optional(),
 }).superRefine(requireExactlyOneCredential)
+
+const providerProbeRequestSchema = z.object({
+  orgMembershipId: denTypeIdSchema("member").optional(),
+})
+
+const providerProbeResponseSchema = z.object({
+  status: z.enum(["ok", "unauthorized", "unreachable", "model_missing", "no_credential"]),
+  latencyMs: z.number().int().nonnegative().optional(),
+  models: z.number().int().nonnegative().optional(),
+  missingModelIds: z.array(z.string()).optional(),
+}).meta({ ref: "LlmProviderProbeResponse" })
 
 const endpointProbeRequestSchema = z.object({
   api: z.string().trim().min(1).max(2048),
@@ -391,6 +403,26 @@ function memberCredentialSummary(credential: LlmProviderMemberCredentialRow) {
     version: credential.version,
     updatedAt: credential.updatedAt.toISOString(),
   }
+}
+
+function probeBearerCredential(provider: Pick<LlmProviderRow, "providerConfig">, secret: string | null) {
+  const credential = decodeProviderCredential(secret)
+  if (credential.apiKey) return credential.apiKey
+  if (!credential.apiKeys) return null
+  const envName = selectPrimaryCredentialEnvName(
+    readProviderEnvNames(provider.providerConfig),
+    Object.keys(credential.apiKeys),
+  )
+  return envName ? credential.apiKeys[envName] ?? null : null
+}
+
+function readGatewayModelIds(value: unknown) {
+  if (typeof value !== "object" || value === null || !("data" in value) || !Array.isArray(value.data)) return []
+  return value.data.flatMap((entry) =>
+    typeof entry === "object" && entry !== null && "id" in entry && typeof entry.id === "string"
+      ? [entry.id]
+      : [],
+  )
 }
 
 type MemberCredentialWriteResult = {
@@ -1028,6 +1060,136 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
     },
   )
 
+  app.post(
+    "/v1/llm-providers/:llmProviderId/probe",
+    describeRoute({
+      tags: ["LLM Providers"],
+      summary: "Probe an LLM provider with a resolved credential",
+      description: "Tests the provider's models endpoint with the calling member's resolved credential. Owners and admins may select another granted member's per-member binding. Credential material and upstream response bodies are never returned.",
+      responses: {
+        200: jsonResponse("Provider probe completed.", providerProbeResponseSchema),
+        400: jsonResponse("The provider id or target binding was invalid.", z.union([invalidRequestSchema, notPerMemberSchema])),
+        401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
+        403: jsonResponse("The caller cannot access the provider or selected member binding.", forbiddenSchema),
+        404: jsonResponse("The provider or selected member could not be found.", notFoundSchema),
+      },
+    }),
+    orgMemberRoute(),
+    paramValidator(orgLlmProviderParamsSchema),
+    jsonValidator(providerProbeRequestSchema),
+    resolveMemberTeamsMiddleware,
+    async (c) => {
+      const payload = c.get("organizationContext")
+      const memberTeams = c.get("memberTeams") ?? []
+      const params = c.req.valid("param")
+      const input = c.req.valid("json")
+      const llmProviderId = parseLlmProviderId(params.llmProviderId)
+      const provider = await getLlmProvider({ organizationId: payload.organization.id, llmProviderId })
+      if (!provider) return c.json({ error: "llm_provider_not_found" }, 404)
+
+      const accessible = await canAccessLlmProvider({
+        organizationId: payload.organization.id,
+        llmProviderId,
+        currentMemberId: payload.currentMember.id,
+        memberTeams,
+      })
+      if (!accessible) {
+        return c.json({ error: "forbidden", message: "You do not have access to this provider." }, 403)
+      }
+
+      let targetMemberId = payload.currentMember.id
+      if (input.orgMembershipId) {
+        targetMemberId = parseMemberId(input.orgMembershipId)
+        if (targetMemberId !== payload.currentMember.id && !isOrganizationAdmin(payload)) {
+          return c.json({ error: "forbidden", message: "Only workspace owners and admins can probe another member's credential." }, 403)
+        }
+        if (provider.credentialMode !== "per_member") {
+          return c.json({ error: "not_per_member" }, 400)
+        }
+        const targetRows = await db
+          .select({ id: MemberTable.id })
+          .from(MemberTable)
+          .where(and(
+            eq(MemberTable.organizationId, payload.organization.id),
+            eq(MemberTable.id, targetMemberId),
+            isNull(MemberTable.removedAt),
+          ))
+          .limit(1)
+        if (!targetRows[0]) return c.json({ error: "member_not_found" }, 404)
+        const grantedMemberIds = await listGrantedLlmProviderMemberIds({
+          organizationId: payload.organization.id,
+          llmProviderId,
+        })
+        if (!grantedMemberIds.includes(targetMemberId)) {
+          return c.json({ error: "forbidden", message: "The selected member does not have access to this provider." }, 403)
+        }
+      }
+
+      let secret = provider.apiKey
+      if (provider.credentialMode === "per_member") {
+        const bindingRows = await db
+          .select({ secret: LlmProviderMemberCredentialTable.secret, state: LlmProviderMemberCredentialTable.state })
+          .from(LlmProviderMemberCredentialTable)
+          .where(and(
+            eq(LlmProviderMemberCredentialTable.organizationId, payload.organization.id),
+            eq(LlmProviderMemberCredentialTable.llmProviderId, llmProviderId),
+            eq(LlmProviderMemberCredentialTable.orgMembershipId, targetMemberId),
+          ))
+          .limit(1)
+        const binding = bindingRows[0]
+        secret = binding?.state === "active" ? binding.secret : null
+      }
+      const apiKey = probeBearerCredential(provider, secret)
+      if (!apiKey) return c.json({ status: "no_credential" })
+
+      const api = typeof provider.providerConfig.api === "string"
+        ? provider.providerConfig.api.replace(/\/+$/, "")
+        : ""
+      const startedAt = Date.now()
+      let response: Response
+      try {
+        response = await fetch(`${api}/models`, {
+          headers: { authorization: `Bearer ${apiKey}` },
+          signal: AbortSignal.timeout(5_000),
+        })
+      } catch {
+        return c.json({ status: "unreachable", latencyMs: Date.now() - startedAt })
+      }
+      const latencyMs = Date.now() - startedAt
+      if (response.status === 401 || response.status === 403) {
+        return c.json({ status: "unauthorized", latencyMs })
+      }
+      if (!response.ok) {
+        return c.json({ status: "unreachable", latencyMs })
+      }
+
+      let body: unknown = null
+      try {
+        body = await response.json()
+      } catch {
+        body = null
+      }
+      const gatewayModelIds = readGatewayModelIds(body)
+      const configuredModels = await db
+        .select({ id: LlmProviderModelTable.modelId })
+        .from(LlmProviderModelTable)
+        .where(eq(LlmProviderModelTable.llmProviderId, llmProviderId))
+      const availableModels = new Set(gatewayModelIds)
+      const missingModelIds = configuredModels
+        .map((model) => model.id)
+        .filter((id) => !availableModels.has(id))
+      if (missingModelIds.length > 0) {
+        return c.json({
+          status: "model_missing",
+          latencyMs,
+          models: gatewayModelIds.length,
+          missingModelIds,
+        })
+      }
+      return c.json({ status: "ok", latencyMs, models: gatewayModelIds.length })
+    },
+  )
+
   app.put(
     "/v1/llm-providers/:llmProviderId/my-credential",
     describeRoute({
@@ -1329,6 +1491,58 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
       const credential: LlmProviderMemberCredentialRow = {
         ...existing,
         state: "blocked",
+        version: existing.version + 1,
+        updatedAt: new Date(),
+      }
+      await db
+        .update(LlmProviderMemberCredentialTable)
+        .set({ state: credential.state, version: credential.version, updatedAt: credential.updatedAt })
+        .where(eq(LlmProviderMemberCredentialTable.id, existing.id))
+      return c.json(memberCredentialSummary(credential))
+    },
+  )
+
+  app.post(
+    "/v1/llm-providers/:llmProviderId/member-credentials/:orgMembershipId/stale",
+    describeRoute({
+      tags: ["LLM Providers"],
+      summary: "Mark one member's LLM provider credential stale",
+      responses: {
+        200: jsonResponse("Member credential marked stale.", memberCredentialSummarySchema),
+        400: jsonResponse("The provider or member id is invalid.", invalidRequestSchema),
+        401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
+        403: jsonResponse("Only workspace owners and admins can mark member credentials stale.", forbiddenSchema),
+        404: jsonResponse("The provider or member credential could not be found.", notFoundSchema),
+      },
+    }),
+    orgMemberRoute(),
+    paramValidator(orgLlmProviderMemberCredentialParamsSchema),
+    async (c) => {
+      const payload = c.get("organizationContext")
+      const admin = ensureOrganizationAdminRole(c, "Only workspace owners and admins can mark member credentials stale.")
+      if (!admin.ok) return c.json(admin.response, orgAccessFailureStatus(admin.response))
+
+      const params = c.req.valid("param")
+      const llmProviderId = parseLlmProviderId(params.llmProviderId)
+      const orgMembershipId = parseMemberId(params.orgMembershipId)
+      const provider = await getLlmProvider({ organizationId: payload.organization.id, llmProviderId })
+      if (!provider) return c.json({ error: "llm_provider_not_found" }, 404)
+
+      const rows = await db
+        .select()
+        .from(LlmProviderMemberCredentialTable)
+        .where(and(
+          eq(LlmProviderMemberCredentialTable.organizationId, payload.organization.id),
+          eq(LlmProviderMemberCredentialTable.llmProviderId, llmProviderId),
+          eq(LlmProviderMemberCredentialTable.orgMembershipId, orgMembershipId),
+        ))
+        .limit(1)
+      const existing = rows[0]
+      if (!existing) return c.json({ error: "member_credential_not_found" }, 404)
+
+      const credential: LlmProviderMemberCredentialRow = {
+        ...existing,
+        state: "stale",
         version: existing.version + 1,
         updatedAt: new Date(),
       }

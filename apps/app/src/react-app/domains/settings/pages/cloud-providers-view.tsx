@@ -31,6 +31,7 @@ export type CloudProviderRowStateInput = {
   allowed: boolean;
   importsUnavailable: boolean;
   needsCredential: boolean;
+  needsMemberCredential?: boolean;
   needsServer: boolean;
   syncError: CloudProviderSyncError | null;
   /**
@@ -51,6 +52,7 @@ export function resolveCloudProviderRowStatus(
 ): CloudProviderRowStatus {
   if (input.importsUnavailable) return "unavailable";
   if (!input.allowed) return "blocked";
+  if (input.needsMemberCredential) return "needs_key";
   if (input.syncError) return input.syncError.kind;
   if (input.needsCredential || input.skippedByServer === true) return "needs_credential";
   if (input.needsServer) return "needs_server";
@@ -75,6 +77,7 @@ export type CloudProvidersViewProps = {
   onOpenAccount: () => void;
   refreshCloudOrgProviders: (options?: { force?: boolean }) => Promise<DenOrgLlmProvider[]>;
   runCloudProviderSync: (reason: "manual") => Promise<unknown>;
+  saveCloudProviderMemberCredential: (cloudProviderId: string, apiKey: string) => Promise<"saved" | "blocked">;
   /** Server-side sync facts (reload pending, skips); null on the legacy renderer-import path. */
   serverSync: CloudProviderServerSyncState | null;
 };
@@ -91,6 +94,7 @@ export function CloudProvidersView({
   onOpenAccount,
   refreshCloudOrgProviders,
   runCloudProviderSync,
+  saveCloudProviderMemberCredential,
   serverSync,
 }: CloudProvidersViewProps) {
   const { activeOrganization, isSignedIn } = useCloudSession();
@@ -110,15 +114,21 @@ export function CloudProvidersView({
       });
       const syncError = lastSyncError[provider.id] ?? null;
       const env = getCloudProviderEnv(provider.providerConfig);
+      const skippedProvider = serverSync?.skippedProviders[provider.id];
+      const needsMemberCredential = skippedProvider?.reason === "needs_key";
+      const hasCredential = provider.credentialMode === "per_member"
+        ? provider.hasMyCredential === true
+        : provider.hasApiKey;
       const status = resolveCloudProviderRowStatus({
         imported: Boolean(imported),
         outOfSync,
         allowed,
         importsUnavailable,
-        needsCredential: !provider.hasApiKey && env.length > 0,
-        needsServer: provider.hasApiKey && env.length > 1 && !openworkServerAvailable,
+        needsCredential: !needsMemberCredential && !hasCredential && env.length > 0,
+        needsMemberCredential,
+        needsServer: hasCredential && env.length > 1 && !openworkServerAvailable,
         syncError,
-        skippedByServer: Boolean(serverSync?.skippedProviders[provider.id]),
+        skippedByServer: Boolean(skippedProvider),
         reloadPending: serverSync?.reloadPending === true,
       });
       const source = provider.source === "custom" ? "custom" : "managed";
@@ -130,11 +140,13 @@ export function CloudProvidersView({
         ? t("den.cloud_provider_blocked")
         : status === "unavailable"
           ? t("den.cloud_provider_imports_unavailable")
-          : status === "needs_credential"
-            ? syncError?.message ?? t("den.cloud_provider_needs_credential")
-            : status === "needs_server"
-              ? syncError?.message ?? t("den.cloud_provider_needs_server")
-              : syncError?.message ?? providerDetail;
+          : status === "needs_key"
+            ? "Paste your provider key to connect."
+            : status === "needs_credential"
+              ? syncError?.message ?? t("den.cloud_provider_needs_credential")
+              : status === "needs_server"
+                ? syncError?.message ?? t("den.cloud_provider_needs_server")
+                : syncError?.message ?? providerDetail;
 
       return {
         key: `live:${provider.id}`,
@@ -214,6 +226,7 @@ export function CloudProvidersView({
       rows={rows}
       onRefresh={syncNow}
       onRetry={retryProvider}
+      onSaveMemberCredential={saveCloudProviderMemberCredential}
     />
   );
 
