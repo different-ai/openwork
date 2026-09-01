@@ -47,12 +47,16 @@ test("Open Coworker mirrors every embedded-server runtime dependency for electro
 test("Open Coworker owns a branded boot surface and cross-platform icon set", async () => {
   const indexHtml = await readFile(path.join(coworkerRoot, "index.html"), "utf8");
   const logoSvg = await readFile(path.join(coworkerRoot, "public", "open-coworker.svg"), "utf8");
+  const appIconSvg = await readFile(path.join(coworkerRoot, "resources", "icons", "open-coworker-app-icon.svg"), "utf8");
   assert.match(indexHtml, /class="boot-splash"/);
   assert.match(indexHtml, /href="\/open-coworker\.svg"/);
   assert.match(logoSvg, /fill="#f7f8fa"/);
   assert.match(logoSvg, /fill="none" stroke="#11151d"/);
+  assert.match(logoSvg, /fill="#d9dde4" stroke="#aeb5c0"/);
   assert.match(logoSvg, /stroke="#aeb5c0"/);
   assert.doesNotMatch(logoSvg, /fill="#5b8dff"/);
+  assert.match(appIconSvg, /fill="#5b8dff"/);
+  assert.match(appIconSvg, /fill="#f7f8fa"/);
   await Promise.all([
     "resources/icons/icon.png",
     "resources/icons/icon.icns",
