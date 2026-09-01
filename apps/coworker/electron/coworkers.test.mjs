@@ -65,6 +65,7 @@ test("createCoworker writes the minimal coworker filesystem representation", asy
   assert.equal(coworker.slug, "research-bot");
   assert.equal(coworker.name, "Research Bot");
   assert.equal(coworker.workspaceId, "");
+  assert.equal(coworker.modelVariant, "");
   assert.equal(coworker.avatarColor, "violet");
   assert.equal(coworker.avatarGlasses, "square");
   assert.deepEqual(coworker.automations, []);
@@ -98,19 +99,23 @@ test("updateCoworker patches profile and platform references", async () => {
     workspaceId: "ws_local_1",
     automations: ["atm_a", "atm_a", " atm_b "],
     model: "anthropic/claude-haiku-4-5",
+    modelVariant: "high",
     avatarColor: "mint",
     avatarGlasses: "none",
   });
   assert.equal(updated.workspaceId, "ws_local_1");
   assert.deepEqual(updated.automations, ["atm_a", "atm_b"]);
   assert.equal(updated.model, "anthropic/claude-haiku-4-5");
+  assert.equal(updated.modelVariant, "high");
   assert.equal(updated.avatarColor, "mint");
   assert.equal(updated.avatarGlasses, "none");
   const reread = await getCoworker(coworkersDir, "ops");
   assert.equal(reread.workspaceId, "ws_local_1");
   assert.equal(reread.model, "anthropic/claude-haiku-4-5");
-  const cleared = await updateCoworker(coworkersDir, "ops", { model: "" });
+  assert.equal(reread.modelVariant, "high");
+  const cleared = await updateCoworker(coworkersDir, "ops", { model: "", modelVariant: "" });
   assert.equal(cleared.model, "");
+  assert.equal(cleared.modelVariant, "");
 });
 
 test("avatar settings fall back when stored or patched values are unknown", async () => {
