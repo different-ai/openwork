@@ -358,6 +358,11 @@
       "reason": "requires a freshly booted Den Web/API origin for its Workflow dashboard assertions"
     },
     {
+      "test": "working-status-liveness.e2e.test.ts",
+      "category": "raw-or-local-placement",
+      "reason": "requires local placement with an actual OpenCode process it kills and restarts on one port"
+    },
+    {
       "test": "workspace-storm-auth-coherence.e2e.test.ts",
       "category": "fault-proxy",
       "reason": "requires all desktop Den traffic to traverse per-test latency and 401 fault proxies"

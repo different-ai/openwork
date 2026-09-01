@@ -119,9 +119,9 @@ test("Daytona E2E regression profile excludes only audited shared-topology incom
   expect(categoryByTest.get("local-managed-mcp-oauth.e2e.test.ts")).toBe("raw-or-local-placement");
   expect(categoryByTest.get("slack-style-mcp-connector.e2e.test.ts")).toBe("raw-or-local-placement");
 
-  expect(inventory.all).toHaveLength(150);
+  expect(inventory.all).toHaveLength(151);
   expect(inventory.rawDesktop).toHaveLength(55);
-  expect(inventory.profile).toHaveLength(75);
+  expect(inventory.profile).toHaveLength(76);
   expect(inventory.eligible).toHaveLength(19);
   expect(inventory.rawDesktop).toContain("den-litellm-provider.e2e.test.ts");
   expect(inventory.eligible).not.toContain("org-team-lifecycle-critical-path.e2e.test.ts");
