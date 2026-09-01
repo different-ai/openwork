@@ -60,6 +60,7 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
       const lookX = Number.parseFloat(mark.style.getPropertyValue("--avatar-look-x"));
       const lookY = Number.parseFloat(mark.style.getPropertyValue("--avatar-look-y"));
       resolve({
+        blueBadge: mark.querySelector('rect[fill="#5b8dff"]') !== null,
         whiteBody: mark.querySelector('path[fill="#f7f8fa"]') !== null,
         hasPointerLayer: pointerLayer !== null,
         lookX,
@@ -68,6 +69,7 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
     })));
   })()`, { awaitPromise: true });
   expect(brandGaze).toMatchObject({
+    blueBadge: true,
     whiteBody: true,
     hasPointerLayer: true,
     lookX: expect.any(Number),
@@ -80,8 +82,8 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   expect(brandGaze.lookX).toBeLessThanOrEqual(1.5);
   expect(Math.abs(brandGaze.lookY)).toBeLessThanOrEqual(0.9);
   evidence.recordAssertionEvidence(
-    "First run presents the white Open Coworker identity with a restrained pointer-aware gaze",
-    "The welcome surface used the white SVG coworker mark, offered both cloud and local paths, and moved only the pupil layer toward the pointer within a 1.5px horizontal cap.",
+    "First run presents the blue Open Coworker badge with a restrained pointer-aware gaze",
+    "The welcome surface used the OpenWork-blue badge and centered white coworker mark, offered both cloud and local paths, and moved only the pupil layer toward the pointer within a 1.5px horizontal cap.",
     true,
   );
 
