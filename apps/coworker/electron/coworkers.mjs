@@ -492,6 +492,19 @@ export async function writeCoworkerFile(coworkersDir, slug, relativePath, conten
 }
 
 /** The memory surface shown by the app: fixed files plus long-term entries. */
+async function fileUpdatedAt(target) {
+  try {
+    return Math.floor((await stat(target)).mtimeMs);
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * The memory surface shown by the app: fixed files plus long-term entries,
+ * each with its last-modified time so the UI can say when the coworker (or
+ * its human) last touched memory without opening the file.
+ */
 export async function listMemoryFiles(coworkersDir, slug) {
   const root = coworkerPath(coworkersDir, slug);
   const files = [
@@ -510,5 +523,7 @@ export async function listMemoryFiles(coworkersDir, slug) {
       });
     }
   }
-  return files;
+  return Promise.all(
+    files.map(async (file) => ({ ...file, updatedAt: await fileUpdatedAt(path.join(root, file.path)) })),
+  );
 }
