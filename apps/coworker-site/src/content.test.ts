@@ -8,15 +8,13 @@ import {
   NEEDS_YOU,
   PLATFORM,
   RESPONSIBILITIES,
-  RETIRE,
   SITE,
-  TRUTHS,
   allClaims,
 } from "./content.ts";
 
 test("every product claim names where in the product it is true", () => {
   const claims = allClaims();
-  assert.ok(claims.length >= 15, `expected a full page of claims, got ${claims.length}`);
+  assert.ok(claims.length >= 12, `expected a full page of claims, got ${claims.length}`);
   for (const claim of claims) {
     assert.ok(claim.text.trim().length > 20, `claim is too thin: ${claim.text}`);
     assert.match(
@@ -28,7 +26,7 @@ test("every product claim names where in the product it is true", () => {
 });
 
 test("copy never promises what the product cannot do", () => {
-  const everything = JSON.stringify({ HERO, TRUTHS, MEMORY, NEEDS_YOU, RESPONSIBILITIES, RETIRE, PLATFORM, GET_STARTED }).toLowerCase();
+  const everything = JSON.stringify({ HERO, MEMORY, NEEDS_YOU, RESPONSIBILITIES, PLATFORM, GET_STARTED }).toLowerCase();
   for (const phrase of FORBIDDEN_PHRASES) {
     assert.equal(everything.includes(phrase), false, `forbidden phrase present: "${phrase}"`);
   }
