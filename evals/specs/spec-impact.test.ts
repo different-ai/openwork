@@ -110,7 +110,7 @@ test("the spec-impact matcher always selects changed E2E tests", ({ evidence }) 
   )
 })
 
-test("every E2E spec is mapped to an implementation contract or explicitly allowlisted", () => {
+test("every E2E spec is mapped to an implementation contract or explicitly allowlisted", ({ evidence }) => {
   const snapshot = readSnapshot()
   const inventory = readdirSync(resolve(repoRoot, "evals/specs"), { withFileTypes: true })
     .filter((entry) => entry.isFile() && entry.name.endsWith(".e2e.test.ts"))
@@ -128,9 +128,14 @@ test("every E2E spec is mapped to an implementation contract or explicitly allow
   expect(deadMapped, `Mapped E2E specs missing on disk:\n${deadMapped.join("\n")}`).toEqual([])
   expect(deadAllowlisted, `Allowlisted E2E specs missing on disk:\n${deadAllowlisted.join("\n")}`).toEqual([])
   expect(duplicated, `E2E specs are both mapped and allowlisted:\n${duplicated.join("\n")}`).toEqual([])
+  evidence.recordAssertionEvidence(
+    "Every E2E spec has an implementation-driven selection path or an explicit allowlist entry",
+    `All ${inventory.length} E2E specs are covered, with ${snapshot.unmapped.length} explicitly allowlisted and no dead or duplicate references.`,
+    true,
+  )
 })
 
-test("implementation patterns resolve to real paths", () => {
+test("implementation patterns resolve to real paths", ({ evidence }) => {
   const { contracts } = readSnapshot()
   const forbiddenRoots = [
     "apps",
@@ -161,9 +166,14 @@ test("implementation patterns resolve to real paths", () => {
   }
 
   expect(failures, `Invalid implementation patterns:\n${failures.join("\n")}`).toEqual([])
+  evidence.recordAssertionEvidence(
+    "Implementation contract patterns stay feature-scoped and resolve to live paths",
+    `Every implementation pattern across ${contracts.length} contracts resolved to a non-empty feature path without covering a forbidden app root.`,
+    true,
+  )
 })
 
-test("selection stays narrow across domains", () => {
+test("selection stays narrow across domains", ({ evidence }) => {
   const automations = JSON.parse(runMatched("apps/app/src/react-app/domains/automations/automations-page.tsx"))
   expect(automations).toContain("evals/specs/automation-revision-revert.e2e.test.ts")
   expect(automations).not.toContain("evals/specs/sso-domain-verification.e2e.test.ts")
@@ -171,4 +181,9 @@ test("selection stays narrow across domains", () => {
   const sso = JSON.parse(runMatched("ee/apps/den-api/src/sso-domain-verification.ts"))
   expect(sso).toContain("evals/specs/sso-domain-verification.e2e.test.ts")
   expect(sso).not.toContain("evals/specs/automation-revision-revert.e2e.test.ts")
+  evidence.recordAssertionEvidence(
+    "Domain changes select only their mapped E2E specs",
+    "Automation and SSO implementation changes selected their own mapped specs without selecting the unrelated domain sample.",
+    true,
+  )
 })
