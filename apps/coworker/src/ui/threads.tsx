@@ -8,7 +8,14 @@ import {
   type CoworkerMcpClient,
   type PreservedMcpAppResult,
 } from "@/lib/mcp";
-import { createCoworkerThreads, type ThreadListItem } from "@/lib/threads";
+import {
+  createCoworkerThreads,
+  describeInteractions,
+  hasPendingInteractions,
+  type PendingInteractions,
+  type ThreadListItem,
+} from "@/lib/threads";
+import { InteractionCards } from "@/ui/interactions";
 import { CoworkerAvatar } from "@/ui/coworker-avatar";
 import { Button, Empty, ErrorNote, StatusDot } from "@/ui/kit";
 import { McpAppFrame } from "@/ui/mcp-app-frame";
@@ -81,6 +88,7 @@ export function ThreadsPanel({
     [runtime.serverUrl, runtime.ownerToken, coworker.workspaceId, coworker.model, coworker.modelVariant],
   );
   const [items, setItems] = useState<ThreadListItem[]>([]);
+  const [attentionBySession, setAttentionBySession] = useState<Record<string, string>>({});
   const [openThreadId, setOpenThreadId] = useState("");
   const [error, setError] = useState("");
 
@@ -91,7 +99,19 @@ export function ThreadsPanel({
   const refresh = useCallback(async () => {
     if (!threads) return;
     try {
-      setItems(await threads.listThreads());
+      const [list, pending] = await Promise.all([
+        threads.listThreads(),
+        threads.listPendingInteractions().catch((): PendingInteractions => ({ permissions: [], questions: [] })),
+      ]);
+      setItems(list);
+      const attention: Record<string, string> = {};
+      for (const permission of pending.permissions) {
+        attention[permission.sessionID] ??= describeInteractions({ permissions: [permission], questions: [] });
+      }
+      for (const question of pending.questions) {
+        attention[question.sessionID] ??= describeInteractions({ permissions: [], questions: [question] });
+      }
+      setAttentionBySession(attention);
       setError("");
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
@@ -157,6 +177,7 @@ export function ThreadsPanel({
       coworker={coworker}
       error={error}
       items={items}
+      attentionBySession={attentionBySession}
       onOpen={setOpenThreadId}
       threads={threads}
       assignmentDraft={assignmentDraft}
@@ -168,6 +189,7 @@ function WorkOverview({
   threads,
   coworker,
   items,
+  attentionBySession,
   error,
   onOpen,
   assignmentDraft,
@@ -175,6 +197,7 @@ function WorkOverview({
   threads: NonNullable<ReturnType<typeof createCoworkerThreads>>;
   coworker: CoworkerSummary;
   items: ThreadListItem[];
+  attentionBySession: Record<string, string>;
   error: string;
   onOpen: (threadId: string) => void;
   assignmentDraft?: AssignmentDraft;
@@ -253,10 +276,19 @@ function WorkOverview({
                     className="flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left transition-colors hover:bg-panel"
                     onClick={() => onOpen(item.id)}
                   >
-                    <StatusDot tone={threadTone(item.status)} />
+                    <StatusDot tone={attentionBySession[item.id] ? "amber" : threadTone(item.status)} />
                     <span className="min-w-0 flex-1 truncate text-sm font-medium text-snow">{item.title}</span>
-                    <span className="shrink-0 text-xs text-mist">
-                      {item.status === "busy" ? "Working" : item.status === "retry" ? "Retrying" : relativeTime(item.updatedAt)}
+                    <span
+                      className={`shrink-0 text-xs ${attentionBySession[item.id] ? "font-medium text-amber" : "text-mist"}`}
+                      title={attentionBySession[item.id] || undefined}
+                    >
+                      {attentionBySession[item.id]
+                        ? "Needs you"
+                        : item.status === "busy"
+                          ? "Working"
+                          : item.status === "retry"
+                            ? "Retrying"
+                            : relativeTime(item.updatedAt)}
                     </span>
                     <span className="text-mist" aria-hidden="true">›</span>
                   </button>
@@ -296,6 +328,7 @@ function ThreadView({
   const [title, setTitle] = useState("Work thread");
   const [statusLabel, setStatusLabel] = useState("idle");
   const [terminalError, setTerminalError] = useState("");
+  const [pending, setPending] = useState<PendingInteractions>({ permissions: [], questions: [] });
   const [reply, setReply] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -311,7 +344,11 @@ function ThreadView({
 
   const refresh = useCallback(async () => {
     try {
-      const transcript = await threads.client.exportTranscript(threadId);
+      const [transcript, interactions] = await Promise.all([
+        threads.client.exportTranscript(threadId),
+        threads.listThreadInteractions(threadId).catch((): PendingInteractions => ({ permissions: [], questions: [] })),
+      ]);
+      setPending(interactions);
       setTitle(transcript.title ?? "Work thread");
       setStatusLabel(transcript.status.type);
       setTerminalError(
@@ -353,7 +390,7 @@ function ThreadView({
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ block: "end" });
-  }, [messages.length, statusLabel]);
+  }, [messages.length, statusLabel, pending.permissions.length, pending.questions.length]);
 
   async function send() {
     const text = reply.trim();
@@ -371,8 +408,9 @@ function ThreadView({
     }
   }
 
-  const working = statusLabel !== "idle";
-  const readableStatus = statusLabel === "retry" ? "Retrying" : working ? "Working" : "Ready";
+  const needsYou = hasPendingInteractions(pending);
+  const working = statusLabel !== "idle" && !needsYou;
+  const readableStatus = needsYou ? "Needs you" : statusLabel === "retry" ? "Retrying" : working ? "Working" : "Ready";
 
   return (
     <section className="flex h-full min-h-0 flex-col bg-ink">
@@ -382,9 +420,9 @@ function ThreadView({
         </Button>
         <div className="min-w-0 flex-1">
           <h2 className="truncate text-sm font-semibold text-snow">{title}</h2>
-          <p className={`text-xs ${working ? "text-spark" : "text-mist"}`}>{readableStatus}</p>
+          <p className={`text-xs ${needsYou ? "text-amber" : working ? "text-spark" : "text-mist"}`}>{readableStatus}</p>
         </div>
-        {working ? (
+        {working || needsYou ? (
           <Button variant="ghost" onClick={() => void threads.client.abortThread(threadId)}>
             Stop
           </Button>
@@ -395,6 +433,22 @@ function ThreadView({
           {messages.map((message) => (
             <MessageBubble key={message.id} message={message} coworker={coworker} mcpClient={mcpClient} />
           ))}
+          <InteractionCards
+            coworker={coworker}
+            pending={pending}
+            onPermission={async (permission, decision) => {
+              await threads.replyPermission(permission, decision);
+              void refresh();
+            }}
+            onAnswer={async (question, answers) => {
+              await threads.replyQuestion(question, answers);
+              void refresh();
+            }}
+            onSkip={async (question) => {
+              await threads.rejectQuestion(question);
+              void refresh();
+            }}
+          />
           {working ? (
             <div className="flex items-center gap-2 px-1 py-2 text-xs text-mist">
               <span className="size-2 animate-pulse rounded-full bg-spark" />
