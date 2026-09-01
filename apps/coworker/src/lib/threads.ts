@@ -4,7 +4,11 @@
  * embedded server's workspace-scoped engine proxy. Nothing here invents a
  * conversation type: a thread created in Open Coworker opens in OpenWork.
  */
-import { createOpencodeClient, type SessionStatus } from "@opencode-ai/sdk/v2/client";
+import {
+  createOpencodeClient,
+  type ProviderListResponse,
+  type SessionStatus,
+} from "@opencode-ai/sdk/v2/client";
 import {
   createHeadlessThreadClient,
   type HeadlessThreadClient,
@@ -40,20 +44,67 @@ const sessionListSchema = z.array(
 export type EngineModelOption = {
   /** "providerId/modelId" */
   id: string;
+  providerId: string;
+  providerLabel: string;
+  modelId: string;
+  modelLabel: string;
   label: string;
+  description: string;
+  family: string;
+  variants: string[];
+  isProviderDefault: boolean;
 };
 
-const providersSchema = z.object({
-  providers: z.array(
-    z
-      .object({
-        id: z.string(),
-        name: z.string().optional(),
-        models: z.record(z.string(), z.unknown()).optional(),
-      })
-      .loose(),
-  ),
-});
+export type EngineModelCatalog = {
+  models: EngineModelOption[];
+  connectedProviderIds: string[];
+};
+
+const VARIANT_ORDER = ["minimal", "low", "medium", "high", "xhigh", "max"];
+
+function sortedVariants(variants: Record<string, unknown> | undefined): string[] {
+  return Object.keys(variants ?? {}).sort((left, right) => {
+    const leftIndex = VARIANT_ORDER.indexOf(left);
+    const rightIndex = VARIANT_ORDER.indexOf(right);
+    if (leftIndex === -1 && rightIndex === -1) return left.localeCompare(right);
+    if (leftIndex === -1) return 1;
+    if (rightIndex === -1) return -1;
+    return leftIndex - rightIndex;
+  });
+}
+
+export function connectedModelCatalog(value: ProviderListResponse): EngineModelCatalog {
+  const connected = new Set(value.connected ?? []);
+  const providers = (value.all ?? []).filter(
+    (provider) =>
+      connected.has(provider.id) &&
+      (provider.source !== "custom" || provider.id === "opencode" || Object.keys(provider.models ?? {}).length > 0),
+  );
+  const models = providers.flatMap((provider) =>
+    Object.entries(provider.models ?? {}).map(([modelId, model]) => {
+      const providerLabel = provider.name?.trim() || provider.id;
+      const modelLabel = model.name?.trim() || modelId;
+      return {
+        id: `${provider.id}/${modelId}`,
+        providerId: provider.id,
+        providerLabel,
+        modelId,
+        modelLabel,
+        label: `${providerLabel} · ${modelLabel}`,
+        description: model.family?.trim() || modelId,
+        family: model.family?.trim() || "",
+        variants: sortedVariants(model.variants),
+        isProviderDefault: value.default?.[provider.id] === modelId,
+      };
+    }),
+  );
+  models.sort((left, right) =>
+    left.providerLabel.localeCompare(right.providerLabel) ||
+    Number(right.isProviderDefault) - Number(left.isProviderDefault) ||
+    left.modelLabel.localeCompare(right.modelLabel),
+  );
+  return { models, connectedProviderIds: providers.map((provider) => provider.id) };
+}
 
 /** Parse a coworker's persisted "providerId/modelId" preference. */
 export function parseModelPreference(value: string): { providerId: string; modelId: string } | undefined {
@@ -67,6 +118,7 @@ export function parseModelPreference(value: string): { providerId: string; model
 export type CoworkerThreads = {
   client: HeadlessThreadClient;
   listThreads: () => Promise<ThreadListItem[]>;
+  listModelCatalog: () => Promise<EngineModelCatalog>;
   listModels: () => Promise<EngineModelOption[]>;
   readActivity: () => Promise<CoworkerActivity>;
   subscribe: (onEvent: () => void) => () => void;
@@ -78,12 +130,17 @@ export function createCoworkerThreads(options: {
   token: string;
   /** "providerId/modelId"; empty or invalid falls back to the engine default. */
   model?: string;
+  /** Optional reasoning/behavior variant supported by the selected model. */
+  modelVariant?: string;
 }): CoworkerThreads {
+  const parsedModel = parseModelPreference(options.model ?? "");
   const client = createHeadlessThreadClient({
     baseUrl: options.serverUrl,
     workspaceId: options.workspaceId,
     token: options.token,
-    defaultModel: parseModelPreference(options.model ?? ""),
+    defaultModel: parsedModel
+      ? { ...parsedModel, variant: options.modelVariant?.trim() || undefined }
+      : undefined,
   });
 
   const opencode = createOpencodeClient({
@@ -130,25 +187,16 @@ export function createCoworkerThreads(options: {
     return { state: "ready", label: "Ready", detail: "Waiting for first assignment", updatedAt: 0 };
   }
 
+  async function listModelCatalog(): Promise<EngineModelCatalog> {
+    const result = await opencode.provider.list();
+    if (result.error !== undefined || !result.data) {
+      throw new Error(`Listing models failed (${result.response?.status ?? "network"})`);
+    }
+    return connectedModelCatalog(result.data);
+  }
+
   async function listModels(): Promise<EngineModelOption[]> {
-    const response = await fetch(
-      `${options.serverUrl}/workspace/${encodeURIComponent(options.workspaceId)}/opencode/config/providers`,
-      { headers: { Authorization: `Bearer ${options.token}` } },
-    );
-    if (!response.ok) {
-      throw new Error(`Listing models failed (${response.status})`);
-    }
-    const parsed = providersSchema.parse(await response.json());
-    const models: EngineModelOption[] = [];
-    for (const provider of parsed.providers) {
-      for (const modelId of Object.keys(provider.models ?? {})) {
-        models.push({
-          id: `${provider.id}/${modelId}`,
-          label: `${provider.name?.trim() || provider.id} · ${modelId}`,
-        });
-      }
-    }
-    return models.sort((a, b) => a.label.localeCompare(b.label));
+    return (await listModelCatalog()).models;
   }
 
   function subscribe(onEvent: () => void): () => void {
@@ -167,7 +215,7 @@ export function createCoworkerThreads(options: {
     return () => controller.abort();
   }
 
-  return { client, listThreads, listModels, readActivity, subscribe };
+  return { client, listThreads, listModelCatalog, listModels, readActivity, subscribe };
 }
 
 export async function readCoworkerActivity(options: {
