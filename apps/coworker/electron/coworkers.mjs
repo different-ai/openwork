@@ -233,6 +233,7 @@ function coworkerConfigTemplate({ name, role, mission, avatarColor: color, avata
       avatarColor: avatarColor(color),
       avatarGlasses: avatarGlasses(glasses),
       workspaceId: "",
+      conversationThreadId: "",
       model: "",
       modelVariant: "",
       automations: [],
@@ -271,6 +272,8 @@ async function readCoworkerRecord(coworkersDir, slug) {
     avatarColor: avatarColor(data.avatarColor),
     avatarGlasses: avatarGlasses(data.avatarGlasses),
     workspaceId: typeof data.workspaceId === "string" ? data.workspaceId.trim() : "",
+    /** Native OpenWork session used for ongoing discussion, never counted as an assignment. */
+    conversationThreadId: typeof data.conversationThreadId === "string" ? data.conversationThreadId.trim() : "",
     /** Preferred model as "providerId/modelId"; empty means engine default. */
     model: typeof data.model === "string" ? data.model.trim() : "",
     /** Optional reasoning/behavior variant for the preferred model. */
@@ -329,12 +332,13 @@ export async function createCoworker(coworkersDir, input) {
   return readCoworkerRecord(coworkersDir, slug);
 }
 
-/** Patch platform references (workspaceId, automations, model) inside coworker.md. */
+/** Patch platform references (workspace, discussion, automations, model) inside coworker.md. */
 export async function updateCoworker(coworkersDir, slug, patch) {
   const root = coworkerPath(coworkersDir, slug);
   const configPath = path.join(root, COWORKER_CONFIG_FILE);
   const { data, body } = parseFrontmatter(await readFile(configPath, "utf8"));
   if (typeof patch?.workspaceId === "string") data.workspaceId = patch.workspaceId.trim();
+  if (typeof patch?.conversationThreadId === "string") data.conversationThreadId = patch.conversationThreadId.trim();
   if (Array.isArray(patch?.automations)) {
     data.automations = [...new Set(patch.automations
       .filter((id) => typeof id === "string" && id.trim())

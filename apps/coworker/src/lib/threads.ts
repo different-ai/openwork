@@ -23,6 +23,12 @@ export type ThreadListItem = {
   status: SessionStatus["type"];
 };
 
+/** Keep the coworker's standing discussion out of outcome-driven assignment lists. */
+export function assignmentThreads<T extends { id: string }>(threads: T[], conversationThreadId?: string): T[] {
+  const discussion = conversationThreadId?.trim();
+  return discussion ? threads.filter((thread) => thread.id !== discussion) : threads;
+}
+
 export type CoworkerActivity = {
   state: "ready" | "working" | "retrying" | "attention" | "recent" | "offline";
   label: string;
@@ -276,6 +282,8 @@ export function createCoworkerThreads(options: {
   model?: string;
   /** Optional reasoning/behavior variant supported by the selected model. */
   modelVariant?: string;
+  /** Native session reserved for ongoing discussion rather than assigned work. */
+  conversationThreadId?: string;
 }): CoworkerThreads {
   const parsedModel = parseModelPreference(options.model ?? "");
   const client = createHeadlessThreadClient({
@@ -293,7 +301,7 @@ export function createCoworkerThreads(options: {
     redirect: "error",
   });
 
-  async function listThreads(): Promise<ThreadListItem[]> {
+  async function listAllThreads(): Promise<ThreadListItem[]> {
     const [listResult, statusResult] = await Promise.all([
       opencode.session.list(),
       opencode.session.status(),
@@ -313,6 +321,10 @@ export function createCoworkerThreads(options: {
         status: statuses[session.id]?.type ?? "idle",
       }))
       .sort((a, b) => b.updatedAt - a.updatedAt);
+  }
+
+  async function listThreads(): Promise<ThreadListItem[]> {
+    return assignmentThreads(await listAllThreads(), options.conversationThreadId);
   }
 
   /**
@@ -370,14 +382,15 @@ export function createCoworkerThreads(options: {
   }
 
   async function readActivity(): Promise<CoworkerActivity> {
-    const [sessions, pending] = await Promise.all([
-      listThreads(),
+    const [allSessions, pending] = await Promise.all([
+      listAllThreads(),
       listPendingInteractions().catch((): PendingInteractions => ({ permissions: [], questions: [] })),
     ]);
+    const assignments = assignmentThreads(allSessions, options.conversationThreadId);
     if (hasPendingInteractions(pending)) {
       const sessionId = pending.permissions[0]?.sessionID ?? pending.questions[0]?.sessionID;
-      const thread = sessions.find((session) => session.id === sessionId);
-      const last = sessions.find((session) => session.id !== sessionId && session.status === "idle");
+      const thread = allSessions.find((session) => session.id === sessionId);
+      const last = assignments.find((session) => session.id !== sessionId && session.status === "idle");
       return {
         state: "attention",
         label: "Needs you",
@@ -387,8 +400,8 @@ export function createCoworkerThreads(options: {
         ...(last ? { last: { title: last.title, updatedAt: last.updatedAt, threadId: last.id } } : {}),
       };
     }
-    const active = sessions.find((session) => session.status === "busy" || session.status === "retry");
-    const last = sessions.find((session) => session.id !== active?.id && session.status === "idle");
+    const active = allSessions.find((session) => session.status === "busy" || session.status === "retry");
+    const last = assignments.find((session) => session.id !== active?.id && session.status === "idle");
     if (active?.status === "retry") {
       return {
         state: "retrying",
@@ -409,7 +422,7 @@ export function createCoworkerThreads(options: {
         ...(last ? { last: { title: last.title, updatedAt: last.updatedAt, threadId: last.id } } : {}),
       };
     }
-    const latest = sessions[0];
+    const latest = assignments[0];
     if (latest) {
       return {
         state: "recent",
@@ -477,6 +490,7 @@ export async function readCoworkerActivity(options: {
   serverUrl: string;
   workspaceId: string;
   token: string;
+  conversationThreadId?: string;
 }): Promise<CoworkerActivity> {
   try {
     return await createCoworkerThreads(options).readActivity();

@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 
-/** Keep the gaze alive without moving the avatar itself or chasing the pointer. */
+/** Let the eyewear and gaze acknowledge the pointer without moving the avatar itself. */
 export function useAvatarPointerGaze(enabled = true) {
   const avatarRef = useRef<SVGSVGElement>(null);
 
@@ -18,10 +18,16 @@ export function useAvatarPointerGaze(enabled = true) {
       const deltaX = pointerX - (bounds.left + bounds.width / 2);
       const deltaY = pointerY - (bounds.top + bounds.height / 2);
       const distance = Math.hypot(deltaX, deltaY);
-      const scale = Math.min(1.25, Math.max(0.4, bounds.width / 96));
+      const scale = Math.min(1.25, Math.max(0.55, bounds.width / 96));
       const attention = Math.min(1, distance / 120);
-      const lookX = distance ? (deltaX / distance) * 1.15 * scale * attention : 0;
-      const lookY = distance ? (deltaY / distance) * 0.7 * scale * attention : 0;
+      const directionX = distance ? deltaX / distance : 0;
+      const directionY = distance ? deltaY / distance : 0;
+      const featureLookX = directionX * 0.72 * scale * attention;
+      const featureLookY = directionY * 0.95 * scale * attention;
+      const lookX = directionX * 1.6 * scale * attention;
+      const lookY = directionY * 1.15 * scale * attention;
+      avatar.style.setProperty("--avatar-feature-look-x", `${featureLookX.toFixed(2)}px`);
+      avatar.style.setProperty("--avatar-feature-look-y", `${featureLookY.toFixed(2)}px`);
       avatar.style.setProperty("--avatar-look-x", `${lookX.toFixed(2)}px`);
       avatar.style.setProperty("--avatar-look-y", `${lookY.toFixed(2)}px`);
     };
@@ -33,6 +39,8 @@ export function useAvatarPointerGaze(enabled = true) {
     };
     const reset = () => {
       const avatar = avatarRef.current;
+      avatar?.style.setProperty("--avatar-feature-look-x", "0px");
+      avatar?.style.setProperty("--avatar-feature-look-y", "0px");
       avatar?.style.setProperty("--avatar-look-x", "0px");
       avatar?.style.setProperty("--avatar-look-y", "0px");
     };

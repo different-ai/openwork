@@ -110,6 +110,8 @@ body.is-resizing-context-panel * {
   --avatar-motion-delay: 0s;
   --avatar-blink-delay: 0s;
   --avatar-blink-duration: 8.8s;
+  --avatar-feature-look-x: 0px;
+  --avatar-feature-look-y: 0px;
   --avatar-look-x: 0px;
   --avatar-look-y: 0px;
   display: block;
@@ -119,12 +121,19 @@ body.is-resizing-context-panel * {
 
 .coworker-avatar__body,
 .coworker-avatar__depth,
+.coworker-avatar__pointer-features,
 .coworker-avatar__features,
 .coworker-avatar__pointer-gaze,
 .coworker-avatar__gaze,
 .coworker-avatar__pupils {
   transform-box: fill-box;
   transform-origin: center;
+}
+
+.coworker-avatar__pointer-features {
+  transform: translate(var(--avatar-feature-look-x), var(--avatar-feature-look-y));
+  transition: transform 180ms cubic-bezier(0.22, 0.72, 0.24, 1);
+  will-change: transform;
 }
 
 .coworker-avatar__pointer-gaze,

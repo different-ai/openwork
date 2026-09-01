@@ -246,7 +246,7 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
     const avatars = [...document.querySelectorAll("aside nav svg.coworker-avatar")];
     window.dispatchEvent(new PointerEvent("pointermove", {
       clientX: window.innerWidth - 2,
-      clientY: window.innerHeight / 2,
+      clientY: window.innerHeight - 2,
     }));
     return new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve(
       avatars.map((avatar) => {
@@ -259,6 +259,8 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
           blinkDuration: blink?.animationDuration ?? "",
           blinkDelay: blink?.animationDelay ?? "",
           lookX: Number.parseFloat(avatar.style.getPropertyValue("--avatar-look-x")),
+          lookY: Number.parseFloat(avatar.style.getPropertyValue("--avatar-look-y")),
+          featureLookY: Number.parseFloat(avatar.style.getPropertyValue("--avatar-feature-look-y")),
         };
       }),
     ))));
@@ -272,14 +274,16 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
     throw new Error("Left-rail coworker motion was unavailable.");
   }
   expect(railAvatars.every((avatar) => typeof avatar.lookX === "number" && avatar.lookX > 0)).toBe(true);
+  expect(railAvatars.every((avatar) => typeof avatar.lookY === "number" && avatar.lookY > 0)).toBe(true);
+  expect(railAvatars.every((avatar) => typeof avatar.featureLookY === "number" && avatar.featureLookY > 0)).toBe(true);
   expect(new Set(railAvatars.map((avatar) => avatar.blinkDuration)).size).toBe(2);
   evidence.recordAssertionEvidence(
-    "Every coworker in the left rail watches the pointer and blinks independently",
-    "Scout and Nova both moved only their pupil layer toward the same right-side pointer, stayed animated while unselected, and used different deterministic blink durations and offsets so the team never blinked in sync.",
+    "Every coworker in the left rail follows the pointer with its eyes and glasses",
+    "Scout and Nova both moved their full eyewear feature group down toward the same bottom-right pointer while their pupils added an independent gaze offset. Both stayed animated while unselected and used different deterministic blink durations and offsets so the team never blinked in sync.",
     true,
   );
   await clickButtonContaining(app, "Scout");
-  await waitForText(app, "Work with Scout", { timeoutMs: 30_000 });
+  await waitForText(app, "Discussion with Scout", { timeoutMs: 30_000 });
 
   const footerPlacement = await evalIn(app, `(() => {
     const button = document.querySelector('button[title="OpenWork account and settings"]');
@@ -301,18 +305,50 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   expect(footerPlacement.bottomGap).toBeLessThan(24);
 
   await clickButtonContaining(app, "OpenWork");
-  await waitForText(app, "OpenWork configuration", { timeoutMs: 30_000 });
+  await waitForText(app, "OpenWork settings", { timeoutMs: 30_000 });
+  const settingsLayout = await evalIn(app, `(() => {
+    const root = document.querySelector('[data-testid="openwork-settings"]');
+    const sidebar = document.querySelector('[data-testid="openwork-settings-sidebar"]');
+    if (!root || !sidebar) return null;
+    const rootRect = root.getBoundingClientRect();
+    const sidebarRect = sidebar.getBoundingClientRect();
+    return {
+      rootLeft: rootRect.left,
+      rootWidth: rootRect.width,
+      sidebarLeft: sidebarRect.left,
+      sidebarWidth: sidebarRect.width,
+      hasCoworkerContextResizer: Boolean(document.querySelector('[data-testid="context-panel-resizer"]')),
+      hasSettingsNavigation: sidebar.querySelectorAll('nav button').length,
+    };
+  })()`);
+  expect(settingsLayout).toMatchObject({
+    hasCoworkerContextResizer: false,
+    hasSettingsNavigation: 4,
+  });
+  if (
+    !isRecord(settingsLayout)
+    || typeof settingsLayout.rootLeft !== "number"
+    || typeof settingsLayout.rootWidth !== "number"
+    || typeof settingsLayout.sidebarLeft !== "number"
+    || typeof settingsLayout.sidebarWidth !== "number"
+  ) {
+    throw new Error("Full-window OpenWork settings layout was unavailable.");
+  }
+  expect(settingsLayout.rootLeft).toBeLessThan(3);
+  expect(settingsLayout.sidebarLeft).toBeLessThan(3);
+  expect(settingsLayout.rootWidth).toBeGreaterThan(900);
+  expect(settingsLayout.sidebarWidth).toBeGreaterThanOrEqual(240);
   const configurationText = await evalIn(app, "document.body.innerText");
   expect(configurationText.toLowerCase()).toContain("local mode");
-  expect(configurationText.toLowerCase()).toContain("agent engine");
+  expect(configurationText.toLowerCase()).toContain("local engine");
   expect(configurationText.toLowerCase()).toContain("opencode/big-pickle");
   evidence.recordAssertionEvidence(
-    "Account, engine, provider, and model configuration stays available from the discreet bottom-left control",
-    "The OpenWork control was within 24px of the window bottom and opened Local mode, Agent engine, and Scout's selected Big Pickle model without replacing the work surface.",
+    "Global OpenWork settings open as a full-window workspace with their own left navigation",
+    "The discreet bottom-left OpenWork control replaced the coworker workspace with a full-width settings shell, a 252px left settings sidebar, four global destinations, Local mode, engine state, and Scout's selected Big Pickle model. No coworker context-panel resizer remained mounted.",
     true,
   );
 
-  await clickButton(app, "←");
+  await clickButtonContaining(app, "Back to coworkers");
   await waitForText(app, "+ New local responsibility", { timeoutMs: 30_000 });
   await clickButton(app, "+ New local responsibility");
   await fill(app, 'input[placeholder="Morning competitor report"]', "Local readiness check");

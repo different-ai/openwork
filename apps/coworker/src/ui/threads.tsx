@@ -6,6 +6,12 @@ import {
   type CoworkerArtifactKind,
 } from "@/lib/artifacts";
 import {
+  assignmentPrompt,
+  assignmentTitle,
+  discussionTitle,
+  type DiscussionMessage,
+} from "@/lib/conversation";
+import {
   createCoworkerMcpClient,
   gatewayMcpAppLaunch,
   preservedMcpAppResult,
@@ -17,12 +23,13 @@ import {
   createCoworkerThreads,
   describeInteractions,
   hasPendingInteractions,
+  type CoworkerActivity,
   type PendingInteractions,
   type ThreadListItem,
 } from "@/lib/threads";
 import { InteractionCards } from "@/ui/interactions";
 import { CoworkerAvatar } from "@/ui/coworker-avatar";
-import { InlineLoader } from "@/ui/brand";
+import { CoworkerMark, InlineLoader } from "@/ui/brand";
 import { Button, Empty, ErrorNote, StatusDot } from "@/ui/kit";
 import { McpAppFrame } from "@/ui/mcp-app-frame";
 
@@ -40,16 +47,41 @@ type TranscriptMessage = {
   id: string;
   role: string;
   text: string;
+  reasoning: string;
   toolCalls: TranscriptToolCall[];
 };
 
 export type AssignmentDraft = { id: number; text: string } | null;
 
-const STARTERS = [
-  "Review your workspace and tell me what needs my attention.",
-  "Summarize what you are focused on and propose the next three steps.",
-  "Turn this outcome into a short plan, then start the first safe step.",
+type QueuedTurn = {
+  id: number;
+  threadId: string;
+  prompt: string;
+  messageId: string;
+};
+
+type PendingTurn = {
+  messageId: string;
+  prompt: string;
+  phase: "accepting" | "waiting";
+};
+
+type TurnIssue = {
+  kind: "failed" | "timeout" | "stopped";
+  message: string;
+  messageId: string;
+  prompt: string;
+};
+
+const DISCUSSION_STARTERS = [
+  "What should we focus on today?",
+  "Help me think through a decision.",
+  "Catch me up on what you remember.",
 ];
+
+function newMessageId(): string {
+  return `msg_coworker_${Date.now().toString(36)}_${crypto.randomUUID().replaceAll("-", "").slice(0, 16)}`;
+}
 
 function relativeTime(timestamp: number): string {
   if (!timestamp) return "Not started";
@@ -74,6 +106,8 @@ export function ThreadsPanel({
   onRefreshRuntime,
   assignmentDraft,
   openThreadRequest,
+  onOpenSettings,
+  onActivityChange,
 }: {
   runtime: RuntimeInfo;
   coworker: CoworkerSummary;
@@ -82,6 +116,8 @@ export function ThreadsPanel({
   assignmentDraft?: AssignmentDraft;
   /** Set by the context rail to jump straight into a thread; the id makes repeat requests distinct. */
   openThreadRequest?: { id: number; threadId: string } | null;
+  onOpenSettings: () => void;
+  onActivityChange: (activity: CoworkerActivity | null) => void;
 }) {
   const threads = useMemo(
     () =>
@@ -92,22 +128,40 @@ export function ThreadsPanel({
             token: runtime.ownerToken,
             model: coworker.model,
             modelVariant: coworker.modelVariant,
+            conversationThreadId: coworker.conversationThreadId,
           })
         : null,
-    [runtime.serverUrl, runtime.ownerToken, coworker.workspaceId, coworker.model, coworker.modelVariant],
+    [runtime.serverUrl, runtime.ownerToken, coworker.workspaceId, coworker.model, coworker.modelVariant, coworker.conversationThreadId],
   );
   const [items, setItems] = useState<ThreadListItem[]>([]);
   const [attentionBySession, setAttentionBySession] = useState<Record<string, string>>({});
   const [openThreadId, setOpenThreadId] = useState("");
+  const [discussionThreadId, setDiscussionThreadId] = useState(coworker.conversationThreadId);
+  const [view, setView] = useState<"discussion" | "assignments">("discussion");
+  const [pendingAssignment, setPendingAssignment] = useState<AssignmentDraft>(assignmentDraft ?? null);
+  const [queuedTurn, setQueuedTurn] = useState<QueuedTurn | null>(null);
   const [error, setError] = useState("");
 
   useEffect(() => {
-    if (assignmentDraft) setOpenThreadId("");
+    setDiscussionThreadId(coworker.conversationThreadId);
+  }, [coworker.conversationThreadId]);
+
+  useEffect(() => {
+    if (!assignmentDraft) return;
+    setOpenThreadId("");
+    setView("discussion");
+    setPendingAssignment(assignmentDraft);
   }, [assignmentDraft]);
 
   useEffect(() => {
-    if (openThreadRequest?.threadId) setOpenThreadId(openThreadRequest.threadId);
-  }, [openThreadRequest]);
+    if (!openThreadRequest?.threadId) return;
+    if (openThreadRequest.threadId === discussionThreadId) {
+      setOpenThreadId("");
+      setView("discussion");
+      return;
+    }
+    setOpenThreadId(openThreadRequest.threadId);
+  }, [discussionThreadId, openThreadRequest]);
 
   const refresh = useCallback(async () => {
     if (!threads) return;
@@ -141,6 +195,33 @@ export function ThreadsPanel({
       window.clearInterval(timer);
     };
   }, [threads, refresh]);
+
+  const ensureDiscussion = useCallback(async () => {
+    if (!threads) throw new Error("This coworker needs a workspace before it can chat.");
+    if (discussionThreadId) return discussionThreadId;
+    const discussion = await threads.client.createThread({ title: discussionTitle(coworker.name) });
+    const updated = await coworkerBridge.coworkers.update(coworker.slug, { conversationThreadId: discussion.id });
+    setDiscussionThreadId(discussion.id);
+    onCoworkerChanged(updated);
+    return discussion.id;
+  }, [coworker.name, coworker.slug, discussionThreadId, onCoworkerChanged, threads]);
+
+  const createAssignment = useCallback(async (outcome: string, messages: ReadonlyArray<DiscussionMessage>) => {
+    if (!threads) throw new Error("This coworker needs a workspace before it can take an assignment.");
+    const thread = await threads.client.createThread({
+      title: assignmentTitle(outcome),
+    });
+    setQueuedTurn({
+      id: Date.now(),
+      threadId: thread.id,
+      prompt: assignmentPrompt(outcome, messages),
+      messageId: newMessageId(),
+    });
+    setPendingAssignment(null);
+    setOpenThreadId(thread.id);
+    setView("discussion");
+    void refresh();
+  }, [refresh, threads]);
 
   if (!threads) {
     return (
@@ -177,64 +258,137 @@ export function ThreadsPanel({
         threadId={openThreadId}
         coworker={coworker}
         runtime={runtime}
+        kind="assignment"
+        assignmentCount={items.length}
+        initialTurn={queuedTurn?.threadId === openThreadId ? queuedTurn : null}
         onBack={() => {
           setOpenThreadId("");
+          setView("discussion");
           void refresh();
+        }}
+        onShowAssignments={() => setView("assignments")}
+        onInitialTurnHandled={(id) => setQueuedTurn((current) => current?.id === id ? null : current)}
+        onOpenSettings={onOpenSettings}
+        onActivityChange={onActivityChange}
+      />
+    );
+  }
+
+  if (view === "assignments") {
+    return (
+      <AssignmentOverview
+        coworker={coworker}
+        error={error}
+        items={items}
+        attentionBySession={attentionBySession}
+        onOpen={setOpenThreadId}
+        onBack={() => setView("discussion")}
+        onNewAssignment={() => {
+          setPendingAssignment({ id: Date.now(), text: "" });
+          setView("discussion");
         }}
       />
     );
   }
 
+  if (!discussionThreadId) {
+    return (
+      <DiscussionWelcome
+        coworker={coworker}
+        error={error}
+        assignmentCount={items.length}
+        assignmentDraft={pendingAssignment}
+        onShowAssignments={() => setView("assignments")}
+        onStartDiscussion={async (text) => {
+          const threadId = await ensureDiscussion();
+          setQueuedTurn({ id: Date.now(), threadId, prompt: text, messageId: newMessageId() });
+        }}
+        onCreateAssignment={createAssignment}
+        onAssignmentDraftHandled={() => setPendingAssignment(null)}
+      />
+    );
+  }
+
   return (
-    <WorkOverview
-      coworker={coworker}
-      error={error}
-      items={items}
-      attentionBySession={attentionBySession}
-      onOpen={setOpenThreadId}
+    <ThreadView
+      key={discussionThreadId}
       threads={threads}
-      assignmentDraft={assignmentDraft}
+      threadId={discussionThreadId}
+      coworker={coworker}
+      runtime={runtime}
+      kind="discussion"
+      assignmentCount={items.length}
+      assignmentDraft={pendingAssignment}
+      initialTurn={queuedTurn?.threadId === discussionThreadId ? queuedTurn : null}
+      onBack={() => undefined}
+      onShowAssignments={() => setView("assignments")}
+      onCreateAssignment={createAssignment}
+      onAssignmentDraftHandled={() => setPendingAssignment(null)}
+      onInitialTurnHandled={(id) => setQueuedTurn((current) => current?.id === id ? null : current)}
+      onOpenSettings={onOpenSettings}
+      onActivityChange={onActivityChange}
     />
   );
 }
 
-function WorkOverview({
-  threads,
+function DiscussionWelcome({
   coworker,
-  items,
-  attentionBySession,
   error,
-  onOpen,
+  assignmentCount,
   assignmentDraft,
+  onStartDiscussion,
+  onCreateAssignment,
+  onShowAssignments,
+  onAssignmentDraftHandled,
 }: {
-  threads: NonNullable<ReturnType<typeof createCoworkerThreads>>;
   coworker: CoworkerSummary;
-  items: ThreadListItem[];
-  attentionBySession: Record<string, string>;
   error: string;
-  onOpen: (threadId: string) => void;
+  assignmentCount: number;
   assignmentDraft?: AssignmentDraft;
+  onStartDiscussion: (text: string) => Promise<void>;
+  onCreateAssignment: (outcome: string, messages: ReadonlyArray<DiscussionMessage>) => Promise<void>;
+  onShowAssignments: () => void;
+  onAssignmentDraftHandled: () => void;
 }) {
-  const [prompt, setPrompt] = useState("");
+  const [message, setMessage] = useState("");
+  const [assignmentText, setAssignmentText] = useState("");
+  const [assignmentMode, setAssignmentMode] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [assignError, setAssignError] = useState("");
+  const [composerError, setComposerError] = useState("");
 
   useEffect(() => {
-    if (assignmentDraft) setPrompt(assignmentDraft.text);
+    if (!assignmentDraft) return;
+    setAssignmentMode(true);
+    setAssignmentText(assignmentDraft.text);
   }, [assignmentDraft]);
 
-  async function assign() {
-    const text = prompt.trim();
+  async function send() {
+    const text = message.trim();
     if (!text) return;
     setBusy(true);
-    setAssignError("");
+    setComposerError("");
     try {
-      const title = text.length > 80 ? `${text.slice(0, 77)}…` : text;
-      const thread = await threads.client.createThread({ title, prompt: text });
-      setPrompt("");
-      onOpen(thread.id);
+      await onStartDiscussion(text);
+      setMessage("");
     } catch (cause) {
-      setAssignError(cause instanceof Error ? cause.message : String(cause));
+      setComposerError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function assign() {
+    const text = assignmentText.trim();
+    if (!text) return;
+    setBusy(true);
+    setComposerError("");
+    try {
+      await onCreateAssignment(text, []);
+      setAssignmentText("");
+      setAssignmentMode(false);
+      onAssignmentDraftHandled();
+    } catch (cause) {
+      setComposerError(cause instanceof Error ? cause.message : String(cause));
     } finally {
       setBusy(false);
     }
@@ -244,57 +398,97 @@ function WorkOverview({
     <section className="flex h-full min-h-0 flex-col bg-ink">
       <header className="flex items-center justify-between gap-4 border-b border-line px-6 py-3">
         <div>
-          <h2 className="text-sm font-semibold text-snow">Work with {coworker.name}</h2>
-          <p className="text-xs text-mist">One assignment becomes a durable OpenWork thread.</p>
+          <h2 className="text-sm font-semibold text-snow">Discussion with {coworker.name}</h2>
+          <p className="text-xs text-mist">Talk naturally. Create an assignment only when there is an outcome to own.</p>
         </div>
+        <Button variant="ghost" onClick={onShowAssignments}>Assignments{assignmentCount ? ` · ${assignmentCount}` : ""}</Button>
       </header>
-      <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
+      <div className="min-h-0 flex-1 overflow-y-auto px-6 py-8">
         {error ? <ErrorNote>{error}</ErrorNote> : null}
-        {items.length === 0 && !error ? (
-          <div className="mx-auto flex h-full max-w-xl flex-col justify-center py-8 text-center">
-            <CoworkerAvatar
-              animated
-              color={coworker.avatarColor}
-              glasses={coworker.avatarGlasses}
-              name={coworker.name}
-              size={88}
-            />
-            <h3 className="mt-2 text-lg font-semibold text-snow">What should {coworker.name} own next?</h3>
-            <p className="mx-auto mt-1 max-w-md text-sm leading-relaxed text-mist">
-              Assign an outcome in your own words. Context and memory carry into future work.
+        {!error ? (
+          <div className="mx-auto flex h-full max-w-xl flex-col justify-center text-center">
+            <CoworkerAvatar animated color={coworker.avatarColor} glasses={coworker.avatarGlasses} name={coworker.name} size={88} />
+            <h3 className="mt-3 text-xl font-semibold tracking-[-0.03em] text-snow">Start with a conversation</h3>
+            <p className="mx-auto mt-1.5 max-w-md text-sm leading-relaxed text-mist">
+              Ask, explore, or think something through. Nothing becomes assigned work until you choose to create an assignment.
             </p>
-            <div className="mt-5 grid gap-2 text-left">
-              {STARTERS.map((starter) => (
-                <button
-                  key={starter}
-                  className="rounded-xl border border-line bg-panel/60 px-4 py-3 text-sm text-snow transition-colors hover:bg-panel"
-                  onClick={() => setPrompt(starter)}
-                >
+            <div className="mt-6 grid gap-2 text-left">
+              {DISCUSSION_STARTERS.map((starter) => (
+                <button key={starter} className="rounded-xl border border-line bg-panel/50 px-4 py-3 text-sm text-snow transition-colors hover:bg-panel" onClick={() => setMessage(starter)}>
                   {starter}
                 </button>
               ))}
             </div>
           </div>
         ) : null}
+      </div>
+      <DiscussionComposer
+        message={message}
+        onMessageChange={setMessage}
+        onSend={() => void send()}
+        assignmentMode={assignmentMode}
+        onAssignmentModeChange={setAssignmentMode}
+        assignment={assignmentText}
+        onAssignmentChange={setAssignmentText}
+        onCreateAssignment={() => void assign()}
+        busy={busy}
+        error={composerError}
+        coworkerName={coworker.name}
+      />
+    </section>
+  );
+}
+
+function AssignmentOverview({
+  coworker,
+  items,
+  attentionBySession,
+  error,
+  onOpen,
+  onBack,
+  onNewAssignment,
+}: {
+  coworker: CoworkerSummary;
+  items: ThreadListItem[];
+  attentionBySession: Record<string, string>;
+  error: string;
+  onOpen: (threadId: string) => void;
+  onBack: () => void;
+  onNewAssignment: () => void;
+}) {
+  return (
+    <section className="flex h-full min-h-0 flex-col bg-ink">
+      <header className="flex items-center gap-3 border-b border-line px-5 py-3">
+        <Button variant="ghost" className="px-2" onClick={onBack} title="Back to discussion">←</Button>
+        <div className="min-w-0 flex-1">
+          <h2 className="text-sm font-semibold text-snow">Assignments</h2>
+          <p className="text-xs text-mist">Outcome-driven work created from your discussion with {coworker.name}.</p>
+        </div>
+        <Button variant="primary" onClick={onNewAssignment}>New assignment</Button>
+      </header>
+      <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
+        {error ? <ErrorNote>{error}</ErrorNote> : null}
+        {items.length === 0 && !error ? (
+          <div className="mx-auto flex h-full max-w-md flex-col items-center justify-center text-center">
+            <CoworkerMark size={42} />
+            <h3 className="mt-3 text-base font-semibold text-snow">No assignments yet</h3>
+            <p className="mt-1 text-sm leading-relaxed text-mist">Talk things through first, then turn a clear outcome into work.</p>
+            <Button className="mt-4" onClick={onNewAssignment}>Create from discussion</Button>
+          </div>
+        ) : null}
         {items.length > 0 ? (
           <div className="mx-auto max-w-3xl">
             <div className="mb-3 flex items-center justify-between">
-              <h3 className="text-xs font-semibold uppercase tracking-[0.14em] text-mist">Recent work</h3>
-              <span className="text-xs text-mist">{items.length} thread{items.length === 1 ? "" : "s"}</span>
+              <h3 className="text-xs font-semibold uppercase tracking-[0.14em] text-mist">Current and recent</h3>
+              <span className="text-xs text-mist">{items.length} assignment{items.length === 1 ? "" : "s"}</span>
             </div>
             <ul className="space-y-1.5">
               {items.map((item) => (
                 <li key={item.id}>
-                  <button
-                    className="flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left transition-colors hover:bg-panel"
-                    onClick={() => onOpen(item.id)}
-                  >
+                  <button className="flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left transition-colors hover:bg-panel" onClick={() => onOpen(item.id)}>
                     <StatusDot tone={attentionBySession[item.id] ? "amber" : threadTone(item.status)} />
                     <span className="min-w-0 flex-1 truncate text-sm font-medium text-snow">{item.title}</span>
-                    <span
-                      className={`shrink-0 text-xs ${attentionBySession[item.id] ? "font-medium text-amber" : "text-mist"}`}
-                      title={attentionBySession[item.id] || undefined}
-                    >
+                    <span className={`shrink-0 text-xs ${attentionBySession[item.id] ? "font-medium text-amber" : "text-mist"}`} title={attentionBySession[item.id] || undefined}>
                       {attentionBySession[item.id]
                         ? "Needs you"
                         : item.status === "busy"
@@ -311,15 +505,6 @@ function WorkOverview({
           </div>
         ) : null}
       </div>
-      <Composer
-        value={prompt}
-        onChange={setPrompt}
-        onSubmit={() => void assign()}
-        busy={busy}
-        error={assignError}
-        placeholder={`Assign work to ${coworker.name}…`}
-        submitLabel="Assign"
-      />
     </section>
   );
 }
@@ -329,13 +514,33 @@ function ThreadView({
   threadId,
   coworker,
   runtime,
+  kind,
+  assignmentCount,
+  assignmentDraft,
+  initialTurn,
   onBack,
+  onShowAssignments,
+  onCreateAssignment,
+  onAssignmentDraftHandled,
+  onInitialTurnHandled,
+  onOpenSettings,
+  onActivityChange,
 }: {
   threads: NonNullable<ReturnType<typeof createCoworkerThreads>>;
   threadId: string;
   coworker: CoworkerSummary;
   runtime: RuntimeInfo;
+  kind: "discussion" | "assignment";
+  assignmentCount: number;
+  assignmentDraft?: AssignmentDraft;
+  initialTurn: QueuedTurn | null;
   onBack: () => void;
+  onShowAssignments: () => void;
+  onCreateAssignment?: (outcome: string, messages: ReadonlyArray<DiscussionMessage>) => Promise<void>;
+  onAssignmentDraftHandled?: () => void;
+  onInitialTurnHandled: (id: number) => void;
+  onOpenSettings: () => void;
+  onActivityChange: (activity: CoworkerActivity | null) => void;
 }) {
   const [messages, setMessages] = useState<TranscriptMessage[]>([]);
   const [title, setTitle] = useState("Work thread");
@@ -343,9 +548,17 @@ function ThreadView({
   const [terminalError, setTerminalError] = useState("");
   const [pending, setPending] = useState<PendingInteractions>({ permissions: [], questions: [] });
   const [reply, setReply] = useState("");
+  const [assignmentMode, setAssignmentMode] = useState(false);
+  const [assignmentText, setAssignmentText] = useState("");
   const [error, setError] = useState("");
-  const [busy, setBusy] = useState(false);
+  const [assignmentBusy, setAssignmentBusy] = useState(false);
+  const [pendingTurn, setPendingTurn] = useState<PendingTurn | null>(null);
+  const [turnIssue, setTurnIssue] = useState<TurnIssue | null>(null);
   const endRef = useRef<HTMLDivElement>(null);
+  const pendingTurnRef = useRef<PendingTurn | null>(null);
+  const waitControllerRef = useRef<AbortController | null>(null);
+  const stopRequestedRef = useRef(false);
+  const handledInitialTurnRef = useRef<number | null>(null);
   const mcpClient = useMemo(
     () => createCoworkerMcpClient({
       serverUrl: runtime.serverUrl,
@@ -365,15 +578,18 @@ function ThreadView({
       setTitle(transcript.title ?? "Work thread");
       setStatusLabel(transcript.status.type);
       setTerminalError(
-        transcript.terminalError
-          ? `${transcript.terminalError.name}: ${transcript.terminalError.message}`
-          : "",
+        pendingTurnRef.current
+          ? ""
+          : transcript.terminalError
+            ? `${transcript.terminalError.name}: ${transcript.terminalError.message}`
+            : "",
       );
       setMessages(
         transcript.messages.map((message) => ({
           id: message.id,
           role: message.role,
           text: message.text,
+          reasoning: message.reasoning,
           toolCalls: message.toolCalls.map((call) => ({
             partId: call.partId,
             tool: call.name,
@@ -392,6 +608,12 @@ function ThreadView({
   }, [threads, threadId]);
 
   useEffect(() => {
+    if (kind !== "discussion" || !assignmentDraft) return;
+    setAssignmentMode(true);
+    setAssignmentText(assignmentDraft.text);
+  }, [assignmentDraft, kind]);
+
+  useEffect(() => {
     void refresh();
     const unsubscribe = threads.subscribe(() => void refresh());
     const timer = window.setInterval(() => void refresh(), 5_000);
@@ -401,50 +623,244 @@ function ThreadView({
     };
   }, [threads, refresh]);
 
+  useEffect(() => () => waitControllerRef.current?.abort(), []);
+
   useEffect(() => {
     endRef.current?.scrollIntoView({ block: "end" });
-  }, [messages.length, statusLabel, pending.permissions.length, pending.questions.length]);
+  }, [messages.length, pendingTurn, statusLabel, pending.permissions.length, pending.questions.length]);
 
-  async function send() {
+  const submitTurn = useCallback(async (prompt: string, messageId: string) => {
+    if (pendingTurnRef.current) return;
+    const nextPending: PendingTurn = { messageId, prompt, phase: "accepting" };
+    pendingTurnRef.current = nextPending;
+    setPendingTurn(nextPending);
+    setTurnIssue(null);
+    setTerminalError("");
+    setError("");
+    stopRequestedRef.current = false;
+    onActivityChange({
+      state: "working",
+      label: "Working",
+      detail: kind === "discussion" ? "Replying in your discussion" : title,
+      updatedAt: Date.now(),
+      threadId,
+    });
+    let refreshTimer: number | undefined;
+    try {
+      if (coworker.model.trim()) {
+        const availableModels = await threads.listModels();
+        if (!availableModels.some((model) => model.id === coworker.model)) {
+          throw new Error(`Configured model "${coworker.model}" is not available from a connected provider.`);
+        }
+      }
+      const acceptance = await threads.client.sendTurn(threadId, { prompt, messageId });
+      const waiting: PendingTurn = { messageId, prompt, phase: "waiting" };
+      pendingTurnRef.current = waiting;
+      setPendingTurn(waiting);
+      await refresh();
+
+      const controller = new AbortController();
+      waitControllerRef.current = controller;
+      refreshTimer = window.setInterval(() => void refresh(), 600);
+      const result = await threads.client.waitForThread(threadId, {
+        timeoutMs: 120_000,
+        pollIntervalMs: 500,
+        since: acceptance,
+        signal: controller.signal,
+      });
+      await refresh();
+
+      if (result.outcome === "failed") {
+        const failure = result.terminalError
+          ? `${result.terminalError.name}: ${result.terminalError.message}`
+          : "The model stopped before producing a response.";
+        setTurnIssue({ kind: "failed", message: failure, messageId, prompt });
+      } else if (result.outcome === "timeout") {
+        setTurnIssue({
+          kind: "timeout",
+          message: "No response arrived within two minutes. The conversation is still saved, and you can retry this turn without sending it twice.",
+          messageId,
+          prompt,
+        });
+      } else if (result.outcome === "aborted" && stopRequestedRef.current) {
+        setTurnIssue({
+          kind: "stopped",
+          message: "Stopped. The conversation and everything completed so far are still saved.",
+          messageId,
+          prompt,
+        });
+      }
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : String(cause);
+      setTurnIssue({ kind: "failed", message, messageId, prompt });
+    } finally {
+      if (refreshTimer !== undefined) window.clearInterval(refreshTimer);
+      waitControllerRef.current = null;
+      if (pendingTurnRef.current?.messageId === messageId) {
+        pendingTurnRef.current = null;
+        setPendingTurn(null);
+      }
+    }
+  }, [coworker.model, kind, onActivityChange, refresh, threadId, threads, title]);
+
+  useEffect(() => {
+    if (!initialTurn || handledInitialTurnRef.current === initialTurn.id) return;
+    handledInitialTurnRef.current = initialTurn.id;
+    void submitTurn(initialTurn.prompt, initialTurn.messageId)
+      .finally(() => onInitialTurnHandled(initialTurn.id));
+  }, [initialTurn, onInitialTurnHandled, submitTurn]);
+
+  function send() {
     const text = reply.trim();
-    if (!text) return;
-    setBusy(true);
+    if (!text || pendingTurnRef.current) return;
+    setReply("");
+    void submitTurn(text, newMessageId());
+  }
+
+  async function stop() {
+    const active = pendingTurnRef.current;
+    stopRequestedRef.current = true;
+    waitControllerRef.current?.abort();
+    setPendingTurn(null);
+    setTurnIssue({
+      kind: "stopped",
+      message: "Stopped. The conversation and everything completed so far are still saved.",
+      messageId: active?.messageId ?? "",
+      prompt: active?.prompt ?? "",
+    });
+    try {
+      await threads.client.abortThread(threadId);
+      await refresh();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    }
+  }
+
+  async function createAssignmentFromDiscussion() {
+    const outcome = assignmentText.trim();
+    if (!outcome || !onCreateAssignment) return;
+    setAssignmentBusy(true);
     setError("");
     try {
-      await threads.client.sendTurn(threadId, { prompt: text });
-      setReply("");
-      void refresh();
+      const optimisticTurn = pendingTurn ?? (turnIssue?.messageId && turnIssue.prompt ? turnIssue : null);
+      const visibleMessages = optimisticTurn && !messages.some((message) => message.id === optimisticTurn.messageId)
+        ? [...messages, { id: optimisticTurn.messageId, role: "user", text: optimisticTurn.prompt, reasoning: "", toolCalls: [] }]
+        : messages;
+      await onCreateAssignment(outcome, visibleMessages.map(({ role, text }) => ({ role, text })));
+      setAssignmentText("");
+      setAssignmentMode(false);
+      onAssignmentDraftHandled?.();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
-      setBusy(false);
+      setAssignmentBusy(false);
     }
   }
 
   const needsYou = hasPendingInteractions(pending);
-  const working = statusLabel !== "idle" && !needsYou;
-  const readableStatus = needsYou ? "Needs you" : statusLabel === "retry" ? "Retrying" : working ? "Working" : "Ready";
+  const engineWorking = statusLabel !== "idle";
+  const turnNeedsAttention = turnIssue?.kind === "failed" || turnIssue?.kind === "timeout" || Boolean(terminalError);
+  const stopped = turnIssue?.kind === "stopped";
+  const working = (pendingTurn !== null || engineWorking) && !needsYou && !turnNeedsAttention && !stopped;
+  const readableStatus = needsYou
+    ? "Needs you"
+    : turnNeedsAttention
+      ? "Needs attention"
+      : stopped
+        ? "Stopped"
+    : statusLabel === "retry"
+      ? "Retrying"
+      : pendingTurn?.phase === "accepting"
+        ? "Sending"
+        : working
+          ? "Working"
+          : "Ready";
+  const optimisticTurn = pendingTurn ?? (turnIssue?.messageId && turnIssue.prompt ? turnIssue : null);
+  const visibleMessages = optimisticTurn && !messages.some((message) => message.id === optimisticTurn.messageId)
+    ? [...messages, { id: optimisticTurn.messageId, role: "user", text: optimisticTurn.prompt, reasoning: "", toolCalls: [] }]
+    : messages;
+  const lastAssistantIndex = visibleMessages.findLastIndex((message) => message.role === "assistant");
+  const displayedFailure = turnIssue?.kind === "failed" ? turnIssue.message : terminalError;
+
+  useEffect(() => {
+    if (needsYou) {
+      onActivityChange({
+        state: "attention",
+        label: "Needs you",
+        detail: describeInteractions(pending),
+        updatedAt: Date.now(),
+        threadId,
+      });
+      return;
+    }
+    if (turnIssue?.kind === "failed" || turnIssue?.kind === "timeout") {
+      onActivityChange({
+        state: "attention",
+        label: turnIssue.kind === "timeout" ? "Response delayed" : "Reply failed",
+        detail: turnIssue.message,
+        updatedAt: Date.now(),
+        threadId,
+      });
+      return;
+    }
+    if (displayedFailure) {
+      onActivityChange({
+        state: "attention",
+        label: "Reply failed",
+        detail: displayedFailure,
+        updatedAt: Date.now(),
+        threadId,
+      });
+      return;
+    }
+    if (working) {
+      onActivityChange({
+        state: statusLabel === "retry" ? "retrying" : "working",
+        label: statusLabel === "retry" ? "Retrying" : "Working",
+        detail: kind === "discussion" ? "Replying in your discussion" : title,
+        updatedAt: Date.now(),
+        threadId,
+      });
+      return;
+    }
+    onActivityChange(null);
+  }, [displayedFailure, kind, needsYou, onActivityChange, pending, statusLabel, threadId, title, turnIssue, working]);
 
   return (
     <section className="flex h-full min-h-0 flex-col bg-ink">
       <header className="flex items-center gap-3 border-b border-line px-5 py-3">
-        <Button variant="ghost" className="px-2" onClick={onBack} title="Back to recent work">
-          ←
-        </Button>
+        {kind === "assignment" ? <Button variant="ghost" className="px-2" onClick={onBack} title="Back to discussion">←</Button> : null}
+        {kind === "discussion" ? (
+          <CoworkerAvatar animated color={coworker.avatarColor} glasses={coworker.avatarGlasses} name={coworker.name} size={30} />
+        ) : null}
         <div className="min-w-0 flex-1">
-          <h2 className="truncate text-sm font-semibold text-snow">{title}</h2>
-          <p className={`text-xs ${needsYou ? "text-amber" : working ? "text-spark" : "text-mist"}`}>{readableStatus}</p>
+          <div className="flex items-center gap-2">
+            <h2 className="truncate text-sm font-semibold text-snow">{kind === "discussion" ? `Discussion with ${coworker.name}` : title}</h2>
+            {kind === "assignment" ? <span className="rounded-full border border-spark/20 bg-spark/8 px-1.5 py-0.5 text-[8px] font-semibold uppercase tracking-[0.08em] text-spark">Assignment</span> : null}
+          </div>
+          <p data-testid="coworker-thread-status" className={`text-xs ${needsYou ? "text-amber" : working ? "text-spark" : "text-mist"}`}>
+            {kind === "discussion" && !working && !needsYou && !turnNeedsAttention && !stopped
+              ? "A continuing conversation — messages are not assignments"
+              : readableStatus}
+          </p>
         </div>
+        <Button variant="ghost" onClick={onShowAssignments}>Assignments{assignmentCount ? ` · ${assignmentCount}` : ""}</Button>
         {working || needsYou ? (
-          <Button variant="ghost" onClick={() => void threads.client.abortThread(threadId)}>
+          <Button variant="ghost" onClick={() => void stop()}>
             Stop
           </Button>
         ) : null}
       </header>
       <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5">
         <div className="mx-auto max-w-3xl space-y-3">
-          {messages.map((message) => (
-            <MessageBubble key={message.id} message={message} coworker={coworker} mcpClient={mcpClient} />
+          {visibleMessages.map((message, index) => (
+            <MessageBubble
+              key={message.id}
+              message={message}
+              coworker={coworker}
+              mcpClient={mcpClient}
+              active={working && message.role === "assistant" && index === lastAssistantIndex}
+            />
           ))}
           <InteractionCards
             coworker={coworker}
@@ -463,30 +879,64 @@ function ThreadView({
             }}
           />
           {working ? (
-            <div className="flex items-center gap-2 px-1 py-2 text-xs text-mist">
-              <span className="size-2 animate-pulse rounded-full bg-spark" />
-              {coworker.name} is working…
-            </div>
+            <WorkIndicator coworker={coworker} messages={visibleMessages} />
           ) : null}
-          {messages.length === 0 && !error ? <Empty><InlineLoader label="Loading activity" /></Empty> : null}
-          {terminalError ? (
-            <ErrorNote>
-              The last turn failed — {terminalError}. Choose another model in coworker details or try again.
-            </ErrorNote>
+          {visibleMessages.length === 0 && !error && !working ? (
+            <Empty>{kind === "discussion" ? `Start a conversation with ${coworker.name}.` : <InlineLoader label="Loading assignment" />}</Empty>
+          ) : null}
+          {displayedFailure ? (
+            <TurnIssueNote
+              kind="failed"
+              message={displayedFailure}
+              canRetry={Boolean(turnIssue?.prompt)}
+              onRetry={() => {
+                if (turnIssue?.prompt) void submitTurn(turnIssue.prompt, turnIssue.messageId);
+              }}
+              onOpenSettings={onOpenSettings}
+            />
+          ) : null}
+          {turnIssue?.kind === "timeout" ? (
+            <TurnIssueNote
+              kind="timeout"
+              message={turnIssue.message}
+              canRetry
+              onRetry={() => void submitTurn(turnIssue.prompt, turnIssue.messageId)}
+              onOpenSettings={onOpenSettings}
+              onStop={() => void stop()}
+            />
+          ) : null}
+          {turnIssue?.kind === "stopped" ? (
+            <div className="flex items-center justify-between gap-3 rounded-xl border border-line bg-panel/45 px-3 py-2.5 text-xs text-mist" data-testid="coworker-turn-stopped">
+              <span>{turnIssue.message}</span>
+              {turnIssue.prompt ? <Button variant="ghost" onClick={() => void submitTurn(turnIssue.prompt, turnIssue.messageId)}>Retry</Button> : null}
+            </div>
           ) : null}
           {error ? <ErrorNote>{error}</ErrorNote> : null}
           <div ref={endRef} />
         </div>
       </div>
-      <Composer
-        value={reply}
-        onChange={setReply}
-        onSubmit={() => void send()}
-        busy={busy}
-        placeholder={`Message ${coworker.name}…`}
-        submitLabel="Send"
-        compact
-      />
+      {kind === "discussion" ? (
+        <DiscussionComposer
+          message={reply}
+          onMessageChange={setReply}
+          onSend={() => void send()}
+          assignmentMode={assignmentMode}
+          onAssignmentModeChange={setAssignmentMode}
+          assignment={assignmentText}
+          onAssignmentChange={setAssignmentText}
+          onCreateAssignment={() => void createAssignmentFromDiscussion()}
+          busy={pendingTurn !== null || assignmentBusy}
+          coworkerName={coworker.name}
+        />
+      ) : (
+        <MessageComposer
+          value={reply}
+          onChange={setReply}
+          onSubmit={() => void send()}
+          busy={pendingTurn !== null}
+          placeholder={`Follow up with ${coworker.name}…`}
+        />
+      )}
     </section>
   );
 }
@@ -495,37 +945,104 @@ function MessageBubble({
   message,
   coworker,
   mcpClient,
+  active,
 }: {
   message: TranscriptMessage;
   coworker: CoworkerSummary;
   mcpClient: CoworkerMcpClient;
+  active: boolean;
 }) {
   const user = message.role === "user";
+  if (user) {
+    return (
+      <article className="flex justify-end" data-message-role="user">
+        <div className="max-w-[82%] whitespace-pre-wrap rounded-2xl rounded-br-md bg-snow px-4 py-3 text-sm leading-relaxed text-ink">
+          {message.text || "…"}
+        </div>
+      </article>
+    );
+  }
+
   return (
-    <article className={`flex items-end gap-2 ${user ? "justify-end" : "justify-start"}`}>
-      {!user ? (
-        <CoworkerAvatar
-          animated={false}
-          color={coworker.avatarColor}
-          glasses={coworker.avatarGlasses}
-          name={coworker.name}
-          size={30}
-        />
-      ) : null}
-      <div
-        className={`max-w-[86%] rounded-2xl px-4 py-3 text-sm leading-relaxed whitespace-pre-wrap ${
-          user ? "rounded-br-md bg-snow text-ink" : "rounded-bl-md bg-panel text-snow"
-        }`}
-      >
-        {!user ? <p className="mb-1 text-[11px] font-semibold text-mist">{coworker.name}</p> : null}
-        {message.text || (message.toolCalls.length > 0 ? "" : "…")}
+    <article className="flex items-start gap-2.5" data-message-role="assistant">
+      <CoworkerAvatar animated={active} color={coworker.avatarColor} glasses={coworker.avatarGlasses} name={coworker.name} size={30} />
+      <div className="min-w-0 max-w-[88%] flex-1 pt-0.5">
+        <p className="mb-1.5 text-[11px] font-semibold text-mist">{coworker.name}</p>
+        {message.reasoning ? <ThinkingDisclosure text={message.reasoning} active={active} /> : null}
         {message.toolCalls.length > 0 ? (
-          <ul className="mt-3 space-y-1.5">
+          <ul className={`${message.reasoning ? "mt-2" : ""} space-y-1.5`}>
             {message.toolCalls.map((call) => <ToolReceipt key={call.partId} call={call} client={mcpClient} />)}
           </ul>
         ) : null}
+        {message.text ? (
+          <div className={`${message.reasoning || message.toolCalls.length ? "mt-2.5" : ""} whitespace-pre-wrap text-sm leading-relaxed text-snow`}>
+            {message.text}
+          </div>
+        ) : !message.reasoning && message.toolCalls.length === 0 ? <span className="text-sm text-mist">…</span> : null}
       </div>
     </article>
+  );
+}
+
+function ThinkingDisclosure({ text, active }: { text: string; active: boolean }) {
+  return (
+    <details className="group rounded-xl border border-white/7 bg-white/[0.025] px-2.5 py-2" data-testid="coworker-thinking">
+      <summary className="flex cursor-pointer list-none items-center gap-2 text-xs text-mist marker:hidden">
+        <CoworkerMark loading={active} size={18} />
+        <span className={`flex-1 ${active ? "animate-pulse" : ""}`}>{active ? "Thinking…" : "Thought through"}</span>
+        <span className="text-mist/60 transition-transform group-open:rotate-90" aria-hidden="true">›</span>
+      </summary>
+      <p className="mt-2 whitespace-pre-wrap border-t border-white/7 pt-2 text-xs leading-relaxed text-mist">{text}</p>
+    </details>
+  );
+}
+
+function WorkIndicator({ coworker, messages }: { coworker: CoworkerSummary; messages: TranscriptMessage[] }) {
+  const activeCall = messages
+    .flatMap((message) => message.toolCalls)
+    .findLast((call) => !["completed", "success", "error", "failed"].includes(call.status));
+  const label = activeCall ? `${toolPresentation(activeCall).label.replace(/^(Searched|Used|Ran) /, "Using ")}…` : "Thinking and working…";
+  return (
+    <div className="flex items-center gap-2.5 px-1 py-2 text-xs text-mist" data-testid="coworker-working">
+      <CoworkerAvatar animated color={coworker.avatarColor} glasses={coworker.avatarGlasses} name={coworker.name} size={24} />
+      <span className="animate-pulse">{label}</span>
+    </div>
+  );
+}
+
+function TurnIssueNote({
+  kind,
+  message,
+  canRetry,
+  onRetry,
+  onOpenSettings,
+  onStop,
+}: {
+  kind: "failed" | "timeout";
+  message: string;
+  canRetry: boolean;
+  onRetry: () => void;
+  onOpenSettings: () => void;
+  onStop?: () => void;
+}) {
+  return (
+    <div className="rounded-xl border border-rose/25 bg-rose/5 px-3 py-3" data-testid={`coworker-turn-${kind}`}>
+      <div className="flex items-start gap-2.5">
+        <CoworkerMark className="mt-0.5 shrink-0" size={20} />
+        <div className="min-w-0 flex-1">
+          <p className="text-xs font-semibold text-snow">{kind === "timeout" ? "The reply is taking too long" : "The coworker could not reply"}</p>
+          <p className="mt-1 break-words text-xs leading-relaxed text-mist">{message}</p>
+          {kind === "failed" ? (
+            <p className="mt-1 text-[11px] leading-relaxed text-mist">Choose another model or reconnect its provider in coworker settings.</p>
+          ) : null}
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            {canRetry ? <Button variant="ghost" onClick={onRetry}>Retry turn</Button> : null}
+            {onStop ? <Button variant="ghost" onClick={onStop}>Stop</Button> : null}
+            <Button variant="ghost" onClick={onOpenSettings}>Open model settings</Button>
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -591,7 +1108,12 @@ function ToolReceipt({ call, client }: { call: TranscriptToolCall; client: Cowor
   return (
     <li className="rounded-xl border border-line bg-ink/70 px-2.5 py-2 text-xs text-snow">
       <div className="flex items-center gap-2">
-        <StatusDot tone={failed ? "rose" : complete ? "mint" : "spark"} />
+        <span className="relative shrink-0">
+          <CoworkerMark loading={!failed && !complete} size={19} />
+          <span className="absolute -bottom-0.5 -right-0.5 flex rounded-full ring-2 ring-ink">
+            <StatusDot tone={failed ? "rose" : complete ? "mint" : "spark"} />
+          </span>
+        </span>
         <span className="min-w-0 flex-1 truncate">{presentation.label}</span>
         <span className="shrink-0 text-[10px] text-mist">{failed ? "Failed" : complete ? "Done" : "Working"}</span>
       </div>
@@ -668,58 +1190,112 @@ function ArtifactIcon({ kind }: { kind: CoworkerArtifactKind }) {
   );
 }
 
-function Composer({
+function DiscussionComposer({
+  message,
+  onMessageChange,
+  onSend,
+  assignmentMode,
+  onAssignmentModeChange,
+  assignment,
+  onAssignmentChange,
+  onCreateAssignment,
+  busy,
+  error,
+  coworkerName,
+}: {
+  message: string;
+  onMessageChange: (value: string) => void;
+  onSend: () => void;
+  assignmentMode: boolean;
+  onAssignmentModeChange: (active: boolean) => void;
+  assignment: string;
+  onAssignmentChange: (value: string) => void;
+  onCreateAssignment: () => void;
+  busy: boolean;
+  error?: string;
+  coworkerName: string;
+}) {
+  const value = assignmentMode ? assignment : message;
+  const submit = assignmentMode ? onCreateAssignment : onSend;
+  return (
+    <div className="border-t border-line bg-ink px-5 pb-2.5 pt-3">
+      <div className="mx-auto max-w-3xl">
+        {error ? <div className="mb-2"><ErrorNote>{error}</ErrorNote></div> : null}
+        <div className="rounded-2xl border border-line bg-panel/80 p-2 transition-colors focus-within:border-spark/45">
+          <div className="mb-1 flex items-center justify-between gap-3 px-1.5 pt-0.5">
+            <span className="text-[10px] font-medium text-mist">
+              {assignmentMode ? "A bounded outcome, separate from this discussion" : `Chat with ${coworkerName}`}
+            </span>
+            <button
+              type="button"
+              className="rounded-lg px-2 py-1 text-[10px] font-medium text-spark transition-colors hover:bg-spark/10"
+              onClick={() => onAssignmentModeChange(!assignmentMode)}
+            >
+              {assignmentMode ? "Back to chat" : "Create assignment"}
+            </button>
+          </div>
+          <div className="flex items-end gap-2">
+            <textarea
+              aria-label={assignmentMode ? "Assignment outcome" : `Message ${coworkerName}`}
+              className="max-h-40 min-h-11 min-w-0 flex-1 resize-none bg-transparent px-2 py-2 text-sm leading-relaxed text-snow outline-none placeholder:text-mist/65"
+              placeholder={assignmentMode ? `What should ${coworkerName} own?` : `Message ${coworkerName}…`}
+              value={value}
+              onChange={(event) => assignmentMode ? onAssignmentChange(event.target.value) : onMessageChange(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) return;
+                event.preventDefault();
+                if (!busy && value.trim()) submit();
+              }}
+            />
+            <Button aria-busy={busy} variant="primary" className="rounded-xl" disabled={busy || !value.trim()} onClick={submit}>
+              {busy ? "Working…" : assignmentMode ? "Create assignment" : "Send"}
+            </Button>
+          </div>
+        </div>
+        <div className="mt-1.5 flex min-h-3 items-center justify-between gap-3 px-1 text-[9px] text-mist/65">
+          <span>Enter to {assignmentMode ? "create" : "send"} · Shift Enter for a new line</span>
+          <span className="shrink-0 font-medium tracking-[0.06em]">Powered by OpenWork</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function MessageComposer({
   value,
   onChange,
   onSubmit,
   busy,
-  error,
   placeholder,
-  submitLabel,
-  compact = false,
 }: {
   value: string;
   onChange: (value: string) => void;
   onSubmit: () => void;
   busy: boolean;
-  error?: string;
   placeholder: string;
-  submitLabel: string;
-  compact?: boolean;
 }) {
   return (
-    <div className="border-t border-line bg-ink px-5 pb-2.5 pt-4">
+    <div className="border-t border-line bg-ink px-5 pb-2.5 pt-3">
       <div className="mx-auto max-w-3xl">
-        {error ? <div className="mb-2"><ErrorNote>{error}</ErrorNote></div> : null}
-        <div className="flex items-end gap-2 rounded-2xl border border-line bg-panel p-2 focus-within:border-spark/50">
-          {compact ? (
-            <input
-              className="min-w-0 flex-1 bg-transparent px-2 py-1.5 text-sm text-snow outline-none placeholder:text-mist/70"
-              placeholder={placeholder}
-              value={value}
-              onChange={(event) => onChange(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter" && !event.shiftKey) onSubmit();
-              }}
-            />
-          ) : (
-            <textarea
-              className="min-h-11 min-w-0 flex-1 resize-none bg-transparent px-2 py-2 text-sm text-snow outline-none placeholder:text-mist/70"
-              placeholder={placeholder}
-              value={value}
-              onChange={(event) => onChange(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) onSubmit();
-              }}
-            />
-          )}
+        <div className="flex items-end gap-2 rounded-2xl border border-line bg-panel/80 p-2 transition-colors focus-within:border-spark/45">
+          <textarea
+            aria-label={placeholder.replace("…", "")}
+            className="max-h-40 min-h-11 min-w-0 flex-1 resize-none bg-transparent px-2 py-2 text-sm leading-relaxed text-snow outline-none placeholder:text-mist/65"
+            placeholder={placeholder}
+            value={value}
+            onChange={(event) => onChange(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) return;
+              event.preventDefault();
+              if (!busy && value.trim()) onSubmit();
+            }}
+          />
           <Button aria-busy={busy} variant="primary" className="rounded-xl" disabled={busy || !value.trim()} onClick={onSubmit}>
-            {busy ? `${submitLabel}ing…` : submitLabel}
+            {busy ? "Working…" : "Send"}
           </Button>
         </div>
-        <div className="mt-1.5 flex min-h-3 items-center justify-between gap-3 px-1 text-[9px] text-mist/65">
-          <span>{compact ? "" : "⌘ Enter to assign"}</span>
-          <span className="shrink-0 font-medium tracking-[0.06em]">Powered by OpenWork</span>
+        <div className="mt-1.5 flex min-h-3 items-center justify-end px-1 text-[9px] text-mist/65">
+          <span className="font-medium tracking-[0.06em]">Powered by OpenWork</span>
         </div>
       </div>
     </div>
