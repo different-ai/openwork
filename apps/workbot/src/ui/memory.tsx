@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { workbot, type BotMemoryFile, type BotSummary } from "@/lib/bridge";
 import { Button, Empty, ErrorNote, Section } from "@/ui/kit";
 
@@ -46,6 +46,28 @@ export function MemoryPanel({ bot }: { bot: BotSummary }) {
     return () => {
       cancelled = true;
     };
+  }, [bot.slug, selected]);
+
+  // The worker edits these files while it works. Follow along live, but never
+  // overwrite unsaved human edits.
+  const editorState = useRef({ content: "", savedContent: "" });
+  editorState.current = { content, savedContent };
+  useEffect(() => {
+    if (!selected) return;
+    const timer = window.setInterval(() => {
+      void workbot.files
+        .read(bot.slug, selected.path)
+        .then((text) => {
+          const { content: currentContent, savedContent: currentSaved } = editorState.current;
+          const dirty = currentContent !== currentSaved;
+          if (!dirty && text !== currentSaved) {
+            setContent(text);
+            setSavedContent(text);
+          }
+        })
+        .catch(() => undefined);
+    }, 5000);
+    return () => window.clearInterval(timer);
   }, [bot.slug, selected]);
 
   async function save() {
