@@ -463,7 +463,8 @@
         "evals/specs/session-title-failure-warning.e2e.test.ts",
         "evals/specs/settings-visit-live-run-continuity.e2e.test.ts",
         "evals/specs/task-activity-shimmer.e2e.test.ts",
-        "evals/specs/unfinished-tool-lifecycle.e2e.test.ts"
+        "evals/specs/unfinished-tool-lifecycle.e2e.test.ts",
+        "evals/specs/working-status-liveness.e2e.test.ts"
       ]
     },
     {

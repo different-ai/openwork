@@ -37,7 +37,7 @@ function agentName(slug: string): string {
  */
 export function SubagentRunLine({ part, className }: SubagentRunLineProps) {
   const [open, setOpen] = useState(false)
-  const { onOpenSubagentSession } = useMessageList()
+  const { onOpenSubagentSession, syncDegraded } = useMessageList()
   const childSessionId = taskChildSessionId(part)
   const inFlight = isToolPartInFlight(part)
   const isFailed = part.state === "output-error"
@@ -47,18 +47,22 @@ export function SubagentRunLine({ part, className }: SubagentRunLineProps) {
   // switching sessions and back) resumes the counter instead of restarting.
   const startedAt = getToolCallStartedAt(part)
   useEffect(() => {
-    if (!inFlight || startedAt === null) return
+    // While run liveness is unconfirmed the counter must not tick; the
+    // module-scoped anchor resumes the true elapsed time on recovery.
+    if (!inFlight || startedAt === null || syncDegraded) return
     const update = () => {
       setElapsedSeconds(Math.max(0, Math.floor((Date.now() - startedAt) / 1000)))
     }
     update()
     const interval = window.setInterval(update, 1000)
     return () => window.clearInterval(interval)
-  }, [inFlight, startedAt, part.toolCallId])
+  }, [inFlight, startedAt, part.toolCallId, syncDegraded])
   const title = part.input?.description?.trim() || "Sub-agent task"
   const agent = agentName(part.input?.subagent_type ?? "")
   const status = inFlight
-    ? `Working ${formatElapsedSeconds(elapsedSeconds)}`
+    ? syncDegraded
+      ? "Connection lost — reconnecting…"
+      : `Working ${formatElapsedSeconds(elapsedSeconds)}`
     : isFailed
       ? part.errorText?.split("\n")[0]?.trim() || "Failed"
       : "Completed"
@@ -66,7 +70,7 @@ export function SubagentRunLine({ part, className }: SubagentRunLineProps) {
   const lines = (
     <>
       <span className="flex min-w-0 items-center gap-2">
-        <span className={cn("min-w-0 truncate", inFlight && "ow-text-shimmer")}>
+        <span className={cn("min-w-0 truncate", inFlight && !syncDegraded && "ow-text-shimmer")}>
           {title}
           <span className="text-muted-foreground/70"> · {agent} agent</span>
         </span>
@@ -89,7 +93,7 @@ export function SubagentRunLine({ part, className }: SubagentRunLineProps) {
       <div
         data-subagent-run={part.toolCallId}
         data-subagent-session-id={childSessionId}
-        data-subagent-activity={inFlight ? "shimmer" : isFailed ? "failed" : "completed"}
+        data-subagent-activity={inFlight ? (syncDegraded ? "reconnecting" : "shimmer") : isFailed ? "failed" : "completed"}
         className={className}
       >
         <button
@@ -107,7 +111,7 @@ export function SubagentRunLine({ part, className }: SubagentRunLineProps) {
   return (
     <Collapsible
       data-subagent-run={part.toolCallId}
-      data-subagent-activity={inFlight ? "shimmer" : isFailed ? "failed" : "completed"}
+      data-subagent-activity={inFlight ? (syncDegraded ? "reconnecting" : "shimmer") : isFailed ? "failed" : "completed"}
       open={open}
       onOpenChange={setOpen}
       className={className}

@@ -7,15 +7,20 @@ import {
   __applySessionSyncEventForTest,
   __createWorkspaceSessionSyncForTest,
   __disposeWorkspaceSessionSyncForTest,
+  __resetWorkspaceSyncReconcileHealthForTest,
+  __revalidateWorkspaceSyncsForTest,
   __setWorkspaceSessionSyncStatusFetcherForTest,
   __setWorkspaceSessionSyncSubscriptionFactoryForTest,
   ensureWorkspaceSessionSync,
   markSessionSnapshotFetchStart,
+  reconcileFailureDegradedThreshold,
   seedSessionState,
   snapshotKey,
   statusKey,
   trackWorkspaceSessionSync,
   transcriptKey,
+  useWorkspaceSyncStreamStore,
+  workspaceSyncStreamKey,
 } from "../src/react-app/domains/session/sync/session-sync";
 import { getReactQueryClient } from "../src/react-app/infra/query-client";
 
@@ -167,6 +172,8 @@ afterEach(() => {
   __setWorkspaceSessionSyncSubscriptionFactoryForTest(null);
   __setWorkspaceSessionSyncStatusFetcherForTest(null);
   useSessionActivityStore.setState({ recordsByWorkspaceId: {}, statusesByWorkspaceId: {} });
+  useWorkspaceSyncStreamStore.setState({ phasesByKey: {} });
+  __resetWorkspaceSyncReconcileHealthForTest();
   getReactQueryClient().clear();
   setSystemTime();
 });
@@ -634,6 +641,141 @@ describe("active session status reconciliation", () => {
     });
     expect(useSessionActivityStore.getState().getStatus(workspaceId, sessionId)).toBe("idle");
     expect(subscriptions[0]?.signal.aborted).toBe(false);
+
+    releaseSession();
+  });
+});
+
+describe("run status reconcile liveness health", () => {
+  // Distinct per-test stream keys: liveness health is keyed by
+  // workspace+baseUrl, and these assertions must not observe residue from
+  // other tests that share the default sync input.
+  function createHealthTestSync(label: string) {
+    const input = {
+      workspaceId,
+      baseUrl: `https://run-status-health-${label}.example/opencode`,
+      openworkToken: "token",
+    };
+    syncInputs.push(input);
+    const cleanup = __createWorkspaceSessionSyncForTest(input);
+    const releaseSession = trackWorkspaceSessionSync(input, sessionId);
+    return { input, cleanup, releaseSession };
+  }
+
+  test("records consecutive failed revalidations without fabricating idle", async () => {
+    jest.useFakeTimers();
+    setSystemTime(100);
+    __setWorkspaceSessionSyncStatusFetcherForTest(async () => {
+      throw new Error("status unreachable");
+    });
+    const { input, cleanup, releaseSession } = createHealthTestSync("failures");
+
+    applyStatus(input, { type: "busy" });
+    for (let attempt = 0; attempt < reconcileFailureDegradedThreshold; attempt += 1) {
+      jest.advanceTimersByTime(250);
+      await flushMicrotasks();
+    }
+
+    const health = useWorkspaceSyncStreamStore.getState().reconcileHealthByKey[workspaceSyncStreamKey(input)];
+    expect(health?.consecutiveFailures).toBeGreaterThanOrEqual(reconcileFailureDegradedThreshold);
+    // A failed validation is evidence the busy state cannot be confirmed,
+    // never evidence that work stopped: the run state must stay busy.
+    expect(useSessionActivityStore.getState().recordsByWorkspaceId[workspaceId]?.[sessionId]?.runActive).toBe(true);
+    expect(getReactQueryClient().getQueryData(statusKey(workspaceId, sessionId))).toEqual({ type: "busy" });
+
+    releaseSession();
+    cleanup();
+  });
+
+  test("freezes the last confirmed time at the first failure and resets on recovery", () => {
+    const key = "workspace-run-status:https://run-status-health-store.example/opencode";
+    const store = useWorkspaceSyncStreamStore.getState();
+
+    // Healthy validations do not create store records (they would notify
+    // subscribers every 250ms for no visible change); the success time is
+    // remembered so the first failure can freeze it.
+    store.publishReconcileSuccess(key, 200);
+    expect(useWorkspaceSyncStreamStore.getState().reconcileHealthByKey[key]).toBeUndefined();
+
+    store.publishReconcileFailure(key);
+    expect(useWorkspaceSyncStreamStore.getState().reconcileHealthByKey[key]).toEqual({
+      consecutiveFailures: 1,
+      lastSuccessAt: 200,
+    });
+
+    store.publishReconcileFailure(key);
+    expect(useWorkspaceSyncStreamStore.getState().reconcileHealthByKey[key]).toEqual({
+      consecutiveFailures: 2,
+      lastSuccessAt: 200,
+    });
+
+    store.publishReconcileSuccess(key, 400);
+    expect(useWorkspaceSyncStreamStore.getState().reconcileHealthByKey[key]).toEqual({
+      consecutiveFailures: 0,
+      lastSuccessAt: 400,
+    });
+  });
+
+  test("does not count aborted revalidations as failures", async () => {
+    jest.useFakeTimers();
+    setSystemTime(100);
+    __setWorkspaceSessionSyncStatusFetcherForTest(
+      (_baseUrl, _token, signal) => new Promise((_, reject) => {
+        signal.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
+      }),
+    );
+    const { input, cleanup, releaseSession } = createHealthTestSync("aborted");
+
+    applyStatus(input, { type: "busy" });
+    jest.advanceTimersByTime(250);
+    await flushMicrotasks();
+
+    // Dispose while the revalidation is in flight: the abort is lifecycle
+    // noise, not evidence of an unreachable engine.
+    releaseSession();
+    cleanup();
+    await flushMicrotasks();
+
+    expect(useWorkspaceSyncStreamStore.getState().reconcileHealthByKey[workspaceSyncStreamKey(input)]).toBeUndefined();
+  });
+
+  test("revalidates parked run state immediately when the network returns", async () => {
+    __setWorkspaceSessionSyncSubscriptionFactoryForTest(createSubscription);
+    let failing = true;
+    let fetches = 0;
+    __setWorkspaceSessionSyncStatusFetcherForTest(async () => {
+      fetches += 1;
+      if (failing) throw new Error("status unreachable");
+      return {};
+    });
+    setSystemTime(100);
+    const input = {
+      workspaceId,
+      baseUrl: "https://run-status-health-online.example/opencode",
+      openworkToken: "token",
+    };
+    syncInputs.push(input);
+    ensureWorkspaceSessionSync(input);
+    const releaseSession = trackWorkspaceSessionSync(input, sessionId);
+    await waitForSubscriptions(1);
+    await flushMicrotasks();
+
+    setSystemTime(200);
+    applyStatus(input, { type: "busy" });
+    const fetchesBeforeOnline = fetches;
+
+    // The network comes back: revalidation must not wait for retry backoff
+    // or the next reconcile tick, and the authoritative answer (no live
+    // sessions) settles the run without a stream event.
+    failing = false;
+    setSystemTime(300);
+    __revalidateWorkspaceSyncsForTest();
+    await flushMicrotasks();
+
+    expect(fetches).toBeGreaterThan(fetchesBeforeOnline);
+    expect(useSessionActivityStore.getState().recordsByWorkspaceId[workspaceId]?.[sessionId]?.runActive).toBe(false);
+    const health = useWorkspaceSyncStreamStore.getState().reconcileHealthByKey[workspaceSyncStreamKey(input)];
+    expect(health?.consecutiveFailures ?? 0).toBe(0);
 
     releaseSession();
   });

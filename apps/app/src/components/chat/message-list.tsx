@@ -15,6 +15,7 @@ import {
   Pencil,
   Split,
   Undo2,
+  WifiOff,
 } from "lucide-react"
 import {
   DynamicToolUIPart,
@@ -848,6 +849,53 @@ const LoadingMessage = React.memo(({ elapsedSeconds }: { elapsedSeconds: number 
 
 LoadingMessage.displayName = "LoadingMessage"
 
+// Show when the run was last validated once the gap is long enough to matter;
+// a short blip needs no timestamp archaeology.
+const RECONNECTING_LAST_CONFIRMED_AFTER_MS = 120_000
+
+export function reconnectingLastConfirmedLabel(
+  lastConfirmedAt: number | null,
+  now: number,
+): string | null {
+  if (lastConfirmedAt === null) return null
+  if (now - lastConfirmedAt < RECONNECTING_LAST_CONFIRMED_AFTER_MS) return null
+  return new Date(lastConfirmedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
+}
+
+/**
+ * The honest replacement for the ticking "Working" row while a live run can
+ * no longer be validated: the engine may still be working, but nothing has
+ * confirmed it recently, so the timer stops instead of counting unverified
+ * time. Recovery is automatic — the sync layer keeps revalidating and the
+ * row settles from authoritative status, never from elapsed time.
+ */
+const ReconnectingMessage = React.memo(({ lastConfirmedAt }: { lastConfirmedAt: number | null }) => {
+  const [now, setNow] = React.useState(() => Date.now())
+  React.useEffect(() => {
+    // The health store stops changing once its failure counter caps, so keep
+    // a slow local tick to let the "last update" hint appear over time.
+    const interval = window.setInterval(() => setNow(Date.now()), 30_000)
+    return () => window.clearInterval(interval)
+  }, [])
+  const lastConfirmedLabel = reconnectingLastConfirmedLabel(lastConfirmedAt, now)
+  return (
+    <Message className="mx-auto flex w-full max-w-3xl flex-col items-start gap-2 px-2 md:px-10">
+      <div
+        data-loading-message="reconnecting"
+        className="flex min-w-0 items-center gap-2 py-1 text-sm text-muted-foreground"
+      >
+        <WifiOff aria-hidden="true" className="size-4 shrink-0" />
+        <span className="min-w-0 truncate">
+          Connection lost — reconnecting…
+          {lastConfirmedLabel ? ` · last update ${lastConfirmedLabel}` : ""}
+        </span>
+      </div>
+    </Message>
+  )
+})
+
+ReconnectingMessage.displayName = "ReconnectingMessage"
+
 interface ErrorMessageProps {
   error: string | null
   /** Set only for interrupted runs (aborted / provider timeout) that can resume. */
@@ -1266,11 +1314,22 @@ const StandaloneMessage = React.memo(function StandaloneMessage(props: Standalon
   return <MessageComponent {...props} />
 })
 
+/**
+ * Liveness of the run behind this transcript, derived from the workspace
+ * sync layer's continuous status revalidation. While `degraded` is true the
+ * busy state cannot be confirmed, so working indicators must stop ticking.
+ */
+export interface RunSyncHealth {
+  degraded: boolean
+  lastConfirmedAt: number | null
+}
+
 interface MessageListProps {
   messages: UIMessage[]
   status: ThreadStatus
   activityStatus: SessionActivityStatus
   retryStatus?: RetryStatus | null
+  syncHealth?: RunSyncHealth
 }
 
 export function shouldShowMessageListLoading(
@@ -1282,9 +1341,15 @@ export function shouldShowMessageListLoading(
   return status === "streaming" || (status === "submitted" && messageCount > 0)
 }
 
-export function MessageList({ messages, status, activityStatus, retryStatus }: MessageListProps) {
+export function shouldShowRunReconnecting(status: ThreadStatus, syncDegraded: boolean) {
+  if (!syncDegraded) return false
+  return status === "submitted" || status === "streaming" || status === "retrying"
+}
+
+export function MessageList({ messages, status, activityStatus, retryStatus, syncHealth }: MessageListProps) {
   const isStreaming = status === "streaming" || status === "retrying"
   const runActive = status === "submitted" || status === "streaming" || status === "retrying"
+  const syncDegraded = syncHealth?.degraded === true
   const runStartedAtRef = React.useRef<number | null>(null)
   const [runElapsedSeconds, setRunElapsedSeconds] = React.useState(0)
   // Anchor the counter to the user message that started the run (server
@@ -1307,6 +1372,11 @@ export function MessageList({ messages, status, activityStatus, retryStatus }: M
     }
     if (runStartedAt !== null) runStartedAtRef.current = runStartedAt
     else if (runStartedAtRef.current === null) runStartedAtRef.current = Date.now()
+    // While liveness is unconfirmed the counter must not tick: elapsed time
+    // is only presented as work while something is validating that work is
+    // still happening. The anchor is kept, so a confirmed recovery resumes
+    // the true task age instead of restarting at zero.
+    if (syncDegraded) return
     const updateElapsed = () => {
       const startedAt = runStartedAtRef.current
       if (startedAt !== null) setRunElapsedSeconds(Math.max(0, Math.floor((Date.now() - startedAt) / 1000)))
@@ -1314,7 +1384,7 @@ export function MessageList({ messages, status, activityStatus, retryStatus }: M
     updateElapsed()
     const interval = window.setInterval(updateElapsed, 1000)
     return () => window.clearInterval(interval)
-  }, [runActive, runStartedAt])
+  }, [runActive, runStartedAt, syncDegraded])
   const items = React.useMemo(() => groupMessages(messages, status), [messages, status]);
   const error = useSessionErrorMessage();
   const hasSessionErrorMessage = React.useMemo(() => messages.some(isSessionErrorMessage), [messages])
@@ -1323,7 +1393,8 @@ export function MessageList({ messages, status, activityStatus, retryStatus }: M
     [messages],
   )
   const hasVisibleToolActivity = latestAssistantToolParts.some(isToolPartInFlight)
-  const showLoading = shouldShowMessageListLoading(status, messages.length, hasVisibleToolActivity)
+  const showReconnecting = shouldShowRunReconnecting(status, syncDegraded)
+  const showLoading = !showReconnecting && shouldShowMessageListLoading(status, messages.length, hasVisibleToolActivity)
   const currentToolCallIds = React.useMemo(
     () => new Set(latestAssistantToolParts.map((part) => part.toolCallId)),
     [latestAssistantToolParts],
@@ -1365,6 +1436,7 @@ export function MessageList({ messages, status, activityStatus, retryStatus }: M
         })}
 
         {showLoading && <LoadingMessage elapsedSeconds={runElapsedSeconds} />}
+        {showReconnecting && <ReconnectingMessage lastConfirmedAt={syncHealth?.lastConfirmedAt ?? null} />}
         {retryStatus ? <RetryMessage status={retryStatus} /> : null}
         {error && !hasSessionErrorMessage ? <ErrorMessage error={error} /> : null}
       </div>

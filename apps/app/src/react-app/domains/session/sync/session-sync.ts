@@ -238,9 +238,43 @@ function syncKey(input: SyncOptions) {
   return `${input.workspaceId}:${input.baseUrl}`;
 }
 
+/**
+ * Freshness of the `/session/status` reconcile loop for one workspace stream.
+ * While any session is believed live that loop polls continuously, so it is
+ * the strongest liveness signal the renderer has: a run status is only as
+ * trustworthy as its latest successful validation. `lastSuccessAt` freezes at
+ * the moment validation started failing so surfaces can say when the run was
+ * last confirmed.
+ */
+export type WorkspaceSyncReconcileHealth = {
+  consecutiveFailures: number;
+  lastSuccessAt: number | null;
+};
+
+/**
+ * A busy status whose validation keeps failing must stop being presented as
+ * confident progress. Three consecutive failures tolerate a single transient
+ * blip while flagging a refused connection within about a second and a
+ * blackholed one within roughly three request timeouts (~30s).
+ */
+export const reconcileFailureDegradedThreshold = 3;
+
+// Cap the stored counter so an extended outage stops producing store updates
+// (and re-renders) once the degraded threshold is long past.
+const reconcileFailureCountCap = 99;
+
+// Non-reactive success times: healthy reconciles land every 250ms while a
+// run is live, and publishing each one through the store would notify
+// subscribers at that cadence for no visible change. The store is only
+// stamped on health transitions.
+const lastReconcileSuccessAtByKey = new Map<string, number>();
+
 type WorkspaceSyncStreamStore = {
   phasesByKey: Record<string, SyncStreamPhase>;
+  reconcileHealthByKey: Record<string, WorkspaceSyncReconcileHealth>;
   publishPhase: (key: string, phase: SyncStreamPhase) => void;
+  publishReconcileSuccess: (key: string, at: number) => void;
+  publishReconcileFailure: (key: string) => void;
   removePhase: (key: string) => void;
 };
 
@@ -252,21 +286,61 @@ type WorkspaceSyncStreamStore = {
  */
 export const useWorkspaceSyncStreamStore = create<WorkspaceSyncStreamStore>((set) => ({
   phasesByKey: {},
+  reconcileHealthByKey: {},
   publishPhase: (key, phase) => set((state) => ({
     phasesByKey: { ...state.phasesByKey, [key]: phase },
   })),
-  removePhase: (key) => set((state) => {
-    if (!(key in state.phasesByKey)) return state;
-    const next = { ...state.phasesByKey };
-    delete next[key];
-    return { phasesByKey: next };
+  publishReconcileSuccess: (key, at) => {
+    lastReconcileSuccessAtByKey.set(key, at);
+    set((state) => {
+      const current = state.reconcileHealthByKey[key];
+      if (!current || current.consecutiveFailures === 0) return state;
+      return {
+        reconcileHealthByKey: {
+          ...state.reconcileHealthByKey,
+          [key]: { consecutiveFailures: 0, lastSuccessAt: at },
+        },
+      };
+    });
+  },
+  publishReconcileFailure: (key) => set((state) => {
+    const current = state.reconcileHealthByKey[key] ?? { consecutiveFailures: 0, lastSuccessAt: null };
+    if (current.consecutiveFailures >= reconcileFailureCountCap) return state;
+    return {
+      reconcileHealthByKey: {
+        ...state.reconcileHealthByKey,
+        [key]: {
+          consecutiveFailures: current.consecutiveFailures + 1,
+          lastSuccessAt: current.consecutiveFailures === 0
+            ? lastReconcileSuccessAtByKey.get(key) ?? current.lastSuccessAt
+            : current.lastSuccessAt,
+        },
+      },
+    };
   }),
+  removePhase: (key) => {
+    lastReconcileSuccessAtByKey.delete(key);
+    set((state) => {
+      if (!(key in state.phasesByKey) && !(key in state.reconcileHealthByKey)) return state;
+      const nextPhases = { ...state.phasesByKey };
+      delete nextPhases[key];
+      const nextHealth = { ...state.reconcileHealthByKey };
+      delete nextHealth[key];
+      return { phasesByKey: nextPhases, reconcileHealthByKey: nextHealth };
+    });
+  },
 }));
+
+export function workspaceSyncStreamKey(
+  input: Pick<SyncOptions, "workspaceId" | "baseUrl">,
+): string {
+  return `${input.workspaceId}:${input.baseUrl}`;
+}
 
 export function getWorkspaceSessionSyncStreamPhase(
   input: Pick<SyncOptions, "workspaceId" | "baseUrl">,
 ): SyncStreamPhase | null {
-  return useWorkspaceSyncStreamStore.getState().phasesByKey[`${input.workspaceId}:${input.baseUrl}`] ?? null;
+  return useWorkspaceSyncStreamStore.getState().phasesByKey[workspaceSyncStreamKey(input)] ?? null;
 }
 
 function getErrorStatus(error: unknown) {
@@ -1283,9 +1357,18 @@ async function reconcileSessionRunStatuses(
   try {
     statuses = await sessionStatusFetcher(input.baseUrl, entry.openworkToken, signal);
   } catch {
+    // The run state itself is deliberately left untouched: a failed fetch is
+    // not evidence that work stopped. It is evidence that the busy state can
+    // no longer be validated, so record it where surfaces can stop
+    // presenting a confident ticking "Working" row. Aborted fetches are
+    // lifecycle noise (dispose, generation rotation), not failures.
+    if (!signal.aborted) {
+      useWorkspaceSyncStreamStore.getState().publishReconcileFailure(syncKey(input));
+    }
     return;
   }
   if (signal.aborted) return;
+  useWorkspaceSyncStreamStore.getState().publishReconcileSuccess(syncKey(input), startedAt);
 
   // Level-triggered convergence on every SSE (re)connect: sessions the fetch
   // reports live are seeded busy (heals a subscriber that missed the busy
@@ -1342,6 +1425,33 @@ function scheduleActiveSessionStatusReconciliation(entry: SyncEntry) {
       scheduleActiveSessionStatusReconciliation(entry);
     });
   }, activeSessionStatusReconcileIntervalMs);
+}
+
+/**
+ * A restored network (or a wake that brings it back) should not wait out
+ * retry backoff or the next watchdog tick: reconnect any parked stream with
+ * fresh backoff and revalidate run statuses immediately, so a run that ended
+ * or kept working while the machine was offline settles within one fetch.
+ */
+function revalidateWorkspaceSyncs() {
+  for (const entry of syncs.values()) {
+    entry.notifyStreamGenerationChanged?.();
+    const controller = new AbortController();
+    void reconcileSessionRunStatuses(entry, entry.input, controller.signal, "connect-reconcile");
+  }
+}
+
+if (typeof window !== "undefined") {
+  window.addEventListener("online", revalidateWorkspaceSyncs);
+}
+
+export function __revalidateWorkspaceSyncsForTest() {
+  revalidateWorkspaceSyncs();
+}
+
+export function __resetWorkspaceSyncReconcileHealthForTest() {
+  lastReconcileSuccessAtByKey.clear();
+  useWorkspaceSyncStreamStore.setState({ reconcileHealthByKey: {} });
 }
 
 export function ensureWorkspaceSessionSync(input: SyncOptions) {

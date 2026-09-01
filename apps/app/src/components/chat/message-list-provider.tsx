@@ -18,6 +18,11 @@ interface MessageListContextValue {
   displaySuggestions: boolean
   providerConnectedCount: number
   connectorIdentities: ConnectorToolIdentity[]
+  /**
+   * True while the workspace sync layer cannot validate live run status
+   * (failed status revalidation). Working indicators must stop ticking.
+   */
+  syncDegraded: boolean
   dispatchAction: (action: DispatchAction) => void
   setPrompt: (prompt: string) => void
   onRevertToUserMessage: (messageId: string) => void
@@ -58,6 +63,7 @@ interface MessageListProviderProps {
   displaySuggestions: boolean
   providerConnectedCount: number
   connectorIdentities?: ConnectorToolIdentity[]
+  syncDegraded?: boolean
   dispatchAction: (action: DispatchAction) => void
   setPrompt: (prompt: string) => void
 }
@@ -78,6 +84,7 @@ export function MessageListProvider({
   displaySuggestions,
   providerConnectedCount,
   connectorIdentities = [],
+  syncDegraded = false,
   dispatchAction,
   setPrompt,
   onRevertToUserMessage,
@@ -155,6 +162,7 @@ export function MessageListProvider({
       displaySuggestions,
       providerConnectedCount,
       connectorIdentities,
+      syncDegraded,
       ...stableHandlers,
       onOpenSubagentSession: canOpenSubagentSession
         ? stableHandlers.onOpenSubagentSession
@@ -172,6 +180,7 @@ export function MessageListProvider({
       displaySuggestions,
       providerConnectedCount,
       connectorIdentities,
+      syncDegraded,
       stableHandlers,
       canOpenSubagentSession,
       canResumeInterrupted,

@@ -1684,9 +1684,15 @@ function mergedEventBody(input: {
         }
       };
       for (const entry of readers) void pump(entry);
+      // A data-bearing heartbeat, not an SSE comment: SSE parsers only yield
+      // frames with data lines, so a `: ping` comment can keep middleboxes
+      // happy but is invisible to the client's stream-staleness tracking. The
+      // heartbeat lets a quiet-but-healthy stream attest liveness instead of
+      // being aborted as stale, and makes a silent half-open socket
+      // detectable within one stale window.
       pingTimer = setInterval(() => {
-        if (!closed && !cancelled) controller.enqueue(encoder.encode(": ping\n\n"));
-      }, 30_000);
+        if (!closed && !cancelled) controller.enqueue(encoder.encode(`data: {"type":"server.heartbeat"}\n\n`));
+      }, engineEventStreamHeartbeatIntervalMs());
       pingTimer.unref?.();
       input.lease.signal.addEventListener("abort", abort, { once: true });
       if (input.lease.signal.aborted) abort();
@@ -1705,6 +1711,14 @@ function mergedEventBody(input: {
 function engineEventStreamEstablishTimeoutMs(): number {
   const parsed = Number(process.env.OPENWORK_ENGINE_EVENT_ESTABLISH_TIMEOUT_MS ?? "5000");
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 5_000;
+}
+
+// 15s keeps two heartbeats inside the renderer's 30s stale-stream window, so
+// one lost beat never churns a healthy connection. Read lazily so tests can
+// shrink the interval at runtime.
+function engineEventStreamHeartbeatIntervalMs(): number {
+  const parsed = Number(process.env.OPENWORK_ENGINE_EVENT_HEARTBEAT_MS ?? "15000");
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 15_000;
 }
 
 async function proxyEngineEventStreams(input: {
