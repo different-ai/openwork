@@ -47,20 +47,20 @@ export function CoworkerRail({
   );
 
   return (
-    <aside className="flex h-full w-[272px] shrink-0 flex-col border-r border-line bg-panel">
-      <div className="flex items-center justify-between px-4 pb-2 pt-4">
+    <aside className="glass-rail flex h-full w-[272px] shrink-0 flex-col border-r border-line">
+      <div className="window-drag flex min-h-[86px] items-end justify-between px-4 pb-3 pt-10">
         <div>
           <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-mist">Open Coworker</p>
           <p className="text-sm font-semibold text-snow">Your team</p>
         </div>
-        <Button variant="ghost" className="size-8 rounded-full px-0 py-0 text-lg" onClick={onNewCoworker} title="New coworker">
+        <Button variant="ghost" className="window-no-drag size-8 rounded-full px-0 py-0 text-lg" onClick={onNewCoworker} title="New coworker">
           <span aria-hidden="true">+</span>
         </Button>
       </div>
       <div className="px-3 pb-3">
         <input
           aria-label="Search coworkers"
-          className="w-full rounded-lg border border-line bg-ink/70 px-3 py-2 text-xs text-snow outline-none placeholder:text-mist/70 focus:border-spark/50"
+          className="window-no-drag w-full rounded-xl border border-line bg-ink/55 px-3 py-2 text-xs text-snow shadow-[inset_0_1px_0_rgba(255,255,255,0.45)] outline-none placeholder:text-mist/70 focus:border-spark/50 focus:bg-ink/75"
           placeholder="Search coworkers"
           value={query}
           onChange={(event) => setQuery(event.target.value)}
@@ -74,11 +74,13 @@ export function CoworkerRail({
             <button
               key={coworker.slug}
               onClick={() => onSelect(coworker.slug)}
-              className={`group flex w-full items-center gap-3 rounded-xl px-2.5 py-2.5 text-left transition-colors ${
-                coworker.slug === selectedSlug ? "bg-panel-2 text-snow" : "text-mist hover:bg-panel-2/70 hover:text-snow"
+              className={`window-no-drag group flex w-full items-center gap-3 rounded-2xl px-2.5 py-2.5 text-left transition-all duration-200 ${
+                coworker.slug === selectedSlug
+                  ? "bg-white/58 text-snow shadow-[0_8px_24px_rgba(45,48,43,0.08),inset_0_1px_0_rgba(255,255,255,0.78)] ring-1 ring-white/65"
+                  : "text-mist hover:bg-white/38 hover:text-snow"
               }`}
             >
-              <span className="relative flex size-9 shrink-0 items-center justify-center rounded-xl bg-ink text-sm font-semibold text-snow shadow-sm ring-1 ring-line">
+              <span className="relative flex size-9 shrink-0 items-center justify-center rounded-xl bg-ink/72 text-sm font-semibold text-snow shadow-[0_6px_18px_rgba(45,48,43,0.08)] ring-1 ring-white/65">
                 {coworker.name.trim().slice(0, 1).toUpperCase() || "C"}
                 <span className="absolute -bottom-1 -right-1 rounded-full border-2 border-panel bg-panel leading-none">
                   <StatusDot tone={activityTone(activity)} />
@@ -99,7 +101,7 @@ export function CoworkerRail({
         {coworkers.length === 0 ? <p className="px-2.5 py-4 text-xs text-mist">No coworkers yet. Add your first teammate.</p> : null}
         {coworkers.length > 0 && visibleCoworkers.length === 0 ? <p className="px-2.5 py-4 text-xs text-mist">No matching coworkers.</p> : null}
       </nav>
-      <footer className="space-y-2 border-t border-line px-4 py-3">
+      <footer className="window-no-drag space-y-2 border-t border-line bg-white/12 px-4 py-3 backdrop-blur-xl">
         {session ? (
           <div className="flex items-center justify-between gap-2 text-xs">
             <span className="flex min-w-0 items-center gap-1.5 text-mist" title={session.userEmail || session.orgName}>

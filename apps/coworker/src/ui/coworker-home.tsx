@@ -31,9 +31,9 @@ export function CoworkerHome({
   const [contextView, setContextView] = useState<ContextView>("overview");
 
   return (
-    <div className="flex h-full min-w-0 flex-1 bg-ink">
+    <div className="glass-main flex h-full min-w-0 flex-1">
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex h-[68px] items-center justify-between gap-4 border-b border-line bg-ink px-6">
+        <header className="glass-header window-drag flex h-[78px] items-center justify-between gap-4 border-b border-line px-6 pt-2">
           <div className="min-w-0">
             <h1 className="truncate text-base font-semibold text-snow">{coworker.name}</h1>
             <p className="truncate text-xs text-mist">{coworker.role || coworker.mission || "Persistent coworker"}</p>
@@ -61,10 +61,10 @@ export function CoworkerHome({
         </main>
       </div>
 
-      <aside className="flex h-full w-[360px] shrink-0 flex-col border-l border-line bg-panel/70">
-        <header className="flex h-[68px] items-center gap-3 border-b border-line px-4">
+      <aside className="glass-context flex h-full w-[360px] shrink-0 flex-col border-l border-line">
+        <header className="glass-header window-drag flex h-[78px] items-center gap-3 border-b border-line px-4 pt-2">
           {contextView !== "overview" ? (
-            <Button variant="ghost" className="px-2" onClick={() => setContextView("overview")} title="Back to coworker details">
+            <Button variant="ghost" className="window-no-drag px-2" onClick={() => setContextView("overview")} title="Back to coworker details">
               ←
             </Button>
           ) : null}
@@ -77,7 +77,7 @@ export function CoworkerHome({
             </p>
           </div>
           {contextView === "overview" ? (
-            <Button variant="ghost" onClick={() => setContextView("settings")}>
+            <Button variant="ghost" className="window-no-drag" onClick={() => setContextView("settings")}>
               Settings
             </Button>
           ) : null}
