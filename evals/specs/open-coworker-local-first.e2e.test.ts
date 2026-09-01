@@ -77,6 +77,46 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
 
   await waitForText(app, "Your team", { timeoutMs: 120_000 });
   await waitForText(app, "Responsibilities", { timeoutMs: 60_000 });
+  const avatarMotion = await evalIn(app, `(() => {
+    const avatar = document.querySelector('svg[aria-label="Scout avatar"].is-animated');
+    if (!avatar) return null;
+    const read = (selector) => {
+      const element = avatar.querySelector(selector);
+      if (!element) return null;
+      const style = getComputedStyle(element);
+      return {
+        animationName: style.animationName,
+        animationDuration: style.animationDuration,
+        animationDelay: style.animationDelay,
+      };
+    };
+    return {
+      body: read(".coworker-avatar__body"),
+      depth: read(".coworker-avatar__depth"),
+      features: read(".coworker-avatar__features"),
+      gaze: read(".coworker-avatar__gaze"),
+      pupils: read(".coworker-avatar__pupils"),
+      glasses: Boolean(avatar.querySelector(".coworker-avatar__glasses")),
+    };
+  })()`);
+  expect(avatarMotion).toMatchObject({
+    body: { animationName: "coworker-float", animationDuration: "8.8s" },
+    depth: { animationName: "coworker-depth-turn", animationDuration: "8.8s" },
+    features: { animationName: "coworker-feature-turn", animationDuration: "8.8s" },
+    gaze: { animationName: "coworker-gaze-turn", animationDuration: "8.8s" },
+    pupils: { animationName: "coworker-blink", animationDuration: "8.8s" },
+    glasses: true,
+  });
+  if (!isRecord(avatarMotion)) throw new Error("Scout avatar motion layers were unavailable.");
+  const animatedLayers = ["body", "depth", "features", "gaze", "pupils"]
+    .map((key) => avatarMotion[key])
+    .filter(isRecord);
+  expect(new Set(animatedLayers.map((layer) => layer.animationDelay)).size).toBe(1);
+  evidence.recordAssertionEvidence(
+    "The coworker avatar coordinates a restrained head turn across separate SVG layers",
+    "Scout's body, rear depth, glasses/features, gaze, and blink each had their expected animation and shared the same 8.8 second phase timing.",
+    true,
+  );
   const storedCoworker = await invokeCoworker(app, "coworkers.get", { slug: "scout" });
   expect(storedCoworker).toMatchObject({
     ok: true,
