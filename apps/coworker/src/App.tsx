@@ -78,6 +78,7 @@ export default function App() {
                 label: "Working",
                 detail: localRunning.name,
                 updatedAt: localRunning.latestRun.startedAt,
+                ...(localRunning.latestRun.threadId ? { threadId: localRunning.latestRun.threadId } : {}),
                 ...(latestActivity ? { last: latestActivity } : {}),
               },
             ] as const;
@@ -93,6 +94,7 @@ export default function App() {
                 label: "Local run needs you",
                 detail: localFailure.latestRun.error || localFailure.name,
                 updatedAt: localFailure.latestRun.finishedAt ?? localFailure.latestRun.startedAt,
+                ...(localFailure.latestRun.threadId ? { threadId: localFailure.latestRun.threadId } : {}),
                 ...(latestActivity ? { last: latestActivity } : {}),
               },
             ] as const;
@@ -212,6 +214,7 @@ export default function App() {
         label: "Needs you",
         detail: attention,
         updatedAt: activity?.updatedAt ?? 0,
+        ...(activity?.last ? { last: activity.last } : {}),
       };
     } else if (activity) {
       visibleActivityBySlug[coworker.slug] = activity;

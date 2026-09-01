@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { coworkerBridge, type CoworkerSummary, type RuntimeInfo } from "@/lib/bridge";
+import { coworkerBridge, type CoworkerMemoryFile, type CoworkerSummary, type RuntimeInfo } from "@/lib/bridge";
+import { describeMemory, describeModelPreference, describeNow, relativeTime } from "@/lib/activity-summary";
 import type { DenSession } from "@/lib/den";
 import { createCoworkerThreads, type CoworkerActivity, type EngineModelOption } from "@/lib/threads";
 import { AvatarControls, CoworkerAvatar } from "@/ui/coworker-avatar";
@@ -60,34 +61,6 @@ function activityTextTone(activity: CoworkerActivity | undefined): string {
   return "text-mist";
 }
 
-function activityTime(timestamp: number): string {
-  if (!timestamp) return "No recent run";
-  const minutes = Math.max(0, Math.round((Date.now() - timestamp) / 60_000));
-  if (minutes < 1) return "Updated now";
-  if (minutes < 60) return `Updated ${minutes}m ago`;
-  const hours = Math.round(minutes / 60);
-  if (hours < 24) return `Updated ${hours}h ago`;
-  return `Updated ${Math.round(hours / 24)}d ago`;
-}
-
-function currentActivityTitle(activity: CoworkerActivity | undefined): string {
-  if (!activity) return "Checking status";
-  if (activity.state === "working" || activity.state === "retrying" || activity.state === "attention") {
-    return activity.detail;
-  }
-  if (activity.state === "offline") return "Activity unavailable";
-  return "No task is running";
-}
-
-function currentActivityNote(activity: CoworkerActivity | undefined): string {
-  if (!activity) return "Reading the workspace now.";
-  if (activity.state === "working") return "This work is running now.";
-  if (activity.state === "retrying") return "OpenWork restarted this work after an interruption.";
-  if (activity.state === "attention") return "Work is paused. Open it to review the request or failure.";
-  if (activity.state === "offline") return "OpenWork could not read this workspace.";
-  return "Ready for the next assignment.";
-}
-
 export function CoworkerHome({
   runtime,
   session,
@@ -115,6 +88,7 @@ export function CoworkerHome({
 }) {
   const [contextView, setContextView] = useState<ContextView>("overview");
   const [assignmentDraft, setAssignmentDraft] = useState<{ id: number; text: string } | null>(null);
+  const [openThreadRequest, setOpenThreadRequest] = useState<{ id: number; threadId: string } | null>(null);
   const [contextPanelWidth, setContextPanelWidth] = useState<number | null>(readContextPanelWidth);
   const [resizingContextPanel, setResizingContextPanel] = useState(false);
   const contextPanelDrag = useRef<{ startX: number; startWidth: number; currentWidth: number } | null>(null);
@@ -212,6 +186,7 @@ export function CoworkerHome({
             onCoworkerChanged={onCoworkerChanged}
             onRefreshRuntime={onRefreshRuntime}
             assignmentDraft={assignmentDraft}
+            openThreadRequest={openThreadRequest}
           />
         </main>
       </div>
@@ -304,7 +279,9 @@ export function CoworkerHome({
               coworkers={coworkers}
               coworker={coworker}
               activity={activity}
+              engineManaged={runtime.engineManaged}
               onCoworkerChanged={onCoworkerChanged}
+              onOpenThread={(threadId) => setOpenThreadRequest({ id: Date.now(), threadId })}
               onOpenMemory={() => setContextView("memory")}
               onOpenCapabilities={() => setContextView("capabilities")}
               onOpenSettings={() => setContextView("settings")}
@@ -351,7 +328,9 @@ function CoworkerOverview({
   coworkers,
   coworker,
   activity,
+  engineManaged,
   onCoworkerChanged,
+  onOpenThread,
   onOpenMemory,
   onOpenCapabilities,
   onOpenSettings,
@@ -361,61 +340,107 @@ function CoworkerOverview({
   coworkers: CoworkerSummary[];
   coworker: CoworkerSummary;
   activity?: CoworkerActivity;
+  engineManaged: boolean;
   onCoworkerChanged: (coworker: CoworkerSummary) => void;
+  onOpenThread: (threadId: string) => void;
   onOpenMemory: () => void;
   onOpenCapabilities: () => void;
   onOpenSettings: () => void;
   onOpenOpenWork: () => void;
 }) {
-  const lastActivity = activity?.last;
+  const now = describeNow(activity);
+  const model = describeModelPreference(coworker);
+  const [memoryFiles, setMemoryFiles] = useState<CoworkerMemoryFile[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const load = () =>
+      coworkerBridge.files
+        .list(coworker.slug)
+        .then((files) => {
+          if (!cancelled) setMemoryFiles(files);
+        })
+        .catch(() => undefined);
+    void load();
+    const timer = window.setInterval(() => void load(), 15_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [coworker.slug]);
+
+  const memory = describeMemory(memoryFiles);
+  const nowTime = relativeTime(activity?.updatedAt ?? 0);
+  const canOpenSubject = Boolean(activity?.threadId);
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-4">
       <section className="rounded-2xl border border-line bg-ink p-4" data-testid="coworker-activity-summary">
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-mist">Now</p>
-            <div className={`mt-2 flex items-center gap-2 text-sm font-semibold ${activityTextTone(activity)}`}>
-              <StatusDot tone={activityTone(activity)} />
-              {activity?.label ?? "Checking status"}
-            </div>
-          </div>
-          <span className="shrink-0 text-[10px] text-mist">{activityTime(activity?.updatedAt ?? 0)}</span>
+        <div className="flex items-center justify-between gap-3">
+          <span className={`flex min-w-0 items-center gap-2 text-sm font-semibold ${engineManaged ? activityTextTone(activity) : "text-rose"}`}>
+            <StatusDot tone={engineManaged ? activityTone(activity) : "rose"} />
+            <span className="truncate">{engineManaged ? (activity?.label ?? "Checking status") : "Engine offline"}</span>
+          </span>
+          {nowTime ? (
+            <span className="shrink-0 text-[11px] text-mist" title={activity?.updatedAt ? new Date(activity.updatedAt).toLocaleString() : undefined}>
+              {nowTime}
+            </span>
+          ) : null}
         </div>
-        <h3 className="mt-3 text-sm font-semibold leading-snug text-snow">{currentActivityTitle(activity)}</h3>
-        <p className="mt-1 text-xs leading-relaxed text-mist">{currentActivityNote(activity)}</p>
-        <div className="mt-4 border-t border-line pt-4">
-          <div className="flex items-center justify-between gap-3">
-            <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-mist">Last activity</p>
-            {lastActivity ? <span className="text-[10px] text-mist">{activityTime(lastActivity.updatedAt)}</span> : null}
+
+        {now.subject ? (
+          <button
+            type="button"
+            className={`mt-2.5 block w-full text-left ${canOpenSubject ? "group" : "cursor-default"}`}
+            disabled={!canOpenSubject}
+            onClick={() => {
+              if (activity?.threadId) onOpenThread(activity.threadId);
+            }}
+            title={canOpenSubject ? "Open this thread" : undefined}
+          >
+            <span className={`line-clamp-2 block text-sm leading-snug text-snow ${canOpenSubject ? "group-hover:underline" : ""}`}>
+              {now.subject}
+            </span>
+            <span className="mt-1 block text-[11px] text-mist">
+              {now.note}
+              {canOpenSubject ? <span aria-hidden="true"> ›</span> : null}
+            </span>
+          </button>
+        ) : (
+          <p className="mt-2.5 text-xs leading-relaxed text-mist">{engineManaged ? now.note : "Start the local agent engine to see activity."}</p>
+        )}
+
+        {now.previous ? (
+          <div className="mt-3 flex items-baseline gap-2 border-t border-line pt-3 text-[11px] text-mist">
+            <span className="shrink-0">Before that</span>
+            {now.previous.threadId ? (
+              <button
+                type="button"
+                className="min-w-0 flex-1 truncate text-left text-snow/80 hover:underline"
+                onClick={() => onOpenThread(now.previous?.threadId ?? "")}
+                title={now.previous.title}
+              >
+                {now.previous.title}
+              </button>
+            ) : (
+              <span className="min-w-0 flex-1 truncate text-snow/80" title={now.previous.title}>{now.previous.title}</span>
+            )}
+            <span className="shrink-0">{relativeTime(now.previous.updatedAt)}</span>
           </div>
-          {lastActivity ? (
-            <p className="mt-2 text-sm leading-snug text-snow">{lastActivity.title}</p>
-          ) : (
-            <p className="mt-2 text-xs text-mist">No previous work yet.</p>
-          )}
-        </div>
+        ) : null}
       </section>
 
-      <section className="rounded-2xl border border-line bg-black/10 p-4">
-        <div className="flex items-start gap-3">
-          <CoworkerAvatar
-            animated
-            color={coworker.avatarColor}
-            glasses={coworker.avatarGlasses}
-            name={coworker.name}
-            size={58}
-          />
-          <div className="min-w-0">
-            <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-mist">Profile</p>
-            <h3 className="mt-1 truncate text-sm font-semibold text-snow">{coworker.name}</h3>
-            <p className="mt-0.5 text-xs text-mist">{coworker.role || "No role set"}</p>
-          </div>
-        </div>
-        {coworker.mission ? <p className="mt-3 text-xs leading-relaxed text-mist">{coworker.mission}</p> : null}
-        <button className="mt-3 text-xs font-medium text-spark hover:underline" onClick={onOpenSettings}>
-          Edit profile and model
-        </button>
+      <section className="divide-y divide-line rounded-2xl border border-line bg-ink" aria-label="Setup at a glance">
+        <FactRow label="Model" value={model.value} hint={model.hint} onClick={onOpenSettings} />
+        <FactRow label="Memory" value={memory.value} hint={memory.hint} onClick={onOpenMemory} />
+        <FactRow label="Apps & tools" value="MCP apps and tools" hint="Available in this workspace" onClick={onOpenCapabilities} />
+        <FactRow
+          label="Mission"
+          value={coworker.mission || "Not set"}
+          hint={coworker.mission ? "" : "Give this coworker something to own"}
+          multiline
+          onClick={onOpenSettings}
+        />
       </section>
 
       <section>
@@ -427,33 +452,39 @@ function CoworkerOverview({
           onConnect={onOpenOpenWork}
         />
       </section>
-
-      <button
-        className="flex w-full items-center justify-between gap-3 rounded-2xl border border-line bg-ink p-4 text-left transition-colors hover:bg-panel"
-        onClick={onOpenCapabilities}
-      >
-        <span>
-          <span className="block text-sm font-semibold text-snow">Apps & tools</span>
-          <span className="mt-1 block text-xs leading-relaxed text-mist">
-            See the MCP apps and tools available in this workspace.
-          </span>
-        </span>
-        <span className="text-mist" aria-hidden="true">›</span>
-      </button>
-
-      <button
-        className="flex w-full items-center justify-between gap-3 rounded-2xl border border-line bg-ink p-4 text-left transition-colors hover:bg-panel"
-        onClick={onOpenMemory}
-      >
-        <span>
-          <span className="block text-sm font-semibold text-snow">Memory</span>
-          <span className="mt-1 block text-xs leading-relaxed text-mist">
-            Open the Markdown files this coworker keeps.
-          </span>
-        </span>
-        <span className="text-mist" aria-hidden="true">›</span>
-      </button>
     </div>
+  );
+}
+
+/** One compact, clickable fact: label on the left, value (and optional hint) on the right. */
+function FactRow({
+  label,
+  value,
+  hint = "",
+  multiline = false,
+  onClick,
+}: {
+  label: string;
+  value: string;
+  hint?: string;
+  multiline?: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      className="group flex w-full items-start gap-3 px-4 py-2.5 text-left transition-colors first:rounded-t-2xl last:rounded-b-2xl hover:bg-white/[0.04]"
+      onClick={onClick}
+    >
+      <span className="w-[76px] shrink-0 pt-px text-[11px] font-medium text-mist">{label}</span>
+      <span className="min-w-0 flex-1">
+        <span className={`block text-xs text-snow ${multiline ? "line-clamp-2 leading-relaxed" : "truncate"}`} title={value}>
+          {value}
+        </span>
+        {hint ? <span className="mt-0.5 block truncate text-[11px] text-mist">{hint}</span> : null}
+      </span>
+      <span className="shrink-0 text-mist transition-colors group-hover:text-snow" aria-hidden="true">›</span>
+    </button>
   );
 }
 

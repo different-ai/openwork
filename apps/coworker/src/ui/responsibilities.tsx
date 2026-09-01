@@ -10,7 +10,7 @@ import {
   type DenLlmProvider,
 } from "@/lib/cloud-responsibilities";
 import { createDenAutomationsClient, describeSchedule, type DenSession } from "@/lib/den";
-import { Button, Empty, ErrorNote, Field, StatusDot, inputClass } from "@/ui/kit";
+import { Button, ErrorNote, Field, StatusDot, inputClass } from "@/ui/kit";
 
 type AutomationEntry = AutomationList["items"][number];
 
@@ -47,25 +47,30 @@ export function ResponsibilitiesPanel({
 
   return (
     <div className="space-y-3">
-      <div>
+      <div className="flex items-center justify-between gap-3">
         <h3 className="text-sm font-semibold text-snow">Responsibilities</h3>
-        <p className="mt-0.5 text-xs text-mist">Work this coworker owns on a schedule</p>
-      </div>
-      <div className="grid grid-cols-2 rounded-xl border border-line bg-ink p-1">
-        <button
-          type="button"
-          className={`rounded-lg px-2 py-1.5 text-[11px] font-medium ${mode === "cloud" ? "bg-white/8 text-snow" : "text-mist hover:text-snow"}`}
-          onClick={() => setMode("cloud")}
-        >
-          OpenWork Cloud <span className="text-spark">· Recommended</span>
-        </button>
-        <button
-          type="button"
-          className={`rounded-lg px-2 py-1.5 text-[11px] font-medium ${mode === "local" ? "bg-white/8 text-snow" : "text-mist hover:text-snow"}`}
-          onClick={() => setMode("local")}
-        >
-          This Mac
-        </button>
+        <div className="grid grid-cols-2 rounded-lg border border-line bg-ink p-0.5" role="tablist" aria-label="Where responsibilities run">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={mode === "cloud"}
+            className={`rounded-md px-2 py-1 text-[11px] font-medium ${mode === "cloud" ? "bg-white/8 text-snow" : "text-mist hover:text-snow"}`}
+            title="Recommended: runs in OpenWork Cloud even when this Mac is off"
+            onClick={() => setMode("cloud")}
+          >
+            Cloud
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={mode === "local"}
+            className={`rounded-md px-2 py-1 text-[11px] font-medium ${mode === "local" ? "bg-white/8 text-snow" : "text-mist hover:text-snow"}`}
+            title="Runs through the local engine while Open Coworker is open"
+            onClick={() => setMode("local")}
+          >
+            This Mac
+          </button>
+        </div>
       </div>
       {mode === "local" ? <LocalResponsibilitiesPanel coworker={coworker} /> : null}
       {mode === "cloud" && session ? (
@@ -78,9 +83,9 @@ export function ResponsibilitiesPanel({
       ) : null}
       {mode === "cloud" && !session ? (
         <div className="rounded-2xl border border-spark/25 bg-spark/5 p-4">
-          <p className="text-xs font-semibold text-snow">Keep work running when this Mac is offline</p>
+          <p className="text-xs font-semibold text-snow">Run schedules even when this Mac is off</p>
           <p className="mt-1 text-xs leading-relaxed text-mist">
-            Connect OpenWork Cloud for always-on schedules, organization-managed providers, and centralized run history.
+            Cloud responsibilities run in OpenWork Cloud with organization-managed models and run history.
           </p>
           <Button variant="primary" className="mt-3 w-full text-xs" onClick={onConnect}>Connect OpenWork</Button>
         </div>
@@ -151,13 +156,15 @@ function LocalResponsibilitiesPanel({ coworker }: { coworker: CoworkerSummary })
 
   return (
     <div className="space-y-3">
-      <div className="rounded-xl border border-line bg-panel/45 px-3 py-2.5 text-[11px] leading-relaxed text-mist">
-        Runs through the local OpenWork engine while Open Coworker is open. One missed occurrence is recovered on the next launch.
-      </div>
-      <div className="flex justify-end">
-        <Button variant="ghost" className="px-2 text-xs" onClick={() => setShowCreate((value) => !value)}>
-          {showCreate ? "Close" : "+ New local responsibility"}
-        </Button>
+      <div className="flex items-center justify-between gap-3">
+        <p className="min-w-0 truncate text-[11px] text-mist" title="Runs through the local OpenWork engine while Open Coworker is open. One missed occurrence is recovered on the next launch.">
+          Runs while Open Coworker is open
+        </p>
+        {items.length > 0 || showCreate ? (
+          <Button variant="ghost" className="shrink-0 px-2 text-xs" onClick={() => setShowCreate((value) => !value)}>
+            {showCreate ? "Close" : "+ New"}
+          </Button>
+        ) : null}
       </div>
       {error ? <ErrorNote>{error}</ErrorNote> : null}
       {notice ? <p className="rounded-lg bg-mint/10 px-3 py-2 text-xs text-mint">{notice}</p> : null}
@@ -170,11 +177,15 @@ function LocalResponsibilitiesPanel({ coworker }: { coworker: CoworkerSummary })
           }}
         />
       ) : null}
-      {items.length === 0 ? (
-        <div className="rounded-2xl border border-dashed border-line bg-ink p-3">
-          <Empty>No local responsibilities yet.</Empty>
+      {items.length === 0 && !showCreate ? (
+        <div className="rounded-2xl border border-dashed border-line bg-ink p-4 text-center">
+          <p className="text-xs text-mist">Nothing scheduled on this Mac yet.</p>
+          <p className="mt-1 text-[11px] leading-relaxed text-mist/80">If a run is missed while the app is closed, the latest one is recovered on launch.</p>
+          <Button variant="default" className="mt-3 text-xs" onClick={() => setShowCreate(true)}>
+            + New local responsibility
+          </Button>
         </div>
-      ) : (
+      ) : items.length === 0 ? null : (
         <ul className="space-y-2">
           {items.map((item) => {
             const running = item.latestRun?.status === "running";
@@ -330,14 +341,17 @@ function CloudResponsibilitiesPanel({
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between gap-3">
-        <p className="text-xs font-medium text-mist">Runs in OpenWork Cloud, even when this Mac is off</p>
-        <Button variant="ghost" className="px-2" onClick={() => setShowCreate((value) => !value)}>
-          {showCreate ? "Close" : "+ New"}
-        </Button>
-      </div>
-      <div className="rounded-xl border border-line bg-panel/45 px-3 py-2.5 text-[11px] leading-relaxed text-mist">
-        Cloud runs use models your organization authorizes and cannot read this coworker's local files or memory.
-        Use “This Mac” for work that must touch this coworker's home.
+        <p
+          className="min-w-0 truncate text-[11px] text-mist"
+          title="Runs in OpenWork Cloud even when this Mac is off. Cloud runs use models your organization authorizes and cannot read this coworker's local files or memory; use “This Mac” for work that must touch this coworker's home."
+        >
+          Runs even when this Mac is off
+        </p>
+        {owned.length > 0 || showCreate ? (
+          <Button variant="ghost" className="shrink-0 px-2 text-xs" onClick={() => setShowCreate((value) => !value)}>
+            {showCreate ? "Close" : "+ New"}
+          </Button>
+        ) : null}
       </div>
 
       {error ? <ErrorNote>{error}</ErrorNote> : null}
@@ -354,11 +368,15 @@ function CloudResponsibilitiesPanel({
         />
       ) : null}
 
-      {owned.length === 0 ? (
-        <div className="rounded-2xl border border-dashed border-line bg-ink p-3">
-          <Empty>No recurring work yet. Add a responsibility when this coworker should keep watch.</Empty>
+      {owned.length === 0 && !showCreate ? (
+        <div className="rounded-2xl border border-dashed border-line bg-ink p-4 text-center">
+          <p className="text-xs text-mist">Nothing scheduled in OpenWork Cloud yet.</p>
+          <p className="mt-1 text-[11px] leading-relaxed text-mist/80">Cloud runs use organization models and cannot read this coworker's local files or memory.</p>
+          <Button variant="default" className="mt-3 text-xs" onClick={() => setShowCreate(true)}>
+            + New cloud responsibility
+          </Button>
         </div>
-      ) : (
+      ) : owned.length === 0 ? null : (
         <ul className="space-y-2">
           {owned.map((entry) => {
             const state = entry.automation.state;

@@ -38,6 +38,8 @@ export type CoworkerMemoryFile = {
   id: string;
   label: string;
   path: string;
+  /** Last modification time in ms since epoch; 0 when unknown. */
+  updatedAt: number;
 };
 
 export type LocalResponsibilityRun = {
