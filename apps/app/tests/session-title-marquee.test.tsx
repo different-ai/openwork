@@ -3,6 +3,7 @@ import { describe, expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import {
+  resolveSessionTitleHiddenEdges,
   resolveSessionTitleTooltip,
   SessionTitle,
 } from "../src/react-app/domains/session/sidebar/session-title";
@@ -56,6 +57,29 @@ function setup(widths: { viewport: number; text: number }, reducedMotion = false
 }
 
 describe("session title marquee", () => {
+  test("fades only the edges with hidden title text", () => {
+    expect(resolveSessionTitleHiddenEdges({
+      moving: false,
+      overflowing: false,
+      transitioning: false,
+    })).toBe("none");
+    expect(resolveSessionTitleHiddenEdges({
+      moving: false,
+      overflowing: true,
+      transitioning: false,
+    })).toBe("end");
+    expect(resolveSessionTitleHiddenEdges({
+      moving: true,
+      overflowing: true,
+      transitioning: true,
+    })).toBe("both");
+    expect(resolveSessionTitleHiddenEdges({
+      moving: true,
+      overflowing: true,
+      transitioning: false,
+    })).toBe("start");
+  });
+
   test("never moves a fitting title", () => {
     const subject = setup({ viewport: 160, text: 140 });
     subject.controller.setIntent("focus");
@@ -141,6 +165,7 @@ describe("session title marquee", () => {
     );
 
     expect(markup).toContain('aria-label="A complete title, unread"');
+    expect(markup).toContain('data-session-title-hidden-edges="none"');
     expect(markup).toContain(
       'aria-hidden="true" class="inline-block" data-session-title-text="true" title="A complete title — Workspace"',
     );

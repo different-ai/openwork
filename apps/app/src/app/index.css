@@ -266,11 +266,20 @@ body {
   mask-image: linear-gradient(to right, black calc(100% - 18px), transparent);
 }
 
-/* Session titles move once from their resting edge; the row and controls stay fixed. */
-.ow-session-title-moving {
+/* Fade only edges that still have hidden session-title text beyond them. */
+.ow-session-title-hidden-start {
+  mask-image: linear-gradient(to right, transparent, black 10px);
+}
+
+.ow-session-title-hidden-both {
   mask-image: linear-gradient(to right, transparent, black 10px, black calc(100% - 10px), transparent);
 }
 
+.ow-session-title-hidden-end {
+  mask-image: linear-gradient(to right, black calc(100% - 10px), transparent);
+}
+
+/* Session titles move once from their resting edge; the row and controls stay fixed. */
 .ow-session-title-moving > span {
   will-change: transform;
 }
