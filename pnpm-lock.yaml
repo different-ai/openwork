@@ -88,18 +88,10 @@ overrides:
   ws@>=8.0.0 <8.21.0: 8.21.0
 
 patchedDependencies:
-  '@better-auth/drizzle-adapter@1.7.0-beta.10':
-    hash: cd64da0c48130585986f4c25fac25093e761675db1885d837df7dc31c358f7f8
-    path: patches/@better-auth__drizzle-adapter@1.7.0-beta.10.patch
-  '@better-auth/sso@1.7.0-beta.10':
-    hash: eb4378a8959f462bbf23acb54e46dd781d29b1ef295f507e6d23a8a42ad7e56b
-    path: patches/@better-auth__sso@1.7.0-beta.10.patch
-  '@modelcontextprotocol/client@2.0.0':
-    hash: 702e2000a3f78e99cfa6971ac4c90466d482174e49340634c0f5b1f346285c12
-    path: patches/@modelcontextprotocol__client@2.0.0.patch
-  '@modelcontextprotocol/sdk':
-    hash: b9b29e6a319e94ea968476aa440eb8586b5da9db6b8011ce749c384d186f8a10
-    path: patches/@modelcontextprotocol__sdk.patch
+  '@better-auth/drizzle-adapter@1.7.0-beta.10': cd64da0c48130585986f4c25fac25093e761675db1885d837df7dc31c358f7f8
+  '@better-auth/sso@1.7.0-beta.10': eb4378a8959f462bbf23acb54e46dd781d29b1ef295f507e6d23a8a42ad7e56b
+  '@modelcontextprotocol/client@2.0.0': 702e2000a3f78e99cfa6971ac4c90466d482174e49340634c0f5b1f346285c12
+  '@modelcontextprotocol/sdk': b9b29e6a319e94ea968476aa440eb8586b5da9db6b8011ce749c384d186f8a10
 
 importers:
 
@@ -490,6 +482,58 @@ importers:
       vite:
         specifier: ^7.1.12
         version: 7.3.6(@types/node@25.6.0)(jiti@2.7.0)(lightningcss@1.32.0)(terser@5.49.0)(tsx@4.23.1)(yaml@2.9.0)
+
+  apps/workbot:
+    dependencies:
+      '@opencode-ai/sdk':
+        specifier: ^1.18.15
+        version: 1.18.18
+      '@openwork/headless-threads':
+        specifier: workspace:*
+        version: link:../../packages/headless-threads
+      '@openwork/paths':
+        specifier: workspace:*
+        version: link:../../packages/paths
+      '@openwork/types':
+        specifier: workspace:*
+        version: link:../../packages/types
+      react:
+        specifier: 'catalog:'
+        version: 19.2.8
+      react-dom:
+        specifier: 'catalog:'
+        version: 19.2.8(react@19.2.8)
+      zod:
+        specifier: ^4.3.6
+        version: 4.3.6
+    devDependencies:
+      '@tailwindcss/vite':
+        specifier: ^4.3.3
+        version: 4.3.3(vite@6.4.3(@types/node@25.6.0)(jiti@2.7.0)(lightningcss@1.32.0)(terser@5.49.0)(tsx@4.23.1)(yaml@2.9.0))
+      '@types/node':
+        specifier: ^25.6.0
+        version: 25.6.0
+      '@types/react':
+        specifier: ^19.2.2
+        version: 19.2.14
+      '@types/react-dom':
+        specifier: ^19.2.3
+        version: 19.2.3(@types/react@19.2.14)
+      '@vitejs/plugin-react':
+        specifier: ^5.0.4
+        version: 5.2.0(vite@6.4.3(@types/node@25.6.0)(jiti@2.7.0)(lightningcss@1.32.0)(terser@5.49.0)(tsx@4.23.1)(yaml@2.9.0))
+      electron:
+        specifier: ^43.2.0
+        version: 43.2.0
+      tailwindcss:
+        specifier: ^4.3.3
+        version: 4.3.3
+      typescript:
+        specifier: ^5.6.3
+        version: 5.9.3
+      vite:
+        specifier: ^6.4.3
+        version: 6.4.3(@types/node@25.6.0)(jiti@2.7.0)(lightningcss@1.32.0)(terser@5.49.0)(tsx@4.23.1)(yaml@2.9.0)
 
   ee/apps/den-api:
     dependencies:
@@ -8747,9 +8791,6 @@ packages:
     engines: {node: '>=14.0.0'}
     hasBin: true
 
-  tailwindcss@4.1.18:
-    resolution: {integrity: sha512-4+Z+0yiYyEtUVCScyfHCxOYP06L5Ne+JiHhY2IjR2KWMIWhJOYZKLSGZaP5HkZ8+bY0cxfzwDE5uOmzFXyIwxw==}
-
   tailwindcss@4.3.3:
     resolution: {integrity: sha512-gOhV3P7ufE62QDGg1zVaTgCR+EtPv92k2nIhVcVKcLmxT1sUBsQGhnZj175j+MqRt4zLF7ic+sCYjfhxMxj7YQ==}
 
@@ -9254,7 +9295,7 @@ packages:
     engines: {node: '>=20'}
 
   xlsx@https://cdn.sheetjs.com/xlsx-0.20.2/xlsx-0.20.2.tgz:
-    resolution: {integrity: sha512-+nKZ39+nvK7Qq6i0PvWWRA4j/EkfWOtkP/YhMtupm+lJIiHxUrgTr1CcKv1nBk1rHtkRRQ3O2+Ih/q/sA+FXZA==, tarball: https://cdn.sheetjs.com/xlsx-0.20.2/xlsx-0.20.2.tgz}
+    resolution: {tarball: https://cdn.sheetjs.com/xlsx-0.20.2/xlsx-0.20.2.tgz}
     version: 0.20.2
     engines: {node: '>=0.8'}
     hasBin: true
@@ -12021,7 +12062,7 @@ snapshots:
     dependencies:
       '@react-email/text': 0.1.6(react@19.2.8)
       react: 19.2.8
-      tailwindcss: 4.1.18
+      tailwindcss: 4.3.3
     optionalDependencies:
       '@react-email/body': 0.3.0(react@19.2.8)
       '@react-email/button': 0.2.1(react@19.2.8)
@@ -17456,8 +17497,6 @@ snapshots:
       sucrase: 3.35.1
     transitivePeerDependencies:
       - ts-node
-
-  tailwindcss@4.1.18: {}
 
   tailwindcss@4.3.3: {}
 
