@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { coworkerBridge, type CoworkerSummary, type RuntimeInfo } from "@/lib/bridge";
 import { readDenSession, writeDenSession, type DenSession } from "@/lib/den";
+import { readCoworkerActivity, type CoworkerActivity } from "@/lib/threads";
 import { Button, ErrorNote } from "@/ui/kit";
 import { NewCoworker } from "@/ui/new-coworker";
 import { SignInGate } from "@/ui/sign-in";
@@ -15,6 +16,7 @@ export default function App() {
   const [selectedSlug, setSelectedSlug] = useState("");
   const [creating, setCreating] = useState(false);
   const [connecting, setConnecting] = useState(false);
+  const [activityBySlug, setActivityBySlug] = useState<Record<string, CoworkerActivity>>({});
 
   const boot = useCallback(async () => {
     try {
@@ -34,6 +36,38 @@ export default function App() {
   useEffect(() => {
     void boot();
   }, [boot]);
+
+  useEffect(() => {
+    if (!runtime) return;
+    let cancelled = false;
+    const refreshActivity = async () => {
+      const entries = await Promise.all(
+        coworkers.map(async (coworker) => {
+          if (!coworker.workspaceId) {
+            return [
+              coworker.slug,
+              { state: "offline", label: "Setting up", detail: "Workspace is not ready", updatedAt: 0 },
+            ] as const;
+          }
+          return [
+            coworker.slug,
+            await readCoworkerActivity({
+              serverUrl: runtime.serverUrl,
+              workspaceId: coworker.workspaceId,
+              token: runtime.ownerToken,
+            }),
+          ] as const;
+        }),
+      );
+      if (!cancelled) setActivityBySlug(Object.fromEntries(entries));
+    };
+    void refreshActivity();
+    const timer = window.setInterval(() => void refreshActivity(), 4_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [runtime, coworkers]);
 
   const refreshRuntime = useCallback(async () => {
     const info = await coworkerBridge.runtimeInfo();
@@ -92,6 +126,7 @@ export default function App() {
     <div className="flex h-full">
       <CoworkerRail
         coworkers={coworkers}
+        activityBySlug={activityBySlug}
         selectedSlug={creating ? "" : selectedSlug}
         session={session}
         onSelect={(slug) => {
