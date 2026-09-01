@@ -4,7 +4,7 @@
  * embedded server's workspace-scoped engine proxy. Nothing here invents a
  * conversation type: a thread created in Open Coworker opens in OpenWork.
  */
-import { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
+import { createOpencodeClient, type SessionStatus } from "@opencode-ai/sdk/v2/client";
 import {
   createHeadlessThreadClient,
   type HeadlessThreadClient,
@@ -15,6 +15,14 @@ export type ThreadListItem = {
   id: string;
   title: string;
   createdAt: number;
+  updatedAt: number;
+  status: SessionStatus["type"];
+};
+
+export type CoworkerActivity = {
+  state: "ready" | "working" | "retrying" | "recent" | "offline";
+  label: string;
+  detail: string;
   updatedAt: number;
 };
 
@@ -60,6 +68,7 @@ export type CoworkerThreads = {
   client: HeadlessThreadClient;
   listThreads: () => Promise<ThreadListItem[]>;
   listModels: () => Promise<EngineModelOption[]>;
+  readActivity: () => Promise<CoworkerActivity>;
 };
 
 export function createCoworkerThreads(options: {
@@ -83,11 +92,15 @@ export function createCoworkerThreads(options: {
   });
 
   async function listThreads(): Promise<ThreadListItem[]> {
-    const result = await opencode.session.list();
-    if (result.error !== undefined) {
-      throw new Error(`Listing threads failed (${result.response?.status ?? "network"})`);
+    const [listResult, statusResult] = await Promise.all([
+      opencode.session.list(),
+      opencode.session.status(),
+    ]);
+    if (listResult.error !== undefined) {
+      throw new Error(`Listing threads failed (${listResult.response?.status ?? "network"})`);
     }
-    const sessions = sessionListSchema.parse(result.data ?? []);
+    const sessions = sessionListSchema.parse(listResult.data ?? []);
+    const statuses = statusResult.data ?? {};
     return sessions
       .filter((session) => !session.parentID)
       .map((session) => ({
@@ -95,8 +108,25 @@ export function createCoworkerThreads(options: {
         title: session.title?.trim() || "Untitled thread",
         createdAt: session.time?.created ?? 0,
         updatedAt: session.time?.updated ?? 0,
+        status: statuses[session.id]?.type ?? "idle",
       }))
       .sort((a, b) => b.updatedAt - a.updatedAt);
+  }
+
+  async function readActivity(): Promise<CoworkerActivity> {
+    const sessions = await listThreads();
+    const active = sessions.find((session) => session.status === "busy" || session.status === "retry");
+    if (active?.status === "retry") {
+      return { state: "retrying", label: "Retrying", detail: active.title, updatedAt: active.updatedAt };
+    }
+    if (active) {
+      return { state: "working", label: "Working", detail: active.title, updatedAt: active.updatedAt };
+    }
+    const latest = sessions[0];
+    if (latest) {
+      return { state: "recent", label: "Ready", detail: latest.title, updatedAt: latest.updatedAt };
+    }
+    return { state: "ready", label: "Ready", detail: "Waiting for first assignment", updatedAt: 0 };
   }
 
   async function listModels(): Promise<EngineModelOption[]> {
@@ -120,5 +150,17 @@ export function createCoworkerThreads(options: {
     return models.sort((a, b) => a.label.localeCompare(b.label));
   }
 
-  return { client, listThreads, listModels };
+  return { client, listThreads, listModels, readActivity };
+}
+
+export async function readCoworkerActivity(options: {
+  serverUrl: string;
+  workspaceId: string;
+  token: string;
+}): Promise<CoworkerActivity> {
+  try {
+    return await createCoworkerThreads(options).readActivity();
+  } catch {
+    return { state: "offline", label: "Offline", detail: "Activity is unavailable", updatedAt: 0 };
+  }
 }
