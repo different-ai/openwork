@@ -1,15 +1,36 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { coworkerBridge, type CoworkerSummary, type RuntimeInfo } from "@/lib/bridge";
+import {
+  createCoworkerMcpClient,
+  gatewayMcpAppLaunch,
+  preservedMcpAppResult,
+  type CoworkerMcpAppResource,
+  type CoworkerMcpClient,
+  type PreservedMcpAppResult,
+} from "@/lib/mcp";
 import { createCoworkerThreads, type ThreadListItem } from "@/lib/threads";
 import { CoworkerAvatar } from "@/ui/coworker-avatar";
 import { Button, Empty, ErrorNote, StatusDot } from "@/ui/kit";
+import { McpAppFrame } from "@/ui/mcp-app-frame";
+
+type TranscriptToolCall = {
+  partId: string;
+  tool: string;
+  status: string;
+  input: Record<string, unknown>;
+  output: unknown;
+  error: string | null;
+  metadata: Record<string, unknown>;
+};
 
 type TranscriptMessage = {
   id: string;
   role: string;
   text: string;
-  toolCalls: Array<{ tool: string; status: string }>;
+  toolCalls: TranscriptToolCall[];
 };
+
+export type AssignmentDraft = { id: number; text: string } | null;
 
 const STARTERS = [
   "Review your workspace and tell me what needs my attention.",
@@ -38,11 +59,13 @@ export function ThreadsPanel({
   coworker,
   onCoworkerChanged,
   onRefreshRuntime,
+  assignmentDraft,
 }: {
   runtime: RuntimeInfo;
   coworker: CoworkerSummary;
   onCoworkerChanged: (coworker: CoworkerSummary) => void;
   onRefreshRuntime: () => Promise<void>;
+  assignmentDraft?: AssignmentDraft;
 }) {
   const threads = useMemo(
     () =>
@@ -60,6 +83,10 @@ export function ThreadsPanel({
   const [items, setItems] = useState<ThreadListItem[]>([]);
   const [openThreadId, setOpenThreadId] = useState("");
   const [error, setError] = useState("");
+
+  useEffect(() => {
+    if (assignmentDraft) setOpenThreadId("");
+  }, [assignmentDraft]);
 
   const refresh = useCallback(async () => {
     if (!threads) return;
@@ -116,6 +143,7 @@ export function ThreadsPanel({
         threads={threads}
         threadId={openThreadId}
         coworker={coworker}
+        runtime={runtime}
         onBack={() => {
           setOpenThreadId("");
           void refresh();
@@ -131,6 +159,7 @@ export function ThreadsPanel({
       items={items}
       onOpen={setOpenThreadId}
       threads={threads}
+      assignmentDraft={assignmentDraft}
     />
   );
 }
@@ -141,16 +170,22 @@ function WorkOverview({
   items,
   error,
   onOpen,
+  assignmentDraft,
 }: {
   threads: NonNullable<ReturnType<typeof createCoworkerThreads>>;
   coworker: CoworkerSummary;
   items: ThreadListItem[];
   error: string;
   onOpen: (threadId: string) => void;
+  assignmentDraft?: AssignmentDraft;
 }) {
   const [prompt, setPrompt] = useState("");
   const [busy, setBusy] = useState(false);
   const [assignError, setAssignError] = useState("");
+
+  useEffect(() => {
+    if (assignmentDraft) setPrompt(assignmentDraft.text);
+  }, [assignmentDraft]);
 
   async function assign() {
     const text = prompt.trim();
@@ -248,11 +283,13 @@ function ThreadView({
   threads,
   threadId,
   coworker,
+  runtime,
   onBack,
 }: {
   threads: NonNullable<ReturnType<typeof createCoworkerThreads>>;
   threadId: string;
   coworker: CoworkerSummary;
+  runtime: RuntimeInfo;
   onBack: () => void;
 }) {
   const [messages, setMessages] = useState<TranscriptMessage[]>([]);
@@ -263,6 +300,14 @@ function ThreadView({
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const endRef = useRef<HTMLDivElement>(null);
+  const mcpClient = useMemo(
+    () => createCoworkerMcpClient({
+      serverUrl: runtime.serverUrl,
+      workspaceId: coworker.workspaceId,
+      token: runtime.ownerToken,
+    }),
+    [coworker.workspaceId, runtime.ownerToken, runtime.serverUrl],
+  );
 
   const refresh = useCallback(async () => {
     try {
@@ -280,8 +325,13 @@ function ThreadView({
           role: message.role,
           text: message.text,
           toolCalls: message.toolCalls.map((call) => ({
+            partId: call.partId,
             tool: call.name,
             status: call.status ?? "working",
+            input: call.input,
+            output: call.output,
+            error: call.error,
+            metadata: call.metadata,
           })),
         })),
       );
@@ -343,7 +393,7 @@ function ThreadView({
       <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5">
         <div className="mx-auto max-w-3xl space-y-3">
           {messages.map((message) => (
-            <MessageBubble key={message.id} message={message} coworker={coworker} />
+            <MessageBubble key={message.id} message={message} coworker={coworker} mcpClient={mcpClient} />
           ))}
           {working ? (
             <div className="flex items-center gap-2 px-1 py-2 text-xs text-mist">
@@ -374,7 +424,15 @@ function ThreadView({
   );
 }
 
-function MessageBubble({ message, coworker }: { message: TranscriptMessage; coworker: CoworkerSummary }) {
+function MessageBubble({
+  message,
+  coworker,
+  mcpClient,
+}: {
+  message: TranscriptMessage;
+  coworker: CoworkerSummary;
+  mcpClient: CoworkerMcpClient;
+}) {
   const user = message.role === "user";
   return (
     <article className={`flex items-end gap-2 ${user ? "justify-end" : "justify-start"}`}>
@@ -396,21 +454,101 @@ function MessageBubble({ message, coworker }: { message: TranscriptMessage; cowo
         {message.text || (message.toolCalls.length > 0 ? "" : "…")}
         {message.toolCalls.length > 0 ? (
           <ul className="mt-3 space-y-1.5">
-            {message.toolCalls.map((call, index) => {
-              const failed = call.status === "error" || call.status === "failed";
-              const complete = call.status === "completed" || call.status === "success";
-              return (
-                <li key={`${call.tool}-${index}`} className="flex items-center gap-2 rounded-lg border border-line bg-ink/70 px-2.5 py-2 text-xs text-snow">
-                  <StatusDot tone={failed ? "rose" : complete ? "mint" : "spark"} />
-                  <span className="min-w-0 flex-1 truncate">{call.tool}</span>
-                  <span className="text-mist">{failed ? "Failed" : complete ? "Done" : "Activity"}</span>
-                </li>
-              );
-            })}
+            {message.toolCalls.map((call) => <ToolReceipt key={call.partId} call={call} client={mcpClient} />)}
           </ul>
         ) : null}
       </div>
     </article>
+  );
+}
+
+function toolPresentation(call: TranscriptToolCall): { label: string; source: string } {
+  const normalized = call.tool.toLowerCase();
+  const source = call.tool.includes("_") ? call.tool.split("_")[0] || "OpenWork" : "OpenWork";
+  if (normalized.endsWith("search_capabilities")) {
+    const query = typeof call.input.query === "string" ? call.input.query.trim() : "";
+    return { label: query ? `Searched for “${query}”` : "Searched connected capabilities", source: "OpenWork Connect" };
+  }
+  if (normalized.endsWith("execute_capability")) {
+    const selected = typeof call.input.name === "string" ? call.input.name.trim() : "";
+    return { label: selected ? `Used ${selected}` : "Ran a connected capability", source: "OpenWork Connect" };
+  }
+  return {
+    label: call.tool.replaceAll("_", " ").replace(/\b\w/g, (character) => character.toUpperCase()),
+    source,
+  };
+}
+
+function ToolReceipt({ call, client }: { call: TranscriptToolCall; client: CoworkerMcpClient }) {
+  const nextResult = preservedMcpAppResult({ output: call.output, metadata: call.metadata });
+  const resultSignature = JSON.stringify(nextResult);
+  const resultRef = useRef<{ signature: string; value: PreservedMcpAppResult | null }>({
+    signature: resultSignature,
+    value: nextResult,
+  });
+  if (resultRef.current.signature !== resultSignature) {
+    resultRef.current = { signature: resultSignature, value: nextResult };
+  }
+  const result = resultRef.current.value;
+  const launch = useMemo(() => gatewayMcpAppLaunch(result?._meta), [result]);
+  const inputSignature = JSON.stringify(launch?.arguments ?? call.input);
+  const inputRef = useRef<{ signature: string; value: Record<string, unknown> }>({
+    signature: inputSignature,
+    value: launch?.arguments ?? call.input,
+  });
+  if (inputRef.current.signature !== inputSignature) {
+    inputRef.current = { signature: inputSignature, value: launch?.arguments ?? call.input };
+  }
+  const [app, setApp] = useState<CoworkerMcpAppResource | null>(null);
+  const [appError, setAppError] = useState("");
+  const presentation = toolPresentation(call);
+  const failed = call.status === "error" || call.status === "failed";
+  const complete = call.status === "completed" || call.status === "success";
+
+  useEffect(() => {
+    let cancelled = false;
+    setApp(null);
+    setAppError("");
+    if (!result || !complete) return;
+    void client.resolveApp(call.tool, launch ?? undefined)
+      .then(({ app: resolved }) => {
+        if (!cancelled) setApp(resolved);
+      })
+      .catch((cause) => {
+        if (!cancelled) setAppError(cause instanceof Error ? cause.message : String(cause));
+      });
+    return () => { cancelled = true; };
+  }, [call.tool, client, complete, launch, result]);
+
+  return (
+    <li className="rounded-xl border border-line bg-ink/70 px-2.5 py-2 text-xs text-snow">
+      <div className="flex items-center gap-2">
+        <StatusDot tone={failed ? "rose" : complete ? "mint" : "spark"} />
+        <span className="min-w-0 flex-1 truncate">{presentation.label}</span>
+        <span className="shrink-0 text-[10px] text-mist">{failed ? "Failed" : complete ? "Done" : "Working"}</span>
+      </div>
+      <div className="mt-1 flex items-center justify-between gap-3 pl-4 text-[9px] text-mist/75">
+        <span className="truncate">{presentation.source}</span>
+        <details className="shrink-0">
+          <summary className="cursor-pointer select-none">Details</summary>
+          <p className="mt-1 max-w-64 break-all text-right font-mono">{call.tool}</p>
+        </details>
+      </div>
+      {call.error ? <p className="mt-2 pl-4 text-[10px] text-rose">{call.error}</p> : null}
+      {app && result ? (
+        <div className="mt-2">
+          <McpAppFrame
+            client={client}
+            app={app}
+            toolName={call.tool}
+            input={inputRef.current.value}
+            result={result}
+            onClose={() => setApp(null)}
+          />
+        </div>
+      ) : null}
+      {appError ? <p className="mt-2 pl-4 text-[10px] text-mist">Interactive view unavailable. {appError}</p> : null}
+    </li>
   );
 }
 

@@ -34,6 +34,12 @@ export interface HeadlessThreadMessagePart {
   tool?: string;
   callId?: string;
   toolStatus?: string;
+  /** Exact arguments admitted by the engine for this tool call. */
+  toolInput?: Record<string, unknown>;
+  /** Exact result preserved by OpenWork, including MCP App transport data. */
+  toolOutput?: unknown;
+  toolError?: string;
+  toolMetadata?: Record<string, unknown>;
   synthetic?: boolean;
   ignored?: boolean;
 }
@@ -151,6 +157,10 @@ export interface HeadlessTranscriptToolCall {
   name: string;
   callId: string | null;
   status: string | null;
+  input: Record<string, unknown>;
+  output: unknown;
+  error: string | null;
+  metadata: Record<string, unknown>;
 }
 
 export interface HeadlessTranscriptMessage {
