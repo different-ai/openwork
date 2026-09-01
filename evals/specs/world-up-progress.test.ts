@@ -142,7 +142,7 @@ if (import.meta.main) await runRecipe(world);
       (line) => line.startsWith(`✔ ${stagedName} is up`),
       (line) => line === "url  http://127.0.0.1:1",
     ]);
-    assert.deepEqual(printed, []);
+    assert.equal(printed.length, 0);
     assert.equal(narrated.some((line) => line.includes("\u001b")), false);
     evidence.recordAssertionEvidence(
       "Attach replays completed progress through the ready block",
