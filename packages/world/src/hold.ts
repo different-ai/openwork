@@ -1,18 +1,22 @@
 import { chmod, mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { basename, dirname, extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { receiptName, resolveStage } from "./stage.ts";
+import { assertWorldName } from "./store.ts";
 
 const REPO_ROOT = fileURLToPath(new URL("../../..", import.meta.url));
-const SAFE_WORLD_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 
 export interface ScriptWorldSnapshot {
-  version: 1;
+  version: 1 | 2;
   kind: "script";
   name: string;
   createdAt: string;
   pid: number;
   sourcePath: string;
   outputs: Record<string, string>;
+  stage?: string;
+  recipeHash?: string;
+  place?: string;
 }
 
 export interface HoldOptions {
@@ -51,39 +55,45 @@ async function aliveSnapshotPid(path: string): Promise<number | undefined> {
 export async function hold(options: HoldOptions = {}): Promise<void> {
   const sourcePath = process.argv[1];
   const name = options.name ?? basename(sourcePath, extname(sourcePath));
-  if (!SAFE_WORLD_NAME.test(name)) {
-    throw new Error("World names must use only letters, numbers, dots, underscores, and hyphens.");
-  }
+  assertWorldName(name);
+  const stage = resolveStage(process.env);
+  const recipeHash = process.env.OPENWORK_WORLD_RECIPE_HASH;
+  const place = process.env.OPENWORK_WORLD_PLACE;
+  const stagedName = receiptName(name, stage);
 
   const snapshotDirectory = resolve(
     options.snapshotDir
       ?? process.env.OPENWORK_WORLD_SNAPSHOT_DIR
       ?? join(REPO_ROOT, "evals", "results", ".worlds", "scripts"),
   );
-  const snapshotPath = join(snapshotDirectory, `${name}.json`);
+  const snapshotPath = join(snapshotDirectory, `${stagedName}.json`);
   const existingPid = await aliveSnapshotPid(snapshotPath);
   if (existingPid !== undefined) {
     throw new Error(
-      `Script world ${JSON.stringify(name)} is already running (pid ${existingPid}); run \`pnpm world down ${name}\` first.`,
+      `Script world ${JSON.stringify(stagedName)} is already running (pid ${existingPid}); run \`pnpm world down ${name}${stage ? ` --stage ${stage}` : ""}\` first.`,
     );
   }
 
   const outputs = options.outputs ?? {};
+  const version = stage !== undefined || recipeHash !== undefined || place !== undefined ? 2 : 1;
   const snapshot: ScriptWorldSnapshot = {
-    version: 1,
+    version,
     kind: "script",
-    name,
+    name: stagedName,
     createdAt: new Date().toISOString(),
     pid: process.pid,
     sourcePath,
     outputs,
+    ...(stage === undefined ? {} : { stage }),
+    ...(recipeHash === undefined ? {} : { recipeHash }),
+    ...(place === undefined ? {} : { place }),
   };
   await mkdir(dirname(snapshotPath), { recursive: true });
   await writeFile(snapshotPath, `${JSON.stringify(snapshot, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
   await chmod(snapshotPath, 0o600);
 
   for (const [key, value] of Object.entries(outputs)) console.log(`${key}  ${value}`);
-  console.log(`World ${JSON.stringify(name)} is up. Ctrl-C (or pnpm world down ${name}) tears it down.`);
+  console.log(`World ${JSON.stringify(stagedName)} is up. Ctrl-C (or pnpm world down ${name}${stage ? ` --stage ${stage}` : ""}) tears it down.`);
 
   await new Promise<void>((done) => {
     let stopping = false;

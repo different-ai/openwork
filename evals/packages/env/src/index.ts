@@ -1,4 +1,5 @@
 export * from "./place.ts";
+export * from "./recipe.ts";
 export * from "./needs.ts";
 export * from "./mock.ts";
 export * from "./den.ts";

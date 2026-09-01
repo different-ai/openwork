@@ -1,7 +1,9 @@
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import { access, chmod, mkdir, open, readFile, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
+import { receiptName } from "./stage.ts";
 import { assertWorldName } from "./store.ts";
 import type { ScriptWorldSnapshot } from "./hold.ts";
 
@@ -29,7 +31,7 @@ export function parseScriptWorldSnapshot(text: string): ScriptWorldSnapshot {
   const value: unknown = JSON.parse(text);
   if (
     !isRecord(value)
-    || value.version !== 1
+    || (value.version !== 1 && value.version !== 2)
     || value.kind !== "script"
     || typeof value.name !== "string"
     || typeof value.createdAt !== "string"
@@ -38,18 +40,30 @@ export function parseScriptWorldSnapshot(text: string): ScriptWorldSnapshot {
     || value.pid <= 0
     || typeof value.sourcePath !== "string"
     || !isStringRecord(value.outputs)
+    || (value.version === 2 && "stage" in value && value.stage !== undefined && typeof value.stage !== "string")
+    || (value.version === 2 && "recipeHash" in value && value.recipeHash !== undefined && typeof value.recipeHash !== "string")
+    || (value.version === 2 && "place" in value && value.place !== undefined && typeof value.place !== "string")
   ) {
     throw new Error("The file is not a valid script world snapshot.");
   }
   return {
-    version: 1,
+    version: value.version,
     kind: "script",
     name: value.name,
     createdAt: value.createdAt,
     pid: value.pid,
     sourcePath: value.sourcePath,
     outputs: value.outputs,
+    ...(value.version === 2 && typeof value.stage === "string" ? { stage: value.stage } : {}),
+    ...(value.version === 2 && typeof value.recipeHash === "string" ? { recipeHash: value.recipeHash } : {}),
+    ...(value.version === 2 && typeof value.place === "string" ? { place: value.place } : {}),
   };
+}
+
+/** Hashes only the recipe file bytes; imported files are not included. */
+export async function computeRecipeHash(filePath: string): Promise<string> {
+  const bytes = await readFile(filePath);
+  return `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
 }
 
 export function isProcessAlive(pid: number): boolean {
@@ -151,18 +165,28 @@ export interface LaunchScriptWorldOptions {
   snapshotDirectory: string;
   detach: boolean;
   timeoutMs?: number;
+  stage?: string;
+  recipeHash?: string;
+  place?: string;
   print: (line: string) => void;
 }
 
 export async function launchScriptWorld(options: LaunchScriptWorldOptions): Promise<number> {
   const path = resolve(options.path);
-  const snapshotPath = scriptWorldSnapshotPath(options.snapshotDirectory, options.name);
-  const env = { ...process.env, OPENWORK_WORLD_SNAPSHOT_DIR: options.snapshotDirectory };
-  await assertNoRunningSnapshot(snapshotPath, options.name);
+  const stagedName = receiptName(options.name, options.stage);
+  const snapshotPath = scriptWorldSnapshotPath(options.snapshotDirectory, stagedName);
+  const env: NodeJS.ProcessEnv = { ...process.env, OPENWORK_WORLD_SNAPSHOT_DIR: options.snapshotDirectory };
+  if (options.stage === undefined) delete env.OPENWORK_WORLD_STAGE;
+  else env.OPENWORK_WORLD_STAGE = options.stage;
+  if (options.recipeHash === undefined) delete env.OPENWORK_WORLD_RECIPE_HASH;
+  else env.OPENWORK_WORLD_RECIPE_HASH = options.recipeHash;
+  if (options.place === undefined) delete env.OPENWORK_WORLD_PLACE;
+  else env.OPENWORK_WORLD_PLACE = options.place;
+  await assertNoRunningSnapshot(snapshotPath, stagedName);
 
   if (!options.detach) return waitForChild(path, options.args, env);
 
-  const logPath = scriptWorldLogPath(options.snapshotDirectory, options.name);
+  const logPath = scriptWorldLogPath(options.snapshotDirectory, stagedName);
   await mkdir(options.snapshotDirectory, { recursive: true });
   const log = await open(logPath, "w", 0o600);
   await chmod(logPath, 0o600);
@@ -193,7 +217,7 @@ export async function launchScriptWorld(options: LaunchScriptWorldOptions): Prom
     }
     if (child.exitCode !== null || child.signalCode !== null) {
       await removeDeadSnapshot(snapshotPath);
-      options.print(`Script world ${JSON.stringify(options.name)} exited before creating its snapshot.`);
+      options.print(`Script world ${JSON.stringify(stagedName)} exited before creating its snapshot.`);
       for (const line of await lastLogLines(logPath)) options.print(line);
       return 1;
     }
@@ -205,7 +229,7 @@ export async function launchScriptWorld(options: LaunchScriptWorldOptions): Prom
     try { process.kill(child.pid, "SIGTERM"); } catch {}
   }
   await removeDeadSnapshot(snapshotPath);
-  options.print(`Timed out after ${options.timeoutMs ?? DEFAULT_START_TIMEOUT_MS}ms waiting for script world ${JSON.stringify(options.name)}.`);
+  options.print(`Timed out after ${options.timeoutMs ?? DEFAULT_START_TIMEOUT_MS}ms waiting for script world ${JSON.stringify(stagedName)}.`);
   for (const line of await lastLogLines(logPath)) options.print(line);
   return 1;
 }

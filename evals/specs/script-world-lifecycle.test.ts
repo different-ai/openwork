@@ -119,8 +119,8 @@ if (import.meta.main) await main();
     assert.equal(await probe(snapshot.outputs.url), 200);
 
     const duplicate = await run(upCommand);
-    assert.equal(duplicate.code, 1);
-    assert.match(duplicate.lines.join("\n"), /already running.*world down healthy-world.*first/is);
+    assert.equal(duplicate.code, 0, duplicate.lines.join("\n"));
+    assert.match(duplicate.lines.join("\n"), /World "healthy-world" is already running \(pid \d+\); adopted\./);
     const afterDuplicate = await readScriptWorldSnapshot(snapshotPath);
     assert.ok(afterDuplicate);
     assert.equal(afterDuplicate.pid, launchedPid);
@@ -173,7 +173,7 @@ if (import.meta.main) await main();
     );
     evidence.recordAssertionEvidence(
       "Duplicate launch and unknown teardown are isolated",
-      "Both operations failed without replacing the pid, duplicating snapshots, stopping the original probe, or running disposal.",
+      "Duplicate launch adopted the existing pid, while unknown teardown failed without duplicating snapshots, stopping the original probe, or running disposal.",
       true,
     );
     evidence.recordAssertionEvidence(

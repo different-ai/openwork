@@ -1,5 +1,6 @@
 export * from "./loader.ts";
 export * from "./store.ts";
+export * from "./stage.ts";
 export * from "./hold.ts";
 export * from "./script-world.ts";
 export * from "./cli.ts";

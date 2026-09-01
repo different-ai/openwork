@@ -272,7 +272,9 @@ class DaytonaPlace implements Place {
 
 /** Resolve placement once; resources never inspect placement environment again. */
 export function resolvePlace(env: NodeJS.ProcessEnv = process.env): Place {
-  const useDaytona = env.OPENWORK_EVAL_DAYTONA?.trim() === "1";
+  const worldPlace = env.OPENWORK_WORLD_PLACE?.trim() || undefined;
+  const useDaytona = worldPlace === "daytona"
+    || (worldPlace === undefined && env.OPENWORK_EVAL_DAYTONA?.trim() === "1");
   if (useDaytona) {
     const ref = env.OPENWORK_EVAL_REF?.trim() || env.GITHUB_SHA?.trim() || "dev";
     return new DaytonaPlace(ref, env.OPENWORK_EVAL_DAYTONA_DESKTOP_SANDBOX?.trim());
