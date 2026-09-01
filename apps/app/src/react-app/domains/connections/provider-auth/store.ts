@@ -9,6 +9,7 @@ import type {
 import { t } from "../../../../i18n";
 import {
   createDenClient,
+  DenApiError,
   readDenSettings,
   resolveDenBaseUrls,
   type DenOrgLlmProvider,
@@ -317,6 +318,7 @@ function providerListModelEntitlementOptions(
 }
 
 export type ProviderAuthStore = ReturnType<typeof createProviderAuthStore>;
+export type CloudProviderMemberCredentialResult = "saved" | "blocked";
 
 export function createProviderAuthStore(options: CreateProviderAuthStoreOptions) {
   const listeners = new Set<() => void>();
@@ -1799,6 +1801,50 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     }
   }
 
+  async function saveCloudProviderMemberCredential(
+    cloudProviderId: string,
+    apiKey: string,
+  ): Promise<CloudProviderMemberCredentialResult> {
+    const trimmed = apiKey.trim();
+    if (!trimmed) throw new Error(t("providers.api_key_required"));
+
+    const provider = state.cloudOrgProviders.find((entry) => entry.id === cloudProviderId);
+    if (!provider) throw new Error("This organization provider is no longer available.");
+    assertProviderAllowedByDesktopPolicy(getCloudManagedProviderId(provider));
+
+    const settings = readDenSettings();
+    const token = settings.authToken?.trim() ?? "";
+    const orgId = settings.activeOrgId?.trim() ?? "";
+    if (!token || !orgId) {
+      throw new Error("Sign in to OpenWork Cloud and choose an organization first.");
+    }
+
+    const den = createDenClient({ baseUrl: settings.baseUrl, token });
+    try {
+      await den.putMyLlmProviderCredential(orgId, cloudProviderId, { apiKey: trimmed });
+    } catch (error) {
+      if (
+        error instanceof DenApiError &&
+        error.status === 409 &&
+        error.code === "credential_blocked"
+      ) {
+        return "blocked";
+      }
+      throw error;
+    }
+
+    await runCloudProviderSync("manual");
+    await Promise.all([
+      refreshCloudOrgProviders({ force: true }),
+      refreshImportedCloudProviders({ strict: true }),
+    ]);
+    if (state.cloudProviderServerSync?.skippedProviders[cloudProviderId]?.reason === "needs_key") {
+      await runCloudProviderSync("manual");
+      await refreshImportedCloudProviders({ strict: true });
+    }
+    return "saved";
+  }
+
   async function removeCloudProviderInternal(
     cloudProviderId: string,
     optionsArg?: { silent?: boolean },
@@ -2519,6 +2565,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     completeProviderAuthOAuth,
     submitProviderApiKey,
     connectCloudProvider,
+    saveCloudProviderMemberCredential,
     removeCloudProvider,
     disconnectProvider,
     ensureProjectProviderDisabledState,

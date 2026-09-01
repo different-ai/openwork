@@ -11,6 +11,7 @@ import fuzzysort from "fuzzysort";
 import * as React from "react";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   RefreshButton,
@@ -43,6 +44,7 @@ export type CloudProviderRowStatus =
   | "error"
   | "conflict"
   | "blocked"
+  | "needs_key"
   | "needs_credential"
   | "needs_server"
   | "unavailable";
@@ -100,6 +102,7 @@ function cloudProviderStatusTone(status: CloudProviderRowStatus) {
     case "conflict":
       return "error" as const;
     case "blocked":
+    case "needs_key":
     case "needs_credential":
     case "needs_server":
     case "unavailable":
@@ -121,6 +124,8 @@ function cloudProviderStatusLabel(status: CloudProviderRowStatus) {
       return t("den.cloud_provider_conflict");
     case "blocked":
       return t("den.cloud_provider_blocked");
+    case "needs_key":
+      return "Needs your key";
     case "needs_credential":
       return t("den.cloud_provider_needs_credential");
     case "needs_server":
@@ -201,15 +206,38 @@ interface CloudProviderListItemProps {
   actionId: string | null;
   row: CloudProviderRow;
   onRetry: (cloudProviderId: string) => void | Promise<void>;
+  onSaveMemberCredential: (cloudProviderId: string, apiKey: string) => Promise<"saved" | "blocked">;
 }
 
-function CloudProviderListItem({ actionId, row, onRetry }: CloudProviderListItemProps) {
+function CloudProviderListItem({ actionId, row, onRetry, onSaveMemberCredential }: CloudProviderListItemProps) {
   const actionBusy = actionId === row.cloudProviderId;
   const status = actionBusy ? "syncing" : row.status;
+  const [apiKey, setApiKey] = React.useState("");
+  const [credentialError, setCredentialError] = React.useState<string | null>(null);
+  const [credentialBusy, setCredentialBusy] = React.useState(false);
+
+  const submitMemberCredential = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const credential = apiKey.trim();
+    if (!credential || credentialBusy) return;
+    setApiKey("");
+    setCredentialError(null);
+    setCredentialBusy(true);
+    try {
+      const result = await onSaveMemberCredential(row.cloudProviderId, credential);
+      if (result === "blocked") {
+        setCredentialError("An admin manages this credential. Ask them to update it.");
+      }
+    } catch (error) {
+      setCredentialError(error instanceof Error ? error.message : "We couldn't save your key. Try again.");
+    } finally {
+      setCredentialBusy(false);
+    }
+  };
 
   return (
     <SettingsListItem>
-      <SettingsListItemContent>
+      <SettingsListItemContent className="flex-1">
         <SettingsListTitle>
           <SettingsListItemTitle>{row.name}</SettingsListItemTitle>
           <SettingsPill className={statusBadgeVariants({ tone: cloudProviderStatusTone(status) })}>
@@ -219,10 +247,33 @@ function CloudProviderListItem({ actionId, row, onRetry }: CloudProviderListItem
         <SettingsListItemDescription>
           {[
             row.provider?.providerId ?? row.imported?.providerId,
-            row.provider?.hasApiKey ? t("den.credentials_ready_badge") : null,
+            row.provider?.hasApiKey || row.provider?.hasMyCredential ? t("den.credentials_ready_badge") : null,
             row.detail,
           ].filter(Boolean).join(" · ")}
         </SettingsListItemDescription>
+        {row.status === "needs_key" ? (
+          <form className="mt-2 flex max-w-xl flex-col gap-2 sm:flex-row sm:items-start" onSubmit={submitMemberCredential}>
+            <div className="min-w-0 flex-1">
+              <Input
+                type="password"
+                aria-label={`API key for ${row.name}`}
+                aria-invalid={Boolean(credentialError)}
+                autoComplete="new-password"
+                placeholder="Paste your provider key"
+                spellCheck={false}
+                value={apiKey}
+                onChange={(event) => setApiKey(event.currentTarget.value)}
+                disabled={credentialBusy}
+              />
+              {credentialError ? (
+                <p className="mt-1 text-xs text-destructive" role="alert">{credentialError}</p>
+              ) : null}
+            </div>
+            <Button type="submit" size="sm" disabled={credentialBusy || !apiKey.trim()}>
+              {credentialBusy ? "Saving…" : "Save key"}
+            </Button>
+          </form>
+        ) : null}
       </SettingsListItemContent>
       {row.status === "error" && row.provider ? (
         <SettingsListItemActions>
@@ -386,6 +437,7 @@ export interface CloudProvidersSectionProps {
   rows: CloudProviderRow[];
   onRefresh: () => void | Promise<void>;
   onRetry: (cloudProviderId: string) => void | Promise<void>;
+  onSaveMemberCredential: (cloudProviderId: string, apiKey: string) => Promise<"saved" | "blocked">;
 }
 
 export function CloudProvidersSection({
@@ -395,6 +447,7 @@ export function CloudProvidersSection({
   rows,
   onRefresh,
   onRetry,
+  onSaveMemberCredential,
 }: CloudProvidersSectionProps) {
   const { hasActiveOrg } = useCloudSession();
   const [searchQuery, setSearchQuery] = React.useState("");
@@ -405,6 +458,7 @@ export function CloudProvidersSection({
     "error",
     "conflict",
     "blocked",
+    "needs_key",
     "needs_credential",
     "needs_server",
     "unavailable",
@@ -476,6 +530,7 @@ export function CloudProvidersSection({
                           actionId={actionId}
                           row={row}
                           onRetry={onRetry}
+                          onSaveMemberCredential={onSaveMemberCredential}
                         />
                       ))}
                     </SettingsList>

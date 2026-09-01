@@ -335,11 +335,17 @@ export type DenOrgLlmProvider = {
   providerId: string;
   name: string;
   providerConfig: Record<string, unknown>;
+  credentialMode?: "shared" | "per_member";
   hasApiKey: boolean;
+  hasMyCredential?: boolean;
   models: DenOrgLlmProviderModel[];
   createdAt: string | null;
   updatedAt: string | null;
 };
+
+export type DenLlmProviderMyCredentialInput =
+  | { apiKey: string; apiKeys?: never }
+  | { apiKey?: never; apiKeys: Record<string, string> };
 
 export type DenExternalMcpConnection = {
   id: string;
@@ -2053,7 +2059,13 @@ function parseDenOrgLlmProvider(value: unknown): DenOrgLlmProvider | null {
     providerId: value.providerId,
     name: value.name,
     providerConfig: parseJsonRecord(value.providerConfig),
+    ...(value.credentialMode === "shared" || value.credentialMode === "per_member"
+      ? { credentialMode: value.credentialMode }
+      : {}),
     hasApiKey: value.hasApiKey === true,
+    ...(typeof value.hasMyCredential === "boolean"
+      ? { hasMyCredential: value.hasMyCredential }
+      : {}),
     models: Array.isArray(value.models)
       ? value.models.flatMap((model) => {
           const parsed = parseDenOrgLlmProviderModel(model);
@@ -3363,6 +3375,23 @@ export function createDenClient(options: { baseUrl: string; apiBaseUrl?: string 
         throw new DenApiError(500, "invalid_llm_provider_payload", "LLM provider response was missing connection details.");
       }
       return provider;
+    },
+
+    async putMyLlmProviderCredential(
+      orgId: string,
+      llmProviderId: string,
+      credential: DenLlmProviderMyCredentialInput,
+    ): Promise<void> {
+      await requestJson<unknown>(
+        baseUrls,
+        `/v1/llm-providers/${encodeURIComponent(llmProviderId)}/my-credential`,
+        {
+          method: "PUT",
+          token,
+          organizationId: orgId,
+          body: credential,
+        },
+      );
     },
 
     async listMcpConnections(orgId: string, scope: "usable" | "manageable" = "usable"): Promise<DenExternalMcpConnection[]> {
