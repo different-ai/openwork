@@ -100,6 +100,10 @@ export default function App() {
           session={session}
           bot={selected}
           onBotChanged={updateBotInList}
+          onRefreshRuntime={async () => {
+            const info = await workbot.runtimeInfo();
+            setRuntime(info);
+          }}
         />
       )}
       {session ? (

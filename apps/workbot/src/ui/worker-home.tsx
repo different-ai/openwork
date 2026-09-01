@@ -18,11 +18,13 @@ export function WorkerHome({
   session,
   bot,
   onBotChanged,
+  onRefreshRuntime,
 }: {
   runtime: RuntimeInfo;
   session: DenSession | null;
   bot: BotSummary;
   onBotChanged: (bot: BotSummary) => void;
+  onRefreshRuntime: () => Promise<void>;
 }) {
   const [tab, setTab] = useState<TabId>("work");
 
@@ -53,7 +55,15 @@ export function WorkerHome({
         </nav>
       </header>
       <main className="min-h-0 flex-1 overflow-y-auto p-6">
-        {tab === "work" ? <ThreadsPanel runtime={runtime} bot={bot} /> : null}
+        {!runtime.engineManaged && runtime.engineError ? (
+          <p className="mb-4 rounded-md border border-amber/30 bg-amber/10 px-3 py-2 text-sm text-amber">
+            The worker engine is offline: {runtime.engineError}. Install the OpenCode engine or set
+            OPENWORK_OPENCODE_BIN, then reopen Work Bot.
+          </p>
+        ) : null}
+        {tab === "work" ? (
+          <ThreadsPanel runtime={runtime} bot={bot} onBotChanged={onBotChanged} onRefreshRuntime={onRefreshRuntime} />
+        ) : null}
         {tab === "responsibilities" ? (
           session ? (
             <ResponsibilitiesPanel session={session} bot={bot} onBotChanged={onBotChanged} />

@@ -165,6 +165,9 @@ async function ensurePlatformServer() {
 }
 
 async function restartPlatformServer() {
+  // Settle an in-flight boot first so a restart is a real stop-then-start
+  // rather than a second subscriber to the old start.
+  if (startingServer) await startingServer.catch(() => undefined);
   if (serverHandle) {
     const previous = serverHandle;
     serverHandle = null;
@@ -215,15 +218,33 @@ const commands = {
   "bots.list": async () => listBots(botsDir),
   "bots.get": async ({ slug }) => getBot(botsDir, slug),
   "bots.create": async ({ name, role, mission }) => {
+    await ensurePlatformServer();
     const hadEngine = Boolean(serverHandle?.managedOpencode);
     const bot = await createBot(botsDir, { name, role, mission });
-    // The engine only spawns when at least one workspace exists, so the very
-    // first bot needs a server restart to bring the managed engine up.
+    // Registration is registry-level and works without an engine. Do it
+    // first, then restart when no engine was managed yet: the engine only
+    // spawns when the registry holds at least one workspace, so the restart
+    // must happen after this workspace is persisted.
+    const workspaceId = await registerBotWorkspace(bot);
+    const updated = await updateBot(botsDir, bot.slug, { workspaceId });
     if (!hadEngine) {
       await restartPlatformServer();
     }
+    return updated;
+  },
+  "bots.ensureWorkspace": async ({ slug }) => {
+    await ensurePlatformServer();
+    const bot = await getBot(botsDir, slug);
+    if (bot.workspaceId) {
+      if (!serverHandle?.managedOpencode) await restartPlatformServer();
+      return bot;
+    }
     const workspaceId = await registerBotWorkspace(bot);
-    return updateBot(botsDir, bot.slug, { workspaceId });
+    const updated = await updateBot(botsDir, slug, { workspaceId });
+    if (!serverHandle?.managedOpencode) {
+      await restartPlatformServer();
+    }
+    return updated;
   },
   "bots.update": async ({ slug, patch }) => updateBot(botsDir, slug, patch ?? {}),
   "bots.delete": async ({ slug }) => {
