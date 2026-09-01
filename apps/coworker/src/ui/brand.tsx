@@ -29,14 +29,28 @@ export function CoworkerMark({
       style={{ width: size, height: size }}
       viewBox="0 0 122 122"
     >
-      <rect x="3" y="3" width="116" height="116" rx="29" fill="#5b8dff" />
-      <rect x="3.5" y="3.5" width="115" height="115" rx="28.5" fill="none" stroke="#8aa9ff" strokeOpacity="0.58" />
+      <rect x="3" y="3" width="116" height="116" rx="29" fill="#f7f8fa" />
+      <rect x="3.5" y="3.5" width="115" height="115" rx="28.5" fill="none" stroke="#d8dde5" />
       <g transform="translate(14.7 14.5) scale(0.76)">
         <g className="coworker-mark__body">
           <g className="coworker-mark__depth">
-            <path d={BUBBLE_PATH} fill="#284f9f" opacity="0.68" transform="translate(3 3)" />
+            <path
+              d={BUBBLE_PATH}
+              fill="none"
+              stroke="#aeb5c0"
+              strokeOpacity="0.72"
+              strokeLinejoin="round"
+              strokeWidth="2.2"
+              transform="translate(3.2 1.6)"
+            />
           </g>
-          <path d={BUBBLE_PATH} fill="#f7f8fa" stroke="#ffffff" strokeWidth="1.1" />
+          <path
+            d={BUBBLE_PATH}
+            fill="none"
+            stroke="#11151d"
+            strokeLinejoin="round"
+            strokeWidth="3.4"
+          />
           <g className="coworker-mark__features">
             <g className="coworker-mark__pointer-gaze">
               <g className="coworker-mark__gaze">
@@ -46,7 +60,7 @@ export function CoworkerMark({
                 </g>
               </g>
             </g>
-            <g fill="none" stroke="#11151d" strokeLinecap="round" strokeWidth="5">
+            <g fill="none" stroke="#11151d" strokeLinecap="round" strokeWidth="4.6">
               <circle cx="37.5" cy="57" r="17.5" />
               <circle cx="82.5" cy="57" r="17.5" />
               <path d="M57.5 57c1.25-4 3.75-4 5 0" />
