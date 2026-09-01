@@ -152,6 +152,7 @@ import {
 import { WorkspaceAvatarPicker } from "./workspace-avatar-picker";
 import { isSameWorkbenchSession, useWorkbenchStore } from "../chat/workbench-store";
 import { SidebarDestination } from "./sidebar-destination";
+import { OverflowFadeLabel } from "./overflow-fade-label";
 import { SessionTitle } from "./session-title";
 
 /** Paper Desktop: unread #2FBE54, needs-action #E8933A (14px artboard → ~8px app). */
@@ -1490,7 +1491,7 @@ function WorkspaceHeader({
         onPointerDown={onTitlePointerDown}
         onClick={handleSelectWorkspace}
       >
-        <span className="block ow-fade-truncate">{label}</span>
+        <OverflowFadeLabel data-sidebar-workspace-title>{label}</OverflowFadeLabel>
         {statusLabel ? (
           <span className={cn("block text-xs", isError ? "text-destructive" : "text-muted-foreground")}>
             {statusLabel}
