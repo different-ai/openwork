@@ -11,8 +11,15 @@ test("sanitizeStage produces bounded world-name-safe segments", () => {
   assert.equal(sanitizeStage("  feature / one  "), "feature-one");
   assert.equal(sanitizeStage("...alpha!!!beta___"), "alpha-beta");
   assert.equal(sanitizeStage("a---b"), "a-b");
+  assert.equal(sanitizeStage("---alpha_beta---"), "alpha_beta");
   assert.equal(sanitizeStage("abcdefghijklmnopqrstuvwxyz0123456789"), "abcdefghijklmnopqrstuvwxyz012345");
   assert.throws(() => sanitizeStage(" ._- "), /at least one letter or number/);
+});
+
+test("sanitizeStage trims long separator runs in linear time", () => {
+  const startedAt = Date.now();
+  assert.equal(sanitizeStage(`${"-".repeat(10_000)}a${"-".repeat(10_000)}`), "a");
+  assert.ok(Date.now() - startedAt < 200, "expected stage sanitization to finish within 200ms");
 });
 
 test("resolveStage gives an explicit stage precedence over environment configuration", () => {

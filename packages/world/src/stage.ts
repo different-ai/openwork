@@ -2,13 +2,18 @@ import { userInfo } from "node:os";
 import { assertWorldName } from "./store.ts";
 
 export function sanitizeStage(raw: string): string {
-  const stage = raw
+  let stage = raw
     .trim()
     .replace(/[^A-Za-z0-9._-]+/g, "-")
-    .replace(/-+/g, "-")
-    .replace(/^[._-]+|[._-]+$/g, "")
-    .slice(0, 32)
-    .replace(/[._-]+$/g, "");
+    .replace(/-+/g, "-");
+  let start = 0;
+  while (start < stage.length && "._-".includes(stage[start])) start += 1;
+  let end = stage.length;
+  while (end > start && "._-".includes(stage[end - 1])) end -= 1;
+  stage = stage.slice(start, end).slice(0, 32);
+  end = stage.length;
+  while (end > 0 && "._-".includes(stage[end - 1])) end -= 1;
+  stage = stage.slice(0, end);
   if (!stage) throw new Error("World stages must contain at least one letter or number.");
   return stage;
 }
