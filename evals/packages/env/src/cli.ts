@@ -1,10 +1,45 @@
+import { execFile } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { createConnection } from "mysql2/promise";
-import { main as runWorldCli, parseWorldArgs, type Reaper } from "@openwork/world";
-import { DEFAULT_MYSQL_URL } from "./place.ts";
+import { main as runWorldCli, parseWorldArgs, type PreflightCheck, type Reaper } from "@openwork/world";
+import { DEFAULT_MYSQL_URL, localMysqlIsRunning, localRedisIsRunning } from "./place.ts";
 
 const REPO_ROOT = fileURLToPath(new URL("../../../..", import.meta.url));
 const WORLDS_DIRECTORY = fileURLToPath(new URL("../../../../worlds", import.meta.url));
+
+const dockerCheck: PreflightCheck = {
+  id: "docker",
+  label: "docker",
+  run: () => new Promise((resolve) => {
+    execFile("docker", ["info"], (error) => resolve(error
+      ? { ok: false, detail: "unavailable", hint: "start Docker Desktop" }
+      : { ok: true }));
+  }),
+};
+
+const mysqlCheck: PreflightCheck = {
+  id: "mysql",
+  label: "mysql",
+  async run() {
+    return await localMysqlIsRunning()
+      ? { ok: true }
+      : { ok: false, detail: "unavailable", hint: "pnpm dev:den:mysql" };
+  },
+};
+
+const redisCheck: PreflightCheck = {
+  id: "redis",
+  label: "redis",
+  async run() {
+    return await localRedisIsRunning()
+      ? { ok: true }
+      : {
+          ok: false,
+          detail: "unavailable",
+          hint: "start Redis on 127.0.0.1:6379 (Den worlds stall at sign-in without it)",
+        };
+  },
+};
 
 export { parseWorldArgs };
 
@@ -46,6 +81,7 @@ export function main(argv = process.argv.slice(2)): Promise<number> {
   return runWorldCli(argv, {
     cwd: REPO_ROOT,
     worldsDirectory: WORLDS_DIRECTORY,
+    preflight: [dockerCheck, mysqlCheck, redisCheck],
     reapers: { "mysql-db": dropEphemeralDatabase },
   });
 }

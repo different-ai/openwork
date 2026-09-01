@@ -3,10 +3,12 @@ import { attachSurface, evaluateOnSurface, isInteractive, probeAppStateOnSurface
 import type { Surface } from "@openwork/cdp";
 import { desktop } from "@openwork/hosts";
 import { liveSharedProductionStateEnv } from "@openwork/hosts";
-import { trackResource } from "@openwork/world";
+import { progress, trackResource } from "@openwork/world";
 import type { AppReadiness, DesktopHandle, Host, InstalledProductionDesktopState } from "@openwork/hosts";
 import type { Den } from "./den.ts";
 import type { Place } from "./place.ts";
+
+const steps = progress();
 
 interface SharedAppOptions {
   den: Den;
@@ -142,16 +144,25 @@ export async function app(options: AppOptions): Promise<App> {
     if (options.localServerDelayMs !== undefined) {
       env.OPENWORK_EVAL_LOCAL_SERVER_DELAY_MS = String(options.localServerDelayMs);
     }
-    const surface = await desktop({
-      name: "testkit-fresh",
-      host: options.host ?? options.place.host(),
-      profileDir: options.profileDir,
-      bootstrap: {
-        baseUrl: options.den.ref.webUrl,
-        requireSignin: false,
-      },
-      env: Object.keys(env).length > 0 ? env : undefined,
-    });
+    const electronStep = steps.step("electron-fresh", "Electron (fresh)");
+    let surface: Awaited<ReturnType<typeof desktop>>;
+    try {
+      surface = await desktop({
+        name: "testkit-fresh",
+        host: options.host ?? options.place.host(),
+        profileDir: options.profileDir,
+        bootstrap: {
+          baseUrl: options.den.ref.webUrl,
+          requireSignin: false,
+        },
+        env: Object.keys(env).length > 0 ? env : undefined,
+      });
+    } catch (error) {
+      await electronStep.fail(error instanceof Error ? error.message : String(error));
+      throw error;
+    }
+    await electronStep.note(`log ${surface.handle.meta?.log}`);
+    await electronStep.ok(surface.handle.cdpUrl);
     if (surface.handle.pid !== undefined) {
       await trackResource({ kind: "process", id: String(surface.handle.pid), label: "electron", match: process.env.OPENWORK_EVAL_ELECTRON_BINARY?.trim() || "dev:electron" });
     }
@@ -160,7 +171,9 @@ export async function app(options: AppOptions): Promise<App> {
     }
     try {
       const path = options.workspacePath ?? `/tmp/openwork-fresh-${Date.now()}`;
+      const workspaceStep = steps.step("workspace-fresh", "Create workspace");
       const { workspaceId } = await createAndSelectWorkspace(surface, { path });
+      await workspaceStep.ok(workspaceId);
       await options.beforeSignIn?.(surface);
       return {
         handle: surface.handle,
@@ -186,16 +199,25 @@ export async function app(options: AppOptions): Promise<App> {
   if (options.localServerDelayMs !== undefined) {
     env.OPENWORK_EVAL_LOCAL_SERVER_DELAY_MS = String(options.localServerDelayMs);
   }
-  const surface = await desktop({
-    name: `testkit-${options.as}`,
-    host: options.host ?? options.place.host(),
-    profileDir: options.profileDir,
-    bootstrap: {
-      baseUrl: options.den.ref.webUrl,
-      requireSignin: false,
-    },
-    env: Object.keys(env).length > 0 ? env : undefined,
-  });
+  const electronStep = steps.step(`electron-${options.as}`, `Electron (${options.as})`);
+  let surface: Awaited<ReturnType<typeof desktop>>;
+  try {
+    surface = await desktop({
+      name: `testkit-${options.as}`,
+      host: options.host ?? options.place.host(),
+      profileDir: options.profileDir,
+      bootstrap: {
+        baseUrl: options.den.ref.webUrl,
+        requireSignin: false,
+      },
+      env: Object.keys(env).length > 0 ? env : undefined,
+    });
+  } catch (error) {
+    await electronStep.fail(error instanceof Error ? error.message : String(error));
+    throw error;
+  }
+  await electronStep.note(`log ${surface.handle.meta?.log}`);
+  await electronStep.ok(surface.handle.cdpUrl);
   if (surface.handle.pid !== undefined) {
     await trackResource({ kind: "process", id: String(surface.handle.pid), label: "electron", match: process.env.OPENWORK_EVAL_ELECTRON_BINARY?.trim() || "dev:electron" });
   }
@@ -206,9 +228,13 @@ export async function app(options: AppOptions): Promise<App> {
     // Workspace first, then the org sign-in: the signed-in org shell offers no
     // Add workspace entry, so a member's workspace exists before they connect.
     const path = options.workspacePath ?? `/tmp/openwork-${options.as}-${Date.now()}`;
-    await createAndSelectWorkspace(surface, { path });
+    const workspaceStep = steps.step(`workspace-${options.as}`, "Create workspace");
+    const { workspaceId: initialWorkspaceId } = await createAndSelectWorkspace(surface, { path });
+    await workspaceStep.ok(initialWorkspaceId);
     await options.beforeSignIn?.(surface);
+    const signInStep = steps.step(`signin-${options.as}`, `Sign in as ${options.as}`);
     await signInDesktopAs(surface, options.den.ref, member);
+    await signInStep.ok();
     const { workspaceId } = await createAndSelectWorkspace(surface, { path });
     return {
       handle: surface.handle,

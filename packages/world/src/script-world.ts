@@ -1,8 +1,9 @@
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { access, chmod, mkdir, open, readFile, rm } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
+import { EVENTS_ENV, eventsPath } from "./events.ts";
 import { LEDGER_ENV, ledgerPath } from "./ledger.ts";
 import { receiptName } from "./stage.ts";
 import { assertWorldName } from "./store.ts";
@@ -136,24 +137,44 @@ async function assertNoRunningSnapshot(path: string, name: string): Promise<void
   await rm(path, { force: true });
 }
 
-async function waitForChild(path: string, args: readonly string[], env: NodeJS.ProcessEnv): Promise<number> {
+async function waitForChild(
+  path: string,
+  args: readonly string[],
+  env: NodeJS.ProcessEnv,
+  logPath: string | undefined,
+  onSpawn: ((pid: number) => void) | undefined,
+): Promise<number> {
   const ignoreSigint = (): void => {};
   process.on("SIGINT", ignoreSigint);
   try {
-    const child = spawn(process.execPath, [path, ...args], { env, stdio: "inherit" });
-    return await new Promise<number>((done, reject) => {
-      child.once("error", reject);
-      child.once("close", (code) => done(code ?? 1));
-    });
+    let log: Awaited<ReturnType<typeof open>> | undefined;
+    try {
+      if (logPath !== undefined) {
+        await mkdir(dirname(logPath), { recursive: true });
+        log = await open(logPath, "w", 0o600);
+        await chmod(logPath, 0o600);
+      }
+      const child = spawn(process.execPath, [path, ...args], {
+        env,
+        stdio: log ? ["inherit", log.fd, log.fd] : "inherit",
+      });
+      if (child.pid !== undefined) onSpawn?.(child.pid);
+      return await new Promise<number>((done, reject) => {
+        child.once("error", reject);
+        child.once("close", (code) => done(code ?? 1));
+      });
+    } finally {
+      await log?.close();
+    }
   } finally {
     process.off("SIGINT", ignoreSigint);
   }
 }
 
-async function lastLogLines(path: string): Promise<string[]> {
+export async function readLastLogLines(path: string, count: number): Promise<string[]> {
   try {
     const text = await readFile(path, "utf8");
-    return text.trimEnd().split(/\r?\n/).slice(-40);
+    return text.trimEnd().split(/\r?\n/).slice(-count);
   } catch {
     return [];
   }
@@ -170,16 +191,21 @@ export interface LaunchScriptWorldOptions {
   recipeHash?: string;
   place?: string;
   print: (line: string) => void;
+  foregroundLog?: boolean;
+  onSpawn?: (pid: number) => void;
 }
 
 export async function launchScriptWorld(options: LaunchScriptWorldOptions): Promise<number> {
   const path = resolve(options.path);
   const stagedName = receiptName(options.name, options.stage);
   const snapshotPath = scriptWorldSnapshotPath(options.snapshotDirectory, stagedName);
+  const eventPath = eventsPath(options.snapshotDirectory, stagedName);
+  const logPath = scriptWorldLogPath(options.snapshotDirectory, stagedName);
   const env: NodeJS.ProcessEnv = {
     ...process.env,
     OPENWORK_WORLD_SNAPSHOT_DIR: options.snapshotDirectory,
     [LEDGER_ENV]: ledgerPath(options.snapshotDirectory, stagedName),
+    [EVENTS_ENV]: eventPath,
   };
   if (options.stage === undefined) delete env.OPENWORK_WORLD_STAGE;
   else env.OPENWORK_WORLD_STAGE = options.stage;
@@ -188,10 +214,18 @@ export async function launchScriptWorld(options: LaunchScriptWorldOptions): Prom
   if (options.place === undefined) delete env.OPENWORK_WORLD_PLACE;
   else env.OPENWORK_WORLD_PLACE = options.place;
   await assertNoRunningSnapshot(snapshotPath, stagedName);
+  await rm(eventPath, { force: true });
 
-  if (!options.detach) return waitForChild(path, options.args, env);
+  if (!options.detach) {
+    return waitForChild(
+      path,
+      options.args,
+      env,
+      options.foregroundLog ? logPath : undefined,
+      options.onSpawn,
+    );
+  }
 
-  const logPath = scriptWorldLogPath(options.snapshotDirectory, stagedName);
   await mkdir(options.snapshotDirectory, { recursive: true });
   const log = await open(logPath, "w", 0o600);
   await chmod(logPath, 0o600);
@@ -223,7 +257,7 @@ export async function launchScriptWorld(options: LaunchScriptWorldOptions): Prom
     if (child.exitCode !== null || child.signalCode !== null) {
       await removeDeadSnapshot(snapshotPath);
       options.print(`Script world ${JSON.stringify(stagedName)} exited before creating its snapshot.`);
-      for (const line of await lastLogLines(logPath)) options.print(line);
+      for (const line of await readLastLogLines(logPath, 40)) options.print(line);
       return 1;
     }
     await delay(Math.min(POLL_INTERVAL_MS, Math.max(1, deadline - Date.now())));
@@ -235,7 +269,7 @@ export async function launchScriptWorld(options: LaunchScriptWorldOptions): Prom
   }
   await removeDeadSnapshot(snapshotPath);
   options.print(`Timed out after ${options.timeoutMs ?? DEFAULT_START_TIMEOUT_MS}ms waiting for script world ${JSON.stringify(stagedName)}.`);
-  for (const line of await lastLogLines(logPath)) options.print(line);
+  for (const line of await readLastLogLines(logPath, 40)) options.print(line);
   return 1;
 }
 

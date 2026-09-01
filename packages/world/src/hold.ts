@@ -1,6 +1,7 @@
 import { chmod, mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { basename, dirname, extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { appendEvent, EVENTS_ENV } from "./events.ts";
 import { receiptName, resolveStage } from "./stage.ts";
 import { assertWorldName } from "./store.ts";
 
@@ -94,6 +95,10 @@ export async function hold(options: HoldOptions = {}): Promise<void> {
   await mkdir(dirname(snapshotPath), { recursive: true });
   await writeFile(snapshotPath, `${JSON.stringify(snapshot, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
   await chmod(snapshotPath, 0o600);
+  const eventPath = process.env[EVENTS_ENV];
+  if (eventPath !== undefined) {
+    await appendEvent(eventPath, { t: new Date().toISOString(), type: "ready", outputs });
+  }
 
   for (const [key, value] of Object.entries(outputs)) console.log(`${key}  ${value}`);
   console.log(`World ${JSON.stringify(stagedName)} is up. Ctrl-C (or pnpm world down ${name}${stage ? ` --stage ${stage}` : ""}) tears it down.`);

@@ -1,5 +1,6 @@
 import { appendFile, chmod, mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { appendEvent, EVENTS_ENV } from "./events.ts";
 
 export interface LedgerEntry {
   kind: string;
@@ -110,6 +111,15 @@ export async function rewriteLedger(path: string, entries: LedgerEntry[]): Promi
 
 export async function trackResource(entry: Omit<LedgerEntry, "at">): Promise<void> {
   const path = process.env[LEDGER_ENV];
-  if (path === undefined) return;
-  await appendLedgerEntry(path, entry);
+  if (path !== undefined) await appendLedgerEntry(path, entry);
+  const eventPath = process.env[EVENTS_ENV];
+  if (eventPath !== undefined) {
+    await appendEvent(eventPath, {
+      t: new Date().toISOString(),
+      type: "resource",
+      kind: entry.kind,
+      id: entry.id,
+      ...(entry.label === undefined ? {} : { label: entry.label }),
+    });
+  }
 }

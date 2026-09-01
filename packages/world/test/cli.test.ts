@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -75,6 +75,26 @@ test("world arguments expose only script lifecycle flags and forward arguments a
     stage: "preview",
     purge: true,
   });
+  assert.deepEqual(parseWorldArgs(["up", "dev-headless", "--plain"]), {
+    kind: "up",
+    source: "dev-headless",
+    plain: true,
+    args: [],
+  });
+  assert.deepEqual(parseWorldArgs(["attach", "dev-headless"]), {
+    kind: "attach",
+    name: "dev-headless",
+  });
+  assert.deepEqual(parseWorldArgs(["attach", "dev-headless", "--stage", "preview", "--plain"]), {
+    kind: "attach",
+    name: "dev-headless",
+    stage: "preview",
+    plain: true,
+  });
+  const missingAttachName = parseWorldArgs(["attach", "--plain"]);
+  assert.equal(missingAttachName.kind, "help");
+  if (missingAttachName.kind !== "help") throw new Error("expected help");
+  assert.match(missingAttachName.error ?? "", /needs exactly one world name/);
 
   const invalidPlace = parseWorldArgs(["up", "dev-headless", "--place", "remote"]);
   assert.equal(invalidPlace.kind, "help");
@@ -131,6 +151,72 @@ test("discovery, resolution, list, and help classify scripts without importing t
       assert.match(lines.join("\n"), /throwing/);
     }
   } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("preflight failures warn without blocking up and do not affect attach or plan", async () => {
+  const root = await mkdtemp(join(tmpdir(), "openwork-world-cli-preflight-"));
+  const worldsDirectory = join(root, "worlds");
+  const receiptPath = join(root, "evals", "results", ".worlds", "scripts", "warned.json");
+  const holdUrl = new URL("../src/hold.ts", import.meta.url).href;
+  let checks = 0;
+  const failingCheck = {
+    id: "fixture",
+    label: "fixture service",
+    async run() {
+      checks += 1;
+      return { ok: false, detail: "offline", hint: "start fixture" };
+    },
+  };
+  try {
+    await mkdir(worldsDirectory);
+    await writeFile(join(worldsDirectory, "warned.ts"), [
+      `import { hold } from ${JSON.stringify(holdUrl)};`,
+      'await hold({ name: "warned", outputs: { ready: "yes" } });',
+      "",
+    ].join("\n"), "utf8");
+
+    const progress: string[] = [];
+    assert.equal(await main(["up", "warned", "--detach"], {
+      cwd: root,
+      worldsDirectory,
+      preflight: [failingCheck],
+      print: () => {},
+      progress: (line) => progress.push(line),
+    }), 0);
+    assert.ok(progress.includes("preflight  node ✔  fixture service ✖"));
+    assert.ok(progress.includes("⚠ fixture service offline — start fixture"));
+    assert.equal(await access(receiptPath).then(() => true, () => false), true);
+
+    const attachProgress: string[] = [];
+    assert.equal(await main(["attach", "warned", "--plain"], {
+      cwd: root,
+      worldsDirectory,
+      preflight: [failingCheck],
+      print: () => {},
+      progress: (line) => attachProgress.push(line),
+    }), 0);
+    assert.ok(attachProgress.some((line) => line.startsWith("✔ warned is up")));
+    assert.equal(checks, 1, "attach does not run preflight");
+
+    const planLines: string[] = [];
+    assert.equal(await main(["plan", "warned"], {
+      cwd: root,
+      worldsDirectory,
+      preflight: [failingCheck],
+      print: (line) => planLines.push(line),
+      progress: () => {},
+    }), 0);
+    assert.equal(planLines[0], "• running (attachable)");
+    assert.equal(checks, 1, "plan does not run preflight");
+  } finally {
+    await main(["down", "warned"], {
+      cwd: root,
+      worldsDirectory,
+      print: () => {},
+      progress: () => {},
+    });
     await rm(root, { recursive: true, force: true });
   }
 });

@@ -1,7 +1,10 @@
 import { access, readdir, rm } from "node:fs/promises";
 import { basename, extname, join, resolve } from "node:path";
+import { styleText } from "node:util";
+import { eventsPath, readEvents, tailEvents, type WorldEvent } from "./events.ts";
 import { ledgerPath, readLedger } from "./ledger.ts";
 import { discoverWorlds, displayWorldPath, resolveWorldScript } from "./loader.ts";
+import { nodeCheck, runPreflight, type PreflightCheck } from "./preflight.ts";
 import { builtinReapers, reapLedger, type ReapReport, type Reaper } from "./reaper.ts";
 import { receiptName, resolveStage, sanitizeStage } from "./stage.ts";
 import { WorldStateStore } from "./store.ts";
@@ -11,9 +14,12 @@ import {
   isProcessAlive,
   launchScriptWorld,
   readScriptWorldSnapshot,
+  readLastLogLines,
+  scriptWorldLogPath,
   scriptWorldSnapshotDirectory,
   scriptWorldSnapshotPath,
 } from "./script-world.ts";
+import { createWorldView, detectViewMode, type ViewSink, type WorldView } from "./view.ts";
 
 export type WorldCommand =
   | {
@@ -23,8 +29,10 @@ export type WorldCommand =
       timeoutMs?: number;
       stage?: string;
       place?: "local" | "daytona";
+      plain?: true;
       args: string[];
     }
+  | { kind: "attach"; name: string; stage?: string; plain?: true }
   | { kind: "down"; name: string; stage?: string; purge?: true }
   | { kind: "plan"; source: string; stage?: string }
   | { kind: "list" }
@@ -35,6 +43,9 @@ export interface WorldCliOptions {
   cwd: string;
   worldsDirectory: string;
   print?: (line: string) => void;
+  progress?: (line: string) => void;
+  preflight?: PreflightCheck[];
+  viewMode?: "tty" | "plain";
   reapers?: Record<string, Reaper>;
 }
 
@@ -78,6 +89,7 @@ export function parseWorldArgs(argv: string[]): WorldCommand {
     let timeoutMs: number | undefined;
     let stage: string | undefined;
     let place: "local" | "daytona" | undefined;
+    let plain = false;
     for (let index = 0; index < options.length; index += 1) {
       const option = options[index];
       if (option === "--detach" && !detach) {
@@ -113,6 +125,10 @@ export function parseWorldArgs(argv: string[]): WorldCommand {
         index += 1;
         continue;
       }
+      if (option === "--plain" && !plain) {
+        plain = true;
+        continue;
+      }
       return helpError(`Unknown world CLI option ${JSON.stringify(option)}. Pass script arguments after --.`);
     }
     if (timeoutMs !== undefined && !detach) return helpError("Use --timeout only with --detach.");
@@ -123,7 +139,39 @@ export function parseWorldArgs(argv: string[]): WorldCommand {
       ...(timeoutMs === undefined ? {} : { timeoutMs }),
       ...(stage === undefined ? {} : { stage }),
       ...(place === undefined ? {} : { place }),
+      ...(plain ? { plain: true } : {}),
       args: scriptArgs,
+    };
+  }
+  if (command === "attach") {
+    const [name, ...options] = args;
+    if (!name || name === "--" || name.startsWith("--")) {
+      return helpError("The attach command needs exactly one world name.");
+    }
+    let stage: string | undefined;
+    let plain = false;
+    for (let index = 0; index < options.length; index += 1) {
+      const option = options[index];
+      if (option === "--stage" && stage === undefined) {
+        try {
+          stage = sanitizeStage(options[index + 1] ?? "");
+        } catch {
+          return helpError("Use --stage followed by a non-empty stage value.");
+        }
+        index += 1;
+        continue;
+      }
+      if (option === "--plain" && !plain) {
+        plain = true;
+        continue;
+      }
+      return helpError(`Unknown world CLI option ${JSON.stringify(option)}.`);
+    }
+    return {
+      kind: "attach",
+      name,
+      ...(stage === undefined ? {} : { stage }),
+      ...(plain ? { plain: true } : {}),
     };
   }
   if (command === "plan") {
@@ -175,7 +223,7 @@ export function parseWorldArgs(argv: string[]): WorldCommand {
       ? { kind: "forget", name: args[0] }
       : helpError("The forget command needs exactly one world name.");
   }
-  return helpError(`Unknown command ${JSON.stringify(command)}. Script worlds support up, plan, down, list, forget, and help.`);
+  return helpError(`Unknown command ${JSON.stringify(command)}. Script worlds support up, attach, plan, down, list, forget, and help.`);
 }
 
 function messageText(error: unknown): string {
@@ -186,7 +234,8 @@ async function helpText(options: WorldCliOptions): Promise<string> {
   const discovered = await discoverWorlds(options.worldsDirectory);
   const sources = discovered.map((world) => displayWorldPath(world.path, options.cwd));
   return `Usage:
-  pnpm world up <script-path-or-name> [--detach] [--timeout <ms>] [--stage <value>] [--place <local|daytona>] [-- <script args...>]
+  pnpm world up <script-path-or-name> [--detach] [--timeout <ms>] [--stage <value>] [--place <local|daytona>] [--plain] [-- <script args...>]
+  pnpm world attach <name> [--stage <value>] [--plain]
   pnpm world plan <script-path-or-name> [--stage <value>]
   pnpm world down <name> [--stage <value>] [--purge]
   pnpm world list
@@ -263,6 +312,113 @@ async function reapAndReport(
   return report;
 }
 
+function createCliView(
+  options: WorldCliOptions,
+  flags: { plain?: boolean },
+): { view: WorldView; mode: "tty" | "plain" } {
+  const detected = detectViewMode(process.env, flags);
+  const mode = options.progress || flags.plain
+    ? "plain"
+    : options.viewMode ?? detected.mode;
+  const progress = options.progress ?? ((line: string) => process.stderr.write(`${line}\n`));
+  const sink: ViewSink = mode === "plain"
+    ? {
+        write(text): void {
+          progress(text.endsWith("\n") ? text.slice(0, -1) : text);
+        },
+        isTTY: false,
+      }
+    : {
+        write: (text) => { process.stderr.write(text); },
+        isTTY: process.stderr.isTTY === true,
+        ...(process.stderr.columns === undefined ? {} : { columns: process.stderr.columns }),
+      };
+  return {
+    mode,
+    view: createWorldView({
+      sink,
+      mode,
+      color: mode === "tty" && detected.color,
+    }),
+  };
+}
+
+function reportProgress(options: WorldCliOptions, line: string): void {
+  if (options.progress) options.progress(line);
+  else process.stderr.write(`${line}\n`);
+}
+
+async function finishEventTail(
+  path: string,
+  tail: { stop(): void },
+  rendered: { count: number },
+  view: WorldView,
+): Promise<WorldEvent[]> {
+  tail.stop();
+  const events = await readEvents(path);
+  for (const event of events.slice(rendered.count)) {
+    rendered.count += 1;
+    view.apply(event);
+  }
+  return events;
+}
+
+async function resourceCount(path: string): Promise<number> {
+  return (await readLedger(path)).length;
+}
+
+function lastStepLabel(events: WorldEvent[]): string | undefined {
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const event = events[index];
+    if (event?.type === "step" && event.status !== "ok") return event.label;
+  }
+  return undefined;
+}
+
+async function stagedReceiptCandidate(
+  snapshotDirectory: string,
+  name: string,
+  stage: string | undefined,
+  print: (line: string) => void,
+): Promise<{ kind: "found"; stagedName: string; path: string } | { kind: "missing" | "multiple" }> {
+  const exactName = receiptName(name, stage);
+  const exactPath = scriptWorldSnapshotPath(snapshotDirectory, exactName);
+  if (await pathExists(exactPath)) return { kind: "found", stagedName: exactName, path: exactPath };
+  if (stage !== undefined) return { kind: "missing" };
+  const prefix = `${name}--`;
+  const candidates = (await new WorldStateStore(snapshotDirectory).list())
+    .map((candidatePath) => basename(candidatePath, extname(candidatePath)))
+    .filter((candidate) => candidate.startsWith(prefix))
+    .sort();
+  if (candidates.length > 1) {
+    print(`Multiple staged world receipts match ${JSON.stringify(name)}:`);
+    for (const candidate of candidates) print(`  ${candidate}`);
+    return { kind: "multiple" };
+  }
+  return candidates[0]
+    ? {
+        kind: "found",
+        stagedName: candidates[0],
+        path: scriptWorldSnapshotPath(snapshotDirectory, candidates[0]),
+      }
+    : { kind: "missing" };
+}
+
+function eventElapsed(events: WorldEvent[]): number {
+  if (events.length < 2) return 0;
+  const first = Date.parse(events[0]?.t ?? "");
+  const ready = [...events].reverse().find((event) => event.type === "ready");
+  const last = Date.parse(ready?.t ?? events[events.length - 1]?.t ?? "");
+  return Number.isFinite(first) && Number.isFinite(last) ? Math.max(0, last - first) : 0;
+}
+
+function planSymbolColor(kind: ScriptReceiptState["kind"]): "green" | "cyan" | "yellow" | "red" {
+  if (kind === "create") return "green";
+  if (kind === "running") return "cyan";
+  if (kind === "changed") return "yellow";
+  return "red";
+}
+
 export async function main(argv: string[], options: WorldCliOptions): Promise<number> {
   const print = options.print ?? console.log;
   const command = parseWorldArgs(argv);
@@ -297,18 +453,181 @@ export async function main(argv: string[], options: WorldCliOptions): Promise<nu
       } else if (await pathExists(worldLedgerPath)) {
         await reapAndReport(worldLedgerPath, stagedName, script.name, stage, false, print, options);
       }
-      return await launchScriptWorld({
-        path: script.path,
-        name: script.name,
-        args: command.args,
-        snapshotDirectory,
-        detach: command.detach === true,
-        ...(command.timeoutMs === undefined ? {} : { timeoutMs: command.timeoutMs }),
+      const logPath = scriptWorldLogPath(snapshotDirectory, stagedName);
+      const eventPath = eventsPath(snapshotDirectory, stagedName);
+      await rm(eventPath, { force: true });
+      const preflight = await runPreflight([nodeCheck(), ...(options.preflight ?? [])]);
+      const { view, mode } = createCliView(options, { plain: command.plain });
+      view.header({
+        name: stagedName,
         ...(stage === undefined ? {} : { stage }),
-        recipeHash,
         ...(command.place === undefined ? {} : { place: command.place }),
-        print,
+        receipt: snapshotPath,
+        ...(command.detach || mode === "tty" ? { log: logPath } : {}),
+        preflight,
       });
+      const startedAt = Date.now();
+      const rendered = { count: 0 };
+      const tail = tailEvents(eventPath, (event) => {
+        rendered.count += 1;
+        view.apply(event);
+      }, { intervalMs: 50 });
+      let childPid: number | undefined;
+      let readyShown = false;
+      let stopped = false;
+      const showReady = async (): Promise<void> => {
+        if (readyShown) return;
+        const snapshot = await readScriptWorldSnapshot(snapshotPath);
+        if (!snapshot) return;
+        readyShown = true;
+        const events = await readEvents(eventPath);
+        for (const event of events.slice(rendered.count)) {
+          rendered.count += 1;
+          view.apply(event);
+        }
+        view.ready({
+          name: stagedName,
+          outputs: snapshot.outputs,
+          elapsedMs: Date.now() - startedAt,
+          resources: await resourceCount(worldLedgerPath),
+          downHint: `pnpm world down ${script.name}${stage ? ` --stage ${stage}` : ""}`,
+          ...(command.detach || mode === "tty" ? { log: logPath } : {}),
+        });
+      };
+      const receiptPoll = setInterval(() => { void showReady(); }, 50);
+      receiptPoll.unref();
+      const onSigint = (): void => {
+        if (stopped || childPid === undefined) return;
+        stopped = true;
+        view.apply({ t: new Date().toISOString(), type: "note", text: "stopping…" });
+        try { process.kill(childPid, "SIGINT"); } catch {}
+      };
+      if (!command.detach && mode === "tty") process.on("SIGINT", onSigint);
+      let code: number;
+      try {
+        code = await launchScriptWorld({
+          path: script.path,
+          name: script.name,
+          args: command.args,
+          snapshotDirectory,
+          detach: command.detach === true,
+          ...(command.timeoutMs === undefined ? {} : { timeoutMs: command.timeoutMs }),
+          ...(stage === undefined ? {} : { stage }),
+          recipeHash,
+          ...(command.place === undefined ? {} : { place: command.place }),
+          print,
+          foregroundLog: !command.detach && mode === "tty",
+          onSpawn: (pid) => { childPid = pid; },
+        });
+      } catch (error) {
+        clearInterval(receiptPoll);
+        if (!command.detach && mode === "tty") process.off("SIGINT", onSigint);
+        const events = await finishEventTail(eventPath, tail, rendered, view);
+        view.failed({
+          name: stagedName,
+          ...(lastStepLabel(events) === undefined ? {} : { step: lastStepLabel(events) }),
+          elapsedMs: Date.now() - startedAt,
+          lastLog: await readLastLogLines(logPath, 40),
+          logPath,
+          hint: messageText(error),
+        });
+        view.stop();
+        throw error;
+      }
+      clearInterval(receiptPoll);
+      if (!command.detach && mode === "tty") process.off("SIGINT", onSigint);
+      const events = await finishEventTail(eventPath, tail, rendered, view);
+      await showReady();
+      if (code === 0 && events.every((event) => event.type === "ready")) {
+        await rm(eventPath, { force: true });
+      }
+      if (code !== 0) {
+        view.failed({
+          name: stagedName,
+          ...(lastStepLabel(events) === undefined ? {} : { step: lastStepLabel(events) }),
+          elapsedMs: Date.now() - startedAt,
+          lastLog: await readLastLogLines(logPath, 40),
+          logPath,
+        });
+      } else if (!command.detach) {
+        view.stop();
+        reportProgress(options, `World ${JSON.stringify(stagedName)} stopped.`);
+      } else {
+        view.stop();
+      }
+      return code;
+    } catch (error) {
+      print(messageText(error));
+      return 1;
+    }
+  }
+  if (command.kind === "attach") {
+    const snapshotDirectory = scriptWorldSnapshotDirectory(options.cwd);
+    const candidate = await stagedReceiptCandidate(
+      snapshotDirectory,
+      command.name,
+      command.stage,
+      print,
+    );
+    if (candidate.kind !== "found") {
+      if (candidate.kind === "multiple") return 1;
+      print(`World receipt ${JSON.stringify(receiptName(command.name, command.stage))} does not exist.`);
+      return 1;
+    }
+    try {
+      const snapshot = await readScriptWorldSnapshot(candidate.path);
+      if (!snapshot) {
+        print(`World receipt ${JSON.stringify(candidate.stagedName)} does not exist.`);
+        return 1;
+      }
+      const { view, mode } = createCliView(options, { plain: command.plain });
+      const eventPath = eventsPath(snapshotDirectory, candidate.stagedName);
+      const logPath = scriptWorldLogPath(snapshotDirectory, candidate.stagedName);
+      view.header({
+        name: candidate.stagedName,
+        ...(snapshot.stage === undefined ? {} : { stage: snapshot.stage }),
+        ...(snapshot.place === undefined ? {} : { place: snapshot.place }),
+        receipt: candidate.path,
+        log: logPath,
+      });
+      const events = await readEvents(eventPath);
+      for (const event of events) view.apply(event);
+      view.ready({
+        name: candidate.stagedName,
+        outputs: snapshot.outputs,
+        elapsedMs: eventElapsed(events),
+        resources: await resourceCount(ledgerPath(snapshotDirectory, candidate.stagedName)),
+        downHint: `pnpm world down ${command.name}${snapshot.stage ? ` --stage ${snapshot.stage}` : ""}`,
+        log: logPath,
+      });
+      if (mode === "plain") {
+        view.stop();
+        return 0;
+      }
+      const tail = tailEvents(eventPath, (event) => view.apply(event), { intervalMs: 50 });
+      process.stdin.resume();
+      await new Promise<void>((done) => {
+        let finished = false;
+        const finish = (): void => {
+          if (finished) return;
+          finished = true;
+          clearInterval(alivePoll);
+          process.off("SIGINT", detach);
+          tail.stop();
+          view.stop();
+          process.stdin.pause();
+          done();
+        };
+        const detach = (): void => finish();
+        const alivePoll = setInterval(() => {
+          if (isProcessAlive(snapshot.pid)) return;
+          reportProgress(options, `World ${JSON.stringify(candidate.stagedName)} stopped.`);
+          finish();
+        }, 250);
+        alivePoll.unref();
+        process.once("SIGINT", detach);
+      });
+      return 0;
     } catch (error) {
       print(messageText(error));
       return 1;
@@ -329,7 +648,11 @@ export async function main(argv: string[], options: WorldCliOptions): Promise<nu
         changed: "~ stale (recipe changed)",
         orphaned: "- orphaned (stale receipt, will recreate)",
       };
-      print(labels[state.kind]);
+      const detected = detectViewMode(process.env, {});
+      const tty = options.progress === undefined && (options.viewMode ?? detected.mode) === "tty";
+      const color = tty && detected.color;
+      const label = labels[state.kind];
+      print(color ? `${styleText(planSymbolColor(state.kind), label[0] ?? "")} ${label.slice(2)}` : label);
       print(`receipt  ${snapshotPath}`);
       if (state.kind !== "create") printOutputs(state.snapshot, print);
       const worldLedgerPath = ledgerPath(snapshotDirectory, stagedName);

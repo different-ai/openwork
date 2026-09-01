@@ -3,6 +3,7 @@ import { access, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { EVENTS_ENV, readEvents } from "../src/events.ts";
 import {
   appendLedgerEntry,
   LEDGER_ENV,
@@ -73,13 +74,16 @@ test("rewriteLedger unlinks an empty ledger", async () => {
 test("trackResource is inert without its env var and appends when configured", async () => {
   const root = await mkdtemp(join(tmpdir(), "openwork-world-ledger-track-"));
   const path = join(root, "world.ledger.jsonl");
+  const eventPath = join(root, "world.events.jsonl");
   const previous = process.env[LEDGER_ENV];
+  const previousEvents = process.env[EVENTS_ENV];
   try {
     delete process.env[LEDGER_ENV];
     await trackResource({ kind: "tmpdir", id: "/tmp/noop" });
     assert.equal(await absent(path), true);
 
     process.env[LEDGER_ENV] = path;
+    process.env[EVENTS_ENV] = eventPath;
     await trackResource({ kind: "tmpdir", id: "/tmp/tracked", retain: true });
     const entries = await readLedger(path);
     assert.equal(entries.length, 1);
@@ -89,9 +93,14 @@ test("trackResource is inert without its env var and appends when configured", a
       retain: true,
       at: "recorded",
     });
+    assert.deepEqual((await readEvents(eventPath)).map((event) => (
+      event.type === "resource" ? { kind: event.kind, id: event.id } : event.type
+    )), [{ kind: "tmpdir", id: "/tmp/tracked" }]);
   } finally {
     if (previous === undefined) delete process.env[LEDGER_ENV];
     else process.env[LEDGER_ENV] = previous;
+    if (previousEvents === undefined) delete process.env[EVENTS_ENV];
+    else process.env[EVENTS_ENV] = previousEvents;
     await rm(root, { recursive: true, force: true });
   }
 });

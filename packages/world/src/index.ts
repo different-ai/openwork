@@ -9,3 +9,6 @@ export * from "./cli.ts";
 export * from "./headless-web-helpers.ts";
 export * from "./headless-web.ts";
 export * from "./standalone-cli.ts";
+export * from "./events.ts";
+export * from "./preflight.ts";
+export * from "./view.ts";

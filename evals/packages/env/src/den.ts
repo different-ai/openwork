@@ -16,7 +16,7 @@ import {
   startMockOnSandbox,
 } from "@openwork/hosts";
 import { denFetch, ensureMemberSession, freshSession, signIn } from "@openwork/behaviors";
-import { trackResource } from "@openwork/world";
+import { progress, trackResource } from "@openwork/world";
 import { createConnection } from "mysql2/promise";
 import type { ChildProcess } from "node:child_process";
 import type { DenRef, DenSession } from "@openwork/behaviors";
@@ -30,6 +30,7 @@ const REPO_ROOT = fileURLToPath(new URL("../../../..", import.meta.url));
 const DATABASE_ENCRYPTION_KEY = "local-dev-db-encryption-key-please-change-1234567890";
 const BETTER_AUTH_SECRET = "local-testkit-secret-not-for-production-use!!";
 const START_TIMEOUT_MS = 120_000;
+const steps = progress();
 
 export interface PersonShape {
   email?: string;
@@ -756,9 +757,12 @@ export async function server(options: ServerOptions): Promise<Den> {
   const services: SpawnedService[] = [];
   let database: DbHandle | undefined;
   try {
+    const databaseStep = steps.step("den-db", "Den database");
     database = await options.place.db(ephemeralDatabaseName());
     await trackResource({ kind: "mysql-db", id: database.name, label: "den-mysql" });
+    await databaseStep.note("schema push");
     await runDbPush(database.url);
+    await databaseStep.ok(database.name);
     let apiPort: number;
     let webPort: number;
     if (options.ports) {
@@ -791,7 +795,9 @@ export async function server(options: ServerOptions): Promise<Den> {
       await rm(join(REPO_ROOT, "ee", "apps", "den-web", ".next", "dev"), { recursive: true, force: true });
     }
     if (options.seedProfile === "demo-org") {
+      const seedStep = steps.step("den-seed", "Seed demo org", { log: join(logsDir, "seed-demo-org.log") });
       await runDemoOrgSeed(database.url, webPort, join(logsDir, "seed-demo-org.log"));
+      await seedStep.ok();
     }
     const orgShape = options.org ?? defaultLocalOrg(runId);
     const bootstrapAdmin = options.seedProfile === "demo-org"
@@ -828,6 +834,7 @@ export async function server(options: ServerOptions): Promise<Den> {
         ...options.env,
       };
     const api = spawnService("den-api", "dev:den:api", apiPort, { ...commonEnv, DEN_BIND_HOST: "127.0.0.1" }, join(logsDir, "api.log"));
+    const apiStep = steps.step("den-api", "den-api", { log: api.logPath });
     services.push(api);
     await trackResource({ kind: "process", id: String(api.pid), label: "den-api", match: prepared ? "@openwork-ee/den-api" : "dev:den:api" });
     const web = options.web === false
@@ -840,24 +847,39 @@ export async function server(options: ServerOptions): Promise<Den> {
           DEN_AUTH_ORIGIN: `http://localhost:${webPort}`,
           DEN_AUTH_FALLBACK_BASE: `http://127.0.0.1:${apiPort}`,
         }, join(logsDir, "web.log"));
+    const webStep = web ? steps.step("den-web", "den-web", { log: web.logPath }) : null;
     if (web) {
       services.push(web);
       await trackResource({ kind: "process", id: String(web.pid), label: "den-web", match: prepared ? "@openwork-ee/den-web" : "dev:den:web" });
     }
-    await waitForHttp(`${ref.apiUrl}/health`, api, (response) => response.ok);
-    if (web) {
-      await waitForHttp(`${ref.webUrl}/api/ready`, web, (response) => response.ok);
-      // /api/ready does not compile the dynamic /api/den proxy route. Locally,
-      // accept its 307 to /health because api.<host> derivation requires
-      // production DNS (see den-web app/api/_lib/den-api-redirect.ts).
-      await waitForHttp(`${ref.webUrl}/api/den/health`, web, (response) => {
-        if (response.ok) return true;
-        if (response.status !== 307 && response.status !== 308) return false;
-        const location = response.headers.get("location");
-        return location !== null && new URL(location, response.url).pathname === "/health";
-      }, { redirect: "manual" });
+    try {
+      await waitForHttp(`${ref.apiUrl}/health`, api, (response) => response.ok);
+      await apiStep.ok(ref.apiUrl);
+    } catch (error) {
+      await apiStep.fail(messageText(error));
+      throw error;
     }
+    if (web) {
+      try {
+        await waitForHttp(`${ref.webUrl}/api/ready`, web, (response) => response.ok);
+        // /api/ready does not compile the dynamic /api/den proxy route. Locally,
+        // accept its 307 to /health because api.<host> derivation requires
+        // production DNS (see den-web app/api/_lib/den-api-redirect.ts).
+        await waitForHttp(`${ref.webUrl}/api/den/health`, web, (response) => {
+          if (response.ok) return true;
+          if (response.status !== 307 && response.status !== 308) return false;
+          const location = response.headers.get("location");
+          return location !== null && new URL(location, response.url).pathname === "/health";
+        }, { redirect: "manual" });
+        await webStep?.ok(ref.webUrl);
+      } catch (error) {
+        await webStep?.fail(messageText(error));
+        throw error;
+      }
+    }
+    const authStep = steps.step("den-auth", "Den auth ready");
     await waitForAuthProbe(ref, api);
+    await authStep.ok();
     const organization = options.seedProfile === "demo-org"
       ? {
           admin: await signIn(ref, {
@@ -869,12 +891,17 @@ export async function server(options: ServerOptions): Promise<Den> {
         }
       : options.provision === false
         ? { admin: emptySession(ref), members: {}, createdOrgId: null }
-        : await provisionOrganization(
-            ref,
-            orgShape,
-            runId,
-            { databaseUrl: database.url, createOrg: true },
-          );
+        : await (async () => {
+            const orgStep = steps.step("den-org", "Provision organization");
+            const provisioned = await provisionOrganization(
+              ref,
+              orgShape,
+              runId,
+              { databaseUrl: database.url, createOrg: true },
+            );
+            await orgStep.ok(orgShape.name);
+            return provisioned;
+          })();
     let disposed = false;
     return {
       ref,

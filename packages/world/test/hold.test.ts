@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
+import { EVENTS_ENV, readEvents } from "../src/events.ts";
 
 function isAlive(pid: number): boolean {
   try {
@@ -29,6 +30,7 @@ test("hold keeps an otherwise idle world alive until SIGTERM", async () => {
   const snapshots = join(root, "snapshots");
   const worldPath = join(root, "hold-only.ts");
   const receiptPath = join(snapshots, "hold-only.json");
+  const eventPath = join(snapshots, "hold-only.events.jsonl");
   const holdUrl = new URL("../src/hold.ts", import.meta.url).href;
   await writeFile(worldPath, [
     `import { hold } from ${JSON.stringify(holdUrl)};`,
@@ -38,7 +40,7 @@ test("hold keeps an otherwise idle world alive until SIGTERM", async () => {
 
   const child = spawn(process.execPath, [worldPath], {
     detached: true,
-    env: { ...process.env, OPENWORK_WORLD_SNAPSHOT_DIR: snapshots },
+    env: { ...process.env, OPENWORK_WORLD_SNAPSHOT_DIR: snapshots, [EVENTS_ENV]: eventPath },
     stdio: "ignore",
   });
   if (child.pid === undefined) throw new Error("child pid unavailable");
@@ -51,6 +53,7 @@ test("hold keeps an otherwise idle world alive until SIGTERM", async () => {
     );
     await delay(1_000);
     assert.equal(isAlive(pid), true, "world exited while hold was awaiting a signal");
+    assert.deepEqual((await readEvents(eventPath)).map((event) => event.type), ["ready"]);
 
     process.kill(pid, "SIGTERM");
     assert.equal(await waitFor(() => !isAlive(pid), 5_000), true, "world did not exit after SIGTERM");

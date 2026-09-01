@@ -62,7 +62,8 @@ test("pruning stale desktop profiles never touches a live sibling desktop", asyn
       intervalMs: 50,
       label: "stale profile process exits",
     });
-    assert.doesNotThrow(() => process.kill(livePid, 0));
+    const liveProbePid = liveChild.pid;
+    assert.doesNotThrow(() => process.kill(liveProbePid, 0));
     assert.equal(liveChild.exitCode, null);
     assert.equal(liveChild.signalCode, null);
     evidence.recordAssertionEvidence(

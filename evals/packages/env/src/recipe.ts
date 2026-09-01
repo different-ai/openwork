@@ -2,6 +2,8 @@ import {
   assertWorldName,
   defaultDisplayStage,
   defaultScriptWorldSnapshotDirectory,
+  EVENTS_ENV,
+  eventsPath,
   hold,
   LEDGER_ENV,
   ledgerPath,
@@ -9,8 +11,10 @@ import {
   receiptName,
   resolveStage,
   rewriteLedger,
+  progress,
   trackResource,
   type LedgerEntry,
+  type Progress,
 } from "@openwork/world";
 import { resolvePlace, type Place } from "./place.ts";
 
@@ -18,6 +22,7 @@ export interface RecipeTools {
   stack: AsyncDisposableStack;
   place: Place;
   stage: string;
+  progress: Progress;
   stageName(base: string): string;
   track(entry: Omit<LedgerEntry, "at">): Promise<void>;
 }
@@ -41,6 +46,10 @@ export async function runRecipe(def: WorldRecipe): Promise<void> {
   const path = process.env[LEDGER_ENV]
     ?? ledgerPath(defaultScriptWorldSnapshotDirectory(), receiptName(def.name, worldStage));
   process.env[LEDGER_ENV] = path;
+  process.env[EVENTS_ENV] ??= eventsPath(
+    defaultScriptWorldSnapshotDirectory(),
+    receiptName(def.name, worldStage),
+  );
   let completed = false;
   try {
     {
@@ -50,6 +59,7 @@ export async function runRecipe(def: WorldRecipe): Promise<void> {
       const outputs = await def.build({
         stack,
         place,
+        progress: progress(),
         stage,
         stageName: (base) => `${base} (${stage})`,
         track: trackResource,
