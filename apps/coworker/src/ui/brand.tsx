@@ -36,14 +36,14 @@ export function CoworkerMark({
           <g className="coworker-mark__depth">
             <path
               d={BUBBLE_PATH}
-              fill="none"
+              fill="#d9dde4"
               stroke="#aeb5c0"
-              strokeOpacity="0.72"
               strokeLinejoin="round"
-              strokeWidth="2.2"
-              transform="translate(3.2 1.6)"
+              strokeWidth="2.4"
+              transform="translate(5.2 2.8)"
             />
           </g>
+          <path d={BUBBLE_PATH} fill="#f7f8fa" />
           <path
             d={BUBBLE_PATH}
             fill="none"

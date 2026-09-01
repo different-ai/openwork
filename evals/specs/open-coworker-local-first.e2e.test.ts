@@ -96,7 +96,7 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
       resolve({
         whiteTile: mark.querySelector('rect[fill="#f7f8fa"]') !== null,
         blackOutline: mark.querySelector('path[fill="none"][stroke="#11151d"]') !== null,
-        offsetContour: mark.querySelector('path[fill="none"][stroke="#aeb5c0"]') !== null,
+        rearShell: mark.querySelector('path[fill="#d9dde4"][stroke="#aeb5c0"]') !== null,
         blueFill: mark.querySelector('[fill="#5b8dff"]') !== null,
         hasPointerLayer: pointerLayer !== null,
         lookX,
@@ -107,7 +107,7 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   expect(brandGaze).toMatchObject({
     whiteTile: true,
     blackOutline: true,
-    offsetContour: true,
+    rearShell: true,
     blueFill: false,
     hasPointerLayer: true,
     lookX: expect.any(Number),
@@ -121,7 +121,7 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   expect(Math.abs(brandGaze.lookY)).toBeLessThanOrEqual(0.9);
   evidence.recordAssertionEvidence(
     "First run presents the monochrome Open Coworker line mark with a restrained pointer-aware gaze",
-    "The centered launch surface used a white tile, black coworker outline, and quiet offset contour, stacked a recommended Cloud path above a quieter local path, and moved only the pupil layer toward the pointer within a 1.5px horizontal cap.",
+    "The centered launch surface used a white tile, black coworker outline, and offset gray rear shell, stacked a recommended Cloud path above a quieter local path, and moved only the pupil layer toward the pointer within a 1.5px horizontal cap.",
     true,
   );
 
@@ -187,9 +187,10 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   const coworkerGaze = await evalIn(app, `(() => {
     const avatar = document.querySelector('svg[aria-label="Scout avatar"].is-animated');
     if (!avatar) return null;
+    const bounds = avatar.getBoundingClientRect();
     window.dispatchEvent(new PointerEvent("pointermove", {
-      clientX: 2,
-      clientY: window.innerHeight - 2,
+      clientX: bounds.left - Math.max(24, bounds.width),
+      clientY: bounds.bottom + Math.max(24, bounds.height),
     }));
     return new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve({
       hasPointerLayer: avatar.querySelector(".coworker-avatar__pointer-gaze") !== null,
@@ -301,19 +302,19 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   const activitySummary = await waitFor(app, `(() => {
     const panel = document.querySelector('[data-testid="coworker-activity-summary"]');
     const text = panel?.textContent ?? "";
-    return text.includes("Now") && text.includes("Last activity") && text.includes("Local readiness check")
+    return text.includes("Ready") && text.includes("Last worked on this") && text.includes("Local readiness check")
       ? text
       : false;
   })()`, {
     timeoutMs: 30_000,
     label: "right sidebar shows the completed local work",
   });
-  expect(activitySummary).toContain("No task is running");
-  expect(activitySummary).toContain("Last activity");
+  expect(activitySummary).toContain("Ready");
+  expect(activitySummary).toContain("Last worked on this");
   expect(activitySummary).toContain("Local readiness check");
   evidence.recordAssertionEvidence(
     "A local Responsibility runs through a native thread and leaves a clear record in the sidebar",
-    "The daily responsibility finished with a native ses_ thread id and no error. The right sidebar then said no task was running and named Local readiness check as the last activity.",
+    "The daily responsibility finished with a native ses_ thread id and no error. The right sidebar then showed Scout as ready and named Local readiness check as the most recent work without repeating the same fact.",
     true,
   );
 });
