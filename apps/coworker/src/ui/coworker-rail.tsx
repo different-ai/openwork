@@ -4,6 +4,7 @@ import type { DenSession } from "@/lib/den";
 import type { CoworkerActivity } from "@/lib/threads";
 import { CoworkerAvatar } from "@/ui/coworker-avatar";
 import { Button, StatusDot } from "@/ui/kit";
+import { CoworkerMark } from "@/ui/brand";
 
 function relativeTime(timestamp: number): string {
   if (!timestamp) return "";
@@ -58,9 +59,12 @@ export function CoworkerRail({
   return (
     <aside className="glass-rail flex h-full w-[272px] shrink-0 flex-col border-r border-line">
       <div className="window-drag flex min-h-[86px] items-end justify-between px-4 pb-3 pt-10">
-        <div>
-          <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-mist">Open Coworker</p>
-          <p className="text-sm font-semibold text-snow">Your team</p>
+        <div className="flex items-center gap-2.5">
+          <CoworkerMark size={34} />
+          <div>
+            <p className="text-[11px] font-semibold tracking-[-0.01em] text-snow">Open Coworker</p>
+            <p className="text-[10px] text-mist">Your team</p>
+          </div>
         </div>
         <Button variant="ghost" className="window-no-drag size-8 rounded-full px-0 py-0 text-lg" onClick={onNewCoworker} title="New coworker">
           <span aria-hidden="true">+</span>

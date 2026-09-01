@@ -45,6 +45,7 @@ body.is-resizing-context-panel * {
   position: relative;
   isolation: isolate;
   background: rgb(8 11 17 / 0.92);
+  animation: surface-enter 240ms ease-out both;
 }
 
 .window-shell::before {
@@ -92,6 +93,8 @@ body.is-resizing-context-panel * {
 
 .coworker-avatar {
   --avatar-motion-delay: 0s;
+  --avatar-look-x: 0px;
+  --avatar-look-y: 0px;
   display: block;
   flex: none;
   overflow: visible;
@@ -100,10 +103,18 @@ body.is-resizing-context-panel * {
 .coworker-avatar__body,
 .coworker-avatar__depth,
 .coworker-avatar__features,
+.coworker-avatar__pointer-gaze,
 .coworker-avatar__gaze,
 .coworker-avatar__pupils {
   transform-box: fill-box;
   transform-origin: center;
+}
+
+.coworker-avatar__pointer-gaze,
+.coworker-mark__pointer-gaze {
+  transform: translate(var(--avatar-look-x), var(--avatar-look-y));
+  transition: transform 220ms cubic-bezier(0.22, 0.72, 0.24, 1);
+  will-change: transform;
 }
 
 .coworker-avatar.is-animated .coworker-avatar__body {
@@ -142,6 +153,135 @@ body.is-resizing-context-panel * {
 
 .coworker-avatar.motion-phase-2 {
   --avatar-motion-delay: -5.8s;
+}
+
+.coworker-mark {
+  --avatar-look-x: 0px;
+  --avatar-look-y: 0px;
+  display: block;
+  flex: none;
+  overflow: visible;
+}
+
+.coworker-mark__body,
+.coworker-mark__depth,
+.coworker-mark__features,
+.coworker-mark__pointer-gaze,
+.coworker-mark__gaze,
+.coworker-mark__pupils {
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+.coworker-mark:is(.is-animated, .is-loading) .coworker-mark__body {
+  animation: coworker-float var(--mark-motion-duration) cubic-bezier(0.45, 0, 0.55, 1) infinite;
+}
+
+.coworker-mark:is(.is-animated, .is-loading) .coworker-mark__depth {
+  animation: coworker-depth-turn var(--mark-motion-duration) cubic-bezier(0.45, 0, 0.55, 1) infinite;
+}
+
+.coworker-mark:is(.is-animated, .is-loading) .coworker-mark__features {
+  animation: coworker-feature-turn var(--mark-motion-duration) cubic-bezier(0.45, 0, 0.55, 1) infinite;
+}
+
+.coworker-mark:is(.is-animated, .is-loading) .coworker-mark__gaze {
+  animation: coworker-gaze-turn var(--mark-motion-duration) cubic-bezier(0.45, 0, 0.55, 1) infinite;
+}
+
+.coworker-mark:is(.is-animated, .is-loading) .coworker-mark__pupils {
+  animation: coworker-blink var(--mark-motion-duration) ease-in-out infinite;
+}
+
+.coworker-mark.is-animated {
+  --mark-motion-duration: 10.4s;
+}
+
+.coworker-mark.is-loading {
+  --mark-motion-duration: 4.8s;
+}
+
+.brand-loader {
+  display: flex;
+  width: min(320px, calc(100vw - 48px));
+  align-items: center;
+  flex-direction: column;
+  text-align: center;
+}
+
+.brand-loader__name {
+  margin: 16px 0 0;
+  color: var(--color-snow);
+  font-size: 17px;
+  font-weight: 650;
+  letter-spacing: -0.025em;
+}
+
+.brand-loader__message {
+  margin: 5px 0 0;
+  color: var(--color-mist);
+  font-size: 12px;
+}
+
+.brand-loader__progress {
+  position: relative;
+  width: 76px;
+  height: 1px;
+  margin-top: 19px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgb(255 255 255 / 0.1);
+}
+
+.brand-loader__progress span,
+.inline-loader__progress span {
+  position: absolute;
+  inset-block: 0;
+  left: 0;
+  width: 32%;
+  border-radius: inherit;
+  background: var(--color-snow);
+  animation: loading-line 1.45s cubic-bezier(0.65, 0, 0.35, 1) infinite;
+}
+
+.brand-loader__detail {
+  margin: 10px 0 0;
+  color: rgb(141 152 169 / 0.68);
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+}
+
+.inline-loader {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: inherit;
+}
+
+.inline-loader__progress {
+  position: relative;
+  display: inline-block;
+  width: 25px;
+  height: 1px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: currentColor;
+  opacity: 0.72;
+}
+
+.button-busy-indicator {
+  display: inline-block;
+  width: 11px;
+  height: 11px;
+  margin-right: 6px;
+  border: 1px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 999px;
+  vertical-align: -1px;
+  animation: loading-spin 720ms linear infinite;
 }
 
 .avatar-swatch {
@@ -198,6 +338,21 @@ body.is-resizing-context-panel * {
   42.6% { transform: scaleY(0.08); }
 }
 
+@keyframes loading-line {
+  0% { transform: translateX(-115%); }
+  52% { transform: translateX(105%); }
+  100% { transform: translateX(315%); }
+}
+
+@keyframes loading-spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes surface-enter {
+  from { opacity: 0; transform: scale(0.997); }
+  to { opacity: 1; transform: scale(1); }
+}
+
 .window-drag {
   -webkit-app-region: drag;
   user-select: none;
@@ -221,7 +376,18 @@ a {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .coworker-avatar * {
+  .coworker-avatar *,
+  .coworker-mark *,
+  .brand-loader__progress span,
+  .inline-loader__progress span,
+  .button-busy-indicator,
+  .window-shell {
     animation: none !important;
+  }
+
+  .coworker-avatar__pointer-gaze,
+  .coworker-mark__pointer-gaze {
+    transform: none !important;
+    transition: none !important;
   }
 }
