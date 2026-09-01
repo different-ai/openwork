@@ -479,6 +479,7 @@
         "evals/specs/mac-sidebar-toggle-clearance.e2e.test.ts",
         "evals/specs/sidebar-primary-actions.e2e.test.ts",
         "evals/specs/sidebar-title-overflow-fade.e2e.test.ts",
+        "evals/specs/sidebar-workspace-title-fit.e2e.test.ts",
         "evals/specs/workspace-new-task-hit-target.e2e.test.ts",
         "evals/specs/workspace-sidebar-order.e2e.test.ts"
       ]
