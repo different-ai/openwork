@@ -1,12 +1,12 @@
 import type { AvatarColor, AvatarGlasses } from "@/lib/bridge";
 
 const AVATAR_COLORS: Array<{ id: AvatarColor; label: string; swatch: string }> = [
-  { id: "blue", label: "OpenWork blue", swatch: "#91adf0" },
-  { id: "violet", label: "Violet", swatch: "#aaa0dc" },
-  { id: "mint", label: "Mint", swatch: "#82c7b3" },
-  { id: "orange", label: "Orange", swatch: "#d9a17d" },
-  { id: "rose", label: "Rose", swatch: "#daa0b2" },
-  { id: "slate", label: "Slate", swatch: "#a6b1c0" },
+  { id: "blue", label: "OpenWork blue", swatch: "#b8c9f0" },
+  { id: "violet", label: "Violet", swatch: "#c8c1e2" },
+  { id: "mint", label: "Mint", swatch: "#b2d5cb" },
+  { id: "orange", label: "Orange", swatch: "#e4c3ad" },
+  { id: "rose", label: "Rose", swatch: "#e2c1cb" },
+  { id: "slate", label: "Pearl", swatch: "#e3e6ea" },
 ];
 
 const AVATAR_GLASSES: Array<{ id: AvatarGlasses; label: string }> = [
@@ -15,13 +15,13 @@ const AVATAR_GLASSES: Array<{ id: AvatarGlasses; label: string }> = [
   { id: "none", label: "None" },
 ];
 
-const PALETTES: Record<AvatarColor, { fill: string; edge: string }> = {
-  blue: { fill: "#91adf0", edge: "#7898e4" },
-  violet: { fill: "#aaa0dc", edge: "#9186ce" },
-  mint: { fill: "#82c7b3", edge: "#69b6a0" },
-  orange: { fill: "#d9a17d", edge: "#cb8962" },
-  rose: { fill: "#daa0b2", edge: "#cb879d" },
-  slate: { fill: "#a6b1c0", edge: "#8d9aac" },
+const PALETTES: Record<AvatarColor, { fill: string; edge: string; depth: string }> = {
+  blue: { fill: "#b8c9f0", edge: "#91a9dc", depth: "#7389b7" },
+  violet: { fill: "#c8c1e2", edge: "#aaa1d0", depth: "#81789f" },
+  mint: { fill: "#b2d5cb", edge: "#8dbbae", depth: "#668e84" },
+  orange: { fill: "#e4c3ad", edge: "#cda589", depth: "#9d7961" },
+  rose: { fill: "#e2c1cb", edge: "#cda1ae", depth: "#9c7682" },
+  slate: { fill: "#e3e6ea", edge: "#c2c8d0", depth: "#939aa4" },
 };
 
 function motionPhase(name: string) {
@@ -54,43 +54,49 @@ export function CoworkerAvatar({
       className={`coworker-avatar ${motionClass} ${working ? "is-working" : ""}`}
       role="img"
       style={{ width: size, height: size }}
-      viewBox="0 0 120 124"
+      viewBox="0 0 122 122"
     >
       <g className="coworker-avatar__body">
         <path
-          d="M27 10h62c15 0 24 10 24 26v41c0 16-9 25-24 25H55l-15 10c-5 3-10 0-10-6v-4h-3C12 102 4 93 4 77V36c0-16 8-26 23-26Z"
-          fill={palette.fill}
-          stroke={palette.edge}
-          strokeWidth="1.5"
+          d="M26 8h65c15 0 23 10 23 26v46c0 15-8 24-23 24H57l-15 9c-5 3-10 0-10-6v-3h-5C12 104 5 95 5 80V34C5 18 12 8 26 8Z"
+          fill={palette.depth}
+          opacity="0.72"
+          transform="translate(3 3)"
         />
         <path
-          d="M27 13h61c12 0 20 7 22 19"
+          d="M26 8h65c15 0 23 10 23 26v46c0 15-8 24-23 24H57l-15 9c-5 3-10 0-10-6v-3h-5C12 104 5 95 5 80V34C5 18 12 8 26 8Z"
+          fill={palette.fill}
+          stroke={palette.edge}
+          strokeWidth="1.25"
+        />
+        <path
+          d="M26 11h64c12 0 20 7 21 19"
           fill="none"
           stroke="#ffffff"
           strokeLinecap="round"
-          strokeOpacity="0.2"
-          strokeWidth="1.25"
+          strokeOpacity="0.24"
+          strokeWidth="1"
         />
 
         <g className="coworker-avatar__pupils" fill="#0b0e14">
-          <rect x="37" y="50" width="6" height="14" rx="3" />
-          <rect x="74" y="50" width="6" height="14" rx="3" />
+          <rect x="34.5" y="50" width="6" height="14" rx="3" />
+          <rect x="79.5" y="50" width="6" height="14" rx="3" />
         </g>
 
         {glasses === "round" ? (
-          <g fill="none" stroke="#111722" strokeLinecap="round" strokeWidth="5.5">
-            <circle cx="40" cy="57" r="17" />
-            <circle cx="77" cy="57" r="17" />
-            <path d="M57 55.5h3" />
-            <path d="M20 57h3M94 57h3" />
+          <g fill="none" stroke="#11151d" strokeLinecap="round" strokeWidth="5">
+            <circle cx="37.5" cy="57" r="17.5" />
+            <circle cx="82.5" cy="57" r="17.5" />
+            <path d="M57.5 57c1.25-4 3.75-4 5 0" />
+            <path d="M15 57h4.5M100.5 57h4.5" strokeWidth="7" />
           </g>
         ) : null}
         {glasses === "square" ? (
-          <g fill="none" stroke="#111722" strokeLinecap="round" strokeLinejoin="round" strokeWidth="5.5">
-            <rect x="22.5" y="40" width="35" height="34" rx="9" />
-            <rect x="59.5" y="40" width="35" height="34" rx="9" />
-            <path d="M57 54.5h3" />
-            <path d="M20 57h3M95 57h3" />
+          <g fill="none" stroke="#11151d" strokeLinecap="round" strokeLinejoin="round" strokeWidth="5">
+            <rect x="19.5" y="39" width="36" height="36" rx="10" />
+            <rect x="64.5" y="39" width="36" height="36" rx="10" />
+            <path d="M58 57c1-3.5 3-3.5 4 0" />
+            <path d="M15 57h4.5M100.5 57h4.5" strokeWidth="7" />
           </g>
         ) : null}
       </g>
