@@ -102,7 +102,7 @@ export function NewCoworker({
             {error ? <div className="mt-3"><ErrorNote>{error}</ErrorNote></div> : null}
             <div className="mt-5 flex items-center justify-between gap-3 border-t border-line pt-4">
               <p className="text-[10px] uppercase tracking-[0.12em] text-mist/75">Step 2 of 2</p>
-              <Button variant="primary" disabled={busy} onClick={() => void finish()}>
+              <Button aria-busy={busy} variant="primary" disabled={busy} onClick={() => void finish()}>
                 {busy ? "Finishing…" : "Finish setup"}
               </Button>
             </div>
@@ -195,7 +195,7 @@ export function NewCoworker({
             {onCancel ? (
               <Button variant="ghost" onClick={onCancel}>Cancel</Button>
             ) : null}
-            <Button variant="primary" disabled={busy || !name.trim()} onClick={() => void create()}>
+            <Button aria-busy={busy} variant="primary" disabled={busy || !name.trim()} onClick={() => void create()}>
               {busy ? "Adding…" : "Add coworker"}
             </Button>
           </div>

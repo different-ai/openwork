@@ -1,4 +1,5 @@
 import { Button, StatusDot } from "@/ui/kit";
+import { CoworkerMark } from "@/ui/brand";
 
 export function OnboardingWelcome({
   onConnect,
@@ -11,6 +12,13 @@ export function OnboardingWelcome({
     <div className="window-shell window-drag flex h-full items-center justify-center overflow-y-auto p-8">
       <div className="window-no-drag w-full max-w-3xl rounded-[30px] border border-line bg-ink/90 p-7 md:p-9">
         <div className="max-w-xl">
+          <div className="mb-6 flex items-center gap-3">
+            <CoworkerMark animated label="Open Coworker" size={54} />
+            <div>
+              <p className="text-sm font-semibold tracking-[-0.02em] text-snow">Open Coworker</p>
+              <p className="mt-0.5 text-[9px] font-semibold uppercase tracking-[0.17em] text-mist">Powered by OpenWork</p>
+            </div>
+          </div>
           <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-spark">Welcome to Open Coworker</p>
           <h1 className="mt-2 text-3xl font-semibold tracking-[-0.045em] text-snow">
             Give recurring work a teammate.

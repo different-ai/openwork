@@ -28,6 +28,11 @@ export type CoworkerActivity = {
   label: string;
   detail: string;
   updatedAt: number;
+  last?: {
+    title: string;
+    updatedAt: number;
+    threadId?: string;
+  };
 };
 
 const sessionListSchema = z.array(
@@ -370,23 +375,44 @@ export function createCoworkerThreads(options: {
     if (hasPendingInteractions(pending)) {
       const sessionId = pending.permissions[0]?.sessionID ?? pending.questions[0]?.sessionID;
       const thread = sessions.find((session) => session.id === sessionId);
+      const last = sessions.find((session) => session.id !== sessionId && session.status === "idle");
       return {
         state: "attention",
         label: "Needs you",
         detail: describeInteractions(pending),
         updatedAt: thread?.updatedAt ?? Date.now(),
+        ...(last ? { last: { title: last.title, updatedAt: last.updatedAt, threadId: last.id } } : {}),
       };
     }
     const active = sessions.find((session) => session.status === "busy" || session.status === "retry");
+    const last = sessions.find((session) => session.id !== active?.id && session.status === "idle");
     if (active?.status === "retry") {
-      return { state: "retrying", label: "Retrying", detail: active.title, updatedAt: active.updatedAt };
+      return {
+        state: "retrying",
+        label: "Retrying",
+        detail: active.title,
+        updatedAt: active.updatedAt,
+        ...(last ? { last: { title: last.title, updatedAt: last.updatedAt, threadId: last.id } } : {}),
+      };
     }
     if (active) {
-      return { state: "working", label: "Working", detail: active.title, updatedAt: active.updatedAt };
+      return {
+        state: "working",
+        label: "Working",
+        detail: active.title,
+        updatedAt: active.updatedAt,
+        ...(last ? { last: { title: last.title, updatedAt: last.updatedAt, threadId: last.id } } : {}),
+      };
     }
     const latest = sessions[0];
     if (latest) {
-      return { state: "recent", label: "Ready", detail: latest.title, updatedAt: latest.updatedAt };
+      return {
+        state: "recent",
+        label: "Ready",
+        detail: latest.title,
+        updatedAt: latest.updatedAt,
+        last: { title: latest.title, updatedAt: latest.updatedAt, threadId: latest.id },
+      };
     }
     return { state: "ready", label: "Ready", detail: "Waiting for first assignment", updatedAt: 0 };
   }

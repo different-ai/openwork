@@ -10,6 +10,7 @@ import {
   type PreservedMcpAppResult,
 } from "@/lib/mcp";
 import { Button, Empty, ErrorNote, StatusDot, inputClass } from "@/ui/kit";
+import { InlineLoader } from "@/ui/brand";
 import { McpAppFrame } from "@/ui/mcp-app-frame";
 
 type SelectedApp = {
@@ -153,8 +154,8 @@ export function CapabilitiesPanel({
           value={query}
           onChange={(event) => setQuery(event.target.value)}
         />
-        <Button variant="ghost" className="h-9 text-xs" disabled={loading} onClick={() => void refresh()}>
-          {loading ? "…" : "Refresh"}
+        <Button aria-busy={loading} variant="ghost" className="h-9 text-xs" disabled={loading} onClick={() => void refresh()}>
+          {loading ? "Refreshing" : "Refresh"}
         </Button>
       </div>
 
@@ -213,7 +214,7 @@ export function CapabilitiesPanel({
             ))}
           </div>
         ) : loading ? (
-          <Empty>Reading the live App catalog…</Empty>
+          <Empty><InlineLoader label="Reading the live App catalog" /></Empty>
         ) : (
           <Empty>{normalizedQuery ? "No interactive Apps match this search." : "No MCP Apps are advertising an interactive view yet."}</Empty>
         )}
@@ -371,7 +372,7 @@ function AppDetail({
               <p className="text-xs font-medium text-snow">Allow one call to {catalog.toolName}?</p>
               <p className="mt-1 text-[10px] leading-relaxed text-mist">OpenWork will execute it once with the arguments above.</p>
               <div className="mt-3 flex gap-2">
-                <Button variant="primary" className="flex-1 text-xs" disabled={busy} onClick={() => void open(true)}>
+                <Button aria-busy={busy} variant="primary" className="flex-1 text-xs" disabled={busy} onClick={() => void open(true)}>
                   {busy ? "Opening…" : "Allow once"}
                 </Button>
                 <Button variant="ghost" className="text-xs" onClick={() => setApprovalArmed(false)}>Cancel</Button>
@@ -379,6 +380,7 @@ function AppDetail({
             </div>
           ) : (
             <Button
+              aria-busy={busy}
               variant="primary"
               className={`${catalog.requiresInput ? "mt-3" : ""} w-full text-xs`}
               disabled={busy || !server.reachable}

@@ -7,6 +7,7 @@ files:
   - electron-dist/**/*
   - dist/**/*
   - server/**/*
+  - resources/icons/**/*
   - package.json
 extraMetadata:
   main: electron-dist/main.mjs
@@ -22,7 +23,7 @@ extraResources:
 asar: true
 npmRebuild: false
 mac:
-  icon: ../desktop/resources/icons/icon.icns
+  icon: resources/icons/icon.icns
   category: public.app-category.productivity
   hardenedRuntime: true
   gatekeeperAssess: false
@@ -32,12 +33,12 @@ mac:
     - zip
 linux:
   executableName: open-coworker
-  icon: ../desktop/resources/icons/linux
+  icon: resources/icons/linux
   syncDesktopName: true
   target:
     - AppImage
     - tar.gz
 win:
-  icon: ../desktop/resources/icons/icon.ico
+  icon: resources/icons/icon.ico
   target:
     - nsis

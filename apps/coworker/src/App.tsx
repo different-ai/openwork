@@ -8,6 +8,7 @@ import { SignInGate } from "@/ui/sign-in";
 import { CoworkerHome } from "@/ui/coworker-home";
 import { CoworkerRail } from "@/ui/coworker-rail";
 import { OnboardingWelcome } from "@/ui/onboarding";
+import { AppLoader, CoworkerMark } from "@/ui/brand";
 
 export default function App() {
   const [runtime, setRuntime] = useState<RuntimeInfo | null>(null);
@@ -62,6 +63,13 @@ export default function App() {
             coworkerBridge.localResponsibilities.list(coworker.slug).catch(() => []),
           ]);
           const localRunning = localResponsibilities.find((item) => item.latestRun?.status === "running");
+          const localSuccess = localResponsibilities
+            .filter((item) => item.latestRun?.status === "succeeded")
+            .sort((left, right) => (right.latestRun?.finishedAt ?? 0) - (left.latestRun?.finishedAt ?? 0))[0];
+          const localSuccessAt = localSuccess?.latestRun?.finishedAt ?? 0;
+          const latestActivity = localSuccess && localSuccessAt > (threadActivity.last?.updatedAt ?? 0)
+            ? { title: localSuccess.name, updatedAt: localSuccessAt, threadId: localSuccess.latestRun?.threadId }
+            : threadActivity.last;
           if (localRunning?.latestRun) {
             return [
               coworker.slug,
@@ -70,6 +78,7 @@ export default function App() {
                 label: "Working",
                 detail: localRunning.name,
                 updatedAt: localRunning.latestRun.startedAt,
+                ...(latestActivity ? { last: latestActivity } : {}),
               },
             ] as const;
           }
@@ -84,10 +93,11 @@ export default function App() {
                 label: "Local run needs you",
                 detail: localFailure.latestRun.error || localFailure.name,
                 updatedAt: localFailure.latestRun.finishedAt ?? localFailure.latestRun.startedAt,
+                ...(latestActivity ? { last: latestActivity } : {}),
               },
             ] as const;
           }
-          return [coworker.slug, threadActivity] as const;
+          return [coworker.slug, latestActivity ? { ...threadActivity, last: latestActivity } : threadActivity] as const;
         }),
       );
       if (!cancelled) setActivityBySlug(Object.fromEntries(entries));
@@ -143,10 +153,13 @@ export default function App() {
 
   if (bootError) {
     return (
-      <div className="flex h-full items-center justify-center p-8">
-        <div className="w-full max-w-md space-y-4">
+      <div className="window-shell window-drag flex h-full items-center justify-center p-8">
+        <div className="window-no-drag w-full max-w-md rounded-[26px] border border-line bg-ink/88 p-7 text-center">
+          <CoworkerMark className="mx-auto" label="Open Coworker" size={64} />
+          <h1 className="mt-4 text-xl font-semibold tracking-[-0.025em] text-snow">Open Coworker needs a moment</h1>
+          <p className="mb-5 mt-1 text-sm text-mist">The local workspace could not finish starting.</p>
           <ErrorNote>{bootError}</ErrorNote>
-          <Button className="w-full" onClick={() => void boot()}>
+          <Button className="mt-4 w-full" onClick={() => void boot()}>
             Retry
           </Button>
         </div>
@@ -155,11 +168,7 @@ export default function App() {
   }
 
   if (!runtime) {
-    return (
-      <div className="flex h-full items-center justify-center">
-        <p className="text-sm text-mist">Starting your coworkers' home…</p>
-      </div>
-    );
+    return <AppLoader />;
   }
 
   if (connecting) {

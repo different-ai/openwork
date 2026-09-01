@@ -3,6 +3,7 @@ import type { ButtonHTMLAttributes, ReactNode } from "react";
 export function Button({
   variant = "default",
   className = "",
+  children,
   ...props
 }: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: "default" | "primary" | "ghost" | "danger" }) {
   const styles = {
@@ -11,11 +12,15 @@ export function Button({
     ghost: "border border-transparent text-mist hover:bg-white/6 hover:text-snow hover:border-white/8",
     danger: "border border-rose/35 bg-rose/10 text-rose hover:bg-rose/18",
   } as const;
+  const busy = props["aria-busy"] === true || props["aria-busy"] === "true";
   return (
     <button
       {...props}
       className={`rounded-xl px-3 py-1.5 text-sm font-medium transition-all duration-200 disabled:cursor-not-allowed disabled:opacity-40 ${styles[variant]} ${className}`}
-    />
+    >
+      {busy ? <span className="button-busy-indicator" aria-hidden="true" /> : null}
+      {children}
+    </button>
   );
 }
 
