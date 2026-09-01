@@ -1,29 +1,29 @@
 import { useCallback, useEffect, useState } from "react";
-import { workbot, type BotSummary, type RuntimeInfo } from "@/lib/bridge";
+import { coworkerBridge, type CoworkerSummary, type RuntimeInfo } from "@/lib/bridge";
 import { readDenSession, writeDenSession, type DenSession } from "@/lib/den";
 import { Button, ErrorNote } from "@/ui/kit";
-import { NewWorker } from "@/ui/new-worker";
+import { NewCoworker } from "@/ui/new-coworker";
 import { SignInGate } from "@/ui/sign-in";
-import { WorkerHome } from "@/ui/worker-home";
-import { WorkerRail } from "@/ui/worker-rail";
+import { CoworkerHome } from "@/ui/coworker-home";
+import { CoworkerRail } from "@/ui/coworker-rail";
 
 export default function App() {
   const [runtime, setRuntime] = useState<RuntimeInfo | null>(null);
   const [bootError, setBootError] = useState("");
   const [session, setSession] = useState<DenSession | null>(() => readDenSession());
-  const [bots, setBots] = useState<BotSummary[]>([]);
+  const [coworkers, setBots] = useState<CoworkerSummary[]>([]);
   const [selectedSlug, setSelectedSlug] = useState("");
   const [creating, setCreating] = useState(false);
   const [connecting, setConnecting] = useState(false);
 
   const boot = useCallback(async () => {
     try {
-      const info = await workbot.runtimeInfo();
+      const info = await coworkerBridge.runtimeInfo();
       setRuntime(info);
-      const list = await workbot.bots.list();
+      const list = await coworkerBridge.coworkers.list();
       setBots(list);
       setSelectedSlug((current) =>
-        current && list.some((bot) => bot.slug === current) ? current : (list[0]?.slug ?? ""),
+        current && list.some((coworker) => coworker.slug === current) ? current : (list[0]?.slug ?? ""),
       );
       setBootError("");
     } catch (cause) {
@@ -36,7 +36,7 @@ export default function App() {
   }, [boot]);
 
   const refreshRuntime = useCallback(async () => {
-    const info = await workbot.runtimeInfo();
+    const info = await coworkerBridge.runtimeInfo();
     setRuntime(info);
   }, []);
 
@@ -56,7 +56,7 @@ export default function App() {
   if (!runtime) {
     return (
       <div className="flex h-full items-center justify-center">
-        <p className="text-sm text-mist">Starting your workers' home…</p>
+        <p className="text-sm text-mist">Starting your coworkers' home…</p>
       </div>
     );
   }
@@ -76,29 +76,29 @@ export default function App() {
     );
   }
 
-  const selected = bots.find((bot) => bot.slug === selectedSlug) ?? null;
+  const selected = coworkers.find((coworker) => coworker.slug === selectedSlug) ?? null;
 
-  function updateBotInList(updated: BotSummary) {
-    setBots((current) => current.map((bot) => (bot.slug === updated.slug ? updated : bot)));
+  function updateCoworkerInList(updated: CoworkerSummary) {
+    setBots((current) => current.map((coworker) => (coworker.slug === updated.slug ? updated : coworker)));
   }
 
-  function removeBotFromList(slug: string) {
-    const remaining = bots.filter((bot) => bot.slug !== slug);
+  function removeCoworkerFromList(slug: string) {
+    const remaining = coworkers.filter((coworker) => coworker.slug !== slug);
     setBots(remaining);
     if (selectedSlug === slug) setSelectedSlug(remaining[0]?.slug ?? "");
   }
 
   return (
     <div className="flex h-full">
-      <WorkerRail
-        bots={bots}
+      <CoworkerRail
+        coworkers={coworkers}
         selectedSlug={creating ? "" : selectedSlug}
         session={session}
         onSelect={(slug) => {
           setCreating(false);
           setSelectedSlug(slug);
         }}
-        onNewWorker={() => setCreating(true)}
+        onNewCoworker={() => setCreating(true)}
         onConnect={() => setConnecting(true)}
         onSignOut={() => {
           writeDenSession(null);
@@ -107,29 +107,29 @@ export default function App() {
       />
       {creating || !selected ? (
         <div className="min-w-0 flex-1">
-          <NewWorker
-            onCancel={selected || bots.length > 0 ? () => setCreating(false) : null}
-            onCreated={(bot) => {
+          <NewCoworker
+            onCancel={selected || coworkers.length > 0 ? () => setCreating(false) : null}
+            onCreated={(coworker) => {
               setCreating(false);
               setBots((current) =>
-                [...current.filter((item) => item.slug !== bot.slug), bot].sort((a, b) =>
+                [...current.filter((item) => item.slug !== coworker.slug), coworker].sort((a, b) =>
                   a.name.localeCompare(b.name),
                 ),
               );
-              setSelectedSlug(bot.slug);
+              setSelectedSlug(coworker.slug);
               void refreshRuntime();
             }}
           />
         </div>
       ) : (
-        <WorkerHome
+        <CoworkerHome
           key={selected.slug}
           runtime={runtime}
           session={session}
-          bots={bots}
-          bot={selected}
-          onBotChanged={updateBotInList}
-          onBotRemoved={removeBotFromList}
+          coworkers={coworkers}
+          coworker={selected}
+          onCoworkerChanged={updateCoworkerInList}
+          onCoworkerRemoved={removeCoworkerFromList}
           onRefreshRuntime={refreshRuntime}
           onConnect={() => setConnecting(true)}
         />
