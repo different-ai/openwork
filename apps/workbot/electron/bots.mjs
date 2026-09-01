@@ -221,6 +221,7 @@ function botConfigTemplate({ name, role, mission, createdAt }) {
       role: role || "",
       mission: mission || "",
       workspaceId: "",
+      model: "",
       automations: [],
       createdAt,
     },
@@ -255,6 +256,8 @@ async function readBotRecord(botsDir, slug) {
     role: typeof data.role === "string" ? data.role : "",
     mission: typeof data.mission === "string" ? data.mission : "",
     workspaceId: typeof data.workspaceId === "string" ? data.workspaceId.trim() : "",
+    /** Preferred model as "providerId/modelId"; empty means engine default. */
+    model: typeof data.model === "string" ? data.model.trim() : "",
     automations,
     createdAt: typeof data.createdAt === "string" ? data.createdAt : "",
   };
@@ -316,6 +319,7 @@ export async function updateBot(botsDir, slug, patch) {
   }
   if (typeof patch?.mission === "string") data.mission = patch.mission.trim();
   if (typeof patch?.role === "string") data.role = patch.role.trim();
+  if (typeof patch?.model === "string") data.model = patch.model.trim();
   await writeFile(configPath, serializeFrontmatter(data, body), "utf8");
   return readBotRecord(botsDir, slug);
 }
