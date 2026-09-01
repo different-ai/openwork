@@ -15,6 +15,10 @@ import { ErrorNote } from "@/ui/kit";
 const MIN_HEIGHT = 160;
 const MAX_HEIGHT = 680;
 const DEFAULT_HEIGHT = 300;
+const SANDBOX_READY_TIMEOUT_MS = 5_000;
+const RESOURCE_ACCEPT_TIMEOUT_MS = 1_000;
+const MAX_RESOURCE_SEND_ATTEMPTS = 2;
+const INITIALIZE_TIMEOUT_MS = 10_000;
 
 function cspSource(values: string[]): string {
   return values.length > 0 ? values.join(" ") : "'none'";
@@ -93,13 +97,15 @@ export function McpAppFrame({
   const closeRef = useRef(onClose);
   const [height, setHeight] = useState(DEFAULT_HEIGHT);
   const [error, setError] = useState("");
+  const [ready, setReady] = useState(false);
   closeRef.current = onClose;
 
   useEffect(() => {
     const iframe = iframeRef.current;
     if (!iframe?.contentWindow) return;
+    setReady(false);
     let disposed = false;
-    let connected = false;
+    let failed = false;
     const sandbox = client.sandboxFor(app, window.location.origin);
     if (sandbox.expectedOrigin === window.location.origin) {
       setError("OpenWork could not isolate this interactive App from the host window.");
@@ -141,17 +147,59 @@ export function McpAppFrame({
         return asToolResult(await client.callAppTool({ ...request, approved: true }));
       }
     };
+    let resourceDeliveryTimer: number | undefined;
+    let initializeTimer: number | undefined;
+    let initialized = false;
+    let resourceAccepted = false;
+    let resourceSendAttempts = 0;
+    const fail = (message: string) => {
+      if (disposed || failed) return;
+      failed = true;
+      setError(message);
+    };
     bridge.oninitialized = () => {
+      initialized = true;
+      setReady(true);
+      if (resourceDeliveryTimer !== undefined) window.clearTimeout(resourceDeliveryTimer);
+      if (initializeTimer !== undefined) window.clearTimeout(initializeTimer);
       void bridge.sendToolInput({ arguments: input })
         .then(() => bridge.sendToolResult(asToolResult(result)))
         .catch((cause) => {
-          if (!disposed) setError(cause instanceof Error ? cause.message : "The App result could not be displayed.");
+          fail(cause instanceof Error ? cause.message : "The App result could not be displayed.");
         });
     };
 
-    const readyTimer = window.setTimeout(() => {
-      if (!connected && !disposed) setError("This App did not finish opening.");
-    }, 7_500);
+    const sandboxReadyTimer = window.setTimeout(() => {
+      fail("The secure App frame did not finish opening.");
+    }, SANDBOX_READY_TIMEOUT_MS);
+
+    const startInitializeTimer = () => {
+      if (initialized || initializeTimer !== undefined) return;
+      initializeTimer = window.setTimeout(() => {
+        fail("The App loaded, but did not finish initializing.");
+      }, INITIALIZE_TIMEOUT_MS);
+    };
+
+    const markResourceAccepted = () => {
+      resourceAccepted = true;
+      if (resourceDeliveryTimer !== undefined) window.clearTimeout(resourceDeliveryTimer);
+      startInitializeTimer();
+    };
+
+    const handleSandboxMessage = (event: MessageEvent) => {
+      if (event.source !== iframe.contentWindow
+        || event.origin !== sandbox.expectedOrigin
+        || !isRecord(event.data)) return;
+      if (event.data.method === "ui/notifications/sandbox-resource-loaded"
+        || event.data.method === "ui/notifications/sandbox-resource-accepted") {
+        markResourceAccepted();
+        return;
+      }
+      if (event.data.method === "ui/notifications/sandbox-diagnostic") {
+        const params = isRecord(event.data.params) ? event.data.params : {};
+        fail(typeof params.message === "string" ? params.message : "The secure frame could not load this App.");
+      }
+    };
 
     const handleReady = (event: MessageEvent) => {
       if (event.source !== iframe.contentWindow
@@ -159,27 +207,45 @@ export function McpAppFrame({
         || !isRecord(event.data)
         || event.data.method !== "ui/notifications/sandbox-proxy-ready") return;
       window.removeEventListener("message", handleReady);
+      window.clearTimeout(sandboxReadyTimer);
       const transport = new PostMessageTransport(iframe.contentWindow!, iframe.contentWindow!);
-      void bridge.connect(transport)
-        .then(async () => {
-          connected = true;
-          window.clearTimeout(readyTimer);
+      const deliverResource = async () => {
+        resourceSendAttempts += 1;
+        try {
           await bridge.sendSandboxResourceReady({
             html: secureHtml(app),
             csp: app.csp,
             sandbox: "allow-scripts allow-same-origin",
           });
-        })
+          if (resourceAccepted || initialized) return;
+          resourceDeliveryTimer = window.setTimeout(() => {
+            if (resourceAccepted || initialized) return;
+            if (resourceSendAttempts < MAX_RESOURCE_SEND_ATTEMPTS) {
+              void deliverResource();
+              return;
+            }
+            fail("The secure frame did not accept this App after two delivery attempts.");
+          }, RESOURCE_ACCEPT_TIMEOUT_MS);
+        } catch (cause) {
+          fail(cause instanceof Error ? cause.message : "The App could not be delivered to its secure frame.");
+        }
+      };
+      void bridge.connect(transport)
+        .then(deliverResource)
         .catch((cause) => {
-          if (!disposed) setError(cause instanceof Error ? cause.message : "The App could not be opened.");
+          fail(cause instanceof Error ? cause.message : "The App could not be opened.");
         });
     };
 
+    window.addEventListener("message", handleSandboxMessage);
     window.addEventListener("message", handleReady);
     iframe.src = sandbox.url;
     return () => {
       disposed = true;
-      window.clearTimeout(readyTimer);
+      window.clearTimeout(sandboxReadyTimer);
+      if (resourceDeliveryTimer !== undefined) window.clearTimeout(resourceDeliveryTimer);
+      if (initializeTimer !== undefined) window.clearTimeout(initializeTimer);
+      window.removeEventListener("message", handleSandboxMessage);
       window.removeEventListener("message", handleReady);
       void Promise.race([
         bridge.teardownResource({}),
@@ -193,6 +259,7 @@ export function McpAppFrame({
     <div
       className={`overflow-hidden rounded-xl bg-ink ${app.prefersBorder ? "border border-line" : ""}`}
       data-mcp-app-resource={app.resourceUri}
+      data-mcp-app-ready={ready ? "true" : "false"}
     >
       <iframe
         ref={iframeRef}
