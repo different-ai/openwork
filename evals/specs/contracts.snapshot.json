@@ -375,6 +375,20 @@
       ]
     },
     {
+      "id": "desktop.permissions-run-mode",
+      "description": "Settings > Permissions: run mode and authorized folders compiled onto the injected engine permission config",
+      "implementation": [
+        "apps/app/src/react-app/domains/settings/panels/authorized-folders-panel.tsx",
+        "apps/app/src/react-app/domains/settings/panels/execution-approvals-panel.tsx",
+        "apps/server/src/openwork-runtime-config.ts",
+        "apps/server/src/run-mode.ts",
+        "apps/server/src/runtime-opencode-config-store.ts"
+      ],
+      "specs": [
+        "evals/specs/run-mode-settings-applies-to-engine.e2e.test.ts"
+      ]
+    },
+    {
       "id": "desktop.providers-models",
       "description": "Desktop provider synchronization, model availability, model selection, and reload deferral",
       "implementation": [
