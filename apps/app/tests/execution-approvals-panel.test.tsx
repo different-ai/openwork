@@ -25,9 +25,13 @@ describe("execution approvals panel", () => {
       />,
     );
 
+    expect(markup).toContain(t("settings.run_mode.title"));
     expect(markup).toContain(t("settings.run_mode.mode"));
     expect(markup).toContain(t("settings.run_mode.approve"));
     expect(markup).toContain(t("settings.run_mode.approve_desc"));
+    // The section is honest about its reach: one choice for the whole device,
+    // scheduled Automations included.
+    expect(t("settings.run_mode.section_desc")).toContain("Automations");
     // The default posture never renders the run-everything risk warning.
     expect(markup).not.toContain(t("settings.run_mode.run_everything_warning"));
   });

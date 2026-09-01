@@ -23,18 +23,24 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 /**
  * Compile the "run everything" run mode into an engine `permission` object.
  *
- * Every tool call the engine would otherwise ask about is auto-allowed, with
- * the protections users still expect kept interactive:
+ * The engine evaluates the concatenation of its defaults, the user's global
+ * config, this injected file, and the workspace's own config, and the last
+ * matching rule wins. The catch-all allow therefore upgrades `ask` rules that
+ * precede it (engine defaults and the user's global config) while the
+ * protections users still expect are restated after it so they stay
+ * interactive:
  *
  * - writes outside the workspace and authorized folders still ask:
  *   `external_directory` keeps its ask default ahead of the stored folder
- *   rules (the engine picks the last matching rule, so explicit entries win);
+ *   rules so explicit grants and denies remain authoritative;
  * - repeated identical tool calls still ask (`doom_loop`);
- * - the engine's default `.env` read denials are restated explicitly so the
- *   top-level allow cannot override them.
+ * - `.env` reads keep the engine's own default (`ask`), which the catch-all
+ *   would otherwise override.
  *
- * Stored deny entries are preserved verbatim: the preset only upgrades
- * would-be prompts, mirroring the engine's own `--auto` semantics.
+ * Known limit of this shape: a `deny` written in the user's global config
+ * without a leading `"*"` entry precedes the catch-all and is overridden by
+ * it. Rules in a workspace's own `opencode.json` are merged after this file
+ * and are never affected.
  */
 export function compileRunEverythingPermission(
   existingPermission: Record<string, unknown> | undefined,
@@ -46,8 +52,8 @@ export function compileRunEverythingPermission(
     "*": "allow",
     read: {
       "*": "allow",
-      "*.env": "deny",
-      "*.env.*": "deny",
+      "*.env": "ask",
+      "*.env.*": "ask",
       "*.env.example": "allow",
     },
     external_directory: {

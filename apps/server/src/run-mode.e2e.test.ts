@@ -171,11 +171,11 @@ describe("run mode routes", () => {
     expect(externalDirectory["*"]).toBe("ask");
     expect(externalDirectory["/shared/*"]).toBe("allow");
     expect(permission.doom_loop).toBe("ask");
-    // The engine's default .env read protection survives the top-level allow.
+    // The engine's default .env read protection (ask) survives the top-level allow.
     expect(asRecord(permission.read)).toEqual({
       "*": "allow",
-      "*.env": "deny",
-      "*.env.*": "deny",
+      "*.env": "ask",
+      "*.env.*": "ask",
       "*.env.example": "allow",
     });
     // The OpenWork-internal field never leaks into engine config.

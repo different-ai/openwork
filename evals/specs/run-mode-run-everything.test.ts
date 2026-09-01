@@ -1,11 +1,11 @@
 import { expect } from "vitest";
 import { test } from "@openwork/testkit";
-import { buildOpenworkRuntimeConfigObjectFromSnapshot } from "../../apps/server/src/openwork-runtime-config";
+import { buildOpenworkRuntimeConfigObjectFromSnapshot } from "../../apps/server/src/openwork-runtime-config.js";
 import {
   compileRunEverythingPermission,
   DEFAULT_ENGINE_RUN_MODE,
   normalizeEngineRunMode,
-} from "../../apps/server/src/run-mode";
+} from "../../apps/server/src/run-mode.js";
 
 function asRecord(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
@@ -41,12 +41,12 @@ test("run everything auto-approves tools in the engine config while protections 
   // Protection 2: doom-loop detection keeps prompting.
   expect(permission.doom_loop).toBe("ask");
 
-  // Protection 3: the engine's default .env read denials are restated so the
-  // catch-all allow cannot override them.
+  // Protection 3: the engine's default .env read rule (ask) is restated so the
+  // catch-all allow cannot override it.
   expect(asRecord(permission.read)).toEqual({
     "*": "allow",
-    "*.env": "deny",
-    "*.env.*": "deny",
+    "*.env": "ask",
+    "*.env.*": "ask",
     "*.env.example": "allow",
   });
 
@@ -87,8 +87,8 @@ test("run everything auto-approves tools in the engine config while protections 
   expect(asRecord(compiled.external_directory)["/blocked/*"]).toBe("deny");
 
   evidence.recordAssertionEvidence(
-    "Run everything stays protected",
-    "The run-everything preset compiles a catch-all allow into the engine-visible permission config while outside-workspace writes, doom-loop detection, .env read denials, stored deny rules, and explicit agent denies all remain enforced; the default mode renders no auto-approval and junk modes are rejected.",
+    "Run everything stays protected in the rendered file",
+    "The run-everything preset compiles a catch-all allow into the engine-visible permission config while outside-workspace writes, doom-loop detection, .env read prompts, stored deny rules, and explicit agent denies all remain in the rendered file; the default mode renders no auto-approval and junk modes are rejected. This spec witnesses the rendered file only; run-mode-engine-effective covers the engine's evaluated ruleset.",
     true,
   );
 });

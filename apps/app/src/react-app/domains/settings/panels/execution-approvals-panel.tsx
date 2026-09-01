@@ -141,7 +141,7 @@ export function ExecutionApprovalsPanel(props: ExecutionApprovalsPanelProps) {
   return (
     <LayoutSectionItem className="gap-6">
       <LayoutSectionItemHeader>
-        <LayoutSectionItemTitle>{t("settings.run_mode.mode")}</LayoutSectionItemTitle>
+        <LayoutSectionItemTitle>{t("settings.run_mode.title")}</LayoutSectionItemTitle>
         <LayoutSectionItemDescription>
           {t("settings.run_mode.section_desc")}{" "}
           {mode === "run-everything"
