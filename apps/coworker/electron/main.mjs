@@ -36,6 +36,7 @@ import {
   listLocalResponsibilities,
   setLocalResponsibilityActive,
 } from "./local-responsibilities.mjs";
+import { resolveBundledOpencodeBinary } from "./runtime-paths.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const isDev = !app.isPackaged || process.env.OPENWORK_DEV_MODE === "1";
@@ -44,6 +45,26 @@ const APP_NAME = "Open Coworker";
 const APP_IDENTIFIER = isDev ? "com.differentai.opencoworker.dev" : "com.differentai.opencoworker";
 const DEFAULT_SERVER_PORT = 8790;
 const DEFAULT_DEN_BASE_URL = "https://app.openworklabs.com";
+
+const explicitCdpPort = Number.parseInt(
+  process.env.OPENWORK_ELECTRON_REMOTE_DEBUG_PORT?.trim() ?? "",
+  10,
+);
+if (Number.isFinite(explicitCdpPort) && explicitCdpPort > 0) {
+  app.commandLine.appendSwitch("remote-debugging-port", String(explicitCdpPort));
+  app.commandLine.appendSwitch("remote-debugging-address", "127.0.0.1");
+  if (isDev) console.log(`[open-coworker] Electron CDP exposed at http://127.0.0.1:${explicitCdpPort}`);
+}
+const extraLaunchArgs = (process.env.ELECTRON_EXTRA_LAUNCH_ARGS ?? "").trim();
+for (const argument of extraLaunchArgs.split(/\s+/).filter(Boolean)) {
+  const cleaned = argument.replace(/^--/, "");
+  const separator = cleaned.indexOf("=");
+  if (separator > 0) {
+    app.commandLine.appendSwitch(cleaned.slice(0, separator), cleaned.slice(separator + 1));
+  } else if (cleaned) {
+    app.commandLine.appendSwitch(cleaned);
+  }
+}
 
 app.setName(APP_NAME);
 if (process.platform === "win32") {
@@ -132,7 +153,12 @@ function embeddedServerPath() {
 }
 
 function resolveOpencodeBin() {
-  return process.env.OPENWORK_OPENCODE_BIN?.trim() || "opencode";
+  return process.env.OPENWORK_OPENCODE_BIN?.trim()
+    || resolveBundledOpencodeBinary({
+      appRoot: path.resolve(__dirname, ".."),
+      resourcesPath: process.resourcesPath,
+    })
+    || "opencode";
 }
 
 async function fetchJson(url, init, timeoutMs = 8000) {

@@ -328,12 +328,21 @@ importers:
 
   apps/coworker:
     dependencies:
+      '@modelcontextprotocol/client':
+        specifier: ^2.0.0
+        version: 2.0.0(patch_hash=702e2000a3f78e99cfa6971ac4c90466d482174e49340634c0f5b1f346285c12)
+      '@modelcontextprotocol/sdk':
+        specifier: ^1.29.0
+        version: 1.29.0(patch_hash=b9b29e6a319e94ea968476aa440eb8586b5da9db6b8011ce749c384d186f8a10)(zod@4.3.6)
       '@opencode-ai/sdk':
         specifier: ^1.18.15
         version: 1.18.18
       '@openwork/automations':
         specifier: workspace:*
         version: link:../../packages/automations
+      '@openwork/enterprise-mcp-client':
+        specifier: workspace:*
+        version: link:../../packages/enterprise-mcp-client
       '@openwork/headless-threads':
         specifier: workspace:*
         version: link:../../packages/headless-threads
@@ -343,12 +352,33 @@ importers:
       '@openwork/types':
         specifier: workspace:*
         version: link:../../packages/types
+      better-sqlite3:
+        specifier: ^13.0.2
+        version: 13.0.2
+      drizzle-orm:
+        specifier: ^0.45.2
+        version: 0.45.2(@opentelemetry/api@1.9.1)(@planetscale/database@1.19.0)(@types/better-sqlite3@7.6.13)(better-sqlite3@13.0.2)(bun-types@1.3.14)(kysely@0.28.17)(mysql2@3.17.4)
+      htmlparser2:
+        specifier: 8.0.2
+        version: 8.0.2
+      jsonc-parser:
+        specifier: ^3.2.1
+        version: 3.3.1
+      minimatch:
+        specifier: ^10.2.5
+        version: 10.2.5
       react:
         specifier: 'catalog:'
         version: 19.2.8
       react-dom:
         specifier: 'catalog:'
         version: 19.2.8(react@19.2.8)
+      undici:
+        specifier: 6.28.0
+        version: 6.28.0
+      yaml:
+        specifier: ^2.9.0
+        version: 2.9.0
       zod:
         specifier: ^4.3.6
         version: 4.3.6
@@ -371,6 +401,12 @@ importers:
       electron:
         specifier: ^43.2.0
         version: 43.2.0
+      electron-builder:
+        specifier: ^26.15.3
+        version: 26.15.3(electron-builder-squirrel-windows@26.15.3)
+      esbuild:
+        specifier: 0.25.12
+        version: 0.25.12
       tailwindcss:
         specifier: ^4.3.3
         version: 4.3.3
