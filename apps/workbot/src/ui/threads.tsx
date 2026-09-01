@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { workbot, type BotSummary, type RuntimeInfo } from "@/lib/bridge";
-import { createBotThreads, type ThreadListItem } from "@/lib/threads";
+import { createBotThreads, type EngineModelOption, type ThreadListItem } from "@/lib/threads";
 import { Button, Empty, ErrorNote, Section, inputClass } from "@/ui/kit";
 
 type TranscriptMessage = {
@@ -24,11 +24,17 @@ export function ThreadsPanel({
   const threads = useMemo(
     () =>
       bot.workspaceId
-        ? createBotThreads({ serverUrl: runtime.serverUrl, workspaceId: bot.workspaceId, token: runtime.ownerToken })
+        ? createBotThreads({
+            serverUrl: runtime.serverUrl,
+            workspaceId: bot.workspaceId,
+            token: runtime.ownerToken,
+            model: bot.model,
+          })
         : null,
-    [runtime.serverUrl, runtime.ownerToken, bot.workspaceId],
+    [runtime.serverUrl, runtime.ownerToken, bot.workspaceId, bot.model],
   );
   const [items, setItems] = useState<ThreadListItem[]>([]);
+  const [models, setModels] = useState<EngineModelOption[]>([]);
   const [openThreadId, setOpenThreadId] = useState("");
   const [error, setError] = useState("");
 
@@ -42,11 +48,56 @@ export function ThreadsPanel({
     }
   }, [threads]);
 
+  // Worker switches remount this panel (keyed by slug), so this only re-runs
+  // for client changes (token/model refresh) where the open thread stays valid.
   useEffect(() => {
-    setOpenThreadId("");
-    setItems([]);
     void refresh();
   }, [refresh]);
+
+  // Model inventory only changes with the engine, so one load per workspace
+  // client is enough; a failure leaves the selector on "Engine default".
+  useEffect(() => {
+    if (!threads || !runtime.engineManaged) return;
+    let cancelled = false;
+    void threads
+      .listModels()
+      .then((options) => {
+        if (!cancelled) setModels(options);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [threads, runtime.engineManaged]);
+
+  const modelSelect = (
+    <label className="flex items-center gap-2 text-xs text-mist">
+      Model
+      <select
+        className="max-w-56 rounded-md border border-line bg-ink px-2 py-1 text-xs text-snow focus:border-spark/60 focus:outline-none"
+        value={bot.model}
+        onChange={(event) => {
+          void (async () => {
+            try {
+              onBotChanged(await workbot.bots.update(bot.slug, { model: event.target.value }));
+            } catch (cause) {
+              setError(cause instanceof Error ? cause.message : String(cause));
+            }
+          })();
+        }}
+      >
+        <option value="">Engine default</option>
+        {bot.model && !models.some((option) => option.id === bot.model) ? (
+          <option value={bot.model}>{bot.model} (unavailable)</option>
+        ) : null}
+        {models.map((option) => (
+          <option key={option.id} value={option.id}>
+            {option.label}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
 
   if (!threads) {
     return (
@@ -99,6 +150,7 @@ export function ThreadsPanel({
         }}
         threads={threads}
         botName={bot.name}
+        actions={modelSelect}
       />
       <Section
         title="Threads"
@@ -133,10 +185,12 @@ export function ThreadsPanel({
 function NewAssignment({
   threads,
   botName,
+  actions,
   onAssigned,
 }: {
   threads: NonNullable<ReturnType<typeof createBotThreads>>;
   botName: string;
+  actions?: ReactNode;
   onAssigned: (threadId: string) => void;
 }) {
   const [prompt, setPrompt] = useState("");
@@ -161,7 +215,7 @@ function NewAssignment({
   }
 
   return (
-    <Section title={`Give ${botName} work`}>
+    <Section title={`Give ${botName} work`} actions={actions}>
       <div className="space-y-3">
         <textarea
           className={`${inputClass} min-h-20 resize-y`}
@@ -192,6 +246,7 @@ function ThreadView({
   const [messages, setMessages] = useState<TranscriptMessage[]>([]);
   const [title, setTitle] = useState("Thread");
   const [statusLabel, setStatusLabel] = useState("idle");
+  const [terminalError, setTerminalError] = useState("");
   const [reply, setReply] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -202,6 +257,11 @@ function ThreadView({
       const transcript = await threads.client.exportTranscript(threadId);
       setTitle(transcript.title ?? "Thread");
       setStatusLabel(transcript.status.type);
+      setTerminalError(
+        transcript.terminalError
+          ? `${transcript.terminalError.name}: ${transcript.terminalError.message}`
+          : "",
+      );
       setMessages(
         transcript.messages.map((message) => ({
           id: message.id,
@@ -281,6 +341,12 @@ function ThreadView({
         ))}
         {messages.length === 0 && !error ? <Empty>Loading thread…</Empty> : null}
       </div>
+      {terminalError ? (
+        <ErrorNote>
+          The worker's last turn failed — {terminalError}. Pick a different model above or try
+          again.
+        </ErrorNote>
+      ) : null}
       {error ? <ErrorNote>{error}</ErrorNote> : null}
       <div className="mt-3 flex gap-2">
         <input
