@@ -73,12 +73,15 @@ export function ThreadsPanel({
   onCoworkerChanged,
   onRefreshRuntime,
   assignmentDraft,
+  openThreadRequest,
 }: {
   runtime: RuntimeInfo;
   coworker: CoworkerSummary;
   onCoworkerChanged: (coworker: CoworkerSummary) => void;
   onRefreshRuntime: () => Promise<void>;
   assignmentDraft?: AssignmentDraft;
+  /** Set by the context rail to jump straight into a thread; the id makes repeat requests distinct. */
+  openThreadRequest?: { id: number; threadId: string } | null;
 }) {
   const threads = useMemo(
     () =>
@@ -101,6 +104,10 @@ export function ThreadsPanel({
   useEffect(() => {
     if (assignmentDraft) setOpenThreadId("");
   }, [assignmentDraft]);
+
+  useEffect(() => {
+    if (openThreadRequest?.threadId) setOpenThreadId(openThreadRequest.threadId);
+  }, [openThreadRequest]);
 
   const refresh = useCallback(async () => {
     if (!threads) return;

@@ -28,6 +28,8 @@ export type CoworkerActivity = {
   label: string;
   detail: string;
   updatedAt: number;
+  /** Thread the current state refers to, when there is one to open. */
+  threadId?: string;
   last?: {
     title: string;
     updatedAt: number;
@@ -381,6 +383,7 @@ export function createCoworkerThreads(options: {
         label: "Needs you",
         detail: describeInteractions(pending),
         updatedAt: thread?.updatedAt ?? Date.now(),
+        ...(sessionId ? { threadId: sessionId } : {}),
         ...(last ? { last: { title: last.title, updatedAt: last.updatedAt, threadId: last.id } } : {}),
       };
     }
@@ -392,6 +395,7 @@ export function createCoworkerThreads(options: {
         label: "Retrying",
         detail: active.title,
         updatedAt: active.updatedAt,
+        threadId: active.id,
         ...(last ? { last: { title: last.title, updatedAt: last.updatedAt, threadId: last.id } } : {}),
       };
     }
@@ -401,6 +405,7 @@ export function createCoworkerThreads(options: {
         label: "Working",
         detail: active.title,
         updatedAt: active.updatedAt,
+        threadId: active.id,
         ...(last ? { last: { title: last.title, updatedAt: last.updatedAt, threadId: last.id } } : {}),
       };
     }
@@ -411,6 +416,7 @@ export function createCoworkerThreads(options: {
         label: "Ready",
         detail: latest.title,
         updatedAt: latest.updatedAt,
+        threadId: latest.id,
         last: { title: latest.title, updatedAt: latest.updatedAt, threadId: latest.id },
       };
     }

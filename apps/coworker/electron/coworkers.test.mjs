@@ -151,6 +151,9 @@ test("memory files are listed and editable through the store", async () => {
   assert.ok(ids.includes("long-term/user-preferences.md"));
   const prefs = await readCoworkerFile(coworkersDir, "memo", "memory/long-term/user-preferences.md");
   assert.equal(prefs, "# Prefs\n");
+  const working = files.find((file) => file.id === "working");
+  assert.ok(working.updatedAt > 0, "memory files report when they were last modified");
+  assert.ok(Math.abs(Date.now() - working.updatedAt) < 60_000);
 });
 
 test("coworker file access is contained to the coworker directory", async () => {
