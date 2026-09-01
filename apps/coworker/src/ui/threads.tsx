@@ -1,14 +1,36 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { coworkerBridge, type CoworkerSummary, type RuntimeInfo } from "@/lib/bridge";
 import { createCoworkerThreads, type EngineModelOption, type ThreadListItem } from "@/lib/threads";
-import { Button, Empty, ErrorNote, Section, inputClass } from "@/ui/kit";
+import { Button, Empty, ErrorNote, StatusDot } from "@/ui/kit";
 
 type TranscriptMessage = {
   id: string;
   role: string;
   text: string;
-  toolCalls: Array<{ tool: string; title: string }>;
+  toolCalls: Array<{ tool: string; status: string }>;
 };
+
+const STARTERS = [
+  "Review your workspace and tell me what needs my attention.",
+  "Summarize what you are focused on and propose the next three steps.",
+  "Turn this outcome into a short plan, then start the first safe step.",
+];
+
+function relativeTime(timestamp: number): string {
+  if (!timestamp) return "Not started";
+  const minutes = Math.max(0, Math.round((Date.now() - timestamp) / 60_000));
+  if (minutes < 1) return "Just now";
+  if (minutes < 60) return `${minutes} min ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours} hr ago`;
+  return new Date(timestamp).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
+function threadTone(status: ThreadListItem["status"]): "spark" | "amber" | "mint" {
+  if (status === "busy") return "spark";
+  if (status === "retry") return "amber";
+  return "mint";
+}
 
 export function ThreadsPanel({
   runtime,
@@ -48,14 +70,17 @@ export function ThreadsPanel({
     }
   }, [threads]);
 
-  // Coworker switches remount this panel (keyed by slug), so this only re-runs
-  // for client changes (token/model refresh) where the open thread stays valid.
   useEffect(() => {
     void refresh();
-  }, [refresh]);
+    if (!threads) return;
+    const unsubscribe = threads.subscribe(() => void refresh());
+    const timer = window.setInterval(() => void refresh(), 5_000);
+    return () => {
+      unsubscribe();
+      window.clearInterval(timer);
+    };
+  }, [threads, refresh]);
 
-  // Model inventory only changes with the engine, so one load per workspace
-  // client is enough; a failure leaves the selector on "Engine default".
   useEffect(() => {
     if (!threads || !runtime.engineManaged) return;
     let cancelled = false;
@@ -72,9 +97,10 @@ export function ThreadsPanel({
 
   const modelSelect = (
     <label className="flex items-center gap-2 text-xs text-mist">
-      Model
+      <span className="sr-only">Model</span>
       <select
-        className="max-w-56 rounded-md border border-line bg-ink px-2 py-1 text-xs text-snow focus:border-spark/60 focus:outline-none"
+        aria-label="Coworker model"
+        className="max-w-64 rounded-lg border border-line bg-panel px-2.5 py-1.5 text-xs text-snow focus:border-spark/60 focus:outline-none"
         value={coworker.model}
         onChange={(event) => {
           void (async () => {
@@ -101,30 +127,28 @@ export function ThreadsPanel({
 
   if (!threads) {
     return (
-      <Section title="Work">
-        <div className="space-y-4">
-          <Empty>This coworker's workspace is not registered yet.</Empty>
+      <div className="flex h-full items-center justify-center p-8">
+        <div className="max-w-sm space-y-4 text-center">
+          <Empty>This coworker needs a workspace before it can start.</Empty>
           {error ? <ErrorNote>{error}</ErrorNote> : null}
-          <div className="flex justify-center">
-            <Button
-              variant="primary"
-              onClick={() => {
-                void (async () => {
-                  try {
-                    const repaired = await coworkerBridge.coworkers.ensureWorkspace(coworker.slug);
-                    await onRefreshRuntime();
-                    onCoworkerChanged(repaired);
-                  } catch (cause) {
-                    setError(cause instanceof Error ? cause.message : String(cause));
-                  }
-                })();
-              }}
-            >
-              Prepare workspace
-            </Button>
-          </div>
+          <Button
+            variant="primary"
+            onClick={() => {
+              void (async () => {
+                try {
+                  const repaired = await coworkerBridge.coworkers.ensureWorkspace(coworker.slug);
+                  await onRefreshRuntime();
+                  onCoworkerChanged(repaired);
+                } catch (cause) {
+                  setError(cause instanceof Error ? cause.message : String(cause));
+                }
+              })();
+            }}
+          >
+            Prepare workspace
+          </Button>
         </div>
-      </Section>
+      </div>
     );
   }
 
@@ -134,6 +158,7 @@ export function ThreadsPanel({
         key={openThreadId}
         threads={threads}
         threadId={openThreadId}
+        coworkerName={coworker.name}
         onBack={() => {
           setOpenThreadId("");
           void refresh();
@@ -143,119 +168,149 @@ export function ThreadsPanel({
   }
 
   return (
-    <div className="space-y-4">
-      <NewAssignment
-        onAssigned={(threadId) => {
-          setOpenThreadId(threadId);
-        }}
-        threads={threads}
-        coworkerName={coworker.name}
-        actions={modelSelect}
-      />
-      <Section
-        title="Threads"
-        actions={
-          <Button variant="ghost" onClick={() => void refresh()}>
-            Refresh
-          </Button>
-        }
-      >
-        {error ? <ErrorNote>{error}</ErrorNote> : null}
-        {items.length === 0 && !error ? <Empty>No work yet. Give {coworker.name} its first assignment above.</Empty> : null}
-        <ul className="divide-y divide-line">
-          {items.map((item) => (
-            <li key={item.id}>
-              <button
-                className="flex w-full items-center justify-between gap-4 px-1 py-2.5 text-left text-sm text-snow hover:text-spark"
-                onClick={() => setOpenThreadId(item.id)}
-              >
-                <span className="min-w-0 flex-1 truncate">{item.title}</span>
-                <span className="shrink-0 text-xs text-mist">
-                  {item.updatedAt ? new Date(item.updatedAt).toLocaleString() : ""}
-                </span>
-              </button>
-            </li>
-          ))}
-        </ul>
-      </Section>
-    </div>
+    <WorkOverview
+      actions={modelSelect}
+      coworkerName={coworker.name}
+      error={error}
+      items={items}
+      onOpen={setOpenThreadId}
+      threads={threads}
+    />
   );
 }
 
-function NewAssignment({
+function WorkOverview({
   threads,
   coworkerName,
+  items,
+  error,
   actions,
-  onAssigned,
+  onOpen,
 }: {
   threads: NonNullable<ReturnType<typeof createCoworkerThreads>>;
   coworkerName: string;
+  items: ThreadListItem[];
+  error: string;
   actions?: ReactNode;
-  onAssigned: (threadId: string) => void;
+  onOpen: (threadId: string) => void;
 }) {
   const [prompt, setPrompt] = useState("");
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
+  const [assignError, setAssignError] = useState("");
 
   async function assign() {
     const text = prompt.trim();
     if (!text) return;
     setBusy(true);
-    setError("");
+    setAssignError("");
     try {
       const title = text.length > 80 ? `${text.slice(0, 77)}…` : text;
       const thread = await threads.client.createThread({ title, prompt: text });
       setPrompt("");
-      onAssigned(thread.id);
+      onOpen(thread.id);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
+      setAssignError(cause instanceof Error ? cause.message : String(cause));
     } finally {
       setBusy(false);
     }
   }
 
   return (
-    <Section title={`Give ${coworkerName} work`} actions={actions}>
-      <div className="space-y-3">
-        <textarea
-          className={`${inputClass} min-h-20 resize-y`}
-          placeholder="Describe the assignment. The coworker keeps its own memory, so context carries over."
-          value={prompt}
-          onChange={(event) => setPrompt(event.target.value)}
-        />
-        {error ? <ErrorNote>{error}</ErrorNote> : null}
-        <div className="flex justify-end">
-          <Button variant="primary" disabled={busy || !prompt.trim()} onClick={() => void assign()}>
-            {busy ? "Assigning…" : "Assign"}
-          </Button>
+    <section className="flex h-full min-h-0 flex-col bg-ink">
+      <header className="flex items-center justify-between gap-4 border-b border-line px-6 py-3">
+        <div>
+          <h2 className="text-sm font-semibold text-snow">Work with {coworkerName}</h2>
+          <p className="text-xs text-mist">One assignment becomes a durable OpenWork thread.</p>
         </div>
+        {actions}
+      </header>
+      <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
+        {error ? <ErrorNote>{error}</ErrorNote> : null}
+        {items.length === 0 && !error ? (
+          <div className="mx-auto flex h-full max-w-xl flex-col justify-center py-8 text-center">
+            <span className="mx-auto flex size-12 items-center justify-center rounded-2xl bg-panel text-lg font-semibold text-snow ring-1 ring-line">
+              {coworkerName.slice(0, 1).toUpperCase()}
+            </span>
+            <h3 className="mt-4 text-lg font-semibold text-snow">What should {coworkerName} own next?</h3>
+            <p className="mx-auto mt-1 max-w-md text-sm leading-relaxed text-mist">
+              Assign an outcome in your own words. Context and memory carry into future work.
+            </p>
+            <div className="mt-5 grid gap-2 text-left">
+              {STARTERS.map((starter) => (
+                <button
+                  key={starter}
+                  className="rounded-xl border border-line bg-panel/60 px-4 py-3 text-sm text-snow transition-colors hover:bg-panel"
+                  onClick={() => setPrompt(starter)}
+                >
+                  {starter}
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : null}
+        {items.length > 0 ? (
+          <div className="mx-auto max-w-3xl">
+            <div className="mb-3 flex items-center justify-between">
+              <h3 className="text-xs font-semibold uppercase tracking-[0.14em] text-mist">Recent work</h3>
+              <span className="text-xs text-mist">{items.length} thread{items.length === 1 ? "" : "s"}</span>
+            </div>
+            <ul className="space-y-1.5">
+              {items.map((item) => (
+                <li key={item.id}>
+                  <button
+                    className="flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left transition-colors hover:bg-panel"
+                    onClick={() => onOpen(item.id)}
+                  >
+                    <StatusDot tone={threadTone(item.status)} />
+                    <span className="min-w-0 flex-1 truncate text-sm font-medium text-snow">{item.title}</span>
+                    <span className="shrink-0 text-xs text-mist">
+                      {item.status === "busy" ? "Working" : item.status === "retry" ? "Retrying" : relativeTime(item.updatedAt)}
+                    </span>
+                    <span className="text-mist" aria-hidden="true">›</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
       </div>
-    </Section>
+      <Composer
+        value={prompt}
+        onChange={setPrompt}
+        onSubmit={() => void assign()}
+        busy={busy}
+        error={assignError}
+        placeholder={`Assign work to ${coworkerName}…`}
+        submitLabel="Assign"
+      />
+    </section>
   );
 }
 
 function ThreadView({
   threads,
   threadId,
+  coworkerName,
   onBack,
 }: {
   threads: NonNullable<ReturnType<typeof createCoworkerThreads>>;
   threadId: string;
+  coworkerName: string;
   onBack: () => void;
 }) {
   const [messages, setMessages] = useState<TranscriptMessage[]>([]);
-  const [title, setTitle] = useState("Thread");
+  const [title, setTitle] = useState("Work thread");
   const [statusLabel, setStatusLabel] = useState("idle");
   const [terminalError, setTerminalError] = useState("");
   const [reply, setReply] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
-  const pollRef = useRef<number>(0);
+  const endRef = useRef<HTMLDivElement>(null);
 
   const refresh = useCallback(async () => {
     try {
       const transcript = await threads.client.exportTranscript(threadId);
-      setTitle(transcript.title ?? "Thread");
+      setTitle(transcript.title ?? "Work thread");
       setStatusLabel(transcript.status.type);
       setTerminalError(
         transcript.terminalError
@@ -269,7 +324,7 @@ function ThreadView({
           text: message.text,
           toolCalls: message.toolCalls.map((call) => ({
             tool: call.name,
-            title: call.status ? `${call.name} (${call.status})` : call.name,
+            status: call.status ?? "working",
           })),
         })),
       );
@@ -281,9 +336,17 @@ function ThreadView({
 
   useEffect(() => {
     void refresh();
-    pollRef.current = window.setInterval(() => void refresh(), 2500);
-    return () => window.clearInterval(pollRef.current);
-  }, [refresh]);
+    const unsubscribe = threads.subscribe(() => void refresh());
+    const timer = window.setInterval(() => void refresh(), 5_000);
+    return () => {
+      unsubscribe();
+      window.clearInterval(timer);
+    };
+  }, [threads, refresh]);
+
+  useEffect(() => {
+    endRef.current?.scrollIntoView({ block: "end" });
+  }, [messages.length, statusLabel]);
 
   async function send() {
     const text = reply.trim();
@@ -302,66 +365,140 @@ function ThreadView({
   }
 
   const working = statusLabel !== "idle";
+  const readableStatus = statusLabel === "retry" ? "Retrying" : working ? "Working" : "Ready";
 
   return (
-    <Section
-      title={title}
-      actions={
-        <>
-          <span className={`text-xs ${working ? "text-amber" : "text-mist"}`}>{working ? "working…" : statusLabel}</span>
-          {working ? (
-            <Button variant="ghost" onClick={() => void threads.client.abortThread(threadId)}>
-              Stop
-            </Button>
-          ) : null}
-          <Button variant="ghost" onClick={onBack}>
-            Back
-          </Button>
-        </>
-      }
-    >
-      <div className="max-h-[52vh] space-y-3 overflow-y-auto pb-2">
-        {messages.map((message) => (
-          <article
-            key={message.id}
-            className={`rounded-lg border px-3 py-2 text-sm leading-relaxed whitespace-pre-wrap ${
-              message.role === "user" ? "border-spark/25 bg-spark/10 text-snow" : "border-line bg-panel-2 text-snow"
-            }`}
-          >
-            <p className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-mist">
-              {message.role === "user" ? "You" : "Coworker"}
-            </p>
-            {message.text || (message.toolCalls.length > 0 ? "" : "…")}
-            {message.toolCalls.length > 0 ? (
-              <p className="mt-1.5 text-xs text-mist">
-                {message.toolCalls.map((call) => call.title).join(" · ")}
-              </p>
-            ) : null}
-          </article>
-        ))}
-        {messages.length === 0 && !error ? <Empty>Loading thread…</Empty> : null}
-      </div>
-      {terminalError ? (
-        <ErrorNote>
-          The coworker's last turn failed — {terminalError}. Pick a different model above or try
-          again.
-        </ErrorNote>
-      ) : null}
-      {error ? <ErrorNote>{error}</ErrorNote> : null}
-      <div className="mt-3 flex gap-2">
-        <input
-          className={inputClass}
-          placeholder="Follow up…"
-          value={reply}
-          onChange={(event) => setReply(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === "Enter" && !event.shiftKey) void send();
-          }}
-        />
-        <Button variant="primary" disabled={busy || !reply.trim()} onClick={() => void send()}>
-          Send
+    <section className="flex h-full min-h-0 flex-col bg-ink">
+      <header className="flex items-center gap-3 border-b border-line px-5 py-3">
+        <Button variant="ghost" className="px-2" onClick={onBack} title="Back to recent work">
+          ←
         </Button>
+        <div className="min-w-0 flex-1">
+          <h2 className="truncate text-sm font-semibold text-snow">{title}</h2>
+          <p className={`text-xs ${working ? "text-spark" : "text-mist"}`}>{readableStatus}</p>
+        </div>
+        {working ? (
+          <Button variant="ghost" onClick={() => void threads.client.abortThread(threadId)}>
+            Stop
+          </Button>
+        ) : null}
+      </header>
+      <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5">
+        <div className="mx-auto max-w-3xl space-y-3">
+          {messages.map((message) => (
+            <MessageBubble key={message.id} message={message} coworkerName={coworkerName} />
+          ))}
+          {working ? (
+            <div className="flex items-center gap-2 px-1 py-2 text-xs text-mist">
+              <span className="size-2 animate-pulse rounded-full bg-spark" />
+              {coworkerName} is working…
+            </div>
+          ) : null}
+          {messages.length === 0 && !error ? <Empty>Loading activity…</Empty> : null}
+          {terminalError ? (
+            <ErrorNote>
+              The last turn failed — {terminalError}. Choose another model in coworker details or try again.
+            </ErrorNote>
+          ) : null}
+          {error ? <ErrorNote>{error}</ErrorNote> : null}
+          <div ref={endRef} />
+        </div>
       </div>
-    </Section>
+      <Composer
+        value={reply}
+        onChange={setReply}
+        onSubmit={() => void send()}
+        busy={busy}
+        placeholder={`Message ${coworkerName}…`}
+        submitLabel="Send"
+        compact
+      />
+    </section>
+  );
+}
+
+function MessageBubble({ message, coworkerName }: { message: TranscriptMessage; coworkerName: string }) {
+  const user = message.role === "user";
+  return (
+    <article className={`flex ${user ? "justify-end" : "justify-start"}`}>
+      <div
+        className={`max-w-[86%] rounded-2xl px-4 py-3 text-sm leading-relaxed whitespace-pre-wrap ${
+          user ? "rounded-br-md bg-snow text-ink" : "rounded-bl-md bg-panel text-snow"
+        }`}
+      >
+        {!user ? <p className="mb-1 text-[11px] font-semibold text-mist">{coworkerName}</p> : null}
+        {message.text || (message.toolCalls.length > 0 ? "" : "…")}
+        {message.toolCalls.length > 0 ? (
+          <ul className="mt-3 space-y-1.5">
+            {message.toolCalls.map((call, index) => {
+              const failed = call.status === "error" || call.status === "failed";
+              const complete = call.status === "completed" || call.status === "success";
+              return (
+                <li key={`${call.tool}-${index}`} className="flex items-center gap-2 rounded-lg border border-line bg-ink/70 px-2.5 py-2 text-xs text-snow">
+                  <StatusDot tone={failed ? "rose" : complete ? "mint" : "spark"} />
+                  <span className="min-w-0 flex-1 truncate">{call.tool}</span>
+                  <span className="text-mist">{failed ? "Failed" : complete ? "Done" : "Activity"}</span>
+                </li>
+              );
+            })}
+          </ul>
+        ) : null}
+      </div>
+    </article>
+  );
+}
+
+function Composer({
+  value,
+  onChange,
+  onSubmit,
+  busy,
+  error,
+  placeholder,
+  submitLabel,
+  compact = false,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  onSubmit: () => void;
+  busy: boolean;
+  error?: string;
+  placeholder: string;
+  submitLabel: string;
+  compact?: boolean;
+}) {
+  return (
+    <div className="border-t border-line bg-ink px-5 py-4">
+      <div className="mx-auto max-w-3xl">
+        {error ? <div className="mb-2"><ErrorNote>{error}</ErrorNote></div> : null}
+        <div className="flex items-end gap-2 rounded-2xl border border-line bg-panel p-2 shadow-sm focus-within:border-spark/50">
+          {compact ? (
+            <input
+              className="min-w-0 flex-1 bg-transparent px-2 py-1.5 text-sm text-snow outline-none placeholder:text-mist/70"
+              placeholder={placeholder}
+              value={value}
+              onChange={(event) => onChange(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" && !event.shiftKey) onSubmit();
+              }}
+            />
+          ) : (
+            <textarea
+              className="min-h-11 min-w-0 flex-1 resize-none bg-transparent px-2 py-2 text-sm text-snow outline-none placeholder:text-mist/70"
+              placeholder={placeholder}
+              value={value}
+              onChange={(event) => onChange(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) onSubmit();
+              }}
+            />
+          )}
+          <Button variant="primary" className="rounded-xl" disabled={busy || !value.trim()} onClick={onSubmit}>
+            {busy ? `${submitLabel}ing…` : submitLabel}
+          </Button>
+        </div>
+        {!compact ? <p className="mt-1.5 px-1 text-[10px] text-mist">⌘ Enter to assign</p> : null}
+      </div>
+    </div>
   );
 }
