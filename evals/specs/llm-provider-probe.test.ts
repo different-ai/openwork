@@ -2,10 +2,15 @@ import { createServer, type Server } from "node:http";
 import { expect } from "vitest";
 import { denFetch } from "@openwork/behaviors";
 import type { DenSession } from "@openwork/behaviors";
-import { inviteMember, server, test } from "@openwork/testkit";
+import { inviteMember, localMysqlIsRunning, server, test } from "@openwork/testkit";
 
 const REQUEST_TIMEOUT_MS = 15_000;
 const MODEL_ID = "team-model";
+const localPlacement = process.env.OPENWORK_EVAL_DAYTONA !== "1" && !process.env.OPENWORK_EVAL_DEN_API_URL?.trim();
+const mysqlOpen = await localMysqlIsRunning();
+const title = localPlacement && !mysqlOpen
+  ? "provider probe classification skipped — needs MySQL on 127.0.0.1:3306"
+  : "organization provider probes classify resolved credentials and stale bindings remain repairable";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -143,7 +148,7 @@ function memberBinding(body: unknown, memberId: string): Record<string, unknown>
   return binding;
 }
 
-test("organization provider probes classify resolved credentials and stale bindings remain repairable", { timeout: 300_000 }, async ({ evidence, place }) => {
+test.skipIf(localPlacement && !mysqlOpen)(title, { timeout: 300_000 }, async ({ evidence, place }) => {
   const runId = `${Date.now().toString(36)}-${process.pid}`;
   const organizationName = `Provider probe ${runId}`;
   const originalKey = `probe-original-${runId}`;
