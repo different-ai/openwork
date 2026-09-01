@@ -39,7 +39,10 @@ app.setName(APP_NAME);
 if (process.platform === "win32") {
   app.setAppUserModelId(APP_IDENTIFIER);
 }
-app.setPath("userData", path.join(app.getPath("appData"), APP_IDENTIFIER));
+app.setPath(
+  "userData",
+  process.env.COWORKER_USER_DATA_DIR?.trim() || path.join(app.getPath("appData"), APP_IDENTIFIER),
+);
 
 const coworkersDir = process.env.COWORKER_HOME_DIR?.trim() || defaultCoworkersDir();
 const serverConfigPath = process.env.COWORKER_SERVER_CONFIG?.trim()
