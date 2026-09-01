@@ -2,16 +2,269 @@
   "version": 1,
   "contracts": [
     {
+      "id": "den.auth-sso-scim",
+      "description": "Den authentication, enterprise SSO, SCIM, login protection, and initial administrator identity",
+      "implementation": [
+        "ee/apps/den-api/src/auth-login-options.ts",
+        "ee/apps/den-api/src/auth-protection.ts",
+        "ee/apps/den-api/src/auth.ts",
+        "ee/apps/den-api/src/initial-admin-bootstrap.ts",
+        "ee/apps/den-api/src/routes/auth/**",
+        "ee/apps/den-api/src/routes/org/scim.ts",
+        "ee/apps/den-api/src/routes/org/sso.ts",
+        "ee/apps/den-api/src/scim.ts",
+        "ee/apps/den-api/src/single-org-signup-policy.ts",
+        "ee/apps/den-api/src/sso-domain-verification.ts",
+        "ee/apps/den-api/src/sso.ts",
+        "ee/apps/den-web/app/(den)/dashboard/_components/scim-screen.tsx",
+        "ee/apps/den-web/app/(den)/dashboard/_components/sso-screen.tsx",
+        "ee/apps/den-web/app/sso/**"
+      ],
+      "specs": [
+        "evals/specs/initial-admin-bootstrap.e2e.test.ts",
+        "evals/specs/login-rate-limit-shared-domain.e2e.test.ts",
+        "evals/specs/scim-okta-lifecycle.e2e.test.ts",
+        "evals/specs/self-host-onboarding.e2e.test.ts",
+        "evals/specs/sso-domain-verification.e2e.test.ts",
+        "evals/specs/sso-invite-sign-in.e2e.test.ts"
+      ]
+    },
+    {
+      "id": "den.brand-appearance",
+      "description": "Organization brand assets, appearance previews, and branded desktop metadata",
+      "implementation": [
+        "apps/desktop/electron/brand-app-name.mjs",
+        "apps/desktop/electron/brand-icon-darwin.mjs",
+        "apps/desktop/electron/brand-icon-windows.mjs",
+        "ee/apps/den-api/src/brand-asset-storage.ts",
+        "ee/apps/den-api/src/brand-assets.ts",
+        "ee/apps/den-api/src/routes/org/brand-assets.ts",
+        "ee/apps/den-web/app/(den)/dashboard/_components/brand-appearance-screen.tsx"
+      ],
+      "specs": [
+        "evals/specs/brand-appearance-preview-removal.e2e.test.ts"
+      ]
+    },
+    {
+      "id": "den.connections-integrations",
+      "description": "Organization connectors, OAuth integration lifecycle, account choice, and connection diagnostics",
+      "implementation": [
+        "ee/apps/den-api/src/capability-sources/**",
+        "ee/apps/den-api/src/routes/org/google-workspace.ts",
+        "ee/apps/den-api/src/routes/org/mcp-connections.ts",
+        "ee/apps/den-api/src/routes/org/microsoft-365.ts",
+        "ee/apps/den-api/src/routes/org/oauth-providers.ts",
+        "ee/apps/den-web/app/(den)/dashboard/_components/connector-quick-add-grid.tsx",
+        "ee/apps/den-web/app/(den)/dashboard/_components/integration-connect-dialog.tsx",
+        "ee/apps/den-web/app/(den)/dashboard/_components/integrations-screen.tsx",
+        "ee/apps/den-web/app/(den)/dashboard/_components/mcp-connections-screen.tsx",
+        "ee/apps/den-web/app/(den)/dashboard/_components/your-connections-screen.tsx"
+      ],
+      "specs": [
+        "evals/specs/connectors-quick-add.e2e.test.ts",
+        "evals/specs/google-workspace-direct-uploads.e2e.test.ts",
+        "evals/specs/google-workspace-multi-account.e2e.test.ts",
+        "evals/specs/org-connection-lifecycle.e2e.test.ts",
+        "evals/specs/org-connector-two-members.e2e.test.ts",
+        "evals/specs/slack-style-mcp-connector.e2e.test.ts",
+        "evals/specs/telegram-removed.e2e.test.ts"
+      ]
+    },
+    {
+      "id": "den.dashboard-admin",
+      "description": "Den administration navigation, managed dashboards, deployment gates, and tool testing",
+      "implementation": [
+        "ee/apps/den-api/src/routes/admin/**",
+        "ee/apps/den-api/src/routes/org/dashboards.ts",
+        "ee/apps/den-web/app/(den)/dashboard/(admin)/tool-tester/**",
+        "ee/apps/den-web/app/(den)/dashboard/_components/org-dashboard-shell.tsx",
+        "ee/apps/den-web/app/(den)/dashboard/_components/tool-tester/**",
+        "ee/apps/den-web/app/admin/page.tsx",
+        "ee/apps/den-web/components/den-admin-panel.tsx",
+        "ee/packages/den-db/src/schema/dashboards.ts"
+      ],
+      "specs": [
+        "evals/specs/dashboard-deployment-contract.e2e.test.ts",
+        "evals/specs/den-sidebar-footer-pin.e2e.test.ts",
+        "evals/specs/den-sidebar-ia.e2e.test.ts",
+        "evals/specs/org-managed-dashboard-desktop.e2e.test.ts",
+        "evals/specs/tool-tester-page.e2e.test.ts"
+      ]
+    },
+    {
+      "id": "den.install-bootstrap",
+      "description": "Enterprise bootstrap, invitations, install links, downloads, and first-run deployment setup",
+      "implementation": [
+        "ee/apps/den-api/src/desktop-connect-grants.ts",
+        "ee/apps/den-api/src/desktop-connect-link.ts",
+        "ee/apps/den-api/src/desktop-releases.ts",
+        "ee/apps/den-api/src/initial-admin-bootstrap.ts",
+        "ee/apps/den-api/src/install-links.ts",
+        "ee/apps/den-api/src/routes/bootstrap/**",
+        "ee/apps/den-api/src/routes/me/**",
+        "ee/apps/den-api/src/routes/org/install-links.ts",
+        "ee/apps/den-api/src/routes/org/invitations.ts",
+        "ee/apps/den-web/app/(den)/_components/install-screen.tsx",
+        "ee/apps/den-web/app/(den)/_components/join-org-success.tsx",
+        "ee/apps/den-web/app/(den)/install/**",
+        "ee/apps/den-web/app/(den)/join-org/**",
+        "ee/apps/den-web/app/(den)/setup/**",
+        "packages/install-config/**",
+        "packages/openwork-bootstrap/**"
+      ],
+      "specs": [
+        "evals/specs/enterprise-install-guide.e2e.test.ts",
+        "evals/specs/enterprise-invite-install-connect.e2e.test.ts",
+        "evals/specs/initial-admin-bootstrap.e2e.test.ts",
+        "evals/specs/join-org-success-download.e2e.test.ts",
+        "evals/specs/member-dashboard-os-download.e2e.test.ts",
+        "evals/specs/self-host-onboarding.e2e.test.ts"
+      ]
+    },
+    {
+      "id": "den.models-inference",
+      "description": "Managed model providers, BYOK credentials, per-member routing, limits, and model analytics",
+      "implementation": [
+        "ee/apps/den-api/src/inference.ts",
+        "ee/apps/den-api/src/llm/**",
+        "ee/apps/den-api/src/routes/org/inference.ts",
+        "ee/apps/den-api/src/routes/org/llm-provider-access.ts",
+        "ee/apps/den-api/src/routes/org/llm-providers.ts",
+        "ee/apps/den-api/src/routes/telemetry/**",
+        "ee/apps/den-web/app/(den)/dashboard/_components/inference-screen.tsx",
+        "ee/apps/den-web/app/(den)/dashboard/_components/llm-provider-detail-screen.tsx",
+        "ee/apps/den-web/app/(den)/dashboard/_components/llm-provider-editor-screen.tsx",
+        "ee/apps/den-web/app/(den)/dashboard/_components/llm-providers-screen.tsx",
+        "ee/packages/den-db/src/schema/inference.ts"
+      ],
+      "specs": [
+        "evals/specs/admin-model-limits.e2e.test.ts",
+        "evals/specs/azure-byok-live.e2e.test.ts",
+        "evals/specs/cloud-model-infra.e2e.test.ts",
+        "evals/specs/den-litellm-provider.e2e.test.ts",
+        "evals/specs/litellm-per-member-credentials.e2e.test.ts",
+        "evals/specs/litellm-per-member-world.e2e.test.ts",
+        "evals/specs/llm-provider-access-parity.e2e.test.ts",
+        "evals/specs/models-available.e2e.test.ts",
+        "evals/specs/org-model-analytics-desktop.e2e.test.ts",
+        "evals/specs/org-model-analytics.e2e.test.ts"
+      ]
+    },
+    {
+      "id": "den.org-access",
+      "description": "Organization membership, teams, roles, API keys, invitations, and effective access",
+      "implementation": [
+        "ee/apps/den-api/src/api-keys.ts",
+        "ee/apps/den-api/src/organization-access.ts",
+        "ee/apps/den-api/src/organization-member-guards.ts",
+        "ee/apps/den-api/src/organization-member-hooks.ts",
+        "ee/apps/den-api/src/organization-role-hierarchy.ts",
+        "ee/apps/den-api/src/orgs.ts",
+        "ee/apps/den-api/src/routes/org/api-keys.ts",
+        "ee/apps/den-api/src/routes/org/core.ts",
+        "ee/apps/den-api/src/routes/org/invitations.ts",
+        "ee/apps/den-api/src/routes/org/members.ts",
+        "ee/apps/den-api/src/routes/org/roles.ts",
+        "ee/apps/den-api/src/routes/org/teams.ts",
+        "ee/apps/den-web/app/(den)/dashboard/_components/api-keys-screen.tsx",
+        "ee/apps/den-web/app/(den)/dashboard/_components/manage-members-screen.tsx",
+        "ee/apps/den-web/app/(den)/dashboard/_components/team-access-data.tsx",
+        "ee/apps/den-web/app/(den)/dashboard/_components/team-detail-screen.tsx",
+        "ee/packages/den-db/src/schema/org.ts",
+        "ee/packages/den-db/src/schema/teams.ts"
+      ],
+      "specs": [
+        "evals/specs/org-api-key-authenticates.e2e.test.ts",
+        "evals/specs/org-team-lifecycle-critical-path.e2e.test.ts",
+        "evals/specs/role-change-session-survival.e2e.test.ts",
+        "evals/specs/team-access-view.e2e.test.ts"
+      ]
+    },
+    {
+      "id": "den.plugins-marketplaces",
+      "description": "Cloud plugins, skills, marketplaces, GitHub import, and access grants",
+      "implementation": [
+        "ee/apps/den-api/src/mcp/builtin-skills.ts",
+        "ee/apps/den-api/src/mcp/marketplace-capabilities.ts",
+        "ee/apps/den-api/src/mcp/plugin-flow-app.ts",
+        "ee/apps/den-api/src/routes/org/plugin-system/**",
+        "ee/apps/den-web/app/(den)/dashboard/(admin)/marketplaces/**",
+        "ee/apps/den-web/app/(den)/dashboard/_components/github-integration-screen.tsx",
+        "ee/apps/den-web/app/(den)/dashboard/_components/marketplace-detail-screen.tsx",
+        "ee/apps/den-web/app/(den)/dashboard/_components/marketplaces-screen.tsx",
+        "ee/apps/den-web/app/(den)/dashboard/_components/plugin-access-data.tsx",
+        "ee/apps/den-web/app/(den)/dashboard/_components/plugin-access-section.tsx",
+        "ee/apps/den-web/app/(den)/dashboard/_components/plugin-detail-screen.tsx",
+        "ee/apps/den-web/app/(den)/dashboard/_components/plugins-screen.tsx",
+        "ee/packages/den-db/src/schema/sharables/**"
+      ],
+      "specs": [
+        "evals/specs/config-object-large-skill.e2e.test.ts",
+        "evals/specs/github-connector-import.e2e.test.ts",
+        "evals/specs/github-sync-self-healing.e2e.test.ts",
+        "evals/specs/library-authoring-routes.e2e.test.ts",
+        "evals/specs/marketplace-catalog-legibility.e2e.test.ts",
+        "evals/specs/plugin-access-panel.e2e.test.ts",
+        "evals/specs/team-access-view.e2e.test.ts"
+      ]
+    },
+    {
+      "id": "den.runtime-deployment",
+      "description": "Den deployment routing, split origins, availability, outage recovery, and enterprise TLS",
+      "implementation": [
+        "apps/desktop/electron/runtime.mjs",
+        "apps/desktop/electron/system-ca.mjs",
+        "apps/server/src/enterprise-den-origin.ts",
+        "ee/apps/den-api/src/env.ts",
+        "ee/apps/den-api/src/openwork-web-access.ts",
+        "ee/apps/den-api/src/openwork-web-availability.ts",
+        "ee/apps/den-api/src/request-url.ts",
+        "ee/apps/den-api/src/routes/version/**",
+        "ee/apps/den-web/next.config.js",
+        "ee/apps/den-web/proxy.ts"
+      ],
+      "specs": [
+        "evals/specs/app-den-tls-fault.e2e.test.ts",
+        "evals/specs/den-behind-enterprise-tls.e2e.test.ts",
+        "evals/specs/den-intermittent-outage-recovery.e2e.test.ts",
+        "evals/specs/den-split-origin-runtime-config.e2e.test.ts"
+      ]
+    },
+    {
+      "id": "den.workflow-receipts",
+      "description": "Workflow execution receipts, promotion, and generated Artifact views",
+      "implementation": [
+        "ee/apps/den-api/src/mcp/codemode-run.ts",
+        "ee/apps/den-api/src/mcp/generated-artifact-views.ts",
+        "ee/apps/den-api/src/mcp/workflow-service.ts",
+        "ee/apps/den-api/src/routes/org/codemode-runs.ts",
+        "ee/apps/den-api/src/routes/org/codemode-scripts.ts",
+        "ee/apps/den-api/src/workflow-runs.ts",
+        "ee/apps/den-api/src/workflows.ts",
+        "ee/packages/den-db/src/schema/workflows.ts"
+      ],
+      "specs": [
+        "evals/specs/generated-artifact-views.e2e.test.ts",
+        "evals/specs/saved-script-automations.e2e.test.ts",
+        "evals/specs/workflows.e2e.test.ts"
+      ]
+    },
+    {
       "id": "desktop.automations",
       "description": "Desktop Automation navigation, editing, execution, and needs-attention behavior",
       "implementation": [
         "apps/app/src/react-app/domains/automations/**",
         "apps/app/src/react-app/shell/session-route.tsx",
         "apps/app/src/react-app/shell/workspace-routes.ts",
+        "apps/desktop/electron/automation-runner.mjs",
         "ee/apps/den-api/src/automations/**",
-        "ee/apps/den-api/src/routes/automations/**"
+        "ee/apps/den-api/src/routes/automations/**",
+        "packages/automations/**"
       ],
       "specs": [
+        "evals/specs/automation-deployment-gate.e2e.test.ts",
+        "evals/specs/automation-desktop-lifecycle.e2e.test.ts",
+        "evals/specs/automation-desktop-recovery-window.e2e.test.ts",
         "evals/specs/automation-model-needs-attention.e2e.test.ts",
         "evals/specs/automation-proposal-model-resolution.e2e.test.ts",
         "evals/specs/automation-revision-revert.e2e.test.ts",
@@ -21,39 +274,277 @@
       ]
     },
     {
-      "id": "den.workflow-receipts",
-      "description": "Workflow execution receipts, promotion, and generated Artifact views",
+      "id": "desktop.chat-composer",
+      "description": "Desktop chat rendering, composer drafts, queued sends, attachments, and resend behavior",
       "implementation": [
-        "ee/apps/den-api/src/workflow-runs.ts",
-        "ee/apps/den-api/src/workflows.ts",
-        "ee/apps/den-api/src/mcp/codemode-run.ts",
-        "ee/apps/den-api/src/mcp/generated-artifact-views.ts",
-        "ee/apps/den-api/src/mcp/workflow-service.ts",
-        "ee/apps/den-api/src/routes/org/codemode-runs.ts",
-        "ee/apps/den-api/src/routes/org/codemode-scripts.ts",
-        "ee/packages/den-db/src/schema/workflows.ts"
+        "apps/app/src/react-app/domains/session/chat/**",
+        "apps/app/src/react-app/domains/session/surface/**",
+        "apps/app/src/react-app/domains/session/sync/**"
       ],
       "specs": [
-        "evals/specs/workflows.e2e.test.ts",
-        "evals/specs/generated-artifact-views.e2e.test.ts",
-        "evals/specs/saved-script-automations.e2e.test.ts"
+        "evals/specs/attachment-upload-loading-state.e2e.test.ts",
+        "evals/specs/chat-loading-shimmer.e2e.test.ts",
+        "evals/specs/chat-render-cycle-stability.e2e.test.ts",
+        "evals/specs/chat-survives-flaky-den-link.e2e.test.ts",
+        "evals/specs/clamp-html-errors.e2e.test.ts",
+        "evals/specs/composer-draft-reload.e2e.test.ts",
+        "evals/specs/composer-focus-continuity.e2e.test.ts",
+        "evals/specs/composer-queued-drain-while-away.e2e.test.ts",
+        "evals/specs/composer-queued-follow-ups-sequential.e2e.test.ts",
+        "evals/specs/cross-workspace-composer-switch.e2e.test.ts",
+        "evals/specs/safe-edit-resend.e2e.test.ts",
+        "evals/specs/unfinished-tool-lifecycle.e2e.test.ts"
       ]
     },
     {
-      "id": "evals.mock-placement",
-      "description": "Local and Daytona mock placement, authentication, and eligibility",
+      "id": "desktop.connect-library",
+      "description": "Desktop Library inventory, OpenWork Connect readiness, MCP setup, and managed credential recovery",
       "implementation": [
-        "evals/packages/testkit/src/mock.ts",
-        "evals/packages/testkit/src/needs.ts",
-        "evals/packages/testkit/src/place.ts",
-        "evals/packages/testkit/src/server.ts",
-        "evals/packages/hosts/src/provision.ts"
+        "apps/app/src/react-app/domains/connections/**",
+        "apps/app/src/react-app/domains/settings/extension-items.ts",
+        "apps/app/src/react-app/domains/settings/extension-registry.tsx",
+        "apps/app/src/react-app/domains/settings/extension-state.ts",
+        "apps/app/src/react-app/domains/settings/library.ts",
+        "apps/app/src/react-app/domains/settings/pages/add-library-item-modal.tsx",
+        "apps/app/src/react-app/domains/settings/pages/advanced-view.tsx",
+        "apps/app/src/react-app/domains/settings/pages/extensions-view.tsx",
+        "apps/app/src/react-app/domains/settings/pages/library-add-control.tsx",
+        "apps/app/src/react-app/domains/settings/pages/library-add-kind-picker.tsx",
+        "apps/app/src/react-app/domains/settings/pages/mcp-view.tsx",
+        "apps/app/src/react-app/domains/settings/pages/plugins-view.tsx",
+        "apps/server/src/connect-mcp-server-catalog.ts",
+        "apps/server/src/connect-mcp-transport.ts",
+        "apps/server/src/connect-skill-catalog.ts",
+        "apps/server/src/connect-state.ts",
+        "apps/server/src/local-managed-mcp.ts"
       ],
       "specs": [
-        "evals/specs/workflows.e2e.test.ts",
+        "evals/specs/cloud-mcp-provider-capability-submit.e2e.test.ts",
+        "evals/specs/composer-connections-menu.e2e.test.ts",
+        "evals/specs/connect-policy-runtime-restart.e2e.test.ts",
+        "evals/specs/connect-readiness-preseeded.e2e.test.ts",
+        "evals/specs/connect-state-provenance.e2e.test.ts",
+        "evals/specs/connector-tool-call-branding.e2e.test.ts",
+        "evals/specs/library-add-connector-discovery.e2e.test.ts",
+        "evals/specs/library-add-session-restore.e2e.test.ts",
+        "evals/specs/library-advanced-refresh.e2e.test.ts",
+        "evals/specs/library-authoring-routes.e2e.test.ts",
+        "evals/specs/library-config-read-budget.e2e.test.ts",
+        "evals/specs/library-mcp-connect-error.e2e.test.ts",
+        "evals/specs/library-signed-in-render-stability.e2e.test.ts",
+        "evals/specs/library-state-tabs.e2e.test.ts",
+        "evals/specs/library-view.e2e.test.ts",
         "evals/specs/local-managed-mcp-oauth.e2e.test.ts",
-        "evals/specs/saved-script-automations.e2e.test.ts",
-        "evals/specs/testkit-selftest.e2e.test.ts"
+        "evals/specs/managed-vault-recovery.e2e.test.ts"
+      ]
+    },
+    {
+      "id": "desktop.dashboard",
+      "description": "Desktop Dashboard availability, organization grants, tile caching, and refresh",
+      "implementation": [
+        "apps/app/src/react-app/domains/dashboard/**"
+      ],
+      "specs": [
+        "evals/specs/dashboard-deployment-gate.e2e.test.ts",
+        "evals/specs/org-managed-dashboard-desktop.e2e.test.ts"
+      ]
+    },
+    {
+      "id": "desktop.onboarding-cloud-auth",
+      "description": "Desktop welcome, first workspace, Cloud sign-in, organization join, and bootstrap state",
+      "implementation": [
+        "apps/app/src/react-app/domains/cloud/den-auth-provider.tsx",
+        "apps/app/src/react-app/domains/cloud/den-signin-surface.tsx",
+        "apps/app/src/react-app/domains/cloud/desktop-config-provider.tsx",
+        "apps/app/src/react-app/domains/cloud/enterprise-activation-gate.tsx",
+        "apps/app/src/react-app/domains/cloud/forced-signin-page.tsx",
+        "apps/app/src/react-app/domains/cloud/join-organization-dialog.tsx",
+        "apps/app/src/react-app/domains/cloud/org-onboarding-page.tsx",
+        "apps/app/src/react-app/domains/onboarding/**",
+        "apps/app/src/react-app/shell/den-signin-routing.ts",
+        "apps/app/src/react-app/shell/startup-deep-links.ts",
+        "apps/app/src/react-app/shell/welcome-den-session.ts",
+        "apps/app/src/react-app/shell/welcome-route.tsx"
+      ],
+      "specs": [
+        "evals/specs/first-run-bootstrap-contract.e2e.test.ts",
+        "evals/specs/first-run-cloud-share.e2e.test.ts",
+        "evals/specs/first-run-local.e2e.test.ts",
+        "evals/specs/first-signin-fresh-profile.e2e.test.ts",
+        "evals/specs/welcome-one-field.e2e.test.ts"
+      ]
+    },
+    {
+      "id": "desktop.providers-models",
+      "description": "Desktop provider synchronization, model availability, model selection, and reload deferral",
+      "implementation": [
+        "apps/app/src/react-app/domains/cloud/openwork-models-promo.ts",
+        "apps/app/src/react-app/domains/cloud/use-cloud-provider-auto-sync.ts",
+        "apps/app/src/react-app/domains/session/modals/model-picker-modal.tsx",
+        "apps/app/src/react-app/domains/session/models/**",
+        "apps/app/src/react-app/domains/session/surface/model-availability.ts",
+        "apps/app/src/react-app/domains/session/surface/session-model-store.ts",
+        "apps/app/src/react-app/domains/session/surface/use-model-behavior.ts",
+        "apps/app/src/react-app/domains/settings/pages/ai-view.tsx",
+        "apps/app/src/react-app/domains/settings/pages/cloud-providers-view.tsx",
+        "apps/app/src/react-app/infra/provider-list-query.ts",
+        "apps/app/src/react-app/shell/new-providers-listener.tsx",
+        "apps/server/src/cloud-provider-sync.ts",
+        "apps/server/src/desktop-cloud-sync.ts",
+        "apps/server/src/managed-provider-auth.ts"
+      ],
+      "specs": [
+        "evals/specs/cloud-provider-auto-import.e2e.test.ts",
+        "evals/specs/cloud-provider-before-workspace.e2e.test.ts",
+        "evals/specs/cloud-provider-sync-contract.e2e.test.ts",
+        "evals/specs/composer-model-picker-no-subscribe-promo.e2e.test.ts",
+        "evals/specs/model-lands-mid-run.e2e.test.ts",
+        "evals/specs/models-available.e2e.test.ts",
+        "evals/specs/opencode-unconfigured-notification.e2e.test.ts",
+        "evals/specs/org-model-analytics-desktop.e2e.test.ts",
+        "evals/specs/session-model-availability.e2e.test.ts",
+        "evals/specs/subagent-run-survives-provider-sync-storm.e2e.test.ts"
+      ]
+    },
+    {
+      "id": "desktop.render-recovery",
+      "description": "Desktop shell boot, render-cycle protection, process recovery, and blank-window resilience",
+      "implementation": [
+        "apps/app/src/react-app/shell/app-root.tsx",
+        "apps/app/src/react-app/shell/boot-state.tsx",
+        "apps/app/src/react-app/shell/loading-overlay.tsx",
+        "apps/app/src/react-app/shell/react-render-watchdog-overlay.tsx",
+        "apps/app/src/react-app/shell/react-render-watchdog.ts",
+        "apps/app/src/react-app/shell/reload-coordinator.tsx",
+        "apps/desktop/electron/process-resilience.mjs",
+        "apps/desktop/electron/recovery.mjs"
+      ],
+      "specs": [
+        "evals/specs/app-smoke.e2e.test.ts",
+        "evals/specs/desktop-render-cycle-stability.e2e.test.ts",
+        "evals/specs/desktop-renderer-crash-recovery.e2e.test.ts",
+        "evals/specs/reliable-app-recovery.e2e.test.ts"
+      ]
+    },
+    {
+      "id": "desktop.sessions-engine",
+      "description": "Session lifecycle, engine freshness, run continuity, loading state, and completion reconciliation",
+      "implementation": [
+        "apps/app/src/react-app/domains/session/control/**",
+        "apps/app/src/react-app/domains/session/panel/**",
+        "apps/app/src/react-app/domains/session/search/**",
+        "apps/app/src/react-app/domains/session/status/**",
+        "apps/app/src/react-app/domains/session/surface/session-admission-outcome.ts",
+        "apps/app/src/react-app/domains/session/surface/session-render-state.ts",
+        "apps/app/src/react-app/domains/session/sync/run-state.ts",
+        "apps/app/src/react-app/domains/session/sync/runtime-sync.tsx",
+        "apps/app/src/react-app/domains/session/sync/session-sync.ts",
+        "apps/app/src/react-app/domains/session/terminal/**",
+        "apps/app/src/react-app/shell/engine-reload-escalation.ts",
+        "apps/app/src/react-app/shell/session-memory.ts",
+        "apps/app/src/react-app/shell/session-route.tsx",
+        "apps/app/src/react-app/shell/session-search-dialog.tsx",
+        "apps/server/src/engine-pool.ts",
+        "apps/server/src/engine-reload-defer.ts",
+        "apps/server/src/file-sessions.ts",
+        "apps/server/src/session-groups.ts"
+      ],
+      "specs": [
+        "evals/specs/active-session-workspace-storm.e2e.test.ts",
+        "evals/specs/engine-restart-turn-freshness.e2e.test.ts",
+        "evals/specs/engine-rollover-session-survival.e2e.test.ts",
+        "evals/specs/live-tool-visible-after-session-switch.e2e.test.ts",
+        "evals/specs/responsive-session-layout.e2e.test.ts",
+        "evals/specs/session-admission-no-result-recovery.e2e.test.ts",
+        "evals/specs/session-archive-button.e2e.test.ts",
+        "evals/specs/session-completion-reconciliation.e2e.test.ts",
+        "evals/specs/session-loading-idle.e2e.test.ts",
+        "evals/specs/session-switch-settings-runtime.e2e.test.ts",
+        "evals/specs/session-title-failure-warning.e2e.test.ts",
+        "evals/specs/settings-visit-live-run-continuity.e2e.test.ts",
+        "evals/specs/task-activity-shimmer.e2e.test.ts",
+        "evals/specs/unfinished-tool-lifecycle.e2e.test.ts"
+      ]
+    },
+    {
+      "id": "desktop.sidebar-navigation",
+      "description": "Desktop sidebar destinations, session titles, primary actions, layout clearance, and workspace ordering",
+      "implementation": [
+        "apps/app/src/react-app/domains/session/sidebar/**",
+        "apps/app/src/react-app/shell/app-menu.tsx",
+        "apps/app/src/react-app/shell/workspace-shell-layout.ts"
+      ],
+      "specs": [
+        "evals/specs/mac-sidebar-toggle-clearance.e2e.test.ts",
+        "evals/specs/sidebar-primary-actions.e2e.test.ts",
+        "evals/specs/sidebar-title-overflow-fade.e2e.test.ts",
+        "evals/specs/workspace-new-task-hit-target.e2e.test.ts",
+        "evals/specs/workspace-sidebar-order.e2e.test.ts"
+      ]
+    },
+    {
+      "id": "desktop.skills-artifacts",
+      "description": "Local skills, plugin authoring sessions, Artifact browsing, Markdown editing, and Mermaid rendering",
+      "implementation": [
+        "apps/app/src/react-app/domains/session/artifacts/**",
+        "apps/app/src/react-app/domains/session/surface/markdown.tsx",
+        "apps/app/src/react-app/domains/settings/pages/plugins-view.tsx",
+        "apps/server/src/claude-plugin-bundle.ts",
+        "apps/server/src/cloud-plugins.ts",
+        "apps/server/src/skills.ts"
+      ],
+      "specs": [
+        "evals/specs/artifact-code-browser.e2e.test.ts",
+        "evals/specs/markdown-editor-autosave.e2e.test.ts",
+        "evals/specs/mermaid-rendering.e2e.test.ts",
+        "evals/specs/skill-authoring-session-freshness.e2e.test.ts",
+        "evals/specs/skills-local.e2e.test.ts"
+      ]
+    },
+    {
+      "id": "desktop.updater-platform",
+      "description": "Desktop update channels, release compatibility, verified recovery, and platform installation boundaries",
+      "implementation": [
+        "apps/app/src/app/lib/release-channels.ts",
+        "apps/app/src/react-app/domains/settings/pages/recovery-view.tsx",
+        "apps/app/src/react-app/domains/settings/pages/updates-view.tsx",
+        "apps/app/src/react-app/domains/settings/state/electron-updater-state.ts",
+        "apps/app/src/react-app/domains/settings/state/update-check-request.ts",
+        "apps/desktop/electron/desktop-distribution.mjs",
+        "apps/desktop/electron/recovery.mjs",
+        "apps/desktop/electron/updater.mjs",
+        "ee/apps/den-api/src/desktop-releases.ts",
+        "evals/packages/labs/src/release-feed.ts"
+      ],
+      "specs": [
+        "evals/specs/alpha-update-eligibility.e2e.test.ts",
+        "evals/specs/compatible-release-picker.e2e.test.ts",
+        "evals/specs/reliable-app-recovery.e2e.test.ts",
+        "evals/specs/updater-channel-selection.e2e.test.ts"
+      ]
+    },
+    {
+      "id": "desktop.workspaces",
+      "description": "Workspace creation, switching, sharing, split views, route state, and authentication coherence",
+      "implementation": [
+        "apps/app/src/react-app/domains/workspace/**",
+        "apps/app/src/react-app/shell/route-workspaces.ts",
+        "apps/app/src/react-app/shell/use-workspace-route-state.ts",
+        "apps/app/src/react-app/shell/workspace-provider.ts",
+        "apps/app/src/react-app/shell/workspace-routes.ts",
+        "apps/desktop/electron/workspace-archive.mjs",
+        "apps/desktop/electron/workspace-store.mjs",
+        "apps/server/src/workspaces.ts"
+      ],
+      "specs": [
+        "evals/specs/active-session-workspace-storm.e2e.test.ts",
+        "evals/specs/cross-workspace-composer-switch.e2e.test.ts",
+        "evals/specs/cross-workspace-split-view.e2e.test.ts",
+        "evals/specs/first-run-cloud-share.e2e.test.ts",
+        "evals/specs/workspace-new-task-hit-target.e2e.test.ts",
+        "evals/specs/workspace-sidebar-order.e2e.test.ts",
+        "evals/specs/workspace-storm-auth-coherence.e2e.test.ts",
+        "evals/specs/workspace-switch-task-survival.e2e.test.ts"
       ]
     },
     {
@@ -61,14 +552,119 @@
       "description": "Daytona E2E regression selection, placement, batching, and shared-stack lifecycle",
       "implementation": [
         ".github/workflows/daytona-e2e-regression-suite.yml",
+        "evals/packages/hosts/src/daytona.ts",
+        "evals/packages/hosts/src/provision.ts",
         "evals/runner/prepare-stack.ts",
         "evals/runner/stack-env.ts",
         "evals/runner/stack-suite.ts"
       ],
       "specs": [
         "evals/specs/spec-impact.test.ts",
-        "evals/specs/testkit-selftest.e2e.test.ts"
+        "evals/specs/testkit-selftest.e2e.test.ts",
+        "evals/specs/two-daytona-desktops.e2e.test.ts"
       ]
+    },
+    {
+      "id": "evals.mock-placement",
+      "description": "Local and Daytona mock placement, authentication, and eligibility",
+      "implementation": [
+        "evals/packages/hosts/src/den-stack.ts",
+        "evals/packages/hosts/src/desktop.ts",
+        "evals/packages/hosts/src/local.ts",
+        "evals/packages/hosts/src/provision.ts",
+        "evals/packages/labs/src/mock-mcp.ts",
+        "evals/packages/testkit/src/fixture.ts",
+        "evals/packages/testkit/src/stack.ts",
+        "evals/packages/testkit/src/state.ts"
+      ],
+      "specs": [
+        "evals/specs/local-managed-mcp-oauth.e2e.test.ts",
+        "evals/specs/saved-script-automations.e2e.test.ts",
+        "evals/specs/testkit-app-boot.e2e.test.ts",
+        "evals/specs/testkit-selftest.e2e.test.ts",
+        "evals/specs/workflows.e2e.test.ts"
+      ]
+    },
+    {
+      "id": "evals.world-headless",
+      "description": "Script-world loading, headless app lifecycle, seeded sessions, and Kind placement",
+      "implementation": [
+        "evals/packages/env/src/network-world.ts",
+        "evals/packages/testkit/src/stack.ts",
+        "packages/world/src/**",
+        "worlds/dev-headless.ts"
+      ],
+      "specs": [
+        "evals/specs/headless-world-lifecycle.e2e.test.ts",
+        "evals/specs/world-kind-den.e2e.test.ts",
+        "evals/specs/world-sessions.e2e.test.ts"
+      ]
+    },
+    {
+      "id": "mcp.agent-capabilities",
+      "description": "OpenWork Cloud MCP authentication, capability search, invocation, and scale behavior",
+      "implementation": [
+        "ee/apps/den-api/src/mcp/agent-http.ts",
+        "ee/apps/den-api/src/mcp/agent.ts",
+        "ee/apps/den-api/src/mcp/auth.ts",
+        "ee/apps/den-api/src/mcp/capability-registry.ts",
+        "ee/apps/den-api/src/mcp/catalog.ts",
+        "ee/apps/den-api/src/mcp/external-capabilities.ts",
+        "ee/apps/den-api/src/mcp/invoke.ts",
+        "ee/apps/den-api/src/mcp/native-capabilities.ts",
+        "ee/apps/den-api/src/mcp/search.ts",
+        "ee/apps/den-api/src/routes/mcp/**"
+      ],
+      "specs": [
+        "evals/specs/capability-search-latency.e2e.test.ts",
+        "evals/specs/capability-search-scale.e2e.test.ts",
+        "evals/specs/cloud-mcp-provider-capability-submit.e2e.test.ts",
+        "evals/specs/opencode-mcp-agent-oauth.e2e.test.ts"
+      ]
+    },
+    {
+      "id": "mcp.apps-remote",
+      "description": "Remote MCP Apps, inline hosting, connection actions, skill-created Apps, and branded tool calls",
+      "implementation": [
+        "apps/server/src/mcp-app-host.ts",
+        "apps/server/src/mcp-app-sandbox.ts",
+        "ee/apps/den-api/src/mcp/connection-action-app.ts",
+        "ee/apps/den-api/src/mcp/mcp-app-v2.ts",
+        "ee/apps/den-api/src/mcp/resource.ts",
+        "ee/apps/den-api/src/mcp/skill-created-app.ts",
+        "ee/apps/den-api/src/remote-mcp-apps.ts",
+        "ee/apps/den-api/src/routes/org/remote-mcp-apps.ts",
+        "packages/mcp-apps/**"
+      ],
+      "specs": [
+        "evals/specs/connection-action-mcp-app.e2e.test.ts",
+        "evals/specs/connector-tool-call-branding.e2e.test.ts",
+        "evals/specs/mcp-app-inline-host.e2e.test.ts",
+        "evals/specs/remote-mcp-apps.e2e.test.ts",
+        "evals/specs/skill-created-mcp-app.e2e.test.ts"
+      ]
+    },
+    {
+      "id": "remote.sessions",
+      "description": "Remote session capabilities, desktop runner commands, presence, and real server execution",
+      "implementation": [
+        "ee/apps/den-api/src/mcp/remote-session-capabilities.ts",
+        "ee/apps/den-api/src/remote-sessions/**",
+        "ee/apps/den-api/src/routes/workers/**",
+        "ee/packages/den-db/src/schema/remote-session-commands.ts",
+        "worlds/remote-session.ts"
+      ],
+      "specs": [
+        "evals/specs/remote-session-desktop-command.e2e.test.ts",
+        "evals/specs/remote-session-desktop-runner.e2e.test.ts",
+        "evals/specs/remote-session-real-server.e2e.test.ts"
+      ]
+    }
+  ],
+  "unmapped": [
+    {
+      "spec": "evals/specs/daytona-k3s-live.e2e.test.ts",
+      "reason": "Validates the externally provisioned Daytona k3s provider image rather than a repository implementation surface."
     }
   ]
 }

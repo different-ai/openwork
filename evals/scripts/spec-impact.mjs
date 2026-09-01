@@ -24,7 +24,7 @@ export function validateSnapshot(value) {
   const rawContracts = Reflect.get(value, "contracts")
   if (!Array.isArray(rawContracts) || rawContracts.length === 0) throw new Error("snapshot contracts must be a non-empty array")
   const ids = new Set()
-  return rawContracts.map((contract, index) => {
+  const contracts = rawContracts.map((contract, index) => {
     if (typeof contract !== "object" || contract === null || Array.isArray(contract)) {
       throw new Error(`contracts[${index}] must be an object`)
     }
@@ -43,6 +43,25 @@ export function validateSnapshot(value) {
       specs: strings(Reflect.get(contract, "specs"), `${id}.specs`),
     }
   })
+  const rawUnmapped = Reflect.get(value, "unmapped")
+  if (rawUnmapped !== undefined) {
+    if (!Array.isArray(rawUnmapped)) throw new Error("snapshot unmapped must be an array")
+    const unmappedSpecs = new Set()
+    const mappedSpecs = new Set(contracts.flatMap((contract) => contract.specs))
+    rawUnmapped.forEach((entry, index) => {
+      if (typeof entry !== "object" || entry === null || Array.isArray(entry)) {
+        throw new Error(`unmapped[${index}] must be an object`)
+      }
+      const spec = Reflect.get(entry, "spec")
+      const reason = Reflect.get(entry, "reason")
+      if (typeof spec !== "string" || spec.length === 0) throw new Error(`unmapped[${index}].spec must be a non-empty string`)
+      if (typeof reason !== "string" || reason.length === 0) throw new Error(`unmapped[${index}].reason must be a non-empty string`)
+      if (unmappedSpecs.has(spec)) throw new Error(`duplicate unmapped spec: ${spec}`)
+      if (mappedSpecs.has(spec)) throw new Error(`unmapped spec is also mapped by a contract: ${spec}`)
+      unmappedSpecs.add(spec)
+    })
+  }
+  return contracts
 }
 
 export function analyzeImpact(contracts, changedFiles) {
