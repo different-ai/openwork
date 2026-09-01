@@ -176,11 +176,11 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
     depth: { animationName: "coworker-depth-turn", animationDuration: "8.8s" },
     features: { animationName: "coworker-feature-turn", animationDuration: "8.8s" },
     gaze: { animationName: "coworker-gaze-turn", animationDuration: "8.8s" },
-    pupils: { animationName: "coworker-blink", animationDuration: "8.8s" },
+    pupils: { animationName: "coworker-blink", animationDuration: "8.2s", animationDelay: "-1.4s" },
     glasses: true,
   });
   if (!isRecord(avatarMotion)) throw new Error("Scout avatar motion layers were unavailable.");
-  const animatedLayers = ["body", "depth", "features", "gaze", "pupils"]
+  const animatedLayers = ["body", "depth", "features", "gaze"]
     .map((key) => avatarMotion[key])
     .filter(isRecord);
   expect(new Set(animatedLayers.map((layer) => layer.animationDelay)).size).toBe(1);
@@ -212,7 +212,7 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   expect(coworkerGaze.lookY).toBeLessThanOrEqual(0.9);
   evidence.recordAssertionEvidence(
     "The coworker avatar coordinates its head turn and keeps a restrained eye on the pointer",
-    "Scout's body, rear depth, glasses/features, gaze, and blink shared the same 8.8 second phase, while only the nested pupil layer followed a lower-left pointer within 1.5px horizontal and 0.9px vertical caps.",
+    "Scout's body, rear depth, glasses/features, and gaze shared one restrained head-turn phase; its blink used an independent cadence while only the nested pupil layer followed a lower-left pointer within 1.5px horizontal and 0.9px vertical caps.",
     true,
   );
   const storedCoworker = await invokeCoworker(app, "coworkers.get", { slug: "scout" });
@@ -231,6 +231,55 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
     "The renderer-created Scout record round-tripped through the main-process bridge with violet color, soft-square glasses, a native workspace id, and opencode/big-pickle.",
     true,
   );
+
+  const secondCoworker = await invokeCoworker(app, "coworkers.create", {
+    name: "Nova",
+    role: "Research partner",
+    mission: "Keep research work moving.",
+    avatarColor: "mint",
+    avatarGlasses: "round",
+  });
+  expect(secondCoworker).toMatchObject({ ok: true, result: { slug: "nova" } });
+  await evalIn(app, "location.reload(); true");
+  await waitForText(app, "Nova", { timeoutMs: 120_000 });
+  const railAvatars = await evalIn(app, `(() => {
+    const avatars = [...document.querySelectorAll("aside nav svg.coworker-avatar")];
+    window.dispatchEvent(new PointerEvent("pointermove", {
+      clientX: window.innerWidth - 2,
+      clientY: window.innerHeight / 2,
+    }));
+    return new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve(
+      avatars.map((avatar) => {
+        const pupils = avatar.querySelector(".coworker-avatar__pupils");
+        const blink = pupils ? getComputedStyle(pupils) : null;
+        return {
+          name: avatar.getAttribute("aria-label"),
+          animated: avatar.classList.contains("is-animated"),
+          blinkName: blink?.animationName ?? "",
+          blinkDuration: blink?.animationDuration ?? "",
+          blinkDelay: blink?.animationDelay ?? "",
+          lookX: Number.parseFloat(avatar.style.getPropertyValue("--avatar-look-x")),
+        };
+      }),
+    ))));
+  })()`, { awaitPromise: true });
+  expect(railAvatars).toHaveLength(2);
+  expect(railAvatars).toEqual(expect.arrayContaining([
+    expect.objectContaining({ name: "Scout avatar", animated: true, blinkName: "coworker-blink", blinkDuration: "8.2s", blinkDelay: "-1.4s" }),
+    expect.objectContaining({ name: "Nova avatar", animated: true, blinkName: "coworker-blink", blinkDuration: "10.5s", blinkDelay: "-8.2s" }),
+  ]));
+  if (!Array.isArray(railAvatars) || !railAvatars.every(isRecord)) {
+    throw new Error("Left-rail coworker motion was unavailable.");
+  }
+  expect(railAvatars.every((avatar) => typeof avatar.lookX === "number" && avatar.lookX > 0)).toBe(true);
+  expect(new Set(railAvatars.map((avatar) => avatar.blinkDuration)).size).toBe(2);
+  evidence.recordAssertionEvidence(
+    "Every coworker in the left rail watches the pointer and blinks independently",
+    "Scout and Nova both moved only their pupil layer toward the same right-side pointer, stayed animated while unselected, and used different deterministic blink durations and offsets so the team never blinked in sync.",
+    true,
+  );
+  await clickButtonContaining(app, "Scout");
+  await waitForText(app, "Work with Scout", { timeoutMs: 30_000 });
 
   const footerPlacement = await evalIn(app, `(() => {
     const button = document.querySelector('button[title="OpenWork account and settings"]');
