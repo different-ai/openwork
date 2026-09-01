@@ -50,7 +50,7 @@ export interface DesktopOptions {
   };
   env?: Record<string, string>;
   /** Root package script used for a source Electron launch. */
-  devCommand?: "dev" | "dev:electron";
+  devCommand?: "dev" | "dev:electron" | "dev:coworker";
   /** Skip host-side sidecar/helper preparation for an explicitly constrained launch. */
   prepareSharedResources?: boolean;
   /** Exact caller-owned Electron profile root, for restart scenarios. */

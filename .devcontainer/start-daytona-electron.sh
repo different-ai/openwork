@@ -83,4 +83,18 @@ if [ -n "${OPENWORK_EVAL_ELECTRON_BINARY:-}" ]; then
   exec "$OPENWORK_EVAL_ELECTRON_BINARY"
 fi
 
-exec pnpm --filter @openwork/desktop dev:electron
+case "${OPENWORK_EVAL_ELECTRON_DEV_COMMAND:-dev:electron}" in
+  dev:coworker)
+    exec pnpm --filter @openwork/coworker dev
+    ;;
+  dev)
+    exec pnpm dev
+    ;;
+  dev:electron)
+    exec pnpm --filter @openwork/desktop dev:electron
+    ;;
+  *)
+    echo "Unsupported Electron dev command: ${OPENWORK_EVAL_ELECTRON_DEV_COMMAND}" >&2
+    exit 2
+    ;;
+esac
