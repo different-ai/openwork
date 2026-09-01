@@ -13,10 +13,12 @@ type AutomationEntry = AutomationList["items"][number];
  */
 export function ResponsibilitiesPanel({
   session,
+  bots,
   bot,
   onBotChanged,
 }: {
   session: DenSession;
+  bots: BotSummary[];
   bot: BotSummary;
   onBotChanged: (bot: BotSummary) => void;
 }) {
@@ -40,21 +42,35 @@ export function ResponsibilitiesPanel({
     void refresh();
   }, [refresh]);
 
-  const owned = entries.filter(
-    (entry) => bot.automations.includes(entry.automation.id) || entry.revision.workspaceId === bot.workspaceId,
+  const belongsTo = useCallback(
+    (entry: AutomationEntry, candidate: BotSummary) =>
+      candidate.automations.includes(entry.automation.id) ||
+      Boolean(candidate.workspaceId && entry.revision.workspaceId === candidate.workspaceId),
+    [],
   );
-  const unassigned = entries.filter((entry) => !owned.includes(entry));
+  const owned = entries.filter((entry) => belongsTo(entry, bot));
+  const others = entries.filter((entry) => !owned.includes(entry));
+  const ownerOf = (entry: AutomationEntry) =>
+    bots.find((candidate) => candidate.slug !== bot.slug && belongsTo(entry, candidate)) ?? null;
 
   async function associate(automationId: string) {
-    const updated = await workbot.bots.update(bot.slug, { automations: [...bot.automations, automationId] });
-    onBotChanged(updated);
+    try {
+      const updated = await workbot.bots.update(bot.slug, { automations: [...bot.automations, automationId] });
+      onBotChanged(updated);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    }
   }
 
   async function release(automationId: string) {
-    const updated = await workbot.bots.update(bot.slug, {
-      automations: bot.automations.filter((id) => id !== automationId),
-    });
-    onBotChanged(updated);
+    try {
+      const updated = await workbot.bots.update(bot.slug, {
+        automations: bot.automations.filter((id) => id !== automationId),
+      });
+      onBotChanged(updated);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    }
   }
 
   async function runNow(automationId: string) {
@@ -132,20 +148,27 @@ export function ResponsibilitiesPanel({
           </ul>
         )}
       </Section>
-      {unassigned.length > 0 ? (
+      {others.length > 0 ? (
         <Section title="Other automations in your organization">
           <ul className="divide-y divide-line">
-            {unassigned.map((entry) => (
-              <li key={entry.automation.id} className="flex items-center gap-3 py-2.5">
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm text-snow">{entry.automation.name}</p>
-                  <p className="truncate text-xs text-mist">{describeSchedule(entry.revision.schedule)}</p>
-                </div>
-                <Button variant="ghost" onClick={() => void associate(entry.automation.id)}>
-                  Assign to {bot.name}
-                </Button>
-              </li>
-            ))}
+            {others.map((entry) => {
+              const owner = ownerOf(entry);
+              return (
+                <li key={entry.automation.id} className="flex items-center gap-3 py-2.5">
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm text-snow">{entry.automation.name}</p>
+                    <p className="truncate text-xs text-mist">{describeSchedule(entry.revision.schedule)}</p>
+                  </div>
+                  {owner ? (
+                    <span className="shrink-0 text-xs text-mist">Owned by {owner.name}</span>
+                  ) : (
+                    <Button variant="ghost" onClick={() => void associate(entry.automation.id)}>
+                      Assign to {bot.name}
+                    </Button>
+                  )}
+                </li>
+              );
+            })}
           </ul>
         </Section>
       ) : null}

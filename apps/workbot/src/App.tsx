@@ -14,6 +14,7 @@ export default function App() {
   const [bots, setBots] = useState<BotSummary[]>([]);
   const [selectedSlug, setSelectedSlug] = useState("");
   const [creating, setCreating] = useState(false);
+  const [connecting, setConnecting] = useState(false);
 
   const boot = useCallback(async () => {
     try {
@@ -21,7 +22,9 @@ export default function App() {
       setRuntime(info);
       const list = await workbot.bots.list();
       setBots(list);
-      setSelectedSlug((current) => current || list[0]?.slug || "");
+      setSelectedSlug((current) =>
+        current && list.some((bot) => bot.slug === current) ? current : (list[0]?.slug ?? ""),
+      );
       setBootError("");
     } catch (cause) {
       setBootError(cause instanceof Error ? cause.message : String(cause));
@@ -31,6 +34,11 @@ export default function App() {
   useEffect(() => {
     void boot();
   }, [boot]);
+
+  const refreshRuntime = useCallback(async () => {
+    const info = await workbot.runtimeInfo();
+    setRuntime(info);
+  }, []);
 
   if (bootError) {
     return (
@@ -53,13 +61,17 @@ export default function App() {
     );
   }
 
-  if (!session && !runtime.allowOffline) {
+  const mustSignIn = !session && !runtime.allowOffline;
+  if (mustSignIn || connecting) {
     return (
       <SignInGate
         denBaseUrl={runtime.denBaseUrl}
         onSignedIn={(next) => {
+          writeDenSession(next);
           setSession(next);
+          setConnecting(false);
         }}
+        onDismiss={mustSignIn ? null : () => setConnecting(false)}
       />
     );
   }
@@ -70,26 +82,42 @@ export default function App() {
     setBots((current) => current.map((bot) => (bot.slug === updated.slug ? updated : bot)));
   }
 
+  function removeBotFromList(slug: string) {
+    const remaining = bots.filter((bot) => bot.slug !== slug);
+    setBots(remaining);
+    if (selectedSlug === slug) setSelectedSlug(remaining[0]?.slug ?? "");
+  }
+
   return (
     <div className="flex h-full">
       <WorkerRail
         bots={bots}
-        selectedSlug={selectedSlug}
+        selectedSlug={creating ? "" : selectedSlug}
+        session={session}
         onSelect={(slug) => {
           setCreating(false);
           setSelectedSlug(slug);
         }}
         onNewWorker={() => setCreating(true)}
+        onConnect={() => setConnecting(true)}
+        onSignOut={() => {
+          writeDenSession(null);
+          setSession(null);
+        }}
       />
       {creating || !selected ? (
         <div className="min-w-0 flex-1">
           <NewWorker
-            onCancel={selected ? () => setCreating(false) : null}
+            onCancel={selected || bots.length > 0 ? () => setCreating(false) : null}
             onCreated={(bot) => {
               setCreating(false);
-              setBots((current) => [...current.filter((item) => item.slug !== bot.slug), bot].sort((a, b) => a.name.localeCompare(b.name)));
+              setBots((current) =>
+                [...current.filter((item) => item.slug !== bot.slug), bot].sort((a, b) =>
+                  a.name.localeCompare(b.name),
+                ),
+              );
               setSelectedSlug(bot.slug);
-              void boot();
+              void refreshRuntime();
             }}
           />
         </div>
@@ -98,27 +126,13 @@ export default function App() {
           key={selected.slug}
           runtime={runtime}
           session={session}
+          bots={bots}
           bot={selected}
           onBotChanged={updateBotInList}
-          onRefreshRuntime={async () => {
-            const info = await workbot.runtimeInfo();
-            setRuntime(info);
-          }}
+          onBotRemoved={removeBotFromList}
+          onRefreshRuntime={refreshRuntime}
+          onConnect={() => setConnecting(true)}
         />
-      )}
-      {session ? (
-        <button
-          className="absolute right-3 top-3 text-xs text-mist hover:text-snow"
-          title={`Signed in${session.userEmail ? ` as ${session.userEmail}` : ""}`}
-          onClick={() => {
-            writeDenSession(null);
-            setSession(null);
-          }}
-        >
-          {session.orgName || session.userEmail || "Connected"} · sign out
-        </button>
-      ) : (
-        <p className="absolute right-3 top-3 text-xs text-amber">offline development mode</p>
       )}
     </div>
   );
