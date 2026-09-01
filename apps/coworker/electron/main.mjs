@@ -342,13 +342,24 @@ function rendererUrl() {
 }
 
 async function createMainWindow() {
+  const macWindowChrome = process.platform === "darwin"
+    ? {
+        backgroundColor: "#00000000",
+        hasShadow: true,
+        titleBarStyle: "hiddenInset",
+        trafficLightPosition: { x: 18, y: 18 },
+        transparent: true,
+        vibrancy: "under-window",
+        visualEffectState: "active",
+      }
+    : { backgroundColor: "#fbfaf7" };
   const window = new BrowserWindow({
     width: 1280,
     height: 860,
     minWidth: 960,
     minHeight: 640,
     title: APP_NAME,
-    backgroundColor: "#0c0d10",
+    ...macWindowChrome,
     webPreferences: {
       preload: path.join(__dirname, "preload.mjs"),
       contextIsolation: true,

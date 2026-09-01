@@ -6,15 +6,15 @@ export function Button({
   ...props
 }: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: "default" | "primary" | "ghost" | "danger" }) {
   const styles = {
-    default: "border border-line bg-panel-2 text-snow hover:border-mist/50",
-    primary: "border border-spark/40 bg-spark/15 text-spark hover:bg-spark/25",
-    ghost: "border border-transparent text-mist hover:text-snow hover:border-line",
-    danger: "border border-rose/40 bg-rose/10 text-rose hover:bg-rose/20",
+    default: "border border-white/65 bg-white/38 text-snow shadow-sm hover:bg-white/58 hover:border-white/80",
+    primary: "border border-spark/30 bg-spark/12 text-spark shadow-[0_5px_16px_rgba(49,95,218,0.10),inset_0_1px_0_rgba(255,255,255,0.52)] hover:bg-spark/20",
+    ghost: "border border-transparent text-mist hover:bg-white/32 hover:text-snow hover:border-white/55",
+    danger: "border border-rose/35 bg-rose/10 text-rose hover:bg-rose/18",
   } as const;
   return (
     <button
       {...props}
-      className={`rounded-lg px-3 py-1.5 text-sm font-medium transition-colors duration-150 disabled:cursor-not-allowed disabled:opacity-40 ${styles[variant]} ${className}`}
+      className={`rounded-xl px-3 py-1.5 text-sm font-medium transition-all duration-200 disabled:cursor-not-allowed disabled:opacity-40 ${styles[variant]} ${className}`}
     />
   );
 }
@@ -41,7 +41,7 @@ export function Field({ label, children }: { label: string; children: ReactNode 
 }
 
 export const inputClass =
-  "w-full rounded-md border border-line bg-ink px-3 py-2 text-sm text-snow placeholder:text-mist/60 focus:border-spark/60 focus:outline-none";
+  "w-full rounded-xl border border-white/62 bg-white/42 px-3 py-2 text-sm text-snow shadow-[inset_0_1px_0_rgba(255,255,255,0.5)] placeholder:text-mist/60 focus:border-spark/45 focus:bg-white/62 focus:outline-none";
 
 export function Empty({ children }: { children: ReactNode }) {
   return <p className="py-6 text-center text-sm text-mist">{children}</p>;
