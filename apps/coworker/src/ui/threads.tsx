@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { coworkerBridge, type CoworkerSummary, type RuntimeInfo } from "@/lib/bridge";
-import { createCoworkerThreads, type EngineModelOption, type ThreadListItem } from "@/lib/threads";
+import { createCoworkerThreads, type ThreadListItem } from "@/lib/threads";
 import { Button, Empty, ErrorNote, StatusDot } from "@/ui/kit";
 
 type TranscriptMessage = {
@@ -56,7 +56,6 @@ export function ThreadsPanel({
     [runtime.serverUrl, runtime.ownerToken, coworker.workspaceId, coworker.model],
   );
   const [items, setItems] = useState<ThreadListItem[]>([]);
-  const [models, setModels] = useState<EngineModelOption[]>([]);
   const [openThreadId, setOpenThreadId] = useState("");
   const [error, setError] = useState("");
 
@@ -80,50 +79,6 @@ export function ThreadsPanel({
       window.clearInterval(timer);
     };
   }, [threads, refresh]);
-
-  useEffect(() => {
-    if (!threads || !runtime.engineManaged) return;
-    let cancelled = false;
-    void threads
-      .listModels()
-      .then((options) => {
-        if (!cancelled) setModels(options);
-      })
-      .catch(() => undefined);
-    return () => {
-      cancelled = true;
-    };
-  }, [threads, runtime.engineManaged]);
-
-  const modelSelect = (
-    <label className="flex items-center gap-2 text-xs text-mist">
-      <span className="sr-only">Model</span>
-      <select
-        aria-label="Coworker model"
-        className="max-w-64 rounded-lg border border-line bg-panel px-2.5 py-1.5 text-xs text-snow focus:border-spark/60 focus:outline-none"
-        value={coworker.model}
-        onChange={(event) => {
-          void (async () => {
-            try {
-              onCoworkerChanged(await coworkerBridge.coworkers.update(coworker.slug, { model: event.target.value }));
-            } catch (cause) {
-              setError(cause instanceof Error ? cause.message : String(cause));
-            }
-          })();
-        }}
-      >
-        <option value="">Engine default</option>
-        {coworker.model && !models.some((option) => option.id === coworker.model) ? (
-          <option value={coworker.model}>{coworker.model} (unavailable)</option>
-        ) : null}
-        {models.map((option) => (
-          <option key={option.id} value={option.id}>
-            {option.label}
-          </option>
-        ))}
-      </select>
-    </label>
-  );
 
   if (!threads) {
     return (
@@ -169,7 +124,6 @@ export function ThreadsPanel({
 
   return (
     <WorkOverview
-      actions={modelSelect}
       coworkerName={coworker.name}
       error={error}
       items={items}
@@ -184,14 +138,12 @@ function WorkOverview({
   coworkerName,
   items,
   error,
-  actions,
   onOpen,
 }: {
   threads: NonNullable<ReturnType<typeof createCoworkerThreads>>;
   coworkerName: string;
   items: ThreadListItem[];
   error: string;
-  actions?: ReactNode;
   onOpen: (threadId: string) => void;
 }) {
   const [prompt, setPrompt] = useState("");
@@ -222,7 +174,6 @@ function WorkOverview({
           <h2 className="text-sm font-semibold text-snow">Work with {coworkerName}</h2>
           <p className="text-xs text-mist">One assignment becomes a durable OpenWork thread.</p>
         </div>
-        {actions}
       </header>
       <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
         {error ? <ErrorNote>{error}</ErrorNote> : null}

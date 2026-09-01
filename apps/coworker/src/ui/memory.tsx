@@ -1,11 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { coworkerBridge, type CoworkerMemoryFile, type CoworkerSummary } from "@/lib/bridge";
-import { Button, Empty, ErrorNote, Section } from "@/ui/kit";
+import { Button, Empty, ErrorNote } from "@/ui/kit";
 
 /**
- * Memory is files, on purpose: the coworker maintains `memory/working.md`
- * itself, long-term memories are separate Markdown documents behind a small
- * always-loaded index, and everything is inspectable and editable here.
+ * Memory stays inspectable Markdown. The editor follows coworker writes live
+ * without replacing unsaved human edits.
  */
 export function MemoryPanel({ coworker }: { coworker: CoworkerSummary }) {
   const [files, setFiles] = useState<CoworkerMemoryFile[]>([]);
@@ -48,8 +47,6 @@ export function MemoryPanel({ coworker }: { coworker: CoworkerSummary }) {
     };
   }, [coworker.slug, selected]);
 
-  // The coworker edits these files while it works. Follow along live, but never
-  // overwrite unsaved human edits.
   const editorState = useRef({ content: "", savedContent: "" });
   editorState.current = { content, savedContent };
   useEffect(() => {
@@ -66,7 +63,7 @@ export function MemoryPanel({ coworker }: { coworker: CoworkerSummary }) {
           }
         })
         .catch(() => undefined);
-    }, 5000);
+    }, 5_000);
     return () => window.clearInterval(timer);
   }, [coworker.slug, selected]);
 
@@ -84,48 +81,41 @@ export function MemoryPanel({ coworker }: { coworker: CoworkerSummary }) {
   const dirty = content !== savedContent;
 
   return (
-    <Section
-      title="Memory"
-      actions={
-        <>
-          <Button variant="ghost" onClick={() => void refreshFiles()}>
-            Refresh
-          </Button>
-          <Button variant="primary" disabled={!dirty} onClick={() => void save()}>
-            {dirty ? "Save" : "Saved"}
-          </Button>
-        </>
-      }
-    >
+    <div className="space-y-3">
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-xs leading-relaxed text-mist">Human-readable context that {coworker.name} can maintain.</p>
+        <div className="flex shrink-0 gap-1">
+          <Button variant="ghost" className="px-2 text-xs" onClick={() => void refreshFiles()}>Refresh</Button>
+          <Button variant="primary" className="px-2 text-xs" disabled={!dirty} onClick={() => void save()}>{dirty ? "Save" : "Saved"}</Button>
+        </div>
+      </div>
       {error ? <ErrorNote>{error}</ErrorNote> : null}
-      <div className="flex gap-4">
-        <nav className="w-48 shrink-0 space-y-0.5">
-          {files.map((file) => (
-            <button
-              key={file.id}
-              onClick={() => setSelectedId(file.id)}
-              className={`block w-full truncate rounded-md px-2.5 py-1.5 text-left text-sm ${
-                file.id === selectedId ? "bg-panel-2 text-snow" : "text-mist hover:text-snow"
-              }`}
-            >
-              {file.label}
-            </button>
-          ))}
-          {files.length === 0 ? <Empty>No memory files.</Empty> : null}
-        </nav>
-        <div className="min-w-0 flex-1">
+      <nav className="flex gap-1 overflow-x-auto pb-1">
+        {files.map((file) => (
+          <button
+            key={file.id}
+            onClick={() => setSelectedId(file.id)}
+            className={`shrink-0 rounded-lg px-2.5 py-1.5 text-xs font-medium transition-colors ${
+              file.id === selectedId ? "bg-panel-2 text-snow" : "text-mist hover:bg-panel hover:text-snow"
+            }`}
+          >
+            {file.label}
+          </button>
+        ))}
+      </nav>
+      {files.length === 0 ? <Empty>No memory files yet.</Empty> : null}
+      {selected ? (
+        <>
           <textarea
-            className="h-[56vh] w-full resize-none rounded-md border border-line bg-ink p-3 font-mono text-[13px] leading-relaxed text-snow focus:border-spark/60 focus:outline-none"
+            aria-label={`${selected.label} memory`}
+            className="h-[58vh] w-full resize-none rounded-2xl border border-line bg-ink p-3 font-mono text-xs leading-relaxed text-snow focus:border-spark/60 focus:outline-none"
             value={content}
             spellCheck={false}
             onChange={(event) => setContent(event.target.value)}
           />
-          <p className="mt-2 text-xs text-mist">
-            The coworker edits its own working memory while it works; you can edit or prune anything
-            here too. Files live in {coworker.path}.
-          </p>
-        </div>
-      </div>
-    </Section>
+          <p className="text-[10px] leading-relaxed text-mist">Live-following coworker edits. Your unsaved changes are never replaced.</p>
+        </>
+      ) : null}
+    </div>
   );
 }
