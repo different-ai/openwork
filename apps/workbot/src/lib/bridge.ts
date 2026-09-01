@@ -56,6 +56,7 @@ export const workbot = {
       invoke<BotSummary>("bots.create", input),
     update: (slug: string, patch: Partial<Pick<BotSummary, "workspaceId" | "automations" | "mission" | "role">>) =>
       invoke<BotSummary>("bots.update", { slug, patch }),
+    ensureWorkspace: (slug: string) => invoke<BotSummary>("bots.ensureWorkspace", { slug }),
     remove: (slug: string) => invoke<{ ok: boolean }>("bots.delete", { slug }),
   },
   files: {

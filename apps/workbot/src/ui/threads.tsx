@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { BotSummary, RuntimeInfo } from "@/lib/bridge";
+import { workbot, type BotSummary, type RuntimeInfo } from "@/lib/bridge";
 import { createBotThreads, type ThreadListItem } from "@/lib/threads";
 import { Button, Empty, ErrorNote, Section, inputClass } from "@/ui/kit";
 
@@ -10,7 +10,17 @@ type TranscriptMessage = {
   toolCalls: Array<{ tool: string; title: string }>;
 };
 
-export function ThreadsPanel({ runtime, bot }: { runtime: RuntimeInfo; bot: BotSummary }) {
+export function ThreadsPanel({
+  runtime,
+  bot,
+  onBotChanged,
+  onRefreshRuntime,
+}: {
+  runtime: RuntimeInfo;
+  bot: BotSummary;
+  onBotChanged: (bot: BotSummary) => void;
+  onRefreshRuntime: () => Promise<void>;
+}) {
   const threads = useMemo(
     () =>
       bot.workspaceId
@@ -41,7 +51,28 @@ export function ThreadsPanel({ runtime, bot }: { runtime: RuntimeInfo; bot: BotS
   if (!threads) {
     return (
       <Section title="Work">
-        <Empty>This worker's workspace is still being prepared. Reopen it in a moment.</Empty>
+        <div className="space-y-4">
+          <Empty>This worker's workspace is not registered yet.</Empty>
+          {error ? <ErrorNote>{error}</ErrorNote> : null}
+          <div className="flex justify-center">
+            <Button
+              variant="primary"
+              onClick={() => {
+                void (async () => {
+                  try {
+                    const repaired = await workbot.bots.ensureWorkspace(bot.slug);
+                    await onRefreshRuntime();
+                    onBotChanged(repaired);
+                  } catch (cause) {
+                    setError(cause instanceof Error ? cause.message : String(cause));
+                  }
+                })();
+              }}
+            >
+              Prepare workspace
+            </Button>
+          </div>
+        </div>
       </Section>
     );
   }

@@ -31,6 +31,12 @@ The bot directory is registered as an ordinary OpenWork workspace, so:
 - **Responsibilities are Den Automations** presented worker-first. The
   bot ⇄ automation association lives in `bot.md` (and the automation's existing
   pinned `workspaceId`) — the Automations schema never learns about bots.
+  Placement is honest about where files live: cloud-placement responsibilities
+  keep running with the app closed but execute in OpenWork Cloud, away from
+  the local bot directory. Duties that must touch the bot's own files (for
+  example memory consolidation) need desktop placement — Work Bot hosting the
+  existing desktop-runner protocol — or a bot home inside a cloud
+  workspace. That is the deliberate next slice, not an accident.
 - **Skills and MCP** come for free from the same engine configuration layering
   the OpenWork desktop uses.
 
