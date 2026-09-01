@@ -1,7 +1,9 @@
 /**
  * All site copy lives here, and every product claim carries the place in the
  * product where it is true. The test in content.test.ts refuses claims without
- * a source, so the site can only say what the app does today.
+ * a source, so the site can only say what the app does today. Sources are not
+ * printed beside the copy; they are listed once, quietly, at the end of the
+ * page ("Where each claim is true").
  */
 
 export type Claim = {
@@ -14,11 +16,10 @@ export const SITE = {
   name: "Open Coworker",
   tagline: "Give recurring work a teammate.",
   description:
-    "Open Coworker is a macOS home for persistent AI coworkers. Each one has a name, a role, inspectable memory, and a native OpenWork workspace. Local-first, powered by OpenWork.",
+    "Open Coworker is a quiet macOS home for AI coworkers who remember. Give each one a name, a role, and real work — and know exactly what happened when you come back. Local-first, powered by OpenWork.",
   url: "https://opencoworker.app",
   repository: "https://github.com/different-ai/openwork",
   openwork: "https://openworklabs.com",
-  openworkDocs: "https://openworklabs.com/docs",
   company: "Different AI",
   year: 2026,
 } as const;
@@ -27,111 +28,78 @@ export const NAV = [
   { href: "#how", label: "How it works" },
   { href: "#memory", label: "Memory" },
   { href: "#responsibilities", label: "Responsibilities" },
-  { href: "#platform", label: "Powered by OpenWork" },
 ] as const;
 
 export const HERO = {
   eyebrow: "Early access · macOS",
   title: "Give recurring work a teammate.",
   lead:
-    "Open Coworker is a desktop home for persistent AI coworkers. Each one has a name, a role, memory you can read, and a native OpenWork workspace on your Mac.",
-  primary: { label: "Run it from source", href: "#get-started" },
-  secondary: { label: "See how it works", href: "#how" },
+    "A quiet desktop home for AI coworkers who remember. Give each one a name, a role, and real work — and know exactly what happened when you come back.",
+  primary: { label: "Run from source", href: "#get-started" },
+  secondary: { label: "How it works", href: "#how" },
+  /** Three short phrases, one line, no cards. */
+  strip: ["Plain files you can open", "Native OpenWork threads", "Honest about where work runs"],
 } as const;
 
-export const TRUTHS: Claim[] = [
-  {
-    text: "Local-first. A coworker is a folder of plain files under ~/.config/openwork/coworkers — identity, memory, and workspace you can open in any editor.",
-    source: "apps/coworker/electron/coworkers.mjs (createCoworker, coworker.md, soul.md, memory/*)",
-  },
-  {
-    text: "Native OpenWork threads. Every assignment is an ordinary OpenWork session in the coworker's workspace, driven by @openwork/headless-threads.",
-    source: "apps/coworker/src/lib/threads.ts (createHeadlessThreadClient against /workspace/:id/opencode)",
-  },
-  {
-    text: "Honest about where work runs. Local responsibilities run while the app is open; Cloud responsibilities run in OpenWork Cloud even when your Mac is off.",
-    source: "apps/coworker/electron/local-responsibilities.mjs; apps/coworker/src/lib/cloud-responsibilities.ts (POST /v1/cloud-automations)",
-  },
-];
-
-export const STEPS: Array<Claim & { title: string; caption: string }> = [
+export const STEPS: Array<Claim & { title: string }> = [
   {
     title: "Create",
-    caption: "A name and a look.",
-    text: "Pick a name, a color, and glasses. Role and mission are optional — the first assignment teaches the job. The coworker's folder and OpenWork workspace are created on the spot.",
+    text: "A name and a look. Role and mission can wait — the first assignment teaches the job.",
     source: "apps/coworker/src/ui/new-coworker.tsx; apps/coworker/electron/main.mjs (coworkers.create registers /workspaces/local)",
   },
   {
     title: "Assign",
-    caption: "Outcomes in your own words.",
-    text: "One assignment becomes a durable thread. Tool steps appear as calm milestones, and the result reads like a receipt: what was made, where it lives.",
+    text: "Say the outcome in your own words. It becomes a durable thread; the result reads like a receipt.",
     source: "apps/coworker/src/ui/threads.tsx (WorkOverview, ThreadView, MessageBubble)",
   },
   {
     title: "Return",
-    caption: "Know what happened at a glance.",
-    text: "The team rail shows who is working, who is ready, and who needs you. The context rail names the thread it refers to and when memory last changed.",
+    text: "The team rail says who is working, who is ready, and who needs you — before you open anything.",
     source: "apps/coworker/src/ui/coworker-rail.tsx; apps/coworker/src/lib/activity-summary.ts",
   },
 ];
 
-export const MEMORY: { title: string; lead: string; files: Array<{ path: string; note: string }>; claims: Claim[] } = {
-  title: "Memory you can read, edit, and diff.",
-  lead:
-    "No vector store, no hidden prompt history. A coworker keeps a small working memory it maintains itself, an index of long-term notes, and a stable soul — all Markdown, loaded on every turn by the OpenWork engine.",
+export const MEMORY: { title: string; lead: Claim; files: Array<{ path: string; note: string }> } = {
+  title: "Memory you can read.",
+  lead: {
+    text:
+      "No vector store, no hidden prompt history. A coworker keeps a small working memory it maintains itself, an index of long-term notes, and a stable soul — all Markdown, loaded on every turn, editable by you.",
+    source: "apps/coworker/electron/coworkers.mjs (AGENTS.md contract, opencode.json instructions); apps/coworker/src/ui/memory.tsx",
+  },
   files: [
-    { path: "soul.md", note: "who it is — loaded every turn" },
-    { path: "memory/working.md", note: "active memory it edits while working" },
-    { path: "memory/index.md", note: "map of long-term notes, loaded every turn" },
+    { path: "soul.md", note: "who it is" },
+    { path: "memory/working.md", note: "what it is carrying right now" },
+    { path: "memory/index.md", note: "what it knows it can look up" },
     { path: "memory/long-term/*.md", note: "durable notes, read when relevant" },
-    { path: "workspace/", note: "deliverables and working files" },
-    { path: "coworker.md", note: "app-owned settings: model, workspace id, avatar" },
-  ],
-  claims: [
-    {
-      text: "The coworker maintains memory/working.md as part of doing the work, and promotes durable facts into memory/long-term/ with a line in the index.",
-      source: "apps/coworker/electron/coworkers.mjs (AGENTS.md contract: working and long-term memory duties)",
-    },
-    {
-      text: "You can edit any memory file in the app; live-follow never replaces text you have not saved.",
-      source: "apps/coworker/src/ui/memory.tsx",
-    },
+    { path: "workspace/", note: "deliverables" },
   ],
 };
 
-export const NEEDS_YOU: { title: string; lead: string; claims: Claim[] } = {
-  title: "Human intervention is a resumable step.",
-  lead:
-    "When a coworker needs a permission — running a command, working outside its folder — or asks a question, the request appears inside the thread as a bounded card. Nothing happens until you choose. Deny ends the step; the coworker explains and continues.",
-  claims: [
-    {
-      text: "Both OpenCode permission protocols and the question tool are handled; replies go through the protocol that issued the request.",
-      source: "apps/coworker/src/lib/threads.ts (listThreadInteractions, replyPermission, replyQuestion)",
-    },
-    {
-      text: "The rail, header, and recent-work rows all say “Needs you” ahead of “Working” while a thread waits on you.",
-      source: "apps/coworker/src/lib/threads.ts (readActivity) and apps/coworker/src/ui/threads.tsx",
-    },
-  ],
+export const NEEDS_YOU: { title: string; lead: Claim } = {
+  title: "When it needs you, it asks — and waits.",
+  lead: {
+    text:
+      "A permission to run a command or leave its folder, or a question it cannot answer alone, shows up inside the thread as one small card. Nothing happens until you choose. Deny ends the step; the coworker explains and carries on.",
+    source: "apps/coworker/src/lib/threads.ts (listThreadInteractions, replyPermission, replyQuestion); apps/coworker/src/ui/interactions.tsx",
+  },
 };
 
 export const RESPONSIBILITIES: {
   title: string;
   lead: string;
   placements: Array<{ name: string; badge: string; points: string[]; source: string }>;
+  retire: Claim;
 } = {
   title: "Recurring work, with the placement said out loud.",
-  lead:
-    "A responsibility is a schedule the coworker owns. There are two places it can run, and the app never blurs them.",
+  lead: "A responsibility is a schedule a coworker owns. It can run in two places, and the app never blurs which.",
   placements: [
     {
       name: "This Mac",
       badge: "Local",
       points: [
         "Runs through the local OpenWork engine while Open Coworker is open.",
-        "Schedules reuse OpenWork's own occurrence rules and time zones.",
+        "Has full access to the coworker's folder and memory.",
         "If a run is missed while the app is closed, the latest one is recovered on launch — never a backlog.",
-        "Runs have full access to the coworker's folder and memory.",
       ],
       source: "apps/coworker/electron/local-responsibilities.mjs (@openwork/automations nextAutomationOccurrence)",
     },
@@ -141,68 +109,37 @@ export const RESPONSIBILITIES: {
       points: [
         "Runs in OpenWork Cloud even when this Mac is off.",
         "Uses models your organization authorizes; run history lives in OpenWork.",
-        "Cannot read this coworker's local files or memory — the app tells you so.",
-        "Requires signing in to OpenWork Cloud.",
+        "Cannot read this coworker's local files or memory — the app says so.",
       ],
       source: "apps/coworker/src/lib/cloud-responsibilities.ts (POST /v1/cloud-automations, GET /v1/llm-providers)",
     },
   ],
-};
-
-export const RETIRE: Claim & { title: string } = {
-  title: "Retire without regret.",
-  text: "Retiring moves the whole coworker folder to a Retired area and takes it off the roster. Nothing is deleted. Restore puts it back at the same path, so its threads reattach; permanent deletion is a separate, deliberate step.",
-  source: "apps/coworker/electron/coworkers.mjs (retireCoworker, restoreCoworker, deleteRetiredCoworker)",
+  retire: {
+    text: "Retiring moves the whole folder to a Retired area; nothing is deleted. Restore brings it back with its threads. Permanent deletion is a separate, deliberate step.",
+    source: "apps/coworker/electron/coworkers.mjs (retireCoworker, restoreCoworker, deleteRetiredCoworker)",
+  },
 };
 
 export const PLATFORM: { title: string; lead: string; items: Array<Claim & { name: string }> } = {
-  title: "A second client on the OpenWork platform — not a second platform.",
-  lead:
-    "Open Coworker adds the coworker layer and nothing else. Everything underneath is the same OpenWork you can run on its own.",
+  title: "Built on OpenWork, not beside it.",
+  lead: "Open Coworker adds the coworker layer and nothing else. Everything underneath is OpenWork you can run on its own.",
   items: [
-    {
-      name: "Embedded OpenWork server",
-      text: "The same openwork-server bundle the OpenWork desktop ships, with its own registry so both apps run side by side.",
-      source: "apps/coworker/electron/main.mjs (startEmbeddedServer)",
-    },
-    {
-      name: "OpenCode engine",
-      text: "Turns run on the managed OpenCode engine with workspace-scoped tools and the provider catalog you configured in OpenWork.",
-      source: "apps/coworker/src/lib/threads.ts (provider.list, connectedModelCatalog)",
-    },
-    {
-      name: "Native sessions",
-      text: "Threads are OpenWork sessions created and driven through @openwork/headless-threads.",
-      source: "packages/headless-threads",
-    },
-    {
-      name: "OpenWork Automations",
-      text: "Cloud responsibilities are Den Automations; schedules, state, and run history stay in OpenWork.",
-      source: "@openwork/types/automations; ee/apps/den-api /v1/cloud-automations",
-    },
-    {
-      name: "Instruction files",
-      text: "Identity and memory ride the engine's ordinary instruction loading — AGENTS.md plus opencode.json instructions.",
-      source: "apps/coworker/electron/coworkers.mjs (opencodeConfigTemplate)",
-    },
-    {
-      name: "Apps & tools",
-      text: "MCP apps and tools configured for the engine are available to every coworker.",
-      source: "apps/coworker/src/ui/capabilities.tsx",
-    },
+    { name: "Server", text: "The same embedded openwork-server the OpenWork desktop ships.", source: "apps/coworker/electron/main.mjs (startEmbeddedServer)" },
+    { name: "Engine", text: "Managed OpenCode with the providers you connected in OpenWork.", source: "apps/coworker/src/lib/threads.ts (provider.list, connectedModelCatalog)" },
+    { name: "Threads", text: "Native sessions through @openwork/headless-threads.", source: "packages/headless-threads" },
+    { name: "Automations", text: "Cloud responsibilities are OpenWork Automations.", source: "@openwork/types/automations; ee/apps/den-api /v1/cloud-automations" },
+    { name: "Instructions", text: "Identity and memory ride the engine's own instruction loading.", source: "apps/coworker/electron/coworkers.mjs (opencodeConfigTemplate)" },
+    { name: "Apps & tools", text: "MCP apps and tools configured for the engine, available to every coworker.", source: "apps/coworker/src/ui/capabilities.tsx" },
   ],
 };
 
-export const GET_STARTED: {
-  title: string;
-  lead: string;
-  status: string;
-  commands: string[];
-  notes: Claim[];
-} = {
+export const GET_STARTED: { title: string; lead: Claim; status: string; commands: string[] } = {
   title: "Run it from source today.",
-  lead:
-    "Open Coworker lives in the OpenWork monorepo. Signed macOS builds are being prepared; until then, the development launcher is the way in.",
+  lead: {
+    text:
+      "Open Coworker lives in the OpenWork monorepo. It works without an account — choose “Start locally” on first launch and connect OpenWork Cloud later if you want always-on responsibilities. Signed macOS builds are in preparation; this page will link them the day they exist.",
+    source: "apps/coworker/src/ui/onboarding.tsx; apps/coworker/README.md",
+  },
   status: "Early access · no packaged download yet",
   commands: [
     "git clone https://github.com/different-ai/openwork",
@@ -210,38 +147,27 @@ export const GET_STARTED: {
     "pnpm --filter openwork-server build",
     "pnpm --filter @openwork/coworker dev",
   ],
-  notes: [
-    {
-      text: "Works without an account: choose “Start locally” on first launch. Connect OpenWork Cloud later for Cloud responsibilities.",
-      source: "apps/coworker/src/ui/onboarding.tsx",
-    },
-    {
-      text: "The engine binary resolves from OPENWORK_OPENCODE_BIN or opencode on your PATH during development.",
-      source: "apps/coworker/README.md",
-    },
-  ],
 };
 
 export const FOOTER = {
   links: [
     { label: "GitHub", href: SITE.repository },
     { label: "OpenWork", href: SITE.openwork },
-    { label: "OpenWork docs", href: SITE.openworkDocs },
   ],
   poweredBy: "Powered by OpenWork",
+  claimsTitle: "Where each claim on this page is true",
 } as const;
 
-/** Every claim on the page, for the honesty test. */
+/** Every claim on the page, for the honesty test and the footer disclosure. */
 export function allClaims(): Claim[] {
   return [
-    ...TRUTHS,
     ...STEPS,
-    ...MEMORY.claims,
-    ...NEEDS_YOU.claims,
+    MEMORY.lead,
+    NEEDS_YOU.lead,
     ...RESPONSIBILITIES.placements.map((placement) => ({ text: placement.points.join(" "), source: placement.source })),
-    RETIRE,
+    RESPONSIBILITIES.retire,
     ...PLATFORM.items,
-    ...GET_STARTED.notes,
+    GET_STARTED.lead,
   ];
 }
 
