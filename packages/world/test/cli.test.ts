@@ -58,6 +58,23 @@ test("world arguments expose only script lifecycle flags and forward arguments a
     name: "dev-headless",
     stage: "preview",
   });
+  assert.deepEqual(parseWorldArgs(["down", "dev-headless", "--purge"]), {
+    kind: "down",
+    name: "dev-headless",
+    purge: true,
+  });
+  assert.deepEqual(parseWorldArgs(["down", "dev-headless", "--stage", "preview", "--purge"]), {
+    kind: "down",
+    name: "dev-headless",
+    stage: "preview",
+    purge: true,
+  });
+  assert.deepEqual(parseWorldArgs(["down", "dev-headless", "--purge", "--stage", "preview"]), {
+    kind: "down",
+    name: "dev-headless",
+    stage: "preview",
+    purge: true,
+  });
 
   const invalidPlace = parseWorldArgs(["up", "dev-headless", "--place", "remote"]);
   assert.equal(invalidPlace.kind, "help");
@@ -73,6 +90,13 @@ test("world arguments expose only script lifecycle flags and forward arguments a
   assert.equal(unknownPlanFlag.kind, "help");
   if (unknownPlanFlag.kind !== "help") throw new Error("expected help");
   assert.match(unknownPlanFlag.error ?? "", /Unknown world CLI option "--detach"/);
+
+  for (const args of [["up", "dev-headless", "--purge"], ["plan", "dev-headless", "--purge"]]) {
+    const result = parseWorldArgs(args);
+    assert.equal(result.kind, "help");
+    if (result.kind !== "help") throw new Error("expected help");
+    assert.match(result.error ?? "", /Unknown world CLI option "--purge"/);
+  }
 });
 
 test("discovery, resolution, list, and help classify scripts without importing them", async () => {

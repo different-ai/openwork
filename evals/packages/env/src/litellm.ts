@@ -11,6 +11,7 @@ import {
   deleteSandboxes,
   execInSandbox,
 } from "@openwork/hosts";
+import { trackResource } from "@openwork/world";
 import type { Server, ServerResponse } from "node:http";
 import { SkipError } from "./needs.ts";
 import type { Place } from "./place.ts";
@@ -654,6 +655,7 @@ async function startLocalLiteLlm(
     );
     witness = startedWitness.server;
     root = await realpath(await mkdtemp(join(tmpdir(), "openwork-litellm-")));
+    await trackResource({ kind: "tmpdir", id: root, label: "litellm-config" });
     const configPath = join(root, "config.json");
     await writeFile(
       configPath,
@@ -676,6 +678,7 @@ async function startLocalLiteLlm(
         "--publish", "127.0.0.1::5432",
         POSTGRES_IMAGE,
       ]);
+      await trackResource({ kind: "docker", id: postgresContainer, label: "litellm-postgres" });
       await run("docker", ["start", postgresContainer], 30_000);
       postgresPort = await mappedPostgresPort(postgresContainer);
       await waitForPostgres(postgresContainer);
@@ -695,6 +698,7 @@ async function startLocalLiteLlm(
           IMAGE, "--config", "/app/config.json", "--port", "4000",
         ];
     await run("docker", createArgs);
+    await trackResource({ kind: "docker", id: container, label: "litellm" });
     await run("docker", ["cp", configPath, `${container}:/app/config.json`], 30_000);
     await run("docker", ["start", container], 30_000);
     const port = input.database
@@ -709,9 +713,9 @@ async function startLocalLiteLlm(
       redactedSecrets: input.database ? [postgresPassword] : undefined,
       async dispose(): Promise<void> {
         if (placementDisposed) return;
-        await run("docker", ["rm", "--force", container], 20_000).catch(() => undefined);
+        await run("docker", ["rm", "--force", "--volumes", container], 20_000).catch(() => undefined);
         if (input.database) {
-          await run("docker", ["rm", "--force", postgresContainer], 20_000).catch(() => undefined);
+          await run("docker", ["rm", "--force", "--volumes", postgresContainer], 20_000).catch(() => undefined);
         }
         await Promise.all([
           rm(root, { recursive: true, force: true }),
@@ -725,9 +729,9 @@ async function startLocalLiteLlm(
     const postgresLogs = input.database
       ? await run("docker", ["logs", postgresContainer], 10_000).then((result) => result.stdout + result.stderr, () => "")
       : "";
-    await run("docker", ["rm", "--force", container], 20_000).catch(() => undefined);
+    await run("docker", ["rm", "--force", "--volumes", container], 20_000).catch(() => undefined);
     if (input.database) {
-      await run("docker", ["rm", "--force", postgresContainer], 20_000).catch(() => undefined);
+      await run("docker", ["rm", "--force", "--volumes", postgresContainer], 20_000).catch(() => undefined);
     }
     if (root) await rm(root, { recursive: true, force: true }).catch(() => undefined);
     if (witness) await closeServer(witness).catch(() => undefined);

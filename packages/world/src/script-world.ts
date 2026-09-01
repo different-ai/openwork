@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { access, chmod, mkdir, open, readFile, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
+import { LEDGER_ENV, ledgerPath } from "./ledger.ts";
 import { receiptName } from "./stage.ts";
 import { assertWorldName } from "./store.ts";
 import type { ScriptWorldSnapshot } from "./hold.ts";
@@ -175,7 +176,11 @@ export async function launchScriptWorld(options: LaunchScriptWorldOptions): Prom
   const path = resolve(options.path);
   const stagedName = receiptName(options.name, options.stage);
   const snapshotPath = scriptWorldSnapshotPath(options.snapshotDirectory, stagedName);
-  const env: NodeJS.ProcessEnv = { ...process.env, OPENWORK_WORLD_SNAPSHOT_DIR: options.snapshotDirectory };
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    OPENWORK_WORLD_SNAPSHOT_DIR: options.snapshotDirectory,
+    [LEDGER_ENV]: ledgerPath(options.snapshotDirectory, stagedName),
+  };
   if (options.stage === undefined) delete env.OPENWORK_WORLD_STAGE;
   else env.OPENWORK_WORLD_STAGE = options.stage;
   if (options.recipeHash === undefined) delete env.OPENWORK_WORLD_RECIPE_HASH;

@@ -3,6 +3,7 @@ import { attachSurface, evaluateOnSurface, isInteractive, probeAppStateOnSurface
 import type { Surface } from "@openwork/cdp";
 import { desktop } from "@openwork/hosts";
 import { liveSharedProductionStateEnv } from "@openwork/hosts";
+import { trackResource } from "@openwork/world";
 import type { AppReadiness, DesktopHandle, Host, InstalledProductionDesktopState } from "@openwork/hosts";
 import type { Den } from "./den.ts";
 import type { Place } from "./place.ts";
@@ -151,6 +152,12 @@ export async function app(options: AppOptions): Promise<App> {
       },
       env: Object.keys(env).length > 0 ? env : undefined,
     });
+    if (surface.handle.pid !== undefined) {
+      await trackResource({ kind: "process", id: String(surface.handle.pid), label: "electron", match: process.env.OPENWORK_EVAL_ELECTRON_BINARY?.trim() || "dev:electron" });
+    }
+    if (surface.handle.meta?.profileOwner !== "caller" && typeof surface.handle.profileDir === "string") {
+      await trackResource({ kind: "tmpdir", id: surface.handle.profileDir, label: "electron-profile" });
+    }
     try {
       const path = options.workspacePath ?? `/tmp/openwork-fresh-${Date.now()}`;
       const { workspaceId } = await createAndSelectWorkspace(surface, { path });
@@ -189,6 +196,12 @@ export async function app(options: AppOptions): Promise<App> {
     },
     env: Object.keys(env).length > 0 ? env : undefined,
   });
+  if (surface.handle.pid !== undefined) {
+    await trackResource({ kind: "process", id: String(surface.handle.pid), label: "electron", match: process.env.OPENWORK_EVAL_ELECTRON_BINARY?.trim() || "dev:electron" });
+  }
+  if (surface.handle.meta?.profileOwner !== "caller" && typeof surface.handle.profileDir === "string") {
+    await trackResource({ kind: "tmpdir", id: surface.handle.profileDir, label: "electron-profile" });
+  }
   try {
     // Workspace first, then the org sign-in: the signed-in org shell offers no
     // Add workspace entry, so a member's workspace exists before they connect.

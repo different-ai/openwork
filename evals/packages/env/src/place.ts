@@ -10,7 +10,7 @@ import type {
   SurfaceHandle,
 } from "@openwork/hosts";
 
-const DEFAULT_MYSQL_URL = "mysql://root:password@127.0.0.1:3306";
+export const DEFAULT_MYSQL_URL = "mysql://root:password@127.0.0.1:3306";
 
 export interface DbHandle extends AsyncDisposable {
   name: string;

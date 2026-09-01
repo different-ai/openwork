@@ -6,6 +6,13 @@ import { assertWorldName } from "./store.ts";
 
 const REPO_ROOT = fileURLToPath(new URL("../../..", import.meta.url));
 
+export function defaultScriptWorldSnapshotDirectory(): string {
+  return resolve(
+    process.env.OPENWORK_WORLD_SNAPSHOT_DIR
+      ?? join(REPO_ROOT, "evals", "results", ".worlds", "scripts"),
+  );
+}
+
 export interface ScriptWorldSnapshot {
   version: 1 | 2;
   kind: "script";
@@ -61,11 +68,7 @@ export async function hold(options: HoldOptions = {}): Promise<void> {
   const place = process.env.OPENWORK_WORLD_PLACE;
   const stagedName = receiptName(name, stage);
 
-  const snapshotDirectory = resolve(
-    options.snapshotDir
-      ?? process.env.OPENWORK_WORLD_SNAPSHOT_DIR
-      ?? join(REPO_ROOT, "evals", "results", ".worlds", "scripts"),
-  );
+  const snapshotDirectory = resolve(options.snapshotDir ?? defaultScriptWorldSnapshotDirectory());
   const snapshotPath = join(snapshotDirectory, `${stagedName}.json`);
   const existingPid = await aliveSnapshotPid(snapshotPath);
   if (existingPid !== undefined) {
@@ -95,6 +98,7 @@ export async function hold(options: HoldOptions = {}): Promise<void> {
   for (const [key, value] of Object.entries(outputs)) console.log(`${key}  ${value}`);
   console.log(`World ${JSON.stringify(stagedName)} is up. Ctrl-C (or pnpm world down ${name}${stage ? ` --stage ${stage}` : ""}) tears it down.`);
 
+  const keepAlive = setInterval(() => {}, 2_147_483_647);
   await new Promise<void>((done) => {
     let stopping = false;
     const stop = (): void => {
@@ -102,6 +106,7 @@ export async function hold(options: HoldOptions = {}): Promise<void> {
       stopping = true;
       process.off("SIGINT", stop);
       process.off("SIGTERM", stop);
+      clearInterval(keepAlive);
       void unlink(snapshotPath).then(done, (error: unknown) => {
         console.error(`Could not remove script world snapshot ${snapshotPath}: ${error instanceof Error ? error.message : String(error)}`);
         done();

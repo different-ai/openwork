@@ -1,6 +1,8 @@
-import { access, rm } from "node:fs/promises";
+import { access, readdir, rm } from "node:fs/promises";
 import { basename, extname, join, resolve } from "node:path";
+import { ledgerPath, readLedger } from "./ledger.ts";
 import { discoverWorlds, displayWorldPath, resolveWorldScript } from "./loader.ts";
+import { builtinReapers, reapLedger, type ReapReport, type Reaper } from "./reaper.ts";
 import { receiptName, resolveStage, sanitizeStage } from "./stage.ts";
 import { WorldStateStore } from "./store.ts";
 import {
@@ -23,7 +25,7 @@ export type WorldCommand =
       place?: "local" | "daytona";
       args: string[];
     }
-  | { kind: "down"; name: string; stage?: string }
+  | { kind: "down"; name: string; stage?: string; purge?: true }
   | { kind: "plan"; source: string; stage?: string }
   | { kind: "list" }
   | { kind: "forget"; name: string }
@@ -33,6 +35,7 @@ export interface WorldCliOptions {
   cwd: string;
   worldsDirectory: string;
   print?: (line: string) => void;
+  reapers?: Record<string, Reaper>;
 }
 
 function helpError(message: string): WorldCommand {
@@ -140,9 +143,32 @@ export function parseWorldArgs(argv: string[]): WorldCommand {
     if (!name || name === "--" || name.startsWith("--")) {
       return helpError("The down command needs exactly one world name.");
     }
-    const parsed = parseStageOptions(options);
-    if (parsed.error) return helpError(parsed.error);
-    return { kind: "down", name, ...(parsed.stage === undefined ? {} : { stage: parsed.stage }) };
+    let stage: string | undefined;
+    let purge = false;
+    for (let index = 0; index < options.length; index += 1) {
+      const option = options[index];
+      if (option === "--stage" && stage === undefined) {
+        const value = options[index + 1];
+        try {
+          stage = sanitizeStage(value ?? "");
+        } catch {
+          return helpError("Use --stage followed by a non-empty stage value.");
+        }
+        index += 1;
+        continue;
+      }
+      if (option === "--purge" && !purge) {
+        purge = true;
+        continue;
+      }
+      return helpError(`Unknown world CLI option ${JSON.stringify(option)}.`);
+    }
+    return {
+      kind: "down",
+      name,
+      ...(stage === undefined ? {} : { stage }),
+      ...(purge ? { purge: true } : {}),
+    };
   }
   if (command === "forget") {
     return args.length === 1 && args[0]
@@ -162,7 +188,7 @@ async function helpText(options: WorldCliOptions): Promise<string> {
   return `Usage:
   pnpm world up <script-path-or-name> [--detach] [--timeout <ms>] [--stage <value>] [--place <local|daytona>] [-- <script args...>]
   pnpm world plan <script-path-or-name> [--stage <value>]
-  pnpm world down <name> [--stage <value>]
+  pnpm world down <name> [--stage <value>] [--purge]
   pnpm world list
   pnpm world forget <name>
   pnpm world help
@@ -195,6 +221,48 @@ async function pathExists(path: string): Promise<boolean> {
   return access(path).then(() => true, () => false);
 }
 
+const LEDGER_SUFFIX = ".ledger.jsonl";
+
+async function ledgerWorldNames(directory: string): Promise<string[]> {
+  try {
+    return (await readdir(directory))
+      .filter((name) => name.endsWith(LEDGER_SUFFIX))
+      .map((name) => name.slice(0, -LEDGER_SUFFIX.length))
+      .sort();
+  } catch (error) {
+    if (typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT") {
+      return [];
+    }
+    throw error;
+  }
+}
+
+async function reapAndReport(
+  path: string,
+  stagedName: string,
+  name: string,
+  stage: string | undefined,
+  purge: boolean,
+  print: (line: string) => void,
+  options: WorldCliOptions,
+): Promise<ReapReport> {
+  const report = await reapLedger(path, {
+    cwd: options.cwd,
+    purge,
+    reapers: { ...builtinReapers, ...options.reapers },
+  });
+  if (report.reaped.length > 0) {
+    print(`Reaped ${report.reaped.length} leaked resources from ${JSON.stringify(stagedName)}.`);
+  }
+  for (const { entry, reason } of report.skipped) {
+    print(`Skipped ${entry.kind} ${entry.id}: ${reason}.`);
+  }
+  if (report.retained.length > 0 && !purge) {
+    print(`Retained ${report.retained.length} resources for ${JSON.stringify(stagedName)}; run pnpm world down ${name}${stage ? ` --stage ${stage}` : ""} --purge to remove them.`);
+  }
+  return report;
+}
+
 export async function main(argv: string[], options: WorldCliOptions): Promise<number> {
   const print = options.print ?? console.log;
   const command = parseWorldArgs(argv);
@@ -211,6 +279,7 @@ export async function main(argv: string[], options: WorldCliOptions): Promise<nu
       const snapshotDirectory = scriptWorldSnapshotDirectory(options.cwd);
       const stagedName = receiptName(script.name, stage);
       const snapshotPath = scriptWorldSnapshotPath(snapshotDirectory, stagedName);
+      const worldLedgerPath = ledgerPath(snapshotDirectory, stagedName);
       const state = await classifyScriptReceipt(snapshotPath, recipeHash);
       if (state.kind === "running") {
         printOutputs(state.snapshot, print);
@@ -222,8 +291,11 @@ export async function main(argv: string[], options: WorldCliOptions): Promise<nu
         return 1;
       }
       if (state.kind === "orphaned") {
+        await reapAndReport(worldLedgerPath, stagedName, script.name, stage, false, print, options);
         await rm(snapshotPath, { force: true });
         print(`Removed stale world receipt ${JSON.stringify(stagedName)} (pid ${state.snapshot.pid}); recreating.`);
+      } else if (await pathExists(worldLedgerPath)) {
+        await reapAndReport(worldLedgerPath, stagedName, script.name, stage, false, print, options);
       }
       return await launchScriptWorld({
         path: script.path,
@@ -247,10 +319,9 @@ export async function main(argv: string[], options: WorldCliOptions): Promise<nu
       const script = await resolveWorldScript(command.source, options);
       const stage = resolveStage(process.env, command.stage);
       const recipeHash = await computeRecipeHash(script.path);
-      const snapshotPath = scriptWorldSnapshotPath(
-        scriptWorldSnapshotDirectory(options.cwd),
-        receiptName(script.name, stage),
-      );
+      const snapshotDirectory = scriptWorldSnapshotDirectory(options.cwd);
+      const stagedName = receiptName(script.name, stage);
+      const snapshotPath = scriptWorldSnapshotPath(snapshotDirectory, stagedName);
       const state = await classifyScriptReceipt(snapshotPath, recipeHash);
       const labels = {
         create: "+ create",
@@ -261,6 +332,16 @@ export async function main(argv: string[], options: WorldCliOptions): Promise<nu
       print(labels[state.kind]);
       print(`receipt  ${snapshotPath}`);
       if (state.kind !== "create") printOutputs(state.snapshot, print);
+      const worldLedgerPath = ledgerPath(snapshotDirectory, stagedName);
+      if (await pathExists(worldLedgerPath)) {
+        const entries = await readLedger(worldLedgerPath);
+        const leaked = entries.filter((entry) => entry.retain !== true).length;
+        const retained = entries.filter((entry) => entry.retain === true).length;
+        if (leaked > 0 && (state.kind === "create" || state.kind === "orphaned")) {
+          print(`leaked  ${leaked} resources`);
+        }
+        if (retained > 0) print(`retained  ${retained} resources`);
+      }
       return 0;
     } catch (error) {
       print(messageText(error));
@@ -272,11 +353,19 @@ export async function main(argv: string[], options: WorldCliOptions): Promise<nu
       const snapshotDirectory = scriptWorldSnapshotDirectory(options.cwd);
       let stagedName = receiptName(command.name, command.stage);
       let path = scriptWorldSnapshotPath(snapshotDirectory, stagedName);
-      if (command.stage === undefined && !await pathExists(path)) {
+      let worldLedgerPath = ledgerPath(snapshotDirectory, stagedName);
+      if (
+        command.stage === undefined
+        && !await pathExists(path)
+        && !await pathExists(worldLedgerPath)
+      ) {
         const prefix = `${command.name}--`;
-        const candidates = (await new WorldStateStore(snapshotDirectory).list())
+        const receiptCandidates = (await new WorldStateStore(snapshotDirectory).list())
           .map((candidatePath) => basename(candidatePath, extname(candidatePath)))
           .filter((candidate) => candidate.startsWith(prefix));
+        const ledgerCandidates = (await ledgerWorldNames(snapshotDirectory))
+          .filter((candidate) => candidate.startsWith(prefix));
+        const candidates = [...new Set([...receiptCandidates, ...ledgerCandidates])].sort();
         if (candidates.length > 1) {
           print(`Multiple staged world receipts match ${JSON.stringify(command.name)}:`);
           for (const candidate of candidates) print(`  ${candidate}`);
@@ -285,7 +374,27 @@ export async function main(argv: string[], options: WorldCliOptions): Promise<nu
         if (candidates[0]) {
           stagedName = candidates[0];
           path = scriptWorldSnapshotPath(snapshotDirectory, stagedName);
+          worldLedgerPath = ledgerPath(snapshotDirectory, stagedName);
         }
+      }
+      const receiptExists = await pathExists(path);
+      const ledgerExists = await pathExists(worldLedgerPath);
+      if (!receiptExists) {
+        if (!ledgerExists) {
+          print(`World receipt ${JSON.stringify(stagedName)} does not exist.`);
+          return 1;
+        }
+        await reapAndReport(
+          worldLedgerPath,
+          stagedName,
+          command.name,
+          command.stage,
+          command.purge === true,
+          print,
+          options,
+        );
+        print(`World ${JSON.stringify(stagedName)} has no receipt; reaped its ledger.`);
+        return 0;
       }
       const result = await downScriptWorld(path);
       if (!result.found) {
@@ -297,6 +406,15 @@ export async function main(argv: string[], options: WorldCliOptions): Promise<nu
       } else {
         print(`World ${JSON.stringify(stagedName)} torn down.`);
       }
+      await reapAndReport(
+        worldLedgerPath,
+        stagedName,
+        command.name,
+        command.stage,
+        command.purge === true,
+        print,
+        options,
+      );
       return 0;
     } catch (error) {
       print(messageText(error));
@@ -308,13 +426,40 @@ export async function main(argv: string[], options: WorldCliOptions): Promise<nu
     print(`World scripts: ${discovered.map((world) => `${world.name} (${displayWorldPath(world.path, options.cwd)}, script)`).join(", ") || "(none)"}`);
     let count = 0;
     const receiptsDirectory = scriptWorldSnapshotDirectory(options.cwd);
+    const receiptNames = new Set<string>();
     for (const path of await new WorldStateStore(receiptsDirectory).list()) {
+      const receiptFileName = basename(path, extname(path));
+      receiptNames.add(receiptFileName);
       try {
         const receipt = await readScriptWorldSnapshot(path);
         if (!receipt) continue;
-        print(`${receipt.name}  ${receipt.createdAt}  script  ${isProcessAlive(receipt.pid) ? "alive" : `dead(pid ${receipt.pid})`}`);
+        const alive = isProcessAlive(receipt.pid);
+        const entries = await readLedger(ledgerPath(receiptsDirectory, receiptFileName));
+        const leaked = entries.filter((entry) => entry.retain !== true).length;
+        const retained = entries.filter((entry) => entry.retain === true).length;
+        let line = `${receipt.name}  ${receipt.createdAt}  script  ${alive ? "alive" : `dead(pid ${receipt.pid})`}`;
+        if (!alive && leaked > 0) line += `  leaked ${leaked}`;
+        if (retained > 0) line += `  retained ${retained}`;
+        print(line);
         count += 1;
       } catch (error) {
+        print(`Warning: skipped ${displayWorldPath(path, options.cwd)}: ${messageText(error)}`);
+      }
+    }
+    for (const stagedName of await ledgerWorldNames(receiptsDirectory)) {
+      if (receiptNames.has(stagedName)) continue;
+      try {
+        const entries = await readLedger(ledgerPath(receiptsDirectory, stagedName));
+        const leaked = entries.filter((entry) => entry.retain !== true).length;
+        const retained = entries.filter((entry) => entry.retain === true).length;
+        if (leaked === 0 && retained === 0) continue;
+        let line = `${stagedName}  -  script  down`;
+        if (retained > 0) line += `  retained ${retained}`;
+        if (leaked > 0) line += `  leaked ${leaked}`;
+        print(line);
+        count += 1;
+      } catch (error) {
+        const path = ledgerPath(receiptsDirectory, stagedName);
         print(`Warning: skipped ${displayWorldPath(path, options.cwd)}: ${messageText(error)}`);
       }
     }

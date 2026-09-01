@@ -16,6 +16,7 @@ import {
   startMockOnSandbox,
 } from "@openwork/hosts";
 import { denFetch, ensureMemberSession, freshSession, signIn } from "@openwork/behaviors";
+import { trackResource } from "@openwork/world";
 import { createConnection } from "mysql2/promise";
 import type { ChildProcess } from "node:child_process";
 import type { DenRef, DenSession } from "@openwork/behaviors";
@@ -756,6 +757,7 @@ export async function server(options: ServerOptions): Promise<Den> {
   let database: DbHandle | undefined;
   try {
     database = await options.place.db(ephemeralDatabaseName());
+    await trackResource({ kind: "mysql-db", id: database.name, label: "den-mysql" });
     await runDbPush(database.url);
     let apiPort: number;
     let webPort: number;
@@ -781,7 +783,8 @@ export async function server(options: ServerOptions): Promise<Den> {
     };
     const logsDir = join(REPO_ROOT, "evals", "results", ".testkit", database.name);
     await mkdir(logsDir, { recursive: true });
-    if (process.env.OPENWORK_EVAL_DEN_RUNTIME_PREPARED !== "1" && options.web !== false) {
+    const prepared = process.env.OPENWORK_EVAL_DEN_RUNTIME_PREPARED === "1";
+    if (!prepared && options.web !== false) {
       // Every ephemeral next dev process otherwise reuses the same Turbopack
       // graph. A stale missing-module node can break /api/den even though
       // /api/ready is healthy.
@@ -826,6 +829,7 @@ export async function server(options: ServerOptions): Promise<Den> {
       };
     const api = spawnService("den-api", "dev:den:api", apiPort, { ...commonEnv, DEN_BIND_HOST: "127.0.0.1" }, join(logsDir, "api.log"));
     services.push(api);
+    await trackResource({ kind: "process", id: String(api.pid), label: "den-api", match: prepared ? "@openwork-ee/den-api" : "dev:den:api" });
     const web = options.web === false
       ? null
       : spawnService("den-web", "dev:den:web", webPort, {
@@ -836,7 +840,10 @@ export async function server(options: ServerOptions): Promise<Den> {
           DEN_AUTH_ORIGIN: `http://localhost:${webPort}`,
           DEN_AUTH_FALLBACK_BASE: `http://127.0.0.1:${apiPort}`,
         }, join(logsDir, "web.log"));
-    if (web) services.push(web);
+    if (web) {
+      services.push(web);
+      await trackResource({ kind: "process", id: String(web.pid), label: "den-web", match: prepared ? "@openwork-ee/den-web" : "dev:den:web" });
+    }
     await waitForHttp(`${ref.apiUrl}/health`, api, (response) => response.ok);
     if (web) {
       await waitForHttp(`${ref.webUrl}/api/ready`, web, (response) => response.ok);
