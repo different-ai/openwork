@@ -29,25 +29,29 @@ export function CoworkerMark({
       style={{ width: size, height: size }}
       viewBox="0 0 122 122"
     >
-      <g className="coworker-mark__body">
-        <g className="coworker-mark__depth">
-          <path d={BUBBLE_PATH} fill="#69717d" opacity="0.62" transform="translate(3 3)" />
-        </g>
-        <path d={BUBBLE_PATH} fill="#f7f8fa" stroke="#ffffff" strokeWidth="1.1" />
-        <g className="coworker-mark__features">
-          <g className="coworker-mark__pointer-gaze">
-            <g className="coworker-mark__gaze">
-              <g className="coworker-mark__pupils" fill="#0b0e14">
-                <rect x="34.5" y="50" width="6" height="14" rx="3" />
-                <rect x="79.5" y="50" width="6" height="14" rx="3" />
+      <rect x="3" y="3" width="116" height="116" rx="29" fill="#5b8dff" />
+      <rect x="3.5" y="3.5" width="115" height="115" rx="28.5" fill="none" stroke="#8aa9ff" strokeOpacity="0.58" />
+      <g transform="translate(14.7 14.5) scale(0.76)">
+        <g className="coworker-mark__body">
+          <g className="coworker-mark__depth">
+            <path d={BUBBLE_PATH} fill="#284f9f" opacity="0.68" transform="translate(3 3)" />
+          </g>
+          <path d={BUBBLE_PATH} fill="#f7f8fa" stroke="#ffffff" strokeWidth="1.1" />
+          <g className="coworker-mark__features">
+            <g className="coworker-mark__pointer-gaze">
+              <g className="coworker-mark__gaze">
+                <g className="coworker-mark__pupils" fill="#0b0e14">
+                  <rect x="34.5" y="50" width="6" height="14" rx="3" />
+                  <rect x="79.5" y="50" width="6" height="14" rx="3" />
+                </g>
               </g>
             </g>
-          </g>
-          <g fill="none" stroke="#11151d" strokeLinecap="round" strokeWidth="5">
-            <circle cx="37.5" cy="57" r="17.5" />
-            <circle cx="82.5" cy="57" r="17.5" />
-            <path d="M57.5 57c1.25-4 3.75-4 5 0" />
-            <path d="M15 57h4.5M100.5 57h4.5" strokeWidth="7" />
+            <g fill="none" stroke="#11151d" strokeLinecap="round" strokeWidth="5">
+              <circle cx="37.5" cy="57" r="17.5" />
+              <circle cx="82.5" cy="57" r="17.5" />
+              <path d="M57.5 57c1.25-4 3.75-4 5 0" />
+              <path d="M15 57h4.5M100.5 57h4.5" strokeWidth="7" />
+            </g>
           </g>
         </g>
       </g>
