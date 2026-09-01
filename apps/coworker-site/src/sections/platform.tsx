@@ -1,29 +1,25 @@
 import { useState } from "react";
 import { CoworkerMark } from "@/ui/brand";
-import { FOOTER, GET_STARTED, PLATFORM, SITE } from "~/content";
-import { Container, Pill, Reveal, Section, SourceNote } from "~/ui/primitives";
+import { FOOTER, GET_STARTED, PLATFORM, SITE, allClaims } from "~/content";
+import { Container, Pill, Reveal, Section } from "~/ui/primitives";
 
 export function Platform() {
   return (
-    <Section id="platform" eyebrow="Powered by OpenWork" title={PLATFORM.title} lead={PLATFORM.lead}>
-      <div className="mt-12 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        {PLATFORM.items.map((item, index) => (
-          <Reveal key={item.name} delay={(index % 3) * 70}>
-            <div className="card h-full p-5">
-              <h3 className="text-[15px] font-semibold tracking-[-0.01em] text-snow">{item.name}</h3>
-              <p className="mt-2 text-[13.5px] leading-relaxed text-mist">{item.text}</p>
-              <SourceNote source={item.source} />
+    <Section id="platform" title={PLATFORM.title} lead={PLATFORM.lead}>
+      <Reveal className="mt-10">
+        <dl className="grid gap-x-10 gap-y-5 border-t border-line pt-8 sm:grid-cols-2 lg:grid-cols-3">
+          {PLATFORM.items.map((item) => (
+            <div key={item.name} className="min-w-0">
+              <dt className="text-[13px] font-semibold text-snow">{item.name}</dt>
+              <dd className="mt-1 text-[13.5px] leading-relaxed text-mist">{item.text}</dd>
             </div>
-          </Reveal>
-        ))}
-      </div>
-      <Reveal>
-        <p className="mt-8 max-w-2xl text-[13.5px] leading-relaxed text-mist">
-          OpenWork is the open-source platform for AI work: local engine, native threads, connectors, and OpenWork Cloud. Learn more at{" "}
+          ))}
+        </dl>
+        <p className="mt-8 text-[13.5px] text-mist">
+          OpenWork is the open-source platform underneath — local engine, native threads, connectors, and OpenWork Cloud.{" "}
           <a href={SITE.openwork} className="text-snow underline decoration-white/25 underline-offset-4 hover:decoration-white/60" rel="noreferrer">
             openworklabs.com
           </a>
-          .
         </p>
       </Reveal>
     </Section>
@@ -70,53 +66,69 @@ function CommandBlock({ commands }: { commands: readonly string[] }) {
 
 export function GetStarted() {
   return (
-    <Section id="get-started" eyebrow="Get started" title={GET_STARTED.title} lead={GET_STARTED.lead}>
-      <div className="mt-10 grid gap-6 lg:grid-cols-[minmax(0,7fr)_minmax(0,5fr)]">
-        <Reveal>
+    <Section id="get-started" title={GET_STARTED.title} lead={GET_STARTED.lead.text}>
+      <Reveal className="mt-10">
+        <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,7fr)_minmax(0,5fr)]">
           <CommandBlock commands={GET_STARTED.commands} />
-        </Reveal>
-        <Reveal delay={100}>
-          <div className="flex h-full flex-col gap-4">
-            <div className="card p-5">
-              <Pill tone="amber">{GET_STARTED.status}</Pill>
-              <p className="mt-3 text-[13.5px] leading-relaxed text-mist">
-                macOS is the first platform. Signed, notarized builds and an update channel are in preparation; this page will link them the day they
-                exist, not before.
-              </p>
-            </div>
-            {GET_STARTED.notes.map((note) => (
-              <div key={note.source} className="card p-5">
-                <p className="text-[13.5px] leading-relaxed text-snow/90">{note.text}</p>
-                <SourceNote source={note.source} />
-              </div>
-            ))}
+          <div className="flex flex-col gap-3 lg:pt-1">
+            <Pill tone="amber">{GET_STARTED.status}</Pill>
+            <p className="text-[13.5px] leading-relaxed text-mist">
+              macOS first. The engine binary resolves from <span className="font-mono text-[12px] text-snow/90">OPENWORK_OPENCODE_BIN</span> or{" "}
+              <span className="font-mono text-[12px] text-snow/90">opencode</span> on your PATH during development.
+            </p>
           </div>
-        </Reveal>
-      </div>
+        </div>
+      </Reveal>
     </Section>
+  );
+}
+
+/** The trust mechanism, kept — but as a quiet disclosure rather than a caption under every card. */
+function ClaimSources() {
+  const claims = allClaims();
+  return (
+    <details className="group mt-10 border-t border-line pt-6">
+      <summary className="cursor-pointer list-none text-[12.5px] font-medium text-mist transition-colors hover:text-snow">
+        <span className="mr-2 inline-block transition-transform group-open:rotate-90" aria-hidden="true">›</span>
+        {FOOTER.claimsTitle} <span className="text-mist/60">({claims.length})</span>
+      </summary>
+      <ul className="mt-4 grid gap-3 md:grid-cols-2">
+        {claims.map((claim) => (
+          <li key={claim.source + claim.text.slice(0, 24)} className="min-w-0 text-[12px] leading-relaxed">
+            <p className="text-mist">{claim.text}</p>
+            <p className="mt-0.5 truncate font-mono text-[10.5px] text-mist/60" title={claim.source}>
+              {claim.source}
+            </p>
+          </li>
+        ))}
+      </ul>
+    </details>
   );
 }
 
 export function Footer() {
   return (
     <footer className="border-t hairline py-10">
-      <Container className="flex flex-col gap-6 md:flex-row md:items-center md:justify-between">
-        <div className="flex items-center gap-3">
-          <CoworkerMark size={28} label="Open Coworker" />
-          <div>
-            <p className="text-sm font-semibold text-snow">{SITE.name}</p>
-            <p className="text-[12px] text-mist">
-              © {SITE.year} {SITE.company} · {FOOTER.poweredBy}
-            </p>
+      <Container>
+        <div className="flex flex-col gap-6 md:flex-row md:items-center md:justify-between">
+          <div className="flex items-center gap-3">
+            <CoworkerMark size={28} label="Open Coworker" />
+            <div>
+              <p className="text-sm font-semibold text-snow">{SITE.name}</p>
+              <p className="text-[12px] text-mist">
+                © {SITE.year} {SITE.company} · {FOOTER.poweredBy}
+              </p>
+            </div>
           </div>
+          <nav aria-label="Footer" className="flex flex-wrap items-center gap-5">
+            {FOOTER.links.map((link) => (
+              <a key={link.href} href={link.href} rel="noreferrer" className="text-[13px] font-medium text-mist transition-colors hover:text-snow">
+                {link.label}
+              </a>
+            ))}
+          </nav>
         </div>
-        <nav aria-label="Footer" className="flex flex-wrap items-center gap-5">
-          {FOOTER.links.map((link) => (
-            <a key={link.href} href={link.href} rel="noreferrer" className="text-[13px] font-medium text-mist transition-colors hover:text-snow">
-              {link.label}
-            </a>
-          ))}
-        </nav>
+        <ClaimSources />
       </Container>
     </footer>
   );
