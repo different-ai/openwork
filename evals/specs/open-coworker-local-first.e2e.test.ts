@@ -47,9 +47,41 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   const welcomeText = await evalIn(app, "document.body.innerText");
   expect(welcomeText).toContain("Connect OpenWork Cloud");
   expect(welcomeText).toContain("Start locally");
+  const brandGaze = await evalIn(app, `(() => {
+    const mark = document.querySelector('svg[aria-label="Open Coworker"].coworker-mark');
+    if (!mark) return null;
+    const bounds = mark.getBoundingClientRect();
+    window.dispatchEvent(new PointerEvent("pointermove", {
+      clientX: window.innerWidth - 2,
+      clientY: bounds.top + bounds.height / 2,
+    }));
+    return new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => {
+      const pointerLayer = mark.querySelector(".coworker-mark__pointer-gaze");
+      const lookX = Number.parseFloat(mark.style.getPropertyValue("--avatar-look-x"));
+      const lookY = Number.parseFloat(mark.style.getPropertyValue("--avatar-look-y"));
+      resolve({
+        whiteBody: mark.querySelector('path[fill="#f7f8fa"]') !== null,
+        hasPointerLayer: pointerLayer !== null,
+        lookX,
+        lookY,
+      });
+    })));
+  })()`, { awaitPromise: true });
+  expect(brandGaze).toMatchObject({
+    whiteBody: true,
+    hasPointerLayer: true,
+    lookX: expect.any(Number),
+    lookY: expect.any(Number),
+  });
+  if (!isRecord(brandGaze) || typeof brandGaze.lookX !== "number" || typeof brandGaze.lookY !== "number") {
+    throw new Error("Open Coworker brand gaze was unavailable.");
+  }
+  expect(brandGaze.lookX).toBeGreaterThan(0);
+  expect(brandGaze.lookX).toBeLessThanOrEqual(1.5);
+  expect(Math.abs(brandGaze.lookY)).toBeLessThanOrEqual(0.9);
   evidence.recordAssertionEvidence(
-    "First run preserves sign-in while making local mode a complete path",
-    "The same welcome surface visibly offered both Connect OpenWork Cloud and Start locally before any coworker existed.",
+    "First run presents the white Open Coworker identity with a restrained pointer-aware gaze",
+    "The welcome surface used the white SVG coworker mark, offered both cloud and local paths, and moved only the pupil layer toward the pointer within a 1.5px horizontal cap.",
     true,
   );
 
@@ -112,9 +144,34 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
     .map((key) => avatarMotion[key])
     .filter(isRecord);
   expect(new Set(animatedLayers.map((layer) => layer.animationDelay)).size).toBe(1);
+  const coworkerGaze = await evalIn(app, `(() => {
+    const avatar = document.querySelector('svg[aria-label="Scout avatar"].is-animated');
+    if (!avatar) return null;
+    window.dispatchEvent(new PointerEvent("pointermove", {
+      clientX: 2,
+      clientY: window.innerHeight - 2,
+    }));
+    return new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve({
+      hasPointerLayer: avatar.querySelector(".coworker-avatar__pointer-gaze") !== null,
+      lookX: Number.parseFloat(avatar.style.getPropertyValue("--avatar-look-x")),
+      lookY: Number.parseFloat(avatar.style.getPropertyValue("--avatar-look-y")),
+    }))));
+  })()`, { awaitPromise: true });
+  expect(coworkerGaze).toMatchObject({
+    hasPointerLayer: true,
+    lookX: expect.any(Number),
+    lookY: expect.any(Number),
+  });
+  if (!isRecord(coworkerGaze) || typeof coworkerGaze.lookX !== "number" || typeof coworkerGaze.lookY !== "number") {
+    throw new Error("Scout's pointer gaze was unavailable.");
+  }
+  expect(coworkerGaze.lookX).toBeLessThan(0);
+  expect(Math.abs(coworkerGaze.lookX)).toBeLessThanOrEqual(1.5);
+  expect(coworkerGaze.lookY).toBeGreaterThan(0);
+  expect(coworkerGaze.lookY).toBeLessThanOrEqual(0.9);
   evidence.recordAssertionEvidence(
-    "The coworker avatar coordinates a restrained head turn across separate SVG layers",
-    "Scout's body, rear depth, glasses/features, gaze, and blink each had their expected animation and shared the same 8.8 second phase timing.",
+    "The coworker avatar coordinates its head turn and keeps a restrained eye on the pointer",
+    "Scout's body, rear depth, glasses/features, gaze, and blink shared the same 8.8 second phase, while only the nested pupil layer followed a lower-left pointer within 1.5px horizontal and 0.9px vertical caps.",
     true,
   );
   const storedCoworker = await invokeCoworker(app, "coworkers.get", { slug: "scout" });
@@ -201,9 +258,22 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
     threadId: expect.stringMatching(/^ses_/),
     error: "",
   });
+  const activitySummary = await waitFor(app, `(() => {
+    const panel = document.querySelector('[data-testid="coworker-activity-summary"]');
+    const text = panel?.textContent ?? "";
+    return text.includes("Now") && text.includes("Last activity") && text.includes("Local readiness check")
+      ? text
+      : false;
+  })()`, {
+    timeoutMs: 30_000,
+    label: "right sidebar shows the completed local work",
+  });
+  expect(activitySummary).toContain("No task is running");
+  expect(activitySummary).toContain("Last activity");
+  expect(activitySummary).toContain("Local readiness check");
   evidence.recordAssertionEvidence(
-    "A local Responsibility schedules and runs through a native OpenWork thread without a Den account",
-    "The user-created daily responsibility persisted as active, Run now was accepted, and its latest run finished succeeded with a native ses_ thread id and no error.",
+    "A local Responsibility runs through a native thread and leaves a clear record in the sidebar",
+    "The daily responsibility finished with a native ses_ thread id and no error. The right sidebar then said no task was running and named Local readiness check as the last activity.",
     true,
   );
 });

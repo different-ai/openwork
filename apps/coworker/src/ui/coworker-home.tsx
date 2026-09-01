@@ -70,14 +70,22 @@ function activityTime(timestamp: number): string {
   return `Updated ${Math.round(hours / 24)}d ago`;
 }
 
-function activityContext(activity: CoworkerActivity | undefined): string {
-  if (!activity) return "Reading the latest OpenWork thread state.";
-  if (activity.state === "working") return "An OpenWork thread is active right now.";
-  if (activity.state === "retrying") return "The current thread is retrying after an interruption.";
-  if (activity.state === "attention") return "A recurring responsibility needs your decision.";
-  if (activity.state === "recent") return "No active run. This is the most recently updated thread.";
-  if (activity.state === "offline") return "OpenWork cannot read this coworker’s activity right now.";
-  return "Ready for a new assignment.";
+function currentActivityTitle(activity: CoworkerActivity | undefined): string {
+  if (!activity) return "Checking status";
+  if (activity.state === "working" || activity.state === "retrying" || activity.state === "attention") {
+    return activity.detail;
+  }
+  if (activity.state === "offline") return "Activity unavailable";
+  return "No task is running";
+}
+
+function currentActivityNote(activity: CoworkerActivity | undefined): string {
+  if (!activity) return "Reading the workspace now.";
+  if (activity.state === "working") return "This work is running now.";
+  if (activity.state === "retrying") return "OpenWork restarted this work after an interruption.";
+  if (activity.state === "attention") return "Work is paused. Open it to review the request or failure.";
+  if (activity.state === "offline") return "OpenWork could not read this workspace.";
+  return "Ready for the next assignment.";
 }
 
 export function CoworkerHome({
@@ -271,11 +279,11 @@ export function CoworkerHome({
                   ? "Coworker settings"
                   : contextView === "openwork"
                     ? "OpenWork configuration"
-                    : "Coworker details"}
+                    : "Activity"}
             </h2>
             <p className="truncate text-xs text-mist">
               {contextView === "overview"
-                ? "Context stays beside the work"
+                ? `${coworker.name}'s current and recent work`
                 : contextView === "capabilities"
                   ? `Available to ${coworker.name}`
                 : contextView === "openwork"
@@ -359,32 +367,14 @@ function CoworkerOverview({
   onOpenSettings: () => void;
   onOpenOpenWork: () => void;
 }) {
+  const lastActivity = activity?.last;
+
   return (
     <div className="space-y-5">
-      <section className="rounded-2xl border border-line bg-ink p-4">
-        <div className="flex items-start gap-3">
-          <CoworkerAvatar
-            animated
-            color={coworker.avatarColor}
-            glasses={coworker.avatarGlasses}
-            name={coworker.name}
-            size={68}
-          />
-          <div className="min-w-0">
-            <h3 className="truncate text-sm font-semibold text-snow">{coworker.name}</h3>
-            <p className="mt-0.5 text-xs text-mist">{coworker.role || "Persistent coworker"}</p>
-          </div>
-        </div>
-        {coworker.mission ? <p className="mt-3 text-sm leading-relaxed text-snow">{coworker.mission}</p> : null}
-        <button className="mt-3 text-xs font-medium text-spark hover:underline" onClick={onOpenSettings}>
-          Edit appearance, role, mission, and model
-        </button>
-      </section>
-
-      <section className="rounded-2xl border border-line bg-ink p-4">
+      <section className="rounded-2xl border border-line bg-ink p-4" data-testid="coworker-activity-summary">
         <div className="flex items-start justify-between gap-3">
           <div>
-            <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-mist">Activity summary</p>
+            <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-mist">Now</p>
             <div className={`mt-2 flex items-center gap-2 text-sm font-semibold ${activityTextTone(activity)}`}>
               <StatusDot tone={activityTone(activity)} />
               {activity?.label ?? "Checking status"}
@@ -392,8 +382,40 @@ function CoworkerOverview({
           </div>
           <span className="shrink-0 text-[10px] text-mist">{activityTime(activity?.updatedAt ?? 0)}</span>
         </div>
-        <p className="mt-2 text-sm leading-relaxed text-snow">{activity?.detail ?? "Reading current activity…"}</p>
-        <p className="mt-1.5 text-xs leading-relaxed text-mist">{activityContext(activity)}</p>
+        <h3 className="mt-3 text-sm font-semibold leading-snug text-snow">{currentActivityTitle(activity)}</h3>
+        <p className="mt-1 text-xs leading-relaxed text-mist">{currentActivityNote(activity)}</p>
+        <div className="mt-4 border-t border-line pt-4">
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-mist">Last activity</p>
+            {lastActivity ? <span className="text-[10px] text-mist">{activityTime(lastActivity.updatedAt)}</span> : null}
+          </div>
+          {lastActivity ? (
+            <p className="mt-2 text-sm leading-snug text-snow">{lastActivity.title}</p>
+          ) : (
+            <p className="mt-2 text-xs text-mist">No previous work yet.</p>
+          )}
+        </div>
+      </section>
+
+      <section className="rounded-2xl border border-line bg-black/10 p-4">
+        <div className="flex items-start gap-3">
+          <CoworkerAvatar
+            animated
+            color={coworker.avatarColor}
+            glasses={coworker.avatarGlasses}
+            name={coworker.name}
+            size={58}
+          />
+          <div className="min-w-0">
+            <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-mist">Profile</p>
+            <h3 className="mt-1 truncate text-sm font-semibold text-snow">{coworker.name}</h3>
+            <p className="mt-0.5 text-xs text-mist">{coworker.role || "No role set"}</p>
+          </div>
+        </div>
+        {coworker.mission ? <p className="mt-3 text-xs leading-relaxed text-mist">{coworker.mission}</p> : null}
+        <button className="mt-3 text-xs font-medium text-spark hover:underline" onClick={onOpenSettings}>
+          Edit profile and model
+        </button>
       </section>
 
       <section>
@@ -413,7 +435,7 @@ function CoworkerOverview({
         <span>
           <span className="block text-sm font-semibold text-snow">Apps & tools</span>
           <span className="mt-1 block text-xs leading-relaxed text-mist">
-            Browse live MCP connections and interactive Apps.
+            See the MCP apps and tools available in this workspace.
           </span>
         </span>
         <span className="text-mist" aria-hidden="true">›</span>
@@ -426,7 +448,7 @@ function CoworkerOverview({
         <span>
           <span className="block text-sm font-semibold text-snow">Memory</span>
           <span className="mt-1 block text-xs leading-relaxed text-mist">
-            Inspect working context and durable Markdown memories.
+            Open the Markdown files this coworker keeps.
           </span>
         </span>
         <span className="text-mist" aria-hidden="true">›</span>

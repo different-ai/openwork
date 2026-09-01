@@ -21,6 +21,10 @@ test("Open Coworker has its own stable packaged identity and local runtime resou
   assert.ok(!config.files.includes("electron/**/*"));
   assert.ok(config.files.includes("server/**/*"));
   assert.ok(config.files.includes("dist/**/*"));
+  assert.ok(config.files.includes("resources/icons/**/*"));
+  assert.equal(config.mac.icon, "resources/icons/icon.icns");
+  assert.equal(config.linux.icon, "resources/icons/linux");
+  assert.equal(config.win.icon, "resources/icons/icon.ico");
   assert.deepEqual(config.extraResources[0], {
     from: "resources/sidecars",
     to: "sidecars",
@@ -38,4 +42,18 @@ test("Open Coworker mirrors every embedded-server runtime dependency for electro
       `Embedded server dependency ${name} must be mirrored in apps/coworker/package.json`,
     );
   }
+});
+
+test("Open Coworker owns a branded boot surface and cross-platform icon set", async () => {
+  const indexHtml = await readFile(path.join(coworkerRoot, "index.html"), "utf8");
+  const logoSvg = await readFile(path.join(coworkerRoot, "public", "open-coworker.svg"), "utf8");
+  assert.match(indexHtml, /class="boot-splash"/);
+  assert.match(indexHtml, /href="\/open-coworker\.svg"/);
+  assert.match(logoSvg, /fill="#f7f8fa"/);
+  await Promise.all([
+    "resources/icons/icon.png",
+    "resources/icons/icon.icns",
+    "resources/icons/icon.ico",
+    "resources/icons/linux/512x512.png",
+  ].map((relativePath) => readFile(path.join(coworkerRoot, relativePath))));
 });
