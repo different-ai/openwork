@@ -175,7 +175,7 @@ export default function App() {
   }
 
   return (
-    <div className="flex h-full">
+    <div className="window-shell flex h-full overflow-hidden">
       <CoworkerRail
         coworkers={coworkers}
         activityBySlug={visibleActivityBySlug}
