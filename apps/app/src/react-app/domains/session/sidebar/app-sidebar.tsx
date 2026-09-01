@@ -152,7 +152,6 @@ import {
 import { WorkspaceAvatarPicker } from "./workspace-avatar-picker";
 import { isSameWorkbenchSession, useWorkbenchStore } from "../chat/workbench-store";
 import { SidebarDestination } from "./sidebar-destination";
-import { OverflowFadeLabel } from "./overflow-fade-label";
 import { SessionTitle } from "./session-title";
 
 /** Paper Desktop: unread #2FBE54, needs-action #E8933A (14px artboard → ~8px app). */
@@ -1464,6 +1463,11 @@ function WorkspaceHeader({
 }: WorkspaceHeaderProps) {
   const ctx = useSidebarContext();
   const label = workspaceLabel(workspace);
+  // Same reveal pattern as task rows: the name fades only where text is
+  // hidden and scrolls into view on mouse hover or keyboard focus.
+  const [isTitleHovered, setIsTitleHovered] = React.useState(false);
+  const [isTitleFocused, setIsTitleFocused] = React.useState(false);
+  const titleIntent = isTitleFocused ? "focus" : isTitleHovered ? "hover" : null;
 
   const handleSelectWorkspace = () => {
     void Promise.resolve(ctx.onSelectWorkspace(workspace.id));
@@ -1487,11 +1491,24 @@ function WorkspaceHeader({
       <button
         type="button"
         data-sidebar-workspace-drag-handle
-        className="min-w-0 flex h-full flex-1 cursor-grab touch-none flex-col items-start justify-center border-0 bg-transparent p-0 text-left text-inherit active:cursor-grabbing pr-8 group-hover/workspace-header:pr-20 group-has-[[data-workspace-actions]:focus-within]/workspace-header:pr-20 group-has-data-popup-open/workspace-header:pr-20"
+        data-sidebar-workspace-title
+        // `items-stretch` (not `items-start`) so the title viewport spans the
+        // row up to the reserved action padding instead of shrinking to its
+        // text, which put the fade on the last letters of every name.
+        className="min-w-0 flex h-full flex-1 cursor-grab touch-none flex-col items-stretch justify-center border-0 bg-transparent p-0 text-left text-inherit active:cursor-grabbing pr-8 group-hover/workspace-header:pr-20 group-has-[[data-workspace-actions]:focus-within]/workspace-header:pr-20 group-has-data-popup-open/workspace-header:pr-20"
+        aria-label={statusLabel ? `${label}, ${statusLabel}` : label}
         onPointerDown={onTitlePointerDown}
+        onPointerEnter={(event) => {
+          if (event.pointerType === "mouse") setIsTitleHovered(true);
+        }}
+        onPointerLeave={() => setIsTitleHovered(false)}
+        onFocus={() => setIsTitleFocused(true)}
+        onBlur={() => setIsTitleFocused(false)}
         onClick={handleSelectWorkspace}
       >
-        <OverflowFadeLabel data-sidebar-workspace-title>{label}</OverflowFadeLabel>
+        <span className="flex min-w-0 items-center">
+          <SessionTitle intent={titleIntent} title={label} tooltip={label} />
+        </span>
         {statusLabel ? (
           <span className={cn("block text-xs", isError ? "text-destructive" : "text-muted-foreground")}>
             {statusLabel}

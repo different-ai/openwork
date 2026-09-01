@@ -13,24 +13,29 @@ const runId = Date.now().toString(36);
 const shortName = `Yonder-${runId}`;
 const longName = `openwork-workspace-title-that-keeps-going-past-the-sidebar-${runId}`;
 
+/** Workspace names use the same title viewport as task rows, so read the same state. */
 const workspaceTitleStateExpression = (name: string) => `(() => {
-  const label = [...document.querySelectorAll("[data-sidebar-workspace-title]")]
+  const text = [...document.querySelectorAll("[data-sidebar-workspace-title] [data-session-title-text]")]
     .find((node) => (node.textContent ?? "").trim() === ${JSON.stringify(name)});
-  if (!(label instanceof HTMLElement)) return null;
-  const parent = label.parentElement;
-  const textRange = document.createRange();
-  textRange.selectNodeContents(label);
-  const text = textRange.getBoundingClientRect();
-  const box = label.getBoundingClientRect();
+  if (!(text instanceof HTMLElement) || !(text.parentElement instanceof HTMLElement)) return null;
+  const viewport = text.parentElement;
+  const button = viewport.closest("[data-sidebar-workspace-title]");
+  const viewportRect = viewport.getBoundingClientRect();
+  const buttonRect = button.getBoundingClientRect();
+  // The expand chevron is the header's own direct child; the avatar picker inside
+  // the row also carries aria-expanded, so do not search descendants.
+  const header = button.parentElement?.parentElement;
+  const chevron = header ? header.querySelector(":scope > [aria-expanded]") : null;
   return {
-    boxRight: box.right,
-    boxWidth: box.width,
-    clientWidth: label.clientWidth,
-    maskImage: getComputedStyle(label).maskImage,
-    overflowing: label.dataset.overflowing ?? "",
-    parentContentRight: parent ? parent.getBoundingClientRect().right - parseFloat(getComputedStyle(parent).paddingRight) : null,
-    scrollWidth: label.scrollWidth,
-    textRight: text.right,
+    buttonContentRight: buttonRect.right - parseFloat(getComputedStyle(button).paddingRight),
+    chevronLeft: chevron ? chevron.getBoundingClientRect().left : null,
+    clientWidth: viewport.clientWidth,
+    hiddenEdges: viewport.dataset.sessionTitleHiddenEdges ?? "",
+    maskImage: getComputedStyle(viewport).maskImage,
+    scrollWidth: text.scrollWidth,
+    viewportRight: viewportRect.right,
+    x: viewportRect.left + Math.min(viewportRect.width / 2, 60),
+    y: viewportRect.top + viewportRect.height / 2,
   };
 })()`;
 
@@ -42,14 +47,15 @@ const railPointExpression = `(() => {
 })()`;
 
 type WorkspaceTitleState = {
-  boxRight: number;
-  boxWidth: number;
+  buttonContentRight: number;
+  chevronLeft: number | null;
   clientWidth: number;
+  hiddenEdges: string;
   maskImage: string;
-  overflowing: string;
-  parentContentRight: number | null;
   scrollWidth: number;
-  textRight: number;
+  viewportRight: number;
+  x: number;
+  y: number;
 };
 
 type Point = { x: number; y: number };
@@ -60,20 +66,21 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function readTitleState(value: unknown, name: string): WorkspaceTitleState {
   if (!isRecord(value)) throw new Error(`Could not read the sidebar workspace title ${JSON.stringify(name)}: ${JSON.stringify(value)}`);
-  const { boxRight, boxWidth, clientWidth, maskImage, overflowing, parentContentRight, scrollWidth, textRight } = value;
+  const { buttonContentRight, chevronLeft, clientWidth, hiddenEdges, maskImage, scrollWidth, viewportRight, x, y } = value;
   if (
-    typeof boxRight !== "number" ||
-    typeof boxWidth !== "number" ||
+    typeof buttonContentRight !== "number" ||
+    (chevronLeft !== null && typeof chevronLeft !== "number") ||
     typeof clientWidth !== "number" ||
+    typeof hiddenEdges !== "string" ||
     typeof maskImage !== "string" ||
-    typeof overflowing !== "string" ||
-    (parentContentRight !== null && typeof parentContentRight !== "number") ||
     typeof scrollWidth !== "number" ||
-    typeof textRight !== "number"
+    typeof viewportRight !== "number" ||
+    typeof x !== "number" ||
+    typeof y !== "number"
   ) {
     throw new Error(`Sidebar workspace title state had an unexpected shape: ${JSON.stringify(value)}`);
   }
-  return { boxRight, boxWidth, clientWidth, maskImage, overflowing, parentContentRight, scrollWidth, textRight };
+  return { buttonContentRight, chevronLeft, clientWidth, hiddenEdges, maskImage, scrollWidth, viewportRight, x, y };
 }
 
 function readPoint(value: unknown, label: string): Point {
@@ -84,14 +91,18 @@ function readPoint(value: unknown, label: string): Point {
 }
 
 function expectFullyVisible(state: WorkspaceTitleState, name: string) {
-  expect(state.scrollWidth, `${name} should fit inside its box`).toBeLessThanOrEqual(state.clientWidth + 1);
+  expect(state.scrollWidth, `${name} should fit inside its viewport`).toBeLessThanOrEqual(state.clientWidth + 1);
+  expect(state.hiddenEdges, `${name} must report no hidden edges`).toBe("none");
   expect(state.maskImage, `${name} must not be masked when it fits`).toBe("none");
-  expect(state.overflowing, `${name} must not report hidden text`).toBe("");
-  // The label box spans the row so any fade sits on the row edge, never on the last letters.
-  if (state.parentContentRight !== null) {
-    expect(Math.abs(state.boxRight - state.parentContentRight), `${name} box should reach the row's content edge`).toBeLessThanOrEqual(1);
+}
+
+function expectViewportSpansRow(state: WorkspaceTitleState, name: string) {
+  // The viewport reaches the row's reserved action padding, so any fade sits on
+  // the row edge and the text never runs under the trailing icons.
+  expect(Math.abs(state.viewportRight - state.buttonContentRight), `${name} viewport should reach the row's content edge`).toBeLessThanOrEqual(1);
+  if (state.chevronLeft !== null) {
+    expect(state.viewportRight, `${name} viewport must stop before the expand chevron`).toBeLessThanOrEqual(state.chevronLeft);
   }
-  expect(state.textRight, `${name} text should end before the box edge`).toBeLessThan(state.boxRight);
 }
 
 async function dragRail(app: Awaited<ReturnType<typeof desktop>>, deltaX: number) {
@@ -113,36 +124,53 @@ test.skipIf(!e2eTestsEnabled)(title, async ({ evidence }) => {
 
   const shortAtDefault = readTitleState(await evalIn(app, workspaceTitleStateExpression(shortName)), shortName);
   expectFullyVisible(shortAtDefault, shortName);
+  expectViewportSpansRow(shortAtDefault, shortName);
   evidence.recordAssertionEvidence(
     "A workspace name that fits the default sidebar is fully visible with no fade",
-    `${JSON.stringify(shortName)} measured ${shortAtDefault.scrollWidth}px inside a ${shortAtDefault.clientWidth}px box, reported no hidden text, and had no mask.`,
+    `${JSON.stringify(shortName)} measured ${shortAtDefault.scrollWidth}px inside a ${shortAtDefault.clientWidth}px viewport, reported no hidden edges, and had no mask.`,
     true,
   );
   await screenshot(app);
 
   await control(app, "workspace.create", { path: `/tmp/${longName}` }, { timeoutMs: 60_000 });
-  await waitFor(app, `${workspaceTitleStateExpression(longName)}?.scrollWidth > ${workspaceTitleStateExpression(longName)}?.clientWidth`, {
+  await waitFor(app, `${workspaceTitleStateExpression(longName)}?.hiddenEdges === "end"`, {
     timeoutMs: 60_000,
-    label: "overflowing workspace name in the sidebar",
-  });
-  await waitFor(app, `${workspaceTitleStateExpression(longName)}?.overflowing === "true"`, {
-    timeoutMs: 10_000,
-    label: "overflowing workspace name reports hidden text",
+    label: "overflowing workspace name fades only its clipped end",
   });
 
   const longAtDefault = readTitleState(await evalIn(app, workspaceTitleStateExpression(longName)), longName);
+  expect(longAtDefault.scrollWidth).toBeGreaterThan(longAtDefault.clientWidth);
   expect(longAtDefault.maskImage).not.toBe("none");
+  expectViewportSpansRow(longAtDefault, longName);
   evidence.recordAssertionEvidence(
-    "A workspace name wider than the sidebar fades only because text is hidden",
-    `${JSON.stringify(longName)} measured ${longAtDefault.scrollWidth}px inside a ${longAtDefault.clientWidth}px box and faded its clipped edge.`,
+    "A workspace name wider than the sidebar fades only its clipped end and stops before the row icons",
+    `${JSON.stringify(longName)} measured ${longAtDefault.scrollWidth}px inside a ${longAtDefault.clientWidth}px viewport ending at ${longAtDefault.viewportRight.toFixed(1)}px, before the chevron at ${longAtDefault.chevronLeft?.toFixed(1) ?? "n/a"}px.`,
     true,
   );
   const shortBesideLong = readTitleState(await evalIn(app, workspaceTitleStateExpression(shortName)), shortName);
   expectFullyVisible(shortBesideLong, shortName);
   await screenshot(app);
 
+  await app.client.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: longAtDefault.x, y: longAtDefault.y });
+  await waitFor(app, `${workspaceTitleStateExpression(longName)}?.hiddenEdges === "start"`, {
+    timeoutMs: 30_000,
+    label: "hovered workspace name reveals its final characters",
+  });
+  const revealed = readTitleState(await evalIn(app, workspaceTitleStateExpression(longName)), longName);
+  expect(revealed.maskImage).not.toBe("none");
+  evidence.recordAssertionEvidence(
+    "Hovering a clipped workspace name reveals its end, like task rows do",
+    `After hovering, ${JSON.stringify(longName)} reported ${JSON.stringify(revealed.hiddenEdges)} hidden edges: the final characters are crisp and only the scrolled-away start is faded.`,
+    true,
+  );
+  await app.client.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: 4, y: longAtDefault.y + 200 });
+  await waitFor(app, `${workspaceTitleStateExpression(longName)}?.hiddenEdges === "end"`, {
+    timeoutMs: 15_000,
+    label: "workspace name returns to rest after hover",
+  });
+
   await dragRail(app, 340);
-  await waitFor(app, `${workspaceTitleStateExpression(longName)}?.overflowing === ""`, {
+  await waitFor(app, `${workspaceTitleStateExpression(longName)}?.hiddenEdges === "none"`, {
     timeoutMs: 15_000,
     label: "expanded sidebar exposes the full workspace name",
   });
