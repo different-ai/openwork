@@ -20,7 +20,7 @@ export type ThreadListItem = {
 };
 
 export type CoworkerActivity = {
-  state: "ready" | "working" | "retrying" | "recent" | "offline";
+  state: "ready" | "working" | "retrying" | "attention" | "recent" | "offline";
   label: string;
   detail: string;
   updatedAt: number;
