@@ -1,5 +1,6 @@
 import { useState } from "react";
-import type { CoworkerSummary } from "@/lib/bridge";
+import type { CoworkerSummary, RuntimeInfo } from "@/lib/bridge";
+import type { DenSession } from "@/lib/den";
 import type { CoworkerActivity } from "@/lib/threads";
 import { CoworkerAvatar } from "@/ui/coworker-avatar";
 import { Button, StatusDot } from "@/ui/kit";
@@ -32,16 +33,22 @@ function activityTextTone(activity: CoworkerActivity | undefined): string {
 
 export function CoworkerRail({
   coworkers,
+  runtime,
+  session,
   activityBySlug,
   selectedSlug,
   onSelect,
   onNewCoworker,
+  onOpenOpenWork,
 }: {
   coworkers: CoworkerSummary[];
+  runtime: RuntimeInfo;
+  session: DenSession | null;
   activityBySlug: Record<string, CoworkerActivity>;
   selectedSlug: string;
   onSelect: (slug: string) => void;
   onNewCoworker: () => void;
+  onOpenOpenWork: () => void;
 }) {
   const [query, setQuery] = useState("");
   const visibleCoworkers = coworkers.filter((coworker) =>
@@ -114,6 +121,30 @@ export function CoworkerRail({
         {coworkers.length === 0 ? <p className="px-2.5 py-4 text-xs text-mist">No coworkers yet. Add your first teammate.</p> : null}
         {coworkers.length > 0 && visibleCoworkers.length === 0 ? <p className="px-2.5 py-4 text-xs text-mist">No matching coworkers.</p> : null}
       </nav>
+      <div className="window-no-drag border-t border-line px-2 py-2">
+        <button
+          type="button"
+          className="group flex w-full items-center gap-2.5 rounded-xl px-2 py-2 text-left transition-colors hover:bg-white/5"
+          onClick={onOpenOpenWork}
+          title="OpenWork account and settings"
+        >
+          <span className="relative flex size-7 shrink-0 items-center justify-center rounded-lg border border-line bg-ink">
+            <span className={`size-1.5 rounded-full ${coworkers.length === 0 ? "bg-mist" : runtime.engineManaged ? "bg-mint" : "bg-rose"}`} />
+          </span>
+          <span className="min-w-0 flex-1">
+            <span className="block text-[11px] font-semibold text-snow">OpenWork</span>
+            <span className="block truncate text-[10px] text-mist">
+              {session?.orgName || session?.userEmail || (coworkers.length === 0 ? "Setup in progress" : runtime.engineManaged ? "Local · connect account" : "Engine unavailable")}
+            </span>
+          </span>
+          <svg className="size-3.5 shrink-0 text-mist transition-colors group-hover:text-snow" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <path d="M3 4.25h10M5.5 8h5M4.5 11.75h7" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" />
+            <circle cx="6" cy="4.25" r="1.25" fill="currentColor" />
+            <circle cx="9" cy="8" r="1.25" fill="currentColor" />
+            <circle cx="7" cy="11.75" r="1.25" fill="currentColor" />
+          </svg>
+        </button>
+      </div>
     </aside>
   );
 }

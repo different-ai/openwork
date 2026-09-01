@@ -7,6 +7,7 @@ import { NewCoworker } from "@/ui/new-coworker";
 import { SignInGate } from "@/ui/sign-in";
 import { CoworkerHome } from "@/ui/coworker-home";
 import { CoworkerRail } from "@/ui/coworker-rail";
+import { OnboardingWelcome } from "@/ui/onboarding";
 
 export default function App() {
   const [runtime, setRuntime] = useState<RuntimeInfo | null>(null);
@@ -16,6 +17,8 @@ export default function App() {
   const [selectedSlug, setSelectedSlug] = useState("");
   const [creating, setCreating] = useState(false);
   const [connecting, setConnecting] = useState(false);
+  const [onboardingReady, setOnboardingReady] = useState(false);
+  const [openConfigurationSignal, setOpenConfigurationSignal] = useState(0);
   const [activityBySlug, setActivityBySlug] = useState<Record<string, CoworkerActivity>>({});
   const [attentionBySlug, setAttentionBySlug] = useState<Record<string, string>>({});
 
@@ -50,14 +53,41 @@ export default function App() {
               { state: "offline", label: "Setting up", detail: "Workspace is not ready", updatedAt: 0 },
             ] as const;
           }
-          return [
-            coworker.slug,
-            await readCoworkerActivity({
+          const [threadActivity, localResponsibilities] = await Promise.all([
+            readCoworkerActivity({
               serverUrl: runtime.serverUrl,
               workspaceId: coworker.workspaceId,
               token: runtime.ownerToken,
             }),
-          ] as const;
+            coworkerBridge.localResponsibilities.list(coworker.slug).catch(() => []),
+          ]);
+          const localRunning = localResponsibilities.find((item) => item.latestRun?.status === "running");
+          if (localRunning?.latestRun) {
+            return [
+              coworker.slug,
+              {
+                state: "working",
+                label: "Working",
+                detail: localRunning.name,
+                updatedAt: localRunning.latestRun.startedAt,
+              },
+            ] as const;
+          }
+          const localFailure = localResponsibilities
+            .filter((item) => item.latestRun?.status === "failed")
+            .sort((left, right) => (right.latestRun?.finishedAt ?? 0) - (left.latestRun?.finishedAt ?? 0))[0];
+          if (localFailure?.latestRun) {
+            return [
+              coworker.slug,
+              {
+                state: "attention",
+                label: "Local run needs you",
+                detail: localFailure.latestRun.error || localFailure.name,
+                updatedAt: localFailure.latestRun.finishedAt ?? localFailure.latestRun.startedAt,
+              },
+            ] as const;
+          }
+          return [coworker.slug, threadActivity] as const;
         }),
       );
       if (!cancelled) setActivityBySlug(Object.fromEntries(entries));
@@ -132,8 +162,7 @@ export default function App() {
     );
   }
 
-  const mustSignIn = !session && !runtime.allowOffline;
-  if (mustSignIn || connecting) {
+  if (connecting) {
     return (
       <SignInGate
         denBaseUrl={runtime.denBaseUrl}
@@ -141,8 +170,24 @@ export default function App() {
           writeDenSession(next);
           setSession(next);
           setConnecting(false);
+          if (coworkers.length === 0) {
+            setOnboardingReady(true);
+            setCreating(true);
+          }
         }}
-        onDismiss={mustSignIn ? null : () => setConnecting(false)}
+        onDismiss={() => setConnecting(false)}
+      />
+    );
+  }
+
+  if (coworkers.length === 0 && !onboardingReady && !creating) {
+    return (
+      <OnboardingWelcome
+        onConnect={() => setConnecting(true)}
+        onContinueLocally={() => {
+          setOnboardingReady(true);
+          setCreating(true);
+        }}
       />
     );
   }
@@ -171,24 +216,42 @@ export default function App() {
   function removeCoworkerFromList(slug: string) {
     const remaining = coworkers.filter((coworker) => coworker.slug !== slug);
     setBots(remaining);
-    if (selectedSlug === slug) setSelectedSlug(remaining[0]?.slug ?? "");
+    if (selectedSlug === slug) {
+      setOpenConfigurationSignal(0);
+      setSelectedSlug(remaining[0]?.slug ?? "");
+    }
   }
 
   return (
     <div className="window-shell flex h-full overflow-hidden">
       <CoworkerRail
+        runtime={runtime}
+        session={session}
         coworkers={coworkers}
         activityBySlug={visibleActivityBySlug}
         selectedSlug={creating ? "" : selectedSlug}
         onSelect={(slug) => {
           setCreating(false);
+          setOpenConfigurationSignal(0);
           setSelectedSlug(slug);
         }}
-        onNewCoworker={() => setCreating(true)}
+        onNewCoworker={() => {
+          setOpenConfigurationSignal(0);
+          setCreating(true);
+        }}
+        onOpenOpenWork={() => {
+          if (!selected) {
+            setConnecting(true);
+            return;
+          }
+          setCreating(false);
+          setOpenConfigurationSignal((value) => value + 1);
+        }}
       />
       {creating || !selected ? (
         <div className="min-w-0 flex-1">
           <NewCoworker
+            runtime={runtime}
             onCancel={selected || coworkers.length > 0 ? () => setCreating(false) : null}
             onCreated={(coworker) => {
               setCreating(false);
@@ -218,6 +281,7 @@ export default function App() {
             writeDenSession(null);
             setSession(null);
           }}
+          openConfigurationSignal={openConfigurationSignal}
         />
       )}
     </div>

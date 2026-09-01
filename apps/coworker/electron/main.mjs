@@ -15,6 +15,7 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { BrowserWindow, Menu, app, ipcMain, shell } from "electron";
 import { openworkConfigDir } from "@openwork/paths";
+import { createHeadlessThreadClient } from "@openwork/headless-threads";
 import {
   createCoworker,
   defaultCoworkersDir,
@@ -26,6 +27,15 @@ import {
   updateCoworker,
   writeCoworkerFile,
 } from "./coworkers.mjs";
+import {
+  attachLocalResponsibilityThread,
+  beginLocalResponsibilityRun,
+  createLocalResponsibility,
+  deleteLocalResponsibility,
+  finishLocalResponsibilityRun,
+  listLocalResponsibilities,
+  setLocalResponsibilityActive,
+} from "./local-responsibilities.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const isDev = !app.isPackaged || process.env.OPENWORK_DEV_MODE === "1";
@@ -53,6 +63,8 @@ let serverHandle = null;
 let ownerToken = "";
 let engineError = "";
 let startingServer = null;
+let localResponsibilitiesTimer = null;
+const activeLocalRuns = new Set();
 
 function tokenFilePath() {
   return path.join(app.getPath("userData"), "coworker-server-tokens.json");
@@ -214,12 +226,103 @@ function runtimeInfo() {
     denBaseUrl: process.env.COWORKER_DEN_BASE_URL?.trim() || DEFAULT_DEN_BASE_URL,
     engineManaged: Boolean(serverHandle?.managedOpencode),
     engineError,
-    // Open Coworker requires the OpenWork Cloud connection as a product rule;
-    // this development-only escape exists so the local platform assembly
-    // (server, engine, coworkers, threads, memory) can be exercised without
-    // an account.
-    allowOffline: isDev && process.env.COWORKER_ALLOW_OFFLINE === "1",
   };
+}
+
+function localRunModel(coworker) {
+  const preference = String(coworker?.model ?? "").trim();
+  const separator = preference.indexOf("/");
+  if (separator <= 0 || separator === preference.length - 1) return undefined;
+  return {
+    providerId: preference.slice(0, separator),
+    modelId: preference.slice(separator + 1),
+    variant: String(coworker?.modelVariant ?? "").trim() || undefined,
+  };
+}
+
+async function executeLocalResponsibility(slug, id, trigger) {
+  const key = `${slug}:${id}`;
+  try {
+    const coworker = await getCoworker(coworkersDir, slug);
+    if (!coworker.workspaceId) throw new Error("Coworker workspace is not ready");
+    const started = await beginLocalResponsibilityRun(coworkersDir, slug, id, { trigger });
+    const runId = started.latestRun.id;
+    try {
+      const handle = await ensurePlatformServer();
+      if (!handle.managedOpencode) throw new Error(engineError || "The local agent engine is unavailable");
+      const client = createHeadlessThreadClient({
+        baseUrl: handle.url,
+        workspaceId: coworker.workspaceId,
+        token: ownerToken,
+        defaultModel: localRunModel(coworker),
+      });
+      const thread = await client.createThread({
+        title: started.name,
+        prompt: started.instructions,
+      });
+      await attachLocalResponsibilityThread(coworkersDir, slug, id, runId, thread.id);
+      const result = await client.waitForThread(thread.id, {
+        timeoutMs: 60 * 60_000,
+        pollIntervalMs: 1_000,
+      });
+      const succeeded = result.outcome === "settled" && !result.terminalError;
+      await finishLocalResponsibilityRun(coworkersDir, slug, id, runId, {
+        status: succeeded ? "succeeded" : "failed",
+        error: succeeded
+          ? ""
+          : result.terminalError?.message || (result.outcome === "timeout" ? "Run timed out after one hour" : `Run ${result.outcome}`),
+      });
+    } catch (error) {
+      await finishLocalResponsibilityRun(coworkersDir, slug, id, runId, {
+        status: "failed",
+        error: error instanceof Error ? error.message : String(error),
+      }).catch(() => undefined);
+    }
+  } finally {
+    activeLocalRuns.delete(key);
+  }
+}
+
+function startLocalResponsibilityRun(slug, id, trigger) {
+  const key = `${slug}:${id}`;
+  if (activeLocalRuns.has(key)) return false;
+  activeLocalRuns.add(key);
+  void executeLocalResponsibility(slug, id, trigger);
+  return true;
+}
+
+async function runDueLocalResponsibilities() {
+  const now = Date.now();
+  const coworkers = await listCoworkers(coworkersDir);
+  for (const coworker of coworkers) {
+    const responsibilities = await listLocalResponsibilities(coworkersDir, coworker.slug).catch(() => []);
+    for (const responsibility of responsibilities) {
+      const key = `${coworker.slug}:${responsibility.id}`;
+      if (responsibility.latestRun?.status === "running" && !activeLocalRuns.has(key)) {
+        await finishLocalResponsibilityRun(
+          coworkersDir,
+          coworker.slug,
+          responsibility.id,
+          responsibility.latestRun.id,
+          { status: "failed", error: "Open Coworker closed before this local run finished.", now },
+        ).catch(() => undefined);
+      }
+      if (responsibility.state !== "active" || !responsibility.nextDueAt || responsibility.nextDueAt > now) continue;
+      const trigger = now - responsibility.nextDueAt > 30_000 ? "recovery" : "scheduled";
+      startLocalResponsibilityRun(coworker.slug, responsibility.id, trigger);
+    }
+  }
+}
+
+function startLocalResponsibilitiesScheduler() {
+  if (localResponsibilitiesTimer) return;
+  const check = () => {
+    void runDueLocalResponsibilities().catch((error) => {
+      console.warn("[open-coworker] local responsibilities check failed", error);
+    });
+  };
+  check();
+  localResponsibilitiesTimer = setInterval(check, 15_000);
 }
 
 /** Register the coworker directory as a native OpenWork workspace. */
@@ -335,6 +438,18 @@ const commands = {
     await writeCoworkerFile(coworkersDir, slug, relativePath, content);
     return { ok: true };
   },
+  "localResponsibilities.list": async ({ slug }) => listLocalResponsibilities(coworkersDir, slug),
+  "localResponsibilities.create": async ({ slug, name, instructions, schedule }) =>
+    createLocalResponsibility(coworkersDir, slug, { name, instructions, schedule }),
+  "localResponsibilities.setActive": async ({ slug, id, active }) =>
+    setLocalResponsibilityActive(coworkersDir, slug, id, Boolean(active)),
+  "localResponsibilities.delete": async ({ slug, id }) => {
+    await deleteLocalResponsibility(coworkersDir, slug, id);
+    return { ok: true };
+  },
+  "localResponsibilities.runNow": async ({ slug, id }) => ({
+    accepted: startLocalResponsibilityRun(slug, id, "manual"),
+  }),
   "shell.openExternal": async ({ url }) => {
     const parsed = new URL(String(url ?? ""));
     if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
@@ -432,6 +547,7 @@ if (!singleInstanceLock) {
     void ensurePlatformServer().catch((error) => {
       engineError = error instanceof Error ? error.message : String(error);
     });
+    startLocalResponsibilitiesScheduler();
     await createMainWindow();
     app.on("activate", () => {
       if (BrowserWindow.getAllWindows().length === 0) void createMainWindow();
@@ -443,6 +559,10 @@ if (!singleInstanceLock) {
   });
 
   app.on("before-quit", (event) => {
+    if (localResponsibilitiesTimer) {
+      clearInterval(localResponsibilitiesTimer);
+      localResponsibilitiesTimer = null;
+    }
     if (!serverHandle) return;
     event.preventDefault();
     const handle = serverHandle;

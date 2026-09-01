@@ -7,6 +7,7 @@ import { Button, ErrorNote, Field, StatusDot, inputClass } from "@/ui/kit";
 import { MemoryPanel } from "@/ui/memory";
 import { ResponsibilitiesPanel } from "@/ui/responsibilities";
 import { ThreadsPanel } from "@/ui/threads";
+import { ModelPicker, type ModelSelection } from "@/ui/model-picker";
 
 type ContextView = "overview" | "memory" | "settings" | "openwork";
 
@@ -57,6 +58,7 @@ export function CoworkerHome({
   onRefreshRuntime,
   onConnect,
   onSignOut,
+  openConfigurationSignal,
 }: {
   runtime: RuntimeInfo;
   session: DenSession | null;
@@ -68,8 +70,13 @@ export function CoworkerHome({
   onRefreshRuntime: () => Promise<void>;
   onConnect: () => void;
   onSignOut: () => void;
+  openConfigurationSignal: number;
 }) {
   const [contextView, setContextView] = useState<ContextView>("overview");
+
+  useEffect(() => {
+    if (openConfigurationSignal > 0) setContextView("openwork");
+  }, [openConfigurationSignal]);
 
   return (
     <div className="glass-main flex h-full min-w-0 flex-1">
@@ -173,25 +180,6 @@ export function CoworkerHome({
             />
           ) : null}
         </div>
-        <footer className="window-no-drag border-t border-line bg-white/[0.018] p-3">
-          <button
-            className={`flex w-full items-center gap-3 rounded-xl px-2.5 py-2 text-left transition-colors ${
-              contextView === "openwork" ? "bg-white/7" : "hover:bg-white/5"
-            }`}
-            onClick={() => setContextView("openwork")}
-          >
-            <span className="flex size-8 shrink-0 items-center justify-center rounded-lg border border-line bg-ink">
-              <StatusDot tone={runtime.engineManaged ? "mint" : "rose"} />
-            </span>
-            <span className="min-w-0 flex-1">
-              <span className="block text-xs font-semibold text-snow">OpenWork</span>
-              <span className="block truncate text-[11px] text-mist">
-                {session?.orgName || session?.userEmail || (runtime.engineManaged ? "Local engine connected" : "Engine unavailable")}
-              </span>
-            </span>
-            <span className="text-[11px] font-medium text-mist">Configure ›</span>
-          </button>
-        </footer>
       </aside>
     </div>
   );
@@ -254,28 +242,13 @@ function CoworkerOverview({
       </section>
 
       <section>
-        {session ? (
-          <ResponsibilitiesPanel
-            session={session}
-            coworkers={coworkers}
-            coworker={coworker}
-            onCoworkerChanged={onCoworkerChanged}
-          />
-        ) : (
-          <div className="rounded-2xl border border-line bg-ink p-4">
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <h3 className="text-sm font-semibold text-snow">Responsibilities</h3>
-                <p className="mt-1 text-xs leading-relaxed text-mist">
-                  Connect OpenWork to schedule recurring work that continues while the app is closed.
-                </p>
-              </div>
-            </div>
-            <Button variant="ghost" className="mt-2 px-0 text-xs text-spark" onClick={onOpenOpenWork}>
-              Open OpenWork configuration →
-            </Button>
-          </div>
-        )}
+        <ResponsibilitiesPanel
+          session={session}
+          coworkers={coworkers}
+          coworker={coworker}
+          onCoworkerChanged={onCoworkerChanged}
+          onConnect={onOpenOpenWork}
+        />
       </section>
 
       <button
@@ -317,9 +290,10 @@ function OpenWorkConfiguration({
             workspaceId: coworker.workspaceId,
             token: runtime.ownerToken,
             model: coworker.model,
+            modelVariant: coworker.modelVariant,
           })
         : null,
-    [runtime.serverUrl, runtime.ownerToken, coworker.workspaceId, coworker.model],
+    [runtime.serverUrl, runtime.ownerToken, coworker.workspaceId, coworker.model, coworker.modelVariant],
   );
   const [models, setModels] = useState<EngineModelOption[]>([]);
   const [refreshing, setRefreshing] = useState(false);
@@ -413,6 +387,7 @@ function OpenWorkConfiguration({
         <div className="mt-3 rounded-xl border border-line bg-panel/50 px-3 py-2.5">
           <p className="text-[10px] uppercase tracking-[0.12em] text-mist">{coworker.name} uses</p>
           <p className="mt-1 truncate text-xs font-medium text-snow" title={selectedModel}>{selectedModel}</p>
+          {coworker.modelVariant ? <p className="mt-0.5 text-[10px] text-mist">Reasoning · {coworker.modelVariant}</p> : null}
         </div>
       </section>
 
@@ -432,19 +407,6 @@ function CoworkerSettings({
   onCoworkerChanged: (coworker: CoworkerSummary) => void;
   onCoworkerRemoved: (slug: string) => void;
 }) {
-  const threads = useMemo(
-    () =>
-      coworker.workspaceId
-        ? createCoworkerThreads({
-            serverUrl: runtime.serverUrl,
-            workspaceId: coworker.workspaceId,
-            token: runtime.ownerToken,
-            model: coworker.model,
-          })
-        : null,
-    [runtime.serverUrl, runtime.ownerToken, coworker.workspaceId, coworker.model],
-  );
-  const [models, setModels] = useState<EngineModelOption[]>([]);
   const [role, setRole] = useState(coworker.role);
   const [mission, setMission] = useState(coworker.mission);
   const [avatarColor, setAvatarColor] = useState(coworker.avatarColor);
@@ -453,20 +415,6 @@ function CoworkerSettings({
   const [error, setError] = useState("");
   const [confirmingRetire, setConfirmingRetire] = useState(false);
   const [confirmArmed, setConfirmArmed] = useState(false);
-
-  useEffect(() => {
-    if (!threads || !runtime.engineManaged) return;
-    let cancelled = false;
-    void threads
-      .listModels()
-      .then((options) => {
-        if (!cancelled) setModels(options);
-      })
-      .catch(() => undefined);
-    return () => {
-      cancelled = true;
-    };
-  }, [threads, runtime.engineManaged]);
 
   useEffect(() => {
     if (!confirmingRetire) {
@@ -496,10 +444,10 @@ function CoworkerSettings({
     }
   }
 
-  async function updateModel(model: string) {
+  async function updateModel(selection: ModelSelection) {
     setError("");
     try {
-      onCoworkerChanged(await coworkerBridge.coworkers.update(coworker.slug, { model }));
+      onCoworkerChanged(await coworkerBridge.coworkers.update(coworker.slug, selection));
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     }
@@ -551,18 +499,16 @@ function CoworkerSettings({
       </section>
 
       <section className="rounded-2xl border border-line bg-ink p-4">
-        <Field label="Model">
-          <select className={`${inputClass} bg-panel`} value={coworker.model} onChange={(event) => void updateModel(event.target.value)}>
-            <option value="">Engine default</option>
-            {coworker.model && !models.some((option) => option.id === coworker.model) ? (
-              <option value={coworker.model}>{coworker.model} (unavailable)</option>
-            ) : null}
-            {models.map((option) => (
-              <option key={option.id} value={option.id}>{option.label}</option>
-            ))}
-          </select>
-        </Field>
-        <p className="mt-2 text-xs leading-relaxed text-mist">This preference stays with {coworker.name}.</p>
+        <p className="mb-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-mist">Model</p>
+        <ModelPicker
+          runtime={runtime}
+          coworker={coworker}
+          value={coworker.model}
+          modelVariant={coworker.modelVariant}
+          onChange={(selection) => void updateModel(selection)}
+          compact
+        />
+        <p className="mt-2 text-xs leading-relaxed text-mist">This model and reasoning preference stays with {coworker.name}.</p>
       </section>
 
       {error ? <ErrorNote>{error}</ErrorNote> : null}

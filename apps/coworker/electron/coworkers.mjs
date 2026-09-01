@@ -234,6 +234,7 @@ function coworkerConfigTemplate({ name, role, mission, avatarColor: color, avata
       avatarGlasses: avatarGlasses(glasses),
       workspaceId: "",
       model: "",
+      modelVariant: "",
       automations: [],
       createdAt,
     },
@@ -272,6 +273,8 @@ async function readCoworkerRecord(coworkersDir, slug) {
     workspaceId: typeof data.workspaceId === "string" ? data.workspaceId.trim() : "",
     /** Preferred model as "providerId/modelId"; empty means engine default. */
     model: typeof data.model === "string" ? data.model.trim() : "",
+    /** Optional reasoning/behavior variant for the preferred model. */
+    modelVariant: typeof data.modelVariant === "string" ? data.modelVariant.trim() : "",
     automations,
     createdAt: typeof data.createdAt === "string" ? data.createdAt : "",
   };
@@ -340,6 +343,7 @@ export async function updateCoworker(coworkersDir, slug, patch) {
   if (typeof patch?.mission === "string") data.mission = patch.mission.trim();
   if (typeof patch?.role === "string") data.role = patch.role.trim();
   if (typeof patch?.model === "string") data.model = patch.model.trim();
+  if (typeof patch?.modelVariant === "string") data.modelVariant = patch.modelVariant.trim();
   if (typeof patch?.avatarColor === "string") data.avatarColor = avatarColor(patch.avatarColor);
   if (typeof patch?.avatarGlasses === "string") data.avatarGlasses = avatarGlasses(patch.avatarGlasses);
   await writeFile(configPath, serializeFrontmatter(data, body), "utf8");

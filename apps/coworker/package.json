@@ -8,11 +8,13 @@
     "dev": "node ./scripts/dev.mjs",
     "build": "vite build",
     "typecheck": "tsc -p tsconfig.json --noEmit",
+    "pretest": "pnpm --filter @openwork/automations build",
     "test": "node --test electron/*.test.mjs",
     "electron": "pnpm exec electron ./electron/main.mjs"
   },
   "dependencies": {
     "@opencode-ai/sdk": "^1.18.15",
+    "@openwork/automations": "workspace:*",
     "@openwork/headless-threads": "workspace:*",
     "@openwork/paths": "workspace:*",
     "@openwork/types": "workspace:*",

@@ -3,11 +3,7 @@ import { coworkerBridge } from "@/lib/bridge";
 import { buildDenSignInUrl, exchangeGrant, parsePastedGrant, writeDenSession, type DenSession } from "@/lib/den";
 import { Button, ErrorNote, Field, inputClass } from "@/ui/kit";
 
-/**
- * Open Coworker requires the OpenWork Cloud connection: coworkers, schedules, and
- * asynchronous runs outlive the desktop session. Sign-in reuses the Den
- * desktop handoff — open Den, copy the sign-in link, paste it here.
- */
+/** Sign-in reuses the OpenWork Cloud desktop handoff without blocking local use. */
 export function SignInGate({
   denBaseUrl,
   onSignedIn,
@@ -47,8 +43,8 @@ export function SignInGate({
         <p className="mb-1 text-xs font-semibold uppercase tracking-widest text-spark">Open Coworker</p>
         <h1 className="mb-2 text-2xl font-semibold text-snow">Connect your OpenWork account</h1>
         <p className="mb-6 text-sm leading-relaxed text-mist">
-          Coworkers keep working when this window is closed, so Open Coworker runs on your OpenWork Cloud
-          account. Sign in on the web, copy the sign-in link, and paste it below.
+          Connect for always-on responsibilities, shared organization settings, and work that continues when
+          this Mac is offline. Sign in on the web, copy the sign-in link, and paste it below.
         </p>
         <div className="space-y-4">
           <Button variant="primary" className="w-full" onClick={() => void coworkerBridge.openExternal(buildDenSignInUrl(denBaseUrl))}>
@@ -71,7 +67,7 @@ export function SignInGate({
           </Button>
           {onDismiss ? (
             <Button variant="ghost" className="w-full" onClick={onDismiss}>
-              Not now
+              Back
             </Button>
           ) : null}
           <p className="text-center text-xs text-mist">Powered by OpenWork</p>

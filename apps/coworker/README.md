@@ -11,7 +11,8 @@ adds no new database concepts.
 ~/.config/openwork/coworkers/<slug>/   ← via @openwork/paths openworkConfigDir()
 ├── AGENTS.md          coworker contract: conduct + memory maintenance duties
 ├── opencode.json      instructions: soul.md, memory/working.md, memory/index.md
-├── coworker.md        app-owned config: name, mission, workspaceId, model, automation ids
+├── coworker.md        app-owned profile, workspace id, model + reasoning preference
+├── local-responsibilities.json  local schedule and run state
 ├── soul.md            stable identity, loaded every turn
 ├── memory/
 │   ├── working.md     active memory the coworker itself edits while working
@@ -28,16 +29,14 @@ The coworker directory is registered as an ordinary OpenWork workspace, so:
 - **Identity and memory ride the engine's existing instruction loading**
   (`AGENTS.md` + `opencode.json` `instructions`); the coworker maintains
   `memory/working.md` with ordinary file tools. No memory backend.
-- **Responsibilities are Den Automations** presented coworker-first. The
-  coworker ⇄ automation association lives in `coworker.md` (and the
-  automation's existing pinned `workspaceId`) — the Automations schema never
-  learns about coworkers. Placement is honest about where files live:
-  cloud-placement responsibilities keep running with the app closed but
-  execute in OpenWork Cloud, away from the local coworker directory. Duties
-  that must touch the coworker's own files (for example memory consolidation)
-  need desktop placement — Open Coworker hosting the existing desktop-runner
-  protocol — or a coworker home inside a cloud workspace. That is the
-  deliberate next slice, not an accident.
+- **Responsibilities have two explicit placements.** OpenWork Cloud is the
+  recommended always-on lane and keeps using native Den Automations, pinned to
+  the coworker's workspace and associated in `coworker.md`. This Mac is a
+  local-first lane: schedules reuse `@openwork/automations` occurrence rules,
+  persist beside the coworker, and create native OpenWork threads through
+  `@openwork/headless-threads`. Local responsibilities run while Open Coworker
+  is available and recover at most one missed occurrence after relaunch; they
+  do not pretend to be always-on Cloud work.
 - **Skills and MCP** come for free from the same engine configuration layering
   the OpenWork desktop uses.
 
@@ -51,7 +50,8 @@ The coworker directory is registered as an ordinary OpenWork workspace, so:
 - `electron/coworkers.mjs` — the filesystem coworker store (pure Node,
   unit-tested).
 - `src/` — Vite + React + Tailwind renderer: coworkers rail, coworker home
-  (Work / Responsibilities / Memory), Den sign-in gate.
+  (Work / Responsibilities / Memory), account connection, first-run choice,
+  and connected-model selection.
 - `src/lib/den.ts` — narrow Den client typed by `@openwork/types/automations`
   (sign-in handoff exchange + automations), resolving the API origin with the
   same deterministic rule as the OpenWork desktop (`api.<host>` for hosted
@@ -59,11 +59,12 @@ The coworker directory is registered as an ordinary OpenWork workspace, so:
   desktop's full Den client into a shared package is the designated follow-up
   extraction.
 
-Open Coworker requires the OpenWork Cloud connection as a product rule
-(coworkers, schedules, and runs outlive the desktop session). Sign-in reuses
-the Den desktop handoff: open Den in the browser, copy the sign-in link, paste
-it in — the same copy/paste handoff lane OpenWork documents for headless web.
-`COWORKER_ALLOW_OFFLINE=1` exists for development only.
+OpenWork Cloud is strongly recommended, but no longer required. First run
+offers the same Den desktop sign-in handoff (open OpenWork in the browser,
+copy the sign-in link, paste it here) or a local path with no account. Cloud
+adds always-on responsibilities and shared organization settings; local use
+keeps identity, memory, model preference, schedules, and thread execution on
+this Mac.
 
 ## Review / develop
 
@@ -75,11 +76,11 @@ pnpm --filter @openwork/coworker typecheck
 pnpm --filter @openwork/coworker build     # renderer bundle
 ```
 
-First run: create a coworker, pick its model, give it work. Its identity and
-memory are plain files under `~/.config/openwork/coworkers/`. The dev launcher
-is usable before signing in; open the compact OpenWork control at the bottom of
-the coworker details panel (open sign-in → copy link → paste) to connect cloud
-responsibilities. The same panel reads the active engine's provider catalog so
+First run: choose OpenWork Cloud or local mode, create a coworker, pick its
+model, then give it work. Identity and memory are plain files under
+`~/.config/openwork/coworkers/`. A discreet OpenWork control in the bottom-left
+rail keeps account and engine settings available without taking space from the
+thread. The same panel reads the active engine's connected-provider catalog so
 OpenWork model and provider changes stay visible without a second settings store.
 Existing or manually copied coworker directories are registered as native
 OpenWork workspaces automatically when the app loads them; the manual prepare
