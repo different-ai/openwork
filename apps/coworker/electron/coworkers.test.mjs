@@ -6,12 +6,16 @@ import { after, test } from "node:test";
 import {
   createCoworker,
   defaultCoworkersDir,
+  deleteRetiredCoworker,
   getCoworker,
   listCoworkers,
   listMemoryFiles,
+  listRetiredCoworkers,
   parseFrontmatter,
   readCoworkerFile,
   resolveCoworkerFile,
+  restoreCoworker,
+  retireCoworker,
   serializeFrontmatter,
   slugifyCoworkerName,
   updateCoworker,
@@ -155,4 +159,49 @@ test("coworker file access is contained to the coworker directory", async () => 
   assert.throws(() => resolveCoworkerFile(coworkersDir, "safe", "../other/soul.md"), /escapes/);
   assert.throws(() => resolveCoworkerFile(coworkersDir, "safe", "/etc/passwd"), /escapes/);
   assert.throws(() => resolveCoworkerFile(coworkersDir, "../safe", "soul.md"), /Invalid coworker slug/);
+});
+
+test("retirement archives the whole home and restore brings it back intact", async () => {
+  const coworkersDir = await tempCoworkersDir();
+  const created = await createCoworker(coworkersDir, { name: "Archivist", role: "Records" });
+  await updateCoworker(coworkersDir, "archivist", { workspaceId: "ws_archive", model: "anthropic/claude-haiku-4-5" });
+  await writeCoworkerFile(coworkersDir, "archivist", "workspace/report.md", "# Report\n");
+  await writeCoworkerFile(coworkersDir, "archivist", "memory/long-term/people.md", "# People\n");
+
+  const retired = await retireCoworker(coworkersDir, "archivist", { now: Date.UTC(2026, 8, 1, 20, 15, 30) });
+  assert.equal(retired.archiveId, "archivist-20260901201530");
+  assert.equal((await listCoworkers(coworkersDir)).length, 0, "retired coworkers leave the active roster");
+  assert.equal(await readFile(path.join(retired.path, "workspace", "report.md"), "utf8"), "# Report\n");
+
+  const listed = await listRetiredCoworkers(coworkersDir);
+  assert.equal(listed.length, 1);
+  assert.equal(listed[0].slug, "archivist");
+  assert.equal(listed[0].name, "Archivist");
+  assert.equal(listed[0].role, "Records");
+  assert.equal(listed[0].retiredAt, "2026-09-01T20:15:30.000Z");
+  assert.equal(listed[0].canRestore, true);
+  assert.ok(listed[0].fileCount >= 8, `expected the full home to be counted, got ${listed[0].fileCount}`);
+
+  const restored = await restoreCoworker(coworkersDir, retired.archiveId);
+  assert.equal(restored.slug, created.slug);
+  assert.equal(restored.workspaceId, "ws_archive");
+  assert.equal(restored.model, "anthropic/claude-haiku-4-5");
+  assert.equal(await readCoworkerFile(coworkersDir, "archivist", "workspace/report.md"), "# Report\n");
+  const config = await readFile(path.join(restored.path, "coworker.md"), "utf8");
+  assert.doesNotMatch(config, /retiredSlug|retiredAt/, "restore removes the archive markers");
+  assert.deepEqual(await listRetiredCoworkers(coworkersDir), []);
+});
+
+test("restore refuses to overwrite a live coworker and permanent delete is explicit", async () => {
+  const coworkersDir = await tempCoworkersDir();
+  await createCoworker(coworkersDir, { name: "Twin" });
+  const retired = await retireCoworker(coworkersDir, "twin", { now: Date.UTC(2026, 8, 1, 9, 0, 0) });
+  await createCoworker(coworkersDir, { name: "Twin" });
+  const [entry] = await listRetiredCoworkers(coworkersDir);
+  assert.equal(entry.canRestore, false);
+  await assert.rejects(() => restoreCoworker(coworkersDir, retired.archiveId), /already exists/);
+  await assert.rejects(() => restoreCoworker(coworkersDir, "../twin"), /Invalid retired coworker id/);
+  await deleteRetiredCoworker(coworkersDir, retired.archiveId);
+  assert.deepEqual(await listRetiredCoworkers(coworkersDir), []);
+  assert.equal((await listCoworkers(coworkersDir)).length, 1, "the live twin is untouched");
 });
