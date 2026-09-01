@@ -2,6 +2,7 @@ import { useState } from "react";
 import type { CoworkerSummary } from "@/lib/bridge";
 import type { DenSession } from "@/lib/den";
 import type { CoworkerActivity } from "@/lib/threads";
+import { CoworkerAvatar } from "@/ui/coworker-avatar";
 import { Button, StatusDot } from "@/ui/kit";
 
 function relativeTime(timestamp: number): string {
@@ -60,7 +61,7 @@ export function CoworkerRail({
       <div className="px-3 pb-3">
         <input
           aria-label="Search coworkers"
-          className="window-no-drag w-full rounded-xl border border-line bg-ink/55 px-3 py-2 text-xs text-snow shadow-[inset_0_1px_0_rgba(255,255,255,0.45)] outline-none placeholder:text-mist/70 focus:border-spark/50 focus:bg-ink/75"
+          className="window-no-drag w-full rounded-xl border border-line bg-black/18 px-3 py-2 text-xs text-snow outline-none placeholder:text-mist/70 focus:border-spark/50 focus:bg-black/28"
           placeholder="Search coworkers"
           value={query}
           onChange={(event) => setQuery(event.target.value)}
@@ -76,12 +77,19 @@ export function CoworkerRail({
               onClick={() => onSelect(coworker.slug)}
               className={`window-no-drag group flex w-full items-center gap-3 rounded-2xl px-2.5 py-2.5 text-left transition-all duration-200 ${
                 coworker.slug === selectedSlug
-                  ? "bg-white/58 text-snow shadow-[0_8px_24px_rgba(45,48,43,0.08),inset_0_1px_0_rgba(255,255,255,0.78)] ring-1 ring-white/65"
-                  : "text-mist hover:bg-white/38 hover:text-snow"
+                  ? "bg-white/8 text-snow ring-1 ring-white/10"
+                  : "text-mist hover:bg-white/5 hover:text-snow"
               }`}
             >
-              <span className="relative flex size-9 shrink-0 items-center justify-center rounded-xl bg-ink/72 text-sm font-semibold text-snow shadow-[0_6px_18px_rgba(45,48,43,0.08)] ring-1 ring-white/65">
-                {coworker.name.trim().slice(0, 1).toUpperCase() || "C"}
+              <span className="relative flex size-11 shrink-0 items-center justify-center">
+                <CoworkerAvatar
+                  animated={coworker.slug === selectedSlug}
+                  color={coworker.avatarColor}
+                  glasses={coworker.avatarGlasses}
+                  name={coworker.name}
+                  size={40}
+                  working={activity?.state === "working"}
+                />
                 <span className="absolute -bottom-1 -right-1 rounded-full border-2 border-panel bg-panel leading-none">
                   <StatusDot tone={activityTone(activity)} />
                 </span>

@@ -6,9 +6,9 @@ export function Button({
   ...props
 }: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: "default" | "primary" | "ghost" | "danger" }) {
   const styles = {
-    default: "border border-white/65 bg-white/38 text-snow shadow-sm hover:bg-white/58 hover:border-white/80",
-    primary: "border border-spark/30 bg-spark/12 text-spark shadow-[0_5px_16px_rgba(49,95,218,0.10),inset_0_1px_0_rgba(255,255,255,0.52)] hover:bg-spark/20",
-    ghost: "border border-transparent text-mist hover:bg-white/32 hover:text-snow hover:border-white/55",
+    default: "border border-white/10 bg-white/6 text-snow hover:bg-white/10 hover:border-white/16",
+    primary: "border border-spark/35 bg-spark/16 text-[#adc3ff] hover:bg-spark/24",
+    ghost: "border border-transparent text-mist hover:bg-white/6 hover:text-snow hover:border-white/8",
     danger: "border border-rose/35 bg-rose/10 text-rose hover:bg-rose/18",
   } as const;
   return (
@@ -41,7 +41,7 @@ export function Field({ label, children }: { label: string; children: ReactNode 
 }
 
 export const inputClass =
-  "w-full rounded-xl border border-white/62 bg-white/42 px-3 py-2 text-sm text-snow shadow-[inset_0_1px_0_rgba(255,255,255,0.5)] placeholder:text-mist/60 focus:border-spark/45 focus:bg-white/62 focus:outline-none";
+  "w-full rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-snow placeholder:text-mist/60 focus:border-spark/50 focus:bg-white/7 focus:outline-none";
 
 export function Empty({ children }: { children: ReactNode }) {
   return <p className="py-6 text-center text-sm text-mist">{children}</p>;
