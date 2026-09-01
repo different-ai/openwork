@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { workbot, type BotSummary, type RuntimeInfo } from "@/lib/bridge";
+import { coworkerBridge, type CoworkerSummary, type RuntimeInfo } from "@/lib/bridge";
 import type { DenSession } from "@/lib/den";
 import { Button, ErrorNote } from "@/ui/kit";
 import { MemoryPanel } from "@/ui/memory";
@@ -14,22 +14,22 @@ const TABS = [
 
 type TabId = (typeof TABS)[number]["id"];
 
-export function WorkerHome({
+export function CoworkerHome({
   runtime,
   session,
-  bots,
-  bot,
-  onBotChanged,
-  onBotRemoved,
+  coworkers,
+  coworker,
+  onCoworkerChanged,
+  onCoworkerRemoved,
   onRefreshRuntime,
   onConnect,
 }: {
   runtime: RuntimeInfo;
   session: DenSession | null;
-  bots: BotSummary[];
-  bot: BotSummary;
-  onBotChanged: (bot: BotSummary) => void;
-  onBotRemoved: (slug: string) => void;
+  coworkers: CoworkerSummary[];
+  coworker: CoworkerSummary;
+  onCoworkerChanged: (coworker: CoworkerSummary) => void;
+  onCoworkerRemoved: (slug: string) => void;
   onRefreshRuntime: () => Promise<void>;
   onConnect: () => void;
 }) {
@@ -54,8 +54,8 @@ export function WorkerHome({
     setRetireBusy(true);
     setRetireError("");
     try {
-      await workbot.bots.remove(bot.slug);
-      onBotRemoved(bot.slug);
+      await coworkerBridge.coworkers.remove(coworker.slug);
+      onCoworkerRemoved(coworker.slug);
     } catch (cause) {
       setRetireError(cause instanceof Error ? cause.message : String(cause));
       setRetireBusy(false);
@@ -67,16 +67,16 @@ export function WorkerHome({
       <header className="border-b border-line bg-panel px-6 py-4">
         <div className="flex items-baseline justify-between gap-4">
           <div className="min-w-0">
-            <h1 className="truncate text-lg font-semibold text-snow">{bot.name}</h1>
-            <p className="truncate text-sm text-mist">{bot.role || bot.mission || "Persistent worker"}</p>
+            <h1 className="truncate text-lg font-semibold text-snow">{coworker.name}</h1>
+            <p className="truncate text-sm text-mist">{coworker.role || coworker.mission || "Persistent coworker"}</p>
           </div>
           <div className="flex shrink-0 items-center gap-3">
             <p className="text-xs text-mist">{runtime.engineManaged ? "engine ready" : "engine offline"}</p>
             {confirmingRetire ? (
               <span className="flex items-center gap-2">
-                <span className="text-xs text-rose">Delete this worker and all its files?</span>
+                <span className="text-xs text-rose">Delete this coworker and all its files?</span>
                 <Button variant="ghost" disabled={retireBusy} onClick={() => setConfirmingRetire(false)}>
-                  Keep worker
+                  Keep coworker
                 </Button>
                 <Button variant="danger" disabled={retireBusy || !confirmArmed} onClick={() => void retire()}>
                   {retireBusy ? "Deleting…" : "Delete forever"}
@@ -107,20 +107,20 @@ export function WorkerHome({
         {retireError ? <ErrorNote>{retireError}</ErrorNote> : null}
         {!runtime.engineManaged && runtime.engineError ? (
           <p className="mb-4 rounded-md border border-amber/30 bg-amber/10 px-3 py-2 text-sm text-amber">
-            The worker engine is offline: {runtime.engineError}. Install the OpenCode engine or set
-            OPENWORK_OPENCODE_BIN, then reopen Work Bot.
+            The agent engine is offline: {runtime.engineError}. Install the OpenCode engine or set
+            OPENWORK_OPENCODE_BIN, then reopen Open Coworker.
           </p>
         ) : null}
         {tab === "work" ? (
-          <ThreadsPanel runtime={runtime} bot={bot} onBotChanged={onBotChanged} onRefreshRuntime={onRefreshRuntime} />
+          <ThreadsPanel runtime={runtime} coworker={coworker} onCoworkerChanged={onCoworkerChanged} onRefreshRuntime={onRefreshRuntime} />
         ) : null}
         {tab === "responsibilities" ? (
           session ? (
-            <ResponsibilitiesPanel session={session} bots={bots} bot={bot} onBotChanged={onBotChanged} />
+            <ResponsibilitiesPanel session={session} coworkers={coworkers} coworker={coworker} onCoworkerChanged={onCoworkerChanged} />
           ) : (
             <div className="space-y-3">
               <p className="text-sm text-mist">
-                Connect your OpenWork account to give {bot.name} scheduled responsibilities. They run
+                Connect your OpenWork account to give {coworker.name} scheduled responsibilities. They run
                 on OpenWork Cloud and keep working while this app is closed.
               </p>
               <Button variant="primary" onClick={onConnect}>
@@ -129,7 +129,7 @@ export function WorkerHome({
             </div>
           )
         ) : null}
-        {tab === "memory" ? <MemoryPanel bot={bot} /> : null}
+        {tab === "memory" ? <MemoryPanel coworker={coworker} /> : null}
       </main>
     </div>
   );
