@@ -69,6 +69,7 @@ export type CoworkerThreads = {
   listThreads: () => Promise<ThreadListItem[]>;
   listModels: () => Promise<EngineModelOption[]>;
   readActivity: () => Promise<CoworkerActivity>;
+  subscribe: (onEvent: () => void) => () => void;
 };
 
 export function createCoworkerThreads(options: {
@@ -150,7 +151,23 @@ export function createCoworkerThreads(options: {
     return models.sort((a, b) => a.label.localeCompare(b.label));
   }
 
-  return { client, listThreads, listModels, readActivity };
+  function subscribe(onEvent: () => void): () => void {
+    const controller = new AbortController();
+    void (async () => {
+      try {
+        const subscription = await opencode.event.subscribe(undefined, { signal: controller.signal });
+        for await (const event of subscription.stream) {
+          if (controller.signal.aborted) return;
+          if (event.type.startsWith("session.") || event.type.startsWith("message.")) onEvent();
+        }
+      } catch {
+        // A bounded poll in the renderer remains the reconnect/backstop path.
+      }
+    })();
+    return () => controller.abort();
+  }
+
+  return { client, listThreads, listModels, readActivity, subscribe };
 }
 
 export async function readCoworkerActivity(options: {
