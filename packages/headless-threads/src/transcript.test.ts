@@ -29,7 +29,16 @@ describe("toTranscript", () => {
           createdAt: 200,
           parts: [
             { id: "prt_2", type: "reasoning", text: "check the policy" },
-            { id: "prt_3", type: "tool", tool: "read", callId: "call_1", toolStatus: "completed" },
+            {
+              id: "prt_3",
+              type: "tool",
+              tool: "read",
+              callId: "call_1",
+              toolStatus: "completed",
+              toolInput: { filePath: "/workspace/brief.md" },
+              toolOutput: "brief",
+              toolMetadata: { openworkMcpApp: { content: [{ type: "text", text: "brief" }] } },
+            },
             { id: "prt_4", type: "text", text: "Because " },
             { id: "prt_5", type: "text", text: "the window closed." },
           ],
@@ -45,7 +54,16 @@ describe("toTranscript", () => {
         createdAt: 200,
         text: "Because the window closed.",
         reasoning: "check the policy",
-        toolCalls: [{ partId: "prt_3", name: "read", callId: "call_1", status: "completed" }],
+        toolCalls: [{
+          partId: "prt_3",
+          name: "read",
+          callId: "call_1",
+          status: "completed",
+          input: { filePath: "/workspace/brief.md" },
+          output: "brief",
+          error: null,
+          metadata: { openworkMcpApp: { content: [{ type: "text", text: "brief" }] } },
+        }],
       },
     ]);
     expect(transcript.finalAssistantText).toBe("Because the window closed.");

@@ -45,7 +45,16 @@ const partSchema = z
     text: z.string().optional(),
     tool: z.string().optional(),
     callID: z.string().optional(),
-    state: z.object({ status: z.string().optional() }).passthrough().optional(),
+    state: z
+      .object({
+        status: z.string().optional(),
+        input: z.record(z.string(), z.unknown()).optional(),
+        output: z.unknown().optional(),
+        error: z.string().optional(),
+        metadata: z.record(z.string(), z.unknown()).optional(),
+      })
+      .passthrough()
+      .optional(),
     synthetic: z.boolean().optional(),
     ignored: z.boolean().optional(),
   })
@@ -112,6 +121,10 @@ function toPart(part: PartWire): HeadlessThreadMessagePart {
   if (part.tool !== undefined) mapped.tool = part.tool;
   if (part.callID !== undefined) mapped.callId = part.callID;
   if (part.state?.status !== undefined) mapped.toolStatus = part.state.status;
+  if (part.state?.input !== undefined) mapped.toolInput = part.state.input;
+  if (part.state?.output !== undefined) mapped.toolOutput = part.state.output;
+  if (part.state?.error !== undefined) mapped.toolError = part.state.error;
+  if (part.state?.metadata !== undefined) mapped.toolMetadata = part.state.metadata;
   if (part.synthetic !== undefined) mapped.synthetic = part.synthetic;
   if (part.ignored !== undefined) mapped.ignored = part.ignored;
   return mapped;

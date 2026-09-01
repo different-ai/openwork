@@ -28,6 +28,15 @@ body {
   text-rendering: optimizeLegibility;
 }
 
+body.is-resizing-context-panel {
+  cursor: col-resize;
+  user-select: none;
+}
+
+body.is-resizing-context-panel * {
+  cursor: col-resize !important;
+}
+
 #root {
   background: transparent;
 }

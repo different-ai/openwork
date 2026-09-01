@@ -1,15 +1,48 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { coworkerBridge, type CoworkerSummary, type RuntimeInfo } from "@/lib/bridge";
 import type { DenSession } from "@/lib/den";
 import { createCoworkerThreads, type CoworkerActivity, type EngineModelOption } from "@/lib/threads";
 import { AvatarControls, CoworkerAvatar } from "@/ui/coworker-avatar";
+import { CapabilitiesPanel } from "@/ui/capabilities";
 import { Button, ErrorNote, Field, StatusDot, inputClass } from "@/ui/kit";
 import { MemoryPanel } from "@/ui/memory";
 import { ResponsibilitiesPanel } from "@/ui/responsibilities";
 import { ThreadsPanel } from "@/ui/threads";
 import { ModelPicker, type ModelSelection } from "@/ui/model-picker";
 
-type ContextView = "overview" | "memory" | "settings" | "openwork";
+type ContextView = "overview" | "capabilities" | "memory" | "settings" | "openwork";
+
+const CONTEXT_PANEL_WIDTH_KEY = "open-coworker.context-panel-width";
+const CONTEXT_PANEL_MIN_WIDTH = 320;
+const CONTEXT_PANEL_MAX_WIDTH = 620;
+const MAIN_WORKSPACE_MIN_WIDTH = 520;
+
+function clampContextPanelWidth(width: number): number {
+  const available = typeof window === "undefined"
+    ? CONTEXT_PANEL_MAX_WIDTH
+    : Math.max(CONTEXT_PANEL_MIN_WIDTH, window.innerWidth - MAIN_WORKSPACE_MIN_WIDTH);
+  return Math.round(Math.min(CONTEXT_PANEL_MAX_WIDTH, available, Math.max(CONTEXT_PANEL_MIN_WIDTH, width)));
+}
+
+function readContextPanelWidth(): number | null {
+  try {
+    const stored = window.localStorage.getItem(CONTEXT_PANEL_WIDTH_KEY);
+    if (!stored) return null;
+    const width = Number(stored);
+    return Number.isFinite(width) ? clampContextPanelWidth(width) : null;
+  } catch {
+    return null;
+  }
+}
+
+function persistContextPanelWidth(width: number | null): void {
+  try {
+    if (width === null) window.localStorage.removeItem(CONTEXT_PANEL_WIDTH_KEY);
+    else window.localStorage.setItem(CONTEXT_PANEL_WIDTH_KEY, String(width));
+  } catch {
+    // The resize remains available for this session when storage is blocked.
+  }
+}
 
 function activityTone(activity: CoworkerActivity | undefined): "spark" | "mint" | "amber" | "rose" | "mist" {
   if (activity?.state === "working") return "spark";
@@ -73,10 +106,68 @@ export function CoworkerHome({
   openConfigurationSignal: number;
 }) {
   const [contextView, setContextView] = useState<ContextView>("overview");
+  const [assignmentDraft, setAssignmentDraft] = useState<{ id: number; text: string } | null>(null);
+  const [contextPanelWidth, setContextPanelWidth] = useState<number | null>(readContextPanelWidth);
+  const [resizingContextPanel, setResizingContextPanel] = useState(false);
+  const contextPanelDrag = useRef<{ startX: number; startWidth: number; currentWidth: number } | null>(null);
+
+  const contextualPanelWidth = contextView === "capabilities" ? 430 : 360;
+  const renderedContextPanelWidth = clampContextPanelWidth(contextPanelWidth ?? contextualPanelWidth);
 
   useEffect(() => {
     if (openConfigurationSignal > 0) setContextView("openwork");
   }, [openConfigurationSignal]);
+
+  useEffect(() => {
+    if (!resizingContextPanel) return;
+    const move = (event: PointerEvent) => {
+      const drag = contextPanelDrag.current;
+      if (!drag) return;
+      const next = clampContextPanelWidth(drag.startWidth + drag.startX - event.clientX);
+      drag.currentWidth = next;
+      setContextPanelWidth(next);
+    };
+    const finish = () => {
+      const width = contextPanelDrag.current?.currentWidth ?? null;
+      contextPanelDrag.current = null;
+      setResizingContextPanel(false);
+      if (width !== null) persistContextPanelWidth(width);
+    };
+    document.body.classList.add("is-resizing-context-panel");
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", finish, { once: true });
+    window.addEventListener("pointercancel", finish, { once: true });
+    return () => {
+      document.body.classList.remove("is-resizing-context-panel");
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", finish);
+      window.removeEventListener("pointercancel", finish);
+    };
+  }, [resizingContextPanel]);
+
+  useEffect(() => {
+    const keepWithinWindow = () => {
+      setContextPanelWidth((current) => {
+        if (current === null) return null;
+        const next = clampContextPanelWidth(current);
+        if (next !== current) persistContextPanelWidth(next);
+        return next;
+      });
+    };
+    window.addEventListener("resize", keepWithinWindow);
+    return () => window.removeEventListener("resize", keepWithinWindow);
+  }, []);
+
+  function setManualContextPanelWidth(width: number): void {
+    const next = clampContextPanelWidth(width);
+    setContextPanelWidth(next);
+    persistContextPanelWidth(next);
+  }
+
+  function resetContextPanelWidth(): void {
+    setContextPanelWidth(null);
+    persistContextPanelWidth(null);
+  }
 
   return (
     <div className="glass-main flex h-full min-w-0 flex-1">
@@ -112,11 +203,58 @@ export function CoworkerHome({
             coworker={coworker}
             onCoworkerChanged={onCoworkerChanged}
             onRefreshRuntime={onRefreshRuntime}
+            assignmentDraft={assignmentDraft}
           />
         </main>
       </div>
 
-      <aside className="glass-context flex h-full w-[360px] shrink-0 flex-col border-l border-line">
+      <aside
+        className={`glass-context relative flex h-full shrink-0 flex-col border-l border-line ${resizingContextPanel ? "" : "transition-[width] duration-200"}`}
+        style={{ width: renderedContextPanelWidth }}
+      >
+        <div
+          role="separator"
+          aria-label="Resize context panel"
+          aria-orientation="vertical"
+          aria-valuemin={CONTEXT_PANEL_MIN_WIDTH}
+          aria-valuemax={CONTEXT_PANEL_MAX_WIDTH}
+          aria-valuenow={renderedContextPanelWidth}
+          aria-valuetext={`${renderedContextPanelWidth} pixels wide`}
+          tabIndex={0}
+          className="window-no-drag group absolute inset-y-0 -left-[5px] z-30 w-[10px] cursor-col-resize outline-none"
+          title="Drag to resize · Double-click to reset"
+          data-testid="context-panel-resizer"
+          onPointerDown={(event) => {
+            event.preventDefault();
+            contextPanelDrag.current = {
+              startX: event.clientX,
+              startWidth: renderedContextPanelWidth,
+              currentWidth: renderedContextPanelWidth,
+            };
+            setResizingContextPanel(true);
+          }}
+          onDoubleClick={resetContextPanelWidth}
+          onKeyDown={(event) => {
+            if (event.key === "ArrowLeft") {
+              event.preventDefault();
+              setManualContextPanelWidth(renderedContextPanelWidth + (event.shiftKey ? 40 : 12));
+            } else if (event.key === "ArrowRight") {
+              event.preventDefault();
+              setManualContextPanelWidth(renderedContextPanelWidth - (event.shiftKey ? 40 : 12));
+            } else if (event.key === "Home") {
+              event.preventDefault();
+              setManualContextPanelWidth(CONTEXT_PANEL_MIN_WIDTH);
+            } else if (event.key === "End") {
+              event.preventDefault();
+              setManualContextPanelWidth(CONTEXT_PANEL_MAX_WIDTH);
+            } else if (event.key === "Enter") {
+              event.preventDefault();
+              resetContextPanelWidth();
+            }
+          }}
+        >
+          <span className="absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-transparent transition-colors group-hover:bg-spark/45 group-focus-visible:bg-spark/70" />
+        </div>
         <header className="glass-header window-drag flex h-[78px] items-center gap-3 border-b border-line px-4 pt-2">
           {contextView !== "overview" ? (
             <Button variant="ghost" className="window-no-drag px-2" onClick={() => setContextView("overview")} title="Back to coworker details">
@@ -127,6 +265,8 @@ export function CoworkerHome({
             <h2 className="text-sm font-semibold text-snow">
               {contextView === "memory"
                 ? "Memory"
+                : contextView === "capabilities"
+                  ? "Apps & tools"
                 : contextView === "settings"
                   ? "Coworker settings"
                   : contextView === "openwork"
@@ -136,6 +276,8 @@ export function CoworkerHome({
             <p className="truncate text-xs text-mist">
               {contextView === "overview"
                 ? "Context stays beside the work"
+                : contextView === "capabilities"
+                  ? `Available to ${coworker.name}`
                 : contextView === "openwork"
                   ? "Shared account, engine, and providers"
                   : coworker.name}
@@ -156,11 +298,22 @@ export function CoworkerHome({
               activity={activity}
               onCoworkerChanged={onCoworkerChanged}
               onOpenMemory={() => setContextView("memory")}
+              onOpenCapabilities={() => setContextView("capabilities")}
               onOpenSettings={() => setContextView("settings")}
               onOpenOpenWork={() => setContextView("openwork")}
             />
           ) : null}
           {contextView === "memory" ? <MemoryPanel coworker={coworker} /> : null}
+          {contextView === "capabilities" ? (
+            <CapabilitiesPanel
+              runtime={runtime}
+              coworker={coworker}
+              onAssign={(text) => {
+                setAssignmentDraft({ id: Date.now(), text });
+                setContextView("overview");
+              }}
+            />
+          ) : null}
           {contextView === "settings" ? (
             <CoworkerSettings
               runtime={runtime}
@@ -192,6 +345,7 @@ function CoworkerOverview({
   activity,
   onCoworkerChanged,
   onOpenMemory,
+  onOpenCapabilities,
   onOpenSettings,
   onOpenOpenWork,
 }: {
@@ -201,6 +355,7 @@ function CoworkerOverview({
   activity?: CoworkerActivity;
   onCoworkerChanged: (coworker: CoworkerSummary) => void;
   onOpenMemory: () => void;
+  onOpenCapabilities: () => void;
   onOpenSettings: () => void;
   onOpenOpenWork: () => void;
 }) {
@@ -250,6 +405,19 @@ function CoworkerOverview({
           onConnect={onOpenOpenWork}
         />
       </section>
+
+      <button
+        className="flex w-full items-center justify-between gap-3 rounded-2xl border border-line bg-ink p-4 text-left transition-colors hover:bg-panel"
+        onClick={onOpenCapabilities}
+      >
+        <span>
+          <span className="block text-sm font-semibold text-snow">Apps & tools</span>
+          <span className="mt-1 block text-xs leading-relaxed text-mist">
+            Browse live MCP connections and interactive Apps.
+          </span>
+        </span>
+        <span className="text-mist" aria-hidden="true">›</span>
+      </button>
 
       <button
         className="flex w-full items-center justify-between gap-3 rounded-2xl border border-line bg-ink p-4 text-left transition-colors hover:bg-panel"

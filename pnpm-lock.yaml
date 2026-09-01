@@ -331,6 +331,9 @@ importers:
       '@modelcontextprotocol/client':
         specifier: ^2.0.0
         version: 2.0.0(patch_hash=702e2000a3f78e99cfa6971ac4c90466d482174e49340634c0f5b1f346285c12)
+      '@modelcontextprotocol/ext-apps':
+        specifier: ^1.7.5
+        version: 1.7.5(@modelcontextprotocol/sdk@1.29.0(patch_hash=b9b29e6a319e94ea968476aa440eb8586b5da9db6b8011ce749c384d186f8a10)(zod@4.3.6))(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(zod@4.3.6)
       '@modelcontextprotocol/sdk':
         specifier: ^1.29.0
         version: 1.29.0(patch_hash=b9b29e6a319e94ea968476aa440eb8586b5da9db6b8011ce749c384d186f8a10)(zod@4.3.6)
