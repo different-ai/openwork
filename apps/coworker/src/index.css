@@ -91,31 +91,57 @@ body.is-resizing-context-panel * {
 }
 
 .coworker-avatar {
+  --avatar-motion-delay: 0s;
   display: block;
   flex: none;
   overflow: visible;
 }
 
 .coworker-avatar__body,
+.coworker-avatar__depth,
+.coworker-avatar__features,
+.coworker-avatar__gaze,
 .coworker-avatar__pupils {
   transform-box: fill-box;
   transform-origin: center;
 }
 
 .coworker-avatar.is-animated .coworker-avatar__body {
-  animation: coworker-float 6.4s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+  animation: coworker-float 8.8s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+}
+
+.coworker-avatar.is-animated .coworker-avatar__depth {
+  animation: coworker-depth-turn 8.8s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+}
+
+.coworker-avatar.is-animated .coworker-avatar__features {
+  animation: coworker-feature-turn 8.8s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+}
+
+.coworker-avatar.is-animated .coworker-avatar__gaze {
+  animation: coworker-gaze-turn 8.8s cubic-bezier(0.45, 0, 0.55, 1) infinite;
 }
 
 .coworker-avatar.is-animated .coworker-avatar__pupils {
-  animation: coworker-blink 6.4s ease-in-out infinite;
+  animation: coworker-blink 8.8s ease-in-out infinite;
 }
 
-.coworker-avatar.motion-phase-1 :is(.coworker-avatar__body, .coworker-avatar__pupils) {
-  animation-delay: -2.1s;
+.coworker-avatar.is-animated :is(
+  .coworker-avatar__body,
+  .coworker-avatar__depth,
+  .coworker-avatar__features,
+  .coworker-avatar__gaze,
+  .coworker-avatar__pupils
+) {
+  animation-delay: var(--avatar-motion-delay);
 }
 
-.coworker-avatar.motion-phase-2 :is(.coworker-avatar__body, .coworker-avatar__pupils) {
-  animation-delay: -4.2s;
+.coworker-avatar.motion-phase-1 {
+  --avatar-motion-delay: -2.9s;
+}
+
+.coworker-avatar.motion-phase-2 {
+  --avatar-motion-delay: -5.8s;
 }
 
 .avatar-swatch {
@@ -149,12 +175,27 @@ body.is-resizing-context-panel * {
 
 @keyframes coworker-float {
   0%, 100% { transform: translateY(0); }
-  50% { transform: translateY(-1px); }
+  44%, 54% { transform: translateY(-0.8px); }
+}
+
+@keyframes coworker-depth-turn {
+  0%, 30%, 68%, 100% { transform: translate(0, 0); }
+  44%, 54% { transform: translate(-0.8px, 0.15px); }
+}
+
+@keyframes coworker-feature-turn {
+  0%, 30%, 68%, 100% { transform: translateX(0) scaleX(1); }
+  44%, 54% { transform: translateX(1.1px) scaleX(0.992); }
+}
+
+@keyframes coworker-gaze-turn {
+  0%, 32%, 66%, 100% { transform: translateX(0); }
+  42%, 56% { transform: translateX(0.45px); }
 }
 
 @keyframes coworker-blink {
-  0%, 91%, 93%, 100% { transform: scaleY(1); }
-  92% { transform: scaleY(0.08); }
+  0%, 41.8%, 43.4%, 100% { transform: scaleY(1); }
+  42.6% { transform: scaleY(0.08); }
 }
 
 .window-drag {
