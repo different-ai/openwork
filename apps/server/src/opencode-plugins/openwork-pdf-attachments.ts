@@ -2,8 +2,8 @@ import { readFile, realpath } from "node:fs/promises";
 import { basename, isAbsolute, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
-import { createInputSupportResolver, nativePdfLimits, TEXT_ONLY } from "../pdf-attachments/capabilities.js";
-import type { InputSupportResolver, ModelInputSupport } from "../pdf-attachments/capabilities.js";
+import { createInputSupportResolver, encodedSize, nativePdfPolicy, TEXT_ONLY } from "../pdf-attachments/capabilities.js";
+import type { InputSupportResolver, ModelInputSupport, NativePdfPolicy } from "../pdf-attachments/capabilities.js";
 import {
   cachedDerivedPdf,
   derivePdf,
@@ -77,11 +77,18 @@ type Inspection = {
 
 /** Remaining native allowance for this step, shared by every PDF in it. */
 type NativeBudget = {
+  policy: NativePdfPolicy;
   pages: number;
-  bytes: number;
+  /** Request body bytes still free for base64 PDF payloads. */
+  encodedBytes: number;
+  /** Context tokens still free for natively-sent PDFs; null when the context size is unknown. */
+  tokens: number | null;
+  contextTokens: number | null;
 };
 
-type Reason = "unsupported" | "limits";
+type Reason =
+  | { kind: "unsupported" }
+  | { kind: "limits"; detail: string };
 
 type Routed =
   | { kind: "native" }
@@ -275,8 +282,8 @@ function textLayerLine(derived: DerivedPdf): string {
 }
 
 function modelNote(support: ModelInputSupport, inlinePages: number, derived: DerivedPdf, reason: Reason): string {
-  const why = reason === "limits"
-    ? "This PDF does not fit what the provider accepts as direct PDF input for this request, so OpenWork"
+  const why = reason.kind === "limits"
+    ? `${reason.detail}, so OpenWork`
     : support.known
       ? "This model does not accept PDF input directly, so OpenWork"
       : "This model's input capabilities are not listed, so OpenWork treated it as text-only and";
@@ -360,13 +367,37 @@ async function inspect(bytes: Buffer, digest: string): Promise<Inspection> {
   return inspection;
 }
 
-/** Takes the PDF out of the step's native allowance when it fits; unreadable bytes pass through as before this plugin existed. */
-function claimNative(inspection: Inspection, budget: NativeBudget): boolean {
-  if (inspection.bytes > budget.bytes) return false;
-  if (inspection.pages !== null && inspection.pages > budget.pages) return false;
-  budget.bytes -= inspection.bytes;
+function megabytes(bytes: number): string {
+  return `${(bytes / MIB).toFixed(bytes >= 10 * MIB ? 0 : 1)} MB`;
+}
+
+/**
+ * Decides whether this PDF should ride natively in this step and, if so, takes
+ * it out of the shared allowance. Unreadable bytes pass through as before this
+ * plugin existed, as long as they fit the request.
+ */
+function claimNative(inspection: Inspection, budget: NativeBudget): { ok: true } | { ok: false; detail: string } {
+  const { policy } = budget;
+  if (inspection.bytes > policy.maxRawBytes) {
+    return { ok: false, detail: `This PDF is ${megabytes(inspection.bytes)}; above ${megabytes(policy.maxRawBytes)} OpenWork stops sending the PDF itself, which would be re-uploaded on every step` };
+  }
+  const encoded = encodedSize(inspection.bytes);
+  if (encoded > budget.encodedBytes) {
+    return { ok: false, detail: "This PDF would push the request past the provider's size limit once base64-encoded alongside the other PDFs in this step" };
+  }
+  if (inspection.pages !== null && inspection.pages > budget.pages) {
+    return { ok: false, detail: `This PDF's ${inspection.pages} pages exceed the ${budget.pages} native PDF pages left for this request` };
+  }
+  if (inspection.pages !== null && budget.tokens !== null && budget.contextTokens !== null) {
+    const tokens = inspection.pages * policy.tokensPerPage;
+    if (tokens > budget.tokens) {
+      return { ok: false, detail: `Sent natively this PDF would take roughly ${Math.round(tokens / 1000)}k tokens of this model's ${Math.round(budget.contextTokens / 1000)}k context window on every step` };
+    }
+    budget.tokens -= tokens;
+  }
+  budget.encodedBytes -= encoded;
   if (inspection.pages !== null) budget.pages -= inspection.pages;
-  return true;
+  return { ok: true };
 }
 
 async function routePdf(source: PdfSource, root: string | null, support: ModelInputSupport, budget: NativeBudget | null): Promise<Routed> {
@@ -374,20 +405,21 @@ async function routePdf(source: PdfSource, root: string | null, support: ModelIn
     const seen = source.key ? digestByKey.get(source.key) : undefined;
     if (seen) {
       const inspection = inspectionByDigest.get(seen);
-      if (budget && inspection && claimNative(inspection, budget)) return { kind: "native" };
+      if (budget && inspection && claimNative(inspection, budget).ok) return { kind: "native" };
       if (!budget) {
         const derived = cachedDerivedPdf(seen, { renderPages: support.image });
-        if (derived) return { kind: "derived", derived, reason: "unsupported" };
+        if (derived) return { kind: "derived", derived, reason: { kind: "unsupported" } };
       }
     }
 
     const bytes = await bytesFromSource(source, root);
     const digest = sha256(bytes);
     rememberDigest(source, digest);
-    let reason: Reason = "unsupported";
+    let reason: Reason = { kind: "unsupported" };
     if (budget) {
-      if (claimNative(await inspect(bytes, digest), budget)) return { kind: "native" };
-      reason = "limits";
+      const verdict = claimNative(await inspect(bytes, digest), budget);
+      if (verdict.ok) return { kind: "native" };
+      reason = { kind: "limits", detail: verdict.detail };
     }
     const derived = await derivePdf(root, source.filename, bytes, { renderPages: support.image });
     if (derived.loadError) return { kind: "failed", message: derived.loadError };
@@ -548,8 +580,16 @@ export const OpenWorkPdfAttachments = async (factoryInput?: unknown) => {
         if (supportBySession.size > 256) supportBySession.clear();
         supportBySession.set(model.sessionID, support);
       }
-      const limits = support.pdf ? nativePdfLimits(support.npm) : null;
-      const nativeBudget: NativeBudget | null = limits ? { pages: limits.maxPages, bytes: limits.maxBytes } : null;
+      const policy = support.pdf ? nativePdfPolicy(support.npm) : null;
+      const nativeBudget: NativeBudget | null = policy
+        ? {
+          policy,
+          pages: policy.maxPages,
+          encodedBytes: policy.requestBytes - policy.requestHeadroomBytes,
+          tokens: support.contextTokens === null ? null : Math.floor(support.contextTokens * policy.contextShare),
+          contextTokens: support.contextTokens,
+        }
+        : null;
       const messages: unknown[] = [];
       for (const message of output.messages) messages.push(await transformMessage(message, root, support, nativeBudget));
       output.messages.splice(0, output.messages.length, ...messages);

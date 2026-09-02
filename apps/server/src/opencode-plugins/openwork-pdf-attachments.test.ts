@@ -15,7 +15,10 @@ const PACKAGE_ROOT = join(dirname(fileURLToPath(import.meta.url)), "../..");
 const catalog = {
   data: {
     all: [
-      { id: "anthropic", npm: "@ai-sdk/anthropic", models: { native: { id: "native", attachment: true, modalities: { input: ["text", "image", "pdf"], output: ["text"] } } } },
+      { id: "anthropic", npm: "@ai-sdk/anthropic", models: {
+        native: { id: "native", attachment: true, limit: { context: 1000000, output: 8192 }, modalities: { input: ["text", "image", "pdf"], output: ["text"] } },
+        "native-small-context": { id: "native-small-context", attachment: true, limit: { context: 32000, output: 4096 }, modalities: { input: ["text", "image", "pdf"], output: ["text"] } },
+      } },
       { id: "openrouter", npm: "@ai-sdk/openai-compatible", models: { vision: { id: "vision", attachment: true, modalities: { input: ["text", "image"], output: ["text"] } } } },
       { id: "ollama", npm: "@ai-sdk/openai-compatible", models: { text: { id: "text", attachment: false, modalities: { input: ["text"], output: ["text"] } } } },
       { id: "odd", npm: "@ai-sdk/openai-compatible", models: { "pdf-no-vision": { id: "pdf-no-vision", attachment: true, modalities: { input: ["text", "pdf"], output: ["text"] } } } },
@@ -178,7 +181,7 @@ describe("OpenWork PDF attachments plugin", () => {
       expect(partsOf(message).map((part) => part.type)).toEqual(["text"]);
       const note = noteOf(message);
       expect(note).toContain("pages: 101");
-      expect(note).toContain("model_note: This PDF does not fit what the provider accepts as direct PDF input for this request");
+      expect(note).toContain("model_note: This PDF's 101 pages exceed the 100 native PDF pages left for this request, so OpenWork");
       expect(note).toContain("--- page 101 ---\nPage 101");
     });
   }, 30_000);
@@ -313,8 +316,34 @@ describe("OpenWork PDF attachments plugin", () => {
       expect(parts.filter((part) => part.type === "file" && part.mime === "application/pdf")).toHaveLength(1);
       const note = noteOf(message);
       expect(note).toContain('OpenWork prepared the PDF "second.pdf"');
-      expect(note).toContain("does not fit what the provider accepts as direct PDF input for this request");
+      expect(note).toContain("This PDF's 60 pages exceed the 40 native PDF pages left for this request");
       expect(parts.at(-1)).toEqual(question);
+    });
+  }, 30_000);
+
+  test("keeps a PDF-capable model on the derived path when native input would dominate its context window", async () => {
+    await withWorkspace(async (root) => {
+      const model: Model = { providerID: "anthropic", modelID: "native-small-context" };
+      // 32k context × 35% = 11.2k tokens ≈ 5 native pages; six pages must be derived instead.
+      const [message] = await transform(root, [userMessage(model, [pdfPart(pdfDataUrl(buildTestPdf(["1", "2", "3", "4", "5", "6"]))), question])]);
+      const note = noteOf(message);
+      expect(note).toContain("Sent natively this PDF would take roughly 12k tokens of this model's 32k context window on every step, so OpenWork attached the first 6 pages as images");
+      const [small] = await transform(root, [userMessage(model, [pdfPart(pdfDataUrl(buildTestPdf(["1", "2", "3", "4", "5"])), { id: "s" }), question])]);
+      expect(partsOf(small)[0].mime).toBe("application/pdf");
+    });
+  });
+
+  test("stops sending the PDF itself above the per-step upload ceiling even when the model accepts PDFs", async () => {
+    await withWorkspace(async (root) => {
+      // A real 10 MiB+ PDF: pad a valid document with an unreferenced stream so PDFium still opens it.
+      const padding = Buffer.alloc(10 * 1024 * 1024 + 1, 0x20);
+      const base = buildTestPdf(["Large report"]);
+      const eof = base.lastIndexOf("%%EOF");
+      const big = Buffer.concat([base.subarray(0, eof), Buffer.from("% padding\n"), padding, base.subarray(eof)]);
+      const [message] = await transform(root, [userMessage(NATIVE, [pdfPart(pdfDataUrl(big)), question])]);
+      const note = noteOf(message);
+      expect(note).toContain("above 10 MB OpenWork stops sending the PDF itself, which would be re-uploaded on every step");
+      expect(note).toContain("--- page 1 ---\nLarge report");
     });
   }, 30_000);
 

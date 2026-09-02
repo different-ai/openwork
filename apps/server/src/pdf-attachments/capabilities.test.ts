@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { createInputSupportResolver, inputSupportFromCatalog, nativePdfLimits, TEXT_ONLY } from "./capabilities.js";
+import { createInputSupportResolver, encodedSize, inputSupportFromCatalog, nativePdfPolicy, TEXT_ONLY } from "./capabilities.js";
 
 const v1Catalog = {
   data: {
@@ -9,7 +9,7 @@ const v1Catalog = {
         id: "anthropic",
         npm: "@ai-sdk/anthropic",
         models: {
-          "claude-sonnet": { id: "claude-sonnet", attachment: true, modalities: { input: ["text", "image", "pdf"], output: ["text"] } },
+          "claude-sonnet": { id: "claude-sonnet", attachment: true, limit: { context: 200000, output: 8192 }, modalities: { input: ["text", "image", "pdf"], output: ["text"] } },
         },
       },
       {
@@ -35,6 +35,7 @@ const v2Catalog = {
         "gemini": {
           id: "gemini",
           api: { id: "gemini", url: "", npm: "@ai-sdk/google" },
+          limit: { context: 1048576, output: 65536 },
           capabilities: { attachment: true, input: { text: true, audio: false, image: true, video: false, pdf: true }, output: { text: true, audio: false, image: false, video: false, pdf: false } },
         },
         "gemma-text": {
@@ -49,18 +50,18 @@ const v2Catalog = {
 
 describe("model input support", () => {
   test("reads the modalities list shape", () => {
-    expect(inputSupportFromCatalog(v1Catalog, "anthropic", "claude-sonnet")).toEqual({ pdf: true, image: true, known: true, npm: "@ai-sdk/anthropic" });
-    expect(inputSupportFromCatalog(v1Catalog, "ollama", "llama-vision")).toEqual({ pdf: false, image: true, known: true, npm: "@ai-sdk/openai-compatible" });
-    expect(inputSupportFromCatalog(v1Catalog, "ollama", "llama-text")).toEqual({ pdf: false, image: false, known: true, npm: "@ai-sdk/openai-compatible" });
+    expect(inputSupportFromCatalog(v1Catalog, "anthropic", "claude-sonnet")).toEqual({ pdf: true, image: true, known: true, npm: "@ai-sdk/anthropic", contextTokens: 200000 });
+    expect(inputSupportFromCatalog(v1Catalog, "ollama", "llama-vision")).toEqual({ pdf: false, image: true, known: true, npm: "@ai-sdk/openai-compatible", contextTokens: null });
+    expect(inputSupportFromCatalog(v1Catalog, "ollama", "llama-text")).toEqual({ pdf: false, image: false, known: true, npm: "@ai-sdk/openai-compatible", contextTokens: null });
   });
 
   test("reads the capabilities.input shape", () => {
-    expect(inputSupportFromCatalog(v2Catalog, "google", "gemini")).toEqual({ pdf: true, image: true, known: true, npm: "@ai-sdk/google" });
-    expect(inputSupportFromCatalog(v2Catalog, "google", "gemma-text")).toEqual({ pdf: false, image: false, known: true, npm: "@ai-sdk/google" });
+    expect(inputSupportFromCatalog(v2Catalog, "google", "gemini")).toEqual({ pdf: true, image: true, known: true, npm: "@ai-sdk/google", contextTokens: 1048576 });
+    expect(inputSupportFromCatalog(v2Catalog, "google", "gemma-text")).toEqual({ pdf: false, image: false, known: true, npm: "@ai-sdk/google", contextTokens: null });
   });
 
   test("falls back to the attachment flag as image-only, never as PDF support", () => {
-    expect(inputSupportFromCatalog(v1Catalog, "ollama", "legacy-attachment-only")).toEqual({ pdf: false, image: true, known: true, npm: "@ai-sdk/openai-compatible" });
+    expect(inputSupportFromCatalog(v1Catalog, "ollama", "legacy-attachment-only")).toEqual({ pdf: false, image: true, known: true, npm: "@ai-sdk/openai-compatible", contextTokens: null });
   });
 
   test("treats unknown providers, models, and malformed catalogs as text-only", () => {
@@ -70,10 +71,17 @@ describe("model input support", () => {
     expect(inputSupportFromCatalog({ data: { error: "boom" } }, "anthropic", "claude-sonnet")).toEqual(TEXT_ONLY);
   });
 
-  test("native limits stay conservative except where the provider documents more", () => {
-    expect(nativePdfLimits("@ai-sdk/anthropic")).toEqual({ maxBytes: 30 * 1024 * 1024, maxPages: 100 });
-    expect(nativePdfLimits(null)).toEqual({ maxBytes: 30 * 1024 * 1024, maxPages: 100 });
-    expect(nativePdfLimits("@ai-sdk/google")).toEqual({ maxBytes: 20 * 1024 * 1024, maxPages: 1000 });
+  test("native policy stays conservative except where the provider documents more", () => {
+    const base = nativePdfPolicy("@ai-sdk/anthropic");
+    expect(base).toEqual({ requestBytes: 32 * 1024 * 1024, requestHeadroomBytes: 4 * 1024 * 1024, maxPages: 100, maxRawBytes: 10 * 1024 * 1024, contextShare: 0.35, tokensPerPage: 2_000 });
+    expect(nativePdfPolicy(null)).toEqual(base);
+    expect(nativePdfPolicy("@ai-sdk/google")).toEqual({ ...base, requestBytes: 20 * 1024 * 1024, maxPages: 1000 });
+  });
+
+  test("encoded size accounts for base64 growth", () => {
+    expect(encodedSize(3)).toBe(4);
+    expect(encodedSize(4)).toBe(8);
+    expect(encodedSize(9 * 1024 * 1024)).toBe(12 * 1024 * 1024);
   });
 });
 

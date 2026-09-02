@@ -14,18 +14,37 @@ export type ModelInputSupport = {
   known: boolean;
   /** AI SDK package serving the model, when the catalog says. */
   npm: string | null;
+  /** Context window in tokens, when the catalog says. */
+  contextTokens: number | null;
 };
 
-export type NativePdfLimits = {
-  maxBytes: number;
+/**
+ * When a PDF-capable model should still get the derived form instead of the
+ * PDF itself. A PDF sent natively rides inline as base64 in every step of the
+ * loop and is tokenized page by page, so past a point it costs more than it
+ * gives: it can exceed the provider's request size, dominate the context
+ * window, or re-upload tens of megabytes per tool call.
+ */
+export type NativePdfPolicy = {
+  /** Provider ceiling for one request body; PDFs count at their base64 size. */
+  requestBytes: number;
+  /** Bytes kept free for the rest of the request (prompt, tools, history). */
+  requestHeadroomBytes: number;
+  /** Provider cap on PDF pages per request. */
   maxPages: number;
+  /** Raw size above which native input is not worth re-uploading every step. */
+  maxRawBytes: number;
+  /** Share of the context window that natively-sent PDFs may take in one step. */
+  contextShare: number;
+  /** Rough provider tokenization of one native PDF page (text plus page image). */
+  tokensPerPage: number;
 };
 
 const MIB = 1024 * 1024;
 const CATALOG_TTL_MS = 5 * 60_000;
 const CATALOG_FAILURE_TTL_MS = 30_000;
 
-export const TEXT_ONLY: ModelInputSupport = { pdf: false, image: false, known: false, npm: null };
+export const TEXT_ONLY: ModelInputSupport = { pdf: false, image: false, known: false, npm: null, contextTokens: null };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -36,12 +55,31 @@ function stringOrNull(value: unknown): string | null {
 }
 
 /**
- * Provider request limits for a PDF sent as-is. Conservative defaults keep a
- * document that would be rejected upstream on the derived path instead.
+ * Native-input policy per provider package. Conservative defaults keep a
+ * document that would be rejected or ruinously expensive upstream on the
+ * derived path instead.
  */
-export function nativePdfLimits(npm: string | null): NativePdfLimits {
-  if (npm === "@ai-sdk/google" || npm === "@ai-sdk/google-vertex") return { maxBytes: 20 * MIB, maxPages: 1000 };
-  return { maxBytes: 30 * MIB, maxPages: 100 };
+export function nativePdfPolicy(npm: string | null): NativePdfPolicy {
+  const base: NativePdfPolicy = {
+    requestBytes: 32 * MIB,
+    requestHeadroomBytes: 4 * MIB,
+    maxPages: 100,
+    maxRawBytes: 10 * MIB,
+    contextShare: 0.35,
+    tokensPerPage: 2_000,
+  };
+  if (npm === "@ai-sdk/google" || npm === "@ai-sdk/google-vertex") return { ...base, requestBytes: 20 * MIB, maxPages: 1000 };
+  return base;
+}
+
+/** Bytes a binary occupies once base64-encoded into a request body. */
+export function encodedSize(rawBytes: number): number {
+  return Math.ceil(rawBytes / 3) * 4;
+}
+
+function contextTokensOf(model: Record<string, unknown>): number | null {
+  const limit = isRecord(model.limit) ? model.limit : null;
+  return limit && typeof limit.context === "number" && limit.context > 0 ? limit.context : null;
 }
 
 function providersOf(catalog: unknown): unknown[] {
@@ -70,17 +108,18 @@ function supportFromModel(provider: Record<string, unknown>, model: Record<strin
   const modelProvider = isRecord(model.provider) ? model.provider : null;
   const npm = stringOrNull(api?.npm) ?? stringOrNull(modelProvider?.npm) ?? stringOrNull(provider.npm);
 
+  const contextTokens = contextTokensOf(model);
   const capabilities = isRecord(model.capabilities) ? model.capabilities : null;
   const input = capabilities && isRecord(capabilities.input) ? capabilities.input : null;
-  if (input) return { pdf: input.pdf === true, image: input.image === true, known: true, npm };
+  if (input) return { pdf: input.pdf === true, image: input.image === true, known: true, npm, contextTokens };
 
   const modalities = isRecord(model.modalities) ? model.modalities : null;
   if (modalities && Array.isArray(modalities.input)) {
-    return { pdf: modalities.input.includes("pdf"), image: modalities.input.includes("image"), known: true, npm };
+    return { pdf: modalities.input.includes("pdf"), image: modalities.input.includes("image"), known: true, npm, contextTokens };
   }
 
   const attachment = typeof model.attachment === "boolean" ? model.attachment : capabilities?.attachment === true;
-  return { pdf: false, image: attachment, known: true, npm };
+  return { pdf: false, image: attachment, known: true, npm, contextTokens };
 }
 
 export function inputSupportFromCatalog(catalog: unknown, providerID: string, modelID: string): ModelInputSupport {
