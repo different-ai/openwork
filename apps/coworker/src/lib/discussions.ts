@@ -62,12 +62,20 @@ export function splitDiscussionThreads<T extends { id: string }>(
 
 /**
  * A discussion is titled after its first message. Until then it carries the
- * default title, which reads as "New discussion" wherever discussions are
- * listed — the coworker's name is already in the header above.
+ * default title, which reads as "New discussion" while it is empty and plainly
+ * "Discussion" once it has been used (a discussion from before titles were
+ * taken from the first message keeps the default until its next message) —
+ * the coworker's name is already in the header above.
  */
-export function discussionLabel(title: string, defaultTitle: string): string {
+export function discussionLabel(title: string, defaultTitle: string, used = false): string {
   const trimmed = title.trim();
-  return !trimmed || trimmed === defaultTitle.trim() ? "New discussion" : trimmed;
+  if (trimmed && trimmed !== defaultTitle.trim()) return trimmed;
+  return used ? "Discussion" : "New discussion";
+}
+
+/** A thread that has been written to is updated well after it was created. */
+export function discussionLooksUsed(thread: { createdAt: number; updatedAt: number }): boolean {
+  return thread.createdAt > 0 && thread.updatedAt - thread.createdAt > 10_000;
 }
 
 export function discussionTitleFromPrompt(prompt: string): string {

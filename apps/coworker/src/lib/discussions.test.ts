@@ -6,6 +6,7 @@ import {
   discussionIds,
   discussionIdsForWorkspace,
   discussionLabel,
+  discussionLooksUsed,
   discussionTitleFromPrompt,
   loadDiscussionRegistry,
   parseDiscussionRegistry,
@@ -44,6 +45,10 @@ test("discussionLabel and discussionTitleFromPrompt read well in a list", () => 
   assert.equal(discussionLabel("Discussion with Scout", "Discussion with Scout"), "New discussion");
   assert.equal(discussionLabel("", "Discussion with Scout"), "New discussion");
   assert.equal(discussionLabel("Move the car on Fridays", "Discussion with Scout"), "Move the car on Fridays");
+  assert.equal(discussionLabel("Discussion with Scout", "Discussion with Scout", true), "Discussion");
+  assert.equal(discussionLooksUsed({ createdAt: 1_000, updatedAt: 1_000 + 60_000 }), true);
+  assert.equal(discussionLooksUsed({ createdAt: 1_000, updatedAt: 3_000 }), false);
+  assert.equal(discussionLooksUsed({ createdAt: 0, updatedAt: 0 }), false);
   assert.equal(discussionTitleFromPrompt("\n\n  can you   remember this\nsecond line"), "can you remember this");
   assert.equal(discussionTitleFromPrompt(""), "");
   const long = discussionTitleFromPrompt("x".repeat(100));
