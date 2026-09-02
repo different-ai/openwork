@@ -2,6 +2,7 @@ import { readdir, readFile, stat } from "node:fs/promises";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
+import { appendAgentInstructions, createInstructionSection } from "./agent-instruction-compose.js";
 
 /**
  * OpenWork Capabilities Knowledge Plugin
@@ -237,7 +238,7 @@ function excerpt(content: string, query: string): string {
 
 export const OpenWorkCapabilitiesKnowledge = async () => ({
   "experimental.chat.system.transform": async (_input: unknown, output: { system: string[] }) => {
-    output.system.push(OPENWORK_CAPABILITIES_KNOWLEDGE);
+    appendAgentInstructions(output.system, createInstructionSection("capabilities-knowledge", OPENWORK_CAPABILITIES_KNOWLEDGE));
   },
   tool: {
     openwork_docs_search: {

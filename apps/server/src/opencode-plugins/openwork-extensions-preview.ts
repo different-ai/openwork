@@ -5,7 +5,7 @@ import { z } from "zod";
 import type { OpenworkAffordanceEffects } from "@openwork/types/openwork-affordance";
 import { automationProposalSchema } from "@openwork/types/automations";
 import {
-  composeAgentInstructions,
+  appendAgentInstructions,
   createInstructionSection,
 } from "./agent-instruction-compose.js";
 import {
@@ -961,14 +961,17 @@ export const OpenWorkExtensionsPreview = async (factoryInput?: unknown) => {
     }
     // One section id per concern — composition drops empties/duplicates so routing,
     // remote skills, session, and browser guidance never overlap by accident.
-    output.system.push(...composeAgentInstructions(
+    // Appended into the engine's existing system entry so the request still
+    // carries a single system message.
+    appendAgentInstructions(
+      output.system,
       createInstructionSection("routing", extensionInstruction),
       createInstructionSection("agent-surface", OPENWORK_AGENT_SURFACE_INSTRUCTION),
       createInstructionSection("skill-authoring", skillAuthoring.prompt),
       createInstructionSection("connect-skills", skillInstruction),
       createInstructionSection("automations", automationInstruction),
       createInstructionSection("browser", OPENWORK_BROWSER_INSTRUCTION),
-    ));
+    );
   },
   tool: {
     openwork_context: {

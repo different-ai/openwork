@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import {
+  appendAgentInstructions,
   combineInstructionSections,
   composeAgentInstructions,
   createInstructionSection,
@@ -51,5 +52,27 @@ describe("agent instruction compose primitives", () => {
       observedSection,
     )).toEqual(["one", "two", "three"]);
     expect(observedBodyReads).toBe(1);
+  });
+
+  test("appendAgentInstructions extends the engine system entry without adding a system message", () => {
+    const system = ["engine header"];
+    appendAgentInstructions(system, createInstructionSection("a", "one"), createInstructionSection("b", "two"));
+    appendAgentInstructions(system, createInstructionSection("c", "three"));
+    expect(system).toEqual(["engine header\none\ntwo\nthree"]);
+  });
+
+  test("appendAgentInstructions starts one entry when the engine supplied none", () => {
+    const system: string[] = [];
+    appendAgentInstructions(system, createInstructionSection("a", "one"));
+    appendAgentInstructions(system, createInstructionSection("b", "two"));
+    expect(system).toEqual(["one\ntwo"]);
+  });
+
+  test("appendAgentInstructions leaves the system prompt untouched when every section is empty", () => {
+    const system = ["engine header", ""];
+    appendAgentInstructions(system, createInstructionSection("empty", "  "), null);
+    expect(system).toEqual(["engine header", ""]);
+    appendAgentInstructions(system, createInstructionSection("a", "one"));
+    expect(system).toEqual(["engine header", "one"]);
   });
 });

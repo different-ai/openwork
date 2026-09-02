@@ -513,12 +513,30 @@ describe("OpenWorkExtensionsPreview session tools", () => {
     await plugin["experimental.chat.system.transform"]({}, output);
 
     expect(requests).toEqual([{ query: { directory: "/tmp/archive" } }]);
-    expect(output.system[0]).toBe(OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION);
-    expect(output.system.join("\n")).toContain(OPENWORK_LOCAL_SKILL_AUTHORING_INSTRUCTION);
-    expect(output.system.join("\n")).not.toContain(OPENWORK_CLOUD_SKILL_AUTHORING_INSTRUCTION);
+    expect(output.system).toHaveLength(1);
+    expect(output.system[0].startsWith(OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION)).toBe(true);
+    expect(output.system[0]).toContain(OPENWORK_LOCAL_SKILL_AUTHORING_INSTRUCTION);
+    expect(output.system[0]).not.toContain(OPENWORK_CLOUD_SKILL_AUTHORING_INSTRUCTION);
     expect(output.system[0]).not.toContain("not ready");
     expect(output.system[0]).not.toContain("Repair and test");
     expect(output.system[0]).not.toContain("Do not use OpenWork documentation tools");
+  });
+
+  test("extends the engine system entry instead of adding a second system message", async () => {
+    const mcp = {
+      async status() {
+        return { data: { "openwork-cloud": { status: "connected" } } };
+      },
+    };
+    const plugin = await OpenWorkExtensionsPreview({ client: { mcp }, directory: "/tmp/archive" });
+    const output: { system: string[] } = { system: ["engine header"] };
+
+    await plugin["experimental.chat.system.transform"]({}, output);
+
+    expect(output.system).toHaveLength(1);
+    expect(output.system[0].startsWith("engine header\n")).toBe(true);
+    expect(output.system[0]).toContain("verified ready for this exact workspace/model");
+    expect(output.system[0]).toContain("## Built-in Browser (external websites)");
   });
 
   test("routes transcript reads through a remote workspace native mount", async () => {

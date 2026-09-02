@@ -41,6 +41,16 @@ describe("OpenWork capabilities knowledge plugin", () => {
     expect(knowledge).not.toContain("openwork_extensions_export");
   });
 
+  test("extends the engine system entry instead of adding a second system message", async () => {
+    const plugin = await OpenWorkCapabilitiesKnowledge();
+    const output = { system: ["engine header"] };
+
+    await plugin["experimental.chat.system.transform"]({}, output);
+
+    expect(output.system).toHaveLength(1);
+    expect(output.system[0].startsWith("engine header\nYou are running inside OpenWork.")).toBe(true);
+  });
+
   test("retrieves Slack connection guidance from bundled docs", async () => {
     process.env.OPENWORK_DOCS_DIR = resolve(import.meta.dir, "../../../../packages/docs");
 

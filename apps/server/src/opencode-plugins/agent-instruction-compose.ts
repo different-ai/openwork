@@ -74,3 +74,25 @@ export function composeAgentInstructions(...groups: AgentInstructionSectionGroup
   }
   return instructions;
 }
+
+/**
+ * Extend the engine's system prompt in place from an
+ * `experimental.chat.system.transform` hook.
+ *
+ * OpenCode sends every entry of `system` as its own `role: "system"` message.
+ * Several chat templates behind OpenAI-compatible endpoints reject any system
+ * message after the first ("System message must be at the beginning."), so
+ * OpenWork folds its instructions into the existing entry instead of pushing a
+ * second one. The engine alone sends a single system message; this keeps that
+ * shape intact.
+ */
+export function appendAgentInstructions(system: string[], ...groups: AgentInstructionSectionGroup[]): void {
+  const body = composeAgentInstructions(...groups).join("\n");
+  if (!body) return;
+  const last = system.length - 1;
+  if (last < 0) {
+    system.push(body);
+    return;
+  }
+  system[last] = system[last] ? `${system[last]}\n${body}` : body;
+}
