@@ -2,17 +2,17 @@ import { describe, expect, test } from "bun:test";
 import * as XLSX from "xlsx";
 
 import { parseSpreadsheet, serializeSpreadsheet } from "../src/react-app/domains/session/artifacts/artifact-spreadsheet-model";
-import { openXlsxWorkbook, writeXlsxWorkbook } from "../../server/src/opencode-plugins/xlsx-workbook";
+import { openXlsxWorkbook, writeXlsxWorkbook } from "../../../packages/workbook/src/index";
 
-function toArrayBuffer(buffer: Buffer): ArrayBuffer {
-  const copy = new Uint8Array(buffer.byteLength);
-  copy.set(buffer);
+function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {
+  const copy = new Uint8Array(bytes.byteLength);
+  copy.set(bytes);
   return copy.buffer;
 }
 
 describe("spreadsheet tools and the artifact panel share one workbook format", () => {
   test("a workbook written by spreadsheet_write opens in the artifact spreadsheet preview", async () => {
-    const { bytes } = writeXlsxWorkbook([
+    const { bytes } = await writeXlsxWorkbook([
       { name: "Summary", rows: [["Region", "Revenue", "Active"], ["EMEA", 1742.42, true], ["APAC", 871.21, false]] },
       { name: "Detail", rows: [["id", "amount"], [1, 10]] },
     ]);
@@ -36,9 +36,9 @@ describe("spreadsheet tools and the artifact panel share one workbook format", (
     const saved = await serializeSpreadsheet("edited.xlsx", [["name", "revenue"], ["Ada", "11"], ["Grace", "12"]]);
     if (saved.kind !== "binary") throw new Error("expected binary workbook");
 
-    const workbook = openXlsxWorkbook(Buffer.from(saved.data));
+    const workbook = await openXlsxWorkbook(new Uint8Array(saved.data));
     expect(workbook.sheets.map((sheet) => sheet.name)).toEqual(["Sheet1"]);
-    const sheet = workbook.readSheet(workbook.sheets[0]);
+    const sheet = await workbook.readSheet(workbook.sheets[0]);
     expect(sheet.cells.map((cell) => [cell.reference, cell.displayedValue])).toEqual([
       ["A1", "name"],
       ["B1", "revenue"],

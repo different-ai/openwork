@@ -6,9 +6,8 @@ import { fileURLToPath } from "node:url";
 
 import { buildOpenworkRuntimeConfigObject } from "../openwork-runtime-config.js";
 import { openworkSpreadsheetsPluginPath } from "../openwork-extensions-plugin-path.js";
-import { buildZip, listZipEntries, readZipEntryData } from "./ooxml-package.js";
+import { buildZip, excelSerialToIso, isDateNumberFormat, listZipEntries, openXlsxWorkbook, readZipEntryData, renderSheetTable, utf8Text, writeXlsxWorkbook } from "@openwork/workbook";
 import { OpenWorkSpreadsheets } from "./openwork-spreadsheets.js";
-import { excelSerialToIso, isDateNumberFormat, openXlsxWorkbook, renderSheetTable, writeXlsxWorkbook } from "./xlsx-workbook.js";
 
 const PACKAGE_ROOT = join(dirname(fileURLToPath(import.meta.url)), "../..");
 
@@ -44,14 +43,14 @@ async function write(plugin: Plugin, args: unknown) {
   return expectRecord(JSON.parse(await plugin.tool.spreadsheet_write.execute(args)));
 }
 
-function workbookFixture(sheetXml: string, extra: { styles?: string; sharedStrings?: string; workbookPr?: string } = {}) {
-  return buildZip([
+async function workbookFixture(sheetXml: string, extra: { styles?: string; sharedStrings?: string; workbookPr?: string } = {}): Promise<Buffer> {
+  return Buffer.from(await buildZip([
     { name: "xl/workbook.xml", data: Buffer.from(`<workbook xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">${extra.workbookPr ?? ""}<sheets><sheet name="Data" sheetId="1" r:id="rId1"/></sheets></workbook>`, "utf8") },
     { name: "xl/_rels/workbook.xml.rels", data: Buffer.from(`<Relationships><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>`, "utf8") },
     ...(extra.sharedStrings ? [{ name: "xl/sharedStrings.xml", data: Buffer.from(extra.sharedStrings, "utf8") }] : []),
     ...(extra.styles ? [{ name: "xl/styles.xml", data: Buffer.from(extra.styles, "utf8") }] : []),
     { name: "xl/worksheets/sheet1.xml", data: Buffer.from(sheetXml, "utf8") },
-  ]);
+  ]));
 }
 
 
@@ -188,9 +187,12 @@ describe("OpenWorkSpreadsheets", () => {
   });
 
   test("keeps numbers, booleans, formulas, and header styling typed in the written XML", async () => {
-    const { bytes } = writeXlsxWorkbook([{ name: "T", rows: [["h1", "h2"], [3.5, true], ["=SUM(A2:A2)", " padded "]] }]);
+    const { bytes } = await writeXlsxWorkbook([{ name: "T", rows: [["h1", "h2"], [3.5, true], ["=SUM(A2:A2)", " padded "]] }]);
     const entries = new Map(listZipEntries(bytes).map((entry) => [entry.name, entry]));
-    const sheet = readZipEntryData(bytes, entries.get("xl/worksheets/sheet1.xml")!).toString("utf8");
+    const sheetEntry = entries.get("xl/worksheets/sheet1.xml");
+    const workbookEntry = entries.get("xl/workbook.xml");
+    if (!sheetEntry || !workbookEntry) throw new Error("Expected worksheet and workbook entries");
+    const sheet = utf8Text(await readZipEntryData(bytes, sheetEntry));
     expect(sheet).toContain('<c r="A1" t="inlineStr" s="1"><is><t>h1</t></is></c>');
     expect(sheet).toContain('<c r="A2"><v>3.5</v></c>');
     expect(sheet).toContain('<c r="B2" t="b"><v>1</v></c>');
@@ -198,19 +200,19 @@ describe("OpenWorkSpreadsheets", () => {
     expect(sheet).toContain('<t xml:space="preserve"> padded </t>');
     expect(sheet).toContain('<pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/>');
     expect(sheet).toContain("<cols>");
-    const workbook = readZipEntryData(bytes, entries.get("xl/workbook.xml")!).toString("utf8");
+    const workbook = utf8Text(await readZipEntryData(bytes, workbookEntry));
     expect(workbook).toContain('<calcPr fullCalcOnLoad="1"/>');
   });
 
   test("sanitizes and de-duplicates sheet names and escapes markup", async () => {
-    const { bytes, sheets } = writeXlsxWorkbook([
+    const { bytes, sheets } = await writeXlsxWorkbook([
       { name: "Q3: Revenue/Plan [draft]?*", rows: [["a"]] },
       { name: "q3  revenue plan draft", rows: [["b"]] },
       { name: "", rows: [["c"]] },
       { name: "<script>&", rows: [["d"]] },
     ]);
     expect(sheets.map((sheet) => sheet.name)).toEqual(["Q3 Revenue Plan draft", "q3 revenue plan draft-2", "Sheet3", "<script>&"]);
-    const parsed = openXlsxWorkbook(bytes);
+    const parsed = await openXlsxWorkbook(bytes);
     expect(parsed.sheets.map((sheet) => sheet.name)).toEqual(["Q3 Revenue Plan draft", "q3 revenue plan draft-2", "Sheet3", "<script>&"]);
     expect(sheets.every((sheet) => sheet.name.length <= 31)).toBe(true);
   });
@@ -231,7 +233,7 @@ describe("OpenWorkSpreadsheets", () => {
     await withWorkspace(async (root, plugin) => {
       const outside = await mkdtemp(join(tmpdir(), "openwork-spreadsheets-outside-"));
       try {
-        await writeFile(join(outside, "secret.xlsx"), workbookFixture('<worksheet><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>SECRET</t></is></c></row></sheetData></worksheet>'));
+        await writeFile(join(outside, "secret.xlsx"), await workbookFixture('<worksheet><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>SECRET</t></is></c></row></sheetData></worksheet>'));
         await symlink(outside, join(root, "linked"), "dir");
         await expect(read(plugin, { path: "../secret.xlsx" })).rejects.toThrow("outside the active workspace");
         await expect(read(plugin, { path: join(outside, "secret.xlsx") })).rejects.toThrow("outside the active workspace");
@@ -255,7 +257,7 @@ describe("OpenWorkSpreadsheets", () => {
 
   test("decodes date serials, keeps self-closing styled cells from swallowing neighbours, and reads shared strings", async () => {
     await withWorkspace(async (root, plugin) => {
-      const bytes = workbookFixture(
+      const bytes = await workbookFixture(
         '<worksheet><dimension ref="A1:D2"/><sheetData><row r="1"><c r="A1" s="2"/><c r="B1" t="s"><v>0</v></c><c r="C1" s="1"><v>45000</v></c><c r="D1" s="3"><v>45000.5</v></c></row><row r="2"><c r="B2" t="e"><v>#DIV/0!</v></c><c r="C2" t="str"><f>TEXT(C1,"yyyy")</f><v>2023</v></c></row></sheetData></worksheet>',
         {
           sharedStrings: "<sst><si><t>Booked</t></si></sst>",
@@ -278,7 +280,7 @@ describe("OpenWorkSpreadsheets", () => {
 
   test("reads Excel and Google Sheets archives that use data descriptors, but still rejects corrupt local sizes", async () => {
     await withWorkspace(async (root, plugin) => {
-      const plain = workbookFixture('<worksheet><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>exported</t></is></c><c r="B1"><v>42</v></c></row></sheetData></worksheet>');
+      const plain = await workbookFixture('<worksheet><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>exported</t></is></c><c r="B1"><v>42</v></c></row></sheetData></worksheet>');
       await writeFile(join(root, "export.xlsx"), withDataDescriptors(plain));
       expect(await read(plugin, { path: "export.xlsx" })).toContain("| 1 | exported | 42 |");
       await writeFile(join(root, "corrupt.xlsx"), withDataDescriptors(plain, { corruptLocalSizes: true }));
@@ -303,20 +305,20 @@ describe("OpenWorkSpreadsheets", () => {
     expect(excelSerialToIso(-5)).toBeNull();
   });
 
-  test("keeps pipes and backslashes from breaking or distorting table cells", () => {
-    const { bytes } = writeXlsxWorkbook([{ rows: [["path", "note"], ["C:\\Users\\ada\\q3.xlsx", "a|b or c"]], header: false }]);
-    const workbook = openXlsxWorkbook(bytes);
-    const table = renderSheetTable(workbook.readSheet(workbook.sheets[0]));
+  test("keeps pipes and backslashes from breaking or distorting table cells", async () => {
+    const { bytes } = await writeXlsxWorkbook([{ rows: [["path", "note"], ["C:\\Users\\ada\\q3.xlsx", "a|b or c"]], header: false }]);
+    const workbook = await openXlsxWorkbook(bytes);
+    const table = renderSheetTable(await workbook.readSheet(workbook.sheets[0]));
     const row = table.text.split("\n")[3];
     expect(row).toBe("| 2 | C:\\Users\\ada\\q3.xlsx | a\u2502b or c |");
     expect(row.split("|")).toHaveLength(5);
   });
 
-  test("bounds table columns and reports omitted columns", () => {
+  test("bounds table columns and reports omitted columns", async () => {
     const rows = [Array.from({ length: 70 }, (_value, index) => `c${index + 1}`)];
-    const { bytes } = writeXlsxWorkbook([{ rows, header: false }]);
-    const workbook = openXlsxWorkbook(bytes);
-    const sheet = workbook.readSheet(workbook.sheets[0]);
+    const { bytes } = await writeXlsxWorkbook([{ rows, header: false }]);
+    const workbook = await openXlsxWorkbook(bytes);
+    const sheet = await workbook.readSheet(workbook.sheets[0]);
     const table = renderSheetTable(sheet, { maxColumns: 60 });
     expect(table.columns).toHaveLength(60);
     expect(table.columns[59]).toBe("BH");

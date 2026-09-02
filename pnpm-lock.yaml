@@ -439,6 +439,9 @@ importers:
       '@openwork/types':
         specifier: workspace:*
         version: link:../../packages/types
+      '@openwork/workbook':
+        specifier: workspace:*
+        version: link:../../packages/workbook
       '@types/better-sqlite3':
         specifier: ^7.6.13
         version: 7.6.13
@@ -1348,6 +1351,16 @@ importers:
       tsup:
         specifier: ^8.5.0
         version: 8.5.1(jiti@2.7.0)(postcss@8.5.23)(tsx@4.23.1)(typescript@5.9.3)(yaml@2.9.0)
+      typescript:
+        specifier: ^5.6.3
+        version: 5.9.3
+
+  packages/workbook:
+    dependencies:
+      htmlparser2:
+        specifier: 8.0.2
+        version: 8.0.2
+    devDependencies:
       typescript:
         specifier: ^5.6.3
         version: 5.9.3

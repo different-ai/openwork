@@ -7,6 +7,8 @@ import {
   parsedXmlText,
   readZipTextEntry,
   relationshipTargets,
+  utf8ByteLength,
+  utf8Bytes,
   xmlBlocks,
   xmlElements,
   xmlStartTagAttributes,
@@ -16,11 +18,12 @@ import {
 } from "./ooxml-package.js";
 
 /**
- * Dependency-free XLSX reading and writing on top of the bounded OOXML package
- * primitives. The reader exposes a row/column grid so agents can page through
- * any sheet; the writer produces plain workbooks (values, formulas, a bold
- * header row, and auto-sized columns) that Excel, Numbers, and LibreOffice
- * open without repair prompts.
+ * XLSX reading and writing on top of the bounded OOXML package primitives,
+ * shared by the agent tools, the attachment normalizer, and the artifact
+ * spreadsheet preview. The reader exposes a row/column grid so agents can page
+ * through any sheet and editors can show a dense table; the writer produces
+ * plain workbooks (typed values, formulas, an optional bold header row, and
+ * auto-sized columns) that spreadsheet applications open without repair.
  */
 
 export const XLSX_MAX_SHEETS = 64;
@@ -76,7 +79,7 @@ export type XlsxWorkbook = {
   sharedStringCount: number;
   styleCount: number;
   date1904: boolean;
-  readSheet(sheet: XlsxSheetInfo, options?: { cellLimit?: number }): XlsxSheetData;
+  readSheet(sheet: XlsxSheetInfo, options?: { cellLimit?: number }): Promise<XlsxSheetData>;
 };
 
 export type XlsxCellInput = string | number | boolean | null;
@@ -348,13 +351,13 @@ function sheetExtents(cells: XlsxCell[], dimension: string) {
   return { firstRow, lastRow, firstColumn, lastColumn };
 }
 
-export function openXlsxWorkbook(bytes: Buffer): XlsxWorkbook {
+export async function openXlsxWorkbook(bytes: Uint8Array): Promise<XlsxWorkbook> {
   const entries = zipEntryMap(listZipEntries(bytes));
-  const workbookXml = readZipTextEntry(bytes, entries, "xl/workbook.xml");
+  const workbookXml = await readZipTextEntry(bytes, entries, "xl/workbook.xml");
   if (!workbookXml) throw new Error("XLSX workbook.xml was not found.");
-  const sharedStrings = parseSharedStrings(readZipTextEntry(bytes, entries, "xl/sharedStrings.xml"));
-  const numberFormats = parseNumberFormats(readZipTextEntry(bytes, entries, "xl/styles.xml"));
-  const sheets = parseWorkbookSheets(workbookXml, readZipTextEntry(bytes, entries, "xl/_rels/workbook.xml.rels"));
+  const sharedStrings = parseSharedStrings(await readZipTextEntry(bytes, entries, "xl/sharedStrings.xml"));
+  const numberFormats = parseNumberFormats(await readZipTextEntry(bytes, entries, "xl/styles.xml"));
+  const sheets = parseWorkbookSheets(workbookXml, await readZipTextEntry(bytes, entries, "xl/_rels/workbook.xml.rels"));
   if (sheets.length === 0) throw new Error("XLSX workbook contained no sheets.");
   const date1904 = xmlStartTagAttributes(workbookXml, "workbookPr").some((attributes) => attributes.date1904 === "1" || attributes.date1904 === "true");
 
@@ -363,9 +366,9 @@ export function openXlsxWorkbook(bytes: Buffer): XlsxWorkbook {
     sharedStringCount: sharedStrings.length,
     styleCount: numberFormats.length,
     date1904,
-    readSheet(sheet, options = {}) {
+    async readSheet(sheet, options = {}) {
       const safePath = sheet.path.startsWith("xl/worksheets/") && sheet.path.endsWith(".xml") ? sheet.path : "";
-      const sheetXml = safePath ? readZipTextEntry(bytes, entries, safePath) : null;
+      const sheetXml = safePath ? await readZipTextEntry(bytes, entries, safePath) : null;
       if (!sheetXml) throw new Error(`Worksheet XML for "${sheet.name}" was not found or was outside xl/worksheets.`);
       const data = parseSheetData(sheetXml, sharedStrings, numberFormats, date1904, options.cellLimit ?? XLSX_MAX_CELLS_PER_SHEET);
       return { info: sheet, ...data, ...sheetExtents(data.cells, data.dimension) };
@@ -489,6 +492,45 @@ export function formulaSummary(sheet: XlsxSheetData, maxFormulas = 20): string[]
     });
 }
 
+const GRID_MAX_CELLS = 250_000;
+
+/**
+ * Dense rows for an editor: every row from 1 to the last used row and every
+ * column from A to the last used column, so positions survive a save.
+ */
+export function sheetGridRows(sheet: XlsxSheetData, options: { maxCells?: number; formulas?: boolean } = {}): string[][] {
+  if (sheet.cells.length === 0) return [[""]];
+  const maxCells = options.maxCells ?? GRID_MAX_CELLS;
+  if (sheet.lastRow * sheet.lastColumn > maxCells) {
+    throw new Error(`This sheet spans ${sheet.lastRow} rows by ${sheet.lastColumn} columns, which is too large to show as an editable grid.`);
+  }
+  const rows: string[][] = Array.from({ length: sheet.lastRow }, () => Array.from({ length: sheet.lastColumn }, () => ""));
+  for (const cell of sheet.cells) {
+    rows[cell.row - 1][cell.column - 1] = options.formulas && cell.formula
+      ? `=${cell.formula}`
+      : cell.displayedValue ?? cell.rawValue ?? (cell.formula ? `=${cell.formula}` : "");
+  }
+  return rows;
+}
+
+const CANONICAL_NUMBER = /^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$/;
+
+/**
+ * Turn edited text back into a typed cell without guessing: canonical numbers
+ * become numbers (so "02134" and "1,000" stay text), TRUE/FALSE become
+ * booleans, "=" prefixes stay formulas, and everything else is text.
+ */
+export function cellInputFromText(text: string): XlsxCellInput {
+  if (text === "") return null;
+  if (text === "TRUE") return true;
+  if (text === "FALSE") return false;
+  if (CANONICAL_NUMBER.test(text)) {
+    const value = Number(text);
+    if (Number.isFinite(value)) return value;
+  }
+  return text;
+}
+
 function sanitizeSheetName(name: string | undefined, position: number, taken: Set<string>): string {
   const cleaned = (name ?? "")
     .replace(/[\u0000-\u001f\u007f[\]:*?/\\]/g, " ")
@@ -549,7 +591,7 @@ function worksheetXml(sheet: XlsxSheetInput): { xml: string; rows: number; colum
     : "";
   const xml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><dimension ref="${dimension}"/><sheetViews><sheetView workbookViewId="0"${header && rows.length > 1 ? `><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView>` : "/>"}</sheetViews><sheetFormatPr defaultRowHeight="15"/>${cols}<sheetData>${rowXml.join("")}</sheetData><pageMargins left="0.7" right="0.7" top="0.75" bottom="0.75" header="0.3" footer="0.3"/></worksheet>`;
-  const size = Buffer.byteLength(xml, "utf8");
+  const size = utf8ByteLength(xml);
   if (size > MAX_ENTRY_UNCOMPRESSED_BYTES) {
     throw new Error(`Sheet ${JSON.stringify(sheet.name ?? "")} would be ${size} bytes of worksheet XML; the limit is ${MAX_ENTRY_UNCOMPRESSED_BYTES} bytes (roughly 30,000 text cells). Split the rows across sheets or files, shorten cell text, or write a CSV instead.`);
   }
@@ -560,11 +602,11 @@ const STYLES_XML = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="2"><font><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="11"/><name val="Calibri"/></font></fonts><fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills><borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="2"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1"/></cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>`;
 
 export type XlsxWriteResult = {
-  bytes: Buffer;
+  bytes: Uint8Array;
   sheets: Array<{ name: string; rows: number; columns: number }>;
 };
 
-export function writeXlsxWorkbook(input: XlsxSheetInput[]): XlsxWriteResult {
+export async function writeXlsxWorkbook(input: XlsxSheetInput[]): Promise<XlsxWriteResult> {
   if (input.length === 0) throw new Error("A workbook needs at least one sheet.");
   if (input.length > XLSX_WRITE_MAX_SHEETS) throw new Error(`A workbook may contain at most ${XLSX_WRITE_MAX_SHEETS} sheets.`);
   const totalCells = input.reduce((sum, sheet) => sum + sheet.rows.reduce((rowSum, row) => rowSum + row.length, 0), 0);
@@ -577,30 +619,30 @@ export function writeXlsxWorkbook(input: XlsxSheetInput[]): XlsxWriteResult {
   const files: ZipFileInput[] = [
     {
       name: "[Content_Types].xml",
-      data: Buffer.from(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>${sheets.map((_sheet, index) => `<Override PartName="/xl/worksheets/sheet${index + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`).join("")}</Types>`, "utf8"),
+      data: utf8Bytes(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>${sheets.map((_sheet, index) => `<Override PartName="/xl/worksheets/sheet${index + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`).join("")}</Types>`),
     },
     {
       name: "_rels/.rels",
-      data: Buffer.from(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>`, "utf8"),
+      data: utf8Bytes(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>`),
     },
     {
       name: "xl/workbook.xml",
-      data: Buffer.from(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><bookViews><workbookView/></bookViews><sheets>${sheets.map((sheet, index) => `<sheet name="${escapeXml(sheet.name)}" sheetId="${index + 1}" r:id="rId${index + 1}"/>`).join("")}</sheets><calcPr fullCalcOnLoad="1"/></workbook>`, "utf8"),
+      data: utf8Bytes(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><bookViews><workbookView/></bookViews><sheets>${sheets.map((sheet, index) => `<sheet name="${escapeXml(sheet.name)}" sheetId="${index + 1}" r:id="rId${index + 1}"/>`).join("")}</sheets><calcPr fullCalcOnLoad="1"/></workbook>`),
     },
     {
       name: "xl/_rels/workbook.xml.rels",
-      data: Buffer.from(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${sheets.map((_sheet, index) => `<Relationship Id="rId${index + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${index + 1}.xml"/>`).join("")}<Relationship Id="rId${sheets.length + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>`, "utf8"),
+      data: utf8Bytes(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${sheets.map((_sheet, index) => `<Relationship Id="rId${index + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${index + 1}.xml"/>`).join("")}<Relationship Id="rId${sheets.length + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>`),
     },
-    { name: "xl/styles.xml", data: Buffer.from(STYLES_XML, "utf8") },
-    ...worksheets.map((worksheet, index) => ({ name: `xl/worksheets/sheet${index + 1}.xml`, data: Buffer.from(worksheet.xml, "utf8") })),
+    { name: "xl/styles.xml", data: utf8Bytes(STYLES_XML) },
+    ...worksheets.map((worksheet, index) => ({ name: `xl/worksheets/sheet${index + 1}.xml`, data: utf8Bytes(worksheet.xml) })),
   ];
 
   return {
-    bytes: buildZip(files),
+    bytes: await buildZip(files),
     sheets: sheets.map((sheet, index) => ({ name: sheet.name, rows: worksheets[index].rows, columns: worksheets[index].columns })),
   };
 }

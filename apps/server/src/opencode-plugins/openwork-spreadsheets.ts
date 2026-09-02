@@ -3,8 +3,8 @@ import { mkdir, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/
 import { dirname, extname, isAbsolute, relative, resolve, sep } from "node:path";
 import { z } from "zod";
 import { appendAgentInstructions, createInstructionSection } from "./agent-instruction-compose.js";
-import { MAX_COMPRESSED_BYTES } from "./ooxml-package.js";
 import {
+  MAX_COMPRESSED_BYTES,
   XLSX_WRITE_MAX_CELLS,
   XLSX_WRITE_MAX_SHEETS,
   columnLetters,
@@ -16,7 +16,7 @@ import {
   sheetHeaderRow,
   writeXlsxWorkbook,
   type XlsxSheetData,
-} from "./xlsx-workbook.js";
+} from "@openwork/workbook";
 
 /**
  * OpenWork Spreadsheets Plugin
@@ -80,8 +80,8 @@ function toWorkspaceRelative(root: string, path: string): string {
   return relative(root, path).split(sep).join("/");
 }
 
-function sha256(buffer: Buffer): string {
-  return createHash("sha256").update(buffer).digest("hex");
+function sha256(bytes: Uint8Array): string {
+  return createHash("sha256").update(bytes).digest("hex");
 }
 
 function workspaceRoot(factoryContext: RuntimeContext, toolContext: unknown): string {
@@ -205,14 +205,14 @@ export const OpenWorkSpreadsheets = async (factoryInput?: unknown) => {
           const args = inspectArgsSchema.parse(rawArgs);
           const root = workspaceRoot(factoryContext, context);
           const { file, bytes } = await readWorkbookFile(root, args.path);
-          const workbook = openXlsxWorkbook(bytes);
-          const sheets = workbook.sheets.map((info) => {
+          const workbook = await openXlsxWorkbook(bytes);
+          const sheets = await Promise.all(workbook.sheets.map(async (info) => {
             try {
-              return sheetFacts(workbook.readSheet(info));
+              return sheetFacts(await workbook.readSheet(info));
             } catch (cause) {
               return { position: info.position, name: info.name, hidden: info.hidden, error: cause instanceof Error ? cause.message : String(cause) };
             }
-          });
+          }));
           return JSON.stringify({
             ok: true,
             path: file.relativePath,
@@ -232,8 +232,8 @@ export const OpenWorkSpreadsheets = async (factoryInput?: unknown) => {
           const args = readArgsSchema.parse(rawArgs);
           const root = workspaceRoot(factoryContext, context);
           const { file, bytes } = await readWorkbookFile(root, args.path);
-          const workbook = openXlsxWorkbook(bytes);
-          const sheet = workbook.readSheet(findSheet(workbook, args.sheet));
+          const workbook = await openXlsxWorkbook(bytes);
+          const sheet = await workbook.readSheet(findSheet(workbook, args.sheet));
           const maxRows = args.maxRows ?? DEFAULT_READ_ROWS;
           const table = renderSheetTable(sheet, {
             startRow: args.startRow,
@@ -272,7 +272,7 @@ export const OpenWorkSpreadsheets = async (factoryInput?: unknown) => {
           if (existing && !args.overwrite) {
             throw new Error(`${JSON.stringify(file.relativePath)} already exists. Pass overwrite: true to replace it (all of its current sheets, formatting, and formulas are replaced by the sheets you pass), or write to a new path.`);
           }
-          const result = writeXlsxWorkbook(args.sheets);
+          const result = await writeXlsxWorkbook(args.sheets);
           await mkdir(dirname(file.absolutePath), { recursive: true });
           await assertRealPathWithinRoot(root, dirname(file.absolutePath), `Destination folder for ${JSON.stringify(file.relativePath)}`);
           const tmp = `${file.absolutePath}.${randomUUID()}.tmp`;
