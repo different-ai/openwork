@@ -153,7 +153,10 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink }) {
       throw new Error(`Browser provider is not available yet: ${requestedProvider}`);
     }
     const url = normalizeBrowserUrl(rawUrl);
-    const tab = createBrowserTab("about:blank", { select: true });
+    // The marker page is loaded right away, so skip the blank initialize load:
+    // a queued about:blank navigation would abort this awaited load with
+    // ERR_ABORTED and fail the agent's request before the page ever opens.
+    const tab = createBrowserTab("about:blank", { select: true, initializeBlank: false });
     await tab.view.webContents.loadURL(browserTargetMarkerUrl(tab.tabId));
     const targetId = await resolveBrowserCdpTargetId(tab.tabId);
     await tab.view.webContents.loadURL(url);
@@ -472,7 +475,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink }) {
     callback(browserProxy.username, browserProxy.password);
   });
 
-  function createBrowserTab(url = "about:blank", { select = true } = {}) {
+  function createBrowserTab(url = "about:blank", { select = true, initializeBlank = true } = {}) {
     const tabId = createBrowserTabId();
     const view = new WebContentsView({
       webPreferences: {
@@ -489,7 +492,11 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink }) {
     browserTabOrder.push(tabId);
     // Load about:blank immediately to preempt persistent-session restore.
     // Cookies live on the session object, not the document — they survive this.
-    runDetachedTask("initialize browser tab", () => view.webContents.loadURL("about:blank"));
+    // Callers that load their own page synchronously opt out, because this
+    // queued navigation would otherwise abort theirs.
+    if (initializeBlank) {
+      runDetachedTask("initialize browser tab", () => view.webContents.loadURL("about:blank"));
+    }
     view.webContents.setWindowOpenHandler(({ url: targetUrl }) => {
       runDetachedTask("open browser popup externally", () => shell.openExternal(targetUrl));
       return { action: "deny" };

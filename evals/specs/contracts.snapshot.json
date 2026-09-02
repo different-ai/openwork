@@ -277,6 +277,17 @@
       ]
     },
     {
+      "id": "desktop.builtin-browser",
+      "description": "Built-in browser panel: tab lifecycle, agent-facing open_url handoff, and CDP target resolution",
+      "implementation": [
+        "apps/desktop/electron/browser-content-preload.cjs",
+        "apps/desktop/electron/browser-panel.mjs"
+      ],
+      "specs": [
+        "evals/specs/browser-open-url-returns-target.e2e.test.ts"
+      ]
+    },
+    {
       "id": "desktop.chat-composer",
       "description": "Desktop chat rendering, composer drafts, queued sends, attachments, and resend behavior",
       "implementation": [
