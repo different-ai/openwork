@@ -6,6 +6,8 @@ import {
   describeInteractions,
   describePermission,
   hasPendingInteractions,
+  isCloudManagedProviderId,
+  modelSourceLabel,
   parseModelPreference,
 } from "./threads.ts";
 
@@ -78,4 +80,48 @@ test("parseModelPreference accepts provider/model and rejects malformed values",
   assert.equal(parseModelPreference(""), undefined);
   assert.equal(parseModelPreference("anthropic/"), undefined);
   assert.equal(parseModelPreference("/model"), undefined);
+});
+
+test("connectedModelCatalog tells account (OpenWork Cloud) providers from this Mac's and lists account models first", () => {
+  const providerList = {
+    connected: ["anthropic", "lpr_01org", "openwork", "opencode"],
+    default: {},
+    all: [
+      { id: "anthropic", name: "Anthropic", source: "env", env: [], options: {}, models: { "claude-haiku-4-5": { name: "Claude Haiku 4.5" } } },
+      { id: "lpr_01org", name: "Acme LiteLLM", source: "config", env: [], options: {}, models: { "acme-router": { name: "Acme Router" } } },
+      { id: "openwork", name: "OpenWork", source: "config", env: [], options: {}, models: { fable: { name: "Fable" } } },
+      { id: "opencode", name: "OpenCode Zen", source: "config", env: [], options: {}, models: { "big-pickle": { name: "Big Pickle" } } },
+    ],
+  } as unknown as Parameters<typeof connectedModelCatalog>[0];
+
+  // With the embedded server's sync status, its provider ids decide the source.
+  const withStatus = connectedModelCatalog(providerList, {
+    hasSession: true,
+    lastRun: { at: "2026-09-01T00:00:00.000Z", status: "applied" },
+    providers: [{ providerId: "lpr_01org", name: "Acme LiteLLM", source: "custom", modelIds: ["acme-router"] }],
+    reloadPending: false,
+    skippedProviders: [{ providerId: "lpr_02", name: "Personal OpenAI", reason: "needs_key" }],
+  });
+  assert.deepEqual(
+    withStatus.models.map((model) => [model.id, model.source]),
+    [
+      ["lpr_01org/acme-router", "cloud"],
+      ["openwork/fable", "cloud"],
+      ["anthropic/claude-haiku-4-5", "local"],
+      ["opencode/big-pickle", "local"],
+    ],
+  );
+  assert.equal(withStatus.cloud?.skippedProviders[0]?.reason, "needs_key");
+
+  // Without status, the cloud-owned key shapes still identify account providers.
+  const withoutStatus = connectedModelCatalog(providerList);
+  assert.equal(withoutStatus.cloud, null);
+  assert.deepEqual(
+    withoutStatus.models.filter((model) => model.source === "cloud").map((model) => model.providerId),
+    ["lpr_01org", "openwork"],
+  );
+  assert.equal(isCloudManagedProviderId("LPR_abc"), true);
+  assert.equal(isCloudManagedProviderId("anthropic"), false);
+  assert.equal(modelSourceLabel("cloud"), "OpenWork Cloud");
+  assert.equal(modelSourceLabel("local"), "This Mac");
 });

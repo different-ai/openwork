@@ -67,6 +67,8 @@ const messageSchema = z
         id: z.string(),
         role: z.string(),
         parentID: z.string().optional(),
+        providerID: z.string().optional(),
+        modelID: z.string().optional(),
         time: timeSchema.optional(),
         error: z.unknown().optional(),
         cost: z.number().nonnegative().optional(),
@@ -159,6 +161,13 @@ function toMessageError(value: unknown): HeadlessThreadMessage["error"] {
   };
 }
 
+function toMessageModel(message: MessageWire): HeadlessThreadMessage["model"] {
+  const providerId = message.info.providerID?.trim() ?? "";
+  const modelId = message.info.modelID?.trim() ?? "";
+  if (message.info.role !== "assistant" || !providerId || !modelId) return null;
+  return { providerId, modelId };
+}
+
 export function toThreadMessage(message: MessageWire): HeadlessThreadMessage {
   return {
     id: message.info.id,
@@ -166,6 +175,7 @@ export function toThreadMessage(message: MessageWire): HeadlessThreadMessage {
     parentId: message.info.parentID ?? null,
     createdAt: message.info.time?.created ?? null,
     error: toMessageError(message.info.error),
+    model: toMessageModel(message),
     usage: message.info.role === "assistant" && message.info.tokens ? {
       inputTokens: message.info.tokens?.input ?? 0,
       outputTokens: message.info.tokens?.output ?? 0,

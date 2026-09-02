@@ -45,7 +45,6 @@ body.is-resizing-context-panel * {
   position: relative;
   isolation: isolate;
   background: rgb(8 11 17 / 0.92);
-  animation: surface-enter 240ms ease-out both;
 }
 
 .window-shell::before {
@@ -404,11 +403,6 @@ body.is-resizing-context-panel * {
   to { transform: rotate(360deg); }
 }
 
-@keyframes surface-enter {
-  from { opacity: 0; transform: scale(0.997); }
-  to { opacity: 1; transform: scale(1); }
-}
-
 .window-drag {
   -webkit-app-region: drag;
   user-select: none;
@@ -436,8 +430,7 @@ a {
   .coworker-mark *,
   .brand-loader__progress span,
   .inline-loader__progress span,
-  .button-busy-indicator,
-  .window-shell {
+  .button-busy-indicator {
     animation: none !important;
   }
 

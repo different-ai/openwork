@@ -175,9 +175,12 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
     return failure?.textContent ?? false;
   })()`, { timeoutMs: 120_000, label: "actionable failed discussion turn" });
   expect(failureText).toContain("The coworker could not reply");
+  expect(failureText).toContain("missing-provider/missing-model");
   expect(failureText).toContain("Choose another model or reconnect its provider");
   expect(failureText).toContain("Open model settings");
-  expect(await evalIn(app, `document.querySelector('[data-testid="coworker-thread-status"]')?.textContent?.trim()`)).toBe("Needs attention");
+  expect(failureText).toContain("Continue with OpenWork");
+  expect(await evalIn(app, `document.querySelector('[data-testid="coworker-thread-status"]')?.textContent?.trim()`)).toBe("Failed");
+  expect(await evalIn(app, `document.querySelector('[data-testid="coworker-top-status"]')?.textContent?.trim()`)).toBe("Failed");
   expect(await evalIn(app, `(() => [...document.querySelectorAll('[data-message-role="user"]')]
     .some((message) => (message.textContent ?? "").includes(${json(failurePrompt)})))()`)).toBe(true);
   expect(resultRecord(await invokeCoworker(app, "coworkers.get", { slug: "editor" })).conversationThreadId).toBe(discussionThreadId);
@@ -187,7 +190,7 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
 
   evidence.recordAssertionEvidence(
     "An invalid coworker model becomes a visible recovery state instead of a silent Ready thread",
-    "The failed turn kept the user's prompt visible, showed the provider/model failure as Needs attention, explained model reconnection, preserved the same discussion id, and exposed a direct Open model settings action.",
+    "The failed turn kept the user's prompt visible, named the exact unavailable model, showed the failure as Failed in both the thread header and the coworker header, explained model reconnection with a direct Open model settings action and an OpenWork account action, and preserved the same discussion id.",
     true,
   );
 });

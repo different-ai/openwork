@@ -76,8 +76,18 @@ export type RuntimeInfo = {
   ownerToken: string;
   coworkersDir: string;
   denBaseUrl: string;
+  /** URL scheme Den uses to hand a sign-in grant back to this app. */
+  deepLinkScheme: string;
+  /** False in unpackaged or isolated launches, where only the pasted link works. */
+  deepLinksRegistered: boolean;
   engineManaged: boolean;
   engineError: string;
+};
+
+/** Outcome of one embedded-server provider sync pass for the signed-in account. */
+export type ProviderSyncRun = {
+  status: "applied" | "noop" | "failed" | "no_session";
+  message: string;
 };
 
 type BridgeResponse = { ok: true; result: unknown } | { ok: false; error: string };
@@ -85,6 +95,7 @@ type BridgeResponse = { ok: true; result: unknown } | { ok: false; error: string
 type BridgeWindow = Window & {
   __COWORKER__?: {
     invoke: (command: string, payload?: unknown) => Promise<BridgeResponse>;
+    onDeepLink?: (listener: (urls: string[]) => void) => () => void;
   };
 };
 
@@ -134,4 +145,30 @@ export const coworkerBridge = {
       invoke<{ accepted: boolean }>("localResponsibilities.runNow", { slug, id }),
   },
   openExternal: (url: string) => invoke<{ ok: boolean }>("shell.openExternal", { url }),
+  /**
+   * The signed-in OpenWork account, handed to the embedded server so the
+   * member's authorized providers become engine providers — the desktop's
+   * own sync path, not a Coworker-specific one.
+   */
+  den: {
+    setSession: (session: { baseUrl: string; token: string; orgId: string }) =>
+      invoke<ProviderSyncRun>("den.session.set", session),
+    clearSession: () => invoke<{ ok: boolean }>("den.session.clear"),
+    syncProviders: () => invoke<ProviderSyncRun>("den.providers.sync"),
+  },
+  /**
+   * Subscribe to OS-delivered `opencoworker://` links. Links that arrived
+   * before the renderer was listening are replayed through the same callback.
+   */
+  onDeepLink: (listener: (urls: string[]) => void): (() => void) => {
+    const bridge = (window as BridgeWindow).__COWORKER__;
+    if (!bridge?.onDeepLink) return () => undefined;
+    const unsubscribe = bridge.onDeepLink(listener);
+    void invoke<{ urls: string[] }>("deepLinks.subscribe")
+      .then((pending) => {
+        if (pending.urls.length > 0) listener(pending.urls);
+      })
+      .catch(() => undefined);
+    return unsubscribe;
+  },
 };
