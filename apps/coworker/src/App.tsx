@@ -56,6 +56,8 @@ export default function App() {
   const [connectBySlug, setConnectBySlug] = useState<Record<string, ConnectState>>({});
   const connectTokenRef = useRef<{ sessionKey: string; token: ConnectToken } | null>(null);
   const connectedWorkspacesRef = useRef<Set<string>>(new Set());
+  /** Automatic retries per coworker while the AI service is still coming up; cleared on success. */
+  const connectRetryRef = useRef<Record<string, { attempts: number; timer: number }>>({});
   /** Cloud responsibilities Den is running right now, per coworker: "Running in OpenWork Cloud". */
   const [cloudRunBySlug, setCloudRunBySlug] = useState<Record<string, CoworkerActivity>>({});
   const pushedSessionKeyRef = useRef("");
@@ -177,6 +179,8 @@ export default function App() {
         .filter((coworker) => coworker.workspaceId)
         .map((coworker) => removeConnect(runtime, coworker.workspaceId).catch(() => undefined)));
     }
+    for (const pending of Object.values(connectRetryRef.current)) window.clearTimeout(pending.timer);
+    connectRetryRef.current = {};
     connectedWorkspacesRef.current.clear();
     connectTokenRef.current = null;
     setConnectBySlug({});
@@ -211,7 +215,7 @@ export default function App() {
    * workspace. Idempotent; `force` re-registers (Repair) and re-mints a token
    * that is about to expire.
    */
-  const syncConnect = useCallback(async (options: { force?: boolean; slug?: string } = {}) => {
+  const syncConnect = useCallback(async (options: { force?: boolean; remint?: boolean; slug?: string } = {}) => {
     if (!runtime?.engineManaged || !session) return;
     const key = sessionKey(session);
     const targets = coworkers.filter((coworker) =>
@@ -220,6 +224,10 @@ export default function App() {
       && (options.force || !connectedWorkspacesRef.current.has(`${key}\u0000${coworker.workspaceId}`)),
     );
     if (targets.length === 0) return;
+    for (const coworker of targets) {
+      const pending = connectRetryRef.current[coworker.slug];
+      if (pending) window.clearTimeout(pending.timer);
+    }
     setConnectBySlug((current) => {
       const next = { ...current };
       for (const coworker of targets) next[coworker.slug] = { status: "connecting" };
@@ -228,7 +236,7 @@ export default function App() {
     let token = connectTokenRef.current?.sessionKey === key ? connectTokenRef.current.token : null;
     const expiresSoon = token ? Date.parse(token.expiresAt) - Date.now() < 5 * 60_000 : true;
     try {
-      if (!token || expiresSoon || options.force) {
+      if (!token || expiresSoon || options.remint) {
         token = await createDenAutomationsClient(session).mintMcpToken();
         connectTokenRef.current = { sessionKey: key, token };
       }
@@ -253,6 +261,16 @@ export default function App() {
         state = { status: "unavailable", message: cause instanceof Error ? cause.message : String(cause) };
       }
       setConnectBySlug((current) => ({ ...current, [coworker.slug]: state }));
+      // Right after a coworker is created its AI service may still be starting, so the first
+      // registration can land before the engine answers. Try again by itself a few times.
+      const previous = connectRetryRef.current[coworker.slug]?.attempts ?? 0;
+      if (state.status === "connected" || previous >= 6) {
+        delete connectRetryRef.current[coworker.slug];
+        return;
+      }
+      const attempts = previous + 1;
+      const timer = window.setTimeout(() => void syncConnect({ force: true, slug: coworker.slug }), Math.min(60_000, 5_000 * attempts));
+      connectRetryRef.current[coworker.slug] = { attempts, timer };
     }));
   }, [coworkers, runtime, session]);
 
@@ -260,7 +278,7 @@ export default function App() {
     if (!session || !runtime?.engineManaged) return;
     void syncConnect();
     // Tokens are short-lived: refresh before they lapse while the app stays open.
-    const timer = window.setInterval(() => void syncConnect({ force: true }), 20 * 60_000);
+    const timer = window.setInterval(() => void syncConnect({ force: true, remint: true }), 20 * 60_000);
     return () => window.clearInterval(timer);
   }, [runtime?.engineManaged, session, syncConnect]);
 
@@ -573,7 +591,7 @@ export default function App() {
               onSyncProviders={syncProviders}
               onOpenOpenWork={(section) => openGlobalSettings(section ?? "general")}
               connect={connectBySlug[selected.slug] ?? null}
-              onRepairConnect={() => syncConnect({ force: true, slug: selected.slug })}
+              onRepairConnect={() => syncConnect({ force: true, remint: true, slug: selected.slug })}
               onConnectAccount={() => setConnecting(true)}
             />
           </div>
