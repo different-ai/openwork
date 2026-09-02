@@ -170,7 +170,7 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
     return {
       outcome: brief.querySelector('[data-testid="coworker-assignment-outcome"]')?.textContent?.trim() ?? "",
       visibleText: brief.innerText,
-      contextSummary: context?.querySelector("summary")?.textContent?.trim() ?? "",
+      contextSummary: context?.querySelector("summary span:not([aria-hidden])")?.textContent?.trim() ?? "",
       contextOpen: context instanceof HTMLDetailsElement ? context.open : null,
       plainUserBubbles: document.querySelectorAll('[data-message-role="user"]:not([data-assignment-brief])').length,
     };
