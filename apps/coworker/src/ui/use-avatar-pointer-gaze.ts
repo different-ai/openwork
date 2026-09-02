@@ -6,12 +6,10 @@ export function useAvatarPointerGaze(enabled = true) {
 
   useEffect(() => {
     if (!enabled || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
-    let animationFrame = 0;
     let pointerX = window.innerWidth / 2;
     let pointerY = window.innerHeight / 2;
 
     const render = () => {
-      animationFrame = 0;
       const avatar = avatarRef.current;
       if (!avatar) return;
       const bounds = avatar.getBoundingClientRect();
@@ -32,10 +30,13 @@ export function useAvatarPointerGaze(enabled = true) {
       avatar.style.setProperty("--avatar-look-y", `${lookY.toFixed(2)}px`);
     };
 
+    // Pointer events already arrive coalesced per frame, and the work is a few style
+    // properties on one element, so the gaze follows the pointer directly rather than
+    // waiting for an animation frame that a hidden or busy window may not deliver.
     const onPointerMove = (event: PointerEvent) => {
       pointerX = event.clientX;
       pointerY = event.clientY;
-      if (!animationFrame) animationFrame = window.requestAnimationFrame(render);
+      render();
     };
     const reset = () => {
       const avatar = avatarRef.current;
@@ -49,7 +50,6 @@ export function useAvatarPointerGaze(enabled = true) {
     document.documentElement.addEventListener("pointerleave", reset);
     window.addEventListener("blur", reset);
     return () => {
-      if (animationFrame) window.cancelAnimationFrame(animationFrame);
       window.removeEventListener("pointermove", onPointerMove);
       document.documentElement.removeEventListener("pointerleave", reset);
       window.removeEventListener("blur", reset);
