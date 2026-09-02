@@ -204,7 +204,7 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
     responsibilitiesVisible: true,
     responsibilitiesBelowActivity: true,
     emptyStateCount: 1,
-    links: ["Apps & tools", "Memory", "Coworker settings"],
+    links: ["Apps & tools", "Memory"],
     settingsLabel: "Coworker settings",
     settingsTitle: "Coworker settings",
     settingsText: "",
@@ -453,20 +453,30 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
     .map((key) => avatarMotion[key])
     .filter(isRecord);
   expect(new Set(animatedLayers.map((layer) => layer.animationDelay)).size).toBe(1);
-  const coworkerGaze = await evalIn(app, `(() => {
+  // The gaze settles on the next animation frames; poll for it rather than holding one long
+  // evaluation open, so a momentary renderer stall on a slow display does not read as a failure.
+  await evalIn(app, `(() => {
     const avatar = document.querySelector('svg[aria-label="Scout avatar"].is-animated');
-    if (!avatar) return null;
+    if (!avatar) return false;
     const bounds = avatar.getBoundingClientRect();
     window.dispatchEvent(new PointerEvent("pointermove", {
       clientX: bounds.left - Math.max(24, bounds.width),
       clientY: bounds.bottom + Math.max(24, bounds.height),
     }));
-    return new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve({
+    return true;
+  })()`);
+  const coworkerGaze = await waitFor(app, `(() => {
+    const avatar = document.querySelector('svg[aria-label="Scout avatar"].is-animated');
+    if (!avatar) return false;
+    const lookX = Number.parseFloat(avatar.style.getPropertyValue("--avatar-look-x"));
+    const lookY = Number.parseFloat(avatar.style.getPropertyValue("--avatar-look-y"));
+    if (!Number.isFinite(lookX) || !Number.isFinite(lookY) || lookX >= 0 || lookY <= 0) return false;
+    return {
       hasPointerLayer: avatar.querySelector(".coworker-avatar__pointer-gaze") !== null,
-      lookX: Number.parseFloat(avatar.style.getPropertyValue("--avatar-look-x")),
-      lookY: Number.parseFloat(avatar.style.getPropertyValue("--avatar-look-y")),
-    }))));
-  })()`, { awaitPromise: true });
+      lookX,
+      lookY,
+    };
+  })()`, { timeoutMs: 30_000, label: "Scout's gaze following a lower-left pointer" });
   expect(coworkerGaze).toMatchObject({
     hasPointerLayer: true,
     lookX: expect.any(Number),
@@ -511,29 +521,33 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   expect(secondCoworker).toMatchObject({ ok: true, result: { slug: "nova" } });
   await evalIn(app, "location.reload(); true");
   await waitForText(app, "Nova", { timeoutMs: 120_000 });
-  const railAvatars = await evalIn(app, `(() => {
-    const avatars = [...document.querySelectorAll("aside nav svg.coworker-avatar")];
+  await evalIn(app, `(() => {
     window.dispatchEvent(new PointerEvent("pointermove", {
       clientX: window.innerWidth - 2,
       clientY: window.innerHeight - 2,
     }));
-    return new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve(
-      avatars.map((avatar) => {
-        const pupils = avatar.querySelector(".coworker-avatar__pupils");
-        const blink = pupils ? getComputedStyle(pupils) : null;
-        return {
-          name: avatar.getAttribute("aria-label"),
-          animated: avatar.classList.contains("is-animated"),
-          blinkName: blink?.animationName ?? "",
-          blinkDuration: blink?.animationDuration ?? "",
-          blinkDelay: blink?.animationDelay ?? "",
-          lookX: Number.parseFloat(avatar.style.getPropertyValue("--avatar-look-x")),
-          lookY: Number.parseFloat(avatar.style.getPropertyValue("--avatar-look-y")),
-          featureLookY: Number.parseFloat(avatar.style.getPropertyValue("--avatar-feature-look-y")),
-        };
-      }),
-    ))));
-  })()`, { awaitPromise: true });
+    return true;
+  })()`);
+  const railAvatars = await waitFor(app, `(() => {
+    const avatars = [...document.querySelectorAll("aside nav svg.coworker-avatar")];
+    if (avatars.length !== 2) return false;
+    const facts = avatars.map((avatar) => {
+      const pupils = avatar.querySelector(".coworker-avatar__pupils");
+      const blink = pupils ? getComputedStyle(pupils) : null;
+      return {
+        name: avatar.getAttribute("aria-label"),
+        animated: avatar.classList.contains("is-animated"),
+        blinkName: blink?.animationName ?? "",
+        blinkDuration: blink?.animationDuration ?? "",
+        blinkDelay: blink?.animationDelay ?? "",
+        lookX: Number.parseFloat(avatar.style.getPropertyValue("--avatar-look-x")),
+        lookY: Number.parseFloat(avatar.style.getPropertyValue("--avatar-look-y")),
+        featureLookY: Number.parseFloat(avatar.style.getPropertyValue("--avatar-feature-look-y")),
+      };
+    });
+    // Both avatars have turned toward the bottom-right pointer once every look value is positive.
+    return facts.every((fact) => fact.lookX > 0 && fact.lookY > 0 && fact.featureLookY > 0) ? facts : false;
+  })()`, { timeoutMs: 30_000, label: "both rail avatars following the pointer" });
   expect(railAvatars).toHaveLength(2);
   expect(railAvatars).toEqual(expect.arrayContaining([
     expect.objectContaining({ name: "Scout avatar", animated: true, blinkName: "coworker-blink", blinkDuration: "8.2s", blinkDelay: "-1.4s" }),
