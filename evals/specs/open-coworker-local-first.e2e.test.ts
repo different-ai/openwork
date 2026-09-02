@@ -285,6 +285,29 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   await clickButtonContaining(app, "Scout");
   await waitForText(app, "Discussion with Scout", { timeoutMs: 30_000 });
 
+  await clickButtonContaining(app, "Thinking effort");
+  await waitForText(app, "Selected model", { timeoutMs: 30_000 });
+  const composerModelControl = await evalIn(app, `(() => {
+    const control = document.querySelector('[data-testid="composer-model-control"]');
+    const popover = document.querySelector('[data-testid="composer-model-popover"]');
+    return {
+      controlVisible: control instanceof HTMLElement && control.offsetParent !== null,
+      popoverVisible: popover instanceof HTMLElement && popover.offsetParent !== null,
+      text: popover?.textContent ?? "",
+    };
+  })()`);
+  expect(composerModelControl).toMatchObject({
+    controlVisible: true,
+    popoverVisible: true,
+  });
+  expect(isRecord(composerModelControl) && String(composerModelControl.text)).toContain("Big Pickle");
+  evidence.recordAssertionEvidence(
+    "A coworker's model and thinking effort are available directly from the conversation composer",
+    "Scout's compact composer control opened over the discussion, showed the selected Big Pickle model, and kept model choice separate from global OpenWork account settings.",
+    true,
+  );
+  await clickButtonContaining(app, "Thinking effort");
+
   const footerPlacement = await evalIn(app, `(() => {
     const button = document.querySelector('button[title="OpenWork account and settings"]');
     if (!button) return null;
