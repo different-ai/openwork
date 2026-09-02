@@ -274,6 +274,22 @@
       ]
     },
     {
+      "id": "desktop.open-coworker",
+      "description": "Open Coworker onboarding, account-backed models, persistent discussions, assignments, responsibilities, MCP Apps, artifacts, and full-window settings",
+      "implementation": [
+        "apps/coworker/electron/**",
+        "apps/coworker/src/**",
+        "evals/packages/hosts/src/coworker.ts",
+        "packages/headless-threads/**"
+      ],
+      "specs": [
+        "evals/specs/open-coworker-discussion.e2e.test.ts",
+        "evals/specs/open-coworker-local-first.e2e.test.ts",
+        "evals/specs/open-coworker-mcp-apps.e2e.test.ts",
+        "evals/specs/open-coworker-openwork-account.e2e.test.ts"
+      ]
+    },
+    {
       "id": "desktop.chat-composer",
       "description": "Desktop chat rendering, composer drafts, queued sends, attachments, and resend behavior",
       "implementation": [
