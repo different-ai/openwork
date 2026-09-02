@@ -159,13 +159,17 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
     expect(phrase).toMatch(/^(Sending…|Editor is (thinking|putting it together|trying again|finishing up|using .+|editing .+|writing .+|reading .+|looking through .+|running .+|searching .+|updating .+|working with .+|asking .+)…)$/);
   }
   expect(beforeReply.every((entry) => !entry.working || ["sending", "thinking", "tool", "writing", "retrying", "finishing"].includes(String(entry.phase)))).toBe(true);
-  // Once the reply is in, thinking folds to one quiet line and tool work to one receipt per reply,
-  // with no raw tool identifiers in either collapsed line.
-  const folded = await evalIn(app, `(() => ({
-    thinking: [...document.querySelectorAll('[data-testid="coworker-thinking"] summary')].map((node) => node.textContent?.trim() ?? ""),
-    receipts: [...document.querySelectorAll('[data-testid="coworker-work-summary"]')].map((node) => node.textContent?.trim() ?? ""),
-    liveRows: document.querySelectorAll('[data-testid="coworker-working"]').length,
-  }))()`);
+  // Once the turn has closed, the live row is gone, thinking folds to one quiet line, and tool work
+  // to one receipt per reply, with no raw tool identifiers in either collapsed line.
+  const folded = await waitFor(app, `(() => {
+    const status = document.querySelector('[data-testid="coworker-thread-status"]')?.textContent?.trim() ?? "";
+    if (!status.startsWith("A continuing conversation")) return false;
+    return {
+      thinking: [...document.querySelectorAll('[data-testid="coworker-thinking"] summary')].map((node) => node.textContent?.trim() ?? ""),
+      receipts: [...document.querySelectorAll('[data-testid="coworker-work-summary"]')].map((node) => node.textContent?.trim() ?? ""),
+      liveRows: document.querySelectorAll('[data-testid="coworker-working"]').length,
+    };
+  })()`, { timeoutMs: 60_000, label: "discussion settled after the first reply" });
   if (!isRecord(folded) || !Array.isArray(folded.thinking) || !Array.isArray(folded.receipts)) throw new Error("Folded transcript facts were unavailable.");
   expect(folded.liveRows).toBe(0);
   for (const line of folded.thinking) expect(String(line)).toMatch(/^Thought through/);
