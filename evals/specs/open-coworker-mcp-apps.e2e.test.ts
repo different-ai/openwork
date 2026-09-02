@@ -39,6 +39,27 @@ async function clickButtonContaining(app: Awaited<ReturnType<typeof coworker>>, 
   })()`, { timeoutMs: 60_000, label: `button containing ${json(text)}` });
 }
 
+/** Bring the right panel to the Apps & tools view from whatever state it is in (folded, another view, or Activity). */
+async function openAppsAndTools(app: Awaited<ReturnType<typeof coworker>>): Promise<void> {
+  await waitFor(app, `(() => {
+    const panel = document.querySelector('[data-testid="context-panel"]');
+    if (!(panel instanceof HTMLElement)) return false;
+    if (panel.dataset.collapsed === "false" && panel.dataset.view === "capabilities") return true;
+    if (panel.dataset.collapsed === "true") {
+      document.querySelector('[data-testid="context-rail-capabilities"]')?.click();
+      return false;
+    }
+    if (panel.dataset.view !== "overview") {
+      document.querySelector('button[aria-label="Back to activity"]')?.click();
+      return false;
+    }
+    const link = [...document.querySelectorAll('nav[aria-label="More for this coworker"] button')]
+      .find((button) => (button.textContent ?? "").includes("Apps & tools"));
+    link?.click();
+    return false;
+  })()`, { timeoutMs: 60_000, label: "Apps & tools view" });
+}
+
 function readBody(request: IncomingMessage): Promise<string> {
   request.setEncoding("utf8");
   return new Promise((resolve, reject) => {
@@ -280,7 +301,7 @@ test.skipIf(!enabled)(title, { timeout: 240_000 }, async ({ evidence }) => {
 
   await evalIn(app, "location.reload(); true");
   await waitFor(app, `Boolean(document.querySelector('[data-testid="coworker-rail"]'))`, { timeoutMs: 120_000, label: "team rail" });
-  await clickButtonContaining(app, "Apps & tools");
+  await openAppsAndTools(app);
   await waitFor(app, `document.querySelectorAll("[data-testid=coworker-mcp-app]").length === 1`, {
     timeoutMs: 60_000,
     label: "live Coworker MCP App catalog",

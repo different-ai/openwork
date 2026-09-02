@@ -30,13 +30,17 @@ The coworker directory is registered as an ordinary OpenWork workspace, so:
 - **A coworker holds several discussions at once.** Each discussion is its
   own native thread; `discussions.json` records which threads are discussions
   so none of them ever reads as an assignment, and `coworker.md`'s
-  `conversationThreadId` points at the one that is open. The thread row under
-  the header is the switcher: it shows the current discussion's title, lists
-  the others (a busy one reads "Replying"), and starts a new one. A discussion
-  is titled after its first message (`session.update`; the engine keeps custom
-  titles), and a reply in progress keeps going while another discussion is
-  open. The coworker is introduced once, in the header; the thread row never
-  repeats the avatar or the name.
+  `conversationThreadId` points at the one that is open. The one conversation
+  header carries the coworker (avatar, name, status) and, on its second line,
+  the discussion switcher: it shows the current discussion's title, lists the
+  others (a busy one reads "Replying"), and starts a new one from its menu. A
+  discussion is titled after its first message (`session.update`; the engine
+  keeps custom titles), and a reply in progress keeps going while another
+  discussion is open. Each view places its own title line and actions (Back,
+  Stop, Assignments) into that header, so there is never a second header row.
+  An empty conversation shows only a small avatar, the coworker's name and
+  role, one line ("What should we work through?"), and the focused composer;
+  there are no starter cards.
 - **Identity and memory ride the engine's existing instruction loading**
   (`AGENTS.md` + `opencode.json` `instructions`); the coworker maintains
   `memory/working.md` with ordinary file tools. No memory backend. The app
@@ -140,8 +144,12 @@ OPENWORK_EVAL_ELECTRON_BINARY="apps/coworker/dist-electron/mac-arm64/Open Cowork
 
 First run: choose OpenWork Cloud or local mode, name a coworker, then give it
 work. Identity and memory are plain files under `~/.config/openwork/coworkers/`.
-The default right sidebar shows only what the selected coworker is doing, what
-it recently finished, and the responsibilities it owns; its AI model, thinking
+The right panel starts folded to its icon strip on every launch and closes
+again when you move to another coworker; the header's details control, a strip
+icon, or a click on its edge opens it, and Escape or the same control closes
+it (its width and last view are remembered, whether it was open is not). Open,
+its Activity view shows only what the selected coworker is doing, what it
+recently finished, and the responsibilities it owns; its AI model, thinking
 effort, memory files, and retirement live behind the icon-only Coworker
 settings control. A discreet OpenWork control in the bottom-left rail opens the
 full-window global settings (account, AI models, AI & local setup) without
@@ -158,8 +166,8 @@ with Home, and resets with Enter). The folded team
 rail keeps every coworker as an avatar with a bottom status dot, marks the
 active one, and shows a hover card naming what that coworker is doing; the
 folded context panel keeps Activity, Apps & tools, Memory, and Coworker
-settings as icons that unfold straight into the chosen view. Widths and folded
-state are remembered per machine.
+settings as icons that unfold straight into the chosen view. Widths are
+remembered per machine; the team rail also remembers whether it was folded.
 
 Signing in also brings OpenWork Connect to every coworker: the app mints the
 same short-lived gateway token the OpenWork desktop uses (`POST /v1/mcp/token`)
