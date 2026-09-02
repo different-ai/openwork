@@ -1,6 +1,6 @@
-import type { WorldSeed } from "./types.ts";
+import type { Seed } from "@openwork/env";
 
-export async function emptySession(seed: WorldSeed) {
+export async function emptySession(seed: Seed) {
   const workspacePath = seed.tmpPath("empty-session");
   const app = await seed.desktop({ name: "empty-session" });
   const workspace = await seed.workspace(app, workspacePath);

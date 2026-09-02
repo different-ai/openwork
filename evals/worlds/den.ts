@@ -1,6 +1,6 @@
 import { localMysqlIsRunning, SkipError } from "@openwork/env";
+import type { Seed } from "@openwork/env";
 import { startMockIdpLab } from "@openwork/labs";
-import type { WorldSeed } from "./types.ts";
 
 function recordField(value: unknown, key: string): Record<string, unknown> | null {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
@@ -14,7 +14,7 @@ function stringField(value: unknown, key: string): string {
   return typeof found === "string" ? found : "";
 }
 
-export async function ssoInvite(seed: WorldSeed) {
+export async function ssoInvite(seed: Seed) {
   if (!await localMysqlIsRunning()) throw new SkipError("MySQL on 127.0.0.1:3306");
 
   const stamp = Date.now();
