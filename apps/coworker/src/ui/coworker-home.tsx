@@ -130,8 +130,8 @@ export function CoworkerHome({
     if (!contextPanelOpen) return;
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== "Escape" || event.defaultPrevented) return;
-      const target = event.target;
-      if (target instanceof HTMLElement && (target.closest("[role=\"menu\"]") || target.closest("dialog"))) return;
+      // An open menu or dialog owns Escape; the panel only closes when nothing else is in the way.
+      if (document.querySelector('[role="menu"], [role="dialog"], dialog[open]')) return;
       collapseContextPanel();
     };
     window.addEventListener("keydown", onKeyDown);
@@ -196,15 +196,6 @@ export function CoworkerHome({
             <StatusDot tone={runtime.engineManaged ? activityTone(activity) : "rose"} />
             {runtime.engineManaged ? (activity?.label ?? "Checking status") : "AI unavailable"}
           </span>
-          <IconButton
-            label={contextPanel.collapsed || contextView !== "overview" ? "Show details" : "Hide details"}
-            className="window-no-drag"
-            data-testid="conversation-details"
-            aria-pressed={!contextPanel.collapsed && contextView === "overview"}
-            onClick={() => showContext("overview")}
-          >
-            <ActivityIcon />
-          </IconButton>
         </header>
         {!runtime.engineManaged ? (
           <AiUnavailableNote coworkerName={coworker.name} technical={runtime.engineError} onRestart={onRestartRuntime} />
@@ -249,8 +240,8 @@ export function CoworkerHome({
         </div>
         {contextPanel.collapsed ? (
           <>
-            <div className="glass-header window-drag h-[78px] border-b border-line" aria-hidden="true" />
-            <nav aria-label="Coworker panels" className="flex flex-col items-center gap-1 px-2 py-3">
+            {/* The strip starts level with the header's controls, so the corner above it is not an empty band. */}
+            <nav aria-label="Coworker panels" className="window-drag flex flex-col items-center gap-1 px-2 pb-3 pt-[23px]">
               {CONTEXT_ORDER.map((view) => {
                 const Icon = CONTEXT_ICONS[view];
                 const active = view === contextView;
