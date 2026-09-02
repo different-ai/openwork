@@ -101,10 +101,11 @@ describe("cloud provisioning image version", () => {
     })
 
     expect(provisions).toBe(0)
-    expect(updates).toEqual([{
-      workerId,
-      status: "failed",
-      onlyWhenStatus: "provisioning",
-    }])
+    expect(updates).toHaveLength(1)
+    expect(updates[0]?.workerId).toBe(workerId)
+    expect(updates[0]?.status).toBe("failed")
+    expect(updates[0]?.onlyWhenStatus).toBe("provisioning")
+    expect(updates[0]?.failure?.code).toBe("web_access_required")
+    expect(updates[0]?.failure?.stage).toBe("provisioning")
   })
 })

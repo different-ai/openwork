@@ -338,19 +338,47 @@ function storedWorker(input: {
 }
 
 describe("Cloud instance route gate", () => {
-  test("returns 404 when the Cloud capability is off", async () => {
+  test("opens Cloud for an organization with Web access and no per-organization Cloud flag", async () => {
+    // Regression: a paying organization must not depend on a separate
+    // platform-admin Cloud opt-in. Web access is the only entitlement.
+    const provisioningWorker = fakeWorker("provisioning")
     const app = new Hono<{ Variables: OrgRouteVariables }>()
     routes.registerCloudRoutes(app, {
       memberRoute: contextMiddleware(organizationContext(null)),
       orgMode: "multi_org",
       provisionerMode: "daytona",
       daytonaApiKey: "daytona-test-key",
+      getOpenWorkWebAccess: async () => ({ hasAccess: true }),
+      ensureCloudWorker: async () => provisioningWorker,
+      getSandboxRecord: async () => null,
     })
 
     const response = await app.request("http://den.local/v1/cloud/instance")
 
-    expect(response.status).toBe(404)
-    await expect(response.json()).resolves.toEqual({ error: "cloud_not_found" })
+    expect(response.status).toBe(200)
+    await expect(response.json()).resolves.toMatchObject({ status: "provisioning" })
+  })
+
+  test("ignores a stale literal Cloud opt-in when Web access is not active", async () => {
+    const app = new Hono<{ Variables: OrgRouteVariables }>()
+    let ensureCalls = 0
+    routes.registerCloudRoutes(app, {
+      memberRoute: contextMiddleware(organizationContext(JSON.stringify({ capabilities: { cloud: true } }))),
+      orgMode: "multi_org",
+      provisionerMode: "daytona",
+      daytonaApiKey: "daytona-test-key",
+      getOpenWorkWebAccess: async () => ({ hasAccess: false }),
+      ensureCloudWorker: async () => {
+        ensureCalls += 1
+        return fakeWorker("provisioning")
+      },
+    })
+
+    const response = await app.request("http://den.local/v1/cloud/instance")
+
+    expect(response.status).toBe(403)
+    await expect(response.json()).resolves.toMatchObject({ error: "openwork_web_access_required" })
+    expect(ensureCalls).toBe(0)
   })
 
   test("returns 404 in single-org mode even with a literal Cloud opt-in", async () => {
@@ -496,7 +524,10 @@ describe("Cloud gateway resolve route", () => {
     await expect(response.json()).resolves.toEqual({ error: "cloud_not_found" })
   })
 
-  test("returns 404 when the Cloud capability is off", async () => {
+  test("resolves the Web gateway for an organization with Web access and no per-organization Cloud flag", async () => {
+    // Regression: the hosted Web origin used to return cloud_not_found for a
+    // paying organization that had never been opted into the Cloud alpha.
+    const provisioningWorker = fakeWorker("provisioning")
     const app = new Hono<{ Variables: OrgRouteVariables }>()
     routes.registerCloudRoutes(app, {
       memberRoute: contextMiddleware(organizationContext(null)),
@@ -504,14 +535,17 @@ describe("Cloud gateway resolve route", () => {
       provisionerMode: "daytona",
       daytonaApiKey: "daytona-test-key",
       gatewayKey: "gateway-secret",
+      getOpenWorkWebAccess: async () => ({ hasAccess: true }),
+      ensureCloudWorker: async () => provisioningWorker,
+      getSandboxRecord: async () => null,
     })
 
     const response = await app.request("http://den.local/v1/cloud/gateway/resolve", {
       headers: { "X-OpenWork-Gateway-Key": "gateway-secret" },
     })
 
-    expect(response.status).toBe(404)
-    await expect(response.json()).resolves.toEqual({ error: "cloud_not_found" })
+    expect(response.status).toBe(200)
+    await expect(response.json()).resolves.toEqual({ status: "provisioning", url: null, clientToken: null, hostToken: null, expiresAt: null })
   })
 
   test("denies Web gateway resolution before provisioning when access is not active", async () => {

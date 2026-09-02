@@ -6,8 +6,20 @@ import {
   createCloudStartupFailure,
   publicCloudStartupFailure,
 } from "../src/workers/cloud-failure.js"
+import { OpenWorkWebAccessRequiredError } from "../src/openwork-web-access-error.js"
 
 describe("Cloud startup failure diagnostics", () => {
+  test("classifies a revoked OpenWork Web entitlement as its own failure code", () => {
+    expect(classifyCloudStartupFailure(new OpenWorkWebAccessRequiredError())).toBe("web_access_required")
+    expect(cloudStartupFailureFromWorker({
+      cloud_failure_code: "web_access_required",
+      cloud_failure_stage: "provisioning",
+      cloud_failure_reference: "cwf_test",
+      cloud_failure_at: new Date("2026-08-28T12:00:00.000Z"),
+    })?.code).toBe("web_access_required")
+  })
+
+
   test("classifies actionable startup stages without exposing raw provider output", () => {
     expect(classifyCloudStartupFailure(new Error("429 Too Many Requests from provider"))).toBe("provider_rate_limited")
     expect(classifyCloudStartupFailure(new Error("Timed out waiting for Daytona worker health at https://secret.preview/health\nAuthorization: Bearer secret")))

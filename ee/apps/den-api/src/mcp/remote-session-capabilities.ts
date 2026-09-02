@@ -1,6 +1,6 @@
 import { createHeadlessThreadClient, toTranscript, type AgentSessionClient, type HeadlessThreadModel } from "@openwork/headless-threads"
 import { and, eq, isNull } from "@openwork-ee/den-db/drizzle"
-import { MemberTable, OrganizationTable } from "@openwork-ee/den-db/schema/org"
+import { MemberTable } from "@openwork-ee/den-db/schema/org"
 import { createDenTypeId, normalizeDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
 import { z } from "zod"
 import { desktopRunnerConnected } from "@openwork/automations"
@@ -18,7 +18,7 @@ import {
 // its `effect` dependency) into every spec that imports this module, which
 // the evals layer rules forbid.
 import { automationRepository } from "../automations/repository.js"
-import { organizationCloudEnabled } from "../capability-sources/cloud-rollout.js"
+import { cloudHostingAvailable } from "../capability-sources/cloud-hosting.js"
 import {
   databaseRemoteSessionCommandStore,
   DEFAULT_TTL_MS,
@@ -237,20 +237,20 @@ const NEEDS_SETUP_MESSAGE =
   "No OpenWork Cloud workspace is available for your account yet. Open OpenWork Cloud in the browser once (the Web tab in OpenWork, or your organization's OpenWork Web URL) so it can be provisioned, then retry this capability."
 
 const CLOUD_NOT_AVAILABLE_MESSAGE =
-  "OpenWork Cloud is not enabled for this organization, so remote sessions are unavailable. An organization administrator can enable OpenWork Cloud; members cannot self-enable it."
+  "OpenWork Cloud is not available on this deployment, so remote sessions are unavailable."
 
 /**
- * Whether the remote-session capabilities exist for an organization at all.
- * Mirrors the external-MCP rollout pattern: when the org's Cloud capability
- * flag is off (or this deployment cannot host Cloud), the capabilities are
- * hidden from search and execute reports them as unknown — members of a
- * flag-off org never see an action they cannot take.
+ * Whether the remote-session capabilities exist on this deployment at all.
+ * When Den cannot host Cloud (self-hosted single-org mode or no Daytona
+ * provisioner), the capabilities are hidden from search and execute reports
+ * them as unknown. Organization entitlement is enforced at execution time by
+ * the OpenWork Web access check, which returns a clear access-required error.
  */
 export function remoteSessionCapabilitiesEnabled(
-  organizationMetadata: Record<string, unknown> | string | null | undefined,
+  _organizationMetadata?: Record<string, unknown> | string | null | undefined,
 ): boolean {
   if (env.provisionerMode !== "daytona" || !env.daytona.apiKey) return false
-  return organizationCloudEnabled(organizationMetadata, { orgMode: env.orgMode })
+  return cloudHostingAvailable({ orgMode: env.orgMode })
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -304,14 +304,10 @@ async function defaultResolveRuntime(
   scope: { organizationId: DenTypeId<"organization">; userId: string },
 ): Promise<RemoteSessionRuntimeResult> {
   // Defense in depth: the registry already hides these capabilities when the
-  // org's Cloud flag is off, but the runtime re-checks with a live read so a
-  // mid-session flag flip cannot keep executing against stale visibility.
-  const organizations = await db
-    .select({ metadata: OrganizationTable.metadata })
-    .from(OrganizationTable)
-    .where(eq(OrganizationTable.id, scope.organizationId))
-    .limit(1)
-  if (!remoteSessionCapabilitiesEnabled(organizations[0]?.metadata)) {
+  // deployment cannot host Cloud, but the runtime re-checks so the runtime
+  // cannot execute against stale visibility. Organization entitlement was
+  // already confirmed by the OpenWork Web access check in executeRemoteSessionCapability.
+  if (!remoteSessionCapabilitiesEnabled()) {
     return { ok: false, error: "cloud_not_available", message: CLOUD_NOT_AVAILABLE_MESSAGE, retryable: false }
   }
 

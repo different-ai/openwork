@@ -22,11 +22,15 @@
  * packages/types/src/automations.ts.
  */
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
+import { OpenWorkWebAccessRequiredError } from "./openwork-web-access-error.js"
 import { getOpenWorkWebAccess } from "./stripe-billing.js"
 
-export const OPENWORK_WEB_ACCESS_REQUIRED_CODE = "openwork_web_access_required" as const
-export const OPENWORK_WEB_ACCESS_REQUIRED_MESSAGE =
-  "An active OpenWork Web subscription or complimentary access is required to use OpenWork Cloud."
+export {
+  OPENWORK_WEB_ACCESS_REQUIRED_CODE,
+  OPENWORK_WEB_ACCESS_REQUIRED_MESSAGE,
+  OpenWorkWebAccessRequiredError,
+  openWorkWebAccessRequiredPayload,
+} from "./openwork-web-access-error.js"
 
 export type OpenWorkWebRuntimeAccess = {
   hasAccess: boolean
@@ -35,15 +39,6 @@ export type OpenWorkWebRuntimeAccess = {
 export type OpenWorkWebRuntimeAccessResolver = (
   organizationId: string,
 ) => Promise<OpenWorkWebRuntimeAccess>
-
-export class OpenWorkWebAccessRequiredError extends Error {
-  readonly code = OPENWORK_WEB_ACCESS_REQUIRED_CODE
-
-  constructor() {
-    super(OPENWORK_WEB_ACCESS_REQUIRED_MESSAGE)
-    this.name = "OpenWorkWebAccessRequiredError"
-  }
-}
 
 export const getOpenWorkWebRuntimeAccess: OpenWorkWebRuntimeAccessResolver = async (organizationId) => {
   const access = await getOpenWorkWebAccess(
@@ -61,11 +56,4 @@ export async function requireOpenWorkWebRuntimeAccess(
     throw new OpenWorkWebAccessRequiredError()
   }
   return access
-}
-
-export function openWorkWebAccessRequiredPayload() {
-  return {
-    error: OPENWORK_WEB_ACCESS_REQUIRED_CODE,
-    message: OPENWORK_WEB_ACCESS_REQUIRED_MESSAGE,
-  }
 }

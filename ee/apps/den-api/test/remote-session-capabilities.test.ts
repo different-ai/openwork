@@ -482,7 +482,7 @@ async function registryContext(input: { remoteSessionsEnabled: boolean }) {
   return { registry, context }
 }
 
-test("an org without the cloud capability flag never discovers remote-session capabilities", async () => {
+test("a deployment that cannot host Cloud never discovers remote-session capabilities", async () => {
   const { registry, context } = await registryContext({ remoteSessionsEnabled: false })
   const source = registry.CAPABILITY_SOURCES.remoteSession
   const matches = await source.search(context, "remote session cloud web", 10)
@@ -498,7 +498,7 @@ test("an org without the cloud capability flag never discovers remote-session ca
   expect(text?.type === "text" ? text.text : "").toContain("unknown_capability")
 })
 
-test("an org with the cloud capability flag discovers remote-session capabilities", async () => {
+test("a hosted Cloud deployment discovers remote-session capabilities for every organization", async () => {
   const { registry, context } = await registryContext({ remoteSessionsEnabled: true })
   const source = registry.CAPABILITY_SOURCES.remoteSession
   const matches = await source.search(context, "remote session cloud web", 10)

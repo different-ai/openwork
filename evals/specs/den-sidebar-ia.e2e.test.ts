@@ -156,7 +156,7 @@ test(title, async ({ evidence, place }) => {
   const flip = await denFetch(den.admin, `/v1/admin/organizations/${orgId}/capabilities`, {
     method: "PUT",
     headers: { authorization: `Bearer ${den.admin.token}` },
-    body: JSON.stringify({ capabilities: { mcpConnections: true, cloud: true } }),
+    body: JSON.stringify({ capabilities: { mcpConnections: true } }),
   });
   if (!flip.response.ok) {
     throw new Error(`Enabling sidebar capabilities failed: HTTP ${flip.response.status} ${flip.text.slice(0, 500)}`);

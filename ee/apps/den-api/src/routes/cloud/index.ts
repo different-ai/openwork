@@ -5,7 +5,7 @@ import { createDenTypeId } from "@openwork-ee/utils/typeid"
 import type { Hono, MiddlewareHandler } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
-import { organizationCloudEnabled } from "../../capability-sources/cloud-rollout.js"
+import { cloudHostingAvailable } from "../../capability-sources/cloud-hosting.js"
 import { db } from "../../db.js"
 import { env, type DenOrgMode } from "../../env.js"
 import { orgMemberRoute } from "../../middleware/index.js"
@@ -358,7 +358,7 @@ function hasDaytonaProvisioner(options: CloudRouteOptions) {
 // returned false outside multi_org; organization entitlement is the separate
 // Web access check on each execution route.
 function cloudAvailable(payload: NonNullable<OrgRouteVariables["organizationContext"]>, options: CloudRouteOptions) {
-  return organizationCloudEnabled(payload.organization.metadata, { orgMode: options.orgMode ?? env.orgMode }) && hasDaytonaProvisioner(options)
+  return cloudHostingAvailable({ orgMode: options.orgMode ?? env.orgMode }) && hasDaytonaProvisioner(options)
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

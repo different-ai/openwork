@@ -126,13 +126,14 @@ without MCP Apps get text fallback with the same URL.
   (e.g. `remote-session`), included in first-party desktop tokens
   (`/v1/mcp/token`) and public OAuth tokens by default; org policy can turn it
   off via the existing exposure allowlist mechanics (`policy.ts` conventions).
-- **Org capability flag**: Cloud is default-off per organization
-  (`metadata.capabilities.cloud`, `cloud-rollout.ts`). When the flag is off,
-  the source is invisible in `search_capabilities` and execute reports
-  `unknown_capability` — mirroring the external-MCP rollout pattern, so
-  members of a flag-off org never see an action they cannot take. The runtime
-  re-checks the flag live at execute time (`cloud_not_available`, an
-  admin-facing action) as defense in depth against mid-session flag flips;
+- **Cloud entitlement**: Cloud is hosted-only (`cloud-hosting.ts`, multi-org
+  deployments with a Daytona provisioner) and entitled per organization by
+  OpenWork Web access — a paid Web subscription or the platform-admin
+  complimentary grant — rather than a separate per-organization rollout flag.
+  When the deployment cannot host Cloud, the source is invisible in
+  `search_capabilities` and execute reports `unknown_capability`. Execution
+  re-checks Web access live (`openwork_web_access_required`) and the runtime
+  re-checks hosting availability (`cloud_not_available`) as defense in depth;
   `needs_cloud_setup` is reserved for the member-facing "open OpenWork Cloud
   once to provision" case.
 - Member-scoped only: capabilities operate on the caller's resolved worker.

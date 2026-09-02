@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto"
 import { createHeadlessThreadClient, type HeadlessThreadTranscript } from "@openwork/headless-threads"
 import { and, asc, eq, isNull } from "@openwork-ee/den-db/drizzle"
-import { MemberTable, OrganizationTable, WorkerTable } from "@openwork-ee/den-db/schema"
+import { MemberTable, WorkerTable } from "@openwork-ee/den-db/schema"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import type { AutomationAction, AutomationError, AutomationUsage } from "@openwork/types/automations"
 import { db } from "../db.js"
@@ -12,7 +12,7 @@ import {
   OPENWORK_WEB_ACCESS_REQUIRED_MESSAGE,
 } from "../openwork-web-runtime-access.js"
 import { resolveCloudRuntimeAccess, type CloudWorkerAccess } from "../workers/worker-access.js"
-import { organizationCloudEnabled } from "../capability-sources/cloud-rollout.js"
+import { cloudHostingAvailable } from "../capability-sources/cloud-hosting.js"
 import { CLOUD_INSTANCE_BACKEND } from "../workers/cloud-constants.js"
 import { wakeCloudWorker } from "../workers/cloud-lifecycle.js"
 import { fetchPreviewNoRedirect, previewFetch } from "../workers/preview-fetch.js"
@@ -161,11 +161,11 @@ export async function cloudAgentRuntimeAvailable(scope: OwnerScope): Promise<boo
     isNull(MemberTable.removedAt),
   )).limit(1)
   if (!members[0]) return false
-  const organizations = await db.select({ metadata: OrganizationTable.metadata }).from(OrganizationTable)
-    .where(eq(OrganizationTable.id, organizationId)).limit(1)
+  if (!cloudHostingAvailable({ orgMode: env.orgMode })) return false
+  const webAccess = await getOpenWorkWebRuntimeAccess(organizationId)
+  if (!webAccess.hasAccess) return false
   const worker = await ownerCloudWorker(scope)
-  return organizationCloudEnabled(organizations[0]?.metadata, { orgMode: env.orgMode })
-    && worker !== null && worker.status !== "failed"
+  return worker !== null && worker.status !== "failed"
 }
 
 function workerHeaders(access: CloudWorkerAccess) {

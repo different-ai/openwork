@@ -8,7 +8,7 @@ import { z } from "zod"
 import { auth } from "../../auth.js"
 import { verifyBotProtection } from "../../bot-protection.js"
 import { validateBrandIconUrl } from "../../brand-icon-validation.js"
-import { organizationCloudEnabled } from "../../capability-sources/cloud-rollout.js"
+import { cloudHostingAvailable } from "../../capability-sources/cloud-hosting.js"
 import { memberFacingMcpConnectionsEnabled } from "../../capability-sources/external-mcp-rollout.js"
 import { organizationInstallLinksEnabled } from "../../capability-sources/install-links-rollout.js"
 import { db } from "../../db.js"
@@ -20,6 +20,7 @@ import { denTypeIdSchema, enterprisePlanRequiredSchema, forbiddenSchema, invalid
 import { validateInvitationAcceptVerification } from "../../organization-join-verification.js"
 import { normalizeOrganizationMetadata } from "../../organization-limits.js"
 import { isOpenWorkWebAvailableForOrganization } from "../../openwork-web-availability.js"
+import { getOpenWorkWebAccess } from "../../stripe-billing.js"
 import {
   acceptInvitationForUser,
   createOrganizationForUser,
@@ -661,7 +662,11 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
       }
 
       const owner = payload.members.find((member: typeof payload.members[number]) => member.isOwner) ?? null
-      const cloudEnabled = organizationCloudEnabled(payload.organization.metadata, { orgMode: env.orgMode })
+      // Cloud is entitled by OpenWork Web access (paid subscription or the
+      // platform-admin complimentary grant) on hosted deployments; there is no
+      // separate per-organization Cloud rollout flag.
+      const cloudEnabled = cloudHostingAvailable({ orgMode: env.orgMode })
+        && (await getOpenWorkWebAccess(payload.organization.id)).hasAccess
       const [ssoRows, scimRows] = await Promise.all([
         db
           .select({ id: SsoConnectionTable.id })

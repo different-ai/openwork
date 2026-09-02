@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto"
 import type { WorkerTable } from "@openwork-ee/den-db/schema"
+import { OpenWorkWebAccessRequiredError } from "../openwork-web-access-error.js"
 
 export type CloudStartupFailureStage = "provisioning" | "recovery" | "runtime"
 
@@ -16,6 +17,7 @@ export type CloudStartupFailureCode =
   | "sandbox_missing"
   | "sandbox_start_failed"
   | "storage_unavailable"
+  | "web_access_required"
 
 export type CloudStartupFailure = {
   code: CloudStartupFailureCode
@@ -49,6 +51,7 @@ const cloudFailureCodes: ReadonlySet<string> = new Set([
   "sandbox_missing",
   "sandbox_start_failed",
   "storage_unavailable",
+  "web_access_required",
 ])
 
 const cloudFailureStages: ReadonlySet<string> = new Set(["provisioning", "recovery", "runtime"])
@@ -58,6 +61,7 @@ function errorMessage(error: unknown) {
 }
 
 export function classifyCloudStartupFailure(error: unknown): CloudStartupFailureCode {
+  if (error instanceof OpenWorkWebAccessRequiredError) return "web_access_required"
   const message = errorMessage(error)
   if (/\b429\b|rate[ -]?limit|too many requests/.test(message)) return "provider_rate_limited"
   if (/quota|capacity|insufficient (cpu|memory|disk)|resource exhausted|no available/.test(message)) {
