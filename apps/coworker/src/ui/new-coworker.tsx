@@ -98,11 +98,11 @@ export function NewCoworker({
           </div>
           <div className="p-6 md:p-7">
             <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-spark">How {created.name} works</p>
-            <h1 className="mt-1 text-2xl font-semibold tracking-[-0.035em] text-snow">Choose a model</h1>
+            <h1 className="mt-1 text-2xl font-semibold tracking-[-0.035em] text-snow">Choose an AI model</h1>
             <p className="mt-1 text-sm leading-relaxed text-mist">
               {session
                 ? "Your organization's OpenWork models are listed first, followed by providers configured on this Mac. You can change this later."
-                : "Choose from providers connected on this Mac, or follow the engine default. You can change this later."}
+                : "Choose from providers connected on this Mac, or use the default AI model. You can change this later in Coworker settings."}
             </p>
             <div className="mt-5">
               <ModelPicker
