@@ -45,7 +45,8 @@ export type RecentWork = {
 };
 
 export type CoworkerActivity = {
-  state: "ready" | "working" | "retrying" | "attention" | "recent" | "offline";
+  /** `starting`: the workspace is not answering yet after the AI service (re)started; `offline`: it still is not. */
+  state: "ready" | "working" | "retrying" | "attention" | "recent" | "starting" | "offline";
   label: string;
   detail: string;
   updatedAt: number;
@@ -91,6 +92,13 @@ export type EngineModelOption = {
   variants: string[];
   isProviderDefault: boolean;
   source: ModelSource;
+  /** Coworkers work through tools (files, MCP); a model without tool calls cannot do the job. */
+  toolCall: boolean;
+  reasoning: boolean;
+  /** Catalog status as the provider reports it; deprecated models are never recommended. */
+  status: string;
+  /** ISO date when known; newer models are preferred among equals. */
+  releaseDate: string;
 };
 
 export type EngineModelCatalog = {
@@ -153,6 +161,11 @@ export function connectedModelCatalog(
         variants: sortedVariants(model.variants),
         isProviderDefault: value.default?.[provider.id] === modelId,
         source,
+        // Older catalogs omit capabilities; treat unknown as capable rather than hiding a usable model.
+        toolCall: model.capabilities?.toolcall ?? true,
+        reasoning: model.capabilities?.reasoning ?? false,
+        status: model.status ?? "active",
+        releaseDate: model.release_date ?? "",
       };
     }),
   );
@@ -164,6 +177,35 @@ export function connectedModelCatalog(
     left.modelLabel.localeCompare(right.modelLabel),
   );
   return { models, connectedProviderIds: providers.map((provider) => provider.id), cloud };
+}
+
+/**
+ * The model a coworker should start on when nobody chose one: a connected,
+ * tool-capable, non-deprecated model — from the OpenWork account when signed
+ * in, else from this Mac — preferring the provider's own default, then the
+ * newest release. Returns null when no connected model can use tools, so the
+ * caller can say so instead of picking something that would fail.
+ */
+export function recommendModel(
+  catalog: Pick<EngineModelCatalog, "models">,
+  options: { exclude?: string | readonly string[] } = {},
+): EngineModelOption | null {
+  const excluded = new Set(typeof options.exclude === "string" ? [options.exclude] : options.exclude ?? []);
+  const candidates = catalog.models.filter(
+    (model) => model.toolCall && model.status !== "deprecated" && !excluded.has(model.id),
+  );
+  const pool = candidates.some((model) => model.source === "cloud")
+    ? candidates.filter((model) => model.source === "cloud")
+    : candidates;
+  // Coworkers do multi-step tool work, so among provider defaults a reasoning
+  // model beats a chat alias; then the newest release.
+  return [...pool].sort((left, right) =>
+    Number(right.isProviderDefault) - Number(left.isProviderDefault)
+    || Number(right.reasoning) - Number(left.reasoning)
+    || Number(right.status === "active") - Number(left.status === "active")
+    || right.releaseDate.localeCompare(left.releaseDate)
+    || left.label.localeCompare(right.label),
+  )[0] ?? null;
 }
 
 /** Parse a coworker's persisted "providerId/modelId" preference. */
@@ -565,6 +607,6 @@ export async function readCoworkerActivity(options: {
   try {
     return await createCoworkerThreads(options).readActivity();
   } catch {
-    return { state: "offline", label: "Offline", detail: "Activity is unavailable", updatedAt: 0 };
+    return { state: "offline", label: "Not responding", detail: "", updatedAt: 0 };
   }
 }

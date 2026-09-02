@@ -464,7 +464,11 @@ const RESUME_PROMPT = (name, reason) =>
  * `resumeThreadId` continues an earlier run's native thread instead of
  * opening a new one.
  */
-async function executeLocalResponsibility(slug, id, { trigger = "manual", runId = "", resumeThreadId = "", resumeReason = "" } = {}) {
+async function executeLocalResponsibility(
+  slug,
+  id,
+  { trigger = "manual", runId = "", resumeThreadId = "", resumeReason = "", onStarted = () => undefined } = {},
+) {
   const key = `${slug}:${id}`;
   try {
     // The coworker or responsibility can disappear between the due check and
@@ -478,8 +482,11 @@ async function executeLocalResponsibility(slug, id, { trigger = "manual", runId 
       started = await beginLocalResponsibilityRun(coworkersDir, slug, id, { trigger, runId, threadId: resumeThreadId });
     } catch (error) {
       console.warn(`[open-coworker] local responsibility ${key} did not start`, error);
+      onStarted();
       return;
     }
+    // The run record is on disk: admission can answer, and the UI can read a consistent state.
+    onStarted();
     const activeRunId = started.latestRun.id;
     try {
       const handle = await ensurePlatformServer();
@@ -528,6 +535,13 @@ async function parallelRunLimit() {
   return (await readSettings(settingsPath)).maxParallelLocalRuns;
 }
 
+/** Launch a run and resolve once its record exists (or it could not start); the run itself continues detached. */
+function launchLocalRun(slug, id, options) {
+  return new Promise((resolve) => {
+    void executeLocalResponsibility(slug, id, { ...options, onStarted: resolve });
+  });
+}
+
 function isQueued(key) {
   return queuedLocalRuns.some((entry) => entry.key === key);
 }
@@ -548,7 +562,7 @@ function startLocalResponsibilityRun(slug, id, trigger) {
       return { accepted: true, queued: true, reason: "" };
     }
     activeLocalRuns.add(key);
-    void executeLocalResponsibility(slug, id, { trigger });
+    await launchLocalRun(slug, id, { trigger });
     return { accepted: true, queued: false, reason: "" };
   });
 }
@@ -565,7 +579,7 @@ function resumeLocalResponsibilityRun(slug, id) {
     const limit = await parallelRunLimit();
     if (activeLocalRuns.size >= limit) return { accepted: false, reason: "at limit" };
     activeLocalRuns.add(key);
-    void executeLocalResponsibility(slug, id, { trigger: "resume", resumeThreadId: last.threadId, resumeReason: last.error });
+    await launchLocalRun(slug, id, { trigger: "resume", resumeThreadId: last.threadId, resumeReason: last.error });
     return { accepted: true, reason: "" };
   });
 }
@@ -589,7 +603,7 @@ function drainLocalRunQueue() {
       const next = queuedLocalRuns.shift();
       if (activeLocalRuns.has(next.key)) continue;
       activeLocalRuns.add(next.key);
-      void executeLocalResponsibility(next.slug, next.id, { runId: next.runId });
+      await launchLocalRun(next.slug, next.id, { runId: next.runId });
     }
   });
 }

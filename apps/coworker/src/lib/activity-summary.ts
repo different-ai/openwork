@@ -48,8 +48,10 @@ export function describeNow(activity: CoworkerActivity | undefined): NowSummary 
       return { subject: activity.detail, note: "", needsYou: /^(Waiting|Needs you)/.test(activity.label) };
     case "recent":
       return { subject: "", note: "", needsYou: false };
+    case "starting":
+      return { subject: "", note: "", needsYou: false };
     case "offline":
-      return { subject: "", note: activity.detail || "OpenWork cannot read this workspace right now.", needsYou: false };
+      return { subject: "", note: activity.detail || "The workspace is not answering. Restart AI from AI & local setup if this continues.", needsYou: false };
     default:
       return { subject: "", note: "Waiting for the first assignment.", needsYou: false };
   }

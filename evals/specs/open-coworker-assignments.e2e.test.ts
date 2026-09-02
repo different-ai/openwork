@@ -125,8 +125,9 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
     true,
   );
 
-  // --- Create one explicit assignment from the discussion composer.
-  await clickButton(app, "Create assignment");
+  // --- Create one explicit assignment from the discussion composer. The composer stays busy
+  // until the coworker has finished its turn, which can outlast the visible reply text.
+  await clickButton(app, "Create assignment", { timeoutMs: 180_000 });
   await waitForText(app, "A bounded outcome, separate from this discussion", { timeoutMs: 30_000 });
   await fill(app, 'textarea[aria-label="Assignment outcome"]', OUTCOME);
   await clickButton(app, "Create assignment");

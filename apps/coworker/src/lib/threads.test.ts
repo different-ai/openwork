@@ -9,6 +9,7 @@ import {
   isCloudManagedProviderId,
   modelSourceLabel,
   parseModelPreference,
+  recommendModel,
 } from "./threads.ts";
 
 test("assignmentThreads excludes the standing discussion without hiding real work", () => {
@@ -139,4 +140,70 @@ test("connectedModelCatalog tells account (OpenWork Cloud) providers from this M
   assert.equal(isCloudManagedProviderId("anthropic"), false);
   assert.equal(modelSourceLabel("cloud"), "OpenWork Cloud");
   assert.equal(modelSourceLabel("local"), "This Mac");
+});
+
+test("recommendModel picks a connected, tool-capable model — the account's first, the provider default first, newest first", () => {
+  const catalog = connectedModelCatalog({
+    connected: ["openrouter", "anthropic", "lpr_org"],
+    default: { openrouter: "free-chat", anthropic: "claude-haiku-4-5", lpr_org: "org-large" },
+    all: [
+      {
+        id: "openrouter",
+        name: "OpenRouter",
+        source: "env",
+        env: [],
+        options: {},
+        models: {
+          "free-chat": { name: "Free Chat", capabilities: { toolcall: false, reasoning: false }, status: "active", release_date: "2026-08-01" },
+          "old-tools": { name: "Old Tools", capabilities: { toolcall: true, reasoning: false }, status: "deprecated", release_date: "2024-01-01" },
+        },
+      },
+      {
+        id: "anthropic",
+        name: "Anthropic",
+        source: "env",
+        env: [],
+        options: {},
+        models: {
+          "claude-haiku-4-5": { name: "Claude Haiku 4.5", capabilities: { toolcall: true, reasoning: true }, status: "active", release_date: "2025-10-01" },
+          "claude-sonnet-4-5": { name: "Claude Sonnet 4.5", capabilities: { toolcall: true, reasoning: true }, status: "active", release_date: "2025-09-01" },
+        },
+      },
+      {
+        id: "lpr_org",
+        name: "Org Provider",
+        source: "custom",
+        env: [],
+        options: {},
+        models: {
+          "org-large": { name: "Org Large", capabilities: { toolcall: true, reasoning: false }, status: "active", release_date: "2026-01-01" },
+          "org-chat": { name: "Org Chat", capabilities: { toolcall: false, reasoning: false }, status: "active", release_date: "2026-05-01" },
+        },
+      },
+    ],
+  } as unknown as Parameters<typeof connectedModelCatalog>[0]);
+  assert.equal(recommendModel(catalog)?.id, "lpr_org/org-large", "the account's tool-capable default wins while signed in");
+  const withChatDefault = connectedModelCatalog({
+    connected: ["openai", "anthropic"],
+    default: { openai: "gpt-chat-latest", anthropic: "claude-sonnet" },
+    all: [
+      {
+        id: "openai", name: "OpenAI", source: "env", env: [], options: {},
+        models: { "gpt-chat-latest": { name: "GPT Chat", capabilities: { toolcall: true, reasoning: false }, status: "active", release_date: "2026-08-01" } },
+      },
+      {
+        id: "anthropic", name: "Anthropic", source: "env", env: [], options: {},
+        models: { "claude-sonnet": { name: "Claude Sonnet", capabilities: { toolcall: true, reasoning: true }, status: "active", release_date: "2026-02-01" } },
+      },
+    ],
+  } as unknown as Parameters<typeof connectedModelCatalog>[0]);
+  assert.equal(recommendModel(withChatDefault)?.id, "anthropic/claude-sonnet", "a reasoning default beats a newer chat alias");
+  assert.equal(recommendModel(withChatDefault, { exclude: ["anthropic/claude-sonnet"] })?.id, "openai/gpt-chat-latest");
+  assert.equal(recommendModel(withChatDefault, { exclude: ["anthropic/claude-sonnet", "openai/gpt-chat-latest"] }), null);
+  const local = { models: catalog.models.filter((model) => model.source === "local") };
+  assert.equal(recommendModel(local)?.id, "anthropic/claude-haiku-4-5", "the provider default wins on this Mac");
+  assert.equal(recommendModel(local, { exclude: "anthropic/claude-haiku-4-5" })?.id, "anthropic/claude-sonnet-4-5");
+  const chatOnly = { models: catalog.models.filter((model) => !model.toolCall) };
+  assert.equal(recommendModel(chatOnly), null, "nothing is recommended when no connected model can use tools");
+  assert.equal(recommendModel({ models: catalog.models.filter((model) => model.providerId === "openrouter") }), null, "a deprecated model is never recommended");
 });

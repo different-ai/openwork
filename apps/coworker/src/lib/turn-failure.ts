@@ -26,6 +26,14 @@ export function describeTurnFailure(raw: string, coworkerName: string): TurnFail
       modelRelated: true,
     };
   }
+  if (/^No connected AI model can use tools\./.test(message)) {
+    return {
+      headline: "No connected AI model can use tools.",
+      detail: "Connect an AI provider in OpenWork, or choose an AI model in Coworker settings.",
+      technical: "",
+      modelRelated: true,
+    };
+  }
   if (/no endpoints found that support tool use/i.test(message) || /does not support tool/i.test(message)) {
     return {
       headline: `${coworkerName}'s AI model cannot use the tools enabled for this coworker.`,

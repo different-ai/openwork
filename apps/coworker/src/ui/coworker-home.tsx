@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import { coworkerBridge, type CoworkerSummary, type LocalResponsibility, type ProviderSyncRun, type RuntimeInfo } from "@/lib/bridge";
 import { describeNow, describeOutcome, mergeRecentWork, relativeTime } from "@/lib/activity-summary";
 import type { DenSession } from "@/lib/den";
-import type { CoworkerActivity } from "@/lib/threads";
+import { clearAutoPicked, markAutoPicked } from "@/lib/model-choice";
+import { createCoworkerThreads, recommendModel, type CoworkerActivity } from "@/lib/threads";
 import { AvatarControls, CoworkerAvatar } from "@/ui/coworker-avatar";
 import { PersonalityPicker } from "@/ui/personality-picker";
 import { useWorkingSaying } from "@/ui/use-working-saying";
@@ -115,6 +116,37 @@ export function CoworkerHome({
   const renderedContextPanelWidth = clampContextPanelWidth(contextPanelWidth ?? contextualPanelWidth);
 
   useEffect(() => () => onActivityChange(null), [onActivityChange]);
+
+  // A coworker created without a model starts on a connected model that can use
+  // tools, chosen as soon as the AI service answers; the choice is kept so it
+  // shows in Coworker settings and can be changed there.
+  useEffect(() => {
+    if (coworker.model || !coworker.workspaceId || !runtime.engineManaged) return;
+    let cancelled = false;
+    let attempts = 0;
+    let timer = 0;
+    const threads = createCoworkerThreads({ serverUrl: runtime.serverUrl, workspaceId: coworker.workspaceId, token: runtime.ownerToken });
+    const attempt = async () => {
+      attempts += 1;
+      try {
+        const pick = recommendModel(await threads.listModelCatalog());
+        if (cancelled) return;
+        if (pick) {
+          markAutoPicked(coworker.slug, pick.id);
+          onCoworkerChanged(await coworkerBridge.coworkers.update(coworker.slug, { model: pick.id, modelVariant: "" }));
+          return;
+        }
+      } catch {
+        // The AI service may still be warming up; try again shortly.
+      }
+      if (!cancelled && attempts < 30) timer = window.setTimeout(() => void attempt(), 3_000);
+    };
+    timer = window.setTimeout(() => void attempt(), 0);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [coworker.model, coworker.slug, coworker.workspaceId, onCoworkerChanged, runtime.engineManaged, runtime.ownerToken, runtime.serverUrl]);
 
   useEffect(() => {
     if (!resizingContextPanel) return;
@@ -618,6 +650,7 @@ function CoworkerSettings({
   async function updateModel(selection: ModelSelection) {
     setError("");
     try {
+      clearAutoPicked(coworker.slug);
       onCoworkerChanged(await coworkerBridge.coworkers.update(coworker.slug, selection));
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
