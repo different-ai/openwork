@@ -209,7 +209,7 @@ export default function App() {
               coworker.slug,
               {
                 state: "working",
-                label: "Working",
+                label: "Running locally",
                 detail: localRunning.name,
                 updatedAt: localRunning.latestRun.startedAt,
                 ...(localRunning.latestRun.threadId ? { threadId: localRunning.latestRun.threadId } : {}),
@@ -225,7 +225,7 @@ export default function App() {
               coworker.slug,
               {
                 state: "attention",
-                label: "Local run needs you",
+                label: "Local run failed",
                 detail: localFailure.latestRun.error || localFailure.name,
                 updatedAt: localFailure.latestRun.finishedAt ?? localFailure.latestRun.startedAt,
                 ...(localFailure.latestRun.threadId ? { threadId: localFailure.latestRun.threadId } : {}),
