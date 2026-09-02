@@ -992,6 +992,10 @@ jobs:
       (needs.publish-npm.result == 'success' || needs.publish-npm.result == 'skipped') &&
       needs.publish-daytona-snapshot.result != 'cancelled'
     runs-on: blacksmith-4vcpu-ubuntu-2404
+    permissions:
+      # actions: write lets this job dispatch changelog.yml after publishing.
+      actions: write
+      contents: write
     env:
       RELEASE_TAG: ${{ needs.resolve-release.outputs.release_tag }}
       RELEASE_PRERELEASE: ${{ needs.resolve-release.outputs.prerelease }}
@@ -1039,8 +1043,15 @@ jobs:
 
           if [ "${RELEASE_PRERELEASE}" = "true" ]; then
             gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false --prerelease
-          else
-            gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest
+            exit 0
+          fi
+          gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest
+
+          # GitHub does not start workflows from `release: published` events
+          # created by GITHUB_TOKEN, so hand the stable tag to the changelog
+          # workflow explicitly. It writes docs + rewrites the release notes.
+          if ! gh workflow run changelog.yml --repo "$GITHUB_REPOSITORY" --ref dev -f "tag=$RELEASE_TAG"; then
+            echo "::warning::Could not dispatch changelog.yml for $RELEASE_TAG; run it manually: gh workflow run changelog.yml -f tag=$RELEASE_TAG"
           fi
 
   prepare-npm:
