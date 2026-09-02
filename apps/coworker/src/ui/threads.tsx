@@ -215,6 +215,13 @@ export function ThreadsPanel({
     };
   }, [threads, refresh]);
 
+  // The moment the AI service is back, drop any listing error it caused and re-read.
+  useEffect(() => {
+    if (!runtime.engineManaged) return;
+    setError("");
+    void refresh();
+  }, [refresh, runtime.engineManaged]);
+
   const ensureDiscussion = useCallback(async () => {
     if (!threads) throw new Error("This coworker needs a workspace before it can chat.");
     if (discussionThreadId) return discussionThreadId;
