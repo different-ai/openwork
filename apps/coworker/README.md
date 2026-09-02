@@ -173,16 +173,25 @@ with Ask, Create a skill, and Repair; signing out removes the gateway again.
 The packaged app ships the engine's OpenWork plugins under
 `Resources/opencode-plugins`, as the desktop does.
 
-The first screen carries a small mascot stack (`ui/onboarding-mascot.tsx`): the
-flat white Open Coworker bubble in front, with two coworkers of their own colour
-and glasses hiding behind it. On load the stack settles (≈600 ms, ease-out, no
-bounce), the coworkers peek out to say hello, blink once, and slip back; after
-that they peek whenever the pointer comes near, their eyes and the logo's follow
-it within the avatar gaze limits, and they hide again when the pointer rests or
-leaves. The entrance plays once per app session, the box never changes size, the
-stack takes no pointer events, and reduced motion renders it settled and still.
-The new-coworker preview reuses the same component with the coworker being
-created in front and no one behind.
+The first screen carries a small mascot (`ui/onboarding-mascot.tsx`) with the
+app icon's composition — the flat white Open Coworker bubble in front of one
+charcoal card. Once per session the front card settles into place, two visiting
+coworkers slide out from behind it (pale mint to the upper left, pale violet to
+the upper right, about three quarters of the front's size, seven degrees), hold
+while everyone blinks once in a stagger, and slip back; the whole welcome takes
+about 2.3 seconds and never loops. Afterwards only the front card's existing
+pointer gaze remains, within the icon's restraint (pupils ≈2 px, turn ≤0.8°,
+travel ≤1 px). The box never changes size, the stack takes no pointer events,
+and reduced motion renders the icon composition at once. The new-coworker
+preview reuses the component with the coworker being created in front. The app
+icon itself is one coworker over one charcoal card on the OpenWork-blue tile
+(`resources/icons/open-coworker-app-icon.svg`); every raster is regenerated from
+it with `pnpm --filter @openwork/coworker icons:render`.
+
+Coworker settings lay out as rows on the panel — an identity row, then Profile
+(look, glasses, role, mission, personality) as hairline-separated rows, the AI
+model, Memory, and a quiet Retire row — with Save appearing only when something
+changed; no card sits inside another card.
 
 Thinking and tool work fold into two quiet lines above a reply: provider-returned
 thinking becomes a borderless "Thought through" disclosure once the reply is
