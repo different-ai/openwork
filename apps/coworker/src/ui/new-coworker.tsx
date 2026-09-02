@@ -7,6 +7,8 @@ import {
   type RuntimeInfo,
 } from "@/lib/bridge";
 import { AvatarControls, CoworkerAvatar } from "@/ui/coworker-avatar";
+import { DEFAULT_PERSONALITY, type Personality } from "@/lib/personalities";
+import { PersonalityPicker } from "@/ui/personality-picker";
 import { Button, ErrorNote, Field, inputClass } from "@/ui/kit";
 import { ModelPicker, type ModelSelection } from "@/ui/model-picker";
 import { RetiredCoworkers } from "@/ui/retired-coworkers";
@@ -29,6 +31,7 @@ export function NewCoworker({
   const [mission, setMission] = useState("");
   const [avatarColor, setAvatarColor] = useState<AvatarColor>("blue");
   const [avatarGlasses, setAvatarGlasses] = useState<AvatarGlasses>("round");
+  const [personality, setPersonality] = useState<Personality>(DEFAULT_PERSONALITY);
   const [showDetails, setShowDetails] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -50,6 +53,7 @@ export function NewCoworker({
           mission: mission.trim(),
           avatarColor,
           avatarGlasses,
+          personality,
         });
       setModelRuntime(await coworkerBridge.runtimeInfo());
       setCreated(nextCoworker);
@@ -160,6 +164,8 @@ export function NewCoworker({
             onColorChange={setAvatarColor}
             onGlassesChange={setAvatarGlasses}
           />
+
+          <PersonalityPicker value={personality} seed={name.trim() || "coworker"} onChange={setPersonality} />
 
           <button
             className="text-xs font-medium text-spark hover:underline"

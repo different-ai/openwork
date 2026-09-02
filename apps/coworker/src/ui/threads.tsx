@@ -29,6 +29,7 @@ import {
 } from "@/lib/threads";
 import { InteractionCards } from "@/ui/interactions";
 import { CoworkerAvatar } from "@/ui/coworker-avatar";
+import { useWorkingSaying } from "@/ui/use-working-saying";
 import { CoworkerMark, InlineLoader } from "@/ui/brand";
 import { Button, Empty, ErrorNote, StatusDot } from "@/ui/kit";
 import { McpAppFrame } from "@/ui/mcp-app-frame";
@@ -879,7 +880,7 @@ function ThreadView({
             }}
           />
           {working ? (
-            <WorkIndicator coworker={coworker} messages={visibleMessages} />
+            <WorkIndicator coworker={coworker} threadId={threadId} messages={visibleMessages} />
           ) : null}
           {visibleMessages.length === 0 && !error && !working ? (
             <Empty>{kind === "discussion" ? `Start a conversation with ${coworker.name}.` : <InlineLoader label="Loading assignment" />}</Empty>
@@ -997,15 +998,20 @@ function ThinkingDisclosure({ text, active }: { text: string; active: boolean })
   );
 }
 
-function WorkIndicator({ coworker, messages }: { coworker: CoworkerSummary; messages: TranscriptMessage[] }) {
+function WorkIndicator({ coworker, threadId, messages }: { coworker: CoworkerSummary; threadId: string; messages: TranscriptMessage[] }) {
   const activeCall = messages
     .flatMap((message) => message.toolCalls)
     .findLast((call) => !["completed", "success", "error", "failed"].includes(call.status));
-  const label = activeCall ? `${toolPresentation(activeCall).label.replace(/^(Searched|Used|Ran) /, "Using ")}…` : "Thinking and working…";
+  const saying = useWorkingSaying(coworker.personality, `${coworker.slug}:${threadId}`, true);
+  // The truthful tool label always comes first; the personality only fills the
+  // quiet moments between tools, or trails the tool label as a second voice.
+  const toolLabel = activeCall ? `${toolPresentation(activeCall).label.replace(/^(Searched|Used|Ran) /, "Using ")}…` : "";
+  const label = toolLabel || (saying ? `${saying}…` : "Thinking and working…");
   return (
     <div className="flex items-center gap-2.5 px-1 py-2 text-xs text-mist" data-testid="coworker-working">
       <CoworkerAvatar animated color={coworker.avatarColor} glasses={coworker.avatarGlasses} name={coworker.name} size={24} />
       <span className="animate-pulse">{label}</span>
+      {toolLabel && saying ? <span className="truncate text-mist/60" data-testid="coworker-saying">{saying}…</span> : null}
     </div>
   );
 }
