@@ -38,7 +38,7 @@ Ask for an Excel deliverable and the agent writes it with `spreadsheet_write`:
 - The first row of each sheet is bold and frozen as a header unless the agent is asked otherwise, and columns are sized to their content.
 - The result appears in the artifact panel, where you can preview and download it.
 
-Writing replaces the whole file. The agent will not overwrite an existing workbook unless you ask for that file to change, and it includes every sheet you want to keep when it does. Charts, cell styling beyond the header row, pivot tables, and macros are out of scope for the built-in tools; the agent will say so and can fall back to a script if you want those.
+Writing replaces the whole file. The agent will not overwrite an existing workbook unless you ask for that file to change, and it includes every sheet you want to keep when it does. The destination folder has to exist already; the agent creates it first when needed. Charts, cell styling beyond the header row, pivot tables, and macros are out of scope for the built-in tools; the agent will say so and can fall back to a script if you want those.
 
 ## Limits
 

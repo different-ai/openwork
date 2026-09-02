@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -122,6 +122,9 @@ const REPORT_SHEETS = [
 describe("OpenWorkSpreadsheets", () => {
   test("writes a multi-sheet workbook that inspect and read round-trip with types, formulas, and paging", async () => {
     await withWorkspace(async (root, plugin) => {
+      await expect(write(plugin, { path: "reports/q3.xlsx", sheets: REPORT_SHEETS })).rejects.toThrow('the folder "reports" does not exist');
+      await expect(readdir(root)).resolves.toEqual([]);
+      await mkdir(join(root, "reports"));
       const written = await write(plugin, { path: "reports/q3.xlsx", sheets: REPORT_SHEETS });
       expect(written).toMatchObject({ ok: true, path: "reports/q3.xlsx", replaced: false });
       expect(written.sheets).toEqual([
@@ -253,9 +256,14 @@ describe("OpenWorkSpreadsheets", () => {
       const before = await readFile(join(root, "budget.xlsx"));
       await expect(write(plugin, { path: "budget.xlsx", sheets: [{ rows: [["b", 2]] }] })).rejects.toThrow("already exists. Pass overwrite: true");
       expect(await readFile(join(root, "budget.xlsx"))).toEqual(before);
+      const beforeInfo = await lstat(join(root, "budget.xlsx"));
       const replaced = await write(plugin, { path: "budget.xlsx", overwrite: true, sheets: [{ rows: [["b", 2]] }] });
       expect(replaced).toMatchObject({ ok: true, replaced: true });
       expect(await read(plugin, { path: "budget.xlsx" })).toContain("| 1 | b | 2 |");
+      // The overwrite wrote through the validated inode rather than replacing the file.
+      const afterInfo = await lstat(join(root, "budget.xlsx"));
+      expect(afterInfo.ino).toBe(beforeInfo.ino);
+      await expect(readdir(root)).resolves.toEqual(["budget.xlsx"]);
     });
   });
 
@@ -274,8 +282,8 @@ describe("OpenWorkSpreadsheets", () => {
         await expect(inspect(plugin, { path: "outside-alias.xlsx" })).rejects.toThrow("resolves outside the active workspace");
         await expect(write(plugin, { path: "../escape.xlsx", sheets: [{ rows: [["x"]] }] })).rejects.toThrow("outside the active workspace");
         await expect(write(plugin, { path: "linked/escape.xlsx", sheets: [{ rows: [["x"]] }] })).rejects.toThrow("resolves outside the active workspace");
-        // A missing folder under a symlinked folder must not be created at the link target.
-        await expect(write(plugin, { path: "linked/new/deeper/escape.xlsx", sheets: [{ rows: [["x"]] }] })).rejects.toThrow("resolves outside the active workspace");
+        // Folders are never created for a write, so nothing can appear at a link target.
+        await expect(write(plugin, { path: "linked/new/deeper/escape.xlsx", sheets: [{ rows: [["x"]] }] })).rejects.toThrow("does not exist");
         await expect(readdir(outside)).resolves.toEqual(["secret.xlsx"]);
         await expect(readdir(join(root, "linked"))).resolves.toEqual(["secret.xlsx"]);
         // A symlinked destination file is refused even with overwrite.
@@ -287,6 +295,7 @@ describe("OpenWorkSpreadsheets", () => {
         await expect(read(plugin, { path: "legacy.xls" })).rejects.toThrow("Legacy .xls");
         await expect(read(plugin, { path: "table.csv" })).rejects.toThrow("use the read tool");
         await expect(read(plugin, { path: "reports/q3.xlsx", sheet: "Nope" })).rejects.toThrow("was not found in the workspace");
+        await mkdir(join(root, "reports"));
         await write(plugin, { path: "reports/q3.xlsx", sheets: REPORT_SHEETS });
         await symlink(join(root, "reports", "q3.xlsx"), join(root, "inside-alias.xlsx"));
         expect(await read(plugin, { path: "inside-alias.xlsx" })).toContain("| 2 | EMEA | 1742.42 | TRUE | =B2/B3 |");

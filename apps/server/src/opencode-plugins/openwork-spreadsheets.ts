@@ -1,6 +1,6 @@
-import { createHash, randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 import { constants, type Stats } from "node:fs";
-import { lstat, mkdir, open, realpath, rename, rm, stat } from "node:fs/promises";
+import { lstat, open, realpath, rm } from "node:fs/promises";
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { z } from "zod";
 import { appendAgentInstructions, createInstructionSection } from "./agent-instruction-compose.js";
@@ -41,7 +41,7 @@ const READABLE_EXTENSIONS = new Set([".xlsx", ".xlsm"]);
 
 const SPREADSHEET_INSTRUCTIONS = `## Spreadsheets and Excel workbooks
 - .xlsx files are binary: never open them with the read tool or cat. Call spreadsheet_inspect (sheets, used ranges, sizes, header rows) and then spreadsheet_read (any sheet, A1 range, or page of rows; pass formulas: true to see formulas instead of values) to work with a workbook. Attached workbooks arrive as a preview that names their workspace path; use these tools for every sheet, range, and row beyond the preview.
-- Create or replace .xlsx deliverables with spreadsheet_write: one or more sheets of rows where numbers stay numeric, booleans stay booleans, strings are always text (even when they start with "="), a formula is written only when you pass { formula: "SUM(B2:B9)" }, and the first row is a bold frozen header unless header: false. Formulas that fetch remote data or run programs (WEBSERVICE, RTD, IMPORT*, IMAGE, DDE references) are refused. It replaces the whole file, so include every sheet you want to keep, and pass overwrite: true only when the user expects that file to change.
+- Create or replace .xlsx deliverables with spreadsheet_write: one or more sheets of rows where numbers stay numeric, booleans stay booleans, strings are always text (even when they start with "="), a formula is written only when you pass { formula: "SUM(B2:B9)" }, and the first row is a bold frozen header unless header: false. Formulas that fetch remote data or run programs (WEBSERVICE, RTD, IMPORT*, IMAGE, DDE references) are refused. It replaces the whole file, so include every sheet you want to keep, and pass overwrite: true only when the user expects that file to change. The destination folder must already exist; create it first (bash mkdir -p) when it does not.
 - Use .csv (write tool) for one flat table; use .xlsx for several sheets, formulas, or when the user asks for Excel. Prefer these tools over python/openpyxl/npx scripts for .xlsx; shell out only for charts, cell styling, pivot tables, or legacy .xls, and say so.`;
 
 type RuntimeContext = {
@@ -107,87 +107,70 @@ function changedWhileWorking(label: string): Error {
   return new Error(`${label} changed on disk while it was being accessed; nothing was read or written. Try again.`);
 }
 
-async function deepestExistingAncestor(path: string): Promise<string> {
-  let current = path;
-  while (true) {
-    try {
-      await lstat(current);
-      return current;
-    } catch {
-      const parent = dirname(current);
-      if (parent === current) return current;
-      current = parent;
+/**
+ * Write a workbook without ever placing bytes through a path: the destination
+ * folder must already exist and prove to be inside the workspace; the file is
+ * opened without following links (O_EXCL for a new file, so nothing can be
+ * overwritten by accident, or the existing inode for an overwrite); the open
+ * handle is proven to be the validated file sitting in that folder; and only
+ * then are bytes written through the handle. A new file that proves to have
+ * landed anywhere else is removed by identity and the write is refused.
+ */
+async function writeWorkbookInPlace(realRoot: string, file: WorkspaceFile, bytes: Uint8Array, overwrite: boolean): Promise<{ replaced: boolean }> {
+  const label = `Destination ${JSON.stringify(file.relativePath)}`;
+  const folder = dirname(file.absolutePath);
+  const realFolder = await realpath(folder).catch(() => null);
+  if (!realFolder) {
+    throw new Error(`${label}: the folder ${JSON.stringify(toWorkspaceRelative(file.root, folder) || ".")} does not exist. Create it first (for example with the bash tool), then write the workbook again.`);
+  }
+  if (!isWithin(realRoot, realFolder)) throw new Error(`${label} resolves outside the active workspace.`);
+  const folderInfo = await lstat(realFolder);
+  if (!folderInfo.isDirectory()) throw new Error(`${label}: ${JSON.stringify(toWorkspaceRelative(file.root, folder))} is not a folder.`);
+  const finalPath = join(realFolder, basename(file.absolutePath));
+
+  const existing = await lstat(finalPath).catch(() => null);
+  if (existing?.isDirectory()) throw new Error(`${JSON.stringify(file.relativePath)} is a directory.`);
+  if (existing?.isSymbolicLink()) throw new Error(`${JSON.stringify(file.relativePath)} is a symbolic link; write to a regular file path instead.`);
+  if (existing && !overwrite) {
+    throw new Error(`${JSON.stringify(file.relativePath)} already exists. Pass overwrite: true to replace it (all of its current sheets, formatting, and formulas are replaced by the sheets you pass), or write to a new path.`);
+  }
+
+  const noFollow = constants.O_NOFOLLOW ?? 0;
+  let handle;
+  if (existing) {
+    // Overwrite: open the validated inode itself. No O_CREAT and no O_TRUNC,
+    // so nothing changes until the handle is proven to be that inode.
+    handle = await open(finalPath, constants.O_WRONLY | noFollow);
+    const actual = await handle.stat();
+    if (!actual.isFile() || !sameFile(actual, existing)) {
+      await handle.close();
+      throw changedWhileWorking(label);
+    }
+  } else {
+    // Create: O_EXCL can never replace an existing file. Prove the new inode
+    // sits in the validated folder before a single byte is written to it.
+    handle = await open(finalPath, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | noFollow, 0o644);
+    const actual = await handle.stat();
+    const [placed, placedReal] = await Promise.all([
+      lstat(finalPath).catch(() => null),
+      realpath(finalPath).catch(() => null),
+    ]);
+    const inPlace = placed !== null && placedReal !== null && sameFile(placed, actual) && dirname(placedReal) === realFolder && isWithin(realRoot, placedReal);
+    if (!inPlace) {
+      if (placed && sameFile(placed, actual)) await rm(finalPath, { force: true }).catch(() => undefined);
+      await handle.close();
+      throw changedWhileWorking(label);
     }
   }
-}
 
-type Destination = {
-  realDirectory: string;
-  identity: Stats;
-};
-
-/**
- * Create the destination folder only after proving that the deepest existing
- * ancestor really lives inside the workspace (so a symlink inside the
- * workspace can never make mkdir create directories at its target), then
- * resolve the created folder and remember its identity so the write can prove
- * it still lands in that exact folder.
- */
-async function prepareDestinationDirectory(realRoot: string, directory: string, label: string): Promise<Destination> {
-  const realAncestor = await realpath(await deepestExistingAncestor(directory));
-  if (!isWithin(realRoot, realAncestor)) throw new Error(`${label} resolves outside the active workspace.`);
-  await mkdir(directory, { recursive: true });
-  const realDirectory = await realpath(directory);
-  if (!isWithin(realRoot, realDirectory)) throw new Error(`${label} resolves outside the active workspace.`);
-  const identity = await lstat(realDirectory);
-  if (!identity.isDirectory()) throw new Error(`${label} is not a folder.`);
-  return { realDirectory, identity };
-}
-
-/**
- * Prove the resolved destination folder is still the folder that was
- * validated: not a link, same inode, same real path inside the workspace.
- */
-async function assertDestinationUnchanged(realRoot: string, destination: Destination, label: string): Promise<void> {
-  const [current, recheck] = await Promise.all([
-    lstat(destination.realDirectory).catch(() => null),
-    realpath(destination.realDirectory).catch(() => null),
-  ]);
-  if (!current || !current.isDirectory() || !sameFile(current, destination.identity) || recheck !== destination.realDirectory || !isWithin(realRoot, recheck)) {
-    throw changedWhileWorking(label);
-  }
-}
-
-/**
- * Write bytes into the validated folder and prove, before and after the
- * atomic rename, that the folder and the final file are the ones that were
- * validated. Path-based APIs cannot exclude a swap in the instant between a
- * check and the following syscall, so every step re-verifies identity and a
- * mismatch aborts with the temp file removed.
- */
-async function writeWorkbookAtomically(realRoot: string, destination: Destination, finalName: string, bytes: Uint8Array, label: string): Promise<void> {
-  const tmp = join(destination.realDirectory, `${finalName}.${randomUUID()}.tmp`);
-  const finalPath = join(destination.realDirectory, finalName);
-  const handle = await open(tmp, "wx");
-  let written: Stats;
   try {
+    await handle.truncate(0);
     await handle.writeFile(bytes);
-    written = await handle.stat();
+    await handle.sync();
   } finally {
     await handle.close();
   }
-  try {
-    await assertDestinationUnchanged(realRoot, destination, label);
-    const tmpNow = await lstat(tmp);
-    if (!tmpNow.isFile() || !sameFile(tmpNow, written)) throw changedWhileWorking(label);
-    await rename(tmp, finalPath);
-    const [landed, landedReal] = await Promise.all([lstat(finalPath), realpath(finalPath)]);
-    if (!landed.isFile() || !sameFile(landed, written) || !isWithin(realRoot, landedReal) || dirname(landedReal) !== destination.realDirectory) {
-      throw changedWhileWorking(label);
-    }
-  } finally {
-    await rm(tmp, { force: true });
-  }
+  return { replaced: existing !== null };
 }
 
 function describeUnsupportedExtension(extension: string): string {
@@ -291,7 +274,7 @@ const formulaCellSchema = z.object({
 const cellValueSchema = z.union([z.string(), z.number(), z.boolean(), z.null(), formulaCellSchema]);
 
 const writeArgsSchema = z.object({
-  path: z.string().min(1).describe("Workspace-relative destination ending in .xlsx, for example reports/summary.xlsx. Parent folders are created."),
+  path: z.string().min(1).describe("Workspace-relative destination ending in .xlsx, for example reports/summary.xlsx. The destination folder must already exist."),
   sheets: z.array(z.object({
     name: z.string().max(31).optional().describe("Sheet tab name (up to 31 characters, no []:*?/\\). Defaults to Sheet1, Sheet2, …"),
     rows: z.array(z.array(cellValueSchema)).describe("Rows of cell values. Numbers stay numeric, booleans stay booleans, null or \"\" leaves the cell empty, strings are always written as text (even when they start with \"=\"), and { formula: \"SUM(B2:B9)\" } writes a formula."),
@@ -379,21 +362,12 @@ export const OpenWorkSpreadsheets = async (factoryInput?: unknown) => {
           const root = workspaceRoot(factoryContext, context);
           const file = resolveWorkspacePath(root, args.path);
           if (extname(file.absolutePath).toLowerCase() !== ".xlsx") throw new Error(`spreadsheet_write only creates .xlsx workbooks; ${JSON.stringify(file.relativePath)} has a different extension.`);
-          const existing = await lstat(file.absolutePath).catch(() => null);
-          if (existing?.isDirectory()) throw new Error(`${JSON.stringify(file.relativePath)} is a directory.`);
-          if (existing?.isSymbolicLink()) throw new Error(`${JSON.stringify(file.relativePath)} is a symbolic link; write to a regular file path instead.`);
-          if (existing && !args.overwrite) {
-            throw new Error(`${JSON.stringify(file.relativePath)} already exists. Pass overwrite: true to replace it (all of its current sheets, formatting, and formulas are replaced by the sheets you pass), or write to a new path.`);
-          }
           const result = await writeXlsxWorkbook(args.sheets);
-          const label = `Destination for ${JSON.stringify(file.relativePath)}`;
-          const realRoot = await realpath(root);
-          const destination = await prepareDestinationDirectory(realRoot, dirname(file.absolutePath), label);
-          await writeWorkbookAtomically(realRoot, destination, basename(file.absolutePath), result.bytes, label);
+          const { replaced } = await writeWorkbookInPlace(await realpath(root), file, result.bytes, args.overwrite ?? false);
           return JSON.stringify({
             ok: true,
             path: file.relativePath,
-            replaced: Boolean(existing),
+            replaced,
             bytes: result.bytes.byteLength,
             sha256: sha256(result.bytes),
             sheets: result.sheets,

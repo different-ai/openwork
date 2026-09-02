@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect } from "vitest";
@@ -97,6 +97,9 @@ test("agents create, inspect, and page through Excel workbooks without leaving t
   await withWorkspace(async (root) => {
     const plugin: ToolPlugin = await OpenWorkSpreadsheets({ directory: root });
 
+    // The tool never creates folders, so nothing can be created through a swapped path.
+    await expect(plugin.tool.spreadsheet_write.execute({ path: "reports/pipeline.xlsx", sheets: [{ rows: [["x"]] }] })).rejects.toThrow('the folder "reports" does not exist');
+    await mkdir(join(root, "reports"));
     const written = json(await plugin.tool.spreadsheet_write.execute({
       path: "reports/pipeline.xlsx",
       sheets: [

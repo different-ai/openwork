@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -32,6 +32,7 @@ test("the artifact spreadsheet preview and the agent's workbook tools share one 
   const root = await mkdtemp(join(tmpdir(), "openwork-preview-workbook-"));
   try {
     const tools = await OpenWorkSpreadsheets({ directory: root });
+    await mkdir(join(root, "reports"));
     await tools.tool.spreadsheet_write.execute({
       path: "reports/pipeline.xlsx",
       sheets: [{ name: "Pipeline", header: false, rows: [[], ["", "Account", "Amount", "Won"], ["", "Northstar", 1742.42, true]] }],
