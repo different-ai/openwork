@@ -24,6 +24,7 @@ export default defineConfig({
     maxWorkers: e2eWorkers,
     projects: [
       {
+        resolve: appResolve,
         test: {
           ...common,
           name: "pr",
