@@ -189,14 +189,13 @@ describe("derivePdf", () => {
     });
   }, 60_000);
 
-  test("works without a workspace root by keeping page images in memory", async () => {
+  test("works without a workspace root by providing text only", async () => {
     const derived = await derivePdf(null, "memo.pdf", buildTestPdf(["Memo"]), { renderPages: true });
     expect(derived.pdfPath).toBeNull();
     expect(derived.directory).toBeNull();
     expect(derived.textPath).toBeNull();
-    expect(derived.renderedPages.length).toBe(1);
-    const bytes = await readPageImage(null, derived, derived.renderedPages[0]);
-    expect(bytes?.byteLength).toBe(derived.renderedPages[0].bytes);
+    expect(derived.text).toContain("--- page 1 ---\nMemo");
+    expect(derived.renderedPages).toEqual([]);
   });
 
   test("safe filenames keep readable stems and always end in .pdf", () => {

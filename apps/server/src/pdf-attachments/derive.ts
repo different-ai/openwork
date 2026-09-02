@@ -84,7 +84,6 @@ export type DeriveOptions = {
 
 type MemoryEntry = {
   derived: DerivedPdf;
-  pageImages: Map<number, Uint8Array>;
 };
 
 type EncodedPage = {
@@ -394,7 +393,6 @@ async function build(root: string | null, filename: string, bytes: Uint8Array, o
   const derivedDirectory = root ? derivedDirectoryFor(root, digest, safeFilename) : null;
 
   let current = existing?.derived ?? null;
-  const pageImages = existing?.pageImages ?? new Map<number, Uint8Array>();
   if (!current && derivedDirectory) {
     const stored = await readManifest(derivedDirectory);
     if (stored && stored.sha256 === digest) current = stored;
@@ -431,24 +429,24 @@ async function build(root: string | null, filename: string, bytes: Uint8Array, o
     }
   }
 
-  const needsRender = options.renderPages && !current.loadError && current.pageCount > 0 && current.renderedPages.length === 0 && !current.renderBudgetExhausted;
+  // Page images live only on disk; without a workspace root the model gets text.
+  const needsRender = options.renderPages && derivedDirectory !== null && !current.loadError && current.pageCount > 0 && current.renderedPages.length === 0 && !current.renderBudgetExhausted;
   if (needsRender) {
-    if (derivedDirectory) await mkdir(derivedDirectory, { recursive: true });
+    await mkdir(derivedDirectory, { recursive: true });
     const wanted = Array.from({ length: Math.min(current.pageCount, EAGER_RENDERED_PAGES) }, (_page, index) => index + 1);
     const { rendered, budgetExhausted } = await renderPageImages(bytes, wanted, async (page, image) => {
-      if (derivedDirectory) await writeFileAtomically(join(derivedDirectory, pageFileName(page, image.mime)), image.bytes);
-      else pageImages.set(page, image.bytes);
+      await writeFileAtomically(join(derivedDirectory, pageFileName(page, image.mime)), image.bytes);
     });
     current = { ...current, renderedPages: rendered, renderBudgetExhausted: budgetExhausted };
-    if (derivedDirectory) await writeManifest(derivedDirectory, current);
+    await writeManifest(derivedDirectory, current);
   }
 
-  return { derived: current, pageImages };
+  return { derived: current };
 }
 
 function satisfies(entry: MemoryEntry, options: DeriveOptions): boolean {
   const { derived } = entry;
-  return !options.renderPages || derived.renderedPages.length > 0 || derived.renderBudgetExhausted || derived.loadError !== null || derived.pageCount === 0;
+  return !options.renderPages || derived.directory === null || derived.renderedPages.length > 0 || derived.renderBudgetExhausted || derived.loadError !== null || derived.pageCount === 0;
 }
 
 /**
@@ -486,7 +484,7 @@ export async function derivePdf(root: string | null, filename: string, bytes: Ui
  * ignored; the caller reports them.
  */
 export async function renderPdfPages(root: string | null, derived: DerivedPdf, bytes: Uint8Array, pages: number[]): Promise<DerivedPdf> {
-  if (derived.loadError || derived.pageCount === 0) return derived;
+  if (derived.loadError || derived.pageCount === 0 || !root || !derived.directory) return derived;
   const have = new Set(derived.renderedPages.map((page) => page.page));
   const wanted = [...new Set(pages)]
     .filter((page) => Number.isInteger(page) && page >= 1 && page <= derived.pageCount && !have.has(page))
@@ -494,30 +492,27 @@ export async function renderPdfPages(root: string | null, derived: DerivedPdf, b
     .slice(0, MAX_PAGES_PER_REQUEST);
   if (wanted.length === 0) return derived;
 
-  const entry = memory.get(derived.sha256) ?? { derived, pageImages: new Map<number, Uint8Array>() };
-  const derivedDirectory = root && derived.directory ? join(root, derived.directory) : null;
-  if (derivedDirectory) await mkdir(derivedDirectory, { recursive: true });
+  const current = memory.get(derived.sha256)?.derived ?? derived;
+  const derivedDirectory = join(root, derived.directory);
+  await mkdir(derivedDirectory, { recursive: true });
   const { rendered } = await renderPageImages(bytes, wanted, async (page, image) => {
-    if (derivedDirectory) await writeFileAtomically(join(derivedDirectory, pageFileName(page, image.mime)), image.bytes);
-    else entry.pageImages.set(page, image.bytes);
+    await writeFileAtomically(join(derivedDirectory, pageFileName(page, image.mime)), image.bytes);
   });
-  const renderedPages = [...entry.derived.renderedPages, ...rendered].sort((left, right) => left.page - right.page);
-  const updated: DerivedPdf = { ...entry.derived, renderedPages };
-  if (derivedDirectory) await writeManifest(derivedDirectory, updated);
-  remember({ derived: updated, pageImages: entry.pageImages });
+  const renderedPages = [...current.renderedPages, ...rendered].sort((left, right) => left.page - right.page);
+  const updated: DerivedPdf = { ...current, renderedPages };
+  await writeManifest(derivedDirectory, updated);
+  remember({ derived: updated });
   return updated;
 }
 
-/** Reads one rendered page image, from disk when the workspace holds it, otherwise from memory. */
+/** Reads one rendered page image from the workspace bundle. */
 export async function readPageImage(root: string | null, derived: DerivedPdf, page: PdfPageImage): Promise<Uint8Array | null> {
-  if (root && derived.directory) {
-    try {
-      return await readFile(join(root, derived.directory, page.fileName));
-    } catch {
-      return null;
-    }
+  if (!root || !derived.directory) return null;
+  try {
+    return await readFile(join(root, derived.directory, page.fileName));
+  } catch {
+    return null;
   }
-  return memory.get(derived.sha256)?.pageImages.get(page.page) ?? null;
 }
 
 /** Test hook: forgets in-memory results so on-disk reuse can be exercised. */
