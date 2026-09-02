@@ -133,9 +133,11 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
 
   const expectedTitle = assignmentTitle(OUTCOME);
   await waitForText(app, expectedTitle, { timeoutMs: 60_000 });
+  // The thread column is the surface under test; the rail and Activity sidebar
+  // may truthfully name the discussion while its session is still busy.
   await waitFor(app, `(() => {
-    const badge = [...document.querySelectorAll("span")].some((span) => (span.textContent ?? "").trim() === "Assignment");
-    return badge && !(document.body.innerText ?? "").includes("Discussion with Editor");
+    const badge = [...document.querySelectorAll("main span")].some((span) => (span.textContent ?? "").trim() === "Assignment");
+    return badge && !(document.querySelector("main")?.innerText ?? "").includes("Discussion with Editor");
   })()`, {
     timeoutMs: 30_000,
     label: "assignment thread view with its badge replaces the discussion view",
@@ -182,8 +184,8 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
     label: "Assignments · 1",
   });
   await clickButton(app, "Assignments · 1");
-  await waitFor(app, `document.body.innerText.toLowerCase().includes("current and recent")`, { timeoutMs: 30_000, label: "assignment list" });
-  const listText = String(await evalIn(app, "document.body.innerText"));
+  await waitFor(app, `(document.querySelector("main")?.innerText ?? "").toLowerCase().includes("current and recent")`, { timeoutMs: 30_000, label: "assignment list" });
+  const listText = String(await evalIn(app, `document.querySelector("main")?.innerText ?? ""`));
   expect(listText).toContain(expectedTitle);
   expect(listText).toContain("1 assignment");
   expect(listText).not.toContain("Discussion with Editor");
