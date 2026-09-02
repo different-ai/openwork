@@ -114,6 +114,55 @@ export function SlidersIcon({ className = "size-4" }: { className?: string }) {
   );
 }
 
+/** A gentle pulse line: the coworker's current and recent activity. */
+export function ActivityIcon({ className = "size-4" }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 16 16" fill="none" aria-hidden="true">
+      <path d="M1.75 8.25h2.4l1.9-4.5 2.6 8.5 2.2-6 1.35 2h1.85" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+/** Four tiles: Apps & tools. */
+export function AppsIcon({ className = "size-4" }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 16 16" fill="none" aria-hidden="true">
+      <rect x="2" y="2" width="5" height="5" rx="1.4" stroke="currentColor" strokeWidth="1.25" />
+      <rect x="9" y="2" width="5" height="5" rx="1.4" stroke="currentColor" strokeWidth="1.25" />
+      <rect x="2" y="9" width="5" height="5" rx="1.4" stroke="currentColor" strokeWidth="1.25" />
+      <path d="M11.5 9.25v4.5M9.25 11.5h4.5" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+/** A notebook: the Markdown memory the coworker keeps. */
+export function MemoryIcon({ className = "size-4" }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 16 16" fill="none" aria-hidden="true">
+      <path d="M3.5 2.75h7.25a1.5 1.5 0 0 1 1.5 1.5v9a1.5 1.5 0 0 1-1.5 1.5H3.5V2.75Z" stroke="currentColor" strokeWidth="1.25" strokeLinejoin="round" />
+      <path d="M3.5 2.75v12M6.25 6h3.5M6.25 8.75h3.5" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+/** A chevron pointing the way a panel will move. */
+export function ChevronIcon({ direction, className = "size-4" }: { direction: "left" | "right"; className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 16 16" fill="none" aria-hidden="true">
+      <path d={direction === "left" ? "M10 3.5 5.5 8l4.5 4.5" : "M6 3.5 10.5 8 6 12.5"} stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+/** A plus for adding a coworker. */
+export function PlusIcon({ className = "size-4" }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 16 16" fill="none" aria-hidden="true">
+      <path d="M8 3v10M3 8h10" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+    </svg>
+  );
+}
+
 /**
  * A 32×32 icon-only control. `label` is both the accessible name and the
  * tooltip, so the icon never needs a visible word beside it.

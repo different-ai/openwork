@@ -47,6 +47,23 @@ export type CoworkerMemoryFile = {
   updatedAt: number;
 };
 
+/** One durable memory: an index line joined with its file in `memory/long-term/`. */
+export type LongTermMemory = {
+  id: string;
+  /** Bare file name, e.g. `cleaning-day.md`. */
+  file: string;
+  /** Coworker-relative path, e.g. `memory/long-term/cleaning-day.md`. */
+  path: string;
+  /** First heading of the file, or a readable form of the file name. */
+  title: string;
+  /** The one-line summary from the index; empty when the file is not indexed. */
+  summary: string;
+  indexed: boolean;
+  exists: boolean;
+  /** Last modification time in ms since epoch; 0 when the file is missing. */
+  updatedAt: number;
+};
+
 export type LocalResponsibilityRun = {
   id: string;
   /** `queued` runs wait for a free slot on this Mac and start by themselves. */
@@ -151,6 +168,16 @@ export const coworkerBridge = {
     },
     write: (slug: string, path: string, content: string) =>
       invoke<{ ok: boolean }>("coworkers.files.write", { slug, path, content }),
+  },
+  memory: {
+    list: (slug: string) => invoke<LongTermMemory[]>("coworkers.memory.list", { slug }),
+    create: (slug: string, input: { title: string; summary?: string }) =>
+      invoke<LongTermMemory>("coworkers.memory.create", { slug, ...input }),
+    /** Add an index line for a file the coworker wrote without listing it. */
+    index: (slug: string, file: string, summary?: string) =>
+      invoke<{ ok: boolean }>("coworkers.memory.index", { slug, file, summary }),
+    /** Forget a memory: the file and its index line go together. */
+    remove: (slug: string, file: string) => invoke<{ ok: boolean }>("coworkers.memory.delete", { slug, file }),
   },
   localResponsibilities: {
     list: (slug: string) => invoke<LocalResponsibility[]>("localResponsibilities.list", { slug }),

@@ -28,12 +28,12 @@ body {
   text-rendering: optimizeLegibility;
 }
 
-body.is-resizing-context-panel {
+body.is-resizing-panel {
   cursor: col-resize;
   user-select: none;
 }
 
-body.is-resizing-context-panel * {
+body.is-resizing-panel * {
   cursor: col-resize !important;
 }
 
