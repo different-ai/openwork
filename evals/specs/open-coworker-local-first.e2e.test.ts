@@ -135,7 +135,7 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
     return {
       left: rect.left,
       width: rect.width,
-      railVisible: text.includes("search coworkers") || text.includes("your team"),
+      railVisible: Boolean(document.querySelector('[data-testid="coworker-rail"]')),
       mentionsModel: text.includes("model"),
       mentionsMemoryFiles: text.includes("inspectable files"),
     };
@@ -162,7 +162,7 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   expect(await evalIn(app, `document.querySelector('button[aria-label="Violet"]')?.getAttribute("aria-pressed")`)).toBe("true");
   await clickButton(app, "Add coworker", { timeoutMs: 120_000 });
 
-  await waitForText(app, "Your team", { timeoutMs: 120_000 });
+  await waitFor(app, `Boolean(document.querySelector('[data-testid="coworker-rail"]'))`, { timeoutMs: 120_000, label: "team rail" });
   await waitForText(app, "Responsibilities", { timeoutMs: 60_000 });
 
   // The default right sidebar is useful before anything is clicked: one status
