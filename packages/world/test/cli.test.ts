@@ -179,6 +179,9 @@ test("preflight failures warn without blocking up and do not affect attach or pl
   const worldsDirectory = join(root, "worlds");
   const receiptPath = join(root, "evals", "results", ".worlds", "scripts", "warned.json");
   const holdUrl = new URL("../src/hold.ts", import.meta.url).href;
+  const unhandledRejections: unknown[] = [];
+  const onUnhandledRejection = (reason: unknown): void => { unhandledRejections.push(reason); };
+  process.on("unhandledRejection", onUnhandledRejection);
   let checks = 0;
   const failingCheck = {
     id: "fixture",
@@ -229,7 +232,10 @@ test("preflight failures warn without blocking up and do not affect attach or pl
     }), 0);
     assert.equal(planLines[0], "• running (attachable)");
     assert.equal(checks, 1, "plan does not run preflight");
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.deepEqual(unhandledRejections, []);
   } finally {
+    process.off("unhandledRejection", onUnhandledRejection);
     await main(["down", "warned"], {
       cwd: root,
       worldsDirectory,

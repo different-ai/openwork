@@ -129,12 +129,21 @@ async function fileExists(path: string): Promise<boolean> {
 }
 
 export async function readScriptWorldSnapshot(path: string): Promise<ScriptWorldSnapshot | undefined> {
+  let text: string;
   try {
-    return parseScriptWorldSnapshot(await readFile(path, "utf8"));
+    text = await readFile(path, "utf8");
   } catch (error) {
     if (isMissingFile(error)) return undefined;
     throw error;
   }
+  if (text.trim() === "") return undefined;
+  try {
+    JSON.parse(text);
+  } catch (error) {
+    if (error instanceof SyntaxError) return undefined;
+    throw error;
+  }
+  return parseScriptWorldSnapshot(text);
 }
 
 async function removeDeadSnapshot(path: string): Promise<void> {

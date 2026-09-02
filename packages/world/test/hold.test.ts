@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { access, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -59,6 +59,7 @@ test("hold keeps an otherwise idle world alive until SIGTERM", async () => {
     assert.equal(isAlive(pid), true, "world exited while hold was awaiting a signal");
     const receiptText = await readFile(receiptPath, "utf8");
     const receipt = parseScriptWorldSnapshot(receiptText);
+    assert.deepEqual((await readdir(snapshots)).filter((name) => name.endsWith(".tmp")), []);
     assert.equal(receipt.version, 2);
     assert.equal(receipt.outputs.token, "s3cr3t");
     assert.equal(receipt.outputMeta?.token?.secret, true);

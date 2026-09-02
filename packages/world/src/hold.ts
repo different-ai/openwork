@@ -1,4 +1,4 @@
-import { chmod, mkdir, readFile, unlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { basename, dirname, extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { appendEvent, EVENTS_ENV } from "./events.ts";
@@ -97,7 +97,10 @@ export async function hold(options: HoldOptions = {}): Promise<void> {
     ...(place === undefined ? {} : { place }),
   };
   await mkdir(dirname(snapshotPath), { recursive: true });
-  await writeFile(snapshotPath, `${JSON.stringify(snapshot, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
+  const temporarySnapshotPath = `${snapshotPath}.tmp`;
+  await writeFile(temporarySnapshotPath, `${JSON.stringify(snapshot, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
+  await chmod(temporarySnapshotPath, 0o600);
+  await rename(temporarySnapshotPath, snapshotPath);
   await chmod(snapshotPath, 0o600);
   const eventPath = process.env[EVENTS_ENV];
   if (eventPath !== undefined) {

@@ -537,7 +537,11 @@ export async function main(argv: string[], options: WorldCliOptions): Promise<nu
           ...(command.detach || mode === "tty" ? { log: logPath } : {}),
         });
       };
-      const receiptPoll = setInterval(() => { void showReady(); }, 50);
+      const receiptPoll = setInterval(() => {
+        void showReady().catch((error: unknown) => {
+          view.apply({ t: new Date().toISOString(), type: "note", text: `Could not read world receipt: ${messageText(error)}` });
+        });
+      }, 50);
       receiptPoll.unref();
       const onSigint = (): void => {
         if (stopped || childPid === undefined) return;

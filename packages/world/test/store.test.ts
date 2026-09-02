@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm, stat } from "node:fs/promises";
+import { mkdtemp, open, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { parseScriptWorldSnapshot } from "../src/script-world.ts";
+import { setTimeout as delay } from "node:timers/promises";
+import { parseScriptWorldSnapshot, readScriptWorldSnapshot } from "../src/script-world.ts";
 import { WorldStateStore } from "../src/store.ts";
 
 test("local world state is owner-only and addressable by world name", async () => {
@@ -11,6 +12,7 @@ test("local world state is owner-only and addressable by world name", async () =
   try {
     const store = new WorldStateStore(join(root, "worlds"));
     const path = await store.save("demo", '{"name":"demo"}');
+    await writeFile(`${path}.tmp`, "partial", "utf8");
     assert.equal((await stat(path)).mode & 0o777, 0o600);
     assert.equal(await store.read("demo"), '{"name":"demo"}\n');
     assert.deepEqual(await store.list(), [path]);
@@ -67,4 +69,54 @@ test("script world snapshots parse v1 and strict v2 receipts", () => {
     );
   }
   assert.throws(() => parseScriptWorldSnapshot("{}"), /not a valid script world snapshot/);
+});
+
+test("script world snapshot reads tolerate a receipt being written byte by byte", async () => {
+  const root = await mkdtemp(join(tmpdir(), "openwork-world-receipt-race-"));
+  const path = join(root, "demo.json");
+  const expected = {
+    version: 2 as const,
+    kind: "script" as const,
+    name: "demo",
+    createdAt: "2026-09-01T00:00:00.000Z",
+    pid: 123,
+    sourcePath: "/tmp/demo.ts",
+    outputs: { ready: "yes" },
+    stage: "test",
+  };
+  const results: Array<Awaited<ReturnType<typeof readScriptWorldSnapshot>>> = [];
+  const errors: unknown[] = [];
+  let polling = true;
+  const poller = (async () => {
+    while (polling) {
+      try {
+        results.push(await readScriptWorldSnapshot(path));
+      } catch (error) {
+        errors.push(error);
+      }
+      await delay(5);
+    }
+  })();
+  try {
+    const file = await open(path, "w", 0o600);
+    try {
+      for (const byte of Buffer.from(`${JSON.stringify(expected)}\n`)) {
+        await file.write(Buffer.from([byte]));
+        await delay(1);
+      }
+    } finally {
+      await file.close();
+    }
+    polling = false;
+    await poller;
+    assert.deepEqual(errors, []);
+    for (const result of results) {
+      if (result !== undefined) assert.deepEqual(result, expected);
+    }
+    assert.deepEqual(await readScriptWorldSnapshot(path), expected);
+  } finally {
+    polling = false;
+    await poller;
+    await rm(root, { recursive: true, force: true });
+  }
 });
