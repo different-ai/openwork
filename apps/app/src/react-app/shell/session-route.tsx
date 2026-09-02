@@ -364,7 +364,9 @@ export function SessionRoute() {
   const { config: shellConfig } = useShellConfig();
   const local = useLocal();
   const automationDeploymentEnabled = useAutomationDeploymentEnabled();
-  const automationsEnabled = isDesktopRuntime() && automationDeploymentEnabled;
+  // Desktop and Web share one Automations surface; the runtime only decides
+  // the placement of what each creates. Den's deployment flag stays the gate.
+  const automationsEnabled = automationDeploymentEnabled;
   const automationsRouteActive = automationsEnabled && automationsRouteRequested;
   const denSettings = readDenSettings();
   const sessionDraftScope = resolveSessionDraftScope({

@@ -15,8 +15,10 @@ import type {
   AutomationRunReceipt,
   AutomationRunnerTokenResponse,
   CreateAutomation,
+  CreateCloudAutomation,
   UpdateAutomation,
 } from "@openwork/types/automations";
+import type { WorkflowDetail } from "@openwork/types/workflows";
 
 // Re-export the shared schema under the local alias so React consumers
 // (e.g. the cloud domain's desktop-config provider) can import it alongside
@@ -3335,6 +3337,26 @@ export function createDenClient(options: { baseUrl: string; apiBaseUrl?: string 
         body: input,
         automationModelAttentionCapable: true,
       });
+    },
+
+    /** Web creation surface: placement is fixed to OpenWork Cloud by the route. */
+    async createCloudAutomation(orgId: string, input: CreateCloudAutomation): Promise<AutomationDetail> {
+      return requestJson<AutomationDetail>(baseUrls, "/v1/cloud-automations", {
+        method: "POST",
+        token,
+        organizationId: orgId,
+        body: input,
+        automationModelAttentionCapable: true,
+      });
+    },
+
+    async getWorkflow(orgId: string, configObjectId: string): Promise<WorkflowDetail> {
+      const payload = await requestJson<{ script: WorkflowDetail }>(
+        baseUrls,
+        `/v1/workflows/${encodeURIComponent(configObjectId)}?maxAgeMs=86400000`,
+        { method: "GET", token, organizationId: orgId },
+      );
+      return payload.script;
     },
 
     async getAutomation(orgId: string, automationId: string): Promise<AutomationDetail> {

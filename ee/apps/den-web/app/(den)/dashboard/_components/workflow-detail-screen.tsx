@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { ArrowLeft, CalendarClock, History, Layers3, Share2 } from "lucide-react";
 import { DenButton } from "../../_components/ui/button";
+import { useDenFlow } from "../../_providers/den-flow-provider";
 import { DenChip } from "../../_components/ui/chip";
 import { useActivateArtifactView, useRetireArtifactView, useWorkflowLibraryDetail } from "./workflow-detail-data";
 import { WorkflowDetailPanel } from "./workflow-detail-panel";
@@ -23,6 +24,7 @@ function cspSummary(csp: {
 
 export function WorkflowDetailScreen({ workflowId }: { workflowId: string }) {
   const router = useRouter();
+  const { runtimeConfig } = useDenFlow();
   const detailQuery = useWorkflowLibraryDetail(workflowId);
   const activate = useActivateArtifactView(workflowId);
   const retire = useRetireArtifactView(workflowId);
@@ -44,7 +46,7 @@ export function WorkflowDetailScreen({ workflowId }: { workflowId: string }) {
           </div>
         </div>
         <div className="flex flex-wrap gap-2">
-          {manager ? <DenButton variant="secondary" href={`/dashboard/automations?workflow=${encodeURIComponent(workflowId)}&version=${encodeURIComponent(detail.script.currentVersion.id)}`}><CalendarClock className="h-3.5 w-3.5" />Automate</DenButton> : null}
+          {manager ? <DenButton variant="secondary" href={`${runtimeConfig.openworkWebUrl.replace(/\/$/, "")}/automations?create=1&workflow=${encodeURIComponent(workflowId)}&version=${encodeURIComponent(detail.script.currentVersion.id)}`} target="_blank" rel="noopener noreferrer"><CalendarClock className="h-3.5 w-3.5" />Automate in OpenWork Web</DenButton> : null}
           {manager && detail.workflow.plugin ? <DenButton variant="secondary" href={`/dashboard/plugins/${encodeURIComponent(detail.workflow.plugin.id)}`}><Share2 className="h-3.5 w-3.5" />Share</DenButton> : null}
         </div>
       </header>

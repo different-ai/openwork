@@ -7,9 +7,24 @@ Automation's lifetime:
 
 - Desktop creation produces a `desktop` Automation and continues to use the
   authenticated desktop runner introduced by the existing Automations work.
-- Web and Cloud Chat creation produce a `cloud` Automation. Den schedules the
-  occurrence, wakes the owner's existing OpenWork Cloud container when it is
-  stopped, and runs a native OpenWork thread headlessly inside that container.
+- OpenWork Web and Cloud Chat creation produce a `cloud` Automation. Den
+  schedules the occurrence, wakes the owner's existing OpenWork Cloud container
+  when it is stopped, and runs a native OpenWork thread headlessly inside that
+  container.
+
+Desktop and OpenWork Web share one Automations surface in the app: the same
+list, editor, detail, run history, receipts, and in-chat proposal card. The
+runtime only decides the placement of what that surface creates, and the free
+Zen starter model stays a published-Desktop exception. The desktop runner
+bridge never registers from a browser runtime.
+
+Den's dashboard "My Automations" page is a monitor, not an authoring surface.
+It groups Den-scheduled work by attention (running, needs attention,
+scheduled, paused), shows receipts and Workflow results, and links each
+Automation to the surface that manages it: OpenWork Web for Cloud placement,
+the desktop app for Desktop placement. Cancelling an in-flight run is its only
+operational control. A Workflow's "Automate" action deep-links into the
+OpenWork Web editor with the exact Workflow version pinned.
 
 Both surfaces read the same Den Automation and run history. Placement is shown
 on list cards and receipts, but it is not an editable setting. Moving execution
@@ -56,10 +71,11 @@ snapshot validation or artifact result retention.
 Focused tests cover the Cloud-only MCP creation contract, deterministic prompt
 admission, terminal errors, cancellation observation, dual worker credentials,
 Cloud wake/idle lifecycle behavior, runtime-specific agent guidance, and
-cross-surface execution labels. Den Web provides once/daily/weekly create and
-edit flows plus activate/deactivate, archive, run-now, cancel, native thread,
-usage, and event receipt controls. The testkit acceptance tape covers the
-Web/Desktop creation language and verifies that no placement picker is exposed.
+cross-surface execution labels. The testkit acceptance tape verifies that the
+Den monitor lists Den-scheduled Automations without any create, edit, state,
+run-now, or archive control and routes management to OpenWork Web or Desktop.
+Source-contract tests pin the shared app surface: one deployment gate for both
+runtimes, runtime-derived placement on create, and the desktop-only runner.
 
 The deployment-shaped Daytona journey—stop a real user's container, let a due
 occurrence wake it, execute against live model and Connect configuration, then
