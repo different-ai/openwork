@@ -6,7 +6,7 @@ import { test } from "@openwork/testkit";
 
 import { OpenWorkOfficeAttachments } from "../../apps/server/src/opencode-plugins/openwork-office-attachments";
 import { OpenWorkSpreadsheets } from "../../apps/server/src/opencode-plugins/openwork-spreadsheets";
-import { buildZip, listZipEntries } from "../../apps/server/src/opencode-plugins/ooxml-package";
+import { buildZip, listZipEntries } from "../../packages/workbook/src/index";
 
 const XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 
@@ -74,14 +74,14 @@ function withDataDescriptors(archive: Buffer): Buffer {
   return Buffer.concat([...local, ...central, end]);
 }
 
-function attachedWorkbook(): Buffer {
-  return withDataDescriptors(buildZip([
+async function attachedWorkbook(): Promise<Buffer> {
+  return withDataDescriptors(Buffer.from(await buildZip([
     { name: "xl/workbook.xml", data: Buffer.from('<workbook xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Pipeline" sheetId="1" r:id="rId1"/><sheet name="Notes" sheetId="2" r:id="rId2"/></sheets></workbook>', "utf8") },
     { name: "xl/_rels/workbook.xml.rels", data: Buffer.from('<Relationships><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet2.xml"/></Relationships>', "utf8") },
     { name: "xl/styles.xml", data: Buffer.from('<styleSheet><cellXfs count="2"><xf numFmtId="0"/><xf numFmtId="14"/></cellXfs></styleSheet>', "utf8") },
     { name: "xl/worksheets/sheet1.xml", data: Buffer.from('<worksheet><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>Account</t></is></c><c r="B1" t="inlineStr"><is><t>Close date</t></is></c><c r="C1" t="inlineStr"><is><t>Amount</t></is></c></row><row r="2"><c r="A2" t="inlineStr"><is><t>Northstar</t></is></c><c r="B2" s="1"><v>45000</v></c><c r="C2"><v>1742.42</v></c></row><row r="3"><c r="A3" t="inlineStr"><is><t>Total</t></is></c><c r="B3" s="1"/><c r="C3"><f>SUM(C2:C2)</f><v>1742.42</v></c></row></sheetData></worksheet>', "utf8") },
     { name: "xl/worksheets/sheet2.xml", data: Buffer.from('<worksheet><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>Sentinel note: reviewed 2026-09-02</t></is></c></row></sheetData></worksheet>', "utf8") },
-  ]));
+  ])));
 }
 
 async function withWorkspace(fn: (root: string) => Promise<void>) {
@@ -153,7 +153,7 @@ test("agents create, inspect, and page through Excel workbooks without leaving t
 
 test("attached Excel workbooks reach the model as a sheet grid with a path the spreadsheet tools can read", async ({ evidence }) => {
   await withWorkspace(async (root) => {
-    const workbook = attachedWorkbook();
+    const workbook = await attachedWorkbook();
     const plugin = await OpenWorkOfficeAttachments({ directory: root });
     const output = {
       messages: [{

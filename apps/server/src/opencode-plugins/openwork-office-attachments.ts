@@ -2,8 +2,20 @@ import { createHash, randomUUID } from "node:crypto";
 import { link, mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { basename, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { MAX_COMPRESSED_BYTES, listZipEntries, readZipEntryData, xmlText, type ZipEntry } from "./ooxml-package.js";
-import { columnLetters, formulaSummary, numberFormatSummary, openXlsxWorkbook, renderSheetTable, type XlsxSheetData } from "./xlsx-workbook.js";
+import {
+  MAX_COMPRESSED_BYTES,
+  columnLetters,
+  formulaSummary,
+  listZipEntries,
+  numberFormatSummary,
+  openXlsxWorkbook,
+  readZipEntryData,
+  renderSheetTable,
+  utf8Text,
+  xmlText,
+  type XlsxSheetData,
+  type ZipEntry,
+} from "@openwork/workbook";
 
 const DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
 const PPTX_MIME = "application/vnd.openxmlformats-officedocument.presentationml.presentation";
@@ -265,8 +277,8 @@ function sheetSummaryLine(sheet: XlsxSheetData, total: number): string {
  * as the cell budget allows. The remainder stays reachable through the
  * spreadsheet tools using the materialized workspace path.
  */
-function extractXlsxText(bytes: Buffer): string {
-  const workbook = openXlsxWorkbook(bytes);
+async function extractXlsxText(bytes: Buffer): Promise<string> {
+  const workbook = await openXlsxWorkbook(bytes);
   const total = workbook.sheets.length;
   const lines = [
     "xlsx_workbook:",
@@ -280,7 +292,7 @@ function extractXlsxText(bytes: Buffer): string {
   for (const info of workbook.sheets) {
     let sheet: XlsxSheetData;
     try {
-      sheet = workbook.readSheet(info);
+      sheet = await workbook.readSheet(info);
     } catch (cause) {
       lines.push(`sheet ${quoted(info.name)} (${info.position} of ${total}): error: ${cause instanceof Error ? cause.message : String(cause)}`);
       continue;
@@ -306,15 +318,15 @@ function extractXlsxText(bytes: Buffer): string {
   return lines.join("\n").slice(0, MAX_EXTRACTED_TEXT_CHARS);
 }
 
-function extractOfficeText(kind: OfficeKind, bytes: Buffer): string {
-  if (kind === "xlsx") return extractXlsxText(bytes);
+async function extractOfficeText(kind: OfficeKind, bytes: Buffer): Promise<string> {
+  if (kind === "xlsx") return await extractXlsxText(bytes);
   const entries = listZipEntries(bytes).filter((entry) => relevantXmlEntry(kind, entry.name)).sort(compareEntryName);
   if (entries.length === 0) throw new Error("No supported Office XML text entries were found.");
   const pieces: string[] = [];
   let remaining = MAX_EXTRACTED_TEXT_CHARS;
   for (const entry of entries) {
     if (remaining <= 0) break;
-    const text = xmlText(readZipEntryData(bytes, entry).toString("utf8"));
+    const text = xmlText(utf8Text(await readZipEntryData(bytes, entry)));
     if (!text) continue;
     const chunk = text.slice(0, remaining);
     pieces.push(`[${entry.name}]\n${chunk}`);
@@ -359,7 +371,7 @@ async function normalizeOfficePart(part: OfficeFilePart, root: string | null): P
     const bytes = await bytesFromPart(part, root);
     const materialized = await materializeAttachment(root, part.filename, part.kind, bytes);
     try {
-      const extractedText = extractOfficeText(part.kind, bytes);
+      const extractedText = await extractOfficeText(part.kind, bytes);
       return textPartFrom(part, normalizedText(part, materialized, extractedText));
     } catch (cause) {
       const message = cause instanceof Error ? cause.message : String(cause);
