@@ -1,5 +1,5 @@
 import { expect } from "vitest";
-import { control, createAndSelectWorkspace, evalIn, seedSessions, waitFor } from "@openwork/behaviors";
+import { control, createAndSelectWorkspace, evalIn, go, seedSessions, waitFor } from "@openwork/behaviors";
 import type { Surface } from "@openwork/cdp";
 import { screenshot, validate } from "@openwork/test-evidence";
 import { desktop } from "@openwork/hosts";
@@ -25,6 +25,11 @@ type HeaderFacts = {
   pinnedRowIds: string[];
   pinnedRowTitles: string[];
 };
+
+/** Interpolate a value into page JavaScript without letting it close a script or break a line. */
+function jsValue(value: string): string {
+  return JSON.stringify(value).replace(/</g, "\\u003c").replace(/\u2028/g, "\\u2028").replace(/\u2029/g, "\\u2029");
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -74,7 +79,7 @@ async function createSecondWorkspace(app: Surface, firstWorkspaceId: string, pat
   await control(app, "workspace.create", { path }, { timeoutMs: 90_000 });
   await waitFor(app, `(() => {
     const active = localStorage.getItem("openwork.react.activeWorkspace") ?? "";
-    return active !== "" && active !== ${JSON.stringify(firstWorkspaceId)};
+    return active !== "" && active !== ${jsValue(firstWorkspaceId)};
   })()`, { timeoutMs: 120_000, label: "second workspace selected" });
   const workspaceId = await evalIn(app, `localStorage.getItem("openwork.react.activeWorkspace") ?? ""`);
   if (typeof workspaceId !== "string" || !workspaceId) {
@@ -103,13 +108,13 @@ async function openAndSettle(
 ): Promise<HeaderFacts> {
   // Click the row in the global Pinned section, the way a person opens it.
   const clicked = await evalIn(app, `(() => {
-    const row = document.querySelector(${JSON.stringify(`[data-global-pinned-sessions] [data-sidebar-session-id="${session.sessionId}"] [data-session-tab-id]`)});
+    const row = document.querySelector(${jsValue(`[data-global-pinned-sessions] [data-sidebar-session-id="${session.sessionId}"] [data-session-tab-id]`)});
     if (!(row instanceof HTMLElement)) return "pinned row missing";
     row.click();
     return "ok";
   })()`);
   if (clicked !== "ok") throw new Error(`Could not click pinned row for ${session.sessionId}: ${JSON.stringify(clicked)}`);
-  await waitFor(app, `window.location.hash.includes(${JSON.stringify(session.sessionId)})`, {
+  await waitFor(app, `window.location.hash.includes(${jsValue(session.sessionId)})`, {
     timeoutMs: 30_000,
     label: `route points at ${session.sessionId}`,
   });
@@ -117,7 +122,7 @@ async function openAndSettle(
     const header = document.querySelector("header");
     const title = header?.querySelector("h1")?.textContent?.trim() ?? "";
     const workspace = header?.querySelector("[data-session-header-workspace]")?.getAttribute("data-session-header-workspace");
-    return title === ${JSON.stringify(session.title)} && workspace === ${JSON.stringify(expectedWorkspace)};
+    return title === ${jsValue(session.title)} && workspace === ${jsValue(expectedWorkspace)};
   })()`, { timeoutMs: 30_000, label: `header reads ${session.title} · ${expectedWorkspace}` }).catch(() => undefined);
   return readHeaderFacts(app);
 }
@@ -156,8 +161,8 @@ test.skipIf(!e2eTestsEnabled)(title, { timeout: 20 * 60_000 }, async ({ evidence
   expect(betaOwnFacts.title).toBe(betaSession.title);
   expect(betaOwnFacts.workspace).toBe(betaName);
 
-  await evalIn(app, `(() => { window.location.hash = ${JSON.stringify(`#/workspace/${alphaId}/session`)}; return true; })()`);
-  await waitFor(app, `(localStorage.getItem("openwork.react.activeWorkspace") ?? "") === ${JSON.stringify(alphaId)}`, {
+  await go(app, `/workspace/${encodeURIComponent(alphaId)}/session`);
+  await waitFor(app, `(localStorage.getItem("openwork.react.activeWorkspace") ?? "") === ${jsValue(alphaId)}`, {
     timeoutMs: 60_000,
     label: "alpha workspace selected",
   });
