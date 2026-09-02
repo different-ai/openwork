@@ -37,6 +37,7 @@ import {
   configureDiscussionStore,
   discussionIds,
   discussionLabel,
+  discussionLooksUsed,
   discussionTitleFromPrompt,
   loadDiscussionRegistry,
   registerDiscussion,
@@ -724,11 +725,14 @@ function AssignmentOverview({
  */
 function DiscussionSwitcher({
   current,
+  currentUsed,
   discussions,
   defaultTitle,
   onOpen,
 }: {
   current: ThreadListItem;
+  /** Whether the open discussion already holds messages (its list entry may not say so yet). */
+  currentUsed: boolean;
   discussions: ThreadListItem[];
   defaultTitle: string;
   onOpen: (threadId: string) => void;
@@ -753,7 +757,7 @@ function DiscussionSwitcher({
   }, [open]);
 
   const listed = discussions.some((item) => item.id === current.id) ? discussions : [current, ...discussions];
-  const label = discussionLabel(current.title, defaultTitle);
+  const label = discussionLabel(current.title, defaultTitle, currentUsed);
 
   return (
     <div ref={rootRef} className="relative -ml-2 min-w-0">
@@ -799,7 +803,7 @@ function DiscussionSwitcher({
                   >
                     <StatusDot tone={threadTone(item.status)} />
                     <span className={`min-w-0 flex-1 truncate text-sm ${active ? "font-semibold text-snow" : "text-snow"}`}>
-                      {discussionLabel(item.title, defaultTitle)}
+                      {discussionLabel(item.title, defaultTitle, active ? currentUsed : discussionLooksUsed(item))}
                     </span>
                     <span className={`shrink-0 text-xs ${item.status === "busy" || item.status === "retry" ? "text-spark" : "text-mist"}`}>{meta}</span>
                   </button>
@@ -1336,6 +1340,7 @@ function ThreadView({
             {kind === "discussion" ? (
               <DiscussionSwitcher
                 current={{ ...currentDiscussion, title }}
+                currentUsed={visibleMessages.length > 0}
                 discussions={discussions}
                 defaultTitle={defaultDiscussionTitle}
                 onOpen={(id) => onOpenDiscussion?.(id)}
