@@ -1,12 +1,36 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js"
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js"
-import { expect, test } from "bun:test"
+import { expect, mock, test } from "bun:test"
 
 process.env.DEN_DB_ENCRYPTION_KEY ??= "x".repeat(32)
 process.env.BETTER_AUTH_SECRET ??= "y".repeat(32)
 process.env.BETTER_AUTH_URL ??= "http://127.0.0.1:3005"
 process.env.OPENWORK_DEV_MODE ??= "1"
 process.env.DATABASE_URL ??= "mysql://root:password@127.0.0.1:3306/openwork_den"
+
+// The proxy module reaches ./auth.js -> ../auth.js, whose better-auth instance
+// seeds the oauthResource registry against the database at import time. This
+// suite never verifies a bearer token, so stand in for that module the same way
+// test/mcp-membership-revocation.test.ts does and keep the run hermetic.
+mock.module("../src/auth.js", () => ({
+  auth: {
+    handler: () => Promise.resolve(new Response(JSON.stringify({ keys: [] }), { status: 200 })),
+  },
+  DEN_MCP_OPAQUE_ACCESS_TOKEN_PREFIX: "ow_mcp_at_",
+  DEN_MCP_FIRST_PARTY_CLIENT_ID: "openwork-desktop",
+  DEN_MCP_FIRST_PARTY_RESOURCES: [
+    "http://127.0.0.1:8790/mcp",
+    "http://127.0.0.1:8790/mcp/agent",
+    "http://127.0.0.1:8790/mcp/admin",
+  ],
+  DEN_MCP_GRANT_ID_CLAIM: "https://openworklabs.com/grant_id",
+  DEN_MCP_ORG_ID_CLAIM: "https://openworklabs.com/org_id",
+  DEN_MCP_OAUTH_RESOURCE: "http://127.0.0.1:8790/mcp/agent",
+  DEN_MCP_RESOURCE: "http://127.0.0.1:8790/mcp",
+  DEN_MCP_RESOURCE_CLAIM: "https://openworklabs.com/resource",
+  DEN_MCP_RESOURCES: ["http://127.0.0.1:8790/mcp"],
+  DEN_MCP_TOKEN_USE_CLAIM: "https://openworklabs.com/token_use",
+}))
 
 const {
   createExternalConnectionProxyServer,
