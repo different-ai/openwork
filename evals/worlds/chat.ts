@@ -929,3 +929,77 @@ export async function mermaidChat(seed: Seed) {
   await arrangeControl(seed, app, "eval.markdown_primitive.seed_chat");
   return { app, workspace, session };
 }
+
+export const safeFirstPrompt = "First turn for safe edit proof.";
+export const safeSecondPrompt = "Second turn that should be replaced.";
+export const safeEditedPrompt = "Edited second turn that replaces the original.";
+export const safeLegacyPrompt = "Legacy session restore proof.";
+export const safeReplies = [
+  "Deterministic first reply.",
+  "Deterministic second reply.",
+  "Deterministic edited reply.",
+  "Deterministic legacy reply.",
+];
+
+export async function safeEdit(seed: Seed) {
+  const providerId = "safe-edit-resend-mock";
+  const modelId = "safe-edit-resend-model";
+  let mainCompletionCount = 0;
+  const provider = createServer((request, response) => {
+    const url = request.url ?? "";
+    if (request.method === "GET" && url.startsWith("/v1/models")) {
+      sendJson(response, 200, { object: "list", data: [{ id: modelId, object: "model" }] });
+      return;
+    }
+    if (request.method !== "POST" || (url !== "/v1/chat/completions" && url !== "/chat/completions")) {
+      sendJson(response, 404, { error: { message: "not found" } });
+      return;
+    }
+    void readBody(request).then((rawBody) => {
+      let parsed: unknown;
+      try { parsed = JSON.parse(rawBody); } catch { parsed = null; }
+      const isMain = isRecord(parsed) && Array.isArray(parsed.tools) && parsed.tools.length > 0;
+      const reply = !isMain
+        ? "Session title"
+        : rawBody.includes(safeEditedPrompt) ? safeReplies[2]
+          : rawBody.includes(safeSecondPrompt) ? safeReplies[1]
+            : rawBody.includes(safeLegacyPrompt) ? safeReplies[3]
+              : rawBody.includes(safeFirstPrompt) ? safeReplies[0]
+                : `Unexpected completion for: ${rawBody.slice(0, 200)}`;
+      if (isMain) mainCompletionCount += 1;
+      const id = `chatcmpl-safe-edit-${mainCompletionCount}`;
+      const chunks = [
+        { id, object: "chat.completion.chunk", choices: [{ index: 0, delta: { role: "assistant" }, finish_reason: null }] },
+        completionChunk(id, reply, null),
+        completionChunk(id, "", "stop"),
+      ];
+      sendStream(response, chunks, 400);
+    });
+  });
+  const baseUrl = await listen(provider);
+  try {
+    const app = await seed.desktop({ name: "safe-edit-resend", model: `${providerId}/${modelId}` });
+    const workspace = await seed.workspace(app, seed.tmpPath("safe-edit-resend"));
+    await configureProvider(seed, app, workspace.workspaceId, providerId, modelId, {
+      provider: {
+        [providerId]: {
+          npm: "@ai-sdk/openai-compatible",
+          name: "Safe edit resend mock",
+          options: { baseURL: `${baseUrl}/v1`, apiKey: "sk-safe-edit-resend" },
+          models: { [modelId]: { name: "Safe edit resend model" } },
+        },
+      },
+    });
+    const session = await seedSessionRetry(seed, app);
+    return {
+      app,
+      workspace,
+      session,
+      mainCompletionCount: () => mainCompletionCount,
+      async [Symbol.asyncDispose]() { await close(provider); },
+    };
+  } catch (error) {
+    await close(provider);
+    throw error;
+  }
+}
