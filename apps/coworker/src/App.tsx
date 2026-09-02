@@ -191,6 +191,10 @@ export default function App() {
               { state: "offline", label: "Setting up", detail: "Workspace is not ready", updatedAt: 0 },
             ] as const;
           }
+          if (!runtime.engineManaged) {
+            // One phrase for one fact: the header, rail, and sidebar all say the AI service is unavailable.
+            return [coworker.slug, { state: "offline", label: "AI unavailable", detail: "", updatedAt: 0 }] as const;
+          }
           const [threadActivity, localResponsibilities] = await Promise.all([
             readCoworkerActivity({
               serverUrl: runtime.serverUrl,
@@ -415,28 +419,10 @@ export default function App() {
         data-testid="coworker-workspace"
         data-active={globalSettings ? "false" : "true"}
       >
-        <CoworkerRail
-          runtime={runtime}
-          session={session}
-          coworkers={coworkers}
-          activityBySlug={visibleActivityBySlug}
-          selectedSlug={creating ? "" : selectedSlug}
-          onSelect={(slug) => {
-            setCreating(false);
-            setSelectedSlug(slug);
-          }}
-          onNewCoworker={() => {
-            setCreating(true);
-          }}
-          onOpenOpenWork={() => openGlobalSettings()}
-        />
         {creating || !selected ? (
-          <div className="min-w-0 flex-1">
+          // Creation takes the whole window: the team list returns once the coworker exists.
+          <div key="create" className="view-enter flex min-w-0 flex-1">
             <NewCoworker
-              runtime={runtime}
-              session={session}
-              onConnect={() => setConnecting(true)}
-              onSyncProviders={syncProviders}
               onCancel={selected || coworkers.length > 0 ? () => setCreating(false) : null}
               onCreated={(coworker) => {
                 setCreating(false);
@@ -451,21 +437,33 @@ export default function App() {
             />
           </div>
         ) : (
-          <CoworkerHome
-            key={selected.slug}
-            runtime={runtime}
-            session={session}
-            coworkers={coworkers}
-            coworker={selected}
-            activity={visibleActivityBySlug[selected.slug]}
-            onActivityChange={updateSelectedLiveActivity}
-            onCoworkerChanged={updateCoworkerInList}
-            onCoworkerRemoved={removeCoworkerFromList}
-            onRefreshRuntime={refreshRuntime}
-            onRestartRuntime={restartRuntime}
-            onSyncProviders={syncProviders}
-            onOpenOpenWork={(section) => openGlobalSettings(section ?? "general")}
-          />
+          <div key="team" className="view-enter flex min-w-0 flex-1">
+            <CoworkerRail
+              runtime={runtime}
+              session={session}
+              coworkers={coworkers}
+              activityBySlug={visibleActivityBySlug}
+              selectedSlug={selectedSlug}
+              onSelect={setSelectedSlug}
+              onNewCoworker={() => setCreating(true)}
+              onOpenOpenWork={() => openGlobalSettings()}
+            />
+            <CoworkerHome
+              key={selected.slug}
+              runtime={runtime}
+              session={session}
+              coworkers={coworkers}
+              coworker={selected}
+              activity={visibleActivityBySlug[selected.slug]}
+              onActivityChange={updateSelectedLiveActivity}
+              onCoworkerChanged={updateCoworkerInList}
+              onCoworkerRemoved={removeCoworkerFromList}
+              onRefreshRuntime={refreshRuntime}
+              onRestartRuntime={restartRuntime}
+              onSyncProviders={syncProviders}
+              onOpenOpenWork={(section) => openGlobalSettings(section ?? "general")}
+            />
+          </div>
         )}
       </div>
       {globalSettingsMounted ? (

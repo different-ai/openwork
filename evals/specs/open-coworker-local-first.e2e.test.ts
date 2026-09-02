@@ -4,7 +4,7 @@ import { expect } from "vitest";
 
 const enabled = process.env.OPENWORK_EVAL_E2E_TESTS === "1";
 const title = enabled
-  ? "Open Coworker completes local onboarding, model choice, settings, and a scheduled native run"
+  ? "Open Coworker completes local onboarding, a calm default sidebar, model choice in settings, and a scheduled native run"
   : "Open Coworker local-first journey skipped — needs: set OPENWORK_EVAL_E2E_TESTS=1";
 
 function json(value: unknown): string {
@@ -127,6 +127,30 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
 
   await clickButtonContaining(app, "Use this Mac");
   await waitForText(app, "Add a coworker", { timeoutMs: 60_000 });
+  const creationScreen = await evalIn(app, `(() => {
+    const screen = document.querySelector('[data-testid="new-coworker"]');
+    if (!(screen instanceof HTMLElement)) return null;
+    const rect = screen.getBoundingClientRect();
+    const text = document.body.innerText.toLowerCase();
+    return {
+      left: rect.left,
+      width: rect.width,
+      railVisible: text.includes("search coworkers") || text.includes("your team"),
+      mentionsModel: text.includes("model"),
+      mentionsMemoryFiles: text.includes("inspectable files"),
+    };
+  })()`);
+  expect(creationScreen).toMatchObject({ railVisible: false, mentionsModel: false, mentionsMemoryFiles: false });
+  if (!isRecord(creationScreen) || typeof creationScreen.left !== "number" || typeof creationScreen.width !== "number") {
+    throw new Error("Creation screen layout was unavailable.");
+  }
+  expect(creationScreen.left).toBeLessThan(3);
+  expect(creationScreen.width).toBeGreaterThan(900);
+  evidence.recordAssertionEvidence(
+    "Adding a coworker takes the whole window and asks only for a name and a look",
+    "The creation screen filled the window with no team rail beside it, and neither AI model choice nor memory-file details appeared; those live in Coworker settings once the coworker exists.",
+    true,
+  );
   await fill(app, 'input[placeholder="Scout"]', "Scout");
   await waitFor(app, `(() => {
     const button = document.querySelector('button[aria-label="Violet"]');
@@ -138,17 +162,129 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   expect(await evalIn(app, `document.querySelector('button[aria-label="Violet"]')?.getAttribute("aria-pressed")`)).toBe("true");
   await clickButton(app, "Add coworker", { timeoutMs: 120_000 });
 
-  await waitForText(app, "Choose a model", { timeoutMs: 120_000 });
-  await waitFor(app, `Boolean(document.querySelector('input[aria-label="Search connected models"]'))`, {
-    timeoutMs: 120_000,
-    label: "connected model picker",
-  });
-  await fill(app, 'input[aria-label="Search connected models"]', "big-pickle");
-  await clickButtonContaining(app, "big-pickle");
-  await clickButton(app, "Finish setup");
-
   await waitForText(app, "Your team", { timeoutMs: 120_000 });
   await waitForText(app, "Responsibilities", { timeoutMs: 60_000 });
+
+  // The default right sidebar is useful before anything is clicked: one status
+  // word, the responsibilities section, quiet secondary links, and no repeated
+  // empty-state phrasing or technical vocabulary.
+  const defaultSidebar = await waitFor(app, `(() => {
+    const summary = document.querySelector('[data-testid="coworker-activity-summary"]');
+    const responsibilities = document.querySelector('[data-testid="coworker-responsibilities"]');
+    const empty = document.querySelector('[data-testid="responsibilities-empty"]');
+    const settings = document.querySelector('[data-testid="coworker-settings-button"]');
+    const icon = settings?.querySelector("svg");
+    const links = [...document.querySelectorAll('nav[aria-label="More for this coworker"] button')].map((button) => button.textContent?.trim());
+    if (!(summary instanceof HTMLElement) || !(responsibilities instanceof HTMLElement) || !(settings instanceof HTMLElement) || !icon) return false;
+    const summaryLines = summary.innerText.split("\\n").map((line) => line.trim()).filter(Boolean);
+    // The first poll may still be reading the workspace; wait for the settled idle state.
+    if (summaryLines[0] !== "Ready") return false;
+    const sidebarText = (summary.closest("aside")?.innerText ?? "").toLowerCase();
+    const settingsRect = settings.getBoundingClientRect();
+    const iconRect = icon.getBoundingClientRect();
+    return {
+      summaryLines,
+      responsibilitiesVisible: responsibilities.offsetParent !== null,
+      responsibilitiesBelowActivity: responsibilities.getBoundingClientRect().top > summary.getBoundingClientRect().bottom,
+      emptyStateCount: document.querySelectorAll('[data-testid="responsibilities-empty"]').length,
+      emptyStateText: empty?.textContent?.trim() ?? "",
+      links,
+      settingsLabel: settings.getAttribute("aria-label"),
+      settingsTitle: settings.getAttribute("title"),
+      settingsText: settings.textContent?.trim() ?? "",
+      settingsSize: [Math.round(settingsRect.width), Math.round(settingsRect.height)],
+      iconSize: [Math.round(iconRect.width), Math.round(iconRect.height)],
+      sidebarMentionsEngine: sidebarText.includes("engine"),
+      sidebarMentionsModel: sidebarText.includes("model"),
+      readyMentions: (sidebarText.match(/ready/g) ?? []).length,
+    };
+  })()`, { timeoutMs: 60_000, label: "settled default Activity sidebar" });
+  expect(defaultSidebar).toMatchObject({
+    summaryLines: ["Ready", "Waiting for the first assignment."],
+    responsibilitiesVisible: true,
+    responsibilitiesBelowActivity: true,
+    emptyStateCount: 1,
+    links: ["Apps & tools", "Memory", "Coworker settings"],
+    settingsLabel: "Coworker settings",
+    settingsTitle: "Coworker settings",
+    settingsText: "",
+    settingsSize: [32, 32],
+    iconSize: [16, 16],
+    sidebarMentionsEngine: false,
+    sidebarMentionsModel: false,
+    readyMentions: 1,
+  });
+  if (!isRecord(defaultSidebar) || typeof defaultSidebar.emptyStateText !== "string") throw new Error("Default sidebar facts were unavailable.");
+  expect(defaultSidebar.emptyStateText).toContain("No responsibilities yet.");
+  expect(defaultSidebar.emptyStateText).toContain("Add responsibility");
+  const composerFacts = await evalIn(app, `(() => {
+    const composer = document.querySelector('textarea[aria-label="Message Scout"]')?.closest("div.border-t");
+    const text = (composer?.textContent ?? "").toLowerCase();
+    return {
+      present: Boolean(composer),
+      hasModelControl: Boolean(document.querySelector('[data-testid="composer-model-control"]')),
+      mentionsModel: text.includes("model") || text.includes("thinking effort"),
+    };
+  })()`);
+  expect(composerFacts).toEqual({ present: true, hasModelControl: false, mentionsModel: false });
+  evidence.recordAssertionEvidence(
+    "The default Activity sidebar leads with current activity and responsibilities, and the composer carries no model controls",
+    "Before any click, Scout's sidebar showed exactly one idle status line plus one note, the Responsibilities section with a single compact Add responsibility empty state, three quiet links, and an icon-only 32×32 Coworker settings control with a 16×16 glyph; the sidebar and composer contained no model, thinking-effort, or engine vocabulary.",
+    true,
+  );
+
+  // Model choice lives in Coworker settings, opened from the icon-only control.
+  await waitFor(app, `(() => {
+    const button = document.querySelector('[data-testid="coworker-settings-button"]');
+    if (!(button instanceof HTMLElement)) return false;
+    button.click();
+    return true;
+  })()`, { label: "Coworker settings icon button" });
+  await waitForText(app, "Coworker settings", { timeoutMs: 30_000 });
+  await waitFor(app, `Boolean(document.querySelector('[data-testid="coworker-model-settings"]'))`, { timeoutMs: 30_000, label: "AI model section" });
+  expect(String(await evalIn(app, `document.querySelector('[data-testid="coworker-model-settings"]')?.innerText ?? ""`))).toContain("AI model");
+  await waitFor(app, `(() => {
+    const button = document.querySelector('[data-testid="model-picker"] > button');
+    if (!(button instanceof HTMLElement)) return false;
+    button.click();
+    return true;
+  })()`, { label: "open the AI model picker" });
+  await waitFor(app, `Boolean(document.querySelector('input[aria-label="Search AI models"]'))`, {
+    timeoutMs: 120_000,
+    label: "AI model search",
+  });
+  await fill(app, 'input[aria-label="Search AI models"]', "big-pickle");
+  await clickButtonContaining(app, "big-pickle");
+  await waitFor(app, `(document.querySelector('[data-testid="model-picker"]')?.textContent ?? "").includes("Big Pickle")`, {
+    timeoutMs: 30_000,
+    label: "Big Pickle selected in Coworker settings",
+  });
+  const thinkingEffort = await evalIn(app, `(() => {
+    const section = document.querySelector('[data-testid="coworker-model-settings"]');
+    const labels = [...(section?.querySelectorAll("label") ?? [])].map((label) => label.textContent ?? "");
+    return {
+      hasSelect: Boolean(section?.querySelector("select")),
+      mentionsThinkingEffort: labels.some((label) => label.includes("Thinking effort")),
+      sectionText: section?.innerText ?? "",
+    };
+  })()`);
+  if (!isRecord(thinkingEffort)) throw new Error("Thinking effort facts were unavailable.");
+  // A model that exposes reasoning variants gets the Thinking effort control here and nowhere else;
+  // one that does not gets nothing, rather than a disabled control.
+  expect(thinkingEffort.hasSelect).toBe(thinkingEffort.mentionsThinkingEffort);
+  expect(String(thinkingEffort.sectionText)).toContain("thinking effort");
+  await waitFor(app, `(() => {
+    const back = document.querySelector('button[aria-label="Back to activity"]');
+    if (!(back instanceof HTMLElement)) return false;
+    back.click();
+    return true;
+  })()`, { label: "back to the Activity sidebar" });
+  await waitFor(app, `Boolean(document.querySelector('[data-testid="coworker-activity-summary"]'))`, { timeoutMs: 30_000, label: "Activity sidebar restored" });
+  evidence.recordAssertionEvidence(
+    "A coworker's AI model and thinking effort are configured in Coworker settings",
+    "The icon-only Coworker settings control opened the AI model section, where the searchable picker selected Big Pickle for Scout and the thinking-effort control appears only when the chosen model offers reasoning variants.",
+    true,
+  );
   const avatarMotion = await evalIn(app, `(() => {
     const avatar = document.querySelector('svg[aria-label="Scout avatar"].is-animated');
     if (!avatar) return null;
@@ -285,33 +421,6 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   await clickButtonContaining(app, "Scout");
   await waitForText(app, "Discussion with Scout", { timeoutMs: 30_000 });
 
-  await clickButtonContaining(app, "Thinking effort");
-  await waitForText(app, "Selected model", { timeoutMs: 30_000 });
-  await waitFor(app, `(() => {
-    const popover = document.querySelector('[data-testid="composer-model-popover"]');
-    return (popover?.textContent ?? "").includes("Big Pickle");
-  })()`, { timeoutMs: 30_000, label: "resolved conversation model" });
-  const composerModelControl = await evalIn(app, `(() => {
-    const control = document.querySelector('[data-testid="composer-model-control"]');
-    const popover = document.querySelector('[data-testid="composer-model-popover"]');
-    return {
-      controlVisible: control instanceof HTMLElement && control.offsetParent !== null,
-      popoverVisible: popover instanceof HTMLElement && popover.offsetParent !== null,
-      text: popover?.textContent ?? "",
-    };
-  })()`);
-  expect(composerModelControl).toMatchObject({
-    controlVisible: true,
-    popoverVisible: true,
-  });
-  expect(isRecord(composerModelControl) && String(composerModelControl.text)).toContain("Big Pickle");
-  evidence.recordAssertionEvidence(
-    "A coworker's model and thinking effort are available directly from the conversation composer",
-    "Scout's compact composer control opened over the discussion, showed the selected Big Pickle model, and kept model choice separate from global OpenWork account settings.",
-    true,
-  );
-  await clickButtonContaining(app, "Thinking effort");
-
   const footerPlacement = await evalIn(app, `(() => {
     const button = document.querySelector('button[title="OpenWork account and settings"]');
     if (!button) return null;
@@ -357,14 +466,24 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
         const resizer = document.querySelector('[data-testid="context-panel-resizer"]');
         return resizer instanceof HTMLElement && resizer.offsetParent !== null;
       })(),
+      visibleRailAvatars: [...document.querySelectorAll("aside nav svg.coworker-avatar")]
+        .filter((avatar) => avatar instanceof SVGElement && avatar.getClientRects().length > 0).length,
+      railSearchVisible: (() => {
+        const search = document.querySelector('input[aria-label="Search coworkers"]');
+        return search instanceof HTMLElement && search.offsetParent !== null;
+      })(),
       hasSettingsNavigation: sidebar.querySelectorAll('nav button').length,
+      navigationLabels: [...sidebar.querySelectorAll('nav button')].map((button) => button.textContent?.trim()),
     };
   })()`);
   expect(settingsLayout).toMatchObject({
     continuityToken: "settings-round-trip",
     coworkerWorkspaceDisplay: "none",
     hasVisibleCoworkerContextResizer: false,
+    visibleRailAvatars: 0,
+    railSearchVisible: false,
     hasSettingsNavigation: 4,
+    navigationLabels: ["General", "Account", "AI models", "AI & local setup"],
   });
   if (
     !isRecord(settingsLayout)
@@ -379,18 +498,25 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   expect(settingsLayout.sidebarLeft).toBeLessThan(3);
   expect(settingsLayout.rootWidth).toBeGreaterThan(900);
   expect(settingsLayout.sidebarWidth).toBeGreaterThanOrEqual(240);
-  const configurationText = await evalIn(app, "document.body.innerText");
-  expect(configurationText.toLowerCase()).toContain("local mode");
-  expect(configurationText.toLowerCase()).toContain("local engine");
-  expect(configurationText.toLowerCase()).toContain("opencode/big-pickle");
+  const configurationText = String(await evalIn(app, "document.body.innerText")).toLowerCase();
+  expect(configurationText).toContain("local mode");
+  expect(configurationText).toContain("ai & local setup");
+  expect(configurationText).toContain("opencode/big-pickle");
+  expect(configurationText).not.toContain("engine");
+  for (const destination of ["AI models", "AI & local setup"]) {
+    await clickButton(app, destination);
+    const pageText = String(await evalIn(app, "document.body.innerText")).toLowerCase();
+    expect(pageText, `${destination} copy`).not.toContain("engine");
+  }
+  expect(String(await evalIn(app, `document.querySelector('[data-testid="local-setup-card"]')?.innerText ?? ""`))).toContain("AI is ready");
   evidence.recordAssertionEvidence(
-    "Global OpenWork settings open as a full-window workspace with their own left navigation",
-    "The discreet bottom-left OpenWork control hid the mounted coworker workspace and replaced it with a full-width settings shell, a 252px left settings sidebar, four global destinations, Local mode, engine state, and Scout's selected Big Pickle model. No coworker context-panel resizer remained visible.",
+    "Global OpenWork settings open as a full-window workspace with their own left navigation and plain AI language",
+    "The discreet bottom-left OpenWork control hid the mounted coworker workspace, its rail, and its context-panel resizer, replacing them with a full-width settings shell, a 252px left settings sidebar, and four destinations named General, Account, AI models, and AI & local setup. The pages showed Local mode, AI is ready, and Scout's selected Big Pickle model without the word engine anywhere.",
     true,
   );
 
   await clickButtonContaining(app, "Back to coworkers");
-  await waitForText(app, "+ New local responsibility", { timeoutMs: 30_000 });
+  await waitForText(app, "Add responsibility", { timeoutMs: 30_000 });
   const returnedWorkspace = await evalIn(app, `(() => {
     const shell = document.querySelector('[data-testid="coworker-shell"]');
     const workspace = document.querySelector('[data-testid="coworker-workspace"]');
@@ -406,11 +532,28 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
     coworkerWorkspaceDisplay: "flex",
     selectedCoworker: true,
   });
-  await clickButton(app, "+ New local responsibility");
+  await clickButton(app, "Add responsibility");
+  await waitFor(app, `Boolean(document.querySelector('[data-testid="add-responsibility"]'))`, { timeoutMs: 30_000, label: "add responsibility form" });
+  const placementChoice = await evalIn(app, `(() => {
+    const radios = [...document.querySelectorAll('[data-testid="add-responsibility"] [role="radio"]')];
+    return radios.map((radio) => ({ label: radio.textContent?.trim(), checked: radio.getAttribute("aria-checked") }));
+  })()`);
+  expect(placementChoice).toEqual([
+    { label: "OpenWork Cloud", checked: "false" },
+    { label: "This Mac", checked: "true" },
+  ]);
   await fill(app, 'input[placeholder="Morning competitor report"]', "Local readiness check");
   await fill(app, 'textarea[placeholder="What should happen on every run?"]', "Reply with exactly LOCAL RESPONSIBILITY READY. Do not use tools.");
-  await clickButton(app, "Create locally");
+  await clickButton(app, "Create responsibility");
   await waitForText(app, "Local readiness check", { timeoutMs: 30_000 });
+  const responsibilityRow = String(await evalIn(app, `document.querySelector('[data-testid="responsibility-row"]')?.innerText ?? ""`));
+  expect(responsibilityRow).toContain("Local readiness check");
+  expect(responsibilityRow).toContain("This Mac");
+  expect(responsibilityRow).toContain("Every day at");
+  expect(responsibilityRow).toContain("Next:");
+  expect(responsibilityRow).not.toContain("Last:");
+  expect(String(await evalIn(app, `document.querySelector('[data-testid="responsibility-placement-note"]')?.textContent ?? ""`))).toContain("runs only while Open Coworker is open");
+  expect(await evalIn(app, `document.querySelectorAll('[data-testid="responsibility-placement-note"]').length`)).toBe(1);
 
   const createdResponsibilities = await invokeCoworker(app, "localResponsibilities.list", { slug: "scout" });
   expect(createdResponsibilities).toMatchObject({
@@ -423,8 +566,19 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
     }],
   });
 
-  await clickButton(app, "Run now");
-  await waitForText(app, "Run started as a native OpenWork thread.", { timeoutMs: 30_000 });
+  await waitFor(app, `(() => {
+    const menu = document.querySelector('button[aria-label="Actions for Local readiness check"]');
+    if (!(menu instanceof HTMLElement)) return false;
+    menu.click();
+    return true;
+  })()`, { label: "responsibility action menu" });
+  await waitFor(app, `(() => {
+    const item = [...document.querySelectorAll('[role="menuitem"]')].find((candidate) => candidate.textContent?.trim() === "Run now");
+    if (!(item instanceof HTMLElement) || item.disabled) return false;
+    item.click();
+    return true;
+  })()`, { label: "Run now menu item" });
+  await waitForText(app, "Run started.", { timeoutMs: 30_000 });
   const completedRun = await waitFor(app, `window.__COWORKER__.invoke("localResponsibilities.list", { slug: "scout" })
     .then((response) => {
       const run = response.ok ? response.result?.[0]?.latestRun : null;
@@ -440,22 +594,34 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
     threadId: expect.stringMatching(/^ses_/),
     error: "",
   });
-  const activitySummary = await waitFor(app, `(() => {
-    const panel = document.querySelector('[data-testid="coworker-activity-summary"]');
-    const text = panel?.textContent ?? "";
-    return text.includes("Ready") && text.includes("Last worked on this") && text.includes("Local readiness check")
-      ? text
-      : false;
+  const sidebarAfterRun = await waitFor(app, `(() => {
+    const summary = document.querySelector('[data-testid="coworker-activity-summary"]');
+    const recent = document.querySelector('[data-testid="coworker-recent-activity"]');
+    const row = document.querySelector('[data-testid="responsibility-row"]');
+    if (!(summary instanceof HTMLElement) || !(recent instanceof HTMLElement) || !(row instanceof HTMLElement)) return false;
+    const recentText = recent.innerText;
+    const rowText = row.innerText;
+    if (!recentText.includes("Local readiness check") || !recentText.includes("Succeeded") || !rowText.includes("Last: Succeeded")) return false;
+    // The activity read and the responsibility read poll independently; wait until both have settled.
+    const summaryLines = summary.innerText.split("\\n").map((line) => line.trim()).filter(Boolean);
+    if (summaryLines.length !== 1 || summaryLines[0] !== "Ready") return false;
+    return {
+      summaryLines,
+      recentEntries: recent.querySelectorAll("li").length,
+      recentText,
+      rowText,
+    };
   })()`, {
     timeoutMs: 30_000,
-    label: "right sidebar shows the completed local work",
+    label: "right sidebar records the completed local work",
   });
-  expect(activitySummary).toContain("Ready");
-  expect(activitySummary).toContain("Last worked on this");
-  expect(activitySummary).toContain("Local readiness check");
+  expect(sidebarAfterRun).toMatchObject({ summaryLines: ["Ready"], recentEntries: 1 });
+  if (!isRecord(sidebarAfterRun)) throw new Error("Sidebar facts after the run were unavailable.");
+  expect(String(sidebarAfterRun.recentText)).toContain("Responsibility");
+  expect(String(sidebarAfterRun.rowText)).toContain("Next:");
   evidence.recordAssertionEvidence(
-    "A local Responsibility runs through a native thread and leaves a clear record in the sidebar",
-    "The daily responsibility finished with a native ses_ thread id and no error. The right sidebar then showed Scout as ready and named Local readiness check as the most recent work without repeating the same fact.",
+    "A local Responsibility runs through a native thread and the sidebar records it once, in the right place",
+    "The daily responsibility finished with a native ses_ thread id and no error. Current activity then read just Ready, Recent listed Local readiness check as a succeeded responsibility exactly once, and the responsibility row showed its next occurrence and Last: Succeeded.",
     true,
   );
 });

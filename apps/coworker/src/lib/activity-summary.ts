@@ -4,8 +4,11 @@
  * unit-tested; the sidebar only renders what these return and never repeats
  * one fact in two places.
  */
-import type { LocalResponsibility } from "./bridge";
-import { RECENT_WORK_LIMIT, type CoworkerActivity, type RecentWork } from "./threads.ts";
+import type { LocalResponsibility } from "./bridge.ts";
+import type { CoworkerActivity, RecentWork } from "./threads.ts";
+
+/** Recent activity stays scannable: a handful of entries, never a log. */
+export const RECENT_WORK_LIMIT = 4;
 
 /** Compact relative time for the sidebar: "now", "12m", "3h", "2d"; empty when unknown. */
 export function relativeTime(timestamp: number, now: number = Date.now()): string {
@@ -63,7 +66,8 @@ export function describeOutcome(entry: Pick<RecentWork, "outcome">): string {
  * Finished assignments plus finished local responsibility runs, newest first,
  * bounded so the list stays scannable. A run that is still going is not
  * recent work, and the discussion thread never appears (it is filtered before
- * it reaches `activity.recent`).
+ * it reaches `activity.recent`). A responsibility run executes as a native
+ * thread, so the thread it produced is listed once, as the run.
  */
 export function mergeRecentWork(
   activity: Pick<CoworkerActivity, "recent"> | undefined,
@@ -84,7 +88,9 @@ export function mergeRecentWork(
       ...(run.error ? { error: run.error } : {}),
     });
   }
-  return [...(activity?.recent ?? []), ...runs]
+  const runThreads = new Set(runs.map((run) => run.threadId).filter((threadId): threadId is string => Boolean(threadId)));
+  const assignments = (activity?.recent ?? []).filter((entry) => !entry.threadId || !runThreads.has(entry.threadId));
+  return [...assignments, ...runs]
     .sort((left, right) => right.finishedAt - left.finishedAt)
     .slice(0, limit);
 }

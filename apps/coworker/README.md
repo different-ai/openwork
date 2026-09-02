@@ -113,12 +113,18 @@ OPENWORK_EVAL_ELECTRON_BINARY="apps/coworker/dist-electron/mac-arm64/Open Cowork
   pnpm evals:e2e open-coworker-local-first --local
 ```
 
-First run: choose OpenWork Cloud or local mode, create a coworker, pick its
-model, then give it work. Identity and memory are plain files under
-`~/.config/openwork/coworkers/`. A discreet OpenWork control in the bottom-left
-rail keeps account and engine settings available without taking space from the
-thread. The same panel reads the active engine's connected-provider catalog so
-OpenWork model and provider changes stay visible without a second settings store.
+First run: choose OpenWork Cloud or local mode, name a coworker, then give it
+work. Identity and memory are plain files under `~/.config/openwork/coworkers/`.
+The default right sidebar shows only what the selected coworker is doing, what
+it recently finished, and the responsibilities it owns; its AI model, thinking
+effort, memory files, and retirement live behind the icon-only Coworker
+settings control. A discreet OpenWork control in the bottom-left rail opens the
+full-window global settings (account, AI models, AI & local setup) without
+taking space from the thread. That surface reads the active connected-provider
+catalog, so OpenWork model and provider changes stay visible without a second
+settings store. User-facing copy says "AI model", "AI providers", and "AI is
+ready/unavailable"; the word "engine" is reserved for developer-facing
+documentation, diagnostics, and code.
 Existing or manually copied coworker directories are registered as native
 OpenWork workspaces automatically when the app loads them; the manual prepare
 action is retained only as recovery when registration fails.

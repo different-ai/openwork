@@ -157,6 +157,9 @@ export function ThreadsPanel({
   const [pendingAssignment, setPendingAssignment] = useState<AssignmentDraft>(assignmentDraft ?? null);
   const [queuedTurn, setQueuedTurn] = useState<QueuedTurn | null>(null);
   const [error, setError] = useState("");
+  // While the AI service is unavailable the header note already says so; a raw
+  // listing error underneath it would only repeat the fact in technical words.
+  const visibleError = runtime.engineManaged ? error : "";
 
   useEffect(() => {
     setDiscussionThreadId(coworker.conversationThreadId);
@@ -244,7 +247,7 @@ export function ThreadsPanel({
       <div className="flex h-full items-center justify-center p-8">
         <div className="max-w-sm space-y-4 text-center">
           <Empty>This coworker needs a workspace before it can start.</Empty>
-          {error ? <ErrorNote>{error}</ErrorNote> : null}
+          {visibleError ? <ErrorNote>{visibleError}</ErrorNote> : null}
           <Button
             variant="primary"
             onClick={() => {
@@ -297,7 +300,7 @@ export function ThreadsPanel({
     return (
       <AssignmentOverview
         coworker={coworker}
-        error={error}
+        error={visibleError}
         items={items}
         attentionBySession={attentionBySession}
         onOpen={setOpenThreadId}
@@ -314,7 +317,7 @@ export function ThreadsPanel({
     return (
       <DiscussionWelcome
         coworker={coworker}
-        error={error}
+        error={visibleError}
         assignmentCount={items.length}
         assignmentDraft={pendingAssignment}
         onShowAssignments={() => setView("assignments")}
@@ -419,10 +422,7 @@ function DiscussionWelcome({
   return (
     <section className="flex h-full min-h-0 flex-col bg-ink">
       <header className="flex items-center justify-between gap-4 border-b border-line px-6 py-3">
-        <div>
-          <h2 className="text-sm font-semibold text-snow">Discussion with {coworker.name}</h2>
-          <p className="text-xs text-mist">Talk naturally. Create an assignment only when there is an outcome to own.</p>
-        </div>
+        <h2 className="text-sm font-semibold text-snow">Discussion with {coworker.name}</h2>
         <Button variant="ghost" onClick={onShowAssignments}>Assignments{assignmentCount ? ` · ${assignmentCount}` : ""}</Button>
       </header>
       <div className="min-h-0 flex-1 overflow-y-auto px-6 py-8">
@@ -1071,15 +1071,12 @@ function MessageBubble({
     <article className="flex items-start gap-2.5" data-message-role="assistant">
       <CoworkerAvatar animated={active} color={coworker.avatarColor} glasses={coworker.avatarGlasses} name={coworker.name} size={30} />
       <div className="min-w-0 max-w-[88%] flex-1 pt-0.5">
-        <p className="mb-1.5 flex items-baseline gap-1.5 text-[11px] font-semibold text-mist">
-          <span>{coworker.name}</span>
+        <p className="mb-1.5 text-[11px] font-semibold text-mist">
+          {/* The answering model stays available on hover and to assistive tech, not as everyday copy. */}
+          <span title={message.model ? `Answered by ${message.model.providerId}/${message.model.modelId}` : undefined}>{coworker.name}</span>
           {message.model ? (
-            <span
-              className="truncate font-normal text-mist/70"
-              data-testid="coworker-reply-model"
-              title={`Answered by ${message.model.providerId}/${message.model.modelId}`}
-            >
-              · {message.model.modelId}
+            <span className="sr-only" data-testid="coworker-reply-model">
+              Answered by {message.model.providerId}/{message.model.modelId}
             </span>
           ) : null}
         </p>
