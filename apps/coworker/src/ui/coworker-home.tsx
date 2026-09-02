@@ -9,7 +9,7 @@ import { AvatarControls, CoworkerAvatar } from "@/ui/coworker-avatar";
 import { PersonalityPicker } from "@/ui/personality-picker";
 import { useWorkingSaying } from "@/ui/use-working-saying";
 import { CapabilitiesPanel } from "@/ui/capabilities";
-import { ActivityIcon, AppsIcon, Button, ErrorNote, Field, IconButton, MemoryIcon, SlidersIcon, StatusDot, inputClass } from "@/ui/kit";
+import { ActivityIcon, AppsIcon, Button, ErrorNote, IconButton, MemoryIcon, SlidersIcon, StatusDot } from "@/ui/kit";
 import { useResizablePanel } from "@/ui/use-resizable-panel";
 import type { PanelBounds } from "@/lib/panel-layout";
 import { MemoryPanel } from "@/ui/memory";
@@ -621,46 +621,54 @@ function CoworkerSettings({
     }
   }
 
+  const dirty = role.trim() !== coworker.role
+    || mission.trim() !== coworker.mission
+    || avatarColor !== coworker.avatarColor
+    || avatarGlasses !== coworker.avatarGlasses
+    || personality !== coworker.personality;
+  const flatInput = "w-full rounded-lg border border-transparent bg-white/[0.04] px-2.5 py-1.5 text-sm text-snow outline-none placeholder:text-mist/60 focus:border-spark/40";
+
   return (
-    <div className="space-y-5">
-      <section className="space-y-3 rounded-2xl border border-line bg-ink p-4" data-testid="coworker-profile-settings">
-        <h3 className="text-[10px] font-semibold uppercase tracking-[0.14em] text-mist">Profile</h3>
-        <div className="flex items-center gap-4">
-          <div className="avatar-stage flex size-24 shrink-0 items-center justify-center rounded-2xl border border-line">
-            <CoworkerAvatar
-              animated
-              color={avatarColor}
-              glasses={avatarGlasses}
-              name={coworker.name}
-              size={72}
-            />
-          </div>
-          <div className="min-w-0 flex-1">
-            <Field label="Name">
-              <input className={`${inputClass} bg-panel`} value={coworker.name} disabled />
-            </Field>
+    <div className="space-y-7">
+      {/* Who the coworker is, laid out as rows on the panel itself rather than as a card inside a card. */}
+      <section data-testid="coworker-profile-settings">
+        <div className="flex items-center gap-3.5 pb-3">
+          <CoworkerAvatar animated color={avatarColor} glasses={avatarGlasses} name={coworker.name} size={56} />
+          <div className="min-w-0">
+            <p className="truncate text-base font-semibold tracking-[-0.02em] text-snow">{coworker.name}</p>
+            <p className="truncate text-xs text-mist">{role.trim() || "Coworker"}</p>
           </div>
         </div>
-        <AvatarControls
-          color={avatarColor}
-          glasses={avatarGlasses}
-          onColorChange={setAvatarColor}
-          onGlassesChange={setAvatarGlasses}
-        />
-        <Field label="Role">
-          <input className={`${inputClass} bg-panel`} value={role} onChange={(event) => setRole(event.target.value)} />
-        </Field>
-        <Field label="Mission">
-          <textarea className={`${inputClass} min-h-20 resize-y bg-panel`} value={mission} onChange={(event) => setMission(event.target.value)} />
-        </Field>
-        <PersonalityPicker value={personality} seed={coworker.slug} onChange={setPersonality} />
-        <Button variant="primary" className="w-full" disabled={busy} onClick={() => void saveProfile()}>
-          {busy ? "Saving…" : "Save profile"}
-        </Button>
+        <h3 className="text-[10px] font-semibold uppercase tracking-[0.14em] text-mist">Profile</h3>
+        <div className="mt-1 divide-y divide-line/60">
+          <AvatarControls
+            layout="rows"
+            color={avatarColor}
+            glasses={avatarGlasses}
+            onColorChange={setAvatarColor}
+            onGlassesChange={setAvatarGlasses}
+          />
+          <label className="flex items-center gap-3 py-2.5">
+            <span className="w-20 shrink-0 text-xs text-mist">Role</span>
+            <input className={flatInput} value={role} placeholder="Research partner" onChange={(event) => setRole(event.target.value)} />
+          </label>
+          <label className="flex items-start gap-3 py-2.5">
+            <span className="w-20 shrink-0 pt-1.5 text-xs text-mist">Mission</span>
+            <textarea className={`${flatInput} min-h-16 resize-y`} value={mission} placeholder="What this coworker is here to move forward" onChange={(event) => setMission(event.target.value)} />
+          </label>
+          <PersonalityPicker layout="row" value={personality} seed={coworker.slug} onChange={setPersonality} />
+        </div>
+        {dirty ? (
+          <div className="flex justify-end pt-3">
+            <Button variant="primary" disabled={busy} onClick={() => void saveProfile()}>
+              {busy ? "Saving…" : "Save changes"}
+            </Button>
+          </div>
+        ) : null}
       </section>
 
-      <section ref={modelSectionRef} className="rounded-2xl border border-line bg-ink p-4" data-testid="coworker-model-settings">
-        <h3 className="mb-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-mist">AI model</h3>
+      <section ref={modelSectionRef} data-testid="coworker-model-settings">
+        <h3 className="mb-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-mist">AI model</h3>
         <ModelPicker
           runtime={runtime}
           session={session}
@@ -675,27 +683,25 @@ function CoworkerSettings({
         <p className="mt-2 text-xs leading-relaxed text-mist">{coworker.name} uses this AI model and thinking effort for every discussion, assignment, and responsibility.</p>
       </section>
 
-      <section className="flex items-center justify-between gap-3 rounded-2xl border border-line bg-ink px-4 py-3">
+      <section className="flex items-center justify-between gap-3 border-t border-line/60 pt-4">
         <div className="min-w-0">
           <h3 className="text-[10px] font-semibold uppercase tracking-[0.14em] text-mist">Memory</h3>
           <p className="mt-1 text-xs leading-relaxed text-mist">Plain Markdown files {coworker.name} maintains; read or edit them any time.</p>
         </div>
-        <Button variant="ghost" className="shrink-0 text-xs" onClick={onOpenMemory}>Open memory</Button>
+        <Button variant="ghost" className="shrink-0 text-xs" onClick={onOpenMemory}>Open</Button>
       </section>
 
       {error ? <ErrorNote>{error}</ErrorNote> : null}
 
-      <section className="rounded-2xl border border-rose/25 bg-rose/5 p-4">
-        <h3 className="text-sm font-semibold text-rose">Retire coworker</h3>
-        <p className="mt-1 text-xs leading-relaxed text-mist">
-          Moves {coworker.name}'s identity, memory, workspace files, and local responsibilities to a Retired folder
-          inside your coworkers home and removes the workspace from the roster. Nothing is deleted; you can restore
-          or permanently remove it later from the Add coworker screen.
-        </p>
+      <section className="border-t border-line/60 pt-4">
         {confirmingRetire ? (
-          <div className="mt-3 space-y-2">
-            <p className="text-xs font-medium text-rose">Retire {coworker.name}?</p>
-            <div className="flex gap-2">
+          <div className="space-y-2">
+            <p className="text-sm font-semibold text-rose">Retire {coworker.name}?</p>
+            <p className="text-xs leading-relaxed text-mist">
+              Identity, memory, workspace files, and local responsibilities move to a Retired folder inside your coworkers
+              home. Nothing is deleted; you can restore or permanently remove it later from the Add coworker screen.
+            </p>
+            <div className="flex gap-2 pt-1">
               <Button variant="ghost" className="flex-1" disabled={busy} onClick={() => setConfirmingRetire(false)}>Keep coworker</Button>
               <Button variant="danger" className="flex-1" disabled={busy || !confirmArmed} onClick={() => void retire()}>
                 {busy ? "Retiring…" : "Retire"}
@@ -703,7 +709,14 @@ function CoworkerSettings({
             </div>
           </div>
         ) : (
-          <Button variant="danger" className="mt-3 w-full" onClick={() => setConfirmingRetire(true)}>Retire…</Button>
+          <button
+            type="button"
+            className="flex w-full items-center justify-between gap-3 rounded-lg py-1.5 text-left text-sm text-rose transition-colors hover:bg-rose/8"
+            onClick={() => setConfirmingRetire(true)}
+          >
+            <span className="font-medium">Retire coworker…</span>
+            <span className="text-xs text-mist">Nothing is deleted</span>
+          </button>
         )}
       </section>
     </div>
