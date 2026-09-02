@@ -41,6 +41,8 @@ export default function App() {
   const [activityBySlug, setActivityBySlug] = useState<Record<string, CoworkerActivity>>({});
   const [liveActivityBySlug, setLiveActivityBySlug] = useState<Record<string, CoworkerActivity>>({});
   const [attentionBySlug, setAttentionBySlug] = useState<Record<string, string>>({});
+  /** Cloud responsibilities Den is running right now, per coworker: "Running in OpenWork Cloud". */
+  const [cloudRunBySlug, setCloudRunBySlug] = useState<Record<string, CoworkerActivity>>({});
   const pushedSessionKeyRef = useRef("");
   const settingsReturnFocusRef = useRef<HTMLElement | null>(null);
 
@@ -247,6 +249,7 @@ export default function App() {
   useEffect(() => {
     if (!session) {
       setAttentionBySlug({});
+      setCloudRunBySlug({});
       return;
     }
     let cancelled = false;
@@ -255,19 +258,34 @@ export default function App() {
       try {
         const list = await den.list();
         const next: Record<string, string> = {};
+        const running: Record<string, CoworkerActivity> = {};
         for (const coworker of coworkers) {
-          const attention = list.items.find(
+          const owned = list.items.filter(
             (entry) =>
-              entry.automation.state === "needs_attention" &&
-              (coworker.automations.includes(entry.automation.id) ||
-                Boolean(coworker.workspaceId && entry.revision.workspaceId === coworker.workspaceId)),
+              coworker.automations.includes(entry.automation.id) ||
+              Boolean(coworker.workspaceId && entry.revision.workspaceId === coworker.workspaceId),
           );
+          const attention = owned.find((entry) => entry.automation.state === "needs_attention");
           if (attention) {
             next[coworker.slug] =
               attention.automation.needsAttentionReason?.message || attention.automation.name;
           }
+          const active = owned.find((entry) =>
+            entry.latestRun !== null && ["queued", "claimed", "running"].includes(entry.latestRun.status),
+          );
+          if (active?.latestRun) {
+            running[coworker.slug] = {
+              state: "working",
+              label: active.latestRun.status === "running" ? "Running in OpenWork Cloud" : "Queued in OpenWork Cloud",
+              detail: active.automation.name,
+              updatedAt: active.latestRun.startedAt ?? active.latestRun.createdAt,
+            };
+          }
         }
-        if (!cancelled) setAttentionBySlug(next);
+        if (!cancelled) {
+          setAttentionBySlug(next);
+          setCloudRunBySlug(running);
+        }
       } catch {
         // The responsibilities rail presents connection errors in context.
       }
@@ -344,6 +362,7 @@ export default function App() {
     const attention = attentionBySlug[coworker.slug];
     const activity = activityBySlug[coworker.slug];
     const liveActivity = liveActivityBySlug[coworker.slug];
+    const cloudRun = cloudRunBySlug[coworker.slug];
     if (attention) {
       visibleActivityBySlug[coworker.slug] = {
         state: "attention",
@@ -354,6 +373,8 @@ export default function App() {
       };
     } else if (liveActivity) {
       visibleActivityBySlug[coworker.slug] = liveActivity;
+    } else if (cloudRun) {
+      visibleActivityBySlug[coworker.slug] = { ...cloudRun, ...(activity?.last ? { last: activity.last } : {}) };
     } else if (activity) {
       visibleActivityBySlug[coworker.slug] = activity;
     }

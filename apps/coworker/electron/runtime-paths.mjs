@@ -32,3 +32,16 @@ export function resolveBundledOpencodeBinary({
   }
   return null;
 }
+
+/**
+ * Where Electron keeps this app's profile (window state, renderer storage, the
+ * single-instance lock, server tokens). `COWORKER_USER_DATA_DIR` is the app's
+ * own override; `OPENWORK_ELECTRON_USERDATA` is the override the OpenWork
+ * desktop and the eval hosts already use for isolated profiles. Electron
+ * derives the default from the real account home, not `$HOME`, so without one
+ * of these every isolated launch would still share one profile.
+ */
+export function resolveUserDataDir({ env, appDataDir, appIdentifier }) {
+  const explicit = env.COWORKER_USER_DATA_DIR?.trim() || env.OPENWORK_ELECTRON_USERDATA?.trim();
+  return explicit || path.join(appDataDir, appIdentifier);
+}
