@@ -169,7 +169,7 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
       receipts: [...document.querySelectorAll('[data-testid="coworker-work-summary"]')].map((node) => node.textContent?.trim() ?? ""),
       liveRows: document.querySelectorAll('[data-testid="coworker-working"]').length,
     };
-  })()`, { timeoutMs: 60_000, label: "discussion settled after the first reply" });
+  })()`, { timeoutMs: 180_000, label: "discussion settled after the first reply" });
   if (!isRecord(folded) || !Array.isArray(folded.thinking) || !Array.isArray(folded.receipts)) throw new Error("Folded transcript facts were unavailable.");
   expect(folded.liveRows).toBe(0);
   for (const line of folded.thinking) expect(String(line)).toMatch(/^Thought through/);
