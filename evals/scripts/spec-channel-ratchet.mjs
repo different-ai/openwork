@@ -63,7 +63,7 @@ if (invokedDirectly) {
   } else {
     const errors = compareBaseline(current, readBaseline(), files);
     if (errors.length > 0) {
-      console.error(`spec-channel-ratchet failed:\n- ${errors.join("\n- ")}`);
+      console.error(`spec-channel-ratchet failed:\n- ${errors.join("\n- ")}\nFix with: pnpm --dir evals exec node scripts/spec-channel-ratchet.mjs --print-baseline > evals/specs/channel-ratchet.baseline.json`);
       process.exitCode = 1;
     } else {
       console.log(`spec-channel-ratchet: ${files.size} e2e specs checked`);

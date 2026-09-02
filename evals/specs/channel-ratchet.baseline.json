@@ -19,7 +19,7 @@
   "chat-loading-shimmer.e2e.test.ts": 3,
   "chat-render-cycle-stability.e2e.test.ts": 7,
   "chat-survives-flaky-den-link.e2e.test.ts": 17,
-  "chat-tool-details-expand.e2e.test.ts": 5,
+  "chat-tool-details-expand.e2e.test.ts": 13,
   "clamp-html-errors.e2e.test.ts": 15,
   "cloud-mcp-provider-capability-submit.e2e.test.ts": 3,
   "cloud-model-infra.e2e.test.ts": 6,
