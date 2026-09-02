@@ -40,6 +40,7 @@ import { cache } from "../../cache.js"
 import { appLogger } from "../../observability/logger.js"
 import { getAuthRequestEmail, getSingleOrgEmailSignupPolicyViolation, type SingleOrgEmailSignupPolicyViolation } from "../../single-org-signup-policy.js"
 import { samlResponsePolicyMiddleware } from "../../sso-saml-response-middleware.js"
+import { authorizeOrganizationSsoCallback, failOrganizationSsoTestIntent } from "../../sso-test-lifecycle.js"
 import { getRequestSession, readSignedSessionCookieToken, revokeBearerSession, type AuthContextVariables } from "../../session.js"
 import { checkRateLimit } from "../../utils/rate-limit.js"
 import { registerDesktopAuthRoutes } from "./desktop-handoff.js"
@@ -601,6 +602,35 @@ async function isInvitationSignupAllowed(request: Request) {
   return email ? hasPendingInvitationForEmail(invite, normalizeLoginEmail(email)) : false
 }
 
+async function getOrganizationSsoCallbackRequest(request: Request) {
+  const url = new URL(request.url)
+  const proxyPath = getBetterAuthProxyPath(url.pathname)
+  const oidcPrefix = "/sso/callback/"
+  const samlPrefix = "/sso/saml2/sp/acs/"
+  if (proxyPath.startsWith(oidcPrefix)) {
+    return {
+      providerId: decodeURIComponent(proxyPath.slice(oidcPrefix.length)),
+      stateIdentifier: url.searchParams.get("state"),
+    }
+  }
+  if (!proxyPath.startsWith(samlPrefix)) return null
+
+  let stateIdentifier = url.searchParams.get("RelayState")
+  if (!stateIdentifier && request.method.toUpperCase() === "POST") {
+    const contentType = request.headers.get("content-type")?.toLowerCase() ?? ""
+    if (contentType.includes("application/x-www-form-urlencoded")) {
+      stateIdentifier = new URLSearchParams(await request.clone().text()).get("RelayState")
+    } else if (contentType.includes("application/json")) {
+      const body: unknown = await request.clone().json().catch(() => null)
+      stateIdentifier = isRecord(body) && typeof body.RelayState === "string" ? body.RelayState : null
+    }
+  }
+  return {
+    providerId: decodeURIComponent(proxyPath.slice(samlPrefix.length)),
+    stateIdentifier,
+  }
+}
+
 async function handleAuthRequest(c: Context) {
   const request = c.req.raw
   const observabilityRequest = request.method === "POST"
@@ -626,6 +656,16 @@ async function handleAuthRequest(c: Context) {
       await recordOAuthTokenFailure(oauthTokenRateLimit.failureKey, authRequest, checkRateLimit)
     }
     return authRequest
+  }
+  const ssoCallbackRequest = await getOrganizationSsoCallbackRequest(authRequest)
+  const ssoCallbackAuthorization = ssoCallbackRequest
+    ? await authorizeOrganizationSsoCallback(ssoCallbackRequest)
+    : null
+  if (ssoCallbackAuthorization && !ssoCallbackAuthorization.ok) {
+    return Response.json({
+      error: "sso_not_enabled",
+      message: ssoCallbackAuthorization.message,
+    }, { status: 403 })
   }
   const invitationSignupAllowed = await isInvitationSignupAllowed(authRequest)
   const initialAdminBootstrapGrant = await getInitialAdminBootstrapGrantFromRequest(authRequest)
@@ -687,6 +727,9 @@ async function handleAuthRequest(c: Context) {
   try {
     response = await auth.handler(authRequest)
   } catch (error) {
+    if (ssoCallbackAuthorization?.ok && ssoCallbackAuthorization.mode === "test") {
+      await failOrganizationSsoTestIntent(ssoCallbackAuthorization.intentId, "authentication")
+    }
     const requestId = c.get("requestId")
     logger.error("better auth handler failed", {
       auth_session_source: "better_auth_handler",
@@ -696,6 +739,13 @@ async function handleAuthRequest(c: Context) {
       error,
     })
     throw error
+  }
+  if (ssoCallbackAuthorization?.ok && ssoCallbackAuthorization.mode === "test") {
+    const location = response.headers.get("location")
+    const failed = response.status >= 400 || (location ? new URL(location, env.betterAuthUrl).searchParams.has("error") : false)
+    if (failed) {
+      await failOrganizationSsoTestIntent(ssoCallbackAuthorization.intentId, "authentication")
+    }
   }
   if (initialAdminBootstrapAuthorization) {
     response = await completeInitialAdminBootstrapSignup({

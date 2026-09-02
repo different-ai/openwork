@@ -161,7 +161,9 @@ export type DenOrgSsoConnection = {
   kind: "oidc" | "saml";
   issuer: string;
   domain: string;
-  status: string;
+  status: "disabled" | "enabled";
+  testStatus: "untested" | "testing" | "succeeded" | "failed";
+  testExpiresAt: string | null;
   signInPath: string;
   signInUrl: string;
   redirectUrl: string;
@@ -1164,6 +1166,7 @@ export function parseOrgSsoPayload(payload: unknown): {
         const issuer = asString(rawConnection.issuer);
         const domain = asString(rawConnection.domain);
         const status = asString(rawConnection.status);
+        const testStatus = asString(rawConnection.testStatus);
         const signInPath = asString(rawConnection.signInPath);
         const signInUrl = asString(rawConnection.signInUrl);
         const redirectUrl = asString(rawConnection.redirectUrl);
@@ -1173,7 +1176,7 @@ export function parseOrgSsoPayload(payload: unknown): {
         const rawSaml = isRecord(rawConnection.saml) ? rawConnection.saml : null;
         const tokenEndpointAuthentication = asString(rawOidc?.tokenEndpointAuthentication);
 
-        if (!id || !providerId || !issuer || !domain || !status || !signInPath || !signInUrl || !redirectUrl || !domainVerificationHost || !domainVerificationDnsName || (kind !== "oidc" && kind !== "saml")) {
+        if (!id || !providerId || !issuer || !domain || (status !== "disabled" && status !== "enabled") || (testStatus !== "untested" && testStatus !== "testing" && testStatus !== "succeeded" && testStatus !== "failed") || !signInPath || !signInUrl || !redirectUrl || !domainVerificationHost || !domainVerificationDnsName || (kind !== "oidc" && kind !== "saml")) {
           return null;
         }
 
@@ -1184,6 +1187,8 @@ export function parseOrgSsoPayload(payload: unknown): {
           issuer,
           domain,
           status,
+          testStatus,
+          testExpiresAt: asIsoString(rawConnection.testExpiresAt),
           signInPath,
           signInUrl,
           redirectUrl,

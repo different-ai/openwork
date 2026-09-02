@@ -69,6 +69,12 @@ import {
 } from "./sso-saml-policy.js";
 import { SSO_DOMAIN_VERIFICATION_TOKEN_PREFIX } from "./sso-domain-verification.js";
 import {
+  authorizeOrganizationSsoSignIn,
+  completeOrganizationSsoTestIntent,
+  failOrganizationSsoTestIntent,
+  getSsoTestIntentIdFromCallbackUrl,
+} from "./sso-test-lifecycle.js";
+import {
   getOrganizationContextForUser,
   listAssignableRoles,
   reconcilePendingInvitationsForUser,
@@ -579,6 +585,17 @@ function getEnterpriseAuthRedirectUrl(input: {
   return url.toString();
 }
 
+function removeSsoTestSessionCookie(ctx: Parameters<Parameters<typeof createAuthMiddleware>[0]>[0]) {
+  const headers = ctx.context.responseHeaders;
+  if (!headers) return;
+  const sessionCookiePrefix = `${ctx.context.authCookies.sessionToken.name}=`;
+  const cookies = headers.getSetCookie().filter((cookie) => !cookie.startsWith(sessionCookiePrefix));
+  headers.delete("set-cookie");
+  for (const cookie of cookies) {
+    headers.append("set-cookie", cookie);
+  }
+}
+
 export const auth = betterAuth({
   baseURL: env.betterAuthUrl,
   secret: env.betterAuthSecret,
@@ -790,6 +807,22 @@ export const auth = betterAuth({
             }
           }
         }
+
+        if (ctx.path === "/sign-in/sso") {
+          const token = await ctx.getSignedCookie(ctx.context.authCookies.sessionToken.name, ctx.context.secret).catch(() => null);
+          const session = typeof token === "string" ? await cache.auth.session(token) : null;
+          const authorization = await authorizeOrganizationSsoSignIn({
+            providerId: readStringProperty(ctx.body, "providerId"),
+            organizationSlug: readStringProperty(ctx.body, "organizationSlug"),
+            domain: readStringProperty(ctx.body, "domain"),
+            email: readStringProperty(ctx.body, "email"),
+            callbackUrl: readStringProperty(ctx.body, "callbackURL"),
+            userId: session?.user.id ?? null,
+          });
+          if (!authorization.ok) {
+            throw new APIError("FORBIDDEN", { message: authorization.message });
+          }
+        }
       }
 
       if (ctx.path !== "/sign-in/email" && ctx.path !== "/sign-up/email") {
@@ -831,6 +864,31 @@ export const auth = betterAuth({
             orgMembershipId: member.id,
           });
         }
+        return;
+      }
+
+      if (ctx.path === "/sso/callback/:providerId" || ctx.path === "/sso/saml2/sp/acs/:providerId") {
+        const callbackUrl = ctx.context.responseHeaders?.get("location") ?? null;
+        const intentId = getSsoTestIntentIdFromCallbackUrl(callbackUrl);
+        const providerId = readStringProperty(ctx.params, "providerId");
+        if (!intentId || !providerId) {
+          return;
+        }
+
+        const newSession = ctx.context.newSession;
+        if (!newSession) {
+          await failOrganizationSsoTestIntent(intentId, "authentication");
+          return;
+        }
+
+        await completeOrganizationSsoTestIntent({
+          intentId,
+          providerId,
+          authenticatedUserId: newSession.user.id,
+        });
+        await ctx.context.internalAdapter.deleteSession(newSession.session.token);
+        await cache.auth.revokeSession(newSession.session.token);
+        removeSsoTestSessionCookie(ctx);
         return;
       }
 

@@ -90,6 +90,54 @@ test.skipIf(!localPlacement || !mysqlOpen)(title, async ({ evidence, place }) =>
   });
   expect(registered.response.ok, `register SSO: HTTP ${registered.response.status} ${registered.text.slice(0, 300)}`).toBe(true);
 
+  const orgHeaders = {
+    authorization: `Bearer ${org.admin.token}`,
+    cookie: sessionCookie,
+    "x-openwork-org-id": org.orgId,
+  };
+  const createdTest = await denFetch(den.ref, "/v1/sso/test", {
+    method: "POST",
+    headers: orgHeaders,
+    body: JSON.stringify({}),
+  });
+  const testUrl = readStringField(createdTest.body, "testUrl");
+  expect(testUrl, `create SSO test: HTTP ${createdTest.response.status} ${createdTest.text.slice(0, 300)}`).toBeTruthy();
+
+  await using configurationBrowser = await chrome({
+    name: "sso-invite-configuration-test",
+    startUrl: new URL(testUrl).origin,
+    headless: true,
+  });
+  const configurationCookieSeparator = sessionCookie.indexOf("=");
+  const configurationCookie = await configurationBrowser.client.send("Network.setCookie", {
+    name: sessionCookie.slice(0, configurationCookieSeparator),
+    value: sessionCookie.slice(configurationCookieSeparator + 1),
+    url: new URL(testUrl).origin,
+    httpOnly: true,
+  });
+  expect(configurationCookie.success).toBe(true);
+  await navigate(configurationBrowser.client, testUrl);
+  await waitFor(configurationBrowser, `/authentication test finished/i.test(document.body?.innerText ?? "")`, {
+    timeoutMs: 90_000,
+    label: "successful SSO configuration test",
+  });
+
+  let configurationTestStatus = "";
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const current = await denFetch(den.ref, "/v1/sso", { headers: orgHeaders });
+    const connection = isRecord(current.body) && isRecord(current.body.connection) ? current.body.connection : null;
+    configurationTestStatus = readStringField(connection, "testStatus");
+    if (configurationTestStatus === "succeeded") break;
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  expect(configurationTestStatus).toBe("succeeded");
+  const enabled = await denFetch(den.ref, "/v1/sso/enable", {
+    method: "POST",
+    headers: orgHeaders,
+    body: JSON.stringify({}),
+  });
+  expect(enabled.response.status, enabled.text).toBe(204);
+
   const invited = await denFetch(den.ref, "/v1/invitations", {
     method: "POST",
     headers: { authorization: `Bearer ${org.admin.token}` },
