@@ -1011,3 +1011,11 @@ export async function taskActivity(seed: Seed) {
   await arrangeControl(seed, app, "eval.task_activity.seed");
   return { app, workspace, session };
 }
+
+export async function unfinishedTools(seed: Seed) {
+  const app = await seed.desktop({ name: "unfinished-tool-lifecycle" });
+  const workspace = await seed.workspace(app, seed.tmpPath("unfinished-tool-lifecycle"));
+  const session = await seedSessionRetry(seed, app);
+  await arrangeControl(seed, app, "eval.session_lifecycle.seed_unfinished_tools", { lifecycle: "active" });
+  return { app, workspace, session };
+}
