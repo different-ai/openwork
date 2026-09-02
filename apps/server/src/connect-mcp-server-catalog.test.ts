@@ -204,6 +204,7 @@ describe("OpenWork Connect MCP server catalog", () => {
       url: `https://api.openworklabs.com/mcp/agent/connections/${directId}`,
       enabled: true,
       headers: { Authorization: "Bearer member-token" },
+      oauth: false,
     });
     expect(runtime.mcp?.["openwork-direct-revoked-abc123"]).toBeUndefined();
     expect(runtime.mcp?.["user-server"]).toEqual({ type: "remote", url: "https://user.example/mcp" });
@@ -223,6 +224,23 @@ describe("OpenWork Connect MCP server catalog", () => {
     expect(revoked.directNames).toEqual([]);
     expect(revoked.removedNames).toEqual([directName]);
     expect((await readRuntimeOpencodeConfig(config, "ws_1")).mcp?.[directName]).toBeUndefined();
+  });
+
+  test("a flagged connection is not projected when the Cloud entry carries no member credential", async () => {
+    const config = await fixtureConfig();
+    const directId = "emc_01direct";
+    const result = await reconcileOpenWorkConnectMcpServers({
+      config,
+      workspace: config.workspaces[0]!,
+      cloudMcp: { type: "remote", url: "https://api.openworklabs.com/mcp/agent" },
+      appHostAuthorization: "Bearer private-app-host-token",
+      fetcher: indexFetcher([], [
+        { connectionId: directId, name: "Linear", description: null, url: `https://api.openworklabs.com/mcp/agent/connections/${directId}`, exposeDirectly: true },
+      ]),
+    });
+    expect(result.status).toBe("synced");
+    expect(result.directNames).toEqual([]);
+    expect(Object.keys((await readRuntimeOpencodeConfig(config, "ws_1")).mcp ?? {})).toEqual([]);
   });
 
   test("an unavailable index purges directly exposed entries instead of trusting a stale catalog", async () => {

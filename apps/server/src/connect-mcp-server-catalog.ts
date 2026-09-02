@@ -190,20 +190,25 @@ function modelFacingHeaders(cloudMcp: Record<string, unknown>): Record<string, s
  * Model-facing runtime entries for the directly exposed connections in an
  * index. They reuse the ordinary member credential already carried by the
  * `openwork-cloud` entry; the private App-host credential never leaves the
- * App host.
+ * App host. `oauth: false` matches the `openwork-cloud` entry so an expired
+ * bearer token during rotation yields a plain 401 instead of the engine
+ * starting an interactive OAuth flow. Without a member credential there is
+ * nothing to project.
  */
 export function directConnectMcpRuntimeEntries(
   cloudMcp: Record<string, unknown>,
   index: OpenWorkConnectMcpServerIndex,
 ): Record<string, Record<string, unknown>> {
   const headers = modelFacingHeaders(cloudMcp);
+  if (!headers) return {};
   return Object.fromEntries(index.servers
     .filter((server) => server.exposeDirectly)
     .map((server) => [connectDirectMcpRuntimeName(server), {
       type: "remote",
       url: server.url,
       enabled: cloudMcp.enabled !== false,
-      ...(headers ? { headers } : {}),
+      headers,
+      oauth: false,
     }]));
 }
 

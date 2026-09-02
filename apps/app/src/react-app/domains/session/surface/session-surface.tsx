@@ -38,6 +38,7 @@ import {
   recordInspectorEvent,
 } from "@/app/lib/app-inspector";
 import { useControlAction, type OpenworkControlAction } from "@/react-app/shell/control/control-provider";
+import { isConnectDirectMcpServerName } from "@/react-app/domains/connections/cloud-mcp-user-state";
 import { attemptSilentMcpReauth } from "@/react-app/domains/connections/mcp-silent-reauth";
 import type {
   CloudMcpSubmissionGateState,
@@ -2303,12 +2304,16 @@ export function SessionSurface(props: SessionSurfaceProps) {
       })()
       : Promise.resolve({});
     const [response, localStatuses] = await Promise.all([localMcpPromise, localStatusesPromise]);
-    const localServers = (response.items ?? []).map((entry) => ({
-      name: entry.name,
-      config: entry.config as McpServerEntry["config"],
-      source: entry.source,
-      origin: entry.name === "openwork-cloud" ? "openwork-connect" : "local",
-    } satisfies McpServerEntry));
+    // Directly exposed org connections are already listed through their org
+    // connection entry; their projected runtime rows must not appear twice.
+    const localServers = (response.items ?? [])
+      .filter((entry) => !isConnectDirectMcpServerName(entry.name))
+      .map((entry) => ({
+        name: entry.name,
+        config: entry.config as McpServerEntry["config"],
+        source: entry.source,
+        origin: entry.name === "openwork-cloud" ? "openwork-connect" : "local",
+      } satisfies McpServerEntry));
 
     void connectPromise.then((connect) => {
       if (mcpConnectPushRef.current !== pushId) return;

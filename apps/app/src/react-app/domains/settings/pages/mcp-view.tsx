@@ -69,6 +69,7 @@ import { t } from "../../../../i18n";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ConfirmModal } from "../../../design-system/modals/confirm-modal";
+import { isConnectDirectMcpServerName } from "../../connections/cloud-mcp-user-state";
 import { AddMcpModal } from "../../connections/modals/add-mcp-modal";
 import type { McpConnectResult } from "../../connections/store";
 import { ClaudePluginImportModal } from "../../connections/modals/claude-plugin-import-modal";
@@ -849,11 +850,13 @@ export function McpView(props: McpViewProps) {
     });
 
   // Auto-configured built-ins like openwork-cloud remain active but hidden from
-  // Your apps until Show hidden reveals the row for disable/remove.
+  // Your apps until Show hidden reveals the row for disable/remove. Projected
+  // direct org connections are shown through their OpenWork Connect card.
   const visibleMcpServers = inventoryState === "all" && (filter === "all" || filter === "mcp")
     ? showHidden
       ? props.mcpServers
       : props.mcpServers.filter((entry) => {
+          if (isConnectDirectMcpServerName(entry.name)) return false;
           const match = resolveQuickConnectMatch(entry.name);
           return !match || !isOpenWorkExtensionHidden(match);
         })
@@ -904,6 +907,7 @@ export function McpView(props: McpViewProps) {
   };
 
   const hiddenCount = quickConnectList.filter((entry) => isOpenWorkExtensionHidden(entry)).length +
+    props.mcpServers.filter((entry) => isConnectDirectMcpServerName(entry.name)).length +
     (props.installedSkills ?? []).filter((skill) => isOpenWorkExtensionHidden(getSkillHiddenId(skill))).length +
     (props.installedPlugins ?? []).filter((plugin) => isOpenWorkExtensionHidden(`plugin:${plugin.pluginId}`)).length;
   const policyHiddenBuiltInCount = props.builtInExtensionsDisabled
