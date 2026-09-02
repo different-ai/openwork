@@ -14,6 +14,7 @@ import {
   type HeadlessThreadClient,
 } from "@openwork/headless-threads";
 import { z } from "zod";
+import { RECENT_WORK_LIMIT } from "./activity-summary.ts";
 import { readCloudProviderSyncStatus, type CloudProviderSyncStatus } from "./den.ts";
 
 export type ThreadListItem = {
@@ -42,8 +43,6 @@ export type RecentWork = {
   /** Failure reason, when the run recorded one. */
   error?: string;
 };
-
-export const RECENT_WORK_LIMIT = 4;
 
 export type CoworkerActivity = {
   state: "ready" | "working" | "retrying" | "attention" | "recent" | "offline";
