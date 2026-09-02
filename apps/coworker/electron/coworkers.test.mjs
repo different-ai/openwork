@@ -73,6 +73,7 @@ test("createCoworker writes the minimal coworker filesystem representation", asy
   assert.equal(coworker.modelVariant, "");
   assert.equal(coworker.avatarColor, "violet");
   assert.equal(coworker.avatarGlasses, "square");
+  assert.equal(coworker.personality, "neutral", "personality defaults to neutral");
   assert.deepEqual(coworker.automations, []);
 
   const soul = await readFile(path.join(coworker.path, "soul.md"), "utf8");
@@ -138,9 +139,16 @@ test("avatar settings fall back when stored or patched values are unknown", asyn
   const updated = await updateCoworker(coworkersDir, "classic", {
     avatarColor: "unknown",
     avatarGlasses: "unknown",
+    personality: "sarcastic-pirate",
   });
   assert.equal(updated.avatarColor, "blue");
   assert.equal(updated.avatarGlasses, "round");
+  assert.equal(updated.personality, "neutral", "unknown personalities fall back to neutral");
+  const voiced = await updateCoworker(coworkersDir, "classic", { personality: "chef" });
+  assert.equal(voiced.personality, "chef");
+  assert.equal((await getCoworker(coworkersDir, "classic")).personality, "chef", "personality persists in coworker.md");
+  const silent = await createCoworker(coworkersDir, { name: "Quiet", personality: "none" });
+  assert.equal(silent.personality, "none");
 });
 
 test("memory files are listed and editable through the store", async () => {

@@ -47,6 +47,15 @@ The coworker directory is registered as an ordinary OpenWork workspace, so:
   do not pretend to be always-on Cloud work.
 - **Skills and MCP** come for free from the same engine configuration layering
   the OpenWork desktop uses.
+- **Personality is a voice, not a behavior.** Each coworker can have a
+  personality (`coworker.md` `personality`: none, neutral, warm, dry,
+  curious, craftsman, librarian, chef, gardener, navigator, detective).
+  It only changes what the interface says while the coworker is working —
+  the rail label, the Now card note, and the quiet moments in the thread —
+  from a pre-written set of sayings in `src/lib/personalities.ts` that
+  rotate deterministically per coworker and thread. It never changes how the
+  coworker works or writes, and truthful states (Needs you, Retrying, tool
+  labels) always win. "None" keeps plain status text everywhere.
 - **Retirement is recoverable.** Retiring a coworker deregisters its workspace
   and moves the whole home to `~/.config/openwork/coworkers/.retired/<slug>-<timestamp>/`
   with `retiredSlug`/`retiredAt` recorded in `coworker.md`. Nothing is deleted;
