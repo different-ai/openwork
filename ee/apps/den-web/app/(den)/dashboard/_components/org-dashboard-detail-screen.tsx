@@ -3,17 +3,19 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { ArrowDown, ArrowLeft, ArrowUp, Check, Globe, LayoutDashboard, Loader2, Plus, Trash2, Users } from "lucide-react";
+import { ArrowDown, ArrowLeft, ArrowUp, Check, Globe, LayoutDashboard, Loader2, Pencil, Plus, Trash2, Users } from "lucide-react";
 import { DashboardPageTemplate } from "../../_components/ui/dashboard-page-template";
 import { DenButton } from "../../_components/ui/button";
 import { DenInput } from "../../_components/ui/input";
 import { DenNotice } from "../../_components/ui/notice";
 import { DenSelect } from "../../_components/ui/select";
 import { DenSwitch } from "../../_components/ui/switch";
+import { DenTextarea } from "../../_components/ui/textarea";
 import { getManagedDashboardsRoute } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { useMcpConnections } from "./mcp-connections-data";
 import { connectionCanListMcpApps } from "./dashboard-mcp-app-catalog";
+import { formatDashboardAppInput, parseDashboardAppInput } from "./dashboard-app-input";
 import { OrgMemberIdentity } from "./org-member-identity";
 import {
   type ConnectionMcpAppCatalogItem,
@@ -42,6 +44,7 @@ export function OrgDashboardDetailScreen({ dashboardId }: { dashboardId: string 
   const deleteMutation = useDeleteDashboard();
   const [nameDraft, setNameDraft] = useState<string | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [editingIndex, setEditingIndex] = useState<number | null>(null);
 
   const dashboard = dashboardQuery.data ?? null;
   const elements = dashboard?.elements ?? [];
@@ -49,7 +52,7 @@ export function OrgDashboardDetailScreen({ dashboardId }: { dashboardId: string 
   const busy = updateMutation.isPending || deleteMutation.isPending;
 
   function saveElements(next: DashboardElement[]) {
-    updateMutation.mutate({ dashboardId, elements: next });
+    return updateMutation.mutateAsync({ dashboardId, elements: next });
   }
 
   function moveElement(index: number, direction: -1 | 1) {
@@ -58,7 +61,7 @@ export function OrgDashboardDetailScreen({ dashboardId }: { dashboardId: string 
     const next = [...elements];
     const [moved] = next.splice(index, 1);
     next.splice(target, 0, moved);
-    saveElements(next);
+    void saveElements(next);
   }
 
   async function saveName() {
@@ -165,7 +168,7 @@ export function OrgDashboardDetailScreen({ dashboardId }: { dashboardId: string 
                     size="sm"
                     checked={element.organizationAutoLaunch === true}
                     disabled={busy}
-                    onChange={(checked) => saveElements(elements.map((current, currentIndex) => (
+                    onChange={(checked) => void saveElements(elements.map((current, currentIndex) => (
                       currentIndex === index
                         ? { ...current, organizationAutoLaunch: checked || undefined }
                         : current
@@ -174,6 +177,15 @@ export function OrgDashboardDetailScreen({ dashboardId }: { dashboardId: string 
                   />
                 </div>
                 <div className="flex shrink-0 items-center gap-1">
+                  <button
+                    type="button"
+                    aria-label={`Edit ${element.title}`}
+                    disabled={busy}
+                    onClick={() => setEditingIndex(index)}
+                    className="rounded-lg p-1.5 text-gray-400 transition hover:bg-gray-50 hover:text-gray-900 disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    <Pencil className="h-4 w-4" aria-hidden />
+                  </button>
                   <button
                     type="button"
                     aria-label={`Move ${element.title} up`}
@@ -196,7 +208,7 @@ export function OrgDashboardDetailScreen({ dashboardId }: { dashboardId: string 
                     type="button"
                     aria-label={`Remove ${element.title}`}
                     disabled={busy}
-                    onClick={() => saveElements(elements.filter((_, current) => current !== index))}
+                    onClick={() => void saveElements(elements.filter((_, current) => current !== index))}
                     className="rounded-lg p-1.5 text-gray-400 transition hover:bg-red-50 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-40"
                   >
                     <Trash2 className="h-4 w-4" aria-hidden />
@@ -237,11 +249,127 @@ export function OrgDashboardDetailScreen({ dashboardId }: { dashboardId: string 
           existingKeys={existingKeys}
           onClose={() => setPickerOpen(false)}
           onAdd={(element) => {
-            if (!existingKeys.has(elementKey(element))) saveElements([...elements, element]);
+            if (!existingKeys.has(elementKey(element))) void saveElements([...elements, element]);
+          }}
+        />
+      ) : null}
+
+      {editingIndex !== null && elements[editingIndex] ? (
+        <EditDashboardAppDialog
+          element={elements[editingIndex]}
+          isSaving={updateMutation.isPending}
+          saveError={updateMutation.error}
+          onClose={() => setEditingIndex(null)}
+          onSave={async (nextElement) => {
+            await saveElements(elements.map((element, index) => (
+              index === editingIndex ? nextElement : element
+            )));
+            setEditingIndex(null);
           }}
         />
       ) : null}
     </DashboardPageTemplate>
+  );
+}
+
+function EditDashboardAppDialog({
+  element,
+  isSaving,
+  saveError,
+  onClose,
+  onSave,
+}: {
+  element: DashboardElement;
+  isSaving: boolean;
+  saveError: unknown;
+  onClose: () => void;
+  onSave: (element: DashboardElement) => Promise<void>;
+}) {
+  const [title, setTitle] = useState(element.title);
+  const [argumentsText, setArgumentsText] = useState(() => formatDashboardAppInput(element.launchArguments));
+  const [argumentsError, setArgumentsError] = useState<string | null>(null);
+
+  async function save() {
+    const trimmedTitle = title.trim();
+    if (!trimmedTitle) return;
+    const parsed = parseDashboardAppInput(argumentsText, false);
+    if (!parsed.ok) {
+      setArgumentsError(parsed.message);
+      return;
+    }
+    setArgumentsError(null);
+    const { launchArguments: _existingLaunchArguments, ...elementWithoutLaunchArguments } = element;
+    try {
+      await onSave({
+        ...elementWithoutLaunchArguments,
+        title: trimmedTitle,
+        ...(parsed.launchArguments ? { launchArguments: parsed.launchArguments } : {}),
+      });
+    } catch {
+      // The mutation error is rendered in the dialog.
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 px-4 py-6" onClick={onClose}>
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="edit-dashboard-app-title"
+        className="w-full max-w-[520px] rounded-2xl border border-gray-100 bg-white p-6 shadow-[0_24px_60px_-24px_rgba(15,23,42,0.4)]"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <h2 id="edit-dashboard-app-title" className="text-[16px] font-semibold tracking-[-0.01em] text-gray-950">
+          Edit app
+        </h2>
+        <p className="mt-1 text-[13px] leading-6 text-gray-500">
+          Change how this app appears and the input sent whenever it launches.
+        </p>
+
+        <label className="mt-5 block">
+          <span className="mb-1.5 block text-[12px] font-medium text-gray-700">Display name</span>
+          <DenInput
+            aria-label="Display name"
+            value={title}
+            onChange={(event) => setTitle(event.target.value)}
+          />
+        </label>
+
+        <label className="mt-4 block">
+          <span className="mb-1.5 block text-[12px] font-medium text-gray-700">Tool input</span>
+          <DenTextarea
+            aria-label="Tool input"
+            className="min-h-32 font-mono text-[12px] leading-5"
+            value={argumentsText}
+            onChange={(event) => {
+              setArgumentsText(event.target.value);
+              setArgumentsError(null);
+            }}
+            placeholder={'{ "budget": 100000 }'}
+            spellCheck={false}
+          />
+          <span className="mt-1 block text-[11.5px] leading-4 text-gray-500">
+            Enter a JSON object. These saved values are sent on every launch; leave blank for no input.
+          </span>
+        </label>
+
+        {argumentsError ? <p className="mt-2 text-[11.5px] text-red-600">{argumentsError}</p> : null}
+        {saveError ? (
+          <DenNotice
+            tone="error"
+            className="mt-3"
+            message={saveError instanceof Error ? saveError.message : "Failed to update the app."}
+          />
+        ) : null}
+
+        <div className="mt-6 flex justify-end gap-2">
+          <DenButton variant="secondary" disabled={isSaving} onClick={onClose}>Cancel</DenButton>
+          <DenButton disabled={isSaving || !title.trim()} onClick={() => void save()}>
+            {isSaving ? "Saving…" : "Save changes"}
+          </DenButton>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -348,22 +476,15 @@ function ConnectionAppRow({
 }) {
   const [argumentsText, setArgumentsText] = useState("");
   const [argumentsError, setArgumentsError] = useState<string | null>(null);
+  const [inputOpen, setInputOpen] = useState(app.requiresInput);
   const [organizationAutoLaunch, setOrganizationAutoLaunch] = useState(false);
 
   function add() {
-    let launchArguments: Record<string, unknown> | undefined;
-    if (app.requiresInput || argumentsText.trim()) {
-      try {
-        const parsed: unknown = JSON.parse(argumentsText || "{}");
-        if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-          setArgumentsError("Launch input must be a JSON object.");
-          return;
-        }
-        launchArguments = parsed as Record<string, unknown>;
-      } catch {
-        setArgumentsError("Launch input must be valid JSON.");
-        return;
-      }
+    const parsed = parseDashboardAppInput(argumentsText, app.requiresInput);
+    if (!parsed.ok) {
+      setArgumentsError(parsed.message);
+      setInputOpen(true);
+      return;
     }
     setArgumentsError(null);
     onAdd({
@@ -373,7 +494,7 @@ function ConnectionAppRow({
       projectedToolName: app.projectedToolName,
       resourceUri: app.resourceUri,
       title: app.title,
-      ...(launchArguments && Object.keys(launchArguments).length > 0 ? { launchArguments } : {}),
+      ...(parsed.launchArguments ? { launchArguments: parsed.launchArguments } : {}),
       ...(app.requiresApproval ? { requiresApproval: true } : {}),
       ...(organizationAutoLaunch ? { organizationAutoLaunch: true } : {}),
     });
@@ -414,17 +535,32 @@ function ConnectionAppRow({
           />
         </div>
       ) : null}
-      {!added && app.requiresInput ? (
+      {!added && inputOpen ? (
         <label className="mt-2 block">
-          <span className="mb-1 block text-[11.5px] font-medium text-gray-600">Launch input (JSON, required by this app)</span>
-          <textarea
+          <span className="mb-1 block text-[11.5px] font-medium text-gray-600">
+            Tool input (JSON, {app.requiresInput ? "required" : "optional"})
+          </span>
+          <DenTextarea
             value={argumentsText}
-            onChange={(event) => setArgumentsText(event.target.value)}
-            placeholder='{ "example": "value" }'
+            onChange={(event) => {
+              setArgumentsText(event.target.value);
+              setArgumentsError(null);
+            }}
+            placeholder={'{ "budget": 100000 }'}
             rows={2}
-            className="w-full resize-none rounded-xl border border-gray-200 px-3 py-2 font-mono text-[12px] text-gray-900 outline-none transition placeholder:text-gray-300 focus:border-gray-400"
+            className="min-h-20 font-mono text-[12px] leading-5"
+            spellCheck={false}
           />
         </label>
+      ) : null}
+      {!added && !inputOpen ? (
+        <button
+          type="button"
+          className="mt-2 text-[11.5px] font-medium text-gray-500 hover:text-gray-900"
+          onClick={() => setInputOpen(true)}
+        >
+          Add input
+        </button>
       ) : null}
       {argumentsError ? <p className="mt-1 text-[11.5px] text-red-600">{argumentsError}</p> : null}
     </div>
