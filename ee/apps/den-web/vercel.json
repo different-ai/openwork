@@ -1,6 +1,6 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": "nextjs",
-  "ignoreCommand": "npx turbo-ignore",
+  "ignoreCommand": "turbo query affected --base=$VERCEL_GIT_PREVIOUS_SHA --packages @openwork-ee/den-web --exit-code",
   "installCommand": "cd ../../.. && pnpm install --frozen-lockfile --filter @openwork-ee/den-web..."
 }

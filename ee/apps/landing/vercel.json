@@ -1,6 +1,6 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": "nextjs",
-  "ignoreCommand": "npx turbo-ignore",
+  "ignoreCommand": "turbo query affected --base=$VERCEL_GIT_PREVIOUS_SHA --packages @openwork-ee/landing --exit-code",
   "buildCommand": "pnpm --dir ../../../packages/email build && pnpm --dir ../../../packages/ui build && pnpm exec next build"
 }

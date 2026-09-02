@@ -10,6 +10,10 @@ const requireFromRepo = createRequire(import.meta.url);
 
 const vercelApps = ["apps/app", "ee/apps/den-web", "ee/apps/diagnostics", "ee/apps/landing"];
 
+function ignoreCommandFor(packageName: string): string {
+  return `turbo query affected --base=$VERCEL_GIT_PREVIOUS_SHA --packages ${packageName} --exit-code`;
+}
+
 type DenApiRedirectRules = {
   denApiRedirects: (env: Record<string, string | undefined>) => Array<{
     source: string;
@@ -21,8 +25,8 @@ type DenApiRedirectRules = {
 briefTest(testBrief({
   behavior: "Vercel builds only the apps a commit affects, and hosted /api/den callers are redirected without invoking a function.",
   claims: {
-    skipUnaffectedBuilds: claim("every Vercel-deployed app runs turbo-ignore so unaffected commits skip its build", {
-      never: "leave a Vercel-deployed app rebuilding on every push to the monorepo",
+    skipUnaffectedBuilds: claim("every Vercel-deployed app gates its build on turbo's affected graph for its own package", {
+      never: "leave a Vercel-deployed app rebuilding on every push, or gate it on another package's changes",
     }),
     routingLayerRedirect: claim("Den Web emits the /api/den 307 as a build-time redirect once the API origin is configured", {
       never: "emit a redirect rule when the API origin is only known per request, or drop the per-request fallback route",
@@ -31,9 +35,16 @@ briefTest(testBrief({
 }), async ({ prove }) => {
   for (const app of vercelApps) {
     const config: { ignoreCommand?: string } = JSON.parse(await readFile(join(repoRoot, app, "vercel.json"), "utf8"));
-    expect(config.ignoreCommand, `${app}/vercel.json`).toBe("npx turbo-ignore");
+    const manifest: { name: string; scripts?: Record<string, string> } = JSON.parse(
+      await readFile(join(repoRoot, app, "package.json"), "utf8"),
+    );
+    expect(config.ignoreCommand, `${app}/vercel.json`).toBe(ignoreCommandFor(manifest.name));
+    expect(manifest.scripts?.build, `${app} needs a build task for turbo's affected graph`).toBeTruthy();
   }
-  prove.skipUnaffectedBuilds(true, `${vercelApps.length} Vercel projects run turbo-ignore before installing`);
+  prove.skipUnaffectedBuilds(
+    true,
+    `${vercelApps.length} Vercel projects run turbo query affected for their own workspace package before installing`,
+  );
 
   const { denApiRedirects }: DenApiRedirectRules = requireFromRepo(
     join(repoRoot, "ee", "apps", "den-web", "next-config-den-api-redirects.cjs"),
