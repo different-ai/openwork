@@ -428,6 +428,7 @@ export async function createExternalMcpConnection(input: {
   kind?: "external_mcp" | "native_provider"
   nativeProviderKey?: string | null
   credentialMode: "shared" | "per_member"
+  exposeDirectly?: boolean
   apiKey?: string | null
   oauthConfiguration?: ExternalMcpOAuthConfigurationInput | null
   createdByOrgMembershipId: OrgMembershipId
@@ -455,6 +456,7 @@ export async function createExternalMcpConnection(input: {
     kind: input.kind ?? "external_mcp",
     nativeProviderKey: input.nativeProviderKey ?? null,
     credentialMode: input.credentialMode,
+    exposeDirectly: input.exposeDirectly ?? false,
     apiKey: input.apiKey ?? null,
     oauthConfiguration,
     createdByOrgMembershipId: input.createdByOrgMembershipId,
@@ -948,6 +950,8 @@ export type UpdateExternalMcpConnectionInput = {
   url: string
   authType: "oauth" | "apikey" | "none"
   credentialMode: "shared" | "per_member"
+  /** Omit to keep the stored value. */
+  exposeDirectly?: boolean
   apiKey?: string
   oauthClient?: {
     clientId: string
@@ -1078,10 +1082,12 @@ export async function updateExternalMcpConnection(
       ? Boolean(existingClient || input.oauthClient)
       : Boolean(input.oauthClient && (!existingClient || clientIdChanged || clientSecretChanged || clientExtraChanged))
     const apiKeyChanged = input.apiKey !== undefined && existing.apiKey !== input.apiKey
+    const exposeDirectlyChanged = input.exposeDirectly !== undefined && existing.exposeDirectly !== input.exposeDirectly
     const rowFieldsChanged = existing.name !== input.name
       || existing.url !== input.url
       || existing.authType !== input.authType
       || existing.credentialMode !== input.credentialMode
+      || exposeDirectlyChanged
       || apiKeyChanged
       || identityChanged
       || oauthConfigurationChanged
@@ -1115,6 +1121,7 @@ export async function updateExternalMcpConnection(
           url: input.url,
           authType: input.authType,
           credentialMode: input.credentialMode,
+          ...(input.exposeDirectly !== undefined ? { exposeDirectly: input.exposeDirectly } : {}),
           oauthConfiguration: input.authType === "oauth" ? input.oauthConfiguration ?? null : null,
           apiKey: input.authType === "apikey" ? input.apiKey ?? null : null,
           accessToken: null,
@@ -1140,6 +1147,7 @@ export async function updateExternalMcpConnection(
           url: input.url,
           authType: input.authType,
           credentialMode: input.credentialMode,
+          ...(input.exposeDirectly !== undefined ? { exposeDirectly: input.exposeDirectly } : {}),
           ...(input.apiKey !== undefined ? { apiKey: input.apiKey } : {}),
           ...(input.oauthConfiguration !== undefined ? { oauthConfiguration: input.oauthConfiguration } : {}),
           ...(input.authType === "none" && input.validatedAt ? { connectedAt: input.validatedAt } : {}),

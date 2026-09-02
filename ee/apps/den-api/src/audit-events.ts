@@ -21,6 +21,8 @@ export const ORGANIZATION_AUDIT_ACTIONS = {
   scimReconciliationRun: "organization.scim.reconciliation_run",
   scimGroupMappingUpdated: "organization.scim.group_mapping_updated",
   ssoConnectionRegistered: "organization.sso.connection_registered",
+  ssoConnectionEnabled: "organization.sso.connection_enabled",
+  ssoConnectionDisabled: "organization.sso.connection_disabled",
   ssoConnectionDeleted: "organization.sso.connection_deleted",
   openWorkWebComplimentaryAccessGranted: "organization.openwork_web.complimentary_access_granted",
   openWorkWebComplimentaryAccessRevoked: "organization.openwork_web.complimentary_access_revoked",
@@ -64,6 +66,8 @@ export function isOrganizationAuditAlertAction(action: OrganizationAuditAction) 
     case ORGANIZATION_AUDIT_ACTIONS.scimConnectionDeleted:
     case ORGANIZATION_AUDIT_ACTIONS.scimGroupMappingUpdated:
     case ORGANIZATION_AUDIT_ACTIONS.ssoConnectionRegistered:
+    case ORGANIZATION_AUDIT_ACTIONS.ssoConnectionEnabled:
+    case ORGANIZATION_AUDIT_ACTIONS.ssoConnectionDisabled:
     case ORGANIZATION_AUDIT_ACTIONS.ssoConnectionDeleted:
     case ORGANIZATION_AUDIT_ACTIONS.openWorkWebComplimentaryAccessGranted:
     case ORGANIZATION_AUDIT_ACTIONS.openWorkWebComplimentaryAccessRevoked:

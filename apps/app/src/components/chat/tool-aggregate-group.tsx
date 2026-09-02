@@ -1,7 +1,7 @@
 "use client"
 
 import { Fragment, useState } from "react"
-import { AlertTriangle, CircleHelp, CirclePause, MoreHorizontal } from "lucide-react"
+import { AlertTriangle, ChevronUp, CircleHelp, CirclePause, MoreHorizontal } from "lucide-react"
 
 import { FileChip } from "@/components/chat/file-chip"
 import { ShellCommandText } from "@/components/chat/shell-command-text"
@@ -13,6 +13,7 @@ import {
   getToolAggregateLifecycle,
   getAggregateRowFile,
   getAggregateRowLabel,
+  getAggregateRowSearch,
   getAggregateSummary,
   getToolFamily,
   type AggregateThought,
@@ -42,10 +43,59 @@ function persistedRowStatus(part: AnyToolPart): "running" | "failed" | "done" {
   return "done"
 }
 
-function failureReason(part: AnyToolPart): string | null {
+function failureText(part: AnyToolPart): string | null {
   if (part.state !== "output-error" || !part.errorText) return null
-  const firstLine = part.errorText.split("\n")[0]?.trim()
-  return firstLine ? (firstLine.length > 120 ? `${firstLine.slice(0, 119)}…` : firstLine) : null
+  const text = part.errorText.trim()
+  return text || null
+}
+
+type DetailBoxProps = {
+  kind: "command" | "pattern" | "error"
+  text: string
+  expanded: boolean
+  onToggle: () => void
+}
+
+/**
+ * Monospace detail (a command, a search pattern, an error) shown as one
+ * clipped line; clicking reveals the whole text, wrapped, so nothing in
+ * an expanded tool group is ever unreadable.
+ */
+function DetailBox({ kind, text, expanded, onToggle }: DetailBoxProps) {
+  const noun = kind === "command" ? "command" : kind === "pattern" ? "search pattern" : "error"
+  const textClassName = cn("min-w-0 flex-1", expanded ? "whitespace-pre-wrap break-all" : "line-clamp-1 break-all")
+  return (
+    <button
+      type="button"
+      data-tool-aggregate-detail={kind}
+      data-tool-aggregate-command={kind === "command" ? "" : undefined}
+      data-command-expanded={expanded ? "true" : "false"}
+      aria-expanded={expanded}
+      aria-label={expanded ? `Collapse ${noun}` : `Show full ${noun}`}
+      onClick={onToggle}
+      className={cn(
+        "flex min-w-0 max-w-full cursor-pointer gap-2 rounded-xl border px-3 py-2 text-start font-mono transition-colors",
+        expanded ? "items-start [&>svg]:mt-0.5" : "items-center",
+        kind === "error"
+          ? "border-destructive/30 bg-destructive/5 text-xs text-destructive hover:border-destructive/50"
+          : "border-border/70 bg-gray-2/60 text-sm hover:border-border hover:bg-gray-3/60",
+      )}
+    >
+      {kind === "command" ? (
+        <>
+          <span className="shrink-0 text-muted-foreground/60">$</span>
+          <ShellCommandText command={text} className={textClassName} />
+        </>
+      ) : (
+        <code className={textClassName}>{text}</code>
+      )}
+      {expanded ? (
+        <ChevronUp aria-hidden="true" className="size-4 shrink-0 text-muted-foreground/70" />
+      ) : (
+        <MoreHorizontal aria-hidden="true" className="size-4 shrink-0 text-muted-foreground/70" />
+      )}
+    </button>
+  )
 }
 
 type AggregateRow = {
@@ -104,7 +154,28 @@ export function ToolAggregateGroup({ parts, thoughts = [], className }: ToolAggr
   const latestToolCallId = parts.at(-1)?.toolCallId ?? groupKey
   const [expanded, setExpandedState] = useState(() => expandedByGroupKey.get(groupKey) ?? false)
   const [showAll, setShowAllState] = useState(() => showAllByGroupKey.get(groupKey) ?? false)
+  // Which detail boxes (command / pattern / error, per call) show full text.
+  const [fullDetailKeys, setFullDetailKeys] = useState<ReadonlySet<string>>(() => new Set())
   const resolveLifecycle = useCurrentToolLifecycleResolver()
+
+  const detailBox = (kind: DetailBoxProps["kind"], toolCallId: string, text: string) => {
+    const key = `${toolCallId}:${kind}`
+    return (
+      <DetailBox
+        kind={kind}
+        text={text}
+        expanded={fullDetailKeys.has(key)}
+        onToggle={() =>
+          setFullDetailKeys((current) => {
+            const next = new Set(current)
+            if (next.has(key)) next.delete(key)
+            else next.add(key)
+            return next
+          })
+        }
+      />
+    )
+  }
 
   const setExpanded = (value: boolean) => {
     expandedByGroupKey.set(groupKey, value)
@@ -154,7 +225,7 @@ export function ToolAggregateGroup({ parts, thoughts = [], className }: ToolAggr
   const soloFile = soloRow ? getAggregateRowFile(soloRow.part) : null
   if (soloRow && soloFile) {
     const status = currentLifecycle ?? persistedRowStatus(soloRow.part)
-    const reason = failureReason(soloRow.part)
+    const failure = failureText(soloRow.part)
     return (
       <div
         className={className}
@@ -189,8 +260,8 @@ export function ToolAggregateGroup({ parts, thoughts = [], className }: ToolAggr
             <span>This step stopped before it finished. Retry to continue.</span>
           </div>
         ) : null}
-        {reason ? (
-          <div className="mt-1 text-[11px] text-muted-foreground">failed — {reason}</div>
+        {failure ? (
+          <div className="mt-1.5">{detailBox("error", soloRow.part.toolCallId, failure)}</div>
         ) : null}
       </div>
     )
@@ -264,12 +335,13 @@ export function ToolAggregateGroup({ parts, thoughts = [], className }: ToolAggr
                 ? lifecycle
                 : "unknown"
               : persistedRowStatus(part)
-            const reason = failureReason(part)
+            const failure = failureText(part)
             const bash = isBashToolPart(part)
             const command = bash ? part.input?.command?.trim() ?? "" : ""
             const commandDescription = bash
               ? part.input?.description?.trim() || "command"
               : ""
+            const search = bash ? null : getAggregateRowSearch(part)
             return (
               <Fragment key={part.toolCallId}>
               {thoughtsAt(row.index).map((thought) => (
@@ -287,7 +359,7 @@ export function ToolAggregateGroup({ parts, thoughts = [], className }: ToolAggr
                     <CircleHelp aria-label="Status unknown" className="size-3.5 shrink-0" />
                   ) : null}
                   {bash ? (
-                    <span className="min-w-0 truncate">
+                    <span className="min-w-0 break-words">
                       <span className={cn("text-foreground", status === "running" && "ow-text-shimmer")}>
                         {status === "running"
                           ? "Running"
@@ -298,6 +370,13 @@ export function ToolAggregateGroup({ parts, thoughts = [], className }: ToolAggr
                               : "Ran"}
                       </span>{" "}
                       <span>{commandDescription}</span>
+                    </span>
+                  ) : search ? (
+                    <span className="min-w-0 break-words">
+                      <span className={cn(status === "running" && "text-foreground ow-text-shimmer")}>
+                        {search.verb}
+                      </span>
+                      {search.scope ? <span> in {search.scope}</span> : null}
                     </span>
                   ) : (() => {
                     const file = getAggregateRowFile(part)
@@ -332,19 +411,9 @@ export function ToolAggregateGroup({ parts, thoughts = [], className }: ToolAggr
                   ) : null}
                   </div>
                 ) : null}
-                {bash && command ? (
-                  <div
-                    data-tool-aggregate-command
-                    className="flex min-w-0 items-center gap-2 rounded-xl border border-border/70 bg-gray-2/60 px-3 py-2 font-mono text-sm"
-                  >
-                    <span className="shrink-0 text-muted-foreground/60">$</span>
-                    <ShellCommandText command={command} className="min-w-0 flex-1 truncate" />
-                    <MoreHorizontal aria-hidden="true" className="size-4 shrink-0 text-muted-foreground/70" />
-                  </div>
-                ) : null}
-                {reason ? (
-                  <div className="text-[11px] text-muted-foreground">failed — {reason}</div>
-                ) : null}
+                {bash && command ? detailBox("command", part.toolCallId, command) : null}
+                {search ? detailBox("pattern", part.toolCallId, search.pattern) : null}
+                {failure ? detailBox("error", part.toolCallId, failure) : null}
               </div>
               </Fragment>
             )

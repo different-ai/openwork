@@ -157,6 +157,8 @@
             ]
           },
           "cloud/members-and-rbac",
+          "cloud/sso-google-workspace",
+          "cloud/scim-google-workspace",
           "cloud/sso-okta",
           "cloud/scim-okta",
           "cloud/sso-microsoft-entra",

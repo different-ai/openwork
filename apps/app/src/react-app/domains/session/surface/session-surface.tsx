@@ -38,6 +38,7 @@ import {
   recordInspectorEvent,
 } from "@/app/lib/app-inspector";
 import { useControlAction, type OpenworkControlAction } from "@/react-app/shell/control/control-provider";
+import { isConnectDirectMcpServerName } from "@/react-app/domains/connections/cloud-mcp-user-state";
 import { attemptSilentMcpReauth } from "@/react-app/domains/connections/mcp-silent-reauth";
 import type {
   CloudMcpSubmissionGateState,
@@ -406,6 +407,56 @@ function createSessionLifecycleEvalMessages(sessionId: string): UIMessage[] {
   ];
 }
 
+const TOOL_DETAILS_EVAL_COMMAND =
+  "pnpm world up dev-headless --detach -- --replace --keep-tokens && OPENWORK_EVAL_E2E_TESTS=1 pnpm vitest run evals/specs/chat-loading-shimmer.e2e.test.ts --reporter=verbose";
+const TOOL_DETAILS_EVAL_PATTERN =
+  "seed_unfinished_tools|git status --short --branch|createSessionLifecycleEvalMessages|useControlAction";
+const TOOL_DETAILS_EVAL_ERROR =
+  "Process exited with code 2\nerror: pathspec 'release/2026.09' did not match any file(s) known to git\nhint: use 'git fetch origin release/2026.09' first";
+
+function createToolDetailsEvalMessages(sessionId: string): UIMessage[] {
+  const now = Date.now();
+  return [
+    {
+      id: `${sessionId}:eval-tool-details-user`,
+      role: "user",
+      parts: [{ type: "text", text: "Run the headless proof and find the seed hook." }],
+      metadata: { opencode: { created: now } },
+    },
+    {
+      id: `${sessionId}:eval-tool-details-assistant`,
+      role: "assistant",
+      parts: [
+        {
+          type: "dynamic-tool",
+          toolName: "bash",
+          toolCallId: "eval-tool-details-bash",
+          state: "output-available",
+          input: { command: TOOL_DETAILS_EVAL_COMMAND, description: "Run the headless proof" },
+          output: "ok",
+        },
+        {
+          type: "dynamic-tool",
+          toolName: "grep",
+          toolCallId: "eval-tool-details-grep",
+          state: "output-available",
+          input: { pattern: TOOL_DETAILS_EVAL_PATTERN, path: "apps/app/src", include: "*.tsx" },
+          output: "2 matches",
+        },
+        {
+          type: "dynamic-tool",
+          toolName: "bash",
+          toolCallId: "eval-tool-details-failed",
+          state: "output-error",
+          input: { command: "git checkout release/2026.09", description: "Switch to the release branch" },
+          errorText: TOOL_DETAILS_EVAL_ERROR,
+        },
+      ],
+      metadata: { opencode: { created: now + 1, completed: now + 4_000 } },
+    },
+  ];
+}
+
 function createSubagentActivityEvalMessages(sessionId: string, childSessionId?: string): UIMessage[] {
   const now = Date.now();
   return [
@@ -444,6 +495,50 @@ function createChatLoadingEvalMessages(sessionId: string): UIMessage[] {
     parts: [{ type: "text", text: "Confirm the loading treatment." }],
     metadata: { opencode: { created: Date.now() } },
   }];
+}
+
+function createImageLightboxEvalImageUrl(width: number, height: number, label: string) {
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}"><rect width="100%" height="100%" fill="#dbeafe"/><text x="50%" y="50%" font-family="sans-serif" font-size="${Math.round(Math.min(width, height) / 8)}" text-anchor="middle" dominant-baseline="middle" fill="#1e3a8a">${label}</text></svg>`;
+  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+}
+
+function createImageLightboxEvalMessages(sessionId: string): UIMessage[] {
+  const now = Date.now();
+  return [
+    {
+      id: `${sessionId}:eval-image-lightbox-user`,
+      role: "user",
+      parts: [
+        {
+          type: "file",
+          mediaType: "image/svg+xml",
+          filename: "landscape-screenshot.svg",
+          url: createImageLightboxEvalImageUrl(2000, 1112, "landscape 2000x1112"),
+        },
+        {
+          type: "file",
+          mediaType: "image/svg+xml",
+          filename: "small-icon.svg",
+          url: createImageLightboxEvalImageUrl(180, 180, "icon"),
+        },
+        { type: "text", text: "Inspect these images." },
+      ],
+      metadata: { opencode: { created: now } },
+    },
+    {
+      id: `${sessionId}:eval-image-lightbox-assistant`,
+      role: "assistant",
+      parts: [
+        {
+          type: "file",
+          mediaType: "image/svg+xml",
+          filename: "portrait-screenshot.svg",
+          url: createImageLightboxEvalImageUrl(1112, 2000, "portrait 1112x2000"),
+        },
+      ],
+      metadata: { opencode: { created: now + 1, completed: now + 2_000 } },
+    },
+  ];
 }
 
 export type SessionSurfaceProps = {
@@ -1331,6 +1426,22 @@ export function SessionSurface(props: SessionSurfaceProps) {
     };
   }, [props.sessionId]);
   useControlAction(props.isControlTarget ? seedConnectorToolCallControlAction : null);
+  const seedToolDetailsControlAction = useMemo<OpenworkControlAction | null>(() => {
+    if (!import.meta.env.DEV) return null;
+
+    return {
+      id: "eval.tool_details.seed",
+      label: "Seed a settled tool group with long details",
+      description: "Dev-only eval hook that renders a long command, a long search pattern, and a multi-line failure in one aggregate group.",
+      sideEffect: "mutation",
+      disabled: !props.sessionId,
+      execute: () => {
+        setEvalMarkdownMessages(createToolDetailsEvalMessages(props.sessionId));
+        return { ok: true };
+      },
+    };
+  }, [props.sessionId]);
+  useControlAction(props.isControlTarget ? seedToolDetailsControlAction : null);
   const seedSessionLifecycleControlAction = useMemo<OpenworkControlAction | null>(() => {
     if (!import.meta.env.DEV) return null;
 
@@ -1450,6 +1561,23 @@ export function SessionSurface(props: SessionSurfaceProps) {
     };
   }, [props.sessionId, props.workspaceId]);
   useControlAction(props.isControlTarget ? seedChatLoadingControlAction : null);
+  const seedImageLightboxControlAction = useMemo<OpenworkControlAction | null>(() => {
+    if (!import.meta.env.DEV) return null;
+
+    return {
+      id: "eval.image_lightbox.seed",
+      label: "Seed image lightbox proof",
+      description: "Dev-only eval hook that renders user and assistant image parts with known pixel sizes.",
+      sideEffect: "mutation",
+      disabled: !props.sessionId,
+      execute: () => {
+        const seeded = createImageLightboxEvalMessages(props.sessionId);
+        setEvalMarkdownMessages(seeded);
+        return { ok: true, messageCount: seeded.length };
+      },
+    };
+  }, [props.sessionId]);
+  useControlAction(props.isControlTarget ? seedImageLightboxControlAction : null);
   const openTargets = useMemo(() => deriveOpenTargets(renderedMessages), [renderedMessages]);
   const openTargetsFingerprint = useMemo(
     () => openTargets.map((target) => `${target.kind}:${target.value}:${target.confidence}`).join("|"),
@@ -2176,12 +2304,16 @@ export function SessionSurface(props: SessionSurfaceProps) {
       })()
       : Promise.resolve({});
     const [response, localStatuses] = await Promise.all([localMcpPromise, localStatusesPromise]);
-    const localServers = (response.items ?? []).map((entry) => ({
-      name: entry.name,
-      config: entry.config as McpServerEntry["config"],
-      source: entry.source,
-      origin: entry.name === "openwork-cloud" ? "openwork-connect" : "local",
-    } satisfies McpServerEntry));
+    // Directly exposed org connections are already listed through their org
+    // connection entry; their projected runtime rows must not appear twice.
+    const localServers = (response.items ?? [])
+      .filter((entry) => !isConnectDirectMcpServerName(entry.name))
+      .map((entry) => ({
+        name: entry.name,
+        config: entry.config as McpServerEntry["config"],
+        source: entry.source,
+        origin: entry.name === "openwork-cloud" ? "openwork-connect" : "local",
+      } satisfies McpServerEntry));
 
     void connectPromise.then((connect) => {
       if (mcpConnectPushRef.current !== pushId) return;

@@ -11,6 +11,7 @@ function orgConnection(overrides: Partial<DenExternalMcpConnection> & Pick<DenEx
     url: "https://mcp.example.test",
     authType: "oauth",
     credentialMode: "per_member",
+    exposeDirectly: false,
     connected: true,
     connectedAt: null,
     connectedForMe: false,

@@ -1,7 +1,10 @@
 /** @jsxImportSource react */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  ArrowUpRight,
   BookOpen,
+  ChevronDown,
+  ChevronUp,
   LogOut,
   MessageCircleMore,
   MoreHorizontal,
@@ -211,6 +214,7 @@ export function AccountStatusMenu(props: AccountStatusMenuProps) {
   const [pasteCode, setPasteCode] = useState("");
   const [pasteBusy, setPasteBusy] = useState(false);
   const [pasteError, setPasteError] = useState<string | null>(null);
+  const [manualAuthOpen, setManualAuthOpen] = useState(false);
   const [initializing, setInitializing] = useState(
     () => Date.now() - BOOT_STARTED_AT < INITIALIZING_MS,
   );
@@ -502,48 +506,76 @@ export function AccountStatusMenu(props: AccountStatusMenuProps) {
             Log out
           </DropdownMenuItem>
         ) : restoringSession ? null : (
-          <>
-            <DropdownMenuItem onClick={openSignIn}>
-              <UserRound className="size-3.5" />
-              Sign in
-            </DropdownMenuItem>
-            <div
-              className="flex flex-col gap-2 px-2 py-2"
-              onPointerDown={(event) => event.stopPropagation()}
-              onKeyDown={(event) => event.stopPropagation()}
+          <div
+            className="flex flex-col gap-2 px-2 py-2"
+            onPointerDown={(event) => event.stopPropagation()}
+            onKeyDown={(event) => event.stopPropagation()}
+          >
+            <Button
+              type="button"
+              className="h-11 w-full justify-between px-3 text-sm"
+              onClick={openSignIn}
+              data-testid="account-cloud-signin-button"
             >
-              <label htmlFor="account-paste-signin-code" className="text-[11px] text-muted-foreground">
-                {t("den.paste_signin_code")}
-              </label>
-              <Input
-                id="account-paste-signin-code"
-                value={pasteCode}
-                onChange={(event) => {
-                  setPasteCode(event.currentTarget.value);
-                  if (pasteError) setPasteError(null);
-                }}
-                placeholder={t("den.signin_link_placeholder")}
-                className="h-11 text-base lg:h-9 lg:text-sm"
-                disabled={pasteBusy}
-              />
-              <Button
-                type="button"
-                size="sm"
-                className="h-11 max-lg:h-11"
-                disabled={pasteBusy || !pasteCode.trim()}
-                onClick={() => void submitPastedCode()}
-              >
-                {pasteBusy ? t("den.finishing") : t("den.finish_signin")}
-              </Button>
-              {pasteError ? (
-                <p className="text-[11px] text-destructive">{pasteError}</p>
+              <span className="inline-flex min-w-0 items-center gap-2">
+                <UserRound className="size-3.5" />
+                <span className="truncate">Sign in to OpenWork Cloud</span>
+              </span>
+              <ArrowUpRight className="size-3.5" />
+            </Button>
+
+            <button
+              type="button"
+              className="flex h-8 w-full items-center justify-between rounded-xl px-2 text-left text-[11px] font-medium text-muted-foreground transition-colors hover:bg-foreground/10 hover:text-foreground"
+              onClick={() => setManualAuthOpen((open) => !open)}
+              aria-expanded={manualAuthOpen}
+              aria-controls="account-manual-auth-panel"
+            >
+              <span>
+                {manualAuthOpen ? t("den.hide_signin_code") : t("den.paste_signin_code")}
+              </span>
+              {manualAuthOpen ? (
+                <ChevronUp className="size-3.5" />
               ) : (
-                <p className="text-[11px] leading-snug text-muted-foreground">
-                  {t("den.signin_link_hint")}
-                </p>
+                <ChevronDown className="size-3.5" />
               )}
-            </div>
-          </>
+            </button>
+
+            {manualAuthOpen ? (
+              <div id="account-manual-auth-panel" className="flex flex-col gap-2">
+                <label htmlFor="account-paste-signin-code" className="text-[11px] text-muted-foreground">
+                  {t("den.signin_link_label")}
+                </label>
+                <Input
+                  id="account-paste-signin-code"
+                  value={pasteCode}
+                  onChange={(event) => {
+                    setPasteCode(event.currentTarget.value);
+                    if (pasteError) setPasteError(null);
+                  }}
+                  placeholder={t("den.signin_link_placeholder")}
+                  className="h-11 text-base lg:h-9 lg:text-sm"
+                  disabled={pasteBusy}
+                />
+                <Button
+                  type="button"
+                  size="sm"
+                  className="h-11 max-lg:h-11"
+                  disabled={pasteBusy || !pasteCode.trim()}
+                  onClick={() => void submitPastedCode()}
+                >
+                  {pasteBusy ? t("den.finishing") : t("den.finish_signin")}
+                </Button>
+                {pasteError ? (
+                  <p className="text-[11px] text-destructive">{pasteError}</p>
+                ) : (
+                  <p className="text-[11px] leading-snug text-muted-foreground">
+                    {t("den.signin_link_hint")}
+                  </p>
+                )}
+              </div>
+            ) : null}
+          </div>
         )}
       </DropdownMenuContent>
     </DropdownMenu>

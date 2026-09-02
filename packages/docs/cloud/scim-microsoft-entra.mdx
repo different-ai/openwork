@@ -13,16 +13,18 @@ You need:
 
 - An OpenWork organization with Enterprise SSO and SCIM.
 - An OpenWork owner, or a member who can manage security configuration.
-- A working OpenWork SAML connection. Complete and test
+- A working, domain-verified, tested, and enabled OpenWork SAML connection.
+  Complete and test
   [Microsoft Entra SAML SSO](/cloud/sso-microsoft-entra) first.
 - A Microsoft Entra role that can manage enterprise applications and
   provisioning.
 - An Entra plan that supports assigning groups to enterprise applications if
   you want to synchronize groups.
 
-Keep SSO enforcement off until you have tested both SAML sign-in and SCIM. Make
-sure at least one OpenWork owner can sign in through SAML before relying on
-Entra as the identity source.
+Do not broaden SCIM assignment scope until you have tested both SAML sign-in and
+SCIM. Make sure at least one OpenWork owner can sign in through SAML and that
+the current SSO configuration has passed OpenWork's **Test SSO before enabling
+it** flow before relying on Entra as the identity source.
 
 ## 1. Get the OpenWork connection values
 

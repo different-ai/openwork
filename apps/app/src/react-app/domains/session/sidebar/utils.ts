@@ -45,13 +45,13 @@ const normalizeSessionParentID = (session: SessionListItem) => {
   return parentID || "";
 };
 
-export const getRootSessions = (sessions: WorkspaceSessionGroup["sessions"]) => {
-  const byID = new Set(sessions.map((session) => session.id));
-  return sessions.filter((session) => {
-    const parentID = normalizeSessionParentID(session);
-    return !parentID || !byID.has(parentID);
-  });
-};
+/**
+ * A session with a parentID is a sub-agent child, whether or not its parent is
+ * in the loaded page (the parent may be archived, deleted, or beyond the list
+ * limit). Children are only reached from the task card in their parent.
+ */
+export const getRootSessions = (sessions: WorkspaceSessionGroup["sessions"]) =>
+  sessions.filter((session) => !normalizeSessionParentID(session));
 
 /**
  * Return every descendant of a session in stable session-list order. The

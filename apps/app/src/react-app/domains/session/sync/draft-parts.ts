@@ -11,6 +11,7 @@ import {
 } from "./attachment-file-part";
 import {
   firstLineLocalFileParts,
+  isReadInlineablePath,
   joinWorkspaceRelativePath,
   toFileUrl,
 } from "./prompt-file-parts";
@@ -56,16 +57,12 @@ export async function draftToParts(
       sessionId,
       workspaceRoot: root,
     });
-    for (const part of uploaded) {
-      if (part.type === "text") {
-        parts.push(part);
-        continue;
+    if (uploaded) {
+      parts.push(uploaded.note);
+      for (const [index, attachment] of draft.attachments.entries()) {
+        const filePart = uploaded.files[index];
+        if (filePart) attachmentFileById.set(attachment.id, filePart);
       }
-    }
-    const fileParts = uploaded.filter((part): part is FilePartInput => part.type === "file");
-    for (const [index, attachment] of draft.attachments.entries()) {
-      const filePart = fileParts[index];
-      if (filePart) attachmentFileById.set(attachment.id, filePart);
     }
   }
 
@@ -123,6 +120,10 @@ export async function draftToParts(
         if (mentionPart?.type === "file") {
           const absolute = toAbsolutePath(mentionPart.path);
           if (!absolute) continue;
+          if (!isReadInlineablePath(absolute)) {
+            parts.push({ type: "text", text: absolute });
+            continue;
+          }
           parts.push({
             type: "file",
             mime: "text/plain",
@@ -162,6 +163,10 @@ export async function draftToParts(
       if (part.type === "file") {
         const absolute = toAbsolutePath(part.path);
         if (!absolute) continue;
+        if (!isReadInlineablePath(absolute)) {
+          parts.push({ type: "text", text: absolute });
+          continue;
+        }
         parts.push({
           type: "file",
           mime: "text/plain",

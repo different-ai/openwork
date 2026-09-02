@@ -15,6 +15,7 @@ const connection = {
   url: "https://provider.example.test/mcp?secret=hidden",
   authType: "oauth",
   credentialMode: "per_member",
+  exposeDirectly: false,
   connected: true,
   connectedAt: null,
   connectedForMe: true,

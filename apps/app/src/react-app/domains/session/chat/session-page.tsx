@@ -903,7 +903,7 @@ export function SessionPage(props: SessionPageProps) {
 
   const selectedSessionTitle = useMemo(
     () => sessionTitleForId(props.sidebar.workspaceSessionGroups, props.selectedSessionId, props.selectedWorkspaceId),
-    [props.selectedSessionId, props.sidebar.workspaceSessionGroups],
+    [props.selectedSessionId, props.selectedWorkspaceId, props.sidebar.workspaceSessionGroups],
   );
   const workspaceName =
     props.selectedWorkspaceDisplay.displayName?.trim() ||
@@ -1458,6 +1458,17 @@ export function SessionPage(props: SessionPageProps) {
                   ? t("session.create_or_connect_workspace")
                   : selectedSessionTitle || t("session.default_title")}
               </h1>
+              {!props.primaryTitle && !props.mainContentTitle && !showWorkspaceSetupEmptyState ? (
+                // Pinned and archived sessions are listed across workspaces, so
+                // the header names the workspace the open session belongs to.
+                <span
+                  className="flex min-w-0 shrink-0 items-center gap-1.5 text-[12px] text-dls-secondary"
+                  data-session-header-workspace={workspaceName}
+                >
+                  <span aria-hidden="true">·</span>
+                  <span className="max-w-40 truncate">{workspaceName}</span>
+                </span>
+              ) : null}
               {props.developerMode ? (
                 <span className="hidden text-[12px] text-dls-secondary lg:inline">
                   {props.headerStatus}

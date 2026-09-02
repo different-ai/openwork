@@ -36,6 +36,7 @@ test("chat working and command activity use quiet shimmer without spinners", asy
       };
     })()`);
     expect(aggregate).toMatchObject({ text: expect.stringContaining("Reading brief.md"), hasSpinner: false, hasShimmer: true });
+    expect(aggregate).not.toMatchObject({ text: expect.stringContaining("Now:") });
     expect(aggregate).toMatchObject({ summary: expect.stringContaining("Running command") });
     expect(aggregate).not.toMatchObject({ summary: expect.stringContaining("Running 1 command") });
   });

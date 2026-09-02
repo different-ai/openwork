@@ -231,6 +231,7 @@ import { openComposerConfigure, isLibraryAgent, type ComposerSettingsSection } f
 import {
   globalExtensionsRoute,
   legacySessionRoute,
+  mergeWorkspaceRouteSession,
   automationsRoute,
   dashboardRoute,
   workspaceExtensionsRoute,
@@ -1476,7 +1477,7 @@ export function SessionRoute() {
             rememberPendingCreatedSession(selectedWorkspaceId, forked.id);
             setSessionsByWorkspaceId((current) => ({
               ...current,
-              [selectedWorkspaceId]: [forked, ...(current[selectedWorkspaceId] ?? [])],
+              [selectedWorkspaceId]: mergeWorkspaceRouteSession(current[selectedWorkspaceId] ?? [], forked),
             }));
             navigateToWorkspaceSession(selectedWorkspaceId, forked.id);
             void refreshRouteState();
@@ -1750,7 +1751,7 @@ export function SessionRoute() {
             rememberPendingCreatedSession(workspace.id, forked.id);
             setSessionsByWorkspaceId((current) => ({
               ...current,
-              [workspace.id]: [forked, ...(current[workspace.id] ?? [])],
+              [workspace.id]: mergeWorkspaceRouteSession(current[workspace.id] ?? [], forked),
             }));
             navigateToWorkspaceSession(workspace.id, forked.id);
             void refreshRouteState();
@@ -2090,7 +2091,7 @@ export function SessionRoute() {
       setSessionsByWorkspaceId((current) => {
         const next = {
           ...current,
-          [workspaceId]: [session, ...(current[workspaceId] ?? [])],
+          [workspaceId]: mergeWorkspaceRouteSession(current[workspaceId] ?? [], session),
         };
         sessionsByWorkspaceIdRef.current = next;
         return next;
@@ -2906,7 +2907,7 @@ export function SessionRoute() {
           setSessionsByWorkspaceId((current) => {
             const next = {
               ...current,
-              [targetWorkspaceId]: [session, ...(current[targetWorkspaceId] ?? [])],
+              [targetWorkspaceId]: mergeWorkspaceRouteSession(current[targetWorkspaceId] ?? [], session),
             };
             sessionsByWorkspaceIdRef.current = next;
             return next;
@@ -3251,7 +3252,7 @@ export function SessionRoute() {
               applyLastUsedModelToSession(session.id);
               setSessionsByWorkspaceId((current) => ({
                 ...current,
-                [workspaceId]: [session, ...(current[workspaceId] ?? [])],
+                [workspaceId]: mergeWorkspaceRouteSession(current[workspaceId] ?? [], session),
               }));
               navigateToWorkspaceSession(workspaceId, session.id);
               focusPromptSoon();

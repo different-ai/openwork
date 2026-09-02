@@ -31,7 +31,7 @@ import type {
 } from "../../../../app/types";
 import { addOpencodeCacheHint, safeStringify } from "../../../../app/utils";
 import { clearSessionDraft, LOCAL_SESSION_DRAFT_SCOPE, saveSessionDraft } from "./draft-store";
-import { firstLineLocalFileParts } from "./prompt-file-parts";
+import { firstLineLocalFileParts, isReadInlineablePath } from "./prompt-file-parts";
 import { composerAttachmentToFilePart } from "./attachment-file-part";
 import { appMentionInstruction } from "../surface/composer/app-mentions";
 
@@ -169,6 +169,10 @@ export function createSessionActionsStore(options: {
       if (part.type === "file") {
         const absolute = toAbsolutePath(part.path);
         if (!absolute) continue;
+        if (!isReadInlineablePath(absolute)) {
+          parts.push({ type: "text", text: absolute } as TextPartInput);
+          continue;
+        }
         parts.push({
           type: "file",
           mime: "text/plain",
@@ -207,7 +211,7 @@ export function createSessionActionsStore(options: {
     for (const part of draft.parts) {
       if (part.type !== "file") continue;
       const absolute = toAbsolutePath(part.path);
-      if (!absolute) continue;
+      if (!absolute || !isReadInlineablePath(absolute)) continue;
       parts.push({
         type: "file",
         mime: "text/plain",

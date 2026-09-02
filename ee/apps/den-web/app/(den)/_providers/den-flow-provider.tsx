@@ -1949,6 +1949,10 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
   }, [authToken]);
 
   useEffect(() => {
+    if (!runtimeConfigLoaded) {
+      return;
+    }
+
     let cancelled = false;
 
     const hydrateSession = async () => {
@@ -1966,7 +1970,7 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, [authToken]);
+  }, [authToken, runtimeConfigLoaded]);
 
   useEffect(() => {
     if (!user) {

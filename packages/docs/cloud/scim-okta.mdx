@@ -10,14 +10,17 @@ OpenWork members. Okta groups can also become SCIM-managed OpenWork teams.
 
 You need:
 
-- A working and domain-verified [Okta SAML SSO](/cloud/sso-okta) connection.
+- A working, domain-verified, tested, and enabled
+  [Okta SAML SSO](/cloud/sso-okta) connection.
 - An OpenWork owner, or a member who can manage security configuration.
 - An Okta administrator who can configure provisioning for the SAML app.
 - An Okta plan that supports the provisioning and group-push features you
   intend to use.
 
-Keep OpenWork SSO enforcement off until both SAML and a narrowly scoped SCIM
-test pass. Make sure at least one OpenWork owner can sign in through Okta.
+Do not broaden SCIM assignment scope until both SAML and a narrowly scoped SCIM
+test pass. Make sure at least one OpenWork owner can sign in through Okta and
+that the current SSO configuration has passed OpenWork's **Test SSO before
+enabling it** flow.
 
 ## 1. Create the OpenWork SCIM connector
 
@@ -152,8 +155,9 @@ After the lifecycle and group tests pass:
 1. Assign the intended Okta users and groups to the application.
 2. Review Okta provisioning events for failures.
 3. Review OpenWork's SCIM health and unresolved-failure count.
-4. Confirm at least one owner has working Okta SAML access.
-5. Only then consider enabling **Require SSO for this organization**.
+4. Confirm at least one owner has working Okta SAML access through the enabled,
+   tested OpenWork SSO configuration.
+5. Keep password or other recovery access available until the rollout is stable.
 
 ## When to run reconciliation
 

@@ -15,7 +15,9 @@
         "ee/apps/den-api/src/scim.ts",
         "ee/apps/den-api/src/single-org-signup-policy.ts",
         "ee/apps/den-api/src/sso-domain-verification.ts",
+        "ee/apps/den-api/src/sso-test-lifecycle.ts",
         "ee/apps/den-api/src/sso.ts",
+        "ee/apps/den-web/app/(den)/_providers/den-flow-provider.tsx",
         "ee/apps/den-web/app/(den)/dashboard/_components/scim-screen.tsx",
         "ee/apps/den-web/app/(den)/dashboard/_components/sso-screen.tsx",
         "ee/apps/den-web/app/sso/**"
@@ -26,7 +28,8 @@
         "evals/specs/scim-okta-lifecycle.e2e.test.ts",
         "evals/specs/self-host-onboarding.e2e.test.ts",
         "evals/specs/sso-domain-verification.e2e.test.ts",
-        "evals/specs/sso-invite-sign-in.e2e.test.ts"
+        "evals/specs/sso-invite-sign-in.e2e.test.ts",
+        "evals/specs/sso-safe-enable.e2e.test.ts"
       ]
     },
     {
@@ -274,9 +277,21 @@
       ]
     },
     {
+      "id": "desktop.builtin-browser",
+      "description": "Built-in browser panel: tab lifecycle, agent-facing open_url handoff, and CDP target resolution",
+      "implementation": [
+        "apps/desktop/electron/browser-content-preload.cjs",
+        "apps/desktop/electron/browser-panel.mjs"
+      ],
+      "specs": [
+        "evals/specs/browser-open-url-returns-target.e2e.test.ts"
+      ]
+    },
+    {
       "id": "desktop.chat-composer",
       "description": "Desktop chat rendering, composer drafts, queued sends, attachments, and resend behavior",
       "implementation": [
+        "apps/app/src/components/chat/**",
         "apps/app/src/react-app/domains/session/chat/**",
         "apps/app/src/react-app/domains/session/surface/**",
         "apps/app/src/react-app/domains/session/sync/**"
@@ -286,13 +301,16 @@
         "evals/specs/chat-loading-shimmer.e2e.test.ts",
         "evals/specs/chat-render-cycle-stability.e2e.test.ts",
         "evals/specs/chat-survives-flaky-den-link.e2e.test.ts",
+        "evals/specs/chat-tool-details-expand.e2e.test.ts",
         "evals/specs/clamp-html-errors.e2e.test.ts",
         "evals/specs/composer-draft-reload.e2e.test.ts",
         "evals/specs/composer-focus-continuity.e2e.test.ts",
         "evals/specs/composer-queued-drain-while-away.e2e.test.ts",
         "evals/specs/composer-queued-follow-ups-sequential.e2e.test.ts",
         "evals/specs/cross-workspace-composer-switch.e2e.test.ts",
+        "evals/specs/image-lightbox-size.e2e.test.ts",
         "evals/specs/safe-edit-resend.e2e.test.ts",
+        "evals/specs/session-header-workspace-name.e2e.test.ts",
         "evals/specs/unfinished-tool-lifecycle.e2e.test.ts"
       ]
     },
@@ -471,14 +489,17 @@
     },
     {
       "id": "desktop.sidebar-navigation",
-      "description": "Desktop sidebar destinations, session titles, primary actions, layout clearance, and workspace ordering",
+      "description": "Desktop sidebar destinations, session titles, primary actions, layout clearance, Settings shell navigation, and workspace ordering",
       "implementation": [
         "apps/app/src/react-app/domains/session/sidebar/**",
+        "apps/app/src/react-app/domains/settings/shell/**",
         "apps/app/src/react-app/shell/app-menu.tsx",
         "apps/app/src/react-app/shell/workspace-shell-layout.ts"
       ],
       "specs": [
         "evals/specs/mac-sidebar-toggle-clearance.e2e.test.ts",
+        "evals/specs/session-header-workspace-name.e2e.test.ts",
+        "evals/specs/settings-narrow-window-navigation.e2e.test.ts",
         "evals/specs/sidebar-primary-actions.e2e.test.ts",
         "evals/specs/sidebar-title-overflow-fade.e2e.test.ts",
         "evals/specs/sidebar-workspace-title-fit.e2e.test.ts",

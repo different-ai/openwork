@@ -4,6 +4,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import type { DynamicToolUIPart } from "ai";
 
 import { ToolAggregateGroup, buildAggregateRows } from "../src/components/chat/tool-aggregate-group";
+import { getAggregateRowSearch } from "../src/lib/tool-aggregate";
 import { CurrentToolLifecycleProvider } from "../src/components/chat/current-tool-lifecycle-context";
 import { getToolAggregateLifecycle } from "../src/lib/tool-aggregate";
 
@@ -161,5 +162,58 @@ describe("tool aggregate row merging", () => {
     );
 
     expect(rows).toHaveLength(2);
+  });
+});
+
+describe("tool aggregate long details", () => {
+  const longPattern = "seed_unfinished_tools|git status --short --branch|createSessionLifecycleEvalMessages";
+  const multiLineError = "Process exited with code 2\nerror: pathspec 'release/2026.09' did not match any file(s) known to git\nhint: use 'git fetch origin release/2026.09' first";
+
+  test("search rows keep the exact pattern and name their scope", () => {
+    const grep: DynamicToolUIPart = {
+      type: "dynamic-tool",
+      toolName: "grep",
+      toolCallId: "grep-1",
+      state: "output-available",
+      input: { pattern: longPattern, path: "apps/app/src", include: "*.tsx" },
+      output: "2 matches",
+    };
+    const glob: DynamicToolUIPart = {
+      type: "dynamic-tool",
+      toolName: "glob",
+      toolCallId: "glob-1",
+      state: "input-available",
+      input: { pattern: "**/*.e2e.test.ts" },
+    };
+
+    expect(getAggregateRowSearch(grep)).toEqual({
+      verb: "Searched code",
+      pattern: longPattern,
+      scope: "apps/app/src · *.tsx",
+    });
+    expect(getAggregateRowSearch(glob)).toEqual({
+      verb: "Searching files",
+      pattern: "**/*.e2e.test.ts",
+      scope: null,
+    });
+    expect(getAggregateRowSearch(runningCommand)).toBeNull();
+  });
+
+  test("a failed solo file action exposes its whole error, not a clipped first line", () => {
+    const failedRead: DynamicToolUIPart = {
+      type: "dynamic-tool",
+      toolName: "read",
+      toolCallId: "failed-read",
+      state: "output-error",
+      input: { filePath: "/repo/missing.md" },
+      errorText: multiLineError,
+    };
+
+    const markup = renderToStaticMarkup(<ToolAggregateGroup parts={[failedRead]} />);
+
+    expect(markup).toContain('data-tool-aggregate-detail="error"');
+    expect(markup).toContain("aria-label=\"Show full error\"");
+    expect(markup).toContain("hint: use &#x27;git fetch origin release/2026.09&#x27; first");
+    expect(markup).not.toContain("failed —");
   });
 });

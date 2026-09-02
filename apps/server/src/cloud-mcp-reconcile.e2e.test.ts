@@ -8,7 +8,7 @@ import {
   CONNECT_MCP_SERVER_INDEX_SCHEMA_VERSION,
   CONNECT_MCP_SERVER_INDEX_URI,
   readOpenWorkConnectMcpAppHostCatalog,
-  type OpenWorkConnectMcpServerIndex,
+  type OpenWorkConnectMcpServerIndexInput,
 } from "./connect-mcp-server-catalog.js";
 import { readGlobalRuntimeOpencodeConfig, readRuntimeOpencodeConfig, writeRuntimeOpencodeConfig } from "./runtime-opencode-config-store.js";
 import { inspectEngineMcpRegistration, registerTrustedOpencodeProcess, startServer } from "./server.js";
@@ -35,7 +35,7 @@ type MockOpencodeOptions = {
   delayMcpStatusMs?: number;
   postFailure?: { status: number; body: unknown };
   cloudFailedError?: string;
-  connectServers?: OpenWorkConnectMcpServerIndex["servers"];
+  connectServers?: OpenWorkConnectMcpServerIndexInput["servers"];
   appHostAuthorization?: string;
 };
 
