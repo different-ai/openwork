@@ -26,6 +26,12 @@ function artifactBadge(entry: TestArtifactIndexEntry): { label: string; classNam
     };
   }
   const summary = entry.testRun.summary;
+  if (entry.testRun.outcome === "failed") {
+    return { label: "FAILED", className: "failed", summary: entry.testRun.failure ?? "Test body failed" };
+  }
+  if (entry.testRun.outcome === "skipped") {
+    return { label: "SKIPPED", className: "pending", summary: entry.testRun.failure ?? "Test skipped" };
+  }
   if (summary.failedArtifacts > 0 || summary.failedExpectations > 0) {
     return {
       label: "FAILED",
@@ -46,6 +52,9 @@ function artifactBadge(entry: TestArtifactIndexEntry): { label: string; classNam
       className: "passed",
       summary: `${summary.passedArtifacts}/${summary.totalArtifacts} artifacts passed`,
     };
+  }
+  if (entry.testRun.outcome === "passed") {
+    return { label: "PASSED", className: "passed", summary: "Provenance trace passed" };
   }
   return {
     label: "UNVALIDATED",
@@ -139,9 +148,9 @@ body{font:15px/1.5 system-ui,sans-serif;max-width:1100px;margin:40px auto;paddin
 
 function summaryLine(testRun: TestRunRecord): string {
   const summary = testRun.summary;
-  const failed = summary.failedArtifacts > 0 || summary.failedExpectations > 0;
+  const failed = testRun.outcome === "failed" || summary.failedArtifacts > 0 || summary.failedExpectations > 0;
   const pending = summary.pendingArtifacts > 0 || summary.pendingJudgments > 0;
-  const icon = failed ? "❌" : pending ? "⏳" : summary.ok ? "✅" : "⚪";
+  const icon = failed ? "❌" : testRun.outcome === "skipped" || pending ? "⏳" : testRun.outcome === "passed" || summary.ok ? "✅" : "⚪";
   return `${icon} **${artifactVerdict(testRun)}** · ${summary.passedExpectations} expectations passed · ${summary.failedExpectations} failed · ${summary.pendingJudgments} pending`;
 }
 

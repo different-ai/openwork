@@ -25,6 +25,9 @@ export interface Located {
   name: string;
   visible: boolean;
   hitTestOk: boolean;
+  editable: boolean;
+  value: string;
+  text: string;
 }
 
 interface SerializedMatcher {
@@ -172,13 +175,16 @@ export async function locate(surface: Surface, target: Target): Promise<Located>
     const text = (element) => (element.innerText ?? element.textContent ?? "").trim();
     const selector = target.composer
       ? '[contenteditable="true"][data-lexical-editor="true"]'
-      : 'button, a[href], input, textarea, [contenteditable="true"], [role="button"], [role="link"], [role="textbox"], [role="checkbox"], [role="menuitem"], [role="tab"], [role="option"], [data-testid]';
+      : target.text && !target.role && !target.label && !target.placeholder && !target.testId
+        ? 'body *'
+        : 'button, a[href], input, textarea, [contenteditable="true"], [role="button"], [role="link"], [role="textbox"], [role="checkbox"], [role="menuitem"], [role="tab"], [role="option"], [data-testid]';
     const candidates = [...document.querySelectorAll(selector)].filter((element) => {
       if (target.role && implicitRole(element) !== target.role) return false;
       if (target.placeholder !== undefined && element.getAttribute("placeholder") !== target.placeholder) return false;
       if (target.testId !== undefined && element.getAttribute("data-testid") !== target.testId) return false;
       if (!matcher(target.text, text(element))) return false;
       if (!matcher(target.label, accessibleName(element))) return false;
+      if (target.text && [...element.children].some((child) => matcher(target.text, text(child)))) return false;
       return true;
     });
     let matches = candidates;
@@ -211,6 +217,9 @@ export async function locate(surface: Surface, target: Target): Promise<Located>
       name: accessibleName(element),
       visible: styleVisible && rect.width > 0 && rect.height > 0 && inViewport,
       hitTestOk: Boolean(hit && (hit === element || element.contains(hit))),
+      editable: element.isContentEditable || !element.readOnly && (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement),
+      value: typeof element.value === "string" ? element.value : "",
+      text: (element.innerText ?? element.value ?? element.textContent ?? "").trim(),
     };
   }`, [parsed]);
   if (!isRecord(value) || !isRecord(value.center) || !isRecord(value.rect)) {
@@ -224,7 +233,8 @@ export async function locate(surface: Surface, target: Target): Promise<Located>
   const height = numberField(value.rect, "height");
   if (x === null || y === null || rectX === null || rectY === null || width === null || height === null
     || typeof value.tag !== "string" || typeof value.name !== "string"
-    || typeof value.visible !== "boolean" || typeof value.hitTestOk !== "boolean") {
+    || typeof value.visible !== "boolean" || typeof value.hitTestOk !== "boolean"
+    || typeof value.editable !== "boolean" || typeof value.value !== "string" || typeof value.text !== "string") {
     throw new Error("CDP returned invalid located-element geometry.");
   }
   return {
@@ -234,6 +244,9 @@ export async function locate(surface: Surface, target: Target): Promise<Located>
     name: value.name,
     visible: value.visible,
     hitTestOk: value.hitTestOk,
+    editable: value.editable,
+    value: value.value,
+    text: value.text,
   };
 }
 

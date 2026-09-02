@@ -448,6 +448,9 @@ function parseTestRun(value: unknown): TestRunRecord | null {
     ? value.outcome
     : "unknown";
   const failure = typeof value.failure === "string" ? value.failure : undefined;
+  const parsedArtifacts = artifacts.filter((artifact): artifact is TestArtifact => artifact.kind !== "json");
+  const summary = summarize(parsedArtifacts);
+  if (parsedArtifacts.length === 0 && outcome === "passed") summary.ok = true;
   return {
     name: value.name,
     dir: value.dir,
@@ -455,7 +458,7 @@ function parseTestRun(value: unknown): TestRunRecord | null {
     closedAt: value.closedAt,
     gitSha,
     branch,
-    summary: summarize(artifacts.filter((artifact): artifact is TestArtifact => artifact.kind !== "json")),
+    summary,
     artifacts,
     trace,
     steps,
@@ -581,6 +584,8 @@ export function createTestEvidence(meta: { name: string; outDir?: string }): Tes
         ...artifacts.filter((artifact) => artifact.validationKey !== null),
         ...artifacts.filter((artifact) => artifact.validationKey === null),
       ].map(testArtifact);
+      const summary = summarize(orderedArtifacts);
+      if (orderedArtifacts.length === 0 && outcome === "passed") summary.ok = true;
       const record: TestRunRecord = {
         name,
         dir,
@@ -588,7 +593,7 @@ export function createTestEvidence(meta: { name: string; outDir?: string }): Tes
         closedAt: new Date().toISOString(),
         gitSha,
         branch,
-        summary: summarize(orderedArtifacts),
+        summary,
         artifacts: [...orderedArtifacts, ...jsonArtifacts.map(({ kind, label, fileName: artifactFileName }) => ({
           kind,
           label,
@@ -715,6 +720,8 @@ export function createTestEvidence(meta: { name: string; outDir?: string }): Tes
     },
     setOutcome(nextOutcome, nextFailure) {
       assertOpen();
+      if (outcome === "failed" && nextOutcome !== "failed") return;
+      if (outcome === "skipped" && nextOutcome === "passed") return;
       outcome = nextOutcome;
       failure = nextFailure;
     },

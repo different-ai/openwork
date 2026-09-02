@@ -18,6 +18,7 @@ import {
 import { denFetch, ensureMemberSession, freshSession, signIn } from "@openwork/behaviors";
 import { progress, trackResource } from "@openwork/world";
 import { createConnection } from "mysql2/promise";
+import type { ExecuteValues } from "mysql2";
 import type { ChildProcess } from "node:child_process";
 import type { DenRef, DenSession } from "@openwork/behaviors";
 import type { DbHandle, Place } from "./place.ts";
@@ -449,7 +450,7 @@ export async function inviteMember(den: Den, key: string, person?: PersonShape):
   return member;
 }
 
-export async function queryDenDatabase(databaseUrl: string, statement: string, values: readonly unknown[] = []): Promise<unknown[]> {
+export async function queryDenDatabase(databaseUrl: string, statement: string, values: readonly ExecuteValues[] = []): Promise<unknown[]> {
   const connection = await createConnection(databaseUrl);
   try {
     const [rows] = await connection.execute(statement, [...values]);
