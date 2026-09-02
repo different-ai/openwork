@@ -390,7 +390,7 @@ describe("OpenWorkSpreadsheets", () => {
     const output = { system: ["base prompt"] };
     await plugin["experimental.chat.system.transform"]({}, output);
     expect(output.system).toHaveLength(1);
-    expect(output.system[0]).toContain("base prompt\n## Spreadsheets and Excel workbooks");
+    expect(output.system[0]).toContain("base prompt\n\n## Spreadsheets and Excel workbooks");
     expect(output.system[0]).toContain("spreadsheet_inspect");
     expect(output.system[0]).toContain("spreadsheet_read");
     expect(output.system[0]).toContain("spreadsheet_write");
