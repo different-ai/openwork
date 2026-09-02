@@ -1235,7 +1235,7 @@ export function SessionRoute() {
     return {
       workspaceRoot: selectedWorkspaceRoot,
       draftScope: sessionDraftScope,
-      developerMode: false,
+      developerMode,
       modelLabel,
       onModelClick: (sessionId?: string) => {
         setModelPickerSessionId(sessionId ?? null);
@@ -1514,6 +1514,7 @@ export function SessionRoute() {
     listSlashCommands,
     modelBehaviorOptions,
     cloudMcpSubmissionState,
+    developerMode,
     modelLabel,
     modelUnavailableMessage,
     organizationModelsEmpty,

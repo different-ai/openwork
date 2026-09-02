@@ -296,6 +296,7 @@
         "evals/specs/cross-workspace-composer-switch.e2e.test.ts",
         "evals/specs/image-lightbox-size.e2e.test.ts",
         "evals/specs/safe-edit-resend.e2e.test.ts",
+        "evals/specs/session-error-technical-details.e2e.test.ts",
         "evals/specs/session-header-workspace-name.e2e.test.ts",
         "evals/specs/unfinished-tool-lifecycle.e2e.test.ts"
       ]
