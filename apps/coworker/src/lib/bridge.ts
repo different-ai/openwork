@@ -145,6 +145,8 @@ export const coworkerBridge = {
       invoke<{ accepted: boolean }>("localResponsibilities.runNow", { slug, id }),
   },
   openExternal: (url: string) => invoke<{ ok: boolean }>("shell.openExternal", { url }),
+  openUntrustedExternal: (url: string) =>
+    invoke<{ ok: boolean; cancelled?: boolean }>("shell.openUntrustedExternal", { url }),
   /**
    * The signed-in OpenWork account, handed to the embedded server so the
    * member's authorized providers become engine providers — the desktop's
