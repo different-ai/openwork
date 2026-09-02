@@ -111,9 +111,9 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
 
   // A person waits for the coworker to read Ready before asking anything of it; so does the journey.
   await waitFor(app, `(() => {
-    const summary = document.querySelector('[data-testid="coworker-activity-summary"]');
-    if (!(summary instanceof HTMLElement)) return false;
-    return summary.innerText.split("\\n").map((line) => line.trim()).filter(Boolean)[0] === "Ready";
+    const status = document.querySelector('[data-testid="coworker-top-status"]');
+    if (!(status instanceof HTMLElement)) return false;
+    return status.textContent?.trim() === "Ready";
   })()`, { timeoutMs: 240_000, label: "coworker AI ready" });
 
   // --- Chat first. Nothing here is an assignment.
@@ -122,7 +122,7 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
   await waitForAssistantText(app, CHAT_REPLY);
   // The reply text can land before the turn closes; wait for the discussion to settle so the
   // composer's assignment control is enabled again.
-  await waitFor(app, `(document.querySelector('[data-testid="coworker-thread-status"]')?.textContent ?? "").startsWith("A continuing conversation")`, {
+  await waitFor(app, `document.querySelector('[data-testid="coworker-thread-status"]')?.dataset.state === "idle"`, {
     timeoutMs: 120_000,
     label: "discussion turn settled",
   });
@@ -211,7 +211,7 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
   );
 
   // --- Back to the discussion: the count is one, the list names the assignment, the chat is unchanged.
-  await clickButton(app, "←");
+  await clickButton(app, "Back");
   await waitFor(app, `Boolean(document.querySelector('[data-testid="coworker-discussion-view"]'))`, { timeoutMs: 60_000, label: "back in the discussion view" });
   // The discussion is titled after its first message; that title belongs to the thread row, not the
   // assignment list. Wait for the row itself: the sidebar can show the same words before the

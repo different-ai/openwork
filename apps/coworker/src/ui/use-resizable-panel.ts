@@ -56,16 +56,23 @@ export function useResizablePanel({
   bounds,
   defaultWidth,
   available,
+  startCollapsed = false,
 }: {
   storageKey: string;
   side: PanelSide;
   bounds: PanelBounds;
   defaultWidth: number;
   available?: () => number;
+  /**
+   * Begin every launch folded. The remembered width still applies once the
+   * panel opens; only whether it was open is transient.
+   */
+  startCollapsed?: boolean;
 }): ResizablePanel {
-  const [layout, setLayout] = useState<PanelLayout>(() =>
-    readPanelLayout(typeof window === "undefined" ? null : window.localStorage, storageKey, defaultWidth, bounds),
-  );
+  const [layout, setLayout] = useState<PanelLayout>(() => {
+    const remembered = readPanelLayout(typeof window === "undefined" ? null : window.localStorage, storageKey, defaultWidth, bounds);
+    return startCollapsed ? { ...remembered, collapsed: true } : remembered;
+  });
   const [resizing, setResizing] = useState(false);
   const drag = useRef<{ startX: number; startWidth: number; layout: PanelLayout; moved: boolean } | null>(null);
   /**
@@ -82,6 +89,17 @@ export function useResizablePanel({
     setLayout(resolved);
     writePanelLayout(window.localStorage, storageKey, next);
   }, [defaultWidth, storageKey]);
+  /** Fold or unfold from the latest layout, so callers can hold one stable function. */
+  const setCollapsed = useCallback((collapsed: boolean) => {
+    setLayout((current) => {
+      if (current.collapsed === collapsed) return current;
+      const next = { width: current.width, collapsed };
+      writePanelLayout(window.localStorage, storageKey, next);
+      return next;
+    });
+  }, [storageKey]);
+  const expand = useCallback(() => setCollapsed(false), [setCollapsed]);
+  const collapse = useCallback(() => setCollapsed(true), [setCollapsed]);
 
   useEffect(() => {
     if (!resizing) return;
@@ -137,8 +155,8 @@ export function useResizablePanel({
     collapsed: layout.collapsed,
     resizing,
     bounds,
-    expand: () => commit({ width: layout.width, collapsed: false }),
-    collapse: () => commit({ width: layout.width, collapsed: true }),
+    expand,
+    collapse,
     toggle: () => commit({ width: layout.width, collapsed: !layout.collapsed }),
     reset: () => commit(null),
     separatorProps: {

@@ -300,6 +300,39 @@ async function clickButtonContaining(app: Awaited<ReturnType<typeof coworker>>, 
   })()`, { timeoutMs: 120_000, label: `button containing ${json(text)}` });
 }
 
+/** Bring the right panel to the Apps & tools view from whatever state it is in (folded, another view, or Activity). */
+async function openAppsAndTools(app: Awaited<ReturnType<typeof coworker>>): Promise<void> {
+  await waitFor(app, `(() => {
+    const panel = document.querySelector('[data-testid="context-panel"]');
+    if (!(panel instanceof HTMLElement)) return false;
+    if (panel.dataset.collapsed === "false" && panel.dataset.view === "capabilities") return true;
+    if (panel.dataset.collapsed === "true") {
+      document.querySelector('[data-testid="context-rail-capabilities"]')?.click();
+      return false;
+    }
+    if (panel.dataset.view !== "overview") {
+      document.querySelector('button[aria-label="Back to activity"]')?.click();
+      return false;
+    }
+    const link = [...document.querySelectorAll('nav[aria-label="More for this coworker"] button')]
+      .find((button) => (button.textContent ?? "").includes("Apps & tools"));
+    link?.click();
+    return false;
+  })()`, { timeoutMs: 60_000, label: "Apps & tools view" });
+}
+
+/** Open the right panel on its Activity view (it starts folded and closes when the coworker changes). */
+async function openDetails(app: Awaited<ReturnType<typeof coworker>>): Promise<void> {
+  await waitFor(app, `(() => {
+    const panel = document.querySelector('[data-testid="context-panel"]');
+    if (!(panel instanceof HTMLElement)) return false;
+    if (panel.dataset.collapsed === "false" && panel.dataset.view === "overview") return true;
+    if (panel.dataset.collapsed === "true") document.querySelector('[data-testid="context-rail-overview"]')?.click();
+    else document.querySelector('button[aria-label="Back to activity"]')?.click();
+    return false;
+  })()`, { timeoutMs: 60_000, label: "Activity view" });
+}
+
 test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
   needs({ optIn: ["OPENWORK_EVAL_E2E_TESTS"], commands: ["opencode"] });
 
@@ -523,10 +556,11 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
   expect(await evalIn(app, `document.querySelector('[data-testid="composer-model-control"]') === null`)).toBe(true);
   // A person waits for the coworker to read Ready before asking anything of it; so does the journey.
   await waitFor(app, `(() => {
-    const summary = document.querySelector('[data-testid="coworker-activity-summary"]');
-    if (!(summary instanceof HTMLElement)) return false;
-    return summary.innerText.split("\\n").map((line) => line.trim()).filter(Boolean)[0] === "Ready";
+    const status = document.querySelector('[data-testid="coworker-top-status"]');
+    if (!(status instanceof HTMLElement)) return false;
+    return status.textContent?.trim() === "Ready";
   })()`, { timeoutMs: 240_000, label: "coworker AI ready" });
+  await openDetails(app);
   await waitFor(app, `(() => {
     const button = document.querySelector('[data-testid="coworker-settings-button"]');
     if (!(button instanceof HTMLElement)) return false;
@@ -585,7 +619,7 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
 
   // --- OpenWork Connect reaches the coworker: one minted gateway token, the gateway registered in Scout's
   // workspace, and the Apps & tools surface reporting it in plain words.
-  await clickButtonContaining(app, "Apps & tools");
+  await openAppsAndTools(app);
   const connectSettled = await waitFor(app, `(() => {
     const card = document.querySelector('[data-testid="coworker-connect-card"]');
     const status = card?.getAttribute("data-status") ?? "";
@@ -770,7 +804,7 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
     return { status: response.status, present: health?.desired?.present ?? null };
   })()`, { awaitPromise: true, timeoutMs: 60_000 });
   expect(isRecord(gatewayAfterSignOut) && (gatewayAfterSignOut.status === 404 || gatewayAfterSignOut.present === false)).toBe(true);
-  await clickButtonContaining(app, "Apps & tools");
+  await openAppsAndTools(app);
   await waitFor(app, `document.querySelector('[data-testid="coworker-connect-card"]')?.getAttribute("data-status") === "signed-out"`, {
     timeoutMs: 30_000,
     label: "Connect card back to its signed-out pitch",
