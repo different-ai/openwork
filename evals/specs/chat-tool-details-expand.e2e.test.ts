@@ -139,7 +139,7 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   // The search row names its scope in prose and does not clip the pattern in JS.
   const searchLabel = await evalIn(app, `(() => {
     const box = document.querySelector('[data-tool-aggregate-detail="pattern"]');
-    const row = box?.parentElement;
+    const row = box?.closest('[data-tool-aggregate-row]');
     return row instanceof HTMLElement ? row.innerText.replace(/\\s+/g, ' ').trim() : '';
   })()`);
   if (typeof searchLabel !== "string") throw new Error(`Search row was not readable: ${JSON.stringify(searchLabel)}`);

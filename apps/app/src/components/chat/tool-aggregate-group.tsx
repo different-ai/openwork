@@ -412,7 +412,7 @@ export function ToolAggregateGroup({ parts, thoughts = [], className }: ToolAggr
                   <ReasoningBlock text={thought.text} isStreaming={thought.isStreaming} />
                 </div>
               ))}
-              <div className="flex min-w-0 flex-col gap-1.5 py-1">
+              <div data-tool-aggregate-row className="flex min-w-0 flex-col gap-1.5 py-1">
                 {!singleCommand ? (
                   <div className="flex min-w-0 items-center gap-2 text-sm text-muted-foreground">
                   {status === "waiting" ? (
