@@ -75,3 +75,32 @@ test("Open Coworker owns a branded boot surface and cross-platform icon set", as
     "resources/icons/linux/512x512.png",
   ].map((relativePath) => readFile(path.join(coworkerRoot, relativePath))));
 });
+
+test("Open Coworker presents a custom, legible drag-to-Applications installer", async () => {
+  const config = YAML.parse(await readFile(path.join(coworkerRoot, "electron-builder.yml"), "utf8"));
+  const backgroundSvg = await readFile(
+    path.join(coworkerRoot, "resources", "installer", "dmg-background.svg"),
+    "utf8",
+  );
+  const backgroundPng = await readFile(
+    path.join(coworkerRoot, "resources", "installer", "dmg-background.png"),
+  );
+
+  assert.equal(config.dmg.title, "Open Coworker");
+  assert.equal(config.dmg.background, "resources/installer/dmg-background.png");
+  assert.equal(config.dmg.icon, "resources/icons/icon.icns");
+  assert.equal(config.dmg.iconSize, 118);
+  assert.equal(config.dmg.iconTextSize, 13);
+  assert.deepEqual(config.dmg.window, { width: 760, height: 500 });
+  assert.deepEqual(config.dmg.contents, [
+    { x: 180, y: 285 },
+    { x: 580, y: 285, type: "link", path: "/Applications" },
+  ]);
+  assert.match(backgroundSvg, /Welcome to your new team/);
+  assert.match(backgroundSvg, /Local by default/);
+  assert.doesNotMatch(backgroundSvg, /Ready for your Mac/);
+  assert.doesNotMatch(backgroundSvg, /(?:linear|radial)Gradient|<filter/);
+  assert.equal(backgroundPng.subarray(1, 4).toString("ascii"), "PNG");
+  assert.equal(backgroundPng.readUInt32BE(16), 760);
+  assert.equal(backgroundPng.readUInt32BE(20), 500);
+});

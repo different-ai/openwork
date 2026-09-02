@@ -42,6 +42,22 @@ mac:
   target:
     - dmg
     - zip
+dmg:
+  title: Open Coworker
+  background: resources/installer/dmg-background.png
+  icon: resources/icons/icon.icns
+  iconSize: 118
+  iconTextSize: 13
+  window:
+    width: 760
+    height: 500
+  contents:
+    - x: 180
+      y: 285
+    - x: 580
+      y: 285
+      type: link
+      path: /Applications
 linux:
   executableName: open-coworker
   icon: resources/icons/linux

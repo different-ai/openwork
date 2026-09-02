@@ -14,6 +14,7 @@
     "dev": "node ./scripts/dev.mjs",
     "build": "vite build",
     "build:electron": "node ./scripts/electron-build.mjs",
+    "installer:background": "node ./scripts/render-installer-background.mjs",
     "package:electron": "pnpm run build:electron && pnpm exec electron-builder --config electron-builder.yml",
     "package:electron:dir": "pnpm run build:electron && pnpm exec electron-builder --config electron-builder.yml --dir",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json --noEmit",
