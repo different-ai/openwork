@@ -20,7 +20,7 @@ test("bundled engine connects to preseeded organization skills and connections",
   expect(signedOut).not.toMatchObject({ status: "available" });
   await user.looks(["The OpenWork desktop is visible", "No crash or error dialog is visible"]);
 
-  await seed.signIn(world.app, world.member);
+  await seed.signIn(world.app, world.member, "admin");
   const signedIn = await probe.eventually(
     () => probe.connectState(world.app),
     {

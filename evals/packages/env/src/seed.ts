@@ -92,7 +92,7 @@ export interface Seed {
   workspace(app: Surface, path?: string): Promise<{ workspaceId: string; route: string }>;
   session(app: Surface, options?: { title?: string }): Promise<{ sessionId: string; title: string }>;
   sessions(app: Surface, titles: readonly string[]): Promise<{ sessionId: string; title: string }[]>;
-  signIn(app: Surface, member: DenSession): Promise<void>;
+  signIn(app: Surface, member: DenSession, identity: string): Promise<void>;
   api(session: DenSession, path: string, init?: RequestInit): Promise<DenFetchResult>;
   orgConnection(admin: DenSession, input: OrgConnectionInput): Promise<{ id: string; name: string }>;
   nativeConnector(admin: DenSession, input: NativeConnectorInput): Promise<{ id: string; name: string }>;

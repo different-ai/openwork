@@ -129,8 +129,9 @@ function messageText(error: unknown): string {
 
 function redacted(value: string): string {
   return value
+    .replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, "<email>")
     .replace(/Bearer\s+[^\s,;]+/gi, "Bearer <redacted>")
-    .replace(/((?:password|token|secret|authorization)["']?\s*[:=]\s*)[^,}\s]+/gi, "$1<redacted>")
+    .replace(/((?:["']?[\w.-]*(?:token|secret|password)[\w.-]*["']?)\s*[:=]\s*)(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s,;}&]+)/gi, "$1<redacted>")
     .slice(0, 240);
 }
 
@@ -294,6 +295,7 @@ export class SpecRuntime {
 
   async call<T>(channel: TraceChannel, verb: string, detail: string, surface: Surface | null, fn: () => Promise<T>): Promise<T> {
     const startedAt = Date.now();
+    const safeDetail = redacted(detail);
     try {
       this.checkOrder(channel, verb);
       const result = await fn();
@@ -301,7 +303,7 @@ export class SpecRuntime {
         stage: this.stage,
         channel,
         verb,
-        detail: redacted(detail),
+        detail: safeDetail,
         surface: surfaceName(surface),
         ok: true,
         ms: Date.now() - startedAt,
@@ -312,7 +314,7 @@ export class SpecRuntime {
         stage: this.stage,
         channel,
         verb,
-        detail: redacted(detail),
+        detail: safeDetail,
         surface: surfaceName(surface),
         ok: false,
         ms: Date.now() - startedAt,
@@ -507,8 +509,8 @@ export class SeedChannel implements Seed {
     });
   }
 
-  signIn(app: Surface, member: import("@openwork/behaviors").DenSession) {
-    return this.#runtime.call("seed", "signIn", `signIn(${member.email})`, app, () => signInDesktopAs(app, member, member));
+  signIn(app: Surface, member: import("@openwork/behaviors").DenSession, identity: string) {
+    return this.#runtime.call("seed", "signIn", `signIn(${identity})`, app, () => signInDesktopAs(app, member, member));
   }
 
   api(session: import("@openwork/behaviors").DenSession, path: string, init: RequestInit = {}) {

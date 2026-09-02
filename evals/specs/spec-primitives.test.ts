@@ -1,3 +1,5 @@
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 import { expect } from "vitest";
 import {
   SeedBeforeActError,
@@ -19,6 +21,8 @@ const steps: StepRecord[] = [];
 const outcomes: { outcome: TestOutcome; failure?: string }[] = [];
 let clickCount = 0;
 const cdpCalls: Array<{ method: string; params: Record<string, unknown> }> = [];
+let primitiveEvidenceDir = "";
+let redactedTraceMarkdown = "";
 
 const fakeSurface: Surface = {
   handle: {
@@ -79,7 +83,8 @@ const primitiveTest = spec.world(async (seed) => {
   },
 });
 
-primitiveTest("worlds and capability channels preserve provenance and ordering", async ({ world, seed, user, probe, step }) => {
+primitiveTest("worlds and capability channels preserve provenance and ordering", async ({ world, seed, user, probe, step, evidence }) => {
+  primitiveEvidenceDir = evidence.dir;
   expect(world.workspacePath).toBe("/fake/world-workspace");
   expect(await probe.text()).toBe("read-only probe");
   expect(typeof seed.denLink).toBe("function");
@@ -93,6 +98,7 @@ primitiveTest("worlds and capability channels preserve provenance and ordering",
   expect(await probe.eval("Promise.resolve('probe')", { awaitPromise: true, timeoutMs: 1_000 })).toBe("evaluated");
   await user.see({ text: /Running 1 command, reading 1 file/ });
   await user.see("composer", { editable: true, text: /Keep this draft/ });
+  await user.see({ text: "alice@example.com Bearer abc accessToken=token-value secret='secret-value' password=password-value" });
   await user.type("composer", "Replacement text", { replace: true });
 
   await expect(step("failing step", () => {
@@ -154,6 +160,7 @@ primitiveTest("worlds and capability channels preserve provenance and ordering",
     failure: "expected step failure",
   };
   const markdown = renderPrMarkdown(record, {});
+  redactedTraceMarkdown = markdown;
   expect(markdown).toContain("**[user]**");
   expect(markdown).toContain("**steps**");
   expect(markdown).toContain("**verdict** failed");
@@ -175,6 +182,19 @@ primitiveTest("worlds and capability channels preserve provenance and ordering",
   const passedMarkdown = renderPrMarkdown(passedRecord, {});
   expect(passedMarkdown).toContain("## Test evidence — passed primitive trace — ✅ passed");
   expect(passedMarkdown).toContain("**verdict** passed · 3 user observations (see ×3) · 1 probes · steps 1/1");
+});
+
+test("trace details redact identities and credentials in persisted and rendered evidence", async () => {
+  const testRunJson = await readFile(join(primitiveEvidenceDir, "test-run.json"), "utf8");
+  for (const output of [testRunJson, redactedTraceMarkdown]) {
+    expect(output).toContain("<email>");
+    expect(output).toContain("Bearer <redacted>");
+    expect(output).not.toContain("alice@example.com");
+    expect(output).not.toContain("Bearer abc");
+    expect(output).not.toContain("token-value");
+    expect(output).not.toContain("secret-value");
+    expect(output).not.toContain("password-value");
+  }
 });
 
 let skippedWorldRuns = 0;
