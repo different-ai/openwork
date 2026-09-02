@@ -574,6 +574,11 @@ export async function enterpriseTlsWorld(seed: Seed, { place }: { place: Place }
     if (!Array.isArray(seededWorkspaceNames) || !seededWorkspaceNames.includes("enterprise-tls-profile-continuity")) {
       throw new Error("Could not seed the enterprise TLS continuity workspace.");
     }
+    await waitForBehavior(
+      rawApp,
+      `window.__openworkControl?.listActions?.().some((action) => action.id === "auth.exchange-grant")`,
+      { timeoutMs: 60_000, label: "pre-trust sign-in reachability action" },
+    );
     const grant = await createDesktopHandoffGrant(den.admin);
     const app = rawApp;
     return {

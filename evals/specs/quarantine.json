@@ -2,7 +2,6 @@
   "version": 1,
   "entries": [
     { "spec": "admin-model-limits.e2e.test.ts", "category": "unmigrated", "reason": "not yet migrated to spec primitives; not verified green in any lane" },
-    { "spec": "artifact-code-browser.e2e.test.ts", "category": "product-finding", "reason": "overflow artifact tab not user-locatable", "evidence": "[user:click] Could not locate \"overflow-tab-12.md\"" },
     { "spec": "automation-deployment-gate.e2e.test.ts", "category": "unmigrated", "reason": "not yet migrated to spec primitives; not verified green in any lane" },
     { "spec": "automation-desktop-lifecycle.e2e.test.ts", "category": "unmigrated", "reason": "not yet migrated to spec primitives; not verified green in any lane" },
     { "spec": "automation-desktop-recovery-window.e2e.test.ts", "category": "unmigrated", "reason": "not yet migrated to spec primitives; not verified green in any lane" },
@@ -32,7 +31,6 @@
     { "spec": "dashboard-deployment-contract.e2e.test.ts", "category": "unmigrated", "reason": "not yet migrated to spec primitives; not verified green in any lane" },
     { "spec": "dashboard-deployment-gate.e2e.test.ts", "category": "unmigrated", "reason": "not yet migrated to spec primitives; not verified green in any lane" },
     { "spec": "daytona-k3s-live.e2e.test.ts", "category": "unmigrated", "reason": "not yet migrated to spec primitives; not verified green in any lane" },
-    { "spec": "den-behind-enterprise-tls.e2e.test.ts", "category": "product-finding", "reason": "model control timed out under a trusted click", "evidence": "[user] click(big-pickle) model control timed out; control passed" },
     { "spec": "den-intermittent-outage-recovery.e2e.test.ts", "category": "unmigrated", "reason": "not yet migrated to spec primitives; not verified green in any lane" },
     { "spec": "den-litellm-provider.e2e.test.ts", "category": "unmigrated", "reason": "not yet migrated to spec primitives; not verified green in any lane" },
     { "spec": "den-sidebar-footer-pin.e2e.test.ts", "category": "unmigrated", "reason": "not yet migrated to spec primitives; not verified green in any lane" },

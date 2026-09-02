@@ -17,6 +17,7 @@ active-session-workspace-storm.e2e.test.ts
 alpha-update-eligibility.e2e.test.ts
 app-den-tls-fault.e2e.test.ts
 app-smoke.e2e.test.ts
+artifact-code-browser.e2e.test.ts
 attachment-upload-loading-state.e2e.test.ts
 automation-revision-revert.e2e.test.ts
 chat-loading-shimmer.e2e.test.ts
@@ -30,6 +31,7 @@ config-object-large-skill.e2e.test.ts
 connect-readiness-preseeded.e2e.test.ts
 connector-tool-call-branding.e2e.test.ts
 cross-workspace-split-view.e2e.test.ts
+den-behind-enterprise-tls.e2e.test.ts
 first-run-cloud-share.e2e.test.ts
 first-run-local.e2e.test.ts
 library-add-connector-discovery.e2e.test.ts
