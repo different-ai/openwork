@@ -115,6 +115,7 @@ export function ThreadsPanel({
   onRefreshRuntime,
   onSyncProviders,
   assignmentDraft,
+  discussionDraft,
   openThreadRequest,
   onOpenModelSettings,
   onOpenAccount,
@@ -127,6 +128,8 @@ export function ThreadsPanel({
   onRefreshRuntime: () => Promise<void>;
   onSyncProviders: () => Promise<ProviderSyncRun>;
   assignmentDraft?: AssignmentDraft;
+  /** A ready-to-send discussion message (for example, "explain this run"); the id makes repeats distinct. */
+  discussionDraft?: AssignmentDraft;
   /** Set by the context rail to jump straight into a thread; the id makes repeat requests distinct. */
   openThreadRequest?: { id: number; threadId: string } | null;
   /** Coworker settings, opened at the AI model section — the first recovery step after a model failure. */
@@ -171,6 +174,12 @@ export function ThreadsPanel({
     setView("discussion");
     setPendingAssignment(assignmentDraft);
   }, [assignmentDraft]);
+
+  useEffect(() => {
+    if (!discussionDraft) return;
+    setOpenThreadId("");
+    setView("discussion");
+  }, [discussionDraft]);
 
   useEffect(() => {
     if (!openThreadRequest?.threadId) return;
@@ -334,6 +343,7 @@ export function ThreadsPanel({
         }}
         onCreateAssignment={createAssignment}
         onAssignmentDraftHandled={() => setPendingAssignment(null)}
+        discussionDraft={discussionDraft}
       />
     );
   }
@@ -348,6 +358,7 @@ export function ThreadsPanel({
       kind="discussion"
       assignmentCount={items.length}
       assignmentDraft={pendingAssignment}
+      discussionDraft={discussionDraft}
       initialTurn={queuedTurn?.threadId === discussionThreadId ? queuedTurn : null}
       onBack={() => undefined}
       onShowAssignments={() => setView("assignments")}
@@ -372,11 +383,13 @@ function DiscussionWelcome({
   onCreateAssignment,
   onShowAssignments,
   onAssignmentDraftHandled,
+  discussionDraft,
 }: {
   coworker: CoworkerSummary;
   error: string;
   assignmentCount: number;
   assignmentDraft?: AssignmentDraft;
+  discussionDraft?: AssignmentDraft;
   onStartDiscussion: (text: string) => Promise<void>;
   onCreateAssignment: (outcome: string, messages: ReadonlyArray<DiscussionMessage>) => Promise<void>;
   onShowAssignments: () => void;
@@ -393,6 +406,12 @@ function DiscussionWelcome({
     setAssignmentMode(true);
     setAssignmentText(assignmentDraft.text);
   }, [assignmentDraft]);
+
+  useEffect(() => {
+    if (!discussionDraft) return;
+    setAssignmentMode(false);
+    setMessage(discussionDraft.text);
+  }, [discussionDraft]);
 
   async function send() {
     const text = message.trim();
@@ -546,6 +565,7 @@ function ThreadView({
   kind,
   assignmentCount,
   assignmentDraft,
+  discussionDraft,
   initialTurn,
   onBack,
   onShowAssignments,
@@ -565,6 +585,7 @@ function ThreadView({
   kind: "discussion" | "assignment";
   assignmentCount: number;
   assignmentDraft?: AssignmentDraft;
+  discussionDraft?: AssignmentDraft;
   initialTurn: QueuedTurn | null;
   onBack: () => void;
   onShowAssignments: () => void;
@@ -649,6 +670,12 @@ function ThreadView({
     setAssignmentMode(true);
     setAssignmentText(assignmentDraft.text);
   }, [assignmentDraft, kind]);
+
+  useEffect(() => {
+    if (kind !== "discussion" || !discussionDraft) return;
+    setAssignmentMode(false);
+    setReply(discussionDraft.text);
+  }, [discussionDraft, kind]);
 
   useEffect(() => {
     void refresh();

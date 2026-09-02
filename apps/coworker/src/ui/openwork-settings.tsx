@@ -1,5 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { coworkerBridge, type CoworkerSummary, type ProviderSyncRun, type RuntimeInfo } from "@/lib/bridge";
+import {
+  coworkerBridge,
+  type CoworkerSettings,
+  type CoworkerSummary,
+  type LocalRunStatus,
+  type ProviderSyncRun,
+  type RuntimeInfo,
+} from "@/lib/bridge";
 import { denApiBase, describeSkippedProvider, type DenSession } from "@/lib/den";
 import {
   createCoworkerThreads,
@@ -16,7 +23,7 @@ const SECTIONS: Array<{ id: SettingsSection; label: string; detail: string }> = 
   { id: "general", label: "General", detail: "Open Coworker and shared defaults" },
   { id: "account", label: "Account", detail: "OpenWork account and organization" },
   { id: "models", label: "AI models", detail: "AI providers and models every coworker can use" },
-  { id: "engine", label: "AI & local setup", detail: "AI service, local storage, and diagnostics" },
+  { id: "engine", label: "AI & local setup", detail: "AI service, responsibilities on this Mac, storage, and diagnostics" },
 ];
 
 const EMPTY_CATALOG: EngineModelCatalog = { models: [], connectedProviderIds: [], cloud: null };
@@ -440,6 +447,7 @@ export function OpenWorkSettings({
                   <SettingsRow label="Coworker files" value={runtime.coworkersDir} hint="Identities, memory, and responsibility definitions stay on this Mac." />
                   <SettingsRow label="Sign-in links" value={runtime.deepLinksRegistered ? `${runtime.deepLinkScheme}:// registered` : "Paste only"} hint={runtime.deepLinksRegistered ? "OpenWork can open this app directly after sign-in." : "Unpackaged and isolated launches accept the pasted sign-in link."} />
                 </SettingsCard>
+                <LocalRunsCard active={active} />
                 {runtime.engineError ? (
                   <details className="rounded-2xl border border-line bg-panel/45 px-4 py-3 text-xs text-mist" data-testid="local-setup-technical">
                     <summary className="cursor-pointer select-none font-medium text-snow/85">Technical details</summary>
@@ -454,5 +462,94 @@ export function OpenWorkSettings({
         </main>
       </section>
     </div>
+  );
+}
+
+const PARALLEL_CHOICES = [1, 2, 3, 4];
+
+/**
+ * How many responsibilities may run at once on this Mac. Runs past the limit
+ * wait in line and start by themselves; OpenWork Cloud schedules its own runs.
+ */
+function LocalRunsCard({ active }: { active: boolean }) {
+  const [settings, setSettings] = useState<CoworkerSettings | null>(null);
+  const [status, setStatus] = useState<LocalRunStatus | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    if (!active) return;
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const [nextSettings, nextStatus] = await Promise.all([
+          coworkerBridge.settings.get(),
+          coworkerBridge.localResponsibilities.status(),
+        ]);
+        if (cancelled) return;
+        setSettings(nextSettings);
+        setStatus(nextStatus);
+        setError("");
+      } catch (cause) {
+        if (!cancelled) setError(cause instanceof Error ? cause.message : String(cause));
+      }
+    };
+    void load();
+    const timer = window.setInterval(() => void load(), 5_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [active]);
+
+  async function choose(limit: number) {
+    setSaving(true);
+    setError("");
+    try {
+      setSettings(await coworkerBridge.settings.update({ maxParallelLocalRuns: limit }));
+      setStatus(await coworkerBridge.localResponsibilities.status());
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const limit = settings?.maxParallelLocalRuns ?? null;
+  const live = status
+    ? `${status.active} running · ${status.queued} waiting`
+    : "";
+
+  return (
+    <SettingsCard testId="local-runs-card">
+      <div className="flex flex-wrap items-start justify-between gap-4 px-4 py-4">
+        <div className="min-w-0 flex-1">
+          <h3 className="text-sm font-semibold text-snow">Responsibilities on this Mac</h3>
+          <p className="mt-1 max-w-md text-xs leading-relaxed text-mist">
+            Run up to this many at the same time. Any others wait in line and start by themselves when a run finishes.
+            OpenWork Cloud schedules its own runs and is not limited here.
+          </p>
+          {live ? <p className="mt-2 text-[11px] text-mist" data-testid="local-runs-live">{live}</p> : null}
+          {error ? <div className="mt-2"><ErrorNote>{error}</ErrorNote></div> : null}
+        </div>
+        <div className="flex shrink-0 items-center gap-1 rounded-lg border border-line bg-ink p-0.5" role="radiogroup" aria-label="Runs at the same time">
+          {PARALLEL_CHOICES.map((choice) => (
+            <button
+              key={choice}
+              type="button"
+              role="radio"
+              aria-checked={limit === choice}
+              disabled={saving || limit === null}
+              className={`min-w-9 rounded-md px-2.5 py-1.5 text-xs font-medium transition-colors disabled:cursor-not-allowed ${
+                limit === choice ? "bg-white/10 text-snow" : "text-mist hover:text-snow"
+              }`}
+              onClick={() => void choose(choice)}
+            >
+              {choice}
+            </button>
+          ))}
+        </div>
+      </div>
+    </SettingsCard>
   );
 }
