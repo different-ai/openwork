@@ -653,7 +653,7 @@ export async function appDenTlsFaultWorld(_seed: Seed, { place }: { place: Place
   };
 }
 
-export async function firstRunCloudShareWorld(seed: Seed) {
+export async function firstRunCloudShareWorld(seed: Seed, { place }: { place: Place }) {
   const den = await seed.den({
     org: {
       name: "Acme",
@@ -661,10 +661,14 @@ export async function firstRunCloudShareWorld(seed: Seed) {
       members: { colleague: { email: `first-run-cloud-colleague-${Date.now()}@openwork.test`, name: "Jordan" } },
     },
   });
-  const app = await seed.desktop({ den, signIn: false });
+  const app = await desktop({
+    name: "first-run-cloud-share",
+    host: place.host(),
+    bootstrap: { baseUrl: den.ref.webUrl, requireSignin: false },
+  });
   const web = await seed.web({
     den,
-    startPath: "/?mode=sign-up&desktopAuth=1&desktopScheme=openwork",
+    startPath: "/",
     headless: true,
     viewport: { width: 1280, height: 900, deviceScaleFactor: 1 },
   });
@@ -686,7 +690,13 @@ export async function firstRunCloudShareWorld(seed: Seed) {
     const visible = await readResolvedMarketplace(den.members.colleague, marketplace.id);
     return { plugin, skillName, visible };
   };
-  return { app, web, den, shareSkill };
+  return {
+    app,
+    web,
+    den,
+    shareSkill,
+    async [Symbol.asyncDispose]() { await app.stop(); },
+  };
 }
 
 function toolResultJson(result: unknown): Record<string, unknown> {
