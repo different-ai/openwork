@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { opencodeTargetName, resolveBundledOpencodeBinary } from "./runtime-paths.mjs";
+import { opencodeTargetName, resolveBundledOpencodeBinary, resolveUserDataDir } from "./runtime-paths.mjs";
 
 test("Open Coworker resolves each packaged OpenCode sidecar name", () => {
   assert.equal(opencodeTargetName("darwin", "arm64"), "opencode-aarch64-apple-darwin");
@@ -34,4 +34,25 @@ test("sidecar resolution returns null when the bundle is absent", () => {
     arch: "x64",
     fileExists: () => false,
   }), null);
+});
+
+test("isolated profiles win over the default userData location, app override first", () => {
+  const appDataDir = "/Users/me/Library/Application Support";
+  assert.equal(
+    resolveUserDataDir({ env: {}, appDataDir, appIdentifier: "com.differentai.opencoworker" }),
+    "/Users/me/Library/Application Support/com.differentai.opencoworker",
+  );
+  assert.equal(
+    resolveUserDataDir({ env: { OPENWORK_ELECTRON_USERDATA: "/tmp/profile/electron-userdata" }, appDataDir, appIdentifier: "x" }),
+    "/tmp/profile/electron-userdata",
+  );
+  assert.equal(
+    resolveUserDataDir({
+      env: { COWORKER_USER_DATA_DIR: "/tmp/coworker-profile", OPENWORK_ELECTRON_USERDATA: "/tmp/profile/electron-userdata" },
+      appDataDir,
+      appIdentifier: "x",
+    }),
+    "/tmp/coworker-profile",
+  );
+  assert.equal(resolveUserDataDir({ env: { COWORKER_USER_DATA_DIR: "   " }, appDataDir, appIdentifier: "y" }), `${appDataDir}/y`);
 });

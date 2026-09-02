@@ -40,7 +40,7 @@ import {
   reconcileInterruptedLocalRuns,
   setLocalResponsibilityActive,
 } from "./local-responsibilities.mjs";
-import { resolveBundledOpencodeBinary } from "./runtime-paths.mjs";
+import { resolveBundledOpencodeBinary, resolveUserDataDir } from "./runtime-paths.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const isDev = !app.isPackaged || process.env.OPENWORK_DEV_MODE === "1";
@@ -78,7 +78,7 @@ if (process.platform === "win32") {
 }
 app.setPath(
   "userData",
-  process.env.COWORKER_USER_DATA_DIR?.trim() || path.join(app.getPath("appData"), APP_IDENTIFIER),
+  resolveUserDataDir({ env: process.env, appDataDir: app.getPath("appData"), appIdentifier: APP_IDENTIFIER }),
 );
 
 const coworkersDir = process.env.COWORKER_HOME_DIR?.trim() || defaultCoworkersDir();
