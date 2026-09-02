@@ -32,15 +32,21 @@ export type ResizablePanel = {
     "aria-valuetext": string;
     tabIndex: 0;
     onPointerDown: (event: PointerEvent<HTMLElement>) => void;
-    onDoubleClick: () => void;
+    /** A plain click on the edge folds or unfolds the panel; a drag never counts as one. */
+    onClick: () => void;
     onKeyDown: (event: KeyboardEvent<HTMLElement>) => void;
   };
 };
 
+/** Pointer travel below this is a click on the edge, not a resize. */
+const CLICK_TRAVEL_PX = 4;
+
 /**
- * One panel edge the person can drag, nudge with the keyboard, or snap closed.
- * `available` bounds the expanded width by what the window can spare, so the
- * middle column always keeps its minimum.
+ * One panel edge the person can drag, click to fold or unfold, nudge with the
+ * keyboard, or snap closed by dragging past the fold threshold. There is no
+ * separate fold button: the edge is the control. `available` bounds the
+ * expanded width by what the window can spare, so the middle column always
+ * keeps its minimum.
  */
 export function useResizablePanel({
   storageKey,
@@ -60,6 +66,8 @@ export function useResizablePanel({
   );
   const [resizing, setResizing] = useState(false);
   const drag = useRef<{ startX: number; startWidth: number; layout: PanelLayout } | null>(null);
+  /** Set once a drag has really moved, so the click that follows it is ignored. */
+  const dragMoved = useRef(false);
   const room = useCallback(() => available?.(), [available]);
 
   const commit = useCallback((next: PanelLayout | null) => {
@@ -73,6 +81,8 @@ export function useResizablePanel({
     const move = (event: globalThis.PointerEvent) => {
       const current = drag.current;
       if (!current) return;
+      if (Math.abs(event.clientX - current.startX) < CLICK_TRAVEL_PX && !dragMoved.current) return;
+      dragMoved.current = true;
       const next = resolvePanelDrag(current.layout, { side, startX: current.startX, currentX: event.clientX, startWidth: current.startWidth }, bounds, room());
       current.layout = next;
       setLayout(next);
@@ -132,10 +142,17 @@ export function useResizablePanel({
       tabIndex: 0,
       onPointerDown: (event) => {
         event.preventDefault();
+        dragMoved.current = false;
         drag.current = { startX: event.clientX, startWidth: width, layout };
         setResizing(true);
       },
-      onDoubleClick: () => commit(null),
+      onClick: () => {
+        if (dragMoved.current) {
+          dragMoved.current = false;
+          return;
+        }
+        commit({ width: layout.width, collapsed: !layout.collapsed });
+      },
       onKeyDown: (event) => {
         if (event.key === "Enter") {
           event.preventDefault();

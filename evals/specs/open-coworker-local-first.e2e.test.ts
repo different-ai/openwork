@@ -233,9 +233,10 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
     true,
   );
 
-  // Both side panels fold away. The team rail keeps every coworker as an avatar with a
-  // status dot and a hover card, and marks the active one; the context panel keeps its
-  // four destinations as icons that unfold straight into the chosen view.
+  // Both side panels fold away with a click on their edge (there is no fold button). The
+  // team rail keeps every coworker as an avatar with a status dot and a hover card, and
+  // marks the active one; the context panel keeps its four destinations as icons that
+  // unfold straight into the chosen view.
   const foldedPanels = await evalIn(app, `(async () => {
     const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
     const q = (selector) => document.querySelector(selector);
@@ -244,8 +245,9 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
     if (!(rail instanceof HTMLElement) || !(panel instanceof HTMLElement)) return null;
     const expandedRailWidth = rail.getBoundingClientRect().width;
     const expandedPanelWidth = panel.getBoundingClientRect().width;
-    q('[data-testid="coworker-rail-collapse"]')?.click();
-    q('[data-testid="context-panel-collapse"]')?.click();
+    const foldButtons = document.querySelectorAll('[data-testid$="-collapse"], [data-testid$="-expand"], [aria-label="Hide panel"], [aria-label="Show panel"], [aria-label="Hide team details"], [aria-label="Show team details"]').length;
+    q('[data-testid="coworker-rail-resizer"]')?.click();
+    q('[data-testid="context-panel-resizer"]')?.click();
     await wait(400);
     const avatar = q('[data-testid="coworker-rail-avatar"]');
     const indicator = q('[data-testid="coworker-rail-indicator"]');
@@ -255,6 +257,7 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
     const peekRect = peek?.getBoundingClientRect();
     const railRect = rail.getBoundingClientRect();
     const collapsed = {
+      foldButtons,
       railWidth: railRect.width,
       panelWidth: panel.getBoundingClientRect().width,
       railSearchVisible: q('input[aria-label="Search coworkers"]') instanceof HTMLElement,
@@ -286,7 +289,7 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
     };
     const draggedOpen = await dragRail(300);
     const draggedClosed = await dragRail(40);
-    q('[data-testid="coworker-rail-expand"]')?.click();
+    q('[data-testid="coworker-rail-resizer"]')?.click();
     await wait(400);
     const reopened = rail.getBoundingClientRect().width;
     // Back to the Activity overview so the rest of the journey sees the default panel.
@@ -308,6 +311,7 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   expect(foldedPanels.expandedRailWidth).toBeGreaterThanOrEqual(220);
   expect(foldedPanels.expandedPanelWidth).toBeGreaterThanOrEqual(320);
   expect(foldedPanels.collapsed).toMatchObject({
+    foldButtons: 0,
     railWidth: 72,
     panelWidth: 56,
     railSearchVisible: false,
@@ -331,7 +335,7 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   expect(foldedPanels.settingsButtonBack).toBe(true);
   evidence.recordAssertionEvidence(
     "Both side panels fold to icon rails and unfold from them",
-    "Folding the team rail left a 72px rail with Scout's avatar marked current, a bottom status dot, and a hover card beside the rail naming Scout and Ready; folding the context panel left a 56px strip with Activity, Apps & tools, Memory, and Coworker settings icons and no words, and choosing Memory unfolded the panel on that view. Dragging the rail edge past the fold threshold closed it and the expand control reopened it.",
+    "With no fold buttons anywhere, a click on each panel's edge folded it: the team rail became a 72px rail with Scout's avatar marked current, a bottom status dot, and a hover card beside the rail naming Scout and Ready; the context panel became a 56px strip with Activity, Apps & tools, Memory, and Coworker settings icons and no words, and choosing Memory unfolded the panel on that view. Dragging the rail edge past the fold threshold closed it and a click on the edge reopened it.",
     true,
   );
 
