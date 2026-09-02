@@ -390,12 +390,17 @@ export function findSheet(workbook: XlsxWorkbook, selector: string | number | un
   throw new Error(`Sheet "${selector}" was not found. Available sheets: ${workbook.sheets.map((sheet) => JSON.stringify(sheet.name)).join(", ")}.`);
 }
 
+// A raw pipe would split a Markdown table cell. Swap it for the look-alike
+// box-drawing bar instead of backslash-escaping, so backslashes in paths and
+// regexes reach the model exactly as the sheet stores them.
+const TABLE_SAFE_PIPE = "\u2502";
+
 function cellText(cell: XlsxCell | undefined, formulas: boolean, maxChars: number): string {
   if (!cell) return "";
   const value = formulas && cell.formula
     ? `=${cell.formula}`
     : cell.displayedValue ?? cell.rawValue ?? (cell.formula ? `=${cell.formula}` : "");
-  const flat = value.replace(/\s*\r?\n\s*/g, " ").replace(/\|/g, "\\|");
+  const flat = value.replace(/\s*\r?\n\s*/g, " ").replaceAll("|", TABLE_SAFE_PIPE);
   return flat.length > maxChars ? `${flat.slice(0, maxChars - 1)}…` : flat;
 }
 
