@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { coworkerBridge, type CoworkerSummary, type ProviderSyncRun, type RuntimeInfo } from "@/lib/bridge";
 import type { DenSession } from "@/lib/den";
 import {
@@ -32,6 +32,12 @@ import {
 } from "@/lib/threads";
 import { InteractionCards } from "@/ui/interactions";
 import { CoworkerAvatar } from "@/ui/coworker-avatar";
+import {
+  ComposerModelControl,
+  initialTurnModelPreference,
+  threadModelForPreference,
+  type TurnModelPreference,
+} from "@/ui/composer-model-control";
 import { useWorkingSaying } from "@/ui/use-working-saying";
 import { CoworkerMark, InlineLoader } from "@/ui/brand";
 import { Button, Empty, ErrorNote, StatusDot } from "@/ui/kit";
@@ -155,6 +161,13 @@ export function ThreadsPanel({
   const [pendingAssignment, setPendingAssignment] = useState<AssignmentDraft>(assignmentDraft ?? null);
   const [queuedTurn, setQueuedTurn] = useState<QueuedTurn | null>(null);
   const [error, setError] = useState("");
+  const [turnPreference, setTurnPreference] = useState<TurnModelPreference>(() =>
+    initialTurnModelPreference(coworker),
+  );
+
+  useEffect(() => {
+    setTurnPreference(initialTurnModelPreference(coworker));
+  }, [coworker.model, coworker.modelVariant, coworker.slug]);
 
   useEffect(() => {
     setDiscussionThreadId(coworker.conversationThreadId);
@@ -287,6 +300,9 @@ export function ThreadsPanel({
         session={session}
         onSyncProviders={onSyncProviders}
         onActivityChange={onActivityChange}
+        turnPreference={turnPreference}
+        onTurnPreferenceChanged={setTurnPreference}
+        onCoworkerChanged={onCoworkerChanged}
       />
     );
   }
@@ -322,6 +338,16 @@ export function ThreadsPanel({
         }}
         onCreateAssignment={createAssignment}
         onAssignmentDraftHandled={() => setPendingAssignment(null)}
+        modelControl={(
+          <ComposerModelControl
+            runtime={runtime}
+            coworker={coworker}
+            preference={turnPreference}
+            running={false}
+            onChange={setTurnPreference}
+            onCoworkerChanged={onCoworkerChanged}
+          />
+        )}
       />
     );
   }
@@ -347,6 +373,9 @@ export function ThreadsPanel({
       session={session}
       onSyncProviders={onSyncProviders}
       onActivityChange={onActivityChange}
+      turnPreference={turnPreference}
+      onTurnPreferenceChanged={setTurnPreference}
+      onCoworkerChanged={onCoworkerChanged}
     />
   );
 }
@@ -360,6 +389,7 @@ function DiscussionWelcome({
   onCreateAssignment,
   onShowAssignments,
   onAssignmentDraftHandled,
+  modelControl,
 }: {
   coworker: CoworkerSummary;
   error: string;
@@ -369,6 +399,7 @@ function DiscussionWelcome({
   onCreateAssignment: (outcome: string, messages: ReadonlyArray<DiscussionMessage>) => Promise<void>;
   onShowAssignments: () => void;
   onAssignmentDraftHandled: () => void;
+  modelControl: ReactNode;
 }) {
   const [message, setMessage] = useState("");
   const [assignmentText, setAssignmentText] = useState("");
@@ -454,6 +485,7 @@ function DiscussionWelcome({
         busy={busy}
         error={composerError}
         coworkerName={coworker.name}
+        controls={modelControl}
       />
     </section>
   );
@@ -548,6 +580,9 @@ function ThreadView({
   session,
   onSyncProviders,
   onActivityChange,
+  turnPreference,
+  onTurnPreferenceChanged,
+  onCoworkerChanged,
 }: {
   threads: NonNullable<ReturnType<typeof createCoworkerThreads>>;
   threadId: string;
@@ -567,6 +602,9 @@ function ThreadView({
   session: DenSession | null;
   onSyncProviders: () => Promise<ProviderSyncRun>;
   onActivityChange: (activity: CoworkerActivity | null) => void;
+  turnPreference: TurnModelPreference;
+  onTurnPreferenceChanged: (preference: TurnModelPreference) => void;
+  onCoworkerChanged: (coworker: CoworkerSummary) => void;
 }) {
   const [messages, setMessages] = useState<TranscriptMessage[]>([]);
   const [title, setTitle] = useState("Work thread");
@@ -676,13 +714,17 @@ function ThreadView({
     });
     let refreshTimer: number | undefined;
     try {
-      if (coworker.model.trim()) {
+      if (turnPreference.model.trim()) {
         const catalog = await threads.listModelCatalog();
-        if (!catalog.models.some((model) => model.id === coworker.model)) {
-          throw new Error(describeUnavailableModel(coworker.model, catalog.models, session));
+        if (!catalog.models.some((model) => model.id === turnPreference.model)) {
+          throw new Error(describeUnavailableModel(turnPreference.model, catalog.models, session));
         }
       }
-      const acceptance = await threads.client.sendTurn(threadId, { prompt, messageId });
+      const acceptance = await threads.client.sendTurn(threadId, {
+        prompt,
+        messageId,
+        model: threadModelForPreference(turnPreference),
+      });
       const waiting: PendingTurn = { messageId, prompt, phase: "waiting" };
       pendingTurnRef.current = waiting;
       setPendingTurn(waiting);
@@ -730,7 +772,7 @@ function ThreadView({
         setPendingTurn(null);
       }
     }
-  }, [coworker.model, kind, onActivityChange, refresh, threadId, threads, title]);
+  }, [kind, onActivityChange, refresh, session, threadId, threads, title, turnPreference]);
 
   useEffect(() => {
     if (!initialTurn || handledInitialTurnRef.current === initialTurn.id) return;
@@ -1016,6 +1058,16 @@ function ThreadView({
           onCreateAssignment={() => void createAssignmentFromDiscussion()}
           busy={pendingTurn !== null || assignmentBusy}
           coworkerName={coworker.name}
+          controls={(
+            <ComposerModelControl
+              runtime={runtime}
+              coworker={coworker}
+              preference={turnPreference}
+              running={working || pendingTurn !== null || assignmentBusy}
+              onChange={onTurnPreferenceChanged}
+              onCoworkerChanged={onCoworkerChanged}
+            />
+          )}
         />
       ) : (
         <MessageComposer
@@ -1024,6 +1076,16 @@ function ThreadView({
           onSubmit={() => void send()}
           busy={pendingTurn !== null}
           placeholder={`Follow up with ${coworker.name}…`}
+          controls={(
+            <ComposerModelControl
+              runtime={runtime}
+              coworker={coworker}
+              preference={turnPreference}
+              running={working || pendingTurn !== null}
+              onChange={onTurnPreferenceChanged}
+              onCoworkerChanged={onCoworkerChanged}
+            />
+          )}
         />
       )}
     </section>
@@ -1364,6 +1426,7 @@ function DiscussionComposer({
   busy,
   error,
   coworkerName,
+  controls,
 }: {
   message: string;
   onMessageChange: (value: string) => void;
@@ -1376,6 +1439,7 @@ function DiscussionComposer({
   busy: boolean;
   error?: string;
   coworkerName: string;
+  controls?: ReactNode;
 }) {
   const value = assignmentMode ? assignment : message;
   const submit = assignmentMode ? onCreateAssignment : onSend;
@@ -1414,8 +1478,9 @@ function DiscussionComposer({
             </Button>
           </div>
         </div>
-        <div className="mt-1.5 flex min-h-3 items-center justify-between gap-3 px-1 text-[9px] text-mist/65">
-          <span>Enter to {assignmentMode ? "create" : "send"} · Shift Enter for a new line</span>
+        <div className="mt-1.5 flex min-h-8 items-center justify-between gap-3 px-1 text-[9px] text-mist/65">
+          <div>{controls}</div>
+          <span className="hidden sm:inline">Enter to {assignmentMode ? "create" : "send"} · Shift Enter for a new line</span>
           <span className="shrink-0 font-medium tracking-[0.06em]">Powered by OpenWork</span>
         </div>
       </div>
@@ -1429,12 +1494,14 @@ function MessageComposer({
   onSubmit,
   busy,
   placeholder,
+  controls,
 }: {
   value: string;
   onChange: (value: string) => void;
   onSubmit: () => void;
   busy: boolean;
   placeholder: string;
+  controls?: ReactNode;
 }) {
   return (
     <div className="border-t border-line bg-ink px-5 pb-2.5 pt-3">
@@ -1456,7 +1523,8 @@ function MessageComposer({
             {busy ? "Working…" : "Send"}
           </Button>
         </div>
-        <div className="mt-1.5 flex min-h-3 items-center justify-end px-1 text-[9px] text-mist/65">
+        <div className="mt-1.5 flex min-h-8 items-center justify-between gap-3 px-1 text-[9px] text-mist/65">
+          <div>{controls}</div>
           <span className="font-medium tracking-[0.06em]">Powered by OpenWork</span>
         </div>
       </div>
