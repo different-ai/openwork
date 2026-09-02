@@ -48,8 +48,9 @@ The coworker directory is registered as an ordinary OpenWork workspace, so:
 - **Skills and MCP** come for free from the same engine configuration layering
   the OpenWork desktop uses.
 - **Personality is a voice, not a behavior.** Each coworker can have a
-  personality (`coworker.md` `personality`: none, neutral, warm, dry,
-  curious, craftsman, librarian, chef, gardener, navigator, detective).
+  personality (`coworker.md` `personality`: none, neutral, warm, calm,
+  eager, playful, dry, blunt, curious, thoughtful, meticulous, detective) —
+  temperaments, not job titles.
   It only changes what the interface says while the coworker is working —
   the rail label, the Now card note, and the quiet moments in the thread —
   from a pre-written set of sayings in `src/lib/personalities.ts` that
