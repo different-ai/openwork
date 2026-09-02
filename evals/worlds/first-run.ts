@@ -73,14 +73,17 @@ export async function appSmokeWorld(seed: Seed) {
   return { app, workspace };
 }
 
-export async function bareFirstRunWorld(seed: Seed) {
-  const app = await seed.desktop({ name: "first-run", signIn: false });
-  const readBootstrapBaseUrl = () => evalIn(
+export async function bareFirstRunWorld(seed: Seed, { place }: { place: Place }) {
+  const capture = process.platform === "linux" ? await captureOpenedUrls() : null;
+  const app = capture
+    ? await desktop({ name: "first-run", host: place.host(), env: { PATH: `${capture.binDir}:${process.env.PATH ?? ""}` } })
+    : await seed.desktop({ name: "first-run", signIn: false });
+  return {
     app,
-    `window.__OPENWORK_ELECTRON__.invokeDesktop("getDesktopBootstrapConfig").then((config) => config.baseUrl)`,
-    { awaitPromise: true },
-  );
-  return { app, workspacePath: seed.tmpPath("first-run-workspace"), readBootstrapBaseUrl };
+    capture,
+    workspacePath: seed.tmpPath("first-run-workspace"),
+    async [Symbol.asyncDispose]() { await app[Symbol.asyncDispose](); },
+  };
 }
 
 export async function workspaceWorld(seed: Seed) {
