@@ -28,7 +28,13 @@ The coworker directory is registered as an ordinary OpenWork workspace, so:
   engine proxy. A thread made here opens in the OpenWork app unchanged.
 - **Identity and memory ride the engine's existing instruction loading**
   (`AGENTS.md` + `opencode.json` `instructions`); the coworker maintains
-  `memory/working.md` with ordinary file tools. No memory backend.
+  `memory/working.md` with ordinary file tools. No memory backend. The app
+  shows memory as structure rather than raw files: Soul and Working memory
+  render as pages with an editor behind them, and Long-term is the list the
+  index describes (`electron/memory-index.mjs` parses the bullets a model
+  actually writes), joined with the files on disk so an unlisted file or a
+  dangling index line stays visible. A memory can be read, edited, created,
+  or deleted; deleting removes the file and its index line together.
 - **Responsibilities have two explicit placements.** OpenWork Cloud is the
   recommended always-on lane: responsibilities are native Den Automations
   created through the Cloud creation surface (`POST /v1/cloud-automations`),
