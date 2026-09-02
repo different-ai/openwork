@@ -804,6 +804,7 @@ export async function managedVaultWorld(_seed: Seed, { place }: { place: Place }
     const authorization = await fetch(authorizeUrl, { redirect: "manual", signal: AbortSignal.timeout(20_000) });
     const callbackUrl = authorization.headers.get("location");
     if (authorization.status !== 302 || !callbackUrl) throw new Error("The mock IdP did not redirect to a callback URL.");
+    if (!callbackUrl.includes("/mcp/oauth/callback")) throw new Error(`Managed OAuth returned an unexpected callback URL: ${callbackUrl}`);
     const callback = await fetch(callbackUrl, { signal: AbortSignal.timeout(20_000) });
     if (!callback.ok) throw new Error(`Managed OAuth callback failed: ${callback.status}`);
   };
@@ -825,11 +826,14 @@ export async function managedVaultWorld(_seed: Seed, { place }: { place: Place }
       url: mock.mcpUrl,
       oauth: { applicationType: "native", requestedScopes: ["mcp:read", "mcp:write"] },
     });
-    if (started.status !== 201 || !isRecord(started.body) || typeof started.body.authorizeUrl !== "string") {
+    if (started.status !== 201 || !isRecord(started.body) || started.body.status !== "needs_auth" || typeof started.body.authorizeUrl !== "string") {
       throw new Error(`Could not create managed MCP ${name}: ${JSON.stringify(started.body)}`);
     }
     await completeOAuth(started.body.authorizeUrl);
-    await waitManaged(firstTarget, name, "connected");
+    const connected = await waitManaged(firstTarget, name, "connected");
+    if (connected.hasCredential !== true || connected.enabled !== true) {
+      throw new Error(`Managed MCP ${name} did not retain its credential: ${JSON.stringify(connected)}`);
+    }
   }
   const plain = await api(firstTarget, "POST", workspaceMcpPath, {
     name: names.plain,
