@@ -496,6 +496,50 @@ function createChatLoadingEvalMessages(sessionId: string): UIMessage[] {
   }];
 }
 
+function createImageLightboxEvalImageUrl(width: number, height: number, label: string) {
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}"><rect width="100%" height="100%" fill="#dbeafe"/><text x="50%" y="50%" font-family="sans-serif" font-size="${Math.round(Math.min(width, height) / 8)}" text-anchor="middle" dominant-baseline="middle" fill="#1e3a8a">${label}</text></svg>`;
+  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+}
+
+function createImageLightboxEvalMessages(sessionId: string): UIMessage[] {
+  const now = Date.now();
+  return [
+    {
+      id: `${sessionId}:eval-image-lightbox-user`,
+      role: "user",
+      parts: [
+        {
+          type: "file",
+          mediaType: "image/svg+xml",
+          filename: "landscape-screenshot.svg",
+          url: createImageLightboxEvalImageUrl(2000, 1112, "landscape 2000x1112"),
+        },
+        {
+          type: "file",
+          mediaType: "image/svg+xml",
+          filename: "small-icon.svg",
+          url: createImageLightboxEvalImageUrl(180, 180, "icon"),
+        },
+        { type: "text", text: "Inspect these images." },
+      ],
+      metadata: { opencode: { created: now } },
+    },
+    {
+      id: `${sessionId}:eval-image-lightbox-assistant`,
+      role: "assistant",
+      parts: [
+        {
+          type: "file",
+          mediaType: "image/svg+xml",
+          filename: "portrait-screenshot.svg",
+          url: createImageLightboxEvalImageUrl(1112, 2000, "portrait 1112x2000"),
+        },
+      ],
+      metadata: { opencode: { created: now + 1, completed: now + 2_000 } },
+    },
+  ];
+}
+
 export type SessionSurfaceProps = {
   client: OpenworkServerClient;
   environmentClient?: OpenworkServerClient | null;
@@ -1516,6 +1560,23 @@ export function SessionSurface(props: SessionSurfaceProps) {
     };
   }, [props.sessionId, props.workspaceId]);
   useControlAction(props.isControlTarget ? seedChatLoadingControlAction : null);
+  const seedImageLightboxControlAction = useMemo<OpenworkControlAction | null>(() => {
+    if (!import.meta.env.DEV) return null;
+
+    return {
+      id: "eval.image_lightbox.seed",
+      label: "Seed image lightbox proof",
+      description: "Dev-only eval hook that renders user and assistant image parts with known pixel sizes.",
+      sideEffect: "mutation",
+      disabled: !props.sessionId,
+      execute: () => {
+        const seeded = createImageLightboxEvalMessages(props.sessionId);
+        setEvalMarkdownMessages(seeded);
+        return { ok: true, messageCount: seeded.length };
+      },
+    };
+  }, [props.sessionId]);
+  useControlAction(props.isControlTarget ? seedImageLightboxControlAction : null);
   const openTargets = useMemo(() => deriveOpenTargets(renderedMessages), [renderedMessages]);
   const openTargetsFingerprint = useMemo(
     () => openTargets.map((target) => `${target.kind}:${target.value}:${target.confidence}`).join("|"),

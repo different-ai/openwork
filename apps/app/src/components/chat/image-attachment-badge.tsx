@@ -55,12 +55,12 @@ export function ImageAttachmentBadge({
         </button>
       ) : null}
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="max-h-[90vh] w-auto max-w-[min(90vw,56rem)] overflow-hidden border-none bg-transparent p-0 shadow-none sm:max-w-[min(90vw,56rem)]">
+        <DialogContent className="max-h-[95vh] w-auto max-w-[95vw] overflow-hidden border-none bg-transparent p-0 shadow-none ring-0 lg:w-max lg:max-w-[95vw]">
           <DialogTitle className="sr-only">{alt}</DialogTitle>
           <img
             src={src}
             alt={alt}
-            className="max-h-[85vh] w-auto max-w-full rounded-xl object-contain"
+            className="max-h-[92vh] w-auto max-w-full rounded-xl object-contain"
           />
         </DialogContent>
       </Dialog>
