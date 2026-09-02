@@ -26,7 +26,7 @@ test("a Connect MCP connection marked exposeDirectly is served and projected as 
   ])
   expect(gateway.error, gateway.output).toBeUndefined()
   expect(gateway.status, gateway.output).toBe(0)
-  expect(gateway.output).toContain("14 pass")
+  expect(gateway.output).toContain("16 pass")
   expect(gateway.output).toContain("0 fail")
 
   const desktop = runFiltered("openwork-server", [
@@ -47,6 +47,11 @@ test("a Connect MCP connection marked exposeDirectly is served and projected as 
   evidence.recordAssertionEvidence(
     "Unflagged connections and the App host are unchanged",
     "Without the flag ordinary clients receive only the bounded search/execute pair, a forged App-host header cannot unlock the catalog, and an App-host client sees the same app-only surface whether or not the connection is exposed directly.",
+    true,
+  )
+  evidence.recordAssertionEvidence(
+    "Direct exposure obeys the organization's member-facing MCP flag and fails closed",
+    "With member-facing MCP connections disabled a flagged connection serves only the bounded pair and no downstream call happens; the request handler defaults to the bounded surface unless the route explicitly confirms the flag; the index selector returns no direct entries while the flag is off.",
     true,
   )
   evidence.recordAssertionEvidence(

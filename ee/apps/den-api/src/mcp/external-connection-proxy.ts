@@ -10,6 +10,8 @@ import {
   ReadResourceRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js"
 import { StreamableHTTPTransport } from "@hono/mcp"
+import { eq } from "@openwork-ee/den-db/drizzle"
+import { OrganizationTable } from "@openwork-ee/den-db/schema"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import type { Context, Hono } from "hono"
 import type { RequestIdVariables } from "hono/request-id"
@@ -27,7 +29,9 @@ import {
   readExternalMcpResource,
 } from "../capability-sources/external-mcp-client-runtime.js"
 import { externalMcpDiagnosticForResponse } from "../capability-sources/external-mcp-diagnostics.js"
+import { memberFacingMcpConnectionsEnabled } from "../capability-sources/external-mcp-rollout.js"
 import { evaluateToolPolicy } from "../capability-sources/external-mcp-tool-policy.js"
+import { db } from "../db.js"
 import { env } from "../env.js"
 import { tokenRoute } from "../middleware/index.js"
 import { resolvePublicOrigin } from "../capability-sources/generic-oauth.js"
@@ -156,13 +160,21 @@ export function createExternalConnectionProxyServer(input: {
   operation: ExternalMcpProxyOperation
   runtime?: ExternalMcpProxyRuntime
   appHostClient?: boolean
+  /**
+   * Whether the organization currently allows member-facing MCP connections.
+   * Direct exposure is fail-closed: the provider catalog is served only when
+   * the caller explicitly confirms the organization flag is on.
+   */
+  directExposureEnabled?: boolean
 }) {
   const { connection } = input.operation
   const runtime = input.runtime ?? externalMcpProxyRuntime
   // An administrator opted this connection into direct exposure: ordinary MCP
   // clients receive the provider's own catalog instead of the bounded
   // search/execute pair. The App host keeps its private app-only surface.
-  const directClient = connection.exposeDirectly && input.appHostClient !== true
+  const directClient = connection.exposeDirectly
+    && input.directExposureEnabled === true
+    && input.appHostClient !== true
   const downstreamUi = input.descriptor.capabilities.extensions?.[EXTENSION_ID]
   const listProviderTools = async () => {
     if (!input.descriptor.capabilities.tools) return []
@@ -373,6 +385,7 @@ export async function handleExternalConnectionProxyRequest(input: {
   context: Context
   operation: ExternalMcpProxyOperation
   appHostClient?: boolean
+  directExposureEnabled?: boolean
   runtime?: ExternalMcpProxyRuntime
   dependencies?: Partial<ExternalMcpProxyRequestDependencies>
 }) {
@@ -387,6 +400,7 @@ export async function handleExternalConnectionProxyRequest(input: {
       operation: input.operation,
       runtime: input.runtime,
       appHostClient: input.appHostClient === true,
+      directExposureEnabled: input.directExposureEnabled === true,
     })
     const response = await dependencies.serve(server, input.context)
     return response ?? new Response(null, { status: 204 })
@@ -449,6 +463,11 @@ export function registerExternalConnectionProxyRoutes<T extends { Variables: Req
     })
     if (!connection || !allowed) throw new McpError(ErrorCode.InvalidRequest, "The MCP connection is not available.")
 
+    // The direct provider catalog is a member-facing MCP surface, so it obeys
+    // the same organization flag as the member-facing connection list.
+    const directExposureEnabled = connection.exposeDirectly
+      && await memberFacingMcpConnectionsEnabledForOrganization(organizationId)
+
     const redirectUriBase = resolvePublicOrigin(c.req.raw, env.apiPublicUrl)
     const redirectUri = `${redirectUriBase}/v1/mcp-connections/${encodeURIComponent(connection.id)}/connect/callback`
     const downstreamMember = { orgMembershipId: member.orgMembershipId }
@@ -462,8 +481,20 @@ export function registerExternalConnectionProxyRoutes<T extends { Variables: Req
       context: c,
       operation,
       appHostClient: principal.scopes.has(DEN_MCP_APP_HOST_SCOPE),
+      directExposureEnabled,
     })
   })
+}
+
+async function memberFacingMcpConnectionsEnabledForOrganization(
+  organizationId: ExternalMcpConnectionRow["organizationId"],
+): Promise<boolean> {
+  const rows = await db
+    .select({ metadata: OrganizationTable.metadata })
+    .from(OrganizationTable)
+    .where(eq(OrganizationTable.id, organizationId))
+    .limit(1)
+  return memberFacingMcpConnectionsEnabled(rows[0]?.metadata, { gatingEnabled: env.mcpConnectionsGatingEnabled })
 }
 
 export const STANDARD_MCP_APP_EXTENSION = {

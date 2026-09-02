@@ -479,18 +479,23 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
     if (method === "server/discover" || method === "initialize" || method === "resources/list" || method === "resources/read") {
       if (memberIdentity) {
         // Select before the per-member readiness probes so an ordinary client
-        // pays only for the connections it may actually see.
-        const indexCandidates = selectConnectMcpServerIndexConnections({
-          appHostClient: connectMcpAppHostSupported,
-          connections: await listUsableExternalMcpConnections({
-            organizationId,
-            orgMembershipId: memberIdentity.orgMembershipId,
-            teamIds: memberIdentity.teamIds,
-          }),
-        })
+        // pays only for the connections it may actually see, and skip the
+        // lookup entirely when it can see none.
+        const indexReadable = connectMcpAppHostSupported || externalMcpConnectionsEnabled
+        const indexCandidates = indexReadable
+          ? selectConnectMcpServerIndexConnections({
+              appHostClient: connectMcpAppHostSupported,
+              memberFacingMcpConnectionsEnabled: externalMcpConnectionsEnabled,
+              connections: await listUsableExternalMcpConnections({
+                organizationId,
+                orgMembershipId: memberIdentity.orgMembershipId,
+                teamIds: memberIdentity.teamIds,
+              }),
+            })
+          : []
         registerConnectMcpServerIndex({
           server,
-          enabled: true,
+          enabled: indexReadable,
           connections: await readyExternalMcpConnectionsForMember(indexCandidates, memberIdentity.orgMembershipId),
           publicOrigin: redirectUriBase,
         })

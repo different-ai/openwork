@@ -26,15 +26,17 @@ export type ConnectMcpServerIndexEntry = {
  * Which member-usable connections an index reader may see. The App host sees
  * every ready connection; an ordinary client sees only the ones an
  * administrator exposed directly, because those are the only per-connection
- * URLs that serve it a provider catalog.
+ * URLs that serve it a provider catalog, and none at all while the
+ * organization has member-facing MCP connections disabled.
  */
 export function selectConnectMcpServerIndexConnections(input: {
   appHostClient: boolean
+  memberFacingMcpConnectionsEnabled: boolean
   connections: ExternalMcpConnectionRow[]
 }): ExternalMcpConnectionRow[] {
-  return input.appHostClient
-    ? input.connections
-    : input.connections.filter((connection) => connection.exposeDirectly)
+  if (input.appHostClient) return input.connections
+  if (!input.memberFacingMcpConnectionsEnabled) return []
+  return input.connections.filter((connection) => connection.exposeDirectly)
 }
 
 export function buildConnectMcpServerIndex(input: {

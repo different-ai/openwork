@@ -96,6 +96,7 @@ async function withClient<T>(
   runtimeOverrides: Record<string, unknown> = {},
   appHostClient = true,
   proxiedConnection: unknown = connection,
+  directExposureEnabled = true,
 ) {
   const server = createExternalConnectionProxyServer({
     descriptor: {
@@ -105,6 +106,7 @@ async function withClient<T>(
     operation: { ...(operation as Record<string, unknown>), connection: proxiedConnection } as never,
     runtime: runtime(runtimeOverrides),
     appHostClient,
+    directExposureEnabled,
   })
   const client = new Client({ name: "proxy-test", version: "1.0.0" }, { capabilities: {} })
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
@@ -211,6 +213,54 @@ test("a directly exposed connection serves its provider catalog to ordinary clie
     ...(directConnection as Record<string, unknown>),
     toolPolicy: { allDisabled: false, disabledTools: ["blocked_fixture"] },
   })
+})
+
+test("direct exposure stays closed while the organization has member-facing MCP connections disabled", async () => {
+  let downstreamCalls = 0
+  await withClient({ tools: {}, resources: {} }, async (client) => {
+    expect((await client.listTools()).tools.map((tool) => tool.name)).toEqual([
+      "search_capabilities",
+      "execute_capability",
+    ])
+    await expect(client.callTool({ name: "open_fixture", arguments: {} }))
+      .rejects.toThrow("Use search_capabilities and execute_capability")
+    expect(downstreamCalls).toBe(0)
+  }, {
+    callTool: async () => {
+      downstreamCalls += 1
+      return { content: [], structuredContent: {} }
+    },
+  }, false, directConnection, false)
+})
+
+test("the request handler never enables direct exposure unless the route confirms the organization flag", async () => {
+  let toolNames: string[] = []
+  const request = new Request("https://openwork.example/mcp/agent/connections/fixture", { method: "POST" })
+  await handleExternalConnectionProxyRequest({
+    context: requestContext(request),
+    operation: { ...(operation as Record<string, unknown>), connection: directConnection } as never,
+    runtime: runtime(),
+    dependencies: {
+      describe: async () => ({
+        capabilities: { tools: {} },
+        serverInfo: { name: "fixture", version: "1.0.0" },
+      }) as never,
+      serve: async (server) => {
+        const client = new Client({ name: "default-gate-test", version: "1.0.0" }, { capabilities: {} })
+        const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
+        await server.connect(serverTransport)
+        await client.connect(clientTransport)
+        try {
+          toolNames = (await client.listTools()).tools.map((tool) => tool.name)
+        } finally {
+          await client.close()
+          await server.close()
+        }
+        return new Response(null, { status: 204 })
+      },
+    },
+  })
+  expect(toolNames).toEqual(["search_capabilities", "execute_capability"])
 })
 
 test("direct exposure does not change the App host surface", async () => {
@@ -477,11 +527,14 @@ test("a client that does not advertise the App host capability receives an empty
 
 test("ordinary clients only see directly exposed connections in the index while the App host sees every ready one", () => {
   const ready = [connection, directConnection]
-  expect(selectConnectMcpServerIndexConnections({ appHostClient: false, connections: ready })).toEqual([directConnection])
-  expect(selectConnectMcpServerIndexConnections({ appHostClient: true, connections: ready })).toEqual(ready)
+  const select = (appHostClient: boolean, memberFacingMcpConnectionsEnabled: boolean) =>
+    selectConnectMcpServerIndexConnections({ appHostClient, memberFacingMcpConnectionsEnabled, connections: ready })
+  expect(select(false, true)).toEqual([directConnection])
+  expect(select(false, false)).toEqual([])
+  expect(select(true, true)).toEqual(ready)
   expect(buildConnectMcpServerIndex({
     enabled: true,
-    connections: selectConnectMcpServerIndexConnections({ appHostClient: true, connections: ready }),
+    connections: select(true, true),
     publicOrigin: "https://openwork.example",
   }).servers.map((server) => server.exposeDirectly)).toEqual([false, true])
 })
