@@ -368,6 +368,106 @@ body.is-resizing-context-panel * {
   background: rgb(255 255 255 / 0.09);
 }
 
+/* Coworker replies: compact Markdown that reads like a note, not a document. */
+.coworker-markdown > * + * {
+  margin-top: 0.6em;
+}
+
+.coworker-markdown p,
+.coworker-markdown li {
+  overflow-wrap: anywhere;
+}
+
+.coworker-markdown h1,
+.coworker-markdown h2,
+.coworker-markdown h3,
+.coworker-markdown h4 {
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--color-snow);
+}
+
+.coworker-markdown h1 {
+  font-size: 1.05rem;
+}
+
+.coworker-markdown h2 {
+  font-size: 1rem;
+}
+
+.coworker-markdown h3,
+.coworker-markdown h4 {
+  font-size: 0.95rem;
+}
+
+.coworker-markdown ul,
+.coworker-markdown ol {
+  padding-left: 1.35em;
+}
+
+.coworker-markdown ul {
+  list-style: disc;
+}
+
+.coworker-markdown ol {
+  list-style: decimal;
+}
+
+.coworker-markdown li + li {
+  margin-top: 0.25em;
+}
+
+.coworker-markdown a {
+  color: var(--color-spark);
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--color-spark) 45%, transparent);
+}
+
+.coworker-markdown code {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 0.85em;
+  background: rgb(255 255 255 / 0.06);
+  border-radius: 0.35rem;
+  padding: 0.1em 0.35em;
+}
+
+.coworker-markdown pre {
+  overflow-x: auto;
+  border: 1px solid var(--color-line);
+  border-radius: 0.75rem;
+  background: rgb(255 255 255 / 0.03);
+  padding: 0.7rem 0.85rem;
+}
+
+.coworker-markdown pre code {
+  background: transparent;
+  padding: 0;
+  font-size: 0.8rem;
+}
+
+.coworker-markdown blockquote {
+  border-left: 2px solid var(--color-line);
+  padding-left: 0.75rem;
+  color: var(--color-mist);
+}
+
+.coworker-markdown hr {
+  border: 0;
+  border-top: 1px solid var(--color-line);
+}
+
+.coworker-markdown table {
+  border-collapse: collapse;
+  font-size: 0.85em;
+}
+
+.coworker-markdown th,
+.coworker-markdown td {
+  border: 1px solid var(--color-line);
+  padding: 0.25rem 0.5rem;
+  text-align: left;
+}
+
 /* Whole-view swaps (team ⇄ add coworker) settle in rather than snap. */
 .view-enter {
   animation: view-enter 220ms cubic-bezier(0.2, 0.7, 0.2, 1) backwards;

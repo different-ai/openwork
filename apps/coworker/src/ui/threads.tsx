@@ -26,17 +26,21 @@ import {
   hasPendingInteractions,
   modelSourceLabel,
   parseModelPreference,
+  recommendModel,
   type CoworkerActivity,
   type EngineModelOption,
   type PendingInteractions,
   type ThreadListItem,
 } from "@/lib/threads";
+import type { HeadlessThreadModel } from "@openwork/headless-threads";
+import { markAutoPicked, wasAutoPicked } from "@/lib/model-choice";
 import { describeTurnFailure } from "@/lib/turn-failure";
 import { InteractionCards } from "@/ui/interactions";
 import { CoworkerAvatar } from "@/ui/coworker-avatar";
 import { useWorkingSaying } from "@/ui/use-working-saying";
-import { CoworkerMark, InlineLoader } from "@/ui/brand";
-import { Button, Empty, ErrorNote, StatusDot } from "@/ui/kit";
+import { InlineLoader } from "@/ui/brand";
+import { AlertIcon, Button, Empty, ErrorNote, StatusDot, ThoughtIcon, ToolIcon } from "@/ui/kit";
+import { Markdown } from "@/ui/markdown";
 import { McpAppFrame } from "@/ui/mcp-app-frame";
 
 type TranscriptToolCall = {
@@ -80,6 +84,31 @@ type TurnIssue = {
   messageId: string;
   prompt: string;
 };
+
+/** How long a freshly (re)started AI service may stay silent before it is a problem worth naming. */
+const WORKSPACE_WARMUP_MS = 45_000;
+
+export const NO_TOOL_MODEL_MESSAGE =
+  "No connected AI model can use tools. Connect an AI provider in OpenWork, or choose an AI model in Coworker settings.";
+
+type WorkspaceProblem = { message: string; technical: string };
+
+/** A workspace that stopped answering, in plain words, with the raw reason folded away. */
+function WorkspaceProblemNote({ problem, onRetry }: { problem: WorkspaceProblem; onRetry: () => void }) {
+  return (
+    <div className="mx-auto max-w-xl rounded-xl border border-rose/25 bg-rose/5 px-3 py-3" data-testid="coworker-workspace-problem">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+        <p className="min-w-0 flex-1 text-xs font-semibold text-snow">{problem.message}</p>
+        <Button variant="ghost" className="text-xs" onClick={onRetry}>Try again</Button>
+      </div>
+      <p className="mt-1 text-[11px] leading-relaxed text-mist">If this keeps happening, restart the AI service from AI &amp; local setup.</p>
+      <details className="mt-2 text-[11px] text-mist">
+        <summary className="cursor-pointer select-none">Technical details</summary>
+        <p className="mt-1 break-words font-mono">{problem.technical}</p>
+      </details>
+    </div>
+  );
+}
 
 const DISCUSSION_STARTERS = [
   "What should we focus on today?",
@@ -160,9 +189,18 @@ export function ThreadsPanel({
   const [pendingAssignment, setPendingAssignment] = useState<AssignmentDraft>(assignmentDraft ?? null);
   const [queuedTurn, setQueuedTurn] = useState<QueuedTurn | null>(null);
   const [error, setError] = useState("");
+  // When the workspace first stops answering; cleared by the next successful read.
+  const [failingSince, setFailingSince] = useState<number | null>(null);
+  const [lastFailureAt, setLastFailureAt] = useState(0);
+  // The AI service restarts to pick up a new workspace and takes a moment to
+  // answer. That is a warm-up, not a problem: show a calm getting-ready state
+  // and only speak up when the workspace still does not answer after a while.
+  const warmingUp = Boolean(error) && runtime.engineManaged && failingSince !== null && lastFailureAt - failingSince < WORKSPACE_WARMUP_MS;
   // While the AI service is unavailable the header note already says so; a raw
   // listing error underneath it would only repeat the fact in technical words.
-  const visibleError = runtime.engineManaged ? error : "";
+  const workspaceProblem: WorkspaceProblem | null = error && runtime.engineManaged && !warmingUp
+    ? { message: `${coworker.name}'s workspace is not answering right now.`, technical: error }
+    : null;
 
   useEffect(() => {
     setDiscussionThreadId(coworker.conversationThreadId);
@@ -208,26 +246,33 @@ export function ThreadsPanel({
       }
       setAttentionBySession(attention);
       setError("");
+      setFailingSince(null);
     } catch (cause) {
+      const now = Date.now();
       setError(cause instanceof Error ? cause.message : String(cause));
+      setFailingSince((current) => current ?? now);
+      setLastFailureAt(now);
     }
   }, [threads]);
 
+  // Re-read quickly while the workspace is not answering so the view heals as soon as it does.
+  const failing = Boolean(error);
   useEffect(() => {
     void refresh();
     if (!threads) return;
     const unsubscribe = threads.subscribe(() => void refresh());
-    const timer = window.setInterval(() => void refresh(), 5_000);
+    const timer = window.setInterval(() => void refresh(), failing ? 1_500 : 5_000);
     return () => {
       unsubscribe();
       window.clearInterval(timer);
     };
-  }, [threads, refresh]);
+  }, [failing, threads, refresh]);
 
   // The moment the AI service is back, drop any listing error it caused and re-read.
   useEffect(() => {
     if (!runtime.engineManaged) return;
     setError("");
+    setFailingSince(null);
     void refresh();
   }, [refresh, runtime.engineManaged]);
 
@@ -263,7 +308,7 @@ export function ThreadsPanel({
       <div className="flex h-full items-center justify-center p-8">
         <div className="max-w-sm space-y-4 text-center">
           <Empty>This coworker needs a workspace before it can start.</Empty>
-          {visibleError ? <ErrorNote>{visibleError}</ErrorNote> : null}
+          {workspaceProblem ? <WorkspaceProblemNote problem={workspaceProblem} onRetry={() => void refresh()} /> : null}
           <Button
             variant="primary"
             onClick={() => {
@@ -308,6 +353,7 @@ export function ThreadsPanel({
         session={session}
         onSyncProviders={onSyncProviders}
         onActivityChange={onActivityChange}
+        onCoworkerChanged={onCoworkerChanged}
       />
     );
   }
@@ -316,7 +362,9 @@ export function ThreadsPanel({
     return (
       <AssignmentOverview
         coworker={coworker}
-        error={visibleError}
+        problem={workspaceProblem}
+        warmingUp={warmingUp}
+        onRetry={() => void refresh()}
         items={items}
         attentionBySession={attentionBySession}
         onOpen={setOpenThreadId}
@@ -333,7 +381,9 @@ export function ThreadsPanel({
     return (
       <DiscussionWelcome
         coworker={coworker}
-        error={visibleError}
+        problem={workspaceProblem}
+        warmingUp={warmingUp}
+        onRetry={() => void refresh()}
         assignmentCount={items.length}
         assignmentDraft={pendingAssignment}
         onShowAssignments={() => setView("assignments")}
@@ -370,13 +420,16 @@ export function ThreadsPanel({
       session={session}
       onSyncProviders={onSyncProviders}
       onActivityChange={onActivityChange}
+      onCoworkerChanged={onCoworkerChanged}
     />
   );
 }
 
 function DiscussionWelcome({
   coworker,
-  error,
+  problem,
+  warmingUp,
+  onRetry,
   assignmentCount,
   assignmentDraft,
   onStartDiscussion,
@@ -386,7 +439,9 @@ function DiscussionWelcome({
   discussionDraft,
 }: {
   coworker: CoworkerSummary;
-  error: string;
+  problem: WorkspaceProblem | null;
+  warmingUp: boolean;
+  onRetry: () => void;
   assignmentCount: number;
   assignmentDraft?: AssignmentDraft;
   discussionDraft?: AssignmentDraft;
@@ -452,14 +507,19 @@ function DiscussionWelcome({
         <Button variant="ghost" onClick={onShowAssignments}>Assignments{assignmentCount ? ` · ${assignmentCount}` : ""}</Button>
       </header>
       <div className="min-h-0 flex-1 overflow-y-auto px-6 py-8">
-        {error ? <ErrorNote>{error}</ErrorNote> : null}
-        {!error ? (
+        {problem ? <WorkspaceProblemNote problem={problem} onRetry={onRetry} /> : null}
+        {!problem ? (
           <div className="mx-auto flex h-full max-w-xl flex-col justify-center text-center">
             <CoworkerAvatar animated color={coworker.avatarColor} glasses={coworker.avatarGlasses} name={coworker.name} size={88} />
             <h3 className="mt-3 text-xl font-semibold tracking-[-0.03em] text-snow">Start with a conversation</h3>
             <p className="mx-auto mt-1.5 max-w-md text-sm leading-relaxed text-mist">
               Ask, explore, or think something through. Nothing becomes assigned work until you choose to create an assignment.
             </p>
+            {warmingUp ? (
+              <div className="mx-auto mt-4 text-xs text-mist" data-testid="coworker-workspace-warming">
+                <InlineLoader label={`Getting ${coworker.name} ready`} />
+              </div>
+            ) : null}
             <div className="mt-6 grid gap-2 text-left">
               {DISCUSSION_STARTERS.map((starter) => (
                 <button key={starter} className="rounded-xl border border-line bg-panel/50 px-4 py-3 text-sm text-snow transition-colors hover:bg-panel" onClick={() => setMessage(starter)}>
@@ -491,7 +551,9 @@ function AssignmentOverview({
   coworker,
   items,
   attentionBySession,
-  error,
+  problem,
+  warmingUp,
+  onRetry,
   onOpen,
   onBack,
   onNewAssignment,
@@ -499,7 +561,9 @@ function AssignmentOverview({
   coworker: CoworkerSummary;
   items: ThreadListItem[];
   attentionBySession: Record<string, string>;
-  error: string;
+  problem: WorkspaceProblem | null;
+  warmingUp: boolean;
+  onRetry: () => void;
   onOpen: (threadId: string) => void;
   onBack: () => void;
   onNewAssignment: () => void;
@@ -515,11 +579,13 @@ function AssignmentOverview({
         <Button variant="primary" onClick={onNewAssignment}>New assignment</Button>
       </header>
       <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
-        {error ? <ErrorNote>{error}</ErrorNote> : null}
-        {items.length === 0 && !error ? (
+        {problem ? <WorkspaceProblemNote problem={problem} onRetry={onRetry} /> : null}
+        {items.length === 0 && warmingUp ? (
+          <div className="py-10 text-center text-xs text-mist"><InlineLoader label={`Getting ${coworker.name} ready`} /></div>
+        ) : null}
+        {items.length === 0 && !problem && !warmingUp ? (
           <div className="mx-auto flex h-full max-w-md flex-col items-center justify-center text-center">
-            <CoworkerMark size={42} />
-            <h3 className="mt-3 text-base font-semibold text-snow">No assignments yet</h3>
+            <h3 className="text-base font-semibold text-snow">No assignments yet</h3>
             <p className="mt-1 text-sm leading-relaxed text-mist">Talk things through first, then turn a clear outcome into work.</p>
             <Button className="mt-4" onClick={onNewAssignment}>Create from discussion</Button>
           </div>
@@ -577,6 +643,7 @@ function ThreadView({
   session,
   onSyncProviders,
   onActivityChange,
+  onCoworkerChanged,
 }: {
   threads: NonNullable<ReturnType<typeof createCoworkerThreads>>;
   threadId: string;
@@ -597,8 +664,11 @@ function ThreadView({
   session: DenSession | null;
   onSyncProviders: () => Promise<ProviderSyncRun>;
   onActivityChange: (activity: CoworkerActivity | null) => void;
+  onCoworkerChanged: (coworker: CoworkerSummary) => void;
 }) {
   const [messages, setMessages] = useState<TranscriptMessage[]>([]);
+  /** A different connected, tool-capable model to fall back to after a model-related failure. */
+  const [recommendedModel, setRecommendedModel] = useState<EngineModelOption | null>(null);
   const [title, setTitle] = useState("Work thread");
   const [statusLabel, setStatusLabel] = useState("idle");
   const [terminalError, setTerminalError] = useState("");
@@ -693,8 +763,32 @@ function ThreadView({
     endRef.current?.scrollIntoView({ block: "end" });
   }, [messages.length, pendingTurn, statusLabel, pending.permissions.length, pending.questions.length]);
 
-  const submitTurn = useCallback(async (prompt: string, messageId: string) => {
+  const submitTurn = useCallback(async (prompt: string, messageId: string, modelOverride?: HeadlessThreadModel, failedModels: readonly string[] = []) => {
     if (pendingTurnRef.current) return;
+    /** The model this turn actually ran on, so a failure can be attributed and, if it was the app's pick, replaced. */
+    let turnModelId = modelOverride ? `${modelOverride.providerId}/${modelOverride.modelId}` : coworker.model;
+    /**
+     * When a model the app chose by itself cannot answer, move to the next
+     * recommendation and try the same message again, once or twice, telling
+     * the person what happened. A model the person chose is never swapped.
+     */
+    const fallBack = async (message: string): Promise<boolean> => {
+      if (!wasAutoPicked(coworker.slug, turnModelId) || failedModels.length >= 2) return false;
+      if (!describeTurnFailure(message, coworker.name).modelRelated) return false;
+      try {
+        const excluded = [...failedModels, turnModelId];
+        const next = recommendModel(await threads.listModelCatalog(), { exclude: excluded });
+        const nextModel = next ? parseModelPreference(next.id) : undefined;
+        if (!next || !nextModel) return false;
+        markAutoPicked(coworker.slug, next.id);
+        onCoworkerChanged(await coworkerBridge.coworkers.update(coworker.slug, { model: next.id, modelVariant: "" }));
+        setProviderRefreshNote(`${turnModelId} could not answer, so ${coworker.name} is trying ${next.modelLabel} instead.`);
+        window.setTimeout(() => void submitTurn(prompt, messageId, nextModel, excluded), 0);
+        return true;
+      } catch {
+        return false;
+      }
+    };
     const nextPending: PendingTurn = { messageId, prompt, phase: "accepting" };
     pendingTurnRef.current = nextPending;
     setPendingTurn(nextPending);
@@ -712,17 +806,32 @@ function ThreadView({
     });
     let refreshTimer: number | undefined;
     try {
-      const savedModel = parseModelPreference(coworker.model);
-      if (savedModel) {
-        const catalog = await threads.listModelCatalog();
-        if (!catalog.models.some((model) => model.id === coworker.model)) {
-          throw new Error(describeUnavailableModel(coworker.model, catalog.models, session));
+      let turnModel: HeadlessThreadModel | undefined = modelOverride;
+      if (!turnModel) {
+        const savedModel = parseModelPreference(coworker.model);
+        if (savedModel) {
+          const catalog = await threads.listModelCatalog();
+          if (!catalog.models.some((model) => model.id === coworker.model)) {
+            throw new Error(describeUnavailableModel(coworker.model, catalog.models, session));
+          }
+          turnModel = { ...savedModel, ...(coworker.modelVariant.trim() ? { variant: coworker.modelVariant.trim() } : {}) };
+        } else {
+          // Nobody chose a model yet: start on a connected model that can use tools and keep it.
+          const pick = recommendModel(await threads.listModelCatalog(), { exclude: failedModels });
+          if (!pick) throw new Error(NO_TOOL_MODEL_MESSAGE);
+          const chosen = parseModelPreference(pick.id);
+          if (chosen) turnModel = chosen;
+          turnModelId = pick.id;
+          markAutoPicked(coworker.slug, pick.id);
+          void coworkerBridge.coworkers.update(coworker.slug, { model: pick.id, modelVariant: "" })
+            .then(onCoworkerChanged)
+            .catch(() => undefined);
         }
       }
       const acceptance = await threads.client.sendTurn(threadId, {
         prompt,
         messageId,
-        model: savedModel ? { ...savedModel, ...(coworker.modelVariant.trim() ? { variant: coworker.modelVariant.trim() } : {}) } : undefined,
+        model: turnModel,
       });
       const waiting: PendingTurn = { messageId, prompt, phase: "waiting" };
       pendingTurnRef.current = waiting;
@@ -750,7 +859,7 @@ function ThreadView({
         const failure = result.terminalError
           ? `${result.terminalError.name}: ${result.terminalError.message}`
           : "The model stopped before producing a response.";
-        setTurnIssue({ kind: "failed", message: failure, messageId, prompt });
+        if (!(await fallBack(failure))) setTurnIssue({ kind: "failed", message: failure, messageId, prompt });
       } else if (result.outcome === "timeout") {
         setTurnIssue({
           kind: "timeout",
@@ -768,7 +877,7 @@ function ThreadView({
       }
     } catch (cause) {
       const message = cause instanceof Error ? cause.message : String(cause);
-      setTurnIssue({ kind: "failed", message, messageId, prompt });
+      if (!(await fallBack(message))) setTurnIssue({ kind: "failed", message, messageId, prompt });
     } finally {
       if (refreshTimer !== undefined) window.clearInterval(refreshTimer);
       waitControllerRef.current = null;
@@ -777,7 +886,40 @@ function ThreadView({
         setPendingTurn(null);
       }
     }
-  }, [coworker.model, coworker.modelVariant, kind, onActivityChange, refresh, session, threadId, threads, title]);
+  }, [coworker.model, coworker.modelVariant, coworker.name, coworker.slug, kind, onActivityChange, onCoworkerChanged, refresh, session, threadId, threads, title]);
+
+  // After a model-related failure, find a different connected model that can use tools.
+  useEffect(() => {
+    if (turnIssue?.kind !== "failed" && !terminalError) {
+      setRecommendedModel(null);
+      return;
+    }
+    let cancelled = false;
+    void threads.listModelCatalog()
+      .then((catalog) => {
+        if (!cancelled) setRecommendedModel(recommendModel(catalog, { exclude: coworker.model }));
+      })
+      .catch(() => {
+        if (!cancelled) setRecommendedModel(null);
+      });
+    return () => { cancelled = true; };
+  }, [coworker.model, terminalError, threads, turnIssue]);
+
+  /** Switch this coworker to the recommended model and retry the failed message. */
+  async function useRecommendedModel() {
+    const failed = turnIssue;
+    const pick = recommendedModel;
+    if (!pick) return;
+    const model = parseModelPreference(pick.id);
+    if (!model) return;
+    try {
+      onCoworkerChanged(await coworkerBridge.coworkers.update(coworker.slug, { model: pick.id, modelVariant: "" }));
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+      return;
+    }
+    if (failed?.prompt) void submitTurn(failed.prompt, failed.messageId, model);
+  }
 
   useEffect(() => {
     if (!initialTurn || handledInitialTurnRef.current === initialTurn.id) return;
@@ -1025,6 +1167,8 @@ function ThreadView({
               onOpenModelSettings={onOpenModelSettings}
               onOpenAccount={onOpenAccount}
               onRefreshProviders={() => void refreshProvidersAndRetry()}
+              recommendedModel={recommendedModel}
+              onUseRecommended={() => void useRecommendedModel()}
             />
           ) : null}
           {turnIssue?.kind === "timeout" ? (
@@ -1121,9 +1265,7 @@ function MessageBubble({
           </ul>
         ) : null}
         {message.text ? (
-          <div className={`${message.reasoning || message.toolCalls.length ? "mt-2.5" : ""} whitespace-pre-wrap text-sm leading-relaxed text-snow`}>
-            {message.text}
-          </div>
+          <Markdown text={message.text} className={message.reasoning || message.toolCalls.length ? "mt-2.5" : ""} />
         ) : !message.reasoning && message.toolCalls.length === 0 ? <span className="text-sm text-mist">…</span> : null}
       </div>
     </article>
@@ -1134,7 +1276,7 @@ function ThinkingDisclosure({ text, active }: { text: string; active: boolean })
   return (
     <details className="group rounded-xl border border-white/7 bg-white/[0.025] px-2.5 py-2" data-testid="coworker-thinking">
       <summary className="flex cursor-pointer list-none items-center gap-2 text-xs text-mist marker:hidden">
-        <CoworkerMark loading={active} size={18} />
+        <ThoughtIcon className="size-4 shrink-0 text-mist" active={active} />
         <span className={`flex-1 ${active ? "animate-pulse" : ""}`}>{active ? "Thinking…" : "Thought through"}</span>
         <span className="text-mist/60 transition-transform group-open:rotate-90" aria-hidden="true">›</span>
       </summary>
@@ -1213,6 +1355,8 @@ function TurnIssueNote({
   onOpenAccount,
   onRefreshProviders,
   onStop,
+  recommendedModel = null,
+  onUseRecommended,
 }: {
   kind: "failed" | "timeout";
   message: string;
@@ -1225,6 +1369,9 @@ function TurnIssueNote({
   /** Re-read the account's providers, then retry; only offered while signed in. */
   onRefreshProviders?: () => void;
   onStop?: () => void;
+  /** A different tool-capable model to switch to and retry with, when one is connected. */
+  recommendedModel?: EngineModelOption | null;
+  onUseRecommended?: () => void;
 }) {
   const failure = kind === "failed"
     ? describeTurnFailure(message, coworkerName)
@@ -1232,11 +1379,16 @@ function TurnIssueNote({
   return (
     <div className="rounded-xl border border-rose/25 bg-rose/5 px-3 py-3" data-testid={`coworker-turn-${kind}`}>
       <div className="flex items-start gap-2.5">
-        <CoworkerMark className="mt-0.5 shrink-0" size={20} />
+        <AlertIcon className="mt-0.5 size-4 shrink-0 text-rose" />
         <div className="min-w-0 flex-1">
           <p className="text-xs font-semibold text-snow" data-testid="coworker-turn-headline">{failure.headline}</p>
           {failure.detail ? <p className="mt-1 break-words text-xs leading-relaxed text-mist">{failure.detail}</p> : null}
           <div className="mt-2 flex flex-wrap items-center gap-2">
+            {failure.modelRelated && recommendedModel && onUseRecommended && canRetry ? (
+              <Button variant="primary" onClick={onUseRecommended} title={`Switch to ${recommendedModel.label} and retry`} data-testid="coworker-use-recommended-model">
+                Use {recommendedModel.modelLabel}
+              </Button>
+            ) : null}
             {canRetry ? <Button variant="ghost" onClick={onRetry}>Retry</Button> : null}
             {onStop ? <Button variant="ghost" onClick={onStop}>Stop</Button> : null}
             <Button variant="ghost" onClick={onOpenModelSettings}>Choose AI model</Button>
@@ -1321,8 +1473,8 @@ function ToolReceipt({ call, client }: { call: TranscriptToolCall; client: Cowor
   return (
     <li className="rounded-xl border border-line bg-ink/70 px-2.5 py-2 text-xs text-snow">
       <div className="flex items-center gap-2">
-        <span className="relative shrink-0">
-          <CoworkerMark loading={!failed && !complete} size={19} />
+        <span className="relative flex size-5 shrink-0 items-center justify-center text-mist">
+          <ToolIcon className={`size-4 ${!failed && !complete ? "animate-pulse" : ""}`} />
           <span className="absolute -bottom-0.5 -right-0.5 flex rounded-full ring-2 ring-ink">
             <StatusDot tone={failed ? "rose" : complete ? "mint" : "spark"} />
           </span>
