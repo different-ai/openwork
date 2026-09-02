@@ -150,9 +150,13 @@ export function OpenWorkSettings({
   useEffect(() => {
     if (!active) return;
     setSection(initialSection);
-    void refreshConfiguration();
     headingRef.current?.focus({ preventScroll: true });
-  }, [active, initialSection, refreshConfiguration]);
+  }, [active, initialSection]);
+
+  useEffect(() => {
+    if (!active) return;
+    void refreshConfiguration();
+  }, [active, refreshConfiguration]);
 
   const [signingOut, setSigningOut] = useState(false);
   async function signOut() {
