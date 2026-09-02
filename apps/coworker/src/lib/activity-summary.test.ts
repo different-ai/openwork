@@ -57,8 +57,9 @@ test("working names the subject once; attention asks for the person", () => {
   const retrying = describeNow({ state: "retrying", label: "Retrying", detail: "Weekly digest", updatedAt: now, threadId: "s3" });
   assert.equal(retrying.note, "Retrying after an interruption");
 
-  const offline = describeNow({ state: "offline", label: "Offline", detail: "", updatedAt: 0 });
-  assert.equal(offline.note, "OpenWork cannot read this workspace right now.");
+  const offline = describeNow({ state: "offline", label: "Not responding", detail: "", updatedAt: 0 });
+  assert.match(offline.note, /not answering/);
+  assert.deepEqual(describeNow({ state: "starting", label: "Starting up", detail: "", updatedAt: 0 }), { subject: "", note: "", needsYou: false });
 });
 
 test("recent work merges finished assignments and responsibility runs, newest first, bounded", () => {
