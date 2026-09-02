@@ -96,3 +96,22 @@ test("recent work merges finished assignments and responsibility runs, newest fi
   assert.deepEqual(merged.map(describeOutcome), ["Succeeded", "Finished", "Failed"]);
   assert.deepEqual(mergeRecentWork(undefined, []), []);
 });
+
+test("a responsibility run's own thread is listed once, as the run", () => {
+  const merged = mergeRecentWork(
+    {
+      recent: [
+        { id: "ses_digest", title: "Morning digest", kind: "assignment", outcome: "finished", finishedAt: now - 9_000, threadId: "ses_digest" },
+        { id: "s1", title: "Draft the release note", kind: "assignment", outcome: "finished", finishedAt: now - 60_000, threadId: "s1" },
+      ],
+    },
+    [
+      {
+        id: "r1",
+        name: "Morning digest",
+        latestRun: { id: "run1", status: "succeeded", trigger: "manual", startedAt: now - 30_000, finishedAt: now - 10_000, threadId: "ses_digest", error: "" },
+      },
+    ],
+  );
+  assert.deepEqual(merged.map((entry) => [entry.title, entry.kind]), [["Morning digest", "responsibility"], ["Draft the release note", "assignment"]]);
+});

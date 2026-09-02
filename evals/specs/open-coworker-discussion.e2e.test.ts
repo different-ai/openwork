@@ -177,23 +177,36 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
     const failure = document.querySelector('[data-testid="coworker-turn-failed"]');
     return failure?.textContent ?? false;
   })()`, { timeoutMs: 120_000, label: "actionable failed discussion turn" });
-  expect(failureText).toContain("The coworker could not reply");
+  expect(await evalIn(app, `document.querySelector('[data-testid="coworker-turn-headline"]')?.textContent?.trim()`)).toBe("Editor's AI model is not available.");
   expect(failureText).toContain("missing-provider/missing-model");
-  expect(failureText).toContain("Choose another model or reconnect its provider");
-  expect(failureText).toContain("Open model settings");
+  expect(failureText).toContain("Choose AI model");
   expect(failureText).toContain("Continue with OpenWork");
-  expect(await evalIn(app, `document.querySelector('[data-testid="coworker-thread-status"]')?.textContent?.trim()`)).toBe("Failed");
-  expect(await evalIn(app, `document.querySelector('[data-testid="coworker-top-status"]')?.textContent?.trim()`)).toBe("Failed");
+  expect(failureText).toContain("Retry");
+  expect(String(failureText)).not.toMatch(/engine|APIError|stack/i);
+  const failureLayout = await evalIn(app, `(() => {
+    const failure = document.querySelector('[data-testid="coworker-turn-failed"]');
+    const headline = failure?.querySelector('[data-testid="coworker-turn-headline"]');
+    const technical = failure?.querySelector('[data-testid="coworker-turn-technical"]');
+    return {
+      headlineFirst: Boolean(headline) && failure?.firstElementChild?.contains(headline) === true,
+      technicalOpen: technical instanceof HTMLDetailsElement ? technical.open : null,
+      loadingIndicator: Boolean(document.querySelector('[data-testid="coworker-working"]')),
+    };
+  })()`);
+  expect(failureLayout).toMatchObject({ headlineFirst: true, loadingIndicator: false });
+  expect(await evalIn(app, `document.querySelector('[data-testid="coworker-thread-status"]')?.textContent?.trim()`)).toBe("Reply failed");
+  expect(await evalIn(app, `document.querySelector('[data-testid="coworker-top-status"]')?.textContent?.trim()`)).toBe("Reply failed");
   expect(await evalIn(app, `(() => [...document.querySelectorAll('[data-message-role="user"]')]
     .some((message) => (message.textContent ?? "").includes(${json(failurePrompt)})))()`)).toBe(true);
   expect(resultRecord(await invokeCoworker(app, "coworkers.get", { slug: "editor" })).conversationThreadId).toBe(discussionThreadId);
-  await clickButton(app, "Open model settings");
+  await clickButton(app, "Choose AI model");
   await waitForText(app, "Coworker settings", { timeoutMs: 30_000 });
+  await waitFor(app, `Boolean(document.querySelector('[data-testid="coworker-model-settings"]'))`, { timeoutMs: 30_000, label: "AI model section" });
   await waitForText(app, "This saved model is not currently available from a connected provider.", { timeoutMs: 30_000 });
 
   evidence.recordAssertionEvidence(
-    "An invalid coworker model becomes a visible recovery state instead of a silent Ready thread",
-    "The failed turn kept the user's prompt visible, named the exact unavailable model, showed the failure as Failed in both the thread header and the coworker header, explained model reconnection with a direct Open model settings action and an OpenWork account action, and preserved the same discussion id.",
+    "An invalid coworker model becomes a plain, actionable recovery state instead of a silent Ready thread",
+    "The failed turn kept the user's prompt visible, led with one human headline naming Editor's AI model, kept the exact unavailable model id in the detail, showed Reply failed in both the thread header and the coworker header with no lingering working indicator, offered Retry, Choose AI model, and Continue with OpenWork, opened Coworker settings at the AI model section, and preserved the same discussion id.",
     true,
   );
 });

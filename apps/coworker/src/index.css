@@ -368,6 +368,22 @@ body.is-resizing-context-panel * {
   background: rgb(255 255 255 / 0.09);
 }
 
+/* Whole-view swaps (team ⇄ add coworker) settle in rather than snap. */
+.view-enter {
+  animation: view-enter 220ms cubic-bezier(0.2, 0.7, 0.2, 1) backwards;
+}
+
+@keyframes view-enter {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 @keyframes coworker-float {
   0%, 100% { transform: translateY(0); }
   44%, 54% { transform: translateY(-0.8px); }
@@ -426,6 +442,10 @@ a {
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .view-enter {
+    animation: none !important;
+  }
+
   .coworker-avatar *,
   .coworker-mark *,
   .brand-loader__progress span,

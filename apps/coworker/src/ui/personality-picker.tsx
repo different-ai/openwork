@@ -41,7 +41,7 @@ export function PersonalityPicker({
       </Field>
       <p className="text-[11px] leading-relaxed text-mist">
         {option.description}
-        {value !== "none" ? " It only changes what the app says while working — never how the coworker works or writes." : ""}
+        {value !== "none" ? " Only the wording while working changes." : ""}
       </p>
       {preview.length > 0 ? (
         <ul className="flex flex-wrap gap-1.5" aria-label="Example sayings">

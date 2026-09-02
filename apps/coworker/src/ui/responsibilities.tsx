@@ -255,7 +255,7 @@ export function ResponsibilitiesPanel({
   return (
     <div className="space-y-2.5">
       <div className="flex items-center justify-between gap-3 px-1">
-        <h3 className="text-[10px] font-semibold uppercase tracking-[0.14em] text-mist">Responsibilities</h3>
+        <h3 className="text-[11px] font-semibold text-mist">Responsibilities</h3>
         {rows.length > 0 && canAdd ? (
           <button
             type="button"
