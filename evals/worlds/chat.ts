@@ -700,3 +700,105 @@ export async function queuedDrainAway(seed: Seed) {
     throw error;
   }
 }
+
+type SequentialRequestLabel = "first" | "one" | "two" | "unexpected";
+type SequentialRequest = { label: SequentialRequestLabel; lastUserText: string };
+
+export const sequentialFirstPrompt = "Start the long deterministic task for sequential queue proof.";
+export const sequentialQueuedOne = "Queued follow-up ONE for sequential drain proof.";
+export const sequentialQueuedTwo = "Queued follow-up TWO for sequential drain proof.";
+export const sequentialReplies = [
+  "Deterministic long-task reply.",
+  "Deterministic drain-one reply.",
+  "Deterministic drain-two reply.",
+];
+
+export async function queuedSequential(seed: Seed) {
+  const providerId = "sequential-queue-mock";
+  const modelId = "sequential-queue-model";
+  const modelName = "Sequential queue model";
+  const requests: SequentialRequest[] = [];
+  let releaseFirst: () => void = () => undefined;
+  let releaseOne: () => void = () => undefined;
+  const firstGate = new Promise<void>((resolveGate) => { releaseFirst = resolveGate; });
+  const oneGate = new Promise<void>((resolveGate) => { releaseOne = resolveGate; });
+  const classify = (rawBody: string): SequentialRequestLabel => {
+    if (rawBody.includes(sequentialQueuedTwo)) return "two";
+    if (rawBody.includes(sequentialQueuedOne)) return "one";
+    if (rawBody.includes(sequentialFirstPrompt)) return "first";
+    return "unexpected";
+  };
+  const provider = createServer((request, response) => {
+    const url = request.url ?? "";
+    if (request.method === "GET" && url.startsWith("/v1/models")) {
+      sendJson(response, 200, { object: "list", data: [{ id: modelId, object: "model" }] });
+      return;
+    }
+    if (request.method !== "POST" || (url !== "/v1/chat/completions" && url !== "/chat/completions")) {
+      sendJson(response, 404, { error: { message: "not found" } });
+      return;
+    }
+    void readBody(request).then((rawBody) => {
+      let parsed: unknown;
+      try { parsed = JSON.parse(rawBody); } catch { parsed = null; }
+      const isMain = isRecord(parsed) && Array.isArray(parsed.tools) && parsed.tools.length > 0;
+      const label = classify(rawBody);
+      if (isMain) requests.push({ label, lastUserText: lastUserText(rawBody) });
+      const reply = !isMain
+        ? "Session title"
+        : label === "first" ? sequentialReplies[0]
+          : label === "one" ? sequentialReplies[1]
+            : label === "two" ? sequentialReplies[2]
+              : `Unexpected completion for: ${rawBody.slice(0, 200)}`;
+      const id = `chatcmpl-sequential-queue-${requests.length}`;
+      response.writeHead(200, {
+        "content-type": "text/event-stream",
+        "cache-control": "no-cache",
+        connection: "keep-alive",
+      });
+      const write = (chunk: unknown): void => {
+        if (!response.writableEnded) response.write(`data: ${JSON.stringify(chunk)}\n\n`);
+      };
+      write({ id, object: "chat.completion.chunk", choices: [{ index: 0, delta: { role: "assistant" }, finish_reason: null }] });
+      const finish = (): void => {
+        write(completionChunk(id, reply, null));
+        setTimeout(() => {
+          write(completionChunk(id, "", "stop"));
+          setTimeout(() => {
+            if (!response.writableEnded) response.end("data: [DONE]\n\n");
+          }, 300);
+        }, 300);
+      };
+      if (isMain && label === "first") void firstGate.then(finish);
+      else if (isMain && label === "one") void oneGate.then(finish);
+      else setTimeout(finish, 400);
+    });
+  });
+  const baseUrl = await listen(provider);
+  try {
+    const workspacePath = seed.tmpPath("sequential-queue");
+    await writeProviderConfig(workspacePath, providerId, modelId, modelName, `${baseUrl}/v1`);
+    const app = await seed.desktop({ name: "sequential-queue", model: `${providerId}/${modelId}` });
+    const workspace = await seed.workspace(app, workspacePath);
+    const session = await seedSessionRetry(seed, app);
+    await selectModelInWorld(seed, app, modelName);
+    return {
+      app,
+      workspace,
+      session,
+      requests,
+      releaseFirst,
+      releaseOne,
+      async [Symbol.asyncDispose]() {
+        releaseFirst();
+        releaseOne();
+        await close(provider);
+      },
+    };
+  } catch (error) {
+    releaseFirst();
+    releaseOne();
+    await close(provider);
+    throw error;
+  }
+}
