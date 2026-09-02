@@ -105,6 +105,13 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
     patch: { model: "opencode/big-pickle", modelVariant: "" },
   });
   await reload(app);
+  // The first coworker's AI service restarts to pick up the new workspace; a person waits for
+  // "Ready" in the sidebar before typing, so the journey does too.
+  await waitFor(app, `(() => {
+    const summary = document.querySelector('[data-testid="coworker-activity-summary"]');
+    if (!(summary instanceof HTMLElement)) return false;
+    return summary.innerText.split("\n").map((line) => line.trim()).filter(Boolean)[0] === "Ready";
+  })()`, { timeoutMs: 180_000, label: "coworker AI ready before the first discussion" });
 
   const firstPrompt = "Reply with exactly COWORKER CHAT READY.";
   await beginStatusTrace(app, firstPrompt);
