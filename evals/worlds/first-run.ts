@@ -474,18 +474,9 @@ export async function updaterChannelWorld(_seed: Seed) {
     });
     return active;
   };
-  const snapshot = (surface = active) => evalIn(surface, `(async () => {
-    const state = window.__openworkUpdaterEvalState;
-    const native = await window.__OPENWORK_ELECTRON__.updater.getChannel();
-    const preferences = JSON.parse(localStorage.getItem("openwork.preferences") || "null");
-    return { checks: state.checks, setChannels: state.setChannels, nativeChannel: native.channel,
-      preferenceChannel: preferences?.releaseChannel, pickerText: document.querySelector('[aria-label="Release channel"]')?.textContent ?? "",
-      pageText: document.body.innerText };
-  })()`, { awaitPromise: true });
   return {
     app,
     relaunch,
-    snapshot,
     async [Symbol.asyncDispose]() {
       await active.stop();
       await host[Symbol.asyncDispose]();
