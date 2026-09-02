@@ -197,7 +197,7 @@ describe("OpenWorkOfficeAttachments", () => {
     });
   });
 
-  test("extracts XLSX structure, values, formulas, styles, merged cells, and materializes exact bytes", async () => {
+  test("previews XLSX sheets as a grid with formulas, number formats, merged cells, a tool pointer, and materializes exact bytes", async () => {
     await withWorkspace(async (root) => {
       const xlsx = xlsxFixture();
       const messages = await transform(root, [{
@@ -212,14 +212,14 @@ describe("OpenWorkOfficeAttachments", () => {
       expect(text).toContain(`sha256: ${sha256(xlsx)}`);
       expect(text).toContain("xlsx_workbook:");
       expect(text).toContain("sheet_count: 1");
-      expect(text).toContain("name: \"Summary\"");
-      expect(text).toContain("merged_ranges: \"A1:D1\"");
-      expect(text).toContain("cell: \"A1\"");
-      expect(text).toContain(`displayed_value: "${XLSX_SENTINEL}"`);
-      expect(text).toContain("cell: \"C2\"");
-      expect(text).toContain("raw_value: \"1742.42\"");
-      expect(text).toContain("number_format: \"$#,##0.00\"");
-      expect(text).toContain("formula: \"SUM(C2:C3)\"");
+      expect(text).toContain("sheet \"Summary\" (1 of 1): dimension A1:D3; 6 cells in rows 1-3, columns A-D; 1 formula; merged A1:D1");
+      expect(text).toContain("| # | A | B | C | D |");
+      expect(text).toContain(`| 1 | ${XLSX_SENTINEL} |  |  |  |`);
+      expect(text).toContain("| 2 | Northstar Revenue | EMEA | 1742.42 | 3484.84 |");
+      expect(text).toContain("| 3 |  |  | 1742.42 |  |");
+      expect(text).toContain("formulas: D2: =SUM(C2:C3) → 3484.84");
+      expect(text).toContain("number_formats: \"$#,##0.00\" (C2, D2, C3)");
+      expect(text).toContain(`next_step: the read tool cannot open .xlsx; use spreadsheet_inspect and spreadsheet_read with path "${pathFromText(text)}"`);
       expect(JSON.stringify(messages)).not.toContain(xlsx.toString("base64"));
       expect(JSON.stringify(messages)).not.toContain('"type":"file"');
       await expect(readFile(join(root, pathFromText(text)))).resolves.toEqual(xlsx);
@@ -242,8 +242,8 @@ describe("OpenWorkOfficeAttachments", () => {
       const xlsxText = textOf(xlsxPart);
 
       expect(docxText).toContain("Alpha & Beta <tag> &lt;once&gt; nested bold tail");
-      expect(xlsxText).toContain('displayed_value: "Sheet & <cell> &lt;once&gt;nested"');
-      expect(xlsxText).toContain('raw_value: "1742"');
+      expect(xlsxText).toContain("| 1 | Sheet & <cell> &lt;once&gt;nested |  |  |  |");
+      expect(xlsxText).toContain("| 2 | Northstar Revenue | EMEA | 1742 | 3484.84 |");
       expect(docxText).not.toContain("SCRIPT_SENTINEL");
       expect(docxText).not.toContain("STYLE_SENTINEL");
       expect(xlsxText).not.toContain("SCRIPT_SENTINEL");
