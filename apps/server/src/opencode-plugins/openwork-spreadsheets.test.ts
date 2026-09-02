@@ -303,6 +303,15 @@ describe("OpenWorkSpreadsheets", () => {
     expect(excelSerialToIso(-5)).toBeNull();
   });
 
+  test("keeps pipes and backslashes from breaking or distorting table cells", () => {
+    const { bytes } = writeXlsxWorkbook([{ rows: [["path", "note"], ["C:\\Users\\ada\\q3.xlsx", "a|b or c"]], header: false }]);
+    const workbook = openXlsxWorkbook(bytes);
+    const table = renderSheetTable(workbook.readSheet(workbook.sheets[0]));
+    const row = table.text.split("\n")[3];
+    expect(row).toBe("| 2 | C:\\Users\\ada\\q3.xlsx | a\u2502b or c |");
+    expect(row.split("|")).toHaveLength(5);
+  });
+
   test("bounds table columns and reports omitted columns", () => {
     const rows = [Array.from({ length: 70 }, (_value, index) => `c${index + 1}`)];
     const { bytes } = writeXlsxWorkbook([{ rows, header: false }]);
