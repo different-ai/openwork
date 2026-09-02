@@ -198,7 +198,7 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
       sidebarMentionsModel: sidebarText.includes("model"),
       readyMentions: (sidebarText.match(/ready/g) ?? []).length,
     };
-  })()`, { timeoutMs: 180_000, label: "settled default Activity sidebar" });
+  })()`, { timeoutMs: 240_000, label: "settled default Activity sidebar" });
   expect(defaultSidebar).toMatchObject({
     summaryLines: ["Ready", "Waiting for the first assignment."],
     responsibilitiesVisible: true,

@@ -109,6 +109,13 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
     label: "Editor discussion view",
   });
 
+  // A person waits for the coworker to read Ready before asking anything of it; so does the journey.
+  await waitFor(app, `(() => {
+    const summary = document.querySelector('[data-testid="coworker-activity-summary"]');
+    if (!(summary instanceof HTMLElement)) return false;
+    return summary.innerText.split("\\n").map((line) => line.trim()).filter(Boolean)[0] === "Ready";
+  })()`, { timeoutMs: 240_000, label: "coworker AI ready" });
+
   // --- Chat first. Nothing here is an assignment.
   await fill(app, 'textarea[aria-label="Message Editor"]', CHAT_PROMPT);
   await clickButton(app, "Send");
