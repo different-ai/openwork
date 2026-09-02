@@ -15,8 +15,8 @@ export type SettingsSection = "general" | "account" | "models" | "engine";
 const SECTIONS: Array<{ id: SettingsSection; label: string; detail: string }> = [
   { id: "general", label: "General", detail: "Open Coworker and shared defaults" },
   { id: "account", label: "Account", detail: "OpenWork account and organization" },
-  { id: "models", label: "Models & providers", detail: "What every coworker can run" },
-  { id: "engine", label: "Local engine", detail: "Runtime and local storage" },
+  { id: "models", label: "AI models", detail: "AI providers and models every coworker can use" },
+  { id: "engine", label: "AI & local setup", detail: "AI service, local storage, and diagnostics" },
 ];
 
 const EMPTY_CATALOG: EngineModelCatalog = { models: [], connectedProviderIds: [], cloud: null };
@@ -30,15 +30,15 @@ function sectionDescription(section: SettingsSection): string {
 }
 
 function modelLabel(coworker: CoworkerSummary, models: EngineModelOption[], catalogLoaded: boolean): string {
-  if (!coworker.model) return "OpenWork engine default";
+  if (!coworker.model) return "Default AI model";
   const match = models.find((model) => model.id === coworker.model);
   if (match) return `${match.label} · ${modelSourceLabel(match.source)}`;
   return catalogLoaded ? `${coworker.model} · unavailable` : coworker.model;
 }
 
 function modelHint(coworker: CoworkerSummary): string {
-  if (!coworker.model) return "Follows the engine default";
-  return coworker.modelVariant ? `${coworker.model} · reasoning ${coworker.modelVariant}` : coworker.model;
+  if (!coworker.model) return "Follows OpenWork's default AI model";
+  return coworker.modelVariant ? `${coworker.model} · thinking effort ${coworker.modelVariant}` : coworker.model;
 }
 
 function hostOf(url: string): string {
@@ -58,7 +58,7 @@ function describeSyncRun(run: ProviderSyncRun | null, status: EngineModelCatalog
   if (!last && !run) return { value: "Not refreshed yet", hint: "Providers refresh when you sign in.", tone: "mist" };
   const at = last?.at ? new Date(last.at).toLocaleString() : "";
   if (status?.reloadPending) {
-    return { value: "Applied · engine reload pending", hint: "New providers appear once current work finishes.", tone: "amber" };
+    return { value: "Applied · finishing current work", hint: "New providers appear once current work finishes.", tone: "amber" };
   }
   return { value: last?.status === "applied" || run?.status === "applied" ? "Up to date" : "Up to date · no changes", hint: at ? `Checked ${at}` : "", tone: "mint" };
 }
@@ -95,6 +95,7 @@ export function OpenWorkSettings({
   onSignOut,
   onSyncProviders,
   onRefreshRuntime,
+  onRestartRuntime,
 }: {
   active?: boolean;
   runtime: RuntimeInfo;
@@ -110,8 +111,23 @@ export function OpenWorkSettings({
   onSignOut: () => Promise<void>;
   onSyncProviders: () => Promise<ProviderSyncRun>;
   onRefreshRuntime: () => Promise<void>;
+  /** Stop and start the local AI service. */
+  onRestartRuntime: () => Promise<void>;
 }) {
   const [section, setSection] = useState<SettingsSection>(initialSection);
+  const [restarting, setRestarting] = useState(false);
+  async function restartRuntime() {
+    setRestarting(true);
+    setError("");
+    try {
+      await onRestartRuntime();
+      await refreshConfiguration();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setRestarting(false);
+    }
+  }
   const [catalog, setCatalog] = useState<EngineModelCatalog>(EMPTY_CATALOG);
   const [catalogLoaded, setCatalogLoaded] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
@@ -182,7 +198,7 @@ export function OpenWorkSettings({
     }, new Map<string, { label: string; source: EngineModelOption["source"]; models: EngineModelOption[] }>()),
   );
   // Account-backed providers stop being actionable the moment the account is
-  // cleared, even if the engine is still completing its provider reload.
+  // cleared, even if the AI service is still completing its provider reload.
   const cloudProviders = session ? providers.filter(([, provider]) => provider.source === "cloud") : [];
   const localProviders = providers.filter(([, provider]) => provider.source === "local");
   const skipped = catalog.cloud?.skippedProviders ?? [];
@@ -253,7 +269,7 @@ export function OpenWorkSettings({
                 <div>
                   <h2 className="text-xl font-semibold tracking-[-0.03em] text-snow">OpenWork settings</h2>
                   <p className="mt-1 max-w-2xl text-sm leading-relaxed text-mist">
-                    Account, runtime, and provider configuration apply across Open Coworker. Each teammate keeps its own identity, memory, and model preference.
+                    Your account, AI providers, and local setup apply across Open Coworker. Each coworker keeps its own identity, memory, and AI model in its own settings.
                   </p>
                 </div>
                 <div className="grid gap-3 md:grid-cols-2">
@@ -266,20 +282,19 @@ export function OpenWorkSettings({
                   </button>
                   <button type="button" className="rounded-2xl border border-line bg-panel/45 p-4 text-left transition-colors hover:bg-white/[0.045]" onClick={() => setSection("engine")}>
                     <div className="flex items-center justify-between gap-3">
-                      <span className="text-sm font-semibold text-snow">Local engine</span>
+                      <span className="text-sm font-semibold text-snow">AI & local setup</span>
                       <StatusDot tone={runtime.engineManaged ? "mint" : "rose"} />
                     </div>
-                    <p className="mt-2 text-xs text-mist">{runtime.engineManaged ? "Running · managed by Open Coworker" : "Unavailable · needs attention"}</p>
+                    <p className="mt-2 text-xs text-mist">{runtime.engineManaged ? "AI is ready" : "AI needs attention"}</p>
                   </button>
                 </div>
                 <SettingsCard>
-                  <SettingsRow label="Coworkers" value={`${coworkers.length} teammate${coworkers.length === 1 ? "" : "s"}`} hint="Each teammate has an isolated OpenWork workspace." />
+                  <SettingsRow label="Coworkers" value={`${coworkers.length} coworker${coworkers.length === 1 ? "" : "s"}`} hint="Each coworker has its own OpenWork workspace." />
                   <SettingsRow
-                    label="Models"
-                    value={models.length > 0 ? `${models.length} available` : runtime.engineManaged ? (refreshing ? "Reading catalog" : "None connected") : "Unavailable"}
-                    hint={models.length > 0 ? `${cloudProviders.length} OpenWork Cloud provider${cloudProviders.length === 1 ? "" : "s"} · ${localProviders.length} on this Mac` : "Provider connections are shared; model choices remain per coworker."}
+                    label="AI models"
+                    value={models.length > 0 ? `${models.length} available` : runtime.engineManaged ? (refreshing ? "Reading models" : "None connected") : "Unavailable"}
+                    hint={models.length > 0 ? `${cloudProviders.length} OpenWork Cloud provider${cloudProviders.length === 1 ? "" : "s"} · ${localProviders.length} on this Mac` : "Provider connections are shared; each coworker chooses its own AI model."}
                   />
-                  <SettingsRow label="Storage" value={runtime.coworkersDir} hint="Identity and memory remain visible on this Mac." />
                 </SettingsCard>
                 {coworkers.length > 0 ? (
                   <SettingsCard>
@@ -301,7 +316,7 @@ export function OpenWorkSettings({
                 <div>
                   <h2 className="text-xl font-semibold tracking-[-0.03em] text-snow">OpenWork account</h2>
                   <p className="mt-1 text-sm leading-relaxed text-mist">
-                    The same account as OpenWork Desktop. Signing in brings your organization's providers into this engine and lets responsibilities run in OpenWork Cloud.
+                    The same account as OpenWork Desktop. Signing in brings your organization's AI providers to every coworker and lets responsibilities run in OpenWork Cloud.
                   </p>
                 </div>
                 <SettingsCard testId="account-card">
@@ -345,9 +360,9 @@ export function OpenWorkSettings({
               <>
                 <div className="flex items-start justify-between gap-5">
                   <div>
-                    <h2 className="text-xl font-semibold tracking-[-0.03em] text-snow">Models & providers</h2>
+                    <h2 className="text-xl font-semibold tracking-[-0.03em] text-snow">AI models</h2>
                     <p className="mt-1 max-w-xl text-sm leading-relaxed text-mist">
-                      Read live from the OpenWork engine every coworker shares. OpenWork Cloud providers come from your signed-in account; the rest are configured on this Mac. Choose a model for an individual teammate from that coworker's settings.
+                      Every AI provider connected here is available to all coworkers. OpenWork Cloud providers come from your signed-in account; the rest are configured on this Mac. Each coworker chooses its own AI model in Coworker settings.
                     </p>
                   </div>
                   <Button variant="ghost" disabled={refreshing} onClick={() => void refreshConfiguration({ sync: true })} data-testid="refresh-providers">
@@ -357,7 +372,7 @@ export function OpenWorkSettings({
                 {session ? (
                   <SettingsCard testId="provider-sync-status">
                     <SettingsRow label="OpenWork account" value={accountHint} tone="mint" />
-                    <SettingsRow label="Provider sync" value={sync.value} hint={sync.hint} tone={sync.tone} />
+                    <SettingsRow label="Provider refresh" value={sync.value} hint={sync.hint} tone={sync.tone} />
                   </SettingsCard>
                 ) : (
                   <SettingsCard>
@@ -367,9 +382,9 @@ export function OpenWorkSettings({
                     </div>
                   </SettingsCard>
                 )}
-                {refreshing && models.length === 0 ? <div className="py-10"><InlineLoader label="Reading OpenWork models" /></div> : null}
+                {refreshing && models.length === 0 ? <div className="py-10"><InlineLoader label="Reading AI models" /></div> : null}
                 {!refreshing && providers.length === 0 ? (
-                  <SettingsCard><p className="p-5 text-sm leading-relaxed text-mist">No connected provider models are available. Connect a provider in OpenWork, then refresh this catalog.</p></SettingsCard>
+                  <SettingsCard><p className="p-5 text-sm leading-relaxed text-mist">No AI models are connected. Connect a provider in OpenWork, then refresh.</p></SettingsCard>
                 ) : null}
                 {[
                   { title: "OpenWork Cloud", entries: cloudProviders, testId: "cloud-providers" },
@@ -409,17 +424,28 @@ export function OpenWorkSettings({
               <>
                 <div className="flex items-start justify-between gap-5">
                   <div>
-                    <h2 className="text-xl font-semibold tracking-[-0.03em] text-snow">Local engine</h2>
-                    <p className="mt-1 max-w-xl text-sm leading-relaxed text-mist">Open Coworker uses the same local OpenWork engine and workspace-scoped tools.</p>
+                    <h2 className="text-xl font-semibold tracking-[-0.03em] text-snow">AI & local setup</h2>
+                    <p className="mt-1 max-w-xl text-sm leading-relaxed text-mist">The local AI service that runs every coworker on this Mac, plus where their files live.</p>
                   </div>
-                  <Button variant="ghost" disabled={refreshing} onClick={() => void refreshConfiguration()}>{refreshing ? "Checking…" : "Check again"}</Button>
+                  <div className="flex shrink-0 items-center gap-2">
+                    {!runtime.engineManaged ? (
+                      <Button variant="ghost" disabled={restarting} onClick={() => void restartRuntime()}>{restarting ? "Restarting…" : "Restart AI"}</Button>
+                    ) : null}
+                    <Button variant="ghost" disabled={refreshing} onClick={() => void refreshConfiguration()}>{refreshing ? "Checking…" : "Check again"}</Button>
+                  </div>
                 </div>
-                <SettingsCard>
-                  <SettingsRow label="Status" value={runtime.engineManaged ? "Running" : "Unavailable"} hint={runtime.engineManaged ? "Managed locally by Open Coworker" : runtime.engineError || "The local agent engine is offline."} tone={runtime.engineManaged ? "mint" : "rose"} />
+                <SettingsCard testId="local-setup-card">
+                  <SettingsRow label="AI service" value={runtime.engineManaged ? "AI is ready" : "AI is unavailable"} hint={runtime.engineManaged ? "Runs with Open Coworker on this Mac." : "Coworkers cannot work until it is running again."} tone={runtime.engineManaged ? "mint" : "rose"} />
                   <SettingsRow label="Application" value={`${runtime.appName} ${runtime.version}`} />
-                  <SettingsRow label="Coworker home" value={runtime.coworkersDir} hint="Local identities, memory, and responsibility definitions." />
+                  <SettingsRow label="Coworker files" value={runtime.coworkersDir} hint="Identities, memory, and responsibility definitions stay on this Mac." />
                   <SettingsRow label="Sign-in links" value={runtime.deepLinksRegistered ? `${runtime.deepLinkScheme}:// registered` : "Paste only"} hint={runtime.deepLinksRegistered ? "OpenWork can open this app directly after sign-in." : "Unpackaged and isolated launches accept the pasted sign-in link."} />
                 </SettingsCard>
+                {runtime.engineError ? (
+                  <details className="rounded-2xl border border-line bg-panel/45 px-4 py-3 text-xs text-mist" data-testid="local-setup-technical">
+                    <summary className="cursor-pointer select-none font-medium text-snow/85">Technical details</summary>
+                    <p className="mt-2 break-words font-mono text-[11px] leading-relaxed">{runtime.engineError}</p>
+                  </details>
+                ) : null}
               </>
             ) : null}
 

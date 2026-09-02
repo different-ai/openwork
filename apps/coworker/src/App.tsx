@@ -88,9 +88,13 @@ export default function App() {
     setRuntime(info);
   }, []);
 
+  const restartRuntime = useCallback(async () => {
+    setRuntime(await coworkerBridge.restartRuntime());
+  }, []);
+
   /**
    * Hand the signed-in account to the embedded server so the member's
-   * authorized providers become engine providers. Runs on boot for a stored
+   * authorized providers become available to every coworker. Runs on boot for a stored
    * session and again after every sign-in; the server ignores a repeat.
    */
   const pushSession = useCallback(async (next: DenSession): Promise<ProviderSyncRun> => {
@@ -214,6 +218,7 @@ export default function App() {
                 updatedAt: localRunning.latestRun.startedAt,
                 ...(localRunning.latestRun.threadId ? { threadId: localRunning.latestRun.threadId } : {}),
                 ...(latestActivity ? { last: latestActivity } : {}),
+                ...(threadActivity.recent ? { recent: threadActivity.recent } : {}),
               },
             ] as const;
           }
@@ -225,11 +230,12 @@ export default function App() {
               coworker.slug,
               {
                 state: "attention",
-                label: "Local run failed",
-                detail: localFailure.latestRun.error || localFailure.name,
+                label: "Run failed",
+                detail: localFailure.name,
                 updatedAt: localFailure.latestRun.finishedAt ?? localFailure.latestRun.startedAt,
                 ...(localFailure.latestRun.threadId ? { threadId: localFailure.latestRun.threadId } : {}),
                 ...(latestActivity ? { last: latestActivity } : {}),
+                ...(threadActivity.recent ? { recent: threadActivity.recent } : {}),
               },
             ] as const;
           }
@@ -370,11 +376,21 @@ export default function App() {
         detail: attention,
         updatedAt: activity?.updatedAt ?? 0,
         ...(activity?.last ? { last: activity.last } : {}),
+        ...(activity?.recent ? { recent: activity.recent } : {}),
       };
     } else if (liveActivity) {
-      visibleActivityBySlug[coworker.slug] = liveActivity;
+      // The thread view knows the live state; the polled read still owns the history.
+      visibleActivityBySlug[coworker.slug] = {
+        ...liveActivity,
+        ...(liveActivity.last ?? activity?.last ? { last: liveActivity.last ?? activity?.last } : {}),
+        ...(activity?.recent ? { recent: activity.recent } : {}),
+      };
     } else if (cloudRun) {
-      visibleActivityBySlug[coworker.slug] = { ...cloudRun, ...(activity?.last ? { last: activity.last } : {}) };
+      visibleActivityBySlug[coworker.slug] = {
+        ...cloudRun,
+        ...(activity?.last ? { last: activity.last } : {}),
+        ...(activity?.recent ? { recent: activity.recent } : {}),
+      };
     } else if (activity) {
       visibleActivityBySlug[coworker.slug] = activity;
     }
@@ -446,6 +462,7 @@ export default function App() {
             onCoworkerChanged={updateCoworkerInList}
             onCoworkerRemoved={removeCoworkerFromList}
             onRefreshRuntime={refreshRuntime}
+            onRestartRuntime={restartRuntime}
             onSyncProviders={syncProviders}
             onOpenOpenWork={(section) => openGlobalSettings(section ?? "general")}
           />
@@ -470,6 +487,7 @@ export default function App() {
             onSignOut={signOut}
             onSyncProviders={syncProviders}
             onRefreshRuntime={refreshRuntime}
+            onRestartRuntime={restartRuntime}
           />
         </div>
       ) : null}

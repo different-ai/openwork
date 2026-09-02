@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { describeMemory, describeModelPreference, describeNow, relativeTime } from "./activity-summary.ts";
+import { describeNow, describeOutcome, mergeRecentWork, relativeTime } from "./activity-summary.ts";
 
 const now = Date.UTC(2026, 8, 1, 12, 0, 0);
 
@@ -14,11 +14,11 @@ test("relativeTime is compact and empty when unknown", () => {
 
 test("an idle coworker with no history gets exactly one line", () => {
   const summary = describeNow({ state: "ready", label: "Ready", detail: "Waiting for first assignment", updatedAt: 0 });
-  assert.deepEqual(summary, { subject: "", note: "Waiting for the first assignment.", previous: undefined });
-  assert.deepEqual(describeNow(undefined), { subject: "", note: "Checking status…", previous: undefined });
+  assert.deepEqual(summary, { subject: "", note: "Waiting for the first assignment.", needsYou: false });
+  assert.deepEqual(describeNow(undefined), { subject: "", note: "Checking status…", needsYou: false });
 });
 
-test("recent work is named once, never repeated as previous", () => {
+test("a ready coworker with history says only Ready; the recent list owns the history", () => {
   const summary = describeNow({
     state: "recent",
     label: "Ready",
@@ -27,12 +27,10 @@ test("recent work is named once, never repeated as previous", () => {
     threadId: "s1",
     last: { title: "Draft the release note", updatedAt: now, threadId: "s1" },
   });
-  assert.equal(summary.subject, "Draft the release note");
-  assert.equal(summary.note, "Last worked on this");
-  assert.equal(summary.previous, undefined);
+  assert.deepEqual(summary, { subject: "", note: "", needsYou: false });
 });
 
-test("working and attention show the subject plus a distinct previous thread", () => {
+test("working names the subject once; attention asks for the person", () => {
   const working = describeNow({
     state: "working",
     label: "Working",
@@ -41,40 +39,60 @@ test("working and attention show the subject plus a distinct previous thread", (
     threadId: "s2",
     last: { title: "Draft the release note", updatedAt: now - 3_600_000, threadId: "s1" },
   });
-  assert.equal(working.note, "Running now");
-  assert.equal(working.previous?.title, "Draft the release note");
+  assert.deepEqual(working, { subject: "Compare onboarding flows", note: "", needsYou: false });
 
   const attention = describeNow({
     state: "attention",
-    label: "Needs you",
+    label: "Waiting for permission",
     detail: "Wants to run a command: rm -rf build",
     updatedAt: now,
     threadId: "s2",
-    last: { title: "Wants to run a command: rm -rf build", updatedAt: now, threadId: "s2" },
   });
-  assert.equal(attention.note, "Waiting for you — open to respond");
-  assert.equal(attention.previous, undefined, "same title as the subject is not repeated");
+  assert.equal(attention.subject, "Wants to run a command: rm -rf build");
+  assert.equal(attention.needsYou, true);
 
-  const denAttention = describeNow({ state: "attention", label: "Needs you", detail: "Model access lost", updatedAt: now });
-  assert.equal(denAttention.note, "Waiting for you");
+  const failedRun = describeNow({ state: "attention", label: "Run failed", detail: "Morning digest", updatedAt: now, threadId: "s4" });
+  assert.deepEqual(failedRun, { subject: "Morning digest", note: "", needsYou: false });
+
+  const retrying = describeNow({ state: "retrying", label: "Retrying", detail: "Weekly digest", updatedAt: now, threadId: "s3" });
+  assert.equal(retrying.note, "Retrying after an interruption");
+
+  const offline = describeNow({ state: "offline", label: "Offline", detail: "", updatedAt: 0 });
+  assert.equal(offline.note, "OpenWork cannot read this workspace right now.");
 });
 
-test("model and memory rows describe the persisted state compactly", () => {
-  assert.deepEqual(describeModelPreference({ model: "", modelVariant: "" }), { value: "Engine default", hint: "Follows the OpenWork default" });
-  assert.deepEqual(describeModelPreference({ model: "anthropic/claude-haiku-4-5", modelVariant: "high" }), {
-    value: "claude-haiku-4-5 · High",
-    hint: "anthropic",
-  });
-  assert.deepEqual(describeMemory([], now), { value: "Working memory", hint: "working.md · 0 long-term notes" });
-  assert.deepEqual(
-    describeMemory(
-      [
-        { id: "working", updatedAt: now - 12 * 60_000 },
-        { id: "long-term/people.md", updatedAt: now },
+test("recent work merges finished assignments and responsibility runs, newest first, bounded", () => {
+  const merged = mergeRecentWork(
+    {
+      recent: [
+        { id: "s1", title: "Draft the release note", kind: "assignment", outcome: "finished", finishedAt: now - 60_000, threadId: "s1" },
+        { id: "s0", title: "Old research", kind: "assignment", outcome: "finished", finishedAt: now - 86_400_000, threadId: "s0" },
       ],
-      now,
-    ),
-    { value: "Updated 12m ago", hint: "working.md · 1 long-term note" },
+    },
+    [
+      {
+        id: "r1",
+        name: "Morning digest",
+        latestRun: { id: "run1", status: "succeeded", trigger: "scheduled", startedAt: now - 30_000, finishedAt: now - 10_000, threadId: "ses_digest", error: "" },
+      },
+      {
+        id: "r2",
+        name: "Backup check",
+        latestRun: { id: "run2", status: "failed", trigger: "manual", startedAt: now - 7_200_000, finishedAt: now - 7_000_000, threadId: "", error: "Model unavailable" },
+      },
+      {
+        id: "r3",
+        name: "Still running",
+        latestRun: { id: "run3", status: "running", trigger: "manual", startedAt: now - 5_000, finishedAt: null, threadId: "ses_live", error: "" },
+      },
+      { id: "r4", name: "Never ran", latestRun: null },
+    ],
+    3,
   );
-  assert.equal(describeMemory([{ id: "working", updatedAt: now - 5_000 }], now).value, "Updated just now");
+  assert.deepEqual(merged.map((entry) => entry.title), ["Morning digest", "Draft the release note", "Backup check"]);
+  assert.equal(merged[0]?.threadId, "ses_digest");
+  assert.equal(merged[2]?.error, "Model unavailable");
+  assert.equal(merged[2]?.threadId, undefined);
+  assert.deepEqual(merged.map(describeOutcome), ["Succeeded", "Finished", "Failed"]);
+  assert.deepEqual(mergeRecentWork(undefined, []), []);
 });

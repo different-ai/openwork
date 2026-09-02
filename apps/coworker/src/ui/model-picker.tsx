@@ -15,7 +15,7 @@ export type ModelSelection = { model: string; modelVariant: string };
 const EMPTY_CATALOG: EngineModelCatalog = { models: [], connectedProviderIds: [], cloud: null };
 
 function selectedDescription(option: EngineModelOption | undefined, value: string): string {
-  if (!value) return "OpenWork chooses the configured engine default.";
+  if (!value) return "Uses OpenWork's default AI model."
   if (!option) return "This saved model is not currently available from a connected provider.";
   return `${option.providerLabel} · ${option.modelId} · ${modelSourceLabel(option.source)}`;
 }
@@ -143,7 +143,7 @@ export function ModelPicker({
         </span>
         <span className="min-w-0 flex-1">
           <span className="block truncate text-xs font-semibold text-snow">
-            {selected?.modelLabel || (value ? value : "Engine default")}
+            {selected?.modelLabel || (value ? value : "Default AI model")}
           </span>
           <span className="mt-0.5 block truncate text-[11px] text-mist">
             {selectedDescription(selected, value)}
@@ -157,8 +157,8 @@ export function ModelPicker({
           <div className="flex items-center gap-2 border-b border-line p-2.5">
             <input
               className={`${inputClass} min-w-0 flex-1 bg-panel py-2 text-xs`}
-              aria-label="Search connected models"
-              placeholder="Search connected models"
+              aria-label="Search AI models"
+              placeholder="Search AI models"
               value={query}
               onChange={(event) => setQuery(event.target.value)}
             />
@@ -167,7 +167,7 @@ export function ModelPicker({
               variant="ghost"
               className="shrink-0 text-xs"
               disabled={loading}
-              title={session ? "Re-read your OpenWork providers and this engine's models" : "Re-read this engine's models"}
+              title={session ? "Refresh your OpenWork providers and the available AI models" : "Refresh the available AI models"}
               onClick={() => void refresh({ sync: true })}
             >
               {loading ? "Refreshing" : "Refresh"}
@@ -181,14 +181,14 @@ export function ModelPicker({
             >
               <StatusDot tone={!value ? "mint" : "mist"} />
               <span>
-                <span className="block text-xs font-semibold text-snow">Engine default</span>
+                <span className="block text-xs font-semibold text-snow">Default AI model</span>
                 <span className="mt-0.5 block text-[11px] text-mist">Follow the current OpenWork default.</span>
               </span>
             </button>
 
             {value && !selected ? (
               <div className="mt-1 rounded-xl bg-amber/8 px-2.5 py-2 text-[11px] leading-relaxed text-amber" data-testid="model-unavailable">
-                Saved selection {value} is unavailable. Choose a connected model or use the engine default.
+                Saved selection {value} is unavailable. Choose a connected AI model or use the default.
               </div>
             ) : null}
 
@@ -232,29 +232,29 @@ export function ModelPicker({
             ) : null}
 
             {loading && catalog.models.length === 0 ? (
-              <div className="p-4 text-xs text-mist"><InlineLoader label="Reading connected models" /></div>
+              <div className="p-4 text-xs text-mist"><InlineLoader label="Reading AI models" /></div>
             ) : null}
 
             {!loading && runtime.engineManaged && catalog.models.length === 0 ? (
               <p className="p-3 text-xs leading-relaxed text-mist">
-                No connected provider models are available yet. The engine default remains usable after a provider is configured in OpenWork.
+                No AI models are connected yet. Connect a provider in OpenWork, then refresh.
               </p>
             ) : null}
             {!runtime.engineManaged ? (
-              <p className="p-3 text-xs leading-relaxed text-rose">Start the local agent engine to read connected models.</p>
+              <p className="p-3 text-xs leading-relaxed text-rose">AI is unavailable, so models cannot be listed right now.</p>
             ) : null}
           </div>
         </div>
       ) : null}
 
       {value && variants.length > 0 ? (
-        <Field label="Reasoning">
+        <Field label="Thinking effort">
           <select
             className={`${inputClass} bg-panel`}
             value={modelVariant}
             onChange={(event) => onChange({ model: value, modelVariant: event.target.value })}
           >
-            <option value="">Provider default</option>
+            <option value="">Model default</option>
             {variants.map((variant) => (
               <option key={variant} value={variant}>{variant.slice(0, 1).toUpperCase() + variant.slice(1)}</option>
             ))}
@@ -269,7 +269,7 @@ export function ModelPicker({
         </p>
       ) : null}
       {reloadPending ? (
-        <p className="text-[11px] leading-relaxed text-mist">New OpenWork providers will appear once the engine finishes its current work and reloads.</p>
+        <p className="text-[11px] leading-relaxed text-mist">New OpenWork providers appear once current work finishes.</p>
       ) : null}
       {syncNote ? <p className="text-[11px] leading-relaxed text-mist">{syncNote}</p> : null}
       <p className="text-[11px] leading-relaxed text-mist" data-testid="model-picker-summary">
@@ -277,7 +277,7 @@ export function ModelPicker({
           ? cloudModelCount > 0
             ? `${cloudModelCount} model${cloudModelCount === 1 ? "" : "s"} come from your OpenWork account (${session.orgName || session.userEmail || "signed in"}); the rest are configured on this Mac.`
             : `Signed in as ${session.orgName || session.userEmail || "your OpenWork account"}, but no organization models are available here yet. Refresh after your organization grants a provider.`
-          : "Only models from providers connected to this OpenWork engine are shown."}
+          : "Only AI models from connected providers are shown."}
         {!session && onConnect ? (
           <>
             {" "}

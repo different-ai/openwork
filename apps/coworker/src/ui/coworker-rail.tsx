@@ -3,7 +3,7 @@ import type { CoworkerSummary, RuntimeInfo } from "@/lib/bridge";
 import type { DenSession } from "@/lib/den";
 import type { CoworkerActivity } from "@/lib/threads";
 import { CoworkerAvatar } from "@/ui/coworker-avatar";
-import { Button, StatusDot } from "@/ui/kit";
+import { Button, SlidersIcon, StatusDot } from "@/ui/kit";
 import { CoworkerMark } from "@/ui/brand";
 import { useWorkingSaying } from "@/ui/use-working-saying";
 
@@ -152,15 +152,10 @@ export function CoworkerRail({
           <span className="min-w-0 flex-1">
             <span className="block text-[11px] font-semibold text-snow">OpenWork</span>
             <span className="block truncate text-[10px] text-mist">
-              {session?.orgName || session?.userEmail || (coworkers.length === 0 ? "Setup in progress" : runtime.engineManaged ? "Local · connect account" : "Engine unavailable")}
+              {session?.orgName || session?.userEmail || (coworkers.length === 0 ? "Setup in progress" : runtime.engineManaged ? "Local mode" : "AI unavailable")}
             </span>
           </span>
-          <svg className="size-3.5 shrink-0 text-mist transition-colors group-hover:text-snow" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-            <path d="M3 4.25h10M5.5 8h5M4.5 11.75h7" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" />
-            <circle cx="6" cy="4.25" r="1.25" fill="currentColor" />
-            <circle cx="9" cy="8" r="1.25" fill="currentColor" />
-            <circle cx="7" cy="11.75" r="1.25" fill="currentColor" />
-          </svg>
+          <SlidersIcon className="size-3.5 shrink-0 text-mist transition-colors group-hover:text-snow" />
         </button>
       </div>
     </aside>

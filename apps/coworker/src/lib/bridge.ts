@@ -111,6 +111,8 @@ async function invoke<T>(command: string, payload?: unknown): Promise<T> {
 
 export const coworkerBridge = {
   runtimeInfo: () => invoke<RuntimeInfo>("runtime.info"),
+  /** Stop and start the local AI service, then report the fresh state. */
+  restartRuntime: () => invoke<RuntimeInfo>("runtime.restart"),
   coworkers: {
     list: () => invoke<CoworkerSummary[]>("coworkers.list"),
     get: (slug: string) => invoke<CoworkerSummary>("coworkers.get", { slug }),
