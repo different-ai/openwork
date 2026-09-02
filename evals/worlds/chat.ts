@@ -612,16 +612,27 @@ async function selectModelInWorld(seed: Seed, app: Awaited<ReturnType<Seed["desk
   // TODO(primitive): select a model as arranged state.
   const selected = await seed.evalIn(app, `(async () => {
     const deadline = Date.now() + 60000;
-    while (Date.now() < deadline && !document.querySelector('button[aria-label="Change model"]')) {
-      await new Promise((resolve) => setTimeout(resolve, 100));
+    if (!document.querySelector('input[placeholder="Search providers and models..."]')) {
+      const result = await window.__openworkControl.execute("session.model_picker.open", null);
+      if (!result?.ok) return false;
     }
-    document.querySelector('button[aria-label="Change model"]')?.click();
     while (Date.now() < deadline) {
-      const item = [...document.querySelectorAll('[data-slot="command-item"]')]
-        .find((candidate) => (candidate.textContent ?? "").includes(${JSON.stringify(modelName)}));
+      const input = document.querySelector('input[placeholder="Search providers and models..."]');
+      if (input instanceof HTMLInputElement && input.value !== ${JSON.stringify(modelName)}) {
+        const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+        setter?.call(input, ${JSON.stringify(modelName)});
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+      }
+      const dialog = document.querySelector('[data-slot="dialog-content"]');
+      const item = [...(dialog?.querySelectorAll("button") ?? [])]
+        .find((candidate) => !candidate.disabled && (candidate.textContent ?? "").includes(${JSON.stringify(modelName)}));
       if (item instanceof HTMLElement) {
         item.click();
-        return true;
+        while (Date.now() < deadline) {
+          if (!document.querySelector('input[placeholder="Search providers and models..."]')) return true;
+          await new Promise((resolve) => setTimeout(resolve, 100));
+        }
+        return false;
       }
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
@@ -1018,4 +1029,106 @@ export async function unfinishedTools(seed: Seed) {
   const session = await seedSessionRetry(seed, app);
   await arrangeControl(seed, app, "eval.session_lifecycle.seed_unfinished_tools", { lifecycle: "active" });
   return { app, workspace, session };
+}
+
+async function configureLiveToolWorkspaces(
+  seed: Seed,
+  app: Awaited<ReturnType<Seed["desktop"]>>,
+  workspaceIds: string[],
+  baseUrl: string,
+): Promise<void> {
+  // TODO(primitive): configure one tool-capable provider across several workspaces and select its model.
+  const configured = await seed.evalIn(app, `(async () => {
+    const port = localStorage.getItem("openwork.server.port");
+    const token = localStorage.getItem("openwork.server.token");
+    if (!port || !token) return "missing local server credentials";
+    const root = "http://127.0.0.1:" + port;
+    const headers = { Authorization: "Bearer " + token, "Content-Type": "application/json" };
+    for (const workspaceId of ${JSON.stringify(workspaceIds)}) {
+      const patch = await fetch(root + "/workspace/" + encodeURIComponent(workspaceId) + "/config", {
+        method: "PATCH",
+        headers,
+        body: JSON.stringify({
+          opencode: {
+            permission: { bash: "allow" },
+            provider: {
+              "live-tool-switch-mock": {
+                npm: "@ai-sdk/openai-compatible",
+                name: "Live tool switch model",
+                options: { baseURL: ${JSON.stringify(`${baseUrl}/v1`)}, apiKey: "sk-live-tool-switch" },
+                models: { "live-tool-switch-model": { name: "Live tool switch model", tool_call: true } },
+              },
+            },
+          },
+        }),
+      });
+      if (!patch.ok) return "config:" + patch.status + ":" + (await patch.text()).slice(0, 300);
+      const reload = await fetch(root + "/workspace/" + encodeURIComponent(workspaceId) + "/engine/reload", { method: "POST", headers });
+      if (!reload.ok && reload.status !== 504) return "reload:" + reload.status + ":" + (await reload.text()).slice(0, 300);
+    }
+    const raw = localStorage.getItem("openwork.preferences");
+    let preferences = {};
+    try { preferences = raw ? JSON.parse(raw) : {}; } catch { preferences = {}; }
+    if (!preferences || typeof preferences !== "object" || Array.isArray(preferences)) preferences = {};
+    localStorage.setItem("openwork.preferences", JSON.stringify({
+      ...preferences,
+      defaultModel: { providerID: "live-tool-switch-mock", modelID: "live-tool-switch-model" },
+      modelVariant: null,
+      providerStepCompleted: true,
+    }));
+    localStorage.setItem("openwork.defaultModel", "live-tool-switch-mock/live-tool-switch-model");
+    return "ok";
+  })()`, { awaitPromise: true, timeoutMs: 180_000 });
+  if (configured !== "ok") throw new Error(`Live-tool provider configuration failed: ${String(configured)}`);
+  await seed.evalIn(app, "location.reload(); true");
+}
+
+export async function liveToolSwitch(seed: Seed) {
+  const runId = `${Date.now().toString(36)}-${process.pid}`;
+  const promptMarker = `LIVE-TOOL-SWITCH-${runId}`;
+  const firstMarker = `FIRST-${promptMarker}`;
+  const firstToolDescription = `First tool in chat A — ${promptMarker}`;
+  const toolDescription = `Waiting in chat A — ${promptMarker}`;
+  const completionMarker = `DONE-${promptMarker}`;
+  const firstCommand = `sleep 15 && printf '%s\\n' '${firstMarker}'`;
+  const command = `sleep 45 && printf '%s\\n' '${completionMarker}'`;
+  const agent = seed.mock({
+    agentWorkloads: [{
+      promptMarker,
+      finalReply: completionMarker,
+      steps: [
+        { tool: "bash", arguments: { command: firstCommand, timeout: 30_000, description: firstToolDescription } },
+        { tool: "bash", arguments: { command, timeout: 90_000, description: toolDescription } },
+      ],
+    }],
+  });
+  const den = await seed.den({
+    mocks: { agent },
+    org: {
+      name: "Live Tool Switch",
+      admin: { name: "Switch Admin" },
+      members: { member: { name: "Switch Member" } },
+    },
+  });
+  const app = await seed.desktop({ den, as: "member" });
+  const workspaceB = await seed.workspace(app, seed.tmpPath(`live-tool-switch-${runId}-b`));
+  const sessionB = await seedSessionRetry(seed, app, { title: "Chat B" });
+  const workspaceA = await seed.workspace(app, seed.tmpPath(`live-tool-switch-${runId}-a`));
+  await configureLiveToolWorkspaces(seed, app, [workspaceA.workspaceId, workspaceB.workspaceId], den.mocks.agent.url);
+  const sessionA = await seedSessionRetry(seed, app, { title: "Chat A" });
+  if (sessionA.sessionId === sessionB.sessionId) throw new Error("Live-tool chats did not receive distinct session IDs.");
+  await selectModelInWorld(seed, app, "Live tool switch model");
+  return {
+    app,
+    workspaceA,
+    workspaceB,
+    sessionA,
+    sessionB,
+    promptMarker,
+    firstToolDescription,
+    toolDescription,
+    completionMarker,
+    firstCommand,
+    command,
+  };
 }
