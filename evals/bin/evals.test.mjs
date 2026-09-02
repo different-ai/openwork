@@ -9,10 +9,18 @@ import {
   exitCodeFor,
   parseArgs,
   resolveRunEnvironment,
+  resolveTestNames,
   summarize,
   verdictFor,
   worldSnapshotsSince,
 } from "./evals.mjs";
+
+test("resolveTestNames reports named quarantined specs with their reason", () => {
+  assert.throws(
+    () => resolveTestNames(["tool-tester-page"], [join("/tmp", "tool-tester-page.e2e.test.ts")]),
+    /quarantined: seeded token lands on sign-in/,
+  );
+});
 
 test("consentVarsFromSource extracts, deduplicates, and sorts only opt-in variables", () => {
   const source = `

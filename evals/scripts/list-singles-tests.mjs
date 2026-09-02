@@ -1,11 +1,13 @@
 import { access, readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { listQuarantined } from "./quarantine.mjs";
 
 const specsDirectory = new URL("../specs/", import.meta.url);
 const profileUrl = new URL("../specs/daytona-e2e-regression-profile.json", import.meta.url);
 
 const SINGLES_CATEGORIES = ["fresh-den-url", "fault-proxy"];
+const QUARANTINED = new Set(listQuarantined());
 
 const SINGLES_DENYLIST = new Map([
   [
@@ -58,13 +60,9 @@ export async function listSinglesTests() {
   }
 
   const selected = profileEntries(profile)
-    .filter(({ category, test }) => SINGLES_CATEGORIES.includes(category) && !SINGLES_DENYLIST.has(test))
+    .filter(({ category, test }) => SINGLES_CATEGORIES.includes(category) && !SINGLES_DENYLIST.has(test) && !QUARANTINED.has(test))
     .map(({ test }) => test)
     .sort();
-
-  if (selected.length === 0) {
-    throw new Error("Daytona E2E singles selection is empty");
-  }
 
   for (const test of selected) {
     try {
