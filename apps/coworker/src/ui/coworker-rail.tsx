@@ -1,9 +1,9 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { CoworkerSummary, RuntimeInfo } from "@/lib/bridge";
 import type { DenSession } from "@/lib/den";
 import type { CoworkerActivity } from "@/lib/threads";
 import { CoworkerAvatar } from "@/ui/coworker-avatar";
-import { Button, IconButton, PlusIcon, SlidersIcon, StatusDot } from "@/ui/kit";
+import { Button, IconButton, PlusIcon, SearchIcon, SlidersIcon, StatusDot } from "@/ui/kit";
 import { CoworkerMark } from "@/ui/brand";
 import type { ResizablePanel } from "@/ui/use-resizable-panel";
 import { useWorkingSaying } from "@/ui/use-working-saying";
@@ -75,6 +75,14 @@ export function CoworkerRail({
 }) {
   const [query, setQuery] = useState("");
   const [peek, setPeek] = useState<{ slug: string; top: number } | null>(null);
+  const searchRef = useRef<HTMLInputElement>(null);
+  const [focusSearchOnExpand, setFocusSearchOnExpand] = useState(false);
+  // The folded rail's search icon unfolds the rail and lands the cursor in the search box.
+  useEffect(() => {
+    if (panel.collapsed || !focusSearchOnExpand) return;
+    searchRef.current?.focus();
+    setFocusSearchOnExpand(false);
+  }, [focusSearchOnExpand, panel.collapsed]);
   const visibleCoworkers = coworkers.filter((coworker) =>
     `${coworker.name} ${coworker.role}`.toLowerCase().includes(query.trim().toLowerCase()),
   );
@@ -93,15 +101,24 @@ export function CoworkerRail({
     >
       {collapsed ? (
         <>
-          <div className="window-drag flex min-h-[86px] flex-col items-center justify-end gap-1 pb-2 pt-10">
-            <CoworkerMark size={30} />
-          </div>
+          {/* The window's traffic lights own this corner; the controls start below them. */}
+          <div className="window-drag h-[58px] shrink-0" />
           <div className="flex flex-col items-center gap-1 px-2 pb-2">
+            <IconButton
+              label="Search coworkers"
+              data-testid="coworker-rail-search"
+              onClick={() => {
+                setFocusSearchOnExpand(true);
+                panel.expand();
+              }}
+            >
+              <SearchIcon />
+            </IconButton>
             <IconButton label="New coworker" onClick={onNewCoworker}>
               <PlusIcon />
             </IconButton>
           </div>
-          <nav aria-label="Coworkers" className="flex flex-1 flex-col items-center gap-1.5 overflow-y-auto px-2 pb-4 pt-1">
+          <nav aria-label="Coworkers" className="flex flex-1 flex-col items-center gap-1.5 overflow-y-auto px-3 pb-4 pt-1">
             {coworkers.map((coworker) => {
               const activity = activityBySlug[coworker.slug];
               const active = coworker.slug === selectedSlug;
@@ -121,24 +138,24 @@ export function CoworkerRail({
                   onPointerLeave={() => setPeek(null)}
                   onFocus={(event) => show(event.currentTarget)}
                   onBlur={() => setPeek(null)}
-                  className={`window-no-drag relative flex size-12 shrink-0 items-center justify-center rounded-2xl transition-all duration-200 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-spark/60 ${
+                  className={`window-no-drag relative flex size-14 shrink-0 items-center justify-center rounded-2xl transition-all duration-200 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-spark/60 ${
                     active ? "bg-white/8 ring-1 ring-white/10" : "hover:bg-white/5"
                   }`}
                 >
-                  {active ? <span aria-hidden="true" className="absolute -left-2 top-3 h-6 w-[3px] rounded-full bg-spark" /> : null}
+                  {active ? <span aria-hidden="true" className="absolute -left-3 top-4 h-6 w-[3px] rounded-full bg-spark" /> : null}
                   <CoworkerAvatar
                     animated
                     color={coworker.avatarColor}
                     glasses={coworker.avatarGlasses}
                     name={coworker.name}
-                    size={36}
+                    size={40}
                     working={activity?.state === "working"}
                   />
                   <span
                     aria-hidden="true"
                     data-testid="coworker-rail-indicator"
                     data-tone={tone}
-                    className={`absolute bottom-1 right-1 size-2.5 rounded-full ring-2 ring-[rgb(7_10_15)] ${DOT_BG[tone]} ${activity?.state === "working" ? "animate-pulse" : ""}`}
+                    className={`absolute bottom-1.5 right-1.5 size-2.5 rounded-full ring-2 ring-[rgb(7_10_15)] ${DOT_BG[tone]} ${activity?.state === "working" ? "animate-pulse" : ""}`}
                   />
                 </button>
               );
@@ -190,6 +207,7 @@ export function CoworkerRail({
           </div>
           <div className="px-3 pb-3">
             <input
+              ref={searchRef}
               aria-label="Search coworkers"
               className="window-no-drag w-full rounded-xl border border-line bg-black/18 px-3 py-2 text-xs text-snow outline-none placeholder:text-mist/70 focus:border-spark/50 focus:bg-black/28"
               placeholder="Search coworkers"
