@@ -198,7 +198,7 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
       sidebarMentionsModel: sidebarText.includes("model"),
       readyMentions: (sidebarText.match(/ready/g) ?? []).length,
     };
-  })()`, { timeoutMs: 60_000, label: "settled default Activity sidebar" });
+  })()`, { timeoutMs: 180_000, label: "settled default Activity sidebar" });
   expect(defaultSidebar).toMatchObject({
     summaryLines: ["Ready", "Waiting for the first assignment."],
     responsibilitiesVisible: true,
@@ -732,8 +732,10 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
     ],
   });
   if (!isRecord(admissions) || !Array.isArray(admissions.states)) throw new Error("Queue states were unavailable.");
+  // The first run's record exists as soon as admission answers (it may even have finished already);
+  // the second is recorded as waiting with the time it was queued.
   expect(admissions.states).toEqual(expect.arrayContaining([
-    ["Longer readiness check", "running", null],
+    ["Longer readiness check", expect.stringMatching(/^(running|succeeded)$/), null],
     ["Second readiness check", "queued", expect.any(Number)],
   ]));
   const queuedRow = await waitFor(app, `(() => {

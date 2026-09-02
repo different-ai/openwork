@@ -19,6 +19,9 @@ import { OnboardingWelcome } from "@/ui/onboarding";
 import { AppLoader, CoworkerMark } from "@/ui/brand";
 import { OpenWorkSettings, type SettingsSection } from "@/ui/openwork-settings";
 
+/** How long a freshly (re)started workspace may stay silent before it is a problem worth naming. */
+const WORKSPACE_WARMUP_MS = 45_000;
+
 /** Identity of a pushed account context; the server itself no-ops on a repeat. */
 function sessionKey(session: DenSession): string {
   return `${session.baseUrl}\u0000${session.orgId}\u0000${session.token}`;
@@ -44,6 +47,8 @@ export default function App() {
   /** Cloud responsibilities Den is running right now, per coworker: "Running in OpenWork Cloud". */
   const [cloudRunBySlug, setCloudRunBySlug] = useState<Record<string, CoworkerActivity>>({});
   const pushedSessionKeyRef = useRef("");
+  /** When each coworker's workspace first stopped answering; cleared by the next good read. */
+  const notAnsweringSinceRef = useRef<Record<string, number>>({});
   const settingsReturnFocusRef = useRef<HTMLElement | null>(null);
 
   const boot = useCallback(async () => {
@@ -195,7 +200,7 @@ export default function App() {
             // One phrase for one fact: the header, rail, and sidebar all say the AI service is unavailable.
             return [coworker.slug, { state: "offline", label: "AI unavailable", detail: "", updatedAt: 0 }] as const;
           }
-          const [threadActivity, localResponsibilities] = await Promise.all([
+          const [readActivity, localResponsibilities] = await Promise.all([
             readCoworkerActivity({
               serverUrl: runtime.serverUrl,
               workspaceId: coworker.workspaceId,
@@ -204,6 +209,17 @@ export default function App() {
             }),
             coworkerBridge.localResponsibilities.list(coworker.slug).catch(() => []),
           ]);
+          // A workspace that has just been (re)started may not answer for a moment.
+          // That is a warm-up, shown calmly; it becomes a problem only if it lasts.
+          const now = Date.now();
+          if (readActivity.state !== "offline") delete notAnsweringSinceRef.current[coworker.slug];
+          const notAnsweringSince = readActivity.state === "offline"
+            ? (notAnsweringSinceRef.current[coworker.slug] ??= now)
+            : null;
+          const threadActivity: CoworkerActivity =
+            notAnsweringSince !== null && now - notAnsweringSince < WORKSPACE_WARMUP_MS
+              ? { state: "starting", label: "Starting up", detail: "", updatedAt: 0 }
+              : readActivity;
           const localRunning = localResponsibilities.find((item) => item.latestRun?.status === "running");
           const localSuccess = localResponsibilities
             .filter((item) => item.latestRun?.status === "succeeded")
@@ -248,6 +264,20 @@ export default function App() {
       );
       if (!cancelled) setActivityBySlug(Object.fromEntries(entries));
     };
+    if (runtime.engineManaged) {
+      // The service is back: a label recorded while it was down is stale now,
+      // and the first fresh read may take a moment while the service warms up.
+      setActivityBySlug((current) => {
+        let changed = false;
+        const next: Record<string, CoworkerActivity> = { ...current };
+        for (const [slug, activity] of Object.entries(current)) {
+          if (activity.label !== "AI unavailable") continue;
+          next[slug] = { state: "starting", label: "Starting up", detail: "", updatedAt: 0 };
+          changed = true;
+        }
+        return changed ? next : current;
+      });
+    }
     void refreshActivity();
     const timer = window.setInterval(() => void refreshActivity(), 4_000);
     return () => {

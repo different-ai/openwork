@@ -35,3 +35,14 @@ test("provider rejections point at the model or account; other failures stay neu
   assert.equal(other.detail, "");
   assert.equal(other.technical, "ECONNRESET");
 });
+
+test("a workspace with no tool-capable model gets a plain headline that points at providers and settings", () => {
+  const failure = describeTurnFailure(
+    "No connected AI model can use tools. Connect an AI provider in OpenWork, or choose an AI model in Coworker settings.",
+    "Nova",
+  );
+  assert.equal(failure.headline, "No connected AI model can use tools.");
+  assert.match(failure.detail, /Coworker settings/);
+  assert.equal(failure.technical, "");
+  assert.equal(failure.modelRelated, true);
+});

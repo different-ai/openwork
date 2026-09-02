@@ -61,6 +61,47 @@ export function StatusDot({ tone }: { tone: "spark" | "mint" | "amber" | "rose" 
   return <span className={`inline-block size-2 rounded-full ${colors[tone]}`} />;
 }
 
+/** A thought bubble for reasoning receipts; pulses gently while the coworker is still thinking. */
+export function ThoughtIcon({ className = "size-4", active = false }: { className?: string; active?: boolean }) {
+  return (
+    <svg className={`${className} ${active ? "animate-pulse" : ""}`} viewBox="0 0 20 20" fill="none" aria-hidden="true">
+      <path
+        d="M6.6 4.3a3.4 3.4 0 0 1 6.5.6 2.9 2.9 0 0 1 2.7 4.3 2.6 2.6 0 0 1-1.6 4.4H7.3a3 3 0 0 1-1.7-5.5 2.7 2.7 0 0 1 1-3.8Z"
+        stroke="currentColor"
+        strokeWidth="1.4"
+        strokeLinejoin="round"
+      />
+      <circle cx="5.2" cy="16.2" r="1" fill="currentColor" />
+      <circle cx="3.2" cy="18.3" r="0.7" fill="currentColor" />
+    </svg>
+  );
+}
+
+/** A small wrench for tool receipts. */
+export function ToolIcon({ className = "size-4" }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 20 20" fill="none" aria-hidden="true">
+      <path
+        d="M13.8 3.3a3.6 3.6 0 0 0-3.9 5l-6 6a1.4 1.4 0 0 0 2 2l6-6a3.6 3.6 0 0 0 5-3.9l-2.2 2.2-2.1-.5-.5-2.1 2.2-2.2Z"
+        stroke="currentColor"
+        strokeWidth="1.4"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+/** An alert glyph for problems that need a person. */
+export function AlertIcon({ className = "size-4" }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 20 20" fill="none" aria-hidden="true">
+      <circle cx="10" cy="10" r="7.2" stroke="currentColor" strokeWidth="1.4" />
+      <path d="M10 6.2v4.4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+      <circle cx="10" cy="13.6" r="0.9" fill="currentColor" />
+    </svg>
+  );
+}
+
 /** The app's sliders glyph, shared by every settings control. 16×16 by default. */
 export function SlidersIcon({ className = "size-4" }: { className?: string }) {
   return (
