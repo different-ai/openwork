@@ -577,6 +577,10 @@ const commands = {
     await ensurePlatformServer();
     return runtimeInfo();
   },
+  "runtime.restart": async () => {
+    await restartPlatformServer();
+    return runtimeInfo();
+  },
   "coworkers.list": async () => listPreparedCoworkers(),
   "coworkers.get": async ({ slug }) => getCoworker(coworkersDir, slug),
   "coworkers.create": async ({ name, role, mission, avatarColor, avatarGlasses, personality }) => {

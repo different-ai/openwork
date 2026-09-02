@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { coworkerBridge, type CoworkerSummary, type ProviderSyncRun, type RuntimeInfo } from "@/lib/bridge";
 import type { DenSession } from "@/lib/den";
 import {
@@ -25,19 +25,15 @@ import {
   describeInteractions,
   hasPendingInteractions,
   modelSourceLabel,
+  parseModelPreference,
   type CoworkerActivity,
   type EngineModelOption,
   type PendingInteractions,
   type ThreadListItem,
 } from "@/lib/threads";
+import { describeTurnFailure } from "@/lib/turn-failure";
 import { InteractionCards } from "@/ui/interactions";
 import { CoworkerAvatar } from "@/ui/coworker-avatar";
-import {
-  ComposerModelControl,
-  initialTurnModelPreference,
-  threadModelForPreference,
-  type TurnModelPreference,
-} from "@/ui/composer-model-control";
 import { useWorkingSaying } from "@/ui/use-working-saying";
 import { CoworkerMark, InlineLoader } from "@/ui/brand";
 import { Button, Empty, ErrorNote, StatusDot } from "@/ui/kit";
@@ -120,7 +116,7 @@ export function ThreadsPanel({
   onSyncProviders,
   assignmentDraft,
   openThreadRequest,
-  onOpenSettings,
+  onOpenModelSettings,
   onOpenAccount,
   onActivityChange,
 }: {
@@ -133,8 +129,8 @@ export function ThreadsPanel({
   assignmentDraft?: AssignmentDraft;
   /** Set by the context rail to jump straight into a thread; the id makes repeat requests distinct. */
   openThreadRequest?: { id: number; threadId: string } | null;
-  /** This coworker's model settings — the first recovery step after a model failure. */
-  onOpenSettings: () => void;
+  /** Coworker settings, opened at the AI model section — the first recovery step after a model failure. */
+  onOpenModelSettings: () => void;
   /** The OpenWork account section — where a provider is reconnected. */
   onOpenAccount: () => void;
   onActivityChange: (activity: CoworkerActivity | null) => void;
@@ -161,13 +157,6 @@ export function ThreadsPanel({
   const [pendingAssignment, setPendingAssignment] = useState<AssignmentDraft>(assignmentDraft ?? null);
   const [queuedTurn, setQueuedTurn] = useState<QueuedTurn | null>(null);
   const [error, setError] = useState("");
-  const [turnPreference, setTurnPreference] = useState<TurnModelPreference>(() =>
-    initialTurnModelPreference(coworker),
-  );
-
-  useEffect(() => {
-    setTurnPreference(initialTurnModelPreference(coworker));
-  }, [coworker.model, coworker.modelVariant, coworker.slug]);
 
   useEffect(() => {
     setDiscussionThreadId(coworker.conversationThreadId);
@@ -295,14 +284,11 @@ export function ThreadsPanel({
         }}
         onShowAssignments={() => setView("assignments")}
         onInitialTurnHandled={(id) => setQueuedTurn((current) => current?.id === id ? null : current)}
-        onOpenSettings={onOpenSettings}
+        onOpenModelSettings={onOpenModelSettings}
         onOpenAccount={onOpenAccount}
         session={session}
         onSyncProviders={onSyncProviders}
         onActivityChange={onActivityChange}
-        turnPreference={turnPreference}
-        onTurnPreferenceChanged={setTurnPreference}
-        onCoworkerChanged={onCoworkerChanged}
       />
     );
   }
@@ -338,16 +324,6 @@ export function ThreadsPanel({
         }}
         onCreateAssignment={createAssignment}
         onAssignmentDraftHandled={() => setPendingAssignment(null)}
-        modelControl={(
-          <ComposerModelControl
-            runtime={runtime}
-            coworker={coworker}
-            preference={turnPreference}
-            running={false}
-            onChange={setTurnPreference}
-            onCoworkerChanged={onCoworkerChanged}
-          />
-        )}
       />
     );
   }
@@ -368,14 +344,11 @@ export function ThreadsPanel({
       onCreateAssignment={createAssignment}
       onAssignmentDraftHandled={() => setPendingAssignment(null)}
       onInitialTurnHandled={(id) => setQueuedTurn((current) => current?.id === id ? null : current)}
-      onOpenSettings={onOpenSettings}
+      onOpenModelSettings={onOpenModelSettings}
       onOpenAccount={onOpenAccount}
       session={session}
       onSyncProviders={onSyncProviders}
       onActivityChange={onActivityChange}
-      turnPreference={turnPreference}
-      onTurnPreferenceChanged={setTurnPreference}
-      onCoworkerChanged={onCoworkerChanged}
     />
   );
 }
@@ -389,7 +362,6 @@ function DiscussionWelcome({
   onCreateAssignment,
   onShowAssignments,
   onAssignmentDraftHandled,
-  modelControl,
 }: {
   coworker: CoworkerSummary;
   error: string;
@@ -399,7 +371,6 @@ function DiscussionWelcome({
   onCreateAssignment: (outcome: string, messages: ReadonlyArray<DiscussionMessage>) => Promise<void>;
   onShowAssignments: () => void;
   onAssignmentDraftHandled: () => void;
-  modelControl: ReactNode;
 }) {
   const [message, setMessage] = useState("");
   const [assignmentText, setAssignmentText] = useState("");
@@ -485,7 +456,6 @@ function DiscussionWelcome({
         busy={busy}
         error={composerError}
         coworkerName={coworker.name}
-        controls={modelControl}
       />
     </section>
   );
@@ -575,14 +545,11 @@ function ThreadView({
   onCreateAssignment,
   onAssignmentDraftHandled,
   onInitialTurnHandled,
-  onOpenSettings,
+  onOpenModelSettings,
   onOpenAccount,
   session,
   onSyncProviders,
   onActivityChange,
-  turnPreference,
-  onTurnPreferenceChanged,
-  onCoworkerChanged,
 }: {
   threads: NonNullable<ReturnType<typeof createCoworkerThreads>>;
   threadId: string;
@@ -597,14 +564,11 @@ function ThreadView({
   onCreateAssignment?: (outcome: string, messages: ReadonlyArray<DiscussionMessage>) => Promise<void>;
   onAssignmentDraftHandled?: () => void;
   onInitialTurnHandled: (id: number) => void;
-  onOpenSettings: () => void;
+  onOpenModelSettings: () => void;
   onOpenAccount: () => void;
   session: DenSession | null;
   onSyncProviders: () => Promise<ProviderSyncRun>;
   onActivityChange: (activity: CoworkerActivity | null) => void;
-  turnPreference: TurnModelPreference;
-  onTurnPreferenceChanged: (preference: TurnModelPreference) => void;
-  onCoworkerChanged: (coworker: CoworkerSummary) => void;
 }) {
   const [messages, setMessages] = useState<TranscriptMessage[]>([]);
   const [title, setTitle] = useState("Work thread");
@@ -714,16 +678,17 @@ function ThreadView({
     });
     let refreshTimer: number | undefined;
     try {
-      if (turnPreference.model.trim()) {
+      const savedModel = parseModelPreference(coworker.model);
+      if (savedModel) {
         const catalog = await threads.listModelCatalog();
-        if (!catalog.models.some((model) => model.id === turnPreference.model)) {
-          throw new Error(describeUnavailableModel(turnPreference.model, catalog.models, session));
+        if (!catalog.models.some((model) => model.id === coworker.model)) {
+          throw new Error(describeUnavailableModel(coworker.model, catalog.models, session));
         }
       }
       const acceptance = await threads.client.sendTurn(threadId, {
         prompt,
         messageId,
-        model: threadModelForPreference(turnPreference),
+        model: savedModel ? { ...savedModel, ...(coworker.modelVariant.trim() ? { variant: coworker.modelVariant.trim() } : {}) } : undefined,
       });
       const waiting: PendingTurn = { messageId, prompt, phase: "waiting" };
       pendingTurnRef.current = waiting;
@@ -778,7 +743,7 @@ function ThreadView({
         setPendingTurn(null);
       }
     }
-  }, [kind, onActivityChange, refresh, session, threadId, threads, title, turnPreference]);
+  }, [coworker.model, coworker.modelVariant, kind, onActivityChange, refresh, session, threadId, threads, title]);
 
   useEffect(() => {
     if (!initialTurn || handledInitialTurnRef.current === initialTurn.id) return;
@@ -810,7 +775,7 @@ function ThreadView({
       const catalog = await threads.listModelCatalog();
       const available = !coworker.model.trim() || catalog.models.some((model) => model.id === coworker.model);
       if (!available) {
-        setProviderRefreshNote(`Providers refreshed, but "${coworker.model}" is still unavailable. Choose another model in coworker settings.`);
+        setProviderRefreshNote(`Providers refreshed, but "${coworker.model}" is still unavailable. Choose another AI model in Coworker settings.`);
         return;
       }
       setProviderRefreshNote("");
@@ -889,7 +854,7 @@ function ThreadView({
   const readableStatus = needsYou
     ? pending.permissions.length > 0 ? "Waiting for permission" : "Waiting for an answer"
     : turnNeedsAttention
-      ? turnIssue?.kind === "timeout" ? "Response delayed" : "Failed"
+      ? turnIssue?.kind === "timeout" ? "Response delayed" : "Reply failed"
       : stopped
         ? "Stopped"
     : working
@@ -910,8 +875,8 @@ function ThreadView({
     if (turnIssue?.kind === "failed" || turnIssue?.kind === "timeout") {
       onActivityChange({
         state: "attention",
-        label: turnIssue.kind === "timeout" ? "Response delayed" : "Failed",
-        detail: turnIssue.message,
+        label: turnIssue.kind === "timeout" ? "Response delayed" : "Reply failed",
+        detail: describeTurnFailure(turnIssue.message, coworker.name).headline,
         updatedAt: Date.now(),
         threadId,
       });
@@ -920,8 +885,8 @@ function ThreadView({
     if (displayedFailure) {
       onActivityChange({
         state: "attention",
-        label: "Failed",
-        detail: displayedFailure,
+        label: "Reply failed",
+        detail: describeTurnFailure(displayedFailure, coworker.name).headline,
         updatedAt: Date.now(),
         threadId,
       });
@@ -948,7 +913,7 @@ function ThreadView({
       return;
     }
     onActivityChange(null);
-  }, [activeToolLabel, displayedFailure, kind, needsYou, onActivityChange, pending, statusLabel, stopped, threadId, title, turnIssue, working, workingLabel]);
+  }, [activeToolLabel, coworker.name, displayedFailure, kind, needsYou, onActivityChange, pending, statusLabel, stopped, threadId, title, turnIssue, working, workingLabel]);
 
   return (
     <section className="flex h-full min-h-0 flex-col bg-ink">
@@ -1017,12 +982,13 @@ function ThreadView({
             <TurnIssueNote
               kind="failed"
               message={displayedFailure}
+              coworkerName={coworker.name}
               canRetry={Boolean(turnIssue?.prompt)}
               session={session}
               onRetry={() => {
                 if (turnIssue?.prompt) void submitTurn(turnIssue.prompt, turnIssue.messageId);
               }}
-              onOpenSettings={onOpenSettings}
+              onOpenModelSettings={onOpenModelSettings}
               onOpenAccount={onOpenAccount}
               onRefreshProviders={() => void refreshProvidersAndRetry()}
             />
@@ -1031,10 +997,11 @@ function ThreadView({
             <TurnIssueNote
               kind="timeout"
               message={turnIssue.message}
+              coworkerName={coworker.name}
               canRetry
               session={session}
               onRetry={() => void submitTurn(turnIssue.prompt, turnIssue.messageId)}
-              onOpenSettings={onOpenSettings}
+              onOpenModelSettings={onOpenModelSettings}
               onOpenAccount={onOpenAccount}
               onStop={() => void stop()}
             />
@@ -1064,16 +1031,6 @@ function ThreadView({
           onCreateAssignment={() => void createAssignmentFromDiscussion()}
           busy={pendingTurn !== null || assignmentBusy}
           coworkerName={coworker.name}
-          controls={(
-            <ComposerModelControl
-              runtime={runtime}
-              coworker={coworker}
-              preference={turnPreference}
-              running={working || pendingTurn !== null || assignmentBusy}
-              onChange={onTurnPreferenceChanged}
-              onCoworkerChanged={onCoworkerChanged}
-            />
-          )}
         />
       ) : (
         <MessageComposer
@@ -1082,16 +1039,6 @@ function ThreadView({
           onSubmit={() => void send()}
           busy={pendingTurn !== null}
           placeholder={`Follow up with ${coworker.name}…`}
-          controls={(
-            <ComposerModelControl
-              runtime={runtime}
-              coworker={coworker}
-              preference={turnPreference}
-              running={working || pendingTurn !== null}
-              onChange={onTurnPreferenceChanged}
-              onCoworkerChanged={onCoworkerChanged}
-            />
-          )}
         />
       )}
     </section>
@@ -1213,63 +1160,68 @@ function describeUnavailableModel(model: string, available: EngineModelOption[],
   const providerModels = available.filter((option) => option.providerId === providerId);
   if (providerModels.length > 0) {
     const sample = providerModels[0];
-    return `The saved model "${model}" is not offered by ${sample?.providerLabel ?? providerId} (${modelSourceLabel(sample?.source ?? "local")}) any more. Choose one of its ${providerModels.length} available model${providerModels.length === 1 ? "" : "s"}.`;
+    return `The saved model "${model}" is not offered by ${sample?.providerLabel ?? providerId} (${modelSourceLabel(sample?.source ?? "local")}) any more. Choose one of its ${providerModels.length} available AI model${providerModels.length === 1 ? "" : "s"}.`;
   }
   const cloudManaged = /^lpr_/i.test(providerId) || providerId === "openwork";
   if (cloudManaged) {
     return session
-      ? `The saved model "${model}" belongs to an OpenWork Cloud provider that is not available in this engine right now. Refresh your OpenWork providers or choose another model.`
-      : `The saved model "${model}" belongs to an OpenWork Cloud provider, but no OpenWork account is signed in here. Continue with OpenWork or choose a model from this Mac.`;
+      ? `The saved model "${model}" belongs to an OpenWork Cloud provider that is not available right now. Refresh your OpenWork providers or choose another AI model.`
+      : `The saved model "${model}" belongs to an OpenWork Cloud provider, but no OpenWork account is signed in here. Continue with OpenWork or choose an AI model from this Mac.`;
   }
-  return `The saved model "${model}" is not available: provider "${providerId}" is not connected to this engine. Choose another model or connect that provider in OpenWork.`;
+  return `The saved model "${model}" is not available: provider "${providerId}" is not connected on this Mac. Choose another AI model or connect that provider in OpenWork.`;
 }
 
 function TurnIssueNote({
   kind,
   message,
+  coworkerName,
   canRetry,
   session,
   onRetry,
-  onOpenSettings,
+  onOpenModelSettings,
   onOpenAccount,
   onRefreshProviders,
   onStop,
 }: {
   kind: "failed" | "timeout";
   message: string;
+  coworkerName: string;
   canRetry: boolean;
   session: DenSession | null;
   onRetry: () => void;
-  onOpenSettings: () => void;
+  onOpenModelSettings: () => void;
   onOpenAccount: () => void;
   /** Re-read the account's providers, then retry; only offered while signed in. */
   onRefreshProviders?: () => void;
   onStop?: () => void;
 }) {
+  const failure = kind === "failed"
+    ? describeTurnFailure(message, coworkerName)
+    : { headline: "The reply is taking too long", detail: message, technical: "", modelRelated: false };
   return (
     <div className="rounded-xl border border-rose/25 bg-rose/5 px-3 py-3" data-testid={`coworker-turn-${kind}`}>
       <div className="flex items-start gap-2.5">
         <CoworkerMark className="mt-0.5 shrink-0" size={20} />
         <div className="min-w-0 flex-1">
-          <p className="text-xs font-semibold text-snow">{kind === "timeout" ? "The reply is taking too long" : "The coworker could not reply"}</p>
-          <p className="mt-1 break-words text-xs leading-relaxed text-mist">{message}</p>
-          {kind === "failed" ? (
-            <p className="mt-1 text-[11px] leading-relaxed text-mist">
-              Choose another model or reconnect its provider in coworker settings.
-              {session ? " Your OpenWork providers can also be refreshed without leaving this conversation." : " Signing in to OpenWork adds your organization's models."}
-            </p>
-          ) : null}
+          <p className="text-xs font-semibold text-snow" data-testid="coworker-turn-headline">{failure.headline}</p>
+          {failure.detail ? <p className="mt-1 break-words text-xs leading-relaxed text-mist">{failure.detail}</p> : null}
           <div className="mt-2 flex flex-wrap items-center gap-2">
-            {canRetry ? <Button variant="ghost" onClick={onRetry}>Retry turn</Button> : null}
+            {canRetry ? <Button variant="ghost" onClick={onRetry}>Retry</Button> : null}
             {onStop ? <Button variant="ghost" onClick={onStop}>Stop</Button> : null}
-            <Button variant="ghost" onClick={onOpenSettings}>Open model settings</Button>
+            <Button variant="ghost" onClick={onOpenModelSettings}>Choose AI model</Button>
             {kind === "failed" && session && onRefreshProviders ? (
               <Button variant="ghost" onClick={onRefreshProviders}>Refresh providers</Button>
             ) : null}
             {kind === "failed" ? (
-              <Button variant="ghost" onClick={onOpenAccount}>{session ? "Reconnect OpenWork" : "Continue with OpenWork"}</Button>
+              <Button variant="ghost" onClick={onOpenAccount}>{session ? "Open account settings" : "Continue with OpenWork"}</Button>
             ) : null}
           </div>
+          {failure.technical ? (
+            <details className="mt-2 text-[11px] text-mist" data-testid="coworker-turn-technical">
+              <summary className="cursor-pointer select-none">Technical details</summary>
+              <p className="mt-1 break-words font-mono">{failure.technical}</p>
+            </details>
+          ) : null}
         </div>
       </div>
     </div>
@@ -1432,7 +1384,6 @@ function DiscussionComposer({
   busy,
   error,
   coworkerName,
-  controls,
 }: {
   message: string;
   onMessageChange: (value: string) => void;
@@ -1445,7 +1396,6 @@ function DiscussionComposer({
   busy: boolean;
   error?: string;
   coworkerName: string;
-  controls?: ReactNode;
 }) {
   const value = assignmentMode ? assignment : message;
   const submit = assignmentMode ? onCreateAssignment : onSend;
@@ -1484,8 +1434,7 @@ function DiscussionComposer({
             </Button>
           </div>
         </div>
-        <div className="mt-1.5 flex min-h-8 items-center justify-between gap-3 px-1 text-[9px] text-mist/65">
-          <div>{controls}</div>
+        <div className="mt-1.5 flex items-center justify-between gap-3 px-1 text-[9px] text-mist/65">
           <span className="hidden sm:inline">Enter to {assignmentMode ? "create" : "send"} · Shift Enter for a new line</span>
           <span className="shrink-0 font-medium tracking-[0.06em]">Powered by OpenWork</span>
         </div>
@@ -1500,14 +1449,12 @@ function MessageComposer({
   onSubmit,
   busy,
   placeholder,
-  controls,
 }: {
   value: string;
   onChange: (value: string) => void;
   onSubmit: () => void;
   busy: boolean;
   placeholder: string;
-  controls?: ReactNode;
 }) {
   return (
     <div className="border-t border-line bg-ink px-5 pb-2.5 pt-3">
@@ -1529,8 +1476,7 @@ function MessageComposer({
             {busy ? "Working…" : "Send"}
           </Button>
         </div>
-        <div className="mt-1.5 flex min-h-8 items-center justify-between gap-3 px-1 text-[9px] text-mist/65">
-          <div>{controls}</div>
+        <div className="mt-1.5 flex items-center justify-end px-1 text-[9px] text-mist/65">
           <span className="font-medium tracking-[0.06em]">Powered by OpenWork</span>
         </div>
       </div>
