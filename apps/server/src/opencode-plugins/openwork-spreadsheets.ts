@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
-import { lstat, mkdir, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
+import { constants } from "node:fs";
+import { lstat, mkdir, open, realpath, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, extname, isAbsolute, relative, resolve, sep } from "node:path";
 import { z } from "zod";
 import { appendAgentInstructions, createInstructionSection } from "./agent-instruction-compose.js";
@@ -137,19 +138,32 @@ function describeUnsupportedExtension(extension: string): string {
   return `Unsupported spreadsheet extension ${JSON.stringify(extension || "(none)")}; only .xlsx and .xlsm workbooks can be read.`;
 }
 
+/**
+ * Read a workbook without a check-then-read gap: resolve the real path, prove
+ * it is inside the workspace, then open that exact path without following a
+ * link and take the size and file type from the open handle.
+ */
 async function readWorkbookFile(root: string, input: string): Promise<{ file: WorkspaceFile; bytes: Buffer }> {
   const file = resolveWorkspacePath(root, input);
   const extension = extname(file.absolutePath).toLowerCase();
   if (!READABLE_EXTENSIONS.has(extension)) throw new Error(describeUnsupportedExtension(extension));
-  let size: number;
+  const label = `Workbook ${JSON.stringify(file.relativePath)}`;
+  const [realRoot, realPath] = await Promise.all([
+    realpath(root),
+    realpath(file.absolutePath).catch(() => null),
+  ]);
+  if (!realPath) throw new Error(`${label} was not found in the workspace.`);
+  if (!isWithin(realRoot, realPath)) throw new Error(`${label} resolves outside the active workspace.`);
+  const handle = await open(realPath, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0)).catch(() => null);
+  if (!handle) throw new Error(`${label} was not found in the workspace.`);
   try {
-    size = (await stat(file.absolutePath)).size;
-  } catch {
-    throw new Error(`Workbook ${JSON.stringify(file.relativePath)} was not found in the workspace.`);
+    const info = await handle.stat();
+    if (!info.isFile()) throw new Error(`${label} is not a regular file.`);
+    if (info.size > MAX_COMPRESSED_BYTES) throw new Error(`${label} is ${info.size} bytes; the limit is ${MAX_COMPRESSED_BYTES} bytes.`);
+    return { file, bytes: await handle.readFile() };
+  } finally {
+    await handle.close();
   }
-  if (size > MAX_COMPRESSED_BYTES) throw new Error(`Workbook ${JSON.stringify(file.relativePath)} is ${size} bytes; the limit is ${MAX_COMPRESSED_BYTES} bytes.`);
-  await assertRealPathWithinRoot(root, file.absolutePath, `Workbook ${JSON.stringify(file.relativePath)}`);
-  return { file, bytes: await readFile(file.absolutePath) };
 }
 
 function sheetFacts(sheet: XlsxSheetData) {

@@ -69,6 +69,8 @@ describe("@openwork/workbook", () => {
     expect(unsafeFormulaReason("webservice(\"http://x\")")).toBe("uses WEBSERVICE, which reaches outside the workbook when it recalculates");
     expect(unsafeFormulaReason("FILTERXML(WEBSERVICE(\"http://x\"),\"//a\")")).toContain("FILTERXML");
     expect(unsafeFormulaReason("cmd|' /C calc'!A0")).toBe("contains a DDE-style external command reference");
+    expect(unsafeFormulaReason('DDE("cmd","/c calc","!A0")')).toBe("uses DDE, which reaches outside the workbook when it recalculates");
+    expect(unsafeFormulaReason('SQL.REQUEST("DSN=x","","",1)')).toContain("SQL.REQUEST");
     expect(unsafeFormulaReason("[1]Sheet1!A1")).toBe("references another workbook");
     expect(unsafeFormulaReason("'C:\\evil\\[Book1.xlsx]Sheet1'!A1")).toBe("references another workbook");
     expect(unsafeFormulaReason("[Book1]Sheet1!A1")).toBe("references another workbook");

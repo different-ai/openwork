@@ -525,7 +525,7 @@ const CANONICAL_NUMBER = /^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$/;
 const FORMULA_MAX_CHARS = 8_192;
 // Functions that fetch remote data, run registered code, or pull other files
 // when a workbook recalculates. A generated report never needs them.
-const OUTSIDE_WORKBOOK_FUNCTION = /\b(WEBSERVICE|FILTERXML|RTD|CALL|REGISTER(?:\.ID)?|EXEC|IMPORT(?:DATA|XML|HTML|FEED|RANGE)|IMAGE)\s*\(/i;
+const OUTSIDE_WORKBOOK_FUNCTION = /\b(DDE|WEBSERVICE|FILTERXML|RTD|CALL|REGISTER(?:\.ID)?|EXEC|SQL\.REQUEST|IMPORT(?:DATA|XML|HTML|FEED|RANGE)|IMAGE)\s*\(/i;
 // A bracket group that belongs to a sheet reference ("[Book]Sheet!A1",
 // "'path\\[Book]Sheet'!A1", "[1]Sheet!A1") names another workbook. Structured
 // table references ("Table1[Amount]", "[@Amount]") never precede a "!".
