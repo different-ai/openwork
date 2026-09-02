@@ -27,7 +27,7 @@ import { useResizablePanel } from "@/ui/use-resizable-panel";
 import type { PanelBounds } from "@/lib/panel-layout";
 
 /** The team rail: drag it narrower than a row can show and it folds to avatars. */
-const RAIL_BOUNDS: PanelBounds = { min: 220, max: 380, collapsedWidth: 72, collapseBelow: 170 };
+const RAIL_BOUNDS: PanelBounds = { min: 220, max: 380, collapsedWidth: 88, collapseBelow: 170 };
 import { OnboardingWelcome } from "@/ui/onboarding";
 import { AppLoader, CoworkerMark } from "@/ui/brand";
 import { OpenWorkSettings, type SettingsSection } from "@/ui/openwork-settings";
