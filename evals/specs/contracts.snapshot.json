@@ -455,6 +455,7 @@
         "evals/specs/engine-restart-turn-freshness.e2e.test.ts",
         "evals/specs/engine-rollover-session-survival.e2e.test.ts",
         "evals/specs/live-tool-visible-after-session-switch.e2e.test.ts",
+        "evals/specs/parent-child-permission-approval.e2e.test.ts",
         "evals/specs/responsive-session-layout.e2e.test.ts",
         "evals/specs/session-admission-no-result-recovery.e2e.test.ts",
         "evals/specs/session-archive-button.e2e.test.ts",
