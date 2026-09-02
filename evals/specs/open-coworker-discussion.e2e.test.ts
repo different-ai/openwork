@@ -110,7 +110,7 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   await waitFor(app, `(() => {
     const summary = document.querySelector('[data-testid="coworker-activity-summary"]');
     if (!(summary instanceof HTMLElement)) return false;
-    return summary.innerText.split("\n").map((line) => line.trim()).filter(Boolean)[0] === "Ready";
+    return summary.innerText.split("\\n").map((line) => line.trim()).filter(Boolean)[0] === "Ready";
   })()`, { timeoutMs: 180_000, label: "coworker AI ready before the first discussion" });
 
   const firstPrompt = "Reply with exactly COWORKER CHAT READY.";
