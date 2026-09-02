@@ -992,10 +992,8 @@ jobs:
       (needs.publish-npm.result == 'success' || needs.publish-npm.result == 'skipped') &&
       needs.publish-daytona-snapshot.result != 'cancelled'
     runs-on: blacksmith-4vcpu-ubuntu-2404
-    permissions:
-      # actions: write lets this job dispatch changelog.yml after publishing.
-      actions: write
-      contents: write
+    outputs:
+      published_stable: ${{ steps.publish.outputs.published_stable }}
     env:
       RELEASE_TAG: ${{ needs.resolve-release.outputs.release_tag }}
       RELEASE_PRERELEASE: ${{ needs.resolve-release.outputs.prerelease }}
@@ -1027,6 +1025,7 @@ jobs:
         run: node scripts/release/publish-electron-assets.mjs --manifests-only "${{ runner.temp }}/electron-dist" "$RELEASE_TAG"
 
       - name: Publish release after assets are ready
+        id: publish
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -1043,9 +1042,28 @@ jobs:
 
           if [ "${RELEASE_PRERELEASE}" = "true" ]; then
             gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false --prerelease
-            exit 0
+          else
+            gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest
+            echo "published_stable=true" >> "$GITHUB_OUTPUT"
           fi
-          gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest
+
+  dispatch-changelog:
+    name: Dispatch changelog
+    needs: [resolve-release, publish-release]
+    if: needs.publish-release.outputs.published_stable == 'true'
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    # This job deliberately checks out nothing and runs no repository code, so
+    # actions: write is never available to code executed from the release tag.
+    permissions:
+      actions: write
+    env:
+      RELEASE_TAG: ${{ needs.resolve-release.outputs.release_tag }}
+    steps:
+      - name: Dispatch changelog.yml for the published stable release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
 
           # GitHub does not start workflows from `release: published` events
           # created by GITHUB_TOKEN, so hand the stable tag to the changelog
