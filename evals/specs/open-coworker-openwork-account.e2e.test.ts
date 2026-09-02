@@ -378,7 +378,8 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
       const body = document.body.innerText;
       return !document.querySelector('[data-testid="cloud-providers"]')
         && !body.includes("Reading OpenWork models")
-        && (body.includes("This Mac") || body.includes("No connected provider models are available"));
+        && (Boolean(document.querySelector('[data-testid="local-providers"]'))
+          || body.includes("No connected provider models are available"));
     })()`);
     if (swept === true) break;
     if (Date.now() > sweepDeadline) throw new Error("Organization providers were still listed 180s after sign-out.");
