@@ -40,8 +40,8 @@ test("local runs describe themselves once, with duration and their own summary",
   assert.equal(queued.at, now);
   assert.equal(queued.durationMs, null);
   assert.equal(queued.how, "");
-  assert.equal(describeRunOutcome(queued.outcome), "Waiting for a free slot");
-  assert.equal(localRunEntry({ ...queuedRun, id: "run3", trigger: "resume" }).how, "Resumed");
+  assert.equal(describeRunOutcome(queued.outcome), "Waiting its turn");
+  assert.equal(localRunEntry({ ...queuedRun, id: "run3", trigger: "resume" }).how, "Picked up where it stopped");
 });
 
 function denRun(overrides: Partial<AutomationRun>): AutomationRun {
@@ -107,6 +107,7 @@ test("durations and trend lines stay short", () => {
     error: "",
     threadId: "",
   }));
-  assert.equal(summarizeRuns(entries), "4 runs · 2 succeeded · 1 failed · 1 missed");
+  assert.equal(summarizeRuns(entries), "Ran 4 times · 2 done · 1 didn't finish · 1 missed");
+  assert.equal(summarizeRuns(entries.filter((entry) => entry.outcome === "succeeded").slice(0, 1)), "Ran once · done");
   assert.equal(summarizeRuns([]), "");
 });

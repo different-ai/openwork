@@ -57,10 +57,10 @@ export function describeNow(activity: CoworkerActivity | undefined): NowSummary 
   }
 }
 
-/** Plain result word for one Recent activity entry. */
+/** Plain result word for one Recent activity entry, in the same words the responsibility list uses. */
 export function describeOutcome(entry: Pick<RecentWork, "outcome">): string {
-  if (entry.outcome === "succeeded") return "Succeeded";
-  if (entry.outcome === "failed") return "Failed";
+  if (entry.outcome === "succeeded") return "Done";
+  if (entry.outcome === "failed") return "Didn't finish";
   return "Finished";
 }
 
