@@ -154,8 +154,8 @@ export async function artifactCodeBrowserWorld(seed: Seed) {
 
 export async function skillsLocalWorld(seed: Seed) {
   const app = await seed.desktop({ name: "skills-local" });
-  const repoRoot = resolve(import.meta.dirname, "../..");
-  const workspace = await seed.workspace(app, repoRoot);
+  if (!app.workspaceRoot) throw new Error("The skills desktop did not expose its checkout root.");
+  const workspace = await seed.workspace(app, app.workspaceRoot);
   return { app, workspace };
 }
 
