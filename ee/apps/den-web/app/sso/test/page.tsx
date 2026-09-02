@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { denApiCredentials, denApiEndpoint } from "../../(den)/_lib/den-api-origin";
 
@@ -11,7 +11,7 @@ function completionUrl(intentId: string, failed = false) {
   return url.toString();
 }
 
-export default function SsoTestStartPage() {
+function SsoTestStartContent() {
   const searchParams = useSearchParams();
   const intentId = searchParams.get("intentId")?.trim() ?? "";
   const organizationId = searchParams.get("organizationId")?.trim() ?? "";
@@ -71,4 +71,8 @@ export default function SsoTestStartPage() {
       </div>
     </main>
   );
+}
+
+export default function SsoTestStartPage() {
+  return <Suspense><SsoTestStartContent /></Suspense>;
 }
