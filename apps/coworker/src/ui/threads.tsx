@@ -322,15 +322,19 @@ export function ThreadsPanel({
   const startDiscussion = useCallback(async () => {
     if (!threads) throw new Error("This coworker needs a workspace before it can chat.");
     const discussion = await threads.client.createThread({ title: discussionTitle(coworker.name) });
-    // Register first: an unregistered thread would read as an assignment.
-    try {
-      setRegisteredDiscussions(await registerDiscussion(coworker.slug, discussion.id));
-    } catch {
-      setRegisteredDiscussions((current) => (current.includes(discussion.id) ? current : [...current, discussion.id]));
-    }
-    const updated = await coworkerBridge.coworkers.update(coworker.slug, { conversationThreadId: discussion.id });
+    // The thread exists now. Whatever else fails, it must never read as an assignment, so the
+    // view treats it as a discussion at once and records it in both places as far as they allow.
+    setRegisteredDiscussions((current) => (current.includes(discussion.id) ? current : [...current, discussion.id]));
     setDiscussionThreadId(discussion.id);
-    onCoworkerChanged(updated);
+    const [registered, updated] = await Promise.allSettled([
+      registerDiscussion(coworker.slug, discussion.id),
+      coworkerBridge.coworkers.update(coworker.slug, { conversationThreadId: discussion.id }),
+    ]);
+    if (registered.status === "fulfilled") setRegisteredDiscussions(registered.value);
+    if (updated.status === "fulfilled") onCoworkerChanged(updated.value);
+    if (registered.status === "rejected" && updated.status === "rejected") {
+      throw updated.reason instanceof Error ? updated.reason : new Error(String(updated.reason));
+    }
     return discussion.id;
   }, [coworker.name, coworker.slug, onCoworkerChanged, threads]);
 
@@ -627,6 +631,9 @@ function DiscussionWelcome({
         onAssignmentChange={setAssignmentText}
         onCreateAssignment={() => void assign()}
         busy={busy}
+        // A first message fired at a workspace that is still starting would fail on the way in
+        // and leave a stray thread behind; hold it until the workspace answers.
+        waiting={warmingUp ? `Getting ${coworker.name} ready` : undefined}
         error={composerError}
         coworkerName={coworker.name}
       />
@@ -1820,6 +1827,7 @@ function DiscussionComposer({
   onAssignmentChange,
   onCreateAssignment,
   busy,
+  waiting,
   error,
   coworkerName,
 }: {
@@ -1832,11 +1840,14 @@ function DiscussionComposer({
   onAssignmentChange: (value: string) => void;
   onCreateAssignment: () => void;
   busy: boolean;
+  /** Why sending has to wait a moment (for example, the workspace is still starting); typing stays possible. */
+  waiting?: string;
   error?: string;
   coworkerName: string;
 }) {
   const value = assignmentMode ? assignment : message;
   const submit = assignmentMode ? onCreateAssignment : onSend;
+  const held = busy || Boolean(waiting);
   return (
     <div className="border-t border-line bg-ink px-5 pb-2.5 pt-3">
       <div className="mx-auto max-w-3xl">
@@ -1864,16 +1875,18 @@ function DiscussionComposer({
               onKeyDown={(event) => {
                 if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) return;
                 event.preventDefault();
-                if (!busy && value.trim()) submit();
+                if (!held && value.trim()) submit();
               }}
             />
-            <Button aria-busy={busy} variant="primary" className="rounded-xl" disabled={busy || !value.trim()} onClick={submit}>
+            <Button aria-busy={held} variant="primary" className="rounded-xl" disabled={held || !value.trim()} onClick={submit} title={waiting}>
               {busy ? "Working…" : assignmentMode ? "Create assignment" : "Send"}
             </Button>
           </div>
         </div>
         <div className="mt-1.5 flex items-center justify-between gap-3 px-1 text-[9px] text-mist/65">
-          <span className="hidden sm:inline">Enter to {assignmentMode ? "create" : "send"} · Shift Enter for a new line</span>
+          <span className="hidden sm:inline" data-testid="coworker-composer-hint">
+            {waiting && !busy ? `${waiting}…` : `Enter to ${assignmentMode ? "create" : "send"} · Shift Enter for a new line`}
+          </span>
           <span className="shrink-0 font-medium tracking-[0.06em]">Powered by OpenWork</span>
         </div>
       </div>
