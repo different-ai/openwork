@@ -1,0 +1,702 @@
+import { spawn } from "node:child_process";
+import { mkdir, writeFile } from "node:fs/promises";
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import { join, resolve } from "node:path";
+import type { Seed } from "@openwork/env";
+
+const repoRoot = resolve(import.meta.dirname, "../..");
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function recordValue(value: unknown, key: string): unknown {
+  return isRecord(value) ? value[key] : undefined;
+}
+
+async function listen(server: Server): Promise<string> {
+  await new Promise<void>((resolveListen, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolveListen);
+  });
+  const address = server.address();
+  if (!address || typeof address === "string") throw new Error("Mock server did not bind a TCP port.");
+  return `http://127.0.0.1:${address.port}`;
+}
+
+async function close(server: Server): Promise<void> {
+  server.closeAllConnections();
+  await new Promise<void>((resolveClose, reject) => server.close((error) => error ? reject(error) : resolveClose()));
+}
+
+function readBody(request: IncomingMessage): Promise<string> {
+  request.setEncoding("utf8");
+  return new Promise((resolveBody, reject) => {
+    let body = "";
+    request.on("data", (chunk: string) => { body += chunk; });
+    request.on("end", () => resolveBody(body));
+    request.on("error", reject);
+  });
+}
+
+function sendJson(response: ServerResponse, status: number, body: unknown): void {
+  response.writeHead(status, {
+    "access-control-allow-origin": "*",
+    "content-type": "application/json",
+    "cache-control": "no-store",
+  });
+  response.end(JSON.stringify(body));
+}
+
+function completionChunk(id: string, content: string, finishReason: string | null) {
+  return {
+    id,
+    object: "chat.completion.chunk",
+    choices: [{ index: 0, delta: content ? { content } : {}, finish_reason: finishReason }],
+  };
+}
+
+function sendStream(response: ServerResponse, chunks: unknown[], intervalMs = 0): void {
+  response.writeHead(200, {
+    "content-type": "text/event-stream",
+    "cache-control": "no-cache",
+    connection: "keep-alive",
+  });
+  let index = 0;
+  const writeNext = () => {
+    const chunk = chunks[index];
+    if (chunk !== undefined) {
+      response.write(`data: ${JSON.stringify(chunk)}\n\n`);
+      index += 1;
+      setTimeout(writeNext, intervalMs);
+      return;
+    }
+    response.end("data: [DONE]\n\n");
+  };
+  writeNext();
+}
+
+async function configureProvider(
+  seed: Seed,
+  app: Awaited<ReturnType<Seed["desktop"]>>,
+  workspaceId: string,
+  providerId: string,
+  modelId: string,
+  opencode: Record<string, unknown>,
+): Promise<void> {
+  // TODO(primitive): configure a workspace provider and select its model.
+  const result = await seed.evalIn(app, `(async () => {
+    const port = localStorage.getItem("openwork.server.port");
+    const token = localStorage.getItem("openwork.server.token");
+    if (!port || !token) return "missing local server credentials";
+    const request = async (path, init) => {
+      const response = await fetch("http://127.0.0.1:" + port + path, {
+        ...init,
+        headers: { Authorization: "Bearer " + token, "Content-Type": "application/json" },
+      });
+      const text = await response.text();
+      if (!response.ok && !(path.endsWith("/engine/reload") && response.status === 504)) {
+        return path + " failed: " + response.status + " " + text.slice(0, 500);
+      }
+      return "ok";
+    };
+    const workspaceId = ${JSON.stringify(workspaceId)};
+    const patched = await request("/workspace/" + encodeURIComponent(workspaceId) + "/config", {
+      method: "PATCH",
+      body: JSON.stringify({ opencode: ${JSON.stringify(opencode)} }),
+    });
+    if (patched !== "ok") return patched;
+    const reloaded = await request("/workspace/" + encodeURIComponent(workspaceId) + "/engine/reload", { method: "POST" });
+    if (reloaded !== "ok") return reloaded;
+    const raw = localStorage.getItem("openwork.preferences");
+    let preferences = {};
+    try { preferences = raw ? JSON.parse(raw) : {}; } catch { preferences = {}; }
+    if (!preferences || typeof preferences !== "object" || Array.isArray(preferences)) preferences = {};
+    localStorage.setItem("openwork.preferences", JSON.stringify({
+      ...preferences,
+      defaultModel: { providerID: ${JSON.stringify(providerId)}, modelID: ${JSON.stringify(modelId)} },
+      modelVariant: null,
+      providerStepCompleted: true,
+    }));
+    localStorage.setItem("openwork.defaultModel", ${JSON.stringify(`${providerId}/${modelId}`)});
+    localStorage.removeItem("openwork.sessionModels." + workspaceId);
+    return "ok";
+  })()`, { awaitPromise: true, timeoutMs: 120_000 });
+  if (result !== "ok") throw new Error(`Provider configuration failed: ${String(result)}`);
+  await seed.evalIn(app, "location.reload(); true");
+  const ready = await seed.evalIn(app, `(async () => {
+    const deadline = Date.now() + 60000;
+    while (Date.now() < deadline) {
+      const port = localStorage.getItem("openwork.server.port");
+      const token = localStorage.getItem("openwork.server.token");
+      try {
+        const response = await fetch("http://127.0.0.1:" + port + "/workspace/" + encodeURIComponent(${JSON.stringify(workspaceId)}) + "/opencode/session", {
+          headers: { Authorization: "Bearer " + token },
+        });
+        if (response.ok && window.__openworkControl) return true;
+      } catch {}
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+    return false;
+  })()`, { awaitPromise: true, timeoutMs: 120_000 });
+  if (ready !== true) throw new Error("Engine did not become ready after provider configuration.");
+}
+
+async function seedControls(
+  seed: Seed,
+  app: Awaited<ReturnType<Seed["desktop"]>>,
+  calls: readonly { action: string; args?: unknown }[],
+): Promise<void> {
+  for (const call of calls) await arrangeControl(seed, app, call.action, call.args);
+}
+
+export async function arrangeControl(
+  seed: Seed,
+  app: Awaited<ReturnType<Seed["desktop"]>>,
+  action: string,
+  args?: unknown,
+): Promise<unknown> {
+  // TODO(primitive): invoke a named renderer fixture control and await its result.
+  return seed.evalIn(app, `(async () => {
+    const deadline = Date.now() + 30000;
+    while (Date.now() < deadline) {
+      const available = window.__openworkControl?.listActions().find((candidate) => candidate.id === ${JSON.stringify(action)} && !candidate.disabled);
+      if (available) break;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    const result = await window.__openworkControl.execute(${JSON.stringify(action)}, ${JSON.stringify(args ?? null)});
+    if (!result?.ok) throw new Error(String(result?.error ?? "control action failed"));
+    return result.value;
+  })()`, { awaitPromise: true, timeoutMs: 120_000 });
+}
+
+async function seedSessionRetry(
+  seed: Seed,
+  app: Awaited<ReturnType<Seed["desktop"]>>,
+  options: { title?: string } = {},
+): Promise<{ sessionId: string; title: string }> {
+  const deadline = Date.now() + 60_000;
+  let lastError: unknown = null;
+  while (Date.now() < deadline) {
+    try {
+      return await seed.session(app, options);
+    } catch (error) {
+      lastError = error;
+      await new Promise((resolveDelay) => setTimeout(resolveDelay, 500));
+    }
+  }
+  throw new Error(`Session creation did not settle: ${lastError instanceof Error ? lastError.message : String(lastError)}`);
+}
+
+export async function emptyChat(seed: Seed) {
+  const app = await seed.desktop({ name: "chat-empty" });
+  const workspace = await seed.workspace(app, seed.tmpPath("chat-empty"));
+  const session = await seedSessionRetry(seed, app);
+  return { app, workspace, session };
+}
+
+export async function shimmerChat(seed: Seed) {
+  const base = await emptyChat(seed);
+  await seedControls(seed, base.app, [{ action: "eval.chat_loading.seed" }]);
+  return base;
+}
+
+export async function focusContinuity(seed: Seed) {
+  const app = await seed.desktop({ name: "composer-focus-continuity" });
+  const workspace = await seed.workspace(app, seed.tmpPath("composer-focus-continuity"));
+  const session = await seedSessionRetry(seed, app);
+  return { app, workspace, session };
+}
+
+export async function modelPicker(seed: Seed) {
+  const den = await seed.den();
+  const app = await seed.desktop({ den, as: "admin" });
+  const session = await seedSessionRetry(seed, app);
+  return { app, den, session };
+}
+
+export async function connectionsMenu(seed: Seed) {
+  const connector = seed.mock();
+  const den = await seed.den({ mocks: { connector } });
+  const connections: { id: string; name: string }[] = [];
+  for (let index = 1; index <= 14; index += 1) {
+    connections.push(await seed.orgConnection(den.admin, {
+      name: `Composer connection ${String(index).padStart(2, "0")}`,
+      url: den.mocks.connector.mcpUrl,
+      authType: "oauth",
+      credentialMode: "per_member",
+      access: { orgWide: true },
+    }));
+  }
+  const app = await seed.desktop({ den, as: "admin" });
+  const session = await seedSessionRetry(seed, app);
+  // TODO(primitive): click a button by its title when it has no accessible name.
+  const opened = await seed.evalIn(app, `(() => {
+    const trigger = document.querySelector('button[title="Agents, commands, skills, plugins, and connections"]');
+    if (!(trigger instanceof HTMLButtonElement)) return false;
+    trigger.click();
+    return true;
+  })()`);
+  if (opened !== true) throw new Error("Composer capability menu did not open.");
+  return { app, den, session, connections };
+}
+
+async function startManualApprovalServer(approvalTimeoutMs: number) {
+  const script = `
+    const { mkdtempSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const { startServer } = await import("./src/server.ts");
+    const root = mkdtempSync(join(tmpdir(), "openwork-attachment-spec-"));
+    const server = await startServer({
+      host: "127.0.0.1", port: 0, token: "owt_spec_token", hostToken: "owt_spec_host_token",
+      approval: { mode: "manual", timeoutMs: ${approvalTimeoutMs} }, corsOrigins: ["*"],
+      workspaces: [{ id: "ws_spec", name: "Workspace", path: root, preset: "starter", workspaceType: "local" }],
+      authorizedRoots: [root], readOnly: false, startedAt: Date.now(), tokenSource: "cli", hostTokenSource: "cli",
+      logFormat: "pretty", logRequests: false,
+    });
+    console.log("SPEC_SERVER_PORT:" + server.port);
+    setInterval(() => {}, 60000);
+  `;
+  const child = spawn("bun", ["-e", script], {
+    cwd: join(repoRoot, "apps", "server"),
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  const port = await new Promise<number>((resolvePort, reject) => {
+    const timer = setTimeout(() => reject(new Error("Standalone openwork-server did not report a port within 30s.")), 30_000);
+    let buffered = "";
+    child.stdout.setEncoding("utf8");
+    child.stdout.on("data", (chunk: string) => {
+      buffered += chunk;
+      const match = buffered.match(/SPEC_SERVER_PORT:(\d+)/);
+      if (match?.[1]) {
+        clearTimeout(timer);
+        resolvePort(Number(match[1]));
+      }
+    });
+    child.on("exit", (code) => {
+      clearTimeout(timer);
+      reject(new Error(`Standalone openwork-server exited early (code ${code}): ${buffered.slice(0, 500)}`));
+    });
+    child.on("error", reject);
+  });
+  return {
+    base: `http://127.0.0.1:${port}`,
+    token: "owt_spec_token",
+    dispose: () => { child.kill("SIGKILL"); },
+  };
+}
+
+export async function attachmentUpload(seed: Seed) {
+  const providerId = "attachment-upload-mock";
+  const modelId = "attachment-upload-model";
+  const reply = "attachment upload loading proof";
+  const provider = createServer((request, response) => {
+    const url = request.url ?? "";
+    if (request.method === "GET" && url.startsWith("/v1/models")) {
+      sendJson(response, 200, { object: "list", data: [{ id: modelId, object: "model" }] });
+      return;
+    }
+    if (request.method === "POST" && (url.startsWith("/v1/chat/completions") || url.startsWith("/chat/completions"))) {
+      request.resume();
+      request.on("end", () => sendStream(response, [
+        { id: "chatcmpl-attachment-upload", object: "chat.completion.chunk", choices: [{ index: 0, delta: { role: "assistant" }, finish_reason: null }] },
+        completionChunk("chatcmpl-attachment-upload", reply, null),
+        completionChunk("chatcmpl-attachment-upload", "", "stop"),
+      ]));
+      return;
+    }
+    sendJson(response, 404, { error: { message: "not found" } });
+  });
+  const providerBase = await listen(provider);
+  const approvalTimeoutMs = 3_000;
+  const gateway = await startManualApprovalServer(approvalTimeoutMs);
+  try {
+    const uploadForm = new FormData();
+    uploadForm.append("file", new File([new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10, 9, 9, 9, 9])], "screenshot.png", { type: "image/png" }));
+    const uploadStartedAt = Date.now();
+    const uploadResponse = await fetch(`${gateway.base}/workspace/ws_spec/inbox?path=${encodeURIComponent("chat-attachments/s1/att-1-screenshot.png")}`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${gateway.token}` },
+      body: uploadForm,
+    });
+    const uploadElapsedMs = Date.now() - uploadStartedAt;
+    const writeStartedAt = Date.now();
+    const writeResponse = await fetch(`${gateway.base}/workspace/ws_spec/files/content`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${gateway.token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ path: "notes/unapproved.md", content: "# should not land\n" }),
+    });
+    const writeElapsedMs = Date.now() - writeStartedAt;
+
+    const app = await seed.desktop({ name: "attachment-upload-loading", model: `${providerId}/${modelId}` });
+    const workspace = await seed.workspace(app, seed.tmpPath("attachment-upload"));
+    await configureProvider(seed, app, workspace.workspaceId, providerId, modelId, {
+      provider: {
+        [providerId]: {
+          npm: "@ai-sdk/openai-compatible",
+          name: "Attachment upload mock",
+          options: { baseURL: `${providerBase}/v1`, apiKey: "sk-attachment-upload" },
+          models: { [modelId]: { name: "Attachment upload model" } },
+        },
+      },
+    });
+    const session = await seedSessionRetry(seed, app);
+    return {
+      app,
+      workspace,
+      session,
+      approvalTimeoutMs,
+      uploadStatus: uploadResponse.status,
+      uploadElapsedMs,
+      writeStatus: writeResponse.status,
+      writeElapsedMs,
+      async [Symbol.asyncDispose]() {
+        gateway.dispose();
+        await close(provider);
+      },
+    };
+  } catch (error) {
+    gateway.dispose();
+    await close(provider);
+    throw error;
+  }
+}
+
+export const renderCycleFirstReply = "Historical response is complete.";
+export const renderCycleMarker = "STREAM_RENDER_CYCLE";
+export const renderCycleChunks = Array.from({ length: 48 }, (_, index) => `chunk-${index + 1} `);
+
+export async function renderCycle(seed: Seed) {
+  const providerId = "chat-render-cycle-mock";
+  const modelId = "chat-render-cycle-model";
+  const requests: string[] = [];
+  let completionIndex = 0;
+  const provider = createServer((request, response) => {
+    const url = request.url ?? "";
+    requests.push(`${request.method ?? "UNKNOWN"} ${url}`);
+    if (request.method === "GET" && url.startsWith("/v1/models")) {
+      sendJson(response, 200, { object: "list", data: [{ id: modelId, object: "model" }] });
+      return;
+    }
+    if (request.method !== "POST" || (url !== "/v1/chat/completions" && url !== "/chat/completions")) {
+      sendJson(response, 404, { error: { message: "not found" } });
+      return;
+    }
+    void readBody(request).then((body) => {
+      const streaming = body.includes(renderCycleMarker);
+      const contents = streaming ? renderCycleChunks : [renderCycleFirstReply];
+      completionIndex += 1;
+      const id = `chatcmpl-render-cycle-${completionIndex}`;
+      const chunks = [
+        { id, object: "chat.completion.chunk", choices: [{ index: 0, delta: { role: "assistant" }, finish_reason: null }] },
+        ...contents.map((content) => completionChunk(id, content, null)),
+        completionChunk(id, "", "stop"),
+      ];
+      setTimeout(() => sendStream(response, chunks, streaming ? 35 : 0), streaming ? 0 : 1_000);
+    });
+  });
+  const baseUrl = await listen(provider);
+  try {
+    const app = await seed.desktop({ name: "chat-render-cycle-stability", model: `${providerId}/${modelId}` });
+    const workspace = await seed.workspace(app, seed.tmpPath("chat-render-cycle"));
+    await configureProvider(seed, app, workspace.workspaceId, providerId, modelId, {
+      provider: {
+        [providerId]: {
+          npm: "@ai-sdk/openai-compatible",
+          name: "Chat render-cycle mock",
+          options: { baseURL: `${baseUrl}/v1`, apiKey: "sk-chat-render-cycle" },
+          models: { [modelId]: { name: "Chat render-cycle model" } },
+        },
+      },
+    });
+    // TODO(primitive): enable the renderer profiler before desktop launch.
+    await seed.evalIn(app, `(() => {
+      localStorage.setItem("openwork.debug.profiler", "1");
+      localStorage.removeItem("openwork.debug.profilerOverlay");
+      location.reload();
+      return true;
+    })()`);
+    const controlsReady = await seed.evalIn(app, `(async () => {
+      const deadline = Date.now() + 30000;
+      while (Date.now() < deadline) {
+        if (window.__openworkControl?.listActions().some((action) => action.id === "session.create_task" && !action.disabled)) return true;
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+      return false;
+    })()`, { awaitPromise: true, timeoutMs: 120_000 });
+    if (controlsReady !== true) throw new Error("Session controls did not return after enabling the profiler.");
+    const session = await seedSessionRetry(seed, app);
+    await seed.composerText(app, `Reply with exactly: ${renderCycleFirstReply}`);
+    // TODO(primitive): send an arranged historical turn and await its completion.
+    const historical = await seed.evalIn(app, `(async () => {
+      const sent = await window.__openworkControl.execute("composer.send", null);
+      if (!sent?.ok) throw new Error(String(sent?.error ?? "composer.send failed"));
+      const deadline = Date.now() + 30000;
+      while (Date.now() < deadline) {
+        if (document.body.innerText.includes(${JSON.stringify(renderCycleFirstReply)})) return true;
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+      return false;
+    })()`, { awaitPromise: true, timeoutMs: 120_000 });
+    if (historical !== true) throw new Error(`Historical turn did not complete. Requests: ${requests.join("; ")}`);
+    return {
+      app,
+      workspace,
+      session,
+      async [Symbol.asyncDispose]() { await close(provider); },
+    };
+  } catch (error) {
+    await close(provider);
+    throw error;
+  }
+}
+
+const htmlToolName = "explode_html";
+export const htmlClosingReply = "The session recovered after the failed upstream call.";
+export const htmlSummary = "Upstream returned an HTML error page (502 Bad Gateway)";
+const htmlError = `<!DOCTYPE html><html><head><title>502 Bad Gateway</title></head><body><h1>502 Bad Gateway</h1>${"Z".repeat(1_024 * 1_024)}</body></html>`;
+
+export async function clampHtml(seed: Seed) {
+  const providerId = "clamp-html-errors-mock";
+  const modelId = "clamp-html-errors-model";
+  let toolsListed = 0;
+  let toolCalls = 0;
+  let closingRounds = 0;
+  const mock = createServer((request, response) => {
+    void (async () => {
+      const url = new URL(request.url ?? "/", "http://127.0.0.1");
+      if (request.method === "GET" && url.pathname === "/v1/models") {
+        sendJson(response, 200, { object: "list", data: [{ id: modelId, object: "model" }] });
+        return;
+      }
+      if (url.pathname === "/mcp") {
+        if (request.method === "GET") {
+          sendJson(response, 405, { error: "method_not_allowed" });
+          return;
+        }
+        const raw = await readBody(request);
+        const parsed: unknown = raw.trim() ? JSON.parse(raw) : {};
+        const messages = Array.isArray(parsed) ? parsed : [parsed];
+        const replies: Record<string, unknown>[] = [];
+        let delayMs = 0;
+        for (const candidate of messages) {
+          if (!isRecord(candidate)) continue;
+          if (candidate.method === "tools/list") toolsListed += 1;
+          if (candidate.method === "tools/call") {
+            toolCalls += 1;
+            delayMs = 4_000;
+          }
+          if (candidate.id === undefined) continue;
+          const method = typeof candidate.method === "string" ? candidate.method : "";
+          if (method === "initialize") replies.push({
+            jsonrpc: "2.0", id: candidate.id,
+            result: { protocolVersion: "2025-06-18", capabilities: { tools: {} }, serverInfo: { name: "html-error-mcp", version: "1.0.0" } },
+          });
+          else if (method === "tools/list") replies.push({
+            jsonrpc: "2.0", id: candidate.id,
+            result: { tools: [{ name: htmlToolName, title: "HTML upstream failure", description: "Returns a deterministic upstream HTML error page.", inputSchema: { type: "object", properties: {}, additionalProperties: false } }] },
+          });
+          else if (method === "tools/call") replies.push({ jsonrpc: "2.0", id: candidate.id, error: { code: -32_000, message: htmlError } });
+          else replies.push({ jsonrpc: "2.0", id: candidate.id, result: {} });
+        }
+        if (replies.length === 0) {
+          response.writeHead(202, { "access-control-allow-origin": "*" });
+          response.end();
+          return;
+        }
+        if (delayMs) await new Promise((resolveDelay) => setTimeout(resolveDelay, delayMs));
+        sendJson(response, 200, Array.isArray(parsed) ? replies : replies[0]);
+        return;
+      }
+      if (request.method === "POST" && (url.pathname === "/v1/chat/completions" || url.pathname === "/chat/completions")) {
+        const raw = await readBody(request);
+        const parsed: unknown = JSON.parse(raw);
+        if (!isRecord(parsed)) throw new Error("Mock provider received a non-object request.");
+        const requestTools = parsed.tools;
+        const id = "chatcmpl-clamp-html-errors";
+        if (!Array.isArray(requestTools) || requestTools.length === 0) {
+          sendStream(response, [{ id, object: "chat.completion.chunk", choices: [{ index: 0, delta: { role: "assistant" }, finish_reason: null }] }, completionChunk(id, "Session title", null), completionChunk(id, "", "stop")], 400);
+          return;
+        }
+        const messages = parsed.messages;
+        if (Array.isArray(messages) && messages.some((message) => recordValue(message, "role") === "tool")) {
+          closingRounds += 1;
+          sendStream(response, [{ id, object: "chat.completion.chunk", choices: [{ index: 0, delta: { role: "assistant" }, finish_reason: null }] }, completionChunk(id, htmlClosingReply, null), completionChunk(id, "", "stop")], 400);
+          return;
+        }
+        let toolName: string | null = null;
+        for (const tool of requestTools) {
+          const fn = recordValue(tool, "function");
+          const name = recordValue(fn, "name");
+          if (typeof name === "string" && name.endsWith(htmlToolName)) toolName = name;
+        }
+        if (!toolName) {
+          sendStream(response, [{ id, object: "chat.completion.chunk", choices: [{ index: 0, delta: { role: "assistant" }, finish_reason: null }] }, completionChunk(id, "The deterministic MCP error tool was unavailable.", null), completionChunk(id, "", "stop")], 400);
+          return;
+        }
+        sendStream(response, [
+          { id, object: "chat.completion.chunk", choices: [{ index: 0, delta: { role: "assistant" }, finish_reason: null }] },
+          { id, object: "chat.completion.chunk", choices: [{ index: 0, delta: { tool_calls: [{ index: 0, id: "call_html_error", type: "function", function: { name: toolName, arguments: "{}" } }] }, finish_reason: null }] },
+          { id, object: "chat.completion.chunk", choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }] },
+        ], 400);
+        return;
+      }
+      sendJson(response, 404, { error: { message: "not found" } });
+    })().catch((error: unknown) => {
+      if (!response.headersSent) sendJson(response, 500, { error: String(error) });
+      else response.destroy(error instanceof Error ? error : undefined);
+    });
+  });
+  const baseUrl = await listen(mock);
+  try {
+    const app = await seed.desktop({ name: "clamp-html-errors", model: `${providerId}/${modelId}` });
+    const workspace = await seed.workspace(app, seed.tmpPath("clamp-html-errors"));
+    await configureProvider(seed, app, workspace.workspaceId, providerId, modelId, {
+      provider: {
+        [providerId]: {
+          npm: "@ai-sdk/openai-compatible", name: "Clamp HTML errors mock",
+          options: { baseURL: `${baseUrl}/v1`, apiKey: "sk-clamp-html-errors" },
+          models: { [modelId]: { name: "Clamp HTML errors model", tool_call: true } },
+        },
+      },
+      mcp: { "html-error": { type: "remote", url: `${baseUrl}/mcp`, enabled: true, oauth: false } },
+    });
+    const session = await seedSessionRetry(seed, app);
+    return {
+      app,
+      workspace,
+      session,
+      counts: () => ({ toolsListed, toolCalls, closingRounds }),
+      async [Symbol.asyncDispose]() { await close(mock); },
+    };
+  } catch (error) {
+    await close(mock);
+    throw error;
+  }
+}
+
+type QueueRequest = { rawBody: string; lastUserText: string };
+
+function lastUserText(rawBody: string): string {
+  let parsed: unknown;
+  try { parsed = JSON.parse(rawBody); } catch { return ""; }
+  if (!isRecord(parsed) || !Array.isArray(parsed.messages)) return "";
+  for (let index = parsed.messages.length - 1; index >= 0; index -= 1) {
+    const message = parsed.messages[index];
+    if (!isRecord(message) || message.role !== "user") continue;
+    if (typeof message.content === "string") return message.content;
+    if (Array.isArray(message.content)) return message.content.flatMap((part) => (
+      isRecord(part) && part.type === "text" && typeof part.text === "string" ? [part.text] : []
+    )).join("");
+  }
+  return "";
+}
+
+async function writeProviderConfig(path: string, providerId: string, modelId: string, modelName: string, baseUrl: string): Promise<void> {
+  await mkdir(path, { recursive: true });
+  await writeFile(join(path, "opencode.json"), `${JSON.stringify({
+    $schema: "https://opencode.ai/config.json",
+    provider: {
+      [providerId]: {
+        npm: "@ai-sdk/openai-compatible",
+        name: modelName,
+        options: { baseURL: baseUrl, apiKey: "sk-openwork-eval" },
+        models: { [modelId]: { name: modelName } },
+      },
+    },
+  }, null, 2)}\n`);
+}
+
+async function selectModelInWorld(seed: Seed, app: Awaited<ReturnType<Seed["desktop"]>>, modelName: string): Promise<void> {
+  // TODO(primitive): select a model as arranged state.
+  const selected = await seed.evalIn(app, `(async () => {
+    const deadline = Date.now() + 60000;
+    while (Date.now() < deadline && !document.querySelector('button[aria-label="Change model"]')) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    document.querySelector('button[aria-label="Change model"]')?.click();
+    while (Date.now() < deadline) {
+      const item = [...document.querySelectorAll('[data-slot="command-item"]')]
+        .find((candidate) => (candidate.textContent ?? "").includes(${JSON.stringify(modelName)}));
+      if (item instanceof HTMLElement) {
+        item.click();
+        return true;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    return false;
+  })()`, { awaitPromise: true, timeoutMs: 120_000 });
+  if (selected !== true) throw new Error(`Model ${modelName} was not selectable.`);
+}
+
+export const awayFirstPrompt = "away-drain first task";
+export const awayQueuedPrompt = "away-drain queued follow-up";
+export const awayFirstReply = "away-drain first reply";
+export const awayQueuedReply = "away-drain queued reply";
+
+export async function queuedDrainAway(seed: Seed) {
+  const providerId = "away-drain-mock";
+  const modelId = "away-drain-model";
+  const modelName = "Away drain model";
+  const requests: QueueRequest[] = [];
+  let releaseFirst: () => void = () => undefined;
+  const firstGate = new Promise<void>((resolveGate) => { releaseFirst = resolveGate; });
+  const provider = createServer((request, response) => {
+    const url = request.url ?? "";
+    if (request.method === "GET" && url.startsWith("/v1/models")) {
+      sendJson(response, 200, { object: "list", data: [{ id: modelId, object: "model" }] });
+      return;
+    }
+    if (request.method !== "POST" || (url !== "/v1/chat/completions" && url !== "/chat/completions")) {
+      sendJson(response, 404, { error: { message: "not found" } });
+      return;
+    }
+    void readBody(request).then((rawBody) => {
+      let parsed: unknown;
+      try { parsed = JSON.parse(rawBody); } catch { parsed = null; }
+      const isMain = isRecord(parsed) && Array.isArray(parsed.tools) && parsed.tools.length > 0;
+      if (isMain) requests.push({ rawBody, lastUserText: lastUserText(rawBody) });
+      const reply = !isMain ? "Away drain session title" : rawBody.includes(awayQueuedPrompt) ? awayQueuedReply : awayFirstReply;
+      const id = `chatcmpl-away-drain-${requests.length}`;
+      response.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache", connection: "keep-alive" });
+      response.write(`data: ${JSON.stringify({ id, object: "chat.completion.chunk", choices: [{ index: 0, delta: { role: "assistant" }, finish_reason: null }] })}\n\n`);
+      const finish = () => {
+        response.write(`data: ${JSON.stringify(completionChunk(id, reply, null))}\n\n`);
+        response.write(`data: ${JSON.stringify(completionChunk(id, "", "stop"))}\n\n`);
+        response.end("data: [DONE]\n\n");
+      };
+      if (isMain && !rawBody.includes(awayQueuedPrompt)) void firstGate.then(finish);
+      else setTimeout(finish, 200);
+    });
+  });
+  const baseUrl = await listen(provider);
+  try {
+    const workspacePathA = seed.tmpPath("away-drain-a");
+    const workspacePathB = seed.tmpPath("away-drain-b");
+    await Promise.all([
+      writeProviderConfig(workspacePathA, providerId, modelId, modelName, `${baseUrl}/v1`),
+      writeProviderConfig(workspacePathB, providerId, modelId, modelName, `${baseUrl}/v1`),
+    ]);
+    const app = await seed.desktop({ name: "queued-drain-while-away", model: `${providerId}/${modelId}` });
+    const workspaceA = await seed.workspace(app, workspacePathA);
+    const sessionA = await seedSessionRetry(seed, app, { title: "Chat A" });
+    await selectModelInWorld(seed, app, modelName);
+    return {
+      app,
+      workspaceA,
+      workspacePathB,
+      sessionA,
+      requests,
+      releaseFirst,
+      async [Symbol.asyncDispose]() {
+        releaseFirst();
+        await close(provider);
+      },
+    };
+  } catch (error) {
+    releaseFirst();
+    await close(provider);
+    throw error;
+  }
+}
