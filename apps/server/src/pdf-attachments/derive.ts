@@ -1,18 +1,21 @@
 import { createHash, randomUUID } from "node:crypto";
-import { link, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { link, mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { basename, join, relative, sep } from "node:path";
+import { encode as encodePng } from "fast-png";
+import { encode as encodeJpeg } from "jpeg-js";
 import { looksLikePdf, withPdfDocument } from "./pdfium.js";
-import type { PdfRenderedPage } from "./pdfium.js";
+import type { PdfRenderedBitmap } from "./pdfium.js";
 
 /**
  * Turns one PDF into what a model can actually consume — page-marked text and
  * rendered page images — and keeps the result in the workspace inbox so later
- * steps, other models, and the agent's own Read/Grep tools reuse it instead of
+ * steps, other models, and the agent's own tools reuse it instead of
  * re-rendering.
  *
  * Limits are deliberate. They keep a single attachment from stalling the turn,
  * blowing the provider's request size, or filling the workspace, while still
- * covering the long reports people actually attach.
+ * covering the long reports people actually attach. Pages past the eager set
+ * are rendered on demand through the plugin's page tool.
  */
 export const MATERIALIZED_DIR = join(".opencode", "openwork", "inbox", "chat-attachments");
 export const DERIVED_DIR = join(".opencode", "openwork", "inbox", "pdf-pages");
@@ -20,24 +23,36 @@ export const MANIFEST_FILENAME = "manifest.json";
 export const TEXT_FILENAME = "text.md";
 /** Pages whose text is extracted. Long documents keep their text reachable on disk. */
 export const MAX_TEXT_PAGES = 300;
-/** Pages rendered to PNG on disk when the model can look at images. */
-export const MAX_RENDERED_PAGES = 40;
+/** Wall-clock budget for text extraction of one document during a turn. */
+export const TEXT_TIME_BUDGET_MS = 6_000;
+/** Pages rendered up front when the model can look at images; more render on demand. */
+export const EAGER_RENDERED_PAGES = 20;
+/** Pages one on-demand request may render. */
+export const MAX_PAGES_PER_REQUEST = 8;
 /** Wall-clock budget for rendering one document during a turn. */
 export const RENDER_TIME_BUDGET_MS = 8_000;
 /** Longest image edge. Vision models downscale anything larger, so more pixels only cost tokens. */
 export const PAGE_LONG_EDGE_PX = 1568;
-/** Fallback edges when a page (typically a scan) encodes too large at full size. */
+/** Fallback edges when a page still encodes too large at full size. */
 const PAGE_FALLBACK_EDGES_PX = [1100, 800];
-/** Per-page PNG ceiling; providers cap single images well above this. */
+/** Per-page image ceiling; providers cap single images well above this. */
 export const PAGE_IMAGE_MAX_BYTES = 1.5 * 1024 * 1024;
-const MANIFEST_VERSION = 1;
+/** Above this PNG size a page is photographic or scanned; JPEG keeps its resolution at a fraction of the bytes. */
+const JPEG_CONSIDER_BYTES = 300 * 1024;
+const JPEG_QUALITY = 85;
+/** Derived bundles kept per workspace; the oldest are pruned when a new one is written. */
+export const MAX_DERIVED_BUNDLES = 64;
+const MANIFEST_VERSION = 2;
 const MEMORY_CACHE_LIMIT = 32;
+
+export type PageImageMime = "image/png" | "image/jpeg";
 
 export type PdfPageImage = {
   page: number;
   width: number;
   height: number;
   bytes: number;
+  mime: PageImageMime;
   fileName: string;
 };
 
@@ -54,7 +69,9 @@ export type DerivedPdf = {
   /** Page-marked text for pages 1..textPages. */
   text: string;
   textPages: number;
+  textBudgetExhausted: boolean;
   pagesWithoutText: number[];
+  /** Rendered pages in ascending page order. */
   renderedPages: PdfPageImage[];
   renderBudgetExhausted: boolean;
   /** Set when PDFium could not open the bytes; text and pages are unavailable. */
@@ -68,6 +85,13 @@ export type DeriveOptions = {
 type MemoryEntry = {
   derived: DerivedPdf;
   pageImages: Map<number, Uint8Array>;
+};
+
+type EncodedPage = {
+  mime: PageImageMime;
+  bytes: Uint8Array;
+  width: number;
+  height: number;
 };
 
 const memory = new Map<string, MemoryEntry>();
@@ -109,8 +133,8 @@ function toWorkerRelativePath(root: string, path: string): string {
   return relative(root, path).split(sep).join("/");
 }
 
-function pageFileName(page: number): string {
-  return `page-${String(page).padStart(3, "0")}.png`;
+export function pageFileName(page: number, mime: PageImageMime): string {
+  return `page-${String(page).padStart(3, "0")}.${mime === "image/png" ? "png" : "jpg"}`;
 }
 
 async function existingSha(path: string): Promise<string | null> {
@@ -166,16 +190,16 @@ function pageHeader(page: number, hasText: boolean): string {
   return hasText ? `--- page ${page} ---` : `--- page ${page} (no text layer) ---`;
 }
 
-function textDocument(derived: Omit<DerivedPdf, "text"> & { pages: Array<{ page: number; text: string }> }): string {
+function textDocument(base: Omit<DerivedPdf, "text">, pages: Array<{ page: number; text: string }>): string {
   const lines = [
-    `# ${derived.filename}`,
+    `# ${base.filename}`,
     "",
-    `pages: ${derived.pageCount}`,
-    `sha256: ${derived.sha256}`,
-    ...(derived.textPages < derived.pageCount ? [`text_extracted_for_pages: 1-${derived.textPages} (of ${derived.pageCount})`] : []),
+    `pages: ${base.pageCount}`,
+    `sha256: ${base.sha256}`,
+    ...(base.textPages < base.pageCount ? [`text_extracted_for_pages: 1-${base.textPages} (of ${base.pageCount})`] : []),
     "",
   ];
-  for (const { page, text } of derived.pages) {
+  for (const { page, text } of pages) {
     lines.push(pageHeader(page, text.length > 0));
     if (text.length > 0) lines.push(text);
     lines.push("");
@@ -183,19 +207,27 @@ function textDocument(derived: Omit<DerivedPdf, "text"> & { pages: Array<{ page:
   return lines.join("\n").trimEnd() + "\n";
 }
 
+/** Returns the text block of one page from a page-marked document, or null when it was not extracted. */
+export function pageTextFrom(text: string, page: number): string | null {
+  const pattern = new RegExp(`(?:^|\\n)--- page ${page}(?: \\(no text layer\\))? ---\\n?([\\s\\S]*?)(?=\\n--- page \\d+(?: \\(no text layer\\))? ---|$)`);
+  const match = pattern.exec(text);
+  return match ? match[1].trim() : null;
+}
+
 type StoredManifest = Omit<DerivedPdf, "text">;
 
 function parseManifest(value: unknown): StoredManifest | null {
   if (!isRecord(value) || value.version !== MANIFEST_VERSION) return null;
-  const { sha256: digest, filename, bytes, pageCount, textPages, pagesWithoutText, renderedPages, renderBudgetExhausted, loadError, pdfPath, directory, textPath } = value;
+  const { sha256: digest, filename, bytes, pageCount, textPages, textBudgetExhausted, pagesWithoutText, renderedPages, renderBudgetExhausted, loadError, pdfPath, directory, textPath } = value;
   if (typeof digest !== "string" || typeof filename !== "string" || typeof bytes !== "number" || typeof pageCount !== "number") return null;
-  if (typeof textPages !== "number" || !Array.isArray(pagesWithoutText) || !Array.isArray(renderedPages) || typeof renderBudgetExhausted !== "boolean") return null;
+  if (typeof textPages !== "number" || typeof textBudgetExhausted !== "boolean" || !Array.isArray(pagesWithoutText) || !Array.isArray(renderedPages) || typeof renderBudgetExhausted !== "boolean") return null;
   const pages: PdfPageImage[] = [];
   for (const entry of renderedPages) {
     if (!isRecord(entry)) return null;
-    const { page, width, height, bytes: imageBytes, fileName } = entry;
+    const { page, width, height, bytes: imageBytes, mime, fileName } = entry;
     if (typeof page !== "number" || typeof width !== "number" || typeof height !== "number" || typeof imageBytes !== "number" || typeof fileName !== "string") return null;
-    pages.push({ page, width, height, bytes: imageBytes, fileName });
+    if (mime !== "image/png" && mime !== "image/jpeg") return null;
+    pages.push({ page, width, height, bytes: imageBytes, mime, fileName });
   }
   return {
     sha256: digest,
@@ -206,6 +238,7 @@ function parseManifest(value: unknown): StoredManifest | null {
     directory: typeof directory === "string" ? directory : null,
     textPath: typeof textPath === "string" ? textPath : null,
     textPages,
+    textBudgetExhausted,
     pagesWithoutText: pagesWithoutText.filter((page): page is number => typeof page === "number"),
     renderedPages: pages,
     renderBudgetExhausted,
@@ -231,50 +264,87 @@ async function writeManifest(directory: string, derived: DerivedPdf): Promise<vo
   await writeFileAtomically(join(directory, MANIFEST_FILENAME), JSON.stringify({ version: MANIFEST_VERSION, ...stored }, null, 2));
 }
 
-async function renderPages(
+function encodeBitmap(bitmap: PdfRenderedBitmap): EncodedPage {
+  const pixels = bitmap.width * bitmap.height;
+  const rgb = new Uint8Array(pixels * 3);
+  for (let source = 0, target = 0; source < bitmap.bgra.length; source += 4, target += 3) {
+    rgb[target] = bitmap.bgra[source + 2];
+    rgb[target + 1] = bitmap.bgra[source + 1];
+    rgb[target + 2] = bitmap.bgra[source];
+  }
+  const png = encodePng({ width: bitmap.width, height: bitmap.height, data: rgb, channels: 3, depth: 8 });
+  if (png.byteLength <= JPEG_CONSIDER_BYTES) return { mime: "image/png", bytes: png, width: bitmap.width, height: bitmap.height };
+
+  const rgba = new Uint8Array(pixels * 4);
+  for (let source = 0; source < bitmap.bgra.length; source += 4) {
+    rgba[source] = bitmap.bgra[source + 2];
+    rgba[source + 1] = bitmap.bgra[source + 1];
+    rgba[source + 2] = bitmap.bgra[source];
+    rgba[source + 3] = 255;
+  }
+  const jpeg = encodeJpeg({ width: bitmap.width, height: bitmap.height, data: rgba }, JPEG_QUALITY).data;
+  return jpeg.byteLength < png.byteLength
+    ? { mime: "image/jpeg", bytes: new Uint8Array(jpeg.buffer, jpeg.byteOffset, jpeg.byteLength), width: bitmap.width, height: bitmap.height }
+    : { mime: "image/png", bytes: png, width: bitmap.width, height: bitmap.height };
+}
+
+async function renderPageImages(
   bytes: Uint8Array,
-  pageCount: number,
-  onPage: (rendered: PdfRenderedPage) => Promise<void>,
+  pages: number[],
+  onPage: (page: number, image: EncodedPage) => Promise<void>,
 ): Promise<{ rendered: PdfPageImage[]; budgetExhausted: boolean }> {
   const rendered: PdfPageImage[] = [];
   const started = Date.now();
   let budgetExhausted = false;
   await withPdfDocument(bytes, async (document) => {
-    const last = Math.min(pageCount, MAX_RENDERED_PAGES);
-    for (let page = 1; page <= last; page += 1) {
+    for (const page of pages) {
       if (Date.now() - started > RENDER_TIME_BUDGET_MS) {
         budgetExhausted = true;
         break;
       }
-      let image = await document.renderPage(page, PAGE_LONG_EDGE_PX);
+      let image = encodeBitmap(await document.renderPage(page, PAGE_LONG_EDGE_PX));
       for (const edge of PAGE_FALLBACK_EDGES_PX) {
-        if (image.png.byteLength <= PAGE_IMAGE_MAX_BYTES) break;
-        image = await document.renderPage(page, edge);
+        if (image.bytes.byteLength <= PAGE_IMAGE_MAX_BYTES) break;
+        image = encodeBitmap(await document.renderPage(page, edge));
       }
-      await onPage(image);
-      rendered.push({ page, width: image.width, height: image.height, bytes: image.png.byteLength, fileName: pageFileName(page) });
+      await onPage(page, image);
+      rendered.push({ page, width: image.width, height: image.height, bytes: image.bytes.byteLength, mime: image.mime, fileName: pageFileName(page, image.mime) });
     }
   });
   return { rendered, budgetExhausted };
 }
 
-async function extract(bytes: Uint8Array): Promise<{ pageCount: number; pages: Array<{ page: number; text: string }>; pagesWithoutText: number[]; loadError: string | null }> {
-  if (!looksLikePdf(bytes)) return { pageCount: 0, pages: [], pagesWithoutText: [], loadError: "The attachment is not a PDF file." };
+type Extraction = {
+  pageCount: number;
+  pages: Array<{ page: number; text: string }>;
+  pagesWithoutText: number[];
+  budgetExhausted: boolean;
+  loadError: string | null;
+};
+
+async function extract(bytes: Uint8Array): Promise<Extraction> {
+  if (!looksLikePdf(bytes)) return { pageCount: 0, pages: [], pagesWithoutText: [], budgetExhausted: false, loadError: "The attachment is not a PDF file." };
   try {
     return await withPdfDocument(bytes, async (document) => {
       const pageCount = document.info.pageCount;
       const pages: Array<{ page: number; text: string }> = [];
       const pagesWithoutText: number[] = [];
+      const started = Date.now();
+      let budgetExhausted = false;
       for (let page = 1; page <= Math.min(pageCount, MAX_TEXT_PAGES); page += 1) {
+        if (Date.now() - started > TEXT_TIME_BUDGET_MS) {
+          budgetExhausted = true;
+          break;
+        }
         const text = document.pageText(page);
         if (text.length === 0) pagesWithoutText.push(page);
         pages.push({ page, text });
       }
-      return { pageCount, pages, pagesWithoutText, loadError: null };
+      return { pageCount, pages, pagesWithoutText, budgetExhausted, loadError: null };
     });
   } catch (cause) {
     const message = cause instanceof Error ? cause.message : String(cause);
-    return { pageCount: 0, pages: [], pagesWithoutText: [], loadError: `PDF could not be opened: ${message}` };
+    return { pageCount: 0, pages: [], pagesWithoutText: [], budgetExhausted: false, loadError: `PDF could not be opened: ${message}` };
   }
 }
 
@@ -289,10 +359,39 @@ function remember(entry: MemoryEntry): MemoryEntry {
   return entry;
 }
 
+async function pruneDerivedBundles(root: string, keep: string): Promise<void> {
+  const directory = join(root, DERIVED_DIR);
+  let entries: string[];
+  try {
+    entries = await readdir(directory);
+  } catch {
+    return;
+  }
+  if (entries.length <= MAX_DERIVED_BUNDLES) return;
+  const dated: Array<{ name: string; mtimeMs: number }> = [];
+  for (const name of entries) {
+    if (name === keep) continue;
+    try {
+      dated.push({ name, mtimeMs: (await stat(join(directory, name, MANIFEST_FILENAME))).mtimeMs });
+    } catch {
+      // Not a derived bundle this code wrote; leave it alone.
+    }
+  }
+  dated.sort((left, right) => left.mtimeMs - right.mtimeMs);
+  const excess = entries.length - MAX_DERIVED_BUNDLES;
+  for (const { name } of dated.slice(0, Math.max(0, excess))) {
+    await rm(join(directory, name), { recursive: true, force: true });
+  }
+}
+
+function derivedDirectoryFor(root: string, digest: string, safeFilename: string): string {
+  return join(root, DERIVED_DIR, `${digest.slice(0, 16)}-${stemOf(safeFilename)}`);
+}
+
 async function build(root: string | null, filename: string, bytes: Uint8Array, options: DeriveOptions, existing: MemoryEntry | null): Promise<MemoryEntry> {
   const digest = sha256(bytes);
   const safeFilename = safePdfFilename(filename);
-  const derivedDirectory = root ? join(root, DERIVED_DIR, `${digest.slice(0, 16)}-${stemOf(safeFilename)}`) : null;
+  const derivedDirectory = root ? derivedDirectoryFor(root, digest, safeFilename) : null;
 
   let current = existing?.derived ?? null;
   const pageImages = existing?.pageImages ?? new Map<number, Uint8Array>();
@@ -304,36 +403,41 @@ async function build(root: string | null, filename: string, bytes: Uint8Array, o
   if (!current) {
     const extracted = await extract(bytes);
     const pdfPath = root ? await materializePdf(root, safeFilename, digest, bytes) : null;
-    const base = {
+    const base: Omit<DerivedPdf, "text"> = {
       sha256: digest,
       filename: safeFilename,
       bytes: bytes.byteLength,
       pageCount: extracted.pageCount,
       pdfPath,
       directory: derivedDirectory && root ? toWorkerRelativePath(root, derivedDirectory) : null,
-      textPath: null as string | null,
+      textPath: null,
       textPages: extracted.pages.length,
+      textBudgetExhausted: extracted.budgetExhausted,
       pagesWithoutText: extracted.pagesWithoutText,
-      renderedPages: [] as PdfPageImage[],
+      renderedPages: [],
       renderBudgetExhausted: false,
       loadError: extracted.loadError,
     };
-    const text = extracted.loadError ? "" : textDocument({ ...base, pages: extracted.pages });
+    const text = extracted.loadError ? "" : textDocument(base, extracted.pages);
     if (derivedDirectory && root && !extracted.loadError) {
       await mkdir(derivedDirectory, { recursive: true });
       await writeFileAtomically(join(derivedDirectory, TEXT_FILENAME), text);
       base.textPath = toWorkerRelativePath(root, join(derivedDirectory, TEXT_FILENAME));
     }
     current = { ...base, text };
-    if (derivedDirectory && !extracted.loadError) await writeManifest(derivedDirectory, current);
+    if (derivedDirectory && root && !extracted.loadError) {
+      await writeManifest(derivedDirectory, current);
+      await pruneDerivedBundles(root, basename(derivedDirectory));
+    }
   }
 
   const needsRender = options.renderPages && !current.loadError && current.pageCount > 0 && current.renderedPages.length === 0 && !current.renderBudgetExhausted;
   if (needsRender) {
     if (derivedDirectory) await mkdir(derivedDirectory, { recursive: true });
-    const { rendered, budgetExhausted } = await renderPages(bytes, current.pageCount, async (image) => {
-      if (derivedDirectory) await writeFileAtomically(join(derivedDirectory, pageFileName(image.page)), image.png);
-      else pageImages.set(image.page, image.png);
+    const wanted = Array.from({ length: Math.min(current.pageCount, EAGER_RENDERED_PAGES) }, (_page, index) => index + 1);
+    const { rendered, budgetExhausted } = await renderPageImages(bytes, wanted, async (page, image) => {
+      if (derivedDirectory) await writeFileAtomically(join(derivedDirectory, pageFileName(page, image.mime)), image.bytes);
+      else pageImages.set(page, image.bytes);
     });
     current = { ...current, renderedPages: rendered, renderBudgetExhausted: budgetExhausted };
     if (derivedDirectory) await writeManifest(derivedDirectory, current);
@@ -374,6 +478,34 @@ export async function derivePdf(root: string | null, filename: string, bytes: Ui
     .finally(() => pending.delete(key));
   pending.set(key, task);
   return (await task).derived;
+}
+
+/**
+ * Renders specific pages that were not rendered yet (on demand, bounded per
+ * request) and records them in the bundle. Pages outside the document are
+ * ignored; the caller reports them.
+ */
+export async function renderPdfPages(root: string | null, derived: DerivedPdf, bytes: Uint8Array, pages: number[]): Promise<DerivedPdf> {
+  if (derived.loadError || derived.pageCount === 0) return derived;
+  const have = new Set(derived.renderedPages.map((page) => page.page));
+  const wanted = [...new Set(pages)]
+    .filter((page) => Number.isInteger(page) && page >= 1 && page <= derived.pageCount && !have.has(page))
+    .sort((left, right) => left - right)
+    .slice(0, MAX_PAGES_PER_REQUEST);
+  if (wanted.length === 0) return derived;
+
+  const entry = memory.get(derived.sha256) ?? { derived, pageImages: new Map<number, Uint8Array>() };
+  const derivedDirectory = root && derived.directory ? join(root, derived.directory) : null;
+  if (derivedDirectory) await mkdir(derivedDirectory, { recursive: true });
+  const { rendered } = await renderPageImages(bytes, wanted, async (page, image) => {
+    if (derivedDirectory) await writeFileAtomically(join(derivedDirectory, pageFileName(page, image.mime)), image.bytes);
+    else entry.pageImages.set(page, image.bytes);
+  });
+  const renderedPages = [...entry.derived.renderedPages, ...rendered].sort((left, right) => left.page - right.page);
+  const updated: DerivedPdf = { ...entry.derived, renderedPages };
+  if (derivedDirectory) await writeManifest(derivedDirectory, updated);
+  remember({ derived: updated, pageImages: entry.pageImages });
+  return updated;
 }
 
 /** Reads one rendered page image, from disk when the workspace holds it, otherwise from memory. */

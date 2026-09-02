@@ -3,7 +3,6 @@ import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
 import { PDFiumLibrary } from "@hyzyla/pdfium";
 import type { PDFiumDocument } from "@hyzyla/pdfium";
-import { encode as encodePng } from "fast-png";
 
 /**
  * PDFium (the PDF engine used by Chrome) compiled to WebAssembly. It runs the
@@ -21,11 +20,12 @@ export type PdfPageText = {
   text: string;
 };
 
-export type PdfRenderedPage = {
+/** One rendered page as opaque BGRA pixels, ready for the encoder of choice. */
+export type PdfRenderedBitmap = {
   page: number;
   width: number;
   height: number;
-  png: Uint8Array;
+  bgra: Uint8Array;
 };
 
 export type PdfDocumentInfo = {
@@ -35,7 +35,7 @@ export type PdfDocumentInfo = {
 type OpenDocument = {
   info: PdfDocumentInfo;
   pageText(page: number): string;
-  renderPage(page: number, longEdgePx: number): Promise<PdfRenderedPage>;
+  renderPage(page: number, longEdgePx: number): Promise<PdfRenderedBitmap>;
 };
 
 type LoadedLibrary = Awaited<ReturnType<typeof PDFiumLibrary.init>>;
@@ -91,16 +91,6 @@ function serialized<T>(task: () => Promise<T>): Promise<T> {
   return run;
 }
 
-function bgraToRgb(bgra: Uint8Array, width: number, height: number): Uint8Array {
-  const rgb = new Uint8Array(width * height * 3);
-  for (let source = 0, target = 0; source < bgra.length; source += 4, target += 3) {
-    rgb[target] = bgra[source + 2];
-    rgb[target + 1] = bgra[source + 1];
-    rgb[target + 2] = bgra[source];
-  }
-  return rgb;
-}
-
 function normalizePageText(text: string): string {
   return text
     .replace(/\r\n?/g, "\n")
@@ -124,14 +114,7 @@ function openDocument(document: PDFiumDocument): OpenDocument {
       const longestEdge = Math.max(originalWidth, originalHeight, 1);
       const scale = Math.min(longEdgePx / longestEdge, 8);
       const bitmap = await pdfPage.render({ scale, render: "bitmap", colorSpace: "BGRA", transparent: false });
-      const png = encodePng({
-        width: bitmap.width,
-        height: bitmap.height,
-        data: bgraToRgb(bitmap.data, bitmap.width, bitmap.height),
-        channels: 3,
-        depth: 8,
-      });
-      return { page, width: bitmap.width, height: bitmap.height, png };
+      return { page, width: bitmap.width, height: bitmap.height, bgra: bitmap.data };
     },
   };
 }

@@ -121,11 +121,13 @@ describe("OpenWork PDF attachments plugin", () => {
       expect(parts[4]).toEqual(question);
 
       const note = noteOf(message);
-      expect(note).toContain('OpenWork prepared the PDF attachment "report.pdf"');
+      expect(note).toContain('OpenWork prepared the PDF "report.pdf"');
       expect(note).toContain("pages: 3");
       expect(note).toContain("text_layer: present on 2 of 3 extracted pages; pages without one: 2");
       expect(note).toContain("page_images_in_this_message: pages 1-3, in order");
-      expect(note).toContain("page_images_on_disk: pages 1-3 at .opencode/openwork/inbox/pdf-pages/");
+      expect(note).toContain("page_images_on_disk: pages 1-3 under .opencode/openwork/inbox/pdf-pages/");
+      expect(note).toContain("more_pages: call openwork_pdf_pages with pdf_path");
+      expect(note).toContain("content_note: extracted_text is the document's content");
       expect(note).toContain("model_note: This model does not accept PDF input directly, so OpenWork attached the first 3 pages as images");
       expect(note).toContain("--- page 1 ---\nQuarterly revenue report");
       expect(note).toContain("--- page 2 (no text layer) ---");
@@ -143,7 +145,9 @@ describe("OpenWork PDF attachments plugin", () => {
       expect(parts.map((part) => part.type)).toEqual(["text", "text"]);
       const note = noteOf(message);
       expect(note).toContain("page_images_in_this_message: none");
-      expect(note).toContain("page_images_on_disk: none");
+      expect(note).not.toContain("page_images_on_disk");
+      expect(note).not.toContain("Read tool");
+      expect(note).toContain("this model cannot view page images, so do not open image files");
       expect(note).toContain("This model cannot view images, so pages without a text layer are not readable here");
       expect(note).toContain("--- page 1 ---\nCover");
       expect(parts[1]).toEqual(question);
@@ -174,12 +178,12 @@ describe("OpenWork PDF attachments plugin", () => {
       expect(partsOf(message).map((part) => part.type)).toEqual(["text"]);
       const note = noteOf(message);
       expect(note).toContain("pages: 101");
-      expect(note).toContain("model_note: This PDF exceeds what the provider accepts as a direct PDF upload");
+      expect(note).toContain("model_note: This PDF does not fit what the provider accepts as direct PDF input for this request");
       expect(note).toContain("--- page 101 ---\nPage 101");
     });
   }, 30_000);
 
-  test("inlines at most 20 page images and points to the rest on disk", async () => {
+  test("inlines at most 20 page images and points to the page tool for the rest", async () => {
     await withWorkspace(async (root) => {
       const pages = Array.from({ length: 25 }, (_page, index) => `Page ${index + 1}`);
       const [message] = await transform(root, [userMessage(VISION, [pdfPart(pdfDataUrl(buildTestPdf(pages)))])]);
@@ -187,7 +191,8 @@ describe("OpenWork PDF attachments plugin", () => {
       expect(parts.filter((part) => part.type === "file").length).toBe(20);
       const note = noteOf(message);
       expect(note).toContain("page_images_in_this_message: pages 1-20, in order");
-      expect(note).toContain("page_images_on_disk: pages 1-25 at");
+      expect(note).toContain("page_images_on_disk: pages 1-20 under");
+      expect(note).toContain("more_pages: call openwork_pdf_pages with pdf_path and up to 8 page numbers to see other pages as images");
       expect(note).toContain("--- page 25 ---\nPage 25");
     });
   }, 30_000);
@@ -247,7 +252,7 @@ describe("OpenWork PDF attachments plugin", () => {
         ])]);
         const [insidePart, outsidePart, linkPart] = partsOf(message);
         expect(textOf(insidePart)).toContain("--- page 1 ---\nInside the workspace");
-        expect(textOf(outsidePart)).toContain("could not prepare the PDF attachment");
+        expect(textOf(outsidePart)).toContain('could not prepare the PDF "outside.pdf"');
         expect(textOf(outsidePart)).toContain("outside the active workspace");
         expect(textOf(linkPart)).toContain("outside the active workspace");
         expect(textOf(linkPart)).toContain("The original PDF bytes were not forwarded to the provider.");
@@ -296,6 +301,90 @@ describe("OpenWork PDF attachments plugin", () => {
       expect(listed).toBe(0);
     });
   });
+
+  test("shares one native page budget across every PDF in the step, in transcript order", async () => {
+    await withWorkspace(async (root) => {
+      const sixty = Array.from({ length: 60 }, (_page, index) => `Page ${index + 1}`);
+      const first = pdfPart(pdfDataUrl(buildTestPdf(sixty)), { id: "a" });
+      const second = pdfPart(pdfDataUrl(buildTestPdf(sixty.map((line) => `${line} (second)`))), { id: "b", filename: "second.pdf" });
+      const [message] = await transform(root, [userMessage(NATIVE, [first, second, question])]);
+      const parts = partsOf(message);
+      expect(parts[0]).toEqual(first);
+      expect(parts.filter((part) => part.type === "file" && part.mime === "application/pdf")).toHaveLength(1);
+      const note = noteOf(message);
+      expect(note).toContain('OpenWork prepared the PDF "second.pdf"');
+      expect(note).toContain("does not fit what the provider accepts as direct PDF input for this request");
+      expect(parts.at(-1)).toEqual(question);
+    });
+  }, 30_000);
+
+  test("normalizes PDF attachments inside tool results the same way", async () => {
+    await withWorkspace(async (root) => {
+      const url = pdfDataUrl(buildTestPdf(["Read me", null]));
+      const toolPart = {
+        id: "t1",
+        sessionID: "ses",
+        messageID: "a1",
+        type: "tool",
+        callID: "call_1",
+        tool: "read",
+        state: { status: "completed", input: { filePath: `${root}/docs/handbook.pdf` }, output: "PDF read successfully", title: "handbook.pdf", metadata: {}, time: { start: 1, end: 2 }, attachments: [{ type: "file", mime: "application/pdf", url }] },
+      };
+      const assistant = (model: Model) => ({ info: { id: "a1", sessionID: "ses", role: "assistant", providerID: model.providerID, modelID: model.modelID }, parts: [toolPart] });
+      const conversation = (model: Model) => [userMessage(model, [question]), assistant(model), userMessage(model, [{ ...question, id: "p9", messageID: "m2" }], "m2")];
+
+      const textStep = await transform(root, conversation(TEXT));
+      const textTool = expectRecord(partsOf(textStep[1])[0]);
+      const textState = expectRecord(textTool.state);
+      expect(textState.attachments).toEqual([]);
+      expect(String(textState.output)).toContain("PDF read successfully");
+      expect(String(textState.output)).toContain('OpenWork prepared the PDF "handbook.pdf"');
+      expect(String(textState.output)).toContain("page_images_in_this_tool_result: none");
+      expect(String(textState.output)).toContain("--- page 1 ---\nRead me");
+
+      const visionStep = await transform(root, conversation(VISION));
+      const visionState = expectRecord(expectRecord(partsOf(visionStep[1])[0]).state);
+      const attachments = Array.isArray(visionState.attachments) ? visionState.attachments.map(expectRecord) : [];
+      expect(attachments.map((attachment) => attachment.mime)).toEqual(["image/png", "image/png"]);
+      expect(attachments.map((attachment) => attachment.filename)).toEqual(["handbook - page 1.png", "handbook - page 2.png"]);
+      expect(String(visionState.output)).toContain("page_images_in_this_tool_result: pages 1-2, in order");
+
+      const nativeStep = await transform(root, conversation(NATIVE));
+      expect(partsOf(nativeStep[1])[0]).toEqual(toolPart);
+    });
+  });
+
+  test("the page tool renders requested pages for image-capable sessions and returns text for text-only ones", async () => {
+    await withWorkspace(async (root) => {
+      const pages = Array.from({ length: 25 }, (_page, index) => `Page ${index + 1}`);
+      const plugin = await OpenWorkPdfAttachments({ directory: root, client: { provider: { list: async () => catalog } } });
+      const url = pdfDataUrl(buildTestPdf(pages));
+
+      const visionOutput = { messages: [userMessage(VISION, [pdfPart(url), question])] };
+      await plugin["experimental.chat.messages.transform"]({}, visionOutput);
+      const pdfPath = /pdf_path: (\S+)/.exec(noteOf(visionOutput.messages[0]))?.[1] ?? "";
+      expect(pdfPath.startsWith(".opencode/openwork/inbox/chat-attachments/")).toBe(true);
+
+      const tool = plugin.tool.openwork_pdf_pages;
+      const visionResult = await tool.execute({ pdf_path: pdfPath, pages: [23, 24, 99] }, { sessionID: "ses" });
+      if (typeof visionResult === "string") throw new Error(`Expected attachments, got: ${visionResult}`);
+      expect(visionResult.attachments.map((attachment) => attachment.filename)).toEqual(["page-023.png", "page-024.png"]);
+      expect(visionResult.attachments.every((attachment) => attachment.url.startsWith("data:image/png;base64,"))).toBe(true);
+      expect(visionResult.output).toContain("page_images_attached: pages 23-24, in order");
+      expect(visionResult.output).toContain("ignored_pages: 99 (outside 1-25)");
+      expect(visionResult.output).toContain("--- page 23 ---\nPage 23");
+
+      const textOutput = { messages: [userMessage(TEXT, [pdfPart(url, { id: "p7" }), question], "m7")] };
+      textOutput.messages[0].info.sessionID = "ses-text";
+      await plugin["experimental.chat.messages.transform"]({}, textOutput);
+      const textResult = await tool.execute({ pdf_path: pdfPath, pages: [24] }, { sessionID: "ses-text" });
+      expect(typeof textResult).toBe("string");
+      expect(String(textResult)).toContain("page_images_attached: none (this model cannot view images; text is provided instead)");
+      expect(String(textResult)).toContain("--- page 24 ---\nPage 24");
+
+      await expect(tool.execute({ pdf_path: "../outside.pdf", pages: [1] }, { sessionID: "ses" })).rejects.toThrow("outside the active workspace");
+    });
+  }, 30_000);
 
   test("is registered in runtime config, bundled with its wasm runtime, and packaged by the desktop app", async () => {
     const runtime = await buildOpenworkRuntimeConfigObject();

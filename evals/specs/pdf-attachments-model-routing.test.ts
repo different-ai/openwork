@@ -1,6 +1,6 @@
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, realpath, rm, writeFile } from "node:fs/promises";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
@@ -81,7 +81,7 @@ test("PDF attachments are routed by what the current model can take as input", a
     expect(images.map((part) => part.mime)).toEqual(["image/png", "image/png", "image/png"]);
     expect(images.map((part) => part.filename)).toEqual(["report - page 1.png", "report - page 2.png", "report - page 3.png"]);
     expect(images.every((part) => String(part.url).startsWith("data:image/png;base64,"))).toBe(true);
-    const visionNote = visionParts.find((part) => part.type === "text" && String(part.text).startsWith("OpenWork prepared the PDF attachment"));
+    const visionNote = visionParts.find((part) => part.type === "text" && String(part.text).startsWith("OpenWork prepared the PDF"));
     expect(String(visionNote?.text)).toContain("text_layer: present on 2 of 3 extracted pages; pages without one: 2");
     expect(String(visionNote?.text)).toContain("--- page 1 ---\nQuarterly revenue report");
     expect(visionParts.at(-1)).toEqual({ id: "p2", sessionID: "ses", messageID: "m1", type: "text", text: "Summarize this." });
@@ -96,6 +96,7 @@ test("PDF attachments are routed by what the current model can take as input", a
     const textParts = partsOf(textOnly.messages[0]);
     expect(textParts.map((part) => part.type)).toEqual(["text", "text"]);
     expect(String(textParts[0].text)).toContain("This model cannot view images, so pages without a text layer are not readable here");
+    expect(String(textParts[0].text)).not.toContain("page_images_on_disk");
     expect(String(textParts[0].text)).toContain("--- page 3 ---\nAppendix: totals");
     evidence.recordAssertionEvidence(
       "A text-only model receives the extracted text and an honest note about pages it cannot read",
@@ -135,7 +136,35 @@ const engineTitle = engineMissing.length > 0
   ? `the real engine sends each model what it can take skipped — needs: ${engineMissing.join(", ")}`
   : "the real engine sends each model what it can take from an attached PDF";
 
-type ProviderRequest = { model: string; parts: string[] };
+type ProviderRequest = { model: string; parts: string[]; toolResults: string[]; tools: string[] };
+
+const READ_SCENARIO_MARKER = "Read the PDF on disk and summarize it.";
+const READ_TOOL_CALL_ID = "call_read_pdf";
+
+function summarizeToolResults(body: unknown): string[] {
+  if (!isRecord(body) || !Array.isArray(body.messages)) return [];
+  const results: string[] = [];
+  for (const message of body.messages) {
+    if (!isRecord(message) || message.role !== "tool") continue;
+    const content = typeof message.content === "string" ? message.content : JSON.stringify(message.content);
+    results.push(content.includes("OpenWork prepared the PDF") ? "tool:note" : `tool:${content.slice(0, 30)}`);
+  }
+  return results;
+}
+
+function toolNames(body: unknown): string[] {
+  if (!isRecord(body) || !Array.isArray(body.tools)) return [];
+  return body.tools.map((tool) => (isRecord(tool) && isRecord(tool.function) && typeof tool.function.name === "string" ? tool.function.name : "?"));
+}
+
+function lastUserText(body: unknown): string {
+  if (!isRecord(body) || !Array.isArray(body.messages)) return "";
+  const users = body.messages.filter((message) => isRecord(message) && message.role === "user");
+  const last = users.at(-1);
+  if (!isRecord(last)) return "";
+  const content = Array.isArray(last.content) ? last.content : [{ type: "text", text: last.content }];
+  return content.filter(isRecord).filter((item) => item.type === "text").map((item) => String(item.text)).join("\n");
+}
 
 function summarizeUserContent(body: unknown): string[] {
   if (!isRecord(body) || !Array.isArray(body.messages)) return [];
@@ -150,7 +179,7 @@ function summarizeUserContent(body: unknown): string[] {
       } else if (item.type === "file") {
         parts.push(`file:${isRecord(item.file) && typeof item.file.filename === "string" ? item.file.filename : "?"}`);
       } else if (item.type === "text" && typeof item.text === "string") {
-        parts.push(item.text.startsWith("OpenWork prepared the PDF attachment") ? "text:note" : `text:${item.text.slice(0, 20)}`);
+        parts.push(item.text.startsWith("OpenWork prepared the PDF") ? "text:note" : `text:${item.text.slice(0, 20)}`);
       } else {
         parts.push(`other:${String(item.type)}`);
       }
@@ -164,7 +193,8 @@ test(engineTitle, async ({ evidence }) => {
   const binary = engineBinary();
   if (!binary) return;
 
-  const scratch = await mkdtemp(join(tmpdir(), "openwork-pdf-engine-"));
+  // Resolve symlinks (macOS /var -> /private/var) so the engine sees workspace files as inside the project.
+  const scratch = await realpath(await mkdtemp(join(tmpdir(), "openwork-pdf-engine-")));
   const pluginDir = join(scratch, "plugins");
   const home = join(scratch, "home");
   const workspace = join(scratch, "workspace");
@@ -175,13 +205,21 @@ test(engineTitle, async ({ evidence }) => {
       let raw = "";
       for await (const chunk of request) raw += chunk;
       const body: unknown = JSON.parse(raw);
-      requests.push({ model: isRecord(body) && typeof body.model === "string" ? body.model : "?", parts: summarizeUserContent(body) });
+      requests.push({ model: isRecord(body) && typeof body.model === "string" ? body.model : "?", parts: summarizeUserContent(body), toolResults: summarizeToolResults(body), tools: toolNames(body) });
       response.writeHead(200, { "content-type": "text/event-stream" });
-      for (const chunk of [
-        { id: "c1", object: "chat.completion.chunk", choices: [{ index: 0, delta: { role: "assistant" }, finish_reason: null }] },
-        { id: "c1", object: "chat.completion.chunk", choices: [{ index: 0, delta: { content: "MOCK OK" }, finish_reason: null }] },
-        { id: "c1", object: "chat.completion.chunk", choices: [{ index: 0, delta: {}, finish_reason: "stop" }] },
-      ]) response.write(`data: ${JSON.stringify(chunk)}\n\n`);
+      const askToRead = lastUserText(body).includes(READ_SCENARIO_MARKER) && summarizeToolResults(body).length === 0;
+      const chunks = askToRead
+        ? [
+          { id: "c1", object: "chat.completion.chunk", choices: [{ index: 0, delta: { role: "assistant" }, finish_reason: null }] },
+          { id: "c1", object: "chat.completion.chunk", choices: [{ index: 0, delta: { tool_calls: [{ index: 0, id: READ_TOOL_CALL_ID, type: "function", function: { name: "read", arguments: JSON.stringify({ filePath: join(workspace, "on-disk.pdf") }) } }] }, finish_reason: null }] },
+          { id: "c1", object: "chat.completion.chunk", choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }] },
+        ]
+        : [
+          { id: "c1", object: "chat.completion.chunk", choices: [{ index: 0, delta: { role: "assistant" }, finish_reason: null }] },
+          { id: "c1", object: "chat.completion.chunk", choices: [{ index: 0, delta: { content: "MOCK OK" }, finish_reason: null }] },
+          { id: "c1", object: "chat.completion.chunk", choices: [{ index: 0, delta: {}, finish_reason: "stop" }] },
+        ];
+      for (const chunk of chunks) response.write(`data: ${JSON.stringify(chunk)}\n\n`);
       response.write("data: [DONE]\n\n");
       response.end();
       return;
@@ -203,6 +241,7 @@ test(engineTitle, async ({ evidence }) => {
 
     const model = (input: string[]) => ({ name: input.join("+"), attachment: input.length > 1, tool_call: true, reasoning: false, temperature: true, modalities: { input, output: ["text"] }, limit: { context: 128000, output: 4096 }, cost: { input: 0, output: 0 } });
     await Promise.all([mkdir(home, { recursive: true }), mkdir(workspace, { recursive: true })]);
+    await writeFile(join(workspace, "on-disk.pdf"), buildTestPdf(["Handbook chapter one", null]));
     await writeFile(join(workspace, "opencode.json"), JSON.stringify({
       $schema: "https://opencode.ai/config.json",
       plugin: [join(pluginDir, "openwork-pdf-attachments.js")],
@@ -279,6 +318,32 @@ test(engineTitle, async ({ evidence }) => {
       };
     }
 
+    const readSession = await api("POST", "/session", { title: "pdf read on disk" });
+    const readSessionId = isRecord(readSession) && typeof readSession.id === "string" ? readSession.id : "";
+    const readBefore = requests.length;
+    const readResult = await api("POST", `/session/${readSessionId}/message`, { model: { providerID: "mock", modelID: "text" }, parts: [{ type: "text", text: READ_SCENARIO_MARKER }] });
+    const readReply = isRecord(readResult) && Array.isArray(readResult.parts)
+      ? readResult.parts.filter(isRecord).filter((part) => part.type === "text").map((part) => String(part.text)).join("")
+      : "";
+    const readRequests = requests.slice(readBefore);
+
+    expect(requests.every((request) => request.tools.includes("openwork_pdf_pages"))).toBe(true);
+    expect(readRequests.length).toBe(2);
+    expect(readRequests[1].toolResults).toEqual(["tool:note"]);
+    expect(readRequests[1].parts.some((part) => part.startsWith("file:") || part.startsWith("image_url:"))).toBe(false);
+    expect(readReply).toBe("MOCK OK");
+    const readTranscript = await api("GET", `/session/${readSessionId}/message`);
+    const readToolPart = Array.isArray(readTranscript)
+      ? readTranscript.filter(isRecord).flatMap((message) => partsOf(message)).find((part) => part.type === "tool")
+      : undefined;
+    const readState = readToolPart && isRecord(readToolPart.state) ? readToolPart.state : null;
+    expect(Array.isArray(readState?.attachments) ? readState.attachments.map((attachment) => (isRecord(attachment) ? attachment.mime : "?")) : []).toEqual(["application/pdf"]);
+    evidence.recordAssertionEvidence(
+      "A text-only model that reads a PDF from disk through the Read tool receives its text instead of a PDF it cannot take, and the persisted tool result keeps the original attachment",
+      `The mock model asked the engine to read on-disk.pdf; the follow-up request carried one tool result containing the OpenWork PDF note and no file or image parts, the turn completed, and the transcript's tool part still holds an application/pdf attachment. Every request advertised the openwork_pdf_pages tool.`,
+      true,
+    );
+
     expect(observed.vision.provider).toEqual(["image_url:data:image/png", "image_url:data:image/png", "image_url:data:image/png", "text:note", "text:Summarize this."]);
     expect(observed.text.provider).toEqual(["text:note", "text:Summarize this."]);
     expect(observed.native.provider).toEqual(["file:report.pdf", "text:Summarize this."]);
@@ -286,8 +351,10 @@ test(engineTitle, async ({ evidence }) => {
       expect(observed[modelID].reply).toBe("MOCK OK");
       expect(observed[modelID].persisted).toEqual(["file:application/pdf", "text"]);
     }
-    const derived = await readdir(join(workspace, ".opencode", "openwork", "inbox", "pdf-pages"));
-    expect(derived).toHaveLength(1);
+    const derived = (await readdir(join(workspace, ".opencode", "openwork", "inbox", "pdf-pages"))).sort();
+    expect(derived).toHaveLength(2);
+    expect(derived.some((name) => name.endsWith("-report"))).toBe(true);
+    expect(derived.some((name) => name.endsWith("-on-disk"))).toBe(true);
 
     evidence.recordAssertionEvidence(
       "Inside the real engine, an image-capable model received page images plus text, a text-only model received text, and a PDF-capable model received the PDF itself",

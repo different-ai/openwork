@@ -5,12 +5,17 @@ import { join } from "node:path";
 
 import {
   DERIVED_DIR,
+  EAGER_RENDERED_PAGES,
   MATERIALIZED_DIR,
-  MAX_RENDERED_PAGES,
+  MAX_DERIVED_BUNDLES,
+  MAX_PAGES_PER_REQUEST,
   MAX_TEXT_PAGES,
+  PAGE_IMAGE_MAX_BYTES,
   PAGE_LONG_EDGE_PX,
   derivePdf,
+  pageTextFrom,
   readPageImage,
+  renderPdfPages,
   resetDerivedPdfMemory,
   safePdfFilename,
 } from "./derive.js";
@@ -63,6 +68,7 @@ describe("derivePdf", () => {
       for (const page of derived.renderedPages) {
         expect(page.height).toBe(PAGE_LONG_EDGE_PX);
         expect(page.width).toBe(Math.floor((612 / 792) * PAGE_LONG_EDGE_PX));
+        expect(page.mime).toBe("image/png");
         expect(page.fileName).toBe(`page-00${page.page}.png`);
         const bytes = await readPageImage(root, derived, page);
         if (!bytes) throw new Error("Expected page image bytes");
@@ -103,7 +109,7 @@ describe("derivePdf", () => {
       expect(derived.text).toContain(`text_extracted_for_pages: 1-${MAX_TEXT_PAGES} (of ${MAX_TEXT_PAGES + 2})`);
       expect(derived.text).toContain(`--- page ${MAX_TEXT_PAGES} ---`);
       expect(derived.text).not.toContain(`--- page ${MAX_TEXT_PAGES + 1} ---`);
-      expect(derived.renderedPages.length).toBeLessThanOrEqual(MAX_RENDERED_PAGES);
+      expect(derived.renderedPages.length).toBeLessThanOrEqual(EAGER_RENDERED_PAGES);
       expect(derived.renderedPages.length).toBeGreaterThan(0);
       expect(derived.renderedPages.at(-1)?.page).toBe(derived.renderedPages.length);
     });
@@ -126,6 +132,62 @@ describe("derivePdf", () => {
       expect(entries).toEqual([]);
     });
   });
+
+  test("encodes photo-like pages as full-resolution JPEG and text pages as PNG", async () => {
+    await withWorkspace(async (root) => {
+      const derived = await derivePdf(root, "album.pdf", buildTestPdf(["Cover", { photo: true }]), { renderPages: true });
+      const [cover, photo] = derived.renderedPages;
+      expect(cover.mime).toBe("image/png");
+      expect(cover.fileName).toBe("page-001.png");
+      expect(photo.mime).toBe("image/jpeg");
+      expect(photo.fileName).toBe("page-002.jpg");
+      expect(photo.height).toBe(PAGE_LONG_EDGE_PX);
+      expect(photo.bytes).toBeLessThanOrEqual(PAGE_IMAGE_MAX_BYTES);
+      expect(derived.pagesWithoutText).toEqual([2]);
+      const jpeg = await readPageImage(root, derived, photo);
+      expect(Buffer.from(jpeg?.subarray(0, 3) ?? [])).toEqual(Buffer.from([0xff, 0xd8, 0xff]));
+    });
+  });
+
+  test("renders further pages on demand, bounded per request, and records them in the bundle", async () => {
+    await withWorkspace(async (root) => {
+      const pages = Array.from({ length: 30 }, (_page, index) => `Page ${index + 1}`);
+      const pdf = buildTestPdf(pages);
+      const eager = await derivePdf(root, "long.pdf", pdf, { renderPages: true });
+      expect(eager.renderedPages.map((page) => page.page)).toEqual(Array.from({ length: EAGER_RENDERED_PAGES }, (_page, index) => index + 1));
+
+      const more = await renderPdfPages(root, eager, pdf, [27, 3, 99, 25, 27]);
+      expect(more.renderedPages.map((page) => page.page).slice(-2)).toEqual([25, 27]);
+      expect(more.renderedPages.length).toBe(EAGER_RENDERED_PAGES + 2);
+      expect(await readPageImage(root, more, more.renderedPages.at(-1) ?? eager.renderedPages[0])).not.toBeNull();
+
+      const tooMany = await renderPdfPages(root, more, pdf, Array.from({ length: 12 }, (_page, index) => 21 + index));
+      expect(tooMany.renderedPages.length).toBe(EAGER_RENDERED_PAGES + 2 + MAX_PAGES_PER_REQUEST);
+
+      resetDerivedPdfMemory();
+      const reloaded = await derivePdf(root, "long.pdf", pdf, { renderPages: true });
+      expect(reloaded.renderedPages).toEqual(tooMany.renderedPages);
+    });
+  }, 60_000);
+
+  test("pageTextFrom returns one page's block from the page-marked text", () => {
+    const text = "# a.pdf\n\npages: 3\n\n--- page 1 ---\nFirst\n\n--- page 2 (no text layer) ---\n\n--- page 3 ---\nThird line\nmore\n";
+    expect(pageTextFrom(text, 1)).toBe("First");
+    expect(pageTextFrom(text, 2)).toBe("");
+    expect(pageTextFrom(text, 3)).toBe("Third line\nmore");
+    expect(pageTextFrom(text, 4)).toBeNull();
+  });
+
+  test("prunes the oldest derived bundles once the workspace holds more than the cap", async () => {
+    await withWorkspace(async (root) => {
+      for (let index = 0; index < MAX_DERIVED_BUNDLES + 3; index += 1) {
+        await derivePdf(root, `doc-${index}.pdf`, buildTestPdf([`Document ${index}`]), { renderPages: false });
+      }
+      const bundles = await readdir(join(root, DERIVED_DIR));
+      expect(bundles.length).toBe(MAX_DERIVED_BUNDLES);
+      expect(bundles.some((name) => name.endsWith(`-doc-${MAX_DERIVED_BUNDLES + 2}`))).toBe(true);
+    });
+  }, 60_000);
 
   test("works without a workspace root by keeping page images in memory", async () => {
     const derived = await derivePdf(null, "memo.pdf", buildTestPdf(["Memo"]), { renderPages: true });
