@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { CoworkerMark } from "@/ui/brand";
 import { FOOTER, GET_STARTED, PLATFORM, SITE, allClaims } from "~/content";
+import { AgentHandoff, Notify } from "~/sections/cloud";
 import { Container, Pill, Reveal, Section } from "~/ui/primitives";
 
 export function Platform() {
@@ -79,6 +80,8 @@ export function GetStarted() {
           </div>
         </div>
       </Reveal>
+      <AgentHandoff />
+      <Notify />
     </Section>
   );
 }
@@ -95,7 +98,10 @@ function ClaimSources() {
       <ul className="mt-4 grid gap-3 md:grid-cols-2">
         {claims.map((claim) => (
           <li key={claim.source + claim.text.slice(0, 24)} className="min-w-0 text-[12px] leading-relaxed">
-            <p className="text-mist">{claim.text}</p>
+            <p className="text-mist">
+              {claim.planned ? <span className="mr-1.5 rounded-full bg-amber/12 px-1.5 py-px text-[10px] font-medium text-amber">Direction</span> : null}
+              {claim.text}
+            </p>
             <p className="mt-0.5 truncate font-mono text-[10.5px] text-mist/60" title={claim.source}>
               {claim.source}
             </p>
