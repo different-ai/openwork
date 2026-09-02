@@ -25,6 +25,7 @@ on:
       - packages/paths/**
       - packages/types/**
       - packages/ui/**
+      - packages/workbook/**
       - patches/**
       - scripts/release/**
       - constants.json

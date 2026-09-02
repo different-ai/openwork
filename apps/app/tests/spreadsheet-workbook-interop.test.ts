@@ -1,8 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import * as XLSX from "xlsx";
+import { openXlsxWorkbook, writeXlsxWorkbook } from "@openwork/workbook";
 
 import { parseSpreadsheet, serializeSpreadsheet } from "../src/react-app/domains/session/artifacts/artifact-spreadsheet-model";
-import { openXlsxWorkbook, writeXlsxWorkbook } from "../../../packages/workbook/src/index";
 
 function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {
   const copy = new Uint8Array(bytes.byteLength);
@@ -10,19 +9,12 @@ function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {
   return copy.buffer;
 }
 
-describe("spreadsheet tools and the artifact panel share one workbook format", () => {
+describe("spreadsheet tools and the artifact preview share one workbook engine", () => {
   test("a workbook written by spreadsheet_write opens in the artifact spreadsheet preview", async () => {
     const { bytes } = await writeXlsxWorkbook([
       { name: "Summary", rows: [["Region", "Revenue", "Active"], ["EMEA", 1742.42, true], ["APAC", 871.21, false]] },
       { name: "Detail", rows: [["id", "amount"], [1, 10]] },
     ]);
-
-    const workbook = XLSX.read(toArrayBuffer(bytes), { type: "array" });
-    expect(workbook.SheetNames).toEqual(["Summary", "Detail"]);
-    expect(workbook.Sheets.Summary["!ref"]).toBe("A1:C3");
-    expect(workbook.Sheets.Summary.B2).toMatchObject({ t: "n", v: 1742.42 });
-    expect(workbook.Sheets.Summary.C2).toMatchObject({ t: "b", v: true });
-    expect(workbook.Sheets.Detail.B2).toMatchObject({ t: "n", v: 10 });
 
     const previewRows = await parseSpreadsheet({ name: "reports/q3.xlsx", content: { kind: "binary", data: toArrayBuffer(bytes) } });
     expect(previewRows).toEqual([

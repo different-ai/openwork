@@ -39,7 +39,7 @@ export function isMarkdownPreviewSupported(extension: string) {
 }
 
 export function isSheetPreviewSupported(extension: string) {
-  return ["csv", "tsv", "xlsx", "xls", "ods"].includes(extension);
+  return ["csv", "tsv", "xlsx"].includes(extension);
 }
 
 export function isImagePreviewSupported(extension: string) {
