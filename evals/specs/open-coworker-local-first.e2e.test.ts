@@ -196,10 +196,63 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   await clickButton(app, "Add coworker", { timeoutMs: 120_000 });
 
   await waitFor(app, `Boolean(document.querySelector('[data-testid="coworker-rail"]'))`, { timeoutMs: 120_000, label: "team rail" });
+
+  // A new coworker opens on the conversation alone: one header that carries the
+  // coworker, a quiet empty state with no starter cards, and the details panel
+  // folded to its icon strip until asked for.
+  const conversationFirst = await waitFor(app, `(() => {
+    const header = document.querySelector('[data-testid="conversation-header"]');
+    const panel = document.querySelector('[data-testid="context-panel"]');
+    const empty = document.querySelector('[data-testid="coworker-discussion-empty"]');
+    const details = document.querySelector('[data-testid="conversation-details"]');
+    if (!(header instanceof HTMLElement) || !(panel instanceof HTMLElement) || !(empty instanceof HTMLElement) || !(details instanceof HTMLElement)) return false;
+    const main = header.closest("div.flex-col");
+    const headerCount = main ? main.querySelectorAll("header").length : 0;
+    return {
+      headerHeight: Math.round(header.getBoundingClientRect().height),
+      headerCount,
+      headerName: header.querySelector("h1")?.textContent?.trim(),
+      headerLine: document.querySelector('[data-testid="conversation-header-title"]')?.textContent?.trim(),
+      panelCollapsed: panel.dataset.collapsed,
+      panelWidth: Math.round(panel.getBoundingClientRect().width),
+      detailsLabel: details.getAttribute("aria-label"),
+      emptyText: empty.innerText.split("\n").map((line) => line.trim()).filter(Boolean),
+      emptyButtons: empty.querySelectorAll("button").length,
+      starterCards: [...document.querySelectorAll("main button")].filter((button) => /focus on today|think through a decision|catch me up/i.test(button.textContent ?? "")).length,
+    };
+  })()`, { timeoutMs: 60_000, label: "conversation-first workspace" });
+  expect(conversationFirst).toMatchObject({
+    headerHeight: 78,
+    headerCount: 1,
+    headerName: "Scout",
+    headerLine: "New discussion",
+    panelCollapsed: "true",
+    panelWidth: 56,
+    detailsLabel: "Show details",
+    emptyButtons: 0,
+    starterCards: 0,
+  });
+  if (!isRecord(conversationFirst) || !Array.isArray(conversationFirst.emptyText)) throw new Error("Conversation-first facts were unavailable.");
+  expect(conversationFirst.emptyText[0]).toBe("Scout");
+  expect(conversationFirst.emptyText).toContain("What should we work through?");
+  evidence.recordAssertionEvidence(
+    "A new coworker opens on the conversation with the details panel closed",
+    "Scout's workspace opened with a single 78px header naming the coworker and the open discussion, a quiet empty state (small avatar, name, one line) with no starter cards, and the right panel folded to a 56px icon strip behind a Show details control.",
+    true,
+  );
+
+  // Details open on request: the header control unfolds the Activity view.
+  await waitFor(app, `(() => {
+    const details = document.querySelector('[data-testid="conversation-details"]');
+    if (!(details instanceof HTMLElement)) return false;
+    details.click();
+    return true;
+  })()`, { label: "Show details" });
+  await waitFor(app, `document.querySelector('[data-testid="context-panel"]')?.dataset.collapsed === "false"`, { timeoutMs: 30_000, label: "details panel open" });
   await waitForText(app, "Responsibilities", { timeoutMs: 60_000 });
 
-  // The default right sidebar is useful before anything is clicked: one status
-  // word, the responsibilities section, quiet secondary links, and no repeated
+  // The Activity view is useful as soon as it opens: one status word, the
+  // responsibilities section, quiet secondary links, and no repeated
   // empty-state phrasing or technical vocabulary.
   const defaultSidebar = await waitFor(app, `(() => {
     const summary = document.querySelector('[data-testid="coworker-activity-summary"]');
@@ -261,8 +314,8 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   })()`);
   expect(composerFacts).toEqual({ present: true, hasModelControl: false, mentionsModel: false });
   evidence.recordAssertionEvidence(
-    "The default Activity sidebar leads with current activity and responsibilities, and the composer carries no model controls",
-    "Before any click, Scout's sidebar showed exactly one idle status line plus one note, the Responsibilities section with a single compact Add responsibility empty state, three quiet links, and an icon-only 32×32 Coworker settings control with a 16×16 glyph; the sidebar and composer contained no model, thinking-effort, or engine vocabulary.",
+    "The Activity view leads with current activity and responsibilities, and the composer carries no model controls",
+    "Once opened, Scout's Activity view showed exactly one idle status line plus one note, the Responsibilities section with a single compact Add responsibility empty state, two quiet links, and an icon-only 32×32 Coworker settings control with a 16×16 glyph; the panel and composer contained no model, thinking-effort, or engine vocabulary.",
     true,
   );
 
@@ -390,6 +443,38 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   evidence.recordAssertionEvidence(
     "Both side panels fold to icon rails and unfold from them",
     "With no fold buttons anywhere, a click on each panel's edge folded it: the team rail became an 88px rail clear of the window controls, without the logo, with a search icon, Scout's avatar marked current, a bottom status dot, and a hover card beside the rail naming Scout and Ready; the context panel became a 56px strip with Activity, Apps & tools, Memory, and Coworker settings icons and no words, and choosing Memory unfolded the panel on that view. Dragging the rail edge past the fold threshold closed it, a click on the edge reopened and refolded it, and the search icon reopened it with the cursor in the search box.",
+    true,
+  );
+
+  // The open panel is transient: Escape closes it, the header control reopens it, and
+  // pressing that control again closes it.
+  const transientPanel = await evalIn(app, `(async () => {
+    const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+    const panel = document.querySelector('[data-testid="context-panel"]');
+    const details = document.querySelector('[data-testid="conversation-details"]');
+    if (!(panel instanceof HTMLElement) || !(details instanceof HTMLElement)) return null;
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    await wait(400);
+    const afterEscape = { collapsed: panel.dataset.collapsed, width: Math.round(panel.getBoundingClientRect().width), label: details.getAttribute("aria-label") };
+    details.click();
+    await wait(400);
+    const afterOpen = { collapsed: panel.dataset.collapsed, view: panel.dataset.view, label: details.getAttribute("aria-label"), pressed: details.getAttribute("aria-pressed") };
+    details.click();
+    await wait(400);
+    const afterToggle = { collapsed: panel.dataset.collapsed, width: Math.round(panel.getBoundingClientRect().width) };
+    details.click();
+    await wait(400);
+    return { afterEscape, afterOpen, afterToggle, finalCollapsed: panel.dataset.collapsed };
+  })()`, { awaitPromise: true, timeoutMs: 30_000 });
+  expect(transientPanel).toEqual({
+    afterEscape: { collapsed: "true", width: 56, label: "Show details" },
+    afterOpen: { collapsed: "false", view: "overview", label: "Hide details", pressed: "true" },
+    afterToggle: { collapsed: "true", width: 56 },
+    finalCollapsed: "false",
+  });
+  evidence.recordAssertionEvidence(
+    "The details panel is transient",
+    "Escape folded the open panel back to its 56px strip, the header's details control reopened it on Activity and read Hide details while open, and pressing it again folded the panel.",
     true,
   );
 
