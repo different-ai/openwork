@@ -216,7 +216,7 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
       panelCollapsed: panel.dataset.collapsed,
       panelWidth: Math.round(panel.getBoundingClientRect().width),
       detailsLabel: details.getAttribute("aria-label"),
-      emptyText: empty.innerText.split("\n").map((line) => line.trim()).filter(Boolean),
+      emptyText: empty.innerText.split("\\n").map((line) => line.trim()).filter(Boolean),
       emptyButtons: empty.querySelectorAll("button").length,
       starterCards: [...document.querySelectorAll("main button")].filter((button) => /focus on today|think through a decision|catch me up/i.test(button.textContent ?? "")).length,
     };
