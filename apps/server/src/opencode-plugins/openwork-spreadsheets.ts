@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
-import { constants } from "node:fs";
-import { lstat, mkdir, open, realpath, rename, rm, writeFile } from "node:fs/promises";
-import { dirname, extname, isAbsolute, relative, resolve, sep } from "node:path";
+import { constants, type Stats } from "node:fs";
+import { lstat, mkdir, open, realpath, rename, rm, stat } from "node:fs/promises";
+import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { z } from "zod";
 import { appendAgentInstructions, createInstructionSection } from "./agent-instruction-compose.js";
 import {
@@ -99,9 +99,12 @@ function resolveWorkspacePath(root: string, input: string): WorkspaceFile {
   return { root, absolutePath, relativePath: toWorkspaceRelative(root, absolutePath) };
 }
 
-async function assertRealPathWithinRoot(root: string, path: string, label: string): Promise<void> {
-  const [realRoot, realPath] = await Promise.all([realpath(root), realpath(path)]);
-  if (!isWithin(realRoot, realPath)) throw new Error(`${label} resolves outside the active workspace.`);
+function sameFile(left: Stats, right: Stats): boolean {
+  return left.dev === right.dev && left.ino === right.ino;
+}
+
+function changedWhileWorking(label: string): Error {
+  return new Error(`${label} changed on disk while it was being accessed; nothing was read or written. Try again.`);
 }
 
 async function deepestExistingAncestor(path: string): Promise<string> {
@@ -118,16 +121,73 @@ async function deepestExistingAncestor(path: string): Promise<string> {
   }
 }
 
+type Destination = {
+  realDirectory: string;
+  identity: Stats;
+};
+
 /**
  * Create the destination folder only after proving that the deepest existing
- * ancestor really lives inside the workspace, so a symlink inside the
- * workspace can never make mkdir create directories at its target, then prove
- * the created folder again before anything is written into it.
+ * ancestor really lives inside the workspace (so a symlink inside the
+ * workspace can never make mkdir create directories at its target), then
+ * resolve the created folder and remember its identity so the write can prove
+ * it still lands in that exact folder.
  */
-async function prepareDestinationDirectory(root: string, directory: string, label: string): Promise<void> {
-  await assertRealPathWithinRoot(root, await deepestExistingAncestor(directory), label);
+async function prepareDestinationDirectory(realRoot: string, directory: string, label: string): Promise<Destination> {
+  const realAncestor = await realpath(await deepestExistingAncestor(directory));
+  if (!isWithin(realRoot, realAncestor)) throw new Error(`${label} resolves outside the active workspace.`);
   await mkdir(directory, { recursive: true });
-  await assertRealPathWithinRoot(root, directory, label);
+  const realDirectory = await realpath(directory);
+  if (!isWithin(realRoot, realDirectory)) throw new Error(`${label} resolves outside the active workspace.`);
+  const identity = await lstat(realDirectory);
+  if (!identity.isDirectory()) throw new Error(`${label} is not a folder.`);
+  return { realDirectory, identity };
+}
+
+/**
+ * Prove the resolved destination folder is still the folder that was
+ * validated: not a link, same inode, same real path inside the workspace.
+ */
+async function assertDestinationUnchanged(realRoot: string, destination: Destination, label: string): Promise<void> {
+  const [current, recheck] = await Promise.all([
+    lstat(destination.realDirectory).catch(() => null),
+    realpath(destination.realDirectory).catch(() => null),
+  ]);
+  if (!current || !current.isDirectory() || !sameFile(current, destination.identity) || recheck !== destination.realDirectory || !isWithin(realRoot, recheck)) {
+    throw changedWhileWorking(label);
+  }
+}
+
+/**
+ * Write bytes into the validated folder and prove, before and after the
+ * atomic rename, that the folder and the final file are the ones that were
+ * validated. Path-based APIs cannot exclude a swap in the instant between a
+ * check and the following syscall, so every step re-verifies identity and a
+ * mismatch aborts with the temp file removed.
+ */
+async function writeWorkbookAtomically(realRoot: string, destination: Destination, finalName: string, bytes: Uint8Array, label: string): Promise<void> {
+  const tmp = join(destination.realDirectory, `${finalName}.${randomUUID()}.tmp`);
+  const finalPath = join(destination.realDirectory, finalName);
+  const handle = await open(tmp, "wx");
+  let written: Stats;
+  try {
+    await handle.writeFile(bytes);
+    written = await handle.stat();
+  } finally {
+    await handle.close();
+  }
+  try {
+    await assertDestinationUnchanged(realRoot, destination, label);
+    const tmpNow = await lstat(tmp);
+    if (!tmpNow.isFile() || !sameFile(tmpNow, written)) throw changedWhileWorking(label);
+    await rename(tmp, finalPath);
+    const [landed, landedReal] = await Promise.all([lstat(finalPath), realpath(finalPath)]);
+    if (!landed.isFile() || !sameFile(landed, written) || !isWithin(realRoot, landedReal) || dirname(landedReal) !== destination.realDirectory) {
+      throw changedWhileWorking(label);
+    }
+  } finally {
+    await rm(tmp, { force: true });
+  }
 }
 
 function describeUnsupportedExtension(extension: string): string {
@@ -154,12 +214,19 @@ async function readWorkbookFile(root: string, input: string): Promise<{ file: Wo
   ]);
   if (!realPath) throw new Error(`${label} was not found in the workspace.`);
   if (!isWithin(realRoot, realPath)) throw new Error(`${label} resolves outside the active workspace.`);
+  // Identity of the validated file, captured with the validation itself.
+  const expected = await lstat(realPath).catch(() => null);
+  if (!expected) throw new Error(`${label} was not found in the workspace.`);
+  if (!expected.isFile()) throw new Error(`${label} is not a regular file.`);
+  if (expected.size > MAX_COMPRESSED_BYTES) throw new Error(`${label} is ${expected.size} bytes; the limit is ${MAX_COMPRESSED_BYTES} bytes.`);
   const handle = await open(realPath, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0)).catch(() => null);
   if (!handle) throw new Error(`${label} was not found in the workspace.`);
   try {
-    const info = await handle.stat();
-    if (!info.isFile()) throw new Error(`${label} is not a regular file.`);
-    if (info.size > MAX_COMPRESSED_BYTES) throw new Error(`${label} is ${info.size} bytes; the limit is ${MAX_COMPRESSED_BYTES} bytes.`);
+    // The open handle must be the validated file, and the path must still
+    // resolve to it; a parent swapped for a link in between fails both.
+    const [actual, recheck] = await Promise.all([handle.stat(), realpath(file.absolutePath).catch(() => null)]);
+    if (!actual.isFile() || !sameFile(actual, expected) || recheck !== realPath) throw changedWhileWorking(label);
+    if (actual.size > MAX_COMPRESSED_BYTES) throw new Error(`${label} is ${actual.size} bytes; the limit is ${MAX_COMPRESSED_BYTES} bytes.`);
     return { file, bytes: await handle.readFile() };
   } finally {
     await handle.close();
@@ -319,14 +386,10 @@ export const OpenWorkSpreadsheets = async (factoryInput?: unknown) => {
             throw new Error(`${JSON.stringify(file.relativePath)} already exists. Pass overwrite: true to replace it (all of its current sheets, formatting, and formulas are replaced by the sheets you pass), or write to a new path.`);
           }
           const result = await writeXlsxWorkbook(args.sheets);
-          await prepareDestinationDirectory(root, dirname(file.absolutePath), `Destination folder for ${JSON.stringify(file.relativePath)}`);
-          const tmp = `${file.absolutePath}.${randomUUID()}.tmp`;
-          try {
-            await writeFile(tmp, result.bytes, { flag: "wx" });
-            await rename(tmp, file.absolutePath);
-          } finally {
-            await rm(tmp, { force: true });
-          }
+          const label = `Destination for ${JSON.stringify(file.relativePath)}`;
+          const realRoot = await realpath(root);
+          const destination = await prepareDestinationDirectory(realRoot, dirname(file.absolutePath), label);
+          await writeWorkbookAtomically(realRoot, destination, basename(file.absolutePath), result.bytes, label);
           return JSON.stringify({
             ok: true,
             path: file.relativePath,

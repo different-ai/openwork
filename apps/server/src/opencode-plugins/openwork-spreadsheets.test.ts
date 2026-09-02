@@ -290,6 +290,11 @@ describe("OpenWorkSpreadsheets", () => {
         await write(plugin, { path: "reports/q3.xlsx", sheets: REPORT_SHEETS });
         await symlink(join(root, "reports", "q3.xlsx"), join(root, "inside-alias.xlsx"));
         expect(await read(plugin, { path: "inside-alias.xlsx" })).toContain("| 2 | EMEA | 1742.42 | TRUE | =B2/B3 |");
+        // A write through an in-workspace folder link lands in the real folder and leaves no temp file behind.
+        await symlink(join(root, "reports"), join(root, "reports-alias"), "dir");
+        await write(plugin, { path: "reports-alias/via-link.xlsx", sheets: [{ rows: [["ok", 1]] }] });
+        await expect(readdir(join(root, "reports"))).resolves.toEqual(["q3.xlsx", "via-link.xlsx"]);
+        expect(await read(plugin, { path: "reports/via-link.xlsx" })).toContain("| 1 | ok | 1 |");
         await mkdir(join(root, "folder.xlsx"));
         await expect(read(plugin, { path: "folder.xlsx" })).rejects.toThrow("is not a regular file");
         await expect(read(plugin, { path: "reports/q3.xlsx", sheet: "Nope" })).rejects.toThrow('Sheet "Nope" was not found. Available sheets: "Summary", "Detail".');
