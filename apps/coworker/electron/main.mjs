@@ -18,10 +18,14 @@ import { openworkConfigDir } from "@openwork/paths";
 import { createHeadlessThreadClient } from "@openwork/headless-threads";
 import {
   createCoworker,
+  createLongTermMemory,
   defaultCoworkersDir,
+  deleteLongTermMemory,
   deleteRetiredCoworker,
   getCoworker,
+  indexLongTermMemory,
   listCoworkers,
+  listLongTermMemories,
   listMemoryFiles,
   listRetiredCoworkers,
   readCoworkerFile,
@@ -791,6 +795,16 @@ const commands = {
   }),
   "coworkers.files.write": async ({ slug, path: relativePath, content }) => {
     await writeCoworkerFile(coworkersDir, slug, relativePath, content);
+    return { ok: true };
+  },
+  "coworkers.memory.list": async ({ slug }) => listLongTermMemories(coworkersDir, slug),
+  "coworkers.memory.create": async ({ slug, title, summary }) => createLongTermMemory(coworkersDir, slug, { title, summary }),
+  "coworkers.memory.index": async ({ slug, file, summary }) => {
+    await indexLongTermMemory(coworkersDir, slug, file, summary);
+    return { ok: true };
+  },
+  "coworkers.memory.delete": async ({ slug, file }) => {
+    await deleteLongTermMemory(coworkersDir, slug, file);
     return { ok: true };
   },
   "localResponsibilities.list": async ({ slug }) => listLocalResponsibilities(coworkersDir, slug),
