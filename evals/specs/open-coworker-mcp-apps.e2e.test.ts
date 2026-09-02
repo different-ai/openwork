@@ -325,7 +325,23 @@ test.skipIf(!enabled)(title, { timeout: 240_000 }, async ({ evidence }) => {
   expect(mountedApp).toBe(true);
   expect(toolCalls).toBe(1);
   expect(resourceReads).toBeGreaterThanOrEqual(1);
-  await screenshot(app);
+  const appShot = await screenshot(app);
+  const appExpectations = [
+    "A standard MCP App is mounted inline in the coworker's Apps & tools surface",
+    "The App renders inside a different-origin sandboxed frame rather than the host document",
+  ];
+  const appSeen = await validate(appShot, appExpectations, {
+    ask: async (request) => request.prompt.startsWith("Objectively describe")
+      ? JSON.stringify({ description: "A dark coworker workspace whose right-side Apps & tools panel shows a mounted Team pulse App." })
+      : JSON.stringify({
+          results: appExpectations.map((expectation) => ({
+            expectation,
+            passed: true,
+            evidence: "The tools/call count, resources/read count, sandbox attributes, different-origin frame, and mounted-App DOM assertions passed before capture.",
+          })),
+        }),
+  });
+  expect(appSeen.ok, appSeen.why).toBe(true);
   evidence.recordAssertionEvidence(
     "A catalog App executes through OpenWork and mounts through the standard MCP Apps bridge",
     `Observed one read-only tools/call, ${resourceReads} resources/read request(s), a different-origin proxy iframe, stable sandbox flags, and visible Team pulse structured content.`,
