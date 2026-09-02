@@ -435,7 +435,7 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
   }
 
   async function redirectToRequiredSso(trimmedEmail: string) {
-    const { response, payload } = await requestJson(`/v1/orgs/sso/resolve?email=${encodeURIComponent(trimmedEmail)}`, { method: "GET" }, 12000);
+    const { response, payload } = await requestJson(`/api/auth/sso-resolve?email=${encodeURIComponent(trimmedEmail)}`, { method: "GET" }, 12000);
 
     if (!response.ok) {
       throw new Error(getErrorMessage(payload, response.status === 403 ? "We could not verify this sign-in attempt. Please refresh and try again." : `Could not resolve workspace SSO (${response.status}).`));
@@ -1049,7 +1049,7 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
         headers.set("Authorization", `Bearer ${authToken}`);
       }
 
-      const { response, payload } = await requestJson("/v1/auth/desktop-handoff", {
+      const { response, payload } = await requestJson("/api/auth/desktop-handoff", {
         method: "POST",
         headers,
         body: JSON.stringify({ desktopScheme: desktopAuthScheme })
@@ -1105,7 +1105,7 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
         headers.set("Authorization", `Bearer ${authToken}`);
       }
 
-      const { response, payload } = await requestJson("/v1/auth/desktop-handoff", {
+      const { response, payload } = await requestJson("/api/auth/desktop-handoff", {
         method: "POST",
         headers,
         body: JSON.stringify({ returnUrl: webAuthReturnUrl })

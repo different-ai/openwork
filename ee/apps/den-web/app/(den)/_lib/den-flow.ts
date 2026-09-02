@@ -1255,7 +1255,7 @@ export async function requestJson(path: string, init: RequestInit = {}, timeoutM
     if (typeof window !== "undefined") {
       await getRuntimeConfig();
     }
-    const endpoint = denApiEndpoint(path);
+    const endpoint = path.startsWith("/api/auth/") ? path : denApiEndpoint(path);
     response = await fetch(endpoint, {
       ...init,
       headers,
