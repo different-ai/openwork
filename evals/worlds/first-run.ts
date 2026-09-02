@@ -1,0 +1,747 @@
+import { spawn } from "node:child_process";
+import { mkdtemp, readdir, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
+import { app as startApp, server as startServer } from "@openwork/env";
+import { SkipError } from "@openwork/env";
+import type { Place, Seed } from "@openwork/env";
+import { createAndSelectWorkspace, evalIn, go, waitFor as waitForBehavior } from "@openwork/behaviors";
+import { allocateFreePort } from "@openwork/cdp";
+import { chrome, desktop, localHost } from "@openwork/hosts";
+import { startEgressLab, startMockMcp } from "@openwork/labs";
+import { diagnoseEgressLabProduct } from "@openwork/behaviors";
+import { matchVerdictExpectations } from "@openwork/matchers";
+import {
+  assignPluginToMarketplace,
+  captureOpenedUrls,
+  completeDesktopHandoff,
+  createMarketplace,
+  createPluginWithSkill,
+  ensureMemberSession,
+  grantMarketplaceAccess,
+  readHandoffDeepLink,
+  readResolvedMarketplace,
+  signIn,
+  signInInBrowser,
+} from "@openwork/behaviors";
+
+// Transitional helpers for journeys whose product-specific mechanics do not yet
+// have spec primitives. Specs still import through their owned world module.
+export {
+  control,
+  enabledButtons,
+  evalIn,
+  readAvailableModels,
+  selectModel,
+  sendComposerMessage,
+  visibleText,
+  waitFor,
+} from "@openwork/behaviors";
+export {
+  checkedExec,
+  daytonaSandbox,
+  defaultDaytonaExec,
+  deleteSandboxes,
+  desktop,
+  enterpriseTlsEdgeDaytonaCommands,
+  provisionDesktopSandbox,
+} from "@openwork/hosts";
+
+export async function emptyInfraWorld(_seed: Seed) {
+  return {};
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+export async function appSmokeWorld(seed: Seed) {
+  const app = await seed.desktop({ name: "app-smoke" });
+  const workspace = await seed.workspace(app, seed.tmpPath("app-smoke"));
+  return { app, workspace };
+}
+
+export async function bareFirstRunWorld(seed: Seed) {
+  const app = await seed.desktop({ name: "first-run", signIn: false });
+  const readBootstrapBaseUrl = () => evalIn(
+    app,
+    `window.__OPENWORK_ELECTRON__.invokeDesktop("getDesktopBootstrapConfig").then((config) => config.baseUrl)`,
+    { awaitPromise: true },
+  );
+  return { app, workspacePath: seed.tmpPath("first-run-workspace"), readBootstrapBaseUrl };
+}
+
+export async function workspaceWorld(seed: Seed) {
+  const app = await seed.desktop({ name: "workspace-spec" });
+  const workspacePath = seed.tmpPath("workspace-spec");
+  const workspace = await seed.workspace(app, workspacePath);
+  return { app, workspace, workspacePath };
+}
+
+export async function sessionWorld(seed: Seed) {
+  const base = await workspaceWorld(seed);
+  const session = await seed.session(base.app);
+  return { ...base, session };
+}
+
+export async function parentChildPermissionWorld(seed: Seed) {
+  const base = await sessionWorld(seed);
+  // TODO(primitive): seed a child-session permission request and parent activity row.
+  const seeded = await evalIn(base.app, `(async () => {
+    const child = await window.__openworkControl.execute("eval.child_permission.seed", null);
+    if (!child?.ok || typeof child.result?.childSessionId !== "string") return child;
+    const activity = await window.__openworkControl.execute("eval.task_activity.seed", {
+      childSessionId: child.result.childSessionId,
+    });
+    return { child, activity };
+  })()`, { awaitPromise: true });
+  if (!isRecord(seeded)) throw new Error(`Child permission seed failed: ${JSON.stringify(seeded)}`);
+  return base;
+}
+
+export async function artifactCodeBrowserWorld(seed: Seed) {
+  const base = await workspaceWorld(seed);
+  await seed.sessions(base.app, ["Artifact code browser proof"]);
+  // TODO(primitive): write workspace files through the local server fixture.
+  const wrote = await evalIn(base.app, `(async () => {
+    const port = localStorage.getItem("openwork.server.port");
+    const token = localStorage.getItem("openwork.server.token");
+    if (!port || !token) return false;
+    const write = (path, content) => fetch(
+      "http://127.0.0.1:" + port + "/workspace/" + encodeURIComponent(${JSON.stringify(base.workspace.workspaceId)}) + "/files/content",
+      {
+        method: "POST",
+        headers: { Authorization: "Bearer " + token, "Content-Type": "application/json" },
+        body: JSON.stringify({ path, content, baseUpdatedAt: null }),
+      },
+    );
+    const responses = await Promise.all([
+      write("src/openwork-artifact-proof.ts", "export const artifactEditor = true;\\n"),
+      write("config/openwork-artifact-settings.json", "{\\"artifactEditor\\":true}\\n"),
+    ]);
+    return responses.every((response) => response.ok);
+  })()`, { awaitPromise: true });
+  if (wrote !== true) throw new Error("Could not seed artifact code files.");
+  // TODO(primitive): seed artifact tabs through a first-class artifact fixture.
+  const tabs = await evalIn(base.app, `window.__openworkControl.execute("eval.artifact_tabs.seed_overflow", { count: 12 })`, { awaitPromise: true });
+  if (!isRecord(tabs)) throw new Error(`Could not seed artifact tabs: ${JSON.stringify(tabs)}`);
+  return base;
+}
+
+export async function skillsLocalWorld(seed: Seed) {
+  const app = await seed.desktop({ name: "skills-local" });
+  const repoRoot = resolve(import.meta.dirname, "../..");
+  const workspace = await seed.workspace(app, repoRoot);
+  return { app, workspace };
+}
+
+export async function firstRunBootstrapWorld(seed: Seed) {
+  const den = await seed.den({
+    org: {
+      name: "First Run Bootstrap",
+      admin: { name: "First Run Bootstrap Admin" },
+      members: { member: { name: "First Run Bootstrap Member" } },
+    },
+  });
+  const proxy = await seed.faultProxy(den);
+  proxy.faults.status("/api/den/v1/me/desktop-config", 429, { times: 5 });
+  const proxiedDen = { ...den, ref: proxy.ref };
+  const app = await seed.desktop({ den: proxiedDen, as: "member" });
+  return { app, den, proxy };
+}
+
+export async function firstSignInWorld(seed: Seed, { place }: { place: Place }) {
+  const den = await seed.den({
+    org: {
+      name: "First Signin Heal",
+      admin: { name: "First Signin Admin" },
+      members: { fresh: { name: "Fresh Profile Member" } },
+    },
+  });
+  const proxy = await seed.faultProxy(den);
+  proxy.faults.status("/api/den/v1/me/orgs", 429, { times: 3 });
+  const proxiedDen = { ...den, ref: proxy.ref };
+  // seed.desktop does not yet expose localServerDelayMs.
+  const app = await startApp({ den: proxiedDen, as: "fresh", place, localServerDelayMs: 3_000 });
+  return {
+    app,
+    den,
+    proxy,
+    async [Symbol.asyncDispose]() {
+      await app[Symbol.asyncDispose]();
+    },
+  };
+}
+
+export async function testkitAppBootWorld(_seed: Seed, { place }: { place: Place }) {
+  const stack = new AsyncDisposableStack();
+  const den = stack.use(await startServer({ place }));
+  if (!den.ports) throw new Error("The local testkit Den did not expose its ports.");
+  const app = stack.use(await startApp({ den, as: "admin", place }));
+  let closed = false;
+  const close = async () => {
+    if (closed) return;
+    closed = true;
+    await stack.disposeAsync();
+  };
+  return { app, den, ports: den.ports, close, [Symbol.asyncDispose]: close };
+}
+
+export async function unconfiguredNotificationWorld(seed: Seed) {
+  const workspacePath = await mkdtemp(join(tmpdir(), "openwork-notification-shell-"));
+  const app = await seed.desktop({ name: "opencode-unconfigured-notification" });
+  const workspace = await seed.workspace(app, workspacePath);
+  const serverToken = "owt_unconfigured_notification";
+  const repoRoot = resolve(import.meta.dirname, "../..");
+  const script = `
+    const { startServer } = await import("./src/server.ts");
+    const server = await startServer({
+      host: "0.0.0.0", port: 0, token: ${JSON.stringify(serverToken)}, corsOrigins: ["*"],
+      workspaces: [{ id: ${JSON.stringify(workspace.workspaceId)}, name: "Unconfigured workspace", path: ${JSON.stringify(workspacePath)}, preset: "starter", workspaceType: "local" }],
+      authorizedRoots: [${JSON.stringify(workspacePath)}], readOnly: false,
+      approval: { mode: "auto", timeoutMs: 30000 }, startedAt: Date.now(), tokenSource: "cli",
+      hostTokenSource: "none", logFormat: "pretty", logRequests: false,
+    });
+    console.log("UNCONFIGURED_SERVER_PORT:" + server.port);
+    setInterval(() => {}, 60000);
+  `;
+  const child = spawn("bun", ["--conditions=development", "-e", script], {
+    cwd: join(repoRoot, "apps", "server"),
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  const port = await new Promise<number>((resolvePort, reject) => {
+    const timer = setTimeout(() => reject(new Error("Unconfigured server did not report a port.")), 30_000);
+    let stdout = "";
+    let stderr = "";
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (chunk: string) => {
+      stdout += chunk;
+      const match = stdout.match(/UNCONFIGURED_SERVER_PORT:(\d+)/);
+      if (!match?.[1]) return;
+      clearTimeout(timer);
+      resolvePort(Number(match[1]));
+    });
+    child.stderr.on("data", (chunk: string) => { stderr += chunk; });
+    child.on("exit", (code) => {
+      clearTimeout(timer);
+      reject(new Error(`Unconfigured server exited early (${code}): ${stderr.slice(0, 500)}`));
+    });
+    child.on("error", reject);
+  });
+  const configResponse = await fetch(`http://127.0.0.1:${port}/workspace/${workspace.workspaceId}/config`, {
+    headers: { authorization: `Bearer ${serverToken}` },
+  });
+  const config: unknown = await configResponse.json();
+  const opencodeConfig = isRecord(config) && isRecord(config.opencode) ? config.opencode : {};
+  const providerConfig = isRecord(opencodeConfig.provider) ? opencodeConfig.provider : {};
+  const engineResponse = await fetch(`http://127.0.0.1:${port}/workspace/${workspace.workspaceId}/opencode/session`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${serverToken}`, "content-type": "application/json" },
+    body: JSON.stringify({}),
+  });
+  const engineError: unknown = await engineResponse.json();
+  // TODO(primitive): point a desktop at a caller-owned local server and observe transient notification text.
+  const switched = await evalIn(app, `(async () => {
+    const state = { rawSeen: document.body.innerText.includes('{"code":') };
+    const observer = new MutationObserver(() => {
+      if (document.body.innerText.includes('{"code":')) state.rawSeen = true;
+    });
+    observer.observe(document.body, { subtree: true, childList: true, characterData: true });
+    window.__issue3980NotificationProbe = { observer, state };
+    localStorage.setItem("openwork.server.urlOverride", "http://127.0.0.1.nip.io:${port}");
+    localStorage.setItem("openwork.server.token", ${JSON.stringify(serverToken)});
+    localStorage.removeItem("openwork.server.hostToken");
+    await window.__OPENWORK_ELECTRON__?.invokeDesktop?.("engineStop");
+    window.dispatchEvent(new CustomEvent("openwork-server-settings-changed"));
+    return true;
+  })()`, { awaitPromise: true, timeoutMs: 30_000 });
+  if (switched !== true) throw new Error("Could not switch the desktop to the unconfigured server.");
+  return {
+    app,
+    workspace,
+    serverToken,
+    directBaseUrl: `http://127.0.0.1:${port}`,
+    configStatus: configResponse.status,
+    opencodeConfig,
+    providerConfig,
+    engineStatus: engineResponse.status,
+    engineError,
+    async [Symbol.asyncDispose]() {
+      child.kill("SIGKILL");
+      await rm(workspacePath, { recursive: true, force: true });
+    },
+  };
+}
+
+async function installAlphaUpdateBridge(app: Awaited<ReturnType<typeof desktop>>) {
+  const installed = await evalIn(app, `(() => {
+    const nativeUpdater = window.__OPENWORK_ELECTRON__?.updater;
+    if (!nativeUpdater?.getChannel || !nativeUpdater.setChannel) return false;
+    const state = { checks: [], currentVersion: "0.18.37-alpha.2491+64d2d37", latestVersion: "0.18.37-alpha.2492+4921a02" };
+    window.__openworkAlphaUpdateEligibilityEvalState = state;
+    localStorage.setItem("openwork.react.settings.update-auto-check", "0");
+    window.__openworkApplyDesktopConfig?.({ allowAlphaUpdates: true });
+    window.__openworkSetDesktopConfigRefreshResult?.({ allowAlphaUpdates: true });
+    window.__openworkReadDesktopVersionMetadataEval = () => ({
+      minAppVersion: "0.17.0", latestAppVersion: "0.18.35", publishedDesktopVersions: ["0.18.35"],
+    });
+    window.__openworkUpdaterEvalBridge = {
+      getChannel: () => nativeUpdater.getChannel(),
+      setChannel: (channel) => nativeUpdater.setChannel(channel),
+      check: async (channel) => {
+        state.checks.push(channel);
+        return channel === "alpha"
+          ? { available: true, channel, currentVersion: state.currentVersion, latestVersion: state.latestVersion }
+          : { available: false, channel, currentVersion: state.currentVersion, latestVersion: "0.18.35" };
+      },
+      download: async () => ({ ok: false, reason: "unused" }),
+      installAndRestart: async () => ({ ok: false, reason: "unused" }),
+      onDownloadProgress: () => () => {},
+    };
+    return true;
+  })()`);
+  if (installed !== true) throw new Error("Could not install the controlled updater bridge.");
+}
+
+export async function alphaUpdateWorld(seed: Seed) {
+  if (process.platform !== "darwin") throw new SkipError(`run on macOS (Alpha is unavailable on ${process.platform})`);
+  const profileDir = await mkdtemp(join(tmpdir(), "openwork-alpha-update-eligibility-eval-"));
+  const host = localHost();
+  const app = await desktop({
+    name: "alpha-update-eligibility",
+    host,
+    profileDir,
+    env: { PORT: String(await allocateFreePort()) },
+  });
+  const workspace = await createAndSelectWorkspace(app, { path: join(profileDir, "workspace") });
+  await installAlphaUpdateBridge(app);
+  await go(app, `/workspace/${workspace.workspaceId}/settings/updates`);
+  return {
+    app,
+    async [Symbol.asyncDispose]() {
+      await app.stop();
+      await host[Symbol.asyncDispose]();
+      await rm(profileDir, { recursive: true, force: true });
+    },
+  };
+}
+
+export async function compatibleReleaseWorld(_seed: Seed, { place }: { place: Place }) {
+  const app = await desktop({
+    name: "compatible-release-picker",
+    host: place.host(),
+    timeoutMs: 30_000,
+    env: {
+      OPENWORK_EVAL_FATAL_DESKTOP_BOOTSTRAP_FAILURE: "EVAL_FATAL_DESKTOP_BOOTSTRAP_FAILURE",
+      OPENWORK_EVAL_RECOVERY_TARGET: "darwin-arm64-public",
+      OPENWORK_EVAL_RECOVERY_RELEASES: JSON.stringify([
+        { version: "2.4.0", channel: "stable", artifact: { platform: "darwin", arch: "arm64", distribution: "public", url: "https://releases.openwork.test/v2.4.0/OpenWork-darwin-arm64.dmg" } },
+        { version: "2.3.1", channel: "stable", artifact: { platform: "darwin", arch: "arm64", distribution: "public", url: "https://releases.openwork.test/v2.3.1/OpenWork-darwin-arm64.dmg" } },
+        { version: "2.3.0", channel: "stable", artifact: { platform: "linux", arch: "x64", distribution: "public", url: "https://incompatible.invalid/OpenWork.AppImage" } },
+        { version: "2.2.9", channel: "stable", artifact: { platform: "darwin", arch: "arm64", distribution: "enterprise", url: "https://wrong-flavor.invalid/OpenWork.dmg" } },
+        { version: "2.2.8-beta.1", channel: "prerelease", artifact: { platform: "darwin", arch: "arm64", distribution: "public", url: "https://prerelease.invalid/OpenWork.dmg" } },
+      ]),
+    },
+  });
+  const snapshot = () => evalIn(app, `window.__openworkRecoveryControl.snapshot()`, { awaitPromise: true });
+  return { app, snapshot, async [Symbol.asyncDispose]() { await app.stop(); } };
+}
+
+export async function reliableRecoveryWorld(_seed: Seed, { place }: { place: Place }) {
+  const profileDir = `/tmp/openwork-reliable-recovery-${process.pid}-${Date.now()}`;
+  const host = place.host();
+  const seeded = await desktop({ name: "recovery-profile-seed", host, profileDir });
+  const names = await evalIn(seeded, `window.__OPENWORK_ELECTRON__.invokeDesktop("workspaceCreate", {
+    folderPath: ${JSON.stringify(`${profileDir}/continuity-workspace`)}, name: "reliable-recovery-profile-marker"
+  }).then((state) => state.workspaces.map((workspace) => workspace.displayName))`, { awaitPromise: true });
+  if (!Array.isArray(names) || !names.includes("reliable-recovery-profile-marker")) throw new Error("Could not seed recovery profile.");
+  await seeded.stop();
+  const app = await desktop({
+    name: "fatal-bootstrap-recovery",
+    host,
+    profileDir,
+    timeoutMs: 30_000,
+    env: {
+      OPENWORK_EVAL_FATAL_DESKTOP_BOOTSTRAP_FAILURE: "EVAL_FATAL_DESKTOP_BOOTSTRAP_FAILURE: dlopen(/private/tmp/runtime.node): invalid code signature",
+      OPENWORK_EVAL_RECOVERY_CANDIDATES: JSON.stringify([
+        { version: "1.8.2", verified: true, artifactUrl: "https://releases.openwork.test/v1.8.2/OpenWork-darwin-arm64.dmg" },
+        { version: "1.8.1", verified: false, artifactUrl: "https://tampered.invalid/OpenWork.dmg" },
+      ]),
+    },
+  });
+  const snapshot = () => evalIn(app, `window.__openworkRecoveryControl.snapshot()`, { awaitPromise: true });
+  const workspaceNames = () => evalIn(
+    app,
+    `window.__OPENWORK_ELECTRON__.invokeDesktop("workspaceBootstrap").then((state) => state.workspaces.map((entry) => entry.displayName))`,
+    { awaitPromise: true },
+  );
+  return {
+    app,
+    snapshot,
+    workspaceNames,
+    async [Symbol.asyncDispose]() {
+      await app.stop();
+      if (place.kind === "local") await rm(profileDir, { recursive: true, force: true });
+    },
+  };
+}
+
+async function installUpdaterRaceBridge(app: Awaited<ReturnType<typeof desktop>>, delayStable: boolean) {
+  const installed = await evalIn(app, `(() => {
+    const nativeUpdater = window.__OPENWORK_ELECTRON__?.updater;
+    if (!nativeUpdater?.getChannel || !nativeUpdater.setChannel) return false;
+    const state = { checks: [], setChannels: [], stableStarted: false, finishStable: null };
+    window.__openworkUpdaterEvalState = state;
+    window.__openworkApplyDesktopConfig?.({ allowAlphaUpdates: true });
+    window.__openworkSetDesktopConfigRefreshResult?.({ allowAlphaUpdates: true });
+    window.__openworkUpdaterEvalBridge = {
+      getChannel: () => nativeUpdater.getChannel(),
+      setChannel: async (channel) => { state.setChannels.push(channel); return nativeUpdater.setChannel(channel); },
+      check: async (channel) => {
+        state.checks.push(channel);
+        if (${JSON.stringify(delayStable)} && channel === "stable") {
+          state.stableStarted = true;
+          return new Promise((resolve) => { state.finishStable = () => resolve({ available: true, channel: "stable", currentVersion: "0.18.0", latestVersion: "9.9.9" }); });
+        }
+        return { available: false, channel, currentVersion: "0.18.0", latestVersion: channel === "alpha" ? "0.18.0-alpha.1" : "0.18.0" };
+      },
+      download: async () => ({ ok: false, reason: "unused" }),
+      installAndRestart: async () => ({ ok: false, reason: "unused" }),
+      onDownloadProgress: () => () => {},
+    };
+    return true;
+  })()`);
+  if (installed !== true) throw new Error("Could not install updater race bridge.");
+}
+
+export async function updaterChannelWorld(_seed: Seed) {
+  if (process.platform !== "darwin") throw new SkipError(`run on macOS (Alpha is unavailable on ${process.platform})`);
+  const profileDir = await mkdtemp(join(tmpdir(), "openwork-updater-channel-eval-"));
+  const host = localHost();
+  const env = { PORT: String(await allocateFreePort()) };
+  const app = await desktop({ name: "updater-channel-selection", host, profileDir, env });
+  const workspace = await createAndSelectWorkspace(app, { path: join(profileDir, "workspace") });
+  await installUpdaterRaceBridge(app, true);
+  await go(app, `/workspace/${workspace.workspaceId}/settings/updates`);
+  let active = app;
+  const relaunch = async () => {
+    await active.client.send("Browser.close").catch((error: unknown) => {
+      const message = error instanceof Error ? error.message : String(error);
+      if (!/CDP websocket (?:failed|closed)/i.test(message)) throw error;
+    });
+    const deadline = Date.now() + 30_000;
+    while (Date.now() < deadline) {
+      const stopped = await fetch(`${active.handle.cdpUrl.replace(/\/$/, "")}/json/version`, {
+        signal: AbortSignal.timeout(1_000),
+      }).then(() => false, () => true);
+      if (stopped) break;
+      await new Promise((resolveDelay) => setTimeout(resolveDelay, 250));
+    }
+    await active.stop();
+    active = await desktop({ name: "updater-channel-selection", host, profileDir, env });
+    await go(active, "/session");
+    await installUpdaterRaceBridge(active, false);
+    await go(active, `/workspace/${workspace.workspaceId}/settings/updates`);
+    await waitForBehavior(active, `window.location.hash.includes("/settings/updates") && Boolean(document.querySelector('[aria-label="Release channel"]'))`, {
+      timeoutMs: 60_000,
+      label: "relaunched Updates page",
+    });
+    return active;
+  };
+  const snapshot = (surface = active) => evalIn(surface, `(async () => {
+    const state = window.__openworkUpdaterEvalState;
+    const native = await window.__OPENWORK_ELECTRON__.updater.getChannel();
+    const preferences = JSON.parse(localStorage.getItem("openwork.preferences") || "null");
+    return { checks: state.checks, setChannels: state.setChannels, nativeChannel: native.channel,
+      preferenceChannel: preferences?.releaseChannel, pickerText: document.querySelector('[aria-label="Release channel"]')?.textContent ?? "",
+      pageText: document.body.innerText };
+  })()`, { awaitPromise: true });
+  return {
+    app,
+    relaunch,
+    snapshot,
+    async [Symbol.asyncDispose]() {
+      await active.stop();
+      await host[Symbol.asyncDispose]();
+      await rm(profileDir, { recursive: true, force: true });
+    },
+  };
+}
+
+export async function appDenTlsFaultWorld(_seed: Seed, { place }: { place: Place }) {
+  const edge = await startEgressLab({ profile: "intercept" });
+  const app = await desktop({
+    name: "den-tls-fault",
+    host: place.host(),
+    bootstrap: { baseUrl: edge.url, requireSignin: false },
+  });
+  const diagnose = async () => {
+    const verdict = await diagnoseEgressLabProduct(edge);
+    return { ...verdict, expectationMatched: matchVerdictExpectations(verdict.text, "intercept").ok };
+  };
+  return {
+    app,
+    diagnose,
+    async [Symbol.asyncDispose]() {
+      await app.stop();
+      await edge[Symbol.asyncDispose]();
+    },
+  };
+}
+
+export async function firstRunCloudShareWorld(_seed: Seed, { place }: { place: Place }) {
+  const apiUrl = process.env.OPENWORK_EVAL_DEN_API_URL?.trim().replace(/\/+$/, "") ?? "";
+  const webUrl = (process.env.OPENWORK_EVAL_DEN_WEB_URL?.trim() || apiUrl.replace("127.0.0.1", "localhost")).replace(/\/+$/, "");
+  const password = process.env.OPENWORK_EVAL_DEMO_PASSWORD?.trim() || "OpenWorkDemo123!";
+  const adminEmail = process.env.OPENWORK_EVAL_DEMO_EMAIL?.trim() || "alex@acme.test";
+  const colleagueEmail = process.env.OPENWORK_EVAL_MEMBER_EMAIL?.trim() || "jordan.demo@acme.test";
+  const capture = await captureOpenedUrls();
+  const app = await desktop({
+    name: "first-run-cloud-share",
+    host: place.host(),
+    bootstrap: { baseUrl: webUrl, requireSignin: false },
+    env: { PATH: `${capture.binDir}:${process.env.PATH ?? ""}` },
+  });
+  let browser: Awaited<ReturnType<typeof chrome>> | null = null;
+  const finishSignIn = async () => {
+    const handoffUrl = await capture.waitForUrl(
+      (url) => url.includes("desktopAuth=1") || url.includes("desktopScheme=") || url.includes("grant="),
+      { timeoutMs: 90_000 },
+    );
+    if (!handoffUrl.startsWith(webUrl)) throw new Error(`The app opened an unexpected origin: ${handoffUrl}`);
+    browser = await chrome({ name: "cloud-signin", startUrl: "about:blank", host: place.host() });
+    await signInInBrowser(browser, handoffUrl, { email: adminEmail, password });
+    const deepLink = await readHandoffDeepLink(browser, { timeoutMs: 120_000 });
+    await completeDesktopHandoff(app, deepLink, webUrl);
+    return { handoffUrl, deepLink, browser };
+  };
+  const shareSkill = async () => {
+    const den = { apiUrl, webUrl };
+    const admin = await signIn(den, { email: adminEmail, password });
+    const colleague = await ensureMemberSession(den, admin, {
+      email: colleagueEmail,
+      password,
+      name: "Jordan Demo",
+      markVerifiedCmd: process.env.OPENWORK_EVAL_MARK_VERIFIED_CMD?.trim(),
+    });
+    const stamp = Date.now();
+    const skillName = `shared-standup-${stamp}`;
+    const marketplace = await createMarketplace(admin, { name: `Team Marketplace ${stamp}` });
+    const plugin = await createPluginWithSkill(admin, {
+      name: `Standup Kit ${stamp}`,
+      skillName,
+      skillBody: "Summarise yesterday, today, and blockers in three short bullets.",
+      marketplaceId: marketplace.id,
+    });
+    await assignPluginToMarketplace(admin, marketplace.id, plugin.id).catch(async (error: unknown) => {
+      const resolved = await readResolvedMarketplace(admin, marketplace.id);
+      if (!resolved.pluginNames.includes(plugin.name)) throw error;
+    });
+    await grantMarketplaceAccess(admin, marketplace.id, { orgWide: true });
+    const visible = await readResolvedMarketplace(colleague, marketplace.id);
+    return { plugin, skillName, visible };
+  };
+  return {
+    app,
+    finishSignIn,
+    shareSkill,
+    async [Symbol.asyncDispose]() {
+      if (browser) await browser[Symbol.asyncDispose]();
+      await app.stop();
+    },
+  };
+}
+
+function toolResultJson(result: unknown): Record<string, unknown> {
+  if (!isRecord(result)) return {};
+  const content = Array.isArray(result.content) ? result.content.filter(isRecord) : [];
+  const text = content.map((entry) => typeof entry.text === "string" ? entry.text : "").join("\n");
+  if (!text) return {};
+  const parsed: unknown = JSON.parse(text);
+  return isRecord(parsed) ? parsed : {};
+}
+
+export async function toolTesterWorld(seed: Seed) {
+  const connectorBoot = seed.mock();
+  const den = await seed.den({
+    org: { name: `Tool Tester Eval ${Date.now()}`, admin: { name: "Sarah" } },
+    mocks: { connector: connectorBoot },
+  });
+  const connector = den.mocks.connector;
+  const connection = await seed.orgConnection(den.admin, {
+    name: `Tool Tester Probe ${Date.now()}`,
+    url: connector.mcpUrl,
+    authType: "oauth",
+    credentialMode: "shared",
+    access: { orgWide: true },
+  });
+  const orgs = await seed.api(den.admin, "/v1/me/orgs");
+  const organizations = isRecord(orgs.body) && Array.isArray(orgs.body.orgs) ? orgs.body.orgs.filter(isRecord) : [];
+  const orgId = organizations[0] && typeof organizations[0].id === "string" ? organizations[0].id : "";
+  if (!orgId) throw new Error("Could not resolve the Tool Tester organization.");
+  const tokenResult = await seed.api(den.admin, "/v1/mcp/token", {
+    method: "POST",
+    headers: { "x-openwork-org-id": orgId },
+    body: JSON.stringify({}),
+  });
+  const mcpToken = isRecord(tokenResult.body) && typeof tokenResult.body.token === "string" ? tokenResult.body.token : "";
+  if (!mcpToken) throw new Error("Could not mint the Tool Tester MCP token.");
+  const web = await seed.web({
+    den,
+    signedInAs: "admin",
+    startPath: "/dashboard/your-connections",
+    headless: true,
+    viewport: { width: 1440, height: 1000 },
+  });
+  let requestId = 0;
+  const callTool = async (name: "search_capabilities" | "execute_capability", args: Record<string, unknown>) => {
+    const response = await fetch(`${den.ref.apiUrl}/mcp/agent`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${mcpToken}`, "content-type": "application/json", accept: "application/json, text/event-stream" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: ++requestId, method: "tools/call", params: { name, arguments: args } }),
+      signal: AbortSignal.timeout(120_000),
+    });
+    const raw = await response.text();
+    if (!response.ok) throw new Error(`MCP tools/call failed: HTTP ${response.status} ${raw.slice(0, 500)}`);
+    const data = raw.split("\n").find((line) => line.startsWith("data:"));
+    if (!data) throw new Error(`MCP tools/call returned no data frame: ${raw.slice(0, 500)}`);
+    const frame: unknown = JSON.parse(data.slice(5));
+    return isRecord(frame) ? frame.result : null;
+  };
+  const search = async () => {
+    const result = await callTool("search_capabilities", { query: "mock echo", limit: 20 });
+    const payload = toolResultJson(result);
+    return Array.isArray(payload.matches) ? payload.matches.filter(isRecord) : [];
+  };
+  return {
+    web,
+    den,
+    connector,
+    connection,
+    toolTesterUrl: `${den.ref.webUrl}/dashboard/tool-tester?connectionId=${encodeURIComponent(connection.id)}`,
+    search,
+    execute: (schemaDigest: string, text: string) => callTool("execute_capability", {
+      name: `mcp:${connection.id}:mock_echo`, schemaDigest, body: { text },
+    }),
+  };
+}
+
+export async function managedVaultWorld(_seed: Seed, { place }: { place: Place }) {
+  const stamp = Date.now();
+  const profileDir = await mkdtemp(join(tmpdir(), "openwork-vault-recovery-"));
+  const workspacePath = join(tmpdir(), `openwork-vault-recovery-ws-${stamp}`);
+  const names = { managedA: `vault-a-${stamp}`, managedB: `vault-b-${stamp}`, plain: `plain-${stamp}` };
+  const keys = {
+    one: `openwork-eval-secure-storage-key-one-${stamp}`,
+    two: `openwork-eval-secure-storage-key-two-${stamp}`,
+  };
+  const mock = await startMockMcp({ port: await allocateFreePort() });
+  let app = await desktop({ name: "managed-vault-recovery", host: place.host(), profileDir, env: { OPENWORK_ENCRYPTION_KEY: keys.one } });
+  const workspace = await createAndSelectWorkspace(app, { path: workspacePath });
+  const serverTarget = async (surface = app) => {
+    const deadline = Date.now() + 120_000;
+    while (Date.now() < deadline) {
+      const info = await evalIn(surface, `window.__OPENWORK_ELECTRON__?.invokeDesktop?.("openworkServerInfo")`, {
+        awaitPromise: true,
+        timeoutMs: 15_000,
+      }).catch(() => null);
+      if (isRecord(info)) {
+        const baseUrl = String(info.baseUrl ?? info.connectUrl ?? "").replace(/\/+$/, "");
+        const token = String(info.ownerToken ?? info.clientToken ?? "");
+        if (baseUrl && token) return { baseUrl, token };
+      }
+      await new Promise((resolveDelay) => setTimeout(resolveDelay, 1_000));
+    }
+    throw new Error("embedded openwork-server credentials not ready");
+  };
+  const api = async (target: { baseUrl: string; token: string }, method: string, path: string, payload?: unknown) => {
+    const response = await fetch(`${target.baseUrl}${path}`, {
+      method,
+      headers: { authorization: `Bearer ${target.token}`, ...(payload === undefined ? {} : { "content-type": "application/json" }) },
+      ...(payload === undefined ? {} : { body: JSON.stringify(payload) }),
+      signal: AbortSignal.timeout(20_000),
+    });
+    return { status: response.status, body: await response.json().catch(() => null) };
+  };
+  const completeOAuth = async (authorizeUrl: string) => {
+    const authorization = await fetch(authorizeUrl, { redirect: "manual", signal: AbortSignal.timeout(20_000) });
+    const callbackUrl = authorization.headers.get("location");
+    if (authorization.status !== 302 || !callbackUrl) throw new Error("The mock IdP did not redirect to a callback URL.");
+    const callback = await fetch(callbackUrl, { signal: AbortSignal.timeout(20_000) });
+    if (!callback.ok) throw new Error(`Managed OAuth callback failed: ${callback.status}`);
+  };
+  const managedPath = (name: string) => `/workspace/${encodeURIComponent(workspace.workspaceId)}/mcp/${encodeURIComponent(name)}/managed`;
+  const waitManaged = async (target: { baseUrl: string; token: string }, name: string, wanted: string) => {
+    const deadline = Date.now() + 60_000;
+    while (Date.now() < deadline) {
+      const result = await api(target, "GET", managedPath(name));
+      if (isRecord(result.body) && result.body.status === wanted) return result.body;
+      await new Promise((resolveDelay) => setTimeout(resolveDelay, 1_000));
+    }
+    throw new Error(`Managed connection ${name} did not reach ${wanted}.`);
+  };
+  const firstTarget = await serverTarget(app);
+  const workspaceMcpPath = `/workspace/${encodeURIComponent(workspace.workspaceId)}/mcp`;
+  for (const name of [names.managedA, names.managedB]) {
+    const started = await api(firstTarget, "POST", `${workspaceMcpPath}/managed`, {
+      name,
+      url: mock.mcpUrl,
+      oauth: { applicationType: "native", requestedScopes: ["mcp:read", "mcp:write"] },
+    });
+    if (started.status !== 201 || !isRecord(started.body) || typeof started.body.authorizeUrl !== "string") {
+      throw new Error(`Could not create managed MCP ${name}: ${JSON.stringify(started.body)}`);
+    }
+    await completeOAuth(started.body.authorizeUrl);
+    await waitManaged(firstTarget, name, "connected");
+  }
+  const plain = await api(firstTarget, "POST", workspaceMcpPath, {
+    name: names.plain,
+    config: { type: "remote", url: mock.mcpUrl, enabled: true, oauth: false },
+  });
+  if (plain.status !== 200) throw new Error(`Could not add ordinary MCP: ${JSON.stringify(plain.body)}`);
+  const relaunch = async () => {
+    await app.stop();
+    app = await desktop({ name: "managed-vault-recovery", host: place.host(), profileDir, env: { OPENWORK_ENCRYPTION_KEY: keys.two } });
+    return app;
+  };
+  const openMcpSettings = async (surface = app) => {
+    await go(surface, `/workspace/${workspace.workspaceId}/settings/mcp`);
+  };
+  const reconnect = async (target: { baseUrl: string; token: string }, name: string) => {
+    const restarted = await api(target, "POST", `${managedPath(name)}/connect`);
+    if (restarted.status !== 200 || !isRecord(restarted.body) || typeof restarted.body.authorizeUrl !== "string") {
+      throw new Error(`Could not reconnect ${name}: ${JSON.stringify(restarted.body)}`);
+    }
+    await completeOAuth(restarted.body.authorizeUrl);
+    return waitManaged(target, name, "connected");
+  };
+  const vaultFiles = async () => (await readdir(profileDir, { recursive: true }))
+    .map(String)
+    .filter((entry) => entry.endsWith("local-managed-mcp-vault.json"))
+    .map((entry) => join(profileDir, entry));
+  return {
+    app,
+    mock,
+    profileDir,
+    workspacePath,
+    workspace,
+    names,
+    serverTarget,
+    api,
+    managedPath,
+    workspaceMcpPath,
+    waitManaged,
+    firstTarget,
+    relaunch,
+    openMcpSettings,
+    reconnect,
+    vaultFiles,
+    async [Symbol.asyncDispose]() {
+      await app.stop().catch(() => undefined);
+      await mock[Symbol.asyncDispose]();
+      await rm(profileDir, { recursive: true, force: true });
+      await rm(workspacePath, { recursive: true, force: true });
+    },
+  };
+}
