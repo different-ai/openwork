@@ -68,6 +68,8 @@ async function beginStatusTrace(app: Awaited<ReturnType<typeof coworker>>, promp
         threadStatus: document.querySelector('[data-testid="coworker-thread-status"]')?.textContent?.trim() ?? "",
         topStatus: document.querySelector('[data-testid="coworker-top-status"]')?.textContent?.trim() ?? "",
         working: Boolean(document.querySelector('[data-testid="coworker-working"]')),
+        phrase: document.querySelector('[data-testid="coworker-progress-phrase"]')?.textContent?.trim() ?? "",
+        phase: document.querySelector('[data-testid="coworker-working"]')?.getAttribute("data-phase") ?? "",
       });
     };
     const observer = new MutationObserver(record);
@@ -149,6 +151,25 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
     beforeReply.every((entry) => entry.topStatus !== "Ready"),
     `status trace before the matched reply: ${JSON.stringify(beforeReply)}`,
   ).toBe(true);
+  // While working, the transcript shows one live row with one phrase that names the phase in
+  // everyday words; the coworker's personality never replaces the operational state.
+  const phrases = [...new Set(beforeReply.map((entry) => String(entry.phrase)).filter(Boolean))];
+  expect(phrases.length, `live progress phrases: ${JSON.stringify(phrases)}`).toBeGreaterThan(0);
+  for (const phrase of phrases) {
+    expect(phrase).toMatch(/^(Sending…|Editor is (thinking|putting it together|trying again|finishing up|using .+|editing .+|writing .+|reading .+|looking through .+|running .+|searching .+|updating .+|working with .+|asking .+)…)$/);
+  }
+  expect(beforeReply.every((entry) => !entry.working || ["sending", "thinking", "tool", "writing", "retrying", "finishing"].includes(String(entry.phase)))).toBe(true);
+  // Once the reply is in, thinking folds to one quiet line and tool work to one receipt per reply,
+  // with no raw tool identifiers in either collapsed line.
+  const folded = await evalIn(app, `(() => ({
+    thinking: [...document.querySelectorAll('[data-testid="coworker-thinking"] summary')].map((node) => node.textContent?.trim() ?? ""),
+    receipts: [...document.querySelectorAll('[data-testid="coworker-work-summary"]')].map((node) => node.textContent?.trim() ?? ""),
+    liveRows: document.querySelectorAll('[data-testid="coworker-working"]').length,
+  }))()`);
+  if (!isRecord(folded) || !Array.isArray(folded.thinking) || !Array.isArray(folded.receipts)) throw new Error("Folded transcript facts were unavailable.");
+  expect(folded.liveRows).toBe(0);
+  for (const line of folded.thinking) expect(String(line)).toMatch(/^Thought through/);
+  for (const line of folded.receipts) expect(String(line)).not.toMatch(/[a-z]+_[a-z]+|Thinking…|Working$/);
 
   const storedAfterFirst = resultRecord(await invokeCoworker(app, "coworkers.get", { slug: "editor" }));
   expect(storedAfterFirst.conversationThreadId).toEqual(expect.stringMatching(/^ses_/));
