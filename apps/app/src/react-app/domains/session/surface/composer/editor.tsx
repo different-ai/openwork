@@ -36,6 +36,7 @@ import {
 import type { InitialConfigType } from "@lexical/react/LexicalComposer.js";
 import { decodeComposerMentionValue, encodeComposerMentionValue, type ComposerMentionKind } from "./mention-encoding";
 import { parseConnectSkillToken } from "./connect-skill-token";
+import { encodeConnectorToken, parseConnectorToken } from "./connector-token";
 import { shouldCollapsePastedText, splitPastedText } from "./pasted-text";
 import { insertPastedText } from "./pasted-text-insertion";
 
@@ -319,6 +320,86 @@ class ComposerSkillNode extends TextNode {
 
 function $createComposerSkillNode(skillName: string, skillToken?: string) {
   return $applyNodeReplacement(new ComposerSkillNode(skillName, skillToken));
+}
+
+type SerializedComposerConnectorNode = Spread<
+  {
+    connectorName: string;
+    type: "composer-connector";
+    version: 1;
+  },
+  SerializedTextNode
+>;
+
+/** `[connector GitHub]` — the connection a seeded prompt is about, shown as a chip. */
+class ComposerConnectorNode extends TextNode {
+  __connectorName: string;
+
+  static override getType() {
+    return "composer-connector";
+  }
+
+  static override clone(node: ComposerConnectorNode) {
+    return new ComposerConnectorNode(node.__connectorName, node.__key);
+  }
+
+  static override importJSON(serializedNode: SerializedComposerConnectorNode) {
+    return $createComposerConnectorNode(serializedNode.connectorName);
+  }
+
+  constructor(connectorName = "", key?: NodeKey) {
+    super(encodeConnectorToken(connectorName), key);
+    this.__connectorName = connectorName;
+  }
+
+  override exportJSON(): SerializedComposerConnectorNode {
+    return {
+      ...super.exportJSON(),
+      connectorName: this.__connectorName,
+      type: "composer-connector",
+      version: 1,
+    };
+  }
+
+  override createDOM(_config: EditorConfig) {
+    const dom = document.createElement("span");
+    dom.className = "inline-flex items-center rounded-full border border-blue-6/35 bg-blue-3/20 px-2.5 py-1 text-xs font-medium text-blue-11";
+    dom.textContent = this.__connectorName;
+    dom.contentEditable = "false";
+    dom.setAttribute("spellcheck", "false");
+    dom.dataset.composerConnector = this.__connectorName;
+    dom.title = `Connector: ${this.__connectorName}`;
+    return dom;
+  }
+
+  override updateDOM(prevNode: ComposerConnectorNode, dom: HTMLElement) {
+    if (prevNode.__connectorName !== this.__connectorName) {
+      dom.textContent = this.__connectorName;
+      dom.dataset.composerConnector = this.__connectorName;
+      dom.title = `Connector: ${this.__connectorName}`;
+    }
+    return false;
+  }
+
+  override canInsertTextBefore(): false {
+    return false;
+  }
+
+  override canInsertTextAfter(): false {
+    return false;
+  }
+
+  override isTextEntity(): true {
+    return true;
+  }
+
+  override isToken(): true {
+    return true;
+  }
+}
+
+function $createComposerConnectorNode(connectorName: string) {
+  return $applyNodeReplacement(new ComposerConnectorNode(connectorName));
 }
 
 function pastedTextChipLabel(lines: number) {
@@ -658,6 +739,7 @@ type ComposerInlineTokenNode =
   | ComposerMentionNode
   | ComposerSlashCommandNode
   | ComposerSkillNode
+  | ComposerConnectorNode
   | ComposerPastedTextNode
   | ComposerAttachmentNode;
 
@@ -665,6 +747,7 @@ function isComposerInlineTokenNode(node: unknown): node is ComposerInlineTokenNo
   return node instanceof ComposerMentionNode
     || node instanceof ComposerSlashCommandNode
     || node instanceof ComposerSkillNode
+    || node instanceof ComposerConnectorNode
     || node instanceof ComposerPastedTextNode
     || node instanceof ComposerAttachmentNode;
 }
@@ -734,11 +817,16 @@ function setPrompt(
     value = slashMatch[2] ?? "";
   }
 
-  const segments = value.split(/(\[attachment [^\]]+\]|\[pasted text [^\]]+\]|\[connect-skill [^\]]+\]|\[skill [^\]]+\]|@[^\s@]+)/);
+  const segments = value.split(/(\[attachment [^\]]+\]|\[pasted text [^\]]+\]|\[connect-skill [^\]]+\]|\[skill [^\]]+\]|\[connector [^\]]+\]|@[^\s@]+)/);
   const pastedTextByLabel = new Map((pastedText ?? []).map((item) => [item.label, item]));
   const attachmentsById = new Map((attachments ?? []).map((item) => [item.id, item]));
   for (const segment of segments) {
     if (!segment) continue;
+    const connectorName = parseConnectorToken(segment);
+    if (connectorName) {
+      paragraph.append($createComposerConnectorNode(connectorName));
+      continue;
+    }
     const attachmentMatch = segment.match(/^\[attachment (.+)\]$/);
     if (attachmentMatch?.[1]) {
       const target = attachmentsById.get(attachmentMatch[1]);
@@ -1232,7 +1320,7 @@ export const LexicalPromptEditor = forwardRef<LexicalPromptEditorHandle, EditorP
         throw error;
       },
       editable: true,
-      nodes: [ComposerMentionNode, ComposerSlashCommandNode, ComposerSkillNode, ComposerPastedTextNode, ComposerAttachmentNode],
+      nodes: [ComposerMentionNode, ComposerSlashCommandNode, ComposerSkillNode, ComposerConnectorNode, ComposerPastedTextNode, ComposerAttachmentNode],
       editorState: () => {
         setPrompt(props.value, props.mentions, props.pastedText, props.attachments);
       },

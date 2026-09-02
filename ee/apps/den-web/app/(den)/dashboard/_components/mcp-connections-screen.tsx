@@ -1,17 +1,20 @@
 "use client";
 
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
-import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { type ReactNode, type Ref, useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, ArrowLeft, Check, Loader2, Minus, MoreHorizontal, Pencil, Plug, Puzzle, Search, Server, Trash2, Users, Wrench } from "lucide-react";
+import { AlertTriangle, ArrowLeft, Check, Loader2, MessageCircle, Minus, MoreHorizontal, Pencil, Plug, Plus, Puzzle, Search, Server, Trash2, Users, Wrench } from "lucide-react";
 import { buttonVariants, DenButton } from "../../_components/ui/button";
 import { DenInput } from "../../_components/ui/input";
 import { DenNotice } from "../../_components/ui/notice";
 import { DenSelect } from "../../_components/ui/select";
 import { DashboardPageTemplate } from "../../_components/ui/dashboard-page-template";
-import { getPluginRoute, getToolTesterRoute } from "../../_lib/den-org";
+import { getConfiguredMcpConnectionsRoute, getMcpConnectionsRoute, getPluginRoute, getToolTesterRoute } from "../../_lib/den-org";
 import { getRequestError, requestJson } from "../../_lib/den-flow";
+import { ConnectorCatalog, connectorChatHref } from "./connector-catalog-list";
+import type { PopularConnector } from "./connector-catalog";
+import { presetEffort } from "./connector-effort";
 import { IntegrationIcon } from "./integration-icon";
 import { Microsoft365Dialog } from "./microsoft-365-dialog";
 import { openMcpAuthorizationWindow, safeMcpAuthorizationUrl, showMcpAuthorizationError } from "./mcp-authorization-url";
@@ -21,7 +24,7 @@ import {
   mcpAccessMode,
   type McpConnectionAccessMode,
 } from "./mcp-connection-editing";
-import { formatConnectionCreatorAttribution } from "./mcp-connection-display";
+import { formatConnectionCreatorAttribution, sortConnectionsForFocus, trustedConnectionFocusId } from "./mcp-connection-display";
 import {
   AUTH_TYPE_OPTIONS,
   CREDENTIAL_MODE_OPTIONS,
@@ -81,10 +84,11 @@ import {
 } from "./mcp-scope-selection";
 import { getPluginPartsSummary, pluginQueryKeys, usePlugins } from "./plugin-data";
 import {
-  ConnectorQuickAddGrid,
   GOOGLE_WORKSPACE_QUICK_ADD_ID,
   MICROSOFT_365_QUICK_ADD_ID,
 } from "./connector-quick-add-grid";
+
+export type McpConnectionsScreenView = "catalog" | "configured";
 
 const OAUTH_POLL_INTERVAL_MS = 2000;
 const OAUTH_POLL_TIMEOUT_MS = 90_000;
@@ -254,8 +258,9 @@ function importServerStatus(server: GithubPluginImportServer): string {
   return "unsupported";
 }
 
-export function McpConnectionsScreen() {
+export function McpConnectionsScreen({ view = "catalog" }: { view?: McpConnectionsScreenView }) {
   const searchParams = useSearchParams();
+  const router = useRouter();
   const { orgContext, orgSlug } = useOrgDashboard();
   const { data: connections = [], isLoading, error, refetch } = useMcpConnections();
   const { data: usableConnections = [], isLoading: usableConnectionsLoading } = useMcpConnections("usable");
@@ -295,6 +300,7 @@ export function McpConnectionsScreen() {
   const pollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
   const handledQuickAddId = useRef<string | null>(null);
   const smartBarRequestId = useRef(0);
+  const focusedRowRef = useRef<HTMLDivElement | null>(null);
 
   function openQuickAdd(id: string) {
     if (id === GOOGLE_WORKSPACE_QUICK_ADD_ID) {
@@ -325,12 +331,43 @@ export function McpConnectionsScreen() {
     setFormOpen(true);
   }
 
-  function manageConnection(connectionId: string) {
-    const connection = connections.find((entry) => entry.id === connectionId);
-    if (!connection) return;
-    updateConnection.reset();
-    setConfiguringOAuthClient(false);
-    setEditingConnection(connection);
+  function manageConnection(connection: ExternalMcpConnection) {
+    router.push(getConfiguredMcpConnectionsRoute(orgSlug, connection.id));
+  }
+
+  /**
+   * Catalog "+" for curated presets: connectors that need nothing from the
+   * org are added on the spot. OAuth servers with automatic app registration
+   * are added for everyone and the authorization tab opens right away so the
+   * admin's own account is connected in the same gesture. Presets that need
+   * an org secret (API key, pre-registered OAuth app) land in the guided form.
+   */
+  function addPreset(preset: ExternalMcpPreset) {
+    const effort = presetEffort(preset);
+    if (effort === "instant") {
+      void handleInstantAdd(preset);
+      return;
+    }
+    if (effort === "one_click") {
+      void handleOneClickAdd(preset);
+      return;
+    }
+    openQuickAdd(preset.presetId);
+  }
+
+  function addPopularConnector(connector: PopularConnector) {
+    if (connector.target.kind === "google-workspace") {
+      openQuickAdd(GOOGLE_WORKSPACE_QUICK_ADD_ID);
+      return;
+    }
+    if (connector.target.kind === "microsoft-365") {
+      openQuickAdd(MICROSOFT_365_QUICK_ADD_ID);
+      return;
+    }
+    const presetId = connector.target.presetId;
+    const preset = presets.find((entry) => entry.presetId === presetId);
+    if (preset) addPreset(preset);
+    else openAdvancedSetup(connector.displayName);
   }
 
   const smartBarInputKind = classifySmartAddInput(smartQuery);
@@ -560,6 +597,33 @@ export function McpConnectionsScreen() {
     }
   }
 
+  async function handleOneClickAdd(preset: ExternalMcpPreset) {
+    setInstantAddingPresetId(preset.presetId);
+    setConnectionActionError(null);
+    setConnectionActionNotice(null);
+    try {
+      // Each person connects their own account; the admin's starts right now
+      // in the authorization tab handleCreate opens.
+      await handleCreate({
+        name: preset.displayName,
+        url: preset.url,
+        authType: "oauth",
+        credentialMode: "per_member",
+        access: { orgWide: true, memberIds: [], teamIds: [] },
+      }, { startOAuth: true });
+      const orgName = orgContext?.organization.name ?? "the organization";
+      setConnectionActionNotice(`${preset.displayName} added for everyone in ${orgName}. Finish signing in to connect your own account.`);
+      await refetch();
+    } catch (createError) {
+      setConnectionActionError({
+        connectionId: preset.presetId,
+        message: createError instanceof Error ? createError.message : "Failed to add the MCP connection.",
+      });
+    } finally {
+      setInstantAddingPresetId(null);
+    }
+  }
+
   async function handleUpdate(input: UpdateMcpConnectionInput): Promise<UpdatedMcpConnection> {
     setConnectionActionError(null);
     setConnectionActionNotice(null);
@@ -631,11 +695,24 @@ export function McpConnectionsScreen() {
       : `${connection.name}'s current issuer was confirmed from live provider metadata.`);
   }
 
+  const configuredView = view === "configured";
+  const configuredRoute = getConfiguredMcpConnectionsRoute(orgSlug);
+  const focusConnectionId = configuredView ? trustedConnectionFocusId(listedConnections, searchParams.get("connectionId")) : null;
+  const configuredConnections = sortConnectionsForFocus(listedConnections, focusConnectionId);
+
+  useEffect(() => {
+    if (!focusConnectionId || !focusedRowRef.current) return;
+    focusedRowRef.current.scrollIntoView({ block: "center" });
+    focusedRowRef.current.focus({ preventScroll: true });
+  }, [focusConnectionId, configuredConnections.length]);
+
   return (
     <DashboardPageTemplate
       icon={Plug}
-      title="Connectors"
-      description="Connectors is where you can add MCP servers that your whole team can use."
+      title={configuredView ? "Configured connectors" : "Connectors"}
+      description={configuredView
+        ? "Everything your team has set up: connect accounts, review tools, change access, or uninstall."
+        : "Connectors is where you can add MCP servers that your whole team can use."}
       colors={["#E2E8F0", "#020617", "#0F172A", "#94A3B8"]}
     >
       {showStagingBanner ? (
@@ -665,7 +742,7 @@ export function McpConnectionsScreen() {
         </div>
       ) : null}
 
-      <h3 className="mb-3 text-[11px] font-semibold uppercase tracking-[0.14em] text-gray-400">Quick add</h3>
+      {configuredView ? null : (
       <div className="mb-8">
         <div className="flex items-center gap-3">
           <div className="min-w-0 flex-1">
@@ -681,14 +758,14 @@ export function McpConnectionsScreen() {
           <button
             type="button"
             onClick={() => openAdvancedSetup()}
-            className="shrink-0 text-[12px] font-medium text-gray-500 underline decoration-gray-300 underline-offset-4 transition hover:text-gray-900"
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-gray-200 bg-white text-gray-700 transition hover:border-gray-300 hover:bg-gray-50 hover:text-gray-900"
+            aria-label="Advanced setup"
+            title="Advanced setup — add any MCP server by URL"
+            data-testid="connector-advanced-setup"
           >
-            Advanced setup
+            <Plus className="h-4 w-4" aria-hidden="true" />
           </button>
         </div>
-        <p className="mt-1.5 text-[11px] text-gray-400">
-          Typing filters the tiles below. Pasting a URL checks the server and offers to add it right here.
-        </p>
 
         {smartBarState === "waiting" || smartBarState === "resolving" ? (
           <div className="mt-4 flex items-center gap-2.5 rounded-2xl border border-gray-100 bg-gray-50 px-4 py-3.5 text-[13px] text-gray-500" role="status">
@@ -777,31 +854,49 @@ export function McpConnectionsScreen() {
           </div>
         ) : null}
 
-        <div className="mt-5">
-          <ConnectorQuickAddGrid
-            connections={connections}
+        <div className="mt-8">
+          <ConnectorCatalog
+            connections={listedConnections}
             presets={presets}
-            onSelect={openQuickAdd}
             filter={smartBarResolutionMode ? "" : smartQuery}
+            configuredHref={configuredRoute}
+            configuredConnectionHref={(connectionId) => getConfiguredMcpConnectionsRoute(orgSlug, connectionId)}
+            onAddPopular={addPopularConnector}
+            onAddPreset={addPreset}
+            onAddMicrosoft365={() => openQuickAdd(MICROSOFT_365_QUICK_ADD_ID)}
             onManage={manageConnection}
-            onInstantAdd={(preset) => void handleInstantAdd(preset)}
-            instantAddingPresetId={instantAddingPresetId}
+            onRemove={handleRemove}
+            addingPresetId={instantAddingPresetId}
           />
         </div>
       </div>
+      )}
 
-      <h3 className="mb-3 text-[11px] font-semibold uppercase tracking-[0.14em] text-gray-400">Your connectors</h3>
+      {!configuredView ? null : (
+      <>
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <h3 className="text-[11px] font-semibold uppercase tracking-[0.14em] text-gray-400">Configured</h3>
+        <Link
+          href={getMcpConnectionsRoute(orgSlug)}
+          className={buttonVariants({ variant: "secondary", size: "sm" })}
+          data-testid="configured-add-connector"
+        >
+          <Plus className="h-3.5 w-3.5" aria-hidden="true" />
+          Add connector
+        </Link>
+      </div>
       {isLoading || usableConnectionsLoading ? (
         <div className="rounded-[28px] border border-gray-200 bg-white px-6 py-10 text-[15px] text-gray-500">
           Loading MCP connectors…
         </div>
-      ) : listedConnections.length === 0 ? (
+      ) : configuredConnections.length === 0 ? (
         <div className="rounded-[28px] border border-gray-200 bg-white px-6 py-10 text-center text-[14px] text-gray-500">
-          No MCP connectors yet.
+          No MCP connectors yet.{" "}
+          <Link href={getMcpConnectionsRoute(orgSlug)} className="font-semibold underline underline-offset-2">Browse connectors</Link>
         </div>
       ) : (
         <div className="divide-y divide-gray-100 rounded-2xl border border-gray-100 bg-white">
-          {listedConnections.map((connection) => {
+          {configuredConnections.map((connection) => {
             const connectAttemptRequiresConfiguration = oauthClientConfigurationRequiredIds.includes(connection.id);
             const needsOAuthClientConfiguration = connectionNeedsOAuthClientConfiguration(
               connection,
@@ -814,6 +909,8 @@ export function McpConnectionsScreen() {
               key={connection.id}
               orgSlug={orgSlug}
               connection={connection}
+              highlighted={focusConnectionId === connection.id}
+              rowRef={focusConnectionId === connection.id ? focusedRowRef : undefined}
               needsPluginSetup={needsPluginSetup}
               needsOAuthClientConfiguration={needsOAuthClientConfiguration}
               setupHref={needsPluginSetup && setupPluginId ? getPluginRoute(orgSlug, setupPluginId) : null}
@@ -844,6 +941,8 @@ export function McpConnectionsScreen() {
             />;
           })}
         </div>
+      )}
+      </>
       )}
 
       <AddConnectionDialog
@@ -1648,6 +1747,8 @@ function accessSummaryLabel(connection: ExternalMcpConnection): string {
 function ConnectionRow({
   orgSlug,
   connection,
+  highlighted = false,
+  rowRef,
   needsPluginSetup,
   needsOAuthClientConfiguration,
   setupHref,
@@ -1665,6 +1766,8 @@ function ConnectionRow({
 }: {
   orgSlug: string | null;
   connection: ExternalMcpConnection;
+  highlighted?: boolean;
+  rowRef?: Ref<HTMLDivElement>;
   needsPluginSetup: boolean;
   needsOAuthClientConfiguration: boolean;
   setupHref: string | null;
@@ -1718,7 +1821,12 @@ function ConnectionRow({
   }, [actionsOpen]);
 
   return (
-    <div data-testid={`mcp-connection-row-${connection.id}`}>
+    <div
+      ref={rowRef}
+      tabIndex={highlighted ? -1 : undefined}
+      className={`outline-none transition ${highlighted ? "bg-blue-50/70 ring-2 ring-inset ring-blue-200" : ""}`}
+      data-testid={`mcp-connection-row-${connection.id}`}
+    >
       <div className="flex flex-col gap-4 px-6 py-4 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex min-w-0 flex-1 items-center gap-3">
           <IntegrationIcon name={connection.name} serviceUrl={connection.url} />
@@ -1830,6 +1938,17 @@ function ConnectionRow({
                 aria-label={`Actions for ${connection.name}`}
                 className="absolute right-0 top-10 z-30 w-44 overflow-hidden rounded-2xl border border-gray-100 bg-white p-1.5 text-[13px] shadow-xl shadow-gray-900/10"
               >
+                <a
+                  role="menuitem"
+                  href={connectorChatHref(connection.name)}
+                  onClick={() => setActionsOpen(false)}
+                  className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-gray-600 transition hover:bg-gray-50 hover:text-gray-900"
+                  aria-label={`Chat with ${connection.name} in OpenWork`}
+                  data-testid={`chat-mcp-connection-${connection.id}`}
+                >
+                  <MessageCircle className="h-3.5 w-3.5" aria-hidden="true" />
+                  Chat
+                </a>
                 <button
                   type="button"
                   role="menuitem"

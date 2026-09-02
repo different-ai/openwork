@@ -671,6 +671,11 @@ export function getMcpConnectionsRoute(orgSlug?: string | null): string {
   return `${getOrgDashboardRoute(orgSlug)}/mcp-connections`;
 }
 
+export function getConfiguredMcpConnectionsRoute(orgSlug?: string | null, connectionId?: string | null): string {
+  const base = `${getMcpConnectionsRoute(orgSlug)}/configured`;
+  return connectionId ? `${base}?connectionId=${encodeURIComponent(connectionId)}` : base;
+}
+
 export function getYourConnectionsRoute(orgSlug?: string | null): string {
   return `${getOrgDashboardRoute(orgSlug)}/your-connections`;
 }

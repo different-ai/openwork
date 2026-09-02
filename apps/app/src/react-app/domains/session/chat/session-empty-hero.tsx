@@ -16,6 +16,7 @@ import {
 } from "@/react-app/domains/cloud/openwork-models-promo";
 import { usePlatform } from "@/react-app/kernel/platform";
 import { NewTaskComposer, type NewTaskComposerContext } from "./new-task-composer";
+import { consumePendingChatSeed, pendingChatSeedEvent } from "./pending-chat-seed";
 
 type HeroSuggestion = {
   title: string;
@@ -77,6 +78,20 @@ export function SessionEmptyHero(props: SessionEmptyHeroProps) {
     const handlePromoChanged = () => setModelsPromoHidden(isOpenWorkModelsPromoHidden());
     window.addEventListener(openWorkModelsPromoChangedEvent, handlePromoChanged);
     return () => window.removeEventListener(openWorkModelsPromoChangedEvent, handlePromoChanged);
+  }, []);
+
+  // A chat deep link (Den's connector "Chat" action) seeds the composer with
+  // the connector chip and its starter prompt; the person reviews and sends.
+  useEffect(() => {
+    const seed = () => {
+      const draft = consumePendingChatSeed();
+      if (draft === null) return;
+      setPrompt(draft);
+      window.dispatchEvent(new Event("openwork:focusPrompt"));
+    };
+    seed();
+    window.addEventListener(pendingChatSeedEvent, seed);
+    return () => window.removeEventListener(pendingChatSeedEvent, seed);
   }, []);
 
   // Quiet inline lead to OpenWork Models: replaces the old startup dialog
