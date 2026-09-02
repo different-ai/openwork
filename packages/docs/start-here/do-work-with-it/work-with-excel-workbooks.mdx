@@ -34,7 +34,7 @@ Dates stored as Excel serial numbers are shown as calendar dates when the cell c
 Ask for an Excel deliverable and the agent writes it with `spreadsheet_write`:
 
 - Numbers stay numeric and booleans stay booleans, so sums and filters work in Excel.
-- Text that starts with `=` is written as a formula and recalculates when the file opens.
+- Formulas are written only when the agent asks for one explicitly; text it copies from anywhere else is always stored as text, even when it begins with `=`. Formulas recalculate when the file opens, and formulas that reach outside the workbook (web requests, other programs, other files) are refused.
 - The first row of each sheet is bold and frozen as a header unless the agent is asked otherwise, and columns are sized to their content.
 - The result appears in the artifact panel, where you can preview and download it.
 

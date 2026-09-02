@@ -40,7 +40,7 @@ const READABLE_EXTENSIONS = new Set([".xlsx", ".xlsm"]);
 
 const SPREADSHEET_INSTRUCTIONS = `## Spreadsheets and Excel workbooks
 - .xlsx files are binary: never open them with the read tool or cat. Call spreadsheet_inspect (sheets, used ranges, sizes, header rows) and then spreadsheet_read (any sheet, A1 range, or page of rows; pass formulas: true to see formulas instead of values) to work with a workbook. Attached workbooks arrive as a preview that names their workspace path; use these tools for every sheet, range, and row beyond the preview.
-- Create or replace .xlsx deliverables with spreadsheet_write: one or more sheets of rows where numbers stay numeric, booleans stay booleans, strings starting with "=" become formulas, and the first row is a bold frozen header unless header: false. It replaces the whole file, so include every sheet you want to keep, and pass overwrite: true only when the user expects that file to change.
+- Create or replace .xlsx deliverables with spreadsheet_write: one or more sheets of rows where numbers stay numeric, booleans stay booleans, strings are always text (even when they start with "="), a formula is written only when you pass { formula: "SUM(B2:B9)" }, and the first row is a bold frozen header unless header: false. Formulas that fetch remote data or run programs (WEBSERVICE, RTD, IMPORT*, IMAGE, DDE references) are refused. It replaces the whole file, so include every sheet you want to keep, and pass overwrite: true only when the user expects that file to change.
 - Use .csv (write tool) for one flat table; use .xlsx for several sheets, formulas, or when the user asks for Excel. Prefer these tools over python/openpyxl/npx scripts for .xlsx; shell out only for charts, cell styling, pivot tables, or legacy .xls, and say so.`;
 
 type RuntimeContext = {
@@ -177,13 +177,17 @@ const readArgsSchema = z.object({
   formulas: z.boolean().optional().describe("Show formulas (=SUM(A1:A9)) instead of their cached values."),
 });
 
-const cellValueSchema = z.union([z.string(), z.number(), z.boolean(), z.null()]);
+const formulaCellSchema = z.object({
+  formula: z.string().min(1).max(8192).describe("Excel formula without the leading \"=\", for example SUM(B2:B9). Only calculations inside the workbook are written; WEBSERVICE, RTD, IMPORT*, IMAGE, DDE command references, and references to other workbooks are refused."),
+});
+
+const cellValueSchema = z.union([z.string(), z.number(), z.boolean(), z.null(), formulaCellSchema]);
 
 const writeArgsSchema = z.object({
   path: z.string().min(1).describe("Workspace-relative destination ending in .xlsx, for example reports/summary.xlsx. Parent folders are created."),
   sheets: z.array(z.object({
     name: z.string().max(31).optional().describe("Sheet tab name (up to 31 characters, no []:*?/\\). Defaults to Sheet1, Sheet2, …"),
-    rows: z.array(z.array(cellValueSchema)).describe("Rows of cell values. Numbers stay numeric, booleans stay booleans, null or \"\" leaves the cell empty, and strings starting with \"=\" are written as formulas."),
+    rows: z.array(z.array(cellValueSchema)).describe("Rows of cell values. Numbers stay numeric, booleans stay booleans, null or \"\" leaves the cell empty, strings are always written as text (even when they start with \"=\"), and { formula: \"SUM(B2:B9)\" } writes a formula."),
     header: z.boolean().optional().describe("Bold and freeze the first row. Defaults to true."),
   })).min(1).max(XLSX_WRITE_MAX_SHEETS).describe(`Sheets to write, in tab order (1-${XLSX_WRITE_MAX_SHEETS}).`),
   overwrite: z.boolean().optional().describe("Replace an existing file at path. Without it, writing over an existing workbook fails so user files are never clobbered by accident."),
@@ -260,7 +264,7 @@ export const OpenWorkSpreadsheets = async (factoryInput?: unknown) => {
         },
       },
       spreadsheet_write: {
-        description: `Create or replace an Excel workbook (.xlsx) in the workspace from rows of values: one or more sheets, numeric cells, booleans, formulas (strings starting with "="), a bold frozen header row, and auto-sized columns. Writes the whole file, so include every sheet to keep; requires overwrite: true to replace an existing file. Up to ${XLSX_WRITE_MAX_CELLS} cells.`,
+        description: `Create or replace an Excel workbook (.xlsx) in the workspace from rows of values: one or more sheets, numeric cells, booleans, text (strings are never treated as formulas), formulas passed as { formula: "SUM(B2:B9)" }, a bold frozen header row, and auto-sized columns. Writes the whole file, so include every sheet to keep; requires overwrite: true to replace an existing file. Up to ${XLSX_WRITE_MAX_CELLS} cells.`,
         args: writeArgsSchema.shape,
         async execute(rawArgs: unknown, context?: unknown) {
           const args = writeArgsSchema.parse(rawArgs);

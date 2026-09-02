@@ -3,6 +3,7 @@ import { describe, expect, test } from "bun:test";
 import {
   buildZip,
   cellInputFromText,
+  unsafeFormulaReason,
   listZipEntries,
   openXlsxWorkbook,
   readZipEntryData,
@@ -60,6 +61,20 @@ describe("@openwork/workbook", () => {
     expect(() => sheetGridRows(sheet, { maxCells: 5 })).toThrow("too large to show as an editable grid");
   });
 
+  test("names why a formula would reach outside the workbook", () => {
+    expect(unsafeFormulaReason("SUM(A1:A9)")).toBeNull();
+    expect(unsafeFormulaReason("=IF(B2>0, HYPERLINK(\"https://example.com\", \"source\"), \"\")")).toBeNull();
+    expect(unsafeFormulaReason("Table1[Amount]*2")).toBeNull();
+    expect(unsafeFormulaReason("Sheet2!A1+1")).toBeNull();
+    expect(unsafeFormulaReason("webservice(\"http://x\")")).toBe("uses WEBSERVICE, which reaches outside the workbook when it recalculates");
+    expect(unsafeFormulaReason("FILTERXML(WEBSERVICE(\"http://x\"),\"//a\")")).toContain("FILTERXML");
+    expect(unsafeFormulaReason("cmd|' /C calc'!A0")).toBe("contains a DDE-style external command reference");
+    expect(unsafeFormulaReason("[1]Sheet1!A1")).toBe("references another workbook");
+    expect(unsafeFormulaReason("'C:\\evil\\[Book1.xlsx]Sheet1'!A1")).toBe("references another workbook");
+    expect(unsafeFormulaReason("")).toBe("is empty");
+    expect(unsafeFormulaReason("A".repeat(9000))).toBe("is longer than 8192 characters");
+  });
+
   test("turns edited text back into typed cells conservatively", () => {
     expect(cellInputFromText("")).toBeNull();
     expect(cellInputFromText("1742.42")).toBe(1742.42);
@@ -67,7 +82,10 @@ describe("@openwork/workbook", () => {
     expect(cellInputFromText("1e3")).toBe(1000);
     expect(cellInputFromText("TRUE")).toBe(true);
     expect(cellInputFromText("FALSE")).toBe(false);
-    expect(cellInputFromText("=SUM(A1:A3)")).toBe("=SUM(A1:A3)");
+    expect(cellInputFromText("=SUM(A1:A3)")).toEqual({ formula: "SUM(A1:A3)" });
+    expect(cellInputFromText('=WEBSERVICE("http://attacker.invalid/")')).toBe('=WEBSERVICE("http://attacker.invalid/")');
+    expect(cellInputFromText("=cmd|' /C calc'!A0")).toBe("=cmd|' /C calc'!A0");
+    expect(cellInputFromText("=")).toBe("=");
     expect(cellInputFromText("02134")).toBe("02134");
     expect(cellInputFromText("1,000")).toBe("1,000");
     expect(cellInputFromText(" 7")).toBe(" 7");

@@ -82,7 +82,15 @@ export type XlsxWorkbook = {
   readSheet(sheet: XlsxSheetInfo, options?: { cellLimit?: number }): Promise<XlsxSheetData>;
 };
 
-export type XlsxCellInput = string | number | boolean | null;
+/** A formula written on request, without the leading "=", e.g. `SUM(B2:B9)`. */
+export type XlsxFormulaInput = { formula: string };
+
+/**
+ * Strings are always written as text, even when they start with "=", so data
+ * copied from untrusted sources can never become executable spreadsheet code.
+ * A formula has to be asked for explicitly with `{ formula }`.
+ */
+export type XlsxCellInput = string | number | boolean | null | XlsxFormulaInput;
 
 export type XlsxSheetInput = {
   name?: string;
@@ -514,11 +522,44 @@ export function sheetGridRows(sheet: XlsxSheetData, options: { maxCells?: number
 }
 
 const CANONICAL_NUMBER = /^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$/;
+const FORMULA_MAX_CHARS = 8_192;
+// Functions that fetch remote data, run registered code, or pull other files
+// when a workbook recalculates. A generated report never needs them.
+const OUTSIDE_WORKBOOK_FUNCTION = /\b(WEBSERVICE|FILTERXML|RTD|CALL|REGISTER(?:\.ID)?|EXEC|IMPORT(?:DATA|XML|HTML|FEED|RANGE)|IMAGE)\s*\(/i;
+const EXTERNAL_WORKBOOK_REFERENCE = /\[\d+\]|\[[^\]]*\.(?:xls[xmb]?|xlam|csv)\]/i;
+
+export function isFormulaInput(value: XlsxCellInput): value is XlsxFormulaInput {
+  return typeof value === "object" && value !== null && typeof value.formula === "string";
+}
+
+/**
+ * Why a formula must not be written, or null when it is a plain calculation.
+ * Formulas that reach outside the workbook are refused even when requested:
+ * DDE command references (`cmd|'/c …'!A0`), functions that fetch remote data
+ * or execute registered code, and references into other workbooks.
+ */
+export function unsafeFormulaReason(formula: string): string | null {
+  const body = formula.trim().replace(/^=/, "");
+  if (!body) return "is empty";
+  if (body.length > FORMULA_MAX_CHARS) return `is longer than ${FORMULA_MAX_CHARS} characters`;
+  if (body.includes("|")) return "contains a DDE-style external command reference";
+  const remote = OUTSIDE_WORKBOOK_FUNCTION.exec(body);
+  if (remote) return `uses ${remote[1].toUpperCase()}, which reaches outside the workbook when it recalculates`;
+  if (EXTERNAL_WORKBOOK_REFERENCE.test(body)) return "references another workbook";
+  return null;
+}
+
+function formulaBody(value: XlsxFormulaInput, reference: string): string {
+  const reason = unsafeFormulaReason(value.formula);
+  if (reason) throw new Error(`Formula in ${reference} ${reason}; only calculations inside the workbook are written. Write the value instead.`);
+  return value.formula.trim().replace(/^=/, "");
+}
 
 /**
  * Turn edited text back into a typed cell without guessing: canonical numbers
  * become numbers (so "02134" and "1,000" stay text), TRUE/FALSE become
- * booleans, "=" prefixes stay formulas, and everything else is text.
+ * booleans, an "=" prefix becomes a formula when it is a plain calculation,
+ * and everything else is text.
  */
 export function cellInputFromText(text: string): XlsxCellInput {
   if (text === "") return null;
@@ -528,6 +569,7 @@ export function cellInputFromText(text: string): XlsxCellInput {
     const value = Number(text);
     if (Number.isFinite(value)) return value;
   }
+  if (text.startsWith("=") && text.length > 1 && unsafeFormulaReason(text) === null) return { formula: text.slice(1) };
   return text;
 }
 
@@ -558,13 +600,14 @@ function cellXml(reference: string, value: XlsxCellInput, styleIndex: number): s
     return `<c r="${reference}"${style}><v>${value}</v></c>`;
   }
   if (typeof value === "boolean") return `<c r="${reference}" t="b"${style}><v>${value ? 1 : 0}</v></c>`;
-  if (value.startsWith("=") && value.length > 1) return `<c r="${reference}"${style}><f>${escapeXml(value.slice(1))}</f></c>`;
+  if (isFormulaInput(value)) return `<c r="${reference}"${style}><f>${escapeXml(formulaBody(value, reference))}</f></c>`;
   const preserve = /^\s|\s$|\n/.test(value) ? ' xml:space="preserve"' : "";
   return `<c r="${reference}" t="inlineStr"${style}><is><t${preserve}>${escapeXml(value)}</t></is></c>`;
 }
 
 function displayWidth(value: XlsxCellInput): number {
   if (value === null) return 0;
+  if (isFormulaInput(value)) return 12;
   return String(value).split("\n").reduce((max, line) => Math.max(max, line.length), 0);
 }
 
