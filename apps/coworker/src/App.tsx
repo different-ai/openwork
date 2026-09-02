@@ -7,8 +7,16 @@ import {
   providerSyncSession,
   readDenSession,
   writeDenSession,
+  type ConnectToken,
   type DenSession,
 } from "@/lib/den";
+import {
+  connectReconcilePayload,
+  connectStateFromHealth,
+  reconcileConnect,
+  removeConnect,
+  type ConnectState,
+} from "@/lib/connect";
 import { readCoworkerActivity, type CoworkerActivity } from "@/lib/threads";
 import { Button, ErrorNote } from "@/ui/kit";
 import { NewCoworker } from "@/ui/new-coworker";
@@ -44,6 +52,10 @@ export default function App() {
   const [activityBySlug, setActivityBySlug] = useState<Record<string, CoworkerActivity>>({});
   const [liveActivityBySlug, setLiveActivityBySlug] = useState<Record<string, CoworkerActivity>>({});
   const [attentionBySlug, setAttentionBySlug] = useState<Record<string, string>>({});
+  /** OpenWork Connect (the `openwork-cloud` gateway) state per coworker, while signed in. */
+  const [connectBySlug, setConnectBySlug] = useState<Record<string, ConnectState>>({});
+  const connectTokenRef = useRef<{ sessionKey: string; token: ConnectToken } | null>(null);
+  const connectedWorkspacesRef = useRef<Set<string>>(new Set());
   /** Cloud responsibilities Den is running right now, per coworker: "Running in OpenWork Cloud". */
   const [cloudRunBySlug, setCloudRunBySlug] = useState<Record<string, CoworkerActivity>>({});
   const pushedSessionKeyRef = useRef("");
@@ -159,6 +171,15 @@ export default function App() {
   }, [runtime, signInWithGrant]);
 
   const signOut = useCallback(async () => {
+    // The organization's capabilities leave with the account.
+    if (runtime) {
+      await Promise.all(coworkers
+        .filter((coworker) => coworker.workspaceId)
+        .map((coworker) => removeConnect(runtime, coworker.workspaceId).catch(() => undefined)));
+    }
+    connectedWorkspacesRef.current.clear();
+    connectTokenRef.current = null;
+    setConnectBySlug({});
     writeDenSession(null);
     setSession(null);
     setProviderSync(null);
@@ -168,7 +189,7 @@ export default function App() {
     } finally {
       void refreshRuntime();
     }
-  }, [refreshRuntime]);
+  }, [coworkers, refreshRuntime, runtime]);
 
   const syncProviders = useCallback(async (): Promise<ProviderSyncRun> => {
     try {
@@ -183,6 +204,65 @@ export default function App() {
       void refreshRuntime();
     }
   }, [refreshRuntime]);
+
+  /**
+   * Bring the organization's capabilities to every coworker: mint one gateway
+   * token for the session and register the gateway in each coworker's
+   * workspace. Idempotent; `force` re-registers (Repair) and re-mints a token
+   * that is about to expire.
+   */
+  const syncConnect = useCallback(async (options: { force?: boolean; slug?: string } = {}) => {
+    if (!runtime?.engineManaged || !session) return;
+    const key = sessionKey(session);
+    const targets = coworkers.filter((coworker) =>
+      coworker.workspaceId
+      && (!options.slug || coworker.slug === options.slug)
+      && (options.force || !connectedWorkspacesRef.current.has(`${key}\u0000${coworker.workspaceId}`)),
+    );
+    if (targets.length === 0) return;
+    setConnectBySlug((current) => {
+      const next = { ...current };
+      for (const coworker of targets) next[coworker.slug] = { status: "connecting" };
+      return next;
+    });
+    let token = connectTokenRef.current?.sessionKey === key ? connectTokenRef.current.token : null;
+    const expiresSoon = token ? Date.parse(token.expiresAt) - Date.now() < 5 * 60_000 : true;
+    try {
+      if (!token || expiresSoon || options.force) {
+        token = await createDenAutomationsClient(session).mintMcpToken();
+        connectTokenRef.current = { sessionKey: key, token };
+      }
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : String(cause);
+      setConnectBySlug((current) => {
+        const next = { ...current };
+        for (const coworker of targets) next[coworker.slug] = { status: "unavailable", message: `OpenWork could not issue a Connect token: ${message}` };
+        return next;
+      });
+      return;
+    }
+    const minted = token;
+    await Promise.all(targets.map(async (coworker) => {
+      const payload = connectReconcilePayload({ workspaceId: coworker.workspaceId, session, token: minted, appVersion: runtime.version });
+      let state: ConnectState;
+      try {
+        if (!payload) throw new Error("OpenWork did not name a gateway for this organization.");
+        state = connectStateFromHealth(await reconcileConnect(runtime, coworker.workspaceId, payload));
+        connectedWorkspacesRef.current.add(`${key}\u0000${coworker.workspaceId}`);
+      } catch (cause) {
+        state = { status: "unavailable", message: cause instanceof Error ? cause.message : String(cause) };
+      }
+      setConnectBySlug((current) => ({ ...current, [coworker.slug]: state }));
+    }));
+  }, [coworkers, runtime, session]);
+
+  useEffect(() => {
+    if (!session || !runtime?.engineManaged) return;
+    void syncConnect();
+    // Tokens are short-lived: refresh before they lapse while the app stays open.
+    const timer = window.setInterval(() => void syncConnect({ force: true }), 20 * 60_000);
+    return () => window.clearInterval(timer);
+  }, [runtime?.engineManaged, session, syncConnect]);
 
   useEffect(() => {
     if (!runtime) return;
@@ -492,6 +572,9 @@ export default function App() {
               onRestartRuntime={restartRuntime}
               onSyncProviders={syncProviders}
               onOpenOpenWork={(section) => openGlobalSettings(section ?? "general")}
+              connect={connectBySlug[selected.slug] ?? null}
+              onRepairConnect={() => syncConnect({ force: true, slug: selected.slug })}
+              onConnectAccount={() => setConnecting(true)}
             />
           </div>
         )}

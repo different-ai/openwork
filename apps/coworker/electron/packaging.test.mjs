@@ -32,6 +32,15 @@ test("Open Coworker has its own stable packaged identity and local runtime resou
     to: "sidecars",
     filter: ["opencode", "opencode.exe", "opencode-*", "versions.json", "versions.json-*"],
   });
+  // The engine loads OpenWork's plugins (Connect steering, extension canaries) from
+  // Resources/opencode-plugins when the server runs inside the asar, so they ship
+  // beside it exactly as the desktop packages them.
+  assert.ok(config.files.includes("!server/dist/opencode-plugins/**"));
+  assert.deepEqual(config.extraResources[1], {
+    from: "server/dist/opencode-plugins",
+    to: "opencode-plugins",
+    filter: ["*.js"],
+  });
 });
 
 test("Open Coworker mirrors every embedded-server runtime dependency for electron-builder", async () => {

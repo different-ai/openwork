@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { coworkerBridge, type CoworkerSummary, type LocalResponsibility, type ProviderSyncRun, type RuntimeInfo } from "@/lib/bridge";
 import { describeNow, describeOutcome, mergeRecentWork, relativeTime } from "@/lib/activity-summary";
+import type { ConnectState } from "@/lib/connect";
 import type { DenSession } from "@/lib/den";
 import { clearAutoPicked, markAutoPicked } from "@/lib/model-choice";
 import { createCoworkerThreads, recommendModel, type CoworkerActivity } from "@/lib/threads";
@@ -87,6 +88,9 @@ export function CoworkerHome({
   onRestartRuntime,
   onSyncProviders,
   onOpenOpenWork,
+  connect,
+  onRepairConnect,
+  onConnectAccount,
 }: {
   runtime: RuntimeInfo;
   session: DenSession | null;
@@ -102,6 +106,11 @@ export function CoworkerHome({
   onSyncProviders: () => Promise<ProviderSyncRun>;
   /** Open the global OpenWork settings, optionally on one section (account, models…). */
   onOpenOpenWork: (section?: SettingsSection) => void;
+  /** OpenWork Connect state for this coworker while signed in; null before the first sync. */
+  connect: ConnectState | null;
+  onRepairConnect: () => void;
+  /** Start the OpenWork sign-in flow. */
+  onConnectAccount: () => void;
 }) {
   const [contextView, setContextView] = useState<ContextView>("overview");
   const [settingsFocus, setSettingsFocus] = useState<{ id: number; section: "model" } | null>(null);
@@ -329,9 +338,17 @@ export function CoworkerHome({
           {contextView === "capabilities" ? (
             <CapabilitiesPanel
               runtime={runtime}
+              session={session}
               coworker={coworker}
+              connect={connect}
+              onRepairConnect={onRepairConnect}
+              onConnectAccount={onConnectAccount}
               onAssign={(text) => {
                 setAssignmentDraft({ id: Date.now(), text });
+                setContextView("overview");
+              }}
+              onDiscuss={(text) => {
+                setDiscussionDraft({ id: Date.now(), text });
                 setContextView("overview");
               }}
             />

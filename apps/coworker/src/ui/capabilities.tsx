@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import type { CoworkerSummary, RuntimeInfo } from "@/lib/bridge";
+import { CONNECT_MCP_NAME, describeConnect, type ConnectState } from "@/lib/connect";
+import type { DenSession } from "@/lib/den";
 import {
   createCoworkerMcpClient,
   type CoworkerMcpAppCatalogApp,
@@ -19,6 +21,7 @@ type SelectedApp = {
 };
 
 function displayName(server: CoworkerMcpAppCatalogServer): string {
+  if (server.serverName === CONNECT_MCP_NAME) return "OpenWork Connect";
   return server.displayName?.trim() || server.serverName;
 }
 
@@ -36,9 +39,9 @@ function configured(item: CoworkerMcpItem): boolean {
 }
 
 function inventoryLabel(item: CoworkerMcpItem): string {
-  if (item.managedOAuth?.status === "needs_auth" || item.managedOAuth?.status === "reconnect_required") return "Connect account";
+  if (item.managedOAuth?.status === "needs_auth" || item.managedOAuth?.status === "reconnect_required") return "Sign in needed";
   if (item.managedOAuth?.status === "connecting") return "Connecting";
-  return configured(item) ? "Available" : "Off";
+  return configured(item) ? "Ready" : "Off";
 }
 
 function inventoryStatus(item: CoworkerMcpItem, server: CoworkerMcpAppCatalogServer | undefined): {
@@ -48,14 +51,13 @@ function inventoryStatus(item: CoworkerMcpItem, server: CoworkerMcpAppCatalogSer
   const label = inventoryLabel(item);
   if (!configured(item)) return { label, tone: "mist" };
   if (server && !server.reachable) return { label: "Unavailable", tone: "rose" };
-  if (label === "Connect account") return { label, tone: "rose" };
+  if (label === "Sign in needed") return { label, tone: "rose" };
   if (label === "Connecting") return { label, tone: "mist" };
   return { label, tone: "mint" };
 }
 
-function isConnectGateway(item: CoworkerMcpItem): boolean {
-  const name = item.name.toLowerCase();
-  return name.includes("openwork-cloud") || name.includes("openwork_cloud") || name.includes("connect");
+function isConnectGateway(item: Pick<CoworkerMcpItem, "name">): boolean {
+  return item.name === CONNECT_MCP_NAME;
 }
 
 function appFailureMessage(result: PreservedMcpAppResult): string {
@@ -75,14 +77,33 @@ function appFailureMessage(result: PreservedMcpAppResult): string {
   return "This App could not start with the supplied input.";
 }
 
+/** What OpenWork Connect adds, said once, in the person's terms. */
+const CONNECT_VALUE = [
+  { title: "One sign-in for the team", text: "Gmail, Slack, Notion and more connected once for your organization, with the same controls as OpenWork Desktop." },
+  { title: "Every tool in one place", text: "Your coworker searches everything your organization connected and picks the right capability itself." },
+  { title: "Shared skills and plugins", text: "Skills your team publishes — including creating new ones — are ready to use and kept up to date." },
+];
+
 export function CapabilitiesPanel({
   runtime,
+  session,
   coworker,
+  connect,
+  onRepairConnect,
+  onConnectAccount,
   onAssign,
+  onDiscuss,
 }: {
   runtime: RuntimeInfo;
+  session: DenSession | null;
   coworker: CoworkerSummary;
+  connect: ConnectState | null;
+  onRepairConnect: () => void;
+  onConnectAccount: () => void;
+  /** Seed the assignment composer with an outcome. */
   onAssign: (prompt: string) => void;
+  /** Seed the discussion composer with a message the person still sends. */
+  onDiscuss: (message: string) => void;
 }) {
   const client = useMemo(
     () => coworker.workspaceId
@@ -118,7 +139,7 @@ export function CapabilitiesPanel({
 
   useEffect(() => {
     void refresh();
-  }, [refresh]);
+  }, [refresh, connect?.status]);
 
   const apps = useMemo(() => servers.flatMap((server) => server.apps.map((catalog) => ({ server, catalog }))), [servers]);
   const normalizedQuery = query.trim().toLowerCase();
@@ -128,9 +149,13 @@ export function CapabilitiesPanel({
     catalog.description,
     catalog.toolName,
   ].some((value) => value?.toLowerCase().includes(normalizedQuery)));
-  const filteredInventory = inventory.filter((item) => !normalizedQuery || item.name.toLowerCase().includes(normalizedQuery));
-  const onlineServers = servers.filter((server) => server.reachable).length;
-  const connectGateway = inventory.find(isConnectGateway);
+  const localInventory = inventory.filter((item) => !isConnectGateway(item));
+  const filteredInventory = localInventory.filter((item) => !normalizedQuery || item.name.toLowerCase().includes(normalizedQuery));
+  const gatewayItem = inventory.find(isConnectGateway);
+  const signedIn = session !== null;
+  const status = describeConnect(connect, signedIn);
+  const connected = signedIn && connect?.status === "connected";
+  const needsRepair = signedIn && (connect?.status === "attention" || connect?.status === "unavailable");
 
   if (selected && client) {
     return (
@@ -159,36 +184,75 @@ export function CapabilitiesPanel({
         </Button>
       </div>
 
-      <section className="rounded-2xl border border-line bg-ink p-4">
-        <div className="flex items-start justify-between gap-4">
-          <div>
+      <section className="rounded-2xl border border-line bg-ink p-4" data-testid="coworker-connect-card" data-status={signedIn ? (connect?.status ?? "connecting") : "signed-out"}>
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
             <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-mist">OpenWork Connect</p>
-            <h3 className="mt-2 text-sm font-semibold text-snow">Search first. Use the right capability.</h3>
+            <h3 className="mt-1.5 text-sm font-semibold leading-snug text-snow">
+              {signedIn
+                ? `${coworker.name} can use everything ${session.orgName ? session.orgName : "your organization"} connected in OpenWork.`
+                : `Bring your organization's apps and tools to ${coworker.name}.`}
+            </h3>
           </div>
-          <span className="shrink-0 rounded-full border border-line px-2 py-1 text-[9px] font-medium text-mist">
-            search → execute
+          <span className={`flex shrink-0 items-center gap-1.5 text-[11px] font-medium ${status.tone === "mint" ? "text-mint" : status.tone === "amber" ? "text-amber" : status.tone === "rose" ? "text-rose" : "text-mist"}`} data-testid="coworker-connect-status">
+            <StatusDot tone={status.tone} />
+            {status.label}
           </span>
         </div>
-        <p className="mt-2 text-xs leading-relaxed text-mist">
-          {connectGateway && configured(connectGateway)
-            ? `${coworker.name} can search your connected services, select a match, then execute it through OpenWork.`
-            : "Connect OpenWork to search organization Apps and execute selected actions with the same controls as Desktop."}
-        </p>
-        <Button
-          variant="primary"
-          className="mt-3 w-full text-xs"
-          onClick={() => onAssign(
-            `Search my connected OpenWork capabilities for "${query.trim() || "what I need next"}". Use search_capabilities first, then execute_capability only after choosing the best match. Tell me what you selected and the result.`,
-          )}
-        >
-          Ask {coworker.name}
-        </Button>
+
+        {signedIn ? (
+          <>
+            {status.detail ? <p className="mt-2 text-xs leading-relaxed text-mist" data-testid="coworker-connect-detail">{status.detail}</p> : null}
+            {connected ? (
+              <p className="mt-2 text-xs leading-relaxed text-mist">
+                Ask for what you need; {coworker.name} searches your organization's connected apps, skills, and plugins first, then uses the right one.
+              </p>
+            ) : null}
+            <div className="mt-3 flex flex-wrap gap-2">
+              <Button
+                variant="primary"
+                className="text-xs"
+                disabled={!connected}
+                onClick={() => onAssign(
+                  `Search my connected OpenWork capabilities for "${query.trim() || "what I need next"}". Use search_capabilities first, then execute_capability only after choosing the best match. Tell me what you selected and the result.`,
+                )}
+              >
+                Ask {coworker.name}
+              </Button>
+              <Button
+                variant="ghost"
+                className="text-xs"
+                disabled={!connected}
+                data-testid="coworker-connect-create-skill"
+                onClick={() => onDiscuss(
+                  "Create a new skill for our team through OpenWork Connect. Search capabilities for \"create skill\" and follow the create-skill instructions you get back. The skill should: ",
+                )}
+              >
+                Create a skill
+              </Button>
+              {needsRepair ? <Button variant="ghost" className="text-xs" onClick={onRepairConnect}>Repair</Button> : null}
+            </div>
+          </>
+        ) : (
+          <>
+            <ul className="mt-3 space-y-2">
+              {CONNECT_VALUE.map((item) => (
+                <li key={item.title} className="text-xs leading-relaxed text-mist">
+                  <span className="font-medium text-snow">{item.title}.</span> {item.text}
+                </li>
+              ))}
+            </ul>
+            <Button variant="primary" className="mt-3 w-full text-xs" onClick={onConnectAccount} data-testid="coworker-connect-cta">
+              Continue with OpenWork
+            </Button>
+          </>
+        )}
       </section>
 
       <section>
         <div className="mb-2 flex items-center justify-between gap-3 px-1">
-          <h3 className="text-[10px] font-semibold uppercase tracking-[0.14em] text-mist">Interactive Apps</h3>
-          <span className="text-[10px] text-mist">{apps.length} · {onlineServers} sources online</span>
+          <h3 className="text-[11px] font-semibold text-mist">Apps</h3>
+          {apps.length > 0 ? <span className="text-[10px] text-mist">{apps.length}</span> : null}
         </div>
         {filteredApps.length > 0 ? (
           <div className="grid grid-cols-2 gap-2">
@@ -214,16 +278,22 @@ export function CapabilitiesPanel({
             ))}
           </div>
         ) : loading ? (
-          <Empty><InlineLoader label="Reading the live App catalog" /></Empty>
+          <Empty><InlineLoader label="Reading apps" /></Empty>
         ) : (
-          <Empty>{normalizedQuery ? "No interactive Apps match this search." : "No MCP Apps are advertising an interactive view yet."}</Empty>
+          <Empty>
+            {normalizedQuery
+              ? "No app matches this search."
+              : signedIn
+                ? "No apps yet. Apps your organization connects in OpenWork appear here."
+                : "Apps your organization connects in OpenWork appear here once you sign in."}
+          </Empty>
         )}
       </section>
 
       <section>
         <div className="mb-2 flex items-center justify-between gap-3 px-1">
-          <h3 className="text-[10px] font-semibold uppercase tracking-[0.14em] text-mist">MCP connections</h3>
-          <span className="text-[10px] text-mist">{inventory.length}</span>
+          <h3 className="text-[11px] font-semibold text-mist">Tools on this Mac</h3>
+          {localInventory.length > 0 ? <span className="text-[10px] text-mist">{localInventory.length}</span> : null}
         </div>
         <div className="overflow-hidden rounded-2xl border border-line bg-ink">
           {filteredInventory.map((item, index) => {
@@ -240,7 +310,7 @@ export function CapabilitiesPanel({
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-xs font-medium text-snow">{item.name}</span>
                   <span className="mt-0.5 block text-[9px] text-mist">
-                    {isConnectGateway(item) ? "Search and execute across connected Apps" : item.source.replace("config.", "")}
+                    {item.source === "config.project" ? "Set up for this coworker" : item.source === "config.global" ? "Set up on this Mac" : "Remote"}
                   </span>
                 </span>
                 <span className="flex shrink-0 items-center gap-1.5 text-[9px] text-mist">
@@ -250,14 +320,16 @@ export function CapabilitiesPanel({
               </div>
             );
           })}
-          {filteredInventory.length === 0 ? <Empty>{normalizedQuery ? "No MCP connection matches this search." : "No MCP connections configured."}</Empty> : null}
+          {filteredInventory.length === 0 ? (
+            <Empty>{normalizedQuery ? "No tool matches this search." : "No tools set up on this Mac."}</Empty>
+          ) : null}
         </div>
       </section>
 
+      {gatewayItem && !signedIn ? (
+        <p className="px-1 text-[11px] leading-relaxed text-mist/80">A previous OpenWork Connect setup is still registered; sign in again to use it.</p>
+      ) : null}
       {error ? <ErrorNote>{error}</ErrorNote> : null}
-      <p className="px-1 text-[9px] leading-relaxed text-mist/70">
-        Catalog, permissions, connection state, and App resources are read live from this coworker’s OpenWork workspace.
-      </p>
     </div>
   );
 }

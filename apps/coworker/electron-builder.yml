@@ -11,6 +11,7 @@ files:
   - electron-dist/**/*
   - dist/**/*
   - server/**/*
+  - "!server/dist/opencode-plugins/**"
   - resources/icons/**/*
   - package.json
 extraMetadata:
@@ -24,6 +25,12 @@ extraResources:
       - opencode-*
       - versions.json
       - versions.json-*
+  # The embedded server resolves its OpenWork engine plugins from
+  # Resources/opencode-plugins when it runs from an asar, as the desktop does.
+  - from: server/dist/opencode-plugins
+    to: opencode-plugins
+    filter:
+      - "*.js"
 asar: true
 npmRebuild: false
 mac:
