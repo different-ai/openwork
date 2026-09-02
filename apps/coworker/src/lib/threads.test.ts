@@ -120,6 +120,21 @@ test("connectedModelCatalog tells account (OpenWork Cloud) providers from this M
     withoutStatus.models.filter((model) => model.source === "cloud").map((model) => model.providerId),
     ["lpr_01org", "openwork"],
   );
+
+  // A definitive signed-out status wins over a provider list that the engine
+  // has not finished refreshing yet, so account models cannot be selected or
+  // invoked with stale routing state.
+  const signedOut = connectedModelCatalog(providerList, {
+    hasSession: false,
+    lastRun: null,
+    providers: [],
+    reloadPending: true,
+    skippedProviders: [],
+  });
+  assert.deepEqual(
+    signedOut.models.map((model) => model.providerId),
+    ["anthropic", "opencode"],
+  );
   assert.equal(isCloudManagedProviderId("LPR_abc"), true);
   assert.equal(isCloudManagedProviderId("anthropic"), false);
   assert.equal(modelSourceLabel("cloud"), "OpenWork Cloud");

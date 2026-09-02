@@ -124,7 +124,10 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   const beforeReply = afterUser.slice(0, replyIndex);
   expect(beforeReply.some((entry) => entry.working === true)).toBe(true);
   expect(beforeReply.every((entry) => entry.threadStatus !== "Ready")).toBe(true);
-  expect(beforeReply.every((entry) => entry.topStatus !== "Ready")).toBe(true);
+  expect(
+    beforeReply.every((entry) => entry.topStatus !== "Ready"),
+    `status trace before the matched reply: ${JSON.stringify(beforeReply)}`,
+  ).toBe(true);
 
   const storedAfterFirst = resultRecord(await invokeCoworker(app, "coworkers.get", { slug: "editor" }));
   expect(storedAfterFirst.conversationThreadId).toEqual(expect.stringMatching(/^ses_/));

@@ -385,7 +385,7 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
     await clickButton(app, "Refresh", { timeoutMs: 30_000 }).catch(() => undefined);
     await new Promise((resolve) => setTimeout(resolve, 3_000));
   }
-  await clickButton(app, "Back to coworkers");
+  await clickButtonContaining(app, "Back to coworkers");
   await waitForText(app, "Discussion with Scout", { timeoutMs: 60_000 });
   await fill(app, 'textarea[aria-label="Message Scout"]', "Reply with exactly SIGNED OUT.");
   await clickButton(app, "Send");

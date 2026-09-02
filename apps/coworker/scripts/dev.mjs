@@ -10,6 +10,7 @@ import { fileURLToPath } from "node:url";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const appRoot = resolve(__dirname, "..");
 const repoRoot = resolve(appRoot, "../..");
+const headlessThreadsBundle = resolve(repoRoot, "packages", "headless-threads", "dist", "index.js");
 const serverBundle = resolve(repoRoot, "apps", "server", "dist", "embedded.js");
 const automationsBundle = resolve(repoRoot, "packages", "automations", "dist", "index.js");
 
@@ -45,6 +46,11 @@ async function waitForVite(url, timeoutMs = 60_000) {
     await new Promise((resolveSleep) => setTimeout(resolveSleep, 400));
   }
   throw new Error(`Vite dev server did not become ready at ${url}`);
+}
+
+if (!existsSync(headlessThreadsBundle)) {
+  console.log("[coworker-dev] Building shared headless thread runtime…");
+  await runOnce(pnpmCmd, ["--filter", "@openwork/headless-threads", "build"], { cwd: repoRoot });
 }
 
 if (!existsSync(serverBundle)) {

@@ -112,9 +112,11 @@ export function connectedModelCatalog(
 ): EngineModelCatalog {
   const connected = new Set(value.connected ?? []);
   const cloudProviderIds = new Set(cloud?.providers.map((provider) => provider.providerId) ?? []);
+  const accountDisconnected = cloud?.hasSession === false;
   const providers = (value.all ?? []).filter(
     (provider) =>
       connected.has(provider.id) &&
+      !(accountDisconnected && isCloudManagedProviderId(provider.id)) &&
       (provider.source !== "custom" || provider.id === "opencode" || Object.keys(provider.models ?? {}).length > 0),
   );
   const models = providers.flatMap((provider) =>
