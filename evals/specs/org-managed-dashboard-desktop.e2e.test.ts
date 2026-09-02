@@ -113,6 +113,49 @@ test(title, async ({ evidence, place }) => {
     as: "admin",
     place,
   });
+  const launchProbeInstalled = await evalIn(desktop, `(() => {
+    const originalFetch = window.fetch.bind(window);
+    performance.clearResourceTimings();
+    window.fetch = async (input, init) => {
+      const requestUrl = typeof input === "string"
+        ? input
+        : input instanceof URL
+          ? input.toString()
+          : input.url;
+      const response = await originalFetch(input, init);
+      const pathname = new URL(requestUrl).pathname;
+      if (!pathname.endsWith("/mcp-apps/resolve") && !pathname.endsWith("/mcp-apps/call")) return response;
+      let body = {};
+      try {
+        body = typeof init?.body === "string" ? JSON.parse(init.body) : {};
+      } catch {
+        return response;
+      }
+      if (pathname.endsWith("/mcp-apps/resolve")) {
+        await new Promise((resolve) => window.setTimeout(resolve, 2_000));
+        const launch = body && typeof body === "object" && body.launch && typeof body.launch === "object"
+          ? body.launch
+          : {};
+        return Response.json({
+          app: {
+            serverName: "managed-dashboard-launch-probe",
+            toolName: typeof launch.toolName === "string" ? launch.toolName : "create_ticket",
+            resourceUri: typeof launch.resourceUri === "string" ? launch.resourceUri : "ui://fixture/ticket/view.html",
+            html: "<!doctype html><html><body><main>Managed dashboard launch completed</main></body></html>",
+            csp: { connectDomains: [], resourceDomains: [], frameDomains: [], baseUriDomains: [] },
+            prefersBorder: true,
+          },
+        });
+      }
+      await new Promise((resolve) => window.setTimeout(resolve, 1_500));
+      return Response.json({
+        content: [{ type: "text", text: "Managed dashboard launch completed" }],
+        structuredContent: { status: "ready" },
+      });
+    };
+    return true;
+  })()`);
+  expect(launchProbeInstalled).toBe(true);
   const dashboardHash = "#/dashboard";
   const dashboardOpened = await evalIn(desktop, `(() => {
     const button = [...document.querySelectorAll("button")]
@@ -132,6 +175,30 @@ test(title, async ({ evidence, place }) => {
   })()`, {
     timeoutMs: 90_000,
     label: "granted organization dashboard rendered in Desktop",
+  });
+  await waitFor(desktop, `Boolean(document.querySelector(${JSON.stringify('[aria-label="Loading Automatic ticket summary"]')}))`, {
+    timeoutMs: 30_000,
+    label: "automatic managed dashboard tile entered its loading state",
+  });
+  const churnStarted = await evalIn(desktop, `(() => {
+    const workspaceRequestsBefore = performance.getEntriesByType("resource")
+      .filter((entry) => new URL(entry.name).pathname === "/workspaces").length;
+    window.__managedDashboardLaunchProbe = {
+      startedAt: performance.now(),
+      workspaceRequestsBefore,
+    };
+    window.dispatchEvent(new Event("openwork-server-settings-changed"));
+    return true;
+  })()`);
+  expect(churnStarted).toBe(true);
+  await waitFor(desktop, `(() => {
+    const probe = window.__managedDashboardLaunchProbe;
+    if (!probe) return false;
+    return performance.getEntriesByType("resource")
+      .filter((entry) => new URL(entry.name).pathname === "/workspaces").length > probe.workspaceRequestsBefore;
+  })()`, {
+    timeoutMs: 15_000,
+    label: "workspace list refetched while the managed dashboard tile was loading",
   });
 
   const initialState = await evalIn(desktop, `(() => {
@@ -200,6 +267,86 @@ test(title, async ({ evidence, place }) => {
     };
   })()`);
   expect(organizationPolicyState).toMatchObject({ automaticAttemptVisible: true, runVisible: false });
+
+  const launchDeadline = Date.now() + 30_000;
+  let launchAfterChurn: unknown = null;
+  while (Date.now() < launchDeadline) {
+    launchAfterChurn = await evalIn(desktop, `(() => {
+      const probe = window.__managedDashboardLaunchProbe;
+      const section = document.querySelector(${JSON.stringify(`[data-granted-dashboard="${grantedDashboardId}"]`)});
+      const tile = section instanceof HTMLElement
+        ? [...section.querySelectorAll("[data-dashboard-entry]")]
+          .find((entry) => entry.textContent?.includes("Automatic ticket summary"))
+        : null;
+      if (!probe || !(tile instanceof HTMLElement)) return null;
+      const resources = performance.getEntriesByType("resource");
+      const mcpRequests = resources.filter((entry) => new URL(entry.name).pathname.includes("/mcp-apps/"));
+      const recentMcpRequests = mcpRequests.filter((entry) => (
+        performance.now() - (entry.startTime + entry.duration) <= 5_000
+      ));
+      const callCount = mcpRequests.filter((entry) => new URL(entry.name).pathname.endsWith("/mcp-apps/call")).length;
+      const workspaceRequestCount = resources
+        .filter((entry) => new URL(entry.name).pathname === "/workspaces").length;
+      const loading = Boolean(tile.querySelector('[aria-label="Loading Automatic ticket summary"]'));
+      const cacheState = tile.querySelector("[data-dashboard-cache-state]")?.getAttribute("data-dashboard-cache-state") ?? null;
+      const page = document.querySelector("[data-dashboard-cache-scope]");
+      const scope = page instanceof HTMLElement ? page.dataset.dashboardCacheScope : undefined;
+      const entryId = tile.dataset.dashboardEntry;
+      let cached = false;
+      try {
+        const stored = scope ? JSON.parse(localStorage.getItem(scope) ?? "{}") : {};
+        cached = Boolean(entryId && stored?.[entryId]?.result);
+      } catch {
+        cached = false;
+      }
+      return {
+        cached,
+        cacheState,
+        callCount,
+        elapsedMs: performance.now() - probe.startedAt,
+        loading,
+        ready: !loading && cacheState === "idle" && Boolean(tile.querySelector("iframe")),
+        recentMcpRequestCount: recentMcpRequests.length,
+        workspaceRefetchCount: workspaceRequestCount - probe.workspaceRequestsBefore,
+      };
+    })()`);
+    if (isRecord(launchAfterChurn)) {
+      if (
+        launchAfterChurn.loading === true
+        && typeof launchAfterChurn.elapsedMs === "number"
+        && launchAfterChurn.elapsedMs > 8_000
+        && launchAfterChurn.recentMcpRequestCount === 0
+      ) {
+        throw new Error("Automatic ticket summary remained in Loading for more than 8 seconds with no MCP App request in the last 5 seconds.");
+      }
+      if (launchAfterChurn.ready === true) break;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  expect(
+    launchAfterChurn,
+    "Automatic ticket summary should leave Loading and render its cached app within 30 seconds of workspace-list churn",
+  ).toMatchObject({
+    cached: true,
+    cacheState: "idle",
+    callCount: 1,
+    loading: false,
+    ready: true,
+  });
+  expect(isRecord(launchAfterChurn) && typeof launchAfterChurn.workspaceRefetchCount === "number"
+    ? launchAfterChurn.workspaceRefetchCount
+    : 0).toBeGreaterThanOrEqual(1);
+  evidence.recordAssertionEvidence(
+    "A managed dashboard launch survives workspace-list churn without hanging or duplicating its tool call",
+    `tile=Automatic ticket summary; state=${JSON.stringify(launchAfterChurn)}; loading was polled for network-idle hangs every 250ms`,
+    isRecord(launchAfterChurn)
+      && launchAfterChurn.cached === true
+      && launchAfterChurn.loading === false
+      && launchAfterChurn.ready === true
+      && launchAfterChurn.callCount === 1
+      && typeof launchAfterChurn.workspaceRefetchCount === "number"
+      && launchAfterChurn.workspaceRefetchCount >= 1,
+  );
   evidence.recordAssertionEvidence(
     "Desktop places Dashboard directly below Search in the left sidebar",
     `state=${JSON.stringify(initialState)}`,

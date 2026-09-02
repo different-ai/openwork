@@ -151,10 +151,10 @@ export function McpAppTile({
   onAutoLaunchEnabledRef.current = onAutoLaunchEnabled;
   const onAutoLaunchDisabledRef = useRef(onAutoLaunchDisabled);
   onAutoLaunchDisabledRef.current = onAutoLaunchDisabled;
-  // A write-tool launch must map 1:1 to a Run/refresh press. The effect also
-  // re-runs when the client or workspace identity changes; this ref keeps such
-  // re-runs from repeating an already-executed data-modifying call.
-  const executedRunRef = useRef<number | null>(null);
+  // A write-tool launch must map 1:1 to a Run/refresh press. Dependency churn
+  // reuses the same in-flight promise; a null promise marks a settled nonce so
+  // later re-renders cannot repeat an already-executed data-modifying call.
+  const launchRef = useRef<{ nonce: number; promise: Promise<TileState> | null } | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -162,8 +162,8 @@ export function McpAppTile({
       if (stateRef.current.phase !== "ready") setState({ phase: "idle" });
       return;
     }
-    if (executedRunRef.current === nonce) return;
-    executedRunRef.current = nonce;
+    const currentLaunch = launchRef.current?.nonce === nonce ? launchRef.current : null;
+    if (currentLaunch?.promise === null) return;
     setRefreshState("refreshing");
     if (stateRef.current.phase !== "ready") setState({ phase: "loading" });
     // Tiles are user-scoped while MCP servers are workspace-scoped: prefer the
@@ -171,6 +171,7 @@ export function McpAppTile({
     // still resolve this app.
     const candidates = launchEndpoints;
     if (candidates.length === 0) {
+      launchRef.current = { nonce, promise: null };
       if (stateRef.current.phase === "ready") setRefreshState("failed");
       else {
         setState({ phase: "error", message: "No connected workspace is available to launch this app." });
@@ -179,7 +180,7 @@ export function McpAppTile({
       return;
     }
     const userInitiated = userInitiatedNonceRef.current === nonce;
-    void (async (): Promise<TileState> => {
+    const promise = currentLaunch?.promise ?? (async (): Promise<TileState> => {
       // Connect app-host apps resolve through their connection reference; the
       // host revalidates the live UI binding before returning the resource.
       const launch = entry.connectionId
@@ -263,7 +264,17 @@ export function McpAppTile({
         // succeed without another tool_requires_approval response.
         autoLaunchEligible: !approvalWasRequired && !launchApprovedRef.current,
       };
-    })()
+    })();
+    if (!currentLaunch) {
+      launchRef.current = { nonce, promise };
+      const markSettled = () => {
+        if (launchRef.current?.nonce === nonce && launchRef.current.promise === promise) {
+          launchRef.current = { nonce, promise: null };
+        }
+      };
+      void promise.then(markSettled, markSettled);
+    }
+    void promise
       .then((next) => {
         if (cancelled) return;
         if (next.phase === "ready") {
