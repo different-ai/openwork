@@ -55,11 +55,14 @@ function stringOrNull(value: unknown): string | null {
 }
 
 /**
- * Native-input policy per provider package. Conservative defaults keep a
- * document that would be rejected or ruinously expensive upstream on the
- * derived path instead.
+ * Native-input policy per provider package, from the providers' own documented
+ * limits with conservative defaults elsewhere:
+ * - Anthropic: 32 MB per request; 100 pages, or 600 when the context window is
+ *   at least 1M tokens; about 2,300 tokens per page (text plus page image).
+ * - OpenAI: text plus page images per page; 50 MB per request (kept at 32 MB).
+ * - Gemini: 50 MB / 1,000 pages via the Files API, 20 MB inline; 258 tokens per page.
  */
-export function nativePdfPolicy(npm: string | null): NativePdfPolicy {
+export function nativePdfPolicy(npm: string | null, contextTokens: number | null = null): NativePdfPolicy {
   const base: NativePdfPolicy = {
     requestBytes: 32 * MIB,
     requestHeadroomBytes: 4 * MIB,
@@ -68,7 +71,11 @@ export function nativePdfPolicy(npm: string | null): NativePdfPolicy {
     contextShare: 0.35,
     tokensPerPage: 2_000,
   };
-  if (npm === "@ai-sdk/google" || npm === "@ai-sdk/google-vertex") return { ...base, requestBytes: 20 * MIB, maxPages: 1000 };
+  if (npm === "@ai-sdk/google" || npm === "@ai-sdk/google-vertex") return { ...base, requestBytes: 20 * MIB, maxPages: 1000, tokensPerPage: 258 };
+  if (npm === "@ai-sdk/anthropic" || npm === "@ai-sdk/google-vertex/anthropic" || npm === "@ai-sdk/amazon-bedrock") {
+    // Anthropic's own example: about 7,000 tokens for a 3-page PDF with text and page images.
+    return { ...base, tokensPerPage: 2_300, maxPages: contextTokens !== null && contextTokens >= 1_000_000 ? 600 : 100 };
+  }
   return base;
 }
 

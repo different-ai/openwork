@@ -315,6 +315,7 @@ function derivedNote(source: PdfSource, derived: DerivedPdf, support: ModelInput
     `pdf_path: ${derived.pdfPath ?? "unavailable"}`,
     `full_text_path: ${derived.textPath ?? "unavailable"}`,
     textLayerLine(derived),
+    "page_numbering: physical 1-based positions in the file; printed page labels may differ",
     ...(derived.textPages < derived.pageCount ? [`text_extracted_for_pages: 1-${derived.textPages} of ${derived.pageCount}${derived.textBudgetExhausted ? " (extraction stopped early to keep this turn responsive)" : ""}`] : []),
     `page_images_${placement === "message" ? "in_this_message" : "in_this_tool_result"}: ${inlinePages > 0 ? `pages 1-${inlinePages}, in order` : "none"}`,
     ...(support.image && renderedPages.length > 0 && derived.directory ? [`page_images_on_disk: pages ${pageRange(renderedPages)} under ${derived.directory}/`] : []),
@@ -447,12 +448,12 @@ async function inlineImages(root: string | null, derived: DerivedPdf, support: M
 async function replaceUserFilePart(part: Record<string, unknown>, source: PdfSource, root: string | null, support: ModelInputSupport, budget: NativeBudget | null): Promise<unknown[]> {
   const routed = await routePdf(source, root, support, budget);
   if (routed.kind === "native") return [part];
-  if (routed.kind === "failed") return [{ ...source.ids, type: "text", text: failureNote(source, routed.message, null) }];
+  if (routed.kind === "failed") return [{ ...source.ids, type: "text", synthetic: true, text: failureNote(source, routed.message, null) }];
   const images = await inlineImages(root, routed.derived, support);
   const id = typeof source.ids.id === "string" ? source.ids.id : null;
   return [
     ...images.map((image) => ({ ...source.ids, ...(id ? { id: `${id}-page-${image.page}` } : {}), type: "file", mime: image.mime, filename: image.filename, url: image.url })),
-    { ...source.ids, type: "text", text: derivedNote(source, routed.derived, support, images.length, routed.reason, "message") },
+    { ...source.ids, type: "text", synthetic: true, text: derivedNote(source, routed.derived, support, images.length, routed.reason, "message") },
   ];
 }
 
@@ -505,16 +506,38 @@ async function transformParts(parts: unknown[], root: string | null, support: Mo
   return result;
 }
 
-async function transformMessage(value: unknown, root: string | null, support: ModelInputSupport, budget: NativeBudget | null): Promise<unknown> {
-  if (!isRecord(value)) return value;
-  if (Array.isArray(value.parts)) return { ...value, parts: await transformParts(value.parts, root, support, budget) };
-  if (Array.isArray(value.content)) return { ...value, content: await transformParts(value.content, root, support, budget) };
-  return value;
+/**
+ * Providers ask for documents and images ahead of the question. Files and the
+ * synthetic notes that carry document text move first; the user's own text
+ * keeps its order. Only the provider-facing copy is reordered.
+ */
+function isDocumentPart(part: unknown): boolean {
+  return isRecord(part) && (part.type === "file" || (part.type === "text" && part.synthetic === true));
+}
+
+function documentsFirst(parts: unknown[]): unknown[] {
+  const documents = parts.filter(isDocumentPart);
+  if (documents.length === 0 || documents.length === parts.length) return parts;
+  return [...documents, ...parts.filter((part) => !isDocumentPart(part))];
 }
 
 function messageInfo(message: unknown): Record<string, unknown> | null {
   if (!isRecord(message)) return null;
   return isRecord(message.info) ? message.info : message;
+}
+
+async function transformMessage(value: unknown, root: string | null, support: ModelInputSupport, budget: NativeBudget | null): Promise<unknown> {
+  if (!isRecord(value)) return value;
+  const isUser = messageInfo(value)?.role === "user";
+  if (Array.isArray(value.parts)) {
+    const parts = await transformParts(value.parts, root, support, budget);
+    return { ...value, parts: isUser ? documentsFirst(parts) : parts };
+  }
+  if (Array.isArray(value.content)) {
+    const content = await transformParts(value.content, root, support, budget);
+    return { ...value, content: isUser ? documentsFirst(content) : content };
+  }
+  return value;
 }
 
 function stepModel(messages: unknown[]): StepModel | null {
@@ -580,7 +603,7 @@ export const OpenWorkPdfAttachments = async (factoryInput?: unknown) => {
         if (supportBySession.size > 256) supportBySession.clear();
         supportBySession.set(model.sessionID, support);
       }
-      const policy = support.pdf ? nativePdfPolicy(support.npm) : null;
+      const policy = support.pdf ? nativePdfPolicy(support.npm, support.contextTokens) : null;
       const nativeBudget: NativeBudget | null = policy
         ? {
           policy,

@@ -71,11 +71,13 @@ describe("model input support", () => {
     expect(inputSupportFromCatalog({ data: { error: "boom" } }, "anthropic", "claude-sonnet")).toEqual(TEXT_ONLY);
   });
 
-  test("native policy stays conservative except where the provider documents more", () => {
-    const base = nativePdfPolicy("@ai-sdk/anthropic");
+  test("native policy follows documented provider limits and stays conservative elsewhere", () => {
+    const base = nativePdfPolicy(null);
     expect(base).toEqual({ requestBytes: 32 * 1024 * 1024, requestHeadroomBytes: 4 * 1024 * 1024, maxPages: 100, maxRawBytes: 10 * 1024 * 1024, contextShare: 0.35, tokensPerPage: 2_000 });
-    expect(nativePdfPolicy(null)).toEqual(base);
-    expect(nativePdfPolicy("@ai-sdk/google")).toEqual({ ...base, requestBytes: 20 * 1024 * 1024, maxPages: 1000 });
+    expect(nativePdfPolicy("@ai-sdk/openai", 400_000)).toEqual(base);
+    expect(nativePdfPolicy("@ai-sdk/anthropic", 200_000)).toEqual({ ...base, tokensPerPage: 2_300 });
+    expect(nativePdfPolicy("@ai-sdk/anthropic", 1_000_000)).toEqual({ ...base, tokensPerPage: 2_300, maxPages: 600 });
+    expect(nativePdfPolicy("@ai-sdk/google")).toEqual({ ...base, requestBytes: 20 * 1024 * 1024, maxPages: 1000, tokensPerPage: 258 });
   });
 
   test("encoded size accounts for base64 growth", () => {

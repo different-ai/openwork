@@ -19,6 +19,7 @@ const catalog = {
         native: { id: "native", attachment: true, limit: { context: 1000000, output: 8192 }, modalities: { input: ["text", "image", "pdf"], output: ["text"] } },
         "native-small-context": { id: "native-small-context", attachment: true, limit: { context: 32000, output: 4096 }, modalities: { input: ["text", "image", "pdf"], output: ["text"] } },
       } },
+      { id: "openai", npm: "@ai-sdk/openai", models: { "gpt-native": { id: "gpt-native", attachment: true, limit: { context: 1000000, output: 8192 }, modalities: { input: ["text", "image", "pdf"], output: ["text"] } } } },
       { id: "openrouter", npm: "@ai-sdk/openai-compatible", models: { vision: { id: "vision", attachment: true, modalities: { input: ["text", "image"], output: ["text"] } } } },
       { id: "ollama", npm: "@ai-sdk/openai-compatible", models: { text: { id: "text", attachment: false, modalities: { input: ["text"], output: ["text"] } } } },
       { id: "odd", npm: "@ai-sdk/openai-compatible", models: { "pdf-no-vision": { id: "pdf-no-vision", attachment: true, modalities: { input: ["text", "pdf"], output: ["text"] } } } },
@@ -30,6 +31,7 @@ const catalog = {
 
 type Model = { providerID: string; modelID: string };
 const NATIVE: Model = { providerID: "anthropic", modelID: "native" };
+const NATIVE_100_PAGES: Model = { providerID: "openai", modelID: "gpt-native" };
 const VISION: Model = { providerID: "openrouter", modelID: "vision" };
 const TEXT: Model = { providerID: "ollama", modelID: "text" };
 const UNLISTED: Model = { providerID: "custom", modelID: "mystery" };
@@ -290,8 +292,28 @@ describe("OpenWork PDF attachments plugin", () => {
         question,
       ])]);
       const parts = partsOf(message);
+      // Documents (files and document notes) keep their order ahead of the user's text.
       expect(textOf(parts[0])).toContain("--- page 1 ---\nGeneric mime");
       expect(parts.slice(1)).toEqual([pngPart, docxPart, question]);
+    });
+  });
+
+  test("places documents and images before text in user messages, and leaves tool results in place", async () => {
+    await withWorkspace(async (root) => {
+      const url = pdfDataUrl(buildTestPdf(["Ordered"]));
+      const [native] = await transform(root, [userMessage(NATIVE, [question, pdfPart(url)])]);
+      expect(partsOf(native).map((part) => part.type)).toEqual(["file", "text"]);
+      expect(partsOf(native)[0].mime).toBe("application/pdf");
+
+      const [vision] = await transform(root, [userMessage(VISION, [question, pdfPart(url)])]);
+      expect(partsOf(vision).map((part) => part.type)).toEqual(["file", "text", "text"]);
+      expect(partsOf(vision)[0].mime).toBe("image/png");
+      expect(partsOf(vision)[1].synthetic).toBe(true);
+      expect(String(partsOf(vision)[1].text)).toContain("--- page 1 ---\nOrdered");
+      expect(partsOf(vision)[2]).toEqual(question);
+
+      const untouched = [userMessage(TEXT, [question, { ...question, id: "p3", text: "Second thought." }])];
+      expect(await transform(root, untouched)).toEqual(untouched);
     });
   });
 
@@ -310,7 +332,7 @@ describe("OpenWork PDF attachments plugin", () => {
       const sixty = Array.from({ length: 60 }, (_page, index) => `Page ${index + 1}`);
       const first = pdfPart(pdfDataUrl(buildTestPdf(sixty)), { id: "a" });
       const second = pdfPart(pdfDataUrl(buildTestPdf(sixty.map((line) => `${line} (second)`))), { id: "b", filename: "second.pdf" });
-      const [message] = await transform(root, [userMessage(NATIVE, [first, second, question])]);
+      const [message] = await transform(root, [userMessage(NATIVE_100_PAGES, [first, second, question])]);
       const parts = partsOf(message);
       expect(parts[0]).toEqual(first);
       expect(parts.filter((part) => part.type === "file" && part.mime === "application/pdf")).toHaveLength(1);
@@ -318,17 +340,20 @@ describe("OpenWork PDF attachments plugin", () => {
       expect(note).toContain('OpenWork prepared the PDF "second.pdf"');
       expect(note).toContain("This PDF's 60 pages exceed the 40 native PDF pages left for this request");
       expect(parts.at(-1)).toEqual(question);
+
+      const [wideContext] = await transform(root, [userMessage(NATIVE, [first, second, question])]);
+      expect(partsOf(wideContext).filter((part) => part.type === "file" && part.mime === "application/pdf")).toHaveLength(2);
     });
   }, 30_000);
 
   test("keeps a PDF-capable model on the derived path when native input would dominate its context window", async () => {
     await withWorkspace(async (root) => {
       const model: Model = { providerID: "anthropic", modelID: "native-small-context" };
-      // 32k context × 35% = 11.2k tokens ≈ 5 native pages; six pages must be derived instead.
+      // 32k context × 35% = 11.2k tokens ≈ 4 native Anthropic pages at 2,300 each; six pages must be derived instead.
       const [message] = await transform(root, [userMessage(model, [pdfPart(pdfDataUrl(buildTestPdf(["1", "2", "3", "4", "5", "6"]))), question])]);
       const note = noteOf(message);
-      expect(note).toContain("Sent natively this PDF would take roughly 12k tokens of this model's 32k context window on every step, so OpenWork attached the first 6 pages as images");
-      const [small] = await transform(root, [userMessage(model, [pdfPart(pdfDataUrl(buildTestPdf(["1", "2", "3", "4", "5"])), { id: "s" }), question])]);
+      expect(note).toContain("Sent natively this PDF would take roughly 14k tokens of this model's 32k context window on every step, so OpenWork attached the first 6 pages as images");
+      const [small] = await transform(root, [userMessage(model, [pdfPart(pdfDataUrl(buildTestPdf(["1", "2", "3", "4"])), { id: "s" }), question])]);
       expect(partsOf(small)[0].mime).toBe("application/pdf");
     });
   });
