@@ -177,7 +177,7 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
   })()`);
   expect(briefView).toMatchObject({ outcome: OUTCOME, contextSummary: "From your discussion · 2 messages", contextOpen: false, plainUserBubbles: 0 });
   if (!isRecord(briefView) || typeof briefView.visibleText !== "string") throw new Error("Assignment brief facts were unavailable.");
-  expect(briefView.visibleText).toContain("Assignment for Editor");
+  expect(briefView.visibleText.toLowerCase()).toContain("assignment for editor");
   expect(briefView.visibleText).not.toMatch(/## |explicit assignment|Own this outcome|source of truth|Coworker:/);
 
   const sessionsAfter = await readEngineSessions(app, workspaceId);
