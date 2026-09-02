@@ -9,12 +9,15 @@ export function CoworkerMark({
   loading = false,
   label,
   className = "",
+  tile = true,
 }: {
   size?: number;
   animated?: boolean;
   loading?: boolean;
   label?: string;
   className?: string;
+  /** `false` draws only the white speech bubble, without the app-icon tile behind it. */
+  tile?: boolean;
 }) {
   const motionClass = loading ? "is-loading" : animated ? "is-animated" : "";
   const avatarRef = useAvatarPointerGaze();
@@ -24,25 +27,27 @@ export function CoworkerMark({
       ref={avatarRef}
       aria-hidden={label ? undefined : true}
       aria-label={label}
-      className={`coworker-mark ${motionClass} ${className}`}
+      className={`coworker-mark ${tile ? "" : "coworker-mark--bare"} ${motionClass} ${className}`}
       role={label ? "img" : undefined}
       style={{ width: size, height: size }}
       viewBox="0 0 122 122"
     >
-      <rect x="3" y="3" width="116" height="116" rx="29" fill="#f7f8fa" />
-      <rect x="3.5" y="3.5" width="115" height="115" rx="28.5" fill="none" stroke="#d8dde5" />
-      <g transform="translate(14.7 14.5) scale(0.76)">
+      {tile ? <rect x="3" y="3" width="116" height="116" rx="29" fill="#f7f8fa" /> : null}
+      {tile ? <rect x="3.5" y="3.5" width="115" height="115" rx="28.5" fill="none" stroke="#d8dde5" /> : null}
+      <g transform={tile ? "translate(14.7 14.5) scale(0.76)" : "translate(1 2)"}>
         <g className="coworker-mark__body">
-          <g className="coworker-mark__depth">
-            <path
-              d={BUBBLE_PATH}
-              fill="#d9dde4"
-              stroke="#aeb5c0"
-              strokeLinejoin="round"
-              strokeWidth="2.4"
-              transform="translate(5.2 2.8)"
-            />
-          </g>
+          {tile ? (
+            <g className="coworker-mark__depth">
+              <path
+                d={BUBBLE_PATH}
+                fill="#d9dde4"
+                stroke="#aeb5c0"
+                strokeLinejoin="round"
+                strokeWidth="2.4"
+                transform="translate(5.2 2.8)"
+              />
+            </g>
+          ) : null}
           <path d={BUBBLE_PATH} fill="#f7f8fa" />
           <path
             d={BUBBLE_PATH}

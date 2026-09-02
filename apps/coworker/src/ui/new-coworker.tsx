@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { coworkerBridge, type AvatarColor, type AvatarGlasses, type CoworkerSummary } from "@/lib/bridge";
-import { AvatarControls, CoworkerAvatar } from "@/ui/coworker-avatar";
+import { AvatarControls } from "@/ui/coworker-avatar";
+import { OnboardingMascotStack } from "@/ui/onboarding-mascot";
 import { DEFAULT_PERSONALITY, type Personality } from "@/lib/personalities";
 import { PersonalityPicker } from "@/ui/personality-picker";
 import { Button, ErrorNote, Field, inputClass } from "@/ui/kit";
@@ -77,12 +78,10 @@ export function NewCoworker({
         {/* m-auto centers the card and still lets it scroll from its top edge on a very short window. */}
         <div className="creation-card m-auto grid w-full max-w-3xl shrink-0 overflow-hidden rounded-[30px] border border-line md:min-h-[540px] md:grid-cols-[290px_1fr]">
           <div className="avatar-stage flex min-h-[300px] flex-col items-center justify-center border-b border-line p-7 md:border-b-0 md:border-r">
-            <CoworkerAvatar
-              animated
-              color={avatarColor}
-              glasses={avatarGlasses}
-              name={name.trim() || "New coworker"}
-              size={152}
+            <OnboardingMascotStack
+              variant={{ kind: "coworker", name: name.trim() || "New coworker", color: avatarColor, glasses: avatarGlasses }}
+              size={140}
+              sessionKey="new-coworker"
             />
             <p className="mt-3 max-w-full truncate text-lg font-semibold tracking-[-0.025em] text-snow">
               {name.trim() || "Your coworker"}
