@@ -104,7 +104,10 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
   expect(workspaceId).not.toBe("");
   await invokeCoworker(app, "coworkers.update", { slug: "editor", patch: { model: "opencode/big-pickle", modelVariant: "" } });
   await evalIn(app, "location.reload(); true");
-  await waitForText(app, "Discussion with Editor", { timeoutMs: 120_000 });
+  await waitFor(app, `Boolean(document.querySelector('[data-testid="coworker-discussion-view"]')) && [...document.querySelectorAll("h1")].some((heading) => heading.textContent?.trim() === "Editor")`, {
+    timeoutMs: 120_000,
+    label: "Editor discussion view",
+  });
 
   // --- Chat first. Nothing here is an assignment.
   await fill(app, 'textarea[aria-label="Message Editor"]', CHAT_PROMPT);
@@ -138,7 +141,7 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
   // may truthfully name the discussion while its session is still busy.
   await waitFor(app, `(() => {
     const badge = [...document.querySelectorAll("main span")].some((span) => (span.textContent ?? "").trim() === "Assignment");
-    return badge && !(document.querySelector("main")?.innerText ?? "").includes("Discussion with Editor");
+    return badge && !document.querySelector('[data-testid="coworker-discussion-view"]');
   })()`, {
     timeoutMs: 30_000,
     label: "assignment thread view with its badge replaces the discussion view",
@@ -177,8 +180,10 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
 
   // --- Back to the discussion: the count is one, the list names the assignment, the chat is unchanged.
   await clickButton(app, "←");
-  await waitForText(app, "Discussion with Editor", { timeoutMs: 60_000 });
+  await waitFor(app, `Boolean(document.querySelector('[data-testid="coworker-discussion-view"]'))`, { timeoutMs: 60_000, label: "back in the discussion view" });
   await waitForText(app, CHAT_REPLY, { timeoutMs: 30_000 });
+  // The discussion is titled after its first message; that title belongs to the thread row, not the assignment list.
+  expect(await evalIn(app, `document.querySelector('[data-testid="coworker-discussion-switcher"]')?.textContent?.trim() ?? ""`)).toContain(CHAT_PROMPT);
   await waitFor(app, `[...document.querySelectorAll("button")]
     .some((button) => (button.textContent ?? "").trim() === "Assignments · 1")`, {
     timeoutMs: 30_000,
@@ -189,7 +194,7 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
   const listText = String(await evalIn(app, `document.querySelector("main")?.innerText ?? ""`));
   expect(listText).toContain(expectedTitle);
   expect(listText).toContain("1 assignment");
-  expect(listText).not.toContain("Discussion with Editor");
+  expect(listText).not.toContain(CHAT_PROMPT);
 
   evidence.recordAssertionEvidence(
     "The standing discussion stays out of the assignment count and list",

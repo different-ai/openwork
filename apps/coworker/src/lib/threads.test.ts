@@ -207,3 +207,10 @@ test("recommendModel picks a connected, tool-capable model — the account's fir
   assert.equal(recommendModel(chatOnly), null, "nothing is recommended when no connected model can use tools");
   assert.equal(recommendModel({ models: catalog.models.filter((model) => model.providerId === "openrouter") }), null, "a deprecated model is never recommended");
 });
+
+test("assignmentThreads excludes every discussion, not just the open one", () => {
+  const threads = [{ id: "ses_a", title: "Discussion with Scout" }, { id: "ses_b", title: "Move the car" }, { id: "ses_work", title: "Launch brief" }];
+  assert.deepEqual(assignmentThreads(threads, ["ses_a", "ses_b"]), [{ id: "ses_work", title: "Launch brief" }]);
+  assert.deepEqual(assignmentThreads(threads, new Set(["ses_a", " "])), threads.slice(1));
+  assert.deepEqual(assignmentThreads(threads, []), threads);
+});

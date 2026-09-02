@@ -527,7 +527,7 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
     true,
   );
   await clickButtonContaining(app, "Scout");
-  await waitForText(app, "Discussion with Scout", { timeoutMs: 30_000 });
+  await waitFor(app, `Boolean(document.querySelector('[data-testid="coworker-discussion-view"]')) && [...document.querySelectorAll("h1")].some((heading) => heading.textContent?.trim() === "Scout")`, { timeoutMs: 30_000, label: "Scout discussion view" });
 
   // Memory is shown as structure. Seed what a working coworker leaves behind: two promoted memories
   // listed in the index (one whose file has since gone) and one file written without an index line.
@@ -748,7 +748,7 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
     return {
       continuityToken: shell.dataset.continuityToken,
       coworkerWorkspaceDisplay: getComputedStyle(workspace).display,
-      selectedCoworker: document.body.innerText.includes("Discussion with Scout"),
+      selectedCoworker: [...document.querySelectorAll("h1")].some((heading) => heading.textContent?.trim() === "Scout") && Boolean(document.querySelector('[data-testid="coworker-discussion-view"]')),
     };
   })()`);
   expect(returnedWorkspace).toMatchObject({
