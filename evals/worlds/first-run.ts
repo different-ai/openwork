@@ -722,7 +722,7 @@ export async function toolTesterWorld(seed: Seed) {
     body: JSON.stringify({}),
   });
   const mcpToken = isRecord(tokenResult.body) && typeof tokenResult.body.token === "string" ? tokenResult.body.token : "";
-  if (!mcpToken) throw new Error("Could not mint the Tool Tester MCP token.");
+  if (!mcpToken.startsWith("ow_mcp_at_")) throw new Error("Could not mint the Tool Tester MCP token.");
   const web = await seed.web({
     den,
     signedInAs: "admin",
