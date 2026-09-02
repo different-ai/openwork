@@ -1,4 +1,4 @@
-import { CoworkerMark } from "@/ui/brand";
+import { OnboardingMascotStack } from "@/ui/onboarding-mascot";
 
 function CloudIcon() {
   return (
@@ -47,7 +47,7 @@ export function OnboardingWelcome({
 
       <main className="window-no-drag flex flex-1 items-center justify-center px-6 py-10 md:py-12">
         <section className="w-full max-w-[680px] text-center">
-          <CoworkerMark animated className="mx-auto" label="Open Coworker" size={76} />
+          <OnboardingMascotStack variant={{ kind: "mark", label: "Open Coworker" }} size={96} sessionKey="onboarding-welcome" className="mx-auto" />
           <p className="mt-6 text-[10px] font-semibold uppercase tracking-[0.2em] text-spark">Welcome to Open Coworker</p>
           <h1 className="mx-auto mt-2 max-w-[620px] text-[34px] font-semibold leading-[1.08] tracking-[-0.05em] text-snow md:text-[40px]">
             Where should your coworker keep work moving?

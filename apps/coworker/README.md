@@ -173,6 +173,17 @@ with Ask, Create a skill, and Repair; signing out removes the gateway again.
 The packaged app ships the engine's OpenWork plugins under
 `Resources/opencode-plugins`, as the desktop does.
 
+The first screen carries a small mascot stack (`ui/onboarding-mascot.tsx`): the
+flat white Open Coworker bubble in front, with two coworkers of their own colour
+and glasses hiding behind it. On load the stack settles (≈600 ms, ease-out, no
+bounce), the coworkers peek out to say hello, blink once, and slip back; after
+that they peek whenever the pointer comes near, their eyes and the logo's follow
+it within the avatar gaze limits, and they hide again when the pointer rests or
+leaves. The entrance plays once per app session, the box never changes size, the
+stack takes no pointer events, and reduced motion renders it settled and still.
+The new-coworker preview reuses the same component with the coworker being
+created in front and no one behind.
+
 Thinking and tool work fold into two quiet lines above a reply: provider-returned
 thinking becomes a borderless "Thought through" disclosure once the reply is
 complete, and all the tool calls behind one reply become one work receipt
