@@ -67,13 +67,25 @@ test("Open Coworker owns a branded boot surface and cross-platform icon set", as
   assert.match(logoSvg, /stroke="#aeb5c0"/);
   assert.doesNotMatch(logoSvg, /fill="#5b8dff"/);
   assert.match(appIconSvg, /fill="#5b8dff"/);
+  assert.match(appIconSvg, /data-layer="back-card"/);
+  assert.match(appIconSvg, /fill="#202126"/);
+  assert.match(appIconSvg, /data-layer="front-coworker"/);
   assert.match(appIconSvg, /fill="#f7f8fa"/);
-  await Promise.all([
+  assert.doesNotMatch(appIconSvg, /(?:linear|radial)Gradient/);
+  const [iconPng, iconIcns, iconIco, linuxIcon] = await Promise.all([
     "resources/icons/icon.png",
     "resources/icons/icon.icns",
     "resources/icons/icon.ico",
     "resources/icons/linux/512x512.png",
   ].map((relativePath) => readFile(path.join(coworkerRoot, relativePath))));
+  assert.equal(iconPng.subarray(1, 4).toString("ascii"), "PNG");
+  assert.equal(iconPng.readUInt32BE(16), 1024);
+  assert.equal(iconPng.readUInt32BE(20), 1024);
+  assert.equal(iconIcns.subarray(0, 4).toString("ascii"), "icns");
+  assert.equal(iconIco.readUInt16LE(2), 1);
+  assert.equal(iconIco.readUInt16LE(4), 7);
+  assert.equal(linuxIcon.readUInt32BE(16), 512);
+  assert.equal(linuxIcon.readUInt32BE(20), 512);
 });
 
 test("Open Coworker presents a custom, legible drag-to-Applications installer", async () => {
