@@ -1,4 +1,3 @@
-import type { ReactNode } from "react";
 import { CoworkerMark } from "@/ui/brand";
 
 function CloudIcon() {
@@ -27,23 +26,6 @@ function ArrowIcon() {
   );
 }
 
-function CheckIcon() {
-  return (
-    <svg aria-hidden="true" viewBox="0 0 16 16" className="size-3 fill-none stroke-current" strokeWidth="1.7">
-      <path d="m3.1 8.3 3 3 6.8-6.7" />
-    </svg>
-  );
-}
-
-function SetupNote({ children }: { children: ReactNode }) {
-  return (
-    <span className="inline-flex items-center gap-1.5 text-[10px] font-medium text-mist/85">
-      <span className="text-mint"><CheckIcon /></span>
-      {children}
-    </span>
-  );
-}
-
 export function OnboardingWelcome({
   onConnect,
   onContinueLocally,
@@ -53,14 +35,7 @@ export function OnboardingWelcome({
 }) {
   return (
     <div className="window-shell window-drag flex h-full min-h-[560px] flex-col overflow-y-auto" data-testid="onboarding-welcome">
-      <header className="flex shrink-0 items-center justify-between px-6 pb-3 pt-5 md:px-8">
-        <div className="flex items-center gap-2.5">
-          <CoworkerMark animated label="Open Coworker" size={34} />
-          <div className="leading-none">
-            <p className="text-[13px] font-semibold tracking-[-0.02em] text-snow">Open Coworker</p>
-            <p className="mt-1 text-[8px] font-semibold uppercase tracking-[0.16em] text-mist/70">Powered by OpenWork</p>
-          </div>
-        </div>
+      <header className="flex shrink-0 items-center justify-end px-6 pb-3 pt-5 md:px-8">
         <button
           type="button"
           className="window-no-drag rounded-full border border-white/9 bg-white/[0.035] px-3.5 py-1.5 text-xs font-medium text-mist transition-colors hover:border-white/16 hover:bg-white/[0.065] hover:text-snow focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-spark/45"
@@ -82,10 +57,7 @@ export function OnboardingWelcome({
           </p>
 
           <div className="onboarding-launcher mt-8 overflow-hidden rounded-[24px] border border-white/10 bg-panel/75 p-2 text-left" data-testid="onboarding-launcher">
-            <div className="flex items-center justify-between px-3 pb-2 pt-1.5">
-              <span className="text-[9px] font-semibold uppercase tracking-[0.16em] text-mist/75">Choose where work runs</span>
-              <span className="rounded-full bg-spark/12 px-2 py-1 text-[9px] font-semibold text-[#aec4ff]">Setup takes a minute</span>
-            </div>
+            <p className="px-3 pb-2 pt-1.5 text-[9px] font-semibold uppercase tracking-[0.16em] text-mist/75">Choose where work runs</p>
 
             <button
               type="button"
@@ -101,7 +73,7 @@ export function OnboardingWelcome({
                   <span className="text-[13px] font-semibold text-snow">Continue with OpenWork</span>
                   <span className="rounded-full bg-spark/15 px-1.5 py-0.5 text-[8px] font-semibold uppercase tracking-[0.08em] text-[#b8caff]">Recommended</span>
                 </span>
-                <span className="mt-0.5 block text-[11px] leading-relaxed text-mist">Always-on work, shared settings, and organization-approved models.</span>
+                <span className="mt-0.5 block text-[11px] leading-relaxed text-mist">Keeps working when this Mac is off, with your organization's AI models.</span>
               </span>
               <span className="flex size-8 shrink-0 items-center justify-center rounded-full border border-white/10 text-mist transition-colors group-hover:border-white/18 group-hover:text-snow">
                 <ArrowIcon />
@@ -119,18 +91,12 @@ export function OnboardingWelcome({
               </span>
               <span className="min-w-0 flex-1">
                 <span className="text-[13px] font-semibold text-snow">Use this Mac</span>
-                <span className="mt-0.5 block text-[11px] leading-relaxed text-mist">No account required. Work runs locally while Open Coworker is available.</span>
+                <span className="mt-0.5 block text-[11px] leading-relaxed text-mist">No account required. Work runs here while Open Coworker is open.</span>
               </span>
               <span className="flex size-8 shrink-0 items-center justify-center rounded-full border border-transparent text-mist transition-colors group-hover:border-white/10 group-hover:text-snow">
                 <ArrowIcon />
               </span>
             </button>
-          </div>
-
-          <div className="mt-4 flex flex-wrap items-center justify-center gap-x-4 gap-y-2" aria-label="Included in every setup">
-            <SetupNote>Inspectable memory</SetupNote>
-            <SetupNote>Your choice of model</SetupNote>
-            <SetupNote>Native OpenWork workspace</SetupNote>
           </div>
         </section>
       </main>

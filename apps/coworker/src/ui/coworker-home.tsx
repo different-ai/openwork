@@ -27,11 +27,13 @@ const CONTEXT_PANEL_WIDTH_KEY = "open-coworker.context-panel-width";
 const CONTEXT_PANEL_MIN_WIDTH = 320;
 const CONTEXT_PANEL_MAX_WIDTH = 620;
 const MAIN_WORKSPACE_MIN_WIDTH = 520;
+/** The team rail beside the workspace; the thread column keeps its minimum before the panel grows. */
+const RAIL_WIDTH = 272;
 
 function clampContextPanelWidth(width: number): number {
   const available = typeof window === "undefined"
     ? CONTEXT_PANEL_MAX_WIDTH
-    : Math.max(CONTEXT_PANEL_MIN_WIDTH, window.innerWidth - MAIN_WORKSPACE_MIN_WIDTH);
+    : Math.max(CONTEXT_PANEL_MIN_WIDTH, window.innerWidth - RAIL_WIDTH - MAIN_WORKSPACE_MIN_WIDTH);
   return Math.round(Math.min(CONTEXT_PANEL_MAX_WIDTH, available, Math.max(CONTEXT_PANEL_MIN_WIDTH, width)));
 }
 
@@ -420,7 +422,7 @@ function CoworkerOverview({
 
       {recent.length > 0 ? (
         <section aria-label="Recent activity" data-testid="coworker-recent-activity">
-          <h3 className="mb-2 px-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-mist">Recent</h3>
+          <h3 className="mb-2 px-1 text-[11px] font-semibold text-mist">Recent</h3>
           <ul className="divide-y divide-line rounded-2xl border border-line bg-ink">
             {recent.map((entry) => {
               const outcome = describeOutcome(entry);
@@ -624,38 +626,6 @@ function CoworkerSettings({
 
   return (
     <div className="space-y-5">
-      <section className="space-y-3 rounded-2xl border border-line bg-ink p-4">
-        <div className="avatar-stage flex min-h-40 items-center justify-center rounded-2xl border border-line">
-          <CoworkerAvatar
-            animated
-            color={avatarColor}
-            glasses={avatarGlasses}
-            name={coworker.name}
-            size={108}
-          />
-        </div>
-        <AvatarControls
-          color={avatarColor}
-          glasses={avatarGlasses}
-          onColorChange={setAvatarColor}
-          onGlassesChange={setAvatarGlasses}
-        />
-        <div className="border-t border-line pt-3" />
-        <Field label="Name">
-          <input className={`${inputClass} bg-panel`} value={coworker.name} disabled />
-        </Field>
-        <Field label="Role">
-          <input className={`${inputClass} bg-panel`} value={role} onChange={(event) => setRole(event.target.value)} />
-        </Field>
-        <Field label="Mission">
-          <textarea className={`${inputClass} min-h-28 resize-y bg-panel`} value={mission} onChange={(event) => setMission(event.target.value)} />
-        </Field>
-        <PersonalityPicker value={personality} seed={coworker.slug} onChange={setPersonality} />
-        <Button variant="primary" className="w-full" disabled={busy} onClick={() => void saveProfile()}>
-          {busy ? "Saving…" : "Save profile"}
-        </Button>
-      </section>
-
       <section ref={modelSectionRef} className="rounded-2xl border border-line bg-ink p-4" data-testid="coworker-model-settings">
         <h3 className="mb-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-mist">AI model</h3>
         <ModelPicker
@@ -670,6 +640,42 @@ function CoworkerSettings({
           compact
         />
         <p className="mt-2 text-xs leading-relaxed text-mist">{coworker.name} uses this AI model and thinking effort for every discussion, assignment, and responsibility.</p>
+      </section>
+
+      <section className="space-y-3 rounded-2xl border border-line bg-ink p-4">
+        <h3 className="text-[10px] font-semibold uppercase tracking-[0.14em] text-mist">Profile</h3>
+        <div className="flex items-center gap-4">
+          <div className="avatar-stage flex size-24 shrink-0 items-center justify-center rounded-2xl border border-line">
+            <CoworkerAvatar
+              animated
+              color={avatarColor}
+              glasses={avatarGlasses}
+              name={coworker.name}
+              size={72}
+            />
+          </div>
+          <div className="min-w-0 flex-1">
+            <Field label="Name">
+              <input className={`${inputClass} bg-panel`} value={coworker.name} disabled />
+            </Field>
+          </div>
+        </div>
+        <AvatarControls
+          color={avatarColor}
+          glasses={avatarGlasses}
+          onColorChange={setAvatarColor}
+          onGlassesChange={setAvatarGlasses}
+        />
+        <Field label="Role">
+          <input className={`${inputClass} bg-panel`} value={role} onChange={(event) => setRole(event.target.value)} />
+        </Field>
+        <Field label="Mission">
+          <textarea className={`${inputClass} min-h-20 resize-y bg-panel`} value={mission} onChange={(event) => setMission(event.target.value)} />
+        </Field>
+        <PersonalityPicker value={personality} seed={coworker.slug} onChange={setPersonality} />
+        <Button variant="primary" className="w-full" disabled={busy} onClick={() => void saveProfile()}>
+          {busy ? "Saving…" : "Save profile"}
+        </Button>
       </section>
 
       <section className="flex items-center justify-between gap-3 rounded-2xl border border-line bg-ink px-4 py-3">

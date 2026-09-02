@@ -267,11 +267,25 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
     true,
   );
 
-  // --- Create the first coworker; its model step must offer the organization model, labelled as OpenWork Cloud.
+  // --- Create the first coworker (name and look only), then choose its AI model in Coworker settings,
+  // where the organization model must be offered and labelled as OpenWork Cloud.
   await fill(app, 'input[placeholder="Scout"]', "Scout");
   await clickButton(app, "Add coworker", { timeoutMs: 120_000 });
-  await waitForText(app, "Choose a model", { timeoutMs: 120_000 });
-  await waitForText(app, "Your organization's OpenWork models are listed first", { timeoutMs: 30_000 });
+  await waitForText(app, "Discussion with Scout", { timeoutMs: 120_000 });
+  expect(await evalIn(app, `document.querySelector('[data-testid="composer-model-control"]') === null`)).toBe(true);
+  await waitFor(app, `(() => {
+    const button = document.querySelector('[data-testid="coworker-settings-button"]');
+    if (!(button instanceof HTMLElement)) return false;
+    button.click();
+    return true;
+  })()`, { timeoutMs: 30_000, label: "Coworker settings icon button" });
+  await waitForText(app, "Coworker settings", { timeoutMs: 30_000 });
+  await waitFor(app, `(() => {
+    const button = document.querySelector('[data-testid="coworker-model-settings"] [data-testid="model-picker"] > button');
+    if (!(button instanceof HTMLElement)) return false;
+    button.click();
+    return true;
+  })()`, { timeoutMs: 30_000, label: "open the AI model picker in Coworker settings" });
   await waitFor(app, `Boolean(document.querySelector('[data-testid="model-provider-${PROVIDER_RECORD_ID}"]'))`, {
     timeoutMs: 180_000,
     label: "organization provider group in the model picker",
@@ -295,14 +309,23 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
 
   await clickButtonContaining(app, MODEL_NAME);
   await waitForText(app, `Eval Org Provider · ${MODEL_ID} · OpenWork Cloud`, { timeoutMs: 30_000 });
-  await clickButton(app, "Finish setup");
-  await waitForText(app, "Discussion with Scout", { timeoutMs: 120_000 });
-  const scout = resultRecord(await invokeCoworker(app, "coworkers.get", { slug: "scout" }));
-  expect(scout.model).toBe(`${PROVIDER_RECORD_ID}/${MODEL_ID}`);
+  const scout = await waitFor(app, `window.__COWORKER__.invoke("coworkers.get", { slug: "scout" })
+    .then((response) => (response.ok && response.result?.model === ${json(`${PROVIDER_RECORD_ID}/${MODEL_ID}`)} ? response.result : false))`, {
+    awaitPromise: true,
+    timeoutMs: 30_000,
+    label: "organization model persisted on Scout",
+  });
+  expect(isRecord(scout) && scout.model).toBe(`${PROVIDER_RECORD_ID}/${MODEL_ID}`);
+  await waitFor(app, `(() => {
+    const back = document.querySelector('button[aria-label="Back to activity"]');
+    if (!(back instanceof HTMLElement)) return false;
+    back.click();
+    return true;
+  })()`, { timeoutMs: 30_000, label: "back to the Activity sidebar" });
 
   evidence.recordAssertionEvidence(
-    "The organization's model reaches the coworker model step through the engine, labelled by source",
-    `After sign-in the picker grouped ${MODEL_NAME} under Eval Org Provider with an OpenWork Cloud tag and a summary naming ${ORG_NAME}; selecting it persisted ${PROVIDER_RECORD_ID}/${MODEL_ID} on Scout.`,
+    "The organization's model reaches Coworker settings labelled by source, without a model step in creation",
+    `Scout was created from a name alone; in Coworker settings the picker grouped ${MODEL_NAME} under Eval Org Provider with an OpenWork Cloud tag and a summary naming ${ORG_NAME}, and selecting it persisted ${PROVIDER_RECORD_ID}/${MODEL_ID} on Scout.`,
     true,
   );
 
@@ -349,7 +372,7 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
   expect(accountText).toContain(ORG_NAME);
   expect(accountText).toContain("member@eval.example");
   expect(accountText).not.toContain(SESSION_TOKEN);
-  await clickButton(app, "Models & providers");
+  await clickButton(app, "AI models");
   await waitFor(app, `Boolean(document.querySelector('[data-testid="cloud-providers"]'))`, { timeoutMs: 60_000, label: "OpenWork Cloud provider group" });
   const modelsText = String(await evalIn(app, "document.body.innerText"));
   expect(modelsText).toContain("Eval Org Provider");
@@ -358,7 +381,7 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
 
   evidence.recordAssertionEvidence(
     "Account and provider state survive reload and are explained without exposing secrets",
-    "After reload the discussion and reply were still present, Account showed OpenWork connected with the organization and member, and Models & providers listed the organization provider under OpenWork Cloud. Neither the session token nor the provider key appeared on screen.",
+    "After reload the discussion and reply were still present, Account showed OpenWork connected with the organization and member, and AI models listed the organization provider under OpenWork Cloud. Neither the session token nor the provider key appeared on screen.",
     true,
   );
 
@@ -370,7 +393,7 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
     label: "signed-out account status",
   });
   expect(await evalIn(app, `window.localStorage.getItem("coworker.den.session.v1")`)).toBeNull();
-  await clickButton(app, "Models & providers");
+  await clickButton(app, "AI models");
   // The sweep reloads the engine asynchronously; re-read the catalog until the account group is gone.
   const sweepDeadline = Date.now() + 180_000;
   for (;;) {
@@ -394,14 +417,15 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
     timeoutMs: 120_000,
     label: "visible failure for the now-unavailable organization model",
   }));
+  expect(failureText).toContain("Scout's AI model is not available.");
   expect(failureText).toContain(`${PROVIDER_RECORD_ID}/${MODEL_ID}`);
   expect(failureText).toContain("no OpenWork account is signed in");
   expect(failureText).toContain("Continue with OpenWork");
-  expect(failureText).toContain("Open model settings");
+  expect(failureText).toContain("Choose AI model");
 
   evidence.recordAssertionEvidence(
     "Signing out removes the organization's providers and turns the saved model into an actionable failure",
-    `After Sign out the settings showed Local mode with no OpenWork Cloud group, and the next discussion turn failed visibly naming ${PROVIDER_RECORD_ID}/${MODEL_ID}, explaining that no account is signed in, with Continue with OpenWork and Open model settings actions.`,
+    `After Sign out the settings showed Local mode with no OpenWork Cloud group, and the next discussion turn failed visibly with a plain headline, naming ${PROVIDER_RECORD_ID}/${MODEL_ID} in the detail, explaining that no account is signed in, with Continue with OpenWork and Choose AI model actions.`,
     true,
   );
 });
