@@ -38,3 +38,4 @@ export const openworkAnthropicAdaptiveThinkingPluginPath = () => openworkPluginP
 export const openworkAnthropicToolSchemaPluginPath = () => openworkPluginPath("openwork-anthropic-tool-schema");
 export const openworkOfficeAttachmentsPluginPath = () => openworkPluginPath("openwork-office-attachments");
 export const openworkSpreadsheetsPluginPath = () => openworkPluginPath("openwork-spreadsheets");
+export const openworkPdfAttachmentsPluginPath = () => openworkPluginPath("openwork-pdf-attachments");
