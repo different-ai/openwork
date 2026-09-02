@@ -33,6 +33,16 @@ import {
   type ThreadListItem,
 } from "@/lib/threads";
 import type { HeadlessThreadModel } from "@openwork/headless-threads";
+import {
+  configureDiscussionStore,
+  discussionIds,
+  discussionLabel,
+  discussionTitleFromPrompt,
+  loadDiscussionRegistry,
+  registerDiscussion,
+  rememberWorkspaceSlug,
+  splitDiscussionThreads,
+} from "@/lib/discussions";
 import { markAutoPicked, wasAutoPicked } from "@/lib/model-choice";
 import { describeTurnFailure } from "@/lib/turn-failure";
 import { InteractionCards } from "@/ui/interactions";
@@ -116,6 +126,13 @@ const DISCUSSION_STARTERS = [
   "Catch me up on what you remember.",
 ];
 
+// The discussion registry lives beside the coworker record; the bridge is the only way to reach it.
+configureDiscussionStore({
+  readFile: (slug, path) => coworkerBridge.files.read(slug, path),
+  writeFile: (slug, path, content) => coworkerBridge.files.write(slug, path, content),
+  listCoworkers: () => coworkerBridge.coworkers.list(),
+});
+
 function newMessageId(): string {
   return `msg_coworker_${Date.now().toString(36)}_${crypto.randomUUID().replaceAll("-", "").slice(0, 16)}`;
 }
@@ -167,6 +184,13 @@ export function ThreadsPanel({
   onOpenAccount: () => void;
   onActivityChange: (activity: CoworkerActivity | null) => void;
 }) {
+  const [discussionThreadId, setDiscussionThreadId] = useState(coworker.conversationThreadId);
+  /** Thread ids registered as discussions in `discussions.json`; the open one is added even when unregistered. */
+  const [registeredDiscussions, setRegisteredDiscussions] = useState<string[]>([]);
+  const discussionThreadIds = useMemo(
+    () => discussionIds(registeredDiscussions, discussionThreadId),
+    [registeredDiscussions, discussionThreadId],
+  );
   const threads = useMemo(
     () =>
       coworker.workspaceId
@@ -176,15 +200,16 @@ export function ThreadsPanel({
             token: runtime.ownerToken,
             model: coworker.model,
             modelVariant: coworker.modelVariant,
-            conversationThreadId: coworker.conversationThreadId,
+            conversationThreadId: discussionThreadId,
+            discussionThreadIds,
           })
         : null,
-    [runtime.serverUrl, runtime.ownerToken, coworker.workspaceId, coworker.model, coworker.modelVariant, coworker.conversationThreadId],
+    [runtime.serverUrl, runtime.ownerToken, coworker.workspaceId, coworker.model, coworker.modelVariant, discussionThreadId, discussionThreadIds],
   );
   const [items, setItems] = useState<ThreadListItem[]>([]);
+  const [discussions, setDiscussions] = useState<ThreadListItem[]>([]);
   const [attentionBySession, setAttentionBySession] = useState<Record<string, string>>({});
   const [openThreadId, setOpenThreadId] = useState("");
-  const [discussionThreadId, setDiscussionThreadId] = useState(coworker.conversationThreadId);
   const [view, setView] = useState<"discussion" | "assignments">("discussion");
   const [pendingAssignment, setPendingAssignment] = useState<AssignmentDraft>(assignmentDraft ?? null);
   const [queuedTurn, setQueuedTurn] = useState<QueuedTurn | null>(null);
@@ -205,6 +230,21 @@ export function ThreadsPanel({
   useEffect(() => {
     setDiscussionThreadId(coworker.conversationThreadId);
   }, [coworker.conversationThreadId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    rememberWorkspaceSlug(coworker.workspaceId, coworker.slug);
+    loadDiscussionRegistry(coworker.slug)
+      .then((ids) => {
+        if (!cancelled) setRegisteredDiscussions(ids);
+      })
+      .catch(() => {
+        // Without the registry the open discussion is still known; older ones read as assignments until it loads.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [coworker.slug, coworker.workspaceId]);
 
   useEffect(() => {
     if (!assignmentDraft) return;
@@ -232,11 +272,13 @@ export function ThreadsPanel({
   const refresh = useCallback(async () => {
     if (!threads) return;
     try {
-      const [list, pending] = await Promise.all([
-        threads.listThreads(),
+      const [all, pending] = await Promise.all([
+        threads.listAllThreads(),
         threads.listPendingInteractions().catch((): PendingInteractions => ({ permissions: [], questions: [] })),
       ]);
-      setItems(list);
+      const split = splitDiscussionThreads(all, discussionThreadIds);
+      setItems(split.assignments);
+      setDiscussions(split.discussions);
       const attention: Record<string, string> = {};
       for (const permission of pending.permissions) {
         attention[permission.sessionID] ??= describeInteractions({ permissions: [permission], questions: [] });
@@ -253,7 +295,7 @@ export function ThreadsPanel({
       setFailingSince((current) => current ?? now);
       setLastFailureAt(now);
     }
-  }, [threads]);
+  }, [discussionThreadIds, threads]);
 
   // Re-read quickly while the workspace is not answering so the view heals as soon as it does.
   const failing = Boolean(error);
@@ -276,15 +318,54 @@ export function ThreadsPanel({
     void refresh();
   }, [refresh, runtime.engineManaged]);
 
-  const ensureDiscussion = useCallback(async () => {
+  /** Open a new native thread as this coworker's current discussion and register it. */
+  const startDiscussion = useCallback(async () => {
     if (!threads) throw new Error("This coworker needs a workspace before it can chat.");
-    if (discussionThreadId) return discussionThreadId;
     const discussion = await threads.client.createThread({ title: discussionTitle(coworker.name) });
+    // Register first: an unregistered thread would read as an assignment.
+    try {
+      setRegisteredDiscussions(await registerDiscussion(coworker.slug, discussion.id));
+    } catch {
+      setRegisteredDiscussions((current) => (current.includes(discussion.id) ? current : [...current, discussion.id]));
+    }
     const updated = await coworkerBridge.coworkers.update(coworker.slug, { conversationThreadId: discussion.id });
     setDiscussionThreadId(discussion.id);
     onCoworkerChanged(updated);
     return discussion.id;
-  }, [coworker.name, coworker.slug, discussionThreadId, onCoworkerChanged, threads]);
+  }, [coworker.name, coworker.slug, onCoworkerChanged, threads]);
+
+  const ensureDiscussion = useCallback(async () => {
+    if (discussionThreadId) return discussionThreadId;
+    return startDiscussion();
+  }, [discussionThreadId, startDiscussion]);
+
+  const openNewDiscussion = useCallback(async () => {
+    try {
+      await startDiscussion();
+      setOpenThreadId("");
+      setView("discussion");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    }
+  }, [startDiscussion]);
+
+  /** Return to an earlier discussion; it becomes the coworker's open one. */
+  const openDiscussion = useCallback(async (threadId: string) => {
+    if (!threadId || threadId === discussionThreadId) {
+      setOpenThreadId("");
+      setView("discussion");
+      return;
+    }
+    try {
+      const updated = await coworkerBridge.coworkers.update(coworker.slug, { conversationThreadId: threadId });
+      setDiscussionThreadId(threadId);
+      onCoworkerChanged(updated);
+      setOpenThreadId("");
+      setView("discussion");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    }
+  }, [coworker.slug, discussionThreadId, onCoworkerChanged]);
 
   const createAssignment = useCallback(async (outcome: string, messages: ReadonlyArray<DiscussionMessage>) => {
     if (!threads) throw new Error("This coworker needs a workspace before it can take an assignment.");
@@ -410,6 +491,9 @@ export function ThreadsPanel({
       assignmentDraft={pendingAssignment}
       discussionDraft={discussionDraft}
       initialTurn={queuedTurn?.threadId === discussionThreadId ? queuedTurn : null}
+      discussions={discussions}
+      onOpenDiscussion={(threadId) => void openDiscussion(threadId)}
+      onNewDiscussion={() => void openNewDiscussion()}
       onBack={() => undefined}
       onShowAssignments={() => setView("assignments")}
       onCreateAssignment={createAssignment}
@@ -501,9 +585,12 @@ function DiscussionWelcome({
   }
 
   return (
-    <section className="flex h-full min-h-0 flex-col bg-ink">
+    <section className="flex h-full min-h-0 flex-col bg-ink" data-testid="coworker-discussion-view">
       <header className="flex items-center justify-between gap-4 border-b border-line px-6 py-3">
-        <h2 className="text-sm font-semibold text-snow">Discussion with {coworker.name}</h2>
+        <div className="min-w-0">
+          <h2 className="text-sm font-semibold text-snow">New discussion</h2>
+          <p className="text-xs text-mist">A continuing conversation — messages are not assignments</p>
+        </div>
         <Button variant="ghost" onClick={onShowAssignments}>Assignments{assignmentCount ? ` · ${assignmentCount}` : ""}</Button>
       </header>
       <div className="min-h-0 flex-1 overflow-y-auto px-6 py-8">
@@ -623,6 +710,102 @@ function AssignmentOverview({
   );
 }
 
+/**
+ * The discussion row's title doubles as the way to move between this
+ * coworker's discussions. Each one runs on its own native thread, so a reply
+ * in progress keeps going while another discussion is open.
+ */
+function DiscussionSwitcher({
+  current,
+  discussions,
+  defaultTitle,
+  onOpen,
+}: {
+  current: ThreadListItem;
+  discussions: ThreadListItem[];
+  defaultTitle: string;
+  onOpen: (threadId: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onPointerDown = (event: MouseEvent) => {
+      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("mousedown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [open]);
+
+  const listed = discussions.some((item) => item.id === current.id) ? discussions : [current, ...discussions];
+  const label = discussionLabel(current.title, defaultTitle);
+
+  return (
+    <div ref={rootRef} className="relative min-w-0">
+      <button
+        type="button"
+        data-testid="coworker-discussion-switcher"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        title="Switch discussion"
+        className="-ml-2 flex max-w-full items-center gap-1.5 rounded-lg px-2 py-1 text-left transition-colors hover:bg-panel"
+        onClick={() => setOpen((value) => !value)}
+      >
+        <span className="truncate text-sm font-semibold text-snow">{label}</span>
+        <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true" className="shrink-0 text-mist">
+          <path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+        {listed.length > 1 ? <span className="shrink-0 text-xs text-mist">{listed.length}</span> : null}
+      </button>
+      {open ? (
+        <div
+          role="menu"
+          aria-label="Discussions"
+          data-testid="coworker-discussion-menu"
+          className="absolute left-0 top-full z-20 mt-1 w-80 max-w-[70vw] rounded-xl border border-line bg-ink/95 p-1.5 shadow-2xl backdrop-blur"
+        >
+          <p className="px-2 pb-1 pt-1.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-mist">Discussions</p>
+          <ul className="max-h-72 overflow-y-auto">
+            {listed.map((item) => {
+              const active = item.id === current.id;
+              const meta = item.status === "busy" ? "Replying" : item.status === "retry" ? "Retrying" : item.updatedAt ? relativeTime(item.updatedAt) : "";
+              return (
+                <li key={item.id}>
+                  <button
+                    type="button"
+                    role="menuitemradio"
+                    aria-checked={active}
+                    data-thread-id={item.id}
+                    className={`flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left transition-colors hover:bg-panel ${active ? "bg-panel/70" : ""}`}
+                    onClick={() => {
+                      setOpen(false);
+                      onOpen(item.id);
+                    }}
+                  >
+                    <StatusDot tone={threadTone(item.status)} />
+                    <span className={`min-w-0 flex-1 truncate text-sm ${active ? "font-semibold text-snow" : "text-snow"}`}>
+                      {discussionLabel(item.title, defaultTitle)}
+                    </span>
+                    <span className={`shrink-0 text-xs ${item.status === "busy" || item.status === "retry" ? "text-spark" : "text-mist"}`}>{meta}</span>
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function ThreadView({
   threads,
   threadId,
@@ -633,6 +816,9 @@ function ThreadView({
   assignmentDraft,
   discussionDraft,
   initialTurn,
+  discussions = [],
+  onOpenDiscussion,
+  onNewDiscussion,
   onBack,
   onShowAssignments,
   onCreateAssignment,
@@ -654,6 +840,10 @@ function ThreadView({
   assignmentDraft?: AssignmentDraft;
   discussionDraft?: AssignmentDraft;
   initialTurn: QueuedTurn | null;
+  /** Every discussion this coworker holds, newest first; lets the header switch between them. */
+  discussions?: ThreadListItem[];
+  onOpenDiscussion?: (threadId: string) => void;
+  onNewDiscussion?: () => void;
   onBack: () => void;
   onShowAssignments: () => void;
   onCreateAssignment?: (outcome: string, messages: ReadonlyArray<DiscussionMessage>) => Promise<void>;
@@ -670,6 +860,10 @@ function ThreadView({
   /** A different connected, tool-capable model to fall back to after a model-related failure. */
   const [recommendedModel, setRecommendedModel] = useState<EngineModelOption | null>(null);
   const [title, setTitle] = useState("Work thread");
+  const defaultDiscussionTitle = discussionTitle(coworker.name);
+  /** The first message sent here, kept until the thread carries a title of its own. */
+  const firstPromptRef = useRef("");
+  const titleLoadedRef = useRef(false);
   const [statusLabel, setStatusLabel] = useState("idle");
   const [terminalError, setTerminalError] = useState("");
   const [pending, setPending] = useState<PendingInteractions>({ permissions: [], questions: [] });
@@ -695,6 +889,24 @@ function ThreadView({
     [coworker.workspaceId, runtime.ownerToken, runtime.serverUrl],
   );
 
+  /**
+   * A discussion takes its title from the first message sent in it. The
+   * engine keeps the custom title we gave it at creation, so this rename is
+   * the only place the title changes; assignments keep their outcome title.
+   */
+  const titleDiscussionAfterFirstMessage = useCallback((currentTitle: string): string | undefined => {
+    if (kind !== "discussion" || !firstPromptRef.current) return undefined;
+    if (currentTitle.trim() !== defaultDiscussionTitle) {
+      firstPromptRef.current = "";
+      return undefined;
+    }
+    const nextTitle = discussionTitleFromPrompt(firstPromptRef.current);
+    if (!nextTitle) return undefined;
+    firstPromptRef.current = "";
+    void threads.renameThread(threadId, nextTitle).catch(() => undefined);
+    return nextTitle;
+  }, [defaultDiscussionTitle, kind, threadId, threads]);
+
   const refresh = useCallback(async () => {
     try {
       const [transcript, interactions] = await Promise.all([
@@ -702,7 +914,9 @@ function ThreadView({
         threads.listThreadInteractions(threadId).catch((): PendingInteractions => ({ permissions: [], questions: [] })),
       ]);
       setPending(interactions);
-      setTitle(transcript.title ?? "Work thread");
+      const loadedTitle = transcript.title ?? "Work thread";
+      titleLoadedRef.current = true;
+      setTitle(titleDiscussionAfterFirstMessage(loadedTitle) ?? loadedTitle);
       setStatusLabel(transcript.status.type);
       setTerminalError(
         pendingTurnRef.current
@@ -733,7 +947,7 @@ function ThreadView({
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     }
-  }, [threads, threadId]);
+  }, [threads, threadId, titleDiscussionAfterFirstMessage]);
 
   useEffect(() => {
     if (kind !== "discussion" || !assignmentDraft) return;
@@ -792,6 +1006,13 @@ function ThreadView({
     const nextPending: PendingTurn = { messageId, prompt, phase: "accepting" };
     pendingTurnRef.current = nextPending;
     setPendingTurn(nextPending);
+    if (kind === "discussion" && !firstPromptRef.current && (!titleLoadedRef.current || title.trim() === defaultDiscussionTitle)) {
+      firstPromptRef.current = prompt;
+      if (titleLoadedRef.current) {
+        const renamed = titleDiscussionAfterFirstMessage(title);
+        if (renamed) setTitle(renamed);
+      }
+    }
     setTurnIssue(null);
     setTerminalError("");
     setError("");
@@ -886,7 +1107,7 @@ function ThreadView({
         setPendingTurn(null);
       }
     }
-  }, [coworker.model, coworker.modelVariant, coworker.name, coworker.slug, kind, onActivityChange, onCoworkerChanged, refresh, session, threadId, threads, title]);
+  }, [coworker.model, coworker.modelVariant, coworker.name, coworker.slug, defaultDiscussionTitle, kind, onActivityChange, onCoworkerChanged, refresh, session, threadId, threads, title, titleDiscussionAfterFirstMessage]);
 
   // After a model-related failure, find a different connected model that can use tools.
   useEffect(() => {
@@ -1094,16 +1315,27 @@ function ThreadView({
     onActivityChange(null);
   }, [activeToolLabel, coworker.name, displayedFailure, kind, needsYou, onActivityChange, pending, statusLabel, stopped, threadId, title, turnIssue, working, workingLabel]);
 
+  const currentDiscussion: ThreadListItem = discussions.find((item) => item.id === threadId)
+    ?? { id: threadId, title, createdAt: 0, updatedAt: 0, status: "idle" };
+  const freshDiscussion = kind === "discussion" && visibleMessages.length === 0 && !working && !needsYou && !error && !displayedFailure;
+
   return (
-    <section className="flex h-full min-h-0 flex-col bg-ink">
+    <section className="flex h-full min-h-0 flex-col bg-ink" data-testid={kind === "discussion" ? "coworker-discussion-view" : "coworker-assignment-view"}>
+      {/* The coworker's avatar and name sit in the header above; this row is about the thread itself. */}
       <header className="flex items-center gap-3 border-b border-line px-5 py-3">
         {kind === "assignment" ? <Button variant="ghost" className="px-2" onClick={onBack} title="Back to discussion">←</Button> : null}
-        {kind === "discussion" ? (
-          <CoworkerAvatar animated color={coworker.avatarColor} glasses={coworker.avatarGlasses} name={coworker.name} size={30} />
-        ) : null}
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
-            <h2 className="truncate text-sm font-semibold text-snow">{kind === "discussion" ? `Discussion with ${coworker.name}` : title}</h2>
+            {kind === "discussion" ? (
+              <DiscussionSwitcher
+                current={{ ...currentDiscussion, title }}
+                discussions={discussions}
+                defaultTitle={defaultDiscussionTitle}
+                onOpen={(id) => onOpenDiscussion?.(id)}
+              />
+            ) : (
+              <h2 className="truncate text-sm font-semibold text-snow">{title}</h2>
+            )}
             {kind === "assignment" ? <span className="rounded-full border border-spark/20 bg-spark/8 px-1.5 py-0.5 text-[8px] font-semibold uppercase tracking-[0.08em] text-spark">Assignment</span> : null}
           </div>
           <p data-testid="coworker-thread-status" className={`text-xs ${needsYou ? "text-amber" : working ? "text-spark" : "text-mist"}`}>
@@ -1112,6 +1344,11 @@ function ThreadView({
               : readableStatus}
           </p>
         </div>
+        {kind === "discussion" && onNewDiscussion ? (
+          <Button variant="ghost" data-testid="coworker-new-discussion" onClick={onNewDiscussion} title="Start another discussion; this one stays in the list">
+            New discussion
+          </Button>
+        ) : null}
         <Button variant="ghost" onClick={onShowAssignments}>Assignments{assignmentCount ? ` · ${assignmentCount}` : ""}</Button>
         {working || needsYou ? (
           <Button variant="ghost" onClick={() => void stop()}>
@@ -1121,6 +1358,21 @@ function ThreadView({
       </header>
       <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5">
         <div className="mx-auto max-w-3xl space-y-3">
+          {freshDiscussion ? (
+            <div className="mx-auto max-w-xl py-10 text-center" data-testid="coworker-discussion-empty">
+              <h3 className="text-lg font-semibold tracking-[-0.02em] text-snow">New discussion</h3>
+              <p className="mx-auto mt-1.5 max-w-md text-sm leading-relaxed text-mist">
+                Ask, explore, or think something through. Nothing becomes assigned work until you choose to create an assignment.
+              </p>
+              <div className="mt-5 grid gap-2 text-left">
+                {DISCUSSION_STARTERS.map((starter) => (
+                  <button key={starter} type="button" className="rounded-xl border border-line bg-panel/50 px-4 py-3 text-sm text-snow transition-colors hover:bg-panel" onClick={() => setReply(starter)}>
+                    {starter}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : null}
           {visibleMessages.map((message, index) => (
             <MessageBubble
               key={message.id}

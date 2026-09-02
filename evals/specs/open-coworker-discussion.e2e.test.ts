@@ -32,9 +32,23 @@ function resultRecord(response: unknown): Record<string, unknown> {
   return response.result;
 }
 
+/** The discussion surface for Editor: the header names the coworker once; the thread row below carries the discussion. */
+async function waitForDiscussionView(app: Awaited<ReturnType<typeof coworker>>, timeoutMs: number): Promise<void> {
+  await waitFor(app, `(() => {
+    const view = document.querySelector('[data-testid="coworker-discussion-view"]');
+    const named = [...document.querySelectorAll("h1")].some((heading) => heading.textContent?.trim() === "Editor");
+    return Boolean(view) && named;
+  })()`, { timeoutMs, label: "Editor discussion view" });
+}
+
+async function openDiscussionMenu(app: Awaited<ReturnType<typeof coworker>>): Promise<void> {
+  await evalIn(app, `document.querySelector('[data-testid="coworker-discussion-switcher"]').click(); true`);
+  await waitFor(app, `Boolean(document.querySelector('[data-testid="coworker-discussion-menu"]'))`, { timeoutMs: 10_000, label: "discussion menu" });
+}
+
 async function reload(app: Awaited<ReturnType<typeof coworker>>): Promise<void> {
   await evalIn(app, "location.reload(); true");
-  await waitForText(app, "Discussion with Editor", { timeoutMs: 120_000 });
+  await waitForDiscussionView(app, 120_000);
   await waitFor(app, `Boolean(document.querySelector('textarea[aria-label="Message Editor"]'))`, {
     timeoutMs: 60_000,
     label: "Editor discussion composer",
@@ -172,6 +186,86 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
     true,
   );
 
+  // The coworker is introduced once, in the header. The thread row below names the
+  // discussion itself (after its first message) and is where discussions are switched.
+  const headerShape = await evalIn(app, `(() => {
+    // The coworker column: the identity header plus the thread area beneath it.
+    const column = document.querySelector("main")?.parentElement;
+    const avatarsOutsideMessages = [...(column?.querySelectorAll('[role="img"][aria-label="Editor avatar"]') ?? [])]
+      .filter((avatar) => !avatar.closest('[data-message-role]')).length;
+    return {
+      avatarsOutsideMessages,
+      mentionsDiscussionWith: (column?.innerText ?? "").includes("Discussion with Editor"),
+      switcherLabel: document.querySelector('[data-testid="coworker-discussion-switcher"]')?.textContent?.trim() ?? "",
+    };
+  })()`);
+  expect(headerShape).toMatchObject({
+    avatarsOutsideMessages: 1,
+    mentionsDiscussionWith: false,
+    switcherLabel: firstPrompt,
+  });
+
+  // A second discussion runs beside the first: start it, send, leave while the reply is
+  // still coming, return to the first, then come back to find the reply waiting.
+  await clickButton(app, "New discussion");
+  await waitFor(app, `Boolean(document.querySelector('[data-testid="coworker-discussion-empty"]'))`, { timeoutMs: 30_000, label: "fresh discussion" });
+  const storedAfterNew = resultRecord(await invokeCoworker(app, "coworkers.get", { slug: "editor" }));
+  const secondDiscussionId = String(storedAfterNew.conversationThreadId);
+  expect(secondDiscussionId).toEqual(expect.stringMatching(/^ses_/));
+  expect(secondDiscussionId).not.toBe(discussionThreadId);
+  expect(await evalIn(app, `document.querySelector('[data-testid="coworker-discussion-switcher"]')?.textContent?.trim()`)).toContain("New discussion");
+
+  const parallelPrompt = "Reply with exactly PARALLEL CHAT READY.";
+  await fill(app, 'textarea[aria-label="Message Editor"]', parallelPrompt);
+  await clickButton(app, "Send");
+  const statusWhenLeaving = await waitFor(app, `(() => {
+    const visible = [...document.querySelectorAll('[data-message-role="user"]')]
+      .some((candidate) => (candidate.textContent ?? "").includes(${json(parallelPrompt)}));
+    const status = document.querySelector('[data-testid="coworker-thread-status"]')?.textContent?.trim() ?? "";
+    return visible && status !== "Sending" ? status : false;
+  })()`, { timeoutMs: 60_000, label: "second discussion accepted its message" });
+
+  await openDiscussionMenu(app);
+  const menuBeforeReturn = await evalIn(app, `[...document.querySelectorAll('[data-testid="coworker-discussion-menu"] [role="menuitemradio"]')]
+    .map((item) => ({ id: item.getAttribute("data-thread-id"), checked: item.getAttribute("aria-checked"), text: item.textContent?.trim() ?? "" }))`);
+  expect(menuBeforeReturn).toHaveLength(2);
+  expect(menuBeforeReturn).toEqual(expect.arrayContaining([
+    expect.objectContaining({ id: discussionThreadId, checked: "false", text: expect.stringContaining(firstPrompt) }),
+    expect.objectContaining({ id: secondDiscussionId, checked: "true" }),
+  ]));
+  await evalIn(app, `document.querySelector('[data-testid="coworker-discussion-menu"] [data-thread-id=${json(discussionThreadId)}]').click(); true`);
+  await waitForText(app, "SECOND CHAT READY", { timeoutMs: 30_000 });
+  expect(resultRecord(await invokeCoworker(app, "coworkers.get", { slug: "editor" })).conversationThreadId).toBe(discussionThreadId);
+  // The thread area shows only the first discussion; the sidebar may truthfully report the other one still working.
+  expect(await evalIn(app, `(document.querySelector("main")?.innerText ?? "").includes(${json(parallelPrompt)})`)).toBe(false);
+
+  await openDiscussionMenu(app);
+  await evalIn(app, `document.querySelector('[data-testid="coworker-discussion-menu"] [data-thread-id=${json(secondDiscussionId)}]').click(); true`);
+  const parallelReply = await waitFor(app, `(() => {
+    const message = [...document.querySelectorAll('[data-message-role="assistant"]')]
+      .find((candidate) => (candidate.textContent ?? "").includes("PARALLEL CHAT READY"));
+    return message?.textContent ?? false;
+  })()`, { timeoutMs: 300_000, label: "reply that continued in the second discussion" });
+  expect(parallelReply).toContain("PARALLEL CHAT READY");
+  expect(await evalIn(app, `document.querySelector('[data-testid="coworker-discussion-switcher"]')?.textContent?.trim()`)).toContain(parallelPrompt);
+  expect(await evalIn(app, `(document.querySelector("main")?.innerText ?? "").includes("SECOND CHAT READY")`)).toBe(false);
+
+  // Both discussions are registered beside the coworker record, and neither counts as an assignment.
+  const registry = resultRecord(await invokeCoworker(app, "coworkers.files.read", { slug: "editor", path: "discussions.json" }));
+  const registered = JSON.parse(String(registry.content)) as { threadIds?: string[] };
+  expect(registered.threadIds).toEqual(expect.arrayContaining([discussionThreadId, secondDiscussionId]));
+  expect(await evalIn(app, `(() => {
+    const button = [...document.querySelectorAll("button")]
+      .find((candidate) => (candidate.textContent ?? "").startsWith("Assignments"));
+    return button?.textContent?.trim() ?? "";
+  })()`)).toBe("Assignments");
+
+  evidence.recordAssertionEvidence(
+    "A coworker holds parallel discussions that can be left, revisited, and resumed",
+    `The main column introduced Editor once (one avatar outside message bubbles, no repeated "Discussion with Editor" heading) and titled the first discussion after its first message. New discussion opened native thread ${secondDiscussionId}; its message was accepted (status "${String(statusWhenLeaving)}" when leaving), the switcher listed both discussions with the open one checked, returning to ${discussionThreadId} showed that discussion alone, and coming back found the matched reply in ${secondDiscussionId}. discussions.json registered both ids and the Assignments control still read "Assignments".`,
+    true,
+  );
+
   await invokeCoworker(app, "coworkers.update", {
     slug: "editor",
     patch: { model: "missing-provider/missing-model", modelVariant: "" },
@@ -205,7 +299,7 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   expect(await evalIn(app, `document.querySelector('[data-testid="coworker-top-status"]')?.textContent?.trim()`)).toBe("Reply failed");
   expect(await evalIn(app, `(() => [...document.querySelectorAll('[data-message-role="user"]')]
     .some((message) => (message.textContent ?? "").includes(${json(failurePrompt)})))()`)).toBe(true);
-  expect(resultRecord(await invokeCoworker(app, "coworkers.get", { slug: "editor" })).conversationThreadId).toBe(discussionThreadId);
+  expect(resultRecord(await invokeCoworker(app, "coworkers.get", { slug: "editor" })).conversationThreadId).toBe(secondDiscussionId);
   await clickButton(app, "Choose AI model");
   await waitForText(app, "Coworker settings", { timeoutMs: 30_000 });
   await waitFor(app, `Boolean(document.querySelector('[data-testid="coworker-model-settings"]'))`, { timeoutMs: 30_000, label: "AI model section" });
