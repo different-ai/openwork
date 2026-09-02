@@ -294,6 +294,7 @@
         "evals/specs/composer-queued-drain-while-away.e2e.test.ts",
         "evals/specs/composer-queued-follow-ups-sequential.e2e.test.ts",
         "evals/specs/cross-workspace-composer-switch.e2e.test.ts",
+        "evals/specs/image-lightbox-size.e2e.test.ts",
         "evals/specs/safe-edit-resend.e2e.test.ts",
         "evals/specs/unfinished-tool-lifecycle.e2e.test.ts"
       ]
