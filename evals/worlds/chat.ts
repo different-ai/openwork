@@ -907,3 +907,16 @@ export async function crossWorkspace(seed: Seed) {
     },
   };
 }
+
+export async function markdownArtifact(seed: Seed) {
+  const app = await seed.desktop({ name: "markdown-editor-autosave" });
+  const workspace = await seed.workspace(app, seed.tmpPath("markdown-editor-autosave"));
+  const session = await seedSessionRetry(seed, app);
+  try {
+    await arrangeControl(seed, app, "browser.open_url", { url: "about:blank" });
+  } catch {
+    // The browser can report ERR_ABORTED after it has already mounted the artifact side panel.
+  }
+  await arrangeControl(seed, app, "eval.artifact_tabs.seed_overflow", { count: 12 });
+  return { app, workspace, session };
+}
