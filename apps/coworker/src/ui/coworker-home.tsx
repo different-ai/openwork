@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { coworkerBridge, type CoworkerMemoryFile, type CoworkerSummary, type RuntimeInfo } from "@/lib/bridge";
+import { coworkerBridge, type CoworkerMemoryFile, type CoworkerSummary, type ProviderSyncRun, type RuntimeInfo } from "@/lib/bridge";
 import { describeMemory, describeModelPreference, describeNow, relativeTime } from "@/lib/activity-summary";
 import type { DenSession } from "@/lib/den";
 import type { CoworkerActivity } from "@/lib/threads";
@@ -12,6 +12,7 @@ import { MemoryPanel } from "@/ui/memory";
 import { ResponsibilitiesPanel } from "@/ui/responsibilities";
 import { ThreadsPanel } from "@/ui/threads";
 import { ModelPicker, type ModelSelection } from "@/ui/model-picker";
+import type { SettingsSection } from "@/ui/openwork-settings";
 
 type ContextView = "overview" | "capabilities" | "memory" | "settings";
 
@@ -73,6 +74,7 @@ export function CoworkerHome({
   onCoworkerChanged,
   onCoworkerRemoved,
   onRefreshRuntime,
+  onSyncProviders,
   onOpenOpenWork,
 }: {
   runtime: RuntimeInfo;
@@ -84,7 +86,9 @@ export function CoworkerHome({
   onCoworkerChanged: (coworker: CoworkerSummary) => void;
   onCoworkerRemoved: (slug: string) => void;
   onRefreshRuntime: () => Promise<void>;
-  onOpenOpenWork: () => void;
+  onSyncProviders: () => Promise<ProviderSyncRun>;
+  /** Open the global OpenWork settings, optionally on one section (account, models…). */
+  onOpenOpenWork: (section?: SettingsSection) => void;
 }) {
   const [contextView, setContextView] = useState<ContextView>("overview");
   const [assignmentDraft, setAssignmentDraft] = useState<{ id: number; text: string } | null>(null);
@@ -180,12 +184,15 @@ export function CoworkerHome({
         <main className="min-h-0 flex-1 overflow-hidden">
           <ThreadsPanel
             runtime={runtime}
+            session={session}
             coworker={coworker}
             onCoworkerChanged={onCoworkerChanged}
             onRefreshRuntime={onRefreshRuntime}
+            onSyncProviders={onSyncProviders}
             assignmentDraft={assignmentDraft}
             openThreadRequest={openThreadRequest}
             onOpenSettings={() => setContextView("settings")}
+            onOpenAccount={() => onOpenOpenWork("account")}
             onActivityChange={onActivityChange}
           />
         </main>
@@ -281,7 +288,7 @@ export function CoworkerHome({
               onOpenMemory={() => setContextView("memory")}
               onOpenCapabilities={() => setContextView("capabilities")}
               onOpenSettings={() => setContextView("settings")}
-              onOpenOpenWork={onOpenOpenWork}
+              onOpenOpenWork={() => onOpenOpenWork()}
             />
           ) : null}
           {contextView === "memory" ? <MemoryPanel coworker={coworker} /> : null}
@@ -298,9 +305,12 @@ export function CoworkerHome({
           {contextView === "settings" ? (
             <CoworkerSettings
               runtime={runtime}
+              session={session}
               coworker={coworker}
               onCoworkerChanged={onCoworkerChanged}
               onCoworkerRemoved={onCoworkerRemoved}
+              onSyncProviders={onSyncProviders}
+              onOpenAccount={() => onOpenOpenWork("account")}
             />
           ) : null}
         </div>
@@ -482,14 +492,20 @@ function FactRow({
 
 function CoworkerSettings({
   runtime,
+  session,
   coworker,
   onCoworkerChanged,
   onCoworkerRemoved,
+  onSyncProviders,
+  onOpenAccount,
 }: {
   runtime: RuntimeInfo;
+  session: DenSession | null;
   coworker: CoworkerSummary;
   onCoworkerChanged: (coworker: CoworkerSummary) => void;
   onCoworkerRemoved: (slug: string) => void;
+  onSyncProviders: () => Promise<ProviderSyncRun>;
+  onOpenAccount: () => void;
 }) {
   const [role, setRole] = useState(coworker.role);
   const [mission, setMission] = useState(coworker.mission);
@@ -589,10 +605,13 @@ function CoworkerSettings({
         <p className="mb-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-mist">Model</p>
         <ModelPicker
           runtime={runtime}
+          session={session}
           coworker={coworker}
           value={coworker.model}
           modelVariant={coworker.modelVariant}
           onChange={(selection) => void updateModel(selection)}
+          onSyncProviders={onSyncProviders}
+          onConnect={onOpenAccount}
           compact
         />
         <p className="mt-2 text-xs leading-relaxed text-mist">This model and reasoning preference stays with {coworker.name}.</p>

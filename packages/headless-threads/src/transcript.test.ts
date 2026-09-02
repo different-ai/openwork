@@ -4,7 +4,7 @@ import { hasAssistantReplySince, toTranscript } from "./transcript.js";
 import type { HeadlessThreadMessage, HeadlessThreadSnapshot } from "./types.js";
 
 function message(input: Partial<HeadlessThreadMessage> & { id: string; role: string }): HeadlessThreadMessage {
-  return { parentId: null, createdAt: null, error: null, usage: null, parts: [], ...input };
+  return { parentId: null, createdAt: null, error: null, usage: null, model: null, parts: [], ...input };
 }
 
 function snapshot(messages: HeadlessThreadMessage[]): HeadlessThreadSnapshot {
@@ -27,6 +27,7 @@ describe("toTranscript", () => {
           id: "msg_2",
           role: "assistant",
           createdAt: 200,
+          model: { providerId: "anthropic", modelId: "claude-sonnet-5" },
           parts: [
             { id: "prt_2", type: "reasoning", text: "check the policy" },
             {
@@ -47,13 +48,14 @@ describe("toTranscript", () => {
     );
 
     expect(transcript.messages).toEqual([
-      { id: "msg_1", role: "user", createdAt: null, text: "Why?", reasoning: "", toolCalls: [] },
+      { id: "msg_1", role: "user", createdAt: null, text: "Why?", reasoning: "", model: null, toolCalls: [] },
       {
         id: "msg_2",
         role: "assistant",
         createdAt: 200,
         text: "Because the window closed.",
         reasoning: "check the policy",
+        model: { providerId: "anthropic", modelId: "claude-sonnet-5" },
         toolCalls: [{
           partId: "prt_3",
           name: "read",

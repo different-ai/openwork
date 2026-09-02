@@ -83,6 +83,24 @@ app.setPath(
 const coworkersDir = process.env.COWORKER_HOME_DIR?.trim() || defaultCoworkersDir();
 const serverConfigPath = process.env.COWORKER_SERVER_CONFIG?.trim()
   || path.join(openworkConfigDir(), "coworker-server.json");
+// The embedded server keeps its runtime configuration (synced providers,
+// engine records) and its credential store next to its registry file. Open
+// Coworker owns its own copies so signing an account in or out here never
+// rewrites the OpenWork desktop app's engine state on the same machine.
+process.env.OPENWORK_RUNTIME_DB ||= path.join(path.dirname(serverConfigPath), "coworker-runtime.sqlite");
+process.env.OPENWORK_ENV_STORE ||= path.join(path.dirname(serverConfigPath), "coworker-env.json");
+
+/**
+ * Deep links use the app's own scheme so a Den handoff never lands in the
+ * OpenWork desktop app installed beside Open Coworker. Registration mirrors
+ * the desktop shell: packaged builds only, and never inside isolated test
+ * profiles.
+ */
+const DEEP_LINK_SCHEME = "opencoworker";
+const DEEP_LINK_EVENT = "coworker:deep-link";
+const protocolRegistered = app.isPackaged
+  && process.env.OPENWORK_ELECTRON_DISABLE_PROTOCOL_REGISTRATION !== "1"
+  && !(process.platform === "linux" && process.env.APPIMAGE);
 
 /** @type {{ url: string, stop: () => Promise<void>, managedOpencode: { pid: number | null, isAlive: () => boolean } | null } | null} */
 let serverHandle = null;
@@ -91,6 +109,19 @@ let engineError = "";
 let startingServer = null;
 let localResponsibilitiesTimer = null;
 const activeLocalRuns = new Set();
+/** @type {BrowserWindow | null} */
+let mainWindow = null;
+/** @type {string[]} */
+const pendingDeepLinks = [];
+let deepLinkListenerReady = false;
+/**
+ * The signed-in OpenWork account the renderer handed to this process, in the
+ * shape the embedded server's cloud provider sync expects. Held here so a
+ * platform restart (first coworker, workspace repair) re-applies it without
+ * asking the user to sign in again.
+ * @type {{ baseUrl: string, token: string, orgId: string } | null}
+ */
+let denSession = null;
 
 function tokenFilePath() {
   return path.join(app.getPath("userData"), "coworker-server-tokens.json");
@@ -224,7 +255,66 @@ async function startPlatformServer() {
     serverHandle = await startOnce(false);
   }
   ownerToken = await resolveOwnerToken(serverHandle.url, tokens);
+  if (denSession) {
+    // A fresh server starts with no account context; hand the session back so
+    // the signed-in user's providers keep flowing into this engine.
+    await applyDenSession(serverHandle, tokens.hostToken, denSession).catch((error) => {
+      console.warn("[open-coworker] could not re-apply the OpenWork session after restart", error);
+    });
+  }
   return serverHandle;
+}
+
+/**
+ * Give the embedded server the signed-in account so it can materialize the
+ * member's authorized providers into the engine — the same `PUT /den-session`
+ * then `POST /cloud-provider-sync/run` sequence the OpenWork desktop performs.
+ */
+async function applyDenSession(handle, hostToken, session) {
+  const headers = { "Content-Type": "application/json", "X-OpenWork-Host-Token": hostToken };
+  const response = await fetch(`${handle.url}/den-session`, {
+    method: "PUT",
+    headers,
+    body: JSON.stringify(session),
+    signal: AbortSignal.timeout(20_000),
+  });
+  if (!response.ok) throw new Error(`Storing the OpenWork session failed (${response.status})`);
+  return runCloudProviderSync(handle, hostToken, "den_session_updated");
+}
+
+async function runCloudProviderSync(handle, hostToken, reason) {
+  const payload = await fetchJson(`${handle.url}/cloud-provider-sync/run`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-OpenWork-Host-Token": hostToken },
+    body: JSON.stringify({ reason }),
+  }, 90_000);
+  return {
+    status: typeof payload?.status === "string" ? payload.status : "failed",
+    message: typeof payload?.message === "string" ? payload.message : "",
+  };
+}
+
+async function clearDenSession(handle, hostToken) {
+  const response = await fetch(`${handle.url}/den-session`, {
+    method: "DELETE",
+    headers: { "X-OpenWork-Host-Token": hostToken },
+    signal: AbortSignal.timeout(60_000),
+  });
+  if (!response.ok) throw new Error(`Clearing the OpenWork session failed (${response.status})`);
+}
+
+function parseDenSessionPayload(payload) {
+  const baseUrl = String(payload?.baseUrl ?? "").trim().replace(/\/+$/, "");
+  const token = String(payload?.token ?? "").trim();
+  const orgId = String(payload?.orgId ?? "").trim();
+  if (!baseUrl || !token || !orgId) {
+    throw new Error("An OpenWork session needs its API base URL, token, and organization.");
+  }
+  const parsed = new URL(baseUrl);
+  if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
+    throw new Error("The OpenWork API base URL must use http(s).");
+  }
+  return { baseUrl, token, orgId };
 }
 
 async function ensurePlatformServer() {
@@ -255,9 +345,31 @@ function runtimeInfo() {
     ownerToken,
     coworkersDir,
     denBaseUrl: process.env.COWORKER_DEN_BASE_URL?.trim() || DEFAULT_DEN_BASE_URL,
+    deepLinkScheme: DEEP_LINK_SCHEME,
+    deepLinksRegistered: protocolRegistered,
     engineManaged: Boolean(serverHandle?.managedOpencode),
     engineError,
   };
+}
+
+function forwardedDeepLinks(argv) {
+  return argv
+    .slice(1)
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.startsWith(`${DEEP_LINK_SCHEME}://`));
+}
+
+function queueDeepLinks(urls) {
+  const next = urls.filter(Boolean);
+  if (next.length === 0) return;
+  pendingDeepLinks.push(...next);
+  flushPendingDeepLinks();
+}
+
+function flushPendingDeepLinks() {
+  const contents = mainWindow?.webContents;
+  if (!contents || !deepLinkListenerReady || pendingDeepLinks.length === 0) return;
+  contents.send(DEEP_LINK_EVENT, pendingDeepLinks.splice(0, pendingDeepLinks.length));
 }
 
 function localRunModel(coworker) {
@@ -519,6 +631,36 @@ const commands = {
     await shell.openExternal(parsed.toString());
     return { ok: true };
   },
+  /** Signed-in account → embedded server → engine providers. Returns the sync outcome. */
+  "den.session.set": async (payload) => {
+    const session = parseDenSessionPayload(payload);
+    denSession = session;
+    const handle = await ensurePlatformServer();
+    const tokens = await loadOrCreateTokens();
+    return applyDenSession(handle, tokens.hostToken, session);
+  },
+  "den.session.clear": async () => {
+    denSession = null;
+    const handle = await ensurePlatformServer();
+    const tokens = await loadOrCreateTokens();
+    await clearDenSession(handle, tokens.hostToken);
+    return { ok: true };
+  },
+  /** Re-read the account's providers now (after org changes, new keys, or a failed pass). */
+  "den.providers.sync": async () => {
+    if (!denSession) return { status: "no_session", message: "" };
+    const handle = await ensurePlatformServer();
+    const tokens = await loadOrCreateTokens();
+    return runCloudProviderSync(handle, tokens.hostToken, "manual_refresh");
+  },
+  /**
+   * The renderer announces its deep-link listener and drains anything queued
+   * while it was loading; later links are pushed over the same channel.
+   */
+  "deepLinks.subscribe": async () => {
+    deepLinkListenerReady = true;
+    return { urls: pendingDeepLinks.splice(0, pendingDeepLinks.length) };
+  },
 };
 
 function registerIpc() {
@@ -586,7 +728,24 @@ async function createMainWindow() {
     if (/^https?:\/\//i.test(url)) void shell.openExternal(url);
     return { action: "deny" };
   });
+  // A reload replaces the renderer; its deep-link listener must re-announce.
+  window.webContents.on("did-start-navigation", (_event, _url, _isInPlace, isMainFrame) => {
+    if (isMainFrame) deepLinkListenerReady = false;
+  });
+  window.on("closed", () => {
+    if (mainWindow === window) mainWindow = null;
+    deepLinkListenerReady = false;
+  });
+  mainWindow = window;
   await window.loadURL(rendererUrl());
+  return window;
+}
+
+async function focusMainWindow() {
+  const window = mainWindow ?? BrowserWindow.getAllWindows()[0] ?? await createMainWindow();
+  if (window.isMinimized()) window.restore();
+  window.show();
+  window.focus();
   return window;
 }
 
@@ -594,12 +753,17 @@ const singleInstanceLock = app.requestSingleInstanceLock();
 if (!singleInstanceLock) {
   app.quit();
 } else {
-  app.on("second-instance", () => {
-    const [window] = BrowserWindow.getAllWindows();
-    if (window) {
-      if (window.isMinimized()) window.restore();
-      window.focus();
-    }
+  if (protocolRegistered) app.setAsDefaultProtocolClient(DEEP_LINK_SCHEME);
+
+  app.on("second-instance", (_event, argv) => {
+    void focusMainWindow().then(() => queueDeepLinks(forwardedDeepLinks(argv)));
+  });
+
+  app.on("open-url", (event, url) => {
+    event.preventDefault();
+    void app.whenReady()
+      .then(() => focusMainWindow())
+      .then(() => queueDeepLinks([url]));
   });
 
   app.whenReady().then(async () => {
@@ -612,6 +776,7 @@ if (!singleInstanceLock) {
     });
     startLocalResponsibilitiesScheduler();
     await createMainWindow();
+    queueDeepLinks(forwardedDeepLinks(process.argv));
     app.on("activate", () => {
       if (BrowserWindow.getAllWindows().length === 0) void createMainWindow();
     });

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { coworkerBridge, type CoworkerSummary, type RuntimeInfo } from "@/lib/bridge";
+import { coworkerBridge, type CoworkerSummary, type ProviderSyncRun, type RuntimeInfo } from "@/lib/bridge";
+import type { DenSession } from "@/lib/den";
 import {
   artifactKindLabel,
   artifactsForToolCall,
@@ -23,7 +24,9 @@ import {
   createCoworkerThreads,
   describeInteractions,
   hasPendingInteractions,
+  modelSourceLabel,
   type CoworkerActivity,
+  type EngineModelOption,
   type PendingInteractions,
   type ThreadListItem,
 } from "@/lib/threads";
@@ -49,6 +52,8 @@ type TranscriptMessage = {
   role: string;
   text: string;
   reasoning: string;
+  /** Provider/model the engine attributed this reply to; null for user turns and unbound replies. */
+  model: { providerId: string; modelId: string } | null;
   toolCalls: TranscriptToolCall[];
 };
 
@@ -102,22 +107,30 @@ function threadTone(status: ThreadListItem["status"]): "spark" | "amber" | "mint
 
 export function ThreadsPanel({
   runtime,
+  session,
   coworker,
   onCoworkerChanged,
   onRefreshRuntime,
+  onSyncProviders,
   assignmentDraft,
   openThreadRequest,
   onOpenSettings,
+  onOpenAccount,
   onActivityChange,
 }: {
   runtime: RuntimeInfo;
+  session: DenSession | null;
   coworker: CoworkerSummary;
   onCoworkerChanged: (coworker: CoworkerSummary) => void;
   onRefreshRuntime: () => Promise<void>;
+  onSyncProviders: () => Promise<ProviderSyncRun>;
   assignmentDraft?: AssignmentDraft;
   /** Set by the context rail to jump straight into a thread; the id makes repeat requests distinct. */
   openThreadRequest?: { id: number; threadId: string } | null;
+  /** This coworker's model settings — the first recovery step after a model failure. */
   onOpenSettings: () => void;
+  /** The OpenWork account section — where a provider is reconnected. */
+  onOpenAccount: () => void;
   onActivityChange: (activity: CoworkerActivity | null) => void;
 }) {
   const threads = useMemo(
@@ -270,6 +283,9 @@ export function ThreadsPanel({
         onShowAssignments={() => setView("assignments")}
         onInitialTurnHandled={(id) => setQueuedTurn((current) => current?.id === id ? null : current)}
         onOpenSettings={onOpenSettings}
+        onOpenAccount={onOpenAccount}
+        session={session}
+        onSyncProviders={onSyncProviders}
         onActivityChange={onActivityChange}
       />
     );
@@ -327,6 +343,9 @@ export function ThreadsPanel({
       onAssignmentDraftHandled={() => setPendingAssignment(null)}
       onInitialTurnHandled={(id) => setQueuedTurn((current) => current?.id === id ? null : current)}
       onOpenSettings={onOpenSettings}
+      onOpenAccount={onOpenAccount}
+      session={session}
+      onSyncProviders={onSyncProviders}
       onActivityChange={onActivityChange}
     />
   );
@@ -525,6 +544,9 @@ function ThreadView({
   onAssignmentDraftHandled,
   onInitialTurnHandled,
   onOpenSettings,
+  onOpenAccount,
+  session,
+  onSyncProviders,
   onActivityChange,
 }: {
   threads: NonNullable<ReturnType<typeof createCoworkerThreads>>;
@@ -541,6 +563,9 @@ function ThreadView({
   onAssignmentDraftHandled?: () => void;
   onInitialTurnHandled: (id: number) => void;
   onOpenSettings: () => void;
+  onOpenAccount: () => void;
+  session: DenSession | null;
+  onSyncProviders: () => Promise<ProviderSyncRun>;
   onActivityChange: (activity: CoworkerActivity | null) => void;
 }) {
   const [messages, setMessages] = useState<TranscriptMessage[]>([]);
@@ -555,6 +580,7 @@ function ThreadView({
   const [assignmentBusy, setAssignmentBusy] = useState(false);
   const [pendingTurn, setPendingTurn] = useState<PendingTurn | null>(null);
   const [turnIssue, setTurnIssue] = useState<TurnIssue | null>(null);
+  const [providerRefreshNote, setProviderRefreshNote] = useState("");
   const endRef = useRef<HTMLDivElement>(null);
   const pendingTurnRef = useRef<PendingTurn | null>(null);
   const waitControllerRef = useRef<AbortController | null>(null);
@@ -591,6 +617,7 @@ function ThreadView({
           role: message.role,
           text: message.text,
           reasoning: message.reasoning,
+          model: message.model,
           toolCalls: message.toolCalls.map((call) => ({
             partId: call.partId,
             tool: call.name,
@@ -638,6 +665,7 @@ function ThreadView({
     setTurnIssue(null);
     setTerminalError("");
     setError("");
+    setProviderRefreshNote("");
     stopRequestedRef.current = false;
     onActivityChange({
       state: "working",
@@ -649,9 +677,9 @@ function ThreadView({
     let refreshTimer: number | undefined;
     try {
       if (coworker.model.trim()) {
-        const availableModels = await threads.listModels();
-        if (!availableModels.some((model) => model.id === coworker.model)) {
-          throw new Error(`Configured model "${coworker.model}" is not available from a connected provider.`);
+        const catalog = await threads.listModelCatalog();
+        if (!catalog.models.some((model) => model.id === coworker.model)) {
+          throw new Error(describeUnavailableModel(coworker.model, catalog.models, session));
         }
       }
       const acceptance = await threads.client.sendTurn(threadId, { prompt, messageId });
@@ -718,6 +746,32 @@ function ThreadView({
     void submitTurn(text, newMessageId());
   }
 
+  /**
+   * Recovery without leaving the conversation: re-read the account's
+   * providers, then retry the same message id if the saved model came back.
+   */
+  async function refreshProvidersAndRetry() {
+    const failed = turnIssue;
+    setProviderRefreshNote("Refreshing your OpenWork providers…");
+    try {
+      const run = await onSyncProviders();
+      if (run.status === "failed") {
+        setProviderRefreshNote(`OpenWork provider refresh failed: ${run.message || "unknown error"}`);
+        return;
+      }
+      const catalog = await threads.listModelCatalog();
+      const available = !coworker.model.trim() || catalog.models.some((model) => model.id === coworker.model);
+      if (!available) {
+        setProviderRefreshNote(`Providers refreshed, but "${coworker.model}" is still unavailable. Choose another model in coworker settings.`);
+        return;
+      }
+      setProviderRefreshNote("");
+      if (failed?.prompt) void submitTurn(failed.prompt, failed.messageId);
+    } catch (cause) {
+      setProviderRefreshNote(cause instanceof Error ? cause.message : String(cause));
+    }
+  }
+
   async function stop() {
     const active = pendingTurnRef.current;
     stopRequestedRef.current = true;
@@ -745,7 +799,7 @@ function ThreadView({
     try {
       const optimisticTurn = pendingTurn ?? (turnIssue?.messageId && turnIssue.prompt ? turnIssue : null);
       const visibleMessages = optimisticTurn && !messages.some((message) => message.id === optimisticTurn.messageId)
-        ? [...messages, { id: optimisticTurn.messageId, role: "user", text: optimisticTurn.prompt, reasoning: "", toolCalls: [] }]
+        ? [...messages, { id: optimisticTurn.messageId, role: "user", text: optimisticTurn.prompt, reasoning: "", model: null, toolCalls: [] }]
         : messages;
       await onCreateAssignment(outcome, visibleMessages.map(({ role, text }) => ({ role, text })));
       setAssignmentText("");
@@ -763,31 +817,42 @@ function ThreadView({
   const turnNeedsAttention = turnIssue?.kind === "failed" || turnIssue?.kind === "timeout" || Boolean(terminalError);
   const stopped = turnIssue?.kind === "stopped";
   const working = (pendingTurn !== null || engineWorking) && !needsYou && !turnNeedsAttention && !stopped;
-  const readableStatus = needsYou
-    ? "Needs you"
-    : turnNeedsAttention
-      ? "Needs attention"
-      : stopped
-        ? "Stopped"
-    : statusLabel === "retry"
-      ? "Retrying"
-      : pendingTurn?.phase === "accepting"
-        ? "Sending"
-        : working
-          ? "Working"
-          : "Ready";
   const optimisticTurn = pendingTurn ?? (turnIssue?.messageId && turnIssue.prompt ? turnIssue : null);
   const visibleMessages = optimisticTurn && !messages.some((message) => message.id === optimisticTurn.messageId)
-    ? [...messages, { id: optimisticTurn.messageId, role: "user", text: optimisticTurn.prompt, reasoning: "", toolCalls: [] }]
+    ? [...messages, { id: optimisticTurn.messageId, role: "user", text: optimisticTurn.prompt, reasoning: "", model: null, toolCalls: [] }]
     : messages;
   const lastAssistantIndex = visibleMessages.findLastIndex((message) => message.role === "assistant");
   const displayedFailure = turnIssue?.kind === "failed" ? turnIssue.message : terminalError;
+  const activeToolLabel = activeToolCallLabel(visibleMessages);
+  // The reply for this turn has started only when the newest message is an
+  // assistant message with text; an older reply must not read as progress.
+  const newestMessage = visibleMessages.at(-1);
+  const replyStarted = newestMessage?.role === "assistant" && newestMessage.text.length > 0;
+  const workingLabel = pendingTurn?.phase === "accepting"
+    ? "Sending"
+    : statusLabel === "retry"
+      ? "Retrying"
+      : activeToolLabel
+        ? "Using a tool"
+        : replyStarted
+          ? "Working"
+          : "Thinking";
+
+  const readableStatus = needsYou
+    ? pending.permissions.length > 0 ? "Waiting for permission" : "Waiting for an answer"
+    : turnNeedsAttention
+      ? turnIssue?.kind === "timeout" ? "Response delayed" : "Failed"
+      : stopped
+        ? "Stopped"
+    : working
+      ? workingLabel
+      : "Ready";
 
   useEffect(() => {
     if (needsYou) {
       onActivityChange({
         state: "attention",
-        label: "Needs you",
+        label: pending.permissions.length > 0 ? "Waiting for permission" : "Waiting for an answer",
         detail: describeInteractions(pending),
         updatedAt: Date.now(),
         threadId,
@@ -797,7 +862,7 @@ function ThreadView({
     if (turnIssue?.kind === "failed" || turnIssue?.kind === "timeout") {
       onActivityChange({
         state: "attention",
-        label: turnIssue.kind === "timeout" ? "Response delayed" : "Reply failed",
+        label: turnIssue.kind === "timeout" ? "Response delayed" : "Failed",
         detail: turnIssue.message,
         updatedAt: Date.now(),
         threadId,
@@ -807,8 +872,18 @@ function ThreadView({
     if (displayedFailure) {
       onActivityChange({
         state: "attention",
-        label: "Reply failed",
+        label: "Failed",
         detail: displayedFailure,
+        updatedAt: Date.now(),
+        threadId,
+      });
+      return;
+    }
+    if (stopped) {
+      onActivityChange({
+        state: "recent",
+        label: "Stopped",
+        detail: kind === "discussion" ? "Discussion turn stopped" : title,
         updatedAt: Date.now(),
         threadId,
       });
@@ -817,15 +892,15 @@ function ThreadView({
     if (working) {
       onActivityChange({
         state: statusLabel === "retry" ? "retrying" : "working",
-        label: statusLabel === "retry" ? "Retrying" : "Working",
-        detail: kind === "discussion" ? "Replying in your discussion" : title,
+        label: workingLabel,
+        detail: activeToolLabel ?? (kind === "discussion" ? "Replying in your discussion" : title),
         updatedAt: Date.now(),
         threadId,
       });
       return;
     }
     onActivityChange(null);
-  }, [displayedFailure, kind, needsYou, onActivityChange, pending, statusLabel, threadId, title, turnIssue, working]);
+  }, [activeToolLabel, displayedFailure, kind, needsYou, onActivityChange, pending, statusLabel, stopped, threadId, title, turnIssue, working, workingLabel]);
 
   return (
     <section className="flex h-full min-h-0 flex-col bg-ink">
@@ -880,7 +955,12 @@ function ThreadView({
             }}
           />
           {working ? (
-            <WorkIndicator coworker={coworker} threadId={threadId} messages={visibleMessages} />
+            <WorkIndicator
+              coworker={coworker}
+              threadId={threadId}
+              messages={visibleMessages}
+              label={workingLabel}
+            />
           ) : null}
           {visibleMessages.length === 0 && !error && !working ? (
             <Empty>{kind === "discussion" ? `Start a conversation with ${coworker.name}.` : <InlineLoader label="Loading assignment" />}</Empty>
@@ -890,10 +970,13 @@ function ThreadView({
               kind="failed"
               message={displayedFailure}
               canRetry={Boolean(turnIssue?.prompt)}
+              session={session}
               onRetry={() => {
                 if (turnIssue?.prompt) void submitTurn(turnIssue.prompt, turnIssue.messageId);
               }}
               onOpenSettings={onOpenSettings}
+              onOpenAccount={onOpenAccount}
+              onRefreshProviders={() => void refreshProvidersAndRetry()}
             />
           ) : null}
           {turnIssue?.kind === "timeout" ? (
@@ -901,10 +984,15 @@ function ThreadView({
               kind="timeout"
               message={turnIssue.message}
               canRetry
+              session={session}
               onRetry={() => void submitTurn(turnIssue.prompt, turnIssue.messageId)}
               onOpenSettings={onOpenSettings}
+              onOpenAccount={onOpenAccount}
               onStop={() => void stop()}
             />
+          ) : null}
+          {providerRefreshNote ? (
+            <p className="px-1 text-[11px] leading-relaxed text-mist" data-testid="coworker-provider-refresh">{providerRefreshNote}</p>
           ) : null}
           {turnIssue?.kind === "stopped" ? (
             <div className="flex items-center justify-between gap-3 rounded-xl border border-line bg-panel/45 px-3 py-2.5 text-xs text-mist" data-testid="coworker-turn-stopped">
@@ -968,7 +1056,18 @@ function MessageBubble({
     <article className="flex items-start gap-2.5" data-message-role="assistant">
       <CoworkerAvatar animated={active} color={coworker.avatarColor} glasses={coworker.avatarGlasses} name={coworker.name} size={30} />
       <div className="min-w-0 max-w-[88%] flex-1 pt-0.5">
-        <p className="mb-1.5 text-[11px] font-semibold text-mist">{coworker.name}</p>
+        <p className="mb-1.5 flex items-baseline gap-1.5 text-[11px] font-semibold text-mist">
+          <span>{coworker.name}</span>
+          {message.model ? (
+            <span
+              className="truncate font-normal text-mist/70"
+              data-testid="coworker-reply-model"
+              title={`Answered by ${message.model.providerId}/${message.model.modelId}`}
+            >
+              · {message.model.modelId}
+            </span>
+          ) : null}
+        </p>
         {message.reasoning ? <ThinkingDisclosure text={message.reasoning} active={active} /> : null}
         {message.toolCalls.length > 0 ? (
           <ul className={`${message.reasoning ? "mt-2" : ""} space-y-1.5`}>
@@ -998,37 +1097,85 @@ function ThinkingDisclosure({ text, active }: { text: string; active: boolean })
   );
 }
 
-function WorkIndicator({ coworker, threadId, messages }: { coworker: CoworkerSummary; threadId: string; messages: TranscriptMessage[] }) {
+/** "Using <tool>" while a tool call is still running; null when the model is only thinking or writing. */
+function activeToolCallLabel(messages: TranscriptMessage[]): string | null {
   const activeCall = messages
     .flatMap((message) => message.toolCalls)
     .findLast((call) => !["completed", "success", "error", "failed"].includes(call.status));
+  return activeCall ? toolPresentation(activeCall).label.replace(/^(Searched|Used|Ran) /, "Using ") : null;
+}
+
+function WorkIndicator({
+  coworker,
+  threadId,
+  messages,
+  label,
+}: {
+  coworker: CoworkerSummary;
+  threadId: string;
+  messages: TranscriptMessage[];
+  label: string;
+}) {
+  const tool = activeToolCallLabel(messages);
   const saying = useWorkingSaying(coworker.personality, `${coworker.slug}:${threadId}`, true);
-  // The truthful tool label always comes first; the personality only fills the
-  // quiet moments between tools, or trails the tool label as a second voice.
-  const toolLabel = activeCall ? `${toolPresentation(activeCall).label.replace(/^(Searched|Used|Ran) /, "Using ")}…` : "";
-  const label = toolLabel || (saying ? `${saying}…` : "Thinking and working…");
+  const text = tool
+    ? `${tool}…`
+    : label === "Sending"
+      ? "Sending…"
+      : saying
+        ? `${saying}…`
+        : `${coworker.name} is ${label.toLowerCase()}…`;
   return (
     <div className="flex items-center gap-2.5 px-1 py-2 text-xs text-mist" data-testid="coworker-working">
       <CoworkerAvatar animated color={coworker.avatarColor} glasses={coworker.avatarGlasses} name={coworker.name} size={24} />
-      <span className="animate-pulse">{label}</span>
-      {toolLabel && saying ? <span className="truncate text-mist/60" data-testid="coworker-saying">{saying}…</span> : null}
+      <span className="animate-pulse">{text}</span>
+      {tool && saying ? <span className="truncate text-mist/60" data-testid="coworker-saying">{saying}…</span> : null}
     </div>
   );
+}
+
+/**
+ * Why a saved model cannot run right now, in terms the user can act on:
+ * which provider it belongs to, whether that provider is connected at all,
+ * and whether the account (not this Mac) is the place to fix it.
+ */
+function describeUnavailableModel(model: string, available: EngineModelOption[], session: DenSession | null): string {
+  const separator = model.indexOf("/");
+  const providerId = separator > 0 ? model.slice(0, separator) : model;
+  const providerModels = available.filter((option) => option.providerId === providerId);
+  if (providerModels.length > 0) {
+    const sample = providerModels[0];
+    return `The saved model "${model}" is not offered by ${sample?.providerLabel ?? providerId} (${modelSourceLabel(sample?.source ?? "local")}) any more. Choose one of its ${providerModels.length} available model${providerModels.length === 1 ? "" : "s"}.`;
+  }
+  const cloudManaged = /^lpr_/i.test(providerId) || providerId === "openwork";
+  if (cloudManaged) {
+    return session
+      ? `The saved model "${model}" belongs to an OpenWork Cloud provider that is not available in this engine right now. Refresh your OpenWork providers or choose another model.`
+      : `The saved model "${model}" belongs to an OpenWork Cloud provider, but no OpenWork account is signed in here. Continue with OpenWork or choose a model from this Mac.`;
+  }
+  return `The saved model "${model}" is not available: provider "${providerId}" is not connected to this engine. Choose another model or connect that provider in OpenWork.`;
 }
 
 function TurnIssueNote({
   kind,
   message,
   canRetry,
+  session,
   onRetry,
   onOpenSettings,
+  onOpenAccount,
+  onRefreshProviders,
   onStop,
 }: {
   kind: "failed" | "timeout";
   message: string;
   canRetry: boolean;
+  session: DenSession | null;
   onRetry: () => void;
   onOpenSettings: () => void;
+  onOpenAccount: () => void;
+  /** Re-read the account's providers, then retry; only offered while signed in. */
+  onRefreshProviders?: () => void;
   onStop?: () => void;
 }) {
   return (
@@ -1039,12 +1186,21 @@ function TurnIssueNote({
           <p className="text-xs font-semibold text-snow">{kind === "timeout" ? "The reply is taking too long" : "The coworker could not reply"}</p>
           <p className="mt-1 break-words text-xs leading-relaxed text-mist">{message}</p>
           {kind === "failed" ? (
-            <p className="mt-1 text-[11px] leading-relaxed text-mist">Choose another model or reconnect its provider in coworker settings.</p>
+            <p className="mt-1 text-[11px] leading-relaxed text-mist">
+              Choose another model or reconnect its provider in coworker settings.
+              {session ? " Your OpenWork providers can also be refreshed without leaving this conversation." : " Signing in to OpenWork adds your organization's models."}
+            </p>
           ) : null}
           <div className="mt-2 flex flex-wrap items-center gap-2">
             {canRetry ? <Button variant="ghost" onClick={onRetry}>Retry turn</Button> : null}
             {onStop ? <Button variant="ghost" onClick={onStop}>Stop</Button> : null}
             <Button variant="ghost" onClick={onOpenSettings}>Open model settings</Button>
+            {kind === "failed" && session && onRefreshProviders ? (
+              <Button variant="ghost" onClick={onRefreshProviders}>Refresh providers</Button>
+            ) : null}
+            {kind === "failed" ? (
+              <Button variant="ghost" onClick={onOpenAccount}>{session ? "Reconnect OpenWork" : "Continue with OpenWork"}</Button>
+            ) : null}
           </div>
         </div>
       </div>
