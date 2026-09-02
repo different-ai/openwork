@@ -75,7 +75,7 @@ describe("permission approval modal helpers", () => {
     ]);
   });
 
-  test("keeps keyboard order on the safer one-shot approval before session approval", () => {
+  test("keeps keyboard order from the safest reply to the widest scope", () => {
     const html = renderToStaticMarkup(
       React.createElement(PermissionApprovalPanel, {
         permission: pendingPermission(),
@@ -83,7 +83,8 @@ describe("permission approval modal helpers", () => {
       }),
     );
 
-    expect(buttonText(html)).toEqual(["Deny", "Allow once", "Allow for session"]);
+    // One-shot before session, session before the workspace-wide rule that is written to disk.
+    expect(buttonText(html)).toEqual(["Deny", "Allow once", "Allow for session", "Always allow in this workspace"]);
   });
 
   test("uses readable labels for generic permission titles", () => {
