@@ -15,7 +15,9 @@
         "ee/apps/den-api/src/scim.ts",
         "ee/apps/den-api/src/single-org-signup-policy.ts",
         "ee/apps/den-api/src/sso-domain-verification.ts",
+        "ee/apps/den-api/src/sso-test-lifecycle.ts",
         "ee/apps/den-api/src/sso.ts",
+        "ee/apps/den-web/app/(den)/_providers/den-flow-provider.tsx",
         "ee/apps/den-web/app/(den)/dashboard/_components/scim-screen.tsx",
         "ee/apps/den-web/app/(den)/dashboard/_components/sso-screen.tsx",
         "ee/apps/den-web/app/sso/**"
@@ -26,7 +28,8 @@
         "evals/specs/scim-okta-lifecycle.e2e.test.ts",
         "evals/specs/self-host-onboarding.e2e.test.ts",
         "evals/specs/sso-domain-verification.e2e.test.ts",
-        "evals/specs/sso-invite-sign-in.e2e.test.ts"
+        "evals/specs/sso-invite-sign-in.e2e.test.ts",
+        "evals/specs/sso-safe-enable.e2e.test.ts"
       ]
     },
     {
