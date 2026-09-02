@@ -34,6 +34,7 @@ export const XLSX_WRITE_MAX_CELLS = 50_000;
 const EXCEL_MAX_ROWS = 1_048_576;
 const EXCEL_MAX_COLUMNS = 16_384;
 const SHEET_NAME_MAX_CHARS = 31;
+const CELL_TEXT_MAX_CHARS = 32_767;
 const EXCEL_EPOCH_1900_MS = Date.UTC(1899, 11, 30);
 const EXCEL_EPOCH_1904_MS = Date.UTC(1904, 0, 1);
 const MS_PER_DAY = 86_400_000;
@@ -76,6 +77,8 @@ export type XlsxSheetData = {
 
 export type XlsxWorkbook = {
   sheets: XlsxSheetInfo[];
+  /** Sheets declared by the workbook beyond XLSX_MAX_SHEETS, which are not read. */
+  omittedSheets: number;
   sharedStringCount: number;
   styleCount: number;
   date1904: boolean;
@@ -161,9 +164,10 @@ export function parseRange(range: string): CellRange | null {
   };
 }
 
-function parseWorkbookSheets(workbookXml: string, relsXml: string | null): XlsxSheetInfo[] {
+function parseWorkbookSheets(workbookXml: string, relsXml: string | null): { sheets: XlsxSheetInfo[]; omittedSheets: number } {
   const targets = relationshipTargets(relsXml, "xl");
-  return xmlStartTagAttributes(workbookXml, "sheet").slice(0, XLSX_MAX_SHEETS).map((attributes, index) => {
+  const declared = xmlStartTagAttributes(workbookXml, "sheet");
+  const sheets = declared.slice(0, XLSX_MAX_SHEETS).map((attributes, index) => {
     const relationshipId = attributes["r:id"] ?? attributes.id ?? "";
     const path = relationshipId && targets.has(relationshipId)
       ? targets.get(relationshipId) ?? ""
@@ -177,11 +181,13 @@ function parseWorkbookSheets(workbookXml: string, relsXml: string | null): XlsxS
       hidden: attributes.state === "hidden" || attributes.state === "veryHidden",
     };
   });
+  return { sheets, omittedSheets: declared.length - sheets.length };
 }
 
 function sharedStringText(xml: string): string {
-  const pieces = xmlBlocks(xml, "t").map((block) => parsedXmlText(block.inner, ""));
-  const text = pieces.join("").replace(/\s+/g, " ").trim();
+  // Keep interior line breaks (multi-line cells) and only trim the edges; the
+  // table renderer flattens whitespace where a single line is needed.
+  const text = xmlBlocks(xml, "t").map((block) => parsedXmlText(block.inner, "")).join("").trim();
   return text || xmlText(xml);
 }
 
@@ -214,6 +220,11 @@ function builtinNumberFormat(id: string): string {
     case "20": return "h:mm";
     case "21": return "h:mm:ss";
     case "22": return "m/d/yy h:mm";
+    case "27": case "28": case "29": case "30": case "31": case "36":
+    case "50": case "51": case "52": case "53": case "54": case "57": case "58":
+      return "yyyy-mm-dd";
+    case "32": case "33": case "34": case "35": case "55": case "56":
+      return "h:mm:ss";
     case "45": return "mm:ss";
     case "46": return "[h]:mm:ss";
     case "47": return "mmss.0";
@@ -257,9 +268,12 @@ export function excelSerialToIso(serial: number, date1904 = false): string | nul
   const ms = Math.round(serial * MS_PER_DAY);
   const date = new Date(epoch + ms);
   if (Number.isNaN(date.getTime())) return null;
+  const time = `${pad(date.getUTCHours())}:${pad(date.getUTCMinutes())}:${pad(date.getUTCSeconds())}`;
+  // A serial below one day carries no calendar date: it is a time of day.
+  if (serial < 1 && !date1904) return time;
   const day = `${date.getUTCFullYear()}-${pad(date.getUTCMonth() + 1)}-${pad(date.getUTCDate())}`;
   if (ms % MS_PER_DAY === 0) return day;
-  return `${day} ${pad(date.getUTCHours())}:${pad(date.getUTCMinutes())}:${pad(date.getUTCSeconds())}`;
+  return `${day} ${time}`;
 }
 
 function cellTypeLabel(type: string): string {
@@ -365,12 +379,13 @@ export async function openXlsxWorkbook(bytes: Uint8Array): Promise<XlsxWorkbook>
   if (!workbookXml) throw new Error("XLSX workbook.xml was not found.");
   const sharedStrings = parseSharedStrings(await readZipTextEntry(bytes, entries, "xl/sharedStrings.xml"));
   const numberFormats = parseNumberFormats(await readZipTextEntry(bytes, entries, "xl/styles.xml"));
-  const sheets = parseWorkbookSheets(workbookXml, await readZipTextEntry(bytes, entries, "xl/_rels/workbook.xml.rels"));
+  const { sheets, omittedSheets } = parseWorkbookSheets(workbookXml, await readZipTextEntry(bytes, entries, "xl/_rels/workbook.xml.rels"));
   if (sheets.length === 0) throw new Error("XLSX workbook contained no sheets.");
   const date1904 = xmlStartTagAttributes(workbookXml, "workbookPr").some((attributes) => attributes.date1904 === "1" || attributes.date1904 === "true");
 
   return {
     sheets,
+    omittedSheets,
     sharedStringCount: sharedStrings.length,
     styleCount: numberFormats.length,
     date1904,
@@ -589,7 +604,8 @@ function sanitizeSheetName(name: string | undefined, position: number, taken: Se
     .trim();
   let candidate = cleaned || `Sheet${position}`;
   let suffix = 2;
-  while (taken.has(candidate.toLowerCase())) {
+  // Excel reserves "History" for its change-tracking sheet.
+  while (taken.has(candidate.toLowerCase()) || candidate.toLowerCase() === "history") {
     const base = candidate.slice(0, SHEET_NAME_MAX_CHARS - String(suffix).length - 1);
     candidate = `${base}-${suffix}`;
     suffix += 1;
@@ -607,6 +623,7 @@ function cellXml(reference: string, value: XlsxCellInput, styleIndex: number): s
   }
   if (typeof value === "boolean") return `<c r="${reference}" t="b"${style}><v>${value ? 1 : 0}</v></c>`;
   if (isFormulaInput(value)) return `<c r="${reference}"${style}><f>${escapeXml(formulaBody(value, reference))}</f></c>`;
+  if (value.length > CELL_TEXT_MAX_CHARS) throw new Error(`Cell ${reference} holds ${value.length} characters of text; Excel allows ${CELL_TEXT_MAX_CHARS}. Shorten it or split it across cells.`);
   const preserve = /^\s|\s$|\n/.test(value) ? ' xml:space="preserve"' : "";
   return `<c r="${reference}" t="inlineStr"${style}><is><t${preserve}>${escapeXml(value)}</t></is></c>`;
 }

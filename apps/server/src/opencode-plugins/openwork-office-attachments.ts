@@ -287,6 +287,7 @@ async function extractXlsxText(bytes: Buffer): Promise<string> {
     `  shared_string_count: ${workbook.sharedStringCount}`,
     `  style_count: ${workbook.styleCount}`,
     ...(workbook.date1904 ? ["  date_system: 1904"] : []),
+    ...(workbook.omittedSheets ? [`  omitted_sheets: ${workbook.omittedSheets} beyond the first ${total} are not shown`] : []),
   ];
   let remainingCells = MAX_XLSX_PREVIEW_CELLS;
   for (const info of workbook.sheets) {

@@ -264,6 +264,7 @@ export const OpenWorkSpreadsheets = async (factoryInput?: unknown) => {
             sha256: sha256(bytes),
             dateSystem: workbook.date1904 ? "1904" : "1900",
             sharedStrings: workbook.sharedStringCount,
+            ...(workbook.omittedSheets ? { omittedSheets: workbook.omittedSheets } : {}),
             sheets,
             next: `spreadsheet_read({ path: ${JSON.stringify(file.relativePath)}, sheet: <name>, startRow: 1, maxRows: ${DEFAULT_READ_ROWS} })`,
           }, null, 2);

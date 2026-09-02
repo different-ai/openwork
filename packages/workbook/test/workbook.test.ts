@@ -3,6 +3,8 @@ import { describe, expect, test } from "bun:test";
 import {
   buildZip,
   cellInputFromText,
+  excelSerialToIso,
+  renderSheetTable,
   unsafeFormulaReason,
   listZipEntries,
   openXlsxWorkbook,
@@ -30,6 +32,45 @@ describe("@openwork/workbook", () => {
     expect(entries[0].compressedSize).toBeLessThan(entries[0].uncompressedSize);
     expect(utf8Text(await readZipEntryData(archive, entries[0]))).toBe(text);
     expect([...await readZipEntryData(archive, entries[1])]).toEqual([1, 2, 3, 250, 251, 252]);
+  });
+
+  test("stores an entry that would compress past the reader's ratio bound", async () => {
+    const archive = await buildZip([{ name: "flat.txt", data: utf8Bytes("A".repeat(200_000)) }]);
+    const [entry] = listZipEntries(archive);
+    expect(entry.method).toBe(0);
+    expect(entry.compressedSize).toBe(entry.uncompressedSize);
+    expect(utf8Text(await readZipEntryData(archive, entry))).toBe("A".repeat(200_000));
+  });
+
+  test("keeps multi-line text, refuses over-long text, and avoids Excel's reserved sheet name", async () => {
+    const { bytes, sheets } = await writeXlsxWorkbook([
+      { name: "History", header: false, rows: [["line one\nline two", " keep edges "]] },
+    ]);
+    expect(sheets.map((sheet) => sheet.name)).toEqual(["History-2"]);
+    const workbook = await openXlsxWorkbook(bytes);
+    const sheet = await workbook.readSheet(workbook.sheets[0]);
+    expect(sheet.cells.map((cell) => cell.displayedValue)).toEqual(["line one\nline two", "keep edges"]);
+    expect(renderSheetTable(sheet).text).toContain("| 1 | line one line two | keep edges |");
+    await expect(writeXlsxWorkbook([{ rows: [["x".repeat(32_768)]] }])).rejects.toThrow("Excel allows 32767");
+  });
+
+  test("reports sheets beyond the read limit instead of hiding them", async () => {
+    const declared = Array.from({ length: 70 }, (_sheet, index) => `<sheet name="S${index + 1}" sheetId="${index + 1}"/>`).join("");
+    const archive = await buildZip([
+      { name: "xl/workbook.xml", data: utf8Bytes(`<workbook><sheets>${declared}</sheets></workbook>`) },
+      { name: "xl/worksheets/sheet1.xml", data: utf8Bytes('<worksheet><sheetData><row r="1"><c r="A1"><v>1</v></c></row></sheetData></worksheet>') },
+    ]);
+    const workbook = await openXlsxWorkbook(archive);
+    expect(workbook.sheets).toHaveLength(64);
+    expect(workbook.omittedSheets).toBe(6);
+  });
+
+  test("renders serials as dates, datetimes, or times of day", () => {
+    expect(excelSerialToIso(45000)).toBe("2023-03-15");
+    expect(excelSerialToIso(45000.5)).toBe("2023-03-15 12:00:00");
+    expect(excelSerialToIso(0.75)).toBe("18:00:00");
+    expect(excelSerialToIso(0)).toBe("00:00:00");
+    expect(excelSerialToIso(1)).toBe("1900-01-01");
   });
 
   test("stops inflating an entry as soon as it exceeds the size its directory declares", async () => {

@@ -261,7 +261,10 @@ export async function buildZip(files: ZipFileInput[]): Promise<Uint8Array> {
     totalUncompressed += file.data.byteLength;
     if (totalUncompressed > MAX_TOTAL_UNCOMPRESSED_BYTES) throw new Error("ZIP archive exceeds total uncompressed limit.");
     const deflated = await deflateRaw(file.data);
-    const useDeflate = deflated.byteLength < file.data.byteLength;
+    // Store an entry that would compress past the reader's ratio bound, so a
+    // workbook this writer produces is always one this reader accepts.
+    const useDeflate = deflated.byteLength < file.data.byteLength
+      && file.data.byteLength / Math.max(1, deflated.byteLength) <= MAX_ZIP_COMPRESSION_RATIO;
     const stored = useDeflate ? deflated : file.data;
     const method = useDeflate ? ZIP_DEFLATE : ZIP_STORED;
     const name = utf8Bytes(file.name);
