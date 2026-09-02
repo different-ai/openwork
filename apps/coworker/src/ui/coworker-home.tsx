@@ -9,7 +9,7 @@ import { AvatarControls, CoworkerAvatar } from "@/ui/coworker-avatar";
 import { PersonalityPicker } from "@/ui/personality-picker";
 import { useWorkingSaying } from "@/ui/use-working-saying";
 import { CapabilitiesPanel } from "@/ui/capabilities";
-import { ActivityIcon, AppsIcon, Button, ChevronIcon, ErrorNote, Field, IconButton, MemoryIcon, SlidersIcon, StatusDot, inputClass } from "@/ui/kit";
+import { ActivityIcon, AppsIcon, Button, ErrorNote, Field, IconButton, MemoryIcon, SlidersIcon, StatusDot, inputClass } from "@/ui/kit";
 import { useResizablePanel } from "@/ui/use-resizable-panel";
 import type { PanelBounds } from "@/lib/panel-layout";
 import { MemoryPanel } from "@/ui/memory";
@@ -204,18 +204,14 @@ export function CoworkerHome({
           {...contextPanel.separatorProps}
           aria-label="Resize context panel"
           className="window-no-drag group absolute inset-y-0 -left-[5px] z-30 w-[10px] cursor-col-resize outline-none"
-          title="Drag to resize · Drag closed to collapse · Double-click to reset"
+          title={contextPanel.collapsed ? "Click to show the panel · Drag to resize" : "Drag to resize · Click or drag closed to fold"}
           data-testid="context-panel-resizer"
         >
           <span className="absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-transparent transition-colors group-hover:bg-spark/45 group-focus-visible:bg-spark/70" />
         </div>
         {contextPanel.collapsed ? (
           <>
-            <div className="glass-header window-drag flex h-[78px] flex-col items-center justify-end border-b border-line pb-3 pt-2">
-              <IconButton label="Show panel" className="window-no-drag" data-testid="context-panel-expand" onClick={contextPanel.expand}>
-                <ChevronIcon direction="left" />
-              </IconButton>
-            </div>
+            <div className="glass-header window-drag h-[78px] border-b border-line" aria-hidden="true" />
             <nav aria-label="Coworker panels" className="flex flex-col items-center gap-1 px-2 py-3">
               {CONTEXT_ORDER.map((view) => {
                 const Icon = CONTEXT_ICONS[view];
@@ -255,9 +251,6 @@ export function CoworkerHome({
               <SlidersIcon />
             </IconButton>
           ) : null}
-          <IconButton label="Hide panel" className="window-no-drag" data-testid="context-panel-collapse" onClick={contextPanel.collapse}>
-            <ChevronIcon direction="right" />
-          </IconButton>
         </header>
         <div className="min-h-0 flex-1 overflow-y-auto p-4">
           {contextView === "overview" ? (
