@@ -45,10 +45,10 @@ import {
   splitDiscussionThreads,
 } from "@/lib/discussions";
 import { markAutoPicked, wasAutoPicked } from "@/lib/model-choice";
+import { describeProgress, describeWorkStep, summarizeWork, type ProgressPhase, type WorkStep } from "@/lib/work-receipt";
 import { describeTurnFailure } from "@/lib/turn-failure";
 import { InteractionCards } from "@/ui/interactions";
 import { CoworkerAvatar } from "@/ui/coworker-avatar";
-import { useWorkingSaying } from "@/ui/use-working-saying";
 import { InlineLoader } from "@/ui/brand";
 import { AlertIcon, Button, Empty, ErrorNote, StatusDot, ThoughtIcon, ToolIcon } from "@/ui/kit";
 import { Markdown } from "@/ui/markdown";
@@ -1392,6 +1392,7 @@ function ThreadView({
               coworker={coworker}
               mcpClient={mcpClient}
               active={working && message.role === "assistant" && index === lastAssistantIndex}
+              continued={index > 0 && visibleMessages[index - 1]?.role === message.role}
             />
           ))}
           <InteractionCards
@@ -1413,7 +1414,6 @@ function ThreadView({
           {working ? (
             <WorkIndicator
               coworker={coworker}
-              threadId={threadId}
               messages={visibleMessages}
               label={workingLabel}
             />
@@ -1495,17 +1495,20 @@ function MessageBubble({
   coworker,
   mcpClient,
   active,
+  continued = false,
 }: {
   message: TranscriptMessage;
   coworker: CoworkerSummary;
   mcpClient: CoworkerMcpClient;
   active: boolean;
+  /** The previous message is from the same speaker: no avatar or name again, tighter spacing. */
+  continued?: boolean;
 }) {
   const user = message.role === "user";
   if (user) {
     return (
-      <article className="flex justify-end" data-message-role="user">
-        <div className="max-w-[82%] whitespace-pre-wrap rounded-2xl rounded-br-md bg-snow px-4 py-3 text-sm leading-relaxed text-ink">
+      <article className={`flex justify-end ${continued ? "-mt-1.5" : ""}`} data-message-role="user" data-continued={continued ? "true" : "false"}>
+        <div className="max-w-[72%] whitespace-pre-wrap rounded-2xl rounded-br-md bg-snow px-4 py-2.5 text-sm leading-relaxed text-ink">
           {message.text || "…"}
         </div>
       </article>
@@ -1513,10 +1516,14 @@ function MessageBubble({
   }
 
   return (
-    <article className="flex items-start gap-2.5" data-message-role="assistant">
-      <CoworkerAvatar animated={active} color={coworker.avatarColor} glasses={coworker.avatarGlasses} name={coworker.name} size={30} />
+    <article className={`flex items-start gap-2.5 ${continued ? "-mt-1" : ""}`} data-message-role="assistant" data-continued={continued ? "true" : "false"}>
+      {continued ? (
+        <span className="w-[30px] shrink-0" aria-hidden="true" />
+      ) : (
+        <CoworkerAvatar animated={active} color={coworker.avatarColor} glasses={coworker.avatarGlasses} name={coworker.name} size={30} />
+      )}
       <div className="min-w-0 max-w-[88%] flex-1 pt-0.5">
-        <p className="mb-1.5 text-[11px] font-semibold text-mist">
+        <p className={`text-[11px] font-semibold text-mist ${continued ? "sr-only" : "mb-1.5"}`}>
           {/* The answering model stays available on hover and to assistive tech, not as everyday copy. */}
           <span title={message.model ? `Answered by ${message.model.providerId}/${message.model.modelId}` : undefined}>{coworker.name}</span>
           {message.model ? (
@@ -1525,66 +1532,89 @@ function MessageBubble({
             </span>
           ) : null}
         </p>
-        {message.reasoning ? <ThinkingDisclosure text={message.reasoning} active={active} /> : null}
-        {message.toolCalls.length > 0 ? (
-          <ul className={`${message.reasoning ? "mt-2" : ""} space-y-1.5`}>
-            {message.toolCalls.map((call) => <ToolReceipt key={call.partId} call={call} client={mcpClient} />)}
-          </ul>
-        ) : null}
+        {/* Thinking and tool work fold into one line each; the live row below the messages carries the moving state. */}
+        {message.reasoning && !active ? <ThinkingDisclosure text={message.reasoning} /> : null}
+        {message.toolCalls.length > 0 ? <WorkReceipt calls={message.toolCalls} client={mcpClient} /> : null}
         {message.text ? (
-          <Markdown text={message.text} className={message.reasoning || message.toolCalls.length ? "mt-2.5" : ""} />
-        ) : !message.reasoning && message.toolCalls.length === 0 ? <span className="text-sm text-mist">…</span> : null}
+          <Markdown text={message.text} className={(message.reasoning && !active) || message.toolCalls.length ? "mt-2" : ""} />
+        ) : !active && !message.reasoning && message.toolCalls.length === 0 ? <span className="text-sm text-mist">…</span> : null}
       </div>
     </article>
   );
 }
 
-function ThinkingDisclosure({ text, active }: { text: string; active: boolean }) {
+/** Provider-returned thinking, folded to one quiet line once the reply is complete. Only what the transcript makes available is shown. */
+function ThinkingDisclosure({ text }: { text: string }) {
   return (
-    <details className="group rounded-xl border border-white/7 bg-white/[0.025] px-2.5 py-2" data-testid="coworker-thinking">
-      <summary className="flex cursor-pointer list-none items-center gap-2 text-xs text-mist marker:hidden">
-        <ThoughtIcon className="size-4 shrink-0 text-mist" active={active} />
-        <span className={`flex-1 ${active ? "animate-pulse" : ""}`}>{active ? "Thinking…" : "Thought through"}</span>
+    <details className="group text-[11px] text-mist" data-testid="coworker-thinking">
+      <summary className="flex cursor-pointer list-none items-center gap-1.5 py-0.5 marker:hidden hover:text-snow">
+        <ThoughtIcon className="size-3.5 shrink-0" />
+        <span>Thought through</span>
         <span className="text-mist/60 transition-transform group-open:rotate-90" aria-hidden="true">›</span>
       </summary>
-      <p className="mt-2 whitespace-pre-wrap border-t border-white/7 pt-2 text-xs leading-relaxed text-mist">{text}</p>
+      <p className="mt-1 whitespace-pre-wrap border-l border-line pl-3 leading-relaxed">{text}</p>
     </details>
   );
 }
 
-/** "Using <tool>" while a tool call is still running; null when the model is only thinking or writing. */
-function activeToolCallLabel(messages: TranscriptMessage[]): string | null {
+/** The step the coworker is on right now, or null when it is only thinking or writing. */
+function activeWorkStep(messages: TranscriptMessage[]): WorkStep | null {
   const activeCall = messages
     .flatMap((message) => message.toolCalls)
     .findLast((call) => !["completed", "success", "error", "failed"].includes(call.status));
-  return activeCall ? toolPresentation(activeCall).label.replace(/^(Searched|Used|Ran) /, "Using ") : null;
+  return activeCall ? describeWorkStep(activeCall) : null;
 }
 
+/** "Editing index.md" for the header and sidebar while a tool runs. */
+function activeToolCallLabel(messages: TranscriptMessage[]): string | null {
+  const step = activeWorkStep(messages);
+  if (!step) return null;
+  return step.doing.charAt(0).toUpperCase() + step.doing.slice(1);
+}
+
+function progressPhase(label: string, hasActiveStep: boolean): ProgressPhase {
+  if (label === "Sending") return "sending";
+  if (label === "Retrying") return "retrying";
+  if (hasActiveStep) return "tool";
+  if (label === "Working") return "writing";
+  return "thinking";
+}
+
+/** Three quiet dots; still under reduced motion. */
+function TypingDots() {
+  return (
+    <span className="flex items-center gap-[3px]" aria-hidden="true">
+      {[0, 1, 2].map((index) => (
+        <span
+          key={index}
+          className="size-1 rounded-full bg-mist/70 motion-safe:animate-pulse"
+          style={{ animationDelay: `${index * 180}ms`, animationDuration: "1.1s" }}
+        />
+      ))}
+    </span>
+  );
+}
+
+/**
+ * One live row per active turn: a small avatar, three dots, and one phrase that
+ * changes only when the phase changes — never on a timer.
+ */
 function WorkIndicator({
   coworker,
-  threadId,
   messages,
   label,
 }: {
   coworker: CoworkerSummary;
-  threadId: string;
   messages: TranscriptMessage[];
   label: string;
 }) {
-  const tool = activeToolCallLabel(messages);
-  const saying = useWorkingSaying(coworker.personality, `${coworker.slug}:${threadId}`, true);
-  const text = tool
-    ? `${tool}…`
-    : label === "Sending"
-      ? "Sending…"
-      : saying
-        ? `${saying}…`
-        : `${coworker.name} is ${label.toLowerCase()}…`;
+  const step = activeWorkStep(messages);
+  const phase = progressPhase(label, step !== null);
   return (
-    <div className="flex items-center gap-2.5 px-1 py-2 text-xs text-mist" data-testid="coworker-working">
-      <CoworkerAvatar animated color={coworker.avatarColor} glasses={coworker.avatarGlasses} name={coworker.name} size={24} />
-      <span className="animate-pulse">{text}</span>
-      {tool && saying ? <span className="truncate text-mist/60" data-testid="coworker-saying">{saying}…</span> : null}
+    <div className="flex items-center gap-2.5 px-1 py-1.5 text-xs text-mist" data-testid="coworker-working" data-phase={phase}>
+      <CoworkerAvatar animated working={phase === "tool"} color={coworker.avatarColor} glasses={coworker.avatarGlasses} name={coworker.name} size={22} />
+      <TypingDots />
+      <span data-testid="coworker-progress-phrase">{describeProgress(coworker.name, phase, step)}</span>
     </div>
   );
 }
@@ -1678,24 +1708,113 @@ function TurnIssueNote({
   );
 }
 
-function toolPresentation(call: TranscriptToolCall): { label: string; source: string } {
-  const normalized = call.tool.toLowerCase();
-  const source = call.tool.includes("_") ? call.tool.split("_")[0] || "OpenWork" : "OpenWork";
-  if (normalized.endsWith("search_capabilities")) {
-    const query = typeof call.input.query === "string" ? call.input.query.trim() : "";
-    return { label: query ? `Searched for “${query}”` : "Searched connected capabilities", source: "OpenWork Connect" };
-  }
-  if (normalized.endsWith("execute_capability")) {
-    const selected = typeof call.input.name === "string" ? call.input.name.trim() : "";
-    return { label: selected ? `Used ${selected}` : "Ran a connected capability", source: "OpenWork Connect" };
-  }
-  return {
-    label: call.tool.replaceAll("_", " ").replace(/\b\w/g, (character) => character.toUpperCase()),
-    source,
-  };
+/**
+ * One receipt for all the tool work behind a reply. Collapsed, it is one line
+ * ("Edited index.md", "Worked with your files and Calendar · 3 steps"); open,
+ * it lists each step in plain words with the tool name behind Technical
+ * details. A step that is still running or did not finish keeps the receipt
+ * open so it never disappears into the fold. Documents and Apps the work
+ * produced stay first-class as compact attachments beneath.
+ */
+function WorkReceipt({ calls, client }: { calls: TranscriptToolCall[]; client: CoworkerMcpClient }) {
+  const steps = calls.map((call) => describeWorkStep(call));
+  const unsettled = steps.some((step) => step.state !== "done");
+  const [open, setOpen] = useState(false);
+  const expanded = open || unsettled;
+  const summary = summarizeWork(steps);
+  const tone = steps.some((step) => step.state === "failed") ? "rose" : unsettled ? "spark" : "mint";
+  return (
+    <div className="text-[11px]" data-testid="coworker-work-receipt" data-state={tone === "rose" ? "failed" : unsettled ? "working" : "done"}>
+      <button
+        type="button"
+        className="group flex w-full items-center gap-1.5 py-0.5 text-left text-mist hover:text-snow"
+        aria-expanded={expanded}
+        onClick={() => setOpen((value) => !value)}
+        data-testid="coworker-work-summary"
+      >
+        <ToolIcon className={`size-3.5 shrink-0 ${unsettled ? "motion-safe:animate-pulse" : ""}`} />
+        <span className="min-w-0 flex-1 truncate">{summary}</span>
+        <StatusDot tone={tone} />
+        <span className={`text-mist/60 transition-transform ${expanded ? "rotate-90" : ""}`} aria-hidden="true">›</span>
+      </button>
+      {expanded ? (
+        <ol className="mt-1 space-y-1 border-l border-line pl-3" data-testid="coworker-work-steps">
+          {calls.map((call) => {
+            const step = describeWorkStep(call);
+            return (
+              <li key={call.partId} data-testid="coworker-work-step" data-state={step.state}>
+                <div className="flex items-center gap-1.5">
+                  <StatusDot tone={step.state === "failed" ? "rose" : step.state === "done" ? "mint" : "spark"} />
+                  <span className={`min-w-0 flex-1 truncate ${step.state === "failed" ? "text-rose" : "text-snow"}`}>{step.label}</span>
+                  <span className="shrink-0 text-mist">{step.state === "failed" ? "Didn't finish" : step.state === "done" ? "Done" : "Working on it"}</span>
+                </div>
+                {call.error ? <p className="mt-0.5 break-words pl-3.5 text-rose">{call.error}</p> : null}
+                <details className="pl-3.5 text-[10px] text-mist/75">
+                  <summary className="cursor-pointer select-none">Technical details</summary>
+                  <p className="mt-0.5 break-all font-mono">{call.tool}</p>
+                  {Object.keys(call.input ?? {}).length > 0 ? (
+                    <pre className="mt-0.5 max-h-40 overflow-auto whitespace-pre-wrap break-all font-mono">{JSON.stringify(call.input, null, 2)}</pre>
+                  ) : null}
+                </details>
+              </li>
+            );
+          })}
+        </ol>
+      ) : null}
+      <ToolAttachments calls={calls} client={client} />
+    </div>
+  );
 }
 
-function ToolReceipt({ call, client }: { call: TranscriptToolCall; client: CoworkerMcpClient }) {
+/** Documents and Apps produced by the work, once, beneath the receipt. */
+function ToolAttachments({ calls, client }: { calls: TranscriptToolCall[]; client: CoworkerMcpClient }) {
+  const seen = new Set<string>();
+  const artifacts = calls
+    .filter((call) => call.status === "completed" || call.status === "success")
+    .flatMap((call) => artifactsForToolCall(call))
+    .filter((artifact) => {
+      const identity = `${artifact.kind}:${artifact.value}`;
+      if (seen.has(identity)) return false;
+      seen.add(identity);
+      return true;
+    });
+  return (
+    <>
+      {artifacts.length > 0 ? (
+        <div className="mt-1.5 flex flex-wrap gap-1.5" data-testid="coworker-artifacts">
+          {artifacts.map((artifact) => {
+            const chip = (
+              <>
+                <span className="flex size-4 shrink-0 items-center justify-center text-mist"><ArtifactIcon kind={artifact.kind} /></span>
+                <span className="max-w-56 truncate text-[11px] font-medium text-snow">{artifact.label}</span>
+              </>
+            );
+            const title = `${artifactKindLabel(artifact.kind)} · ${artifact.value}`;
+            return artifact.openUrl ? (
+              <button
+                key={`${artifact.kind}:${artifact.value}`}
+                type="button"
+                className="flex items-center gap-1.5 rounded-lg border border-white/8 bg-white/[0.03] px-2 py-1 transition-colors hover:bg-white/6"
+                title={`Open ${title}`}
+                onClick={() => void coworkerBridge.openExternal(artifact.openUrl ?? "")}
+              >
+                {chip}
+              </button>
+            ) : (
+              <span key={`${artifact.kind}:${artifact.value}`} className="flex items-center gap-1.5 rounded-lg border border-white/8 bg-white/[0.03] px-2 py-1" title={title}>
+                {chip}
+              </span>
+            );
+          })}
+        </div>
+      ) : null}
+      {calls.map((call) => <ToolAppFrame key={call.partId} call={call} client={client} />)}
+    </>
+  );
+}
+
+/** The standard MCP App a tool call returned, mounted in the existing sandboxed host. */
+function ToolAppFrame({ call, client }: { call: TranscriptToolCall; client: CoworkerMcpClient }) {
   const nextResult = preservedMcpAppResult({ output: call.output, metadata: call.metadata });
   const resultSignature = JSON.stringify(nextResult);
   const resultRef = useRef<{ signature: string; value: PreservedMcpAppResult | null }>({
@@ -1717,9 +1836,6 @@ function ToolReceipt({ call, client }: { call: TranscriptToolCall; client: Cowor
   }
   const [app, setApp] = useState<CoworkerMcpAppResource | null>(null);
   const [appError, setAppError] = useState("");
-  const presentation = toolPresentation(call);
-  const artifacts = artifactsForToolCall(call);
-  const failed = call.status === "error" || call.status === "failed";
   const complete = call.status === "completed" || call.status === "success";
 
   useEffect(() => {
@@ -1737,65 +1853,22 @@ function ToolReceipt({ call, client }: { call: TranscriptToolCall; client: Cowor
     return () => { cancelled = true; };
   }, [call.tool, client, complete, launch, result]);
 
-  return (
-    <li className="rounded-xl border border-line bg-ink/70 px-2.5 py-2 text-xs text-snow">
-      <div className="flex items-center gap-2">
-        <span className="relative flex size-5 shrink-0 items-center justify-center text-mist">
-          <ToolIcon className={`size-4 ${!failed && !complete ? "animate-pulse" : ""}`} />
-          <span className="absolute -bottom-0.5 -right-0.5 flex rounded-full ring-2 ring-ink">
-            <StatusDot tone={failed ? "rose" : complete ? "mint" : "spark"} />
-          </span>
-        </span>
-        <span className="min-w-0 flex-1 truncate">{presentation.label}</span>
-        <span className="shrink-0 text-[10px] text-mist">{failed ? "Failed" : complete ? "Done" : "Working"}</span>
+  if (app && result) {
+    return (
+      <div className="mt-1.5">
+        <McpAppFrame
+          client={client}
+          app={app}
+          toolName={call.tool}
+          input={inputRef.current.value}
+          result={result}
+          onClose={() => setApp(null)}
+        />
       </div>
-      <div className="mt-1 flex items-center justify-between gap-3 pl-4 text-[9px] text-mist/75">
-        <span className="truncate">{presentation.source}</span>
-        <details className="shrink-0">
-          <summary className="cursor-pointer select-none">Details</summary>
-          <p className="mt-1 max-w-64 break-all text-right font-mono">{call.tool}</p>
-        </details>
-      </div>
-      {call.error ? <p className="mt-2 pl-4 text-[10px] text-rose">{call.error}</p> : null}
-      {complete && artifacts.length > 0 ? (
-        <div className="mt-2 space-y-1.5 border-t border-line pt-2" data-testid="coworker-artifacts">
-          {artifacts.map((artifact) => (
-            <div key={`${artifact.kind}:${artifact.value}`} className="flex items-center gap-2 rounded-lg bg-white/[0.035] px-2.5 py-2">
-              <span className="flex size-7 shrink-0 items-center justify-center rounded-lg border border-white/8 bg-ink text-mist">
-                <ArtifactIcon kind={artifact.kind} />
-              </span>
-              <span className="min-w-0 flex-1">
-                <span className="block text-[9px] font-semibold uppercase tracking-[0.1em] text-mist">{artifactKindLabel(artifact.kind)}</span>
-                <span className="mt-0.5 block truncate text-[11px] font-medium text-snow" title={artifact.value}>{artifact.label}</span>
-              </span>
-              {artifact.openUrl ? (
-                <button
-                  type="button"
-                  className="rounded-lg border border-white/9 px-2 py-1 text-[10px] font-medium text-mist transition-colors hover:bg-white/6 hover:text-snow"
-                  onClick={() => void coworkerBridge.openExternal(artifact.openUrl ?? "")}
-                >
-                  Open
-                </button>
-              ) : null}
-            </div>
-          ))}
-        </div>
-      ) : null}
-      {app && result ? (
-        <div className="mt-2">
-          <McpAppFrame
-            client={client}
-            app={app}
-            toolName={call.tool}
-            input={inputRef.current.value}
-            result={result}
-            onClose={() => setApp(null)}
-          />
-        </div>
-      ) : null}
-      {appError ? <p className="mt-2 pl-4 text-[10px] text-mist">Interactive view unavailable. {appError}</p> : null}
-    </li>
-  );
+    );
+  }
+  if (appError) return <p className="mt-1 text-[10px] text-mist">Interactive view unavailable. {appError}</p>;
+  return null;
 }
 
 function ArtifactIcon({ kind }: { kind: CoworkerArtifactKind }) {
