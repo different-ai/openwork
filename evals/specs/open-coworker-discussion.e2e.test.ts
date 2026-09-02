@@ -238,7 +238,10 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   const secondDiscussionId = String(storedAfterNew.conversationThreadId);
   expect(secondDiscussionId).toEqual(expect.stringMatching(/^ses_/));
   expect(secondDiscussionId).not.toBe(discussionThreadId);
-  expect(await evalIn(app, `document.querySelector('[data-testid="coworker-discussion-switcher"]')?.textContent?.trim()`)).toContain("New discussion");
+  await waitFor(app, `(document.querySelector('[data-testid="coworker-discussion-switcher"]')?.textContent ?? "").includes("New discussion")`, {
+    timeoutMs: 30_000,
+    label: "fresh discussion labelled New discussion",
+  });
 
   const parallelPrompt = "Reply with exactly PARALLEL CHAT READY.";
   await fill(app, 'textarea[aria-label="Message Editor"]', parallelPrompt);
