@@ -83,21 +83,21 @@ test("Linux OS trust lets OpenWork use one corporate TLS Den without trusting an
     const anthropicKey = process.env.ANTHROPIC_API_KEY?.trim();
     if (!anthropicKey) throw new Error("ANTHROPIC_API_KEY was empty after needs resolution.");
     // TODO(primitive): configure and reload a local workspace provider.
-    const configured = await seed.evalIn(trustedApp, `(async () => {
+    const configured = await seed.evalIn(trustedApp, `async (workspaceId, apiKey) => {
       const port = localStorage.getItem("openwork.server.port");
       const token = localStorage.getItem("openwork.server.token");
       if (!port || !token) return "missing local server credentials";
       const headers = { Authorization: "Bearer " + token, "Content-Type": "application/json" };
-      const base = "http://127.0.0.1:" + port + "/workspace/" + encodeURIComponent(${JSON.stringify(trustedApp.workspaceId)});
+      const base = "http://127.0.0.1:" + port + "/workspace/" + encodeURIComponent(workspaceId);
       const patch = await fetch(base + "/config", {
         method: "PATCH",
         headers,
-        body: JSON.stringify({ opencode: { provider: { anthropic: { options: { apiKey: ${JSON.stringify(anthropicKey)} } } } } }),
+        body: JSON.stringify({ opencode: { provider: { anthropic: { options: { apiKey } } } } }),
       });
       if (!patch.ok) return "patch:" + patch.status + ":" + (await patch.text()).slice(0, 300);
       const reload = await fetch(base + "/engine/reload", { method: "POST", headers });
       return reload.ok ? "ok" : "reload:" + reload.status + ":" + (await reload.text()).slice(0, 300);
-    })()`, { awaitPromise: true, timeoutMs: 90_000 });
+    }`, { args: [trustedApp.workspaceId, anthropicKey], awaitPromise: true, timeoutMs: 90_000 });
     expect(configured).toBe("ok");
 
     const preferredModel = process.env.OPENWORK_EVAL_MODEL?.trim() || "big-pickle";

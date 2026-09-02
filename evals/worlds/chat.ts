@@ -85,10 +85,11 @@ async function configureProvider(
   opencode: Record<string, unknown>,
 ): Promise<void> {
   // TODO(primitive): configure a workspace provider and select its model.
-  const result = await seed.evalIn(app, `(async () => {
+  const result = await seed.evalIn(app, `async (workspaceId, providerId, modelId, defaultModel, opencodeJson) => {
     const port = localStorage.getItem("openwork.server.port");
     const token = localStorage.getItem("openwork.server.token");
     if (!port || !token) return "missing local server credentials";
+    const opencode = JSON.parse(opencodeJson);
     const request = async (path, init) => {
       const response = await fetch("http://127.0.0.1:" + port + path, {
         ...init,
@@ -100,10 +101,9 @@ async function configureProvider(
       }
       return "ok";
     };
-    const workspaceId = ${JSON.stringify(workspaceId)};
     const patched = await request("/workspace/" + encodeURIComponent(workspaceId) + "/config", {
       method: "PATCH",
-      body: JSON.stringify({ opencode: ${JSON.stringify(opencode)} }),
+      body: JSON.stringify({ opencode }),
     });
     if (patched !== "ok") return patched;
     const reloaded = await request("/workspace/" + encodeURIComponent(workspaceId) + "/engine/reload", { method: "POST" });
@@ -114,23 +114,27 @@ async function configureProvider(
     if (!preferences || typeof preferences !== "object" || Array.isArray(preferences)) preferences = {};
     localStorage.setItem("openwork.preferences", JSON.stringify({
       ...preferences,
-      defaultModel: { providerID: ${JSON.stringify(providerId)}, modelID: ${JSON.stringify(modelId)} },
+      defaultModel: { providerID: providerId, modelID: modelId },
       modelVariant: null,
       providerStepCompleted: true,
     }));
-    localStorage.setItem("openwork.defaultModel", ${JSON.stringify(`${providerId}/${modelId}`)});
+    localStorage.setItem("openwork.defaultModel", defaultModel);
     localStorage.removeItem("openwork.sessionModels." + workspaceId);
     return "ok";
-  })()`, { awaitPromise: true, timeoutMs: 120_000 });
+  }`, {
+    args: [workspaceId, providerId, modelId, `${providerId}/${modelId}`, JSON.stringify(opencode)],
+    awaitPromise: true,
+    timeoutMs: 120_000,
+  });
   if (result !== "ok") throw new Error(`Provider configuration failed: ${String(result)}`);
   await seed.evalIn(app, "location.reload(); true");
-  const ready = await seed.evalIn(app, `(async () => {
+  const ready = await seed.evalIn(app, `async (workspaceId) => {
     const deadline = Date.now() + 60000;
     while (Date.now() < deadline) {
       const port = localStorage.getItem("openwork.server.port");
       const token = localStorage.getItem("openwork.server.token");
       try {
-        const response = await fetch("http://127.0.0.1:" + port + "/workspace/" + encodeURIComponent(${JSON.stringify(workspaceId)}) + "/opencode/session", {
+        const response = await fetch("http://127.0.0.1:" + port + "/workspace/" + encodeURIComponent(workspaceId) + "/opencode/session", {
           headers: { Authorization: "Bearer " + token },
         });
         if (response.ok && window.__openworkControl) return true;
@@ -138,7 +142,7 @@ async function configureProvider(
       await new Promise((resolve) => setTimeout(resolve, 500));
     }
     return false;
-  })()`, { awaitPromise: true, timeoutMs: 120_000 });
+  }`, { args: [workspaceId], awaitPromise: true, timeoutMs: 120_000 });
   if (ready !== true) throw new Error("Engine did not become ready after provider configuration.");
 }
 
@@ -157,17 +161,17 @@ export async function arrangeControl(
   args?: unknown,
 ): Promise<unknown> {
   // TODO(primitive): invoke a named renderer fixture control and await its result.
-  return seed.evalIn(app, `(async () => {
+  return seed.evalIn(app, `async (action, argsJson) => {
     const deadline = Date.now() + 30000;
     while (Date.now() < deadline) {
-      const available = window.__openworkControl?.listActions().find((candidate) => candidate.id === ${JSON.stringify(action)} && !candidate.disabled);
+      const available = window.__openworkControl?.listActions().find((candidate) => candidate.id === action && !candidate.disabled);
       if (available) break;
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
-    const result = await window.__openworkControl.execute(${JSON.stringify(action)}, ${JSON.stringify(args ?? null)});
+    const result = await window.__openworkControl.execute(action, JSON.parse(argsJson));
     if (!result?.ok) throw new Error(String(result?.error ?? "control action failed"));
     return result.value;
-  })()`, { awaitPromise: true, timeoutMs: 120_000 });
+  }`, { args: [action, JSON.stringify(args ?? null)], awaitPromise: true, timeoutMs: 120_000 });
 }
 
 async function seedSessionRetry(
@@ -429,16 +433,16 @@ export async function renderCycle(seed: Seed) {
     const session = await seedSessionRetry(seed, app);
     await seed.composerText(app, `Reply with exactly: ${renderCycleFirstReply}`);
     // TODO(primitive): send an arranged historical turn and await its completion.
-    const historical = await seed.evalIn(app, `(async () => {
+    const historical = await seed.evalIn(app, `async (expectedReply) => {
       const sent = await window.__openworkControl.execute("composer.send", null);
       if (!sent?.ok) throw new Error(String(sent?.error ?? "composer.send failed"));
       const deadline = Date.now() + 30000;
       while (Date.now() < deadline) {
-        if (document.body.innerText.includes(${JSON.stringify(renderCycleFirstReply)})) return true;
+        if (document.body.innerText.includes(expectedReply)) return true;
         await new Promise((resolve) => setTimeout(resolve, 100));
       }
       return false;
-    })()`, { awaitPromise: true, timeoutMs: 120_000 });
+    }`, { args: [renderCycleFirstReply], awaitPromise: true, timeoutMs: 120_000 });
     if (historical !== true) throw new Error(`Historical turn did not complete. Requests: ${requests.join("; ")}`);
     return {
       app,
@@ -610,7 +614,7 @@ async function writeProviderConfig(path: string, providerId: string, modelId: st
 
 async function selectModelInWorld(seed: Seed, app: Awaited<ReturnType<Seed["desktop"]>>, modelName: string): Promise<void> {
   // TODO(primitive): select a model as arranged state.
-  const selected = await seed.evalIn(app, `(async () => {
+  const selected = await seed.evalIn(app, `async (modelName) => {
     const deadline = Date.now() + 60000;
     if (!document.querySelector('input[placeholder="Search providers and models..."]')) {
       const result = await window.__openworkControl.execute("session.model_picker.open", null);
@@ -618,14 +622,14 @@ async function selectModelInWorld(seed: Seed, app: Awaited<ReturnType<Seed["desk
     }
     while (Date.now() < deadline) {
       const input = document.querySelector('input[placeholder="Search providers and models..."]');
-      if (input instanceof HTMLInputElement && input.value !== ${JSON.stringify(modelName)}) {
+      if (input instanceof HTMLInputElement && input.value !== modelName) {
         const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
-        setter?.call(input, ${JSON.stringify(modelName)});
+        setter?.call(input, modelName);
         input.dispatchEvent(new Event("input", { bubbles: true }));
       }
       const dialog = document.querySelector('[data-slot="dialog-content"]');
       const item = [...(dialog?.querySelectorAll("button") ?? [])]
-        .find((candidate) => !candidate.disabled && (candidate.textContent ?? "").includes(${JSON.stringify(modelName)}));
+        .find((candidate) => !candidate.disabled && (candidate.textContent ?? "").includes(modelName));
       if (item instanceof HTMLElement) {
         item.click();
         while (Date.now() < deadline) {
@@ -637,7 +641,7 @@ async function selectModelInWorld(seed: Seed, app: Awaited<ReturnType<Seed["desk
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
     return false;
-  })()`, { awaitPromise: true, timeoutMs: 120_000 });
+  }`, { args: [modelName], awaitPromise: true, timeoutMs: 120_000 });
   if (selected !== true) throw new Error(`Model ${modelName} was not selectable.`);
 }
 
@@ -821,13 +825,14 @@ async function configureCrossWorkspaces(
   baseUrl: string,
 ): Promise<void> {
   // TODO(primitive): configure one provider across several workspaces and select its model.
-  const configured = await seed.evalIn(app, `(async () => {
+  const configured = await seed.evalIn(app, `async (workspaceIdsJson, providerBaseUrl) => {
     const port = localStorage.getItem("openwork.server.port");
     const token = localStorage.getItem("openwork.server.token");
     if (!port || !token) return "missing local server credentials";
+    const workspaceIds = JSON.parse(workspaceIdsJson);
     const root = "http://127.0.0.1:" + port;
     const headers = { Authorization: "Bearer " + token, "Content-Type": "application/json" };
-    for (const workspaceId of ${JSON.stringify(workspaceIds)}) {
+    for (const workspaceId of workspaceIds) {
       const patch = await fetch(root + "/workspace/" + encodeURIComponent(workspaceId) + "/config", {
         method: "PATCH",
         headers,
@@ -838,7 +843,7 @@ async function configureCrossWorkspaces(
               "composer-switch-mock": {
                 npm: "@ai-sdk/openai-compatible",
                 name: "Composer switch model",
-                options: { baseURL: ${JSON.stringify(`${baseUrl}/v1`)}, apiKey: "sk-composer-switch" },
+                options: { baseURL: providerBaseUrl, apiKey: "sk-composer-switch" },
                 models: { "composer-switch-model": { name: "Composer switch model", tool_call: true } },
               },
             },
@@ -861,7 +866,7 @@ async function configureCrossWorkspaces(
     }));
     localStorage.setItem("openwork.defaultModel", "composer-switch-mock/composer-switch-model");
     return "ok";
-  })()`, { awaitPromise: true, timeoutMs: 180_000 });
+  }`, { args: [JSON.stringify(workspaceIds), `${baseUrl}/v1`], awaitPromise: true, timeoutMs: 180_000 });
   if (configured !== "ok") throw new Error(`Cross-workspace provider configuration failed: ${String(configured)}`);
   await seed.evalIn(app, "location.reload(); true");
 }

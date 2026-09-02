@@ -60,37 +60,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-async function seedAsyncEval(
-  seed: Seed,
-  app: Awaited<ReturnType<Seed["desktop"]>>,
-  expression: string,
-  timeoutMs: number,
-): Promise<unknown> {
-  const key = `__openworkSeedAsync_${Date.now()}_${Math.random().toString(36).slice(2)}`;
-  // TODO(primitive): seed.evalAsync should await an asynchronous renderer arrangement.
-  await seed.evalIn(app, `(() => {
-    const state = { done: false, error: "", value: null };
-    globalThis[${JSON.stringify(key)}] = state;
-    Promise.resolve(${expression}).then(
-      (value) => { state.value = value; state.done = true; },
-      (error) => { state.error = String(error?.stack ?? error?.message ?? error); state.done = true; },
-    );
-    return true;
-  })()`);
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    // TODO(primitive): seed.evalAsync should expose completion without raw polling.
-    const state = await seed.evalIn(app, `globalThis[${JSON.stringify(key)}] ?? null`);
-    if (isRecord(state) && state.done === true) {
-      await seed.evalIn(app, `delete globalThis[${JSON.stringify(key)}]`);
-      if (typeof state.error === "string" && state.error) throw new Error(state.error);
-      return state.value;
-    }
-    await new Promise((resolve) => setTimeout(resolve, 250));
-  }
-  throw new Error(`Timed out after ${timeoutMs}ms waiting for asynchronous world arrangement.`);
-}
-
 async function additionalWorkspace(
   seed: Seed,
   app: Awaited<ReturnType<Seed["desktop"]>>,
@@ -98,12 +67,11 @@ async function additionalWorkspace(
 ): Promise<ShellWorkspace> {
   const previous = await seed.evalIn(app, `localStorage.getItem("openwork.react.activeWorkspace") ?? ""`);
   // TODO(primitive): seed.workspace should always create the requested additional workspace.
-  const result = await seedAsyncEval(
-    seed,
-    app,
-    `window.__openworkControl.execute("workspace.create", ${JSON.stringify({ path })})`,
-    120_000,
-  );
+  const result = await seed.evalIn(app, `(path) => window.__openworkControl.execute("workspace.create", { path })`, {
+    args: [path],
+    awaitPromise: true,
+    timeoutMs: 120_000,
+  });
   if (!isRecord(result) || result.ok !== true) throw new Error(`Could not create workspace ${path}: ${JSON.stringify(result)}`);
   const deadline = Date.now() + 120_000;
   while (Date.now() < deadline) {
@@ -139,33 +107,33 @@ async function configureWorkspaceProvider(
   },
 ): Promise<void> {
   // TODO(primitive): seed.configureWorkspaceProvider should configure and reload a workspace model without raw renderer evaluation.
-  const result = await seedAsyncEval(seed, app, `(async () => {
+  const result = await seed.evalIn(app, `async (workspaceIdsJson, smallModel, allowTools, providerId, modelId, modelName, baseUrl, defaultModel) => {
     const info = await window.__OPENWORK_ELECTRON__?.invokeDesktop?.("openworkServerInfo");
     if (!info?.running || !info.baseUrl) return { error: "local_server_unavailable" };
+    const workspaceIds = JSON.parse(workspaceIdsJson);
     const root = String(info.baseUrl).replace(/\\/+$/, "");
     const headers = {
       Authorization: "Bearer " + String(info.ownerToken ?? info.clientToken ?? ""),
       "Content-Type": "application/json",
     };
     const outcomes = [];
-    for (const workspaceId of ${JSON.stringify(workspaceIds)}) {
+    for (const workspaceId of workspaceIds) {
+      const opencode = {
+        provider: {
+          [providerId]: {
+            npm: "@ai-sdk/openai-compatible",
+            name: modelName,
+            options: { baseURL: baseUrl, apiKey: "sk-eval-fixture" },
+            models: { [modelId]: { name: modelName, tool_call: allowTools } },
+          },
+        },
+      };
+      if (smallModel) opencode.small_model = smallModel;
+      if (allowTools) opencode.permission = { edit: "allow", write: "allow", read: "allow", bash: "allow" };
       const response = await fetch(root + "/workspace/" + encodeURIComponent(workspaceId) + "/config", {
         method: "PATCH",
         headers,
-        body: JSON.stringify({
-          opencode: {
-            ${options.smallModel ? `small_model: ${JSON.stringify(options.smallModel)},` : ""}
-            ${options.allowTools ? 'permission: { edit: "allow", write: "allow", read: "allow", bash: "allow" },' : ""}
-            provider: {
-              [${JSON.stringify(options.providerId)}]: {
-                npm: "@ai-sdk/openai-compatible",
-                name: ${JSON.stringify(options.modelName)},
-                options: { baseURL: ${JSON.stringify(options.baseUrl)}, apiKey: "sk-eval-fixture" },
-                models: { [${JSON.stringify(options.modelId)}]: { name: ${JSON.stringify(options.modelName)}, tool_call: ${options.allowTools === true} } },
-              },
-            },
-          },
-        }),
+        body: JSON.stringify({ opencode }),
         signal: AbortSignal.timeout(30000),
       });
       if (!response.ok) {
@@ -185,14 +153,27 @@ async function configureWorkspaceProvider(
     if (!preferences || typeof preferences !== "object" || Array.isArray(preferences)) preferences = {};
     localStorage.setItem("openwork.preferences", JSON.stringify({
       ...preferences,
-      defaultModel: { providerID: ${JSON.stringify(options.providerId)}, modelID: ${JSON.stringify(options.modelId)} },
+      defaultModel: { providerID: providerId, modelID: modelId },
       modelVariant: null,
       providerStepCleaned: true,
     }));
-    localStorage.setItem("openwork.defaultModel", ${JSON.stringify(`${options.providerId}/${options.modelId}`)});
-    for (const workspaceId of ${JSON.stringify(workspaceIds)}) localStorage.removeItem("openwork.sessionModels." + workspaceId);
+    localStorage.setItem("openwork.defaultModel", defaultModel);
+    for (const workspaceId of workspaceIds) localStorage.removeItem("openwork.sessionModels." + workspaceId);
     return { outcomes };
-  })()`, 240_000);
+  }`, {
+    args: [
+      JSON.stringify(workspaceIds),
+      options.smallModel ?? null,
+      options.allowTools ?? false,
+      options.providerId,
+      options.modelId,
+      options.modelName,
+      options.baseUrl,
+      `${options.providerId}/${options.modelId}`,
+    ],
+    awaitPromise: true,
+    timeoutMs: 240_000,
+  });
   if (typeof result !== "object" || result === null || !("outcomes" in result) || !Array.isArray(result.outcomes)) {
     throw new Error(`Workspace provider configuration failed: ${JSON.stringify(result)}`);
   }

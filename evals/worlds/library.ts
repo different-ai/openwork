@@ -182,18 +182,16 @@ export const runtimeGenerationExpression = `(async () => {
   };
 })()`;
 
-export function cloudHealthExpression(workspaceId: string): string {
-  return `(() => {
+export const cloudHealthExpression = `(workspaceId) => {
     const port = localStorage.getItem("openwork.server.port");
     const token = localStorage.getItem("openwork.server.token");
     if (!port || !token) return { error: "missing local server credentials" };
     const request = new XMLHttpRequest();
-    request.open("GET", "http://127.0.0.1:" + port + "/workspace/" + encodeURIComponent(${JSON.stringify(workspaceId)}) + "/mcp/openwork-cloud/health?probe=1", false);
+    request.open("GET", "http://127.0.0.1:" + port + "/workspace/" + encodeURIComponent(workspaceId) + "/mcp/openwork-cloud/health?probe=1", false);
     request.setRequestHeader("Authorization", "Bearer " + token);
     request.send();
     return JSON.parse(request.responseText || "{}");
-  })()`;
-}
+  }`;
 
 export async function connectPolicyRuntimeRestart(seed: Seed, { place }: { place: import("@openwork/env").Place }) {
   const stamp = Date.now();
@@ -206,7 +204,9 @@ export async function connectPolicyRuntimeRestart(seed: Seed, { place }: { place
   });
   const app = await startApp({ den, as: "fresh", place, localServerDelayMs: 5_000 });
   // TODO(primitive): seed.route
-  await seed.evalIn(app, `location.hash = "#/workspace/${app.workspaceId}/settings/general"; true`);
+  await seed.evalIn(app, `(workspaceId) => { location.hash = "#/workspace/" + workspaceId + "/settings/general"; return true; }`, {
+    args: [app.workspaceId],
+  });
   return withDispose({ app }, async () => app.stop());
 }
 
@@ -233,7 +233,9 @@ export async function connectStateProvenance(seed: Seed) {
   const app = await seed.desktop({ den, signIn: false });
   const workspace = await seed.workspace(app, seed.tmpPath("connect-state-provenance"));
   // TODO(primitive): seed.route
-  await seed.evalIn(app, `location.hash = "#/workspace/${workspace.workspaceId}/settings/general"; true`);
+  await seed.evalIn(app, `(workspaceId) => { location.hash = "#/workspace/" + workspaceId + "/settings/general"; return true; }`, {
+    args: [workspace.workspaceId],
+  });
   return { app, member: den.members.fresh };
 }
 
@@ -269,7 +271,9 @@ export async function preseededConnect(seed: Seed) {
   const app = await seed.desktop({ den, signIn: false });
   const workspace = await seed.workspace(app, seed.tmpPath("preseeded-connect"));
   // TODO(primitive): seed.route
-  await seed.evalIn(app, `location.hash = "#/workspace/${workspace.workspaceId}/settings/general"; true`);
+  await seed.evalIn(app, `(workspaceId) => { location.hash = "#/workspace/" + workspaceId + "/settings/general"; return true; }`, {
+    args: [workspace.workspaceId],
+  });
   return {
     app,
     admin: den.admin,
@@ -324,7 +328,9 @@ export async function libraryConnectorDiscovery(seed: Seed) {
     mobile: false,
   });
   // TODO(primitive): seed.route
-  await seed.evalIn(app, `location.hash = "#/workspace/${workspace.workspaceId}/settings/general"; true`);
+  await seed.evalIn(app, `(workspaceId) => { location.hash = "#/workspace/" + workspaceId + "/settings/general"; return true; }`, {
+    args: [workspace.workspaceId],
+  });
   return { app, organizationId, denWebUrl: den.ref.webUrl };
 }
 
@@ -339,7 +345,7 @@ export async function librarySessionRestore(seed: Seed) {
   const workspace = await seed.workspace(app, seed.tmpPath("library-session-restore"));
   const skillsRoute = `/workspace/${workspace.workspaceId}/extensions/skills`;
   // TODO(primitive): seed.route
-  await seed.evalIn(app, `location.hash = ${JSON.stringify(`#${skillsRoute}`)}; true`);
+  await seed.evalIn(app, `(route) => { location.hash = route; return true; }`, { args: [`#${skillsRoute}`] });
   return {
     app,
     proxy,
@@ -358,7 +364,9 @@ export async function libraryAdvancedRefresh(seed: Seed) {
   const app = await seed.desktop({ den: { ...den, ref: proxy.ref }, as: "admin" });
   const workspace = await seed.workspace(app, seed.tmpPath("library-advanced-refresh"));
   // TODO(primitive): seed.route
-  await seed.evalIn(app, `location.hash = "#/workspace/${workspace.workspaceId}/settings/general"; true`);
+  await seed.evalIn(app, `(workspaceId) => { location.hash = "#/workspace/" + workspaceId + "/settings/general"; return true; }`, {
+    args: [workspace.workspaceId],
+  });
   return { app, proxy, admin: den.admin, connector: den.mocks.connector };
 }
 
@@ -385,7 +393,9 @@ export async function libraryAuthoringRoutes(seed: Seed) {
   const app = await seed.desktop({ den: { ...den, ref: proxy.ref }, signIn: false });
   const workspace = await seed.workspace(app, seed.tmpPath("library-authoring-routes"));
   // TODO(primitive): seed.route
-  await seed.evalIn(app, `location.hash = "#/workspace/${workspace.workspaceId}/extensions"; true`);
+  await seed.evalIn(app, `(workspaceId) => { location.hash = "#/workspace/" + workspaceId + "/extensions"; return true; }`, {
+    args: [workspace.workspaceId],
+  });
   const web = await seed.web({ den, signedInAs: den.admin, startPath: "/dashboard/library", headless: true });
   return {
     app,
@@ -442,7 +452,9 @@ export async function libraryMcpConnectError(seed: Seed) {
   const app = await seed.desktop({ den, as: "admin" });
   const workspace = await seed.workspace(app, seed.tmpPath("library-mcp-connect-error"));
   // TODO(primitive): seed.route
-  await seed.evalIn(app, `location.hash = "#/workspace/${workspace.workspaceId}/settings/general"; true`);
+  await seed.evalIn(app, `(workspaceId) => { location.hash = "#/workspace/" + workspaceId + "/settings/general"; return true; }`, {
+    args: [workspace.workspaceId],
+  });
   return {
     app,
     connector: den.mocks.connector,
@@ -459,7 +471,7 @@ export async function librarySignedInStability(seed: Seed) {
   const app = await seed.desktop({ den, as: "member" });
   const workspace = await seed.workspace(app, repoRoot);
   // TODO(primitive): seed.networkObserver
-  await seed.evalIn(app, `(() => {
+  await seed.evalIn(app, `(workspaceId) => {
     window.__libraryStability = { requests: [], denEvents: 0, samples: [] };
     const originalFetch = window.fetch;
     window.fetch = function (...args) {
@@ -468,9 +480,9 @@ export async function librarySignedInStability(seed: Seed) {
       return originalFetch.apply(this, args);
     };
     window.addEventListener("openwork-den-settings-changed", () => { window.__libraryStability.denEvents += 1; });
-    location.hash = "#/workspace/${workspace.workspaceId}/settings/general";
+    location.hash = "#/workspace/" + workspaceId + "/settings/general";
     return true;
-  })()`);
+  }`, { args: [workspace.workspaceId] });
   return { app };
 }
 
@@ -491,7 +503,9 @@ export async function localManagedMcp(seed: Seed) {
   const app = await seed.desktop({ den, as: "admin" });
   const workspace = await seed.workspace(app, seed.tmpPath("local-managed-mcp"));
   // TODO(primitive): seed.route
-  await seed.evalIn(app, `location.hash = "#/workspace/${workspace.workspaceId}/settings/general"; true`);
+  await seed.evalIn(app, `(workspaceId) => { location.hash = "#/workspace/" + workspaceId + "/settings/general"; return true; }`, {
+    args: [workspace.workspaceId],
+  });
   return { app, connector: den.mocks.connector, name: `local-managed-${stamp}`, workspaceId: workspace.workspaceId };
 }
 

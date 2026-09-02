@@ -17,9 +17,9 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 async function titleState(probe: Probe, title: string): Promise<TitleState> {
   // TODO(primitive): probe.computedStyle should read overflow geometry and computed masks for a visible target.
-  const value = await probe.eval(`(() => {
+  const value = await probe.eval(`(title) => {
     const text = [...document.querySelectorAll("[data-session-title-text]")]
-      .find((node) => (node.textContent ?? "").trim() === ${JSON.stringify(title)});
+      .find((node) => (node.textContent ?? "").trim() === title);
     if (!(text instanceof HTMLElement) || !(text.parentElement instanceof HTMLElement)) return null;
     const viewport = text.parentElement;
     return {
@@ -28,7 +28,7 @@ async function titleState(probe: Probe, title: string): Promise<TitleState> {
       maskImage: getComputedStyle(viewport).maskImage,
       scrollWidth: text.scrollWidth,
     };
-  })()`);
+  }`, { args: [title] });
   if (!isRecord(value)
     || typeof value.clientWidth !== "number"
     || typeof value.hiddenEdges !== "string"

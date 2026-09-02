@@ -120,12 +120,12 @@ export async function artifactCodeBrowserWorld(seed: Seed) {
   if (!session) throw new Error("Could not seed the artifact code browser session.");
   await go(base.app, `/workspace/${base.workspace.workspaceId}/session/${session.sessionId}`);
   // TODO(primitive): write workspace files through the local server fixture.
-  const wrote = await seed.evalIn(base.app, `(async () => {
+  const wrote = await seed.evalIn(base.app, `async (workspaceId) => {
     const port = localStorage.getItem("openwork.server.port");
     const token = localStorage.getItem("openwork.server.token");
     if (!port || !token) return false;
     const write = (path, content) => fetch(
-      "http://127.0.0.1:" + port + "/workspace/" + encodeURIComponent(${JSON.stringify(base.workspace.workspaceId)}) + "/files/content",
+      "http://127.0.0.1:" + port + "/workspace/" + encodeURIComponent(workspaceId) + "/files/content",
       {
         method: "POST",
         headers: { Authorization: "Bearer " + token, "Content-Type": "application/json" },
@@ -137,7 +137,7 @@ export async function artifactCodeBrowserWorld(seed: Seed) {
       write("config/openwork-artifact-settings.json", "{\\"artifactEditor\\":true}\\n"),
     ]);
     return responses.every((response) => response.ok);
-  })()`, { awaitPromise: true });
+  }`, { args: [base.workspace.workspaceId], awaitPromise: true });
   if (wrote !== true) throw new Error("Could not seed artifact code files.");
   // TODO(primitive): open an initial built-in browser artifact tab.
   await seed.evalIn(base.app, `window.__openworkControl.execute("browser.open_url", { url: "about:blank" })`, { awaitPromise: true });
@@ -565,11 +565,11 @@ export async function enterpriseTlsWorld(seed: Seed, { place }: { place: Place }
     // TODO(primitive): seed a named workspace in a caller-owned desktop profile.
     const seededWorkspaceNames = await seed.evalIn(
       rawApp,
-      `window.__OPENWORK_ELECTRON__.invokeDesktop("workspaceCreate", {
-        folderPath: ${JSON.stringify(`${profileDir}/continuity-workspace`)},
+      `(folderPath) => window.__OPENWORK_ELECTRON__.invokeDesktop("workspaceCreate", {
+        folderPath,
         name: "enterprise-tls-profile-continuity"
       }).then((state) => state.workspaces.map((workspace) => workspace.displayName))`,
-      { awaitPromise: true },
+      { args: [`${profileDir}/continuity-workspace`], awaitPromise: true },
     );
     if (!Array.isArray(seededWorkspaceNames) || !seededWorkspaceNames.includes("enterprise-tls-profile-continuity")) {
       throw new Error("Could not seed the enterprise TLS continuity workspace.");

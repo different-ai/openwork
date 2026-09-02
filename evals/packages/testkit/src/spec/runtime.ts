@@ -564,8 +564,11 @@ export class SeedChannel implements Seed {
     });
   }
 
-  evalIn(surface: Surface, expression: string, options: { awaitPromise?: boolean; timeoutMs?: number } = {}) {
-    return this.#runtime.call("seed:raw", "evalIn", "[seed:raw] evalIn(<expression>)", surface, () => evalIn(surface, expression, options));
+  evalIn(surface: Surface, expression: string, options: { args?: readonly import("@openwork/cdp").CdpFunctionArgument[]; awaitPromise?: boolean; timeoutMs?: number } = {}) {
+    const { args, ...evaluateOptions } = options;
+    return this.#runtime.call("seed:raw", "evalIn", "[seed:raw] evalIn(<expression>)", surface, () => args === undefined
+      ? evalIn(surface, expression, evaluateOptions)
+      : callFunctionOnSurface(surface, expression, args, evaluateOptions));
   }
 }
 
@@ -826,7 +829,10 @@ export class ProbeChannel implements Probe {
       ? typeof expressionOrOptions === "string" ? {} : expressionOrOptions ?? {}
       : explicitOptions;
     if (source === undefined) throw new Error("probe.eval requires an expression.");
-    return this.#runtime.call("probe:raw", "eval", "[probe:raw] eval(<expression>)", surface, () => evalIn(surface, source, options));
+    const { args, ...evaluateOptions } = options;
+    return this.#runtime.call("probe:raw", "eval", "[probe:raw] eval(<expression>)", surface, () => args === undefined
+      ? evalIn(surface, source, evaluateOptions)
+      : callFunctionOnSurface(surface, source, args, evaluateOptions));
   }
 
   connectState(app: Surface) {

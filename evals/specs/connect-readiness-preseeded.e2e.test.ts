@@ -33,7 +33,7 @@ test("bundled engine connects to preseeded organization skills and connections",
 
   const health = await probe.eventually(
     // TODO(primitive): probe.cloudMcpHealth
-    () => probe.eval(cloudHealthExpression(world.workspaceId)),
+    () => probe.eval(cloudHealthExpression, { args: [world.workspaceId] }),
     {
       within: 180_000,
       label: "openwork-cloud engine and agent-tool readiness",

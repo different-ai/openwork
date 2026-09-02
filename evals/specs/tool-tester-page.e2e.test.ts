@@ -14,7 +14,9 @@ test("an admin can test and govern an MCP tool from the dedicated Tool Tester pa
   await user.click("Connect");
   await world.connector.authorizeRequestSince(connectedAt, { timeoutMs: 120_000 });
   // TODO(primitive): read a visible link destination by test id.
-  const wrenchHref = await probe.eval(`document.querySelector('[data-testid="toggle-mcp-tool-runner-${world.connection.id}"]')?.getAttribute("href") ?? ""`);
+  const wrenchHref = await probe.eval(`(connectionId) => document.querySelector('[data-testid="toggle-mcp-tool-runner-' + connectionId + '"]')?.getAttribute("href") ?? ""`, {
+    args: [world.connection.id],
+  });
   expect(wrenchHref).toContain(`/dashboard/tool-tester?connectionId=${encodeURIComponent(world.connection.id)}`);
   await user.click({ testId: `toggle-mcp-tool-runner-${world.connection.id}` });
   await user.navigate(world.toolTesterUrl);

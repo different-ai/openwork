@@ -35,10 +35,10 @@ function parseSnapshot(value: unknown): Snapshot {
 
 async function snapshot(probe: Probe, workspaceId: string, sessionId: string): Promise<Snapshot> {
   // TODO(primitive): read a local engine session and its messages.
-  const value = await probe.eval(`(() => {
+  const value = await probe.eval(`(workspaceId, sessionId) => {
     const port = localStorage.getItem("openwork.server.port");
     const token = localStorage.getItem("openwork.server.token");
-    const base = "http://127.0.0.1:" + port + "/workspace/" + encodeURIComponent(${JSON.stringify(workspaceId)}) + "/opencode/session/" + encodeURIComponent(${JSON.stringify(sessionId)});
+    const base = "http://127.0.0.1:" + port + "/workspace/" + encodeURIComponent(workspaceId) + "/opencode/session/" + encodeURIComponent(sessionId);
     const read = (url) => {
       const request = new XMLHttpRequest();
       request.open("GET", url, false);
@@ -48,7 +48,7 @@ async function snapshot(probe: Probe, workspaceId: string, sessionId: string): P
       return JSON.parse(request.responseText);
     };
     return { session: read(base), messages: read(base + "/message") };
-  })()`);
+  }`, { args: [workspaceId, sessionId] });
   return parseSnapshot(value);
 }
 
@@ -90,21 +90,21 @@ test("edit resend defers history mutation, rolls back failures, and restores str
   });
 
   // TODO(primitive): fault one local engine prompt request after revert succeeds.
-  await seed.evalIn(world.app, `(() => {
+  await seed.evalIn(world.app, `(promptPath) => {
     globalThis.__openworkSafeEditOriginalFetch = globalThis.fetch.bind(globalThis);
     globalThis.__openworkSafeEditFaultCount = 0;
     const original = globalThis.__openworkSafeEditOriginalFetch;
     globalThis.fetch = (input, init) => {
       const url = typeof input === "string" ? input : input instanceof Request ? input.url : String(input);
       const method = input instanceof Request ? input.method : init?.method ?? "GET";
-      if (method.toUpperCase() === "POST" && url.includes(${JSON.stringify(`/opencode/session/${firstSessionId}/prompt_async`)})) {
+      if (method.toUpperCase() === "POST" && url.includes(promptPath)) {
         globalThis.__openworkSafeEditFaultCount += 1;
         return Promise.resolve(new Response("<html>injected prompt failure</html>", { status: 502, headers: { "content-type": "text/html" } }));
       }
       return original(input, init);
     };
     return true;
-  })()`);
+  }`, { args: [`/opencode/session/${firstSessionId}/prompt_async`] });
   await user.click("Run task");
   await user.see({ testId: "session-error-card" }, { timeoutMs: 30_000 });
   await user.see({ text: safeReplies[0] });
@@ -170,16 +170,16 @@ test("edit resend defers history mutation, rolls back failures, and restores str
   if (!legacyFirstUser) throw new Error("Legacy seed has no user message.");
 
   // TODO(primitive): apply a local engine session revert as mid-flow arranged state.
-  expect(await seed.evalIn(world.app, `(() => {
+  expect(await seed.evalIn(world.app, `(workspaceId, sessionId, messageId) => {
     const port = localStorage.getItem("openwork.server.port");
     const token = localStorage.getItem("openwork.server.token");
     const request = new XMLHttpRequest();
-    request.open("POST", "http://127.0.0.1:" + port + "/workspace/" + encodeURIComponent(${JSON.stringify(world.workspace.workspaceId)}) + "/opencode/session/" + encodeURIComponent(${JSON.stringify(legacy.sessionId)}) + "/revert", false);
+    request.open("POST", "http://127.0.0.1:" + port + "/workspace/" + encodeURIComponent(workspaceId) + "/opencode/session/" + encodeURIComponent(sessionId) + "/revert", false);
     request.setRequestHeader("Authorization", "Bearer " + token);
     request.setRequestHeader("Content-Type", "application/json");
-    request.send(JSON.stringify({ messageID: ${JSON.stringify(legacyFirstUser.id)} }));
+    request.send(JSON.stringify({ messageID: messageId }));
     return request.status >= 200 && request.status < 300;
-  })()`)).toBe(true);
+  }`, { args: [world.workspace.workspaceId, legacy.sessionId, legacyFirstUser.id] })).toBe(true);
   const stranded = await waitForSnapshot(probe, world.workspace.workspaceId, legacy.sessionId, "legacy stranded cursor", (value) => value.revertMessageId === legacyFirstUser.id);
   expect(stranded.messages).toHaveLength(legacySeeded.messages.length);
 

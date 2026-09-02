@@ -28,16 +28,16 @@ function parseMessages(value: unknown): Message[] {
 
 async function engineMessages(probe: Probe, workspaceId: string, sessionId: string): Promise<Message[]> {
   // TODO(primitive): read local engine messages for a desktop workspace session.
-  const value = await probe.eval(`(() => {
+  const value = await probe.eval(`(workspaceId, sessionId) => {
     const port = localStorage.getItem("openwork.server.port");
     const token = localStorage.getItem("openwork.server.token");
     const request = new XMLHttpRequest();
-    request.open("GET", "http://127.0.0.1:" + port + "/workspace/" + encodeURIComponent(${JSON.stringify(workspaceId)}) + "/opencode/session/" + encodeURIComponent(${JSON.stringify(sessionId)}) + "/message", false);
+    request.open("GET", "http://127.0.0.1:" + port + "/workspace/" + encodeURIComponent(workspaceId) + "/opencode/session/" + encodeURIComponent(sessionId) + "/message", false);
     request.setRequestHeader("Authorization", "Bearer " + token);
     request.send();
     if (request.status < 200 || request.status >= 300) throw new Error("Engine messages failed: " + request.status);
     return JSON.parse(request.responseText);
-  })()`);
+  }`, { args: [workspaceId, sessionId] });
   return parseMessages(value);
 }
 
@@ -69,15 +69,15 @@ test("queued follow-ups drain as separate FIFO user turns, never one merged mess
     await user.click("Run task");
     await user.see({ text: /2 queued/ });
     // TODO(primitive): inspect queued-panel order separately from rendered user bubbles.
-    const queued = await probe.eval(`(() => {
+    const queued = await probe.eval(`(queuedOne, queuedTwo) => {
       const body = document.body.innerText;
       const bubbles = [...document.querySelectorAll('[data-message-role="user"]')].map((bubble) => bubble.textContent ?? "");
       return {
-        first: body.indexOf(${JSON.stringify(sequentialQueuedOne)}),
-        second: body.indexOf(${JSON.stringify(sequentialQueuedTwo)}),
-        bubble: bubbles.some((text) => text.includes(${JSON.stringify(sequentialQueuedOne)}) || text.includes(${JSON.stringify(sequentialQueuedTwo)})),
+        first: body.indexOf(queuedOne),
+        second: body.indexOf(queuedTwo),
+        bubble: bubbles.some((text) => text.includes(queuedOne) || text.includes(queuedTwo)),
       };
-    })()`);
+    }`, { args: [sequentialQueuedOne, sequentialQueuedTwo] });
     expect(queued).toMatchObject({ bubble: false });
     if (!isRecord(queued) || typeof queued.first !== "number" || typeof queued.second !== "number") throw new Error("Queued order was unavailable.");
     expect(queued.first).toBeGreaterThanOrEqual(0);
@@ -99,7 +99,8 @@ test("queued follow-ups drain as separate FIFO user turns, never one merged mess
     await user.see({ text: /1 queued/ }, { timeoutMs: 60_000 });
     await user.see({ text: sequentialQueuedOne });
     // TODO(primitive): distinguish transcript user bubbles from queued-panel text.
-    expect(await probe.eval(`[...document.querySelectorAll('[data-message-role="user"]')].filter((bubble) => (bubble.textContent ?? "").includes(${JSON.stringify(sequentialQueuedOne)})).length`)).toBe(1);
+    expect(await probe.eval(`(queuedOne) => [...document.querySelectorAll('[data-message-role="user"]')]
+      .filter((bubble) => (bubble.textContent ?? "").includes(queuedOne)).length`, { args: [sequentialQueuedOne] })).toBe(1);
     await probe.eventually(() => world.requests.length, {
       within: 60_000, intervalMs: 200, label: "first queued turn reached mock", until: (count) => count === 2,
     });
@@ -140,14 +141,14 @@ test("queued follow-ups drain as separate FIFO user turns, never one merged mess
       { label: "two", lastUserText: sequentialQueuedTwo },
     ]);
     // TODO(primitive): count separate rendered user bubbles for queued turns.
-    expect(await probe.eval(`(() => {
+    expect(await probe.eval(`(queuedOne, queuedTwo) => {
       const bubbles = [...document.querySelectorAll('[data-message-role="user"]')].map((bubble) => bubble.textContent ?? "");
       return {
-        one: bubbles.filter((text) => text.includes(${JSON.stringify(sequentialQueuedOne)})).length,
-        two: bubbles.filter((text) => text.includes(${JSON.stringify(sequentialQueuedTwo)})).length,
-        both: bubbles.filter((text) => text.includes(${JSON.stringify(sequentialQueuedOne)}) && text.includes(${JSON.stringify(sequentialQueuedTwo)})).length,
+        one: bubbles.filter((text) => text.includes(queuedOne)).length,
+        two: bubbles.filter((text) => text.includes(queuedTwo)).length,
+        both: bubbles.filter((text) => text.includes(queuedOne) && text.includes(queuedTwo)).length,
       };
-    })()`)).toEqual({ one: 1, two: 1, both: 0 });
+    }`, { args: [sequentialQueuedOne, sequentialQueuedTwo] })).toEqual({ one: 1, two: 1, both: 0 });
     await user.looks([
       "The conversation shows two separate follow-up user messages, ONE before TWO, each followed by its own assistant reply",
       "No queued messages panel is visible anymore",

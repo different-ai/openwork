@@ -1,5 +1,5 @@
 import type { DenFetchResult, DenSession, NativeConnectorInput } from "@openwork/behaviors";
-import type { AttachedSurface, Surface } from "@openwork/cdp";
+import type { AttachedSurface, CdpFunctionArgument, Surface } from "@openwork/cdp";
 import type { StartMockMcpOptions } from "@openwork/labs";
 import type { DaytonaExec, DesktopHandle } from "@openwork/hosts";
 import type { App } from "./desktop-app.ts";
@@ -102,5 +102,5 @@ export interface Seed {
   tmpPath(label: string): string;
   composerText(app: Surface, text: string): Promise<void>;
   /** Migration-only raw write escape hatch. New specs must not use it. */
-  evalIn(surface: Surface, expression: string, options?: { awaitPromise?: boolean; timeoutMs?: number }): Promise<unknown>;
+  evalIn(surface: Surface, expression: string, options?: { args?: readonly CdpFunctionArgument[]; awaitPromise?: boolean; timeoutMs?: number }): Promise<unknown>;
 }

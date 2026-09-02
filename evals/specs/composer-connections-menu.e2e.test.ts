@@ -17,9 +17,9 @@ test("the composer connections menu scrolls through Den inventory and signs in o
 
   await step("the connection inventory has an independently scrolling list", async () => {
     // TODO(primitive): inspect overflow geometry for a visible connection list.
-    const before = await probe.eval(`(() => {
+    const before = await probe.eval(`(targetName) => {
       const title = [...document.querySelectorAll("div")]
-        .find((entry) => (entry.textContent ?? "").trim() === ${JSON.stringify(target.name)} && entry.children.length === 0);
+        .find((entry) => (entry.textContent ?? "").trim() === targetName && entry.children.length === 0);
       const row = title?.parentElement?.parentElement?.parentElement;
       const list = row?.parentElement?.parentElement;
       const navigation = [...document.querySelectorAll("button")]
@@ -35,7 +35,7 @@ test("the composer connections menu scrolls through Den inventory and signs in o
         listScrollHeight: list.scrollHeight,
         targetInitiallyBelow: row.getBoundingClientRect().bottom > list.getBoundingClientRect().bottom,
       };
-    })()`);
+    }`, { args: [target.name] });
     expect(before).toMatchObject({ navigationOverflow: "auto", listOverflow: "auto", targetInitiallyBelow: true });
     if (!isRecord(before)
       || typeof before.panelHeight !== "number"
@@ -45,15 +45,15 @@ test("the composer connections menu scrolls through Den inventory and signs in o
     expect(before.listScrollHeight).toBeGreaterThan(before.listClientHeight);
 
     // TODO(primitive): scroll a named connection row into view.
-    const scrolled = await seed.evalIn(world.app, `(() => {
+    const scrolled = await seed.evalIn(world.app, `(targetName) => {
       const title = [...document.querySelectorAll("div")]
-        .find((entry) => (entry.textContent ?? "").trim() === ${JSON.stringify(target.name)} && entry.children.length === 0);
+        .find((entry) => (entry.textContent ?? "").trim() === targetName && entry.children.length === 0);
       const row = title?.parentElement?.parentElement?.parentElement;
       const list = row?.parentElement?.parentElement;
       if (!(row instanceof HTMLElement) || !(list instanceof HTMLElement)) return false;
       list.scrollTop = list.scrollHeight;
       return list.scrollTop > 0;
-    })()`);
+    }`, { args: [target.name] });
     expect(scrolled).toBe(true);
     await user.see({ text: target.name });
     await user.see({ role: "button", label: "Connect your account", nth: 13 });
@@ -76,16 +76,16 @@ test("the composer connections menu scrolls through Den inventory and signs in o
   });
   expect(connected).toBe(true);
   // TODO(primitive): read one named connection row's status and actions.
-  const readyRow = await probe.eventually(() => probe.eval(`(() => {
+  const readyRow = await probe.eventually(() => probe.eval(`(targetName) => {
     const title = [...document.querySelectorAll("div")]
-      .find((entry) => (entry.textContent ?? "").trim() === ${JSON.stringify(target.name)} && entry.children.length === 0);
+      .find((entry) => (entry.textContent ?? "").trim() === targetName && entry.children.length === 0);
     const row = title?.parentElement?.parentElement?.parentElement;
     return {
       ready: (row?.textContent ?? "").includes("Ready"),
       hasSignIn: [...(row?.querySelectorAll("button") ?? [])]
         .some((button) => (button.textContent ?? "").trim() === "Connect your account"),
     };
-  })()`), {
+  }`, { args: [target.name] }), {
     within: 90_000,
     intervalMs: 500,
     label: "target composer connection row becomes ready",

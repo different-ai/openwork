@@ -19,7 +19,7 @@ test("attaching an image shows its chip instantly and sends with a visible uploa
 
   await user.type("composer", "Describe the attached image.");
   // TODO(primitive): attach an in-memory file through the composer's file chooser.
-  const attached = await seed.evalIn(world.app, `(async () => {
+  const attached = await seed.evalIn(world.app, `async (attachmentName) => {
       const canvas = document.createElement("canvas");
       canvas.width = 2400;
       canvas.height = 2400;
@@ -32,7 +32,7 @@ test("attaching an image shows its chip instantly and sends with a visible uploa
       context.putImageData(image, 0, 0);
       const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/png"));
       if (!(blob instanceof Blob)) return { error: "no blob" };
-      const file = new File([blob], ${JSON.stringify(attachmentName)}, { type: "image/png" });
+      const file = new File([blob], attachmentName, { type: "image/png" });
       const input = [...document.querySelectorAll('input[type="file"][multiple]')].at(-1);
       if (!(input instanceof HTMLInputElement)) return { error: "no composer file input" };
       const transfer = new DataTransfer();
@@ -51,7 +51,7 @@ test("attaching an image shows its chip instantly and sends with a visible uploa
         chipTitle: chip?.getAttribute("title") ?? "",
         chipStatus: chip?.getAttribute("data-attachment-status") ?? "",
       };
-  })()`, { awaitPromise: true, timeoutMs: 60_000 });
+  }`, { args: [attachmentName], awaitPromise: true, timeoutMs: 60_000 });
   if (!isRecord(attached)) throw new Error(`Attachment result was invalid: ${JSON.stringify(attached)}`);
   expect(attached.fileBytes).toEqual(expect.any(Number));
   expect(attached.elapsedMs).toEqual(expect.any(Number));

@@ -96,6 +96,7 @@ primitiveTest("worlds and capability channels preserve provenance and ordering",
   expect(clickCount).toBe(1);
   expect(await seed.evalIn(fakeSurface, "Promise.resolve('seed')", { awaitPromise: true, timeoutMs: 1_000 })).toBe("evaluated");
   expect(await probe.eval("Promise.resolve('probe')", { awaitPromise: true, timeoutMs: 1_000 })).toBe("evaluated");
+  await probe.eval("(value) => value", { args: ["argument value"], awaitPromise: true, timeoutMs: 1_000 });
   await user.see({ text: /Running 1 command, reading 1 file/ });
   await user.see("composer", { editable: true, text: /Keep this draft/ });
   await user.see({ text: "alice@example.com Bearer abc accessToken=token-value secret='secret-value' password=password-value" });
@@ -125,6 +126,14 @@ primitiveTest("worlds and capability channels preserve provenance and ordering",
       params: expect.objectContaining({ type: "keyDown", code: "KeyA" }),
     }),
     expect.objectContaining({ method: "Input.insertText", params: { text: "Replacement text" } }),
+    expect.objectContaining({
+      method: "Runtime.callFunctionOn",
+      params: expect.objectContaining({
+        functionDeclaration: "(value) => value",
+        arguments: [{ value: "argument value" }],
+        awaitPromise: true,
+      }),
+    }),
   ]));
   expect(steps.map(({ name, ok }) => ({ name, ok }))).toEqual([
     { name: "failing step", ok: false },

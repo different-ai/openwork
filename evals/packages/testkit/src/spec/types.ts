@@ -1,5 +1,5 @@
 import type { DenSession, DenFetchResult } from "@openwork/behaviors";
-import type { Surface, Target } from "@openwork/cdp";
+import type { CdpFunctionArgument, Surface, Target } from "@openwork/cdp";
 import type {
   MockHandle,
   Place,
@@ -28,6 +28,7 @@ export interface TypeOptions {
 }
 
 export interface ProbeEvalOptions {
+  args?: readonly CdpFunctionArgument[];
   awaitPromise?: boolean;
   timeoutMs?: number;
 }

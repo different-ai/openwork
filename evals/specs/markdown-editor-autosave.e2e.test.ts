@@ -10,18 +10,18 @@ const test = spec.world(markdownArtifact);
 
 async function readFile(probe: Probe, workspaceId: string, path: string): Promise<string> {
   // TODO(primitive): read a workspace file through the local desktop gateway.
-  const value = await probe.eval(`(() => {
+  const value = await probe.eval(`(workspaceId, path) => {
     const port = localStorage.getItem("openwork.server.port");
     const token = localStorage.getItem("openwork.server.token");
     if (!port || !token) return "";
     const request = new XMLHttpRequest();
-    request.open("GET", "http://127.0.0.1:" + port + "/workspace/" + encodeURIComponent(${JSON.stringify(workspaceId)}) + "/files/content?path=" + encodeURIComponent(${JSON.stringify(path)}), false);
+    request.open("GET", "http://127.0.0.1:" + port + "/workspace/" + encodeURIComponent(workspaceId) + "/files/content?path=" + encodeURIComponent(path), false);
     request.setRequestHeader("Authorization", "Bearer " + token);
     request.send();
     if (request.status < 200 || request.status >= 300) return "";
     const json = JSON.parse(request.responseText);
     return typeof json.content === "string" ? json.content : "";
-  })()`);
+  }`, { args: [workspaceId, path] });
   if (typeof value !== "string") throw new Error(`Workspace file ${path} was not text.`);
   return value;
 }
