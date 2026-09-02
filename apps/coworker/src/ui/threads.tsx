@@ -740,6 +740,12 @@ function ThreadView({
         signal: controller.signal,
       });
       await refresh();
+      // Keep the optimistic working state through the transcript commit. Without
+      // this paint boundary, the header can briefly return to Ready before the
+      // completed assistant message becomes visible.
+      await new Promise<void>((resolvePaint) => {
+        window.requestAnimationFrame(() => window.requestAnimationFrame(() => resolvePaint()));
+      });
 
       if (result.outcome === "failed") {
         const failure = result.terminalError

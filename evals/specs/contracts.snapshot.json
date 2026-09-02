@@ -278,6 +278,7 @@
       "description": "Open Coworker onboarding, account-backed models, persistent discussions, assignments, responsibilities, MCP Apps, artifacts, and full-window settings",
       "implementation": [
         "apps/coworker/electron/**",
+        "apps/coworker/scripts/**",
         "apps/coworker/src/**",
         "evals/packages/hosts/src/coworker.ts",
         "packages/headless-threads/**"
