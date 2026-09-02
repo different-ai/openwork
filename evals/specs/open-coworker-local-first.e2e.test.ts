@@ -287,6 +287,10 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
 
   await clickButtonContaining(app, "Thinking effort");
   await waitForText(app, "Selected model", { timeoutMs: 30_000 });
+  await waitFor(app, `(() => {
+    const popover = document.querySelector('[data-testid="composer-model-popover"]');
+    return (popover?.textContent ?? "").includes("Big Pickle");
+  })()`, { timeoutMs: 30_000, label: "resolved conversation model" });
   const composerModelControl = await evalIn(app, `(() => {
     const control = document.querySelector('[data-testid="composer-model-control"]');
     const popover = document.querySelector('[data-testid="composer-model-popover"]');
@@ -349,14 +353,17 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
       rootWidth: rootRect.width,
       sidebarLeft: sidebarRect.left,
       sidebarWidth: sidebarRect.width,
-      hasCoworkerContextResizer: Boolean(document.querySelector('[data-testid="context-panel-resizer"]')),
+      hasVisibleCoworkerContextResizer: (() => {
+        const resizer = document.querySelector('[data-testid="context-panel-resizer"]');
+        return resizer instanceof HTMLElement && resizer.offsetParent !== null;
+      })(),
       hasSettingsNavigation: sidebar.querySelectorAll('nav button').length,
     };
   })()`);
   expect(settingsLayout).toMatchObject({
     continuityToken: "settings-round-trip",
     coworkerWorkspaceDisplay: "none",
-    hasCoworkerContextResizer: false,
+    hasVisibleCoworkerContextResizer: false,
     hasSettingsNavigation: 4,
   });
   if (
@@ -378,7 +385,7 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   expect(configurationText.toLowerCase()).toContain("opencode/big-pickle");
   evidence.recordAssertionEvidence(
     "Global OpenWork settings open as a full-window workspace with their own left navigation",
-    "The discreet bottom-left OpenWork control replaced the coworker workspace with a full-width settings shell, a 252px left settings sidebar, four global destinations, Local mode, engine state, and Scout's selected Big Pickle model. No coworker context-panel resizer remained mounted.",
+    "The discreet bottom-left OpenWork control hid the mounted coworker workspace and replaced it with a full-width settings shell, a 252px left settings sidebar, four global destinations, Local mode, engine state, and Scout's selected Big Pickle model. No coworker context-panel resizer remained visible.",
     true,
   );
 

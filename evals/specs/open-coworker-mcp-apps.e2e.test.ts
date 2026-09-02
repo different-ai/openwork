@@ -336,7 +336,7 @@ test.skipIf(!enabled)(title, { timeout: 240_000 }, async ({ evidence }) => {
   await fill(app, 'input[aria-label="Search Apps and tools"]', "team activity");
   await clickButton(app, "Ask Scout");
   await waitFor(app, `(() => {
-    const composer = document.querySelector("textarea[placeholder='Assign work to Scout…']");
+    const composer = document.querySelector('textarea[aria-label="Assignment outcome"]');
     return composer instanceof HTMLTextAreaElement
       && composer.value.includes("search_capabilities")
       && composer.value.includes("execute_capability")
