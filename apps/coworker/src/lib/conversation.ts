@@ -53,6 +53,47 @@ export function assignmentPrompt(outcome: string, messages: ReadonlyArray<Discus
   ].join("\n");
 }
 
+export type AssignmentBrief = {
+  outcome: string;
+  /** The visible discussion carried along, in order; `you` is the person, `coworker` the coworker. */
+  context: Array<{ speaker: "you" | "coworker"; text: string }>;
+};
+
+const ASSIGNMENT_OPENER = "This is an explicit assignment created from our ongoing discussion.";
+const ASSIGNMENT_CLOSER = "Own this outcome end to end. Keep the discussion context, but treat the outcome above as the source of truth.";
+
+/**
+ * Read back a message built by `assignmentPrompt` so the transcript can show
+ * a person the outcome and the carried discussion instead of the scaffolding
+ * the model needs. Anything else returns null and renders as an ordinary message.
+ */
+export function parseAssignmentBrief(text: string): AssignmentBrief | null {
+  const trimmed = text.trim();
+  if (!trimmed.startsWith(ASSIGNMENT_OPENER)) return null;
+  const outcomeStart = trimmed.indexOf("## Outcome");
+  if (outcomeStart < 0) return null;
+  let body = trimmed.slice(outcomeStart + "## Outcome".length);
+  if (body.trimEnd().endsWith(ASSIGNMENT_CLOSER)) body = body.trimEnd().slice(0, -ASSIGNMENT_CLOSER.length);
+  const contextStart = body.indexOf("## Relevant discussion");
+  const outcome = (contextStart >= 0 ? body.slice(0, contextStart) : body).trim();
+  if (!outcome) return null;
+  const context: AssignmentBrief["context"] = [];
+  if (contextStart >= 0) {
+    const raw = body.slice(contextStart + "## Relevant discussion".length).trim();
+    const pattern = /^(You|Coworker): /gm;
+    const starts: Array<{ index: number; speaker: "you" | "coworker"; length: number }> = [];
+    for (const match of raw.matchAll(pattern)) {
+      starts.push({ index: match.index ?? 0, speaker: match[1] === "You" ? "you" : "coworker", length: match[0].length });
+    }
+    starts.forEach((start, position) => {
+      const end = position + 1 < starts.length ? starts[position + 1]?.index ?? raw.length : raw.length;
+      const line = raw.slice(start.index + start.length, end).trim();
+      if (line) context.push({ speaker: start.speaker, text: line });
+    });
+  }
+  return { outcome, context };
+}
+
 const MAX_EXPLAIN_SUMMARY_CHARACTERS = 1_200;
 
 /**
