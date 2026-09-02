@@ -47,6 +47,9 @@ export function SiteFooter() {
           >
             Cloud
           </a>
+          <Link href="/dashboard" className="whitespace-nowrap transition-colors hover:text-gray-800">
+            Dashboard
+          </Link>
           <Link href="/enterprise" className="whitespace-nowrap transition-colors hover:text-gray-800">
             Enterprise
           </Link>
