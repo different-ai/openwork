@@ -802,3 +802,108 @@ export async function queuedSequential(seed: Seed) {
     throw error;
   }
 }
+
+async function configureCrossWorkspaces(
+  seed: Seed,
+  app: Awaited<ReturnType<Seed["desktop"]>>,
+  workspaceIds: string[],
+  baseUrl: string,
+): Promise<void> {
+  // TODO(primitive): configure one provider across several workspaces and select its model.
+  const configured = await seed.evalIn(app, `(async () => {
+    const port = localStorage.getItem("openwork.server.port");
+    const token = localStorage.getItem("openwork.server.token");
+    if (!port || !token) return "missing local server credentials";
+    const root = "http://127.0.0.1:" + port;
+    const headers = { Authorization: "Bearer " + token, "Content-Type": "application/json" };
+    for (const workspaceId of ${JSON.stringify(workspaceIds)}) {
+      const patch = await fetch(root + "/workspace/" + encodeURIComponent(workspaceId) + "/config", {
+        method: "PATCH",
+        headers,
+        body: JSON.stringify({
+          opencode: {
+            permission: { bash: "allow" },
+            provider: {
+              "composer-switch-mock": {
+                npm: "@ai-sdk/openai-compatible",
+                name: "Composer switch model",
+                options: { baseURL: ${JSON.stringify(`${baseUrl}/v1`)}, apiKey: "sk-composer-switch" },
+                models: { "composer-switch-model": { name: "Composer switch model", tool_call: true } },
+              },
+            },
+          },
+        }),
+      });
+      if (!patch.ok) return "config:" + patch.status + ":" + (await patch.text()).slice(0, 300);
+      const reload = await fetch(root + "/workspace/" + encodeURIComponent(workspaceId) + "/engine/reload", { method: "POST", headers });
+      if (!reload.ok && reload.status !== 504) return "reload:" + reload.status + ":" + (await reload.text()).slice(0, 300);
+    }
+    const raw = localStorage.getItem("openwork.preferences");
+    let preferences = {};
+    try { preferences = raw ? JSON.parse(raw) : {}; } catch { preferences = {}; }
+    if (!preferences || typeof preferences !== "object" || Array.isArray(preferences)) preferences = {};
+    localStorage.setItem("openwork.preferences", JSON.stringify({
+      ...preferences,
+      defaultModel: { providerID: "composer-switch-mock", modelID: "composer-switch-model" },
+      modelVariant: null,
+      providerStepCompleted: true,
+    }));
+    localStorage.setItem("openwork.defaultModel", "composer-switch-mock/composer-switch-model");
+    return "ok";
+  })()`, { awaitPromise: true, timeoutMs: 180_000 });
+  if (configured !== "ok") throw new Error(`Cross-workspace provider configuration failed: ${String(configured)}`);
+  await seed.evalIn(app, "location.reload(); true");
+}
+
+export async function crossWorkspace(seed: Seed) {
+  const runId = `${Date.now().toString(36)}-${process.pid}`;
+  const sendMarker = `COMPOSER-SWITCH-SEND-${runId}`;
+  const agent = seed.mock({
+    agentWorkloads: [{
+      promptMarker: sendMarker,
+      finalReply: `DONE-${sendMarker}`,
+      steps: [{
+        tool: "bash",
+        arguments: {
+          command: `printf '%s\\n' 'ACK-${sendMarker}'`,
+          timeout: 30_000,
+          description: "Acknowledge the composer switch prompt",
+        },
+      }],
+    }],
+  });
+  const den = await seed.den({
+    mocks: { agent },
+    org: {
+      name: "Composer Switch",
+      admin: { name: "Switch Admin" },
+      members: { member: { name: "Switch Member" } },
+    },
+  });
+  const app = await seed.desktop({ den, as: "member" });
+  const workspaceB = await seed.workspace(app, seed.tmpPath(`composer-switch-${runId}-b`));
+  const B1 = await seed.session(app);
+  const B2 = await seed.session(app);
+  await arrangeControl(seed, app, "session.rename", { sessionId: B1.sessionId, title: "Chat B1" });
+  await arrangeControl(seed, app, "session.rename", { sessionId: B2.sessionId, title: "Chat B2" });
+  const workspaceA = await seed.workspace(app, seed.tmpPath(`composer-switch-${runId}-a`));
+  const A1 = await seed.session(app);
+  const A2 = await seed.session(app);
+  await arrangeControl(seed, app, "session.rename", { sessionId: A1.sessionId, title: "Chat A1" });
+  await arrangeControl(seed, app, "session.rename", { sessionId: A2.sessionId, title: "Chat A2" });
+  if (new Set([A1.sessionId, A2.sessionId, B1.sessionId, B2.sessionId]).size !== 4) {
+    throw new Error("Four distinct cross-workspace sessions were not created.");
+  }
+  await configureCrossWorkspaces(seed, app, [workspaceA.workspaceId, workspaceB.workspaceId], den.mocks.agent.url);
+  await selectModelInWorld(seed, app, "Composer switch model");
+  return {
+    app,
+    sendMarker,
+    chats: {
+      A1: { ...A1, title: "Chat A1", workspaceId: workspaceA.workspaceId },
+      A2: { ...A2, title: "Chat A2", workspaceId: workspaceA.workspaceId },
+      B1: { ...B1, title: "Chat B1", workspaceId: workspaceB.workspaceId },
+      B2: { ...B2, title: "Chat B2", workspaceId: workspaceB.workspaceId },
+    },
+  };
+}
