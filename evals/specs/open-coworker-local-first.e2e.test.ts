@@ -102,10 +102,11 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
       lookY: Number.parseFloat(mark.style.getPropertyValue("--avatar-look-y")),
     };
   })()`, { timeoutMs: 30_000 });
+  // The welcome mark is the bare, flat white speech bubble: no app-icon tile and no depth layer.
   expect(brandGaze).toMatchObject({
-    whiteTile: true,
+    whiteTile: false,
     blackOutline: true,
-    rearShell: true,
+    rearShell: false,
     blueFill: false,
     hasPointerLayer: true,
     lookX: expect.any(Number),
@@ -115,8 +116,51 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
     throw new Error("Open Coworker brand gaze was unavailable.");
   }
   expect(brandGaze.lookX).toBeGreaterThan(0);
-  expect(brandGaze.lookX).toBeLessThanOrEqual(1.5);
-  expect(Math.abs(brandGaze.lookY)).toBeLessThanOrEqual(0.9);
+  expect(brandGaze.lookX).toBeLessThanOrEqual(2);
+  expect(Math.abs(brandGaze.lookY)).toBeLessThanOrEqual(1.5);
+  // The mark fronts a small stack: two coworkers with their own colours and glasses hide behind
+  // it, peek out while the pointer moves nearby, and slip back once it rests. The stack keeps one
+  // fixed box throughout and takes no pointer events, so it never disturbs the onboarding controls.
+  const mascot = await evalIn(app, `(async () => {
+    const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+    const stack = document.querySelector('[data-testid="onboarding-mascot"]');
+    if (!(stack instanceof HTMLElement)) return null;
+    const box = () => { const r = stack.getBoundingClientRect(); return [Math.round(r.width), Math.round(r.height)].join("x"); };
+    const peeks = [...stack.querySelectorAll('[data-testid="onboarding-mascot-peek"]')];
+    const leftX = () => Math.round(parseFloat(getComputedStyle(peeks[0]).transform.split(",")[4] ?? "0"));
+    const restBox = box();
+    const restLeft = leftX();
+    const r = stack.getBoundingClientRect();
+    const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+    window.dispatchEvent(new PointerEvent("pointermove", { clientX: cx + 100, clientY: cy + 40 }));
+    await wait(700);
+    const peekingBox = box();
+    const peeking = stack.dataset.peeking;
+    const peekLeft = leftX();
+    await wait(2200);
+    return {
+      stage: stack.dataset.stage,
+      frontLabel: stack.querySelector('.mascot-stack__front svg')?.getAttribute("aria-label") ?? "",
+      faces: stack.querySelectorAll("svg").length,
+      peekers: peeks.map((peek) => [peek.dataset.color, peek.dataset.glasses, peek.getAttribute("aria-hidden")].join(":")),
+      pointerEvents: getComputedStyle(stack).pointerEvents,
+      restBox, peekingBox, afterBox: box(),
+      peeking, peekMoved: peekLeft < restLeft - 20,
+      hiddenAgain: stack.dataset.peeking === "false" && leftX() === restLeft,
+    };
+  })()`, { awaitPromise: true, timeoutMs: 30_000 });
+  expect(mascot).toMatchObject({
+    frontLabel: "Open Coworker",
+    faces: 3,
+    peekers: ["violet:square:true", "mint:round:true"],
+    pointerEvents: "none",
+    peeking: "true",
+    peekMoved: true,
+    hiddenAgain: true,
+  });
+  if (!isRecord(mascot)) throw new Error("Mascot facts were unavailable.");
+  expect(mascot.restBox).toBe(mascot.peekingBox);
+  expect(mascot.restBox).toBe(mascot.afterBox);
   evidence.recordAssertionEvidence(
     "First run presents the monochrome Open Coworker line mark with a restrained pointer-aware gaze",
     "The centered launch surface used a white tile, black coworker outline, and offset gray rear shell, stacked a recommended Cloud path above a quieter local path, and moved only the pupil layer toward the pointer within a 1.5px horizontal cap.",

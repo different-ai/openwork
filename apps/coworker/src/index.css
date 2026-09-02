@@ -105,6 +105,144 @@ body.is-resizing-panel * {
   background: rgb(255 255 255 / 0.015);
 }
 
+/*
+ * Onboarding mascot stack: the product mark in front, a couple of coworkers
+ * hiding behind it. The box is fixed by the component; every layer is
+ * absolutely placed inside it, so nothing shifts when they peek. Decorative:
+ * it takes no pointer events.
+ */
+.mascot-stack {
+  --mascot-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --mascot-peek-ease: cubic-bezier(0.3, 1.25, 0.5, 1);
+  position: relative;
+  display: block;
+  flex: none;
+  pointer-events: none;
+  user-select: none;
+}
+
+.mascot-stack__peek,
+.mascot-stack__front {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform-origin: center;
+}
+
+.mascot-stack__front {
+  z-index: 2;
+  width: var(--mascot-size);
+  height: var(--mascot-size);
+  transform: translate(-50%, -50%) rotate(0.6deg);
+}
+
+/* At rest a coworker shows only a sliver behind the logo; peeking, it leans out to its side. */
+.mascot-stack__peek {
+  z-index: 1;
+  width: calc(var(--mascot-size) * 0.82);
+  height: calc(var(--mascot-size) * 0.82);
+  transition: transform 460ms var(--mascot-ease);
+  will-change: transform;
+}
+
+.mascot-stack__peek--left {
+  transform: translate(calc(-50% - 7px), calc(-50% + 2px)) rotate(-3deg) scale(0.94);
+}
+
+.mascot-stack__peek--right {
+  transform: translate(calc(-50% + 7px), calc(-50% + 2px)) rotate(3deg) scale(0.94);
+}
+
+.mascot-stack.is-peeking .mascot-stack__peek {
+  transition: transform 520ms var(--mascot-peek-ease);
+}
+
+.mascot-stack.is-peeking .mascot-stack__peek--left {
+  transform: translate(calc(-50% - var(--mascot-size) * 0.58), calc(-50% - var(--mascot-size) * 0.16)) rotate(-8deg) scale(1);
+}
+
+.mascot-stack.is-peeking .mascot-stack__peek--right {
+  transform: translate(calc(-50% + var(--mascot-size) * 0.58), calc(-50% - var(--mascot-size) * 0.16)) rotate(8deg) scale(1);
+  transition-delay: 60ms;
+}
+
+/* Flat layers: a faint contact shadow under the hidden coworkers keeps them readable
+   against the front card; the front card itself stays flat. */
+.mascot-stack__peek .coworker-avatar {
+  filter: drop-shadow(0 1px 2px rgb(0 0 0 / 0.28));
+}
+
+.mascot-stack__front .coworker-avatar,
+.mascot-stack__front .coworker-mark {
+  transform: rotate(var(--avatar-turn, 0deg));
+  transition: transform 260ms var(--mascot-ease);
+}
+
+/* Until the stack has said hello, the eyes hold centre and the head stays put. */
+.mascot-stack:not(.is-gazing) .mascot-stack__front .coworker-avatar,
+.mascot-stack:not(.is-gazing) .mascot-stack__front .coworker-mark {
+  transform: none;
+}
+
+.mascot-stack:not(.is-gazing) .coworker-avatar__pointer-gaze,
+.mascot-stack:not(.is-gazing) .coworker-avatar__pointer-features,
+.mascot-stack:not(.is-gazing) .coworker-mark__pointer-gaze {
+  transform: none;
+}
+
+/* One blink when they show up; the right one a beat later. */
+.mascot-stack.is-blinking .coworker-avatar__pupils,
+.mascot-stack.is-blinking .coworker-mark__pupils {
+  animation: mascot-blink 240ms ease-in-out 1 both;
+}
+
+.mascot-stack.is-blinking .mascot-stack__peek--right .coworker-avatar__pupils {
+  animation-delay: 90ms;
+}
+
+/* Entrance: the stack rises 6px from near-transparent; the hidden coworkers land first, the
+   front card follows 75ms later from -2° and 3.5px lower. */
+.mascot-stack.is-entering {
+  animation: mascot-stack-enter 480ms var(--mascot-ease) both;
+}
+
+.mascot-stack.is-entering .mascot-stack__peek--left {
+  animation: mascot-peek-left-enter 480ms var(--mascot-ease) both;
+}
+
+.mascot-stack.is-entering .mascot-stack__peek--right {
+  animation: mascot-peek-right-enter 480ms var(--mascot-ease) both;
+}
+
+.mascot-stack.is-entering .mascot-stack__front {
+  animation: mascot-front-enter 525ms var(--mascot-ease) 75ms both;
+}
+
+@keyframes mascot-stack-enter {
+  from { opacity: 0.02; translate: 0 6px; }
+  to { opacity: 1; translate: 0 0; }
+}
+
+@keyframes mascot-peek-left-enter {
+  from { transform: translate(calc(-50% - 7px), calc(-50% + 2px)) rotate(-5deg) scale(0.94); }
+  to { transform: translate(calc(-50% - 7px), calc(-50% + 2px)) rotate(-3deg) scale(0.94); }
+}
+
+@keyframes mascot-peek-right-enter {
+  from { transform: translate(calc(-50% + 7px), calc(-50% + 2px)) rotate(5deg) scale(0.94); }
+  to { transform: translate(calc(-50% + 7px), calc(-50% + 2px)) rotate(3deg) scale(0.94); }
+}
+
+@keyframes mascot-front-enter {
+  from { opacity: 0; transform: translate(-50%, calc(-50% + 3.5px)) rotate(-2deg); }
+  to { opacity: 1; transform: translate(-50%, -50%) rotate(0.6deg); }
+}
+
+@keyframes mascot-blink {
+  0%, 100% { transform: scaleY(1); }
+  50% { transform: scaleY(0.08); }
+}
+
 .coworker-avatar {
   --avatar-motion-delay: 0s;
   --avatar-blink-delay: 0s;
@@ -558,5 +696,16 @@ a {
   .coworker-mark__pointer-gaze {
     transform: none !important;
     transition: none !important;
+  }
+
+  .mascot-stack,
+  .mascot-stack * {
+    animation: none !important;
+    transition: none !important;
+  }
+
+  .mascot-stack__front .coworker-avatar,
+  .mascot-stack__front .coworker-mark {
+    transform: none !important;
   }
 }

@@ -24,10 +24,13 @@ export function useAvatarPointerGaze(enabled = true) {
       const featureLookY = directionY * 0.95 * scale * attention;
       const lookX = directionX * 1.6 * scale * attention;
       const lookY = directionY * 1.15 * scale * attention;
+      // A whole-head turn of at most one degree, for surfaces that opt in through CSS.
+      const turn = directionX * attention;
       avatar.style.setProperty("--avatar-feature-look-x", `${featureLookX.toFixed(2)}px`);
       avatar.style.setProperty("--avatar-feature-look-y", `${featureLookY.toFixed(2)}px`);
       avatar.style.setProperty("--avatar-look-x", `${lookX.toFixed(2)}px`);
       avatar.style.setProperty("--avatar-look-y", `${lookY.toFixed(2)}px`);
+      avatar.style.setProperty("--avatar-turn", `${turn.toFixed(3)}deg`);
     };
 
     // Pointer events already arrive coalesced per frame, and the work is a few style
@@ -44,6 +47,7 @@ export function useAvatarPointerGaze(enabled = true) {
       avatar?.style.setProperty("--avatar-feature-look-y", "0px");
       avatar?.style.setProperty("--avatar-look-x", "0px");
       avatar?.style.setProperty("--avatar-look-y", "0px");
+      avatar?.style.setProperty("--avatar-turn", "0deg");
     };
 
     window.addEventListener("pointermove", onPointerMove, { passive: true });
