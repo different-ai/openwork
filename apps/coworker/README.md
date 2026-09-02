@@ -119,8 +119,16 @@ pnpm --filter @openwork/coworker test      # store + platform integration tests 
 pnpm --filter @openwork/coworker typecheck
 pnpm --filter @openwork/coworker build     # renderer bundle
 pnpm --filter @openwork/coworker package:electron:dir # unpacked native app
+pnpm --filter @openwork/coworker installer:background # regenerate the macOS DMG artwork
 pnpm --filter @openwork/coworker package:electron     # platform installers
 ```
+
+The macOS DMG is an Open Coworker-owned installation surface rather than the
+electron-builder default: two quiet installation stations hold the native app
+and Applications icons while three small, tilted coworkers carry the eye
+across the drag path. Its source artwork is flat SVG (no gradients or raster
+effects) under `resources/installer/`; `installer:background` renders the exact
+760×500 PNG consumed by electron-builder.
 
 The packaged local-first journey is a canonical `@openwork/testkit` spec. On
 macOS, prove the exact unpacked binary with:
