@@ -1,5 +1,6 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": "nextjs",
+  "ignoreCommand": "npx turbo-ignore",
   "buildCommand": "pnpm --dir ../../../packages/email build && pnpm --dir ../../../packages/ui build && pnpm exec next build"
 }
