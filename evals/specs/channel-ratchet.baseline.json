@@ -74,7 +74,7 @@
   "library-view.e2e.test.ts": 36,
   "litellm-per-member-credentials.e2e.test.ts": 7,
   "litellm-per-member-world.e2e.test.ts": 2,
-  "live-tool-visible-after-session-switch.e2e.test.ts": 3,
+  "live-tool-visible-after-session-switch.e2e.test.ts": 8,
   "llm-provider-access-parity.e2e.test.ts": 8,
   "local-managed-mcp-oauth.e2e.test.ts": 2,
   "login-rate-limit-shared-domain.e2e.test.ts": 3,

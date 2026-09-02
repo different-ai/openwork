@@ -12,22 +12,37 @@ const specsDirectory = fileURLToPath(new URL("./", import.meta.url));
 const singlesScript = fileURLToPath(new URL("../scripts/list-singles-tests.mjs", import.meta.url));
 const categories = new Set(["unmigrated", "pre-existing-red", "product-finding", "needs-topology"]);
 const evidenceCategories = new Set(["pre-existing-red", "product-finding"]);
-const verifiedGreen = `
+const expectedEnabled = `
+active-session-workspace-storm.e2e.test.ts
 alpha-update-eligibility.e2e.test.ts
 app-den-tls-fault.e2e.test.ts
 app-smoke.e2e.test.ts
 attachment-upload-loading-state.e2e.test.ts
+automation-revision-revert.e2e.test.ts
 chat-loading-shimmer.e2e.test.ts
+cloud-provider-local-credential-fallback.e2e.test.ts
+cloud-provider-sync-contract.e2e.test.ts
 compatible-release-picker.e2e.test.ts
 composer-connections-menu.e2e.test.ts
 composer-draft-reload.e2e.test.ts
 composer-model-picker-no-subscribe-promo.e2e.test.ts
+config-object-large-skill.e2e.test.ts
 connect-readiness-preseeded.e2e.test.ts
 connector-tool-call-branding.e2e.test.ts
+cross-workspace-split-view.e2e.test.ts
 first-run-local.e2e.test.ts
+library-add-connector-discovery.e2e.test.ts
+library-signed-in-render-stability.e2e.test.ts
+live-tool-visible-after-session-switch.e2e.test.ts
+llm-provider-access-parity.e2e.test.ts
 managed-vault-recovery.e2e.test.ts
+org-api-key-authenticates.e2e.test.ts
+org-model-analytics.e2e.test.ts
+org-team-lifecycle-critical-path.e2e.test.ts
 parent-child-permission-approval.e2e.test.ts
 reliable-app-recovery.e2e.test.ts
+responsive-session-layout.e2e.test.ts
+saved-script-automations.e2e.test.ts
 sidebar-title-overflow-fade.e2e.test.ts
 sso-invite-sign-in.e2e.test.ts
 task-activity-shimmer.e2e.test.ts
@@ -141,20 +156,18 @@ test("all E2E selectors exclude exactly the quarantine", ({ evidence }) => {
   );
 });
 
-test("the enabled E2E set retains every verified and nightly spec", ({ evidence }) => {
+test("the enabled E2E set equals the evidence-backed inventory", ({ evidence }) => {
   const allE2e = readdirSync(specsDirectory)
     .filter((name) => name.endsWith(".e2e.test.ts"))
     .sort();
   const enabled = allE2e.filter((name) => !isQuarantined(name));
-  const required = ["org-team-lifecycle-critical-path.e2e.test.ts", ...verifiedGreen];
-  const missing = required.filter((name) => !enabled.includes(name));
 
-  expect(missing).toEqual([]);
+  expect(enabled).toEqual(expectedEnabled);
   expect(enabled).toHaveLength(allE2e.length - listQuarantined().length);
 
   evidence.recordAssertionEvidence(
-    "The trusted E2E suite preserves verified green and nightly coverage",
-    `All ${verifiedGreen.length} verified-green specs and org-team-lifecycle-critical-path remain among ${enabled.length} enabled E2E specs.`,
+    "The trusted E2E suite equals the evidence-backed inventory",
+    `Exactly ${enabled.length} branch-verified, scheduled-CI-green, or nightly-green E2E specs remain enabled.`,
     true,
   );
 });
