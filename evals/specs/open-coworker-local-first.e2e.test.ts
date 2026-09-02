@@ -703,19 +703,39 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
     instructions: "Reply with exactly SECOND RESPONSIBILITY READY. Do not use tools.",
     schedule: { kind: "daily", timezone: "UTC", hour: 9, minute: 0 },
   });
+  // Give the first run something to say so the second visibly waits its turn.
+  await invokeCoworker(app, "localResponsibilities.create", {
+    slug: "scout",
+    name: "Longer readiness check",
+    instructions: "Write eight numbered sentences about keeping a team's shared notes tidy, then end with LONGER READINESS READY. Do not use tools.",
+    schedule: { kind: "daily", timezone: "UTC", hour: 10, minute: 0 },
+  });
   expect(second).toMatchObject({ ok: true, result: { name: "Second readiness check", state: "active" } });
   const listed = await invokeCoworker(app, "localResponsibilities.list", { slug: "scout" });
   if (!isRecord(listed) || !Array.isArray(listed.result)) throw new Error("Local responsibilities were unavailable.");
-  const ids = listed.result.filter(isRecord).map((item) => String(item.id));
-  expect(ids).toHaveLength(2);
+  const byName = new Map(listed.result.filter(isRecord).map((item) => [String(item.name), String(item.id)]));
+  const longerId = byName.get("Longer readiness check");
+  const secondId = byName.get("Second readiness check");
+  if (!longerId || !secondId) throw new Error(`Responsibilities were not both listed: ${JSON.stringify([...byName.keys()])}`);
   const admissions = await evalIn(app, `Promise.all([
-    window.__COWORKER__.invoke("localResponsibilities.runNow", { slug: "scout", id: ${json(ids[0])} }),
-    window.__COWORKER__.invoke("localResponsibilities.runNow", { slug: "scout", id: ${json(ids[1])} }),
-  ])`, { awaitPromise: true, timeoutMs: 30_000 });
-  expect(admissions).toEqual([
-    { ok: true, result: { accepted: true, queued: false, reason: "" } },
-    { ok: true, result: { accepted: true, queued: true, reason: "" } },
-  ]);
+    window.__COWORKER__.invoke("localResponsibilities.runNow", { slug: "scout", id: ${json(longerId)} }),
+    window.__COWORKER__.invoke("localResponsibilities.runNow", { slug: "scout", id: ${json(secondId)} }),
+  ]).then((results) => window.__COWORKER__.invoke("localResponsibilities.list", { slug: "scout" })
+    .then((list) => ({ results, states: list.ok ? list.result.map((item) => [item.name, item.latestRun?.status ?? null, item.latestRun?.queuedAt ?? null]) : null })))`, {
+    awaitPromise: true,
+    timeoutMs: 30_000,
+  });
+  expect(admissions).toMatchObject({
+    results: [
+      { ok: true, result: { accepted: true, queued: false, reason: "" } },
+      { ok: true, result: { accepted: true, queued: true, reason: "" } },
+    ],
+  });
+  if (!isRecord(admissions) || !Array.isArray(admissions.states)) throw new Error("Queue states were unavailable.");
+  expect(admissions.states).toEqual(expect.arrayContaining([
+    ["Longer readiness check", "running", null],
+    ["Second readiness check", "queued", expect.any(Number)],
+  ]));
   const queuedRow = await waitFor(app, `(() => {
     const row = [...document.querySelectorAll('[data-testid="responsibility-row"]')].find((candidate) => candidate.getAttribute("data-state") === "Queued");
     return row instanceof HTMLElement ? row.innerText : false;
@@ -729,7 +749,7 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
       return finished ? items.map((item) => ({ name: item.name, runs: item.runs.length, latest: item.latestRun.status, queuedAt: item.latestRun.queuedAt })) : false;
     })`, { awaitPromise: true, timeoutMs: 300_000, label: "both runs succeeded one after another" });
   expect(drained).toEqual(expect.arrayContaining([
-    expect.objectContaining({ name: "Local readiness check", runs: 2, latest: "succeeded" }),
+    expect.objectContaining({ name: "Longer readiness check", runs: 1, latest: "succeeded", queuedAt: null }),
     expect.objectContaining({ name: "Second readiness check", runs: 1, latest: "succeeded", queuedAt: expect.any(Number) }),
   ]));
   expect(await invokeCoworker(app, "localResponsibilities.status", {})).toMatchObject({ ok: true, result: { limit: 1, active: 0, queued: 0 } });
