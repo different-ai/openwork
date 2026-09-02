@@ -13,7 +13,7 @@ import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { BrowserWindow, Menu, app, ipcMain, shell } from "electron";
+import { BrowserWindow, Menu, app, dialog, ipcMain, shell } from "electron";
 import { openworkConfigDir } from "@openwork/paths";
 import { createHeadlessThreadClient } from "@openwork/headless-threads";
 import {
@@ -111,6 +111,34 @@ let localResponsibilitiesTimer = null;
 const activeLocalRuns = new Set();
 /** @type {BrowserWindow | null} */
 let mainWindow = null;
+
+function parseExternalUrl(value) {
+  const parsed = new URL(String(value ?? ""));
+  if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
+    throw new Error("Only http(s) URLs can be opened");
+  }
+  return parsed;
+}
+
+async function confirmAndOpenExternal(value) {
+  const parsed = parseExternalUrl(value);
+  const options = {
+    type: "question",
+    title: "Open link in browser?",
+    message: "An App wants to open this link in your browser.",
+    detail: parsed.toString(),
+    buttons: ["Cancel", "Open link"],
+    defaultId: 0,
+    cancelId: 0,
+    noLink: true,
+  };
+  const result = mainWindow
+    ? await dialog.showMessageBox(mainWindow, options)
+    : await dialog.showMessageBox(options);
+  if (result.response !== 1) return { ok: false, cancelled: true };
+  await shell.openExternal(parsed.toString());
+  return { ok: true };
+}
 /** @type {string[]} */
 const pendingDeepLinks = [];
 let deepLinkListenerReady = false;
@@ -624,13 +652,13 @@ const commands = {
     accepted: startLocalResponsibilityRun(slug, id, "manual"),
   }),
   "shell.openExternal": async ({ url }) => {
-    const parsed = new URL(String(url ?? ""));
-    if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
-      throw new Error("Only http(s) URLs can be opened");
-    }
+    const parsed = parseExternalUrl(url);
     await shell.openExternal(parsed.toString());
     return { ok: true };
   },
+  // Links supplied by an MCP App are untrusted. The native confirmation keeps
+  // the destination visible and requires a fresh user gesture before leaving.
+  "shell.openUntrustedExternal": async ({ url }) => confirmAndOpenExternal(url),
   /** Signed-in account → embedded server → engine providers. Returns the sync outcome. */
   "den.session.set": async (payload) => {
     const session = parseDenSessionPayload(payload);
@@ -725,7 +753,7 @@ async function createMainWindow() {
     },
   });
   window.webContents.setWindowOpenHandler(({ url }) => {
-    if (/^https?:\/\//i.test(url)) void shell.openExternal(url);
+    if (/^https?:\/\//i.test(url)) void confirmAndOpenExternal(url);
     return { action: "deny" };
   });
   // A reload replaces the renderer; its deep-link listener must re-announce.

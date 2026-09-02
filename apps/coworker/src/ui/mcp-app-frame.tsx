@@ -120,7 +120,8 @@ export function McpAppFrame({
     );
     bridge.onopenlink = async ({ url }) => {
       try {
-        await coworkerBridge.openExternal(url);
+        const result = await coworkerBridge.openUntrustedExternal(url);
+        if (!result.ok) return { isError: true };
         return {};
       } catch {
         return { isError: true };
