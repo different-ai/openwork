@@ -45,6 +45,7 @@ export function CoworkerAvatar({
   size = 96,
   animated = true,
   working = false,
+  gaze = true,
 }: {
   name: string;
   color: AvatarColor;
@@ -52,11 +53,13 @@ export function CoworkerAvatar({
   size?: number;
   animated?: boolean;
   working?: boolean;
+  /** `false` leaves the eyes to CSS variables set by a parent instead of following the pointer. */
+  gaze?: boolean;
 }) {
   const palette = PALETTES[color];
   const phase = motionPhase(name);
   const motionClass = animated ? `is-animated motion-phase-${phase} blink-phase-${blinkPhase(name)}` : "";
-  const avatarRef = useAvatarPointerGaze();
+  const avatarRef = useAvatarPointerGaze(gaze);
 
   return (
     <svg
@@ -143,12 +146,57 @@ export function AvatarControls({
   glasses,
   onColorChange,
   onGlassesChange,
+  layout = "stacked",
 }: {
   color: AvatarColor;
   glasses: AvatarGlasses;
   onColorChange: (color: AvatarColor) => void;
   onGlassesChange: (glasses: AvatarGlasses) => void;
+  /** `rows` lays each choice out as a label beside its control, for flat settings lists. */
+  layout?: "stacked" | "rows";
 }) {
+  if (layout === "rows") {
+    return (
+      <>
+        <div className="flex items-center gap-3 py-2.5" role="group" aria-label="Color">
+          <span className="w-20 shrink-0 text-xs text-mist">Color</span>
+          <div className="flex flex-wrap gap-2">
+            {AVATAR_COLORS.map((option) => (
+              <button
+                key={option.id}
+                aria-label={option.label}
+                aria-pressed={color === option.id}
+                className={`avatar-swatch ${color === option.id ? "is-selected" : ""}`}
+                onClick={() => onColorChange(option.id)}
+                title={option.label}
+                type="button"
+              >
+                <span style={{ backgroundColor: option.swatch }} />
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="flex items-center gap-3 py-2.5" role="group" aria-label="Glasses">
+          <span className="w-20 shrink-0 text-xs text-mist">Glasses</span>
+          <div className="flex flex-wrap gap-1">
+            {AVATAR_GLASSES.map((option) => (
+              <button
+                key={option.id}
+                aria-pressed={glasses === option.id}
+                className={`rounded-lg px-2.5 py-1 text-[11px] font-medium transition-colors ${
+                  glasses === option.id ? "bg-white/10 text-snow" : "text-mist hover:bg-white/5 hover:text-snow"
+                }`}
+                onClick={() => onGlassesChange(option.id)}
+                type="button"
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      </>
+    );
+  }
   return (
     <div className="space-y-4">
       <fieldset>
