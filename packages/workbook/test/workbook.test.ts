@@ -71,6 +71,16 @@ describe("@openwork/workbook", () => {
     expect(unsafeFormulaReason("cmd|' /C calc'!A0")).toBe("contains a DDE-style external command reference");
     expect(unsafeFormulaReason("[1]Sheet1!A1")).toBe("references another workbook");
     expect(unsafeFormulaReason("'C:\\evil\\[Book1.xlsx]Sheet1'!A1")).toBe("references another workbook");
+    expect(unsafeFormulaReason("[Book1]Sheet1!A1")).toBe("references another workbook");
+    expect(unsafeFormulaReason("'[Book1]Sheet 1'!A1")).toBe("references another workbook");
+    expect(unsafeFormulaReason("'\\\\attacker\\share\\[book]Sheet1'!A1")).toBe("references another workbook");
+    expect(unsafeFormulaReason("'http://attacker.invalid/[book]Sheet1'!A1")).toBe("references another workbook");
+    expect(unsafeFormulaReason("'\\\\attacker\\share\\book'!A1")).toBe("references a remote or network path");
+    expect(unsafeFormulaReason("'https://attacker.invalid/book'!A1")).toBe("references a remote or network path");
+    expect(unsafeFormulaReason("Table1[Amount]+Sheet2!A1")).toBeNull();
+    expect(unsafeFormulaReason("SUM(Table1[[#Headers],[Amount]])")).toBeNull();
+    expect(unsafeFormulaReason("[@Amount]*2")).toBeNull();
+    expect(unsafeFormulaReason("'My Sheet'!A1+'Q3 Data'!B2")).toBeNull();
     expect(unsafeFormulaReason("")).toBe("is empty");
     expect(unsafeFormulaReason("A".repeat(9000))).toBe("is longer than 8192 characters");
   });

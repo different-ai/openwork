@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, extname, isAbsolute, relative, resolve, sep } from "node:path";
 import { z } from "zod";
 import { appendAgentInstructions, createInstructionSection } from "./agent-instruction-compose.js";
@@ -101,6 +101,32 @@ function resolveWorkspacePath(root: string, input: string): WorkspaceFile {
 async function assertRealPathWithinRoot(root: string, path: string, label: string): Promise<void> {
   const [realRoot, realPath] = await Promise.all([realpath(root), realpath(path)]);
   if (!isWithin(realRoot, realPath)) throw new Error(`${label} resolves outside the active workspace.`);
+}
+
+async function deepestExistingAncestor(path: string): Promise<string> {
+  let current = path;
+  while (true) {
+    try {
+      await lstat(current);
+      return current;
+    } catch {
+      const parent = dirname(current);
+      if (parent === current) return current;
+      current = parent;
+    }
+  }
+}
+
+/**
+ * Create the destination folder only after proving that the deepest existing
+ * ancestor really lives inside the workspace, so a symlink inside the
+ * workspace can never make mkdir create directories at its target, then prove
+ * the created folder again before anything is written into it.
+ */
+async function prepareDestinationDirectory(root: string, directory: string, label: string): Promise<void> {
+  await assertRealPathWithinRoot(root, await deepestExistingAncestor(directory), label);
+  await mkdir(directory, { recursive: true });
+  await assertRealPathWithinRoot(root, directory, label);
 }
 
 function describeUnsupportedExtension(extension: string): string {
@@ -271,14 +297,14 @@ export const OpenWorkSpreadsheets = async (factoryInput?: unknown) => {
           const root = workspaceRoot(factoryContext, context);
           const file = resolveWorkspacePath(root, args.path);
           if (extname(file.absolutePath).toLowerCase() !== ".xlsx") throw new Error(`spreadsheet_write only creates .xlsx workbooks; ${JSON.stringify(file.relativePath)} has a different extension.`);
-          const existing = await stat(file.absolutePath).catch(() => null);
+          const existing = await lstat(file.absolutePath).catch(() => null);
           if (existing?.isDirectory()) throw new Error(`${JSON.stringify(file.relativePath)} is a directory.`);
+          if (existing?.isSymbolicLink()) throw new Error(`${JSON.stringify(file.relativePath)} is a symbolic link; write to a regular file path instead.`);
           if (existing && !args.overwrite) {
             throw new Error(`${JSON.stringify(file.relativePath)} already exists. Pass overwrite: true to replace it (all of its current sheets, formatting, and formulas are replaced by the sheets you pass), or write to a new path.`);
           }
           const result = await writeXlsxWorkbook(args.sheets);
-          await mkdir(dirname(file.absolutePath), { recursive: true });
-          await assertRealPathWithinRoot(root, dirname(file.absolutePath), `Destination folder for ${JSON.stringify(file.relativePath)}`);
+          await prepareDestinationDirectory(root, dirname(file.absolutePath), `Destination folder for ${JSON.stringify(file.relativePath)}`);
           const tmp = `${file.absolutePath}.${randomUUID()}.tmp`;
           try {
             await writeFile(tmp, result.bytes, { flag: "wx" });

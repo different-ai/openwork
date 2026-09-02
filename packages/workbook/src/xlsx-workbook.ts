@@ -526,7 +526,12 @@ const FORMULA_MAX_CHARS = 8_192;
 // Functions that fetch remote data, run registered code, or pull other files
 // when a workbook recalculates. A generated report never needs them.
 const OUTSIDE_WORKBOOK_FUNCTION = /\b(WEBSERVICE|FILTERXML|RTD|CALL|REGISTER(?:\.ID)?|EXEC|IMPORT(?:DATA|XML|HTML|FEED|RANGE)|IMAGE)\s*\(/i;
-const EXTERNAL_WORKBOOK_REFERENCE = /\[\d+\]|\[[^\]]*\.(?:xls[xmb]?|xlam|csv)\]/i;
+// A bracket group that belongs to a sheet reference ("[Book]Sheet!A1",
+// "'path\\[Book]Sheet'!A1", "[1]Sheet!A1") names another workbook. Structured
+// table references ("Table1[Amount]", "[@Amount]") never precede a "!".
+const EXTERNAL_WORKBOOK_REFERENCE = /\[[^\]]*\][A-Za-z0-9_. ]*!|'[^']*\[[^\]]*\][^']*'!/;
+// A quoted sheet reference whose path is a URL or UNC share.
+const REMOTE_PATH_REFERENCE = /'[^']*(?::\/\/|\\\\)[^']*'!/;
 
 export function isFormulaInput(value: XlsxCellInput): value is XlsxFormulaInput {
   return typeof value === "object" && value !== null && typeof value.formula === "string";
@@ -546,6 +551,7 @@ export function unsafeFormulaReason(formula: string): string | null {
   const remote = OUTSIDE_WORKBOOK_FUNCTION.exec(body);
   if (remote) return `uses ${remote[1].toUpperCase()}, which reaches outside the workbook when it recalculates`;
   if (EXTERNAL_WORKBOOK_REFERENCE.test(body)) return "references another workbook";
+  if (REMOTE_PATH_REFERENCE.test(body)) return "references a remote or network path";
   return null;
 }
 

