@@ -347,6 +347,8 @@ export type DenExternalMcpConnection = {
   url: string;
   authType: "oauth" | "apikey" | "none";
   credentialMode: "shared" | "per_member";
+  /** True when an administrator exposed this connection to the agent as a standard MCP server with its own tools. */
+  exposeDirectly: boolean;
   connected: boolean;
   connectedAt: string | null;
   /** For per_member connections: whether the CALLING member has connected their own account. Always true for connected shared connections. */
@@ -2094,6 +2096,7 @@ function parseDenExternalMcpConnection(value: unknown): DenExternalMcpConnection
     url: value.url,
     authType: value.authType,
     credentialMode: value.credentialMode,
+    exposeDirectly: value.exposeDirectly === true,
     connected: value.connected === true,
     connectedAt: typeof value.connectedAt === "string" ? value.connectedAt : null,
     connectedForMe: value.connectedForMe === true,

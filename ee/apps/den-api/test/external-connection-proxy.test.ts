@@ -17,7 +17,7 @@ const {
   readyExternalMcpConnectionsForMember,
 } = await import("../src/capability-sources/external-mcp-connections.js")
 const { ExternalMcpDiagnosticError } = await import("../src/capability-sources/external-mcp-diagnostics.js")
-const { buildConnectMcpServerIndex } = await import("../src/mcp/connect-mcp-server-index.js")
+const { buildConnectMcpServerIndex, selectConnectMcpServerIndexConnections } = await import("../src/mcp/connect-mcp-server-index.js")
 
 const resourceUri = "ui://fixture/healthy.html"
 const html = "<!doctype html><html><body>Healthy native MCP App</body></html>"
@@ -29,8 +29,10 @@ const connection = {
   credentialMode: "shared",
   kind: "external_mcp",
   toolPolicy: null,
+  exposeDirectly: false,
   oauthIssuerReviewRequiredAt: null,
 } as never
+const directConnection = { ...(connection as Record<string, unknown>), exposeDirectly: true } as never
 const operation = {
   connection,
   redirectUri: "https://openwork.example/v1/mcp-connections/fixture/connect/callback",
@@ -69,13 +71,14 @@ async function withClient<T>(
   run: (client: Client) => Promise<T>,
   runtimeOverrides: Record<string, unknown> = {},
   appHostClient = true,
+  proxiedConnection: unknown = connection,
 ) {
   const server = createExternalConnectionProxyServer({
     descriptor: {
       capabilities,
       serverInfo: { name: "fixture", version: "1.0.0" },
     } as never,
-    operation,
+    operation: { ...(operation as Record<string, unknown>), connection: proxiedConnection } as never,
     runtime: runtime(runtimeOverrides),
     appHostClient,
   })
@@ -140,6 +143,61 @@ test("legacy clients retain ordinary operations through bounded search and execu
       inputSchema: { type: "object" },
     }],
   }, false)
+})
+
+test("a directly exposed connection serves its provider catalog to ordinary clients", async () => {
+  let downstreamCalls = 0
+  let downstreamCalledWith: unknown = null
+  await withClient({ tools: {}, resources: {} }, async (client) => {
+    expect((await client.listTools()).tools.map((tool) => tool.name)).toEqual([
+      "open_fixture",
+      "search_fixture",
+    ])
+    expect((await client.listResources()).resources).toEqual([])
+    const called = await client.callTool({ name: "search_fixture", arguments: { query: "direct" } })
+    expect(called.structuredContent).toEqual({ status: "healthy" })
+    expect(downstreamCalls).toBe(1)
+    expect(downstreamCalledWith).toMatchObject({ toolName: "search_fixture", args: { query: "direct" } })
+    await expect(client.callTool({ name: "app_only_fixture", arguments: {} })).rejects.toThrow("is not available on Fixture MCP")
+    await expect(client.callTool({ name: "blocked_fixture", arguments: {} })).rejects.toThrow("is not available on Fixture MCP")
+    await expect(client.callTool({ name: "search_capabilities", arguments: { query: "direct" } })).rejects.toThrow("is not available on Fixture MCP")
+    await expect(client.readResource({ uri: resourceUri })).rejects.toThrow("only through the OpenWork App host")
+    expect(downstreamCalls).toBe(1)
+  }, {
+    listTools: async () => [
+      ...(await runtime().listTools()),
+      { name: "search_fixture", description: "Search fixture records.", inputSchema: { type: "object" } },
+      {
+        name: "app_only_fixture",
+        description: "An App-only tool that stays private to the App host.",
+        inputSchema: { type: "object" },
+        _meta: { ui: { resourceUri, visibility: ["app"] } },
+      },
+      { name: "blocked_fixture", description: "Blocked by the organization tool policy.", inputSchema: { type: "object" } },
+    ],
+    callTool: async (input: { toolName: string; args: unknown }) => {
+      downstreamCalls += 1
+      downstreamCalledWith = input
+      return {
+        content: [{ type: "text" as const, text: "Direct fixture call." }],
+        structuredContent: { status: "healthy" },
+      }
+    },
+  }, false, {
+    ...(directConnection as Record<string, unknown>),
+    toolPolicy: { allDisabled: false, disabledTools: ["blocked_fixture"] },
+  })
+})
+
+test("direct exposure does not change the App host surface", async () => {
+  await withClient({ tools: {}, resources: {} }, async (client) => {
+    expect((await client.listTools()).tools.map((tool) => tool.name)).toEqual([
+      "search_capabilities",
+      "execute_capability",
+      "open_fixture",
+    ])
+    for (const tool of (await client.listTools()).tools) expect(tool._meta).toMatchObject({ ui: { visibility: ["app"] } })
+  }, {}, true, directConnection)
 })
 
 test("a forged App-host audience header cannot unlock the provider surface", async () => {
@@ -391,6 +449,17 @@ test("a client that does not advertise the App host capability receives an empty
     connections: [connection],
     publicOrigin: "https://openwork.example",
   }).servers).toEqual([])
+})
+
+test("ordinary clients only see directly exposed connections in the index while the App host sees every ready one", () => {
+  const ready = [connection, directConnection]
+  expect(selectConnectMcpServerIndexConnections({ appHostClient: false, connections: ready })).toEqual([directConnection])
+  expect(selectConnectMcpServerIndexConnections({ appHostClient: true, connections: ready })).toEqual(ready)
+  expect(buildConnectMcpServerIndex({
+    enabled: true,
+    connections: selectConnectMcpServerIndexConnections({ appHostClient: true, connections: ready }),
+    publicOrigin: "https://openwork.example",
+  }).servers.map((server) => server.exposeDirectly)).toEqual([false, true])
 })
 
 test("disconnected and issuer-blocked OAuth connections are not ready for the native server index", async () => {

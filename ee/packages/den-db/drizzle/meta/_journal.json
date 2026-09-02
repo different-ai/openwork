@@ -603,6 +603,13 @@
       "when": 1788355460139,
       "tag": "0086_jittery_selene",
       "breakpoints": true
+    },
+    {
+      "idx": 87,
+      "version": "5",
+      "when": 1788371787639,
+      "tag": "0087_external_mcp_connection_expose_directly",
+      "breakpoints": true
     }
   ]
 }

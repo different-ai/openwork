@@ -112,6 +112,17 @@ const appGatewayTools: ExternalMcpProxyTool[] = boundedGatewayTools.map((tool) =
   _meta: { ui: { visibility: ["app"] } },
 }))
 
+/**
+ * A provider tool the model may see on a directly exposed connection. Tools
+ * that declare an app-only UI visibility stay private to the App host.
+ */
+function toolVisibleToModel(tool: ExternalMcpProxyTool): boolean {
+  const meta = isRecord(tool._meta) ? tool._meta : {}
+  const ui = isRecord(meta.ui) ? meta.ui : {}
+  if (ui.visibility === undefined) return true
+  return Array.isArray(ui.visibility) && ui.visibility.includes("model")
+}
+
 function toolVisibleToApp(tool: ExternalMcpProxyTool): boolean {
   const meta = isRecord(tool._meta) ? tool._meta : {}
   const ui = isRecord(meta.ui) ? meta.ui : {}
@@ -148,6 +159,10 @@ export function createExternalConnectionProxyServer(input: {
 }) {
   const { connection } = input.operation
   const runtime = input.runtime ?? externalMcpProxyRuntime
+  // An administrator opted this connection into direct exposure: ordinary MCP
+  // clients receive the provider's own catalog instead of the bounded
+  // search/execute pair. The App host keeps its private app-only surface.
+  const directClient = connection.exposeDirectly && input.appHostClient !== true
   const downstreamUi = input.descriptor.capabilities.extensions?.[EXTENSION_ID]
   const listProviderTools = async () => {
     if (!input.descriptor.capabilities.tools) return []
@@ -161,6 +176,7 @@ export function createExternalConnectionProxyServer(input: {
       && !evaluateToolPolicy(connection.toolPolicy, tool.name).blocked
     ))
   }
+  const listDirectTools = async () => (await listProviderTools()).filter(toolVisibleToModel)
   const listAppTools = async () => (
     await listProviderTools()
   ).flatMap((tool) => {
@@ -181,15 +197,32 @@ export function createExternalConnectionProxyServer(input: {
     },
     instructions: input.appHostClient
       ? `This member-authorized OpenWork Connect endpoint exposes only app-visible MCP App tools and their bound resources for ${connection.name}. Ordinary provider capabilities remain available exclusively through search_capabilities and execute_capability.`
-      : `This compatibility endpoint exposes only bounded search_capabilities and execute_capability for ${connection.name}. Direct provider tools, MCP App launch tools, and resources are not exposed.`,
+      : directClient
+        ? `This member-authorized OpenWork Connect endpoint exposes the tools of ${connection.name} directly, subject to your organization's access grants and tool policy. Resources are not exposed.`
+        : `This compatibility endpoint exposes only bounded search_capabilities and execute_capability for ${connection.name}. Direct provider tools, MCP App launch tools, and resources are not exposed.`,
   })
 
   if (input.descriptor.capabilities.tools) {
     server.server.setRequestHandler(ListToolsRequestSchema, async () => ({
-      tools: input.appHostClient ? [...appGatewayTools, ...await listAppTools()] : boundedGatewayTools,
+      tools: input.appHostClient
+        ? [...appGatewayTools, ...await listAppTools()]
+        : directClient
+          ? await listDirectTools()
+          : boundedGatewayTools,
     }))
     server.server.setRequestHandler(CallToolRequestSchema, async (request) => {
       const args = toolArguments(request.params.arguments)
+      if (directClient) {
+        const allowed = (await listDirectTools()).some((tool) => tool.name === request.params.name)
+        if (!allowed) {
+          throw new McpError(ErrorCode.InvalidRequest, `Tool ${request.params.name} is not available on ${connection.name}.`)
+        }
+        return runtime.callTool({
+          ...input.operation,
+          toolName: request.params.name,
+          args,
+        })
+      }
       if (request.params.name === SEARCH_CAPABILITIES_TOOL_NAME) {
         const query = typeof args.query === "string" ? args.query.trim() : ""
         if (!query) throw new McpError(ErrorCode.InvalidParams, "search_capabilities requires a non-empty query.")
@@ -367,10 +400,11 @@ export async function handleExternalConnectionProxyRequest(input: {
 }
 
 /**
- * Exposes one member-authorized connection to Desktop's private App host. A
- * stale published client receives only a bounded search/execute compatibility
- * surface: never the provider catalog, App launch tools, or resources. Current
- * Desktop clients keep these descriptors private and use central openwork-cloud.
+ * Exposes one member-authorized connection to Desktop's private App host. An
+ * ordinary client receives only a bounded search/execute compatibility surface
+ * unless an administrator marked the connection `exposeDirectly`, in which case
+ * it is served as a standard MCP server whose tool catalog is filtered by the
+ * organization's tool policy. Grants are re-checked on every request.
  */
 export function registerExternalConnectionProxyRoutes<T extends { Variables: RequestIdVariables & Record<string, unknown> }>(
   app: Hono<T>,

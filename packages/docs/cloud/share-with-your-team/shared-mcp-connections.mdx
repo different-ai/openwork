@@ -128,6 +128,31 @@ audit trail on the provider's side.
 If a connection needs attention, the agent should tell you which account needs
 action and direct you to `Settings` > `OpenWork Connect`.
 
+## Expose a connection directly as an MCP server
+
+By default the agent reaches every connection through OpenWork Connect's two
+discovery tools, `search_capabilities` and `execute_capability`, so the model
+sees a small, constant tool list no matter how many connections you publish.
+
+For a connection the agent uses constantly, an admin can instead tick
+`Expose directly as an MCP server` when adding or editing it. Granted members'
+desktop apps then register that connection as its own MCP server in OpenCode,
+so the model sees the provider's real tool names and schemas up front and calls
+them without a search step. The same option is available from any MCP client
+that reads the OpenWork Connect server index.
+
+What stays the same:
+
+- Sign-in still happens in OpenWork Cloud. The desktop app never receives the
+  provider's URL or token; it talks to Den's per-connection endpoint with the
+  member's own OpenWork credential.
+- Access grants and the connection's tool policy are enforced on every call.
+- Turning the option off, revoking a member's access, or removing the
+  connection removes the server from every desktop on the next sync.
+- Member-added local MCP servers are never touched.
+
+Directly exposed connections appear in OpenCode as `openwork-direct-<name>-…`.
+
 ## Notes for admins
 
 - Members only see connections they've been granted — access is explicit

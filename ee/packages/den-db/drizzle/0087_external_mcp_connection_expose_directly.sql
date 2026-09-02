@@ -1,0 +1,1 @@
+ALTER TABLE `external_mcp_connection` ADD `expose_directly` boolean DEFAULT false NOT NULL;

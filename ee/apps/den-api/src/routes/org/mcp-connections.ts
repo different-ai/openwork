@@ -309,6 +309,8 @@ const createExternalConnectionBodySchema = z.object({
   url: externalMcpUrlSchema,
   authType: z.enum(["oauth", "apikey", "none"]),
   credentialMode: z.enum(["shared", "per_member"]).optional().default("shared"),
+  /** When true, granted members can reach this connection as a standard MCP server with its own tool catalog instead of only through search_capabilities/execute_capability. */
+  exposeDirectly: z.boolean().optional().default(false),
   apiKey: z.string().trim().min(1).max(4096).optional(),
   oauthClient: z.object({
     clientId: z.string().trim().min(1).max(512),
@@ -343,6 +345,8 @@ const updateConnectionBodySchema = z.object({
   url: externalMcpUrlSchema,
   authType: z.enum(["oauth", "apikey", "none"]),
   credentialMode: z.enum(["shared", "per_member"]),
+  /** Omitted keeps the stored value. */
+  exposeDirectly: z.boolean().optional(),
   /** Omitted means preserve only when the connection identity is unchanged. Never returned by any read route. */
   apiKey: z.string().trim().min(1).max(4096).optional(),
   oauthClient: z.object({
@@ -397,6 +401,8 @@ const connectionResponseSchema = z.object({
   url: z.string(),
   authType: z.enum(["oauth", "apikey", "none"]),
   credentialMode: z.enum(["shared", "per_member"]),
+  /** True when granted members may use this connection as a standard MCP server with its own tool catalog. */
+  exposeDirectly: z.boolean(),
   connected: z.boolean(),
   connectedAt: z.string().nullable(),
   /** Safe creator display label for admin/manageable rows. */
@@ -1134,6 +1140,7 @@ async function toConnectionResponse(
     url: row.url,
     authType: row.authType,
     credentialMode: row.credentialMode,
+    exposeDirectly: row.exposeDirectly,
     // Which service a native connector fronts ("google-workspace"), so a
     // member's card can say what they would be signing in to. Null for
     // external MCP rows, whose url already names the service.
@@ -2246,6 +2253,7 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
         url: body.url,
         authType: body.authType,
         credentialMode: body.credentialMode,
+        exposeDirectly: body.exposeDirectly,
         apiKey: body.apiKey ?? null,
         oauthConfiguration: body.authType === "oauth" ? {
           version: 1,
@@ -2522,6 +2530,7 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
         url: body.url,
         authType: body.authType,
         credentialMode: body.credentialMode,
+        ...(body.exposeDirectly !== undefined ? { exposeDirectly: body.exposeDirectly } : {}),
         ...(body.apiKey !== undefined ? { apiKey: body.apiKey } : {}),
         ...(body.oauthClient ? {
           oauthClient: {

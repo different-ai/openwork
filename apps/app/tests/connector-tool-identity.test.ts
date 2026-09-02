@@ -24,6 +24,7 @@ const granolaConnection: DenExternalMcpConnection = {
   url: "https://mcp.granola.ai/mcp",
   authType: "oauth",
   credentialMode: "per_member",
+  exposeDirectly: false,
   connected: true,
   connectedAt: "2026-08-26T00:00:00.000Z",
   connectedForMe: true,

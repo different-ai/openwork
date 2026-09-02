@@ -43,6 +43,8 @@ export type ExternalMcpConnection = {
   url: string;
   authType: ExternalMcpAuthType;
   credentialMode: ExternalMcpCredentialMode;
+  /** True when granted members may use this connection as a standard MCP server with its own tool catalog. */
+  exposeDirectly: boolean;
   connected: boolean;
   connectedAt: string | null;
   createdByName?: string | null;
@@ -563,6 +565,7 @@ async function fetchConnections(scope: ExternalMcpConnectionScope, orgId: string
     requiredBy: parseRequiredBy(connection.requiredBy),
     identityManagedBy: parseRequiredBy(connection.identityManagedBy),
     updatedAt: typeof connection.updatedAt === "string" ? connection.updatedAt : null,
+    exposeDirectly: connection.exposeDirectly === true,
     ...(typeof connection.createdByName === "string" || connection.createdByName === null ? { createdByName: connection.createdByName } : {}),
     ...(typeof connection.needsReconnect === "boolean" ? { needsReconnect: connection.needsReconnect } : {}),
     ...(connection.credentialHealth === "unknown" || connection.credentialHealth === "ready" || connection.credentialHealth === "reconnect_required"
@@ -615,6 +618,7 @@ export type CreateMcpConnectionInput = {
   url: string;
   authType: ExternalMcpAuthType;
   credentialMode: ExternalMcpCredentialMode;
+  exposeDirectly?: boolean;
   apiKey?: string;
   oauthClient?: {
     clientId: string;
@@ -642,6 +646,7 @@ export type UpdateMcpConnectionInput = {
   url: string;
   authType: ExternalMcpAuthType;
   credentialMode: ExternalMcpCredentialMode;
+  exposeDirectly: boolean;
   apiKey?: string;
   oauthClient?: {
     clientId: string;
