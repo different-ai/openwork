@@ -2,6 +2,10 @@ import { expect } from "vitest";
 import { denFetch } from "@openwork/behaviors";
 import type { DenSession } from "@openwork/behaviors";
 import { localMysqlIsRunning, localRedisIsRunning, server, test } from "@openwork/testkit";
+import {
+  denLibraryPluginCreateRequest,
+  emptyLibraryMcpConnectionForm,
+} from "../../apps/app/src/react-app/domains/settings/library";
 
 const daytona = process.env.OPENWORK_EVAL_DAYTONA?.trim() === "1";
 const attached = Boolean(process.env.OPENWORK_EVAL_DEN_API_URL?.trim());
@@ -55,6 +59,8 @@ test.skipIf(!mysqlOpen || !redisOpen)(title, { timeout: 300_000 }, async ({ evid
   const configuredPluginName = `Configured CRM ${runId}`;
   const configuredUrl = `https://crm-configured-${runId}.example.test/mcp`;
   const declaredUrl = `https://crm-declared-${runId}.example.test/mcp`;
+  const desktopPluginName = `Desktop Linear ${runId}`;
+  const desktopUrl = `https://linear-desktop-${runId}.example.test/mcp`;
 
   await using den = await server({ place, org: { name: organizationName, members: {} } });
   const admin = den.admin;
@@ -67,17 +73,17 @@ test.skipIf(!mysqlOpen || !redisOpen)(title, { timeout: 300_000 }, async ({ evid
     return isRecord(result.body) && Array.isArray(result.body.connections) ? result.body.connections.filter(isRecord) : [];
   }
 
-  async function createPlugin(name: string, component: Record<string, unknown>): Promise<string> {
-    const result = await denFetch(admin, "/v1/plugins", {
-      method: "POST",
-      headers,
-      body: JSON.stringify({ name, orgWide: true, components: [component] }),
-    });
+  async function postPlugin(body: Record<string, unknown>): Promise<string> {
+    const result = await denFetch(admin, "/v1/plugins", { method: "POST", headers, body: JSON.stringify(body) });
     expect(result.response.status, result.text).toBe(201);
     const item = isRecord(result.body) && isRecord(result.body.item) ? result.body.item : null;
     const id = item && typeof item.id === "string" ? item.id : "";
     expect(id, result.text).toBeTruthy();
     return id;
+  }
+
+  function createPlugin(name: string, component: Record<string, unknown>): Promise<string> {
+    return postPlugin({ name, orgWide: true, components: [component] });
   }
 
   // Claim: the connector setup given while adding the MCP server to the plugin
@@ -97,6 +103,38 @@ test.skipIf(!mysqlOpen || !redisOpen)(title, { timeout: 300_000 }, async ({ evid
   await createPlugin(`Declared CRM ${runId}`, mcpComponent(declaredUrl));
   expect((await manageableConnections()).some((row) => row.url === declaredUrl)).toBe(false);
 
+  // Claim: the Desktop Library's "Add organization MCP" builds the same request
+  // shape, so an admin adding an MCP server from the app gets a configured
+  // connector too. Den validates non-OAuth setups against the server itself,
+  // so the OAuth-with-pre-registered-app path is the one that stays hermetic.
+  const desktopBody = denLibraryPluginCreateRequest("mcp", {
+    name: desktopPluginName,
+    description: "",
+    instructions: desktopUrl,
+    orgWide: true,
+    connection: {
+      ...emptyLibraryMcpConnectionForm(),
+      credentialMode: "shared",
+      useOAuthClient: true,
+      oauthClientId: "desktop-client-id",
+      oauthClientSecret: "desktop-client-secret",
+    },
+  });
+  expect(desktopBody.components[0]?.connection).toEqual({
+    authType: "oauth",
+    credentialMode: "shared",
+    oauthClient: { clientId: "desktop-client-id", clientSecret: "desktop-client-secret" },
+  });
+  await postPlugin({ ...desktopBody });
+  const desktopRow = (await manageableConnections()).find((row) => row.url === desktopUrl);
+  expect(desktopRow, JSON.stringify(desktopRow)).toMatchObject({
+    authType: "oauth",
+    credentialMode: "shared",
+    oauthClientConfigured: true,
+    oauthClientId: "desktop-client-id",
+  });
+  expect(pluginNames(desktopRow)).toEqual([desktopPluginName]);
+
   // Claim: archiving the plugin removes its connector from the Connectors list;
   // restoring the plugin lists it again with the same provenance.
   const archived = await denFetch(admin, `/v1/plugins/${encodeURIComponent(pluginId)}/archive`, { method: "POST", headers });
@@ -114,6 +152,11 @@ test.skipIf(!mysqlOpen || !redisOpen)(title, { timeout: 300_000 }, async ({ evid
   evidence.recordAssertionEvidence(
     "Adding an MCP server to a plugin configures its connection with the connector setup",
     `POST /v1/plugins with an mcp component carrying { authType: oauth, credentialMode: shared } created "${configuredPluginName} / crm" as an OAuth, one-org-account connection owned by the plugin; scope=manageable listed it under that plugin. A declaration without connection setup created no connection.`,
+    true,
+  );
+  evidence.recordAssertionEvidence(
+    "The Desktop Library posts the same connector setup Den's plugin editor does",
+    `denLibraryPluginCreateRequest("mcp", …) — the body the app's "Add organization MCP" dialog sends — carried { authType: oauth, credentialMode: shared, oauthClient } for "${desktopPluginName}"; Den accepted it and listed the connection as OAuth, one org account, with the pre-registered client id configured and the plugin as identity manager.`,
     true,
   );
   evidence.recordAssertionEvidence(
