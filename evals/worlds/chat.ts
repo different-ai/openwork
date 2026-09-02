@@ -920,3 +920,12 @@ export async function markdownArtifact(seed: Seed) {
   await arrangeControl(seed, app, "eval.artifact_tabs.seed_overflow", { count: 12 });
   return { app, workspace, session };
 }
+
+export async function mermaidChat(seed: Seed) {
+  const app = await seed.desktop({ name: "mermaid-rendering" });
+  const workspace = await seed.workspace(app, seed.tmpPath("mermaid-rendering"));
+  const session = await seedSessionRetry(seed, app, { title: "Mermaid rendering proof" });
+  await arrangeControl(seed, app, "eval.mermaid.set_theme", { mode: "light" });
+  await arrangeControl(seed, app, "eval.markdown_primitive.seed_chat");
+  return { app, workspace, session };
+}
