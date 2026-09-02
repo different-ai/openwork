@@ -27,7 +27,7 @@ test("the welcome join field takes a server URL or web invite and points the app
   });
 
   await user.click({ text: /Join your organization/ });
-  const joinInput = { label: /invite link|server url|sign-in code/i };
+  const joinInput: Parameters<typeof user.type>[0] = { role: "textbox", label: /invite link|server url|sign-in code/i };
 
   await step("A server URL becomes the control plane", async () => {
     await user.type(joinInput, "https://openwork.acme.test");

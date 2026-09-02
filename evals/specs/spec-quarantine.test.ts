@@ -48,6 +48,7 @@ sso-invite-sign-in.e2e.test.ts
 task-activity-shimmer.e2e.test.ts
 two-daytona-desktops.e2e.test.ts
 unfinished-tool-lifecycle.e2e.test.ts
+welcome-one-field.e2e.test.ts
 workspace-new-task-hit-target.e2e.test.ts
 `.trim().split("\n");
 

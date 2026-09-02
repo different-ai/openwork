@@ -111,7 +111,6 @@
     { "spec": "testkit-selftest.e2e.test.ts", "category": "unmigrated", "reason": "not yet migrated to spec primitives; not verified green in any lane" },
     { "spec": "tool-tester-page.e2e.test.ts", "category": "pre-existing-red", "reason": "seeded token lands on sign-in", "evidence": "seeded token lands on sign-in; control red" },
     { "spec": "updater-channel-selection.e2e.test.ts", "category": "pre-existing-red", "reason": "relaunch remained on /session", "evidence": "relaunch remained on /session; control red" },
-    { "spec": "welcome-one-field.e2e.test.ts", "category": "product-finding", "reason": "labeled input covered by a 'Cancel Connect' overlay", "evidence": "[user:type] Covered by div text=\"Cancel Connect\"" },
     { "spec": "workflows.e2e.test.ts", "category": "unmigrated", "reason": "not yet migrated to spec primitives; not verified green in any lane" },
     { "spec": "working-status-liveness.e2e.test.ts", "category": "unmigrated", "reason": "not yet migrated to spec primitives; not verified green in any lane" },
     { "spec": "workspace-sidebar-order.e2e.test.ts", "category": "unmigrated", "reason": "not yet migrated to spec primitives; not verified green in any lane" },
