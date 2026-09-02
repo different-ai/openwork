@@ -65,7 +65,9 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   if (!aggregate || typeof aggregate !== "object" || !("text" in aggregate) || typeof aggregate.text !== "string") {
     throw new Error(`Aggregate activity row was not readable: ${JSON.stringify(aggregate)}`);
   }
-  expect(aggregate.text).toContain("Now:");
+  // #4134 dropped the "Now:" prefix: the whole current action shimmers instead.
+  expect(aggregate.text).not.toContain("Now:");
+  expect(aggregate.text).toContain("Reading brief.md");
   if (!("singularSummary" in aggregate) || typeof aggregate.singularSummary !== "string") {
     throw new Error(`Aggregate summary was not readable: ${JSON.stringify(aggregate)}`);
   }

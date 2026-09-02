@@ -406,6 +406,56 @@ function createSessionLifecycleEvalMessages(sessionId: string): UIMessage[] {
   ];
 }
 
+const TOOL_DETAILS_EVAL_COMMAND =
+  "pnpm world up dev-headless --detach -- --replace --keep-tokens && OPENWORK_EVAL_E2E_TESTS=1 pnpm vitest run evals/specs/chat-loading-shimmer.e2e.test.ts --reporter=verbose";
+const TOOL_DETAILS_EVAL_PATTERN =
+  "seed_unfinished_tools|git status --short --branch|createSessionLifecycleEvalMessages|useControlAction";
+const TOOL_DETAILS_EVAL_ERROR =
+  "Process exited with code 2\nerror: pathspec 'release/2026.09' did not match any file(s) known to git\nhint: use 'git fetch origin release/2026.09' first";
+
+function createToolDetailsEvalMessages(sessionId: string): UIMessage[] {
+  const now = Date.now();
+  return [
+    {
+      id: `${sessionId}:eval-tool-details-user`,
+      role: "user",
+      parts: [{ type: "text", text: "Run the headless proof and find the seed hook." }],
+      metadata: { opencode: { created: now } },
+    },
+    {
+      id: `${sessionId}:eval-tool-details-assistant`,
+      role: "assistant",
+      parts: [
+        {
+          type: "dynamic-tool",
+          toolName: "bash",
+          toolCallId: "eval-tool-details-bash",
+          state: "output-available",
+          input: { command: TOOL_DETAILS_EVAL_COMMAND, description: "Run the headless proof" },
+          output: "ok",
+        },
+        {
+          type: "dynamic-tool",
+          toolName: "grep",
+          toolCallId: "eval-tool-details-grep",
+          state: "output-available",
+          input: { pattern: TOOL_DETAILS_EVAL_PATTERN, path: "apps/app/src", include: "*.tsx" },
+          output: "2 matches",
+        },
+        {
+          type: "dynamic-tool",
+          toolName: "bash",
+          toolCallId: "eval-tool-details-failed",
+          state: "output-error",
+          input: { command: "git checkout release/2026.09", description: "Switch to the release branch" },
+          errorText: TOOL_DETAILS_EVAL_ERROR,
+        },
+      ],
+      metadata: { opencode: { created: now + 1, completed: now + 4_000 } },
+    },
+  ];
+}
+
 function createSubagentActivityEvalMessages(sessionId: string, childSessionId?: string): UIMessage[] {
   const now = Date.now();
   return [
@@ -1331,6 +1381,22 @@ export function SessionSurface(props: SessionSurfaceProps) {
     };
   }, [props.sessionId]);
   useControlAction(props.isControlTarget ? seedConnectorToolCallControlAction : null);
+  const seedToolDetailsControlAction = useMemo<OpenworkControlAction | null>(() => {
+    if (!import.meta.env.DEV) return null;
+
+    return {
+      id: "eval.tool_details.seed",
+      label: "Seed a settled tool group with long details",
+      description: "Dev-only eval hook that renders a long command, a long search pattern, and a multi-line failure in one aggregate group.",
+      sideEffect: "mutation",
+      disabled: !props.sessionId,
+      execute: () => {
+        setEvalMarkdownMessages(createToolDetailsEvalMessages(props.sessionId));
+        return { ok: true };
+      },
+    };
+  }, [props.sessionId]);
+  useControlAction(props.isControlTarget ? seedToolDetailsControlAction : null);
   const seedSessionLifecycleControlAction = useMemo<OpenworkControlAction | null>(() => {
     if (!import.meta.env.DEV) return null;
 

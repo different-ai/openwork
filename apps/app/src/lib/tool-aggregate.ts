@@ -187,6 +187,31 @@ export function getAggregateRowFile(part: AnyToolPart): { verb: string; path: st
   return null
 }
 
+/**
+ * Search-family rows render as "Searched code in <scope>" above the exact
+ * pattern, so the pattern is never clipped by a summary label.
+ */
+export function getAggregateRowSearch(
+  part: AnyToolPart,
+): { verb: string; pattern: string; scope: string | null } | null {
+  const grep = isGrepToolPart(part)
+  if (!grep && !isGlobToolPart(part)) return null
+  if (!isRecord(part.input)) return null
+  const pattern = typeof part.input.pattern === "string" ? part.input.pattern.trim() : ""
+  if (!pattern) return null
+  const running = isToolPartInFlight(part)
+  const path = typeof part.input.path === "string" ? part.input.path.trim() : ""
+  const include = grep && typeof part.input.include === "string" ? part.input.include.trim() : ""
+  const scope = [path, include].filter(Boolean).join(" · ")
+  return {
+    verb: grep
+      ? (running ? "Searching code" : "Searched code")
+      : (running ? "Searching files" : "Searched files"),
+    pattern,
+    scope: scope || null,
+  }
+}
+
 /** Monospace action text for an expanded aggregate row. */
 export function getAggregateRowLabel(part: AnyToolPart): string {
   if (isBashToolPart(part)) {
