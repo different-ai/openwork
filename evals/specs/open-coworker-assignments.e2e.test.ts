@@ -148,23 +148,22 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
   if (!assignment) throw new Error(`No assignment session beside the discussion: ${JSON.stringify(sessionsAfter)}`);
   expect(assignment.title).toBe(expectedTitle);
 
-  // The assignment's first turn is exactly the bounded visible prose — no reasoning, no tool payloads.
+  // The discussion itself is untouched: same id, same two messages.
+  const discussionTexts = await readSessionTexts(app, workspaceId, discussionId);
+  expect(discussionTexts.map((message) => message.role)).toEqual(["user", "assistant"]);
+  expect(discussionTexts[0]?.text).toBe(CHAT_PROMPT);
+  expect(discussionTexts[1]?.text).toContain(CHAT_REPLY);
+
+  // The assignment's first turn is exactly the bounded visible prose of that discussion — no reasoning, no tool payloads.
   const assignmentTexts = await readSessionTexts(app, workspaceId, assignment.id);
   const firstUserTurn = assignmentTexts.find((message) => message.role === "user");
-  expect(firstUserTurn?.text).toBe(assignmentPrompt(OUTCOME, [
-    { role: "user", text: CHAT_PROMPT },
-    { role: "assistant", text: CHAT_REPLY },
-  ]));
+  expect(firstUserTurn?.text).toBe(assignmentPrompt(OUTCOME, discussionTexts));
   expect(firstUserTurn?.text).toContain("## Outcome");
   expect(firstUserTurn?.text).toContain(`You: ${CHAT_PROMPT}`);
   expect(firstUserTurn?.text).toContain(`Coworker: ${CHAT_REPLY}`);
   for (const forbidden of ["reasoning", "toolCalls", "partId", "openworkMcpApp", "metadata"]) {
     expect(firstUserTurn?.text).not.toContain(forbidden);
   }
-
-  // The discussion itself is untouched: same id, same two messages.
-  const discussionTexts = await readSessionTexts(app, workspaceId, discussionId);
-  expect(discussionTexts.map((message) => message.role)).toEqual(["user", "assistant"]);
   expect(String(resultRecord(await invokeCoworker(app, "coworkers.get", { slug: "editor" })).conversationThreadId)).toBe(discussionId);
 
   evidence.recordAssertionEvidence(
