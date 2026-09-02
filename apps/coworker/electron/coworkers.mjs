@@ -14,6 +14,14 @@
 import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { openworkConfigDir } from "@openwork/paths";
+import {
+  addToMemoryIndex,
+  isMemoryFileName,
+  memoryFileNameFor,
+  memoryTitle,
+  parseMemoryIndex,
+  removeFromMemoryIndex,
+} from "./memory-index.mjs";
 
 export const COWORKERS_DIR_NAME = "coworkers";
 const COWORKER_CONFIG_FILE = "coworker.md";
@@ -529,9 +537,11 @@ async function fileUpdatedAt(target) {
 }
 
 /**
- * The memory surface shown by the app: fixed files plus long-term entries,
- * each with its last-modified time so the UI can say when the coworker (or
- * its human) last touched memory without opening the file.
+ * The fixed memory files shown by the app (identity, working memory, and the
+ * long-term index), each with its last-modified time so the UI can say when
+ * the coworker (or its human) last touched memory without opening the file.
+ * Long-term memories are listed separately as structure by
+ * `listLongTermMemories`.
  */
 export async function listMemoryFiles(coworkersDir, slug) {
   const root = coworkerPath(coworkersDir, slug);
@@ -540,18 +550,130 @@ export async function listMemoryFiles(coworkersDir, slug) {
     { id: "working", label: "Working memory", path: WORKING_MEMORY_FILE },
     { id: "index", label: "Memory index", path: MEMORY_INDEX_FILE },
   ];
-  const longTermRoot = path.join(root, LONG_TERM_DIR);
-  if (await pathExists(longTermRoot)) {
-    const entries = await readdir(longTermRoot, { withFileTypes: true });
-    for (const entry of entries.filter((item) => item.isFile() && item.name.endsWith(".md")).sort((a, b) => a.name.localeCompare(b.name))) {
-      files.push({
-        id: `long-term/${entry.name}`,
-        label: entry.name.replace(/\.md$/, ""),
-        path: path.join(LONG_TERM_DIR, entry.name),
-      });
-    }
-  }
   return Promise.all(
     files.map(async (file) => ({ ...file, updatedAt: await fileUpdatedAt(path.join(root, file.path)) })),
   );
+}
+
+function longTermMemoryPath(file) {
+  if (!isMemoryFileName(file)) throw new Error(`Not a memory file name: ${file}`);
+  return path.join(LONG_TERM_DIR, file);
+}
+
+async function readMemoryIndex(root) {
+  try {
+    return await readFile(path.join(root, MEMORY_INDEX_FILE), "utf8");
+  } catch {
+    return "";
+  }
+}
+
+async function writeMemoryIndex(root, text) {
+  await mkdir(path.join(root, "memory"), { recursive: true });
+  await writeFile(path.join(root, MEMORY_INDEX_FILE), text, "utf8");
+}
+
+/**
+ * Long-term memories as the app presents them: the index in the order the
+ * coworker keeps it, joined with the files actually on disk. A file the index
+ * does not mention is still listed (`indexed: false`) so nothing the coworker
+ * wrote is hidden; an index line whose file is gone is listed too
+ * (`exists: false`) so the human can clear it. Titles come from each file's
+ * first heading.
+ */
+export async function listLongTermMemories(coworkersDir, slug) {
+  const root = coworkerPath(coworkersDir, slug);
+  const indexed = parseMemoryIndex(await readMemoryIndex(root));
+  const longTermRoot = path.join(root, LONG_TERM_DIR);
+  const onDisk = new Set();
+  if (await pathExists(longTermRoot)) {
+    const entries = await readdir(longTermRoot, { withFileTypes: true });
+    for (const entry of entries) {
+      if (entry.isFile() && isMemoryFileName(entry.name)) onDisk.add(entry.name);
+    }
+  }
+  const order = [];
+  const seen = new Set();
+  for (const entry of indexed) {
+    if (seen.has(entry.file)) continue;
+    seen.add(entry.file);
+    order.push({ file: entry.file, summary: entry.summary, indexed: true });
+  }
+  for (const file of [...onDisk].sort((a, b) => a.localeCompare(b))) {
+    if (seen.has(file)) continue;
+    seen.add(file);
+    order.push({ file, summary: "", indexed: false });
+  }
+  return Promise.all(order.map(async ({ file, summary, indexed: isIndexed }) => {
+    const relativePath = path.join(LONG_TERM_DIR, file);
+    const exists = onDisk.has(file);
+    let content = "";
+    if (exists) {
+      try {
+        content = await readFile(path.join(root, relativePath), "utf8");
+      } catch {
+        content = "";
+      }
+    }
+    return {
+      id: `long-term/${file}`,
+      file,
+      path: relativePath,
+      title: memoryTitle(content, file),
+      summary,
+      indexed: isIndexed,
+      exists,
+      updatedAt: exists ? await fileUpdatedAt(path.join(root, relativePath)) : 0,
+    };
+  }));
+}
+
+/**
+ * Start a long-term memory by hand: a titled file in `memory/long-term/` and
+ * its line in the index. The file name is derived from the title and made
+ * unique so an existing memory is never overwritten.
+ */
+export async function createLongTermMemory(coworkersDir, slug, { title, summary = "" }) {
+  const root = coworkerPath(coworkersDir, slug);
+  const cleanTitle = String(title ?? "").trim();
+  if (!cleanTitle) throw new Error("A memory needs a title.");
+  const longTermRoot = path.join(root, LONG_TERM_DIR);
+  await mkdir(longTermRoot, { recursive: true });
+  const base = memoryFileNameFor(cleanTitle);
+  let file = base;
+  for (let attempt = 2; await pathExists(path.join(longTermRoot, file)); attempt += 1) {
+    file = base.replace(/\.md$/, `-${attempt}.md`);
+  }
+  await writeFile(path.join(longTermRoot, file), `# ${cleanTitle}\n\n`, "utf8");
+  await writeMemoryIndex(root, addToMemoryIndex(await readMemoryIndex(root), file, String(summary ?? "").trim() || cleanTitle));
+  const memories = await listLongTermMemories(coworkersDir, slug);
+  return memories.find((memory) => memory.file === file);
+}
+
+/** List a memory file the coworker wrote without adding it to the index. */
+export async function indexLongTermMemory(coworkersDir, slug, file, summary = "") {
+  const root = coworkerPath(coworkersDir, slug);
+  const relativePath = longTermMemoryPath(file);
+  let content = "";
+  try {
+    content = await readFile(path.join(root, relativePath), "utf8");
+  } catch {
+    throw new Error(`No memory file named ${file}.`);
+  }
+  const line = String(summary ?? "").trim() || memoryTitle(content, file);
+  await writeMemoryIndex(root, addToMemoryIndex(await readMemoryIndex(root), file, line));
+}
+
+/**
+ * Forget a long-term memory: the file and its index line go together, so the
+ * coworker never sees a map entry that leads nowhere. Removing an index line
+ * whose file is already gone is the same operation.
+ */
+export async function deleteLongTermMemory(coworkersDir, slug, file) {
+  const root = coworkerPath(coworkersDir, slug);
+  const relativePath = longTermMemoryPath(file);
+  await rm(path.join(root, relativePath), { force: true });
+  const index = await readMemoryIndex(root);
+  const next = removeFromMemoryIndex(index, file);
+  if (next !== index) await writeMemoryIndex(root, next);
 }

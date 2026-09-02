@@ -5,10 +5,14 @@ import path from "node:path";
 import { after, test } from "node:test";
 import {
   createCoworker,
+  createLongTermMemory,
   defaultCoworkersDir,
+  deleteLongTermMemory,
   deleteRetiredCoworker,
   getCoworker,
+  indexLongTermMemory,
   listCoworkers,
+  listLongTermMemories,
   listMemoryFiles,
   listRetiredCoworkers,
   parseFrontmatter,
@@ -156,16 +160,85 @@ test("memory files are listed and editable through the store", async () => {
   await createCoworker(coworkersDir, { name: "Memo" });
   await writeCoworkerFile(coworkersDir, "memo", "memory/long-term/user-preferences.md", "# Prefs\n");
   const files = await listMemoryFiles(coworkersDir, "memo");
-  const ids = files.map((file) => file.id);
-  assert.ok(ids.includes("soul"));
-  assert.ok(ids.includes("working"));
-  assert.ok(ids.includes("index"));
-  assert.ok(ids.includes("long-term/user-preferences.md"));
+  assert.deepEqual(files.map((file) => file.id), ["soul", "working", "index"], "long-term memories are structure, not tabs");
   const prefs = await readCoworkerFile(coworkersDir, "memo", "memory/long-term/user-preferences.md");
   assert.equal(prefs, "# Prefs\n");
   const working = files.find((file) => file.id === "working");
   assert.ok(working.updatedAt > 0, "memory files report when they were last modified");
   assert.ok(Math.abs(Date.now() - working.updatedAt) < 60_000);
+});
+
+test("long-term memories join the index with the files on disk", async () => {
+  const coworkersDir = await tempCoworkersDir();
+  await createCoworker(coworkersDir, { name: "Memo" });
+  assert.deepEqual(await listLongTermMemories(coworkersDir, "memo"), [], "a new coworker has no long-term memories");
+
+  // The coworker promotes two memories and lists them; a third file is written without an index line;
+  // a fourth index line points at a file that no longer exists.
+  await writeCoworkerFile(coworkersDir, "memo", "memory/long-term/cleaning-day.md", "# Street cleaning\n\n- Move the car every **Friday**.\n");
+  await writeCoworkerFile(coworkersDir, "memo", "memory/long-term/people.md", "# People\n");
+  await writeCoworkerFile(coworkersDir, "memo", "memory/long-term/stray-notes.md", "Some notes without a heading\n");
+  await writeCoworkerFile(
+    coworkersDir,
+    "memo",
+    "memory/index.md",
+    "# Long-term memory index\n\nOne line per durable memory.\n\n- `long-term/people.md` — Who is who\n- `long-term/cleaning-day.md` — Street cleaning: move car every Friday\n- `long-term/gone.md` — Promoted then lost\n",
+  );
+  const memories = await listLongTermMemories(coworkersDir, "memo");
+  assert.deepEqual(
+    memories.map(({ file, title, summary, indexed, exists }) => ({ file, title, summary, indexed, exists })),
+    [
+      { file: "people.md", title: "People", summary: "Who is who", indexed: true, exists: true },
+      { file: "cleaning-day.md", title: "Street cleaning", summary: "Street cleaning: move car every Friday", indexed: true, exists: true },
+      { file: "gone.md", title: "Gone", summary: "Promoted then lost", indexed: true, exists: false },
+      { file: "stray-notes.md", title: "Stray notes", summary: "", indexed: false, exists: true },
+    ],
+    "index order first, then unindexed files; missing files stay visible",
+  );
+  assert.equal(memories[0].id, "long-term/people.md");
+  assert.equal(memories[0].path, path.join("memory", "long-term", "people.md"));
+  assert.ok(memories[0].updatedAt > 0);
+  assert.equal(memories[2].updatedAt, 0);
+
+  // Adding the stray file to the index uses its title when no summary is given.
+  await indexLongTermMemory(coworkersDir, "memo", "stray-notes.md");
+  const indexAfterAdd = await readCoworkerFile(coworkersDir, "memo", "memory/index.md");
+  assert.ok(indexAfterAdd.includes("- `long-term/stray-notes.md` — Stray notes"));
+
+  // Deleting a memory removes the file and its index line together; a missing file is just its line.
+  await deleteLongTermMemory(coworkersDir, "memo", "cleaning-day.md");
+  await deleteLongTermMemory(coworkersDir, "memo", "gone.md");
+  const indexAfterDelete = await readCoworkerFile(coworkersDir, "memo", "memory/index.md");
+  assert.ok(!indexAfterDelete.includes("cleaning-day.md"));
+  assert.ok(!indexAfterDelete.includes("gone.md"));
+  assert.ok(indexAfterDelete.includes("- `long-term/people.md` — Who is who"), "other lines and prose are untouched");
+  assert.ok(indexAfterDelete.startsWith("# Long-term memory index\n\nOne line per durable memory.\n"));
+  await assert.rejects(readCoworkerFile(coworkersDir, "memo", "memory/long-term/cleaning-day.md"));
+  assert.deepEqual((await listLongTermMemories(coworkersDir, "memo")).map((memory) => memory.file), ["people.md", "stray-notes.md"]);
+
+  // File names are never paths.
+  await assert.rejects(deleteLongTermMemory(coworkersDir, "memo", "../soul.md"), /Not a memory file name/);
+  await assert.rejects(deleteLongTermMemory(coworkersDir, "memo", "long-term/people.md"), /Not a memory file name/);
+  assert.equal(await readCoworkerFile(coworkersDir, "memo", "soul.md").then(() => true), true);
+});
+
+test("a memory created by hand gets a titled file, a unique name, and an index line", async () => {
+  const coworkersDir = await tempCoworkersDir();
+  await createCoworker(coworkersDir, { name: "Memo" });
+  const first = await createLongTermMemory(coworkersDir, "memo", { title: "Street cleaning", summary: "Move the car every Friday" });
+  assert.equal(first.file, "street-cleaning.md");
+  assert.equal(first.title, "Street cleaning");
+  assert.equal(first.summary, "Move the car every Friday");
+  assert.equal(first.indexed, true);
+  assert.equal(await readCoworkerFile(coworkersDir, "memo", "memory/long-term/street-cleaning.md"), "# Street cleaning\n\n");
+  const index = await readCoworkerFile(coworkersDir, "memo", "memory/index.md");
+  assert.ok(!index.includes("(none yet)"), "the template placeholder gives way to the first entry");
+  assert.ok(index.includes("- `long-term/street-cleaning.md` — Move the car every Friday"));
+
+  const second = await createLongTermMemory(coworkersDir, "memo", { title: "Street cleaning" });
+  assert.equal(second.file, "street-cleaning-2.md", "an existing memory is never overwritten");
+  assert.equal(second.summary, "Street cleaning", "the title stands in for a missing summary");
+  await assert.rejects(createLongTermMemory(coworkersDir, "memo", { title: "  " }), /needs a title/);
 });
 
 test("coworker file access is contained to the coworker directory", async () => {

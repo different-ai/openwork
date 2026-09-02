@@ -233,6 +233,108 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
     true,
   );
 
+  // Both side panels fold away. The team rail keeps every coworker as an avatar with a
+  // status dot and a hover card, and marks the active one; the context panel keeps its
+  // four destinations as icons that unfold straight into the chosen view.
+  const foldedPanels = await evalIn(app, `(async () => {
+    const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+    const q = (selector) => document.querySelector(selector);
+    const rail = q('[data-testid="coworker-rail"]');
+    const panel = q('[data-testid="context-panel"]');
+    if (!(rail instanceof HTMLElement) || !(panel instanceof HTMLElement)) return null;
+    const expandedRailWidth = rail.getBoundingClientRect().width;
+    const expandedPanelWidth = panel.getBoundingClientRect().width;
+    q('[data-testid="coworker-rail-collapse"]')?.click();
+    q('[data-testid="context-panel-collapse"]')?.click();
+    await wait(400);
+    const avatar = q('[data-testid="coworker-rail-avatar"]');
+    const indicator = q('[data-testid="coworker-rail-indicator"]');
+    avatar?.dispatchEvent(new PointerEvent("pointerover", { bubbles: true }));
+    await wait(150);
+    const peek = q('[data-testid="coworker-rail-peek"]');
+    const peekRect = peek?.getBoundingClientRect();
+    const railRect = rail.getBoundingClientRect();
+    const collapsed = {
+      railWidth: railRect.width,
+      panelWidth: panel.getBoundingClientRect().width,
+      railSearchVisible: q('input[aria-label="Search coworkers"]') instanceof HTMLElement,
+      avatarCount: document.querySelectorAll('[data-testid="coworker-rail-avatar"]').length,
+      avatarLabel: avatar?.getAttribute("aria-label"),
+      avatarCurrent: avatar?.getAttribute("aria-current"),
+      indicatorTone: indicator?.dataset.tone,
+      indicatorAtBottom: indicator && avatar ? indicator.getBoundingClientRect().bottom > avatar.getBoundingClientRect().top + avatar.getBoundingClientRect().height / 2 : false,
+      peekText: peek?.innerText ?? "",
+      peekRightOfRail: peekRect ? peekRect.left >= railRect.right : false,
+      panelIcons: [...document.querySelectorAll('[data-testid^="context-rail-"]')].map((button) => button.getAttribute("aria-label") + ":" + button.dataset.active),
+      panelIconText: [...document.querySelectorAll('[data-testid^="context-rail-"]')].map((button) => button.textContent?.trim()).join(""),
+    };
+    avatar?.dispatchEvent(new PointerEvent("pointerout", { bubbles: true }));
+    q('[data-testid="context-rail-memory"]')?.click();
+    await wait(400);
+    const afterIcon = { view: panel.dataset.view, collapsed: panel.dataset.collapsed, panelWidth: panel.getBoundingClientRect().width };
+    // Dragging the rail edge closed folds it; dragging it back out reopens it at the pointer.
+    const dragRail = async (toX) => {
+      const resizer = q('[data-testid="coworker-rail-resizer"]');
+      const rect = resizer.getBoundingClientRect();
+      resizer.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, clientX: rect.left + 5, clientY: 300, pointerId: 1 }));
+      await wait(30);
+      window.dispatchEvent(new PointerEvent("pointermove", { clientX: toX, clientY: 300, pointerId: 1 }));
+      await wait(30);
+      window.dispatchEvent(new PointerEvent("pointerup", { clientX: toX, clientY: 300, pointerId: 1 }));
+      await wait(400);
+      return rail.getBoundingClientRect().width;
+    };
+    const draggedOpen = await dragRail(300);
+    const draggedClosed = await dragRail(40);
+    q('[data-testid="coworker-rail-expand"]')?.click();
+    await wait(400);
+    const reopened = rail.getBoundingClientRect().width;
+    // Back to the Activity overview so the rest of the journey sees the default panel.
+    q('[aria-label="Back to activity"]')?.click();
+    await wait(200);
+    return {
+      expandedRailWidth,
+      expandedPanelWidth,
+      collapsed,
+      afterIcon,
+      draggedOpen,
+      draggedClosed,
+      reopened,
+      finalView: panel.dataset.view,
+      settingsButtonBack: Boolean(q('[data-testid="coworker-settings-button"]')),
+    };
+  })()`, { awaitPromise: true, timeoutMs: 30_000 });
+  if (!isRecord(foldedPanels) || !isRecord(foldedPanels.collapsed) || !isRecord(foldedPanels.afterIcon)) throw new Error("Folded panel facts were unavailable.");
+  expect(foldedPanels.expandedRailWidth).toBeGreaterThanOrEqual(220);
+  expect(foldedPanels.expandedPanelWidth).toBeGreaterThanOrEqual(320);
+  expect(foldedPanels.collapsed).toMatchObject({
+    railWidth: 72,
+    panelWidth: 56,
+    railSearchVisible: false,
+    avatarCount: 1,
+    avatarLabel: "Scout",
+    avatarCurrent: "true",
+    indicatorTone: "mist",
+    indicatorAtBottom: true,
+    peekRightOfRail: true,
+    panelIcons: ["Activity:true", "Apps & tools:false", "Memory:false", "Coworker settings:false"],
+    panelIconText: "",
+  });
+  expect(String(foldedPanels.collapsed.peekText)).toContain("Scout");
+  expect(String(foldedPanels.collapsed.peekText)).toContain("Ready");
+  expect(foldedPanels.afterIcon).toMatchObject({ view: "memory", collapsed: "false" });
+  expect(foldedPanels.afterIcon.panelWidth).toBeGreaterThanOrEqual(320);
+  expect(foldedPanels.draggedOpen).toBeGreaterThanOrEqual(220);
+  expect(foldedPanels.draggedClosed).toBe(72);
+  expect(foldedPanels.reopened).toBeGreaterThanOrEqual(220);
+  expect(foldedPanels.finalView).toBe("overview");
+  expect(foldedPanels.settingsButtonBack).toBe(true);
+  evidence.recordAssertionEvidence(
+    "Both side panels fold to icon rails and unfold from them",
+    "Folding the team rail left a 72px rail with Scout's avatar marked current, a bottom status dot, and a hover card beside the rail naming Scout and Ready; folding the context panel left a 56px strip with Activity, Apps & tools, Memory, and Coworker settings icons and no words, and choosing Memory unfolded the panel on that view. Dragging the rail edge past the fold threshold closed it and the expand control reopened it.",
+    true,
+  );
+
   // Model choice lives in Coworker settings, opened from the icon-only control.
   await waitFor(app, `(() => {
     const button = document.querySelector('[data-testid="coworker-settings-button"]');
@@ -243,6 +345,12 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   await waitForText(app, "Coworker settings", { timeoutMs: 30_000 });
   await waitFor(app, `Boolean(document.querySelector('[data-testid="coworker-model-settings"]'))`, { timeoutMs: 30_000, label: "AI model section" });
   expect(String(await evalIn(app, `document.querySelector('[data-testid="coworker-model-settings"]')?.innerText ?? ""`))).toContain("AI model");
+  // Who the coworker is comes before what it runs on.
+  expect(await evalIn(app, `(() => {
+    const profile = document.querySelector('[data-testid="coworker-profile-settings"]');
+    const model = document.querySelector('[data-testid="coworker-model-settings"]');
+    return Boolean(profile && model) && profile.getBoundingClientRect().top < model.getBoundingClientRect().top;
+  })()`)).toBe(true);
   await waitFor(app, `(() => {
     const button = document.querySelector('[data-testid="model-picker"] > button');
     if (!(button instanceof HTMLElement)) return false;
@@ -420,6 +528,122 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   );
   await clickButtonContaining(app, "Scout");
   await waitForText(app, "Discussion with Scout", { timeoutMs: 30_000 });
+
+  // Memory is shown as structure. Seed what a working coworker leaves behind: two promoted memories
+  // listed in the index (one whose file has since gone) and one file written without an index line.
+  await invokeCoworker(app, "coworkers.files.write", {
+    slug: "scout",
+    path: "memory/long-term/cleaning-day.md",
+    content: "# Street cleaning\n\n- Move the car every **Friday** for street cleaning.\n",
+  });
+  await invokeCoworker(app, "coworkers.files.write", { slug: "scout", path: "memory/long-term/stray.md", content: "Some notes nobody listed.\n" });
+  await invokeCoworker(app, "coworkers.files.write", {
+    slug: "scout",
+    path: "memory/index.md",
+    content: "# Long-term memory index\n\nOne line per durable memory in `memory/long-term/`.\n\n- `long-term/cleaning-day.md` — Street cleaning: move car every Friday\n- `long-term/gone.md` — Promoted, then lost\n",
+  });
+  await clickButton(app, "Memory");
+  const memoryTabs = await waitFor(app, `(() => {
+    const panel = document.querySelector('[data-testid="memory-panel"]');
+    const count = panel?.querySelector('[data-testid="memory-count"]');
+    if (!panel || !count) return false;
+    const view = panel.querySelector('[data-testid="memory-view"]');
+    if (!view) return false;
+    return {
+      tabs: [...panel.querySelectorAll('nav[aria-label="Memory"] button')].map((button) => button.getAttribute("data-testid")),
+      count: count.textContent?.trim(),
+      renderedHeading: view.querySelector("h1")?.textContent?.trim() ?? "",
+      rawTextareaVisible: panel.querySelector("textarea") !== null,
+      mentionsIndexAsTab: (panel.querySelector("nav")?.textContent ?? "").includes("index"),
+    };
+  })()`, { timeoutMs: 30_000, label: "memory panel with structured tabs" });
+  expect(memoryTabs).toEqual({
+    tabs: ["memory-tab-soul", "memory-tab-working", "memory-tab-long-term"],
+    count: "3",
+    renderedHeading: "Working memory — Scout",
+    rawTextareaVisible: false,
+    mentionsIndexAsTab: false,
+  });
+  await evalIn(app, `document.querySelector('[data-testid="memory-tab-long-term"]').click()`);
+  const memoryRows = await waitFor(app, `(() => {
+    const rows = [...document.querySelectorAll('[data-testid="memory-row"]')];
+    if (rows.length !== 3) return false;
+    return rows.map((row) => ({
+      file: row.getAttribute("data-file"),
+      title: row.querySelector("span")?.textContent?.trim() ?? "",
+      badge: [...row.querySelectorAll("span")].map((span) => span.textContent?.trim() ?? "").find((text) => text === "File missing" || text === "Not in index") ?? "",
+      summary: row.querySelector("p")?.textContent?.trim() ?? "",
+    }));
+  })()`, { timeoutMs: 30_000, label: "three long-term memory rows" });
+  expect(memoryRows).toEqual([
+    { file: "cleaning-day.md", title: "Street cleaning", badge: "", summary: "Street cleaning: move car every Friday" },
+    { file: "gone.md", title: "Gone", badge: "File missing", summary: "Promoted, then lost" },
+    { file: "stray.md", title: "Stray", badge: "Not in index", summary: "" },
+  ]);
+
+  // Selecting a memory renders it; Edit exposes the file, and a saved edit lands on disk.
+  await evalIn(app, `document.querySelector('[data-testid="memory-row"][data-file="cleaning-day.md"]').click()`);
+  const memoryDetail = await waitFor(app, `(() => {
+    const detail = document.querySelector('[data-testid="memory-detail"][data-file="cleaning-day.md"]');
+    const view = detail?.querySelector('[data-testid="memory-view"]');
+    if (!detail || !view) return false;
+    return {
+      heading: view.querySelector("h1")?.textContent?.trim() ?? "",
+      emphasis: view.querySelector("strong")?.textContent?.trim() ?? "",
+      listItems: view.querySelectorAll("li").length,
+      path: detail.textContent?.includes("memory/long-term/cleaning-day.md") ?? false,
+      rawTextareaVisible: detail.querySelector("textarea") !== null,
+    };
+  })()`, { timeoutMs: 30_000, label: "rendered memory detail" });
+  expect(memoryDetail).toEqual({ heading: "Street cleaning", emphasis: "Friday", listItems: 1, path: true, rawTextareaVisible: false });
+  await clickButton(app, "Edit");
+  await fill(
+    app,
+    'textarea[aria-label="Street cleaning memory"]',
+    "# Street cleaning\n\n- Move the car every **Friday** for street cleaning.\n- The sweeper passes around 9am.\n",
+  );
+  await clickButton(app, "Save");
+  await waitForText(app, "Saved", { timeoutMs: 30_000 });
+  const editedMemory = await invokeCoworker(app, "coworkers.files.read", { slug: "scout", path: "memory/long-term/cleaning-day.md" });
+  expect(editedMemory).toMatchObject({ ok: true, result: { content: expect.stringContaining("The sweeper passes around 9am.") } });
+  await clickButton(app, "View");
+  await waitFor(app, `document.querySelectorAll('[data-testid="memory-view"] li').length === 2`, { timeoutMs: 30_000, label: "rendered edit" });
+
+  // Forgetting a memory removes the file and its index line together, after an explicit confirmation.
+  await clickButton(app, "Delete…");
+  await waitFor(app, `document.querySelector('[data-testid="memory-delete-confirm"]') !== null`, { timeoutMs: 30_000, label: "delete confirmation" });
+  await clickButton(app, "Delete memory");
+  const afterDelete = await waitFor(app, `(() => {
+    if (document.querySelector('[data-testid="memory-detail"]')) return false;
+    const rows = [...document.querySelectorAll('[data-testid="memory-row"]')].map((row) => row.getAttribute("data-file"));
+    if (rows.length !== 2) return false;
+    return { rows, count: document.querySelector('[data-testid="memory-count"]')?.textContent?.trim() ?? "" };
+  })()`, { timeoutMs: 30_000, label: "memory list after delete" });
+  expect(afterDelete).toEqual({ rows: ["gone.md", "stray.md"], count: "2" });
+  const indexAfterDelete = await invokeCoworker(app, "coworkers.files.read", { slug: "scout", path: "memory/index.md" });
+  expect(indexAfterDelete).toEqual({
+    ok: true,
+    result: { content: "# Long-term memory index\n\nOne line per durable memory in `memory/long-term/`.\n\n- `long-term/gone.md` — Promoted, then lost\n" },
+  });
+  const deletedFile = await invokeCoworker(app, "coworkers.files.read", { slug: "scout", path: "memory/long-term/cleaning-day.md" });
+  expect(deletedFile).toMatchObject({ ok: false, error: expect.stringContaining("ENOENT") });
+
+  // A file the coworker wrote but never listed can be added to the index from its page.
+  await evalIn(app, `document.querySelector('[data-testid="memory-row"][data-file="stray.md"]').click()`);
+  await clickButton(app, "Add to index");
+  await waitFor(app, `(() => {
+    const detail = document.querySelector('[data-testid="memory-detail"][data-file="stray.md"]');
+    return detail !== null && !(detail.textContent ?? "").includes("Not in index");
+  })()`, { timeoutMs: 30_000, label: "stray memory indexed" });
+  const indexAfterAdd = await invokeCoworker(app, "coworkers.files.read", { slug: "scout", path: "memory/index.md" });
+  expect(indexAfterAdd).toMatchObject({ ok: true, result: { content: expect.stringContaining("- `long-term/stray.md` — Stray") } });
+  evidence.recordAssertionEvidence(
+    "Long-term memory is a list of selectable memories, not a raw index file",
+    "Memory opened with exactly Soul, Working memory, and Long-term tabs (no per-file tabs) and rendered working memory as a page. Long-term listed three memories from the index joined with the files on disk, marking the missing file and the unlisted one. Selecting Street cleaning rendered its heading, bold Friday, and one list item; Edit exposed the Markdown, a saved edit landed on disk and re-rendered; Delete asked for confirmation, then removed both the file and its index line while leaving the index prose and the other line intact; Add to index listed the stray file.",
+    true,
+  );
+  await evalIn(app, `document.querySelector('button[aria-label="Back to activity"]').click()`);
+  await waitForText(app, "Add responsibility", { timeoutMs: 30_000 });
 
   const footerPlacement = await evalIn(app, `(() => {
     const button = document.querySelector('button[title="OpenWork account and settings"]');
