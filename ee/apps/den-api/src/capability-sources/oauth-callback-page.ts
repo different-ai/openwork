@@ -11,7 +11,8 @@ export function connectCallbackPage(input:
   | { ok: true; name: string }
   | { ok: false; name: string; message: string; referenceId?: string }): string {
   const title = input.ok ? "You're connected" : "Connection failed"
-  const closeButton = `<button type="button" onclick="window.close()">Close window</button>`
+  const closeButton = `<button id="close-window-button" type="button">Close window</button>
+       <p id="manual-close-guidance" class="close-guidance" role="status" aria-live="polite" hidden>Your browser prevented OpenWork from closing this tab automatically. Close this tab to return to OpenWork.</p>`
   const body = input.ok
     ? `<div class="status-row success">
         <span class="status-icon" aria-hidden="true">✓</span>
@@ -53,6 +54,7 @@ export function connectCallbackPage(input:
       button { margin-top: 30px; border: 0; border-radius: 12px; padding: 12px 18px; color: #fff; background: #101828; font: inherit; font-weight: 600; cursor: pointer; box-shadow: 0 1px 2px rgba(16, 24, 40, .12); }
       button:hover { background: #1d2939; }
       button:focus-visible { outline: 3px solid rgba(59, 130, 246, .28); outline-offset: 3px; }
+      .close-guidance { margin-top: 30px; color: #475467; font-weight: 600; }
       @media (max-width: 560px) { body { padding: 16px; } main { padding: 32px 22px; border-radius: 24px; } .status-row { margin-top: 30px; padding: 18px; } }
     </style>
   </head>
@@ -62,6 +64,20 @@ export function connectCallbackPage(input:
       <h1>${title}</h1>
       ${body}
     </main>
+    <script>
+      // Browsers only let a script close a tab that a script opened. OpenWork
+      // launches this page through the OS default browser, so window.close()
+      // is usually a no-op there; fall back to telling the user to close the tab.
+      const closeButton = document.getElementById("close-window-button");
+      const manualCloseGuidance = document.getElementById("manual-close-guidance");
+      closeButton.addEventListener("click", () => {
+        window.close();
+        window.setTimeout(() => {
+          closeButton.hidden = true;
+          manualCloseGuidance.hidden = false;
+        }, 250);
+      });
+    </script>
   </body>
 </html>`
 }

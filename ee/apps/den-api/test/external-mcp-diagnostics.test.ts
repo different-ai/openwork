@@ -1239,8 +1239,10 @@ describe("external MCP diagnostics", () => {
 
     expect(html).toContain("You're connected")
     expect(html).toContain("Enterprise MCP &lt;test&gt; is connected to OpenWork.")
-    expect(html).toContain("window.close()")
+    expect(html).toContain("window.close();")
     expect(html).toContain("Close window")
+    expect(html).toContain("Your browser prevented OpenWork from closing this tab automatically.")
+    expect(html).toContain("manualCloseGuidance.hidden = false")
     expect(html).toContain("OpenWork Connect")
     expect(html).toContain("background: #f8fbff")
     expect(html).not.toContain("@keyframes")
