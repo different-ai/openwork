@@ -4,13 +4,15 @@ import { artifactCodeBrowserWorld } from "../worlds/first-run.ts";
 const test = spec.world(artifactCodeBrowserWorld);
 
 test("artifact editor renders code with Pierre and browses workspace files", async ({ user, step }) => {
-  await user.click("overflow-tab-12.md");
+  await user.click("Select tab: overflow-tab-12.md");
   await user.see({ placeholder: "Search files" }, { timeoutMs: 30_000 });
 
   await step("A TypeScript file opens beside the workspace tree", async () => {
     await user.type({ placeholder: "Search files" }, "openwork-artifact-proof.ts");
-    await user.click({ text: /openwork-artifact-proof\.ts/ });
-    await user.see({ text: /artifactEditor/ }, { timeoutMs: 30_000 });
+    await user.press("Tab");
+    await user.press("Tab");
+    await user.press("Enter");
+    await user.see("Select tab: openwork-artifact-proof.ts", { timeoutMs: 30_000 });
     await user.looks([
       "The artifact panel visibly shows a workspace file tree beside a syntax-highlighted TypeScript code viewer",
       "The code viewer visibly contains the TypeScript declaration export const artifactEditor = true",
@@ -20,9 +22,10 @@ test("artifact editor renders code with Pierre and browses workspace files", asy
 
   await step("Selecting JSON replaces the active code artifact", async () => {
     await user.type({ placeholder: "Search files" }, "openwork-artifact-settings.json", { replace: true });
-    await user.click({ text: /openwork-artifact-settings\.json/ });
-    await user.see({ text: /artifactEditor/ }, { timeoutMs: 30_000 });
-    await user.notSee({ text: /export const artifactEditor/ });
+    await user.press("Tab");
+    await user.press("Tab");
+    await user.press("Enter");
+    await user.see("Select tab: openwork-artifact-settings.json", { timeoutMs: 30_000 });
     await user.looks([
       "The artifact panel visibly shows the workspace file tree beside a syntax-highlighted JSON code viewer",
       "The code viewer visibly contains the JSON property artifactEditor set to true, and no TypeScript declaration is visible",

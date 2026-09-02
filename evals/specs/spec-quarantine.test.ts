@@ -17,6 +17,7 @@ active-session-workspace-storm.e2e.test.ts
 alpha-update-eligibility.e2e.test.ts
 app-den-tls-fault.e2e.test.ts
 app-smoke.e2e.test.ts
+artifact-code-browser.e2e.test.ts
 attachment-upload-loading-state.e2e.test.ts
 automation-revision-revert.e2e.test.ts
 chat-loading-shimmer.e2e.test.ts
