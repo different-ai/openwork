@@ -3,8 +3,8 @@ import { describe, expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import type { DynamicToolUIPart } from "ai";
 
-import { ToolAggregateGroup, buildAggregateRows } from "../src/components/chat/tool-aggregate-group";
-import { getAggregateRowSearch } from "../src/lib/tool-aggregate";
+import { DetailBox, ToolAggregateGroup, buildAggregateRows } from "../src/components/chat/tool-aggregate-group";
+import { getAggregateNowPart, getAggregateRowSearch } from "../src/lib/tool-aggregate";
 import { CurrentToolLifecycleProvider } from "../src/components/chat/current-tool-lifecycle-context";
 import { getToolAggregateLifecycle } from "../src/lib/tool-aggregate";
 
@@ -54,6 +54,46 @@ describe("tool aggregate running feedback", () => {
     expect(markup).not.toContain("Now:");
     expect(markup).toContain("ow-text-shimmer");
     expect(markup).not.toContain("animate-spin");
+  });
+
+  test("the running command line invites a double-click to show the whole command", () => {
+    const markup = renderToStaticMarkup(
+      <CurrentToolLifecycleProvider
+        activityStatus="responding"
+        currentToolCallIds={new Set([runningCommand.toolCallId])}
+      >
+        <ToolAggregateGroup parts={[completedCommand, runningCommand]} />
+      </CurrentToolLifecycleProvider>,
+    );
+
+    expect(getAggregateNowPart([completedCommand, runningCommand])).toBe(runningCommand);
+    expect(markup).toContain("data-tool-aggregate-now");
+    expect(markup).toContain('title="Double-click to show the full command"');
+    // Until double-clicked, the line stays the one-line shimmer, not the box.
+    expect(markup).not.toContain("data-tool-aggregate-copy");
+  });
+
+  test("a running file action's current line offers no command reveal", () => {
+    const runningRead: DynamicToolUIPart = {
+      type: "dynamic-tool",
+      toolName: "read",
+      toolCallId: "running-read",
+      state: "input-available",
+      input: { filePath: "/repo/brief.md" },
+    };
+
+    const markup = renderToStaticMarkup(
+      <CurrentToolLifecycleProvider
+        activityStatus="responding"
+        currentToolCallIds={new Set([runningCommand.toolCallId, runningRead.toolCallId])}
+      >
+        <ToolAggregateGroup parts={[runningCommand, runningRead]} />
+      </CurrentToolLifecycleProvider>,
+    );
+
+    expect(getAggregateNowPart([runningCommand, runningRead])).toBe(runningRead);
+    expect(markup).toContain("Reading brief.md");
+    expect(markup).not.toContain("Double-click to show the full command");
   });
 
   test("shimmers the whole active action without a Now prefix", () => {
@@ -197,6 +237,36 @@ describe("tool aggregate long details", () => {
       scope: null,
     });
     expect(getAggregateRowSearch(runningCommand)).toBeNull();
+  });
+
+  test("an expanded command is a bounded scroll box with a copy action; collapsed it is one line", () => {
+    const expanded = renderToStaticMarkup(
+      <DetailBox kind="command" text="git status --short --branch" expanded onToggle={() => {}} />,
+    );
+    expect(expanded).toContain('data-command-expanded="true"');
+    expect(expanded).toContain("max-h-60 overflow-y-auto whitespace-pre-wrap");
+    expect(expanded).toContain("data-tool-aggregate-copy");
+    expect(expanded).toContain('aria-label="Copy command"');
+
+    const collapsed = renderToStaticMarkup(
+      <DetailBox kind="command" text="git status --short --branch" expanded={false} onToggle={() => {}} />,
+    );
+    expect(collapsed).toContain('data-command-expanded="false"');
+    expect(collapsed).toContain("line-clamp-1");
+    expect(collapsed).not.toContain("overflow-y-auto");
+    expect(collapsed).not.toContain("data-tool-aggregate-copy");
+  });
+
+  test("only commands offer a copy action; errors and patterns do not", () => {
+    const error = renderToStaticMarkup(
+      <DetailBox kind="error" text={multiLineError} expanded onToggle={() => {}} />,
+    );
+    const pattern = renderToStaticMarkup(
+      <DetailBox kind="pattern" text={longPattern} expanded onToggle={() => {}} />,
+    );
+    expect(error).toContain("max-h-60 overflow-y-auto");
+    expect(error).not.toContain("data-tool-aggregate-copy");
+    expect(pattern).not.toContain("data-tool-aggregate-copy");
   });
 
   test("a failed solo file action exposes its whole error, not a clipped first line", () => {
