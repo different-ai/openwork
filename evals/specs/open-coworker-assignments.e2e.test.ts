@@ -113,6 +113,12 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
   await fill(app, 'textarea[aria-label="Message Editor"]', CHAT_PROMPT);
   await clickButton(app, "Send");
   await waitForAssistantText(app, CHAT_REPLY);
+  // The reply text can land before the turn closes; wait for the discussion to settle so the
+  // composer's assignment control is enabled again.
+  await waitFor(app, `(document.querySelector('[data-testid="coworker-thread-status"]')?.textContent ?? "").startsWith("A continuing conversation")`, {
+    timeoutMs: 120_000,
+    label: "discussion turn settled",
+  });
   const editor = resultRecord(await invokeCoworker(app, "coworkers.get", { slug: "editor" }));
   const discussionId = String(editor.conversationThreadId);
   expect(discussionId).toMatch(/^ses_/);
