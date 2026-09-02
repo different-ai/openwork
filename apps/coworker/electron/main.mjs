@@ -49,6 +49,7 @@ const APP_NAME = "Open Coworker";
 const APP_IDENTIFIER = isDev ? "com.differentai.opencoworker.dev" : "com.differentai.opencoworker";
 const DEFAULT_SERVER_PORT = 8790;
 const DEFAULT_DEN_BASE_URL = "https://app.openworklabs.com";
+const HOSTED_DEN_APEX_HOST = "openworklabs.com";
 const APP_ICON_PATH = path.resolve(__dirname, "..", "resources", "icons", "icon.png");
 
 const explicitCdpPort = Number.parseInt(
@@ -342,7 +343,23 @@ function parseDenSessionPayload(payload) {
   if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
     throw new Error("The OpenWork API base URL must use http(s).");
   }
+  const configured = configuredDenApiBase();
+  if (parsed.toString().replace(/\/+$/, "") !== configured) {
+    throw new Error("The OpenWork session origin does not match this app's configured Den.");
+  }
   return { baseUrl, token, orgId };
+}
+
+function configuredDenApiBase() {
+  const configured = (process.env.COWORKER_DEN_BASE_URL?.trim() || DEFAULT_DEN_BASE_URL).replace(/\/+$/, "");
+  const url = new URL(configured);
+  const hostname = url.hostname.toLowerCase();
+  if (hostname === "api" || hostname.startsWith("api.")) return url.origin;
+  if (hostname === HOSTED_DEN_APEX_HOST || hostname.endsWith(`.${HOSTED_DEN_APEX_HOST}`)) {
+    url.hostname = `api.${hostname}`;
+    return url.origin;
+  }
+  return `${configured}/api/den`;
 }
 
 async function ensurePlatformServer() {
@@ -692,7 +709,10 @@ const commands = {
 };
 
 function registerIpc() {
-  ipcMain.handle("coworker:invoke", async (_event, request) => {
+  ipcMain.handle("coworker:invoke", async (event, request) => {
+    if (event.senderFrame !== event.sender.mainFrame) {
+      return { ok: false, error: "Open Coworker commands are only available to the main app frame." };
+    }
     const command = typeof request?.command === "string" ? request.command : "";
     const handler = commands[command];
     if (!handler) {

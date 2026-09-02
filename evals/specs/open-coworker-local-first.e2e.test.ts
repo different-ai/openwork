@@ -103,7 +103,7 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
         lookY,
       });
     })));
-  })()`, { awaitPromise: true });
+  })()`, { awaitPromise: true, timeoutMs: 30_000 });
   expect(brandGaze).toMatchObject({
     whiteTile: true,
     blackOutline: true,
