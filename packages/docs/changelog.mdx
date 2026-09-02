@@ -1,6 +1,30 @@
 ---
 title: "Changelog"
 ---
+<Update label="September 2nd" tags={["🐛 Bug Fixes", "🚀 New Features"]}>
+
+  ## [v0.18.41](https://github.com/different-ai/openwork/compare/v0.18.40...v0.18.41): Session status gets honest and cloud providers connect with saved credentials
+
+  - The Working indicator now tells the truth: it stops when a run errors or the engine is unreachable, and shows minutes once a run passes the first hour.
+  - Sessions reconcile more cleanly — completions are detected while you're working elsewhere, queued messages send even when the session is out of view, and archiving works from any workspace.
+  - Cloud providers now connect using the credentials saved on your desktop, and Google Workspace retrieval is more resilient.
+  - OpenWork is SOC 2 Type I — the landing page now shows the badge and live status.
+  - Hardened security by fixing static-analysis findings and isolating provider sync contexts, alongside internal test and release tooling improvements.
+
+</Update>
+
+<Update label="August 31st" tags={["🚀 New Features", "🐛 Bug Fixes", "🏗️ Refactoring"]}>
+
+  ## [v0.18.40](https://github.com/different-ai/openwork/compare/v0.18.39...v0.18.40): Portable Agent Plugins arrive and desktop sessions run calmer
+
+  - OpenWork can now import and run portable Agent Plugins, bringing Anthropic-compatible plugin packs into the desktop app.
+  - Automations can be pinned to a specific workspace, and remote-session commands now arrive in native local sessions on your desktop.
+  - Fixed request storms and reload loops across Settings, the Library, the composer, and desktop policies, so long sessions stay fast.
+  - Gmail replies support collapsible quoting and attachments, and OpenWork Cloud members get complimentary OpenWork Web access.
+  - Strengthened sign-in and access security and made the desktop recover cleanly from socket and renderer crashes.
+
+</Update>
+
 <Update label="August 27th" tags={["🚀 New Features", "🐛 Bug Fixes", "🏗️ Refactoring"]}>
 
   ## [v0.18.39](https://github.com/different-ai/openwork/compare/v0.18.38...v0.18.39): Richer session artifacts and more resilient agent runs
