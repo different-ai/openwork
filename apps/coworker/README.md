@@ -173,6 +173,18 @@ with Ask, Create a skill, and Repair; signing out removes the gateway again.
 The packaged app ships the engine's OpenWork plugins under
 `Resources/opencode-plugins`, as the desktop does.
 
+Thinking and tool work fold into two quiet lines above a reply: provider-returned
+thinking becomes a borderless "Thought through" disclosure once the reply is
+complete, and all the tool calls behind one reply become one work receipt
+("Edited index.md", "Worked with your files and Calendar · 3 steps") that opens
+into plain-word steps with the tool name behind Technical details
+(`lib/work-receipt.ts`). Documents and Apps the work produced stay first-class
+as compact attachment chips beneath the receipt. While a turn runs, one live row
+carries the moving state — a small avatar, three dots, and one phrase that
+changes only with the phase ("Nova is thinking…", "Nova is editing index.md…",
+"Nova is putting it together…"). Consecutive messages from the same speaker
+drop the repeated avatar and name and sit closer together.
+
 Responsibilities read like a to-do list for a person: one line per
 responsibility (its name, then "Every day at 9:00 AM · Done today at 12:05
 PM") that opens into labelled everyday facts — When, Where, Next, Last time,
