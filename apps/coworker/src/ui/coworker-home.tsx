@@ -359,6 +359,10 @@ function CoworkerOverview({
   );
   const nowNote = saying ? `${saying}…` : now.note;
   const [localResponsibilities, setLocalResponsibilities] = useState<LocalResponsibility[]>([]);
+  // While a run is going or waiting in line, the list follows it closely; otherwise it idles.
+  const localRunsBusy = localResponsibilities.some(
+    (item) => item.latestRun?.status === "running" || item.latestRun?.status === "queued",
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -370,12 +374,12 @@ function CoworkerOverview({
         })
         .catch(() => undefined);
     void load();
-    const timer = window.setInterval(() => void load(), 5_000);
+    const timer = window.setInterval(() => void load(), localRunsBusy ? 1_500 : 5_000);
     return () => {
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [coworker.slug]);
+  }, [coworker.slug, localRunsBusy]);
 
   const recent = mergeRecentWork(activity, localResponsibilities);
   const nowTime = relativeTime(activity?.updatedAt ?? 0);
