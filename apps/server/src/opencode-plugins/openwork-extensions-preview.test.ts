@@ -151,7 +151,7 @@ function startFakeOpenWorkServer(options: { failPromptText?: string; failSession
             description: "Prepare a connected customer briefing.",
             capability: "skill:skl_customer_briefing",
           }],
-          instruction: "<available_skills><skill><name>customer-briefing</name></skill></available_skills>",
+          instruction: "<available_remote_skills><skill name=\"customer-briefing\" capability=\"skill:skill_customer_briefing\">Customer briefing</skill></available_remote_skills>",
         });
       }
 
@@ -475,7 +475,7 @@ describe("OpenWorkExtensionsPreview session tools", () => {
     expect(output.system.join("\n")).toContain("verified ready for this exact workspace/model");
     expect(output.system.join("\n")).toContain(OPENWORK_CLOUD_SKILL_AUTHORING_INSTRUCTION);
     expect(output.system.join("\n")).not.toContain(OPENWORK_LOCAL_SKILL_AUTHORING_INSTRUCTION);
-    expect(output.system.join("\n")).toContain("<name>customer-briefing</name>");
+    expect(output.system.join("\n")).toContain('<skill name="customer-briefing"');
   });
 
   test("uses the factory engine client as transform steering source of truth", async () => {
@@ -514,7 +514,10 @@ describe("OpenWorkExtensionsPreview session tools", () => {
 
     expect(requests).toEqual([{ query: { directory: "/tmp/archive" } }]);
     expect(output.system).toHaveLength(1);
-    expect(output.system[0].startsWith(OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION)).toBe(true);
+    // App-control mechanics lead; the live steering follows them.
+    expect(output.system[0].startsWith("## OpenWork app context")).toBe(true);
+    expect(output.system[0]).toContain(OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION);
+    expect(output.system[0].indexOf("## Built-in Browser")).toBeLessThan(output.system[0].indexOf(OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION));
     expect(output.system[0]).toContain(OPENWORK_LOCAL_SKILL_AUTHORING_INSTRUCTION);
     expect(output.system[0]).not.toContain(OPENWORK_CLOUD_SKILL_AUTHORING_INSTRUCTION);
     expect(output.system[0]).not.toContain("not ready");
@@ -534,7 +537,7 @@ describe("OpenWorkExtensionsPreview session tools", () => {
     await plugin["experimental.chat.system.transform"]({}, output);
 
     expect(output.system).toHaveLength(1);
-    expect(output.system[0].startsWith("engine header\n")).toBe(true);
+    expect(output.system[0].startsWith("engine header\n\n")).toBe(true);
     expect(output.system[0]).toContain("verified ready for this exact workspace/model");
     expect(output.system[0]).toContain("## Built-in Browser (external websites)");
   });

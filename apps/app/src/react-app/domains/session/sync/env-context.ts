@@ -1,5 +1,6 @@
 import type { OpenworkServerClient } from "../../../../app/lib/openwork-server";
 import { readOpenworkEnvPendingChanges } from "../../../../app/lib/openwork-env-runtime";
+import { readOpenworkRuntimeFacts, renderOpenworkRuntimeContext } from "./runtime-context";
 
 const DEFAULT_CACHE_KEY = "__openwork_env_default__";
 const MAX_CONTEXT_CACHE_ENTRIES = 100;
@@ -67,4 +68,23 @@ function rememberEnvSystemContext(cacheKey: string, context: string | undefined)
     if (firstKey) envSystemContextCache.delete(firstKey);
   }
   envSystemContextCache.set(cacheKey, context);
+}
+
+/**
+ * The per-message `system` context every send carries: the user's time zone,
+ * local date, and locale (computed fresh each send so a long-lived session
+ * crosses midnight correctly), followed by the cached environment-key names
+ * when the workspace has any.
+ */
+export async function buildOpenworkSessionSystemContext(
+  client: OpenworkServerClient | null,
+  options: {
+    cacheKey?: string;
+    runtimeKey?: string | null;
+    readPendingChanges?: () => boolean;
+  } = {},
+): Promise<string> {
+  const envContext = await buildOpenworkEnvSystemContext(client, options);
+  const runtimeContext = renderOpenworkRuntimeContext(readOpenworkRuntimeFacts());
+  return envContext ? `${runtimeContext}\n\n${envContext}` : runtimeContext;
 }

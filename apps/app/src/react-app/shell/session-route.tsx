@@ -105,7 +105,7 @@ import { useCheckDesktopRestriction } from "@/react-app/domains/cloud/desktop-co
 import { useRestrictionNotice } from "@/react-app/domains/cloud/restriction-notice-provider";
 import { ReactSessionRuntime } from "@/react-app/domains/session/sync/runtime-sync";
 import { useSessionActivityStore } from "@/react-app/domains/session/status/session-activity-store";
-import { buildOpenworkEnvSystemContext } from "@/react-app/domains/session/sync/env-context";
+import { buildOpenworkSessionSystemContext } from "@/react-app/domains/session/sync/env-context";
 import {
   applySessionRevert,
   applySessionUnrevert,
@@ -1366,7 +1366,7 @@ export function SessionRoute() {
                 }
 
                 const parts = await draftToParts(draft, selectedWorkspaceRoot, targetSessionId, selectedWorkspaceEndpoint);
-                const envSystemContext = await buildOpenworkEnvSystemContext(client, {
+                const system = await buildOpenworkSessionSystemContext(client, {
                   cacheKey: targetSessionId,
                   runtimeKey: environmentRuntimeKey,
                 });
@@ -1376,7 +1376,7 @@ export function SessionRoute() {
                   model: sendModel ?? undefined,
                   agent: selectedAgent ?? undefined,
                   ...(sendVariant ? { variant: sendVariant } : {}),
-                  ...(envSystemContext ? { system: envSystemContext } : {}),
+                  system,
                 });
                 if (result.error) {
                   throw new Error(serializeSDKError(result.error));
@@ -1684,7 +1684,7 @@ export function SessionRoute() {
                   return;
                 }
                 const parts = await draftToParts(draft, workspaceRoot, targetSessionId, endpoint);
-                const envSystemContext = await buildOpenworkEnvSystemContext(endpoint.client, {
+                const system = await buildOpenworkSessionSystemContext(endpoint.client, {
                   cacheKey: targetSessionId,
                   runtimeKey: workspace.workspaceType === "remote" ? null : environmentRuntimeKey,
                 });
@@ -1694,7 +1694,7 @@ export function SessionRoute() {
                   model: sendModel ?? undefined,
                   agent: selectedAgent ?? undefined,
                   ...(sendVariant ? { variant: sendVariant } : {}),
-                  ...(envSystemContext ? { system: envSystemContext } : {}),
+                  system,
                 });
                 if (result.error) throw new Error(serializeSDKError(result.error));
                 if (sendModel) {

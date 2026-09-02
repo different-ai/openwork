@@ -214,7 +214,7 @@ export default {
   "connect.diagnostics_mcp_config_effective": "Effective configuration observed",
   "connect.diagnostics_mcp_status_unavailable": "Live connection status not queried",
   "connect.diagnostics_mcp_title": "MCP inventory",
-  "connect.diagnostics_memory_marker": "Memory marker",
+  "connect.diagnostics_artifacts_marker": "Artifacts marker",
   "connect.diagnostics_missing_features": "{count} missing features",
   "connect.diagnostics_no": "No",
   "connect.diagnostics_no_headers": "No configured headers",

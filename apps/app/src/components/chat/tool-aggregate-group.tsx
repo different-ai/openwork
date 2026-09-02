@@ -1,14 +1,15 @@
 "use client"
 
 import { Fragment, useState } from "react"
-import { AlertTriangle, ChevronUp, CircleHelp, CirclePause, MoreHorizontal } from "lucide-react"
+import { AlertTriangle, Check, ChevronUp, CircleHelp, CirclePause, Copy, MoreHorizontal } from "lucide-react"
 
 import { FileChip } from "@/components/chat/file-chip"
 import { ShellCommandText } from "@/components/chat/shell-command-text"
 import { ReasoningBlock } from "@/components/chat/reasoning-block"
 import { useCurrentToolLifecycleResolver } from "@/components/chat/current-tool-lifecycle-context"
+import { Button } from "@/components/ui/button"
 import {
-  getAggregateNowLabel,
+  getAggregateNowPart,
   getAggregateCountSummary,
   getToolAggregateLifecycle,
   getAggregateRowFile,
@@ -56,45 +57,84 @@ type DetailBoxProps = {
   onToggle: () => void
 }
 
+function CopyCommandButton({ command }: { command: string }) {
+  const [copied, setCopied] = useState(false)
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(command)
+      setCopied(true)
+      window.setTimeout(() => setCopied(false), 2000)
+    } catch {
+      // Clipboard access can be unavailable outside a secure browser context.
+    }
+  }
+  return (
+    <Button
+      type="button"
+      variant="ghost"
+      size="icon-xs"
+      className="mr-1.5 mt-1.5 shrink-0 text-muted-foreground/70"
+      data-tool-aggregate-copy=""
+      title={copied ? "Copied" : "Copy command"}
+      aria-label={copied ? "Command copied" : "Copy command"}
+      onClick={() => void copy()}
+    >
+      {copied ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
+    </Button>
+  )
+}
+
 /**
  * Monospace detail (a command, a search pattern, an error) shown as one
- * clipped line; clicking reveals the whole text, wrapped, so nothing in
- * an expanded tool group is ever unreadable.
+ * clipped line; clicking reveals the whole text, wrapped inside a bounded
+ * scroll box, so nothing in an expanded tool group is ever unreadable and
+ * a long script never swallows the thread. A full command can be copied.
  */
-function DetailBox({ kind, text, expanded, onToggle }: DetailBoxProps) {
+export function DetailBox({ kind, text, expanded, onToggle }: DetailBoxProps) {
   const noun = kind === "command" ? "command" : kind === "pattern" ? "search pattern" : "error"
-  const textClassName = cn("min-w-0 flex-1", expanded ? "whitespace-pre-wrap break-all" : "line-clamp-1 break-all")
+  const textClassName = cn(
+    "min-w-0 flex-1 break-all",
+    expanded ? "max-h-60 overflow-y-auto whitespace-pre-wrap" : "line-clamp-1",
+  )
   return (
-    <button
-      type="button"
-      data-tool-aggregate-detail={kind}
-      data-tool-aggregate-command={kind === "command" ? "" : undefined}
-      data-command-expanded={expanded ? "true" : "false"}
-      aria-expanded={expanded}
-      aria-label={expanded ? `Collapse ${noun}` : `Show full ${noun}`}
-      onClick={onToggle}
+    <div
       className={cn(
-        "flex min-w-0 max-w-full cursor-pointer gap-2 rounded-xl border px-3 py-2 text-start font-mono transition-colors",
-        expanded ? "items-start [&>svg]:mt-0.5" : "items-center",
+        "flex min-w-0 max-w-full rounded-xl border font-mono transition-colors",
+        expanded ? "items-start" : "items-center",
         kind === "error"
           ? "border-destructive/30 bg-destructive/5 text-xs text-destructive hover:border-destructive/50"
           : "border-border/70 bg-gray-2/60 text-sm hover:border-border hover:bg-gray-3/60",
       )}
     >
-      {kind === "command" ? (
-        <>
-          <span className="shrink-0 text-muted-foreground/60">$</span>
-          <ShellCommandText command={text} className={textClassName} />
-        </>
-      ) : (
-        <code className={textClassName}>{text}</code>
-      )}
-      {expanded ? (
-        <ChevronUp aria-hidden="true" className="size-4 shrink-0 text-muted-foreground/70" />
-      ) : (
-        <MoreHorizontal aria-hidden="true" className="size-4 shrink-0 text-muted-foreground/70" />
-      )}
-    </button>
+      <button
+        type="button"
+        data-tool-aggregate-detail={kind}
+        data-tool-aggregate-command={kind === "command" ? "" : undefined}
+        data-command-expanded={expanded ? "true" : "false"}
+        aria-expanded={expanded}
+        aria-label={expanded ? `Collapse ${noun}` : `Show full ${noun}`}
+        onClick={onToggle}
+        className={cn(
+          "flex min-w-0 flex-1 cursor-pointer gap-2 rounded-xl px-3 py-2 text-start",
+          expanded ? "items-start [&>svg]:mt-0.5" : "items-center",
+        )}
+      >
+        {kind === "command" ? (
+          <>
+            <span className="shrink-0 text-muted-foreground/60">$</span>
+            <ShellCommandText command={text} className={textClassName} />
+          </>
+        ) : (
+          <code className={textClassName}>{text}</code>
+        )}
+        {expanded ? (
+          <ChevronUp aria-hidden="true" className="size-4 shrink-0 text-muted-foreground/70" />
+        ) : (
+          <MoreHorizontal aria-hidden="true" className="size-4 shrink-0 text-muted-foreground/70" />
+        )}
+      </button>
+      {expanded && kind === "command" ? <CopyCommandButton command={text} /> : null}
+    </div>
   )
 }
 
@@ -158,8 +198,9 @@ export function ToolAggregateGroup({ parts, thoughts = [], className }: ToolAggr
   const [fullDetailKeys, setFullDetailKeys] = useState<ReadonlySet<string>>(() => new Set())
   const resolveLifecycle = useCurrentToolLifecycleResolver()
 
+  const detailKey = (toolCallId: string, kind: DetailBoxProps["kind"]) => `${toolCallId}:${kind}`
   const detailBox = (kind: DetailBoxProps["kind"], toolCallId: string, text: string) => {
-    const key = `${toolCallId}:${kind}`
+    const key = detailKey(toolCallId, kind)
     return (
       <DetailBox
         kind={kind}
@@ -200,7 +241,13 @@ export function ToolAggregateGroup({ parts, thoughts = [], className }: ToolAggr
     : aggregateLifecycle === "unknown"
       ? `Status unknown · ${countSummary}`
       : getAggregateSummary(parts, visiblyRunning ? "present" : "past")
-  const nowLabel = visiblyRunning ? getAggregateNowLabel(parts) : null
+  const nowPart = visiblyRunning ? getAggregateNowPart(parts) : null
+  const nowLabel = nowPart ? getAggregateRowLabel(nowPart) : null
+  // A running command is clipped to one line; double-clicking swaps that
+  // line for the same scrollable, copyable box the history uses, so the
+  // whole command is readable while it is still running.
+  const nowCommand = nowPart && isBashToolPart(nowPart) ? nowPart.input?.command?.trim() ?? "" : ""
+  const nowCommandShown = Boolean(nowPart && nowCommand && fullDetailKeys.has(detailKey(nowPart.toolCallId, "command")))
   // The model is thinking mid-run: no tool is in flight but the run's
   // latest thought is still streaming. Show that instead of dead air.
   const lastThought = thoughts.at(-1)
@@ -311,8 +358,24 @@ export function ToolAggregateGroup({ parts, thoughts = [], className }: ToolAggr
         </div>
       ) : null}
 
-      {nowLabel ? (
-        <div data-tool-aggregate-now className="mt-1 min-w-0 text-sm text-muted-foreground">
+      {nowPart && nowCommandShown ? (
+        <div data-tool-aggregate-now className="mt-1.5 min-w-0">
+          {detailBox("command", nowPart.toolCallId, nowCommand)}
+        </div>
+      ) : nowLabel ? (
+        <div
+          data-tool-aggregate-now
+          className="mt-1 min-w-0 text-sm text-muted-foreground"
+          title={nowCommand ? "Double-click to show the full command" : undefined}
+          onDoubleClick={
+            nowPart && nowCommand
+              ? () =>
+                  setFullDetailKeys((current) =>
+                    new Set(current).add(detailKey(nowPart.toolCallId, "command")),
+                  )
+              : undefined
+          }
+        >
           <span className="ow-text-shimmer block min-w-0 truncate">
             {nowLabel}
           </span>
@@ -349,7 +412,7 @@ export function ToolAggregateGroup({ parts, thoughts = [], className }: ToolAggr
                   <ReasoningBlock text={thought.text} isStreaming={thought.isStreaming} />
                 </div>
               ))}
-              <div className="flex min-w-0 flex-col gap-1.5 py-1">
+              <div data-tool-aggregate-row className="flex min-w-0 flex-col gap-1.5 py-1">
                 {!singleCommand ? (
                   <div className="flex min-w-0 items-center gap-2 text-sm text-muted-foreground">
                   {status === "waiting" ? (
