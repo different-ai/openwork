@@ -23,6 +23,11 @@ import { NewCoworker } from "@/ui/new-coworker";
 import { SignInGate } from "@/ui/sign-in";
 import { CoworkerHome } from "@/ui/coworker-home";
 import { CoworkerRail } from "@/ui/coworker-rail";
+import { useResizablePanel } from "@/ui/use-resizable-panel";
+import type { PanelBounds } from "@/lib/panel-layout";
+
+/** The team rail: drag it narrower than a row can show and it folds to avatars. */
+const RAIL_BOUNDS: PanelBounds = { min: 220, max: 380, collapsedWidth: 72, collapseBelow: 170 };
 import { OnboardingWelcome } from "@/ui/onboarding";
 import { AppLoader, CoworkerMark } from "@/ui/brand";
 import { OpenWorkSettings, type SettingsSection } from "@/ui/openwork-settings";
@@ -436,6 +441,13 @@ export default function App() {
     };
   }, [session, coworkers]);
 
+  const rail = useResizablePanel({
+    storageKey: "open-coworker.team-rail",
+    side: "left",
+    bounds: RAIL_BOUNDS,
+    defaultWidth: 272,
+  });
+
   const updateSelectedLiveActivity = useCallback((activity: CoworkerActivity | null) => {
     if (!selectedSlug) return;
     setLiveActivityBySlug((current) => {
@@ -572,6 +584,7 @@ export default function App() {
               coworkers={coworkers}
               activityBySlug={visibleActivityBySlug}
               selectedSlug={selectedSlug}
+              panel={rail}
               onSelect={setSelectedSlug}
               onNewCoworker={() => setCreating(true)}
               onOpenOpenWork={() => openGlobalSettings()}
@@ -593,6 +606,7 @@ export default function App() {
               connect={connectBySlug[selected.slug] ?? null}
               onRepairConnect={() => syncConnect({ force: true, remint: true, slug: selected.slug })}
               onConnectAccount={() => setConnecting(true)}
+              railWidth={rail.width}
             />
           </div>
         )}

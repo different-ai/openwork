@@ -126,6 +126,14 @@ settings store. User-facing copy says "AI model", "AI providers", and "AI is
 ready/unavailable"; the word "engine" is reserved for developer-facing
 documentation, diagnostics, and code.
 
+Both side panels resize by dragging their inner edge and fold away when dragged
+narrower than they can usefully be (or from their chevron). The folded team
+rail keeps every coworker as an avatar with a bottom status dot, marks the
+active one, and shows a hover card naming what that coworker is doing; the
+folded context panel keeps Activity, Apps & tools, Memory, and Coworker
+settings as icons that unfold straight into the chosen view. Widths and folded
+state are remembered per machine.
+
 Signing in also brings OpenWork Connect to every coworker: the app mints the
 same short-lived gateway token the OpenWork desktop uses (`POST /v1/mcp/token`)
 and registers the `openwork-cloud` gateway in each coworker workspace through

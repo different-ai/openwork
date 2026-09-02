@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { coworkerBridge, type CoworkerSummary, type LocalResponsibility, type ProviderSyncRun, type RuntimeInfo } from "@/lib/bridge";
 import { describeNow, describeOutcome, mergeRecentWork, relativeTime } from "@/lib/activity-summary";
 import type { ConnectState } from "@/lib/connect";
@@ -9,7 +9,9 @@ import { AvatarControls, CoworkerAvatar } from "@/ui/coworker-avatar";
 import { PersonalityPicker } from "@/ui/personality-picker";
 import { useWorkingSaying } from "@/ui/use-working-saying";
 import { CapabilitiesPanel } from "@/ui/capabilities";
-import { Button, ErrorNote, Field, IconButton, SlidersIcon, StatusDot, inputClass } from "@/ui/kit";
+import { ActivityIcon, AppsIcon, Button, ChevronIcon, ErrorNote, Field, IconButton, MemoryIcon, SlidersIcon, StatusDot, inputClass } from "@/ui/kit";
+import { useResizablePanel } from "@/ui/use-resizable-panel";
+import type { PanelBounds } from "@/lib/panel-layout";
 import { MemoryPanel } from "@/ui/memory";
 import { ResponsibilitiesPanel } from "@/ui/responsibilities";
 import { ThreadsPanel } from "@/ui/threads";
@@ -26,38 +28,18 @@ const CONTEXT_TITLES: Record<ContextView, string> = {
 };
 
 const CONTEXT_PANEL_WIDTH_KEY = "open-coworker.context-panel-width";
-const CONTEXT_PANEL_MIN_WIDTH = 320;
-const CONTEXT_PANEL_MAX_WIDTH = 620;
+const CONTEXT_PANEL_DEFAULT_WIDTH = 360;
 const MAIN_WORKSPACE_MIN_WIDTH = 520;
-/** The team rail beside the workspace; the thread column keeps its minimum before the panel grows. */
-const RAIL_WIDTH = 272;
+/** The context panel: drag it narrower than it can usefully be and it folds to an icon strip. */
+const CONTEXT_PANEL_BOUNDS: PanelBounds = { min: 320, max: 620, collapsedWidth: 56, collapseBelow: 240 };
 
-function clampContextPanelWidth(width: number): number {
-  const available = typeof window === "undefined"
-    ? CONTEXT_PANEL_MAX_WIDTH
-    : Math.max(CONTEXT_PANEL_MIN_WIDTH, window.innerWidth - RAIL_WIDTH - MAIN_WORKSPACE_MIN_WIDTH);
-  return Math.round(Math.min(CONTEXT_PANEL_MAX_WIDTH, available, Math.max(CONTEXT_PANEL_MIN_WIDTH, width)));
-}
-
-function readContextPanelWidth(): number | null {
-  try {
-    const stored = window.localStorage.getItem(CONTEXT_PANEL_WIDTH_KEY);
-    if (!stored) return null;
-    const width = Number(stored);
-    return Number.isFinite(width) ? clampContextPanelWidth(width) : null;
-  } catch {
-    return null;
-  }
-}
-
-function persistContextPanelWidth(width: number | null): void {
-  try {
-    if (width === null) window.localStorage.removeItem(CONTEXT_PANEL_WIDTH_KEY);
-    else window.localStorage.setItem(CONTEXT_PANEL_WIDTH_KEY, String(width));
-  } catch {
-    // The resize remains available for this session when storage is blocked.
-  }
-}
+const CONTEXT_ICONS: Record<ContextView, (props: { className?: string }) => ReactNode> = {
+  overview: ActivityIcon,
+  capabilities: AppsIcon,
+  memory: MemoryIcon,
+  settings: SlidersIcon,
+};
+const CONTEXT_ORDER: ContextView[] = ["overview", "capabilities", "memory", "settings"];
 
 function activityTone(activity: CoworkerActivity | undefined): "spark" | "mint" | "amber" | "rose" | "mist" {
   if (activity?.state === "working") return "spark";
@@ -91,6 +73,7 @@ export function CoworkerHome({
   connect,
   onRepairConnect,
   onConnectAccount,
+  railWidth,
 }: {
   runtime: RuntimeInfo;
   session: DenSession | null;
@@ -111,18 +94,27 @@ export function CoworkerHome({
   onRepairConnect: () => void;
   /** Start the OpenWork sign-in flow. */
   onConnectAccount: () => void;
+  /** Current width of the team rail, so the thread column keeps its minimum before this panel grows. */
+  railWidth: number;
 }) {
   const [contextView, setContextView] = useState<ContextView>("overview");
   const [settingsFocus, setSettingsFocus] = useState<{ id: number; section: "model" } | null>(null);
   const [assignmentDraft, setAssignmentDraft] = useState<{ id: number; text: string } | null>(null);
   const [discussionDraft, setDiscussionDraft] = useState<{ id: number; text: string } | null>(null);
   const [openThreadRequest, setOpenThreadRequest] = useState<{ id: number; threadId: string } | null>(null);
-  const [contextPanelWidth, setContextPanelWidth] = useState<number | null>(readContextPanelWidth);
-  const [resizingContextPanel, setResizingContextPanel] = useState(false);
-  const contextPanelDrag = useRef<{ startX: number; startWidth: number; currentWidth: number } | null>(null);
-
-  const contextualPanelWidth = contextView === "capabilities" ? 430 : 360;
-  const renderedContextPanelWidth = clampContextPanelWidth(contextPanelWidth ?? contextualPanelWidth);
+  const contextPanelRoom = useCallback(() => Math.max(CONTEXT_PANEL_BOUNDS.min, window.innerWidth - railWidth - MAIN_WORKSPACE_MIN_WIDTH), [railWidth]);
+  const contextPanel = useResizablePanel({
+    storageKey: CONTEXT_PANEL_WIDTH_KEY,
+    side: "right",
+    bounds: CONTEXT_PANEL_BOUNDS,
+    defaultWidth: CONTEXT_PANEL_DEFAULT_WIDTH,
+    available: contextPanelRoom,
+  });
+  /** Open one view, unfolding the panel if it was collapsed. */
+  function showContext(view: ContextView): void {
+    setContextView(view);
+    if (contextPanel.collapsed) contextPanel.expand();
+  }
 
   useEffect(() => () => onActivityChange(null), [onActivityChange]);
 
@@ -156,57 +148,6 @@ export function CoworkerHome({
       window.clearTimeout(timer);
     };
   }, [coworker.model, coworker.slug, coworker.workspaceId, onCoworkerChanged, runtime.engineManaged, runtime.ownerToken, runtime.serverUrl]);
-
-  useEffect(() => {
-    if (!resizingContextPanel) return;
-    const move = (event: PointerEvent) => {
-      const drag = contextPanelDrag.current;
-      if (!drag) return;
-      const next = clampContextPanelWidth(drag.startWidth + drag.startX - event.clientX);
-      drag.currentWidth = next;
-      setContextPanelWidth(next);
-    };
-    const finish = () => {
-      const width = contextPanelDrag.current?.currentWidth ?? null;
-      contextPanelDrag.current = null;
-      setResizingContextPanel(false);
-      if (width !== null) persistContextPanelWidth(width);
-    };
-    document.body.classList.add("is-resizing-context-panel");
-    window.addEventListener("pointermove", move);
-    window.addEventListener("pointerup", finish, { once: true });
-    window.addEventListener("pointercancel", finish, { once: true });
-    return () => {
-      document.body.classList.remove("is-resizing-context-panel");
-      window.removeEventListener("pointermove", move);
-      window.removeEventListener("pointerup", finish);
-      window.removeEventListener("pointercancel", finish);
-    };
-  }, [resizingContextPanel]);
-
-  useEffect(() => {
-    const keepWithinWindow = () => {
-      setContextPanelWidth((current) => {
-        if (current === null) return null;
-        const next = clampContextPanelWidth(current);
-        if (next !== current) persistContextPanelWidth(next);
-        return next;
-      });
-    };
-    window.addEventListener("resize", keepWithinWindow);
-    return () => window.removeEventListener("resize", keepWithinWindow);
-  }, []);
-
-  function setManualContextPanelWidth(width: number): void {
-    const next = clampContextPanelWidth(width);
-    setContextPanelWidth(next);
-    persistContextPanelWidth(next);
-  }
-
-  function resetContextPanelWidth(): void {
-    setContextPanelWidth(null);
-    persistContextPanelWidth(null);
-  }
 
   return (
     <div className="glass-main flex h-full min-w-0 flex-1">
@@ -243,7 +184,7 @@ export function CoworkerHome({
             discussionDraft={discussionDraft}
             openThreadRequest={openThreadRequest}
             onOpenModelSettings={() => {
-              setContextView("settings");
+              showContext("settings");
               setSettingsFocus({ id: Date.now(), section: "model" });
             }}
             onOpenAccount={() => onOpenOpenWork("account")}
@@ -253,52 +194,50 @@ export function CoworkerHome({
       </div>
 
       <aside
-        className={`glass-context relative flex h-full shrink-0 flex-col border-l border-line ${resizingContextPanel ? "" : "transition-[width] duration-200"}`}
-        style={{ width: renderedContextPanelWidth }}
+        className={`glass-context relative flex h-full shrink-0 flex-col border-l border-line ${contextPanel.resizing ? "" : "transition-[width] duration-200"}`}
+        style={{ width: contextPanel.width }}
+        data-testid="context-panel"
+        data-collapsed={contextPanel.collapsed ? "true" : "false"}
+        data-view={contextView}
       >
         <div
-          role="separator"
+          {...contextPanel.separatorProps}
           aria-label="Resize context panel"
-          aria-orientation="vertical"
-          aria-valuemin={CONTEXT_PANEL_MIN_WIDTH}
-          aria-valuemax={CONTEXT_PANEL_MAX_WIDTH}
-          aria-valuenow={renderedContextPanelWidth}
-          aria-valuetext={`${renderedContextPanelWidth} pixels wide`}
-          tabIndex={0}
           className="window-no-drag group absolute inset-y-0 -left-[5px] z-30 w-[10px] cursor-col-resize outline-none"
-          title="Drag to resize · Double-click to reset"
+          title="Drag to resize · Drag closed to collapse · Double-click to reset"
           data-testid="context-panel-resizer"
-          onPointerDown={(event) => {
-            event.preventDefault();
-            contextPanelDrag.current = {
-              startX: event.clientX,
-              startWidth: renderedContextPanelWidth,
-              currentWidth: renderedContextPanelWidth,
-            };
-            setResizingContextPanel(true);
-          }}
-          onDoubleClick={resetContextPanelWidth}
-          onKeyDown={(event) => {
-            if (event.key === "ArrowLeft") {
-              event.preventDefault();
-              setManualContextPanelWidth(renderedContextPanelWidth + (event.shiftKey ? 40 : 12));
-            } else if (event.key === "ArrowRight") {
-              event.preventDefault();
-              setManualContextPanelWidth(renderedContextPanelWidth - (event.shiftKey ? 40 : 12));
-            } else if (event.key === "Home") {
-              event.preventDefault();
-              setManualContextPanelWidth(CONTEXT_PANEL_MIN_WIDTH);
-            } else if (event.key === "End") {
-              event.preventDefault();
-              setManualContextPanelWidth(CONTEXT_PANEL_MAX_WIDTH);
-            } else if (event.key === "Enter") {
-              event.preventDefault();
-              resetContextPanelWidth();
-            }
-          }}
         >
           <span className="absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-transparent transition-colors group-hover:bg-spark/45 group-focus-visible:bg-spark/70" />
         </div>
+        {contextPanel.collapsed ? (
+          <>
+            <div className="glass-header window-drag flex h-[78px] flex-col items-center justify-end border-b border-line pb-3 pt-2">
+              <IconButton label="Show panel" className="window-no-drag" data-testid="context-panel-expand" onClick={contextPanel.expand}>
+                <ChevronIcon direction="left" />
+              </IconButton>
+            </div>
+            <nav aria-label="Coworker panels" className="flex flex-col items-center gap-1 px-2 py-3">
+              {CONTEXT_ORDER.map((view) => {
+                const Icon = CONTEXT_ICONS[view];
+                const active = view === contextView;
+                return (
+                  <IconButton
+                    key={view}
+                    label={CONTEXT_TITLES[view]}
+                    data-testid={`context-rail-${view}`}
+                    data-active={active ? "true" : "false"}
+                    aria-current={active ? "true" : undefined}
+                    className={active ? "bg-white/8 text-snow ring-1 ring-white/10" : ""}
+                    onClick={() => showContext(view)}
+                  >
+                    <Icon />
+                  </IconButton>
+                );
+              })}
+            </nav>
+          </>
+        ) : (
+          <>
         <header className="glass-header window-drag flex h-[78px] items-center gap-3 border-b border-line px-4 pt-2">
           {contextView !== "overview" ? (
             <IconButton label="Back to activity" className="window-no-drag" onClick={() => setContextView("overview")}>
@@ -316,6 +255,9 @@ export function CoworkerHome({
               <SlidersIcon />
             </IconButton>
           ) : null}
+          <IconButton label="Hide panel" className="window-no-drag" data-testid="context-panel-collapse" onClick={contextPanel.collapse}>
+            <ChevronIcon direction="right" />
+          </IconButton>
         </header>
         <div className="min-h-0 flex-1 overflow-y-auto p-4">
           {contextView === "overview" ? (
@@ -367,6 +309,8 @@ export function CoworkerHome({
             />
           ) : null}
         </div>
+          </>
+        )}
       </aside>
     </div>
   );
@@ -538,22 +482,23 @@ function CoworkerOverview({
       </section>
 
       <nav aria-label="More for this coworker" className="mt-auto flex items-center justify-between gap-1 border-t border-line pt-3 text-[11px]">
-        <QuietLink onClick={onOpenCapabilities}>Apps & tools</QuietLink>
-        <QuietLink onClick={onOpenMemory}>Memory</QuietLink>
-        <QuietLink onClick={onOpenSettings}>Coworker settings</QuietLink>
+        <QuietLink icon={<AppsIcon className="size-3.5" />} onClick={onOpenCapabilities}>Apps & tools</QuietLink>
+        <QuietLink icon={<MemoryIcon className="size-3.5" />} onClick={onOpenMemory}>Memory</QuietLink>
+        <QuietLink icon={<SlidersIcon className="size-3.5" />} onClick={onOpenSettings}>Coworker settings</QuietLink>
       </nav>
     </div>
   );
 }
 
-function QuietLink({ children, onClick }: { children: string; onClick: () => void }) {
+function QuietLink({ icon, children, onClick }: { icon: ReactNode; children: string; onClick: () => void }) {
   return (
     <button
       type="button"
-      className="rounded-lg px-2 py-1.5 font-medium text-mist transition-colors hover:bg-white/5 hover:text-snow focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-spark/60"
+      className="flex items-center gap-1.5 rounded-lg px-2 py-1.5 font-medium text-mist transition-colors hover:bg-white/5 hover:text-snow focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-spark/60"
       onClick={onClick}
     >
-      {children}
+      <span className="text-mist/80" aria-hidden="true">{icon}</span>
+      <span>{children}</span>
     </button>
   );
 }
@@ -688,23 +633,7 @@ function CoworkerSettings({
 
   return (
     <div className="space-y-5">
-      <section ref={modelSectionRef} className="rounded-2xl border border-line bg-ink p-4" data-testid="coworker-model-settings">
-        <h3 className="mb-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-mist">AI model</h3>
-        <ModelPicker
-          runtime={runtime}
-          session={session}
-          coworker={coworker}
-          value={coworker.model}
-          modelVariant={coworker.modelVariant}
-          onChange={(selection) => void updateModel(selection)}
-          onSyncProviders={onSyncProviders}
-          onConnect={onOpenAccount}
-          compact
-        />
-        <p className="mt-2 text-xs leading-relaxed text-mist">{coworker.name} uses this AI model and thinking effort for every discussion, assignment, and responsibility.</p>
-      </section>
-
-      <section className="space-y-3 rounded-2xl border border-line bg-ink p-4">
+      <section className="space-y-3 rounded-2xl border border-line bg-ink p-4" data-testid="coworker-profile-settings">
         <h3 className="text-[10px] font-semibold uppercase tracking-[0.14em] text-mist">Profile</h3>
         <div className="flex items-center gap-4">
           <div className="avatar-stage flex size-24 shrink-0 items-center justify-center rounded-2xl border border-line">
@@ -738,6 +667,22 @@ function CoworkerSettings({
         <Button variant="primary" className="w-full" disabled={busy} onClick={() => void saveProfile()}>
           {busy ? "Saving…" : "Save profile"}
         </Button>
+      </section>
+
+      <section ref={modelSectionRef} className="rounded-2xl border border-line bg-ink p-4" data-testid="coworker-model-settings">
+        <h3 className="mb-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-mist">AI model</h3>
+        <ModelPicker
+          runtime={runtime}
+          session={session}
+          coworker={coworker}
+          value={coworker.model}
+          modelVariant={coworker.modelVariant}
+          onChange={(selection) => void updateModel(selection)}
+          onSyncProviders={onSyncProviders}
+          onConnect={onOpenAccount}
+          compact
+        />
+        <p className="mt-2 text-xs leading-relaxed text-mist">{coworker.name} uses this AI model and thinking effort for every discussion, assignment, and responsibility.</p>
       </section>
 
       <section className="flex items-center justify-between gap-3 rounded-2xl border border-line bg-ink px-4 py-3">
