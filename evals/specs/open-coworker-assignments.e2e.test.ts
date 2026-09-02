@@ -194,9 +194,17 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
   // --- Back to the discussion: the count is one, the list names the assignment, the chat is unchanged.
   await clickButton(app, "←");
   await waitFor(app, `Boolean(document.querySelector('[data-testid="coworker-discussion-view"]'))`, { timeoutMs: 60_000, label: "back in the discussion view" });
-  await waitForText(app, CHAT_REPLY, { timeoutMs: 30_000 });
-  // The discussion is titled after its first message; that title belongs to the thread row, not the assignment list.
-  expect(await evalIn(app, `document.querySelector('[data-testid="coworker-discussion-switcher"]')?.textContent?.trim() ?? ""`)).toContain(CHAT_PROMPT);
+  // The discussion is titled after its first message; that title belongs to the thread row, not the
+  // assignment list. Wait for the row itself: the sidebar can show the same words before the
+  // transcript has loaded back into the view.
+  await waitFor(app, `(document.querySelector('[data-testid="coworker-discussion-switcher"]')?.textContent ?? "").includes(${JSON.stringify(CHAT_PROMPT)})`, {
+    timeoutMs: 60_000,
+    label: "discussion row titled after its first message",
+  });
+  await waitFor(app, `[...document.querySelectorAll('[data-message-role="assistant"]')].some((message) => (message.textContent ?? "").includes(${JSON.stringify(CHAT_REPLY)}))`, {
+    timeoutMs: 30_000,
+    label: "chat reply back in the discussion view",
+  });
   await waitFor(app, `[...document.querySelectorAll("button")]
     .some((button) => (button.textContent ?? "").trim() === "Assignments · 1")`, {
     timeoutMs: 30_000,
