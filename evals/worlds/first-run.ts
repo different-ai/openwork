@@ -7,7 +7,17 @@ import { SkipError } from "@openwork/env";
 import type { Place, Seed } from "@openwork/env";
 import { createAndSelectWorkspace, evalIn, go, waitFor as waitForBehavior } from "@openwork/behaviors";
 import { allocateFreePort } from "@openwork/cdp";
-import { chrome, desktop, localHost } from "@openwork/hosts";
+import {
+  checkedExec,
+  chrome,
+  daytonaSandbox,
+  defaultDaytonaExec,
+  deleteSandboxes,
+  desktop,
+  enterpriseTlsEdgeDaytonaCommands,
+  localHost,
+  provisionDesktopSandbox,
+} from "@openwork/hosts";
 import { startEgressLab, startMockMcp } from "@openwork/labs";
 import { diagnoseEgressLabProduct } from "@openwork/behaviors";
 import { matchVerdictExpectations } from "@openwork/matchers";
@@ -15,6 +25,7 @@ import {
   assignPluginToMarketplace,
   captureOpenedUrls,
   completeDesktopHandoff,
+  createDesktopHandoffGrant,
   createMarketplace,
   createPluginWithSkill,
   ensureMemberSession,
@@ -39,6 +50,7 @@ export {
 } from "@openwork/behaviors";
 export {
   checkedExec,
+  chrome,
   daytonaSandbox,
   defaultDaytonaExec,
   deleteSandboxes,
@@ -146,11 +158,12 @@ export async function firstRunBootstrapWorld(seed: Seed) {
   const proxy = await seed.faultProxy(den);
   proxy.faults.status("/api/den/v1/me/desktop-config", 429, { times: 5 });
   const proxiedDen = { ...den, ref: proxy.ref };
-  const app = await seed.desktop({ den: proxiedDen, as: "member" });
-  return { app, den, proxy };
+  const grant = await createDesktopHandoffGrant(den.members.member);
+  const app = await seed.desktop({ den: proxiedDen, signIn: false });
+  return { app, den, proxy, grant };
 }
 
-export async function firstSignInWorld(seed: Seed, { place }: { place: Place }) {
+export async function firstSignInWorld(seed: Seed) {
   const den = await seed.den({
     org: {
       name: "First Signin Heal",
@@ -161,16 +174,9 @@ export async function firstSignInWorld(seed: Seed, { place }: { place: Place }) 
   const proxy = await seed.faultProxy(den);
   proxy.faults.status("/api/den/v1/me/orgs", 429, { times: 3 });
   const proxiedDen = { ...den, ref: proxy.ref };
-  // seed.desktop does not yet expose localServerDelayMs.
-  const app = await startApp({ den: proxiedDen, as: "fresh", place, localServerDelayMs: 3_000 });
-  return {
-    app,
-    den,
-    proxy,
-    async [Symbol.asyncDispose]() {
-      await app[Symbol.asyncDispose]();
-    },
-  };
+  const grant = await createDesktopHandoffGrant(den.members.fresh);
+  const app = await seed.desktop({ den: proxiedDen, signIn: false });
+  return { app, den, proxy, grant };
 }
 
 export async function testkitAppBootWorld(_seed: Seed, { place }: { place: Place }) {
@@ -350,7 +356,15 @@ export async function compatibleReleaseWorld(_seed: Seed, { place }: { place: Pl
 
 export async function reliableRecoveryWorld(_seed: Seed, { place }: { place: Place }) {
   const profileDir = `/tmp/openwork-reliable-recovery-${process.pid}-${Date.now()}`;
-  const host = place.host();
+  const provisioned = place.kind === "daytona"
+    ? await provisionDesktopSandbox({
+        ref: process.env.OPENWORK_EVAL_REF?.trim() || process.env.GITHUB_SHA?.trim() || "dev",
+        name: "reliable-app-recovery",
+        reuse: process.env.OPENWORK_EVAL_DAYTONA_SANDBOX?.trim(),
+        log: (line) => console.error(`[openwork/testkit] ${line}`),
+      })
+    : null;
+  const host = provisioned ? daytonaSandbox(provisioned.sandbox) : localHost();
   const seeded = await desktop({ name: "recovery-profile-seed", host, profileDir });
   const names = await evalIn(seeded, `window.__OPENWORK_ELECTRON__.invokeDesktop("workspaceCreate", {
     folderPath: ${JSON.stringify(`${profileDir}/continuity-workspace`)}, name: "reliable-recovery-profile-marker"
@@ -382,7 +396,18 @@ export async function reliableRecoveryWorld(_seed: Seed, { place }: { place: Pla
     workspaceNames,
     async [Symbol.asyncDispose]() {
       await app.stop();
-      if (place.kind === "local") await rm(profileDir, { recursive: true, force: true });
+      if (provisioned) {
+        await checkedExec(
+          defaultDaytonaExec,
+          ["exec", provisioned.sandbox, "--", "rm", "-rf", profileDir],
+          `remove caller-owned recovery profile ${profileDir}`,
+          { timeoutMs: 30_000 },
+        );
+      } else {
+        await rm(profileDir, { recursive: true, force: true });
+      }
+      await host[Symbol.asyncDispose]();
+      if (provisioned?.created) await deleteSandboxes([provisioned.sandbox]);
     },
   };
 }
@@ -469,6 +494,141 @@ export async function updaterChannelWorld(_seed: Seed) {
   };
 }
 
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, `'"'"'`)}'`;
+}
+
+function remoteCommand(sandbox: string, command: string): string[] {
+  return ["exec", sandbox, "--", `bash -lc ${shellQuote(command)}`];
+}
+
+async function cleanup(label: string, action: () => PromiseLike<unknown>): Promise<void> {
+  try {
+    await action();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`[openwork/testkit] ${label} cleanup failed: ${message}`);
+  }
+}
+
+export async function enterpriseTlsWorld(seed: Seed, { place }: { place: Place }) {
+  const den = await seed.den();
+  const provisioned = await provisionDesktopSandbox({
+    ref: process.env.OPENWORK_EVAL_REF?.trim() || process.env.GITHUB_SHA?.trim() || "dev",
+    name: "den-behind-enterprise-tls",
+    reuse: process.env.OPENWORK_EVAL_DAYTONA_SANDBOX?.trim(),
+    log: (line) => console.error(`[openwork/testkit] ${line}`),
+  });
+  const profileDir = `/workspace/.openwork-daytona/profiles/enterprise-tls-${process.pid}-${Date.now()}`;
+  const edge = enterpriseTlsEdgeDaytonaCommands({ sandboxId: provisioned.sandbox, upstream: den.ref.webUrl });
+  let edgeStarted = false;
+  let rootInstallAttempted = false;
+  let rawApp: Awaited<ReturnType<typeof desktop>> | null = null;
+  let trustedApp: Awaited<ReturnType<typeof startApp>> | null = null;
+  const host = daytonaSandbox(provisioned.sandbox);
+
+  const dispose = async () => {
+    if (trustedApp) await cleanup("dispose trusted enterprise TLS app", () => trustedApp?.[Symbol.asyncDispose]() ?? Promise.resolve());
+    if (rawApp) await cleanup("dispose pre-trust enterprise TLS app", () => rawApp?.stop() ?? Promise.resolve());
+    await cleanup("remove caller-owned enterprise TLS profile", () => checkedExec(
+      defaultDaytonaExec,
+      ["exec", provisioned.sandbox, "--", "rm", "-rf", profileDir],
+      `remove caller-owned profile ${profileDir}`,
+      { timeoutMs: 30_000 },
+    ));
+    if (rootInstallAttempted) {
+      await cleanup("remove enterprise TLS root", () => checkedExec(defaultDaytonaExec, edge.removeRoot, "remove enterprise TLS root", { timeoutMs: 120_000 }));
+    }
+    if (edgeStarted) {
+      await cleanup("stop enterprise TLS edge", () => checkedExec(defaultDaytonaExec, edge.stop, "stop enterprise TLS edge", { timeoutMs: 30_000 }));
+    }
+    await cleanup("dispose Daytona desktop host", () => host[Symbol.asyncDispose]());
+    if (provisioned.created) await cleanup("delete Daytona desktop sandbox", () => deleteSandboxes([provisioned.sandbox]));
+  };
+
+  try {
+    for (const [index, command] of edge.prepare.entries()) {
+      await checkedExec(defaultDaytonaExec, command, `prepare enterprise TLS edge chunk ${index + 1}/${edge.prepare.length}`, { timeoutMs: 30_000 });
+    }
+    await checkedExec(defaultDaytonaExec, edge.start, "start enterprise TLS edge", { timeoutMs: 120_000 });
+    edgeStarted = true;
+    await checkedExec(defaultDaytonaExec, edge.probe, "probe enterprise TLS edge", { timeoutMs: 30_000 });
+    rawApp = await desktop({
+      name: "enterprise-tls-before-os-trust",
+      host,
+      profileDir,
+      bootstrap: { baseUrl: edge.candidateUrl, requireSignin: false },
+    });
+    // TODO(primitive): seed a named workspace in a caller-owned desktop profile.
+    const seededWorkspaceNames = await seed.evalIn(
+      rawApp,
+      `window.__OPENWORK_ELECTRON__.invokeDesktop("workspaceCreate", {
+        folderPath: ${JSON.stringify(`${profileDir}/continuity-workspace`)},
+        name: "enterprise-tls-profile-continuity"
+      }).then((state) => state.workspaces.map((workspace) => workspace.displayName))`,
+      { awaitPromise: true },
+    );
+    if (!Array.isArray(seededWorkspaceNames) || !seededWorkspaceNames.includes("enterprise-tls-profile-continuity")) {
+      throw new Error("Could not seed the enterprise TLS continuity workspace.");
+    }
+    const grant = await createDesktopHandoffGrant(den.admin);
+    const app = rawApp;
+    return {
+      app,
+      den,
+      edge,
+      grant,
+      profileDir,
+      async installTrust() {
+        await app.stop();
+        rawApp = null;
+        rootInstallAttempted = true;
+        await checkedExec(
+          defaultDaytonaExec,
+          edge.installRoot,
+          "ENTERPRISE_TLS_ROOT_INSTALL_REQUIRED (root and update-ca-certificates)",
+          { timeoutMs: 120_000 },
+        );
+        const candidateDen = { ...den, ref: { webUrl: edge.candidateUrl, apiUrl: `${edge.candidateUrl}/api/den` } };
+        trustedApp = await startApp({ den: candidateDen, as: "admin", place, host, profileDir });
+        return trustedApp;
+      },
+      inspectBundle() {
+        const bundlePath = `${profileDir}/electron-userdata/system-ca-bundle.pem`;
+        return checkedExec(
+          defaultDaytonaExec,
+          remoteCommand(provisioned.sandbox, [
+            "set -euo pipefail",
+            `test -s ${shellQuote(bundlePath)}`,
+            `/usr/bin/openssl crl2pkcs7 -nocrl -certfile ${shellQuote(bundlePath)} | /usr/bin/openssl pkcs7 -print_certs -noout`,
+          ].join("; ")),
+          "inspect product-generated profile system CA bundle",
+          { timeoutMs: 30_000 },
+        );
+      },
+      probeSelectiveTrust(encodedProbe: string) {
+        const bundlePath = `${profileDir}/electron-userdata/system-ca-bundle.pem`;
+        return checkedExec(
+          defaultDaytonaExec,
+          remoteCommand(
+            provisioned.sandbox,
+            `export NODE_EXTRA_CA_CERTS=${shellQuote(bundlePath)}; /usr/bin/env node --input-type=module -e "\$(printf %s ${shellQuote(encodedProbe)} | base64 -d)" ${shellQuote(edge.candidateUrl)} ${shellQuote(edge.negativeUrl)}`,
+          ),
+          "probe selective trust with product-generated CA bundle",
+          { timeoutMs: 30_000 },
+        );
+      },
+      readEdgeRequests() {
+        return checkedExec(defaultDaytonaExec, edge.requests, "read enterprise TLS edge requests", { timeoutMs: 30_000 });
+      },
+      [Symbol.asyncDispose]: dispose,
+    };
+  } catch (error) {
+    await dispose();
+    throw error;
+  }
+}
+
 export async function appDenTlsFaultWorld(_seed: Seed, { place }: { place: Place }) {
   const edge = await startEgressLab({ profile: "intercept" });
   const app = await desktop({
@@ -490,67 +650,40 @@ export async function appDenTlsFaultWorld(_seed: Seed, { place }: { place: Place
   };
 }
 
-export async function firstRunCloudShareWorld(_seed: Seed, { place }: { place: Place }) {
-  const apiUrl = process.env.OPENWORK_EVAL_DEN_API_URL?.trim().replace(/\/+$/, "") ?? "";
-  const webUrl = (process.env.OPENWORK_EVAL_DEN_WEB_URL?.trim() || apiUrl.replace("127.0.0.1", "localhost")).replace(/\/+$/, "");
-  const password = process.env.OPENWORK_EVAL_DEMO_PASSWORD?.trim() || "OpenWorkDemo123!";
-  const adminEmail = process.env.OPENWORK_EVAL_DEMO_EMAIL?.trim() || "alex@acme.test";
-  const colleagueEmail = process.env.OPENWORK_EVAL_MEMBER_EMAIL?.trim() || "jordan.demo@acme.test";
-  const capture = await captureOpenedUrls();
-  const app = await desktop({
-    name: "first-run-cloud-share",
-    host: place.host(),
-    bootstrap: { baseUrl: webUrl, requireSignin: false },
-    env: { PATH: `${capture.binDir}:${process.env.PATH ?? ""}` },
+export async function firstRunCloudShareWorld(seed: Seed) {
+  const den = await seed.den({
+    org: {
+      name: "Acme",
+      admin: { email: `first-run-cloud-admin-${Date.now()}@openwork.test`, name: "Alex" },
+      members: { colleague: { email: `first-run-cloud-colleague-${Date.now()}@openwork.test`, name: "Jordan" } },
+    },
   });
-  let browser: Awaited<ReturnType<typeof chrome>> | null = null;
-  const finishSignIn = async () => {
-    const handoffUrl = await capture.waitForUrl(
-      (url) => url.includes("desktopAuth=1") || url.includes("desktopScheme=") || url.includes("grant="),
-      { timeoutMs: 90_000 },
-    );
-    if (!handoffUrl.startsWith(webUrl)) throw new Error(`The app opened an unexpected origin: ${handoffUrl}`);
-    browser = await chrome({ name: "cloud-signin", startUrl: "about:blank", host: place.host() });
-    await signInInBrowser(browser, handoffUrl, { email: adminEmail, password });
-    const deepLink = await readHandoffDeepLink(browser, { timeoutMs: 120_000 });
-    await completeDesktopHandoff(app, deepLink, webUrl);
-    return { handoffUrl, deepLink, browser };
-  };
+  const app = await seed.desktop({ den, signIn: false });
+  const web = await seed.web({
+    den,
+    startPath: "/?mode=sign-up&desktopAuth=1&desktopScheme=openwork",
+    headless: true,
+    viewport: { width: 1280, height: 900, deviceScaleFactor: 1 },
+  });
   const shareSkill = async () => {
-    const den = { apiUrl, webUrl };
-    const admin = await signIn(den, { email: adminEmail, password });
-    const colleague = await ensureMemberSession(den, admin, {
-      email: colleagueEmail,
-      password,
-      name: "Jordan Demo",
-      markVerifiedCmd: process.env.OPENWORK_EVAL_MARK_VERIFIED_CMD?.trim(),
-    });
     const stamp = Date.now();
     const skillName = `shared-standup-${stamp}`;
-    const marketplace = await createMarketplace(admin, { name: `Team Marketplace ${stamp}` });
-    const plugin = await createPluginWithSkill(admin, {
+    const marketplace = await createMarketplace(den.admin, { name: `Team Marketplace ${stamp}` });
+    const plugin = await createPluginWithSkill(den.admin, {
       name: `Standup Kit ${stamp}`,
       skillName,
       skillBody: "Summarise yesterday, today, and blockers in three short bullets.",
       marketplaceId: marketplace.id,
     });
-    await assignPluginToMarketplace(admin, marketplace.id, plugin.id).catch(async (error: unknown) => {
-      const resolved = await readResolvedMarketplace(admin, marketplace.id);
+    await assignPluginToMarketplace(den.admin, marketplace.id, plugin.id).catch(async (error: unknown) => {
+      const resolved = await readResolvedMarketplace(den.admin, marketplace.id);
       if (!resolved.pluginNames.includes(plugin.name)) throw error;
     });
-    await grantMarketplaceAccess(admin, marketplace.id, { orgWide: true });
-    const visible = await readResolvedMarketplace(colleague, marketplace.id);
+    await grantMarketplaceAccess(den.admin, marketplace.id, { orgWide: true });
+    const visible = await readResolvedMarketplace(den.members.colleague, marketplace.id);
     return { plugin, skillName, visible };
   };
-  return {
-    app,
-    finishSignIn,
-    shareSkill,
-    async [Symbol.asyncDispose]() {
-      if (browser) await browser[Symbol.asyncDispose]();
-      await app.stop();
-    },
-  };
+  return { app, web, den, shareSkill };
 }
 
 function toolResultJson(result: unknown): Record<string, unknown> {
