@@ -44,3 +44,16 @@ export function drainPendingDeepLinks(target: Window): string[] {
   }
   return [...pending];
 }
+
+/**
+ * Remove and return only the pending links a consumer owns, leaving the rest
+ * queued for the consumers that parse them.
+ */
+export function takePendingDeepLinks(target: Window, owns: (url: string) => boolean): string[] {
+  const pending = target.__OPENWORK__?.deepLinks ?? [];
+  const taken = pending.filter(owns);
+  if (target.__OPENWORK__ && taken.length > 0) {
+    target.__OPENWORK__.deepLinks = pending.filter((url) => !owns(url));
+  }
+  return taken;
+}

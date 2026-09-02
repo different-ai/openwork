@@ -17,6 +17,7 @@ import {
 } from "./prompt-file-parts";
 import { appMentionInstruction } from "../surface/composer/app-mentions";
 import { connectSkillPrompt, parseConnectSkillToken } from "../surface/composer/connect-skill-token";
+import { connectorPrompt, parseConnectorToken } from "../surface/composer/connector-token";
 import { decodeComposerMentionValue } from "../surface/composer/mention-encoding";
 
 // All workspace-scoped server URLs/clients/tokens come from
@@ -75,8 +76,13 @@ export async function draftToParts(
         .filter((part): part is Extract<ComposerPart, { type: "paste" }> => part.type === "paste")
         .map((part) => [part.label, part.text] as const),
     );
-    for (const segment of draft.text.split(/(\[attachment [^\]]+\]|\[pasted text [^\]]+\]|\[connect-skill [^\]]+\]|\[skill [^\]]+\]|@[^\s@]+)/)) {
+    for (const segment of draft.text.split(/(\[attachment [^\]]+\]|\[pasted text [^\]]+\]|\[connect-skill [^\]]+\]|\[skill [^\]]+\]|\[connector [^\]]+\]|@[^\s@]+)/)) {
       if (!segment) continue;
+      const connectorName = parseConnectorToken(segment);
+      if (connectorName) {
+        parts.push({ type: "text", text: connectorPrompt(connectorName) });
+        continue;
+      }
       const attachmentMatch = segment.match(/^\[attachment (.+)\]$/);
       if (attachmentMatch?.[1]) {
         const filePart = attachmentFileById.get(attachmentMatch[1]);

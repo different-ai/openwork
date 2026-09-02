@@ -20,6 +20,18 @@ export type ConnectDeepLink = {
   key: string;
 };
 
+/** `openwork://chat?prompt=…&connector=…` — open a new chat with a seeded composer. */
+export type ChatDeepLink = {
+  prompt: string;
+  /** Connector the prompt is about (rendered as a chip ahead of the prompt). */
+  connector: string | null;
+  /** Dedupe key so a replayed queue never seeds the same chat twice. */
+  key: string;
+};
+
+const CHAT_DEEP_LINK_PROMPT_MAX_LENGTH = 4000;
+const CHAT_DEEP_LINK_CONNECTOR_MAX_LENGTH = 80;
+
 function isSupportedDeepLinkProtocol(protocol: string): boolean {
   const normalized = protocol.toLowerCase();
   return normalized === "openwork:"
@@ -177,6 +189,45 @@ export function parseConnectDeepLink(rawUrl: string): ConnectDeepLink | null {
   }
 
   return { rawUrl, key: signed ? `signed:${token}` : `exchange:${apiBaseUrl}:${code}` };
+}
+
+export function parseChatDeepLink(rawUrl: string): ChatDeepLink | null {
+  let url: URL;
+  try {
+    url = new URL(rawUrl);
+  } catch {
+    return null;
+  }
+
+  // Chat seeding is a desktop handoff from Den; ordinary web URLs never
+  // pre-fill the composer.
+  const protocol = url.protocol.toLowerCase();
+  if (protocol !== "openwork:" && protocol !== "openwork-dev:") {
+    return null;
+  }
+
+  const routeHost = url.hostname.toLowerCase();
+  const routePath = url.pathname.replace(/^\/+/, "").toLowerCase();
+  const routeSegments = routePath.split("/").filter(Boolean);
+  const routeTail = routeSegments[routeSegments.length - 1] ?? "";
+  if (routeHost !== "chat" && routePath !== "chat" && routeTail !== "chat") {
+    return null;
+  }
+
+  const prompt = (url.searchParams.get("prompt") ?? "").trim().slice(0, CHAT_DEEP_LINK_PROMPT_MAX_LENGTH);
+  const connector = (url.searchParams.get("connector") ?? "")
+    .trim()
+    .replace(/[\[\]\n\r]/g, "")
+    .slice(0, CHAT_DEEP_LINK_CONNECTOR_MAX_LENGTH);
+  if (!prompt && !connector) {
+    return null;
+  }
+
+  return {
+    prompt,
+    connector: connector || null,
+    key: `chat:${connector}:${prompt}`,
+  };
 }
 
 function normalizeDebugDeepLinkInput(rawValue: string): string {
