@@ -521,6 +521,12 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
   await clickButton(app, "Add coworker", { timeoutMs: 120_000 });
   await waitFor(app, `Boolean(document.querySelector('[data-testid="coworker-discussion-view"]')) && [...document.querySelectorAll("h1")].some((heading) => heading.textContent?.trim() === "Scout")`, { timeoutMs: 120_000, label: "Scout discussion view" });
   expect(await evalIn(app, `document.querySelector('[data-testid="composer-model-control"]') === null`)).toBe(true);
+  // A person waits for the coworker to read Ready before asking anything of it; so does the journey.
+  await waitFor(app, `(() => {
+    const summary = document.querySelector('[data-testid="coworker-activity-summary"]');
+    if (!(summary instanceof HTMLElement)) return false;
+    return summary.innerText.split("\\n").map((line) => line.trim()).filter(Boolean)[0] === "Ready";
+  })()`, { timeoutMs: 240_000, label: "coworker AI ready" });
   await waitFor(app, `(() => {
     const button = document.querySelector('[data-testid="coworker-settings-button"]');
     if (!(button instanceof HTMLElement)) return false;
