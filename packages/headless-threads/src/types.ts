@@ -44,6 +44,12 @@ export interface HeadlessThreadMessagePart {
   ignored?: boolean;
 }
 
+/** The provider and model that produced an assistant message, as the engine recorded them. */
+export interface HeadlessThreadMessageModel {
+  providerId: string;
+  modelId: string;
+}
+
 export interface HeadlessThreadMessage {
   id: string;
   role: string;
@@ -52,6 +58,8 @@ export interface HeadlessThreadMessage {
   createdAt: number | null;
   error: HeadlessThreadMessageError | null;
   usage: HeadlessThreadUsage | null;
+  /** Set on assistant messages once the engine has bound the reply to a model. */
+  model: HeadlessThreadMessageModel | null;
   parts: HeadlessThreadMessagePart[];
 }
 
@@ -169,6 +177,8 @@ export interface HeadlessTranscriptMessage {
   createdAt: number | null;
   text: string;
   reasoning: string;
+  /** Which model answered; null for user messages and replies the engine has not attributed yet. */
+  model: HeadlessThreadMessageModel | null;
   toolCalls: HeadlessTranscriptToolCall[];
 }
 

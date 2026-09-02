@@ -13,7 +13,7 @@ type RecordedRequest = {
   redirect: RequestRedirect | undefined;
   signal: AbortSignal | undefined;
 };
-type MessageWire = { info: { id: string; role: string; parentID?: string; time?: { created: number }; error?: unknown; tokens?: unknown; cost?: number }; parts: unknown[] };
+type MessageWire = { info: { id: string; role: string; parentID?: string; providerID?: string; modelID?: string; time?: { created: number }; error?: unknown; tokens?: unknown; cost?: number }; parts: unknown[] };
 /** One poll's worth of thread state, consumed in order by snapshot reads. */
 type Beat = { status: HeadlessThreadStatus; messages: MessageWire[] };
 
@@ -408,6 +408,30 @@ describe("getThreadSnapshot", () => {
       toolError: "",
       toolMetadata: { openworkMcpApp: appResult },
     });
+  });
+
+  test("attributes assistant replies to the model the engine recorded and leaves user turns unattributed", async () => {
+    const double = createOpenworkDouble({
+      messages: [
+        { info: { id: "msg_user", role: "user", time: { created: 1 } }, parts: [{ id: "prt_user", type: "text", text: "Ping" }] },
+        {
+          info: { id: "msg_reply", role: "assistant", parentID: "msg_user", providerID: "openwork", modelID: "fable", time: { created: 2 } },
+          parts: [{ id: "prt_reply", type: "text", text: "Pong" }],
+        },
+        // A reply the engine accepted but has not bound to a model yet carries no attribution.
+        { info: { id: "msg_pending", role: "assistant", parentID: "msg_user", time: { created: 3 } }, parts: [] },
+      ],
+    });
+
+    const snapshot = await createClient(double).getThreadSnapshot(SESSION_ID);
+
+    expect(snapshot.messages.map((message) => message.model)).toEqual([
+      null,
+      { providerId: "openwork", modelId: "fable" },
+      null,
+    ]);
+    const transcript = await createClient(double).exportTranscript(SESSION_ID);
+    expect(transcript.messages[1]?.model).toEqual({ providerId: "openwork", modelId: "fable" });
   });
 });
 

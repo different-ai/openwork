@@ -1,6 +1,14 @@
-import { useCallback, useEffect, useState } from "react";
-import { coworkerBridge, type CoworkerSummary, type RuntimeInfo } from "@/lib/bridge";
-import { createDenAutomationsClient, readDenSession, writeDenSession, type DenSession } from "@/lib/den";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { coworkerBridge, type CoworkerSummary, type ProviderSyncRun, type RuntimeInfo } from "@/lib/bridge";
+import {
+  createDenAutomationsClient,
+  exchangeGrant,
+  parsePastedGrant,
+  providerSyncSession,
+  readDenSession,
+  writeDenSession,
+  type DenSession,
+} from "@/lib/den";
 import { readCoworkerActivity, type CoworkerActivity } from "@/lib/threads";
 import { Button, ErrorNote } from "@/ui/kit";
 import { NewCoworker } from "@/ui/new-coworker";
@@ -9,27 +17,38 @@ import { CoworkerHome } from "@/ui/coworker-home";
 import { CoworkerRail } from "@/ui/coworker-rail";
 import { OnboardingWelcome } from "@/ui/onboarding";
 import { AppLoader, CoworkerMark } from "@/ui/brand";
-import { OpenWorkSettings } from "@/ui/openwork-settings";
+import { OpenWorkSettings, type SettingsSection } from "@/ui/openwork-settings";
+
+/** Identity of a pushed account context; the server itself no-ops on a repeat. */
+function sessionKey(session: DenSession): string {
+  return `${session.baseUrl}\u0000${session.orgId}\u0000${session.token}`;
+}
 
 export default function App() {
   const [runtime, setRuntime] = useState<RuntimeInfo | null>(null);
   const [bootError, setBootError] = useState("");
   const [session, setSession] = useState<DenSession | null>(() => readDenSession());
+  const [providerSync, setProviderSync] = useState<ProviderSyncRun | null>(null);
+  const [signInBusy, setSignInBusy] = useState(false);
+  const [signInError, setSignInError] = useState("");
   const [coworkers, setBots] = useState<CoworkerSummary[]>([]);
   const [selectedSlug, setSelectedSlug] = useState("");
   const [creating, setCreating] = useState(false);
   const [connecting, setConnecting] = useState(false);
   const [onboardingReady, setOnboardingReady] = useState(false);
-  const [globalSettingsOpen, setGlobalSettingsOpen] = useState(false);
+  const [globalSettings, setGlobalSettings] = useState<SettingsSection | null>(null);
+  const [globalSettingsMounted, setGlobalSettingsMounted] = useState(false);
   const [activityBySlug, setActivityBySlug] = useState<Record<string, CoworkerActivity>>({});
   const [liveActivityBySlug, setLiveActivityBySlug] = useState<Record<string, CoworkerActivity>>({});
   const [attentionBySlug, setAttentionBySlug] = useState<Record<string, string>>({});
+  const pushedSessionKeyRef = useRef("");
+  const settingsReturnFocusRef = useRef<HTMLElement | null>(null);
 
   const boot = useCallback(async () => {
     try {
+      const list = await coworkerBridge.coworkers.list();
       const info = await coworkerBridge.runtimeInfo();
       setRuntime(info);
-      const list = await coworkerBridge.coworkers.list();
       setBots(list);
       setSelectedSlug((current) =>
         current && list.some((coworker) => coworker.slug === current) ? current : (list[0]?.slug ?? ""),
@@ -43,6 +62,116 @@ export default function App() {
   useEffect(() => {
     void boot();
   }, [boot]);
+
+  const openGlobalSettings = useCallback((section: SettingsSection = "general") => {
+    const opener = document.activeElement;
+    settingsReturnFocusRef.current = opener instanceof HTMLElement && opener !== document.body ? opener : null;
+    setGlobalSettingsMounted(true);
+    setGlobalSettings(section);
+  }, []);
+
+  const closeGlobalSettings = useCallback(() => {
+    setGlobalSettings(null);
+  }, []);
+
+  useEffect(() => {
+    if (globalSettings) return;
+    const target = settingsReturnFocusRef.current;
+    settingsReturnFocusRef.current = null;
+    if (target?.isConnected) target.focus({ preventScroll: true });
+  }, [globalSettings]);
+
+  const refreshRuntime = useCallback(async () => {
+    const info = await coworkerBridge.runtimeInfo();
+    setRuntime(info);
+  }, []);
+
+  /**
+   * Hand the signed-in account to the embedded server so the member's
+   * authorized providers become engine providers. Runs on boot for a stored
+   * session and again after every sign-in; the server ignores a repeat.
+   */
+  const pushSession = useCallback(async (next: DenSession): Promise<ProviderSyncRun> => {
+    pushedSessionKeyRef.current = sessionKey(next);
+    try {
+      const run = await coworkerBridge.den.setSession(providerSyncSession(next));
+      setProviderSync(run);
+      return run;
+    } catch (cause) {
+      const failed: ProviderSyncRun = { status: "failed", message: cause instanceof Error ? cause.message : String(cause) };
+      setProviderSync(failed);
+      return failed;
+    } finally {
+      void refreshRuntime();
+    }
+  }, [refreshRuntime]);
+
+  useEffect(() => {
+    if (!runtime || !session || pushedSessionKeyRef.current === sessionKey(session)) return;
+    void pushSession(session);
+  }, [pushSession, runtime, session]);
+
+  const signInWithGrant = useCallback(async (grant: string, baseUrl?: string) => {
+    if (!runtime) return;
+    setSignInBusy(true);
+    setSignInError("");
+    try {
+      const next = await exchangeGrant(baseUrl ?? runtime.denBaseUrl, grant);
+      writeDenSession(next);
+      setSession(next);
+      await pushSession(next);
+      setConnecting(false);
+      if (coworkers.length === 0) {
+        setOnboardingReady(true);
+        setCreating(true);
+      }
+    } catch (cause) {
+      setSignInError(cause instanceof Error ? cause.message : String(cause));
+      setConnecting(true);
+    } finally {
+      setSignInBusy(false);
+    }
+  }, [coworkers.length, pushSession, runtime]);
+
+  // Den's "Open in app" button returns here as an opencoworker://den-auth link.
+  useEffect(() => {
+    if (!runtime) return;
+    return coworkerBridge.onDeepLink((urls) => {
+      for (const url of urls) {
+        const parsed = parsePastedGrant(url);
+        if (parsed) {
+          void signInWithGrant(parsed.grant, parsed.baseUrl);
+          return;
+        }
+      }
+    });
+  }, [runtime, signInWithGrant]);
+
+  const signOut = useCallback(async () => {
+    writeDenSession(null);
+    setSession(null);
+    setProviderSync(null);
+    pushedSessionKeyRef.current = "";
+    try {
+      await coworkerBridge.den.clearSession();
+    } finally {
+      void refreshRuntime();
+    }
+  }, [refreshRuntime]);
+
+  const syncProviders = useCallback(async (): Promise<ProviderSyncRun> => {
+    try {
+      const run = await coworkerBridge.den.syncProviders();
+      setProviderSync(run);
+      return run;
+    } catch (cause) {
+      const failed: ProviderSyncRun = { status: "failed", message: cause instanceof Error ? cause.message : String(cause) };
+      setProviderSync(failed);
+      return failed;
+    } finally {
+      void refreshRuntime();
+    }
+  }, [refreshRuntime]);
 
   useEffect(() => {
     if (!runtime) return;
@@ -151,11 +280,6 @@ export default function App() {
     };
   }, [session, coworkers]);
 
-  const refreshRuntime = useCallback(async () => {
-    const info = await coworkerBridge.runtimeInfo();
-    setRuntime(info);
-  }, []);
-
   const updateSelectedLiveActivity = useCallback((activity: CoworkerActivity | null) => {
     if (!selectedSlug) return;
     setLiveActivityBySlug((current) => {
@@ -190,17 +314,14 @@ export default function App() {
   if (connecting) {
     return (
       <SignInGate
-        denBaseUrl={runtime.denBaseUrl}
-        onSignedIn={(next) => {
-          writeDenSession(next);
-          setSession(next);
+        runtime={runtime}
+        busy={signInBusy}
+        error={signInError}
+        onGrant={(grant, baseUrl) => void signInWithGrant(grant, baseUrl)}
+        onDismiss={() => {
+          setSignInError("");
           setConnecting(false);
-          if (coworkers.length === 0) {
-            setOnboardingReady(true);
-            setCreating(true);
-          }
         }}
-        onDismiss={() => setConnecting(false)}
       />
     );
   }
@@ -218,23 +339,6 @@ export default function App() {
   }
 
   const selected = coworkers.find((coworker) => coworker.slug === selectedSlug) ?? null;
-  if (globalSettingsOpen) {
-    return (
-      <OpenWorkSettings
-        runtime={runtime}
-        session={session}
-        coworkers={coworkers}
-        selectedCoworker={selected}
-        onClose={() => setGlobalSettingsOpen(false)}
-        onConnect={() => setConnecting(true)}
-        onSignOut={() => {
-          writeDenSession(null);
-          setSession(null);
-        }}
-        onRefreshRuntime={refreshRuntime}
-      />
-    );
-  }
   const visibleActivityBySlug: Record<string, CoworkerActivity> = {};
   for (const coworker of coworkers) {
     const attention = attentionBySlug[coworker.slug];
@@ -268,54 +372,86 @@ export default function App() {
   }
 
   return (
-    <div className="window-shell flex h-full overflow-hidden">
-      <CoworkerRail
-        runtime={runtime}
-        session={session}
-        coworkers={coworkers}
-        activityBySlug={visibleActivityBySlug}
-        selectedSlug={creating ? "" : selectedSlug}
-        onSelect={(slug) => {
-          setCreating(false);
-          setSelectedSlug(slug);
-        }}
-        onNewCoworker={() => {
-          setCreating(true);
-        }}
-        onOpenOpenWork={() => setGlobalSettingsOpen(true)}
-      />
-      {creating || !selected ? (
-        <div className="min-w-0 flex-1">
-          <NewCoworker
-            runtime={runtime}
-            onCancel={selected || coworkers.length > 0 ? () => setCreating(false) : null}
-            onCreated={(coworker) => {
-              setCreating(false);
-              setBots((current) =>
-                [...current.filter((item) => item.slug !== coworker.slug), coworker].sort((a, b) =>
-                  a.name.localeCompare(b.name),
-                ),
-              );
-              setSelectedSlug(coworker.slug);
-              void refreshRuntime();
-            }}
-          />
-        </div>
-      ) : (
-        <CoworkerHome
-          key={selected.slug}
+    <div className="window-shell relative flex h-full overflow-hidden" data-testid="coworker-shell">
+      <div
+        className={globalSettings ? "hidden" : "flex min-w-0 flex-1"}
+        data-testid="coworker-workspace"
+        data-active={globalSettings ? "false" : "true"}
+      >
+        <CoworkerRail
           runtime={runtime}
           session={session}
           coworkers={coworkers}
-          coworker={selected}
-          activity={visibleActivityBySlug[selected.slug]}
-          onActivityChange={updateSelectedLiveActivity}
-          onCoworkerChanged={updateCoworkerInList}
-          onCoworkerRemoved={removeCoworkerFromList}
-          onRefreshRuntime={refreshRuntime}
-          onOpenOpenWork={() => setGlobalSettingsOpen(true)}
+          activityBySlug={visibleActivityBySlug}
+          selectedSlug={creating ? "" : selectedSlug}
+          onSelect={(slug) => {
+            setCreating(false);
+            setSelectedSlug(slug);
+          }}
+          onNewCoworker={() => {
+            setCreating(true);
+          }}
+          onOpenOpenWork={() => openGlobalSettings()}
         />
-      )}
+        {creating || !selected ? (
+          <div className="min-w-0 flex-1">
+            <NewCoworker
+              runtime={runtime}
+              session={session}
+              onConnect={() => setConnecting(true)}
+              onSyncProviders={syncProviders}
+              onCancel={selected || coworkers.length > 0 ? () => setCreating(false) : null}
+              onCreated={(coworker) => {
+                setCreating(false);
+                setBots((current) =>
+                  [...current.filter((item) => item.slug !== coworker.slug), coworker].sort((a, b) =>
+                    a.name.localeCompare(b.name),
+                  ),
+                );
+                setSelectedSlug(coworker.slug);
+                void refreshRuntime();
+              }}
+            />
+          </div>
+        ) : (
+          <CoworkerHome
+            key={selected.slug}
+            runtime={runtime}
+            session={session}
+            coworkers={coworkers}
+            coworker={selected}
+            activity={visibleActivityBySlug[selected.slug]}
+            onActivityChange={updateSelectedLiveActivity}
+            onCoworkerChanged={updateCoworkerInList}
+            onCoworkerRemoved={removeCoworkerFromList}
+            onRefreshRuntime={refreshRuntime}
+            onSyncProviders={syncProviders}
+            onOpenOpenWork={(section) => openGlobalSettings(section ?? "general")}
+          />
+        )}
+      </div>
+      {globalSettingsMounted ? (
+        <div
+          className={globalSettings ? "absolute inset-0 flex" : "hidden"}
+          data-testid="openwork-settings-pane"
+          data-active={globalSettings ? "true" : "false"}
+        >
+          <OpenWorkSettings
+            active={Boolean(globalSettings)}
+            runtime={runtime}
+            session={session}
+            providerSync={providerSync}
+            coworkers={coworkers}
+            selectedCoworker={selected}
+            initialSection={globalSettings ?? "general"}
+            onClose={closeGlobalSettings}
+            onConnect={() => setConnecting(true)}
+            onSignOut={signOut}
+            onSyncProviders={syncProviders}
+            onRefreshRuntime={refreshRuntime}
+          />
+        </div>
+      ) : null}
     </div>
   );
 }
