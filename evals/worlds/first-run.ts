@@ -116,9 +116,11 @@ export async function parentChildPermissionWorld(seed: Seed) {
 
 export async function artifactCodeBrowserWorld(seed: Seed) {
   const base = await workspaceWorld(seed);
-  await seed.sessions(base.app, ["Artifact code browser proof"]);
+  const [session] = await seed.sessions(base.app, ["Artifact code browser proof"]);
+  if (!session) throw new Error("Could not seed the artifact code browser session.");
+  await go(base.app, `/workspace/${base.workspace.workspaceId}/session/${session.sessionId}`);
   // TODO(primitive): write workspace files through the local server fixture.
-  const wrote = await evalIn(base.app, `(async () => {
+  const wrote = await seed.evalIn(base.app, `(async () => {
     const port = localStorage.getItem("openwork.server.port");
     const token = localStorage.getItem("openwork.server.token");
     if (!port || !token) return false;
@@ -137,9 +139,16 @@ export async function artifactCodeBrowserWorld(seed: Seed) {
     return responses.every((response) => response.ok);
   })()`, { awaitPromise: true });
   if (wrote !== true) throw new Error("Could not seed artifact code files.");
+  // TODO(primitive): open an initial built-in browser artifact tab.
+  await seed.evalIn(base.app, `window.__openworkControl.execute("browser.open_url", { url: "about:blank" })`, { awaitPromise: true });
+  await waitForBehavior(
+    base.app,
+    `window.__openworkControl.listActions().some((action) => action.id === "eval.artifact_tabs.seed_overflow" && !action.disabled)`,
+    { timeoutMs: 30_000, label: "artifact seed action enabled" },
+  );
   // TODO(primitive): seed artifact tabs through a first-class artifact fixture.
-  const tabs = await evalIn(base.app, `window.__openworkControl.execute("eval.artifact_tabs.seed_overflow", { count: 12 })`, { awaitPromise: true });
-  if (!isRecord(tabs)) throw new Error(`Could not seed artifact tabs: ${JSON.stringify(tabs)}`);
+  const tabs = await seed.evalIn(base.app, `window.__openworkControl.execute("eval.artifact_tabs.seed_overflow", { count: 12 })`, { awaitPromise: true });
+  if (!isRecord(tabs) || tabs.ok !== true) throw new Error(`Could not seed artifact tabs: ${JSON.stringify(tabs)}`);
   return base;
 }
 
