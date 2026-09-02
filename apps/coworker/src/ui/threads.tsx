@@ -1088,6 +1088,9 @@ function ThreadView({
       });
       return;
     }
+    // A turn accepted in this same effect pass (the first message of a new discussion) has
+    // already announced itself; clearing here would leave the header on Ready for one frame.
+    if (pendingTurnRef.current) return;
     onActivityChange(null);
   }, [activeToolLabel, coworker.name, displayedFailure, kind, needsYou, onActivityChange, pending, statusLabel, stopped, threadId, title, turnIssue, working, workingLabel]);
 
