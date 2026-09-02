@@ -1,6 +1,5 @@
 _archive
 _worktrees
-.git
 .opencode
 vendor
 **/node_modules
