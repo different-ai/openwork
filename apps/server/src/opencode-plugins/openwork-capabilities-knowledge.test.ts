@@ -16,22 +16,18 @@ describe("OpenWork capabilities knowledge plugin", () => {
     expect(knowledge).toContain("search_capabilities");
     expect(knowledge).toContain("execute_capability");
     // Protocol and client-setup detail lives in the docs, reachable through
-    // openwork_docs_read — the always-on prompt only routes to it. Keeping
-    // OAuth mechanics out of every request saves ~2.5k characters per turn.
-    expect(knowledge).toContain("read packages/docs/cloud/run-in-the-cloud/cloud-mcp.mdx with openwork_docs_read");
+    // openwork_docs_read with a docs-relative path — the always-on prompt only
+    // routes to it. Keeping OAuth mechanics out of every request saves ~2.5k
+    // characters per turn.
+    expect(knowledge).toContain("read cloud/run-in-the-cloud/cloud-mcp.mdx with openwork_docs_read");
+    expect(knowledge).toContain("read cloud/share-with-your-team/desktop-policies.mdx");
+    expect(knowledge).not.toContain("packages/docs/");
     expect(knowledge).not.toContain("cursor://anysphere.cursor-mcp/oauth/callback");
     expect(knowledge).not.toContain("RFC9728 discovery");
     expect(knowledge).not.toContain("JWTs signed and validated with EdDSA");
     expect(knowledge).not.toContain("30-day inactivity window");
     expect(knowledge).not.toContain("codex mcp login openwork");
     expect(knowledge).toContain("OpenWork documentation tools answer product questions. Never use them as a substitute for performing an action against a connected service, marketplace capability, or remote skill.");
-    expect(knowledge).toContain("require the user to sign in to OpenWork first");
-    expect(knowledge).toContain("Runtime steering from the OpenWork extensions plugin is the source of truth");
-    expect(knowledge).toContain("retrieve the listed remote `create-skill` skill with its exact capability");
-    expect(knowledge).toContain("Follow the separate runtime `Skill creation:` instruction");
-    expect(knowledge).not.toContain("create custom skills in `.opencode/skills/`");
-    expect(knowledge).not.toContain("First call `openwork-cloud_search_capabilities`");
-    expect(knowledge).not.toContain("then call `openwork-cloud_execute_capability`");
     expect(knowledge).toContain("Settings > Library");
     expect(knowledge).toContain("Settings > Debug");
     expect(knowledge).toContain("custom or local MCP server");
@@ -41,6 +37,36 @@ describe("OpenWork capabilities knowledge plugin", () => {
     expect(knowledge).not.toContain("openwork_extensions_export");
   });
 
+  test("states each rule once and never describes removed or duplicated guidance", async () => {
+    const plugin = await OpenWorkCapabilitiesKnowledge();
+    const output = { system: [] };
+
+    await plugin["experimental.chat.system.transform"]({}, output);
+
+    const knowledge = output.system.join("\n");
+    // Den removed the Memory Bank; cross-chat memory is session history only,
+    // read through session.search/session.read without navigating the user.
+    expect(knowledge).not.toContain("Memory Bank");
+    expect(knowledge).toContain("## Other sessions");
+    expect(knowledge).toContain("use the session affordances described under OpenWork app context");
+    expect(knowledge).not.toContain("session.search then session.read");
+    expect(knowledge).not.toContain("open the matching session");
+    // Owned elsewhere: Connect tool mechanics (base prompt), readiness and
+    // sign-in direction (runtime steering), skill-authoring mode (steering),
+    // browser and app-control mechanics (extensions plugin), and the
+    // Automation listing's read-live rule (catalog section).
+    expect(knowledge).not.toContain("openwork-cloud_search_capabilities");
+    expect(knowledge).not.toContain("require the user to sign in to OpenWork first");
+    expect(knowledge).not.toContain("source of truth for whether Cloud execution tools");
+    expect(knowledge).not.toContain("retrieve the listed remote `create-skill` skill");
+    expect(knowledge).not.toContain("NOT browser tools");
+    expect(knowledge).not.toContain("Only report schedules, status, next runs, or results from an actual capability call");
+    expect(knowledge).not.toContain("Important docs to know");
+    expect(knowledge).toContain("Create them as the `Skill creation:` instruction in this prompt directs.");
+    expect(knowledge).toContain("use the user's time zone stated in this prompt");
+    expect(knowledge).toContain("Deactivation stops future runs but does not cancel a run already in progress.");
+  });
+
   test("extends the engine system entry instead of adding a second system message", async () => {
     const plugin = await OpenWorkCapabilitiesKnowledge();
     const output = { system: ["engine header"] };
@@ -48,7 +74,7 @@ describe("OpenWork capabilities knowledge plugin", () => {
     await plugin["experimental.chat.system.transform"]({}, output);
 
     expect(output.system).toHaveLength(1);
-    expect(output.system[0].startsWith("engine header\nYou are running inside OpenWork.")).toBe(true);
+    expect(output.system[0].startsWith("engine header\n\nYou are running inside OpenWork.")).toBe(true);
   });
 
   test("retrieves Slack connection guidance from bundled docs", async () => {
@@ -140,10 +166,12 @@ describe("OpenWork capabilities knowledge plugin", () => {
     expect(knowledge).toContain("updateAutomation");
     expect(knowledge).toContain("runAutomationNow");
     expect(knowledge).toContain("cancelAutomationRun");
-    expect(knowledge).toContain("Only report schedules, status, next runs, or results from an actual capability call");
+    // "Read live before reporting" is owned by the Automation catalog section
+    // that accompanies the listing; the knowledge block does not restate it.
+    expect(knowledge).not.toContain("from an actual capability call");
     expect(knowledge).toContain("Deactivation stops future runs but does not cancel a run already in progress");
     expect(knowledge).not.toContain("you cannot create, activate, or run an Automation");
-    expect(knowledge).toContain("There is no interval schedule");
+    expect(knowledge).toContain("there is no interval schedule");
     expect(knowledge).toContain("signed-in desktop runner");
   });
 

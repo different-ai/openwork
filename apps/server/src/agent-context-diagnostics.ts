@@ -338,7 +338,7 @@ function promptEvidence(configuredAgent: Record<string, unknown> | null) {
     markers: {
       searchCapabilities: prompt.includes("search_capabilities"),
       executeCapability: prompt.includes("execute_capability"),
-      memoryBank: prompt.includes("Memory Bank"),
+      artifacts: prompt.includes("## OpenWork Artifacts"),
     },
   };
 }
@@ -1326,7 +1326,7 @@ export async function runAgentContextDiagnostics(input: {
   const expectedPrompt = promptEvidence(expectedAgent);
   const promptMarkersPresent = prompt.markers.searchCapabilities
     && prompt.markers.executeCapability
-    && prompt.markers.memoryBank;
+    && prompt.markers.artifacts;
   const canonicalPromptDigestMatch = prompt.sha256 !== null
     && expectedPrompt.sha256 !== null
     && prompt.sha256 === expectedPrompt.sha256;

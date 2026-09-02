@@ -18,31 +18,35 @@ test("OpenWork system-prompt hooks keep the engine request at one system message
   const knowledge = await OpenWorkCapabilitiesKnowledge();
   const output: { system: string[] } = { system: ["engine header"] };
 
-  await extensions["experimental.chat.system.transform"]({}, output);
+  // Registration order in the runtime config: knowledge (operating rules)
+  // first, then extensions (app mechanics, live steering, catalogs).
   await knowledge["experimental.chat.system.transform"]({}, output);
+  await extensions["experimental.chat.system.transform"]({}, output);
 
   expect(output.system).toHaveLength(1);
-  expect(output.system[0].startsWith("engine header\n")).toBe(true);
+  expect(output.system[0].startsWith("engine header\n\n")).toBe(true);
   // Nothing was dropped to get there: both contributions are still present,
   // in registration order, after the engine header.
-  const routing = output.system[0].indexOf("verified ready for this exact workspace/model");
-  const browser = output.system[0].indexOf("## Built-in Browser (external websites)");
   const capabilities = output.system[0].indexOf("You are running inside OpenWork.");
-  expect(routing).toBeGreaterThan("engine header".length);
-  expect(browser).toBeGreaterThan(routing);
-  expect(capabilities).toBeGreaterThan(browser);
+  const appContext = output.system[0].indexOf("## OpenWork app context");
+  const browser = output.system[0].indexOf("## Built-in Browser (external websites)");
+  const routing = output.system[0].indexOf("verified ready for this exact workspace/model");
+  expect(capabilities).toBeGreaterThan("engine header".length);
+  expect(appContext).toBeGreaterThan(capabilities);
+  expect(browser).toBeGreaterThan(appContext);
+  expect(routing).toBeGreaterThan(browser);
 
   // Negative half: when the engine hands over an empty array the hooks still
   // produce exactly one entry, never a leading empty message.
   const empty: { system: string[] } = { system: [] };
-  await extensions["experimental.chat.system.transform"]({}, empty);
   await knowledge["experimental.chat.system.transform"]({}, empty);
+  await extensions["experimental.chat.system.transform"]({}, empty);
   expect(empty.system).toHaveLength(1);
   expect(empty.system[0].startsWith("\n")).toBe(false);
 
   evidence.recordAssertionEvidence(
     "OpenWork instructions fold into a single system message",
-    "Running the extensions-preview and capabilities-knowledge transform hooks in registration order leaves the engine system array at length 1, with the engine header first and every OpenWork section retained in order; an empty engine array also yields exactly one non-empty entry.",
+    "Running the capabilities-knowledge and extensions-preview transform hooks in registration order leaves the engine system array at length 1, with the engine header first and every OpenWork section retained in order (rules, app mechanics, browser, then live steering); an empty engine array also yields exactly one non-empty entry.",
     true,
   );
 });

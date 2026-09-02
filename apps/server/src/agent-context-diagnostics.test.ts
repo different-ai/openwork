@@ -1253,7 +1253,7 @@ describe("agent context diagnostics analyzer", () => {
       dependencies: {
         fetchImpl: catalogFetch(["search_capabilities", "execute_capability"], []),
         inspectEffectiveEngine: effectiveEngineInspection(diagnosticRuntimeConfig(), {
-          prompt: "search_capabilities execute_capability Memory Bank",
+          prompt: "search_capabilities execute_capability ## OpenWork Artifacts",
         }),
       },
     });
@@ -1264,7 +1264,7 @@ describe("agent context diagnostics analyzer", () => {
       details: {
         searchCapabilities: true,
         executeCapability: true,
-        memoryBank: true,
+        artifacts: true,
         canonicalPromptDigestMatch: false,
       },
     });
