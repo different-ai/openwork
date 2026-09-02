@@ -3,7 +3,7 @@ import type { CoworkerSummary, RuntimeInfo } from "@/lib/bridge";
 import type { DenSession } from "@/lib/den";
 import type { CoworkerActivity } from "@/lib/threads";
 import { CoworkerAvatar } from "@/ui/coworker-avatar";
-import { Button, ChevronIcon, IconButton, PlusIcon, SlidersIcon, StatusDot } from "@/ui/kit";
+import { Button, IconButton, PlusIcon, SlidersIcon, StatusDot } from "@/ui/kit";
 import { CoworkerMark } from "@/ui/brand";
 import type { ResizablePanel } from "@/ui/use-resizable-panel";
 import { useWorkingSaying } from "@/ui/use-working-saying";
@@ -97,9 +97,6 @@ export function CoworkerRail({
             <CoworkerMark size={30} />
           </div>
           <div className="flex flex-col items-center gap-1 px-2 pb-2">
-            <IconButton label="Show team details" data-testid="coworker-rail-expand" onClick={panel.expand}>
-              <ChevronIcon direction="right" />
-            </IconButton>
             <IconButton label="New coworker" onClick={onNewCoworker}>
               <PlusIcon />
             </IconButton>
@@ -189,9 +186,6 @@ export function CoworkerRail({
               <Button variant="ghost" className="window-no-drag size-8 rounded-full px-0 py-0 text-lg" onClick={onNewCoworker} title="New coworker">
                 <span aria-hidden="true">+</span>
               </Button>
-              <IconButton label="Hide team details" className="window-no-drag" data-testid="coworker-rail-collapse" onClick={panel.collapse}>
-                <ChevronIcon direction="left" />
-              </IconButton>
             </div>
           </div>
           <div className="px-3 pb-3">
@@ -275,7 +269,7 @@ export function CoworkerRail({
         {...panel.separatorProps}
         aria-label="Resize team rail"
         className="window-no-drag group absolute inset-y-0 -right-[5px] z-30 w-[10px] cursor-col-resize outline-none"
-        title="Drag to resize · Drag closed to collapse · Double-click to reset"
+        title={collapsed ? "Click to show the team · Drag to resize" : "Drag to resize · Click or drag closed to fold"}
         data-testid="coworker-rail-resizer"
       >
         <span className="absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-transparent transition-colors group-hover:bg-spark/45 group-focus-visible:bg-spark/70" />

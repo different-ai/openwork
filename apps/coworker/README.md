@@ -144,7 +144,9 @@ ready/unavailable"; the word "engine" is reserved for developer-facing
 documentation, diagnostics, and code.
 
 Both side panels resize by dragging their inner edge and fold away when dragged
-narrower than they can usefully be (or from their chevron). The folded team
+narrower than they can usefully be; a plain click on that edge folds or unfolds
+them, so there is no separate fold button (the keyboard still nudges, folds
+with Home, and resets with Enter). The folded team
 rail keeps every coworker as an avatar with a bottom status dot, marks the
 active one, and shows a hover card naming what that coworker is doing; the
 folded context panel keeps Activity, Apps & tools, Memory, and Coworker
