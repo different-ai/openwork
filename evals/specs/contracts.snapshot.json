@@ -277,6 +277,7 @@
       "id": "desktop.chat-composer",
       "description": "Desktop chat rendering, composer drafts, queued sends, attachments, and resend behavior",
       "implementation": [
+        "apps/app/src/components/chat/**",
         "apps/app/src/react-app/domains/session/chat/**",
         "apps/app/src/react-app/domains/session/surface/**",
         "apps/app/src/react-app/domains/session/sync/**"
@@ -286,6 +287,7 @@
         "evals/specs/chat-loading-shimmer.e2e.test.ts",
         "evals/specs/chat-render-cycle-stability.e2e.test.ts",
         "evals/specs/chat-survives-flaky-den-link.e2e.test.ts",
+        "evals/specs/chat-tool-details-expand.e2e.test.ts",
         "evals/specs/clamp-html-errors.e2e.test.ts",
         "evals/specs/composer-draft-reload.e2e.test.ts",
         "evals/specs/composer-focus-continuity.e2e.test.ts",
