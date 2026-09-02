@@ -13,6 +13,7 @@ import type {
   Agent,
   Probe,
   Seed,
+  SpecTestApi,
   SpecWorldOptions,
   Step,
   User,
@@ -74,6 +75,7 @@ async function buildWithTimeout<W>(worldFn: WorldFn<W>, seed: Seed, place: Place
   }
 }
 
+function world<W>(worldFn: WorldFn<W>, options?: SpecWorldOptions): SpecTestApi<W>;
 function world<W>(worldFn: WorldFn<W>, options: SpecWorldOptions = {}) {
   const scope = options.scope ?? "test";
   const api = fixtureTest.extend<{
