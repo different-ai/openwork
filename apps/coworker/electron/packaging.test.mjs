@@ -17,6 +17,8 @@ test("Open Coworker has its own stable packaged identity and local runtime resou
   assert.equal(config.productName, "Open Coworker");
   assert.equal(config.artifactName, "open-coworker-${os}-${arch}-${version}.${ext}");
   assert.equal(config.extraMetadata.main, "electron-dist/main.mjs");
+  // Den handoffs deep-link back into this app, never into OpenWork's scheme.
+  assert.deepEqual(config.protocols, [{ name: "Open Coworker", schemes: ["opencoworker"] }]);
   assert.ok(config.files.includes("electron-dist/**/*"));
   assert.ok(!config.files.includes("electron/**/*"));
   assert.ok(config.files.includes("server/**/*"));

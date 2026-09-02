@@ -4,8 +4,10 @@ import {
   type AvatarColor,
   type AvatarGlasses,
   type CoworkerSummary,
+  type ProviderSyncRun,
   type RuntimeInfo,
 } from "@/lib/bridge";
+import type { DenSession } from "@/lib/den";
 import { AvatarControls, CoworkerAvatar } from "@/ui/coworker-avatar";
 import { DEFAULT_PERSONALITY, type Personality } from "@/lib/personalities";
 import { PersonalityPicker } from "@/ui/personality-picker";
@@ -19,10 +21,16 @@ import { RetiredCoworkers } from "@/ui/retired-coworkers";
  */
 export function NewCoworker({
   runtime,
+  session,
+  onConnect,
+  onSyncProviders,
   onCreated,
   onCancel,
 }: {
   runtime: RuntimeInfo;
+  session: DenSession | null;
+  onConnect: () => void;
+  onSyncProviders: () => Promise<ProviderSyncRun>;
   onCreated: (coworker: CoworkerSummary) => void;
   onCancel: (() => void) | null;
 }) {
@@ -92,15 +100,20 @@ export function NewCoworker({
             <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-spark">How {created.name} works</p>
             <h1 className="mt-1 text-2xl font-semibold tracking-[-0.035em] text-snow">Choose a model</h1>
             <p className="mt-1 text-sm leading-relaxed text-mist">
-              Choose from providers connected to OpenWork, or follow the engine default. You can change this later.
+              {session
+                ? "Your organization's OpenWork models are listed first, followed by providers configured on this Mac. You can change this later."
+                : "Choose from providers connected on this Mac, or follow the engine default. You can change this later."}
             </p>
             <div className="mt-5">
               <ModelPicker
                 runtime={modelRuntime}
+                session={session}
                 coworker={created}
                 value={selection.model}
                 modelVariant={selection.modelVariant}
                 onChange={setSelection}
+                onSyncProviders={onSyncProviders}
+                onConnect={onConnect}
               />
             </div>
             {error ? <div className="mt-3"><ErrorNote>{error}</ErrorNote></div> : null}

@@ -1,7 +1,9 @@
-import { useEffect, useMemo, useState } from "react";
-import type { CoworkerSummary, RuntimeInfo } from "@/lib/bridge";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import type { CoworkerSummary, ProviderSyncRun, RuntimeInfo } from "@/lib/bridge";
+import { describeSkippedProvider, type DenSession } from "@/lib/den";
 import {
   createCoworkerThreads,
+  modelSourceLabel,
   type EngineModelCatalog,
   type EngineModelOption,
 } from "@/lib/threads";
@@ -10,25 +12,48 @@ import { InlineLoader } from "@/ui/brand";
 
 export type ModelSelection = { model: string; modelVariant: string };
 
+const EMPTY_CATALOG: EngineModelCatalog = { models: [], connectedProviderIds: [], cloud: null };
+
 function selectedDescription(option: EngineModelOption | undefined, value: string): string {
   if (!value) return "OpenWork chooses the configured engine default.";
   if (!option) return "This saved model is not currently available from a connected provider.";
-  return `${option.providerLabel} · ${option.modelId}`;
+  return `${option.providerLabel} · ${option.modelId} · ${modelSourceLabel(option.source)}`;
+}
+
+function SourceTag({ source }: { source: EngineModelOption["source"] }) {
+  return (
+    <span
+      className={`shrink-0 rounded-full px-1.5 py-0.5 text-[8px] font-semibold uppercase tracking-[0.08em] ${
+        source === "cloud" ? "bg-spark/14 text-[#b8caff]" : "bg-white/7 text-mist"
+      }`}
+      data-testid={`model-source-${source}`}
+    >
+      {modelSourceLabel(source)}
+    </span>
+  );
 }
 
 export function ModelPicker({
   runtime,
+  session,
   coworker,
   value,
   modelVariant,
   onChange,
+  onSyncProviders,
+  onConnect,
   compact = false,
 }: {
   runtime: RuntimeInfo;
+  session: DenSession | null;
   coworker: CoworkerSummary;
   value: string;
   modelVariant: string;
   onChange: (selection: ModelSelection) => void;
+  /** Re-read the signed-in account's providers before re-listing models. */
+  onSyncProviders?: () => Promise<ProviderSyncRun>;
+  /** Offered in local mode so organization models can be added without leaving setup. */
+  onConnect?: () => void;
   compact?: boolean;
 }) {
   const threads = useMemo(
@@ -42,28 +67,39 @@ export function ModelPicker({
         : null,
     [coworker.workspaceId, runtime.ownerToken, runtime.serverUrl],
   );
-  const [catalog, setCatalog] = useState<EngineModelCatalog>({ models: [], connectedProviderIds: [] });
+  const [catalog, setCatalog] = useState<EngineModelCatalog>(EMPTY_CATALOG);
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState(!compact);
   const [loading, setLoading] = useState(false);
+  const [syncNote, setSyncNote] = useState("");
   const [error, setError] = useState("");
 
-  async function refresh() {
+  const refresh = useCallback(async (options: { sync?: boolean } = {}) => {
     if (!threads || !runtime.engineManaged) return;
     setLoading(true);
     setError("");
     try {
+      if (options.sync && session && onSyncProviders) {
+        const run = await onSyncProviders();
+        setSyncNote(
+          run.status === "failed"
+            ? `OpenWork provider refresh failed: ${run.message || "unknown error"}`
+            : run.status === "applied"
+              ? "OpenWork providers updated."
+              : "",
+        );
+      }
       setCatalog(await threads.listModelCatalog());
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
       setLoading(false);
     }
-  }
+  }, [onSyncProviders, runtime.engineManaged, session, threads]);
 
   useEffect(() => {
     void refresh();
-  }, [threads, runtime.engineManaged]);
+  }, [refresh]);
 
   const selected = catalog.models.find((option) => option.id === value);
   const visible = catalog.models.filter((option) => {
@@ -75,13 +111,17 @@ export function ModelPicker({
   });
   const groups = Array.from(
     visible.reduce((byProvider, option) => {
-      const group = byProvider.get(option.providerId) ?? { label: option.providerLabel, models: [] };
+      const group = byProvider.get(option.providerId) ?? { label: option.providerLabel, source: option.source, models: [] };
       group.models.push(option);
       byProvider.set(option.providerId, group);
       return byProvider;
-    }, new Map<string, { label: string; models: EngineModelOption[] }>()),
+    }, new Map<string, { label: string; source: EngineModelOption["source"]; models: EngineModelOption[] }>()),
   );
   const variants = selected?.variants ?? [];
+  const cloudModelCount = catalog.models.filter((option) => option.source === "cloud").length;
+  const skipped = catalog.cloud?.skippedProviders ?? [];
+  const reloadPending = catalog.cloud?.reloadPending === true;
+  const lastRunFailed = catalog.cloud?.lastRun?.status === "failed" ? catalog.cloud.lastRun : null;
 
   function selectModel(model: EngineModelOption | null) {
     onChange({
@@ -92,7 +132,7 @@ export function ModelPicker({
   }
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-3" data-testid="model-picker">
       <button
         type="button"
         className="flex w-full items-center gap-3 rounded-xl border border-line bg-panel px-3 py-3 text-left transition-colors hover:border-white/20 hover:bg-white/5"
@@ -122,7 +162,14 @@ export function ModelPicker({
               value={query}
               onChange={(event) => setQuery(event.target.value)}
             />
-            <Button aria-busy={loading} variant="ghost" className="shrink-0 text-xs" disabled={loading} onClick={() => void refresh()}>
+            <Button
+              aria-busy={loading}
+              variant="ghost"
+              className="shrink-0 text-xs"
+              disabled={loading}
+              title={session ? "Re-read your OpenWork providers and this engine's models" : "Re-read this engine's models"}
+              onClick={() => void refresh({ sync: true })}
+            >
               {loading ? "Refreshing" : "Refresh"}
             </Button>
           </div>
@@ -140,15 +187,16 @@ export function ModelPicker({
             </button>
 
             {value && !selected ? (
-              <div className="mt-1 rounded-xl bg-amber/8 px-2.5 py-2 text-[11px] leading-relaxed text-amber">
+              <div className="mt-1 rounded-xl bg-amber/8 px-2.5 py-2 text-[11px] leading-relaxed text-amber" data-testid="model-unavailable">
                 Saved selection {value} is unavailable. Choose a connected model or use the engine default.
               </div>
             ) : null}
 
             {groups.map(([providerId, group]) => (
-              <div key={providerId} className="mt-2 border-t border-line pt-2">
-                <p className="px-2 pb-1 text-[9px] font-semibold uppercase tracking-[0.14em] text-mist">
-                  {group.label}
+              <div key={providerId} className="mt-2 border-t border-line pt-2" data-testid={`model-provider-${providerId}`}>
+                <p className="flex items-center gap-2 px-2 pb-1 text-[9px] font-semibold uppercase tracking-[0.14em] text-mist">
+                  <span className="truncate">{group.label}</span>
+                  <SourceTag source={group.source} />
                 </p>
                 {group.models.map((option) => (
                   <button
@@ -171,6 +219,17 @@ export function ModelPicker({
                 ))}
               </div>
             ))}
+
+            {skipped.length > 0 ? (
+              <div className="mt-2 border-t border-line pt-2" data-testid="model-skipped-providers">
+                <p className="px-2 pb-1 text-[9px] font-semibold uppercase tracking-[0.14em] text-mist">Granted, not usable here yet</p>
+                {skipped.map((provider) => (
+                  <p key={provider.providerId} className="px-2.5 py-1.5 text-[11px] leading-relaxed text-mist">
+                    <span className="font-medium text-snow/85">{provider.name}</span> — {describeSkippedProvider(provider.reason)}
+                  </p>
+                ))}
+              </div>
+            ) : null}
 
             {loading && catalog.models.length === 0 ? (
               <div className="p-4 text-xs text-mist"><InlineLoader label="Reading connected models" /></div>
@@ -204,8 +263,30 @@ export function ModelPicker({
       ) : null}
 
       {error ? <ErrorNote>{error}</ErrorNote> : null}
-      <p className="text-[11px] leading-relaxed text-mist">
-        Only models from providers connected to this OpenWork engine are shown.
+      {lastRunFailed ? (
+        <p className="text-[11px] leading-relaxed text-amber" data-testid="model-sync-failed">
+          OpenWork could not refresh your providers{lastRunFailed.message ? `: ${lastRunFailed.message}` : "."} Models listed under OpenWork Cloud may be stale.
+        </p>
+      ) : null}
+      {reloadPending ? (
+        <p className="text-[11px] leading-relaxed text-mist">New OpenWork providers will appear once the engine finishes its current work and reloads.</p>
+      ) : null}
+      {syncNote ? <p className="text-[11px] leading-relaxed text-mist">{syncNote}</p> : null}
+      <p className="text-[11px] leading-relaxed text-mist" data-testid="model-picker-summary">
+        {session
+          ? cloudModelCount > 0
+            ? `${cloudModelCount} model${cloudModelCount === 1 ? "" : "s"} come from your OpenWork account (${session.orgName || session.userEmail || "signed in"}); the rest are configured on this Mac.`
+            : `Signed in as ${session.orgName || session.userEmail || "your OpenWork account"}, but no organization models are available here yet. Refresh after your organization grants a provider.`
+          : "Only models from providers connected to this OpenWork engine are shown."}
+        {!session && onConnect ? (
+          <>
+            {" "}
+            <button type="button" className="font-medium text-spark hover:underline" onClick={onConnect}>
+              Connect your OpenWork account
+            </button>{" "}
+            to use your organization's models.
+          </>
+        ) : null}
       </p>
     </div>
   );

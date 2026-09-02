@@ -47,6 +47,7 @@ export function toTranscriptMessage(message: HeadlessThreadMessage): HeadlessTra
     createdAt: message.createdAt,
     text: joinPartText(message, "text"),
     reasoning: joinPartText(message, "reasoning"),
+    model: message.model,
     toolCalls: toToolCalls(message),
   };
 }
