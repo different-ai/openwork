@@ -181,7 +181,9 @@ export function OpenWorkSettings({
       return byProvider;
     }, new Map<string, { label: string; source: EngineModelOption["source"]; models: EngineModelOption[] }>()),
   );
-  const cloudProviders = providers.filter(([, provider]) => provider.source === "cloud");
+  // Account-backed providers stop being actionable the moment the account is
+  // cleared, even if the engine is still completing its provider reload.
+  const cloudProviders = session ? providers.filter(([, provider]) => provider.source === "cloud") : [];
   const localProviders = providers.filter(([, provider]) => provider.source === "local");
   const skipped = catalog.cloud?.skippedProviders ?? [];
   const sync = describeSyncRun(providerSync, catalog.cloud);
