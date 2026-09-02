@@ -144,9 +144,9 @@ test("avatar settings fall back when stored or patched values are unknown", asyn
   assert.equal(updated.avatarColor, "blue");
   assert.equal(updated.avatarGlasses, "round");
   assert.equal(updated.personality, "neutral", "unknown personalities fall back to neutral");
-  const voiced = await updateCoworker(coworkersDir, "classic", { personality: "chef" });
-  assert.equal(voiced.personality, "chef");
-  assert.equal((await getCoworker(coworkersDir, "classic")).personality, "chef", "personality persists in coworker.md");
+  const voiced = await updateCoworker(coworkersDir, "classic", { personality: "playful" });
+  assert.equal(voiced.personality, "playful");
+  assert.equal((await getCoworker(coworkersDir, "classic")).personality, "playful", "personality persists in coworker.md");
   const silent = await createCoworker(coworkersDir, { name: "Quiet", personality: "none" });
   assert.equal(silent.personality, "none");
 });
