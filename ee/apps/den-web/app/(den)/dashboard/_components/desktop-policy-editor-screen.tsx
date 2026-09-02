@@ -5,8 +5,10 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ArrowLeft, Laptop } from "lucide-react";
 import {
+  ALLOWED_BROWSER_HOSTS_MAX_COUNT,
   desktopPolicyDefaults,
   desktopPolicyKeys,
+  normalizeAllowedBrowserHost,
   type DesktopPolicyDocumentWrite,
   type DesktopPolicyValue,
 } from "@openwork/types/den/desktop-policies";
@@ -33,6 +35,8 @@ type PolicyDraft = {
   onboardingPromptsEnabled: boolean;
   onboardingPromptTexts: string[];
   onboardingPromptDescriptions: string[];
+  browserHostsEnabled: boolean;
+  browserHostsText: string;
   memberIds: string[];
   teamIds: string[];
   roles: DenDesktopPolicyRole[];
@@ -45,6 +49,8 @@ const EMPTY_DRAFT: PolicyDraft = {
   onboardingPromptsEnabled: false,
   onboardingPromptTexts: ["", "", ""],
   onboardingPromptDescriptions: ["", "", ""],
+  browserHostsEnabled: false,
+  browserHostsText: "",
   memberIds: [],
   teamIds: [],
   roles: [],
@@ -55,6 +61,8 @@ const ONBOARDING_PROMPT_DESCRIPTION_MAX_LENGTH = 120;
 const MAX_POLICY_PRIORITY = 1_000_000;
 const PRIORITY_HELP_ID = "desktop-policy-priority-help";
 const PRIORITY_ERROR_ID = "desktop-policy-priority-error";
+const BROWSER_HOSTS_HELP_ID = "desktop-policy-browser-hosts-help";
+const BROWSER_HOSTS_ERROR_ID = "desktop-policy-browser-hosts-error";
 
 function requiredPolicyValue(value: DesktopPolicyValue): Required<DesktopPolicyValue> {
   return Object.fromEntries(
@@ -65,6 +73,7 @@ function requiredPolicyValue(value: DesktopPolicyValue): Required<DesktopPolicyV
 function draftFromPolicy(policy: DenDesktopPolicy): PolicyDraft {
   const onboardingPrompts = policy.policy.onboardingPrompts ?? [];
   const onboardingPromptDescriptions = policy.policy.onboardingPromptDescriptions ?? [];
+  const allowedBrowserHosts = policy.policy.allowedBrowserHosts ?? [];
   return {
     policyName: policy.policyName,
     policy: requiredPolicyValue(policy.policy),
@@ -80,6 +89,8 @@ function draftFromPolicy(policy: DenDesktopPolicy): PolicyDraft {
       onboardingPromptDescriptions[1] ?? "",
       onboardingPromptDescriptions[2] ?? "",
     ],
+    browserHostsEnabled: allowedBrowserHosts.length > 0,
+    browserHostsText: allowedBrowserHosts.join("\n"),
     memberIds: policy.assignments.flatMap((assignment) => (assignment.orgMemberId ? [assignment.orgMemberId] : [])),
     teamIds: policy.assignments.flatMap((assignment) => (assignment.teamId ? [assignment.teamId] : [])),
     roles: policy.roles,
@@ -123,6 +134,42 @@ function getOnboardingPromptDescriptions(draft: PolicyDraft, promptCount: number
     .map((description) => description.trim());
   if (descriptions.some((description) => description.length > ONBOARDING_PROMPT_DESCRIPTION_MAX_LENGTH)) return undefined;
   return descriptions.some((description) => description.length > 0) ? descriptions : undefined;
+}
+
+function splitBrowserHostLines(text: string): string[] {
+  return text
+    .split(/[\n,]+/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+}
+
+function getBrowserHostsError(draft: PolicyDraft): string | null {
+  if (!draft.browserHostsEnabled) return null;
+  const lines = splitBrowserHostLines(draft.browserHostsText);
+  if (lines.length === 0) return "Add at least one website, or turn the allowlist off.";
+  if (lines.length > ALLOWED_BROWSER_HOSTS_MAX_COUNT) {
+    return `Use at most ${ALLOWED_BROWSER_HOSTS_MAX_COUNT} websites.`;
+  }
+  const invalid = lines.find((line) => normalizeAllowedBrowserHost(line) === null);
+  return invalid ? `"${invalid}" is not a website host. Use example.com or *.example.com.` : null;
+}
+
+function getAllowedBrowserHosts(draft: PolicyDraft): string[] | undefined {
+  if (!draft.browserHostsEnabled || getBrowserHostsError(draft) !== null) return undefined;
+  return [
+    ...new Set(
+      splitBrowserHostLines(draft.browserHostsText).flatMap((line) => {
+        const host = normalizeAllowedBrowserHost(line);
+        return host === null ? [] : [host];
+      }),
+    ),
+  ];
+}
+
+function getDisabledBrowserHostsCopy(isDefault: boolean) {
+  return isDefault
+    ? "When off, members can open any website in OpenWork's built-in browser."
+    : "Targeted policies can only add websites to the default policy's allowlist. When the default policy has no allowlist, the browser stays unrestricted.";
 }
 
 function getPriorityError(draft: PolicyDraft, isDefault: boolean) {
@@ -180,8 +227,10 @@ function policyDocumentFromDraft(draft: PolicyDraft): DesktopPolicyDocumentWrite
   const onboardingPromptDescriptions = onboardingPrompts !== undefined
     ? getOnboardingPromptDescriptions(draft, onboardingPrompts.length)
     : undefined;
+  const allowedBrowserHosts = getAllowedBrowserHosts(draft);
   return {
     ...draft.policy,
+    allowedBrowserHosts: allowedBrowserHosts ?? null,
     ...(draft.onboardingPromptsEnabled
       ? onboardingPrompts !== undefined
         ? {
@@ -235,6 +284,8 @@ export function DesktopPolicyEditorScreen({ desktopPolicyId }: { desktopPolicyId
   const notFound = isEditing && !busy && !policy && desktopPolicies.length > 0;
   const priorityError = getPriorityError(draft, isDefault);
   const disabledPromptCopy = getDisabledPromptCopy(isDefault);
+  const browserHostsError = getBrowserHostsError(draft);
+  const disabledBrowserHostsCopy = getDisabledBrowserHostsCopy(isDefault);
   const formDisabled = saving || togglingEnabled || !canManage;
 
   const handleSave = async () => {
@@ -261,6 +312,11 @@ export function DesktopPolicyEditorScreen({ desktopPolicyId }: { desktopPolicyId
         setPageError(promptError);
         return;
       }
+    }
+    const nextBrowserHostsError = getBrowserHostsError(draft);
+    if (nextBrowserHostsError) {
+      setPageError(nextBrowserHostsError);
+      return;
     }
     setPageError(null);
     try {
@@ -523,6 +579,47 @@ export function DesktopPolicyEditorScreen({ desktopPolicyId }: { desktopPolicyId
               </div>
             ) : (
               <p className="text-[13px] leading-6 text-gray-500">{disabledPromptCopy}</p>
+            )}
+          </div>
+
+          <div className="grid gap-4 rounded-[22px] border border-gray-200 bg-gray-50 px-5 py-4">
+            <label className="flex items-start gap-3">
+              <input
+                type="checkbox"
+                className="mt-1 h-5 w-5"
+                checked={draft.browserHostsEnabled}
+                onChange={(event) => setDraft({ ...draft, browserHostsEnabled: event.target.checked })}
+                disabled={formDisabled}
+              />
+              <span>
+                <span className="block text-[14px] font-medium text-gray-950">Browser URL allowlist</span>
+                <span className="mt-1 block text-[13px] leading-6 text-gray-500">
+                  Only let OpenWork's built-in browser open approved websites. Everything else shows an organization-blocked page.
+                </span>
+              </span>
+            </label>
+
+            {draft.browserHostsEnabled ? (
+              <label className="grid gap-2">
+                <span className="text-[12px] font-medium text-gray-600">Allowed websites</span>
+                <DenTextarea
+                  rows={5}
+                  value={draft.browserHostsText}
+                  aria-invalid={browserHostsError ? true : undefined}
+                  aria-describedby={browserHostsError ? `${BROWSER_HOSTS_HELP_ID} ${BROWSER_HOSTS_ERROR_ID}` : BROWSER_HOSTS_HELP_ID}
+                  onChange={(event) => setDraft({ ...draft, browserHostsText: event.target.value })}
+                  disabled={formDisabled}
+                  placeholder={"example.com\ndocs.example.com"}
+                />
+                <span id={BROWSER_HOSTS_HELP_ID} className="text-[12px] text-gray-500">
+                  One website per line. example.com also allows its subdomains; * allows every website. Schemes, ports, and paths are ignored.
+                </span>
+                {browserHostsError ? (
+                  <span id={BROWSER_HOSTS_ERROR_ID} className="text-[12px] text-red-600">{browserHostsError}</span>
+                ) : null}
+              </label>
+            ) : (
+              <p className="text-[13px] leading-6 text-gray-500">{disabledBrowserHostsCopy}</p>
             )}
           </div>
 

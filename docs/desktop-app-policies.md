@@ -12,6 +12,8 @@ Do not duplicate the list of policy IDs in app docs or feature code unless a fea
 
 `allowedDesktopVersions` is part of the desktop config response but is not a boolean policy item in `desktopPolicyDefinitions`.
 
+`allowedBrowserHosts` is a list-valued policy document field (host patterns; `*` allows everything) rather than a boolean key. `calculateEffectiveAllowedBrowserHosts()` unions it across matching policies but only when the default policy defines a list, so targeted policies can widen a restriction and never create one. `DesktopConfigProvider` forwards the effective list to the Electron shell (`browser.setUrlPolicy`), and `apps/desktop/electron/browser-url-policy.mjs` enforces it on every http(s) frame load in the built-in browser session. Renderer code does not need to check it.
+
 For boolean policy keys, `false` means the feature is restricted or disabled. `true` or `undefined` means the app should not block the feature locally.
 
 ## Organization Prompt Suggestions

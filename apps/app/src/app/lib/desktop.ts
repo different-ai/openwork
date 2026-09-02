@@ -59,6 +59,11 @@ export type BrowserProxyState = {
   proxy: { rules: string; authenticated: boolean } | null;
 };
 
+/** Organization browser URL allowlist enforced by the desktop shell; null = every website. */
+export type BrowserUrlPolicyState = {
+  allowedHosts: string[] | null;
+};
+
 export type RecoveryRelease = {
   id: string;
   version: string;
@@ -194,6 +199,8 @@ declare global {
         listTabs?: () => Promise<BrowserPanelTab[]>;
         setProxy?: (proxy?: string | null) => Promise<BrowserProxyState>;
         getProxy?: () => Promise<BrowserProxyState>;
+        setUrlPolicy?: (hosts: string[] | null) => Promise<BrowserUrlPolicyState>;
+        getUrlPolicy?: () => Promise<BrowserUrlPolicyState>;
         showTabContextMenu?: (tabId: string, point?: { x: number; y: number }) => Promise<void>;
         destroy?: () => Promise<void>;
         onStateChange?: (callback: (state: BrowserStatePayload) => void) => () => void;
@@ -522,6 +529,16 @@ export async function applyBrandIcon(url: string | null): Promise<BrandIconApply
   const apply = typeof window !== "undefined" ? window.__OPENWORK_ELECTRON__?.brandIcon?.apply : undefined;
   if (!apply) return { ok: false, reason: "bridge-unavailable" };
   return apply(url);
+}
+
+/**
+ * Forward the effective desktop policy's browser allowlist to the shell, which
+ * enforces it on every built-in browser tab. Resolves null when the desktop
+ * bridge is unavailable (web runtime).
+ */
+export async function applyBrowserUrlPolicy(hosts: string[] | null): Promise<BrowserUrlPolicyState | null> {
+  const setUrlPolicy = typeof window !== "undefined" ? window.__OPENWORK_ELECTRON__?.browser?.setUrlPolicy : undefined;
+  return setUrlPolicy ? setUrlPolicy(hosts) : null;
 }
 
 export async function getBrandIconState(): Promise<BrandIconState | null> {

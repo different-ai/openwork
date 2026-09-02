@@ -6,6 +6,12 @@ import { fileURLToPath } from "node:url";
 
 import { app, WebContentsView, clipboard, session, shell } from "electron";
 import { runDetachedTask } from "./process-resilience.mjs";
+import {
+  blockedBrowserPageUrl,
+  blockedBrowserUrlMessage,
+  compileBrowserUrlPolicy,
+  isBrowserUrlAllowed,
+} from "./browser-url-policy.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const BROWSER_SESSION_PARTITION = "persist:openwork-browser";
@@ -31,6 +37,9 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink }) {
   let browserTabCounter = 0;
   // Active proxy for the built-in browser session: { rules, username, password }.
   let browserProxy = null;
+  // Organization browser URL allowlist compiled from the desktop policy; null = unrestricted.
+  let browserUrlPolicy = null;
+  let browserRequestGuardInstalled = false;
   let menuOverlayView = null;
   let menuOverlayRequest = null;
   let menuOverlayReady = false;
@@ -89,6 +98,44 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink }) {
     return /^https?:\/\//i.test(target) ? target : `https://${target}`;
   }
 
+  /** Return `url` when the policy allows it, otherwise the organization-blocked page. */
+  function guardedBrowserUrl(url) {
+    return isBrowserUrlAllowed(url, browserUrlPolicy) ? url : blockedBrowserPageUrl(url);
+  }
+
+  // Cancel disallowed http(s) frame loads at the network layer so CDP
+  // `Page.navigate`, redirects, and in-page navigations cannot bypass the
+  // allowlist. `did-fail-load` below turns the cancelled load into the
+  // blocked page. Installed lazily: sessions exist only after app ready.
+  function ensureBrowserRequestGuard() {
+    if (browserRequestGuardInstalled) return;
+    browserRequestGuardInstalled = true;
+    const browserSession = session.fromPartition(BROWSER_SESSION_PARTITION);
+    browserSession.webRequest.onBeforeRequest({ urls: ["http://*/*", "https://*/*"] }, (details, callback) => {
+      const isFrame = details.resourceType === "mainFrame" || details.resourceType === "subFrame";
+      callback(isFrame && !isBrowserUrlAllowed(details.url, browserUrlPolicy) ? { cancel: true } : {});
+    });
+  }
+
+  function browserUrlPolicyState() {
+    return { allowedHosts: browserUrlPolicy ? [...browserUrlPolicy.hosts] : null };
+  }
+
+  function setBrowserUrlPolicy(hosts) {
+    browserUrlPolicy = compileBrowserUrlPolicy(hosts);
+    ensureBrowserRequestGuard();
+    // Tabs already sitting on a now-disallowed page move to the blocked page.
+    for (const tab of browserTabs.values()) {
+      const webContents = tab.view.webContents;
+      if (webContents.isDestroyed()) continue;
+      const url = webContents.getURL();
+      if (!isBrowserUrlAllowed(url, browserUrlPolicy)) {
+        runDetachedTask("apply browser url policy", () => webContents.loadURL(blockedBrowserPageUrl(url)));
+      }
+    }
+    return browserUrlPolicyState();
+  }
+
   function isMainWindowAllowedNavigation(url) {
     if (!url) return true;
     if (url.startsWith("file://") || url.startsWith("data:")) return true;
@@ -106,6 +153,11 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink }) {
 
   function routeBlockedMainWindowNavigation(url) {
     if (!/^https?:\/\//i.test(String(url ?? ""))) return;
+    if (!isBrowserUrlAllowed(url, browserUrlPolicy)) {
+      const tab = createBrowserTab("about:blank", { select: true });
+      runDetachedTask("show blocked browser page", () => tab.view.webContents.loadURL(blockedBrowserPageUrl(url)));
+      return;
+    }
     void openBrowserUrlForAutomation(url).catch((error) => {
       console.warn("[browser] failed to route blocked main-window navigation", error);
     });
@@ -153,6 +205,9 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink }) {
       throw new Error(`Browser provider is not available yet: ${requestedProvider}`);
     }
     const url = normalizeBrowserUrl(rawUrl);
+    if (!isBrowserUrlAllowed(url, browserUrlPolicy)) {
+      throw new Error(blockedBrowserUrlMessage(url));
+    }
     // The marker page is loaded right away, so skip the blank initialize load:
     // a queued about:blank navigation would abort this awaited load with
     // ERR_ABORTED and fail the agent's request before the page ever opens.
@@ -497,9 +552,18 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink }) {
     if (initializeBlank) {
       runDetachedTask("initialize browser tab", () => view.webContents.loadURL("about:blank"));
     }
+    ensureBrowserRequestGuard();
     view.webContents.setWindowOpenHandler(({ url: targetUrl }) => {
-      runDetachedTask("open browser popup externally", () => shell.openExternal(targetUrl));
+      if (isBrowserUrlAllowed(targetUrl, browserUrlPolicy)) {
+        runDetachedTask("open browser popup externally", () => shell.openExternal(targetUrl));
+      }
       return { action: "deny" };
+    });
+    view.webContents.on("did-fail-load", (_event, errorCode, _errorDescription, validatedURL, isMainFrame) => {
+      // ERR_BLOCKED_BY_CLIENT (-20) is what the request guard produces.
+      if (!isMainFrame || errorCode !== -20) return;
+      if (isBrowserUrlAllowed(validatedURL, browserUrlPolicy)) return;
+      runDetachedTask("show blocked browser page", () => view.webContents.loadURL(blockedBrowserPageUrl(validatedURL)));
     });
     view.webContents.on("did-start-navigation", (_event, targetUrl, isInPlace, isMainFrame) => {
       if (!isMainFrame || isInPlace) return;
@@ -561,7 +625,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink }) {
     }
     const finalUrl = normalizeBrowserUrl(url, "about:blank");
     if (finalUrl !== "about:blank") {
-      runDetachedTask("navigate new browser tab", () => view.webContents.loadURL(finalUrl));
+      runDetachedTask("navigate new browser tab", () => view.webContents.loadURL(guardedBrowserUrl(finalUrl)));
     }
     return tab;
   }
@@ -790,7 +854,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink }) {
     ipcMain.handle("openwork:browser:openUrl", (_event, url, provider) => openBrowserUrlForAutomation(url, provider));
     ipcMain.handle("openwork:browser:navigate", (_event, url) => {
       const view = getActiveBrowserView() ?? createBrowserTab("about:blank", { select: true }).view;
-      runDetachedTask("navigate browser tab", () => view.webContents.loadURL(normalizeBrowserUrl(url)));
+      runDetachedTask("navigate browser tab", () => view.webContents.loadURL(guardedBrowserUrl(normalizeBrowserUrl(url))));
     });
     ipcMain.handle("openwork:browser:back", () => {
       const webContents = getActiveWebContents();
@@ -810,7 +874,10 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink }) {
     });
     ipcMain.handle("openwork:browser:state", () => browserStatePayload());
     ipcMain.handle("openwork:browser:createTab", (_event, url) => {
-      const target = typeof url === "string" && url.trim() ? url : BROWSER_NEW_TAB_URL;
+      // A "+" tab should not open on the blocked page when the default start
+      // page is outside the organization's allowlist.
+      const newTabUrl = isBrowserUrlAllowed(BROWSER_NEW_TAB_URL, browserUrlPolicy) ? BROWSER_NEW_TAB_URL : "about:blank";
+      const target = typeof url === "string" && url.trim() ? url : newTabUrl;
       const tab = createBrowserTab(target, { select: true });
       return { tabId: tab.tabId };
     });
@@ -825,6 +892,8 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink }) {
     ipcMain.handle("openwork:browser:listTabs", () => listBrowserTabs());
     ipcMain.handle("openwork:browser:setProxy", (_event, proxy) => setBrowserProxy(proxy));
     ipcMain.handle("openwork:browser:getProxy", () => browserProxyState());
+    ipcMain.handle("openwork:browser:setUrlPolicy", (_event, hosts) => setBrowserUrlPolicy(hosts));
+    ipcMain.handle("openwork:browser:getUrlPolicy", () => browserUrlPolicyState());
     ipcMain.handle("openwork:browser:tabContextMenu", (_event, tabId, point) => showBrowserTabContextMenu(tabId, point));
     ipcMain.handle("openwork:browser:destroy", () => destroyBrowserView());
     ipcMain.on("openwork:menu-overlay:ready", (event) => {
