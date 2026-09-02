@@ -24,6 +24,20 @@ const LONG_TERM_DIR = path.join("memory", "long-term");
 const WORKSPACE_DIR = "workspace";
 const AVATAR_COLORS = new Set(["blue", "violet", "mint", "orange", "rose", "slate"]);
 const AVATAR_GLASSES = new Set(["round", "square", "none"]);
+// Mirrors PERSONALITIES in src/lib/personalities.ts; the renderer owns the sayings, the store owns the choice.
+const PERSONALITIES = new Set([
+  "none",
+  "neutral",
+  "warm",
+  "dry",
+  "curious",
+  "craftsman",
+  "librarian",
+  "chef",
+  "gardener",
+  "navigator",
+  "detective",
+]);
 
 function avatarColor(value) {
   return AVATAR_COLORS.has(value) ? value : "blue";
@@ -31,6 +45,10 @@ function avatarColor(value) {
 
 function avatarGlasses(value) {
   return AVATAR_GLASSES.has(value) ? value : "round";
+}
+
+function personality(value) {
+  return PERSONALITIES.has(value) ? value : "neutral";
 }
 
 /** Resolve the shared coworkers home inside the existing OpenWork config dir. */
@@ -224,7 +242,7 @@ function opencodeConfigTemplate() {
   )}\n`;
 }
 
-function coworkerConfigTemplate({ name, role, mission, avatarColor: color, avatarGlasses: glasses, createdAt }) {
+function coworkerConfigTemplate({ name, role, mission, avatarColor: color, avatarGlasses: glasses, personality: voice, createdAt }) {
   return serializeFrontmatter(
     {
       name,
@@ -232,6 +250,7 @@ function coworkerConfigTemplate({ name, role, mission, avatarColor: color, avata
       mission: mission || "",
       avatarColor: avatarColor(color),
       avatarGlasses: avatarGlasses(glasses),
+      personality: personality(voice),
       workspaceId: "",
       conversationThreadId: "",
       model: "",
@@ -271,6 +290,8 @@ async function readCoworkerRecord(coworkersDir, slug) {
     mission: typeof data.mission === "string" ? data.mission : "",
     avatarColor: avatarColor(data.avatarColor),
     avatarGlasses: avatarGlasses(data.avatarGlasses),
+    /** Voice for the working state only; see src/lib/personalities.ts. */
+    personality: personality(data.personality),
     workspaceId: typeof data.workspaceId === "string" ? data.workspaceId.trim() : "",
     /** Native OpenWork session used for ongoing discussion, never counted as an assignment. */
     conversationThreadId: typeof data.conversationThreadId === "string" ? data.conversationThreadId.trim() : "",
@@ -311,6 +332,7 @@ export async function createCoworker(coworkersDir, input) {
   const mission = String(input?.mission ?? "").trim();
   const color = avatarColor(input?.avatarColor);
   const glasses = avatarGlasses(input?.avatarGlasses);
+  const voice = personality(input?.personality);
   const slug = slugifyCoworkerName(name);
   const root = coworkerPath(coworkersDir, slug);
   if (await pathExists(root)) {
@@ -321,7 +343,7 @@ export async function createCoworker(coworkersDir, input) {
   await mkdir(path.join(root, WORKSPACE_DIR), { recursive: true });
   await writeFile(
     path.join(root, COWORKER_CONFIG_FILE),
-    coworkerConfigTemplate({ name, role, mission, avatarColor: color, avatarGlasses: glasses, createdAt }),
+    coworkerConfigTemplate({ name, role, mission, avatarColor: color, avatarGlasses: glasses, personality: voice, createdAt }),
     "utf8",
   );
   await writeFile(path.join(root, SOUL_FILE), soulTemplate({ name, role, mission }), "utf8");
@@ -350,6 +372,7 @@ export async function updateCoworker(coworkersDir, slug, patch) {
   if (typeof patch?.modelVariant === "string") data.modelVariant = patch.modelVariant.trim();
   if (typeof patch?.avatarColor === "string") data.avatarColor = avatarColor(patch.avatarColor);
   if (typeof patch?.avatarGlasses === "string") data.avatarGlasses = avatarGlasses(patch.avatarGlasses);
+  if (typeof patch?.personality === "string") data.personality = personality(patch.personality);
   await writeFile(configPath, serializeFrontmatter(data, body), "utf8");
   return readCoworkerRecord(coworkersDir, slug);
 }

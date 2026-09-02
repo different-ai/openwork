@@ -5,6 +5,20 @@ import type { CoworkerActivity } from "@/lib/threads";
 import { CoworkerAvatar } from "@/ui/coworker-avatar";
 import { Button, StatusDot } from "@/ui/kit";
 import { CoworkerMark } from "@/ui/brand";
+import { useWorkingSaying } from "@/ui/use-working-saying";
+
+/**
+ * The status word for a rail row. While a coworker is working, a personality
+ * speaks here ("Measuring twice…"); every other state keeps its truthful label.
+ */
+function RailStatusLabel({ coworker, activity }: { coworker: CoworkerSummary; activity: CoworkerActivity | undefined }) {
+  const saying = useWorkingSaying(
+    coworker.personality,
+    `${coworker.slug}:${activity?.threadId ?? "work"}`,
+    activity?.state === "working",
+  );
+  return <span>{saying ? `${saying}…` : (activity?.label ?? "Checking status")}</span>;
+}
 
 function relativeTime(timestamp: number): string {
   if (!timestamp) return "";
@@ -110,7 +124,7 @@ export function CoworkerRail({
                 </span>
                 <span className={`mt-1 flex items-center gap-1.5 text-[11px] font-medium ${activityTextTone(activity)}`}>
                   <StatusDot tone={activityTone(activity)} />
-                  <span>{activity?.label ?? "Checking status"}</span>
+                  <RailStatusLabel coworker={coworker} activity={activity} />
                 </span>
                 <span
                   className="mt-1 block line-clamp-2 text-[11px] leading-[1.35] text-mist"

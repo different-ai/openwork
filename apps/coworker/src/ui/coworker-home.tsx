@@ -4,6 +4,8 @@ import { describeMemory, describeModelPreference, describeNow, relativeTime } fr
 import type { DenSession } from "@/lib/den";
 import type { CoworkerActivity } from "@/lib/threads";
 import { AvatarControls, CoworkerAvatar } from "@/ui/coworker-avatar";
+import { PersonalityPicker } from "@/ui/personality-picker";
+import { useWorkingSaying } from "@/ui/use-working-saying";
 import { CapabilitiesPanel } from "@/ui/capabilities";
 import { Button, ErrorNote, Field, StatusDot, inputClass } from "@/ui/kit";
 import { MemoryPanel } from "@/ui/memory";
@@ -333,6 +335,12 @@ function CoworkerOverview({
   onOpenOpenWork: () => void;
 }) {
   const now = describeNow(activity);
+  const saying = useWorkingSaying(
+    coworker.personality,
+    `${coworker.slug}:${activity?.threadId ?? "work"}`,
+    activity?.state === "working",
+  );
+  const nowNote = saying ? `${saying}…` : now.note;
   const model = describeModelPreference(coworker);
   const [memoryFiles, setMemoryFiles] = useState<CoworkerMemoryFile[]>([]);
 
@@ -386,7 +394,7 @@ function CoworkerOverview({
               {now.subject}
             </span>
             <span className="mt-1 block text-[11px] text-mist">
-              {now.note}
+              {nowNote}
               {canOpenSubject ? <span aria-hidden="true"> ›</span> : null}
             </span>
           </button>
@@ -487,6 +495,7 @@ function CoworkerSettings({
   const [mission, setMission] = useState(coworker.mission);
   const [avatarColor, setAvatarColor] = useState(coworker.avatarColor);
   const [avatarGlasses, setAvatarGlasses] = useState(coworker.avatarGlasses);
+  const [personality, setPersonality] = useState(coworker.personality);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [confirmingRetire, setConfirmingRetire] = useState(false);
@@ -511,6 +520,7 @@ function CoworkerSettings({
           mission: mission.trim(),
           avatarColor,
           avatarGlasses,
+          personality,
         }),
       );
     } catch (cause) {
@@ -569,6 +579,7 @@ function CoworkerSettings({
         <Field label="Mission">
           <textarea className={`${inputClass} min-h-28 resize-y bg-panel`} value={mission} onChange={(event) => setMission(event.target.value)} />
         </Field>
+        <PersonalityPicker value={personality} seed={coworker.slug} onChange={setPersonality} />
         <Button variant="primary" className="w-full" disabled={busy} onClick={() => void saveProfile()}>
           {busy ? "Saving…" : "Save profile"}
         </Button>
