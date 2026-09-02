@@ -154,6 +154,16 @@ export function ChevronIcon({ direction, className = "size-4" }: { direction: "l
   );
 }
 
+/** A magnifier for finding a coworker. */
+export function SearchIcon({ className = "size-4" }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 16 16" fill="none" aria-hidden="true">
+      <circle cx="7" cy="7" r="4.25" stroke="currentColor" strokeWidth="1.4" />
+      <path d="m10.25 10.25 3.25 3.25" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+    </svg>
+  );
+}
+
 /** A plus for adding a coworker. */
 export function PlusIcon({ className = "size-4" }: { className?: string }) {
   return (
