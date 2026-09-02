@@ -173,6 +173,16 @@ with Ask, Create a skill, and Repair; signing out removes the gateway again.
 The packaged app ships the engine's OpenWork plugins under
 `Resources/opencode-plugins`, as the desktop does.
 
+Responsibilities read like a to-do list for a person: one line per
+responsibility (its name, then "Every day at 9:00 AM · Done today at 12:05
+PM") that opens into labelled everyday facts — When, Where, Next, Last time,
+what the coworker said — and each earlier run in the same words. The
+vocabulary is shared with the sidebar's Recent list (`lib/responsibility-copy.ts`,
+`lib/run-history.ts`): Done, Didn't finish, Working on it, Waiting its turn;
+schedules show the person's clock and name another time zone only when the
+schedule keeps one ("Every day at 6:30 PM (Paris time)"); nothing in the list
+says slot, thread, UTC, or a status code.
+
 Each responsibility row keeps a bounded run history (`runs`, newest first, in
 `local-responsibilities.json`) with the coworker's own closing summary, the
 duration, and how the run came about; a run can be re-opened as its native

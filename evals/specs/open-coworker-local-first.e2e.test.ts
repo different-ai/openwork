@@ -801,12 +801,24 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   await fill(app, 'textarea[placeholder="What should happen on every run?"]', "Reply with exactly LOCAL RESPONSIBILITY READY. Do not use tools.");
   await clickButton(app, "Create responsibility");
   await waitForText(app, "Local readiness check", { timeoutMs: 30_000 });
+  // The row is one plain line a person can read at a glance; the where and the details wait behind it.
   const responsibilityRow = String(await evalIn(app, `document.querySelector('[data-testid="responsibility-row"]')?.innerText ?? ""`));
   expect(responsibilityRow).toContain("Local readiness check");
-  expect(responsibilityRow).toContain("This Mac");
   expect(responsibilityRow).toContain("Every day at");
-  expect(responsibilityRow).toContain("Next:");
-  expect(responsibilityRow).not.toContain("Last:");
+  expect(responsibilityRow).toMatch(/Next: (today|tomorrow) at \d{1,2}:\d{2} (AM|PM)/);
+  expect(responsibilityRow).not.toMatch(/UTC|America\/|Los_Angeles|slot|thread|Succeeded|Failed|Queued/);
+  const responsibilityDetail = String(await waitFor(app, `(() => {
+    const toggle = document.querySelector('[data-testid="responsibility-history-toggle"]');
+    if (!(toggle instanceof HTMLElement)) return false;
+    if (toggle.getAttribute("aria-expanded") !== "true") toggle.click();
+    const detail = document.querySelector('[data-testid="responsibility-detail"]');
+    return detail instanceof HTMLElement ? detail.innerText : false;
+  })()`, { timeoutMs: 30_000, label: "responsibility detail" }));
+  expect(responsibilityDetail).toContain("When");
+  expect(responsibilityDetail).toContain("Where");
+  expect(responsibilityDetail).toContain("On this Mac");
+  expect(responsibilityDetail).toContain("It hasn't run yet.");
+  await evalIn(app, `document.querySelector('[data-testid="responsibility-history-toggle"]').click(); true`);
   expect(String(await evalIn(app, `document.querySelector('[data-testid="responsibility-placement-note"]')?.textContent ?? ""`))).toContain("runs only while Open Coworker is open");
   expect(await evalIn(app, `document.querySelectorAll('[data-testid="responsibility-placement-note"]').length`)).toBe(1);
 
@@ -856,7 +868,7 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
     if (!(summary instanceof HTMLElement) || !(recent instanceof HTMLElement) || !(row instanceof HTMLElement)) return false;
     const recentText = recent.innerText;
     const rowText = row.innerText;
-    if (!recentText.includes("Local readiness check") || !recentText.includes("Succeeded") || !rowText.includes("Last: Succeeded")) return false;
+    if (!recentText.includes("Local readiness check") || !recentText.includes("Done") || !/Done (today|yesterday) at/.test(rowText)) return false;
     // The activity read and the responsibility read poll independently; wait until both have settled.
     const summaryLines = summary.innerText.split("\\n").map((line) => line.trim()).filter(Boolean);
     if (summaryLines.length !== 1 || summaryLines[0] !== "Ready") return false;
@@ -873,7 +885,7 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   expect(sidebarAfterRun).toMatchObject({ summaryLines: ["Ready"], recentEntries: 1 });
   if (!isRecord(sidebarAfterRun)) throw new Error("Sidebar facts after the run were unavailable.");
   expect(String(sidebarAfterRun.recentText)).toContain("Responsibility");
-  expect(String(sidebarAfterRun.rowText)).toContain("Next:");
+  expect(String(sidebarAfterRun.rowText)).not.toMatch(/Succeeded|Failed|slot|thread/);
   evidence.recordAssertionEvidence(
     "A local Responsibility runs through a native thread and the sidebar records it once, in the right place",
     "The daily responsibility finished with a native ses_ thread id and no error. Current activity then read just Ready, Recent listed Local readiness check as a succeeded responsibility exactly once, and the responsibility row showed its next occurrence and Last: Succeeded.",
@@ -884,10 +896,10 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   // and a way to ask the coworker to explain a run without leaving the discussion.
   await waitFor(app, `(() => {
     const toggle = document.querySelector('[data-testid="responsibility-history-toggle"]');
-    if (!(toggle instanceof HTMLElement) || !(toggle.textContent ?? "").includes("1 run")) return false;
-    toggle.click();
+    if (!(toggle instanceof HTMLElement) || !(toggle.textContent ?? "").includes("Done")) return false;
+    if (toggle.getAttribute("aria-expanded") !== "true") toggle.click();
     return true;
-  })()`, { timeoutMs: 30_000, label: "run history toggle" });
+  })()`, { timeoutMs: 30_000, label: "open the responsibility's details" });
   const history = await waitFor(app, `(() => {
     const runs = [...document.querySelectorAll('[data-testid="responsibility-run"]')];
     if (runs.length !== 1) return false;
@@ -895,19 +907,23 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
     return {
       outcome: run.getAttribute("data-outcome"),
       text: run.innerText,
-      toggle: document.querySelector('[data-testid="responsibility-history-toggle"] span:not([aria-hidden])')?.textContent?.trim() ?? "",
+      trend: document.querySelector('[data-testid="responsibility-trend"]')?.textContent?.trim() ?? "",
+      detail: document.querySelector('[data-testid="responsibility-detail"]')?.innerText ?? "",
       rowSummary: document.querySelector('[data-testid="responsibility-summary"]')?.textContent?.trim() ?? "",
     };
   })()`, { timeoutMs: 30_000, label: "one recorded run in the history" });
-  expect(history).toMatchObject({ outcome: "succeeded", toggle: "1 run · 1 succeeded" });
-  if (!isRecord(history) || typeof history.text !== "string" || typeof history.rowSummary !== "string") {
+  expect(history).toMatchObject({ outcome: "succeeded", trend: "Ran once · done" });
+  if (!isRecord(history) || typeof history.text !== "string" || typeof history.rowSummary !== "string" || typeof history.detail !== "string") {
     throw new Error("Run history facts were unavailable.");
   }
+  expect(history.detail).toContain("Last time");
+  expect(history.detail).toMatch(/Done · (Today|Yesterday) at \d{1,2}:\d{2} (AM|PM) · took \d+ seconds? · started by you/);
+  expect(history.detail).not.toMatch(/UTC|America\/|slot|thread|Succeeded/);
   // innerText breaks each flex child onto its own line; read the run as one sentence.
   const runLine = history.text.replace(/\s+/g, " ");
-  expect(runLine).toMatch(/Succeeded · .+ · \d+(s|m)/);
+  expect(runLine).toMatch(/Done · (today|yesterday) at .+ · \d+ seconds?/);
   expect(runLine).toContain("Started by you");
-  expect(runLine).toContain("Open thread");
+  expect(runLine).toContain("Open the conversation");
   expect(runLine).toContain("Ask Scout to explain");
   const summaryRecorded = history.rowSummary.length > 0;
   await waitFor(app, `(() => {
@@ -926,7 +942,7 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   expect(await evalIn(app, `[...document.querySelectorAll('[data-message-role="user"]')].length`)).toBe(0);
   evidence.recordAssertionEvidence(
     "Each responsibility shows its run history and can ask the coworker to explain a run",
-    `The row's history opened on one succeeded manual run with its duration${summaryRecorded ? " and Scout's own closing summary" : ""}, plus Open thread and Ask Scout to explain. Explain prefilled the discussion composer with the run's outcome without sending anything.`,
+    `The row read as one plain line and opened into labelled everyday facts (When, Where, Next, Last time) with one run in plain words — Done, when, how long it took, started by you${summaryRecorded ? ", and Scout's own closing summary" : ""} — plus Open the conversation and Ask Scout to explain, with no time-zone ids, slots, threads, or status codes. Explain prefilled the discussion composer with the run's outcome without sending anything.`,
     true,
   );
 
@@ -997,8 +1013,8 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
     const row = [...document.querySelectorAll('[data-testid="responsibility-row"]')].find((candidate) => candidate.getAttribute("data-state") === "Queued");
     return row instanceof HTMLElement ? row.innerText : false;
   })()`, { timeoutMs: 30_000, label: "queued responsibility row" });
-  expect(String(queuedRow)).toContain("Waiting for a free slot");
-  expect(String(queuedRow)).toContain("Queued");
+  expect(String(queuedRow)).toContain("Waiting its turn");
+  expect(String(queuedRow)).not.toMatch(/slot|Queued/);
   const drained = await waitFor(app, `window.__COWORKER__.invoke("localResponsibilities.list", { slug: "scout" })
     .then((response) => {
       const items = response.ok ? response.result : [];

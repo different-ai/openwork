@@ -94,7 +94,7 @@ test("recent work merges finished assignments and responsibility runs, newest fi
   assert.equal(merged[0]?.threadId, "ses_digest");
   assert.equal(merged[2]?.error, "Model unavailable");
   assert.equal(merged[2]?.threadId, undefined);
-  assert.deepEqual(merged.map(describeOutcome), ["Succeeded", "Finished", "Failed"]);
+  assert.deepEqual(merged.map(describeOutcome), ["Done", "Finished", "Didn't finish"]);
   assert.deepEqual(mergeRecentWork(undefined, []), []);
 });
 

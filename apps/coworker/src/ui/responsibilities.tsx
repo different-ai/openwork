@@ -9,29 +9,23 @@ import {
   type DenLlmProvider,
 } from "@/lib/cloud-responsibilities";
 import { explainRunPrompt } from "@/lib/conversation";
-import { createDenAutomationsClient, describeSchedule, type DenSession } from "@/lib/den";
+import { createDenAutomationsClient, type DenSession } from "@/lib/den";
 import {
-  cloudRunEntry,
-  describeRunOutcome,
-  formatDuration,
-  localRunEntry,
-  summarizeRuns,
-  type RunEntry,
-} from "@/lib/run-history";
+  describeDurationForPeople,
+  describeMoment,
+  describeRowStatus,
+  describeRunTrend,
+  describeScheduleForPeople,
+  describeWhere,
+  outcomeForPrompt,
+  sentenceCase,
+} from "@/lib/responsibility-copy";
+import { cloudRunEntry, describeRunOutcome, localRunEntry, type RunEntry } from "@/lib/run-history";
 import { ActionMenu, Button, ErrorNote, Field, StatusDot, inputClass, type ActionMenuItem } from "@/ui/kit";
 
 type AutomationEntry = AutomationList["items"][number];
 type Placement = "cloud" | "local";
-
-function formatWhen(timestamp: number | null): string {
-  if (!timestamp) return "Not scheduled";
-  return new Date(timestamp).toLocaleString(undefined, {
-    month: "short",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  });
-}
+type Tone = "spark" | "mint" | "amber" | "rose" | "mist";
 
 function stateLabel(state: string): string {
   if (state === "needs_attention") return "Needs you";
@@ -39,29 +33,33 @@ function stateLabel(state: string): string {
   return readable.slice(0, 1).toUpperCase() + readable.slice(1);
 }
 
-/** "Succeeded · Sep 2, 9:00 AM" for the row's Last line. */
-function describeLast(entry: RunEntry | undefined): string {
-  if (!entry || entry.outcome === "queued" || entry.outcome === "running") return "";
-  return `${describeRunOutcome(entry.outcome)} · ${formatWhen(entry.at)}`;
-}
-
-/** One row of the unified list, whichever place it runs. */
+/**
+ * One row of the list, whichever place it runs. The row itself is one plain
+ * line; everything else waits behind it in the detail.
+ */
 type ResponsibilityRow = {
   key: string;
   name: string;
-  placement: string;
+  /** Where it runs, as a sentence: only the detail says this; a Cloud row also carries a small tag. */
+  where: string;
+  cloud: boolean;
+  /** "Every day at 9:00 AM (Paris time)". */
   schedule: string;
+  /** "Done today at 12:05 PM", "Working on it now", "Next: tomorrow at 9:00 AM". */
+  status: string;
+  statusTone: Tone;
+  /** The next occurrence in plain words, or empty when there is none. */
   next: string;
-  /** "Succeeded · Sep 2, 9:00 AM" or empty when it has never run. */
-  last: string;
-  lastFailed: boolean;
-  /** The coworker's closing words for the latest finished run, when it left any. */
-  latestSummary: string;
-  /** Short state pill; empty for an ordinary active responsibility. */
+  paused: boolean;
+  /** Newest run of any state and newest run that finished. */
+  latest: RunEntry | undefined;
+  finished: RunEntry | undefined;
+  /** Machine-readable state for the row element; "active" when nothing special is happening. */
   state: string;
-  tone: "spark" | "mint" | "amber" | "rose" | "mist";
-  /** Explanation shown only when this row cannot run here. */
+  tone: Tone;
+  /** Shown only when this row cannot run here. */
   warning: string;
+  /** What went wrong the last time, in the system's words; kept behind a disclosure. */
   attention: string;
   actions: ActionMenuItem[];
   /** Known runs, newest first; cloud rows load theirs when opened. */
@@ -100,7 +98,7 @@ export function ResponsibilitiesPanel({
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [busyKey, setBusyKey] = useState("");
-  const [openHistory, setOpenHistory] = useState<string | null>(null);
+  const [openRow, setOpenRow] = useState<string | null>(null);
   const [cloudRuns, setCloudRuns] = useState<Record<string, AutomationRun[]>>({});
   const den = useMemo(() => (session ? createDenAutomationsClient(session) : null), [session]);
   const [entries, setEntries] = useState<AutomationEntry[]>([]);
@@ -170,8 +168,8 @@ export function ResponsibilitiesPanel({
   function explain(name: string, entry: RunEntry) {
     onExplain(explainRunPrompt({
       responsibilityName: name,
-      outcome: describeRunOutcome(entry.outcome),
-      when: formatWhen(entry.at),
+      outcome: outcomeForPrompt(entry.outcome),
+      when: describeMoment(entry.at),
       summary: entry.summary,
       error: entry.error,
     }));
@@ -189,52 +187,55 @@ export function ResponsibilitiesPanel({
     return {
       key,
       name: item.name,
-      placement: "This Mac",
-      schedule: describeSchedule(item.schedule),
-      next: queued ? "Waiting for a free slot" : running ? "Running now" : paused ? "Paused" : formatWhen(item.nextDueAt),
-      last: describeLast(finished),
-      lastFailed: finished?.outcome === "failed",
-      latestSummary: finished?.outcome === "succeeded" ? finished.summary : "",
-      state: running ? "Running" : queued ? "Queued" : paused ? "Paused" : failed ? "Failed" : "",
-      tone: running ? "spark" : queued ? "spark" : failed ? "rose" : paused ? "mist" : "mint",
+      where: describeWhere("local"),
+      cloud: false,
+      schedule: describeScheduleForPeople(item.schedule),
+      status: describeRowStatus({ latest, finished, paused, needsAttention: false, nextDueAt: item.nextDueAt }),
+      statusTone: running || queued ? "spark" : failed ? "rose" : paused ? "mist" : finished ? "mint" : "mist",
+      next: paused || running || queued ? "" : describeMoment(item.nextDueAt),
+      paused,
+      latest,
+      finished,
+      state: running ? "Running" : queued ? "Queued" : paused ? "Paused" : failed ? "Failed" : "active",
+      tone: running || queued ? "spark" : failed ? "rose" : paused ? "mist" : "mint",
       warning: "",
       attention: failed ? latest?.error ?? "" : "",
       history,
       actions: [
         queued
           ? {
-              label: "Cancel queued run",
+              label: "Don't run this time",
               onSelect: () => void act(key, async () => {
                 await coworkerBridge.localResponsibilities.cancelQueued(coworker.slug, item.id);
                 await refreshLocal();
-                return "Removed from the line.";
+                return "Taken out of line.";
               }),
             }
           : {
-              label: running ? "Running…" : "Run now",
+              label: running ? "Working on it…" : "Run now",
               disabled: running,
               onSelect: () => void act(key, async () => {
                 const result = await coworkerBridge.localResponsibilities.runNow(coworker.slug, item.id);
                 window.setTimeout(() => void refreshLocal(), 500);
-                if (result.queued) return "Queued. It starts when a run finishes.";
-                return result.accepted ? "Run started." : "This responsibility is already running.";
+                if (result.queued) return "It'll start when the current run finishes.";
+                return result.accepted ? "Run started." : "This one is already running.";
               }),
             },
         ...(failed && latest?.threadId
           ? [{
-              label: "Resume last run",
+              label: "Pick up where it stopped",
               onSelect: () => void act(key, async () => {
                 const result = await coworkerBridge.localResponsibilities.resume(coworker.slug, item.id);
                 window.setTimeout(() => void refreshLocal(), 500);
-                if (result.accepted) return "Resuming in the same thread.";
+                if (result.accepted) return "Picking up where it stopped.";
                 return result.reason === "at limit"
-                  ? "This Mac is at its run limit. Try again when a run finishes."
-                  : "Another run of this responsibility is already active.";
+                  ? "This Mac is busy with other runs. Try again when one finishes."
+                  : "This one is already running.";
               }),
             }]
           : []),
         {
-          label: paused ? "Resume schedule" : "Pause schedule",
+          label: paused ? "Resume" : "Pause",
           onSelect: () => void act(key, async () => {
             await coworkerBridge.localResponsibilities.setActive(coworker.slug, item.id, paused);
             await refreshLocal();
@@ -264,16 +265,25 @@ export function ResponsibilitiesPanel({
     const latest = entry.latestRun ? cloudRunEntry(entry.latestRun) : undefined;
     const loaded = cloudRuns[id];
     const history = loaded ? loaded.map(cloudRunEntry) : latest ? [latest] : [];
+    const finished = latest && latest.outcome !== "running" && latest.outcome !== "queued" ? latest : undefined;
+    const status = needsAttention
+      ? "Needs you"
+      : paused
+        ? stateLabel(state)
+        : describeRowStatus({ latest, finished, paused: false, needsAttention: false, nextDueAt: entry.automation.nextDueAt });
     return {
       key: `cloud:${id}`,
       name: entry.automation.name,
-      placement: placement.label,
-      schedule: describeSchedule(entry.revision.schedule),
-      next: needsAttention ? "Waiting for you" : paused ? stateLabel(state) : formatWhen(entry.automation.nextDueAt),
-      last: describeLast(latest),
-      lastFailed: latest?.outcome === "failed" || latest?.outcome === "missed",
-      latestSummary: latest?.outcome === "succeeded" ? latest.summary : "",
-      state: needsAttention ? "Needs you" : paused ? stateLabel(state) : "",
+      where: describeWhere(placement.target === "cloud" ? "cloud" : "desktop"),
+      cloud: true,
+      schedule: describeScheduleForPeople(entry.revision.schedule),
+      status,
+      statusTone: needsAttention ? "rose" : paused ? "mist" : finished?.outcome === "succeeded" ? "mint" : finished ? "amber" : "mist",
+      next: paused || needsAttention ? "" : describeMoment(entry.automation.nextDueAt),
+      paused,
+      latest,
+      finished,
+      state: needsAttention ? "Needs you" : paused ? stateLabel(state) : "active",
       tone: needsAttention ? "rose" : paused ? "mist" : "mint",
       warning: placement.target === "cloud" ? "" : placement.detail,
       attention: entry.automation.needsAttentionReason?.message ?? "",
@@ -296,13 +306,13 @@ export function ResponsibilitiesPanel({
             await den.runNow(id);
             void refreshCloud();
             return placement.target === "cloud"
-              ? "Run requested in OpenWork Cloud."
-              : "Run requested. It starts only when the OpenWork desktop app is open for your account.";
+              ? "Asked OpenWork Cloud to run it now."
+              : "Asked for a run. It starts when the OpenWork desktop app is open for your account.";
           }),
         },
         ...(state === "active" || (state !== "archived" && !needsAttention)
           ? [{
-              label: state === "active" ? "Pause schedule" : "Resume schedule",
+              label: state === "active" ? "Pause" : "Resume",
               onSelect: () => void act(`cloud:${id}`, async () => {
                 if (!den) return "";
                 await den.setActive(id, state !== "active");
@@ -312,7 +322,7 @@ export function ResponsibilitiesPanel({
             }]
           : []),
         {
-          label: "Release",
+          label: `Take off ${coworker.name}'s list`,
           tone: "danger" as const,
           onSelect: () => void act(`cloud:${id}`, async () => {
             onCoworkerChanged(
@@ -330,9 +340,9 @@ export function ResponsibilitiesPanel({
   const rows = [...cloudRows, ...localRows];
   const canAdd = adding === null;
 
-  function toggleHistory(row: ResponsibilityRow) {
-    const next = openHistory === row.key ? null : row.key;
-    setOpenHistory(next);
+  function toggleRow(row: ResponsibilityRow) {
+    const next = openRow === row.key ? null : row.key;
+    setOpenRow(next);
     if (next && row.loadHistory) void row.loadHistory();
   }
 
@@ -386,60 +396,46 @@ export function ResponsibilitiesPanel({
       {rows.length > 0 ? (
         <ul className="divide-y divide-line rounded-2xl border border-line bg-ink" data-testid="responsibility-list">
           {rows.map((row) => {
-            const expanded = openHistory === row.key;
-            const known = row.history ?? [];
-            const trend = summarizeRuns(known);
-            const hasRuns = known.length > 0 || row.loadHistory !== undefined;
+            const expanded = openRow === row.key;
+            const statusClass = row.statusTone === "rose"
+              ? "text-rose"
+              : row.statusTone === "amber"
+                ? "text-amber"
+                : row.statusTone === "spark"
+                  ? "text-spark"
+                  : row.statusTone === "mint"
+                    ? "text-mint"
+                    : "text-mist";
             return (
-              <li key={row.key} className="px-3.5 py-3" data-testid="responsibility-row" data-state={row.state || "active"}>
-                <div className="flex items-start gap-2.5">
+              <li key={row.key} data-testid="responsibility-row" data-state={row.state} data-expanded={expanded ? "true" : "false"}>
+                <div className="flex items-start gap-2.5 px-3.5 py-3">
                   <span className="mt-1.5"><StatusDot tone={row.tone} /></span>
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-start justify-between gap-2">
-                      <p className="min-w-0 break-words text-sm font-semibold leading-snug text-snow">{row.name}</p>
-                      <ActionMenu label={`Actions for ${row.name}`} items={row.actions.map((action) => ({ ...action, disabled: action.disabled || busyKey === row.key }))} />
-                    </div>
-                    <p className="mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[11px] text-mist">
-                      <span className={`rounded-full px-1.5 py-px font-medium ${row.placement === "OpenWork Cloud" ? "bg-spark/10 text-spark" : row.placement === "This Mac" ? "bg-white/7 text-mist" : "bg-amber/10 text-amber"}`}>
-                        {row.placement}
-                      </span>
-                      <span>{row.schedule}</span>
-                      {row.state ? <span className={`font-medium ${row.tone === "rose" ? "text-rose" : row.tone === "spark" ? "text-spark" : "text-mist"}`}>· {row.state}</span> : null}
-                    </p>
-                    <p className="mt-1 text-[11px] text-mist">
-                      <span>Next: {row.next}</span>
-                      {row.last ? <span className={row.lastFailed ? "text-amber" : ""}> · Last: {row.last}</span> : null}
-                    </p>
-                    {row.latestSummary ? (
-                      <p className="mt-1.5 line-clamp-2 text-[11px] leading-relaxed text-snow/80" title={row.latestSummary} data-testid="responsibility-summary">
-                        {row.latestSummary}
-                      </p>
-                    ) : null}
-                    {row.attention ? <p className="mt-1.5 break-words rounded-lg bg-rose/8 px-2.5 py-1.5 text-[11px] leading-relaxed text-rose">{row.attention}</p> : null}
-                    {row.warning ? <p className="mt-1.5 rounded-lg bg-amber/8 px-2.5 py-1.5 text-[11px] leading-relaxed text-amber">{row.warning}</p> : null}
-                    {hasRuns && (trend || row.loadHistory) ? (
-                      <button
-                        type="button"
-                        className="mt-1.5 flex items-center gap-1 text-[11px] font-medium text-mist transition-colors hover:text-snow"
-                        aria-expanded={expanded}
-                        onClick={() => toggleHistory(row)}
-                        data-testid="responsibility-history-toggle"
-                      >
-                        <span aria-hidden="true" className={`inline-block transition-transform ${expanded ? "rotate-90" : ""}`}>›</span>
-                        <span>{trend || "Run history"}</span>
-                      </button>
-                    ) : null}
-                    {expanded ? (
-                      <RunHistory
-                        entries={known}
-                        loading={row.history === null}
-                        onOpenThread={onOpenThread}
-                        onExplain={(entry) => explain(row.name, entry)}
-                        coworkerName={coworker.name}
-                      />
-                    ) : null}
-                  </div>
+                  <button
+                    type="button"
+                    className="min-w-0 flex-1 rounded-lg text-left outline-none focus-visible:ring-1 focus-visible:ring-spark/60"
+                    aria-expanded={expanded}
+                    onClick={() => toggleRow(row)}
+                    data-testid="responsibility-history-toggle"
+                    title={expanded ? "Hide details" : "Show details"}
+                  >
+                    <span className="block break-words text-sm font-semibold leading-snug text-snow">{row.name}</span>
+                    <span className="mt-0.5 block text-[11px] leading-relaxed text-mist" data-testid="responsibility-line">
+                      {row.schedule}
+                      <span aria-hidden="true"> · </span>
+                      <span className={`font-medium ${statusClass}`}>{row.status}</span>
+                      {row.cloud ? <span className="ml-1.5 rounded-full bg-spark/10 px-1.5 py-px text-[10px] font-medium text-spark">Cloud</span> : null}
+                    </span>
+                  </button>
+                  <ActionMenu label={`Actions for ${row.name}`} items={row.actions.map((action) => ({ ...action, disabled: action.disabled || busyKey === row.key }))} />
                 </div>
+                {expanded ? (
+                  <ResponsibilityDetail
+                    row={row}
+                    coworkerName={coworker.name}
+                    onOpenThread={onOpenThread}
+                    onExplain={(entry) => explain(row.name, entry)}
+                  />
+                ) : null}
               </li>
             );
           })}
@@ -453,7 +449,7 @@ export function ResponsibilitiesPanel({
       {others.length > 0 ? (
         <details className="rounded-2xl border border-line bg-ink px-3 py-2.5">
           <summary className="cursor-pointer text-xs font-medium text-mist">
-            {others.length} other organization automation{others.length === 1 ? "" : "s"}
+            {others.length} more in your organization
           </summary>
           <ul className="mt-2 space-y-2">
             {others.map((entry) => {
@@ -461,10 +457,10 @@ export function ResponsibilitiesPanel({
               return (
                 <li key={entry.automation.id} className="rounded-xl bg-panel p-2.5">
                   <p className="text-xs font-medium text-snow">{entry.automation.name}</p>
-                  <p className="mt-0.5 text-[11px] text-mist">{owner ? `Owned by ${owner.name}` : describeSchedule(entry.revision.schedule)}</p>
+                  <p className="mt-0.5 text-[11px] text-mist">{owner ? `Looked after by ${owner.name}` : describeScheduleForPeople(entry.revision.schedule)}</p>
                   {!owner ? (
                     <button className="mt-1 text-[11px] font-medium text-spark hover:underline" onClick={() => void associate(entry.automation.id)}>
-                      Assign to {coworker.name}
+                      Give to {coworker.name}
                     </button>
                   ) : null}
                 </li>
@@ -477,60 +473,146 @@ export function ResponsibilitiesPanel({
   );
 }
 
-/** Past runs of one responsibility: outcome, when, how long, and the coworker's own words. */
+/**
+ * Everything a person might want to know about one responsibility, in labelled
+ * everyday facts, followed by what happened each time it ran.
+ */
+function ResponsibilityDetail({
+  row,
+  coworkerName,
+  onOpenThread,
+  onExplain,
+}: {
+  row: ResponsibilityRow;
+  coworkerName: string;
+  onOpenThread: (threadId: string) => void;
+  onExplain: (entry: RunEntry) => void;
+}) {
+  const known = row.history ?? [];
+  const trend = describeRunTrend(known);
+  const lastTime = row.finished
+    ? [
+        describeRunOutcome(row.finished.outcome),
+        sentenceCase(describeMoment(row.finished.at)),
+        row.finished.durationMs !== null ? `took ${describeDurationForPeople(row.finished.durationMs)}` : "",
+        row.finished.how ? row.finished.how.toLowerCase() : "",
+      ].filter(Boolean).join(" · ")
+    : "";
+  const nextText = row.latest?.outcome === "running"
+    ? "Working on it now"
+    : row.latest?.outcome === "queued"
+      ? "Waiting its turn"
+      : row.paused
+        ? "Paused — nothing until you resume it"
+        : row.next
+          ? sentenceCase(row.next)
+          : "Not scheduled";
+  const summary = row.finished?.outcome === "succeeded" ? row.finished.summary : "";
+  return (
+    <div className="border-t border-line/70 bg-panel/40 px-3.5 py-3 text-[11px] leading-relaxed" data-testid="responsibility-detail">
+      <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1">
+        <dt className="text-mist">When</dt>
+        <dd className="text-snow">{row.schedule}</dd>
+        <dt className="text-mist">Where</dt>
+        <dd className="text-snow">{row.where}</dd>
+        <dt className="text-mist">Next</dt>
+        <dd className="text-snow">{nextText}</dd>
+        {lastTime ? (
+          <>
+            <dt className="text-mist">Last time</dt>
+            <dd className={row.finished?.outcome === "succeeded" ? "text-snow" : "text-amber"}>{lastTime}</dd>
+          </>
+        ) : null}
+      </dl>
+      {summary ? (
+        <div className="mt-2">
+          <p className="text-mist">What {coworkerName} said</p>
+          <p className="mt-0.5 line-clamp-3 text-snow/85" title={summary} data-testid="responsibility-summary">{summary}</p>
+        </div>
+      ) : null}
+      {row.attention ? (
+        <details className="mt-2 rounded-lg bg-rose/8 px-2.5 py-1.5 text-rose">
+          <summary className="cursor-pointer select-none font-medium">What went wrong</summary>
+          <p className="mt-1 break-words">{row.attention}</p>
+        </details>
+      ) : null}
+      {row.warning ? <p className="mt-2 rounded-lg bg-amber/8 px-2.5 py-1.5 text-amber">{row.warning}</p> : null}
+      <RunHistory
+        entries={known}
+        trend={trend}
+        loading={row.history === null}
+        coworkerName={coworkerName}
+        onOpenThread={onOpenThread}
+        onExplain={onExplain}
+      />
+    </div>
+  );
+}
+
+/** Each time it ran: what happened, when, how long it took, and the coworker's own words. */
 function RunHistory({
   entries,
+  trend,
   loading,
   coworkerName,
   onOpenThread,
   onExplain,
 }: {
   entries: RunEntry[];
+  trend: string;
   loading: boolean;
   coworkerName: string;
   onOpenThread: (threadId: string) => void;
   onExplain: (entry: RunEntry) => void;
 }) {
   if (loading && entries.length === 0) {
-    return <p className="mt-2 text-[11px] text-mist">Reading run history…</p>;
+    return <p className="mt-2 text-mist">Looking up earlier runs…</p>;
   }
   if (entries.length === 0) {
-    return <p className="mt-2 text-[11px] text-mist">No runs yet.</p>;
+    return <p className="mt-2 text-mist">It hasn't run yet.</p>;
   }
   return (
-    <ol className="mt-2 space-y-1.5 border-l border-line pl-3" data-testid="responsibility-history">
-      {entries.map((entry) => {
-        const tone = entry.outcome === "succeeded" ? "mint" : entry.outcome === "failed" ? "rose" : entry.outcome === "missed" ? "amber" : entry.outcome === "running" || entry.outcome === "queued" ? "spark" : "mist";
-        const explainable = entry.outcome !== "queued" && entry.outcome !== "running";
-        return (
-          <li key={entry.id} className="text-[11px]" data-testid="responsibility-run" data-outcome={entry.outcome}>
-            <div className="flex flex-wrap items-center gap-x-1.5 text-mist">
-              <StatusDot tone={tone} />
-              <span className={`font-medium ${tone === "rose" ? "text-rose" : tone === "amber" ? "text-amber" : "text-snow"}`}>{describeRunOutcome(entry.outcome)}</span>
-              <span>· {formatWhen(entry.at)}</span>
-              {entry.durationMs !== null ? <span>· {formatDuration(entry.durationMs)}</span> : null}
-              {entry.how ? <span>· {entry.how}</span> : null}
-            </div>
-            {entry.summary ? <p className="mt-0.5 line-clamp-3 leading-relaxed text-snow/80" title={entry.summary}>{entry.summary}</p> : null}
-            {entry.error ? <p className="mt-0.5 break-words leading-relaxed text-rose">{entry.error}</p> : null}
-            {explainable || entry.threadId ? (
-              <div className="mt-1 flex flex-wrap gap-x-3">
-                {entry.threadId ? (
-                  <button type="button" className="font-medium text-spark hover:underline" onClick={() => onOpenThread(entry.threadId)}>
-                    Open thread
-                  </button>
-                ) : null}
-                {explainable ? (
-                  <button type="button" className="font-medium text-spark hover:underline" onClick={() => onExplain(entry)} data-testid="responsibility-explain">
-                    Ask {coworkerName} to explain
-                  </button>
-                ) : null}
+    <div className="mt-2.5">
+      <p className="text-mist" data-testid="responsibility-trend">{trend || "So far"}</p>
+      <ol className="mt-1.5 space-y-1.5 border-l border-line pl-3" data-testid="responsibility-history">
+        {entries.map((entry) => {
+          const tone: Tone = entry.outcome === "succeeded" ? "mint" : entry.outcome === "failed" ? "rose" : entry.outcome === "missed" ? "amber" : entry.outcome === "running" || entry.outcome === "queued" ? "spark" : "mist";
+          const explainable = entry.outcome !== "queued" && entry.outcome !== "running";
+          return (
+            <li key={entry.id} data-testid="responsibility-run" data-outcome={entry.outcome}>
+              <div className="flex flex-wrap items-center gap-x-1.5 text-mist">
+                <StatusDot tone={tone} />
+                <span className={`font-medium ${tone === "rose" ? "text-rose" : tone === "amber" ? "text-amber" : "text-snow"}`}>{describeRunOutcome(entry.outcome)}</span>
+                <span>· {describeMoment(entry.at)}</span>
+                {entry.durationMs !== null ? <span>· {describeDurationForPeople(entry.durationMs)}</span> : null}
+                {entry.how ? <span>· {entry.how}</span> : null}
               </div>
-            ) : null}
-          </li>
-        );
-      })}
-    </ol>
+              {entry.summary ? <p className="mt-0.5 line-clamp-3 text-snow/80" title={entry.summary}>{entry.summary}</p> : null}
+              {entry.error ? (
+                <details className="mt-0.5 text-rose">
+                  <summary className="cursor-pointer select-none">What went wrong</summary>
+                  <p className="mt-0.5 break-words">{entry.error}</p>
+                </details>
+              ) : null}
+              {explainable || entry.threadId ? (
+                <div className="mt-1 flex flex-wrap gap-x-3">
+                  {entry.threadId ? (
+                    <button type="button" className="font-medium text-spark hover:underline" onClick={() => onOpenThread(entry.threadId)}>
+                      Open the conversation
+                    </button>
+                  ) : null}
+                  {explainable ? (
+                    <button type="button" className="font-medium text-spark hover:underline" onClick={() => onExplain(entry)} data-testid="responsibility-explain">
+                      Ask {coworkerName} to explain
+                    </button>
+                  ) : null}
+                </div>
+              ) : null}
+            </li>
+          );
+        })}
+      </ol>
+    </div>
   );
 }
 
