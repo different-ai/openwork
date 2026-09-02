@@ -455,21 +455,18 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   expect(new Set(animatedLayers.map((layer) => layer.animationDelay)).size).toBe(1);
   // The gaze settles on the next animation frames; poll for it rather than holding one long
   // evaluation open, so a momentary renderer stall on a slow display does not read as a failure.
-  await evalIn(app, `(() => {
-    const avatar = document.querySelector('svg[aria-label="Scout avatar"].is-animated');
-    if (!avatar) return false;
-    const bounds = avatar.getBoundingClientRect();
-    window.dispatchEvent(new PointerEvent("pointermove", {
-      clientX: bounds.left - Math.max(24, bounds.width),
-      clientY: bounds.bottom + Math.max(24, bounds.height),
-    }));
-    return true;
-  })()`);
+  // Each poll moves the pointer again and reads the gaze rendered since the previous tick, so a
+  // focus change (which resets the gaze) or a slow frame cannot leave a stale zero behind.
   const coworkerGaze = await waitFor(app, `(() => {
     const avatar = document.querySelector('svg[aria-label="Scout avatar"].is-animated');
     if (!avatar) return false;
     const lookX = Number.parseFloat(avatar.style.getPropertyValue("--avatar-look-x"));
     const lookY = Number.parseFloat(avatar.style.getPropertyValue("--avatar-look-y"));
+    const bounds = avatar.getBoundingClientRect();
+    window.dispatchEvent(new PointerEvent("pointermove", {
+      clientX: bounds.left - Math.max(24, bounds.width),
+      clientY: bounds.bottom + Math.max(24, bounds.height),
+    }));
     if (!Number.isFinite(lookX) || !Number.isFinite(lookY) || lookX >= 0 || lookY <= 0) return false;
     return {
       hasPointerLayer: avatar.querySelector(".coworker-avatar__pointer-gaze") !== null,
@@ -521,13 +518,6 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   expect(secondCoworker).toMatchObject({ ok: true, result: { slug: "nova" } });
   await evalIn(app, "location.reload(); true");
   await waitForText(app, "Nova", { timeoutMs: 120_000 });
-  await evalIn(app, `(() => {
-    window.dispatchEvent(new PointerEvent("pointermove", {
-      clientX: window.innerWidth - 2,
-      clientY: window.innerHeight - 2,
-    }));
-    return true;
-  })()`);
   const railAvatars = await waitFor(app, `(() => {
     const avatars = [...document.querySelectorAll("aside nav svg.coworker-avatar")];
     if (avatars.length !== 2) return false;
@@ -545,6 +535,12 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
         featureLookY: Number.parseFloat(avatar.style.getPropertyValue("--avatar-feature-look-y")),
       };
     });
+    // Move the pointer to the bottom-right corner on every tick; the values read above were rendered
+    // after the previous tick's move, so a focus reset in between cannot stick.
+    window.dispatchEvent(new PointerEvent("pointermove", {
+      clientX: window.innerWidth - 2,
+      clientY: window.innerHeight - 2,
+    }));
     // Both avatars have turned toward the bottom-right pointer once every look value is positive.
     return facts.every((fact) => fact.lookX > 0 && fact.lookY > 0 && fact.featureLookY > 0) ? facts : false;
   })()`, { timeoutMs: 30_000, label: "both rail avatars following the pointer" });
