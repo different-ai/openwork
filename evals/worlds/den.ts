@@ -71,7 +71,7 @@ export async function ssoInvite(seed: Seed) {
     const inviteToken = stringField(invited.body, "inviteToken");
     if (!invited.response.ok || !inviteToken) throw new Error(`Could not invite the SSO member: HTTP ${invited.response.status}.`);
 
-    const webOrigin = den.ref.webUrl.replace("127.0.0.1", "localhost");
+    const webOrigin = den.ref.webUrl;
     const web = await seed.web({
       den,
       startPath: "/",
