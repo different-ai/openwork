@@ -85,25 +85,23 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
     const mark = document.querySelector('svg[aria-label="Open Coworker"].coworker-mark');
     if (!mark) return null;
     const bounds = mark.getBoundingClientRect();
+    // The gaze follows the pointer synchronously, so read it in the same tick as the synthetic
+    // move: a real mouse crossing the window cannot slip in between.
     window.dispatchEvent(new PointerEvent("pointermove", {
       clientX: window.innerWidth - 2,
       clientY: bounds.top + bounds.height / 2,
     }));
-    return new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => {
-      const pointerLayer = mark.querySelector(".coworker-mark__pointer-gaze");
-      const lookX = Number.parseFloat(mark.style.getPropertyValue("--avatar-look-x"));
-      const lookY = Number.parseFloat(mark.style.getPropertyValue("--avatar-look-y"));
-      resolve({
-        whiteTile: mark.querySelector('rect[fill="#f7f8fa"]') !== null,
-        blackOutline: mark.querySelector('path[fill="none"][stroke="#11151d"]') !== null,
-        rearShell: mark.querySelector('path[fill="#d9dde4"][stroke="#aeb5c0"]') !== null,
-        blueFill: mark.querySelector('[fill="#5b8dff"]') !== null,
-        hasPointerLayer: pointerLayer !== null,
-        lookX,
-        lookY,
-      });
-    })));
-  })()`, { awaitPromise: true, timeoutMs: 30_000 });
+    const pointerLayer = mark.querySelector(".coworker-mark__pointer-gaze");
+    return {
+      whiteTile: mark.querySelector('rect[fill="#f7f8fa"]') !== null,
+      blackOutline: mark.querySelector('path[fill="none"][stroke="#11151d"]') !== null,
+      rearShell: mark.querySelector('path[fill="#d9dde4"][stroke="#aeb5c0"]') !== null,
+      blueFill: mark.querySelector('[fill="#5b8dff"]') !== null,
+      hasPointerLayer: pointerLayer !== null,
+      lookX: Number.parseFloat(mark.style.getPropertyValue("--avatar-look-x")),
+      lookY: Number.parseFloat(mark.style.getPropertyValue("--avatar-look-y")),
+    };
+  })()`, { timeoutMs: 30_000 });
   expect(brandGaze).toMatchObject({
     whiteTile: true,
     blackOutline: true,
@@ -460,13 +458,13 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   const coworkerGaze = await waitFor(app, `(() => {
     const avatar = document.querySelector('svg[aria-label="Scout avatar"].is-animated');
     if (!avatar) return false;
-    const lookX = Number.parseFloat(avatar.style.getPropertyValue("--avatar-look-x"));
-    const lookY = Number.parseFloat(avatar.style.getPropertyValue("--avatar-look-y"));
     const bounds = avatar.getBoundingClientRect();
     window.dispatchEvent(new PointerEvent("pointermove", {
       clientX: bounds.left - Math.max(24, bounds.width),
       clientY: bounds.bottom + Math.max(24, bounds.height),
     }));
+    const lookX = Number.parseFloat(avatar.style.getPropertyValue("--avatar-look-x"));
+    const lookY = Number.parseFloat(avatar.style.getPropertyValue("--avatar-look-y"));
     if (!Number.isFinite(lookX) || !Number.isFinite(lookY) || lookX >= 0 || lookY <= 0) return false;
     return {
       hasPointerLayer: avatar.querySelector(".coworker-avatar__pointer-gaze") !== null,
@@ -521,6 +519,10 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   const railAvatars = await waitFor(app, `(() => {
     const avatars = [...document.querySelectorAll("aside nav svg.coworker-avatar")];
     if (avatars.length !== 2) return false;
+    window.dispatchEvent(new PointerEvent("pointermove", {
+      clientX: window.innerWidth - 2,
+      clientY: window.innerHeight - 2,
+    }));
     const facts = avatars.map((avatar) => {
       const pupils = avatar.querySelector(".coworker-avatar__pupils");
       const blink = pupils ? getComputedStyle(pupils) : null;
@@ -535,12 +537,6 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
         featureLookY: Number.parseFloat(avatar.style.getPropertyValue("--avatar-feature-look-y")),
       };
     });
-    // Move the pointer to the bottom-right corner on every tick; the values read above were rendered
-    // after the previous tick's move, so a focus reset in between cannot stick.
-    window.dispatchEvent(new PointerEvent("pointermove", {
-      clientX: window.innerWidth - 2,
-      clientY: window.innerHeight - 2,
-    }));
     // Both avatars have turned toward the bottom-right pointer once every look value is positive.
     return facts.every((fact) => fact.lookX > 0 && fact.lookY > 0 && fact.featureLookY > 0) ? facts : false;
   })()`, { timeoutMs: 30_000, label: "both rail avatars following the pointer" });
