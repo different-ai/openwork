@@ -57,12 +57,14 @@ describe("sidebar session rows", () => {
     expect(rows.map((row) => row.session.id)).toEqual(["session-b"]);
   });
 
-  test("keeps a child whose parent is outside the list as a root", () => {
+  test("hides a child even when its parent is archived or outside the list", () => {
     const orphaned: SidebarSessionItem[] = [
       { id: "session-c", title: "Orphan child", parentID: "missing-parent" },
+      { id: "session-d", title: "Archived parent", time: { archived: 1 } },
+      { id: "session-d-child", title: "Child of archived", parentID: "session-d" },
     ];
     const rows = flattenSessionRows(orphaned, Number.MAX_SAFE_INTEGER);
 
-    expect(rows.map((row) => row.session.id)).toEqual(["session-c"]);
+    expect(rows).toEqual([]);
   });
 });
