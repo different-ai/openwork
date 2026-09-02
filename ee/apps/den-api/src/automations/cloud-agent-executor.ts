@@ -7,6 +7,7 @@ import type { AutomationAction, AutomationError, AutomationUsage } from "@openwo
 import { db } from "../db.js"
 import { env } from "../env.js"
 import { resolveCloudRuntimeAccess, type CloudWorkerAccess } from "../workers/worker-access.js"
+import { materializeCloudWorkerProviders } from "../llm/cloud-provider-materialization.js"
 import { organizationCloudEnabled } from "../capability-sources/cloud-rollout.js"
 import { CLOUD_INSTANCE_BACKEND } from "../workers/cloud-constants.js"
 import { wakeCloudWorker } from "../workers/cloud-lifecycle.js"
@@ -460,6 +461,27 @@ export async function executeCloudAgent(input: CloudAgentExecutorInput): Promise
     // Recovery keeps the receipt's workspace (the turn may already be running
     // there); otherwise the revision pin wins over the worker's active workspace.
     const workspaceId = previousReceipt?.workspaceId ?? input.workspaceId ?? runtime.workspaceId
+    // Automations never materialized the organization's custom LLM providers
+    // into the worker's OpenCode runtime -- that mechanism
+    // (llm/cloud-provider-materialization.ts) previously existed only for the
+    // Cloud Chat / gateway resolution path (routes/cloud/index.ts). A worker
+    // that only ever ran Automations therefore never received a custom
+    // provider's credentials or model catalog, and connectHealth below failed
+    // with connect_access_unavailable ("provider/model not found in OpenCode
+    // provider catalog"). Best-effort and non-fatal on purpose: on failure,
+    // connectHealth still runs right after and surfaces a real, actionable
+    // error instead of this call's own.
+    try {
+      await materializeCloudWorkerProviders({
+        organizationId: normalizeDenTypeId("organization", input.organizationId),
+        workerId: normalizeDenTypeId("worker", runtime.workerId),
+        instanceUrl: runtime.baseUrl,
+        hostToken: runtime.access.hostToken,
+        clientToken: runtime.access.clientToken,
+      })
+    } catch {
+      // swallow: see comment above.
+    }
     const connect = await connectHealth({ ...runtime, workspaceId, action: input.action, signal })
     if (!connect.ok) {
       return { ok: false, status: "failed", code: connect.code, message: connect.message, retryable: false, needsAttention: true }
