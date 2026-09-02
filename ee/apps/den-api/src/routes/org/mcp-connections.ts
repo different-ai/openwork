@@ -59,6 +59,7 @@ import {
   listActiveExternalMcpConnectionBindings,
   listDirectExternalMcpConnectionAccess,
   listExternalMcpConnections,
+  listRetiredPluginOwnedExternalMcpConnectionIds,
   listVisibleExternalMcpConnections,
   markExternalMcpConnectionConnected,
   markExternalMcpOAuthIssuerReviewRequired,
@@ -1728,7 +1729,7 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
     describeRoute({
       tags: ["Capability Sources"],
       summary: "List External MCP Connections",
-      description: "scope=usable (default): connections the calling member has been granted (org-wide, direct, or via a team), with per-member connection status. scope=manageable: every org connection with access summaries — workspace owners and admins only.",
+      description: "scope=usable (default): connections the calling member has been granted (org-wide, direct, or via a team), with per-member connection status. scope=manageable: every org connection with access summaries — workspace owners and admins only. A connection a plugin created for its own MCP server is omitted while every plugin that owns it is archived or deleted; restoring the plugin lists it again.",
       responses: {
         200: jsonResponse("Connections.", connectionListResponseSchema),
         401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
@@ -1748,7 +1749,12 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
         if (!verifyOrgRole({ roles: ["admin"], userContext: payload.currentMember })) {
           return c.json({ error: "forbidden", message: "Only workspace owners and admins can list all MCP connections." }, 403)
         }
-        const rows = await listExternalMcpConnections(payload.organization.id)
+        const allRows = await listExternalMcpConnections(payload.organization.id)
+        const retiredIds = await listRetiredPluginOwnedExternalMcpConnectionIds({
+          organizationId: payload.organization.id,
+          connectionIds: allRows.map((row) => row.id),
+        })
+        const rows = allRows.filter((row) => !retiredIds.has(row.id))
         const provenance = await requiredByForConnections({ context, includeAllPluginNames: true, rows })
         const connections = await Promise.all(rows.map((row) =>
           toConnectionResponse(row, {
