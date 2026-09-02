@@ -4,7 +4,7 @@ import { expect } from "vitest";
 
 const enabled = process.env.OPENWORK_EVAL_E2E_TESTS === "1";
 const title = enabled
-  ? "Open Coworker completes local onboarding, a calm default sidebar, model choice in settings, and a scheduled native run"
+  ? "Open Coworker completes local onboarding, a calm default sidebar, model choice in settings, native runs with history, and a run queue"
   : "Open Coworker local-first journey skipped — needs: set OPENWORK_EVAL_E2E_TESTS=1";
 
 function json(value: unknown): string {
@@ -622,6 +622,120 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   evidence.recordAssertionEvidence(
     "A local Responsibility runs through a native thread and the sidebar records it once, in the right place",
     "The daily responsibility finished with a native ses_ thread id and no error. Current activity then read just Ready, Recent listed Local readiness check as a succeeded responsibility exactly once, and the responsibility row showed its next occurrence and Last: Succeeded.",
+    true,
+  );
+
+  // --- Outcomes live beside the responsibility: a run history with the coworker's own words,
+  // and a way to ask the coworker to explain a run without leaving the discussion.
+  await waitFor(app, `(() => {
+    const toggle = document.querySelector('[data-testid="responsibility-history-toggle"]');
+    if (!(toggle instanceof HTMLElement) || !(toggle.textContent ?? "").includes("1 run")) return false;
+    toggle.click();
+    return true;
+  })()`, { timeoutMs: 30_000, label: "run history toggle" });
+  const history = await waitFor(app, `(() => {
+    const runs = [...document.querySelectorAll('[data-testid="responsibility-run"]')];
+    if (runs.length !== 1) return false;
+    const run = runs[0];
+    return {
+      outcome: run.getAttribute("data-outcome"),
+      text: run.innerText,
+      toggle: document.querySelector('[data-testid="responsibility-history-toggle"] span:not([aria-hidden])')?.textContent?.trim() ?? "",
+      rowSummary: document.querySelector('[data-testid="responsibility-summary"]')?.textContent?.trim() ?? "",
+    };
+  })()`, { timeoutMs: 30_000, label: "one recorded run in the history" });
+  expect(history).toMatchObject({ outcome: "succeeded", toggle: "1 run · 1 succeeded" });
+  if (!isRecord(history) || typeof history.text !== "string" || typeof history.rowSummary !== "string") {
+    throw new Error("Run history facts were unavailable.");
+  }
+  // innerText breaks each flex child onto its own line; read the run as one sentence.
+  const runLine = history.text.replace(/\s+/g, " ");
+  expect(runLine).toMatch(/Succeeded · .+ · \d+(s|m)/);
+  expect(runLine).toContain("Started by you");
+  expect(runLine).toContain("Open thread");
+  expect(runLine).toContain("Ask Scout to explain");
+  const summaryRecorded = history.rowSummary.length > 0;
+  await waitFor(app, `(() => {
+    const explain = document.querySelector('[data-testid="responsibility-explain"]');
+    if (!(explain instanceof HTMLElement)) return false;
+    explain.click();
+    return true;
+  })()`, { timeoutMs: 30_000, label: "Ask Scout to explain" });
+  const explainDraft = String(await waitFor(app, `(() => {
+    const composer = document.querySelector('textarea[aria-label="Message Scout"]');
+    return composer instanceof HTMLTextAreaElement && composer.value.includes("Local readiness check") ? composer.value : false;
+  })()`, { timeoutMs: 30_000, label: "explain message prefilled in the discussion composer" }));
+  expect(explainDraft).toContain('run of your responsibility "Local readiness check". It succeeded.');
+  expect(explainDraft).toContain("what the outcome means");
+  if (summaryRecorded) expect(explainDraft).toContain("Here is what you reported at the end of that run:");
+  expect(await evalIn(app, `[...document.querySelectorAll('[data-message-role="user"]')].length`)).toBe(0);
+  evidence.recordAssertionEvidence(
+    "Each responsibility shows its run history and can ask the coworker to explain a run",
+    `The row's history opened on one succeeded manual run with its duration${summaryRecorded ? " and Scout's own closing summary" : ""}, plus Open thread and Ask Scout to explain. Explain prefilled the discussion composer with the run's outcome without sending anything.`,
+    true,
+  );
+
+  // --- A run limit on this Mac: the second request waits in line and starts by itself.
+  await clickButtonContaining(app, "OpenWork");
+  await waitForText(app, "OpenWork settings", { timeoutMs: 30_000 });
+  await clickButton(app, "AI & local setup");
+  await waitFor(app, `Boolean(document.querySelector('[data-testid="local-runs-card"] [role="radio"][aria-checked="true"]'))`, { timeoutMs: 30_000, label: "parallel-run limit control" });
+  const limitCard = String(await evalIn(app, `document.querySelector('[data-testid="local-runs-card"]')?.innerText ?? ""`));
+  expect(limitCard).toContain("Responsibilities on this Mac");
+  expect(limitCard).toContain("wait in line");
+  expect(limitCard).toMatch(/\d+ running · \d+ waiting/);
+  await waitFor(app, `(() => {
+    const one = [...document.querySelectorAll('[data-testid="local-runs-card"] [role="radio"]')].find((radio) => radio.textContent?.trim() === "1");
+    if (!(one instanceof HTMLElement) || one.disabled) return false;
+    one.click();
+    return true;
+  })()`, { timeoutMs: 30_000, label: "limit of one run" });
+  await waitFor(app, `[...document.querySelectorAll('[data-testid="local-runs-card"] [role="radio"]')].find((radio) => radio.textContent?.trim() === "1")?.getAttribute("aria-checked") === "true"`, {
+    timeoutMs: 30_000,
+    label: "limit saved",
+  });
+  expect(await invokeCoworker(app, "settings.get", {})).toMatchObject({ ok: true, result: { maxParallelLocalRuns: 1 } });
+  await clickButtonContaining(app, "Back to coworkers");
+  await waitForText(app, "Local readiness check", { timeoutMs: 30_000 });
+  const second = await invokeCoworker(app, "localResponsibilities.create", {
+    slug: "scout",
+    name: "Second readiness check",
+    instructions: "Reply with exactly SECOND RESPONSIBILITY READY. Do not use tools.",
+    schedule: { kind: "daily", timezone: "UTC", hour: 9, minute: 0 },
+  });
+  expect(second).toMatchObject({ ok: true, result: { name: "Second readiness check", state: "active" } });
+  const listed = await invokeCoworker(app, "localResponsibilities.list", { slug: "scout" });
+  if (!isRecord(listed) || !Array.isArray(listed.result)) throw new Error("Local responsibilities were unavailable.");
+  const ids = listed.result.filter(isRecord).map((item) => String(item.id));
+  expect(ids).toHaveLength(2);
+  const admissions = await evalIn(app, `Promise.all([
+    window.__COWORKER__.invoke("localResponsibilities.runNow", { slug: "scout", id: ${json(ids[0])} }),
+    window.__COWORKER__.invoke("localResponsibilities.runNow", { slug: "scout", id: ${json(ids[1])} }),
+  ])`, { awaitPromise: true, timeoutMs: 30_000 });
+  expect(admissions).toEqual([
+    { ok: true, result: { accepted: true, queued: false, reason: "" } },
+    { ok: true, result: { accepted: true, queued: true, reason: "" } },
+  ]);
+  const queuedRow = await waitFor(app, `(() => {
+    const row = [...document.querySelectorAll('[data-testid="responsibility-row"]')].find((candidate) => candidate.getAttribute("data-state") === "Queued");
+    return row instanceof HTMLElement ? row.innerText : false;
+  })()`, { timeoutMs: 30_000, label: "queued responsibility row" });
+  expect(String(queuedRow)).toContain("Waiting for a free slot");
+  expect(String(queuedRow)).toContain("Queued");
+  const drained = await waitFor(app, `window.__COWORKER__.invoke("localResponsibilities.list", { slug: "scout" })
+    .then((response) => {
+      const items = response.ok ? response.result : [];
+      const finished = items.every((item) => item.latestRun?.status === "succeeded");
+      return finished ? items.map((item) => ({ name: item.name, runs: item.runs.length, latest: item.latestRun.status, queuedAt: item.latestRun.queuedAt })) : false;
+    })`, { awaitPromise: true, timeoutMs: 300_000, label: "both runs succeeded one after another" });
+  expect(drained).toEqual(expect.arrayContaining([
+    expect.objectContaining({ name: "Local readiness check", runs: 2, latest: "succeeded" }),
+    expect.objectContaining({ name: "Second readiness check", runs: 1, latest: "succeeded", queuedAt: expect.any(Number) }),
+  ]));
+  expect(await invokeCoworker(app, "localResponsibilities.status", {})).toMatchObject({ ok: true, result: { limit: 1, active: 0, queued: 0 } });
+  evidence.recordAssertionEvidence(
+    "A parallel-run limit set in Settings makes later runs wait in line and start by themselves",
+    "With Responsibilities on this Mac set to 1, two Run now requests admitted the first immediately and queued the second; the second row read Queued · Waiting for a free slot, then started on its own once the first finished, and both ended Succeeded with the queue empty.",
     true,
   );
 });

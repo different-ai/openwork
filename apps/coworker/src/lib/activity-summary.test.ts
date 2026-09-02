@@ -73,17 +73,17 @@ test("recent work merges finished assignments and responsibility runs, newest fi
       {
         id: "r1",
         name: "Morning digest",
-        latestRun: { id: "run1", status: "succeeded", trigger: "scheduled", startedAt: now - 30_000, finishedAt: now - 10_000, threadId: "ses_digest", error: "" },
+        latestRun: { id: "run1", status: "succeeded", trigger: "scheduled", queuedAt: null, startedAt: now - 30_000, finishedAt: now - 10_000, threadId: "ses_digest", error: "", summary: "Digest sent." },
       },
       {
         id: "r2",
         name: "Backup check",
-        latestRun: { id: "run2", status: "failed", trigger: "manual", startedAt: now - 7_200_000, finishedAt: now - 7_000_000, threadId: "", error: "Model unavailable" },
+        latestRun: { id: "run2", status: "failed", trigger: "manual", queuedAt: null, startedAt: now - 7_200_000, finishedAt: now - 7_000_000, threadId: "", error: "Model unavailable", summary: "" },
       },
       {
         id: "r3",
         name: "Still running",
-        latestRun: { id: "run3", status: "running", trigger: "manual", startedAt: now - 5_000, finishedAt: null, threadId: "ses_live", error: "" },
+        latestRun: { id: "run3", status: "running", trigger: "manual", queuedAt: null, startedAt: now - 5_000, finishedAt: null, threadId: "ses_live", error: "", summary: "" },
       },
       { id: "r4", name: "Never ran", latestRun: null },
     ],
@@ -109,7 +109,7 @@ test("a responsibility run's own thread is listed once, as the run", () => {
       {
         id: "r1",
         name: "Morning digest",
-        latestRun: { id: "run1", status: "succeeded", trigger: "manual", startedAt: now - 30_000, finishedAt: now - 10_000, threadId: "ses_digest", error: "" },
+        latestRun: { id: "run1", status: "succeeded", trigger: "manual", queuedAt: null, startedAt: now - 30_000, finishedAt: now - 10_000, threadId: "ses_digest", error: "", summary: "" },
       },
     ],
   );

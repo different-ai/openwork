@@ -33,14 +33,17 @@ import {
 import {
   attachLocalResponsibilityThread,
   beginLocalResponsibilityRun,
+  cancelQueuedLocalRun,
   createLocalResponsibility,
   deleteLocalResponsibility,
   finishLocalResponsibilityRun,
   listLocalResponsibilities,
+  queueLocalResponsibilityRun,
   reconcileInterruptedLocalRuns,
   setLocalResponsibilityActive,
 } from "./local-responsibilities.mjs";
 import { resolveBundledOpencodeBinary, resolveUserDataDir } from "./runtime-paths.mjs";
+import { SETTINGS_FILE, readSettings, updateSettings } from "./settings.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const isDev = !app.isPackaged || process.env.OPENWORK_DEV_MODE === "1";
@@ -90,6 +93,7 @@ const serverConfigPath = process.env.COWORKER_SERVER_CONFIG?.trim()
 // rewrites the OpenWork desktop app's engine state on the same machine.
 process.env.OPENWORK_RUNTIME_DB ||= path.join(path.dirname(serverConfigPath), "coworker-runtime.sqlite");
 process.env.OPENWORK_ENV_STORE ||= path.join(path.dirname(serverConfigPath), "coworker-env.json");
+const settingsPath = path.join(path.dirname(serverConfigPath), SETTINGS_FILE);
 
 /**
  * Deep links use the app's own scheme so a Den handoff never lands in the
@@ -109,7 +113,17 @@ let ownerToken = "";
 let engineError = "";
 let startingServer = null;
 let localResponsibilitiesTimer = null;
+/** `slug:id` of every run executing in this process. */
 const activeLocalRuns = new Set();
+/** Runs waiting for a free slot, oldest first: `{ key, slug, id, runId }`. */
+const queuedLocalRuns = [];
+/** Admission decisions run one at a time so two requests can never both take the last slot. */
+let localRunAdmission = Promise.resolve();
+function admitLocalRun(decide) {
+  const next = localRunAdmission.then(decide, decide);
+  localRunAdmission = next.then(() => undefined, () => undefined);
+  return next;
+}
 /** @type {BrowserWindow | null} */
 let mainWindow = null;
 
@@ -428,7 +442,29 @@ function localRunModel(coworker) {
   };
 }
 
-async function executeLocalResponsibility(slug, id, trigger) {
+/** The coworker's own last words for a finished run, bounded for the history list. */
+async function readRunSummary(client, threadId) {
+  try {
+    const transcript = await client.exportTranscript(threadId);
+    const reply = [...transcript.messages].reverse().find((message) => message.role === "assistant" && message.text.trim());
+    return reply?.text.trim() ?? "";
+  } catch {
+    return "";
+  }
+}
+
+const RESUME_PROMPT = (name, reason) =>
+  [
+    `Continue the previous run of the responsibility "${name}". It stopped before finishing${reason ? ` (${reason})` : ""}.`,
+    "Pick up where you left off, finish the work described in your instructions, and report the outcome.",
+  ].join(" ");
+
+/**
+ * Execute one run to completion. `runId` promotes an already-queued run;
+ * `resumeThreadId` continues an earlier run's native thread instead of
+ * opening a new one.
+ */
+async function executeLocalResponsibility(slug, id, { trigger = "manual", runId = "", resumeThreadId = "", resumeReason = "" } = {}) {
   const key = `${slug}:${id}`;
   try {
     // The coworker or responsibility can disappear between the due check and
@@ -439,59 +475,132 @@ async function executeLocalResponsibility(slug, id, trigger) {
     try {
       coworker = await getCoworker(coworkersDir, slug);
       if (!coworker.workspaceId) throw new Error("Coworker workspace is not ready");
-      started = await beginLocalResponsibilityRun(coworkersDir, slug, id, { trigger });
+      started = await beginLocalResponsibilityRun(coworkersDir, slug, id, { trigger, runId, threadId: resumeThreadId });
     } catch (error) {
       console.warn(`[open-coworker] local responsibility ${key} did not start`, error);
       return;
     }
-    const runId = started.latestRun.id;
+    const activeRunId = started.latestRun.id;
     try {
       const handle = await ensurePlatformServer();
-      if (!handle.managedOpencode) throw new Error(engineError || "The local agent engine is unavailable");
+      if (!handle.managedOpencode) throw new Error(engineError || "AI is unavailable on this Mac");
       const client = createHeadlessThreadClient({
         baseUrl: handle.url,
         workspaceId: coworker.workspaceId,
         token: ownerToken,
         defaultModel: localRunModel(coworker),
       });
-      const thread = await client.createThread({
-        title: started.name,
-        prompt: started.instructions,
-      });
-      await attachLocalResponsibilityThread(coworkersDir, slug, id, runId, thread.id);
-      const result = await client.waitForThread(thread.id, {
+      let threadId = resumeThreadId;
+      let acceptance;
+      if (threadId) {
+        acceptance = await client.sendTurn(threadId, { prompt: RESUME_PROMPT(started.name, resumeReason) });
+      } else {
+        const thread = await client.createThread({ title: started.name, prompt: started.instructions });
+        threadId = thread.id;
+        await attachLocalResponsibilityThread(coworkersDir, slug, id, activeRunId, threadId);
+      }
+      const result = await client.waitForThread(threadId, {
         timeoutMs: 60 * 60_000,
         pollIntervalMs: 1_000,
+        ...(acceptance ? { since: acceptance } : {}),
       });
       const succeeded = result.outcome === "settled" && !result.terminalError;
-      await finishLocalResponsibilityRun(coworkersDir, slug, id, runId, {
+      await finishLocalResponsibilityRun(coworkersDir, slug, id, activeRunId, {
         status: succeeded ? "succeeded" : "failed",
         error: succeeded
           ? ""
           : result.terminalError?.message || (result.outcome === "timeout" ? "Run timed out after one hour" : `Run ${result.outcome}`),
+        summary: await readRunSummary(client, threadId),
       });
     } catch (error) {
-      await finishLocalResponsibilityRun(coworkersDir, slug, id, runId, {
+      await finishLocalResponsibilityRun(coworkersDir, slug, id, activeRunId, {
         status: "failed",
         error: error instanceof Error ? error.message : String(error),
       }).catch(() => undefined);
     }
   } finally {
     activeLocalRuns.delete(key);
+    void drainLocalRunQueue();
   }
 }
 
+async function parallelRunLimit() {
+  return (await readSettings(settingsPath)).maxParallelLocalRuns;
+}
+
+function isQueued(key) {
+  return queuedLocalRuns.some((entry) => entry.key === key);
+}
+
+/**
+ * Start a run now if a slot is free on this Mac, otherwise record it as queued
+ * so it starts by itself when one frees up. Returns what happened.
+ */
 function startLocalResponsibilityRun(slug, id, trigger) {
+  return admitLocalRun(async () => {
+    const key = `${slug}:${id}`;
+    if (activeLocalRuns.has(key)) return { accepted: false, queued: false, reason: "running" };
+    if (isQueued(key)) return { accepted: false, queued: true, reason: "queued" };
+    const limit = await parallelRunLimit();
+    if (activeLocalRuns.size >= limit) {
+      const queued = await queueLocalResponsibilityRun(coworkersDir, slug, id, { trigger });
+      queuedLocalRuns.push({ key, slug, id, runId: queued.latestRun.id });
+      return { accepted: true, queued: true, reason: "" };
+    }
+    activeLocalRuns.add(key);
+    void executeLocalResponsibility(slug, id, { trigger });
+    return { accepted: true, queued: false, reason: "" };
+  });
+}
+
+/** Continue a failed or interrupted run inside its own native thread. */
+function resumeLocalResponsibilityRun(slug, id) {
+  return admitLocalRun(async () => {
+    const key = `${slug}:${id}`;
+    if (activeLocalRuns.has(key) || isQueued(key)) return { accepted: false, reason: "busy" };
+    const items = await listLocalResponsibilities(coworkersDir, slug);
+    const record = items.find((item) => item.id === id);
+    const last = record?.latestRun;
+    if (!last || last.status !== "failed" || !last.threadId) return { accepted: false, reason: "nothing to resume" };
+    const limit = await parallelRunLimit();
+    if (activeLocalRuns.size >= limit) return { accepted: false, reason: "at limit" };
+    activeLocalRuns.add(key);
+    void executeLocalResponsibility(slug, id, { trigger: "resume", resumeThreadId: last.threadId, resumeReason: last.error });
+    return { accepted: true, reason: "" };
+  });
+}
+
+async function cancelQueuedLocalResponsibilityRun(slug, id) {
   const key = `${slug}:${id}`;
-  if (activeLocalRuns.has(key)) return false;
-  activeLocalRuns.add(key);
-  void executeLocalResponsibility(slug, id, trigger);
-  return true;
+  const index = queuedLocalRuns.findIndex((entry) => entry.key === key);
+  const entry = index === -1 ? null : queuedLocalRuns.splice(index, 1)[0];
+  const items = await listLocalResponsibilities(coworkersDir, slug);
+  const record = items.find((item) => item.id === id);
+  const queuedRun = entry?.runId ?? record?.runs.find((run) => run.status === "queued")?.id ?? "";
+  if (queuedRun) await cancelQueuedLocalRun(coworkersDir, slug, id, queuedRun);
+  return { ok: true };
+}
+
+/** Start queued runs, oldest first, while slots are free. */
+function drainLocalRunQueue() {
+  return admitLocalRun(async () => {
+    const limit = await parallelRunLimit();
+    while (queuedLocalRuns.length > 0 && activeLocalRuns.size < limit) {
+      const next = queuedLocalRuns.shift();
+      if (activeLocalRuns.has(next.key)) continue;
+      activeLocalRuns.add(next.key);
+      void executeLocalResponsibility(next.slug, next.id, { runId: next.runId });
+    }
+  });
 }
 
 function activeLocalRunIds(slug) {
   const prefix = `${slug}:`;
   return new Set([...activeLocalRuns].filter((key) => key.startsWith(prefix)).map((key) => key.slice(prefix.length)));
+}
+
+function localRunStatus(limit) {
+  return { limit, active: activeLocalRuns.size, queued: queuedLocalRuns.length };
 }
 
 async function runDueLocalResponsibilities() {
@@ -503,11 +612,18 @@ async function runDueLocalResponsibilities() {
       now,
     }).catch(() => []);
     for (const responsibility of responsibilities) {
+      const key = `${coworker.slug}:${responsibility.id}`;
+      // A run queued in an earlier process (quit before its turn) waits in line again.
+      const persistedQueue = responsibility.runs.find((run) => run.status === "queued");
+      if (persistedQueue && !activeLocalRuns.has(key) && !isQueued(key)) {
+        queuedLocalRuns.push({ key, slug: coworker.slug, id: responsibility.id, runId: persistedQueue.id });
+      }
       if (responsibility.state !== "active" || !responsibility.nextDueAt || responsibility.nextDueAt > now) continue;
       const trigger = now - responsibility.nextDueAt > 30_000 ? "recovery" : "scheduled";
-      startLocalResponsibilityRun(coworker.slug, responsibility.id, trigger);
+      await startLocalResponsibilityRun(coworker.slug, responsibility.id, trigger);
     }
   }
+  await drainLocalRunQueue();
 }
 
 function startLocalResponsibilitiesScheduler() {
@@ -615,6 +731,9 @@ const commands = {
   "coworkers.update": async ({ slug, patch }) => updateCoworker(coworkersDir, slug, patch ?? {}),
   "coworkers.delete": async ({ slug }) => {
     const running = activeLocalRunIds(String(slug ?? "")).size;
+    for (let index = queuedLocalRuns.length - 1; index >= 0; index -= 1) {
+      if (queuedLocalRuns[index].slug === String(slug ?? "")) queuedLocalRuns.splice(index, 1);
+    }
     if (running > 0) {
       throw new Error(
         `${running === 1 ? "A local responsibility is" : `${running} local responsibilities are`} still running for this coworker. Wait for it to finish or stop it before retiring.`,
@@ -669,9 +788,17 @@ const commands = {
     await deleteLocalResponsibility(coworkersDir, slug, id);
     return { ok: true };
   },
-  "localResponsibilities.runNow": async ({ slug, id }) => ({
-    accepted: startLocalResponsibilityRun(slug, id, "manual"),
-  }),
+  "localResponsibilities.runNow": async ({ slug, id }) => startLocalResponsibilityRun(slug, id, "manual"),
+  "localResponsibilities.resume": async ({ slug, id }) => resumeLocalResponsibilityRun(slug, id),
+  "localResponsibilities.cancelQueued": async ({ slug, id }) => cancelQueuedLocalResponsibilityRun(slug, id),
+  /** How busy this Mac is with responsibilities right now, and the limit that applies. */
+  "localResponsibilities.status": async () => localRunStatus(await parallelRunLimit()),
+  "settings.get": async () => readSettings(settingsPath),
+  "settings.update": async (patch) => {
+    const next = await updateSettings(settingsPath, patch);
+    void drainLocalRunQueue();
+    return next;
+  },
   "shell.openExternal": async ({ url }) => {
     const parsed = parseExternalUrl(url);
     await shell.openExternal(parsed.toString());

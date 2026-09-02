@@ -77,7 +77,7 @@ export function mergeRecentWork(
   const runs: RecentWork[] = [];
   for (const item of responsibilities) {
     const run = item.latestRun;
-    if (!run || run.status === "running" || !run.finishedAt) continue;
+    if (!run || run.status === "running" || run.status === "queued" || !run.finishedAt) continue;
     runs.push({
       id: `${item.id}:${run.id}`,
       title: item.name,

@@ -12,11 +12,19 @@ import {
   AUTOMATION_MODEL_ATTENTION_CAPABILITY,
   automationDetailSchema,
   automationListSchema,
+  automationRunSchema,
   type AutomationDetail,
   type AutomationList,
+  type AutomationRun,
   type AutomationSchedule,
 } from "@openwork/types/automations";
 import { z } from "zod";
+
+/** `GET /v1/automations/:id/runs` — the same page shape the OpenWork desktop reads. */
+const automationRunListSchema = z.object({
+  items: z.array(automationRunSchema),
+  nextCursor: z.string().nullable(),
+});
 import {
   cloudResponsibilityBody,
   parseDenLlmProviders,
@@ -311,6 +319,15 @@ export function createDenAutomationsClient(session: DenSession) {
         body: cloudResponsibilityBody(draft),
       });
       return automationDetailSchema.parse(payload);
+    },
+    /** Recent runs of one Automation, newest first, with Den's own result summaries. */
+    async listRuns(automationId: string, limit = 12): Promise<AutomationRun[]> {
+      const payload = await denRequest(
+        baseUrl,
+        `/v1/automations/${encodeURIComponent(automationId)}/runs?limit=${encodeURIComponent(String(limit))}`,
+        { token, orgId },
+      );
+      return automationRunListSchema.parse(payload).items;
     },
     async runNow(automationId: string): Promise<void> {
       await denRequest(baseUrl, `/v1/automations/${encodeURIComponent(automationId)}/run`, {

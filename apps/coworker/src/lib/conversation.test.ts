@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { assignmentPrompt, assignmentTitle, discussionTitle } from "./conversation.ts";
+import { assignmentPrompt, assignmentTitle, discussionTitle, explainRunPrompt } from "./conversation.ts";
 
 test("discussionTitle and assignmentTitle stay readable and within native session limits", () => {
   assert.equal(discussionTitle(" Scout "), "Discussion with Scout");
@@ -44,4 +44,21 @@ test("assignmentPrompt drops tool-only and system turns and keeps the outcome as
   assert.doesNotMatch(prompt, /hidden system text/);
   assert.match(prompt, /You: How was the week\?/);
   assert.match(prompt, /treat the outcome above as the source of truth/);
+});
+
+test("explainRunPrompt carries the run's outcome, summary, and error into the discussion", () => {
+  const prompt = explainRunPrompt({
+    responsibilityName: "  Morning   digest ",
+    outcome: "Failed",
+    when: "Sep 2, 9:00 AM",
+    summary: "Drafted the digest but could not send it.\n",
+    error: "Mail provider rejected the request",
+  });
+  assert.match(prompt, /^Explain the Sep 2, 9:00 AM run of your responsibility "Morning digest"\. It failed\./);
+  assert.match(prompt, /Here is what you reported at the end of that run:\n\nDrafted the digest but could not send it\./);
+  assert.match(prompt, /It stopped with this problem: Mail provider rejected the request/);
+  assert.match(prompt, /whether anything needs my attention/);
+  const bare = explainRunPrompt({ responsibilityName: "", outcome: "Succeeded", when: "just now", summary: "", error: "" });
+  assert.match(bare, /"this responsibility"\. It succeeded\./);
+  assert.doesNotMatch(bare, /reported|problem/);
 });
