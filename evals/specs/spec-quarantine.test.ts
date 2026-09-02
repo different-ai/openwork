@@ -31,6 +31,7 @@ config-object-large-skill.e2e.test.ts
 connect-readiness-preseeded.e2e.test.ts
 connector-tool-call-branding.e2e.test.ts
 cross-workspace-split-view.e2e.test.ts
+den-behind-enterprise-tls.e2e.test.ts
 first-run-local.e2e.test.ts
 library-add-connector-discovery.e2e.test.ts
 library-signed-in-render-stability.e2e.test.ts
