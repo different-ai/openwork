@@ -1,7 +1,8 @@
 import type { Metadata } from "next";
-import { LayoutDashboard, ShieldCheck, Users } from "lucide-react";
+import { Blocks, MousePointerClick, Users } from "lucide-react";
 
 import { LpCta } from "../../components/lp-cta";
+import { LpDashboardPreview } from "../../components/lp-dashboard-preview";
 import { LpSectionHeader, LpTonalCard } from "../../components/lp-primitives";
 import { SiteFooter } from "../../components/site-footer";
 import { SiteNav } from "../../components/site-nav";
@@ -11,28 +12,28 @@ const CLOUD_SIGNUP_URL = "https://app.openworklabs.com";
 const MCP_APPS_URL = "https://github.com/modelcontextprotocol/ext-apps/tree/main";
 
 export const metadata: Metadata = {
-  title: "OpenWork Dashboard — instant information for your team",
+  title: "OpenWork Dashboard — build dashboards out of MCP Apps",
   description:
-    "Custom dashboards built from MCP Apps. Give your whole team the information they need without asking the chat.",
+    "Every MCP App is a widget. Compose a dashboard from the apps your team relies on and share it with the whole organization.",
   alternates: { canonical: "/dashboard" }
 };
 
 const dashboardFeatures = [
   {
-    title: "MCP that outputs UI",
-    body: "MCP Apps are an extension of the Model Context Protocol. A tool returns not just data but a rich, interactive interface that the host renders inline."
+    title: "MCP that returns UI",
+    body: "MCP Apps extend the Model Context Protocol: a tool returns an interactive interface, and the host renders it. That interface is your widget."
   },
   {
-    title: "Standard, not proprietary",
-    body: "Build to the spec once and your app runs in OpenWork and in any other host that implements it. Apps built for other hosts run in OpenWork too."
+    title: "Open standard",
+    body: "Build to the spec once and it runs in OpenWork and in every other host that implements MCP Apps. Apps built elsewhere work here too."
   },
   {
-    title: "Yes, dashboards again",
-    body: "We know chat was supposed to replace them. It replaced a lot — but for information you check every day, a dashboard is still faster."
+    title: "Private interactions",
+    body: "What happens inside a widget doesn't pass through the model. Enter credentials, approve a purchase, view sensitive data — safely."
   },
   {
-    title: "Just the beginning",
-    body: "This is the first version of Dashboard. Next up: creating MCP Apps directly inside OpenWork."
+    title: "Build your own",
+    body: "Follow the MCP Apps spec or point your agent at the reference repo. Next up: creating MCP Apps directly inside OpenWork."
   }
 ];
 
@@ -40,17 +41,17 @@ const steps = [
   {
     number: "01",
     title: "Connect an MCP server",
-    body: "Add any MCP server that ships an app in Settings → Connectors. OpenWork discovers the app automatically."
+    body: "Add any MCP server that ships an app under Connectors. OpenWork detects the app automatically."
   },
   {
     number: "02",
-    title: "Create a dashboard",
-    body: "In the admin panel, create a dashboard and add the apps you want on it."
+    title: "Compose a dashboard",
+    body: "Create a dashboard, add the widgets you want, arrange them."
   },
   {
     number: "03",
-    title: "Share it with the org",
-    body: "Toggle it on for everyone. Members see it the next time they open OpenWork."
+    title: "Share it",
+    body: "Toggle it on for the organization or specific teams. Members see it the next time they open OpenWork."
   }
 ];
 
@@ -76,12 +77,12 @@ export default async function DashboardPage() {
               <div className="max-w-[650px]">
                 <div className="mb-5 text-[15px] text-[var(--lp-muted)]">OpenWork Dashboard · Powered by MCP Apps</div>
                 <h1 className="text-[46px] font-light leading-[51px] tracking-[-0.02em] md:text-[58px] md:leading-[62px]">
-                  <span className="block">Instant information</span>
-                  <span className="font-pixel block font-normal">for your whole team</span>
+                  <span className="block">Build dashboards</span>
+                  <span className="font-pixel block font-normal">out of MCP Apps</span>
                 </h1>
               </div>
               <p className="max-w-[440px] pb-1 text-[16px] leading-[25px]">
-                Chat is great for getting work done. It&apos;s a slow way to get information. OpenWork Dashboard puts the numbers your team checks every day one click away — no prompt, no waiting for a reply.
+                Every MCP App is a widget. Pick the ones your team relies on — budgets, pipeline, incidents, anything with an MCP server — arrange them on a dashboard, and share it with the whole organization.
               </p>
             </div>
             <div className="mt-10 flex flex-col items-start gap-5 sm:flex-row sm:items-center">
@@ -89,30 +90,37 @@ export default async function DashboardPage() {
                 <a href={CLOUD_SIGNUP_URL} className="lp-pill-primary">Open OpenWork Cloud</a>
                 <a href={MCP_APPS_URL} target="_blank" rel="noreferrer" className="lp-pill-secondary">Read the MCP Apps spec</a>
               </div>
-              <span className="text-[13.5px] text-[var(--lp-body)] sm:ml-2">Available now in OpenWork Cloud. Works with any MCP server that ships an app.</span>
+              <span className="text-[13.5px] text-[var(--lp-body)] sm:ml-2">Any MCP App works as a widget. Nothing to rebuild for OpenWork.</span>
             </div>
+          </section>
+
+          <section className="mt-[88px]" aria-label="OpenWork Dashboard preview">
+            <LpDashboardPreview />
+            <p className="mt-3 text-[13.5px] text-[var(--lp-muted)]">
+              Toggle apps on the left to add or remove widgets — that&apos;s the whole flow.
+            </p>
           </section>
 
           <section className="mt-[120px] grid gap-6 lg:grid-cols-3">
             <LpTonalCard className="flex flex-col p-7">
-              <span className="flex h-11 w-11 items-center justify-center rounded-full bg-white"><LayoutDashboard className="h-5 w-5 text-[var(--lp-ink)]" strokeWidth={1.75} /></span>
-              <h2 className="mt-8 text-[16.5px] font-semibold">See it without asking</h2>
-              <p className="mt-3 text-[14px] leading-[22px] text-[var(--lp-body)]">Open the dashboard and the information is already there. No prompting, no re-explaining context, no scrolling back through a thread.</p>
+              <span className="flex h-11 w-11 items-center justify-center rounded-full bg-white"><Blocks className="h-5 w-5 text-[var(--lp-ink)]" strokeWidth={1.75} /></span>
+              <h2 className="mt-8 text-[16.5px] font-semibold">Widgets from any MCP server</h2>
+              <p className="mt-3 text-[14px] leading-[22px] text-[var(--lp-body)]">If an MCP server ships an app, it&apos;s a widget. Connect it once and it&apos;s ready to drop onto a dashboard.</p>
+            </LpTonalCard>
+            <LpTonalCard className="flex flex-col p-7">
+              <span className="flex h-11 w-11 items-center justify-center rounded-full bg-white"><MousePointerClick className="h-5 w-5 text-[var(--lp-ink)]" strokeWidth={1.75} /></span>
+              <h2 className="mt-8 text-[16.5px] font-semibold">Live and interactive</h2>
+              <p className="mt-3 text-[14px] leading-[22px] text-[var(--lp-body)]">Widgets are real UI, not screenshots. Filter, drill in, approve, adjust — right on the dashboard.</p>
             </LpTonalCard>
             <LpTonalCard className="flex flex-col p-7">
               <span className="flex h-11 w-11 items-center justify-center rounded-full bg-white"><Users className="h-5 w-5 text-[var(--lp-ink)]" strokeWidth={1.75} /></span>
-              <h2 className="mt-8 text-[16.5px] font-semibold">Build once, share with everyone</h2>
-              <p className="mt-3 text-[14px] leading-[22px] text-[var(--lp-body)]">An admin creates a dashboard, adds apps, and toggles it on for the organization. It shows up in everyone&apos;s OpenWork automatically.</p>
-            </LpTonalCard>
-            <LpTonalCard className="flex flex-col p-7">
-              <span className="flex h-11 w-11 items-center justify-center rounded-full bg-white"><ShieldCheck className="h-5 w-5 text-[var(--lp-ink)]" strokeWidth={1.75} /></span>
-              <h2 className="mt-8 text-[16.5px] font-semibold">Private by design</h2>
-              <p className="mt-3 text-[14px] leading-[22px] text-[var(--lp-body)]">What happens inside an app stays inside the app. The model never sees it — so approving a purchase or entering credentials is safe.</p>
+              <h2 className="mt-8 text-[16.5px] font-semibold">One dashboard, the whole org</h2>
+              <p className="mt-3 text-[14px] leading-[22px] text-[var(--lp-body)]">Compose it once in the admin panel and toggle it on for everyone. It appears in each member&apos;s OpenWork.</p>
             </LpTonalCard>
           </section>
 
           <section className="mt-[120px]">
-            <LpSectionHeader label="How it works" heading="Connect once. Share with everyone." />
+            <LpSectionHeader label="How it works" heading="Connect. Compose. Share." />
             <div className="mt-10 grid items-start gap-10 md:grid-cols-3">
               {steps.map((step) => (
                 <div key={step.number}>
@@ -129,7 +137,7 @@ export default async function DashboardPage() {
           </section>
 
           <section className="mt-[120px]">
-            <LpSectionHeader label="Under the hood: MCP Apps" heading="Interactive interfaces, built on an open standard." />
+            <LpSectionHeader label="Under the hood: MCP Apps" heading="Widgets are just MCP Apps." />
             <div className="mt-10 grid gap-6 md:grid-cols-2">
               {dashboardFeatures.map((feature) => (
                 <div key={feature.title} className="rounded-[24px] bg-[var(--lp-tonal)] p-7">
@@ -142,11 +150,11 @@ export default async function DashboardPage() {
 
           <div className="mt-[120px]">
             <LpCta
-              heading="Give your team instant information"
-              sub="Create your first dashboard in OpenWork Cloud, or build an MCP App and bring it anywhere."
+              heading="Put your team's widgets on one screen"
+              sub="Compose your first dashboard in OpenWork Cloud, or build an MCP App and use it anywhere."
               primary={{ label: "Open OpenWork Cloud", href: CLOUD_SIGNUP_URL }}
               secondary={{ label: "MCP Apps on GitHub", href: MCP_APPS_URL }}
-              trust="Free to start. Works with the standard MCP Apps spec."
+              trust="Free to start. Standard MCP Apps, no lock-in."
             />
           </div>
           <div className="mt-16"><SiteFooter /></div>
