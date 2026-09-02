@@ -519,7 +519,7 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
   // where the organization model must be offered and labelled as OpenWork Cloud.
   await fill(app, 'input[placeholder="Scout"]', "Scout");
   await clickButton(app, "Add coworker", { timeoutMs: 120_000 });
-  await waitForText(app, "Discussion with Scout", { timeoutMs: 120_000 });
+  await waitFor(app, `Boolean(document.querySelector('[data-testid="coworker-discussion-view"]')) && [...document.querySelectorAll("h1")].some((heading) => heading.textContent?.trim() === "Scout")`, { timeoutMs: 120_000, label: "Scout discussion view" });
   expect(await evalIn(app, `document.querySelector('[data-testid="composer-model-control"]') === null`)).toBe(true);
   await waitFor(app, `(() => {
     const button = document.querySelector('[data-testid="coworker-settings-button"]');
@@ -702,7 +702,7 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
 
   // --- Reload: account, providers, and selection all persist; settings explain the source of every provider.
   await evalIn(app, "location.reload(); true");
-  await waitForText(app, "Discussion with Scout", { timeoutMs: 120_000 });
+  await waitFor(app, `Boolean(document.querySelector('[data-testid="coworker-discussion-view"]')) && [...document.querySelectorAll("h1")].some((heading) => heading.textContent?.trim() === "Scout")`, { timeoutMs: 120_000, label: "Scout discussion view" });
   await waitForText(app, REPLY, { timeoutMs: 60_000 });
   await clickButtonContaining(app, ORG_NAME);
   await waitForText(app, "OpenWork settings", { timeoutMs: 30_000 });
@@ -753,7 +753,7 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
     await new Promise((resolve) => setTimeout(resolve, 3_000));
   }
   await clickButtonContaining(app, "Back to coworkers");
-  await waitForText(app, "Discussion with Scout", { timeoutMs: 60_000 });
+  await waitFor(app, `Boolean(document.querySelector('[data-testid="coworker-discussion-view"]')) && [...document.querySelectorAll("h1")].some((heading) => heading.textContent?.trim() === "Scout")`, { timeoutMs: 60_000, label: "Scout discussion view" });
   const gatewayAfterSignOut = await evalIn(app, `(async () => {
     const runtime = await window.__COWORKER__.invoke("runtime.info");
     const scout = await window.__COWORKER__.invoke("coworkers.get", { slug: "scout" });
