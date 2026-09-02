@@ -144,7 +144,7 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
   // --- Create one explicit assignment from the discussion composer. The composer stays busy
   // until the coworker has finished its turn, which can outlast the visible reply text.
   await clickButton(app, "Create assignment", { timeoutMs: 180_000 });
-  await waitForText(app, "A bounded outcome, separate from this discussion", { timeoutMs: 30_000 });
+  await waitForText(app, "Something Editor should own, separate from this chat", { timeoutMs: 30_000 });
   await fill(app, 'textarea[aria-label="Assignment outcome"]', OUTCOME);
   await clickButton(app, "Create assignment");
 
@@ -160,6 +160,25 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
     label: "assignment thread view with its badge replaces the discussion view",
   });
   await waitForAssistantText(app, ASSIGNMENT_REPLY);
+
+  // What the person sees is the brief, not the scaffolding the model needs: the outcome up front,
+  // the carried discussion behind one small disclosure, no headings or instructions in view.
+  const briefView = await evalIn(app, `(() => {
+    const brief = document.querySelector('[data-message-role="user"][data-assignment-brief="true"]');
+    if (!(brief instanceof HTMLElement)) return null;
+    const context = brief.querySelector('[data-testid="coworker-assignment-context"]');
+    return {
+      outcome: brief.querySelector('[data-testid="coworker-assignment-outcome"]')?.textContent?.trim() ?? "",
+      visibleText: brief.innerText,
+      contextSummary: context?.querySelector("summary")?.textContent?.trim() ?? "",
+      contextOpen: context instanceof HTMLDetailsElement ? context.open : null,
+      plainUserBubbles: document.querySelectorAll('[data-message-role="user"]:not([data-assignment-brief])').length,
+    };
+  })()`);
+  expect(briefView).toMatchObject({ outcome: OUTCOME, contextSummary: "From your discussion · 2 messages", contextOpen: false, plainUserBubbles: 0 });
+  if (!isRecord(briefView) || typeof briefView.visibleText !== "string") throw new Error("Assignment brief facts were unavailable.");
+  expect(briefView.visibleText).toContain("Assignment for Editor");
+  expect(briefView.visibleText).not.toMatch(/## |explicit assignment|Own this outcome|source of truth|Coworker:/);
 
   const sessionsAfter = await readEngineSessions(app, workspaceId);
   expect(sessionsAfter).toHaveLength(2);
@@ -187,7 +206,7 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
 
   evidence.recordAssertionEvidence(
     "Create assignment yields a separate native session carrying only visible discussion prose",
-    `The explicit assignment became native session ${assignment.id} titled "${expectedTitle}", distinct from discussion ${discussionId}; its first turn equalled the bounded prompt built from the two visible messages and contained no reasoning or tool payload fields, and the discussion still held exactly its original two messages.`,
+    `In the assignment view the opening message read as a brief — "Assignment for Editor", the outcome, and a closed "From your discussion · 2 messages" disclosure — with no headings, instructions, or Coworker: lines in view. The explicit assignment became native session ${assignment.id} titled "${expectedTitle}", distinct from discussion ${discussionId}; its first turn equalled the bounded prompt built from the two visible messages and contained no reasoning or tool payload fields, and the discussion still held exactly its original two messages.`,
     true,
   );
 

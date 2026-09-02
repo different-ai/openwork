@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { assignmentPrompt, assignmentTitle, discussionTitle, explainRunPrompt } from "./conversation.ts";
+import { assignmentPrompt, assignmentTitle, discussionTitle, explainRunPrompt, parseAssignmentBrief } from "./conversation.ts";
 
 test("discussionTitle and assignmentTitle stay readable and within native session limits", () => {
   assert.equal(discussionTitle(" Scout "), "Discussion with Scout");
@@ -61,4 +61,24 @@ test("explainRunPrompt carries the run's outcome, summary, and error into the di
   const bare = explainRunPrompt({ responsibilityName: "", outcome: "Succeeded", when: "just now", summary: "", error: "" });
   assert.match(bare, /"this responsibility"\. It succeeded\./);
   assert.doesNotMatch(bare, /reported|problem/);
+});
+
+test("parseAssignmentBrief reads back the outcome and carried discussion, and nothing else", () => {
+  const messages = [
+    { role: "user", text: "Can you draft the launch note?\n\nKeep it short." },
+    { role: "assistant", text: "Yes — I would lead with the date.\nThen the two changes." },
+    { role: "system", text: "ignored" },
+  ];
+  const prompt = assignmentPrompt("Write the launch note by Friday", messages);
+  const brief = parseAssignmentBrief(prompt);
+  assert.ok(brief);
+  assert.equal(brief.outcome, "Write the launch note by Friday");
+  assert.deepEqual(brief.context, [
+    { speaker: "you", text: "Can you draft the launch note?\n\nKeep it short." },
+    { speaker: "coworker", text: "Yes — I would lead with the date.\nThen the two changes." },
+  ]);
+  const bare = parseAssignmentBrief(assignmentPrompt("Just do it", []));
+  assert.deepEqual(bare, { outcome: "Just do it", context: [] });
+  assert.equal(parseAssignmentBrief("Reply with exactly CHAT ONE READY."), null);
+  assert.equal(parseAssignmentBrief("This is an explicit assignment created from our ongoing discussion.\n\nno headings"), null);
 });
