@@ -1,25 +1,33 @@
 /**
  * All site copy lives here, and every product claim carries the place in the
  * product where it is true. The test in content.test.ts refuses claims without
- * a source, so the site can only say what the app does today. Sources are not
- * printed beside the copy; they are listed once, quietly, at the end of the
- * page ("Where each claim is true").
+ * a source, so the site can only say what the app does today. Statements about
+ * what comes next are a separate, labeled kind (`planned`) sourced to the
+ * product plan, and must read as "next", never as shipped.
  */
 
 export type Claim = {
   text: string;
   /** Where in the product this is true: a file path, route, or contract name. */
   source: string;
+  /** Roadmap statements must say so in their own words. */
+  planned?: true;
 };
 
 export const SITE = {
   name: "Open Coworker",
   tagline: "Give recurring work a teammate.",
   description:
-    "Open Coworker is a quiet macOS home for AI coworkers who remember. Give each one a name, a role, and real work — and know exactly what happened when you come back. Local-first, powered by OpenWork.",
+    "Open Coworker is a quiet home for AI coworkers who remember. Give each one a name, a role, and real work — and know exactly what happened when you come back. Local-first on your Mac, built on OpenWork.",
   url: "https://opencoworker.app",
   repository: "https://github.com/different-ai/openwork",
+  releases: "https://github.com/different-ai/openwork/releases",
   openwork: "https://openworklabs.com",
+  pricing: "https://openworklabs.com/pricing",
+  enterprise: "https://openworklabs.com/enterprise",
+  /** OpenWork Cloud sign-up, attributed so Cloud signups from this site can be counted. */
+  cloudSignUp: "https://app.openworklabs.com?mode=sign-up&utm_source=opencoworker&utm_medium=site&utm_campaign=cloud",
+  contactEmail: "team@openworklabs.com",
   company: "Different AI",
   year: 2026,
 } as const;
@@ -28,17 +36,18 @@ export const NAV = [
   { href: "#how", label: "How it works" },
   { href: "#memory", label: "Memory" },
   { href: "#responsibilities", label: "Responsibilities" },
+  { href: "#cloud", label: "Cloud" },
 ] as const;
 
 export const HERO = {
   eyebrow: "Early access · macOS",
   title: "Give recurring work a teammate.",
   lead:
-    "A quiet desktop home for AI coworkers who remember. Give each one a name, a role, and real work — and know exactly what happened when you come back.",
+    "A quiet home for AI coworkers who remember. Give each one a name, a role, and real work — and know exactly what happened when you come back.",
   primary: { label: "Run from source", href: "#get-started" },
   secondary: { label: "How it works", href: "#how" },
   /** Three short phrases, one line, no cards. */
-  strip: ["Plain files you can open", "Native OpenWork threads", "Honest about where work runs"],
+  strip: ["Memory you can read", "Native OpenWork threads", "Built on OpenWork, cloud included"],
 } as const;
 
 export const STEPS: Array<Claim & { title: string }> = [
@@ -94,6 +103,16 @@ export const RESPONSIBILITIES: {
   lead: "A responsibility is a schedule a coworker owns. It can run in two places, and the app never blurs which.",
   placements: [
     {
+      name: "OpenWork Cloud",
+      badge: "Always-on",
+      points: [
+        "Runs in OpenWork Cloud even when your Mac is off.",
+        "Uses models your organization authorizes; run history lives in OpenWork.",
+        "Cannot read the coworker's local files or memory today — the app says so.",
+      ],
+      source: "apps/coworker/src/lib/cloud-responsibilities.ts (POST /v1/cloud-automations, GET /v1/llm-providers)",
+    },
+    {
       name: "This Mac",
       badge: "Local",
       points: [
@@ -102,16 +121,6 @@ export const RESPONSIBILITIES: {
         "If a run is missed while the app is closed, the latest one is recovered on launch — never a backlog.",
       ],
       source: "apps/coworker/electron/local-responsibilities.mjs (@openwork/automations nextAutomationOccurrence)",
-    },
-    {
-      name: "OpenWork Cloud",
-      badge: "Always-on",
-      points: [
-        "Runs in OpenWork Cloud even when this Mac is off.",
-        "Uses models your organization authorizes; run history lives in OpenWork.",
-        "Cannot read this coworker's local files or memory — the app says so.",
-      ],
-      source: "apps/coworker/src/lib/cloud-responsibilities.ts (POST /v1/cloud-automations, GET /v1/llm-providers)",
     },
   ],
   retire: {
@@ -122,7 +131,7 @@ export const RESPONSIBILITIES: {
 
 export const PLATFORM: { title: string; lead: string; items: Array<Claim & { name: string }> } = {
   title: "Built on OpenWork, not beside it.",
-  lead: "Open Coworker adds the coworker layer and nothing else. Everything underneath is OpenWork you can run on its own.",
+  lead: "Open Coworker adds the coworker layer and nothing else. Everything underneath is OpenWork, which is what lets it grow into OpenWork Cloud without becoming a different product.",
   items: [
     { name: "Server", text: "The same embedded openwork-server the OpenWork desktop ships.", source: "apps/coworker/electron/main.mjs (startEmbeddedServer)" },
     { name: "Engine", text: "Managed OpenCode with the providers you connected in OpenWork.", source: "apps/coworker/src/lib/threads.ts (provider.list, connectedModelCatalog)" },
@@ -133,11 +142,91 @@ export const PLATFORM: { title: string; lead: string; items: Array<Claim & { nam
   ],
 };
 
+/**
+ * The revenue path. Open Coworker is free and open source; OpenWork Cloud is
+ * the paid platform underneath it. Everything here points at real OpenWork
+ * destinations — nothing is sold from this page directly, and nothing
+ * unshipped is sold at all.
+ */
+export const CLOUD: {
+  title: string;
+  lead: string;
+  local: { name: string; badge: string; points: Claim[]; cta: { label: string; href: string } };
+  cloud: { name: string; badge: string; price: Claim; points: Claim[]; cta: { label: string; href: string }; secondary: { label: string; href: string } };
+  direction: Claim;
+  teams: { text: string; cta: { label: string; href: string } };
+} = {
+  title: "Free on your Mac. OpenWork Cloud when work must keep going.",
+  lead:
+    "Open Coworker is open source and costs nothing. Sign in to OpenWork Cloud and a coworker's responsibilities can run there even when your Mac is off — with the models your organization authorizes.",
+  local: {
+    name: "Open Coworker",
+    badge: "Free · open source",
+    points: [
+      {
+        text: "Coworkers, memory, and threads on your Mac, with the providers you configure. No account required.",
+        source: "apps/coworker/src/ui/onboarding.tsx (Start locally); apps/coworker/README.md",
+      },
+      {
+        text: "Local responsibilities while the app is open; one missed run recovered on launch.",
+        source: "apps/coworker/electron/local-responsibilities.mjs",
+      },
+    ],
+    cta: { label: "Run from source", href: "#get-started" },
+  },
+  cloud: {
+    name: "With OpenWork Cloud",
+    badge: "Recommended for recurring work",
+    price: {
+      text: "Free for up to 5 users · Team and Enterprise plans",
+      source: "ee/apps/landing/app/pricing/page.tsx (metadata title: Free up to 5 users, $20 Team, $50 Enterprise)",
+    },
+    points: [
+      {
+        text: "Responsibilities that run in OpenWork Cloud even when your Mac is off.",
+        source: "apps/coworker/src/lib/cloud-responsibilities.ts (POST /v1/cloud-automations)",
+      },
+      {
+        text: "Models your organization authorizes for those runs, with run history kept in OpenWork.",
+        source: "apps/coworker/src/lib/cloud-responsibilities.ts (GET /v1/llm-providers); @openwork/types/automations (latestRun)",
+      },
+      {
+        text: "Sign in from the app: open OpenWork sign-in, copy the link it shows, paste it back.",
+        source: "apps/coworker/src/ui/sign-in.tsx",
+      },
+    ],
+    cta: { label: "Create a free OpenWork Cloud account", href: SITE.cloudSignUp },
+    secondary: { label: "See plans", href: SITE.pricing },
+  },
+  direction: {
+    text: "Because everything underneath is OpenWork, the same coworkers can grow into OpenWork Cloud over time. That is the direction we are building toward; today the app is where they live.",
+    source: "plans/open-coworker-persistent-workers-app.md (Phase 3: cloud execution)",
+    planned: true,
+  },
+  teams: {
+    text: "Rolling coworkers out to a team? OpenWork Enterprise covers provisioning, policies, and support.",
+    cta: { label: "Talk to OpenWork", href: SITE.enterprise },
+  },
+};
+
+/** Agents install software now. Give them a document, not a marketing page. */
+export const AGENT = {
+  title: "Or hand this page to your agent.",
+  text:
+    "Open Coworker ships a plain-text start guide written for agents: prerequisites, the exact commands, the first-run choices, and how to verify the coworker's files. Paste the prompt into the agent you already use.",
+  promptTemplate: (startUrl: string) =>
+    `Set up Open Coworker for me. Fetch ${startUrl} and follow it step by step. Ask me before installing anything, choose "Start locally" unless I say otherwise, and finish by showing me the coworker's folder.`,
+  links: [
+    { label: "start.md", href: "/start.md", note: "the agent start guide" },
+    { label: "llms.txt", href: "/llms.txt", note: "product facts for language models" },
+  ],
+} as const;
+
 export const GET_STARTED: { title: string; lead: Claim; status: string; commands: string[] } = {
   title: "Run it from source today.",
   lead: {
     text:
-      "Open Coworker lives in the OpenWork monorepo. It works without an account — choose “Start locally” on first launch and connect OpenWork Cloud later if you want always-on responsibilities. Signed macOS builds are in preparation; this page will link them the day they exist.",
+      "Open Coworker lives in the OpenWork monorepo. It works without an account — choose “Start locally” on first launch and connect OpenWork Cloud whenever you want always-on responsibilities. Packaged builds are in preparation; this page will link them the day they exist.",
     source: "apps/coworker/src/ui/onboarding.tsx; apps/coworker/README.md",
   },
   status: "Early access · no packaged download yet",
@@ -149,10 +238,22 @@ export const GET_STARTED: { title: string; lead: Claim; status: string; commands
   ],
 };
 
+/** No mailing list exists yet; these are the two real ways to hear about the cloud opening and signed builds. */
+export const NOTIFY = {
+  title: "Hear about signed builds and what comes next",
+  releases: { label: "Watch releases on GitHub", href: SITE.releases },
+  email: {
+    label: "Email us for early access",
+    href: `mailto:${SITE.contactEmail}?subject=${encodeURIComponent("Open Coworker early access")}`,
+  },
+} as const;
+
 export const FOOTER = {
   links: [
     { label: "GitHub", href: SITE.repository },
     { label: "OpenWork", href: SITE.openwork },
+    { label: "Pricing", href: SITE.pricing },
+    { label: "start.md", href: "/start.md" },
   ],
   poweredBy: "Powered by OpenWork",
   claimsTitle: "Where each claim on this page is true",
@@ -167,6 +268,10 @@ export function allClaims(): Claim[] {
     ...RESPONSIBILITIES.placements.map((placement) => ({ text: placement.points.join(" "), source: placement.source })),
     RESPONSIBILITIES.retire,
     ...PLATFORM.items,
+    ...CLOUD.local.points,
+    CLOUD.cloud.price,
+    ...CLOUD.cloud.points,
+    CLOUD.direction,
     GET_STARTED.lead,
   ];
 }
@@ -179,4 +284,6 @@ export const FORBIDDEN_PHRASES = [
   "app store",
   "never fails",
   "fully autonomous",
+  "available in the cloud today",
+  "coworkers run in the cloud today",
 ] as const;

@@ -19,6 +19,32 @@ Vignettes in `src/mocks/product-mocks.tsx` are illustrations of real states in
 the app's vocabulary and tones; they are not screenshots and do not show
 features the app lacks.
 
+## Agent-ready and shareable
+
+- `public/start.md` is a start guide written for agents (prerequisites, exact
+  commands, first-run choices, on-disk verification). `public/llms.txt`
+  follows llmstxt.org. The page offers a copyable prompt that points a
+  person's own agent at `/start.md` on whatever origin the site is served from.
+- `index.html` carries canonical, Open Graph, Twitter card, manifest, and
+  JSON-LD (`SoftwareApplication` + `Organization` + `WebSite`) metadata.
+  `src/metadata.test.ts` keeps every URL-bearing file in agreement with
+  `SITE.url` and checks that `public/og.png` is a real 1200×630 PNG.
+- Regenerate the share image after brand changes with
+  `pnpm --filter @openwork/coworker-site og:render` (renders
+  `scripts/og-card.html` through Electron; same bubble geometry and palettes
+  as the app).
+
+## Revenue path
+
+Open Coworker is free and open source. The paid product underneath is
+OpenWork Cloud, so the page's Cloud section sends people to the real
+sign-up (`app.openworklabs.com?mode=sign-up`, UTM-tagged as
+`opencoworker`) and to OpenWork pricing and enterprise pages. There is no
+waitlist backend; "hear about what's next" uses GitHub release watching and
+the team inbox. Nothing unshipped is sold: the one roadmap statement on the
+page is typed `planned`, sourced to the product plan, and the tests require
+it to read as direction.
+
 ## Develop
 
 ```bash
