@@ -10,8 +10,10 @@ const requireFromRepo = createRequire(import.meta.url);
 
 const vercelApps = ["apps/app", "ee/apps/den-web", "ee/apps/diagnostics", "ee/apps/landing"];
 
+// Exit 0 skips the build; anything else (affected, missing base ref, git or
+// turbo failure) must exit 1 so Vercel builds instead of erroring the deployment.
 function ignoreCommandFor(packageName: string): string {
-  return `turbo query affected --base=$VERCEL_GIT_PREVIOUS_SHA --packages ${packageName} --exit-code`;
+  return `turbo query affected --base=$VERCEL_GIT_PREVIOUS_SHA --packages ${packageName} --exit-code || exit 1`;
 }
 
 type DenApiRedirectRules = {
@@ -26,7 +28,7 @@ briefTest(testBrief({
   behavior: "Vercel builds only the apps a commit affects, and hosted /api/den callers are redirected without invoking a function.",
   claims: {
     skipUnaffectedBuilds: claim("every Vercel-deployed app gates its build on turbo's affected graph for its own package", {
-      never: "leave a Vercel-deployed app rebuilding on every push, or gate it on another package's changes",
+      never: "gate it on another package's changes, error the deployment when the query cannot run, or strip .git from the build checkout",
     }),
     routingLayerRedirect: claim("Den Web emits the /api/den 307 as a build-time redirect once the API origin is configured", {
       never: "emit a redirect rule when the API origin is only known per request, or drop the per-request fallback route",
@@ -41,9 +43,13 @@ briefTest(testBrief({
     expect(config.ignoreCommand, `${app}/vercel.json`).toBe(ignoreCommandFor(manifest.name));
     expect(manifest.scripts?.build, `${app} needs a build task for turbo's affected graph`).toBeTruthy();
   }
+
+  const vercelIgnore = (await readFile(join(repoRoot, ".vercelignore"), "utf8")).split("\n").map((line) => line.trim());
+  expect(vercelIgnore, ".vercelignore must keep .git so the affected query can read history").not.toContain(".git");
+
   prove.skipUnaffectedBuilds(
     true,
-    `${vercelApps.length} Vercel projects run turbo query affected for their own workspace package before installing`,
+    `${vercelApps.length} Vercel projects run turbo query affected for their own workspace package before installing, failing open to a build`,
   );
 
   const { denApiRedirects }: DenApiRedirectRules = requireFromRepo(
