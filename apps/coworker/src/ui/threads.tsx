@@ -870,8 +870,10 @@ function ThreadView({
   const [messages, setMessages] = useState<TranscriptMessage[]>([]);
   /** A different connected, tool-capable model to fall back to after a model-related failure. */
   const [recommendedModel, setRecommendedModel] = useState<EngineModelOption | null>(null);
-  const [title, setTitle] = useState("Work thread");
   const defaultDiscussionTitle = discussionTitle(coworker.name);
+  // Until the transcript answers, a discussion carries its default title (which reads as "New
+  // discussion" while empty); only an assignment falls back to the generic placeholder.
+  const [title, setTitle] = useState(kind === "discussion" ? defaultDiscussionTitle : "Work thread");
   /** The first message sent here, kept until the thread carries a title of its own. */
   const firstPromptRef = useRef("");
   const titleLoadedRef = useRef(false);
