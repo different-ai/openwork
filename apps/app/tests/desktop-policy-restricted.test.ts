@@ -16,6 +16,7 @@ import {
   type DesktopAppRestrictionChecker,
 } from "../src/app/cloud/desktop-app-restrictions";
 import { SETTINGS_TAB_VALUES } from "../src/app/types";
+import { libraryAddAction } from "../src/react-app/domains/settings/library";
 
 const allowEverything: DesktopAppRestrictionChecker = () => false;
 const restrictedChecker: DesktopAppRestrictionChecker = ({ restriction }) =>
@@ -69,6 +70,25 @@ describe("restricted desktop policy mode", () => {
     });
     expect(unlockedForTeam.allowManageExtensions).toBe(true);
     expect(unlockedForTeam.allowControlSettings).toBe(false);
+
+    // Restricted on a targeted policy alone grants nothing extra: effective
+    // policy is the union of grants, so the permissive default still wins.
+    const restrictedTargetOnly = calculateEffectiveDesktopPolicy({
+      orgPolicyCount: 2,
+      defaultPolicy: desktopPolicyDefaults,
+      assignedPolicies: [restrictedDesktopPolicyValue],
+    });
+    expect(restrictedTargetOnly.allowControlSettings).toBe(true);
+  });
+});
+
+describe("allowManageExtensions Library gate", () => {
+  test("removes only the local add flows and keeps organization-approved ones", () => {
+    const signedInRestricted = { cloudSignedIn: true, allowManageExtensions: false };
+    expect(libraryAddAction("workspace-mcp", signedInRestricted)).toBeNull();
+    expect(libraryAddAction("mcp", signedInRestricted)).toEqual({ type: "den-modal", kind: "mcp" });
+    expect(libraryAddAction("skill", signedInRestricted)).toEqual({ type: "den-modal", kind: "skill" });
+    expect(libraryAddAction("workspace-mcp", { cloudSignedIn: true, allowManageExtensions: true })).toEqual({ type: "workspace-mcp" });
   });
 });
 
