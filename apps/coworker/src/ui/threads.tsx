@@ -749,14 +749,14 @@ function DiscussionSwitcher({
   const label = discussionLabel(current.title, defaultTitle);
 
   return (
-    <div ref={rootRef} className="relative min-w-0">
+    <div ref={rootRef} className="relative -ml-2 min-w-0">
       <button
         type="button"
         data-testid="coworker-discussion-switcher"
         aria-haspopup="menu"
         aria-expanded={open}
         title="Switch discussion"
-        className="-ml-2 flex max-w-full items-center gap-1.5 rounded-lg px-2 py-1 text-left transition-colors hover:bg-panel"
+        className="flex max-w-full items-center gap-1.5 rounded-lg px-2 py-1 text-left transition-colors hover:bg-panel"
         onClick={() => setOpen((value) => !value)}
       >
         <span className="truncate text-sm font-semibold text-snow">{label}</span>
@@ -770,7 +770,7 @@ function DiscussionSwitcher({
           role="menu"
           aria-label="Discussions"
           data-testid="coworker-discussion-menu"
-          className="absolute left-0 top-full z-20 mt-1 w-80 max-w-[70vw] rounded-xl border border-line bg-ink/95 p-1.5 shadow-2xl backdrop-blur"
+          className="absolute left-2 top-full z-20 mt-1 w-80 max-w-[70vw] rounded-xl border border-line bg-ink/95 p-1.5 shadow-2xl backdrop-blur"
         >
           <p className="px-2 pb-1 pt-1.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-mist">Discussions</p>
           <ul className="max-h-72 overflow-y-auto">
