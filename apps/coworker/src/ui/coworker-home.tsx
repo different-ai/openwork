@@ -265,7 +265,6 @@ export function CoworkerHome({
               onExplain={(text) => setDiscussionDraft({ id: Date.now(), text })}
               onOpenMemory={() => setContextView("memory")}
               onOpenCapabilities={() => setContextView("capabilities")}
-              onOpenSettings={() => setContextView("settings")}
               onOpenOpenWork={() => onOpenOpenWork()}
             />
           ) : null}
@@ -320,7 +319,6 @@ function CoworkerOverview({
   onExplain,
   onOpenMemory,
   onOpenCapabilities,
-  onOpenSettings,
   onOpenOpenWork,
 }: {
   session: DenSession | null;
@@ -334,7 +332,6 @@ function CoworkerOverview({
   onExplain: (message: string) => void;
   onOpenMemory: () => void;
   onOpenCapabilities: () => void;
-  onOpenSettings: () => void;
   onOpenOpenWork: () => void;
 }) {
   const now = describeNow(activity);
@@ -474,10 +471,10 @@ function CoworkerOverview({
         />
       </section>
 
-      <nav aria-label="More for this coworker" className="mt-auto flex items-center justify-between gap-1 border-t border-line pt-3 text-[11px]">
+      {/* Coworker settings already has its control in the panel header; the foot keeps the two destinations that do not. */}
+      <nav aria-label="More for this coworker" className="mt-auto flex items-center gap-1 border-t border-line pt-3 text-[11px]">
         <QuietLink icon={<AppsIcon className="size-3.5" />} onClick={onOpenCapabilities}>Apps & tools</QuietLink>
         <QuietLink icon={<MemoryIcon className="size-3.5" />} onClick={onOpenMemory}>Memory</QuietLink>
-        <QuietLink icon={<SlidersIcon className="size-3.5" />} onClick={onOpenSettings}>Coworker settings</QuietLink>
       </nav>
     </div>
   );
