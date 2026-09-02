@@ -25,21 +25,22 @@ export type RunEntry = {
 
 const HOW: Record<LocalResponsibilityRun["trigger"], string> = {
   scheduled: "",
-  recovery: "Recovered after a missed time",
+  recovery: "Caught up after a missed time",
   manual: "Started by you",
-  resume: "Resumed",
+  resume: "Picked up where it stopped",
 };
 
+/** The outcome in the words a person would use: what happened, not a status code. */
 export function describeRunOutcome(outcome: RunOutcome): string {
   switch (outcome) {
     case "queued":
-      return "Waiting for a free slot";
+      return "Waiting its turn";
     case "running":
-      return "Running";
+      return "Working on it";
     case "succeeded":
-      return "Succeeded";
+      return "Done";
     case "failed":
-      return "Failed";
+      return "Didn't finish";
     case "missed":
       return "Missed";
     default:
@@ -75,7 +76,7 @@ export function cloudRunEntry(run: AutomationRun): RunEntry {
   return {
     id: run.id,
     outcome: cloudOutcome(run.status),
-    how: run.trigger === "manual" ? "Started by you" : run.trigger === "recovery" ? "Recovered after a missed time" : "",
+    how: run.trigger === "manual" ? "Started by you" : run.trigger === "recovery" ? "Caught up after a missed time" : "",
     at: run.finishedAt ?? run.startedAt ?? run.createdAt,
     durationMs: run.finishedAt !== null && run.startedAt !== null ? Math.max(0, run.finishedAt - run.startedAt) : null,
     summary: run.resultSummary?.trim() ?? "",
@@ -94,16 +95,20 @@ export function formatDuration(durationMs: number): string {
   return minutes % 60 ? `${hours}h ${minutes % 60}m` : `${hours}h`;
 }
 
-/** Counts for a small trend line: "5 runs · 4 succeeded · 1 failed". */
+/** Counts for a small trend line: "Ran 5 times · 4 done · 1 didn't finish". */
 export function summarizeRuns(entries: ReadonlyArray<RunEntry>): string {
   const finished = entries.filter((entry) => entry.outcome !== "queued" && entry.outcome !== "running");
   if (finished.length === 0) return "";
-  const succeeded = finished.filter((entry) => entry.outcome === "succeeded").length;
-  const failed = finished.filter((entry) => entry.outcome === "failed").length;
+  const done = finished.filter((entry) => entry.outcome === "succeeded").length;
+  const unfinished = finished.filter((entry) => entry.outcome === "failed").length;
   const missed = finished.filter((entry) => entry.outcome === "missed").length;
-  const parts = [`${finished.length} run${finished.length === 1 ? "" : "s"}`];
-  if (succeeded) parts.push(`${succeeded} succeeded`);
-  if (failed) parts.push(`${failed} failed`);
+  const parts = [finished.length === 1 ? "Ran once" : finished.length === 2 ? "Ran twice" : `Ran ${finished.length} times`];
+  if (finished.length === 1) {
+    parts.push(done ? "done" : unfinished ? "didn't finish" : missed ? "missed" : "cancelled");
+    return parts.join(" · ");
+  }
+  if (done) parts.push(`${done} done`);
+  if (unfinished) parts.push(`${unfinished} didn't finish`);
   if (missed) parts.push(`${missed} missed`);
   return parts.join(" · ");
 }

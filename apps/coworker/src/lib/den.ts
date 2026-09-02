@@ -16,7 +16,6 @@ import {
   type AutomationDetail,
   type AutomationList,
   type AutomationRun,
-  type AutomationSchedule,
 } from "@openwork/types/automations";
 import { z } from "zod";
 
@@ -371,21 +370,4 @@ export function createDenAutomationsClient(session: DenSession) {
       return automationDetailSchema.parse(payload);
     },
   };
-}
-
-const WEEKDAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-
-function formatTime(hour: number, minute: number): string {
-  return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
-}
-
-export function describeSchedule(schedule: AutomationSchedule): string {
-  if (schedule.kind === "once") {
-    return `Once at ${new Date(schedule.at).toLocaleString()}`;
-  }
-  if (schedule.kind === "daily") {
-    return `Every day at ${formatTime(schedule.hour, schedule.minute)} (${schedule.timezone})`;
-  }
-  const days = schedule.daysOfWeek.map((day) => WEEKDAY_LABELS[day] ?? `day ${day}`).join(", ");
-  return `Every ${days} at ${formatTime(schedule.hour, schedule.minute)} (${schedule.timezone})`;
 }
