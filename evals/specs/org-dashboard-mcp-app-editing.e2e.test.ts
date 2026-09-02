@@ -1,5 +1,5 @@
 import { expect } from "vitest";
-import { denFetch, evalIn, fill, signInInBrowser, waitFor } from "@openwork/behaviors";
+import { denFetch, evalIn, fill, waitFor } from "@openwork/behaviors";
 import type { DenSession } from "@openwork/behaviors";
 import { navigate } from "@openwork/cdp";
 import { chrome } from "@openwork/hosts";
@@ -105,6 +105,7 @@ test(title, async ({ evidence, place }) => {
     },
   });
   const dashboardId = await createDashboard(den.admin, dashboardName);
+  expect(await readElements(den.admin, dashboardId)).toEqual([budgetApp]);
 
   await using browser = await chrome({
     name: "org-dashboard-mcp-app-editing",
@@ -148,10 +149,6 @@ test(title, async ({ evidence, place }) => {
         return originalFetch(targetUrl, init);
       };
     })();`,
-  });
-  await signInInBrowser(browser, `${den.ref.webUrl}/dashboard/dashboards/${encodeURIComponent(dashboardId)}`, {
-    email: den.admin.email,
-    password: den.admin.password,
   });
   await navigate(browser.client, `${den.ref.webUrl}/dashboard/dashboards/${encodeURIComponent(dashboardId)}`);
   await waitFor(browser, `(() => {
