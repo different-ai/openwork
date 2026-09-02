@@ -125,6 +125,16 @@ catalog, so OpenWork model and provider changes stay visible without a second
 settings store. User-facing copy says "AI model", "AI providers", and "AI is
 ready/unavailable"; the word "engine" is reserved for developer-facing
 documentation, diagnostics, and code.
+
+Each responsibility row keeps a bounded run history (`runs`, newest first, in
+`local-responsibilities.json`) with the coworker's own closing summary, the
+duration, and how the run came about; a run can be re-opened as its native
+thread or handed to the discussion composer as an "explain this run" message
+that the person still sends. Runs on this Mac respect a shared limit stored in
+`coworker-settings.json` (`maxParallelLocalRuns`, 1–4, default 2, editable
+under AI & local setup); later runs are recorded as `queued` and start by
+themselves when a slot frees, and a failed run with a thread can be resumed
+inside that same thread. OpenWork Cloud schedules its own runs.
 Existing or manually copied coworker directories are registered as native
 OpenWork workspaces automatically when the app loads them; the manual prepare
 action is retained only as recovery when registration fails.

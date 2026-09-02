@@ -49,12 +49,17 @@ export type CoworkerMemoryFile = {
 
 export type LocalResponsibilityRun = {
   id: string;
-  status: "running" | "succeeded" | "failed";
-  trigger: "scheduled" | "recovery" | "manual";
+  /** `queued` runs wait for a free slot on this Mac and start by themselves. */
+  status: "queued" | "running" | "succeeded" | "failed";
+  /** `resume` continues an earlier run inside its own native thread. */
+  trigger: "scheduled" | "recovery" | "manual" | "resume";
+  queuedAt: number | null;
   startedAt: number;
   finishedAt: number | null;
   threadId: string;
   error: string;
+  /** The coworker's own closing words for the run, bounded. */
+  summary: string;
 };
 
 export type LocalResponsibility = {
@@ -64,9 +69,20 @@ export type LocalResponsibility = {
   schedule: AutomationSchedule;
   state: "active" | "paused";
   nextDueAt: number | null;
+  /** Always `runs[0]` when any run exists. */
   latestRun: LocalResponsibilityRun | null;
+  /** Newest first, bounded history. */
+  runs: LocalResponsibilityRun[];
   createdAt: number;
   updatedAt: number;
+};
+
+/** Live picture of responsibility runs on this Mac. */
+export type LocalRunStatus = { limit: number; active: number; queued: number };
+
+export type CoworkerSettings = {
+  /** How many responsibilities may run at the same time on this Mac (1–4). */
+  maxParallelLocalRuns: number;
 };
 
 export type RuntimeInfo = {
@@ -143,8 +159,19 @@ export const coworkerBridge = {
     setActive: (slug: string, id: string, active: boolean) =>
       invoke<LocalResponsibility>("localResponsibilities.setActive", { slug, id, active }),
     remove: (slug: string, id: string) => invoke<{ ok: boolean }>("localResponsibilities.delete", { slug, id }),
+    /** Starts now when a slot is free; otherwise the run is recorded as queued. */
     runNow: (slug: string, id: string) =>
-      invoke<{ accepted: boolean }>("localResponsibilities.runNow", { slug, id }),
+      invoke<{ accepted: boolean; queued: boolean; reason: string }>("localResponsibilities.runNow", { slug, id }),
+    /** Continue the latest failed run inside its own native thread. */
+    resume: (slug: string, id: string) =>
+      invoke<{ accepted: boolean; reason: string }>("localResponsibilities.resume", { slug, id }),
+    cancelQueued: (slug: string, id: string) =>
+      invoke<{ ok: boolean }>("localResponsibilities.cancelQueued", { slug, id }),
+    status: () => invoke<LocalRunStatus>("localResponsibilities.status"),
+  },
+  settings: {
+    get: () => invoke<CoworkerSettings>("settings.get"),
+    update: (patch: Partial<CoworkerSettings>) => invoke<CoworkerSettings>("settings.update", patch),
   },
   openExternal: (url: string) => invoke<{ ok: boolean }>("shell.openExternal", { url }),
   openUntrustedExternal: (url: string) =>

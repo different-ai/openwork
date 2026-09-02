@@ -13,23 +13,52 @@ import { resolveCoworkerFile } from "./coworkers.mjs";
 
 export const LOCAL_RESPONSIBILITIES_FILE = "local-responsibilities.json";
 
+/** Runs kept per responsibility: enough to read a trend, never a log. */
+export const RUN_HISTORY_LIMIT = 12;
+/** Result summaries are the coworker's own last words for the run, bounded. */
+export const RUN_SUMMARY_LIMIT = 1_200;
+
+const RUN_STATUSES = ["queued", "running", "succeeded", "failed"];
+const RUN_TRIGGERS = ["scheduled", "recovery", "manual", "resume"];
+
 function cleanString(value, maximum = 100_000) {
   return String(value ?? "").trim().slice(0, maximum);
 }
 
+function cleanTimestamp(value, fallback = null) {
+  return Number.isFinite(value) ? Math.max(0, Math.floor(value)) : fallback;
+}
+
 function cleanRun(value) {
   if (!value || typeof value !== "object") return null;
-  const status = ["running", "succeeded", "failed"].includes(value.status) ? value.status : "failed";
-  const trigger = ["scheduled", "recovery", "manual"].includes(value.trigger) ? value.trigger : "manual";
+  const status = RUN_STATUSES.includes(value.status) ? value.status : "failed";
+  const trigger = RUN_TRIGGERS.includes(value.trigger) ? value.trigger : "manual";
   return {
     id: cleanString(value.id, 160) || randomUUID(),
     status,
     trigger,
-    startedAt: Number.isFinite(value.startedAt) ? Math.max(0, Math.floor(value.startedAt)) : 0,
-    finishedAt: Number.isFinite(value.finishedAt) ? Math.max(0, Math.floor(value.finishedAt)) : null,
+    queuedAt: cleanTimestamp(value.queuedAt),
+    startedAt: cleanTimestamp(value.startedAt, 0),
+    finishedAt: cleanTimestamp(value.finishedAt),
     threadId: cleanString(value.threadId, 240),
     error: cleanString(value.error, 2_000),
+    summary: cleanString(value.summary, RUN_SUMMARY_LIMIT),
   };
+}
+
+/** Newest first, bounded; `latestRun` is always `runs[0]` (or null). */
+function cleanRuns(value, latestRun) {
+  const source = Array.isArray(value) ? value : latestRun ? [latestRun] : [];
+  const seen = new Set();
+  const runs = [];
+  for (const candidate of source) {
+    const run = cleanRun(candidate);
+    if (!run || seen.has(run.id)) continue;
+    seen.add(run.id);
+    runs.push(run);
+  }
+  runs.sort((left, right) => (right.queuedAt ?? right.startedAt) - (left.queuedAt ?? left.startedAt));
+  return runs.slice(0, RUN_HISTORY_LIMIT);
 }
 
 function cleanRecord(value) {
@@ -40,17 +69,25 @@ function cleanRecord(value) {
   if (!id || !name || !instructions) return null;
   const parsedSchedule = automationScheduleSchema.safeParse(value.schedule);
   if (!parsedSchedule.success) return null;
+  const runs = cleanRuns(value.runs, cleanRun(value.latestRun));
   return {
     id,
     name,
     instructions,
     schedule: parsedSchedule.data,
     state: value.state === "paused" ? "paused" : "active",
-    nextDueAt: Number.isFinite(value.nextDueAt) ? Math.max(0, Math.floor(value.nextDueAt)) : null,
-    latestRun: cleanRun(value.latestRun),
-    createdAt: Number.isFinite(value.createdAt) ? Math.max(0, Math.floor(value.createdAt)) : 0,
-    updatedAt: Number.isFinite(value.updatedAt) ? Math.max(0, Math.floor(value.updatedAt)) : 0,
+    nextDueAt: cleanTimestamp(value.nextDueAt),
+    latestRun: runs[0] ?? null,
+    runs,
+    createdAt: cleanTimestamp(value.createdAt, 0),
+    updatedAt: cleanTimestamp(value.updatedAt, 0),
   };
+}
+
+/** Put `run` at the head of the history (replacing an entry with the same id) and refresh `latestRun`. */
+function withRun(record, run) {
+  const runs = cleanRuns([run, ...record.runs.filter((existing) => existing.id !== run.id)], null);
+  return { ...record, runs, latestRun: runs[0] ?? null };
 }
 
 async function readStore(coworkersDir, slug) {
@@ -65,11 +102,38 @@ async function readStore(coworkersDir, slug) {
   }
 }
 
+let temporarySequence = 0;
+
 async function writeStore(coworkersDir, slug, items) {
   const file = resolveCoworkerFile(coworkersDir, slug, LOCAL_RESPONSIBILITIES_FILE);
-  const temporary = `${file}.${process.pid}.tmp`;
+  temporarySequence += 1;
+  const temporary = `${file}.${process.pid}.${temporarySequence}.tmp`;
   await writeFile(temporary, `${JSON.stringify({ version: 1, items }, null, 2)}\n`, "utf8");
   await rename(temporary, file);
+}
+
+/**
+ * Every change to one coworker's store goes through here, one at a time, so a
+ * run finishing while another is queued can never overwrite the other's write.
+ * `change` receives the current items and returns `{ items, result }`.
+ */
+const storeLocks = new Map();
+
+async function mutateStore(coworkersDir, slug, change) {
+  const key = resolveCoworkerFile(coworkersDir, slug, LOCAL_RESPONSIBILITIES_FILE);
+  const previous = storeLocks.get(key) ?? Promise.resolve();
+  const run = previous.then(async () => {
+    const items = await readStore(coworkersDir, slug);
+    const { items: next, result, changed = true } = await change(items);
+    if (changed) await writeStore(coworkersDir, slug, next);
+    return result;
+  });
+  storeLocks.set(key, run.then(() => undefined, () => undefined));
+  try {
+    return await run;
+  } finally {
+    if (storeLocks.get(key) === run) storeLocks.delete(key);
+  }
 }
 
 export async function listLocalResponsibilities(coworkersDir, slug) {
@@ -91,83 +155,142 @@ export async function createLocalResponsibility(coworkersDir, slug, input, now =
     state: "active",
     nextDueAt: nextAutomationOccurrence(schedule, createdAt),
     latestRun: null,
+    runs: [],
     createdAt,
     updatedAt: createdAt,
   };
-  const items = await readStore(coworkersDir, slug);
-  items.push(record);
-  await writeStore(coworkersDir, slug, items);
-  return record;
+  return mutateStore(coworkersDir, slug, (items) => ({ items: [...items, record], result: record }));
 }
 
 export async function setLocalResponsibilityActive(coworkersDir, slug, id, active, now = Date.now()) {
-  const items = await readStore(coworkersDir, slug);
-  const index = items.findIndex((item) => item.id === id);
-  if (index === -1) throw new Error("Local responsibility not found");
-  const current = items[index];
-  const updatedAt = Math.max(0, Math.floor(now));
-  const updated = {
-    ...current,
-    state: active ? "active" : "paused",
-    nextDueAt: active ? nextAutomationOccurrence(current.schedule, updatedAt) : current.nextDueAt,
-    updatedAt,
-  };
-  items[index] = updated;
-  await writeStore(coworkersDir, slug, items);
-  return updated;
+  return mutateStore(coworkersDir, slug, (items) => {
+    const index = items.findIndex((item) => item.id === id);
+    if (index === -1) throw new Error("Local responsibility not found");
+    const current = items[index];
+    const updatedAt = Math.max(0, Math.floor(now));
+    const updated = {
+      ...current,
+      state: active ? "active" : "paused",
+      nextDueAt: active ? nextAutomationOccurrence(current.schedule, updatedAt) : current.nextDueAt,
+      updatedAt,
+    };
+    return { items: items.with(index, updated), result: updated };
+  });
 }
 
 export async function deleteLocalResponsibility(coworkersDir, slug, id) {
-  const items = await readStore(coworkersDir, slug);
-  const remaining = items.filter((item) => item.id !== id);
-  if (remaining.length === items.length) throw new Error("Local responsibility not found");
-  await writeStore(coworkersDir, slug, remaining);
+  await mutateStore(coworkersDir, slug, (items) => {
+    const remaining = items.filter((item) => item.id !== id);
+    if (remaining.length === items.length) throw new Error("Local responsibility not found");
+    return { items: remaining, result: undefined };
+  });
 }
 
-export async function beginLocalResponsibilityRun(
+function cleanTrigger(trigger) {
+  return RUN_TRIGGERS.includes(trigger) ? trigger : "manual";
+}
+
+/** Only scheduled occurrences advance the schedule; manual and resumed runs leave it alone. */
+function advanceForTrigger(record, trigger, at) {
+  const scheduled = trigger === "scheduled" || trigger === "recovery";
+  if (!scheduled) return record;
+  return {
+    ...record,
+    state: record.schedule.kind === "once" ? "paused" : record.state,
+    nextDueAt: nextAutomationOccurrence(record.schedule, at),
+  };
+}
+
+/**
+ * Record a run that is waiting for a free slot on this Mac. The schedule
+ * advances now, exactly as it would for a run that started immediately, so a
+ * queued occurrence is never counted twice.
+ */
+export async function queueLocalResponsibilityRun(
   coworkersDir,
   slug,
   id,
   { trigger = "manual", now = Date.now() } = {},
 ) {
-  const items = await readStore(coworkersDir, slug);
-  const index = items.findIndex((item) => item.id === id);
-  if (index === -1) throw new Error("Local responsibility not found");
-  const current = items[index];
-  const startedAt = Math.max(0, Math.floor(now));
-  const run = {
-    id: randomUUID(),
-    status: "running",
-    trigger: ["scheduled", "recovery", "manual"].includes(trigger) ? trigger : "manual",
-    startedAt,
-    finishedAt: null,
-    threadId: "",
-    error: "",
-  };
-  const scheduled = run.trigger !== "manual";
-  const nextDueAt = scheduled ? nextAutomationOccurrence(current.schedule, startedAt) : current.nextDueAt;
-  const updated = {
-    ...current,
-    state: scheduled && current.schedule.kind === "once" ? "paused" : current.state,
-    nextDueAt,
-    latestRun: run,
-    updatedAt: startedAt,
-  };
-  items[index] = updated;
-  await writeStore(coworkersDir, slug, items);
-  return updated;
+  return mutateStore(coworkersDir, slug, (items) => {
+    const index = items.findIndex((item) => item.id === id);
+    if (index === -1) throw new Error("Local responsibility not found");
+    const current = items[index];
+    const queuedAt = Math.max(0, Math.floor(now));
+    const run = {
+      id: randomUUID(),
+      status: "queued",
+      trigger: cleanTrigger(trigger),
+      queuedAt,
+      startedAt: 0,
+      finishedAt: null,
+      threadId: "",
+      error: "",
+      summary: "",
+    };
+    const updated = { ...withRun(advanceForTrigger(current, run.trigger, queuedAt), run), updatedAt: queuedAt };
+    return { items: items.with(index, updated), result: updated };
+  });
+}
+
+/** Drop a run that never started. Anything already running or finished is untouched. */
+export async function cancelQueuedLocalRun(coworkersDir, slug, id, runId, now = Date.now()) {
+  return mutateStore(coworkersDir, slug, (items) => {
+    const index = items.findIndex((item) => item.id === id);
+    if (index === -1) throw new Error("Local responsibility not found");
+    const current = items[index];
+    const run = current.runs.find((candidate) => candidate.id === runId);
+    if (!run || run.status !== "queued") return { items, result: current, changed: false };
+    const runs = current.runs.filter((candidate) => candidate.id !== runId);
+    const updated = { ...current, runs, latestRun: runs[0] ?? null, updatedAt: Math.max(0, Math.floor(now)) };
+    return { items: items.with(index, updated), result: updated };
+  });
+}
+
+/**
+ * Start a run. Pass `runId` to promote a queued run; pass `threadId` to resume
+ * inside an earlier run's native thread instead of opening a new one.
+ */
+export async function beginLocalResponsibilityRun(
+  coworkersDir,
+  slug,
+  id,
+  { trigger = "manual", now = Date.now(), runId = "", threadId = "" } = {},
+) {
+  return mutateStore(coworkersDir, slug, (items) => {
+    const index = items.findIndex((item) => item.id === id);
+    if (index === -1) throw new Error("Local responsibility not found");
+    const current = items[index];
+    const startedAt = Math.max(0, Math.floor(now));
+    const queued = runId ? current.runs.find((candidate) => candidate.id === runId && candidate.status === "queued") : null;
+    const run = {
+      id: queued?.id ?? randomUUID(),
+      status: "running",
+      trigger: queued?.trigger ?? cleanTrigger(trigger),
+      queuedAt: queued?.queuedAt ?? null,
+      startedAt,
+      finishedAt: null,
+      threadId: cleanString(threadId, 240),
+      error: "",
+      summary: "",
+    };
+    // A queued run already advanced the schedule when it was queued.
+    const advanced = queued ? current : advanceForTrigger(current, run.trigger, startedAt);
+    const updated = { ...withRun(advanced, run), updatedAt: startedAt };
+    return { items: items.with(index, updated), result: updated };
+  });
 }
 
 export async function attachLocalResponsibilityThread(coworkersDir, slug, id, runId, threadId) {
-  const items = await readStore(coworkersDir, slug);
-  const index = items.findIndex((item) => item.id === id);
-  if (index === -1) throw new Error("Local responsibility not found");
-  const current = items[index];
-  if (current.latestRun?.id !== runId) return current;
-  const updated = { ...current, latestRun: { ...current.latestRun, threadId: cleanString(threadId, 240) } };
-  items[index] = updated;
-  await writeStore(coworkersDir, slug, items);
-  return updated;
+  return mutateStore(coworkersDir, slug, (items) => {
+    const index = items.findIndex((item) => item.id === id);
+    if (index === -1) throw new Error("Local responsibility not found");
+    const current = items[index];
+    const run = current.runs.find((candidate) => candidate.id === runId);
+    if (!run) return { items, result: current, changed: false };
+    const updated = withRun(current, { ...run, threadId: cleanString(threadId, 240) });
+    return { items: items.with(index, updated), result: updated };
+  });
 }
 
 export const INTERRUPTED_RUN_MESSAGE = "Open Coworker closed before this local run finished.";
@@ -184,21 +307,22 @@ export async function reconcileInterruptedLocalRuns(
   slug,
   { activeRunIds = new Set(), now = Date.now() } = {},
 ) {
-  const items = await readStore(coworkersDir, slug);
-  const finishedAt = Math.max(0, Math.floor(now));
-  let changed = false;
-  const reconciled = items.map((item) => {
-    const run = item.latestRun;
-    if (!run || run.status !== "running" || activeRunIds.has(item.id)) return item;
-    changed = true;
-    return {
-      ...item,
-      latestRun: { ...run, status: "failed", finishedAt, error: INTERRUPTED_RUN_MESSAGE },
-      updatedAt: finishedAt,
-    };
+  return mutateStore(coworkersDir, slug, (items) => {
+    const finishedAt = Math.max(0, Math.floor(now));
+    let changed = false;
+    const reconciled = items.map((item) => {
+      if (activeRunIds.has(item.id)) return item;
+      const interrupted = item.runs.filter((run) => run.status === "running");
+      if (interrupted.length === 0) return item;
+      changed = true;
+      let next = item;
+      for (const run of interrupted) {
+        next = withRun(next, { ...run, status: "failed", finishedAt, error: INTERRUPTED_RUN_MESSAGE });
+      }
+      return { ...next, updatedAt: finishedAt };
+    });
+    return { items: reconciled, result: reconciled, changed };
   });
-  if (changed) await writeStore(coworkersDir, slug, reconciled);
-  return reconciled;
 }
 
 export async function finishLocalResponsibilityRun(
@@ -206,25 +330,25 @@ export async function finishLocalResponsibilityRun(
   slug,
   id,
   runId,
-  { status, error = "", now = Date.now() },
+  { status, error = "", summary = "", now = Date.now() },
 ) {
-  const items = await readStore(coworkersDir, slug);
-  const index = items.findIndex((item) => item.id === id);
-  if (index === -1) throw new Error("Local responsibility not found");
-  const current = items[index];
-  if (current.latestRun?.id !== runId) return current;
-  const updatedAt = Math.max(0, Math.floor(now));
-  const updated = {
-    ...current,
-    latestRun: {
-      ...current.latestRun,
-      status: status === "succeeded" ? "succeeded" : "failed",
-      finishedAt: updatedAt,
-      error: cleanString(error, 2_000),
-    },
-    updatedAt,
-  };
-  items[index] = updated;
-  await writeStore(coworkersDir, slug, items);
-  return updated;
+  return mutateStore(coworkersDir, slug, (items) => {
+    const index = items.findIndex((item) => item.id === id);
+    if (index === -1) throw new Error("Local responsibility not found");
+    const current = items[index];
+    const run = current.runs.find((candidate) => candidate.id === runId);
+    if (!run) return { items, result: current, changed: false };
+    const updatedAt = Math.max(0, Math.floor(now));
+    const updated = {
+      ...withRun(current, {
+        ...run,
+        status: status === "succeeded" ? "succeeded" : "failed",
+        finishedAt: updatedAt,
+        error: cleanString(error, 2_000),
+        summary: cleanString(summary, RUN_SUMMARY_LIMIT),
+      }),
+      updatedAt,
+    };
+    return { items: items.with(index, updated), result: updated };
+  });
 }

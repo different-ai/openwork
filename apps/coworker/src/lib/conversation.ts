@@ -52,3 +52,29 @@ export function assignmentPrompt(outcome: string, messages: ReadonlyArray<Discus
     "Own this outcome end to end. Keep the discussion context, but treat the outcome above as the source of truth.",
   ].join("\n");
 }
+
+const MAX_EXPLAIN_SUMMARY_CHARACTERS = 1_200;
+
+/**
+ * Ask the coworker, in its own discussion, to explain one responsibility run.
+ * The run happened in a separate native thread, so its result and any error
+ * travel inside the message; the person still sends it explicitly.
+ */
+export function explainRunPrompt(input: {
+  responsibilityName: string;
+  outcome: string;
+  when: string;
+  summary: string;
+  error: string;
+}): string {
+  const name = oneLine(input.responsibilityName) || "this responsibility";
+  const summary = input.summary.trim().slice(0, MAX_EXPLAIN_SUMMARY_CHARACTERS);
+  const error = oneLine(input.error);
+  return [
+    `Explain the ${input.when} run of your responsibility "${name}". It ${input.outcome.toLowerCase()}.`,
+    ...(summary ? ["", "Here is what you reported at the end of that run:", "", summary] : []),
+    ...(error ? ["", `It stopped with this problem: ${error}`] : []),
+    "",
+    "Tell me what happened, what the outcome means, and whether anything needs my attention or a change to the responsibility.",
+  ].join("\n");
+}
