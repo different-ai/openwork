@@ -105,6 +105,7 @@ export function CoworkerHome({
   const [contextView, setContextView] = useState<ContextView>("overview");
   const [settingsFocus, setSettingsFocus] = useState<{ id: number; section: "model" } | null>(null);
   const [assignmentDraft, setAssignmentDraft] = useState<{ id: number; text: string } | null>(null);
+  const [discussionDraft, setDiscussionDraft] = useState<{ id: number; text: string } | null>(null);
   const [openThreadRequest, setOpenThreadRequest] = useState<{ id: number; threadId: string } | null>(null);
   const [contextPanelWidth, setContextPanelWidth] = useState<number | null>(readContextPanelWidth);
   const [resizingContextPanel, setResizingContextPanel] = useState(false);
@@ -198,6 +199,7 @@ export function CoworkerHome({
             onRefreshRuntime={onRefreshRuntime}
             onSyncProviders={onSyncProviders}
             assignmentDraft={assignmentDraft}
+            discussionDraft={discussionDraft}
             openThreadRequest={openThreadRequest}
             onOpenModelSettings={() => {
               setContextView("settings");
@@ -284,6 +286,7 @@ export function CoworkerHome({
               engineManaged={runtime.engineManaged}
               onCoworkerChanged={onCoworkerChanged}
               onOpenThread={(threadId) => setOpenThreadRequest({ id: Date.now(), threadId })}
+              onExplain={(text) => setDiscussionDraft({ id: Date.now(), text })}
               onOpenMemory={() => setContextView("memory")}
               onOpenCapabilities={() => setContextView("capabilities")}
               onOpenSettings={() => setContextView("settings")}
@@ -328,6 +331,7 @@ function CoworkerOverview({
   engineManaged,
   onCoworkerChanged,
   onOpenThread,
+  onExplain,
   onOpenMemory,
   onOpenCapabilities,
   onOpenSettings,
@@ -340,6 +344,8 @@ function CoworkerOverview({
   engineManaged: boolean;
   onCoworkerChanged: (coworker: CoworkerSummary) => void;
   onOpenThread: (threadId: string) => void;
+  /** Prefill the discussion composer with a message about a run; the person still sends it. */
+  onExplain: (message: string) => void;
   onOpenMemory: () => void;
   onOpenCapabilities: () => void;
   onOpenSettings: () => void;
@@ -473,6 +479,8 @@ function CoworkerOverview({
           onLocalItemsChanged={setLocalResponsibilities}
           onCoworkerChanged={onCoworkerChanged}
           onConnect={onOpenOpenWork}
+          onOpenThread={onOpenThread}
+          onExplain={onExplain}
         />
       </section>
 

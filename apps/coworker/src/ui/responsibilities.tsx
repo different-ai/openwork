@@ -1,15 +1,23 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import type { AutomationList, AutomationModel, AutomationSchedule } from "@openwork/types/automations";
+import type { AutomationList, AutomationModel, AutomationRun, AutomationSchedule } from "@openwork/types/automations";
 import { coworkerBridge, type CoworkerSummary, type LocalResponsibility } from "@/lib/bridge";
 import {
   cloudModelOptions,
   describePlacement,
-  describeRunOutcome,
   resolveCloudModel,
   type CloudModelOption,
   type DenLlmProvider,
 } from "@/lib/cloud-responsibilities";
+import { explainRunPrompt } from "@/lib/conversation";
 import { createDenAutomationsClient, describeSchedule, type DenSession } from "@/lib/den";
+import {
+  cloudRunEntry,
+  describeRunOutcome,
+  formatDuration,
+  localRunEntry,
+  summarizeRuns,
+  type RunEntry,
+} from "@/lib/run-history";
 import { ActionMenu, Button, ErrorNote, Field, StatusDot, inputClass, type ActionMenuItem } from "@/ui/kit";
 
 type AutomationEntry = AutomationList["items"][number];
@@ -31,6 +39,12 @@ function stateLabel(state: string): string {
   return readable.slice(0, 1).toUpperCase() + readable.slice(1);
 }
 
+/** "Succeeded · Sep 2, 9:00 AM" for the row's Last line. */
+function describeLast(entry: RunEntry | undefined): string {
+  if (!entry || entry.outcome === "queued" || entry.outcome === "running") return "";
+  return `${describeRunOutcome(entry.outcome)} · ${formatWhen(entry.at)}`;
+}
+
 /** One row of the unified list, whichever place it runs. */
 type ResponsibilityRow = {
   key: string;
@@ -41,6 +55,8 @@ type ResponsibilityRow = {
   /** "Succeeded · Sep 2, 9:00 AM" or empty when it has never run. */
   last: string;
   lastFailed: boolean;
+  /** The coworker's closing words for the latest finished run, when it left any. */
+  latestSummary: string;
   /** Short state pill; empty for an ordinary active responsibility. */
   state: string;
   tone: "spark" | "mint" | "amber" | "rose" | "mist";
@@ -48,6 +64,9 @@ type ResponsibilityRow = {
   warning: string;
   attention: string;
   actions: ActionMenuItem[];
+  /** Known runs, newest first; cloud rows load theirs when opened. */
+  history: RunEntry[] | null;
+  loadHistory?: () => Promise<void>;
 };
 
 const PLACEMENT_NOTE =
@@ -61,6 +80,8 @@ export function ResponsibilitiesPanel({
   onLocalItemsChanged,
   onCoworkerChanged,
   onConnect,
+  onOpenThread,
+  onExplain,
 }: {
   session: DenSession | null;
   coworkers: CoworkerSummary[];
@@ -70,11 +91,17 @@ export function ResponsibilitiesPanel({
   onLocalItemsChanged: (items: LocalResponsibility[]) => void;
   onCoworkerChanged: (coworker: CoworkerSummary) => void;
   onConnect: () => void;
+  /** Open a run's native thread in the main column. */
+  onOpenThread: (threadId: string) => void;
+  /** Put a ready-to-send message in the coworker's discussion composer. */
+  onExplain: (message: string) => void;
 }) {
   const [adding, setAdding] = useState<Placement | null>(null);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [busyKey, setBusyKey] = useState("");
+  const [openHistory, setOpenHistory] = useState<string | null>(null);
+  const [cloudRuns, setCloudRuns] = useState<Record<string, AutomationRun[]>>({});
   const den = useMemo(() => (session ? createDenAutomationsClient(session) : null), [session]);
   const [entries, setEntries] = useState<AutomationEntry[]>([]);
 
@@ -140,37 +167,75 @@ export function ResponsibilitiesPanel({
     });
   }
 
+  function explain(name: string, entry: RunEntry) {
+    onExplain(explainRunPrompt({
+      responsibilityName: name,
+      outcome: describeRunOutcome(entry.outcome),
+      when: formatWhen(entry.at),
+      summary: entry.summary,
+      error: entry.error,
+    }));
+  }
+
   const localRows: ResponsibilityRow[] = localItems.map((item) => {
-    const running = item.latestRun?.status === "running";
-    const failed = item.latestRun?.status === "failed";
+    const history = item.runs.map(localRunEntry);
+    const latest = history[0];
+    const running = latest?.outcome === "running";
+    const queued = latest?.outcome === "queued";
+    const failed = latest?.outcome === "failed";
     const paused = item.state !== "active";
+    const key = `local:${item.id}`;
+    const finished = history.find((entry) => entry.outcome !== "running" && entry.outcome !== "queued");
     return {
-      key: `local:${item.id}`,
+      key,
       name: item.name,
       placement: "This Mac",
       schedule: describeSchedule(item.schedule),
-      next: paused ? "Paused" : running ? "Running now" : formatWhen(item.nextDueAt),
-      last: item.latestRun && !running
-        ? `${stateLabel(item.latestRun.status)} · ${formatWhen(item.latestRun.finishedAt || item.latestRun.startedAt)}`
-        : "",
-      lastFailed: Boolean(failed),
-      state: running ? "Running" : paused ? "Paused" : failed ? "Failed" : "",
-      tone: running ? "spark" : failed ? "rose" : paused ? "mist" : "mint",
+      next: queued ? "Waiting for a free slot" : running ? "Running now" : paused ? "Paused" : formatWhen(item.nextDueAt),
+      last: describeLast(finished),
+      lastFailed: finished?.outcome === "failed",
+      latestSummary: finished?.outcome === "succeeded" ? finished.summary : "",
+      state: running ? "Running" : queued ? "Queued" : paused ? "Paused" : failed ? "Failed" : "",
+      tone: running ? "spark" : queued ? "spark" : failed ? "rose" : paused ? "mist" : "mint",
       warning: "",
-      attention: failed ? item.latestRun?.error ?? "" : "",
+      attention: failed ? latest?.error ?? "" : "",
+      history,
       actions: [
+        queued
+          ? {
+              label: "Cancel queued run",
+              onSelect: () => void act(key, async () => {
+                await coworkerBridge.localResponsibilities.cancelQueued(coworker.slug, item.id);
+                await refreshLocal();
+                return "Removed from the line.";
+              }),
+            }
+          : {
+              label: running ? "Running…" : "Run now",
+              disabled: running,
+              onSelect: () => void act(key, async () => {
+                const result = await coworkerBridge.localResponsibilities.runNow(coworker.slug, item.id);
+                window.setTimeout(() => void refreshLocal(), 500);
+                if (result.queued) return "Queued. It starts when a run finishes.";
+                return result.accepted ? "Run started." : "This responsibility is already running.";
+              }),
+            },
+        ...(failed && latest?.threadId
+          ? [{
+              label: "Resume last run",
+              onSelect: () => void act(key, async () => {
+                const result = await coworkerBridge.localResponsibilities.resume(coworker.slug, item.id);
+                window.setTimeout(() => void refreshLocal(), 500);
+                if (result.accepted) return "Resuming in the same thread.";
+                return result.reason === "at limit"
+                  ? "This Mac is at its run limit. Try again when a run finishes."
+                  : "Another run of this responsibility is already active.";
+              }),
+            }]
+          : []),
         {
-          label: running ? "Running…" : "Run now",
-          disabled: running,
-          onSelect: () => void act(`local:${item.id}`, async () => {
-            const result = await coworkerBridge.localResponsibilities.runNow(coworker.slug, item.id);
-            window.setTimeout(() => void refreshLocal(), 500);
-            return result.accepted ? "Run started." : "This responsibility is already running.";
-          }),
-        },
-        {
-          label: paused ? "Resume" : "Pause",
-          onSelect: () => void act(`local:${item.id}`, async () => {
+          label: paused ? "Resume schedule" : "Pause schedule",
+          onSelect: () => void act(key, async () => {
             await coworkerBridge.localResponsibilities.setActive(coworker.slug, item.id, paused);
             await refreshLocal();
             return "";
@@ -180,7 +245,7 @@ export function ResponsibilitiesPanel({
           label: "Remove",
           tone: "danger",
           disabled: running,
-          onSelect: () => void act(`local:${item.id}`, async () => {
+          onSelect: () => void act(key, async () => {
             await coworkerBridge.localResponsibilities.remove(coworker.slug, item.id);
             await refreshLocal();
             return "";
@@ -195,20 +260,33 @@ export function ResponsibilitiesPanel({
     const needsAttention = state === "needs_attention";
     const paused = state !== "active" && !needsAttention;
     const placement = describePlacement(entry.revision.executionTarget);
-    const lastRunFailed = Boolean(entry.latestRun && entry.latestRun.status !== "succeeded");
     const id = entry.automation.id;
+    const latest = entry.latestRun ? cloudRunEntry(entry.latestRun) : undefined;
+    const loaded = cloudRuns[id];
+    const history = loaded ? loaded.map(cloudRunEntry) : latest ? [latest] : [];
     return {
       key: `cloud:${id}`,
       name: entry.automation.name,
       placement: placement.label,
       schedule: describeSchedule(entry.revision.schedule),
       next: needsAttention ? "Waiting for you" : paused ? stateLabel(state) : formatWhen(entry.automation.nextDueAt),
-      last: entry.latestRun ? `${describeRunOutcome(entry.latestRun)} · ${formatWhen(entry.latestRun.finishedAt)}` : "",
-      lastFailed: lastRunFailed,
+      last: describeLast(latest),
+      lastFailed: latest?.outcome === "failed" || latest?.outcome === "missed",
+      latestSummary: latest?.outcome === "succeeded" ? latest.summary : "",
       state: needsAttention ? "Needs you" : paused ? stateLabel(state) : "",
       tone: needsAttention ? "rose" : paused ? "mist" : "mint",
       warning: placement.target === "cloud" ? "" : placement.detail,
       attention: entry.automation.needsAttentionReason?.message ?? "",
+      history: loaded ? history : null,
+      loadHistory: async () => {
+        if (!den || cloudRuns[id]) return;
+        try {
+          const runs = await den.listRuns(id);
+          setCloudRuns((current) => ({ ...current, [id]: runs }));
+        } catch (cause) {
+          setError(cause instanceof Error ? cause.message : String(cause));
+        }
+      },
       actions: [
         {
           label: "Run now",
@@ -224,7 +302,7 @@ export function ResponsibilitiesPanel({
         },
         ...(state === "active" || (state !== "archived" && !needsAttention)
           ? [{
-              label: state === "active" ? "Pause" : "Resume",
+              label: state === "active" ? "Pause schedule" : "Resume schedule",
               onSelect: () => void act(`cloud:${id}`, async () => {
                 if (!den) return "";
                 await den.setActive(id, state !== "active");
@@ -251,6 +329,12 @@ export function ResponsibilitiesPanel({
 
   const rows = [...cloudRows, ...localRows];
   const canAdd = adding === null;
+
+  function toggleHistory(row: ResponsibilityRow) {
+    const next = openHistory === row.key ? null : row.key;
+    setOpenHistory(next);
+    if (next && row.loadHistory) void row.loadHistory();
+  }
 
   return (
     <div className="space-y-2.5">
@@ -301,32 +385,64 @@ export function ResponsibilitiesPanel({
 
       {rows.length > 0 ? (
         <ul className="divide-y divide-line rounded-2xl border border-line bg-ink" data-testid="responsibility-list">
-          {rows.map((row) => (
-            <li key={row.key} className="px-3.5 py-3" data-testid="responsibility-row">
-              <div className="flex items-start gap-2.5">
-                <span className="mt-1.5"><StatusDot tone={row.tone} /></span>
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-start justify-between gap-2">
-                    <p className="min-w-0 break-words text-sm font-semibold leading-snug text-snow">{row.name}</p>
-                    <ActionMenu label={`Actions for ${row.name}`} items={row.actions.map((action) => ({ ...action, disabled: action.disabled || busyKey === row.key }))} />
+          {rows.map((row) => {
+            const expanded = openHistory === row.key;
+            const known = row.history ?? [];
+            const trend = summarizeRuns(known);
+            const hasRuns = known.length > 0 || row.loadHistory !== undefined;
+            return (
+              <li key={row.key} className="px-3.5 py-3" data-testid="responsibility-row" data-state={row.state || "active"}>
+                <div className="flex items-start gap-2.5">
+                  <span className="mt-1.5"><StatusDot tone={row.tone} /></span>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-start justify-between gap-2">
+                      <p className="min-w-0 break-words text-sm font-semibold leading-snug text-snow">{row.name}</p>
+                      <ActionMenu label={`Actions for ${row.name}`} items={row.actions.map((action) => ({ ...action, disabled: action.disabled || busyKey === row.key }))} />
+                    </div>
+                    <p className="mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[11px] text-mist">
+                      <span className={`rounded-full px-1.5 py-px font-medium ${row.placement === "OpenWork Cloud" ? "bg-spark/10 text-spark" : row.placement === "This Mac" ? "bg-white/7 text-mist" : "bg-amber/10 text-amber"}`}>
+                        {row.placement}
+                      </span>
+                      <span>{row.schedule}</span>
+                      {row.state ? <span className={`font-medium ${row.tone === "rose" ? "text-rose" : row.tone === "spark" ? "text-spark" : "text-mist"}`}>· {row.state}</span> : null}
+                    </p>
+                    <p className="mt-1 text-[11px] text-mist">
+                      <span>Next: {row.next}</span>
+                      {row.last ? <span className={row.lastFailed ? "text-amber" : ""}> · Last: {row.last}</span> : null}
+                    </p>
+                    {row.latestSummary ? (
+                      <p className="mt-1.5 line-clamp-2 text-[11px] leading-relaxed text-snow/80" title={row.latestSummary} data-testid="responsibility-summary">
+                        {row.latestSummary}
+                      </p>
+                    ) : null}
+                    {row.attention ? <p className="mt-1.5 break-words rounded-lg bg-rose/8 px-2.5 py-1.5 text-[11px] leading-relaxed text-rose">{row.attention}</p> : null}
+                    {row.warning ? <p className="mt-1.5 rounded-lg bg-amber/8 px-2.5 py-1.5 text-[11px] leading-relaxed text-amber">{row.warning}</p> : null}
+                    {hasRuns && (trend || row.loadHistory) ? (
+                      <button
+                        type="button"
+                        className="mt-1.5 flex items-center gap-1 text-[11px] font-medium text-mist transition-colors hover:text-snow"
+                        aria-expanded={expanded}
+                        onClick={() => toggleHistory(row)}
+                        data-testid="responsibility-history-toggle"
+                      >
+                        <span aria-hidden="true" className={`inline-block transition-transform ${expanded ? "rotate-90" : ""}`}>›</span>
+                        <span>{trend || "Run history"}</span>
+                      </button>
+                    ) : null}
+                    {expanded ? (
+                      <RunHistory
+                        entries={known}
+                        loading={row.history === null}
+                        onOpenThread={onOpenThread}
+                        onExplain={(entry) => explain(row.name, entry)}
+                        coworkerName={coworker.name}
+                      />
+                    ) : null}
                   </div>
-                  <p className="mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[11px] text-mist">
-                    <span className={`rounded-full px-1.5 py-px font-medium ${row.placement === "OpenWork Cloud" ? "bg-spark/10 text-spark" : row.placement === "This Mac" ? "bg-white/7 text-mist" : "bg-amber/10 text-amber"}`}>
-                      {row.placement}
-                    </span>
-                    <span>{row.schedule}</span>
-                    {row.state ? <span className={`font-medium ${row.tone === "rose" ? "text-rose" : row.tone === "spark" ? "text-spark" : "text-mist"}`}>· {row.state}</span> : null}
-                  </p>
-                  <p className="mt-1 text-[11px] text-mist">
-                    <span>Next: {row.next}</span>
-                    {row.last ? <span className={row.lastFailed ? "text-amber" : ""}> · Last: {row.last}</span> : null}
-                  </p>
-                  {row.attention ? <p className="mt-1.5 break-words rounded-lg bg-rose/8 px-2.5 py-1.5 text-[11px] leading-relaxed text-rose">{row.attention}</p> : null}
-                  {row.warning ? <p className="mt-1.5 rounded-lg bg-amber/8 px-2.5 py-1.5 text-[11px] leading-relaxed text-amber">{row.warning}</p> : null}
                 </div>
-              </div>
-            </li>
-          ))}
+              </li>
+            );
+          })}
         </ul>
       ) : null}
 
@@ -358,6 +474,63 @@ export function ResponsibilitiesPanel({
         </details>
       ) : null}
     </div>
+  );
+}
+
+/** Past runs of one responsibility: outcome, when, how long, and the coworker's own words. */
+function RunHistory({
+  entries,
+  loading,
+  coworkerName,
+  onOpenThread,
+  onExplain,
+}: {
+  entries: RunEntry[];
+  loading: boolean;
+  coworkerName: string;
+  onOpenThread: (threadId: string) => void;
+  onExplain: (entry: RunEntry) => void;
+}) {
+  if (loading && entries.length === 0) {
+    return <p className="mt-2 text-[11px] text-mist">Reading run history…</p>;
+  }
+  if (entries.length === 0) {
+    return <p className="mt-2 text-[11px] text-mist">No runs yet.</p>;
+  }
+  return (
+    <ol className="mt-2 space-y-1.5 border-l border-line pl-3" data-testid="responsibility-history">
+      {entries.map((entry) => {
+        const tone = entry.outcome === "succeeded" ? "mint" : entry.outcome === "failed" ? "rose" : entry.outcome === "missed" ? "amber" : entry.outcome === "running" || entry.outcome === "queued" ? "spark" : "mist";
+        const explainable = entry.outcome !== "queued" && entry.outcome !== "running";
+        return (
+          <li key={entry.id} className="text-[11px]" data-testid="responsibility-run" data-outcome={entry.outcome}>
+            <div className="flex flex-wrap items-center gap-x-1.5 text-mist">
+              <StatusDot tone={tone} />
+              <span className={`font-medium ${tone === "rose" ? "text-rose" : tone === "amber" ? "text-amber" : "text-snow"}`}>{describeRunOutcome(entry.outcome)}</span>
+              <span>· {formatWhen(entry.at)}</span>
+              {entry.durationMs !== null ? <span>· {formatDuration(entry.durationMs)}</span> : null}
+              {entry.how ? <span>· {entry.how}</span> : null}
+            </div>
+            {entry.summary ? <p className="mt-0.5 line-clamp-3 leading-relaxed text-snow/80" title={entry.summary}>{entry.summary}</p> : null}
+            {entry.error ? <p className="mt-0.5 break-words leading-relaxed text-rose">{entry.error}</p> : null}
+            {explainable || entry.threadId ? (
+              <div className="mt-1 flex flex-wrap gap-x-3">
+                {entry.threadId ? (
+                  <button type="button" className="font-medium text-spark hover:underline" onClick={() => onOpenThread(entry.threadId)}>
+                    Open thread
+                  </button>
+                ) : null}
+                {explainable ? (
+                  <button type="button" className="font-medium text-spark hover:underline" onClick={() => onExplain(entry)} data-testid="responsibility-explain">
+                    Ask {coworkerName} to explain
+                  </button>
+                ) : null}
+              </div>
+            ) : null}
+          </li>
+        );
+      })}
+    </ol>
   );
 }
 
