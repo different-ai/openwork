@@ -28,6 +28,7 @@ export interface Located {
   editable: boolean;
   value: string;
   text: string;
+  covering: { tag: string; text: string; role: string } | null;
 }
 
 interface SerializedMatcher {
@@ -140,9 +141,9 @@ export async function locate(surface: Surface, target: Target): Promise<Located>
       if (spec.kind === "regexp") return new RegExp(spec.value, spec.flags ?? "").test(actual);
       return actual === spec.value.trim();
     };
-    const containsMatcher = (spec, candidate) => {
-      if (!spec || spec.kind !== "string") return matcher(spec, candidate);
-      return String(candidate ?? "").trim().toLowerCase().includes(spec.value.trim().toLowerCase());
+    const startsMatcher = (spec, candidate) => {
+      if (!spec || spec.kind !== "string") return false;
+      return String(candidate ?? "").trim().toLowerCase().startsWith(spec.value.trim().toLowerCase());
     };
     const implicitRole = (element) => {
       const explicit = element.getAttribute("role");
@@ -173,6 +174,17 @@ export async function locate(surface: Surface, target: Target): Promise<Located>
         || (element.innerText ?? element.textContent ?? "").trim();
     };
     const text = (element) => (element.innerText ?? element.textContent ?? "").trim();
+    const rendered = (element) => {
+      const rect = element.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) return false;
+      let current = element;
+      while (current instanceof Element) {
+        const style = getComputedStyle(current);
+        if (style.display === "none" || style.visibility === "hidden" || Number(style.opacity) === 0) return false;
+        current = current.parentElement;
+      }
+      return true;
+    };
     const selector = target.composer
       ? '[contenteditable="true"][data-lexical-editor="true"]'
       : target.text && !target.role && !target.label && !target.placeholder && !target.testId
@@ -182,22 +194,40 @@ export async function locate(surface: Surface, target: Target): Promise<Located>
       if (target.role && implicitRole(element) !== target.role) return false;
       if (target.placeholder !== undefined && element.getAttribute("placeholder") !== target.placeholder) return false;
       if (target.testId !== undefined && element.getAttribute("data-testid") !== target.testId) return false;
-      if (!matcher(target.text, text(element))) return false;
       if (!matcher(target.label, accessibleName(element))) return false;
-      if (target.text && [...element.children].some((child) => matcher(target.text, text(child)))) return false;
       return true;
     });
     let matches = candidates;
+    if (target.text) {
+      const exact = candidates.filter((element) => matcher(target.text, text(element)))
+        .filter((element) => ![...element.children].some((child) => matcher(target.text, text(child))));
+      if (exact.length > 0) matches = exact;
+      else {
+        const starts = candidates.filter((element) => rendered(element) && startsMatcher(target.text, text(element)))
+          .filter((element) => ![...element.children].some((child) => startsMatcher(target.text, text(child))));
+        matches = starts.length === 1 ? starts : [];
+      }
+    }
     if (target.bare && !target.composer) {
       const exact = candidates.filter((element) => matcher(target.bare, accessibleName(element)));
       if (exact.length > 0) matches = exact;
       else {
-        const contains = candidates.filter((element) => containsMatcher(target.bare, accessibleName(element)));
-        matches = contains.length === 1 ? contains : [];
+        const starts = candidates.filter((element) => rendered(element) && startsMatcher(target.bare, text(element)))
+          .filter((element) => ![...element.children].some((child) => startsMatcher(target.bare, text(child))));
+        matches = starts.length === 1 ? starts : [];
       }
     }
     const element = matches[target.nth];
-    if (!element) return null;
+    if (!element) {
+      const visibleCandidates = [...document.querySelectorAll('button, a[href], [role="button"], [role="link"]')]
+        .filter(rendered)
+        .slice(0, 8)
+        .map((candidate) => {
+          const role = implicitRole(candidate) || candidate.tagName.toLowerCase();
+          return role + " " + JSON.stringify(accessibleName(candidate));
+        });
+      return { notFound: true, candidates: visibleCandidates };
+    }
     element.scrollIntoView({ block: "center", inline: "center" });
     const rect = element.getBoundingClientRect();
     const center = { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
@@ -210,18 +240,31 @@ export async function locate(surface: Surface, target: Target): Promise<Located>
     }
     const inViewport = center.x >= 0 && center.y >= 0 && center.x <= innerWidth && center.y <= innerHeight;
     const hit = inViewport ? document.elementFromPoint(center.x, center.y) : null;
+    const hitTestOk = Boolean(hit && (hit === element || element.contains(hit)));
     return {
       center,
       rect: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
       tag: element.tagName.toLowerCase(),
       name: accessibleName(element),
       visible: styleVisible && rect.width > 0 && rect.height > 0 && inViewport,
-      hitTestOk: Boolean(hit && (hit === element || element.contains(hit))),
+      hitTestOk,
       editable: element.isContentEditable || !element.readOnly && (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement),
       value: typeof element.value === "string" ? element.value : "",
-      text: (element.innerText ?? element.value ?? element.textContent ?? "").trim(),
+      text: (element.isContentEditable ? element.innerText : element.innerText ?? element.value ?? element.textContent ?? "").trim(),
+      covering: hit && !hitTestOk ? {
+        tag: hit.tagName.toLowerCase(),
+        text: (hit.innerText ?? hit.textContent ?? "").replace(/\\s+/g, " ").trim().slice(0, 160),
+        role: implicitRole(hit),
+      } : null,
     };
   }`, [parsed]);
+  if (isRecord(value) && value.notFound === true) {
+    const candidates = Array.isArray(value.candidates)
+      ? value.candidates.filter((candidate): candidate is string => typeof candidate === "string").slice(0, 8)
+      : [];
+    const candidateDetail = candidates.length > 0 ? ` Visible button/link candidates: ${candidates.join(", ")}.` : "";
+    throw new Error(`Could not locate ${JSON.stringify(typeof target === "string" ? target : parseTarget(target))}.${candidateDetail}`);
+  }
   if (!isRecord(value) || !isRecord(value.center) || !isRecord(value.rect)) {
     throw new Error(`Could not locate ${JSON.stringify(typeof target === "string" ? target : parseTarget(target))}.`);
   }
@@ -231,10 +274,19 @@ export async function locate(surface: Surface, target: Target): Promise<Located>
   const rectY = numberField(value.rect, "y");
   const width = numberField(value.rect, "width");
   const height = numberField(value.rect, "height");
+  const covering = value.covering === null
+    ? null
+    : isRecord(value.covering)
+      && typeof value.covering.tag === "string"
+      && typeof value.covering.text === "string"
+      && typeof value.covering.role === "string"
+      ? { tag: value.covering.tag, text: value.covering.text, role: value.covering.role }
+      : undefined;
   if (x === null || y === null || rectX === null || rectY === null || width === null || height === null
     || typeof value.tag !== "string" || typeof value.name !== "string"
     || typeof value.visible !== "boolean" || typeof value.hitTestOk !== "boolean"
-    || typeof value.editable !== "boolean" || typeof value.value !== "string" || typeof value.text !== "string") {
+    || typeof value.editable !== "boolean" || typeof value.value !== "string" || typeof value.text !== "string"
+    || covering === undefined) {
     throw new Error("CDP returned invalid located-element geometry.");
   }
   return {
@@ -247,6 +299,7 @@ export async function locate(surface: Surface, target: Target): Promise<Located>
     editable: value.editable,
     value: value.value,
     text: value.text,
+    covering,
   };
 }
 
@@ -308,9 +361,14 @@ export async function waitForLocated(
   let lastError: unknown;
   while (Date.now() < deadline) {
     try {
+      // locate() centers the element on every attempt, so smooth scrolling and
+      // transient overlays are re-evaluated instead of preserving stale geometry.
       const found = await locate(surface, target);
       if (found.visible && (!options.mustHitTest || found.hitTestOk)) return found;
-      lastError = new Error(`Located element was visible=${found.visible}, hitTestOk=${found.hitTestOk}.`);
+      const covering = found.covering
+        ? ` Covered by ${found.covering.tag}${found.covering.role ? ` role=${JSON.stringify(found.covering.role)}` : ""}${found.covering.text ? ` text=${JSON.stringify(found.covering.text)}` : ""}.`
+        : "";
+      lastError = new Error(`Located element was visible=${found.visible}, hitTestOk=${found.hitTestOk}.${covering}`);
     } catch (error) {
       lastError = error;
     }

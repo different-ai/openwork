@@ -160,8 +160,11 @@ world. Mid-flow seeding after an act is explicit and allowed; probes do not
 change the ordering state.
 
 `seed.evalIn()` (`[seed:raw]`) and `probe.eval()` (`[probe:raw]`) are migration
-escape hatches. New specs must not use them. The channel ratchet records current
-legacy usage per E2E file and fails on increases or stale baseline entries.
+escape hatches. Both accept `{ awaitPromise?: boolean, timeoutMs?: number }`;
+`probe.eval` accepts the options after either `(expression)` or
+`(surface, expression)`. New specs must not use them. The channel ratchet
+records current legacy usage per E2E file and fails on increases or stale
+baseline entries.
 
 Before, composer reload coverage imported hosts, behaviors, CDP evaluation, and
 evidence APIs directly. After, the journey is only:
@@ -183,7 +186,22 @@ test("a draft survives reloads", async ({ user, probe, step }) => {
 
 `"composer"` is the documented well-known target for the Lexical
 `[contenteditable="true"][data-lexical-editor="true"]` editor. Other targets use
-accessible name, role, label, placeholder, test ID, and optional `nth`.
+accessible name, role, label, placeholder, test ID, and optional `nth`; `text`
+and `label` accept strings or regular expressions. A unique visible element
+whose inner text starts with a string is the fallback for a non-exact text/name
+match.
+
+`user.type(target, text)` appends by default. Pass `{ replace: true }` to focus
+with a real click, select all with the platform key chord, and replace the
+current value. `user.see(target, { text })` compares contenteditable inner text
+and accepts a string or regular expression. Clicks require center-point hit
+testing; `{ hitTest: false }` is a last resort for an intentionally covered
+target and still performs a trusted CDP click at that element's center.
+
+Worlds can arrange a shaped Den connection with `seed.denLink(den, options)`;
+the returned link is fixture-owned. `probe.connectState(app)` reads the
+testkit's normalized desktop Connect state without exposing the raw helper to a
+spec.
 
 ## Layers
 

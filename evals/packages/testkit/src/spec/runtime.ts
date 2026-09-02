@@ -6,8 +6,8 @@ import {
   evalIn,
   listSessions,
   readComposerState,
-  seedSessions,
   signInDesktopAs,
+  waitUntilInteractive,
 } from "@openwork/behaviors";
 import {
   callFunctionOnSurface,
@@ -44,15 +44,20 @@ import type {
   TraceEntryInput,
 } from "@openwork/test-evidence";
 import { eventually } from "../eventually.ts";
+import { denLink as startDenLink } from "../link.ts";
+import { readConnectState } from "../state.ts";
 import type {
   Agent,
+  ClickOptions,
   Probe,
+  ProbeEvalOptions,
   Seed,
   SeedDesktopOptions,
   SeedWebOptions,
   SeeOptions,
   SpecAdapters,
   Step,
+  TypeOptions,
   User,
 } from "./types.ts";
 
@@ -157,16 +162,89 @@ function surfaceName(surface: Surface | null): string | undefined {
 function targetDetail(target: Target): string {
   if (typeof target === "string") return target;
   if (target.testId) return `testId=${target.testId}`;
-  if (target.label) return `label=${target.label instanceof RegExp ? target.label.toString() : target.label}`;
-  if (target.text) return `text=${target.text instanceof RegExp ? target.text.toString() : target.text}`;
+  if (target.label) return `label=${matcherDetail(target.label)}`;
+  if (target.text) return `text=${matcherDetail(target.text)}`;
   if (target.placeholder) return `placeholder=${target.placeholder}`;
   return target.role ?? "target";
 }
 
-function typedTextDetail(target: Target, text: string): string {
+function matcherDetail(value: string | RegExp): string {
+  return typeof value === "string" ? value : `/${value.source}/${value.flags}`;
+}
+
+function optionTextDetail(value: string | RegExp): string {
+  return typeof value === "string" ? JSON.stringify(redacted(value)) : matcherDetail(value);
+}
+
+function seeDetail(target: Target, options: SeeOptions): string {
+  const details = [targetDetail(target)];
+  if (options.editable !== undefined) details.push(options.editable ? "editable" : "editable=false");
+  if (options.value !== undefined) details.push(`value=${JSON.stringify(redacted(options.value))}`);
+  if (options.text !== undefined) details.push(`text=${optionTextDetail(options.text)}`);
+  if (options.timeoutMs !== undefined) details.push(`timeoutMs=${options.timeoutMs}`);
+  return `see(${details.join(", ")})`;
+}
+
+function textMatches(actual: string, expected: string | RegExp): boolean {
+  if (typeof expected === "string") return actual.trim() === expected.trim();
+  return new RegExp(expected.source, expected.flags).test(actual);
+}
+
+function typedTextDetail(target: Target, text: string, options: TypeOptions): string {
   const targetName = targetDetail(target);
   const sensitive = /password|token|secret/i.test(targetName);
-  return `type(${targetName}, ${sensitive ? "<redacted>" : JSON.stringify(redacted(text))})`;
+  return `type(${targetName}, ${sensitive ? "<redacted>" : JSON.stringify(redacted(text))}${options.replace ? ", replace" : ""})`;
+}
+
+const CONTROL_READY_TIMEOUT_MS = 60_000;
+const CONTROL_POLL_INTERVAL_MS = 250;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+async function waitForControlAction(surface: Surface, action: string, timeoutMs = CONTROL_READY_TIMEOUT_MS): Promise<void> {
+  const startedAt = Date.now();
+  const deadline = startedAt + timeoutMs;
+  let lastError: unknown = null;
+  await waitForControlRail(surface, action, Math.max(1, deadline - Date.now()));
+  while (Date.now() < deadline) {
+    try {
+      const actions = await evalIn(surface, "window.__openworkControl?.listActions?.() ?? null", {
+        timeoutMs: Math.min(2_000, Math.max(1, deadline - Date.now())),
+      });
+      if (Array.isArray(actions) && actions.some((entry) => isRecord(entry) && entry.id === action && entry.disabled !== true)) return;
+      lastError = new Error(`action ${action} is not enabled`);
+    } catch (error) {
+      lastError = error;
+    }
+    await new Promise((resolve) => setTimeout(resolve, Math.min(CONTROL_POLL_INTERVAL_MS, Math.max(0, deadline - Date.now()))));
+  }
+  throw new Error(`control rail not ready for ${action} within ${timeoutMs}ms${lastError ? `: ${messageText(lastError)}` : ""}`);
+}
+
+async function waitForControlRail(surface: Surface, action: string, timeoutMs = CONTROL_READY_TIMEOUT_MS): Promise<void> {
+  try {
+    await waitUntilInteractive(surface, { timeoutMs });
+  } catch (error) {
+    throw new Error(`control rail not ready for ${action} within ${timeoutMs}ms: ${messageText(error)}`);
+  }
+}
+
+async function createSessionWhenReady(surface: Surface): Promise<string> {
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    await waitForControlAction(surface, "session.create_task");
+    try {
+      const result = await control(surface, "session.create_task");
+      if (typeof result === "string" && result.trim()) return result.trim();
+      if (attempt === 1) throw new Error("session.create_task returned no session ID after one retry.");
+    } catch (error) {
+      const emptyResult = /did not return a session ID|returned no session ID|invalid session ID/i.test(messageText(error));
+      if (attempt === 1 || !emptyResult) throw error;
+    }
+    await new Promise((resolve) => setTimeout(resolve, CONTROL_POLL_INTERVAL_MS));
+  }
+  throw new Error("session.create_task returned no session ID after one retry.");
 }
 
 export class SpecRuntime {
@@ -406,15 +484,27 @@ export class SeedChannel implements Seed {
   session(app: Surface, options: { title?: string } = {}) {
     const title = options.title ?? "New task";
     return this.#runtime.call("seed", "session", `session(${JSON.stringify(title)})`, app, async () => {
-      const sessionId = await control(app, "session.create_task");
-      if (typeof sessionId !== "string" || !sessionId) throw new Error("session.create_task returned no session ID.");
+      const sessionId = await createSessionWhenReady(app);
       if (options.title) await control(app, "session.rename", { sessionId, title });
       return { sessionId, title };
     });
   }
 
   sessions(app: Surface, titles: readonly string[]) {
-    return this.#runtime.call("seed", "sessions", `sessions(${titles.length})`, app, () => seedSessions(app, titles));
+    return this.#runtime.call("seed", "sessions", `sessions(${titles.length})`, app, async () => {
+      const seeded: { sessionId: string; title: string }[] = [];
+      for (const title of titles) {
+        const sessionId = await createSessionWhenReady(app);
+        await control(app, "session.rename", { sessionId, title });
+        seeded.push({ sessionId, title });
+      }
+      const observed = await listSessions(app);
+      const missing = titles.filter((title) => !observed.some((session) => session.title === title));
+      if (missing.length > 0) {
+        throw new Error(`Seeded session titles were not present after creation. Missing: ${JSON.stringify(missing)}. Observed: ${JSON.stringify(observed)}.`);
+      }
+      return seeded;
+    });
   }
 
   signIn(app: Surface, member: import("@openwork/behaviors").DenSession) {
@@ -452,21 +542,28 @@ export class SeedChannel implements Seed {
     });
   }
 
+  denLink(den: Den, options: import("@openwork/env").SeedDenLinkOptions = {}) {
+    return this.#runtime.call("seed", "denLink", `denLink(${options.client ?? "public-preview"})`, null, async () => {
+      const link = await startDenLink(den.ref, options);
+      return this.#runtime.stack.use(link);
+    });
+  }
+
   tmpPath(label: string): string {
-    return this.#runtime.sync("seed", "tmpPath", `tmpPath(${JSON.stringify(label)})`, () => (
-      this.#runtime.adapters.seed?.tmpPath?.(label)
-      ?? `/tmp/openwork-${label.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-")}-${Date.now()}`
-    ));
+    this.#runtime.checkOrder("seed", "tmpPath");
+    return this.#runtime.adapters.seed?.tmpPath?.(label)
+      ?? `/tmp/openwork-${label.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-")}-${Date.now()}`;
   }
 
   composerText(app: Surface, text: string) {
     return this.#runtime.call("seed", "composerText", `composerText(${text.length} chars)`, app, async () => {
+      await waitForControlAction(app, "composer.set_text");
       await control(app, "composer.set_text", { text });
     });
   }
 
-  evalIn(surface: Surface, expression: string) {
-    return this.#runtime.call("seed:raw", "evalIn", "[seed:raw] evalIn(<expression>)", surface, () => evalIn(surface, expression));
+  evalIn(surface: Surface, expression: string, options: { awaitPromise?: boolean; timeoutMs?: number } = {}) {
+    return this.#runtime.call("seed:raw", "evalIn", "[seed:raw] evalIn(<expression>)", surface, () => evalIn(surface, expression, options));
   }
 }
 
@@ -485,31 +582,34 @@ export class UserChannel implements User {
     return new UserChannel(this.#runtime, surface);
   }
 
-  click(target: Target): Promise<void> {
-    return this.#click(target, 1, "click");
+  click(target: Target, options: ClickOptions = {}): Promise<void> {
+    return this.#click(target, 1, "click", options);
   }
 
   dblclick(target: Target): Promise<void> {
     return this.#click(target, 2, "dblclick");
   }
 
-  #click(target: Target, clickCount: number, verb: "click" | "dblclick"): Promise<void> {
+  #click(target: Target, clickCount: number, verb: "click" | "dblclick", options: ClickOptions = {}): Promise<void> {
     const surface = requireSurface(this.#surface);
-    return this.#runtime.call("user", verb, `${verb}(${targetDetail(target)})`, surface, async () => {
+    const hitTestDetail = options.hitTest === false ? ", hitTest=false" : "";
+    return this.#runtime.call("user", verb, `${verb}(${targetDetail(target)}${hitTestDetail})`, surface, async () => {
       if (this.#runtime.adapters.user?.click) return this.#runtime.adapters.user.click(surface, target, clickCount);
-      const found = await waitForLocated(surface, target, { mustHitTest: true });
+      const found = await waitForLocated(surface, target, { mustHitTest: options.hitTest !== false });
       await clickAt(surface, found.center, { clickCount });
     });
   }
 
-  type(target: Target, text: string): Promise<void> {
+  type(target: Target, text: string, options: TypeOptions = {}): Promise<void> {
     const surface = requireSurface(this.#surface);
-    return this.#runtime.call("user", "type", typedTextDetail(target, text), surface, async () => {
+    return this.#runtime.call("user", "type", typedTextDetail(target, text, options), surface, async () => {
       if (this.#runtime.adapters.user?.click) await this.#runtime.adapters.user.click(surface, target, 1);
       else {
         const found = await waitForLocated(surface, target, { mustHitTest: true });
         await clickAt(surface, found.center);
       }
+      const mac = surface.handle.hostKind !== "daytona" && process.platform === "darwin";
+      await pressKey(surface, options.replace ? (mac ? "Meta+A" : "Control+A") : (mac ? "Meta+ArrowDown" : "Control+End"));
       await typeText(surface, text);
     });
   }
@@ -529,7 +629,7 @@ export class UserChannel implements User {
 
   see(target: Target, options: SeeOptions = {}): Promise<void> {
     const surface = requireSurface(this.#surface);
-    return this.#runtime.call("user", "see", `see(${targetDetail(target)})`, surface, async () => {
+    return this.#runtime.call("user", "see", seeDetail(target, options), surface, async () => {
       const timeoutMs = options.timeoutMs ?? 30_000;
       const deadline = Date.now() + timeoutMs;
       let found: Located | null = null;
@@ -539,7 +639,7 @@ export class UserChannel implements User {
           if (found.visible
             && (options.editable === undefined || found.editable === options.editable)
             && (options.value === undefined || found.value === options.value)
-            && (options.text === undefined || found.text.trim() === options.text.trim())) return;
+            && (options.text === undefined || textMatches(found.text, options.text))) return;
         } catch {
           found = null;
         }
@@ -609,13 +709,19 @@ export class AgentChannel implements Agent {
 
   run(action: string, args?: unknown): Promise<unknown> {
     const surface = requireSurface(this.#surface);
-    return this.#runtime.call("agent", "run", `run(${action})`, surface, () => control(surface, action, args));
+    return this.#runtime.call("agent", "run", `run(${action})`, surface, async () => {
+      if (action.startsWith("composer.")) await waitForControlAction(surface, action);
+      else await waitForControlRail(surface, action);
+      return control(surface, action, args);
+    });
   }
 
   async send(text: string): Promise<unknown> {
     const surface = requireSurface(this.#surface);
     return this.#runtime.call("agent", "send", `send(${text.length} chars)`, surface, async () => {
+      await waitForControlAction(surface, "composer.set_text");
       await control(surface, "composer.set_text", { text });
+      await waitForControlAction(surface, "composer.send");
       return control(surface, "composer.send");
     });
   }
@@ -623,8 +729,7 @@ export class AgentChannel implements Agent {
   createSession(title?: string): Promise<string> {
     const surface = requireSurface(this.#surface);
     return this.#runtime.call("agent", "createSession", `createSession(${title ? JSON.stringify(title) : ""})`, surface, async () => {
-      const result = await control(surface, "session.create_task");
-      if (typeof result !== "string" || !result) throw new Error("session.create_task returned no session ID.");
+      const result = await createSessionWhenReady(surface);
       if (title) await control(surface, "session.rename", { sessionId: result, title });
       return result;
     });
@@ -637,9 +742,10 @@ export class AgentChannel implements Agent {
 
   actions(): Promise<unknown> {
     const surface = requireSurface(this.#surface);
-    return this.#runtime.call("agent", "actions", "listActions", surface, () => (
-      evaluateOnSurface(surface, "window.__openworkControl.listActions()")
-    ));
+    return this.#runtime.call("agent", "actions", "listActions", surface, async () => {
+      await waitForControlRail(surface, "listActions");
+      return evaluateOnSurface(surface, "window.__openworkControl.listActions()");
+    });
   }
 }
 
@@ -707,13 +813,22 @@ export class ProbeChannel implements Probe {
     });
   }
 
-  eval(expression: string): Promise<unknown>;
-  eval(surface: Surface, expression: string): Promise<unknown>;
-  eval(surfaceOrExpression: Surface | string, expression?: string): Promise<unknown> {
+  eval(expression: string, options?: ProbeEvalOptions): Promise<unknown>;
+  eval(surface: Surface, expression: string, options?: ProbeEvalOptions): Promise<unknown>;
+  eval(surfaceOrExpression: Surface | string, expressionOrOptions?: string | ProbeEvalOptions, explicitOptions: ProbeEvalOptions = {}): Promise<unknown> {
     const surface = typeof surfaceOrExpression === "string" ? requireSurface(this.#surface) : surfaceOrExpression;
-    const source = typeof surfaceOrExpression === "string" ? surfaceOrExpression : expression;
+    const source = typeof surfaceOrExpression === "string"
+      ? surfaceOrExpression
+      : typeof expressionOrOptions === "string" ? expressionOrOptions : undefined;
+    const options = typeof surfaceOrExpression === "string"
+      ? typeof expressionOrOptions === "string" ? {} : expressionOrOptions ?? {}
+      : explicitOptions;
     if (source === undefined) throw new Error("probe.eval requires an expression.");
-    return this.#runtime.call("probe:raw", "eval", "[probe:raw] eval(<expression>)", surface, () => evaluateOnSurface(surface, source));
+    return this.#runtime.call("probe:raw", "eval", "[probe:raw] eval(<expression>)", surface, () => evalIn(surface, source, options));
+  }
+
+  connectState(app: Surface) {
+    return this.#runtime.call("probe", "connectState", "connectState", app, () => readConnectState(app));
   }
 
   api(session: import("@openwork/behaviors").DenSession, path: string, init: RequestInit = {}) {
