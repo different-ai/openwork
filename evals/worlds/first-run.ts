@@ -102,7 +102,7 @@ export async function sessionWorld(seed: Seed) {
 export async function parentChildPermissionWorld(seed: Seed) {
   const base = await sessionWorld(seed);
   // TODO(primitive): seed a child-session permission request and parent activity row.
-  const seeded = await evalIn(base.app, `(async () => {
+  const seeded = await seed.evalIn(base.app, `(async () => {
     const child = await window.__openworkControl.execute("eval.child_permission.seed", null);
     if (!child?.ok || typeof child.result?.childSessionId !== "string") return child;
     const activity = await window.__openworkControl.execute("eval.task_activity.seed", {
