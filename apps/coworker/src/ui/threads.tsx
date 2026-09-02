@@ -11,6 +11,7 @@ import {
   assignmentTitle,
   discussionTitle,
   type DiscussionMessage,
+  parseAssignmentBrief,
 } from "@/lib/conversation";
 import {
   createCoworkerMcpClient,
@@ -669,7 +670,7 @@ function AssignmentOverview({
         <Button variant="ghost" className="px-2" onClick={onBack} title="Back to discussion">←</Button>
         <div className="min-w-0 flex-1">
           <h2 className="text-sm font-semibold text-snow">Assignments</h2>
-          <p className="text-xs text-mist">Outcome-driven work created from your discussion with {coworker.name}.</p>
+          <p className="text-xs text-mist">Work you have handed to {coworker.name} to own.</p>
         </div>
         <Button variant="primary" onClick={onNewAssignment}>New assignment</Button>
       </header>
@@ -1395,6 +1396,7 @@ function ThreadView({
               mcpClient={mcpClient}
               active={working && message.role === "assistant" && index === lastAssistantIndex}
               continued={index > 0 && visibleMessages[index - 1]?.role === message.role}
+              kind={kind}
             />
           ))}
           <InteractionCards
@@ -1498,6 +1500,7 @@ function MessageBubble({
   mcpClient,
   active,
   continued = false,
+  kind = "discussion",
 }: {
   message: TranscriptMessage;
   coworker: CoworkerSummary;
@@ -1505,9 +1508,38 @@ function MessageBubble({
   active: boolean;
   /** The previous message is from the same speaker: no avatar or name again, tighter spacing. */
   continued?: boolean;
+  kind?: "discussion" | "assignment";
 }) {
   const user = message.role === "user";
   if (user) {
+    // The message that opens an assignment carries scaffolding for the model; the person sees
+    // the outcome they asked for, with the discussion it came from behind a small disclosure.
+    const brief = kind === "assignment" ? parseAssignmentBrief(message.text) : null;
+    if (brief) {
+      return (
+        <article className={`flex justify-end ${continued ? "-mt-1.5" : ""}`} data-message-role="user" data-assignment-brief="true">
+          <div className="max-w-[76%] rounded-2xl rounded-br-md bg-snow px-4 py-2.5 text-sm leading-relaxed text-ink">
+            <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-ink/55">Assignment for {coworker.name}</p>
+            <p className="mt-1 whitespace-pre-wrap" data-testid="coworker-assignment-outcome">{brief.outcome}</p>
+            {brief.context.length > 0 ? (
+              <details className="group mt-2 text-xs text-ink/70" data-testid="coworker-assignment-context">
+                <summary className="flex cursor-pointer list-none items-center gap-1 marker:hidden hover:text-ink">
+                  <span>From your discussion · {brief.context.length} message{brief.context.length === 1 ? "" : "s"}</span>
+                  <span className="transition-transform group-open:rotate-90" aria-hidden="true">›</span>
+                </summary>
+                <ol className="mt-1.5 space-y-1.5 border-l border-ink/15 pl-2.5">
+                  {brief.context.map((entry, index) => (
+                    <li key={index} className="whitespace-pre-wrap">
+                      <span className="font-semibold">{entry.speaker === "you" ? "You" : coworker.name}:</span> {entry.text}
+                    </li>
+                  ))}
+                </ol>
+              </details>
+            ) : null}
+          </div>
+        </article>
+      );
+    }
     return (
       <article className={`flex justify-end ${continued ? "-mt-1.5" : ""}`} data-message-role="user" data-continued={continued ? "true" : "false"}>
         <div className="max-w-[72%] whitespace-pre-wrap rounded-2xl rounded-br-md bg-snow px-4 py-2.5 text-sm leading-relaxed text-ink">
@@ -1935,7 +1967,7 @@ function DiscussionComposer({
         <div className="rounded-2xl border border-line bg-panel/80 p-2 transition-colors focus-within:border-spark/45">
           <div className="mb-1 flex items-center justify-between gap-3 px-1.5 pt-0.5">
             <span className="text-[10px] font-medium text-mist">
-              {assignmentMode ? "A bounded outcome, separate from this discussion" : `Chat with ${coworkerName}`}
+              {assignmentMode ? `Something ${coworkerName} should own, separate from this chat` : `Chat with ${coworkerName}`}
             </span>
             <button
               type="button"

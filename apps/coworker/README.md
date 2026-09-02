@@ -185,6 +185,13 @@ changes only with the phase ("Nova is thinking…", "Nova is editing index.md…
 "Nova is putting it together…"). Consecutive messages from the same speaker
 drop the repeated avatar and name and sit closer together.
 
+The message that opens an assignment carries scaffolding for the model (the
+outcome, the visible discussion it came from, and a short instruction); the
+person sees it as a brief — "Assignment for Nova", the outcome, and a closed
+"From your discussion · n messages" disclosure — never the headings or the
+instruction (`parseAssignmentBrief` in `lib/conversation.ts`). The engine still
+receives the exact prompt the journeys verify.
+
 Responsibilities read like a to-do list for a person: one line per
 responsibility (its name, then "Every day at 9:00 AM · Done today at 12:05
 PM") that opens into labelled everyday facts — When, Where, Next, Last time,
