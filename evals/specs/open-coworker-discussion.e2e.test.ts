@@ -122,11 +122,11 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   });
   await reload(app);
   // The first coworker's AI service restarts to pick up the new workspace; a person waits for
-  // "Ready" in the sidebar before typing, so the journey does too.
+  // "Ready" in the header before typing, so the journey does too.
   await waitFor(app, `(() => {
-    const summary = document.querySelector('[data-testid="coworker-activity-summary"]');
-    if (!(summary instanceof HTMLElement)) return false;
-    return summary.innerText.split("\\n").map((line) => line.trim()).filter(Boolean)[0] === "Ready";
+    const status = document.querySelector('[data-testid="coworker-top-status"]');
+    if (!(status instanceof HTMLElement)) return false;
+    return status.textContent?.trim() === "Ready";
   })()`, { timeoutMs: 240_000, label: "coworker AI ready before the first discussion" });
 
   const firstPrompt = "Reply with exactly COWORKER CHAT READY.";
@@ -162,8 +162,8 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   // Once the turn has closed, the live row is gone, thinking folds to one quiet line, and tool work
   // to one receipt per reply, with no raw tool identifiers in either collapsed line.
   const folded = await waitFor(app, `(() => {
-    const status = document.querySelector('[data-testid="coworker-thread-status"]')?.textContent?.trim() ?? "";
-    if (!status.startsWith("A continuing conversation")) return false;
+    const status = document.querySelector('[data-testid="coworker-thread-status"]');
+    if (!(status instanceof HTMLElement) || status.dataset.state !== "idle" || status.textContent?.trim() !== "Ready") return false;
     return {
       thinking: [...document.querySelectorAll('[data-testid="coworker-thinking"] summary')].map((node) => node.textContent?.trim() ?? ""),
       receipts: [...document.querySelectorAll('[data-testid="coworker-work-summary"]')].map((node) => node.textContent?.trim() ?? ""),
@@ -202,7 +202,7 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   await clickButton(app, "Assignments");
   await waitForText(app, "No assignments yet", { timeoutMs: 30_000 });
   expect(await evalIn(app, "document.body.innerText")).not.toContain("COWORKER CHAT READY\nJust now");
-  await clickButton(app, "←");
+  await clickButton(app, "Back");
   await waitForText(app, "SECOND CHAT READY", { timeoutMs: 30_000 });
 
   evidence.recordAssertionEvidence(
@@ -232,7 +232,13 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
 
   // A second discussion runs beside the first: start it, send, leave while the reply is
   // still coming, return to the first, then come back to find the reply waiting.
-  await clickButton(app, "New discussion");
+  await openDiscussionMenu(app);
+  await waitFor(app, `(() => {
+    const item = document.querySelector('[data-testid="coworker-new-discussion"]');
+    if (!(item instanceof HTMLElement)) return false;
+    item.click();
+    return true;
+  })()`, { timeoutMs: 30_000, label: "New discussion menu item" });
   await waitFor(app, `Boolean(document.querySelector('[data-testid="coworker-discussion-empty"]'))`, { timeoutMs: 30_000, label: "fresh discussion" });
   const storedAfterNew = resultRecord(await invokeCoworker(app, "coworkers.get", { slug: "editor" }));
   const secondDiscussionId = String(storedAfterNew.conversationThreadId);

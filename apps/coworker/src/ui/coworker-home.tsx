@@ -31,7 +31,7 @@ const CONTEXT_PANEL_WIDTH_KEY = "open-coworker.context-panel-width";
 const CONTEXT_PANEL_DEFAULT_WIDTH = 360;
 const MAIN_WORKSPACE_MIN_WIDTH = 520;
 /** The context panel: drag it narrower than it can usefully be and it folds to an icon strip. */
-const CONTEXT_PANEL_BOUNDS: PanelBounds = { min: 320, max: 620, collapsedWidth: 56, collapseBelow: 240 };
+const CONTEXT_PANEL_BOUNDS: PanelBounds = { min: 320, max: 440, collapsedWidth: 56, collapseBelow: 240 };
 
 const CONTEXT_ICONS: Record<ContextView, (props: { className?: string }) => ReactNode> = {
   overview: ActivityIcon,
@@ -102,6 +102,9 @@ export function CoworkerHome({
   const [assignmentDraft, setAssignmentDraft] = useState<{ id: number; text: string } | null>(null);
   const [discussionDraft, setDiscussionDraft] = useState<{ id: number; text: string } | null>(null);
   const [openThreadRequest, setOpenThreadRequest] = useState<{ id: number; threadId: string } | null>(null);
+  /** The conversation views place their own title line and actions into the one header. */
+  const [headerTitleSlot, setHeaderTitleSlot] = useState<HTMLElement | null>(null);
+  const [headerActionsSlot, setHeaderActionsSlot] = useState<HTMLElement | null>(null);
   const contextPanelRoom = useCallback(() => Math.max(CONTEXT_PANEL_BOUNDS.min, window.innerWidth - railWidth - MAIN_WORKSPACE_MIN_WIDTH), [railWidth]);
   const contextPanel = useResizablePanel({
     storageKey: CONTEXT_PANEL_WIDTH_KEY,
@@ -109,12 +112,36 @@ export function CoworkerHome({
     bounds: CONTEXT_PANEL_BOUNDS,
     defaultWidth: CONTEXT_PANEL_DEFAULT_WIDTH,
     available: contextPanelRoom,
+    startCollapsed: true,
   });
-  /** Open one view, unfolding the panel if it was collapsed. */
+  /** Open one view, unfolding the panel if it was closed. Choosing the open view again closes it. */
   function showContext(view: ContextView): void {
+    if (!contextPanel.collapsed && view === contextView) {
+      contextPanel.collapse();
+      return;
+    }
     setContextView(view);
     if (contextPanel.collapsed) contextPanel.expand();
   }
+  /** Escape closes the panel when nothing else is using the key. */
+  const contextPanelOpen = !contextPanel.collapsed;
+  const collapseContextPanel = contextPanel.collapse;
+  useEffect(() => {
+    if (!contextPanelOpen) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || event.defaultPrevented) return;
+      const target = event.target;
+      if (target instanceof HTMLElement && (target.closest("[role=\"menu\"]") || target.closest("dialog"))) return;
+      collapseContextPanel();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [collapseContextPanel, contextPanelOpen]);
+  /** Moving to another coworker returns to the conversation; the panel does not follow. */
+  useEffect(() => {
+    collapseContextPanel();
+    setContextView("overview");
+  }, [collapseContextPanel, coworker.slug]);
 
   useEffect(() => () => onActivityChange(null), [onActivityChange]);
 
@@ -152,22 +179,32 @@ export function CoworkerHome({
   return (
     <div className="glass-main flex h-full min-w-0 flex-1">
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="glass-header window-drag flex h-[78px] items-center justify-between gap-4 border-b border-line px-6 pt-2">
+        <header className="glass-header window-drag flex h-[78px] items-center gap-3 border-b border-line px-6 pt-2" data-testid="conversation-header">
           <CoworkerAvatar
             animated
             color={coworker.avatarColor}
             glasses={coworker.avatarGlasses}
             name={coworker.name}
-            size={42}
+            size={40}
           />
           <div className="min-w-0 flex-1">
-            <h1 className="truncate text-base font-semibold text-snow">{coworker.name}</h1>
-            <p className="truncate text-xs text-mist">{coworker.role || coworker.mission || "Persistent coworker"}</p>
+            <h1 className="truncate text-sm font-semibold text-snow">{coworker.name}</h1>
+            <div ref={setHeaderTitleSlot} className="window-no-drag flex min-h-[18px] min-w-0 items-center gap-2 text-xs text-mist" data-testid="conversation-header-title" />
           </div>
+          <div ref={setHeaderActionsSlot} className="window-no-drag flex shrink-0 items-center gap-1" data-testid="conversation-header-actions" />
           <span data-testid="coworker-top-status" className={`flex shrink-0 items-center gap-2 text-xs ${runtime.engineManaged ? activityTextTone(activity) : "text-rose"}`} title={activity?.detail}>
             <StatusDot tone={runtime.engineManaged ? activityTone(activity) : "rose"} />
             {runtime.engineManaged ? (activity?.label ?? "Checking status") : "AI unavailable"}
           </span>
+          <IconButton
+            label={contextPanel.collapsed || contextView !== "overview" ? "Show details" : "Hide details"}
+            className="window-no-drag"
+            data-testid="conversation-details"
+            aria-pressed={!contextPanel.collapsed && contextView === "overview"}
+            onClick={() => showContext("overview")}
+          >
+            <ActivityIcon />
+          </IconButton>
         </header>
         {!runtime.engineManaged ? (
           <AiUnavailableNote coworkerName={coworker.name} technical={runtime.engineError} onRestart={onRestartRuntime} />
@@ -183,6 +220,7 @@ export function CoworkerHome({
             assignmentDraft={assignmentDraft}
             discussionDraft={discussionDraft}
             openThreadRequest={openThreadRequest}
+            headerSlots={{ title: headerTitleSlot, actions: headerActionsSlot }}
             onOpenModelSettings={() => {
               showContext("settings");
               setSettingsFocus({ id: Date.now(), section: "model" });
@@ -194,7 +232,7 @@ export function CoworkerHome({
       </div>
 
       <aside
-        className={`glass-context relative flex h-full shrink-0 flex-col border-l border-line ${contextPanel.resizing ? "" : "transition-[width] duration-200"}`}
+        className={`glass-context relative flex h-full shrink-0 flex-col border-l border-line ${contextPanel.resizing ? "" : "transition-[width] duration-[180ms] ease-out motion-reduce:transition-none"}`}
         style={{ width: contextPanel.width }}
         data-testid="context-panel"
         data-collapsed={contextPanel.collapsed ? "true" : "false"}

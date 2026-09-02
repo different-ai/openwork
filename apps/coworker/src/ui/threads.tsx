@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { coworkerBridge, type CoworkerSummary, type ProviderSyncRun, type RuntimeInfo } from "@/lib/bridge";
 import type { DenSession } from "@/lib/den";
 import {
@@ -122,11 +123,22 @@ function WorkspaceProblemNote({ problem, onRetry }: { problem: WorkspaceProblem;
   );
 }
 
-const DISCUSSION_STARTERS = [
-  "What should we focus on today?",
-  "Help me think through a decision.",
-  "Catch me up on what you remember.",
-];
+/** An empty conversation says who is here and one quiet line; the composer does the rest. */
+function QuietEmptyConversation({ coworker, warmingUp = false }: { coworker: CoworkerSummary; warmingUp?: boolean }) {
+  return (
+    <div className="mx-auto flex h-full max-w-md flex-col items-center justify-center py-10 text-center" data-testid="coworker-discussion-empty">
+      <CoworkerAvatar animated color={coworker.avatarColor} glasses={coworker.avatarGlasses} name={coworker.name} size={44} />
+      <p className="mt-3 text-sm font-semibold text-snow">{coworker.name}</p>
+      {coworker.role ? <p className="mt-0.5 text-xs text-mist">{coworker.role}</p> : null}
+      <p className="mt-4 text-sm text-mist">What should we work through?</p>
+      {warmingUp ? (
+        <div className="mt-3 text-xs text-mist" data-testid="coworker-workspace-warming">
+          <InlineLoader label={`Getting ${coworker.name} ready`} />
+        </div>
+      ) : null}
+    </div>
+  );
+}
 
 // The discussion registry lives beside the coworker record; the bridge is the only way to reach it.
 configureDiscussionStore({
@@ -134,6 +146,26 @@ configureDiscussionStore({
   writeFile: (slug, path, content) => coworkerBridge.files.write(slug, path, content),
   listCoworkers: () => coworkerBridge.coworkers.list(),
 });
+
+/** Where the one conversation header lets a view place its title line and its actions. */
+export type HeaderSlots = { title: HTMLElement | null; actions: HTMLElement | null };
+
+function HeaderContent({ slots, title, actions }: { slots: HeaderSlots; title: ReactNode; actions?: ReactNode }) {
+  return (
+    <>
+      {slots.title ? createPortal(title, slots.title) : null}
+      {slots.actions && actions ? createPortal(actions, slots.actions) : null}
+    </>
+  );
+}
+
+function AssignmentsLink({ count, onClick }: { count: number; onClick: () => void }) {
+  return (
+    <Button variant="ghost" onClick={onClick} title={`Work handed over to own${count ? ` · ${count}` : ""}`}>
+      Assignments{count ? ` · ${count}` : ""}
+    </Button>
+  );
+}
 
 function newMessageId(): string {
   return `msg_coworker_${Date.now().toString(36)}_${crypto.randomUUID().replaceAll("-", "").slice(0, 16)}`;
@@ -165,6 +197,7 @@ export function ThreadsPanel({
   assignmentDraft,
   discussionDraft,
   openThreadRequest,
+  headerSlots,
   onOpenModelSettings,
   onOpenAccount,
   onActivityChange,
@@ -180,6 +213,7 @@ export function ThreadsPanel({
   discussionDraft?: AssignmentDraft;
   /** Set by the context rail to jump straight into a thread; the id makes repeat requests distinct. */
   openThreadRequest?: { id: number; threadId: string } | null;
+  headerSlots: HeaderSlots;
   /** Coworker settings, opened at the AI model section — the first recovery step after a model failure. */
   onOpenModelSettings: () => void;
   /** The OpenWork account section — where a provider is reconnected. */
@@ -427,6 +461,7 @@ export function ThreadsPanel({
         runtime={runtime}
         kind="assignment"
         assignmentCount={items.length}
+        headerSlots={headerSlots}
         initialTurn={queuedTurn?.threadId === openThreadId ? queuedTurn : null}
         onBack={() => {
           setOpenThreadId("");
@@ -449,6 +484,7 @@ export function ThreadsPanel({
     return (
       <AssignmentOverview
         coworker={coworker}
+        headerSlots={headerSlots}
         problem={workspaceProblem}
         warmingUp={warmingUp}
         onRetry={() => void refresh()}
@@ -468,6 +504,7 @@ export function ThreadsPanel({
     return (
       <DiscussionWelcome
         coworker={coworker}
+        headerSlots={headerSlots}
         problem={workspaceProblem}
         warmingUp={warmingUp}
         onRetry={() => void refresh()}
@@ -494,6 +531,7 @@ export function ThreadsPanel({
       runtime={runtime}
       kind="discussion"
       assignmentCount={items.length}
+      headerSlots={headerSlots}
       assignmentDraft={pendingAssignment}
       discussionDraft={discussionDraft}
       initialTurn={queuedTurn?.threadId === discussionThreadId ? queuedTurn : null}
@@ -527,6 +565,7 @@ function DiscussionWelcome({
   onShowAssignments,
   onAssignmentDraftHandled,
   discussionDraft,
+  headerSlots,
 }: {
   coworker: CoworkerSummary;
   problem: WorkspaceProblem | null;
@@ -535,6 +574,7 @@ function DiscussionWelcome({
   assignmentCount: number;
   assignmentDraft?: AssignmentDraft;
   discussionDraft?: AssignmentDraft;
+  headerSlots: HeaderSlots;
   onStartDiscussion: (text: string) => Promise<void>;
   onCreateAssignment: (outcome: string, messages: ReadonlyArray<DiscussionMessage>) => Promise<void>;
   onShowAssignments: () => void;
@@ -592,36 +632,14 @@ function DiscussionWelcome({
 
   return (
     <section className="flex h-full min-h-0 flex-col bg-ink" data-testid="coworker-discussion-view">
-      <header className="flex items-center justify-between gap-4 border-b border-line px-6 py-3">
-        <div className="min-w-0">
-          <h2 className="text-sm font-semibold text-snow">New discussion</h2>
-          <p className="text-xs text-mist">A continuing conversation — messages are not assignments</p>
-        </div>
-        <Button variant="ghost" onClick={onShowAssignments}>Assignments{assignmentCount ? ` · ${assignmentCount}` : ""}</Button>
-      </header>
+      <HeaderContent
+        slots={headerSlots}
+        title={<span className="truncate">New discussion</span>}
+        actions={<AssignmentsLink count={assignmentCount} onClick={onShowAssignments} />}
+      />
       <div className="min-h-0 flex-1 overflow-y-auto px-6 py-8">
         {problem ? <WorkspaceProblemNote problem={problem} onRetry={onRetry} /> : null}
-        {!problem ? (
-          <div className="mx-auto flex h-full max-w-xl flex-col justify-center text-center">
-            <CoworkerAvatar animated color={coworker.avatarColor} glasses={coworker.avatarGlasses} name={coworker.name} size={88} />
-            <h3 className="mt-3 text-xl font-semibold tracking-[-0.03em] text-snow">Start with a conversation</h3>
-            <p className="mx-auto mt-1.5 max-w-md text-sm leading-relaxed text-mist">
-              Ask, explore, or think something through. Nothing becomes assigned work until you choose to create an assignment.
-            </p>
-            {warmingUp ? (
-              <div className="mx-auto mt-4 text-xs text-mist" data-testid="coworker-workspace-warming">
-                <InlineLoader label={`Getting ${coworker.name} ready`} />
-              </div>
-            ) : null}
-            <div className="mt-6 grid gap-2 text-left">
-              {DISCUSSION_STARTERS.map((starter) => (
-                <button key={starter} className="rounded-xl border border-line bg-panel/50 px-4 py-3 text-sm text-snow transition-colors hover:bg-panel" onClick={() => setMessage(starter)}>
-                  {starter}
-                </button>
-              ))}
-            </div>
-          </div>
-        ) : null}
+        {!problem ? <QuietEmptyConversation coworker={coworker} warmingUp={warmingUp} /> : null}
       </div>
       <DiscussionComposer
         message={message}
@@ -653,6 +671,7 @@ function AssignmentOverview({
   onOpen,
   onBack,
   onNewAssignment,
+  headerSlots,
 }: {
   coworker: CoworkerSummary;
   items: ThreadListItem[];
@@ -663,17 +682,20 @@ function AssignmentOverview({
   onOpen: (threadId: string) => void;
   onBack: () => void;
   onNewAssignment: () => void;
+  headerSlots: HeaderSlots;
 }) {
   return (
-    <section className="flex h-full min-h-0 flex-col bg-ink">
-      <header className="flex items-center gap-3 border-b border-line px-5 py-3">
-        <Button variant="ghost" className="px-2" onClick={onBack} title="Back to discussion">←</Button>
-        <div className="min-w-0 flex-1">
-          <h2 className="text-sm font-semibold text-snow">Assignments</h2>
-          <p className="text-xs text-mist">Work you have handed to {coworker.name} to own.</p>
-        </div>
-        <Button variant="primary" onClick={onNewAssignment}>New assignment</Button>
-      </header>
+    <section className="flex h-full min-h-0 flex-col bg-ink" data-testid="coworker-assignments-view">
+      <HeaderContent
+        slots={headerSlots}
+        title={<span className="truncate">Assignments · work {coworker.name} owns</span>}
+        actions={(
+          <>
+            <Button variant="ghost" onClick={onBack} title="Back to discussion">Back</Button>
+            <Button variant="primary" onClick={onNewAssignment}>New assignment</Button>
+          </>
+        )}
+      />
       <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
         {problem ? <WorkspaceProblemNote problem={problem} onRetry={onRetry} /> : null}
         {items.length === 0 && warmingUp ? (
@@ -730,6 +752,7 @@ function DiscussionSwitcher({
   discussions,
   defaultTitle,
   onOpen,
+  onNew,
 }: {
   current: ThreadListItem;
   /** Whether the open discussion already holds messages (its list entry may not say so yet). */
@@ -737,6 +760,8 @@ function DiscussionSwitcher({
   discussions: ThreadListItem[];
   defaultTitle: string;
   onOpen: (threadId: string) => void;
+  /** Start another discussion; the open one stays in the list. */
+  onNew?: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
@@ -768,14 +793,14 @@ function DiscussionSwitcher({
         aria-haspopup="menu"
         aria-expanded={open}
         title="Switch discussion"
-        className="flex max-w-full items-center gap-1.5 rounded-lg px-2 py-1 text-left transition-colors hover:bg-panel"
+        className="flex max-w-full items-center gap-1 rounded-md px-2 py-0.5 text-left transition-colors hover:bg-panel hover:text-snow"
         onClick={() => setOpen((value) => !value)}
       >
-        <span className="truncate text-sm font-semibold text-snow">{label}</span>
-        <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true" className="shrink-0 text-mist">
+        <span className="truncate text-xs text-mist">{label}</span>
+        <svg viewBox="0 0 16 16" width="10" height="10" aria-hidden="true" className="shrink-0 text-mist">
           <path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
         </svg>
-        {listed.length > 1 ? <span className="shrink-0 text-xs text-mist">{listed.length}</span> : null}
+        {listed.length > 1 ? <span className="shrink-0 text-[11px] text-mist">{listed.length}</span> : null}
       </button>
       {open ? (
         <div
@@ -784,6 +809,21 @@ function DiscussionSwitcher({
           data-testid="coworker-discussion-menu"
           className="absolute left-2 top-full z-20 mt-1 w-80 max-w-[70vw] rounded-xl border border-line bg-ink/95 p-1.5 shadow-2xl backdrop-blur"
         >
+          {onNew ? (
+            <button
+              type="button"
+              role="menuitem"
+              data-testid="coworker-new-discussion"
+              className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm text-snow transition-colors hover:bg-panel"
+              onClick={() => {
+                setOpen(false);
+                onNew();
+              }}
+            >
+              <span className="flex size-4 items-center justify-center text-mist" aria-hidden="true">+</span>
+              New discussion
+            </button>
+          ) : null}
           <p className="px-2 pb-1 pt-1.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-mist">Discussions</p>
           <ul className="max-h-72 overflow-y-auto">
             {listed.map((item) => {
@@ -842,6 +882,7 @@ function ThreadView({
   onSyncProviders,
   onActivityChange,
   onCoworkerChanged,
+  headerSlots,
 }: {
   threads: NonNullable<ReturnType<typeof createCoworkerThreads>>;
   threadId: string;
@@ -849,6 +890,7 @@ function ThreadView({
   runtime: RuntimeInfo;
   kind: "discussion" | "assignment";
   assignmentCount: number;
+  headerSlots: HeaderSlots;
   assignmentDraft?: AssignmentDraft;
   discussionDraft?: AssignmentDraft;
   initialTurn: QueuedTurn | null;
@@ -1335,59 +1377,39 @@ function ThreadView({
 
   return (
     <section className="flex h-full min-h-0 flex-col bg-ink" data-testid={kind === "discussion" ? "coworker-discussion-view" : "coworker-assignment-view"}>
-      {/* The coworker's avatar and name sit in the header above; this row is about the thread itself. */}
-      <header className="flex items-center gap-3 border-b border-line px-5 py-3">
-        {kind === "assignment" ? <Button variant="ghost" className="px-2" onClick={onBack} title="Back to discussion">←</Button> : null}
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
-            {kind === "discussion" ? (
-              <DiscussionSwitcher
-                current={{ ...currentDiscussion, title }}
-                currentUsed={visibleMessages.length > 0}
-                discussions={discussions}
-                defaultTitle={defaultDiscussionTitle}
-                onOpen={(id) => onOpenDiscussion?.(id)}
-              />
-            ) : (
-              <h2 className="truncate text-sm font-semibold text-snow">{title}</h2>
-            )}
-            {kind === "assignment" ? <span className="rounded-full border border-spark/20 bg-spark/8 px-1.5 py-0.5 text-[8px] font-semibold uppercase tracking-[0.08em] text-spark">Assignment</span> : null}
-          </div>
-          <p data-testid="coworker-thread-status" className={`text-xs ${needsYou ? "text-amber" : working ? "text-spark" : "text-mist"}`}>
-            {kind === "discussion" && !working && !needsYou && !turnNeedsAttention && !stopped
-              ? "A continuing conversation — messages are not assignments"
-              : readableStatus}
-          </p>
-        </div>
-        {kind === "discussion" && onNewDiscussion ? (
-          <Button variant="ghost" data-testid="coworker-new-discussion" onClick={onNewDiscussion} title="Start another discussion; this one stays in the list">
-            New discussion
-          </Button>
-        ) : null}
-        <Button variant="ghost" onClick={onShowAssignments}>Assignments{assignmentCount ? ` · ${assignmentCount}` : ""}</Button>
-        {working || needsYou ? (
-          <Button variant="ghost" onClick={() => void stop()}>
-            Stop
-          </Button>
-        ) : null}
-      </header>
+      {/* The one header above carries the coworker; the view places its title line and actions there. */}
+      <HeaderContent
+        slots={headerSlots}
+        title={kind === "discussion" ? (
+          <DiscussionSwitcher
+            current={{ ...currentDiscussion, title }}
+            currentUsed={visibleMessages.length > 0}
+            discussions={discussions}
+            defaultTitle={defaultDiscussionTitle}
+            onOpen={(id) => onOpenDiscussion?.(id)}
+            onNew={onNewDiscussion}
+          />
+        ) : (
+          <>
+            <span className="truncate">{title}</span>
+            <span className="shrink-0 rounded-full border border-spark/20 bg-spark/8 px-1.5 py-0.5 text-[8px] font-semibold uppercase tracking-[0.08em] text-spark">Assignment</span>
+          </>
+        )}
+        actions={(
+          <>
+            {kind === "assignment" ? <Button variant="ghost" onClick={onBack} title="Back to discussion">Back</Button> : null}
+            {working || needsYou ? <Button variant="ghost" onClick={() => void stop()}>Stop</Button> : null}
+            {kind === "discussion" ? <AssignmentsLink count={assignmentCount} onClick={onShowAssignments} /> : null}
+          </>
+        )}
+      />
+      {/* Progress and problems show inline in the conversation; this keeps the turn state readable to assistive tech and tests. */}
+      <p data-testid="coworker-thread-status" className="sr-only" aria-live="polite" data-state={needsYou ? "needs-you" : working ? "working" : "idle"}>
+        {kind === "discussion" && !working && !needsYou && !turnNeedsAttention && !stopped ? "Ready" : readableStatus}
+      </p>
       <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5">
         <div className="mx-auto max-w-3xl space-y-3">
-          {freshDiscussion ? (
-            <div className="mx-auto max-w-xl py-10 text-center" data-testid="coworker-discussion-empty">
-              <h3 className="text-lg font-semibold tracking-[-0.02em] text-snow">New discussion</h3>
-              <p className="mx-auto mt-1.5 max-w-md text-sm leading-relaxed text-mist">
-                Ask, explore, or think something through. Nothing becomes assigned work until you choose to create an assignment.
-              </p>
-              <div className="mt-5 grid gap-2 text-left">
-                {DISCUSSION_STARTERS.map((starter) => (
-                  <button key={starter} type="button" className="rounded-xl border border-line bg-panel/50 px-4 py-3 text-sm text-snow transition-colors hover:bg-panel" onClick={() => setReply(starter)}>
-                    {starter}
-                  </button>
-                ))}
-              </div>
-            </div>
-          ) : null}
+          {freshDiscussion ? <QuietEmptyConversation coworker={coworker} /> : null}
           {visibleMessages.map((message, index) => (
             <MessageBubble
               key={message.id}
@@ -1422,8 +1444,8 @@ function ThreadView({
               label={workingLabel}
             />
           ) : null}
-          {visibleMessages.length === 0 && !error && !working ? (
-            <Empty>{kind === "discussion" ? `Start a conversation with ${coworker.name}.` : <InlineLoader label="Loading assignment" />}</Empty>
+          {visibleMessages.length === 0 && !error && !working && kind !== "discussion" ? (
+            <Empty><InlineLoader label="Loading assignment" /></Empty>
           ) : null}
           {displayedFailure ? (
             <TurnIssueNote
