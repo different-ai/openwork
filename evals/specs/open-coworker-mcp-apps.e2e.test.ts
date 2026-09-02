@@ -279,7 +279,7 @@ test.skipIf(!enabled)(title, { timeout: 240_000 }, async ({ evidence }) => {
   expect(prepared).toMatchObject({ ok: true, workspaceId: expect.any(String) });
 
   await evalIn(app, "location.reload(); true");
-  await waitForText(app, "Your team", { timeoutMs: 120_000 });
+  await waitFor(app, `Boolean(document.querySelector('[data-testid="coworker-rail"]'))`, { timeoutMs: 120_000, label: "team rail" });
   await clickButtonContaining(app, "Apps & tools");
   await waitFor(app, `document.querySelectorAll("[data-testid=coworker-mcp-app]").length === 1`, {
     timeoutMs: 60_000,

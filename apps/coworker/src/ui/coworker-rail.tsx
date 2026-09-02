@@ -190,17 +190,11 @@ export function CoworkerRail({
         </>
       ) : (
         <>
-          <div className="window-drag flex min-h-[86px] items-end justify-between gap-2 px-4 pb-3 pt-10">
-            {/* The app's mark belongs to the welcome screen and the Dock; the rail just names the team. */}
-            <div className="min-w-0">
-              <p className="truncate text-[11px] font-semibold tracking-[-0.01em] text-snow">Open Coworker</p>
-              <p className="truncate text-[10px] text-mist">Your team</p>
-            </div>
-            <div className="flex shrink-0 items-center">
-              <Button variant="ghost" className="window-no-drag size-8 rounded-full px-0 py-0 text-lg" onClick={onNewCoworker} title="New coworker">
-                <span aria-hidden="true">+</span>
-              </Button>
-            </div>
+          {/* The window controls own this corner and the app already announces itself on the welcome screen; the rail starts with its one action. */}
+          <div className="window-drag flex min-h-[86px] items-end justify-end px-4 pb-3 pt-10">
+            <Button variant="ghost" className="window-no-drag size-8 rounded-full px-0 py-0 text-lg" onClick={onNewCoworker} title="New coworker">
+              <span aria-hidden="true">+</span>
+            </Button>
           </div>
           <div className="px-3 pb-3">
             <input
