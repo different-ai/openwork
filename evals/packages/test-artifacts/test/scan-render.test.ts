@@ -36,6 +36,9 @@ function record(name: string, dir: string, createdAt: string, passed: boolean): 
       results: [{ expectation: `${name} expectation`, passed, evidence: `${name} evidence` }],
       judgments: [{ expectation: `${name} expectation`, state: passed ? "passed" : "failed", reasoning: `${name} evidence` }],
     }],
+    trace: [],
+    steps: [],
+    outcome: passed ? "passed" : "failed",
   };
 }
 
@@ -98,10 +101,20 @@ test("scanTestRuns reads current and persisted legacy results while tolerating c
 
 test("renderPrMarkdown writes only the new test-evidence marker", () => {
   const testRun = record("PR proof", "/tmp/2026-pr-proof", "2026-07-02T10:00:00.000Z", false);
+  testRun.trace = [
+    { seq: 1, at: testRun.createdAt, stage: "world", channel: "seed", verb: "den", detail: "den(local)", ok: true },
+    { seq: 2, at: testRun.createdAt, stage: "body", channel: "user", verb: "reload", detail: "reload", ok: true },
+    { seq: 3, at: testRun.createdAt, stage: "body", channel: "user", verb: "reload", detail: "reload", ok: true },
+  ];
+  testRun.steps = [{ seq: 1, name: "draft persists", depth: 0, ok: false, ms: 6_100, error: "missing draft" }];
   const markdown = renderPrMarkdown(testRun, { "01-first.png": "https://example.test/01-first.png" });
   assert.match(markdown, /<!-- test-evidence -->/);
   assert.doesNotMatch(markdown, /<!-- photo-roll -->|<!-- fraimz -->/);
   assert.match(markdown, /PR proof first validation/);
+  assert.match(markdown, /\*\*\[world\]\*\* den\(local\)/);
+  assert.match(markdown, /\*\*\[user\]\*\* reload ×2/);
+  assert.match(markdown, /\*\*steps\*\* 1 ❌ draft persists \(6\.1s\)/);
+  assert.match(markdown, /\*\*verdict\*\* failed/);
 });
 
 test("scanTestRuns skips a symlinked test-run.json", async () => {

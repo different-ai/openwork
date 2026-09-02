@@ -40,6 +40,9 @@ function testRunRecord(dir: string): TestRunRecord {
       results: [{ expectation: "State is visible", passed: true, evidence: "Visible" }],
       judgments: [{ expectation: "State is visible", state: "passed", reasoning: "Visible" }],
     }],
+    trace: [],
+    steps: [],
+    outcome: "passed",
   };
 }
 
