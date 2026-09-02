@@ -101,10 +101,11 @@ export function CoworkerRail({
       {collapsed ? (
         <>
           {/* The window's traffic lights own this corner; the controls start below them. */}
-          <div className="window-drag h-[58px] shrink-0" />
-          <div className="flex flex-col items-center gap-1 px-2 pb-2">
+          {/* The same 78px header band as the other columns; its two controls sit below the window controls. */}
+          <div className="glass-header window-drag flex h-[78px] shrink-0 items-end justify-center gap-1 border-b border-line pb-2">
             <IconButton
               label="Search coworkers"
+              className="window-no-drag"
               data-testid="coworker-rail-search"
               onClick={() => {
                 setFocusSearchOnExpand(true);
@@ -113,11 +114,11 @@ export function CoworkerRail({
             >
               <SearchIcon />
             </IconButton>
-            <IconButton label="New coworker" onClick={onNewCoworker}>
+            <IconButton label="New coworker" className="window-no-drag" onClick={onNewCoworker}>
               <PlusIcon />
             </IconButton>
           </div>
-          <nav aria-label="Coworkers" className="flex flex-1 flex-col items-center gap-1.5 overflow-y-auto px-3 pb-4 pt-1">
+          <nav aria-label="Coworkers" className="flex flex-1 flex-col items-center gap-1.5 overflow-y-auto px-3 pb-4 pt-3">
             {coworkers.map((coworker) => {
               const activity = activityBySlug[coworker.slug];
               const active = coworker.slug === selectedSlug;
@@ -190,23 +191,25 @@ export function CoworkerRail({
         </>
       ) : (
         <>
-          {/* The window controls own this corner and the app already announces itself on the welcome screen; the rail starts with its one action. */}
-          <div className="window-drag flex min-h-[86px] items-end justify-end px-4 pb-3 pt-10">
-            <Button variant="ghost" className="window-no-drag size-8 rounded-full px-0 py-0 text-lg" onClick={onNewCoworker} title="New coworker">
-              <span aria-hidden="true">+</span>
-            </Button>
-          </div>
-          <div className="px-3 pb-3">
+          {/*
+            The window controls own the top of this corner and the app already announces itself
+            on the welcome screen. The rail shares the 78px header band of the other columns and
+            uses its bottom row for search and New coworker, so the border runs straight across.
+          */}
+          <div className="glass-header window-drag flex h-[78px] shrink-0 items-end gap-2 border-b border-line px-3 pb-2">
             <input
               ref={searchRef}
               aria-label="Search coworkers"
-              className="window-no-drag w-full rounded-xl border border-line bg-black/18 px-3 py-2 text-xs text-snow outline-none placeholder:text-mist/70 focus:border-spark/50 focus:bg-black/28"
+              className="window-no-drag h-8 min-w-0 flex-1 rounded-xl border border-line bg-black/18 px-3 text-xs text-snow outline-none placeholder:text-mist/70 focus:border-spark/50 focus:bg-black/28"
               placeholder="Search coworkers"
               value={query}
               onChange={(event) => setQuery(event.target.value)}
             />
+            <Button variant="ghost" className="window-no-drag size-8 shrink-0 rounded-lg px-0 py-0 text-lg" onClick={onNewCoworker} title="New coworker">
+              <span aria-hidden="true">+</span>
+            </Button>
           </div>
-          <p className="px-4 pb-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-mist">Coworkers</p>
+          <p className="px-4 pb-1 pt-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-mist">Coworkers</p>
           <nav aria-label="Coworkers" className="flex-1 space-y-1 overflow-y-auto px-2 pb-5">
             {visibleCoworkers.map((coworker) => {
               const activity = activityBySlug[coworker.slug];
