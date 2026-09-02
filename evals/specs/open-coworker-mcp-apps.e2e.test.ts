@@ -286,9 +286,10 @@ test.skipIf(!enabled)(title, { timeout: 240_000 }, async ({ evidence }) => {
     label: "live Coworker MCP App catalog",
   });
   const catalogText = String(await evalIn(app, "document.body.innerText"));
-  expect(catalogText.toLowerCase()).toContain("search → execute");
+  expect(catalogText).toContain("Continue with OpenWork");
   expect(catalogText.toLowerCase()).toContain(mcpServerName);
-  expect(catalogText.toLowerCase()).toContain("mcp connections");
+  expect(catalogText.toLowerCase()).toContain("tools on this mac");
+  expect(catalogText.toLowerCase()).not.toContain("mcp connections");
   const flatSurface = await evalIn(app, `(() => {
     const root = document.querySelector("[data-testid=coworker-capabilities]");
     if (!root) return false;
@@ -297,7 +298,7 @@ test.skipIf(!enabled)(title, { timeout: 240_000 }, async ({ evidence }) => {
   expect(flatSurface).toBe(true);
   evidence.recordAssertionEvidence(
     "Coworker reads the same live MCP inventory and App catalog as OpenWork Desktop",
-    "The right-side Apps & tools surface showed the configured chapter-notes MCP, its Team pulse App, live connection state, and the OpenWork Connect search → execute contract.",
+    "The right-side Apps & tools surface showed the configured chapter-notes tool under Tools on this Mac, its Team pulse App, live connection state, and the signed-out OpenWork Connect invitation.",
     true,
   );
 
@@ -350,17 +351,22 @@ test.skipIf(!enabled)(title, { timeout: 240_000 }, async ({ evidence }) => {
 
   await clickButton(app, "← All Apps");
   await fill(app, 'input[aria-label="Search Apps and tools"]', "team activity");
-  await clickButton(app, "Ask Scout");
+  await waitFor(app, `document.querySelectorAll("[data-testid=coworker-mcp-app]").length === 1`, {
+    timeoutMs: 30_000,
+    label: "search keeps the matching App",
+  });
+  await clickButtonContaining(app, "Team pulse");
+  await clickButton(app, "Use with Scout");
   await waitFor(app, `(() => {
     const composer = document.querySelector('textarea[aria-label="Assignment outcome"]');
     return composer instanceof HTMLTextAreaElement
-      && composer.value.includes("search_capabilities")
-      && composer.value.includes("execute_capability")
-      && composer.value.includes("team activity");
-  })()`, { timeoutMs: 30_000, label: "search then execute assignment draft" });
+      && composer.value.includes("Team pulse")
+      && composer.value.includes(${json(mcpServerName)})
+      && composer.value.toLowerCase().includes("search connected capabilities");
+  })()`, { timeoutMs: 30_000, label: "App-seeded assignment draft" });
   evidence.recordAssertionEvidence(
-    "Catalog search hands a human-readable search-then-execute assignment to the coworker",
-    "Ask Scout returned to the work surface and seeded the real assignment composer with the visible query plus search_capabilities before execute_capability instructions.",
+    "An App hands a human-readable assignment to the coworker",
+    "Searching the catalog kept the matching Team pulse App; Use with Scout returned to the work surface and seeded the real assignment composer with the App, its source, and search-first instructions without sending anything.",
     true,
   );
 

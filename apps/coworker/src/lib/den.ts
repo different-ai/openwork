@@ -20,6 +20,18 @@ import {
 } from "@openwork/types/automations";
 import { z } from "zod";
 
+/** `POST /v1/mcp/token` — the minted gateway token plus the resource it is valid for. */
+const connectTokenSchema = z.object({
+  token: z.string().min(1),
+  expiresAt: z.string().min(1),
+  organizationId: z.string().min(1),
+  resource: z.string().min(1),
+  scopes: z.array(z.string()).default([]),
+  appHostToken: z.string().optional(),
+  appHostExpiresAt: z.string().optional(),
+});
+export type ConnectToken = z.infer<typeof connectTokenSchema>;
+
 /** `GET /v1/automations/:id/runs` — the same page shape the OpenWork desktop reads. */
 const automationRunListSchema = z.object({
   items: z.array(automationRunSchema),
@@ -319,6 +331,19 @@ export function createDenAutomationsClient(session: DenSession) {
         body: cloudResponsibilityBody(draft),
       });
       return automationDetailSchema.parse(payload);
+    },
+    /**
+     * A short-lived bearer token for the OpenWork Connect gateway (`/mcp/agent`),
+     * the same one the OpenWork desktop mints before registering the gateway.
+     */
+    async mintMcpToken(): Promise<ConnectToken> {
+      const payload = await denRequest(baseUrl, "/v1/mcp/token", {
+        method: "POST",
+        token,
+        orgId,
+        body: { scopes: ["mcp:read", "mcp:write"] },
+      });
+      return connectTokenSchema.parse(payload);
     },
     /** Recent runs of one Automation, newest first, with Den's own result summaries. */
     async listRuns(automationId: string, limit = 12): Promise<AutomationRun[]> {
