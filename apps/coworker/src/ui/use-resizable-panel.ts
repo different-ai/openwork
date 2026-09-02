@@ -40,6 +40,8 @@ export type ResizablePanel = {
 
 /** Pointer travel below this is a click on the edge, not a resize. */
 const CLICK_TRAVEL_PX = 4;
+/** A click arriving this soon after a real drag belongs to that drag. */
+const CLICK_AFTER_DRAG_MS = 300;
 
 /**
  * One panel edge the person can drag, click to fold or unfold, nudge with the
@@ -65,9 +67,14 @@ export function useResizablePanel({
     readPanelLayout(typeof window === "undefined" ? null : window.localStorage, storageKey, defaultWidth, bounds),
   );
   const [resizing, setResizing] = useState(false);
-  const drag = useRef<{ startX: number; startWidth: number; layout: PanelLayout } | null>(null);
-  /** Set once a drag has really moved, so the click that follows it is ignored. */
-  const dragMoved = useRef(false);
+  const drag = useRef<{ startX: number; startWidth: number; layout: PanelLayout; moved: boolean } | null>(null);
+  /**
+   * When the last real drag ended. The browser fires a click after a drag that
+   * ends on the edge itself; that click must not fold the panel. A drag that
+   * ends elsewhere fires none, so the guard is time-bounded rather than a flag
+   * that could swallow the next genuine click.
+   */
+  const movedDragEndedAt = useRef(0);
   const room = useCallback(() => available?.(), [available]);
 
   const commit = useCallback((next: PanelLayout | null) => {
@@ -81,8 +88,8 @@ export function useResizablePanel({
     const move = (event: globalThis.PointerEvent) => {
       const current = drag.current;
       if (!current) return;
-      if (Math.abs(event.clientX - current.startX) < CLICK_TRAVEL_PX && !dragMoved.current) return;
-      dragMoved.current = true;
+      if (Math.abs(event.clientX - current.startX) < CLICK_TRAVEL_PX && !current.moved) return;
+      current.moved = true;
       const next = resolvePanelDrag(current.layout, { side, startX: current.startX, currentX: event.clientX, startWidth: current.startWidth }, bounds, room());
       current.layout = next;
       setLayout(next);
@@ -91,7 +98,9 @@ export function useResizablePanel({
       const current = drag.current;
       drag.current = null;
       setResizing(false);
-      if (current) writePanelLayout(window.localStorage, storageKey, current.layout);
+      if (!current) return;
+      if (current.moved) movedDragEndedAt.current = performance.now();
+      writePanelLayout(window.localStorage, storageKey, current.layout);
     };
     document.body.classList.add("is-resizing-panel");
     window.addEventListener("pointermove", move);
@@ -142,15 +151,11 @@ export function useResizablePanel({
       tabIndex: 0,
       onPointerDown: (event) => {
         event.preventDefault();
-        dragMoved.current = false;
-        drag.current = { startX: event.clientX, startWidth: width, layout };
+        drag.current = { startX: event.clientX, startWidth: width, layout, moved: false };
         setResizing(true);
       },
       onClick: () => {
-        if (dragMoved.current) {
-          dragMoved.current = false;
-          return;
-        }
+        if (performance.now() - movedDragEndedAt.current < CLICK_AFTER_DRAG_MS) return;
         commit({ width: layout.width, collapsed: !layout.collapsed });
       },
       onKeyDown: (event) => {
