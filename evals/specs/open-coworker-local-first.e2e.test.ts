@@ -204,18 +204,22 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
     const header = document.querySelector('[data-testid="conversation-header"]');
     const panel = document.querySelector('[data-testid="context-panel"]');
     const empty = document.querySelector('[data-testid="coworker-discussion-empty"]');
-    const details = document.querySelector('[data-testid="conversation-details"]');
-    if (!(header instanceof HTMLElement) || !(panel instanceof HTMLElement) || !(empty instanceof HTMLElement) || !(details instanceof HTMLElement)) return false;
+    const activityIcon = document.querySelector('[data-testid="context-rail-overview"]');
+    if (!(header instanceof HTMLElement) || !(panel instanceof HTMLElement) || !(empty instanceof HTMLElement) || !(activityIcon instanceof HTMLElement)) return false;
     const main = header.closest("div.flex-col");
     const headerCount = main ? main.querySelectorAll("header").length : 0;
+    const headerRect = header.getBoundingClientRect();
+    const iconRect = activityIcon.getBoundingClientRect();
     return {
-      headerHeight: Math.round(header.getBoundingClientRect().height),
+      headerHeight: Math.round(headerRect.height),
       headerCount,
       headerName: header.querySelector("h1")?.textContent?.trim(),
       headerLine: document.querySelector('[data-testid="conversation-header-title"]')?.textContent?.trim(),
       panelCollapsed: panel.dataset.collapsed,
       panelWidth: Math.round(panel.getBoundingClientRect().width),
-      detailsLabel: details.getAttribute("aria-label"),
+      stripEmptyBand: panel.querySelectorAll("header, .glass-header").length,
+      stripStartsInHeaderBand: iconRect.top < headerRect.bottom && iconRect.top > headerRect.top,
+      headerIconLabels: [...header.querySelectorAll("button")].map((button) => button.getAttribute("aria-label")).filter(Boolean),
       emptyText: empty.innerText.split("\\n").map((line) => line.trim()).filter(Boolean),
       emptyButtons: empty.querySelectorAll("button").length,
       starterCards: [...document.querySelectorAll("main button")].filter((button) => /focus on today|think through a decision|catch me up/i.test(button.textContent ?? "")).length,
@@ -228,7 +232,9 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
     headerLine: "New discussion",
     panelCollapsed: "true",
     panelWidth: 56,
-    detailsLabel: "Show details",
+    stripEmptyBand: 0,
+    stripStartsInHeaderBand: true,
+    headerIconLabels: [],
     emptyButtons: 0,
     starterCards: 0,
   });
@@ -237,17 +243,17 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   expect(conversationFirst.emptyText).toContain("What should we work through?");
   evidence.recordAssertionEvidence(
     "A new coworker opens on the conversation with the details panel closed",
-    "Scout's workspace opened with a single 78px header naming the coworker and the open discussion, a quiet empty state (small avatar, name, one line) with no starter cards, and the right panel folded to a 56px icon strip behind a Show details control.",
+    "Scout's workspace opened with a single 78px header naming the coworker and the open discussion, a quiet empty state (small avatar, name, one line) with no starter cards, and the right panel folded to a 56px icon strip whose icons start level with the header, with no empty band above them and no duplicate of them in the header.",
     true,
   );
 
-  // Details open on request: the header control unfolds the Activity view.
+  // Details open on request: the strip's Activity icon unfolds the Activity view.
   await waitFor(app, `(() => {
-    const details = document.querySelector('[data-testid="conversation-details"]');
-    if (!(details instanceof HTMLElement)) return false;
-    details.click();
+    const icon = document.querySelector('[data-testid="context-rail-overview"]');
+    if (!(icon instanceof HTMLElement)) return false;
+    icon.click();
     return true;
-  })()`, { label: "Show details" });
+  })()`, { label: "Activity icon" });
   await waitFor(app, `document.querySelector('[data-testid="context-panel"]')?.dataset.collapsed === "false"`, { timeoutMs: 30_000, label: "details panel open" });
   await waitForText(app, "Responsibilities", { timeoutMs: 60_000 });
 
@@ -446,35 +452,35 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
     true,
   );
 
-  // The open panel is transient: Escape closes it, the header control reopens it, and
-  // pressing that control again closes it.
+  // The open panel is transient: Escape closes it, a strip icon reopens it on that view,
+  // and a click on its edge closes it again.
   const transientPanel = await evalIn(app, `(async () => {
     const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-    const panel = document.querySelector('[data-testid="context-panel"]');
-    const details = document.querySelector('[data-testid="conversation-details"]');
-    if (!(panel instanceof HTMLElement) || !(details instanceof HTMLElement)) return null;
+    const q = (selector) => document.querySelector(selector);
+    const panel = q('[data-testid="context-panel"]');
+    if (!(panel instanceof HTMLElement)) return null;
     window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
     await wait(400);
-    const afterEscape = { collapsed: panel.dataset.collapsed, width: Math.round(panel.getBoundingClientRect().width), label: details.getAttribute("aria-label") };
-    details.click();
+    const afterEscape = { collapsed: panel.dataset.collapsed, width: Math.round(panel.getBoundingClientRect().width), stripIcons: document.querySelectorAll('[data-testid^="context-rail-"]').length };
+    q('[data-testid="context-rail-overview"]')?.click();
     await wait(400);
-    const afterOpen = { collapsed: panel.dataset.collapsed, view: panel.dataset.view, label: details.getAttribute("aria-label"), pressed: details.getAttribute("aria-pressed") };
-    details.click();
+    const afterOpen = { collapsed: panel.dataset.collapsed, view: panel.dataset.view, stripIcons: document.querySelectorAll('[data-testid^="context-rail-"]').length };
+    q('[data-testid="context-panel-resizer"]')?.click();
     await wait(400);
-    const afterToggle = { collapsed: panel.dataset.collapsed, width: Math.round(panel.getBoundingClientRect().width) };
-    details.click();
+    const afterEdge = { collapsed: panel.dataset.collapsed, width: Math.round(panel.getBoundingClientRect().width) };
+    q('[data-testid="context-rail-overview"]')?.click();
     await wait(400);
-    return { afterEscape, afterOpen, afterToggle, finalCollapsed: panel.dataset.collapsed };
+    return { afterEscape, afterOpen, afterEdge, finalCollapsed: panel.dataset.collapsed };
   })()`, { awaitPromise: true, timeoutMs: 30_000 });
   expect(transientPanel).toEqual({
-    afterEscape: { collapsed: "true", width: 56, label: "Show details" },
-    afterOpen: { collapsed: "false", view: "overview", label: "Hide details", pressed: "true" },
-    afterToggle: { collapsed: "true", width: 56 },
+    afterEscape: { collapsed: "true", width: 56, stripIcons: 4 },
+    afterOpen: { collapsed: "false", view: "overview", stripIcons: 0 },
+    afterEdge: { collapsed: "true", width: 56 },
     finalCollapsed: "false",
   });
   evidence.recordAssertionEvidence(
     "The details panel is transient",
-    "Escape folded the open panel back to its 56px strip, the header's details control reopened it on Activity and read Hide details while open, and pressing it again folded the panel.",
+    "Escape folded the open panel back to its 56px strip of four icons, the strip's Activity icon reopened it on Activity (the strip icons giving way to the panel), and a click on the panel's edge folded it again.",
     true,
   );
 
@@ -693,7 +699,16 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
     path: "memory/index.md",
     content: "# Long-term memory index\n\nOne line per durable memory in `memory/long-term/`.\n\n- `long-term/cleaning-day.md` — Street cleaning: move car every Friday\n- `long-term/gone.md` — Promoted, then lost\n",
   });
-  await clickButton(app, "Memory");
+  // The panel closed when the coworker changed; the strip's Memory icon opens that view directly.
+  await waitFor(app, `(() => {
+    const panel = document.querySelector('[data-testid="context-panel"]');
+    if (!(panel instanceof HTMLElement)) return false;
+    if (panel.dataset.collapsed === "false" && panel.dataset.view === "memory") return true;
+    if (panel.dataset.collapsed === "true") document.querySelector('[data-testid="context-rail-memory"]')?.click();
+    else if (panel.dataset.view === "overview") [...document.querySelectorAll('nav[aria-label="More for this coworker"] button')].find((button) => (button.textContent ?? "").trim() === "Memory")?.click();
+    else document.querySelector('button[aria-label="Back to activity"]')?.click();
+    return false;
+  })()`, { timeoutMs: 60_000, label: "Memory view" });
   const memoryTabs = await waitFor(app, `(() => {
     const panel = document.querySelector('[data-testid="memory-panel"]');
     const count = panel?.querySelector('[data-testid="memory-count"]');
