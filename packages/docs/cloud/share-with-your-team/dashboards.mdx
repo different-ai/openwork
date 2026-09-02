@@ -1,0 +1,180 @@
+---
+title: "Dashboards"
+description: "Give your team a dashboard made of MCP Apps, and build your own widget."
+---
+
+## What a Dashboard is
+
+A dashboard is a curated set of MCP Apps that admins assign to people or teams. After sign-in, it appears under **Dashboard** in each member's desktop sidebar.
+
+Each tile is an MCP App from one of the organization's **Connectors**. OpenWork renders the tile as real, interactive UI; what a member does inside it is not sent to the model.
+
+When the feature is enabled for the organization, Dashboards appear in the OpenWork Cloud admin sidebar under **Manage → Dashboards**.
+
+## Create and share a dashboard (admin)
+
+<Steps>
+  <Step title="Connect the MCP server">
+    In OpenWork Cloud, open **Connectors**, click **Add connector**, paste the **Server URL** (for example, `https://mcp.example.com/mcp`), and choose **Authentication** and **Account mode**: **Individual accounts** or **Org account**. Use **Test tools** to confirm the server responds. Only connectors that expose at least one MCP App can be added to a dashboard.
+  </Step>
+  <Step title="Create the dashboard">
+    Open **Dashboards**, click **New dashboard**, enter a **Name** such as `Support overview`, then click **Create dashboard**.
+  </Step>
+  <Step title="Add apps">
+    Click **Add app**, pick an **MCP**, choose one of its Apps, and click **Add**. MCPs without Apps are hidden. If the app's tool requires input, fill **Launch input (JSON)**. Reorder or remove apps from the list.
+  </Step>
+  <Step title="Decide how each app runs">
+    Apps run on request by default: the member clicks **Run**. Turn on **Run automatically** to run an app on dashboard load and refresh. This also applies to tools that modify data, so enable it only for apps you trust.
+  </Step>
+  <Step title="Share it">
+    In **Access**, turn on **Everyone in the organization**, or leave it off and add specific people and teams. Members see the dashboard the next time they open OpenWork.
+  </Step>
+</Steps>
+
+## What members see
+
+The desktop sidebar shows **Dashboard**, with one section per assigned dashboard labeled **Managed by your organization**.
+
+Tiles have one of these badges:
+
+- **Organization auto-run**
+- **Run on request**
+- **Run once to enable**
+
+A tool that is not read-only runs only when the member clicks **Run**, unless an admin enabled auto-run.
+
+## Build an MCP App widget
+
+[MCP Apps](https://modelcontextprotocol.io/docs/extensions/apps) are a standard extension of MCP (`io.modelcontextprotocol/ui`). An app is an ordinary MCP server with a tool that points to a UI resource and that resource served as HTML. Anything built to the specification runs in OpenWork and in any other host that implements it. The [`ext-apps` repository](https://github.com/modelcontextprotocol/ext-apps) provides the SDK and examples.
+
+### Requirements OpenWork checks
+
+- The tool's `_meta.ui.resourceUri` is a string starting with `ui://`.
+- If `_meta.ui.visibility` is set, it includes `"app"`.
+- `resources/read` for that URI returns exactly one content item with `mimeType` `text/html;profile=mcp-app`, at most 768 KiB.
+- Optional `_meta.ui.csp` on the resource supports `connectDomains`, `resourceDomains`, `frameDomains`, and `baseUriDomains`: HTTPS origins only, up to 16 each. `permissions` and `domain` are not supported; OpenWork rejects a resource containing either.
+- The server is reachable over HTTP(S) as a remote Streamable HTTP MCP server. Local stdio servers cannot be dashboard apps.
+- Mark read-only tools with `annotations: { readOnlyHint: true }`. Tools without it, or with `destructiveHint: true`, are treated as modifying data and run only on request unless an admin enables auto-run.
+- The dashboard picker uses `title`, or `annotations.title`, as the tile name. It shows a **Launch input** field when `inputSchema.required` is non-empty.
+
+### Example: a Team budget widget
+
+Install `@modelcontextprotocol/sdk`, `@modelcontextprotocol/ext-apps`, and `express`, then create these two files.
+
+<Steps>
+  <Step title="Create the MCP server">
+
+```ts server.ts
+import express from "express";
+import { readFile } from "node:fs/promises";
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import {
+  registerAppResource,
+  registerAppTool,
+  RESOURCE_MIME_TYPE,
+} from "@modelcontextprotocol/ext-apps/server";
+
+const server = new McpServer({ name: "team-budget", version: "1.0.0" });
+const html = await readFile(new URL("./view.html", import.meta.url), "utf8");
+
+registerAppResource(
+  server,
+  "budget-view",
+  "ui://team-budget/view.html",
+  { mimeType: RESOURCE_MIME_TYPE },
+  async () => ({
+    contents: [{
+      uri: "ui://team-budget/view.html",
+      mimeType: RESOURCE_MIME_TYPE,
+      text: html,
+    }],
+  }),
+);
+
+registerAppTool(
+  server,
+  "get_budget",
+  {
+    title: "Team budget",
+    description: "Current budget allocation by team",
+    inputSchema: {},
+    annotations: { readOnlyHint: true },
+    _meta: { ui: { resourceUri: "ui://team-budget/view.html" } },
+  },
+  async () => {
+    const data = { teams: [
+      { name: "Engineering", percent: 42 },
+      { name: "Sales", percent: 33 },
+      { name: "Operations", percent: 25 },
+    ] };
+    return {
+      content: [{ type: "text", text: JSON.stringify(data) }],
+      structuredContent: data,
+    };
+  },
+);
+
+const app = express();
+app.use(express.json());
+const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
+await server.connect(transport);
+app.all("/mcp", (req, res) => transport.handleRequest(req, res, req.body));
+app.listen(3000);
+```
+
+  </Step>
+  <Step title="Create the view">
+    Bundle this file with Vite so it resolves the package import, or serve the import through an ESM CDN.
+
+```html view.html
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Team budget</title>
+    <style>
+      body { font: 14px system-ui; margin: 0; padding: 16px; color: #18181b; }
+      h2 { font-size: 16px; margin: 0 0 16px; }
+      .team { display: grid; grid-template-columns: 100px 1fr 40px; gap: 8px; margin: 10px 0; }
+      .track { background: #e4e4e7; border-radius: 4px; overflow: hidden; }
+      .bar { background: #2563eb; height: 100%; }
+      .value { text-align: right; }
+    </style>
+  </head>
+  <body>
+    <h2>Team budget</h2>
+    <div id="teams">Loading…</div>
+    <script type="module">
+      import { App } from "@modelcontextprotocol/ext-apps";
+
+      const root = document.querySelector("#teams");
+      const render = (data) => {
+        root.replaceChildren(...data.teams.map(({ name, percent }) => {
+          const row = document.createElement("div");
+          row.className = "team";
+          row.innerHTML = `<span>${name}</span><span class="track"><span class="bar" style="display:block;width:${percent}%"></span></span><span class="value">${percent}%</span>`;
+          return row;
+        }));
+      };
+
+      const app = new App({ name: "Team budget", version: "1.0.0" });
+      app.addEventListener("toolresult", (params) => render(params.structuredContent));
+      await app.connect();
+    </script>
+  </body>
+</html>
+```
+
+  </Step>
+  <Step title="Add it to OpenWork">
+    Run the server on a public HTTPS URL, or use a tunnel for testing, then follow the admin steps above. You can test it in chat first: ask the agent to call `get_budget`, and the tile renders inline.
+  </Step>
+</Steps>
+
+## Tips
+
+- Keep the resource self-contained. If it loads remote assets, declare their origins in `_meta.ui.csp`.
+- Return the data the UI needs in `structuredContent`; text content is what the model sees.
+- One tool can drive one view. Ship several tools for several widgets.

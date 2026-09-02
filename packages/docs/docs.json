@@ -127,7 +127,8 @@
               "cloud/share-with-your-team/managed-llm-provider",
               "cloud/share-with-your-team/per-member-llm-credentials",
               "cloud/share-with-your-team/custom-llm-provider",
-              "cloud/share-with-your-team/shared-mcp-connections"
+              "cloud/share-with-your-team/shared-mcp-connections",
+              "cloud/share-with-your-team/dashboards"
             ]
           },
           {
