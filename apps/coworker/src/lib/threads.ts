@@ -16,6 +16,7 @@ import {
 import { z } from "zod";
 import { RECENT_WORK_LIMIT } from "./activity-summary.ts";
 import { readCloudProviderSyncStatus, type CloudProviderSyncStatus } from "./den.ts";
+import { discussionIds, discussionIdsForWorkspace } from "./discussions.ts";
 
 export type ThreadListItem = {
   id: string;
@@ -25,10 +26,12 @@ export type ThreadListItem = {
   status: SessionStatus["type"];
 };
 
-/** Keep the coworker's standing discussion out of outcome-driven assignment lists. */
-export function assignmentThreads<T extends { id: string }>(threads: T[], conversationThreadId?: string): T[] {
-  const discussion = conversationThreadId?.trim();
-  return discussion ? threads.filter((thread) => thread.id !== discussion) : threads;
+/** Keep the coworker's discussions out of outcome-driven assignment lists. */
+export function assignmentThreads<T extends { id: string }>(threads: T[], discussions?: string | Iterable<string>): T[] {
+  const excluded = new Set(
+    (typeof discussions === "string" ? [discussions] : [...(discussions ?? [])]).map((id) => id.trim()).filter(Boolean),
+  );
+  return excluded.size === 0 ? threads : threads.filter((thread) => !excluded.has(thread.id));
 }
 
 /** One finished piece of meaningful work for the Recent activity list. */
@@ -291,7 +294,11 @@ export function hasPendingInteractions(pending: PendingInteractions): boolean {
 
 export type CoworkerThreads = {
   client: HeadlessThreadClient;
+  /** Assignment threads only; discussions are excluded. */
   listThreads: () => Promise<ThreadListItem[]>;
+  /** Every top-level thread in the workspace, discussions included, newest first. */
+  listAllThreads: () => Promise<ThreadListItem[]>;
+  renameThread: (threadId: string, title: string) => Promise<void>;
   listModelCatalog: () => Promise<EngineModelCatalog>;
   listModels: () => Promise<EngineModelOption[]>;
   readActivity: () => Promise<CoworkerActivity>;
@@ -371,10 +378,13 @@ export function createCoworkerThreads(options: {
   model?: string;
   /** Optional reasoning/behavior variant supported by the selected model. */
   modelVariant?: string;
-  /** Native session reserved for ongoing discussion rather than assigned work. */
+  /** The open discussion: a native session reserved for conversation rather than assigned work. */
   conversationThreadId?: string;
+  /** Every discussion this coworker holds, open or not; none of them is an assignment. */
+  discussionThreadIds?: readonly string[];
 }): CoworkerThreads {
   const parsedModel = parseModelPreference(options.model ?? "");
+  const discussions = discussionIds(options.discussionThreadIds ?? [], options.conversationThreadId);
   const client = createHeadlessThreadClient({
     baseUrl: options.serverUrl,
     workspaceId: options.workspaceId,
@@ -413,7 +423,14 @@ export function createCoworkerThreads(options: {
   }
 
   async function listThreads(): Promise<ThreadListItem[]> {
-    return assignmentThreads(await listAllThreads(), options.conversationThreadId);
+    return assignmentThreads(await listAllThreads(), discussions);
+  }
+
+  async function renameThread(threadId: string, title: string): Promise<void> {
+    const result = await opencode.session.update({ sessionID: threadId, title });
+    if (result.error !== undefined) {
+      throw new Error(`Renaming the thread failed (${result.response?.status ?? "network"})`);
+    }
   }
 
   /**
@@ -475,7 +492,7 @@ export function createCoworkerThreads(options: {
       listAllThreads(),
       listPendingInteractions().catch((): PendingInteractions => ({ permissions: [], questions: [] })),
     ]);
-    const assignments = assignmentThreads(allSessions, options.conversationThreadId);
+    const assignments = assignmentThreads(allSessions, discussions);
     const recentOf = (excludeId: string | undefined): RecentWork[] =>
       assignments
         .filter((session) => session.id !== excludeId && session.status === "idle")
@@ -586,6 +603,8 @@ export function createCoworkerThreads(options: {
   return {
     client,
     listThreads,
+    listAllThreads,
+    renameThread,
     listModelCatalog,
     listModels,
     readActivity,
@@ -605,7 +624,10 @@ export async function readCoworkerActivity(options: {
   conversationThreadId?: string;
 }): Promise<CoworkerActivity> {
   try {
-    return await createCoworkerThreads(options).readActivity();
+    // Discussions other than the open one are only known to the coworker's registry.
+    const discussionThreadIds = await discussionIdsForWorkspace(options.workspaceId, options.conversationThreadId)
+      .catch(() => discussionIds([], options.conversationThreadId));
+    return await createCoworkerThreads({ ...options, discussionThreadIds }).readActivity();
   } catch {
     return { state: "offline", label: "Not responding", detail: "", updatedAt: 0 };
   }

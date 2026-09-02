@@ -12,6 +12,7 @@ adds no new database concepts.
 ├── AGENTS.md          coworker contract: conduct + memory maintenance duties
 ├── opencode.json      instructions: soul.md, memory/working.md, memory/index.md
 ├── coworker.md        app-owned profile, workspace id, model + reasoning preference
+├── discussions.json   which native threads are discussions (the open one is in coworker.md)
 ├── local-responsibilities.json  local schedule and run state
 ├── soul.md            stable identity, loaded every turn
 ├── memory/
@@ -26,6 +27,16 @@ The coworker directory is registered as an ordinary OpenWork workspace, so:
 - **Threads are native sessions** in that workspace, created and driven through
   `@openwork/headless-threads` against the embedded server's workspace-scoped
   engine proxy. A thread made here opens in the OpenWork app unchanged.
+- **A coworker holds several discussions at once.** Each discussion is its
+  own native thread; `discussions.json` records which threads are discussions
+  so none of them ever reads as an assignment, and `coworker.md`'s
+  `conversationThreadId` points at the one that is open. The thread row under
+  the header is the switcher: it shows the current discussion's title, lists
+  the others (a busy one reads "Replying"), and starts a new one. A discussion
+  is titled after its first message (`session.update`; the engine keeps custom
+  titles), and a reply in progress keeps going while another discussion is
+  open. The coworker is introduced once, in the header; the thread row never
+  repeats the avatar or the name.
 - **Identity and memory ride the engine's existing instruction loading**
   (`AGENTS.md` + `opencode.json` `instructions`); the coworker maintains
   `memory/working.md` with ordinary file tools. No memory backend. The app
