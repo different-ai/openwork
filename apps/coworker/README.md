@@ -126,6 +126,18 @@ settings store. User-facing copy says "AI model", "AI providers", and "AI is
 ready/unavailable"; the word "engine" is reserved for developer-facing
 documentation, diagnostics, and code.
 
+Signing in also brings OpenWork Connect to every coworker: the app mints the
+same short-lived gateway token the OpenWork desktop uses (`POST /v1/mcp/token`)
+and registers the `openwork-cloud` gateway in each coworker workspace through
+the embedded server's reconcile route, so the coworker gains
+`search_capabilities` / `execute_capability`, remote skills such as
+create-skill, and the organization's Apps (discovered through the gateway's
+connection index and rendered with the standard MCP App host). The Apps &
+tools panel shows one plain status (Connected / Needs attention / Unavailable)
+with Ask, Create a skill, and Repair; signing out removes the gateway again.
+The packaged app ships the engine's OpenWork plugins under
+`Resources/opencode-plugins`, as the desktop does.
+
 Each responsibility row keeps a bounded run history (`runs`, newest first, in
 `local-responsibilities.json`) with the coworker's own closing summary, the
 duration, and how the run came about; a run can be re-opened as its native
