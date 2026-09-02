@@ -6,7 +6,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import { unwrap } from "@/app/lib/opencode";
-import type { Client, PendingPermission, PendingQuestion, TodoItem } from "@/app/types";
+import type { OpenworkServerClient } from "@/app/lib/openwork-server";
+import type { Client, PendingPermission, PendingQuestion, PermissionReply, TodoItem } from "@/app/types";
 import { t } from "@/i18n";
 import { getReactQueryClient } from "@/react-app/infra/query-client";
 import { useQueryCacheArrayState, useQueryCacheState } from "@/react-app/infra/query-cache-state";
@@ -30,10 +31,22 @@ export type UseSessionInteractionsInput = {
   sessionId: string | null;
   permissionSessionIds?: string[];
   workspaceRoot: string;
+  /** OpenWork server for this workspace; needed to persist an approval into the workspace's opencode.json. */
+  openworkServer?: { client: OpenworkServerClient; workspaceId: string } | null;
 };
 
+/** The patterns the engine itself proposed for an "always" reply (v1 `always`, v2 `save`). */
+function suggestedPatterns(permission: PendingPermission): string[] {
+  const raw = permission.protocol === "v2" ? permission.v2?.save : permission.always;
+  return Array.isArray(raw) ? raw.filter((entry): entry is string => typeof entry === "string" && entry.length > 0) : [];
+}
+
+function permissionName(permission: PendingPermission): string {
+  return permission.protocol === "v2" ? permission.v2?.action ?? permission.permission : permission.permission;
+}
+
 export function useSessionInteractions(input: UseSessionInteractionsInput) {
-  const { client, workspaceId, sessionId, workspaceRoot } = input;
+  const { client, workspaceId, sessionId, workspaceRoot, openworkServer = null } = input;
 
   const [permissionReplyBusy, setPermissionReplyBusy] = useState(false);
   const permissionReplyBusyRef = useRef(false);
@@ -142,11 +155,14 @@ export function useSessionInteractions(input: UseSessionInteractionsInput) {
 
   const activePermission = pendingPermissions[0] ?? null;
   const respondPermission = useCallback(
-    async (requestID: string, reply: "once" | "always" | "reject") => {
+    async (requestID: string, requested: PermissionReply) => {
       if (!client || !workspaceId || !sessionId) return;
       if (permissionReplyBusyRef.current) return;
       permissionReplyBusyRef.current = true;
       setPermissionReplyBusy(true);
+      // "Always allow in this workspace" is the engine's own "always" reply
+      // plus the same patterns written into the workspace's opencode.json.
+      const reply = requested === "always-workspace" ? "always" : requested;
       try {
         const pendingPermission = pendingPermissions.find((permission) => permission.id === requestID);
         if (pendingPermission?.evaluation) {
@@ -182,6 +198,19 @@ export function useSessionInteractions(input: UseSessionInteractionsInput) {
             false,
           );
         }
+        if (requested === "always-workspace" && pendingPermission) {
+          if (!openworkServer) throw new Error(t("session.allow_in_workspace_unavailable"));
+          const patterns = suggestedPatterns(pendingPermission);
+          if (patterns.length === 0) throw new Error(t("session.allow_in_workspace_no_pattern"));
+          for (const pattern of patterns) {
+            await openworkServer.client.addWorkspacePermissionRule(openworkServer.workspaceId, {
+              permission: permissionName(pendingPermission),
+              pattern,
+              action: "allow",
+            });
+          }
+          toast.success(t("session.allow_in_workspace_saved"), { description: patterns.join(", ") });
+        }
       } catch (error) {
         toast.error(t("app.error_request_failed"), {
           description: describeRouteError(error),
@@ -191,7 +220,7 @@ export function useSessionInteractions(input: UseSessionInteractionsInput) {
         setPermissionReplyBusy(false);
       }
     },
-    [client, pendingPermissions, permissionSessionIds, sessionId, workspaceId, workspaceRoot],
+    [client, openworkServer, pendingPermissions, permissionSessionIds, sessionId, workspaceId, workspaceRoot],
   );
 
   const activeQuestion = pendingQuestions[0] ?? null;

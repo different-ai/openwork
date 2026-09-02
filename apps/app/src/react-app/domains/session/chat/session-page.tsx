@@ -17,6 +17,7 @@ import type {
   ComposerAttachment,
   PendingPermission,
   PendingQuestion,
+  PermissionReply,
   ProviderListItem,
   TodoItem,
   WorkspaceConnectionState,
@@ -248,7 +249,8 @@ export type SessionPageProps = {
   activePermission?: PendingPermission | null;
   activePermissionSourceTitle?: string | null;
   permissionReplyBusy?: boolean;
-  respondPermission?: (requestID: string, reply: "once" | "always" | "reject") => void;
+  respondPermission?: (requestID: string, reply: PermissionReply) => void;
+  canAllowInWorkspace?: boolean;
   safeStringify?: (value: unknown) => string;
   activeQuestion?: PendingQuestion | null;
   questionReplyBusy?: boolean;
@@ -1808,6 +1810,7 @@ export function SessionPage(props: SessionPageProps) {
                             activePermissionSourceTitle={props.activePermissionSourceTitle}
                             permissionReplyBusy={props.permissionReplyBusy}
                             respondPermission={props.respondPermission}
+                            canAllowInWorkspace={props.canAllowInWorkspace}
                             activeQuestion={props.activeQuestion}
                             questionReplyBusy={props.questionReplyBusy}
                             respondQuestion={props.respondQuestion}

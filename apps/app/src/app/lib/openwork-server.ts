@@ -306,6 +306,21 @@ export type OpenworkEffectivePermissionsResponse = {
   files: { workspace: string; global: string };
 };
 
+export type OpenworkWorkspacePermissionRule = {
+  permission: string;
+  pattern: string;
+  action: OpenworkPermissionAction;
+};
+
+export type OpenworkWorkspacePermissionRulesResponse = {
+  rules: OpenworkWorkspacePermissionRule[];
+  path: string;
+};
+
+export type OpenworkWorkspacePermissionRulesUpdateResponse = OpenworkWorkspacePermissionRulesResponse & {
+  changed: boolean;
+};
+
 export type OpenworkAuthorizedFoldersUpdateResponse = {
   folders: string[];
   hiddenCount: number;
@@ -1692,6 +1707,24 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         baseUrl,
         `/workspace/${encodeURIComponent(workspaceId)}/permissions/effective`,
         { token, hostToken, timeoutMs: timeouts.config },
+      ),
+    listWorkspacePermissionRules: (workspaceId: string) =>
+      requestJson<OpenworkWorkspacePermissionRulesResponse>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/permissions/rules`,
+        { token, hostToken, timeoutMs: timeouts.config },
+      ),
+    addWorkspacePermissionRule: (workspaceId: string, rule: OpenworkWorkspacePermissionRule) =>
+      requestJson<OpenworkWorkspacePermissionRulesUpdateResponse>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/permissions/rules`,
+        { token, hostToken, method: "POST", body: rule, timeoutMs: timeouts.config },
+      ),
+    removeWorkspacePermissionRule: (workspaceId: string, rule: Pick<OpenworkWorkspacePermissionRule, "permission" | "pattern">) =>
+      requestJson<OpenworkWorkspacePermissionRulesUpdateResponse>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/permissions/rules`,
+        { token, hostToken, method: "DELETE", body: rule, timeoutMs: timeouts.config },
       ),
     listAuthorizedFolders: (workspaceId: string) =>
       requestJson<OpenworkAuthorizedFoldersResponse>(

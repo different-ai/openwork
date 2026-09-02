@@ -386,6 +386,9 @@ export type ReloadTrigger = {
   path?: string;
 };
 
+/** A reply to a permission prompt. "always-workspace" also writes the engine's suggested patterns into the workspace's opencode.json. */
+export type PermissionReply = "once" | "always" | "always-workspace" | "reject";
+
 export type PendingPermission = Omit<ApiPermissionRequest, "always"> & {
   always: unknown;
   receivedAt: number;

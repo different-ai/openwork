@@ -13,7 +13,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { t } from "@/i18n";
-import type { PendingPermission } from "@/app/types";
+import type { PendingPermission, PermissionReply } from "@/app/types";
 
 type PermissionPresentation = {
   title: string;
@@ -35,7 +35,9 @@ type PermissionApprovalModalProps = {
   permission: PendingPermission;
   sourceTitle?: string;
   busy?: boolean;
-  respondPermission?: (requestID: string, reply: "once" | "always" | "reject") => void;
+  respondPermission?: (requestID: string, reply: PermissionReply) => void;
+  /** Whether the workspace's opencode.json can be edited from here (writable OpenWork server for this workspace). */
+  canAllowInWorkspace?: boolean;
   safeStringify?: (value: unknown) => string;
 };
 
@@ -346,7 +348,7 @@ export function PermissionApprovalModal(props: PermissionApprovalModalProps) {
           <p className="mb-4 text-[12px] leading-5 text-dls-secondary">
             {t("session.permission_decision_hint")}
           </p>
-          <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-[1fr_auto_auto]">
+          <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-[1fr_auto_auto_auto]">
             <AlertDialogAction
               variant="destructive"
               className="justify-center sm:justify-self-start"
@@ -370,6 +372,15 @@ export function PermissionApprovalModal(props: PermissionApprovalModalProps) {
             >
               <Check data-icon="inline-start" />
               {t("session.allow_for_session")}
+            </AlertDialogAction>
+            <AlertDialogAction
+              variant="outline"
+              onClick={() => props.respondPermission?.(props.permission.id, "always-workspace")}
+              disabled={props.busy || !props.respondPermission || !props.canAllowInWorkspace}
+              title={t("session.allow_in_workspace_hint")}
+            >
+              <Check data-icon="inline-start" />
+              {t("session.allow_in_workspace")}
             </AlertDialogAction>
           </div>
         </AlertDialogFooter>
@@ -441,6 +452,17 @@ export function PermissionApprovalPanel(props: PermissionApprovalModalProps) {
             >
               <Check data-icon="inline-start" />
               {t("session.allow_for_session")}
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => props.respondPermission?.(props.permission.id, "always-workspace")}
+              disabled={props.busy || !props.respondPermission || !props.canAllowInWorkspace}
+              title={t("session.allow_in_workspace_hint")}
+            >
+              <Check data-icon="inline-start" />
+              {t("session.allow_in_workspace")}
             </Button>
           </div>
         </div>
