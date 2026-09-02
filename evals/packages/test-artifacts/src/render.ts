@@ -68,9 +68,13 @@ interface TraceGroup {
   entries: { detail: string; count: number }[];
 }
 
+function renderedTrace(testRun: TestRunRecord): TestRunRecord["trace"] {
+  return testRun.trace.filter((entry) => entry.verb !== "tmpPath");
+}
+
 function traceGroups(testRun: TestRunRecord): TraceGroup[] {
   const groups: TraceGroup[] = [];
-  for (const entry of [...testRun.trace].sort((left, right) => left.seq - right.seq)) {
+  for (const entry of [...renderedTrace(testRun)].sort((left, right) => left.seq - right.seq)) {
     if (entry.channel === "step") continue;
     const label = entry.stage === "world" ? "world" : entry.channel;
     let group = groups.at(-1);
@@ -95,8 +99,18 @@ function stepLine(testRun: TestRunRecord): string | null {
   }).join(" · ");
 }
 
-function assertionCount(testRun: TestRunRecord): number {
-  return testRun.summary.passedExpectations + testRun.summary.failedExpectations;
+function verdictLine(testRun: TestRunRecord): string {
+  const trace = renderedTrace(testRun);
+  const observations = trace.filter((entry) => (
+    (entry.channel === "user" && (entry.verb === "see" || entry.verb === "notSee" || entry.verb === "screenshot"))
+    || entry.channel === "vision"
+  ));
+  const observationCounts = new Map<string, number>();
+  for (const entry of observations) observationCounts.set(entry.verb, (observationCounts.get(entry.verb) ?? 0) + 1);
+  const observationDetail = [...observationCounts.entries()].map(([verb, count]) => `${verb} ×${count}`).join(", ");
+  const probes = trace.filter((entry) => entry.channel === "probe" || entry.channel === "probe:raw").length;
+  const passedSteps = testRun.steps.filter((step) => step.ok === true).length;
+  return `${testRun.outcome} · ${observations.length} user observations${observationDetail ? ` (${observationDetail})` : ""} · ${probes} probes · steps ${passedSteps}/${testRun.steps.length}`;
 }
 
 function traceMarkdown(testRun: TestRunRecord): string[] {
@@ -105,7 +119,7 @@ function traceMarkdown(testRun: TestRunRecord): string[] {
   ));
   const steps = stepLine(testRun);
   if (steps) lines.push(`**steps** ${steps}`);
-  lines.push(`**verdict** ${testRun.outcome} · ${assertionCount(testRun)} assertions · ${testRun.outcome === "skipped" ? 1 : 0} skipped`);
+  lines.push(`**verdict** ${verdictLine(testRun)}`);
   return lines;
 }
 
@@ -115,7 +129,7 @@ function traceHtml(testRun: TestRunRecord): string {
   ));
   const steps = stepLine(testRun);
   if (steps) lines.push(`<div><strong>steps</strong> ${html(steps)}</div>`);
-  lines.push(`<div><strong>verdict</strong> ${html(testRun.outcome)} · ${assertionCount(testRun)} assertions · ${testRun.outcome === "skipped" ? 1 : 0} skipped</div>`);
+  lines.push(`<div><strong>verdict</strong> ${html(verdictLine(testRun))}</div>`);
   return `<div class="trace">${lines.join("")}</div>`;
 }
 
@@ -154,6 +168,13 @@ function summaryLine(testRun: TestRunRecord): string {
   return `${icon} **${artifactVerdict(testRun)}** · ${summary.passedExpectations} expectations passed · ${summary.failedExpectations} failed · ${summary.pendingJudgments} pending`;
 }
 
+function outcomeHeading(testRun: TestRunRecord): string {
+  if (testRun.outcome === "passed") return "✅ passed";
+  if (testRun.outcome === "failed") return "❌ failed";
+  if (testRun.outcome === "skipped") return "⏭ skipped";
+  return artifactVerdict(testRun);
+}
+
 function renderArtifact(artifact: TestArtifact, sequence: number, imageUrl: string | undefined): string {
   const assertion = artifact.fileName.length === 0;
   const pending = artifact.judgments.some((judgment) => judgment.state === "pending");
@@ -176,6 +197,7 @@ function renderArtifact(artifact: TestArtifact, sequence: number, imageUrl: stri
 
 function artifactVerdict(testRun: TestRunRecord): string {
   const screenshots = testRun.artifacts.filter((artifact) => artifact.fileName.length > 0);
+  if (screenshots.length === 0 && testRun.outcome !== "unknown") return testRun.outcome;
   const passed = screenshots.filter((artifact) => artifact.ok === true).length;
   const pending = screenshots.filter((artifact) => artifact.judgments.some((judgment) => judgment.state === "pending")).length;
   const assertions = testRun.artifacts.length - screenshots.length;
@@ -190,7 +212,7 @@ export function renderPrMarkdown(
   const title = opts.title ?? `Test evidence — ${testRun.name}`;
   const lines = [
     "<!-- test-evidence -->",
-    `## ${html(title)} — ${artifactVerdict(testRun)}`,
+    `## ${html(title)} — ${outcomeHeading(testRun)}`,
     "",
     summaryLine(testRun),
   ];

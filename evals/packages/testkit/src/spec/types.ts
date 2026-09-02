@@ -14,13 +14,28 @@ export interface SeeOptions {
   timeoutMs?: number;
   editable?: boolean;
   value?: string;
-  text?: string;
+  text?: string | RegExp;
+}
+
+export interface ClickOptions {
+  /** Last resort for an intentionally covered target; still clicks its trusted CDP center. */
+  hitTest?: boolean;
+}
+
+export interface TypeOptions {
+  /** Replace existing text with a real select-all key chord before typing. Defaults to append. */
+  replace?: boolean;
+}
+
+export interface ProbeEvalOptions {
+  awaitPromise?: boolean;
+  timeoutMs?: number;
 }
 
 export interface User {
-  click(target: Target): Promise<void>;
+  click(target: Target, options?: ClickOptions): Promise<void>;
   dblclick(target: Target): Promise<void>;
-  type(target: Target, text: string): Promise<void>;
+  type(target: Target, text: string, options?: TypeOptions): Promise<void>;
   press(key: string): Promise<void>;
   hover(target: Target): Promise<void>;
   see(target: Target, options?: SeeOptions): Promise<void>;
@@ -48,8 +63,9 @@ export interface Probe {
   storage(key: string): Promise<unknown>;
   storage<T>(key: string, pick: (value: unknown) => T): Promise<T>;
   hash(): Promise<string>;
-  eval(expression: string): Promise<unknown>;
-  eval(surface: Surface, expression: string): Promise<unknown>;
+  eval(expression: string, options?: ProbeEvalOptions): Promise<unknown>;
+  eval(surface: Surface, expression: string, options?: ProbeEvalOptions): Promise<unknown>;
+  connectState(app: Surface): ReturnType<typeof import("../state.ts").readConnectState>;
   api(session: DenSession, path: string, init?: RequestInit): Promise<DenFetchResult>;
   toolCalls(mock: MockHandle, options?: Parameters<MockHandle["toolCalls"]>[0]): ReturnType<MockHandle["toolCalls"]>;
   eventually<T>(fn: () => Promise<T> | T, options: EventuallyOptions<T>): Promise<T>;

@@ -1,7 +1,7 @@
 import type { DenFetchResult, DenSession, NativeConnectorInput } from "@openwork/behaviors";
 import type { AttachedSurface, Surface } from "@openwork/cdp";
 import type { StartMockMcpOptions } from "@openwork/labs";
-import type { DesktopHandle } from "@openwork/hosts";
+import type { DaytonaExec, DesktopHandle } from "@openwork/hosts";
 import type { App } from "./desktop-app.ts";
 import type { Den, ServerOptions } from "./den.ts";
 import type { FaultProxy } from "./faults.ts";
@@ -33,6 +33,57 @@ export interface OrgConnectionInput {
   access: { orgWide: boolean };
 }
 
+export type SeedDenLinkProfile = "baseline" | "vpn-flaky-emulated";
+export type SeedDenLinkClient = "public-preview" | "sandbox-loopback";
+export type SeedDenLinkRule = { pathPrefix?: string; times?: number; everyNth?: number } & (
+  | { kind: "latency"; delayMs: number; jitterMs?: number }
+  | { kind: "status"; statusCode: number; body?: unknown }
+  | { kind: "reset" }
+  | { kind: "stall" }
+);
+
+export interface SeedDenLinkOptions {
+  sandboxId?: string;
+  client?: SeedDenLinkClient;
+  port?: number;
+  adminPort?: number;
+  daytonaExec?: DaytonaExec;
+}
+
+export interface SeedDenLink extends AsyncDisposable {
+  ref: Den["ref"];
+  admin: {
+    phase(name: string, profile?: SeedDenLinkProfile): Promise<void>;
+    rules(rules: SeedDenLinkRule[]): Promise<void>;
+    bandwidth(bytesPerSec: number | null): Promise<void>;
+    offline(durationMs: number): Promise<void>;
+    clear(): Promise<void>;
+    requests(): Promise<{
+      requests: Array<{
+        method: string;
+        path: string;
+        status: number;
+        faulted: boolean;
+        fault?: string;
+        phase: string;
+        profile: SeedDenLinkProfile;
+        at: number;
+      }>;
+      refusedConnections: Record<string, number>;
+      phase: string;
+      profile: SeedDenLinkProfile;
+    }>;
+    stats(): Promise<{
+      requests: number;
+      faults: number;
+      refusedConnections: number;
+      phase: string;
+      profile: SeedDenLinkProfile;
+    }>;
+    health(): Promise<{ ok: boolean; phase: string; offline: boolean }>;
+  };
+}
+
 /** Framework-free arrangement contract implemented by the testkit world fixture. */
 export interface Seed {
   den(options?: Omit<ServerOptions, "place">): Promise<Den>;
@@ -47,8 +98,9 @@ export interface Seed {
   nativeConnector(admin: DenSession, input: NativeConnectorInput): Promise<{ id: string; name: string }>;
   mock(options?: StartMockMcpOptions): MockBoot;
   faultProxy(den: Den): Promise<FaultProxy>;
+  denLink(den: Den, options?: SeedDenLinkOptions): Promise<SeedDenLink>;
   tmpPath(label: string): string;
   composerText(app: Surface, text: string): Promise<void>;
   /** Migration-only raw write escape hatch. New specs must not use it. */
-  evalIn(surface: Surface, expression: string): Promise<unknown>;
+  evalIn(surface: Surface, expression: string, options?: { awaitPromise?: boolean; timeoutMs?: number }): Promise<unknown>;
 }
