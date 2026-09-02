@@ -118,15 +118,17 @@ function changedWhileWorking(label: string): Error {
  */
 async function writeWorkbookInPlace(realRoot: string, file: WorkspaceFile, bytes: Uint8Array, overwrite: boolean): Promise<{ replaced: boolean }> {
   const label = `Destination ${JSON.stringify(file.relativePath)}`;
-  const folder = dirname(file.absolutePath);
+  const relativeFolder = dirname(file.relativePath);
+  const folder = relativeFolder === "." ? realRoot : join(realRoot, ...relativeFolder.split("/"));
   const realFolder = await realpath(folder).catch(() => null);
   if (!realFolder) {
-    throw new Error(`${label}: the folder ${JSON.stringify(toWorkspaceRelative(file.root, folder) || ".")} does not exist. Create it first (for example with the bash tool), then write the workbook again.`);
+    throw new Error(`${label}: the folder ${JSON.stringify(relativeFolder)} does not exist. Create it first (for example with the bash tool), then write the workbook again.`);
   }
-  if (!isWithin(realRoot, realFolder)) throw new Error(`${label} resolves outside the active workspace.`);
-  const folderInfo = await lstat(realFolder);
-  if (!folderInfo.isDirectory()) throw new Error(`${label}: ${JSON.stringify(toWorkspaceRelative(file.root, folder))} is not a folder.`);
-  const finalPath = join(realFolder, basename(file.absolutePath));
+  // The folder must be exactly this path under the real root: no link in any component.
+  if (realFolder !== folder) throw new Error(`${label} passes through a symbolic link, which is not allowed.`);
+  const folderInfo = await lstat(folder);
+  if (!folderInfo.isDirectory()) throw new Error(`${label}: ${JSON.stringify(relativeFolder)} is not a folder.`);
+  const finalPath = join(folder, basename(file.absolutePath));
 
   const existing = await lstat(finalPath).catch(() => null);
   if (existing?.isDirectory()) throw new Error(`${JSON.stringify(file.relativePath)} is a directory.`);
@@ -155,7 +157,7 @@ async function writeWorkbookInPlace(realRoot: string, file: WorkspaceFile, bytes
       lstat(finalPath).catch(() => null),
       realpath(finalPath).catch(() => null),
     ]);
-    const inPlace = placed !== null && placedReal !== null && sameFile(placed, actual) && dirname(placedReal) === realFolder && isWithin(realRoot, placedReal);
+    const inPlace = placed !== null && placedReal === finalPath && sameFile(placed, actual);
     if (!inPlace) {
       if (placed && sameFile(placed, actual)) await rm(finalPath, { force: true }).catch(() => undefined);
       await handle.close();
@@ -191,24 +193,24 @@ async function readWorkbookFile(root: string, input: string): Promise<{ file: Wo
   const extension = extname(file.absolutePath).toLowerCase();
   if (!READABLE_EXTENSIONS.has(extension)) throw new Error(describeUnsupportedExtension(extension));
   const label = `Workbook ${JSON.stringify(file.relativePath)}`;
-  const [realRoot, realPath] = await Promise.all([
-    realpath(root),
-    realpath(file.absolutePath).catch(() => null),
-  ]);
+  const realRoot = await realpath(root);
+  // The file must sit at exactly this path under the real root: no link in
+  // any component, so nothing under the workspace is ever followed.
+  const path = join(realRoot, ...file.relativePath.split("/"));
+  const realPath = await realpath(path).catch(() => null);
   if (!realPath) throw new Error(`${label} was not found in the workspace.`);
-  if (!isWithin(realRoot, realPath)) throw new Error(`${label} resolves outside the active workspace.`);
+  if (realPath !== path) throw new Error(`${label} passes through a symbolic link, which is not allowed.`);
   // Identity of the validated file, captured with the validation itself.
-  const expected = await lstat(realPath).catch(() => null);
+  const expected = await lstat(path).catch(() => null);
   if (!expected) throw new Error(`${label} was not found in the workspace.`);
   if (!expected.isFile()) throw new Error(`${label} is not a regular file.`);
   if (expected.size > MAX_COMPRESSED_BYTES) throw new Error(`${label} is ${expected.size} bytes; the limit is ${MAX_COMPRESSED_BYTES} bytes.`);
-  const handle = await open(realPath, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0)).catch(() => null);
+  const handle = await open(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0)).catch(() => null);
   if (!handle) throw new Error(`${label} was not found in the workspace.`);
   try {
-    // The open handle must be the validated file, and the path must still
-    // resolve to it; a parent swapped for a link in between fails both.
-    const [actual, recheck] = await Promise.all([handle.stat(), realpath(file.absolutePath).catch(() => null)]);
-    if (!actual.isFile() || !sameFile(actual, expected) || recheck !== realPath) throw changedWhileWorking(label);
+    // The open handle must be the validated inode.
+    const actual = await handle.stat();
+    if (!actual.isFile() || !sameFile(actual, expected)) throw changedWhileWorking(label);
     if (actual.size > MAX_COMPRESSED_BYTES) throw new Error(`${label} is ${actual.size} bytes; the limit is ${MAX_COMPRESSED_BYTES} bytes.`);
     return { file, bytes: await handle.readFile() };
   } finally {

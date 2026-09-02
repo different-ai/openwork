@@ -275,13 +275,13 @@ describe("OpenWorkSpreadsheets", () => {
         await symlink(outside, join(root, "linked"), "dir");
         await expect(read(plugin, { path: "../secret.xlsx" })).rejects.toThrow("outside the active workspace");
         await expect(read(plugin, { path: join(outside, "secret.xlsx") })).rejects.toThrow("outside the active workspace");
-        await expect(read(plugin, { path: "linked/secret.xlsx" })).rejects.toThrow("resolves outside the active workspace");
-        // A file symlink inside the workspace that points outside is refused; one that stays inside still reads.
+        await expect(read(plugin, { path: "linked/secret.xlsx" })).rejects.toThrow("passes through a symbolic link");
+        // Any link in the path is refused, whether it points outside or inside the workspace.
         await symlink(join(outside, "secret.xlsx"), join(root, "outside-alias.xlsx"));
-        await expect(read(plugin, { path: "outside-alias.xlsx" })).rejects.toThrow("resolves outside the active workspace");
-        await expect(inspect(plugin, { path: "outside-alias.xlsx" })).rejects.toThrow("resolves outside the active workspace");
+        await expect(read(plugin, { path: "outside-alias.xlsx" })).rejects.toThrow("passes through a symbolic link");
+        await expect(inspect(plugin, { path: "outside-alias.xlsx" })).rejects.toThrow("passes through a symbolic link");
         await expect(write(plugin, { path: "../escape.xlsx", sheets: [{ rows: [["x"]] }] })).rejects.toThrow("outside the active workspace");
-        await expect(write(plugin, { path: "linked/escape.xlsx", sheets: [{ rows: [["x"]] }] })).rejects.toThrow("resolves outside the active workspace");
+        await expect(write(plugin, { path: "linked/escape.xlsx", sheets: [{ rows: [["x"]] }] })).rejects.toThrow("passes through a symbolic link");
         // Folders are never created for a write, so nothing can appear at a link target.
         await expect(write(plugin, { path: "linked/new/deeper/escape.xlsx", sheets: [{ rows: [["x"]] }] })).rejects.toThrow("does not exist");
         await expect(readdir(outside)).resolves.toEqual(["secret.xlsx"]);
@@ -298,12 +298,12 @@ describe("OpenWorkSpreadsheets", () => {
         await mkdir(join(root, "reports"));
         await write(plugin, { path: "reports/q3.xlsx", sheets: REPORT_SHEETS });
         await symlink(join(root, "reports", "q3.xlsx"), join(root, "inside-alias.xlsx"));
-        expect(await read(plugin, { path: "inside-alias.xlsx" })).toContain("| 2 | EMEA | 1742.42 | TRUE | =B2/B3 |");
-        // A write through an in-workspace folder link lands in the real folder and leaves no temp file behind.
+        await expect(read(plugin, { path: "inside-alias.xlsx" })).rejects.toThrow("passes through a symbolic link");
+        expect(await read(plugin, { path: "reports/q3.xlsx" })).toContain("| 2 | EMEA | 1742.42 | TRUE | =B2/B3 |");
+        // A write through an in-workspace folder link is refused too, and creates nothing.
         await symlink(join(root, "reports"), join(root, "reports-alias"), "dir");
-        await write(plugin, { path: "reports-alias/via-link.xlsx", sheets: [{ rows: [["ok", 1]] }] });
-        await expect(readdir(join(root, "reports"))).resolves.toEqual(["q3.xlsx", "via-link.xlsx"]);
-        expect(await read(plugin, { path: "reports/via-link.xlsx" })).toContain("| 1 | ok | 1 |");
+        await expect(write(plugin, { path: "reports-alias/via-link.xlsx", sheets: [{ rows: [["ok", 1]] }] })).rejects.toThrow("passes through a symbolic link");
+        await expect(readdir(join(root, "reports"))).resolves.toEqual(["q3.xlsx"]);
         await mkdir(join(root, "folder.xlsx"));
         await expect(read(plugin, { path: "folder.xlsx" })).rejects.toThrow("is not a regular file");
         await expect(read(plugin, { path: "reports/q3.xlsx", sheet: "Nope" })).rejects.toThrow('Sheet "Nope" was not found. Available sheets: "Summary", "Detail".');

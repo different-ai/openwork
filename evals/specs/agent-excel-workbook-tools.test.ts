@@ -145,7 +145,7 @@ test("agents create, inspect, and page through Excel workbooks without leaving t
     try {
       await symlink(outside, join(root, "linked"), "dir");
       await expect(plugin.tool.spreadsheet_read.execute({ path: "../secret.xlsx" })).rejects.toThrow("outside the active workspace");
-      await expect(plugin.tool.spreadsheet_write.execute({ path: "linked/escape.xlsx", sheets: [{ rows: [["x"]] }] })).rejects.toThrow("outside the active workspace");
+      await expect(plugin.tool.spreadsheet_write.execute({ path: "linked/escape.xlsx", sheets: [{ rows: [["x"]] }] })).rejects.toThrow("passes through a symbolic link");
       await expect(stat(join(outside, "escape.xlsx"))).rejects.toThrow();
       await expect(plugin.tool.spreadsheet_write.execute({ path: "reports/pipeline.xlsx", sheets: [{ rows: [["clobber"]] }] })).rejects.toThrow("already exists. Pass overwrite: true");
       expect(await readFile(join(root, "reports", "pipeline.xlsx"))).toEqual(bytes);

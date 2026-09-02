@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -333,11 +333,42 @@ describe("OpenWorkOfficeAttachments", () => {
         await symlink(outside, join(root, "linked-outside"), "dir");
         const messages = await transform(root, [{ role: "user", parts: [{ type: "file", filename: "QuarterlyBrief.docx", mediaType: DOCX_MIME, url: pathToFileURL(join(root, "linked-outside", "QuarterlyBrief.docx")).toString() }] }]);
         const text = textOf(messageParts(messages[0])[0]);
-        expect(text).toContain("points outside the active workspace");
+        expect(text).toContain("passes through a symbolic link");
         expect(text).toContain("sha256: unavailable");
       } finally {
         await rm(outside, { recursive: true, force: true });
       }
+    });
+  });
+
+  test("never materializes attachment bytes through a symlinked inbox folder", async () => {
+    await withWorkspace(async (root) => {
+      const outside = await mkdtemp(join(tmpdir(), "openwork-office-inbox-outside-"));
+      try {
+        await symlink(outside, join(root, ".opencode"), "dir");
+        const docx = docxFixture();
+        const messages = await transform(root, [{ role: "user", parts: [{ type: "file", filename: "QuarterlyBrief.docx", mediaType: DOCX_MIME, url: dataUrl(DOCX_MIME, docx) }] }]);
+        const text = textOf(messageParts(messages[0])[0]);
+        expect(text).toContain("is a symbolic link, which is not allowed");
+        expect(text).toContain("worker_relative_path: unavailable");
+        expect(text).not.toContain(DOCX_SENTINEL);
+        await expect(readdir(outside)).resolves.toEqual([]);
+      } finally {
+        await rm(outside, { recursive: true, force: true });
+      }
+    });
+  });
+
+  test("materializes into the real inbox folder and reuses identical bytes", async () => {
+    await withWorkspace(async (root) => {
+      const docx = docxFixture();
+      const part = { type: "file", filename: "QuarterlyBrief.docx", mediaType: DOCX_MIME, url: dataUrl(DOCX_MIME, docx) };
+      const first = pathFromText(textOf(messageParts((await transform(root, [{ role: "user", parts: [part] }]))[0])[0]));
+      const second = pathFromText(textOf(messageParts((await transform(root, [{ role: "user", parts: [part] }]))[0])[0]));
+      expect(second).toBe(first);
+      expect(first).toBe(`.opencode/openwork/inbox/chat-attachments/${sha256(docx).slice(0, 16)}-QuarterlyBrief.docx`);
+      await expect(readdir(join(root, ".opencode", "openwork", "inbox", "chat-attachments"))).resolves.toEqual([`${sha256(docx).slice(0, 16)}-QuarterlyBrief.docx`]);
+      await expect(readFile(join(root, first))).resolves.toEqual(docx);
     });
   });
 

@@ -1,5 +1,6 @@
-import { createHash, randomUUID } from "node:crypto";
-import { link, mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { constants, type Stats } from "node:fs";
+import { lstat, mkdir, open, realpath, rm } from "node:fs/promises";
 import { basename, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -179,56 +180,116 @@ function decodeDataUrl(url: string): Buffer {
   return buffer;
 }
 
+const NO_FOLLOW = constants.O_NOFOLLOW ?? 0;
+
+function sameFile(left: Stats, right: Stats): boolean {
+  return left.dev === right.dev && left.ino === right.ino;
+}
+
+/**
+ * Read a regular file that must sit at exactly this path inside the real
+ * workspace root: no link in any component (the real path has to equal the
+ * lexical path), opened without following a link, and proven to be the
+ * validated inode before it is read.
+ */
+async function readWorkspaceFile(realRoot: string, path: string, label: string): Promise<Buffer> {
+  if (!isWithin(realRoot, path)) throw new Error(`${label} points outside the active workspace.`);
+  const real = await realpath(path).catch(() => null);
+  if (real === null) throw new Error(`${label} was not found in the active workspace.`);
+  if (real !== path) throw new Error(`${label} passes through a symbolic link, which is not allowed.`);
+  const expected = await lstat(path);
+  if (!expected.isFile()) throw new Error(`${label} is not a regular file.`);
+  if (expected.size > MAX_COMPRESSED_BYTES) throw new Error("Office attachment exceeds the compressed byte limit.");
+  const handle = await open(path, constants.O_RDONLY | NO_FOLLOW);
+  try {
+    const actual = await handle.stat();
+    if (!actual.isFile() || !sameFile(actual, expected)) throw new Error(`${label} changed on disk while it was being read.`);
+    if (actual.size > MAX_COMPRESSED_BYTES) throw new Error("Office attachment exceeds the compressed byte limit.");
+    return await handle.readFile();
+  } finally {
+    await handle.close();
+  }
+}
+
 async function bytesFromPart(part: OfficeFilePart, root: string | null): Promise<Buffer> {
   if (part.url.startsWith("data:")) return decodeDataUrl(part.url);
   const url = new URL(part.url);
   if (url.protocol !== "file:") throw new Error("Office attachment URL was not a supported data: or workspace file: URL.");
   if (!root) throw new Error("Workspace root is unavailable for file: Office attachment URLs.");
-  const filePath = resolve(fileURLToPath(url));
-  if (!isWithin(root, filePath)) throw new Error("Office attachment file URL points outside the active workspace.");
   const realRoot = await realpath(root);
-  const realFilePath = await realpath(filePath);
-  if (!isWithin(realRoot, realFilePath)) throw new Error("Office attachment file URL points outside the active workspace.");
-  const buffer = await readFile(realFilePath);
-  if (buffer.byteLength > MAX_COMPRESSED_BYTES) throw new Error("Office attachment exceeds the compressed byte limit.");
-  return buffer;
+  const filePath = resolve(realRoot, relative(root, resolve(fileURLToPath(url))));
+  return await readWorkspaceFile(realRoot, filePath, "Office attachment file URL");
 }
 
-async function existingSha(path: string): Promise<string | null> {
+/**
+ * Ensure the materialization folder exists one component at a time, refusing
+ * a link at any level, so the folder can only ever be the real directory
+ * directly under the real workspace root.
+ */
+async function ensureMaterializedDirectory(realRoot: string): Promise<string> {
+  let current = realRoot;
+  for (const segment of MATERIALIZED_DIR.split(sep)) {
+    current = join(current, segment);
+    let info = await lstat(current).catch(() => null);
+    if (info === null) {
+      await mkdir(current).catch(() => undefined);
+      info = await lstat(current);
+    }
+    if (info.isSymbolicLink()) throw new Error(`Office attachment folder ${toWorkerRelativePath(realRoot, current)} is a symbolic link, which is not allowed.`);
+    if (!info.isDirectory()) throw new Error(`Office attachment folder ${toWorkerRelativePath(realRoot, current)} is not a directory.`);
+  }
+  const real = await realpath(current);
+  if (real !== current) throw new Error("Office attachment folder passes through a symbolic link, which is not allowed.");
+  return current;
+}
+
+async function existingDigest(realRoot: string, path: string): Promise<string | null> {
   try {
-    return sha256(await readFile(path));
+    return sha256(await readWorkspaceFile(realRoot, path, "Materialized Office attachment"));
   } catch {
     return null;
   }
 }
 
-async function linkBytesAtomically(target: string, bytes: Buffer): Promise<void> {
-  const tmp = `${target}.${randomUUID()}.tmp`;
-  await writeFile(tmp, bytes, { flag: "wx" });
+/**
+ * Create the file exclusively (never replacing anything), prove the new inode
+ * sits in the materialization folder, then write through the handle. Bytes
+ * never travel through a pathname after validation.
+ */
+async function writeMaterializedFile(realRoot: string, directory: string, target: string, bytes: Buffer): Promise<void> {
+  const handle = await open(target, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | NO_FOLLOW, 0o644);
   try {
-    await link(tmp, target);
+    const actual = await handle.stat();
+    const [placed, placedReal] = await Promise.all([lstat(target).catch(() => null), realpath(target).catch(() => null)]);
+    const inPlace = placed !== null && placedReal === target && sameFile(placed, actual) && isWithin(realRoot, placedReal) && placedReal.startsWith(`${directory}${sep}`);
+    if (!inPlace) {
+      if (placed && sameFile(placed, actual)) await rm(target, { force: true }).catch(() => undefined);
+      throw new Error("Office attachment folder changed on disk while the attachment was being written.");
+    }
+    await handle.writeFile(bytes);
+    await handle.sync();
   } finally {
-    await rm(tmp, { force: true });
+    await handle.close();
   }
 }
 
 async function materializeAttachment(root: string | null, filename: string, kind: OfficeKind, bytes: Buffer): Promise<MaterializedAttachment | null> {
   if (!root) return null;
   const digest = sha256(bytes);
-  const directory = join(root, MATERIALIZED_DIR);
-  await mkdir(directory, { recursive: true });
+  const realRoot = await realpath(root);
+  const directory = await ensureMaterializedDirectory(realRoot);
   const names = [`${digest.slice(0, 16)}-${safeFilename(filename, kind)}`, `${digest}-${safeFilename(filename, kind)}`];
   for (const name of names) {
     const target = join(directory, name);
-    const current = await existingSha(target);
-    if (current === digest) return { sha256: digest, relativePath: toWorkerRelativePath(root, target) };
+    const current = await existingDigest(realRoot, target);
+    if (current === digest) return { sha256: digest, relativePath: toWorkerRelativePath(realRoot, target) };
     if (current !== null) continue;
     try {
-      await linkBytesAtomically(target, bytes);
-      return { sha256: digest, relativePath: toWorkerRelativePath(root, target) };
+      await writeMaterializedFile(realRoot, directory, target, bytes);
+      return { sha256: digest, relativePath: toWorkerRelativePath(realRoot, target) };
     } catch (cause) {
-      const afterRace = await existingSha(target);
-      if (afterRace === digest) return { sha256: digest, relativePath: toWorkerRelativePath(root, target) };
+      const afterRace = await existingDigest(realRoot, target);
+      if (afterRace === digest) return { sha256: digest, relativePath: toWorkerRelativePath(realRoot, target) };
       if (afterRace !== null) continue;
       throw cause;
     }

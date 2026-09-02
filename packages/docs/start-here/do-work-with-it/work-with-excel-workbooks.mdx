@@ -42,6 +42,8 @@ Writing replaces the whole file. The agent will not overwrite an existing workbo
 
 ## Limits
 
+- Paths that pass through a symbolic link are refused, for reading and for writing; keep workbooks in real folders under the workspace.
+
 - Workbooks up to 12 MB compressed, with a 2 MB limit per worksheet part (roughly 30,000 text cells per sheet).
 - Up to 64 sheets read, 32 sheets and 50,000 cells written per workbook.
 - Flat, single-table data is usually better as `.csv`, which the agent can read and write directly.
