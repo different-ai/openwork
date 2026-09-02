@@ -1,6 +1,10 @@
 appId: com.differentai.opencoworker
 productName: Open Coworker
 artifactName: open-coworker-${os}-${arch}-${version}.${ext}
+protocols:
+  - name: Open Coworker
+    schemes:
+      - opencoworker
 directories:
   output: dist-electron
 files:

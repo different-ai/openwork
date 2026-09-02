@@ -22,7 +22,7 @@ import {
   parseDenLlmProviders,
   type CloudResponsibilityDraft,
   type DenLlmProvider,
-} from "./cloud-responsibilities";
+} from "./cloud-responsibilities.ts";
 
 const STORAGE_KEY = "coworker.den.session.v1";
 const ORG_SCOPE_HEADER = "x-openwork-org-id";
@@ -77,7 +77,7 @@ const HOSTED_DEN_APEX_HOST = "openworklabs.com";
  * `api.`-prefixed host, and any other (self-hosted) Den is reached through
  * its `/api/den` proxy path.
  */
-function denApiBase(baseUrl: string): string {
+export function denApiBase(baseUrl: string): string {
   const web = trimBase(baseUrl);
   try {
     const url = new URL(web);
@@ -100,16 +100,24 @@ function requestBase(baseUrl: string, path: string): string {
   return path.startsWith("/v1/") ? denApiBase(baseUrl) : trimBase(baseUrl);
 }
 
-export function buildDenSignInUrl(baseUrl: string): string {
+/** Deep-link schemes whose `den-auth` handoff this app accepts, pasted or delivered by the OS. */
+const HANDOFF_PROTOCOLS = new Set(["opencoworker:", "opencoworker-dev:", "openwork:", "openwork-dev:"]);
+
+/**
+ * The same hosted Den sign-in the OpenWork desktop opens. `desktopScheme` makes
+ * Den build the handoff link with this app's own scheme, so "Open in app"
+ * returns here instead of to an OpenWork desktop installed beside it; the copy
+ * button on that page remains the paste path for unregistered (dev) builds.
+ */
+export function buildDenSignInUrl(baseUrl: string, deepLinkScheme = "opencoworker"): string {
   const target = new URL(trimBase(baseUrl));
   target.searchParams.set("mode", "sign-in");
-  // Den shows the copyable openwork:// grant handoff for desktop clients.
   target.searchParams.set("desktopAuth", "1");
-  target.searchParams.set("desktopScheme", "openwork");
+  target.searchParams.set("desktopScheme", deepLinkScheme);
   return target.toString();
 }
 
-/** Accept a pasted openwork://den-auth deep link or a raw handoff grant. */
+/** Accept a pasted or deep-linked `…://den-auth` handoff, or a raw handoff grant. */
 export function parsePastedGrant(value: string): { grant: string; baseUrl?: string } | null {
   const trimmed = value.trim();
   if (!trimmed) return null;
@@ -118,15 +126,80 @@ export function parsePastedGrant(value: string): { grant: string; baseUrl?: stri
     const protocol = url.protocol.toLowerCase();
     const tail = url.pathname.replace(/^\/+/, "").split("/").filter(Boolean).pop() ?? "";
     const isAuthRoute = url.hostname.toLowerCase() === "den-auth" || tail === "den-auth";
-    if ((protocol === "openwork:" || protocol === "openwork-dev:") && isAuthRoute) {
+    if (HANDOFF_PROTOCOLS.has(protocol) && isAuthRoute) {
       const grant = url.searchParams.get("grant")?.trim() ?? "";
       const baseUrl = url.searchParams.get("denBaseUrl")?.trim() || undefined;
       return grant ? { grant, baseUrl } : null;
     }
+    // Any other URL with a host (a web page, an unrelated deep link) is not a grant.
+    if (url.hostname) return null;
   } catch {
     // Not a URL: treat as a raw grant below.
   }
   return trimmed.length >= 12 ? { grant: trimmed } : null;
+}
+
+/** The session shape the embedded server's provider sync stores: API origin, token, organization. */
+export function providerSyncSession(session: DenSession): { baseUrl: string; token: string; orgId: string } {
+  return { baseUrl: denApiBase(session.baseUrl), token: session.token, orgId: session.orgId };
+}
+
+export type CloudProviderSyncStatus = {
+  hasSession: boolean;
+  lastRun: { at: string; status: "applied" | "noop" | "failed"; message?: string } | null;
+  /** Providers the account materialized into this engine, keyed by their engine provider id. */
+  providers: Array<{ providerId: string; name: string; source: string | null; modelIds: string[] }>;
+  /** Materialized on disk but not yet served: the engine reload is still owed. */
+  reloadPending: boolean;
+  /** Granted by the organization but not usable here yet, each with the reason. */
+  skippedProviders: Array<{ providerId: string; name: string; reason: "missing_credentials" | "needs_key" }>;
+};
+
+const cloudProviderSyncStatusSchema = z.object({
+  hasSession: z.boolean(),
+  lastRun: z
+    .object({
+      at: z.string(),
+      status: z.enum(["applied", "noop", "failed"]),
+      message: z.string().optional(),
+    })
+    .nullable(),
+  providers: z.array(
+    z.object({
+      providerId: z.string(),
+      name: z.string(),
+      source: z.string().nullable(),
+      modelIds: z.array(z.string()),
+    }).loose(),
+  ),
+  reloadPending: z.boolean().default(false),
+  skippedProviders: z
+    .array(z.object({ providerId: z.string(), name: z.string(), reason: z.enum(["missing_credentials", "needs_key"]) }))
+    .default([]),
+});
+
+/**
+ * What the embedded server has done with the signed-in account's providers.
+ * Read from the same status route the OpenWork desktop consults, so the
+ * Coworker UI never guesses whether an organization model is really usable.
+ */
+export async function readCloudProviderSyncStatus(options: {
+  serverUrl: string;
+  token: string;
+}): Promise<CloudProviderSyncStatus> {
+  const response = await fetch(`${trimBase(options.serverUrl)}/cloud-provider-sync/status`, {
+    headers: { Accept: "application/json", Authorization: `Bearer ${options.token}` },
+    signal: AbortSignal.timeout(10_000),
+  });
+  if (!response.ok) throw new Error(`Reading the OpenWork provider status failed (${response.status})`);
+  return cloudProviderSyncStatusSchema.parse(await response.json());
+}
+
+/** Plain-language reason a granted provider is not usable in this engine yet. */
+export function describeSkippedProvider(reason: "missing_credentials" | "needs_key"): string {
+  return reason === "needs_key"
+    ? "Needs your own key in OpenWork before it can run here."
+    : "Your organization has not attached a credential yet.";
 }
 
 type DenRequestOptions = {

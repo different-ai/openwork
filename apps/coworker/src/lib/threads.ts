@@ -14,6 +14,7 @@ import {
   type HeadlessThreadClient,
 } from "@openwork/headless-threads";
 import { z } from "zod";
+import { readCloudProviderSyncStatus, type CloudProviderSyncStatus } from "./den.ts";
 
 export type ThreadListItem = {
   id: string;
@@ -54,6 +55,13 @@ const sessionListSchema = z.array(
     .loose(),
 );
 
+/**
+ * Where a connected provider comes from: `cloud` providers were materialized
+ * into this engine from the signed-in OpenWork account (organization access,
+ * Den-backed inference); `local` providers were configured on this Mac.
+ */
+export type ModelSource = "cloud" | "local";
+
 export type EngineModelOption = {
   /** "providerId/modelId" */
   id: string;
@@ -66,12 +74,24 @@ export type EngineModelOption = {
   family: string;
   variants: string[];
   isProviderDefault: boolean;
+  source: ModelSource;
 };
 
 export type EngineModelCatalog = {
   models: EngineModelOption[];
   connectedProviderIds: string[];
+  /** Account provider sync state; null when the embedded server did not report it. */
+  cloud: CloudProviderSyncStatus | null;
 };
+
+/** Engine provider keys owned by the OpenWork account sync (`lpr_*` records and the hosted `openwork` provider). */
+export function isCloudManagedProviderId(providerId: string): boolean {
+  return /^lpr_/i.test(providerId) || providerId.trim() === "openwork";
+}
+
+export function modelSourceLabel(source: ModelSource): string {
+  return source === "cloud" ? "OpenWork Cloud" : "This Mac";
+}
 
 const VARIANT_ORDER = ["minimal", "low", "medium", "high", "xhigh", "max"];
 
@@ -86,8 +106,12 @@ function sortedVariants(variants: Record<string, unknown> | undefined): string[]
   });
 }
 
-export function connectedModelCatalog(value: ProviderListResponse): EngineModelCatalog {
+export function connectedModelCatalog(
+  value: ProviderListResponse,
+  cloud: CloudProviderSyncStatus | null = null,
+): EngineModelCatalog {
   const connected = new Set(value.connected ?? []);
+  const cloudProviderIds = new Set(cloud?.providers.map((provider) => provider.providerId) ?? []);
   const providers = (value.all ?? []).filter(
     (provider) =>
       connected.has(provider.id) &&
@@ -97,6 +121,8 @@ export function connectedModelCatalog(value: ProviderListResponse): EngineModelC
     Object.entries(provider.models ?? {}).map(([modelId, model]) => {
       const providerLabel = provider.name?.trim() || provider.id;
       const modelLabel = model.name?.trim() || modelId;
+      const source: ModelSource =
+        cloudProviderIds.has(provider.id) || isCloudManagedProviderId(provider.id) ? "cloud" : "local";
       return {
         id: `${provider.id}/${modelId}`,
         providerId: provider.id,
@@ -108,15 +134,18 @@ export function connectedModelCatalog(value: ProviderListResponse): EngineModelC
         family: model.family?.trim() || "",
         variants: sortedVariants(model.variants),
         isProviderDefault: value.default?.[provider.id] === modelId,
+        source,
       };
     }),
   );
+  // Account providers first: they are what "Continue with OpenWork" promised.
   models.sort((left, right) =>
+    Number(right.source === "cloud") - Number(left.source === "cloud") ||
     left.providerLabel.localeCompare(right.providerLabel) ||
     Number(right.isProviderDefault) - Number(left.isProviderDefault) ||
     left.modelLabel.localeCompare(right.modelLabel),
   );
-  return { models, connectedProviderIds: providers.map((provider) => provider.id) };
+  return { models, connectedProviderIds: providers.map((provider) => provider.id), cloud };
 }
 
 /** Parse a coworker's persisted "providerId/modelId" preference. */
@@ -437,11 +466,17 @@ export function createCoworkerThreads(options: {
   }
 
   async function listModelCatalog(): Promise<EngineModelCatalog> {
-    const result = await opencode.provider.list();
+    const [result, cloud] = await Promise.all([
+      opencode.provider.list(),
+      // Status is advisory: without it, account providers are still recognised by their ids.
+      readCloudProviderSyncStatus({ serverUrl: options.serverUrl, token: options.token }).catch(
+        (): CloudProviderSyncStatus | null => null,
+      ),
+    ]);
     if (result.error !== undefined || !result.data) {
       throw new Error(`Listing models failed (${result.response?.status ?? "network"})`);
     }
-    return connectedModelCatalog(result.data);
+    return connectedModelCatalog(result.data, cloud);
   }
 
   async function listModels(): Promise<EngineModelOption[]> {

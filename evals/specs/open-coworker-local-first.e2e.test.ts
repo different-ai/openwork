@@ -304,15 +304,24 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   expect(footerPlacement.left).toBeLessThan(32);
   expect(footerPlacement.bottomGap).toBeLessThan(24);
 
+  await evalIn(app, `(() => {
+    const shell = document.querySelector('[data-testid="coworker-shell"]');
+    if (!(shell instanceof HTMLElement)) throw new Error("Coworker shell was unavailable.");
+    shell.dataset.continuityToken = "settings-round-trip";
+  })()`);
   await clickButtonContaining(app, "OpenWork");
   await waitForText(app, "OpenWork settings", { timeoutMs: 30_000 });
   const settingsLayout = await evalIn(app, `(() => {
+    const shell = document.querySelector('[data-testid="coworker-shell"]');
+    const workspace = document.querySelector('[data-testid="coworker-workspace"]');
     const root = document.querySelector('[data-testid="openwork-settings"]');
     const sidebar = document.querySelector('[data-testid="openwork-settings-sidebar"]');
-    if (!root || !sidebar) return null;
+    if (!(shell instanceof HTMLElement) || !(workspace instanceof HTMLElement) || !root || !sidebar) return null;
     const rootRect = root.getBoundingClientRect();
     const sidebarRect = sidebar.getBoundingClientRect();
     return {
+      continuityToken: shell.dataset.continuityToken,
+      coworkerWorkspaceDisplay: getComputedStyle(workspace).display,
       rootLeft: rootRect.left,
       rootWidth: rootRect.width,
       sidebarLeft: sidebarRect.left,
@@ -322,6 +331,8 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
     };
   })()`);
   expect(settingsLayout).toMatchObject({
+    continuityToken: "settings-round-trip",
+    coworkerWorkspaceDisplay: "none",
     hasCoworkerContextResizer: false,
     hasSettingsNavigation: 4,
   });
@@ -350,6 +361,21 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
 
   await clickButtonContaining(app, "Back to coworkers");
   await waitForText(app, "+ New local responsibility", { timeoutMs: 30_000 });
+  const returnedWorkspace = await evalIn(app, `(() => {
+    const shell = document.querySelector('[data-testid="coworker-shell"]');
+    const workspace = document.querySelector('[data-testid="coworker-workspace"]');
+    if (!(shell instanceof HTMLElement) || !(workspace instanceof HTMLElement)) return null;
+    return {
+      continuityToken: shell.dataset.continuityToken,
+      coworkerWorkspaceDisplay: getComputedStyle(workspace).display,
+      selectedCoworker: document.body.innerText.includes("Discussion with Scout"),
+    };
+  })()`);
+  expect(returnedWorkspace).toMatchObject({
+    continuityToken: "settings-round-trip",
+    coworkerWorkspaceDisplay: "flex",
+    selectedCoworker: true,
+  });
   await clickButton(app, "+ New local responsibility");
   await fill(app, 'input[placeholder="Morning competitor report"]', "Local readiness check");
   await fill(app, 'textarea[placeholder="What should happen on every run?"]', "Reply with exactly LOCAL RESPONSIBILITY READY. Do not use tools.");
