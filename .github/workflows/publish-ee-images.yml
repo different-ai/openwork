@@ -42,7 +42,6 @@ on:
       - "packages/mcp-apps/**"
       - "packages/types/**"
       - "packages/ui/**"
-      - "packages/workbook/**"
       - "pnpm-lock.yaml"
       - "pnpm-workspace.yaml"
       - "package.json"

@@ -9,7 +9,6 @@ on:
       - apps/app/**
       - apps/desktop/**
       - packages/ui/**
-      - packages/workbook/**
       - constants.json
       - pnpm-lock.yaml
       - package.json
