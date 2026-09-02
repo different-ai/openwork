@@ -1,12 +1,13 @@
 /**
- * The context rail's grammar for a coworker's current state. Kept pure so the
- * copy for every state (including the empty ones) is unit-tested; the rail
- * only renders what these return and never repeats one fact in two rows.
+ * The Activity sidebar's grammar for a coworker's current state and recent
+ * work. Kept pure so the copy for every state (including the empty ones) is
+ * unit-tested; the sidebar only renders what these return and never repeats
+ * one fact in two places.
  */
-import type { CoworkerSummary } from "./bridge";
-import type { CoworkerActivity } from "./threads";
+import type { LocalResponsibility } from "./bridge";
+import { RECENT_WORK_LIMIT, type CoworkerActivity, type RecentWork } from "./threads.ts";
 
-/** Compact relative time for the rail: "now", "12m", "3h", "2d"; empty when unknown. */
+/** Compact relative time for the sidebar: "now", "12m", "3h", "2d"; empty when unknown. */
 export function relativeTime(timestamp: number, now: number = Date.now()): string {
   if (!timestamp) return "";
   const minutes = Math.max(0, Math.round((now - timestamp) / 60_000));
@@ -20,62 +21,70 @@ export function relativeTime(timestamp: number, now: number = Date.now()): strin
 export type NowSummary = {
   /** The thread title or request the coworker is on; empty when there is nothing to name. */
   subject: string;
+  /** One supporting line; empty when the status word already says everything. */
   note: string;
-  /** Previous thread, only when it is a different thing from the subject. */
-  previous: CoworkerActivity["last"] | undefined;
+  /** Whether the person is being asked for something right now. */
+  needsYou: boolean;
 };
 
 /**
- * What the Now card should say. Every field is optional on purpose: an idle
- * coworker with no history gets one line, not five ways of saying "nothing".
+ * What the Current activity card should say. Finished work is never named
+ * here — the Recent activity list below owns it — so an idle coworker gets
+ * exactly one status word, not the same fact in several phrasings.
  */
 export function describeNow(activity: CoworkerActivity | undefined): NowSummary {
-  if (!activity) return { subject: "", note: "Checking status…", previous: undefined };
-  const previous = activity.last && activity.last.title !== activity.detail ? activity.last : undefined;
+  if (!activity) return { subject: "", note: "Checking status…", needsYou: false };
   switch (activity.state) {
     case "working":
-      return { subject: activity.detail, note: "Running now", previous };
+      return { subject: activity.detail, note: "", needsYou: false };
     case "retrying":
-      return { subject: activity.detail, note: "Retrying after an interruption", previous };
+      return { subject: activity.detail, note: "Retrying after an interruption", needsYou: false };
     case "attention":
-      return {
-        subject: activity.detail,
-        note: activity.threadId ? "Waiting for you — open to respond" : "Waiting for you",
-        previous,
-      };
+      // Permission and question requests wait on the person; a failed run only
+      // needs a look, so it is named without asking for a reply.
+      return { subject: activity.detail, note: "", needsYou: /^(Waiting|Needs you)/.test(activity.label) };
     case "recent":
-      return { subject: activity.detail, note: "Last worked on this", previous: undefined };
+      return { subject: "", note: "", needsYou: false };
     case "offline":
-      return { subject: "", note: activity.detail || "OpenWork cannot read this workspace right now.", previous };
+      return { subject: "", note: activity.detail || "OpenWork cannot read this workspace right now.", needsYou: false };
     default:
-      return { subject: "", note: "Waiting for the first assignment.", previous: undefined };
+      return { subject: "", note: "Waiting for the first assignment.", needsYou: false };
   }
 }
 
-/** "claude-haiku-4-5 · High" from the persisted provider/model preference. */
-export function describeModelPreference(
-  coworker: Pick<CoworkerSummary, "model" | "modelVariant">,
-): { value: string; hint: string } {
-  if (!coworker.model) return { value: "Engine default", hint: "Follows the OpenWork default" };
-  const separator = coworker.model.indexOf("/");
-  const providerId = separator > 0 ? coworker.model.slice(0, separator) : "";
-  const modelId = separator > 0 ? coworker.model.slice(separator + 1) : coworker.model;
-  const variant = coworker.modelVariant
-    ? ` · ${coworker.modelVariant.slice(0, 1).toUpperCase()}${coworker.modelVariant.slice(1)}`
-    : "";
-  return { value: `${modelId}${variant}`, hint: providerId };
+/** Plain result word for one Recent activity entry. */
+export function describeOutcome(entry: Pick<RecentWork, "outcome">): string {
+  if (entry.outcome === "succeeded") return "Succeeded";
+  if (entry.outcome === "failed") return "Failed";
+  return "Finished";
 }
 
-/** Memory row: when working memory last changed and how many long-term notes exist. */
-export function describeMemory(
-  files: ReadonlyArray<{ id: string; updatedAt: number }>,
-  now: number = Date.now(),
-): { value: string; hint: string } {
-  const working = files.find((file) => file.id === "working");
-  const longTerm = files.filter((file) => file.id.startsWith("long-term/")).length;
-  const age = working?.updatedAt ? relativeTime(working.updatedAt, now) : "";
-  return {
-    value: age ? (age === "now" ? "Updated just now" : `Updated ${age} ago`) : "Working memory",
-    hint: `working.md · ${longTerm} long-term ${longTerm === 1 ? "note" : "notes"}`,
-  };
+/**
+ * Finished assignments plus finished local responsibility runs, newest first,
+ * bounded so the list stays scannable. A run that is still going is not
+ * recent work, and the discussion thread never appears (it is filtered before
+ * it reaches `activity.recent`).
+ */
+export function mergeRecentWork(
+  activity: Pick<CoworkerActivity, "recent"> | undefined,
+  responsibilities: ReadonlyArray<Pick<LocalResponsibility, "id" | "name" | "latestRun">>,
+  limit: number = RECENT_WORK_LIMIT,
+): RecentWork[] {
+  const runs: RecentWork[] = [];
+  for (const item of responsibilities) {
+    const run = item.latestRun;
+    if (!run || run.status === "running" || !run.finishedAt) continue;
+    runs.push({
+      id: `${item.id}:${run.id}`,
+      title: item.name,
+      kind: "responsibility",
+      outcome: run.status,
+      finishedAt: run.finishedAt,
+      ...(run.threadId ? { threadId: run.threadId } : {}),
+      ...(run.error ? { error: run.error } : {}),
+    });
+  }
+  return [...(activity?.recent ?? []), ...runs]
+    .sort((left, right) => right.finishedAt - left.finishedAt)
+    .slice(0, limit);
 }

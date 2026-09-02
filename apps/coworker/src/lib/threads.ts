@@ -30,6 +30,21 @@ export function assignmentThreads<T extends { id: string }>(threads: T[], conver
   return discussion ? threads.filter((thread) => thread.id !== discussion) : threads;
 }
 
+/** One finished piece of meaningful work for the Recent activity list. */
+export type RecentWork = {
+  id: string;
+  title: string;
+  kind: "assignment" | "responsibility";
+  /** Thread outcomes are not recorded, so a finished assignment is "finished"; responsibility runs carry their result. */
+  outcome: "finished" | "succeeded" | "failed";
+  finishedAt: number;
+  threadId?: string;
+  /** Failure reason, when the run recorded one. */
+  error?: string;
+};
+
+export const RECENT_WORK_LIMIT = 4;
+
 export type CoworkerActivity = {
   state: "ready" | "working" | "retrying" | "attention" | "recent" | "offline";
   label: string;
@@ -42,6 +57,8 @@ export type CoworkerActivity = {
     updatedAt: number;
     threadId?: string;
   };
+  /** Finished assignments, newest first, excluding whatever is active now. */
+  recent?: RecentWork[];
 };
 
 const sessionListSchema = z.array(
@@ -418,21 +435,36 @@ export function createCoworkerThreads(options: {
       listPendingInteractions().catch((): PendingInteractions => ({ permissions: [], questions: [] })),
     ]);
     const assignments = assignmentThreads(allSessions, options.conversationThreadId);
+    const recentOf = (excludeId: string | undefined): RecentWork[] =>
+      assignments
+        .filter((session) => session.id !== excludeId && session.status === "idle")
+        .slice(0, RECENT_WORK_LIMIT)
+        .map((session) => ({
+          id: session.id,
+          title: session.title,
+          kind: "assignment",
+          outcome: "finished",
+          finishedAt: session.updatedAt,
+          threadId: session.id,
+        }));
     if (hasPendingInteractions(pending)) {
       const sessionId = pending.permissions[0]?.sessionID ?? pending.questions[0]?.sessionID;
       const thread = allSessions.find((session) => session.id === sessionId);
-      const last = assignments.find((session) => session.id !== sessionId && session.status === "idle");
+      const recent = recentOf(sessionId);
+      const last = recent[0];
       return {
         state: "attention",
         label: "Needs you",
         detail: describeInteractions(pending),
         updatedAt: thread?.updatedAt ?? Date.now(),
         ...(sessionId ? { threadId: sessionId } : {}),
-        ...(last ? { last: { title: last.title, updatedAt: last.updatedAt, threadId: last.id } } : {}),
+        ...(last ? { last: { title: last.title, updatedAt: last.finishedAt, threadId: last.id } } : {}),
+        recent,
       };
     }
     const active = allSessions.find((session) => session.status === "busy" || session.status === "retry");
-    const last = assignments.find((session) => session.id !== active?.id && session.status === "idle");
+    const recent = recentOf(active?.id);
+    const last = recent[0];
     if (active?.status === "retry") {
       return {
         state: "retrying",
@@ -440,7 +472,8 @@ export function createCoworkerThreads(options: {
         detail: active.title,
         updatedAt: active.updatedAt,
         threadId: active.id,
-        ...(last ? { last: { title: last.title, updatedAt: last.updatedAt, threadId: last.id } } : {}),
+        ...(last ? { last: { title: last.title, updatedAt: last.finishedAt, threadId: last.id } } : {}),
+        recent,
       };
     }
     if (active) {
@@ -450,21 +483,22 @@ export function createCoworkerThreads(options: {
         detail: active.title,
         updatedAt: active.updatedAt,
         threadId: active.id,
-        ...(last ? { last: { title: last.title, updatedAt: last.updatedAt, threadId: last.id } } : {}),
+        ...(last ? { last: { title: last.title, updatedAt: last.finishedAt, threadId: last.id } } : {}),
+        recent,
       };
     }
-    const latest = assignments[0];
-    if (latest) {
+    if (last) {
       return {
         state: "recent",
         label: "Ready",
-        detail: latest.title,
-        updatedAt: latest.updatedAt,
-        threadId: latest.id,
-        last: { title: latest.title, updatedAt: latest.updatedAt, threadId: latest.id },
+        detail: last.title,
+        updatedAt: last.finishedAt,
+        threadId: last.id,
+        last: { title: last.title, updatedAt: last.finishedAt, threadId: last.id },
+        recent,
       };
     }
-    return { state: "ready", label: "Ready", detail: "Waiting for first assignment", updatedAt: 0 };
+    return { state: "ready", label: "Ready", detail: "Waiting for first assignment", updatedAt: 0, recent: [] };
   }
 
   async function listModelCatalog(): Promise<EngineModelCatalog> {
