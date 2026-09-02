@@ -4,7 +4,6 @@ import type { DenSession } from "@/lib/den";
 import type { CoworkerActivity } from "@/lib/threads";
 import { CoworkerAvatar } from "@/ui/coworker-avatar";
 import { Button, IconButton, PlusIcon, SearchIcon, SlidersIcon, StatusDot } from "@/ui/kit";
-import { CoworkerMark } from "@/ui/brand";
 import type { ResizablePanel } from "@/ui/use-resizable-panel";
 import { useWorkingSaying } from "@/ui/use-working-saying";
 
@@ -192,12 +191,10 @@ export function CoworkerRail({
       ) : (
         <>
           <div className="window-drag flex min-h-[86px] items-end justify-between gap-2 px-4 pb-3 pt-10">
-            <div className="flex min-w-0 items-center gap-2.5">
-              <CoworkerMark size={34} />
-              <div className="min-w-0">
-                <p className="truncate text-[11px] font-semibold tracking-[-0.01em] text-snow">Open Coworker</p>
-                <p className="truncate text-[10px] text-mist">Your team</p>
-              </div>
+            {/* The app's mark belongs to the welcome screen and the Dock; the rail just names the team. */}
+            <div className="min-w-0">
+              <p className="truncate text-[11px] font-semibold tracking-[-0.01em] text-snow">Open Coworker</p>
+              <p className="truncate text-[10px] text-mist">Your team</p>
             </div>
             <div className="flex shrink-0 items-center">
               <Button variant="ghost" className="window-no-drag size-8 rounded-full px-0 py-0 text-lg" onClick={onNewCoworker} title="New coworker">

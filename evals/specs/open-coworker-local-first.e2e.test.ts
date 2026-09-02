@@ -244,6 +244,7 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
     const panel = q('[data-testid="context-panel"]');
     if (!(rail instanceof HTMLElement) || !(panel instanceof HTMLElement)) return null;
     const expandedRailWidth = rail.getBoundingClientRect().width;
+    const expandedRailLogo = Boolean(rail.querySelector('svg.coworker-mark'));
     const expandedPanelWidth = panel.getBoundingClientRect().width;
     const foldButtons = document.querySelectorAll('[data-testid$="-collapse"], [data-testid$="-expand"], [aria-label="Hide panel"], [aria-label="Show panel"], [aria-label="Hide team details"], [aria-label="Show team details"]').length;
     q('[data-testid="coworker-rail-resizer"]')?.click();
@@ -307,6 +308,7 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
     await wait(200);
     return {
       expandedRailWidth,
+      expandedRailLogo,
       expandedPanelWidth,
       collapsed,
       afterIcon,
@@ -322,6 +324,7 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   })()`, { awaitPromise: true, timeoutMs: 30_000 });
   if (!isRecord(foldedPanels) || !isRecord(foldedPanels.collapsed) || !isRecord(foldedPanels.afterIcon)) throw new Error("Folded panel facts were unavailable.");
   expect(foldedPanels.expandedRailWidth).toBeGreaterThanOrEqual(220);
+  expect(foldedPanels.expandedRailLogo).toBe(false);
   expect(foldedPanels.expandedPanelWidth).toBeGreaterThanOrEqual(320);
   expect(foldedPanels.collapsed).toMatchObject({
     foldButtons: 0,
