@@ -1,5 +1,6 @@
 /** Typed access to the Open Coworker main-process bridge. */
 import type { AutomationSchedule } from "@openwork/types/automations";
+import type { Personality } from "./personalities";
 
 export type CoworkerSummary = {
   slug: string;
@@ -9,6 +10,8 @@ export type CoworkerSummary = {
   mission: string;
   avatarColor: AvatarColor;
   avatarGlasses: AvatarGlasses;
+  /** Voice for the working state only; never changes how the coworker works. */
+  personality: Personality;
   workspaceId: string;
   /** Native OpenWork session reserved for ongoing chat, separate from assignments. */
   conversationThreadId: string;
@@ -100,9 +103,9 @@ export const coworkerBridge = {
   coworkers: {
     list: () => invoke<CoworkerSummary[]>("coworkers.list"),
     get: (slug: string) => invoke<CoworkerSummary>("coworkers.get", { slug }),
-    create: (input: { name: string; role: string; mission: string; avatarColor: AvatarColor; avatarGlasses: AvatarGlasses }) =>
+    create: (input: { name: string; role: string; mission: string; avatarColor: AvatarColor; avatarGlasses: AvatarGlasses; personality: Personality }) =>
       invoke<CoworkerSummary>("coworkers.create", input),
-    update: (slug: string, patch: Partial<Pick<CoworkerSummary, "workspaceId" | "conversationThreadId" | "automations" | "mission" | "role" | "model" | "modelVariant" | "avatarColor" | "avatarGlasses">>) =>
+    update: (slug: string, patch: Partial<Pick<CoworkerSummary, "workspaceId" | "conversationThreadId" | "automations" | "mission" | "role" | "model" | "modelVariant" | "avatarColor" | "avatarGlasses" | "personality">>) =>
       invoke<CoworkerSummary>("coworkers.update", { slug, patch }),
     ensureWorkspace: (slug: string) => invoke<CoworkerSummary>("coworkers.ensureWorkspace", { slug }),
     /** Retire: archive the whole home under `.retired/`; nothing is deleted. */
