@@ -58,6 +58,21 @@ async function waitForWorker(
 }
 
 /** Row actions disable while one is in flight; click only when the button is ready. */
+/** Bring the right panel to one level of Activity from wherever it is: folded, on the root, or on another level. */
+async function openActivityLevel(app: App, level: "documents" | "workers" | "assignments"): Promise<void> {
+  await waitFor(app, `(() => {
+    const panel = document.querySelector('[data-testid="context-panel"]');
+    if (!(panel instanceof HTMLElement)) return false;
+    const route = document.querySelector('[data-testid="panel-content"]')?.getAttribute("data-route") ?? "";
+    if (panel.dataset.collapsed === "false" && route === ${JSON.stringify(`overview/${level}`)}) return true;
+    if (panel.dataset.collapsed === "true") document.querySelector('[data-testid="context-rail-overview"]')?.click();
+    else if (panel.dataset.view !== "overview") document.querySelector('button[aria-label="Back to activity"]')?.click();
+    else if (route !== "overview") document.querySelector('[data-testid="panel-back"]')?.click();
+    else document.querySelector(${JSON.stringify(`[data-testid="activity-row-${level}"]`)})?.click();
+    return false;
+  })()`, { timeoutMs: 60_000, label: `Activity › ${level}` });
+}
+
 async function clickRowAction(app: App, testId: string): Promise<void> {
   await waitFor(app, `(() => {
     const button = document.querySelector('[data-testid=${JSON.stringify(testId)}]');
@@ -135,12 +150,14 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   expect(responsibility.name).toBe("Limit check");
 
 
-  // The Workers view: the panel starts folded to its strip; its Workers icon opens the view, which
-  // says no Worker is running yet and starts an open-ended one from its own form.
+  // The Workers level: the panel starts folded to its strip; the Activity icon opens the panel and its
+  // Workers row opens the level, which says no Worker is running yet and starts an open-ended one from
+  // its own form.
   expect(await evalIn(app, `document.querySelector('[data-testid="context-panel"]')?.getAttribute("data-collapsed")`)).toBe("true");
-  await evalIn(app, `document.querySelector('[data-testid="context-rail-workers"]').click(); true`);
-  await waitFor(app, `Boolean(document.querySelector('[data-testid="coworker-workers"]'))`, { timeoutMs: 30_000, label: "Workers view" });
-  expect(await evalIn(app, `document.querySelector('[data-testid="context-panel"]')?.getAttribute("data-view")`)).toBe("workers");
+  await openActivityLevel(app, "workers");
+  await waitFor(app, `Boolean(document.querySelector('[data-testid="coworker-workers"]'))`, { timeoutMs: 30_000, label: "Workers level" });
+  expect(await evalIn(app, `document.querySelector('[data-testid="panel-content"]')?.getAttribute("data-route")`)).toBe("overview/workers");
+  expect(await evalIn(app, `[...document.querySelectorAll('[data-testid="panel-crumb"]')].map((crumb) => crumb.textContent?.trim())`)).toEqual(["Activity", "Workers"]);
   const emptyState = await waitFor(app, `document.querySelector('[data-testid="workers-empty"]')?.textContent?.trim() || false`, { timeoutMs: 30_000, label: "empty Workers state" });
   expect(String(emptyState)).toContain("No Workers running. Ask Editor to start one, or start one here.");
   await clickButton(app, "New Worker");
@@ -241,24 +258,36 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   expect(steerRefused).toMatchObject({ ok: false, error: expect.stringContaining("already stopped") });
   expect(resultRecords(await invokeCoworker(app, "workers.list", { slug: "editor" })).map((worker) => [worker.id, worker.status])).toEqual([[watcherId, "cancelled"]]);
 
-  // The view keeps to flat rows (no card inside a card) and Escape folds the panel away.
-  expect(await evalIn(app, `document.querySelectorAll('[data-testid="coworker-workers"] .rounded-2xl .rounded-2xl').length`)).toBe(0);
+  // The level keeps to flat rows (no card at all) and holds Workers only; Escape goes back to the Activity
+  // root, and again folds the panel away.
+  expect(await evalIn(app, `document.querySelectorAll('[data-testid="coworker-workers"] .rounded-2xl').length`)).toBe(0);
+  expect(await evalIn(app, `document.querySelector('[data-testid="coworker-assignments"]') === null`)).toBe(true);
+  await evalIn(app, `document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); true`);
+  await waitFor(app, `document.querySelector('[data-testid="context-panel"]')?.getAttribute("data-depth") === "0" && document.querySelector('[data-testid="context-panel"]')?.getAttribute("data-collapsed") === "false"`, { timeoutMs: 10_000, label: "Escape returns to the Activity root" });
+  // The Activity root's rows: the stopped Worker no longer counts, the scheduled assignment does.
+  const activityRows = await evalIn(app, `[...document.querySelectorAll('[data-testid^="activity-row-"]')].map((row) => row.innerText.replace(/\\s+/g, " ").trim())`);
+  if (!Array.isArray(activityRows)) throw new Error("Activity rows were unavailable.");
+  // A stopped Worker no longer counts; the scheduled assignment does.
+  expect(activityRows.slice(1)).toEqual(["Workers ›", "1 assignment On a schedule ›"]);
   await evalIn(app, `document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); true`);
   await waitFor(app, `document.querySelector('[data-testid="context-panel"]')?.getAttribute("data-collapsed") === "true"`, { timeoutMs: 10_000, label: "panel folded by Escape" });
 
-  // The Assignments section sits below the Workers: the scheduled run from earlier is listed once, under its
+  // Assignments is its own level of Activity: the scheduled run from earlier is listed once, under its
   // schedule, never again as a one-off from its own thread.
-  await evalIn(app, `document.querySelector('[data-testid="context-rail-workers"]').click(); true`);
+  await openActivityLevel(app, "assignments");
   const assignmentsSection = await waitFor(app, `(() => {
     const section = document.querySelector('[data-testid="coworker-assignments"]');
     if (!(section instanceof HTMLElement)) return false;
     const scheduled = [...section.querySelectorAll('[data-testid="responsibility-row"]')].map((row) => row.innerText.replace(/\\s+/g, " ").trim());
     if (scheduled.length === 0) return false;
-    return { heading: section.querySelector("h3")?.textContent?.trim() ?? "", scheduled, once: document.querySelectorAll('[data-testid="assignment-row"]').length };
-  })()`, { timeoutMs: 30_000, label: "Assignments below the Workers" });
-  expect(assignmentsSection).toMatchObject({ heading: "Assignments", once: 0 });
+    return { crumb: document.querySelector('[data-testid="panel-crumb"][aria-current="page"]')?.textContent?.trim() ?? "", scheduled, once: document.querySelectorAll('[data-testid="assignment-row"]').length };
+  })()`, { timeoutMs: 30_000, label: "Activity › Assignments" });
+  expect(assignmentsSection).toMatchObject({ crumb: "Assignments", once: 0 });
   if (!isRecord(assignmentsSection) || !Array.isArray(assignmentsSection.scheduled)) throw new Error("Assignments facts were unavailable.");
   expect(String(assignmentsSection.scheduled[0])).toContain("Limit check");
+  await evalIn(app, `document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); true`);
+  await evalIn(app, `document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); true`);
+  await waitFor(app, `document.querySelector('[data-testid="context-panel"]')?.getAttribute("data-collapsed") === "true"`, { timeoutMs: 10_000, label: "panel folded again" });
 
   // A Worker that needs a decision asks in the discussion as a lettered card; the answer steers it.
   const decider = resultRecord(await invokeCoworker(app, "workers.spawn", {
@@ -309,7 +338,7 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   // Workers survive a reload of the window: the same rows, the same states.
   await evalIn(app, "location.reload(); true");
   await waitForDiscussionView(app, 120_000);
-  await evalIn(app, `document.querySelector('[data-testid="context-rail-workers"]').click(); true`);
+  await openActivityLevel(app, "workers");
   const afterReload = await waitFor(app, `(() => {
     const rows = [...document.querySelectorAll('[data-testid="worker-row"]')];
     if (rows.length < 2) return false;
@@ -320,7 +349,7 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
 
   evidence.recordAssertionEvidence(
     "From the Workers view a person starts, steers, pauses, resumes, and stops a Worker; a Worker's decision is asked in the discussion",
-    `The folded panel's Workers icon opened the view (data-view workers), which said no Worker was running yet. New Worker started open-ended Worker ${watcherId} ("Long watch") from the form; its row read "${watcherLine}" and the rail said "${String(railLine)}". A steer typed in the row appeared in its timeline and then as the Worker's next turn in its read-only work view (Worker badge, no composer, no Stop in the header, no person bubbles). Pause held it (row Paused, nothing queued), Resume let it go on, Stop ended it: record Stopped with an end time, events Paused/Resumed/Stopped attributed to the person, no finding after the stop within 15 seconds, no active or queued runs, a second stop harmless, steering refused, both Workers listed newest first. The view had no card inside a card and Escape folded the panel. Below the Workers, Assignments listed the scheduled Limit check once (its run thread not repeated as a one-off). Worker ${deciderId} ("Decider") asked for a decision: the discussion showed the card "Decider asks" with its lettered choices while the header read Needs you; choosing Green steered it (one steer, by the person) and it finished with Done naming Green. After a window reload the Workers view listed both Workers with their final states.`,
+    `The folded panel's Activity icon and its Workers row opened Activity › Workers (route overview/workers), which said no Worker was running yet. New Worker started open-ended Worker ${watcherId} ("Long watch") from the form; its row read "${watcherLine}" and the rail said "${String(railLine)}". A steer typed in the row appeared in its timeline and then as the Worker's next turn in its read-only work view (Worker badge, no composer, no Stop in the header, no person bubbles). Pause held it (row Paused, nothing queued), Resume let it go on, Stop ended it: record Stopped with an end time, events Paused/Resumed/Stopped attributed to the person, no finding after the stop within 15 seconds, no active or queued runs, a second stop harmless, steering refused, both Workers listed newest first. The level had no card, held Workers only, and Escape stepped back to the Activity root — whose rows counted 1 assignment on a schedule — then folded the panel. Activity › Assignments listed the scheduled Limit check once (its run thread not repeated as a one-off). Worker ${deciderId} ("Decider") asked for a decision: the discussion showed the card "Decider asks" with its lettered choices while the header read Needs you; choosing Green steered it (one steer, by the person) and it finished with Done naming Green. After a window reload the Workers view listed both Workers with their final states.`,
     true,
   );
 });

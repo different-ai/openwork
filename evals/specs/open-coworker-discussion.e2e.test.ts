@@ -192,21 +192,33 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   const storedAfterSecond = resultRecord(await invokeCoworker(app, "coworkers.get", { slug: "editor" }));
   expect(storedAfterSecond.conversationThreadId).toBe(discussionThreadId);
 
-  const assignmentButtonText = await evalIn(app, `(() => {
-    const button = [...document.querySelectorAll("button")]
-      .find((candidate) => (candidate.textContent ?? "").startsWith("Assignments"));
-    return button?.textContent?.trim() ?? "";
-  })()`);
-  expect(assignmentButtonText).toBe("Assignments");
-  await clickButton(app, "Assignments");
-  await waitForText(app, "No assignments yet", { timeoutMs: 30_000 });
-  expect(await evalIn(app, "document.body.innerText")).not.toContain("COWORKER CHAT READY\nJust now");
-  await clickButton(app, "Back");
-  await waitForText(app, "SECOND CHAT READY", { timeoutMs: 30_000 });
+  // Discussions never count as assignments. The header carries no Assignments control any more;
+  // the composer's summary line names none, and Activity › Assignments has nothing handed over.
+  const assignmentFacts = await evalIn(app, `(() => ({
+    headerAssignmentsControl: [...document.querySelectorAll('[data-testid="conversation-header"] button')].some((button) => (button.textContent ?? "").startsWith("Assignments")),
+    summaryParts: [...document.querySelectorAll('[data-testid^="summary-part-"]')].map((part) => part.textContent?.trim()),
+    brandLine: (document.querySelector('[data-testid="coworker-composer"]')?.textContent ?? "").includes("Powered by"),
+  }))()`);
+  expect(assignmentFacts).toEqual({ headerAssignmentsControl: false, summaryParts: [], brandLine: false });
+  await evalIn(app, `document.querySelector('[data-testid="context-rail-overview"]').click()`);
+  await waitFor(app, `(() => {
+    const row = document.querySelector('[data-testid="activity-row-assignments"]');
+    if (!(row instanceof HTMLElement)) return false;
+    row.click();
+    return true;
+  })()`, { timeoutMs: 30_000, label: "the Assignments row of Activity" });
+  await waitForText(app, "Nothing handed over yet", { timeoutMs: 30_000 });
+  expect(await evalIn(app, `document.querySelector('[data-testid="assignment-list"]') === null`)).toBe(true);
+  // The conversation stays where it was while the panel is open; Escape twice folds the panel again.
+  expect(await evalIn(app, `(document.querySelector("main")?.innerText ?? "").includes("SECOND CHAT READY")`)).toBe(true);
+  await evalIn(app, `window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }))`);
+  await waitFor(app, `document.querySelector('[data-testid="context-panel"]')?.getAttribute("data-depth") === "0"`, { timeoutMs: 10_000, label: "back at the Activity root" });
+  await evalIn(app, `window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }))`);
+  await waitFor(app, `document.querySelector('[data-testid="context-panel"]')?.getAttribute("data-collapsed") === "true"`, { timeoutMs: 10_000, label: "panel folded" });
 
   evidence.recordAssertionEvidence(
     "A coworker's discussion waits for a matched reply and survives reload without becoming an assignment",
-    `The first user message became visible, the UI exposed a real working interval with no Ready status before the matched assistant response, and native discussion ${discussionThreadId} persisted across reload and a second turn while the assignment count remained zero.`,
+    `The first user message became visible, the UI exposed a real working interval with no Ready status before the matched assistant response, and native discussion ${discussionThreadId} persisted across reload and a second turn while nothing counted as an assignment: no Assignments control in the header, no summary line part, and an empty once list under Activity › Assignments.`,
     true,
   );
 
@@ -287,15 +299,11 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   const registry = resultRecord(await invokeCoworker(app, "coworkers.files.read", { slug: "editor", path: "discussions.json" }));
   const registered = JSON.parse(String(registry.content)) as { threadIds?: string[] };
   expect(registered.threadIds).toEqual(expect.arrayContaining([discussionThreadId, secondDiscussionId]));
-  expect(await evalIn(app, `(() => {
-    const button = [...document.querySelectorAll("button")]
-      .find((candidate) => (candidate.textContent ?? "").startsWith("Assignments"));
-    return button?.textContent?.trim() ?? "";
-  })()`)).toBe("Assignments");
+  expect(await evalIn(app, `[...document.querySelectorAll('[data-testid^="summary-part-"]')].map((part) => part.getAttribute("data-testid"))`)).toEqual([]);
 
   evidence.recordAssertionEvidence(
     "A coworker holds parallel discussions that can be left, revisited, and resumed",
-    `The main column introduced Editor once (one avatar outside message bubbles, no repeated "Discussion with Editor" heading) and titled the first discussion after its first message. New discussion opened native thread ${secondDiscussionId}; its message was accepted (status "${String(statusWhenLeaving)}" when leaving), the switcher listed both discussions with the open one checked, returning to ${discussionThreadId} showed that discussion alone, and coming back found the matched reply in ${secondDiscussionId}. discussions.json registered both ids and the Assignments control still read "Assignments".`,
+    `The main column introduced Editor once (one avatar outside message bubbles, no repeated "Discussion with Editor" heading) and titled the first discussion after its first message. New discussion opened native thread ${secondDiscussionId}; its message was accepted (status "${String(statusWhenLeaving)}" when leaving), the switcher listed both discussions with the open one checked, returning to ${discussionThreadId} showed that discussion alone, and coming back found the matched reply in ${secondDiscussionId}. discussions.json registered both ids and the composer's summary line still counted no assignment.`,
     true,
   );
 

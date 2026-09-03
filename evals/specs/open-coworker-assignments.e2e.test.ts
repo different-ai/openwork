@@ -128,15 +128,15 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
   const editor = resultRecord(await invokeCoworker(app, "coworkers.get", { slug: "editor" }));
   const discussionId = String(editor.conversationThreadId);
   expect(discussionId).toMatch(/^ses_/);
-  const assignmentsBefore = String(await evalIn(app, `[...document.querySelectorAll("button")]
-    .find((button) => (button.textContent ?? "").startsWith("Assignments"))?.textContent?.trim() ?? ""`));
-  expect(assignmentsBefore).toBe("Assignments");
+  // Nothing counts as an assignment yet: the composer's summary line has no assignments part.
+  const assignmentsBefore = await evalIn(app, `[...document.querySelectorAll('[data-testid^="summary-part-"]')].map((part) => part.textContent?.trim())`);
+  expect(assignmentsBefore).toEqual([]);
   const sessionsBefore = await readEngineSessions(app, workspaceId);
   expect(sessionsBefore.map((session) => session.id)).toEqual([discussionId]);
 
   evidence.recordAssertionEvidence(
     "A natural discussion turn does not create an assignment",
-    `After one chat exchange the coworker owned exactly one native session (${discussionId}, the discussion) and the Assignments control showed no count.`,
+    `After one chat exchange the coworker owned exactly one native session (${discussionId}, the discussion) and the composer's summary line counted no assignment.`,
     true,
   );
 
@@ -210,7 +210,7 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
     true,
   );
 
-  // --- Back to the discussion: the count is one, the list names the assignment, the chat is unchanged.
+  // --- Back to the discussion: the summary line counts one, Activity › Assignments names it, the chat is unchanged.
   await clickButton(app, "Back");
   await waitFor(app, `Boolean(document.querySelector('[data-testid="coworker-discussion-view"]'))`, { timeoutMs: 60_000, label: "back in the discussion view" });
   // The discussion is titled after its first message; that title belongs to the thread row, not the
@@ -224,42 +224,51 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
     timeoutMs: 30_000,
     label: "chat reply back in the discussion view",
   });
-  await waitFor(app, `[...document.querySelectorAll("button")]
-    .some((button) => (button.textContent ?? "").trim() === "Assignments · 1")`, {
+  // The quiet line under the composer counts the one assignment; it is the way into Activity › Assignments.
+  await waitFor(app, `document.querySelector('[data-testid="summary-part-assignments"]')?.textContent?.trim() === "1 assignment"`, {
     timeoutMs: 30_000,
-    label: "Assignments · 1",
+    label: "summary line: 1 assignment",
   });
-  await clickButton(app, "Assignments · 1");
-  await waitFor(app, `(document.querySelector("main")?.innerText ?? "").toLowerCase().includes("current and recent")`, { timeoutMs: 30_000, label: "assignment list" });
-  const listText = String(await evalIn(app, `document.querySelector("main")?.innerText ?? ""`));
-  expect(listText).toContain(expectedTitle);
-  expect(listText).toContain("1 assignment");
-  expect(listText).not.toContain(CHAT_PROMPT);
-
-  // The panel's Workers view lists the same assignment once, beside the scheduled ones, and opens it.
-  await evalIn(app, `document.querySelector('[data-testid="context-rail-workers"]').click(); true`);
+  const composerLine = await evalIn(app, `(() => {
+    const composer = document.querySelector('[data-testid="coworker-composer"]');
+    return {
+      line: composer?.querySelector('[data-testid="coworker-summary-line"]')?.textContent?.trim() ?? "",
+      brandLine: (composer?.textContent ?? "").includes("Powered by"),
+      headerAssignmentsControl: [...document.querySelectorAll('[data-testid="conversation-header"] button')].some((button) => (button.textContent ?? "").startsWith("Assignments")),
+    };
+  })()`);
+  expect(composerLine).toEqual({ line: "1 assignment", brandLine: false, headerAssignmentsControl: false });
+  await evalIn(app, `document.querySelector('[data-testid="summary-part-assignments"]').click(); true`);
   const panelAssignments = await waitFor(app, `(() => {
     const section = document.querySelector('[data-testid="coworker-assignments"]');
     const rows = [...document.querySelectorAll('[data-testid="assignment-row"]')];
     if (!(section instanceof HTMLElement) || rows.length === 0) return false;
     return {
-      heading: section.querySelector("h3")?.textContent?.trim() ?? "",
+      route: document.querySelector('[data-testid="panel-content"]')?.getAttribute("data-route") ?? "",
+      crumbs: [...document.querySelectorAll('[data-testid="panel-crumb"]')].map((crumb) => crumb.textContent?.trim()),
       rows: rows.map((row) => row.innerText.replace(/\\s+/g, " ").trim()),
       scheduledEmpty: Boolean(section.querySelector('[data-testid="responsibilities-empty"]')),
+      cards: section.querySelectorAll(".rounded-2xl").length,
+      mentionsDiscussion: (section.innerText ?? "").includes(${JSON.stringify(CHAT_PROMPT)}),
     };
-  })()`, { timeoutMs: 30_000, label: "the assignment in the panel's Assignments" });
-  expect(panelAssignments).toMatchObject({ heading: "Assignments", scheduledEmpty: true });
+  })()`, { timeoutMs: 30_000, label: "the assignment in Activity › Assignments" });
+  expect(panelAssignments).toMatchObject({ route: "overview/assignments", crumbs: ["Activity", "Assignments"], scheduledEmpty: true, cards: 0, mentionsDiscussion: false });
   if (!isRecord(panelAssignments) || !Array.isArray(panelAssignments.rows)) throw new Error("Panel assignment rows were unavailable.");
   expect(panelAssignments.rows).toHaveLength(1);
   expect(String(panelAssignments.rows[0])).toContain(expectedTitle);
-  expect(String(panelAssignments.rows[0])).toMatch(/Once · (Done .+ ago|Working on it)/);
+  expect(String(panelAssignments.rows[0])).toMatch(/(Done .+ ago|Working on it)/);
+  // The Activity root's row says the same number.
+  await evalIn(app, `document.querySelector('[data-testid="panel-back"]').click(); true`);
+  await waitFor(app, `(document.querySelector('[data-testid="activity-row-assignments"]')?.textContent ?? "").includes("1 assignment")`, { timeoutMs: 30_000, label: "Activity row: 1 assignment" });
+  await evalIn(app, `document.querySelector('[data-testid="activity-row-assignments"]').click(); true`);
+  await waitFor(app, `Boolean(document.querySelector('[data-testid="assignment-row"]'))`, { timeoutMs: 30_000, label: "the Assignments level again" });
   await evalIn(app, `document.querySelector('[data-testid="assignment-row"]').click(); true`);
   await waitFor(app, `Boolean(document.querySelector('[data-testid="coworker-assignment-view"]'))`, { timeoutMs: 30_000, label: "the assignment opened from the panel" });
   await evalIn(app, `document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); true`);
 
   evidence.recordAssertionEvidence(
     "The standing discussion stays out of the assignment count and list, and the panel lists the assignment once",
-    `Back in the discussion the control read "Assignments · 1"; the Assignments list showed "${expectedTitle}" as the single entry and did not list the discussion session. The panel's Workers view listed the same assignment once under Assignments as a one-off (Once · Done), beside an empty schedule, and opened it in the main column.`,
+    `Back in the discussion the composer's summary line read "1 assignment" (no Assignments control in the header, no brand line); it opened Activity › Assignments, where "${expectedTitle}" was the single flat row (Done), beside an empty schedule and without the discussion; the Activity root's row read 1 assignment too, and the row opened the assignment in the main column.`,
     true,
   );
 });
