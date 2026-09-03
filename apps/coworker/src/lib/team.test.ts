@@ -109,7 +109,7 @@ test("small print and the pill that keeps the coworker on it read like Messages"
   if (referral?.kind !== "referral") throw new Error("expected a referral");
   assert.equal(referralSmallPrint(referral), "Editor could take this · Writing and content");
   assert.equal(continueWithReply("Nova"), "Go ahead, Nova.");
-  assert.equal(newcomerLine({ suggestedBy: { slug: "nova", why: "the support inbox comes up every morning." } }, "Nova"), "Nova suggested me for the support inbox comes up every morning.");
+  assert.equal(newcomerLine({ suggestedBy: { slug: "nova", why: "The support inbox comes up every morning." } }, "Nova"), "Nova suggested me — the support inbox comes up every morning.");
   assert.equal(newcomerLine({ suggestedBy: { slug: "nova", why: "" } }, "Nova"), "Nova suggested me.");
   assert.equal(newcomerLine({ suggestedBy: null }, "Nova"), "");
 });
