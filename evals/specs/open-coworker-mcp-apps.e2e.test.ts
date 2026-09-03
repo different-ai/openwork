@@ -1,9 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { expect, onTestFinished } from "vitest";
-import { clickButton, evalIn, fill, waitFor, waitForText } from "@openwork/behaviors";
-import { connect, debuggerUrlFor, evaluate, listTargets } from "@openwork/cdp";
-import { screenshot, validate } from "@openwork/test-evidence";
-import { coworker, needs, test } from "@openwork/testkit";
+import { clickButton, connect, coworker, debuggerUrlFor, evalIn, evaluate, fill, listTargets, needs, screenshot, test, validate, waitFor, waitForText } from "@openwork/testkit";
 import { buildGeneratedArtifactViewInWorker } from "../../ee/apps/den-api/src/generated-artifact-view-builder.js";
 
 const mcpServerName = "chapter-notes";
