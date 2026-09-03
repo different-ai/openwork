@@ -40,6 +40,8 @@ import {
   writeCoworkerFile,
 } from "./coworkers.mjs";
 import { COWORKER_TOOLS_MCP_NAME, DEFAULT_INSTRUCTIONS, createCoworkerToolsServer, createToolHandlers, toolCatalog } from "./coworker-tools.mjs";
+import { readSuggestions, recommendTeam, refreshTeamRosters, setReferralState, setSuggestionState, teamCatalog, teamStates } from "./team.mjs";
+import { TEAM_INSTRUCTIONS, createTeamToolHandlers, teamToolCatalog } from "./team-tools.mjs";
 import {
   archiveDocument,
   listDocuments,
@@ -1113,9 +1115,10 @@ async function ensureToolsServer() {
         cloud: () => cloudAssignments(),
       }),
       ...createSelfToolHandlers({ coworkersDir }),
+      ...createTeamToolHandlers({ coworkersDir }),
     },
-    tools: [...toolCatalog(), ...workerToolCatalog(), ...assignmentToolCatalog(), ...selfToolCatalog()],
-    instructions: `${DEFAULT_INSTRUCTIONS} Your Worker tools start, steer, and stop long-lived Workers for goals that outlive one reply; each finding they post wakes you to review it. ${ASSIGNMENT_INSTRUCTIONS}`,
+    tools: [...toolCatalog(), ...workerToolCatalog(), ...assignmentToolCatalog(), ...selfToolCatalog(), ...teamToolCatalog()],
+    instructions: `${DEFAULT_INSTRUCTIONS} Your Worker tools start, steer, and stop long-lived Workers for goals that outlive one reply; each finding they post wakes you to review it. ${ASSIGNMENT_INSTRUCTIONS} ${TEAM_INSTRUCTIONS}`,
     version: app.getVersion(),
   }).then((server) => {
     toolsServer = server;
@@ -1620,6 +1623,32 @@ function cloudAssignments() {
 
 const TRACKED_MEMORY_FILES = /^(soul\.md|memory\/(working|index)\.md|memory\/long-term\/[^/]+\.md)$/;
 
+/**
+ * Add a coworker the one way there is: the home on disk, its native workspace,
+ * the engine when it was not running yet, then the contract repair and tools.
+ * The Add screen, onboarding, and a suggestion the person accepts all land here.
+ */
+async function addCoworker(input) {
+  await ensurePlatformServer();
+  const hadEngine = Boolean(serverHandle?.managedOpencode);
+  const coworker = await createCoworker(coworkersDir, input);
+  // Registration is registry-level and works without an engine. Do it
+  // first, then restart when no engine was managed yet: the engine only
+  // spawns when the registry holds at least one workspace, so the restart
+  // must happen after this workspace is persisted.
+  const workspaceId = await registerCoworkerWorkspace(coworker);
+  const updated = await updateCoworker(coworkersDir, coworker.slug, { workspaceId, ...(input.model ? { model: input.model, modelVariant: input.modelVariant ?? "" } : {}) });
+  if (!hadEngine) {
+    await restartPlatformServer();
+  }
+  prepareCoworker(updated);
+  return updated;
+}
+
+function shortDate(at) {
+  return new Date(at).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+}
+
 const commands = {
   "runtime.info": async () => {
     await ensurePlatformServer();
@@ -1631,21 +1660,46 @@ const commands = {
   },
   "coworkers.list": async () => listPreparedCoworkers(),
   "coworkers.get": async ({ slug }) => getCoworker(coworkersDir, slug),
-  "coworkers.create": async ({ name, role, mission, avatarColor, avatarGlasses, personality }) => {
-    await ensurePlatformServer();
-    const hadEngine = Boolean(serverHandle?.managedOpencode);
-    const coworker = await createCoworker(coworkersDir, { name, role, mission, avatarColor, avatarGlasses, personality });
-    // Registration is registry-level and works without an engine. Do it
-    // first, then restart when no engine was managed yet: the engine only
-    // spawns when the registry holds at least one workspace, so the restart
-    // must happen after this workspace is persisted.
-    const workspaceId = await registerCoworkerWorkspace(coworker);
-    const updated = await updateCoworker(coworkersDir, coworker.slug, { workspaceId });
-    if (!hadEngine) {
-      await restartPlatformServer();
-    }
-    prepareCoworker(updated);
-    return updated;
+  "coworkers.create": async ({ name, role, mission, avatarColor, avatarGlasses, personality, roleId, firstNote }) =>
+    addCoworker({ name, role, mission, avatarColor, avatarGlasses, personality, roleId, firstNote }),
+  // The team: the catalog onboarding proposes from, the person's answers to a
+  // coworker's offers, and the states the conversation restores after a reload.
+  "team.catalog": async () => teamCatalog(),
+  "team.recommend": async ({ intents }) => recommendTeam(intents),
+  "team.states": async ({ slug }) => teamStates(coworkersDir, slug),
+  // Only this tap creates a coworker from a suggestion. It inherits the proposer's
+  // model, remembers who proposed it and why, and every team description refreshes.
+  "team.accept": async ({ slug, suggestionId, name }) => {
+    const suggestion = (await readSuggestions(coworkersDir, slug)).find((entry) => entry.id === suggestionId);
+    if (!suggestion) throw new Error("That suggestion is not on record.");
+    if (suggestion.state !== "offered") throw new Error("That suggestion was already answered.");
+    const proposer = await getCoworker(coworkersDir, slug);
+    const chosenName = typeof name === "string" && name.trim() ? name.trim().slice(0, 40) : suggestion.name;
+    const created = await addCoworker({
+      name: chosenName,
+      role: suggestion.role,
+      mission: suggestion.mission,
+      avatarColor: suggestion.avatarColor,
+      avatarGlasses: suggestion.avatarGlasses,
+      personality: suggestion.personality,
+      roleId: suggestion.roleId,
+      suggestedBy: { slug, why: suggestion.why },
+      firstNote: `Joined the team on ${shortDate(Date.now())}; ${proposer.name} suggested me because ${suggestion.why.replace(/\.$/, "")}.`,
+      model: proposer.model,
+      modelVariant: proposer.modelVariant,
+    });
+    await setSuggestionState(coworkersDir, slug, suggestionId, "accepted", { createdSlug: created.slug });
+    return created;
+  },
+  "team.decline": async ({ slug, suggestionId }) => {
+    const declined = await setSuggestionState(coworkersDir, slug, suggestionId, "declined");
+    // The decline reaches the coworker through its team description.
+    await refreshTeamRosters(coworkersDir, await listCoworkers(coworkersDir));
+    return { id: declined.id, state: declined.state, at: declined.stateAt };
+  },
+  "team.referralResolved": async ({ slug, referralId, outcome }) => {
+    const resolved = await setReferralState(coworkersDir, slug, referralId, outcome);
+    return { id: resolved.id, state: resolved.state, at: resolved.stateAt };
   },
   "coworkers.ensureWorkspace": async ({ slug }) => {
     await ensurePlatformServer();
