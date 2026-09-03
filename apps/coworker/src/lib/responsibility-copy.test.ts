@@ -6,6 +6,7 @@ import {
   describeRowStatus,
   describeRunTrend,
   describeScheduleForPeople,
+  describeScheduleInSentence,
   describeWhere,
   describeZone,
   outcomeForPrompt,
@@ -75,4 +76,29 @@ test("a row's status says what is happening, what happened, or what comes next",
   assert.equal(describeRowStatus({ ...base, latest: done, finished: done }, { now, locale }), "Done today at 12:05 PM");
   const failed = { outcome: "failed" as const, at: new Date(2026, 8, 1, 9, 0).getTime() };
   assert.equal(describeRowStatus({ ...base, latest: failed, finished: failed }, { now, locale }), "Didn't finish yesterday at 9:00 AM");
+});
+
+test("intervals and custom timetables read as everyday sentences too", () => {
+  assert.equal(
+    describeScheduleForPeople({ kind: "interval", everyMinutes: 120, from: { hour: 9, minute: 0 }, until: { hour: 18, minute: 0 }, maxPerDay: 4, timezone: localZone }, { localZone, locale }),
+    "Every 2 hours between 9:00 AM and 6:00 PM, up to 4 times a day",
+  );
+  assert.equal(
+    describeScheduleForPeople({ kind: "interval", everyMinutes: 60, daysOfWeek: [1, 2, 3, 4, 5], maxPerDay: 1, timezone: "Europe/Paris" }, { localZone, locale }),
+    "Every hour on weekdays, once a day (Paris time)",
+  );
+  assert.equal(
+    describeScheduleForPeople({ kind: "interval", everyMinutes: 720, from: { hour: 8, minute: 30 }, daysOfWeek: [1, 4], maxPerDay: 2, timezone: localZone }, { localZone, locale }),
+    "Every 12 hours from 8:30 AM on Monday and Thursday, up to 2 times a day",
+  );
+  assert.equal(describeScheduleForPeople({ kind: "cron", expression: "0 9 * * 1-5", maxPerDay: 4, timezone: localZone }, { localZone, locale }), "Every weekday at 9:00 AM, up to 4 times a day");
+  assert.equal(describeScheduleForPeople({ kind: "cron", expression: "30 18 * * *", maxPerDay: 1, timezone: localZone }, { localZone, locale }), "Every day at 6:30 PM, once a day");
+  assert.equal(describeScheduleForPeople({ kind: "cron", expression: "0 9-18/2 * * 1-5", maxPerDay: 4, timezone: localZone }, { localZone, locale }), "Every 2 hours between 9:00 AM and 6:00 PM on weekdays, up to 4 times a day");
+  assert.equal(describeScheduleForPeople({ kind: "cron", expression: "0 */3 * * *", maxPerDay: 4, timezone: localZone }, { localZone, locale }), "Every 3 hours, up to 4 times a day");
+  assert.equal(describeScheduleForPeople({ kind: "cron", expression: "15 8 1 * *", maxPerDay: 4, timezone: localZone }, { localZone, locale }), "On a custom timetable, up to 4 times a day");
+  assert.equal(describeScheduleForPeople({ kind: "cron", expression: "0 8,20 * * *", maxPerDay: 2, timezone: "UTC" }, { localZone, locale }), "On a custom timetable, up to 2 times a day (UTC)");
+  assert.equal(
+    describeScheduleInSentence({ kind: "interval", everyMinutes: 120, from: { hour: 9, minute: 0 }, until: { hour: 18, minute: 0 }, maxPerDay: 4, timezone: localZone }, { localZone, locale }),
+    "every 2 hours between 9:00 AM and 6:00 PM, up to 4 times a day",
+  );
 });
