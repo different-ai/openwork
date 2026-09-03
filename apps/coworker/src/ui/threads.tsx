@@ -501,7 +501,6 @@ export function ThreadsPanel({
       .then((threadId) => {
         setQueuedTurn({ id: turnRequest.id, threadId, prompt: turnRequest.prompt, messageId: newMessageId() });
         setOpenThreadId("");
-        setView("discussion");
       })
       .catch((cause) => setError(cause instanceof Error ? cause.message : String(cause)));
   }, [ensureDiscussion, turnRequest]);
