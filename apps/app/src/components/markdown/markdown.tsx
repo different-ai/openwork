@@ -16,6 +16,7 @@ import {
   hasFencedCodeBlock,
   renderHighlightedMarkdownHtml,
   renderMarkdownHtml,
+  renderUserMathHtml,
   setCodeCopyButtonState,
   setCodeWrapButtonState,
   syncMarkdownImagePreviews,
@@ -90,6 +91,7 @@ type MarkdownBlockInnerProps = {
   text: string;
   streaming?: boolean;
   highlightQuery?: string;
+  mathOnly?: boolean;
 } & Omit<
   React.ComponentProps<"div">,
   "ref" | "className" | "children" | "dangerouslySetInnerHTML"
@@ -100,6 +102,7 @@ function MarkdownBlockInner({
   text,
   streaming,
   highlightQuery,
+  mathOnly,
   ...props
 }: MarkdownBlockInnerProps) {
   const rootRef = useRef<HTMLDivElement>(null);
@@ -110,8 +113,11 @@ function MarkdownBlockInner({
   const [linkMenu, setLinkMenu] = useState<{ target: OpenTarget; rect: DOMRect } | null>(null);
   const [imagePreview, setImagePreview] = useState<{ src: string; alt: string } | null>(null);
   const syncHtml = useMemo(() => {
+    if (mathOnly) {
+      return renderUserMathHtml(text);
+    }
     return renderMarkdownHtml(text);
-  }, [text]);
+  }, [text, mathOnly]);
   const [highlightedHtml, setHighlightedHtml] = useState<{ text: string; html: string } | null>(null);
 
   const handleCodeBlockCopy = useCallback(async (button: HTMLButtonElement, code: string) => {
@@ -163,7 +169,8 @@ function MarkdownBlockInner({
   }, []);
 
   useEffect(() => {
-    if (streaming || !hasFencedCodeBlock(text)) {
+    // mathOnly renderer has no async shiki step — skip entirely.
+    if (mathOnly || streaming || !hasFencedCodeBlock(text)) {
       setHighlightedHtml(null);
       return;
     }
@@ -181,7 +188,7 @@ function MarkdownBlockInner({
     return () => {
       cancelled = true;
     };
-  }, [streaming, text]);
+  }, [streaming, text, mathOnly]);
 
   const candidateHtml = !streaming && highlightedHtml?.text === text ? highlightedHtml.html : syncHtml;
   const html = useSelectionStableValue(rootRef, candidateHtml);
