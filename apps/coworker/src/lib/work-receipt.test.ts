@@ -91,3 +91,49 @@ test("the coworker's document tools read as plain steps: wrote, updated by secti
   assert.equal(line, "Worked with documents and your files · 3 steps");
   assert.doesNotMatch(wrote.label + updated.label + aside.label, /[a-z]+_[a-z]+/);
 });
+
+test("the coworker's own assignment tools read as what changed, never as tool ids or JSON", () => {
+  const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const created = describeWorkStep({
+    tool: "coworker_assignment_create",
+    status: "completed",
+    input: { name: "Move the car", instructions: "Remind me to move the car.", schedule: { kind: "weekly", daysOfWeek: [1, 2, 3, 4, 5], hour: 9, minute: 0, timezone: zone } },
+    output: 'Created assignment "Move the car" · Every weekday at 9:00 AM\nNext run: tomorrow at 9:00 AM',
+  });
+  assert.deepEqual([created.label, created.service, created.state], ["Created assignment · Move the car · Every weekday at 9:00 AM", "your assignments", "done"]);
+  assert.equal(describeWorkStep({ tool: "coworker_assignment_create", status: "running", input: { name: "Move the car" } }).label, "Setting up an assignment · Move the car");
+  assert.equal(describeWorkStep({ tool: "coworker_assignment_create", status: "error", input: { name: "Move the car" }, error: "Runs on this Mac need at least 1 hour between them." }).label, "Couldn't create assignment · Move the car");
+  const changed = describeWorkStep({
+    tool: "coworker_assignment_update",
+    status: "completed",
+    input: { id: "abc", patch: { schedule: { kind: "interval", everyMinutes: 120, from: "09:00", until: "18:00", maxPerDay: 4, timezone: zone } } },
+    output: 'Changed assignment "Move the car" · Every 2 hours between 9:00 AM and 6:00 PM, up to 4 times a day',
+  });
+  assert.equal(changed.label, "Changed Move the car to every 2 hours between 9:00 AM and 6:00 PM, up to 4 times a day");
+  assert.equal(describeWorkStep({ tool: "coworker_assignment_update", status: "completed", input: { id: "abc", patch: { active: false } }, output: 'Paused assignment "Move the car"' }).label, "Paused Move the car");
+  assert.equal(describeWorkStep({ tool: "coworker_assignment_update", status: "completed", input: { id: "abc", patch: { active: true } }, output: 'Resumed assignment "Move the car"' }).label, "Resumed Move the car");
+  assert.equal(describeWorkStep({ tool: "coworker_assignment_update", status: "completed", input: { id: "abc", patch: { name: "Car day" } }, output: 'Renamed assignment "Move the car" to "Car day"' }).label, "Renamed Move the car to Car day");
+  assert.equal(describeWorkStep({ tool: "coworker_assignment_update", status: "completed", input: { id: "abc", patch: { instructions: "Also check the sign." } }, output: 'Changed assignment "Move the car"' }).label, "Changed what Move the car does");
+  assert.equal(describeWorkStep({ tool: "coworker_assignment_update", status: "running", input: { id: "abc", patch: { active: false } } }).label, "Changing the assignment");
+  assert.equal(describeWorkStep({ tool: "coworker_assignment_run_now", status: "completed", input: { id: "abc" }, output: 'Started assignment "Move the car" now' }).label, "Started Move the car now");
+  assert.equal(describeWorkStep({ tool: "coworker_assignment_remove", status: "completed", input: { id: "abc" }, output: 'Removed assignment "Move the car"' }).label, "Removed Move the car");
+  assert.equal(describeWorkStep({ tool: "coworker_assignments_list", status: "completed", input: {}, output: "2 assignments" }).label, "Checked the assignments");
+  const steps = [created, changed];
+  assert.equal(summarizeWork(steps), "Worked with your assignments · 2 steps");
+  for (const step of [created, changed]) assert.doesNotMatch(step.label, /coworker_|\{|"kind"/);
+});
+
+test("the coworker's memory and soul tools read as what it remembered or changed, and never echo a refused secret", () => {
+  const remembered = describeWorkStep({ tool: "coworker_memory_remember", status: "completed", input: { text: "You work in Product", kind: "long-term", topic: "About you" }, output: "Remembered in long-term memory (About you): You work in Product" });
+  assert.deepEqual([remembered.label, remembered.service], ["Remembered · You work in Product", "your memory"]);
+  assert.equal(describeWorkStep({ tool: "coworker_memory_remember", status: "completed", input: { text: "We use Slack and Linear", kind: "long-term" }, output: "Moved to long-term memory (Tools): We use Slack and Linear" }).label, "Moved to long-term memory · We use Slack and Linear");
+  assert.equal(describeWorkStep({ tool: "coworker_memory_remember", status: "running", input: { text: "You work in Product", kind: "working" } }).label, "Remembering · You work in Product");
+  assert.equal(describeWorkStep({ tool: "coworker_memory_remember", status: "error", input: { text: "API key sk-live-1234567890abcdef1234", kind: "working" }, error: "That looks like a secret." }).label, "Couldn't remember that");
+  assert.equal(describeWorkStep({ tool: "coworker_memory_forget", status: "completed", input: { target: "The launch is on Friday" }, output: "Forgot from working memory: The launch is on Friday" }).label, "Forgot · The launch is on Friday");
+  assert.equal(describeWorkStep({ tool: "coworker_soul_update", status: "completed", input: { section: "Communication", change: { kind: "add", text: "Shorter replies" } }, output: "Updated Communication: added \"Shorter replies\"" }).label, "Updated how I work · Shorter replies");
+  assert.equal(describeWorkStep({ tool: "coworker_soul_update", status: "completed", input: { section: "Principles", change: { kind: "remove", target: "Ask before emailing" } }, output: "Updated Principles" }).label, "Updated how I work · dropped “Ask before emailing”");
+  assert.equal(describeWorkStep({ tool: "coworker_soul_update", status: "error", input: { section: "Communication", change: { kind: "add", text: "password: hunter2" } } }).label, "Couldn't update how I work");
+  assert.equal(describeWorkStep({ tool: "coworker_self_read", status: "completed", input: { what: "memory" }, output: "# Working memory…" }).label, "Checked what I remember");
+  assert.equal(describeWorkStep({ tool: "coworker_self_read", status: "running", input: { what: "soul" } }).doing, "checking what I remember");
+  assert.equal(summarizeWork([remembered, describeWorkStep({ tool: "coworker_soul_update", status: "completed", input: { section: "Communication", change: { kind: "add", text: "Shorter replies" } } })]), "Worked with your memory · 2 steps");
+});
