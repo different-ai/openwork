@@ -466,6 +466,7 @@ async function restartPlatformServer() {
     serverHandle = null;
     await previous.stop().catch(() => undefined);
   }
+  warmedCoworkerWorkspaces.clear();
   return ensurePlatformServer();
 }
 
@@ -1063,6 +1064,64 @@ async function registerCoworkerWorkspace(coworker) {
   return workspaceId;
 }
 
+// OpenCode initializes plug-ins per workspace directory. A team landing in the
+// main screen can otherwise ask it to initialize every new coworker at once,
+// which is both slower and vulnerable to shared first-boot work colliding.
+// Keep that cold path one-at-a-time and remember completed work for this engine
+// process; normal reads remain fully concurrent after the warm-up.
+const warmedCoworkerWorkspaces = new Set();
+const coworkerWarmups = new Map();
+let coworkerWarmupTail = Promise.resolve();
+
+async function runCoworkerWorkspaceWarmup(coworker) {
+  let handle = await ensurePlatformServer();
+  if (!handle.managedOpencode || !coworker?.workspaceId) return;
+  let lastError = null;
+  // OpenCode's very first project request also prepares its SDK directory.
+  // In a blank profile that request can stay attached to the installer even
+  // after the files are ready. Bound it once, restart the still-idle engine,
+  // then make the real readiness read against the prepared directory.
+  for (const [attempt, timeoutMs] of [20_000, 60_000].entries()) {
+    try {
+      const response = await fetch(
+        `${handle.url}/workspace/${encodeURIComponent(coworker.workspaceId)}/opencode/provider`,
+        {
+          headers: { Authorization: `Bearer ${ownerToken}` },
+          signal: AbortSignal.timeout(timeoutMs),
+        },
+      );
+      if (response.ok) {
+        await response.arrayBuffer();
+        warmedCoworkerWorkspaces.add(coworker.workspaceId);
+        return;
+      }
+      lastError = new Error(`AI service answered with HTTP ${response.status}`);
+    } catch (error) {
+      lastError = error;
+    }
+    if (attempt === 0) {
+      handle = await restartPlatformServer();
+      if (!handle.managedOpencode) break;
+    }
+  }
+  throw new Error(
+    `The AI service did not finish preparing ${coworker.name}. ${lastError instanceof Error ? lastError.message : "Try again."}`,
+  );
+}
+
+function warmCoworkerWorkspace(coworker) {
+  if (!coworker?.workspaceId || warmedCoworkerWorkspaces.has(coworker.workspaceId)) return Promise.resolve();
+  const current = coworkerWarmups.get(coworker.workspaceId);
+  if (current) return current;
+  const warmup = coworkerWarmupTail
+    .catch(() => undefined)
+    .then(() => runCoworkerWorkspaceWarmup(coworker))
+    .finally(() => coworkerWarmups.delete(coworker.workspaceId));
+  coworkerWarmups.set(coworker.workspaceId, warmup);
+  coworkerWarmupTail = warmup;
+  return warmup;
+}
+
 // ---------------------------------------------------------------------------
 // Coworker tools: the app's own MCP server on loopback (documents and the
 // active context around them). One bearer token per coworker names the
@@ -1175,7 +1234,12 @@ function prepareCoworker(coworker) {
 async function listPreparedCoworkers() {
   const coworkers = await listCoworkers(coworkersDir);
   if (!coworkers.some((coworker) => !coworker.workspaceId)) {
-    for (const coworker of coworkers) prepareCoworker(coworker);
+    for (const coworker of coworkers) {
+      await warmCoworkerWorkspace(coworker).catch((error) => {
+        console.warn(`[open-coworker] could not warm ${coworker.slug}`, error);
+      });
+      prepareCoworker(coworker);
+    }
     return coworkers;
   }
 
@@ -1201,7 +1265,12 @@ async function listPreparedCoworkers() {
   if (registeredWorkspace && !serverHandle?.managedOpencode) {
     await restartPlatformServer();
   }
-  for (const coworker of prepared) prepareCoworker(coworker);
+  for (const coworker of prepared) {
+    await warmCoworkerWorkspace(coworker).catch((error) => {
+      console.warn(`[open-coworker] could not warm ${coworker.slug}`, error);
+    });
+    prepareCoworker(coworker);
+  }
   return prepared;
 }
 
@@ -1209,10 +1278,14 @@ async function listPreparedCoworkers() {
 async function ensureCoordinatorWorkspace() {
   await ensurePlatformServer();
   const coordinator = await ensureCoordinatorHome(coworkersDir);
-  if (coordinator.workspaceId) return coordinator;
+  if (coordinator.workspaceId) {
+    await warmCoworkerWorkspace(coordinator);
+    return coordinator;
+  }
   const workspaceId = await registerCoworkerWorkspace(coordinator);
   const updated = await updateCoordinator(coworkersDir, { workspaceId });
   if (!serverHandle?.managedOpencode) await restartPlatformServer();
+  await warmCoworkerWorkspace(updated);
   return updated;
 }
 
@@ -1641,6 +1714,7 @@ async function addCoworker(input) {
   if (!hadEngine) {
     await restartPlatformServer();
   }
+  await warmCoworkerWorkspace(updated);
   prepareCoworker(updated);
   return updated;
 }
@@ -1803,7 +1877,11 @@ const commands = {
     // the renderer reads the live address from here rather than from an earlier runtime.info.
     const base = { workspaceId, engineManaged, serverUrl: handle.url, ownerToken };
     if (!engineManaged) return { ...base, providers: [], signIns: {} };
-    const [providers, signIns] = await Promise.all([readEngineProviders(), readEngineSignIns()]);
+    // The first read is also the hidden workspace's cold start. Finish it
+    // before the second read so OpenCode never initializes the same directory
+    // twice at once on a new install.
+    const providers = await readEngineProviders();
+    const signIns = await readEngineSignIns();
     return { ...base, providers, signIns };
   },
   "localProviders.detect": async () => detectLocalProviders({ log: debugLog }),
