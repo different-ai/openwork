@@ -55,6 +55,8 @@ import { coworkerToolName } from "@/lib/coworker-tools";
 import { describeProgress, describeWorkStep, summarizeWork, technicalSections, type ProgressPhase, type WorkStep } from "@/lib/work-receipt";
 import { isServerTool, toolRefPath } from "@/lib/apps-tools";
 import { openPanelRoute } from "@/lib/panel-route";
+import { appsToolsRoute } from "@/lib/panel-views";
+import type { CoworkerSummaryLine, SummaryKind } from "@/lib/coworker-summary";
 import { describeTurnFailure } from "@/lib/turn-failure";
 import { useAutoGrow } from "@/ui/use-auto-grow";
 import { InteractionCards } from "@/ui/interactions";
@@ -178,14 +180,6 @@ function HeaderContent({ slots, title, actions }: { slots: HeaderSlots; title: R
   );
 }
 
-function AssignmentsLink({ count, onClick }: { count: number; onClick: () => void }) {
-  return (
-    <Button variant="ghost" onClick={onClick} title={`Work handed over to own${count ? ` · ${count}` : ""}`}>
-      Assignments{count ? ` · ${count}` : ""}
-    </Button>
-  );
-}
-
 function newMessageId(): string {
   return `msg_coworker_${Date.now().toString(36)}_${crypto.randomUUID().replaceAll("-", "").slice(0, 16)}`;
 }
@@ -222,6 +216,8 @@ export function ThreadsPanel({
   onOpenAccount,
   onActivityChange,
   documents,
+  summary = null,
+  onOpenSummary,
 }: {
   runtime: RuntimeInfo;
   session: DenSession | null;
@@ -234,8 +230,8 @@ export function ThreadsPanel({
   discussionDraft?: AssignmentDraft;
   /** Set by the context rail to jump straight into a thread; the id makes repeat requests distinct. */
   openThreadRequest?: { id: number; threadId: string } | null;
-  /** The one-off assignment threads as this column lists them, so the panel's Assignments can show the same ones. */
-  onAssignmentsChange?: (items: ThreadListItem[]) => void;
+  /** The one-off assignment threads as this column lists them, and what each waits on the person for, so the panel's Assignments show the same ones. */
+  onAssignmentsChange?: (items: ThreadListItem[], attention: Record<string, string>) => void;
   headerSlots: HeaderSlots;
   /** Coworker settings, opened at the AI model section — the first recovery step after a model failure. */
   onOpenModelSettings: () => void;
@@ -243,6 +239,10 @@ export function ThreadsPanel({
   onOpenAccount: () => void;
   onActivityChange: (activity: CoworkerActivity | null) => void;
   documents?: DocumentHooks;
+  /** What the coworker holds, for the quiet line under the composer; null hides the line. */
+  summary?: CoworkerSummaryLine | null;
+  /** A part of that line was chosen: open the matching level of Activity. */
+  onOpenSummary?: (kind: SummaryKind) => void;
 }) {
   const [discussionThreadId, setDiscussionThreadId] = useState(coworker.conversationThreadId);
   /** Thread ids registered as discussions in `discussions.json`; the open one is added even when unregistered. */
@@ -271,11 +271,8 @@ export function ThreadsPanel({
         : null,
     [runtime.serverUrl, runtime.ownerToken, coworker.workspaceId, coworker.model, coworker.modelVariant, discussionThreadId, discussionThreadIds, workerThreadIds],
   );
-  const [items, setItems] = useState<ThreadListItem[]>([]);
   const [discussions, setDiscussions] = useState<ThreadListItem[]>([]);
-  const [attentionBySession, setAttentionBySession] = useState<Record<string, string>>({});
   const [openThreadId, setOpenThreadId] = useState("");
-  const [view, setView] = useState<"discussion" | "assignments">("discussion");
   const [pendingAssignment, setPendingAssignment] = useState<AssignmentDraft>(assignmentDraft ?? null);
   const [queuedTurn, setQueuedTurn] = useState<QueuedTurn | null>(null);
   const [error, setError] = useState("");
@@ -314,21 +311,18 @@ export function ThreadsPanel({
   useEffect(() => {
     if (!assignmentDraft) return;
     setOpenThreadId("");
-    setView("discussion");
     setPendingAssignment(assignmentDraft);
   }, [assignmentDraft]);
 
   useEffect(() => {
     if (!discussionDraft) return;
     setOpenThreadId("");
-    setView("discussion");
   }, [discussionDraft]);
 
   useEffect(() => {
     if (!openThreadRequest?.threadId) return;
     if (openThreadRequest.threadId === discussionThreadId) {
       setOpenThreadId("");
-      setView("discussion");
       return;
     }
     setOpenThreadId(openThreadRequest.threadId);
@@ -346,8 +340,6 @@ export function ThreadsPanel({
       setWorkerThreadIds((current) => (current.length === workerIds.length && current.every((id, index) => id === workerIds[index]) ? current : workerIds));
       setWorkerRecords((current) => (current.length === workers.length && current.every((worker, index) => worker.id === workers[index]?.id && worker.updatedAt === workers[index]?.updatedAt) ? current : workers));
       const split = classifyThreads(all, { discussions: discussionThreadIds, workers: workerIds });
-      setItems(split.assignments);
-      onAssignmentsChange?.(split.assignments);
       setDiscussions(split.discussions);
       const attention: Record<string, string> = {};
       for (const permission of pending.permissions) {
@@ -356,7 +348,7 @@ export function ThreadsPanel({
       for (const question of pending.questions) {
         attention[question.sessionID] ??= describeInteractions({ permissions: [], questions: [question] });
       }
-      setAttentionBySession(attention);
+      onAssignmentsChange?.(split.assignments, attention);
       setError("");
       setFailingSince(null);
     } catch (cause) {
@@ -417,7 +409,6 @@ export function ThreadsPanel({
     try {
       await startDiscussion();
       setOpenThreadId("");
-      setView("discussion");
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     }
@@ -427,7 +418,6 @@ export function ThreadsPanel({
   const openDiscussion = useCallback(async (threadId: string) => {
     if (!threadId || threadId === discussionThreadId) {
       setOpenThreadId("");
-      setView("discussion");
       return;
     }
     try {
@@ -435,7 +425,6 @@ export function ThreadsPanel({
       setDiscussionThreadId(threadId);
       onCoworkerChanged(updated);
       setOpenThreadId("");
-      setView("discussion");
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     }
@@ -454,7 +443,6 @@ export function ThreadsPanel({
     });
     setPendingAssignment(null);
     setOpenThreadId(thread.id);
-    setView("discussion");
     void refresh();
   }, [refresh, threads]);
 
@@ -494,15 +482,12 @@ export function ThreadsPanel({
         coworker={coworker}
         runtime={runtime}
         kind={workerThreadIds.includes(openThreadId) ? "worker" : "assignment"}
-        assignmentCount={items.length}
         headerSlots={headerSlots}
         initialTurn={queuedTurn?.threadId === openThreadId ? queuedTurn : null}
         onBack={() => {
           setOpenThreadId("");
-          setView("discussion");
           void refresh();
         }}
-        onShowAssignments={() => setView("assignments")}
         onInitialTurnHandled={(id) => setQueuedTurn((current) => current?.id === id ? null : current)}
         onOpenModelSettings={onOpenModelSettings}
         onOpenAccount={onOpenAccount}
@@ -511,26 +496,8 @@ export function ThreadsPanel({
         onActivityChange={onActivityChange}
         onCoworkerChanged={onCoworkerChanged}
         documents={documents}
-      />
-    );
-  }
-
-  if (view === "assignments") {
-    return (
-      <AssignmentOverview
-        coworker={coworker}
-        headerSlots={headerSlots}
-        problem={workspaceProblem}
-        warmingUp={warmingUp}
-        onRetry={() => void refresh()}
-        items={items}
-        attentionBySession={attentionBySession}
-        onOpen={setOpenThreadId}
-        onBack={() => setView("discussion")}
-        onNewAssignment={() => {
-          setPendingAssignment({ id: Date.now(), text: "" });
-          setView("discussion");
-        }}
+        summary={summary}
+        onOpenSummary={onOpenSummary}
       />
     );
   }
@@ -543,9 +510,7 @@ export function ThreadsPanel({
         problem={workspaceProblem}
         warmingUp={warmingUp}
         onRetry={() => void refresh()}
-        assignmentCount={items.length}
         assignmentDraft={pendingAssignment}
-        onShowAssignments={() => setView("assignments")}
         onStartDiscussion={async (text) => {
           const threadId = await ensureDiscussion();
           setQueuedTurn({ id: Date.now(), threadId, prompt: text, messageId: newMessageId() });
@@ -553,6 +518,8 @@ export function ThreadsPanel({
         onCreateAssignment={createAssignment}
         onAssignmentDraftHandled={() => setPendingAssignment(null)}
         discussionDraft={discussionDraft}
+        summary={summary}
+        onOpenSummary={onOpenSummary}
       />
     );
   }
@@ -565,7 +532,6 @@ export function ThreadsPanel({
       coworker={coworker}
       runtime={runtime}
       kind="discussion"
-      assignmentCount={items.length}
       headerSlots={headerSlots}
       assignmentDraft={pendingAssignment}
       discussionDraft={discussionDraft}
@@ -574,7 +540,6 @@ export function ThreadsPanel({
       onOpenDiscussion={(threadId) => void openDiscussion(threadId)}
       onNewDiscussion={() => void openNewDiscussion()}
       onBack={() => undefined}
-      onShowAssignments={() => setView("assignments")}
       onCreateAssignment={createAssignment}
       onAssignmentDraftHandled={() => setPendingAssignment(null)}
       onInitialTurnHandled={(id) => setQueuedTurn((current) => current?.id === id ? null : current)}
@@ -587,6 +552,8 @@ export function ThreadsPanel({
       documents={documents}
       workers={workerRecords}
       onWorkersChanged={() => void refresh()}
+      summary={summary}
+      onOpenSummary={onOpenSummary}
     />
   );
 }
@@ -596,27 +563,27 @@ function DiscussionWelcome({
   problem,
   warmingUp,
   onRetry,
-  assignmentCount,
   assignmentDraft,
   onStartDiscussion,
   onCreateAssignment,
-  onShowAssignments,
   onAssignmentDraftHandled,
   discussionDraft,
   headerSlots,
+  summary,
+  onOpenSummary,
 }: {
   coworker: CoworkerSummary;
   problem: WorkspaceProblem | null;
   warmingUp: boolean;
   onRetry: () => void;
-  assignmentCount: number;
   assignmentDraft?: AssignmentDraft;
   discussionDraft?: AssignmentDraft;
   headerSlots: HeaderSlots;
   onStartDiscussion: (text: string) => Promise<void>;
   onCreateAssignment: (outcome: string, messages: ReadonlyArray<DiscussionMessage>) => Promise<void>;
-  onShowAssignments: () => void;
   onAssignmentDraftHandled: () => void;
+  summary?: CoworkerSummaryLine | null;
+  onOpenSummary?: (kind: SummaryKind) => void;
 }) {
   const [message, setMessage] = useState("");
   const [assignmentText, setAssignmentText] = useState("");
@@ -673,7 +640,6 @@ function DiscussionWelcome({
       <HeaderContent
         slots={headerSlots}
         title={<span className="truncate">New discussion</span>}
-        actions={<AssignmentsLink count={assignmentCount} onClick={onShowAssignments} />}
       />
       <div className="min-h-0 flex-1 overflow-y-auto px-6 py-8">
         {problem ? <WorkspaceProblemNote problem={problem} onRetry={onRetry} /> : null}
@@ -694,87 +660,9 @@ function DiscussionWelcome({
         waiting={warmingUp ? `Getting ${coworker.name} ready` : undefined}
         error={composerError}
         coworkerName={coworker.name}
+        summary={summary}
+        onOpenSummary={onOpenSummary}
       />
-    </section>
-  );
-}
-
-function AssignmentOverview({
-  coworker,
-  items,
-  attentionBySession,
-  problem,
-  warmingUp,
-  onRetry,
-  onOpen,
-  onBack,
-  onNewAssignment,
-  headerSlots,
-}: {
-  coworker: CoworkerSummary;
-  items: ThreadListItem[];
-  attentionBySession: Record<string, string>;
-  problem: WorkspaceProblem | null;
-  warmingUp: boolean;
-  onRetry: () => void;
-  onOpen: (threadId: string) => void;
-  onBack: () => void;
-  onNewAssignment: () => void;
-  headerSlots: HeaderSlots;
-}) {
-  return (
-    <section className="flex h-full min-h-0 flex-col bg-ink" data-testid="coworker-assignments-view">
-      <HeaderContent
-        slots={headerSlots}
-        title={<span className="truncate">Assignments · work {coworker.name} owns</span>}
-        actions={(
-          <>
-            <Button variant="ghost" onClick={onBack} title="Back to discussion">Back</Button>
-            <Button variant="primary" onClick={onNewAssignment}>New assignment</Button>
-          </>
-        )}
-      />
-      <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
-        {problem ? <WorkspaceProblemNote problem={problem} onRetry={onRetry} /> : null}
-        {items.length === 0 && warmingUp ? (
-          <div className="py-10 text-center text-xs text-mist"><InlineLoader label={`Getting ${coworker.name} ready`} /></div>
-        ) : null}
-        {items.length === 0 && !problem && !warmingUp ? (
-          <div className="mx-auto flex h-full max-w-md flex-col items-center justify-center text-center">
-            <h3 className="text-base font-semibold text-snow">No assignments yet</h3>
-            <p className="mt-1 text-sm leading-relaxed text-mist">Talk things through first, then turn a clear outcome into work.</p>
-            <Button className="mt-4" onClick={onNewAssignment}>Create from discussion</Button>
-          </div>
-        ) : null}
-        {items.length > 0 ? (
-          <div className="mx-auto max-w-3xl">
-            <div className="mb-3 flex items-center justify-between">
-              <h3 className="text-xs font-semibold uppercase tracking-[0.14em] text-mist">Current and recent</h3>
-              <span className="text-xs text-mist">{items.length} assignment{items.length === 1 ? "" : "s"}</span>
-            </div>
-            <ul className="space-y-1.5">
-              {items.map((item) => (
-                <li key={item.id}>
-                  <button className="flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left transition-colors hover:bg-panel" onClick={() => onOpen(item.id)}>
-                    <StatusDot tone={attentionBySession[item.id] ? "amber" : threadTone(item.status)} />
-                    <span className="min-w-0 flex-1 truncate text-sm font-medium text-snow">{item.title}</span>
-                    <span className={`shrink-0 text-xs ${attentionBySession[item.id] ? "font-medium text-amber" : "text-mist"}`} title={attentionBySession[item.id] || undefined}>
-                      {attentionBySession[item.id]
-                        ? "Needs you"
-                        : item.status === "busy"
-                          ? "Working"
-                          : item.status === "retry"
-                            ? "Retrying"
-                            : relativeTime(item.updatedAt)}
-                    </span>
-                    <span className="text-mist" aria-hidden="true">›</span>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          </div>
-        ) : null}
-      </div>
     </section>
   );
 }
@@ -902,7 +790,6 @@ function ThreadView({
   coworker,
   runtime,
   kind,
-  assignmentCount,
   assignmentDraft,
   discussionDraft,
   initialTurn,
@@ -910,7 +797,6 @@ function ThreadView({
   onOpenDiscussion,
   onNewDiscussion,
   onBack,
-  onShowAssignments,
   onCreateAssignment,
   onAssignmentDraftHandled,
   onInitialTurnHandled,
@@ -924,6 +810,8 @@ function ThreadView({
   documents,
   workers = [],
   onWorkersChanged,
+  summary = null,
+  onOpenSummary,
 }: {
   threads: NonNullable<ReturnType<typeof createCoworkerThreads>>;
   threadId: string;
@@ -931,7 +819,6 @@ function ThreadView({
   runtime: RuntimeInfo;
   /** `worker`: a Worker's own thread, shown read-only; steering and stopping live in the Workers view. */
   kind: "discussion" | "assignment" | "worker";
-  assignmentCount: number;
   headerSlots: HeaderSlots;
   /** The coworker's Workers; one waiting for a decision asks for it here, in the discussion. */
   workers?: WorkerSummary[];
@@ -944,7 +831,6 @@ function ThreadView({
   onOpenDiscussion?: (threadId: string) => void;
   onNewDiscussion?: () => void;
   onBack: () => void;
-  onShowAssignments: () => void;
   onCreateAssignment?: (outcome: string, messages: ReadonlyArray<DiscussionMessage>) => Promise<void>;
   onAssignmentDraftHandled?: () => void;
   onInitialTurnHandled: (id: number) => void;
@@ -955,6 +841,9 @@ function ThreadView({
   onActivityChange: (activity: CoworkerActivity | null) => void;
   onCoworkerChanged: (coworker: CoworkerSummary) => void;
   documents?: DocumentHooks;
+  /** What the coworker holds, for the quiet line under the composer; null hides it. */
+  summary?: CoworkerSummaryLine | null;
+  onOpenSummary?: (kind: SummaryKind) => void;
 }) {
   const [messages, setMessages] = useState<TranscriptMessage[]>([]);
   /** Long replies already reported this mount; the store also refuses a repeat by message id. */
@@ -1471,9 +1360,8 @@ function ThreadView({
         )}
         actions={(
           <>
-            {kind !== "discussion" ? <Button variant="ghost" onClick={onBack} title="Back to discussion">Back</Button> : null}
+            {kind !== "discussion" ? <Button variant="ghost" onClick={onBack}>Back</Button> : null}
             {(working || needsYou) && kind !== "worker" ? <Button variant="ghost" onClick={() => void stop()}>Stop</Button> : null}
-            {kind === "discussion" ? <AssignmentsLink count={assignmentCount} onClick={onShowAssignments} /> : null}
           </>
         )}
       />
@@ -1589,6 +1477,8 @@ function ThreadView({
           onCreateAssignment={() => void createAssignmentFromDiscussion()}
           busy={pendingTurn !== null || assignmentBusy}
           coworkerName={coworker.name}
+          summary={summary}
+          onOpenSummary={onOpenSummary}
         />
       ) : kind === "worker" ? (
         <p className="border-t border-line px-5 py-3 text-center text-[11px] text-mist" data-testid="coworker-worker-readonly">
@@ -1601,6 +1491,8 @@ function ThreadView({
           onSubmit={() => void send()}
           busy={pendingTurn !== null}
           placeholder={`Follow up with ${coworker.name}…`}
+          summary={summary}
+          onOpenSummary={onOpenSummary}
         />
       )}
     </section>
@@ -2071,7 +1963,7 @@ function WorkReceipt({ calls, client }: { calls: TranscriptToolCall[]; client: C
                       className={`min-w-0 flex-1 truncate text-left hover:underline ${step.state === "failed" ? "text-rose" : "text-snow"}`}
                       title="Open in Apps & tools"
                       data-testid="coworker-work-step-open"
-                      onClick={() => openPanelRoute({ view: "capabilities", path: toolRefPath(call.tool, step.label) })}
+                      onClick={() => openPanelRoute(appsToolsRoute(toolRefPath(call.tool, step.label)))}
                     >
                       {step.label}
                     </button>
@@ -2267,6 +2159,8 @@ function DiscussionComposer({
   waiting,
   error,
   coworkerName,
+  summary = null,
+  onOpenSummary,
 }: {
   message: string;
   onMessageChange: (value: string) => void;
@@ -2281,6 +2175,8 @@ function DiscussionComposer({
   waiting?: string;
   error?: string;
   coworkerName: string;
+  summary?: CoworkerSummaryLine | null;
+  onOpenSummary?: (kind: SummaryKind) => void;
 }) {
   const value = assignmentMode ? assignment : message;
   const submit = assignmentMode ? onCreateAssignment : onSend;
@@ -2335,10 +2231,42 @@ function DiscussionComposer({
           <span className="hidden sm:inline" data-testid="coworker-composer-hint">
             {waiting && !busy ? `${waiting}…` : `Enter to ${assignmentMode ? "create" : "send"} · Shift Enter for a new line`}
           </span>
-          <span className="shrink-0 font-medium tracking-[0.06em]">Powered by OpenWork</span>
+          <SummaryLine summary={summary} onOpen={onOpenSummary} />
         </div>
       </div>
     </div>
+  );
+}
+
+/**
+ * One discreet line about what the coworker holds — "2 assignments · 1 Worker ·
+ * 3 documents" — at the foot of the conversation. Each part opens its level of
+ * Activity; a dot after "documents" marks ones changed since the person looked.
+ */
+export function SummaryLine({ summary, onOpen }: { summary: CoworkerSummaryLine | null; onOpen?: (kind: SummaryKind) => void }) {
+  if (!summary) return null;
+  if (summary.parts.length === 0) {
+    return <span className="shrink-0 truncate" data-testid="coworker-summary-line">{summary.text}</span>;
+  }
+  return (
+    <span className="flex min-w-0 shrink-0 items-center gap-1" data-testid="coworker-summary-line">
+      {summary.parts.map((part, index) => (
+        <Fragment key={part.kind}>
+          {index > 0 ? <span aria-hidden="true">·</span> : null}
+          <button
+            type="button"
+            className="inline-flex items-center gap-1 rounded px-0.5 text-mist/80 transition-colors hover:text-snow focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-spark/60"
+            onClick={() => onOpen?.(part.kind)}
+            disabled={!onOpen}
+            data-testid={`summary-part-${part.kind}`}
+            data-count={part.count}
+          >
+            {part.label}
+            {part.changed > 0 ? <span className="size-1 rounded-full bg-spark" aria-hidden="true" data-testid="documents-changed-dot" /> : null}
+          </button>
+        </Fragment>
+      ))}
+    </span>
   );
 }
 
@@ -2374,12 +2302,16 @@ function MessageComposer({
   onSubmit,
   busy,
   placeholder,
+  summary = null,
+  onOpenSummary,
 }: {
   value: string;
   onChange: (value: string) => void;
   onSubmit: () => void;
   busy: boolean;
   placeholder: string;
+  summary?: CoworkerSummaryLine | null;
+  onOpenSummary?: (kind: SummaryKind) => void;
 }) {
   const canSubmit = !busy && Boolean(value.trim());
   const fieldRef = useRef<HTMLTextAreaElement>(null);
@@ -2404,9 +2336,11 @@ function MessageComposer({
           />
           <SendButton label={busy ? "Working…" : "Send"} busy={busy} disabled={!canSubmit} onClick={onSubmit} />
         </div>
-        <div className="mt-1.5 flex items-center justify-end px-1 text-[9px] text-mist/65">
-          <span className="font-medium tracking-[0.06em]">Powered by OpenWork</span>
-        </div>
+        {summary ? (
+          <div className="mt-1.5 flex items-center justify-end px-1 text-[9px] text-mist/65">
+            <SummaryLine summary={summary} onOpen={onOpenSummary} />
+          </div>
+        ) : null}
       </div>
     </div>
   );

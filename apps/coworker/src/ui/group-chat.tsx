@@ -2,7 +2,9 @@ import { createHeadlessThreadClient, isRunning, type HeadlessThreadClient, type 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { coworkerBridge, type CoworkerGroupSummary, type CoworkerGroupTurn, type CoworkerSummary, type GroupTimelineEvent, type RuntimeInfo } from "@/lib/bridge";
 import { assignmentPrompt, assignmentTitle, timeLabelBetween, type DiscussionMessage } from "@/lib/conversation";
-import { registerDiscussion } from "@/lib/discussions";
+import { combineSummaryLines, describeCoworkerSummary, type CoworkerSummaryLine } from "@/lib/coworker-summary";
+import { classifyThreads, discussionIds, loadDiscussionRegistry, registerDiscussion } from "@/lib/discussions";
+import { lastDocumentsOpened } from "@/ui/documents";
 import { ROUTING_TIMEOUT_MS, earlierSpeakerOrders, facilitatorModels, facilitatorPrompt, routeWithFacilitator, type FacilitatorAsk } from "@/lib/facilitator";
 import {
   busyGroupSpeakers,
@@ -38,7 +40,7 @@ import { CoworkerAvatar } from "@/ui/coworker-avatar";
 import { GroupAvatars } from "@/ui/coworker-rail";
 import { InteractionCard, LETTERS, OptionRow, typingInField } from "@/ui/interactions";
 import { ActionMenu, Button, ErrorNote, PlusIcon, StatusDot } from "@/ui/kit";
-import { SendButton } from "@/ui/threads";
+import { SendButton, SummaryLine } from "@/ui/threads";
 import { useAutoGrow } from "@/ui/use-auto-grow";
 
 /** How long one coworker may take over one reply before the turn moves on. */
@@ -123,6 +125,56 @@ function mentionAtCaret(value: string, caret: number): { start: number; query: s
 
 type MentionOption = { handle: string; label: string; detail: string; member: CoworkerSummary | null };
 
+/** How often the members' holdings are re-read for the composer's line; a group's line is informative, not live. */
+const GROUP_HOLDINGS_POLL_MS = 15_000;
+
+/**
+ * What the members hold, added up for the composer's quiet line. Each member is
+ * read the way its own home reads it — one-off assignments from its threads,
+ * scheduled ones, live Workers, documents in play — so the numbers agree.
+ * Null until the first read, and null when nobody holds anything.
+ */
+function useGroupHoldings(members: readonly CoworkerSummary[], runtime: RuntimeInfo): CoworkerSummaryLine | null {
+  const [line, setLine] = useState<CoworkerSummaryLine | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    const read = async () => {
+      const lines = await Promise.all(members.map(async (member) => {
+        const [workers, scheduled, documents, registry] = await Promise.all([
+          coworkerBridge.workers.list(member.slug).catch(() => []),
+          coworkerBridge.localResponsibilities.list(member.slug).catch(() => []),
+          coworkerBridge.documents.list(member.slug).catch(() => []),
+          loadDiscussionRegistry(member.slug).catch((): string[] => []),
+        ]);
+        const all = member.workspaceId && runtime.engineManaged
+          ? await createCoworkerThreads({ serverUrl: runtime.serverUrl, workspaceId: member.workspaceId, token: runtime.ownerToken }).listAllThreads().catch(() => [])
+          : [];
+        const split = classifyThreads(all, {
+          discussions: discussionIds(registry, member.conversationThreadId),
+          workers: workers.map((worker) => worker.threadId).filter(Boolean),
+        });
+        return describeCoworkerSummary({
+          assignments: split.assignments,
+          scheduled,
+          workers,
+          documents,
+          documentsSeenAt: lastDocumentsOpened(member.slug),
+        });
+      }));
+      if (cancelled) return;
+      const combined = combineSummaryLines(lines);
+      setLine(combined.parts.length > 0 ? combined : null);
+    };
+    void read();
+    const timer = window.setInterval(() => void read(), GROUP_HOLDINGS_POLL_MS);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [members, runtime.engineManaged, runtime.ownerToken, runtime.serverUrl]);
+  return line;
+}
+
 /**
  * A group chat: the person and several coworkers in one conversation. Each
  * reply is a real turn in that coworker's own workspace on a group-specific
@@ -187,6 +239,7 @@ export function GroupChat({
   );
   const membersRef = useRef(members);
   membersRef.current = members;
+  const holdings = useGroupHoldings(members, runtime);
   const nameFor = useCallback((slug: string) => coworkers.find((coworker) => coworker.slug === slug)?.name ?? slug, [coworkers]);
 
   useEffect(() => {
@@ -793,9 +846,13 @@ export function GroupChat({
               )}
             </div>
           </div>
-          <p className="mt-1.5 px-12 text-[9px] text-mist/65">
-            {assignmentMode ? "Enter to choose who owns it · Shift Enter for a new line" : "Enter to send · Shift Enter for a new line · @name chooses who answers, @everyone asks all"}
-          </p>
+          <div className="mt-1.5 flex items-center justify-between gap-3 px-12 text-[9px] text-mist/65">
+            <p className="min-w-0 truncate">
+              {assignmentMode ? "Enter to choose who owns it · Shift Enter for a new line" : "Enter to send · Shift Enter for a new line · @name chooses who answers, @everyone asks all"}
+            </p>
+            {/* What the members hold between them; the line stays away while nobody holds anything. */}
+            <SummaryLine summary={holdings} />
+          </div>
         </div>
       </div>
     </div>

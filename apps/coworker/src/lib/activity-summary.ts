@@ -103,7 +103,8 @@ export type NowSummary = {
  * about.
  */
 export function describeNow(activity: CoworkerActivity | undefined): NowSummary {
-  if (!activity) return { subject: "", note: "Checking status…", needsYou: false };
+  // Until the first activity arrives the header already says it is checking; the row stays quiet.
+  if (!activity) return { subject: "", note: "", needsYou: false };
   switch (activity.state) {
     case "working":
       return { subject: activity.detail, note: activity.workers?.subject ? "A Worker, working on it" : "", needsYou: false };

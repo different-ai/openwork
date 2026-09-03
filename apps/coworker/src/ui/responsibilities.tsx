@@ -398,16 +398,16 @@ export function ResponsibilitiesPanel({
       ) : null}
 
       {rows.length === 0 && canAdd ? (
-        <div className="rounded-2xl border border-dashed border-line bg-ink px-4 py-5 text-center" data-testid="responsibilities-empty">
+        <div className="flex items-center justify-between gap-3 px-1 py-2" data-testid="responsibilities-empty">
           <p className="text-xs text-mist">Nothing on a schedule yet.</p>
-          <Button variant="default" className="mt-3 text-xs" onClick={() => setAdding(session ? "cloud" : "local")}>
+          <Button variant="ghost" className="shrink-0 px-2 text-xs" onClick={() => setAdding(session ? "cloud" : "local")}>
             Add assignment
           </Button>
         </div>
       ) : null}
 
       {rows.length > 0 ? (
-        <ul className="divide-y divide-line rounded-2xl border border-line bg-ink" data-testid="responsibility-list">
+        <ul className="divide-y divide-line" data-testid="responsibility-list">
           {rows.map((row) => {
             const expanded = openRow === row.key;
             const statusClass = row.statusTone === "rose"
@@ -421,7 +421,7 @@ export function ResponsibilitiesPanel({
                     : "text-mist";
             return (
               <li key={row.key} data-testid="responsibility-row" data-state={row.state} data-expanded={expanded ? "true" : "false"}>
-                <div className="flex items-start gap-2.5 px-3.5 py-3">
+                <div className="flex items-start gap-2.5 px-1 py-3">
                   <span className="mt-1.5"><StatusDot tone={row.tone} /></span>
                   <button
                     type="button"
@@ -460,15 +460,15 @@ export function ResponsibilitiesPanel({
       ) : null}
 
       {others.length > 0 ? (
-        <details className="rounded-2xl border border-line bg-ink px-3 py-2.5">
+        <details className="border-t border-line px-1 py-2.5">
           <summary className="cursor-pointer text-xs font-medium text-mist">
             {others.length} more in your organization
           </summary>
-          <ul className="mt-2 space-y-2">
+          <ul className="mt-2 divide-y divide-line/60">
             {others.map((entry) => {
               const owner = ownerOf(entry);
               return (
-                <li key={entry.automation.id} className="rounded-xl bg-panel p-2.5">
+                <li key={entry.automation.id} className="py-2">
                   <p className="text-xs font-medium text-snow">{entry.automation.name}</p>
                   <p className="mt-0.5 text-[11px] text-mist">{owner ? `Looked after by ${owner.name}` : describeScheduleForPeople(entry.revision.schedule)}</p>
                   {!owner ? (
@@ -656,7 +656,7 @@ function AddResponsibility({
   onCreatedCloud: (automationId: string) => Promise<void>;
 }) {
   return (
-    <div className="space-y-3 rounded-2xl border border-line bg-ink p-3" data-testid="add-responsibility">
+    <div className="space-y-3 border-y border-line px-1 py-3" data-testid="add-responsibility">
       <div className="flex items-center justify-between gap-3">
         <p className="text-xs font-semibold text-snow">New assignment on a schedule</p>
         <Button variant="ghost" className="px-2 text-xs" onClick={onCancel}>Cancel</Button>

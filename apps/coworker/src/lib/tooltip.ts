@@ -3,6 +3,8 @@
  * for the panel strip is unit-tested against the plain-words rule and the
  * placement math is tested against the window's edges.
  */
+import type { PanelView } from "./panel-views.ts";
+
 export type TooltipSide = "top" | "bottom" | "left" | "right";
 
 /** How long the pointer rests before a tooltip appears; long enough not to flicker on the way past. */
@@ -34,15 +36,6 @@ export function tooltipPosition(
     left: Math.max(TOOLTIP_VIEWPORT_MARGIN_PX, Math.min(left, maxLeft)),
   };
 }
-
-/** The three views the folded strip offers. */
-export type PanelView = "overview" | "memory" | "settings";
-
-export const PANEL_VIEW_TITLES: Record<PanelView, string> = {
-  overview: "Activity",
-  memory: "Memory",
-  settings: "Coworker settings",
-};
 
 /**
  * What each strip icon's tooltip says: the view's name, then what it shows, in

@@ -17,8 +17,12 @@ export type PanelRoute<View extends string = string> = {
   path: PanelCrumb[];
 };
 
-/** Root → group → item; a deeper push replaces the last level instead of nesting further. */
-export const MAX_PANEL_DEPTH = 3;
+/**
+ * Root → level → group → item: Coworker settings › Apps & tools › Apps › one App
+ * is the deepest trail; a deeper push replaces the last level instead of
+ * nesting further.
+ */
+export const MAX_PANEL_DEPTH = 4;
 
 export function rootRoute<View extends string>(view: View): PanelRoute<View> {
   return { view, path: [] };
