@@ -10,7 +10,7 @@ adds no new database concepts.
 ```
 ~/.config/openwork/coworkers/<slug>/   ← via @openwork/paths openworkConfigDir()
 ├── AGENTS.md          coworker contract: conduct + memory maintenance duties
-├── opencode.json      instructions: soul.md, memory/working.md, memory/index.md
+├── opencode.json      instructions: soul.md, memory/working.md, memory/index.md, documents/index.md
 ├── coworker.md        app-owned profile, workspace id, model + reasoning preference
 ├── discussions.json   which native threads are discussions (the open one is in coworker.md)
 ├── local-responsibilities.json  local schedule and run state
@@ -20,7 +20,12 @@ adds no new database concepts.
 ├── memory/
 │   ├── working.md     active memory the coworker itself edits while working
 │   ├── index.md       always-loaded map of long-term memories
-│   └── long-term/     durable Markdown memories, read on demand
+│   ├── long-term/     durable Markdown memories, read on demand
+│   └── style.jsonl    when a reply ran long with no document behind it
+├── documents/
+│   ├── index.md       always-loaded list of the documents in play
+│   ├── <id>.md        a document: frontmatter + Markdown body
+│   └── .history/      the last five revisions of each document
 └── workspace/         the coworker's working area
 ```
 
@@ -174,6 +179,75 @@ The coworker directory is registered as an ordinary OpenWork workspace, so:
   armed permanent delete. Retirement is refused while one of the coworker's
   scheduled assignments or Workers is still running.
 
+## Documents and how coworkers talk
+
+A coworker answers like a colleague in a chat, not like a report: the point
+first, two to four sentences, at most three highlights, rarely more than about
+120 words. When the answer needs more than that — a plan, a comparison,
+research, a draft, a summary of many things — the coworker writes or updates a
+**document** in the same turn and answers with the short version, naming the
+document. The person is never buried in text and always has one clean place to
+read more.
+
+- **The coworker's document tools** are served by the app itself: the Electron
+  main process answers MCP over loopback HTTP (`electron/coworker-tools.mjs`)
+  and registers that endpoint in each coworker workspace like any remote MCP,
+  with a per-coworker bearer token that names the coworker (so no tool takes a
+  coworker id from the model). The tools are `documents_list`,
+  `document_create { title, summary, highlights, body }`, `document_update`
+  (a whole body, or `patch: { heading, content }` to replace one `##` section),
+  `document_read`, `context_set { active, aside }`, and `document_archive`
+  (only when the person asked for it). Each returns one plain sentence plus the
+  card fields. Ids come from titles (`launch-plan`), writes are atomic, and a
+  body that looks like it carries a credential is refused with a sentence the
+  coworker can act on.
+- **Active context.** `documents/index.md` lists the active set (`- <id> —
+  <title> — <summary>`) and is loaded every turn beside `memory/index.md`, so
+  the coworker always knows what it has. Every time it creates or refreshes a
+  document it reconsiders the set with `context_set` and puts aside what the
+  current work no longer needs (about five stay in play). Coworkers never
+  archive on their own. A document the person edited is marked in the index so
+  the coworker asks before rewriting it.
+- **The Documents view** in the right panel (strip icon between Activity and
+  Apps & tools, with a small dot when something changed since it was last
+  opened) shows two flat groups — Active by last update and Put aside, closed
+  by default — plus Archived behind a quiet link. A row is title, one-line
+  summary, when, and *by <coworker> / by you*. Opening a document shows a
+  reading header (title, updated, revision) over Markdown rendered for reading
+  (`lib/document-markdown.ts`: a 68ch measure, stable heading ids with a quiet
+  table of contents at three or more sections, tables, task lists, code with
+  Copy, `> **Note**` callouts, images only from inside the coworker home,
+  `doc:<id>` links between documents, raw HTML shown as text) with Edit in
+  place (saved as the person's revision), Ask <name> to update (drops
+  `Update "Title" with …` into the composer), Put aside / Make active, Copy,
+  Export to a chosen `.md`, History (revisions with a side-by-side line diff
+  and Restore), Archive, and — when the window is wide enough — Open beside, a
+  reading pane in a second column next to the conversation.
+- **The card in a bubble.** When a reply's turn created or updated a document,
+  the bubble ends with a compact card — title, summary, up to three
+  highlights, Open — built from the tool calls (`lib/documents.ts`), so no
+  Markdown from the model is needed; an update reads *Updated · Timeline
+  section*. Receipts say *Wrote a document · Launch plan*, *Updated Launch plan
+  · Timeline section*, *Put aside · Old vendor notes*.
+- **Soft enforcement.** A finished reply longer than about 1,200 characters
+  with no document call in its turn renders as its first paragraph behind a
+  quiet **Show the rest**; nothing is cut. The app records it in
+  `memory/style.jsonl` and the index carries a one-line reminder of the
+  contract until the coworker next writes a document.
+- **The contract** lives in the coworker's `AGENTS.md` (`## How I talk`, with
+  three before/after examples: a research question, a plan request, a quick
+  question that needs no document). It is versioned and regenerated on launch
+  for existing coworkers without touching `soul.md` or anything under
+  `memory/`; the repair also adds `documents/index.md` to `opencode.json`'s
+  instructions and creates the index when it is missing.
+
+Prove it with the packaged app:
+
+```bash
+OPENWORK_EVAL_ELECTRON_BINARY="apps/coworker/dist-electron/mac-arm64/Open Coworker.app/Contents/MacOS/Open Coworker" \
+  pnpm evals:e2e open-coworker-documents --local
+```
+
 ## Architecture
 
 - `electron/main.mjs` — standalone shell (own app id/userData; single
@@ -201,6 +275,123 @@ copy the sign-in link, paste it here) or a local path with no account. Cloud
 adds always-on responsibilities and shared organization settings; local use
 keeps identity, memory, model preference, schedules, and thread execution on
 this Mac.
+
+## Local mode
+
+*Use this Mac* (and the same screen under OpenWork › AI models) gets a person
+without an account to a working coworker in a minute, using what they already
+pay for. One component (`ui/local-providers.tsx`; the rules in
+`lib/local-providers.ts`, detection in `electron/local-providers.mjs`) shows:
+
+- **Found on this Mac** — one flat row per thing the app found, with one line
+  saying what Connect does, and **Connect**. Detection is presence-only and
+  runs when the screen opens and on Refresh, never on a timer:
+  - *ChatGPT (signed in with Codex)* — Codex's sign-in file (`$CODEX_HOME` or
+    `~/.codex/auth.json`) has ChatGPT tokens; when Codex kept an OpenAI key
+    instead the row reads *OpenAI key (saved by Codex)*.
+  - *GitHub Copilot (signed in on this Mac)* — a Copilot `hosts.json` or
+    `apps.json` under the XDG config dir carries a github.com sign-in.
+  - *Claude (signed in with Claude Code)* — `~/.claude/.credentials.json`, or
+    on macOS the *Claude Code-credentials* keychain item. Shown without
+    Connect: Claude subscriptions only work inside Claude Code, so the row
+    offers **Add key** (an Anthropic key) instead.
+  - *Ollama* / *LM Studio (running on this Mac)* — the server answers on its
+    default port (Ollama honours `OLLAMA_HOST`; `LMSTUDIO_HOST` overrides LM
+    Studio) with its model list. Each probe gives up after 200 ms.
+  - Keys in the app's own environment (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`,
+    `OPENROUTER_API_KEY`, `GEMINI_API_KEY`/`GOOGLE_API_KEY`, `XAI_API_KEY`) are
+    reported by name only; the AI service already uses them, so they appear
+    under Connected as *From GEMINI_API_KEY in your environment* rather than
+    with a Connect step.
+  - Providers already connected in OpenCode's shared store are listed by id.
+  A finding whose provider is connected moves out of Found; a Mac with nothing
+  to connect shows one quiet line.
+- **Connect** does the engine's own thing, in one step: a Codex or Copilot
+  sign-in is handed to the AI service as the exact credential its own sign-in
+  would have stored (`PUT /auth/{provider}`), a local server becomes a provider
+  the AI service is pointed at, then every coworker workspace is reloaded so
+  the models appear everywhere. The result is one line (*Connected. 13 models
+  available.*); an expired Codex sign-in says so and offers the AI service's
+  own sign-in instead. Sign-ins the engine offers (ChatGPT in the browser,
+  GitHub Copilot's device code) render inline as a lettered card: the code,
+  *Open browser*, *I've finished*, *Cancel*; the app polls the AI service until
+  it reports the result.
+- **Connected** — each connected provider on this Mac with where it comes
+  from, its model count, and **Disconnect**. Disconnecting a credential the
+  shared store holds first says, in one sentence, that OpenWork Desktop and
+  OpenCode lose it too; a key from the environment cannot be disconnected here
+  and says where to remove it.
+- **A free model is ready now** — the free provider's default model (nothing
+  to set up); the default until something else is connected.
+- **Add another** — the well-known providers the AI service lists (OpenAI,
+  Anthropic, Google, OpenRouter, GitHub Copilot, xAI, Mistral, Groq, DeepSeek)
+  plus **Custom (OpenAI-compatible)**. A key provider asks for the key only;
+  Custom asks for a name, the address, and an optional key, lists the models
+  the server answers with before anything is saved, and lets the person pick
+  one to start with. Everything derived (the compatible SDK, `/v1`, ids) stays
+  under *Technical details*.
+- One line at the top recommends *Continue with OpenWork* while signed out;
+  it is dismissible for the session.
+
+When nobody chose a model, `recommendModel` prefers the OpenWork account, then
+a subscription or key on this Mac, then a local model server, then the free
+model; a model chosen on the local mode screen before the first coworker
+existed becomes that coworker's model. Existing coworkers keep their choice.
+
+Sign-ins and keys go through the AI service's own credential store
+(`~/.local/share/opencode/auth.json`, shared with OpenWork Desktop and the
+OpenCode CLI on this Mac); servers added here live in Open Coworker's own
+runtime provider config. The renderer never sees a stored secret: the main
+process reads a sign-in file only to hand it to the AI service over loopback
+with the owner token, keeps nothing, and logs ids only. A key the person types
+travels once. The packaged journey uses fixtures with plainly fake values and
+asserts none of them reaches the screen or the app log.
+
+### Technical notes
+
+Verified against the bundled engine (OpenCode 1.18.18) before building:
+
+- `GET /provider/auth` lists sign-in methods per provider. `openai` offers
+  *ChatGPT Pro/Plus (browser)* and *(headless)* (both `method: "auto"`; the
+  headless one shows a device code), `github-copilot` offers a device flow
+  with a deployment-type prompt (`inputs.deploymentType = "github.com"`), and
+  `xai`, `poe`, `digitalocean`, `snowflake-cortex`, `gitlab` offer their own.
+  **There is no Anthropic sign-in method**: Claude Pro/Max subscriptions
+  cannot be connected through the engine, only an Anthropic API key. Claude
+  Code is therefore detected but never offered for Connect.
+- `POST /provider/{id}/oauth/authorize` returns `{ url, method, instructions }`;
+  `POST /provider/{id}/oauth/callback` blocks until the flow finishes (it polls
+  the device code or waits for the browser redirect on `localhost:1455`).
+  The app runs it in the background with a 15-minute cap and reports through
+  `localProviders.signIn.status`.
+- `PUT /auth/{id}` stores `{ type: "api", key }` or
+  `{ type: "oauth", refresh, access, expires, accountId? }` in
+  `$XDG_DATA_HOME/opencode/auth.json` (`~/.local/share/opencode/auth.json`);
+  `DELETE /auth/{id}` removes it (200 even when absent). Codex's
+  `~/.codex/auth.json` tokens use the same OAuth client as the engine's own
+  ChatGPT sign-in, so they import as that shape (`expires` from the access
+  token's `exp`, else 0 so the engine refreshes first); a Copilot
+  `oauth_token` imports as the refresh token with an empty access token, as
+  the engine's own Copilot sign-in stores it.
+- A stored credential is read when a workspace's engine instance is built.
+  `POST /workspace/:id/engine/reload` normally skips when the runtime config
+  fingerprint is unchanged (a store change is invisible to it), so it now
+  accepts `{ force: true }`, and Open Coworker reloads every registered
+  workspace after a credential change (the server re-attaches each
+  workspace's tools as part of that reload).
+- Keys in the engine's environment connect providers automatically
+  (`source: "env"`); custom providers come from the embedded server's
+  `PATCH /runtime-config/providers` (host token) as
+  `{ npm: "@ai-sdk/openai-compatible", name, options: { baseURL }, models }`,
+  which the server writes into the engine's `OPENCODE_CONFIG` and reloads.
+  Ollama serves an OpenAI-compatible API at `<host>/v1`; LM Studio at
+  `http://127.0.0.1:1234/v1`. Known models.dev ids (`lmstudio`) would merge
+  phantom default models, so local servers use `ollama` and `lm-studio` and
+  custom servers `custom-<slug>`.
+- The engine spawns before any coworker exists by registering the hidden
+  coordinator workspace, so the local mode screen has a live catalog during
+  onboarding; registering the first workspace restarts the platform, which may
+  move its port — `localProviders.prepare` returns the live address.
 
 ## Review / develop
 
