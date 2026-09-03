@@ -313,7 +313,16 @@ export function GroupChat({
       const acceptance = await client.sendTurn(threadId, { prompt: text, model: { providerId: model.providerId, modelId: model.modelId }, messageId: newId("msg"), signal: askSignal });
       return settledReplyText(client, threadId, acceptance, ROUTING_TIMEOUT_MS, askSignal, "The facilitator");
     };
-    return routeWithFacilitator({ prompt, participants: input.participants, mentions: input.mentions, models, ask, signal });
+    return routeWithFacilitator({
+      prompt,
+      participants: input.participants,
+      mentions: input.mentions,
+      models,
+      ask,
+      signal,
+      // Never shown to the person; kept in the console so a silent fallback can be understood later.
+      onAttempt: (detail) => console.info(`[open-coworker] facilitator ${detail.outcome} on ${detail.model}${detail.reason ? `: ${detail.reason}` : ""}`),
+    });
   }
 
   function depsFor(run: LiveGroupRun): GroupTurnDeps {
