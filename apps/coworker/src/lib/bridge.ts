@@ -255,6 +255,10 @@ export const coworkerBridge = {
     /** Settle every turn a quit or reload cut off; returns which ones it touched. */
     recoverInterrupted: () => invoke<{ groupId: string; turnId: string }[]>("groups.recoverInterrupted"),
   },
+  /** The hidden workspace the silent facilitator runs in; created and registered on first use. */
+  coordinator: {
+    ensure: () => invoke<{ path: string; name: string; workspaceId: string }>("coordinator.ensure"),
+  },
   files: {
     list: (slug: string) => invoke<CoworkerMemoryFile[]>("coworkers.files.list", { slug }),
     read: async (slug: string, path: string) => {
