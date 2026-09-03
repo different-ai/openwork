@@ -16,7 +16,7 @@ import { buildGeneratedArtifactViewInWorker } from "../../ee/apps/den-api/src/ge
 
 const enabled = process.env.OPENWORK_EVAL_E2E_TESTS === "1";
 const title = enabled
-  ? "Open Coworker signs in with an OpenWork account, gains OpenWork Connect, and runs a discussion turn on an organization model"
+  ? "Open Coworker signs in with an OpenWork account, browses what OpenWork Connect brings it level by level, and runs a discussion turn on an organization model"
   : "Open Coworker OpenWork account journey skipped — needs: set OPENWORK_EVAL_E2E_TESTS=1";
 
 const GRANT = "eval-handoff-grant-0001";
@@ -36,6 +36,10 @@ const CONNECTION_PATH = `/mcp/connections/${CONNECTION_ID}`;
 const CONNECT_INDEX_URI = "openwork://connect/mcp-servers/index.json";
 const SKILL_APP_TOOL = "skill_studio";
 const SKILL_APP_RESOURCE = "ui://openwork-connect/skill-studio";
+const SKILL_INDEX_URI = "skill://index.json";
+const NOTION_CONNECTION_ID = "conn_eval_notion";
+const RELEASE_PLUGIN_ID = "plg_eval_release";
+const RELEASE_SKILL_ID = "cob_eval_release";
 
 /**
  * A deterministic stand-in for the OpenWork Connect gateway (`/mcp/agent`):
@@ -96,6 +100,26 @@ function gatewayResponse(message: Record<string, unknown>): Record<string, unkno
       },
     };
   }
+  if (message.method === "resources/read" && params.uri === SKILL_INDEX_URI) {
+    // The skills the member can use: one built in, one from a marketplace plugin.
+    return {
+      jsonrpc: "2.0",
+      id,
+      result: {
+        contents: [{
+          uri: SKILL_INDEX_URI,
+          mimeType: "application/json",
+          text: JSON.stringify({
+            $schema: "https://schemas.agentskills.io/discovery/0.2.0/schema.json",
+            skills: [
+              { name: "create-skill", type: "skill-md", title: "Create Skill", description: "Create a new OpenWork Cloud skill.", url: "skill://create-skill/SKILL.md", capability: "skill:create-skill" },
+              { name: "release", type: "skill-md", title: "Release", description: "Versioning, tagging, and release verification.", marketplaceName: "Engineering Marketplace", pluginName: "Release", url: "skill://release/SKILL.md", capability: `plugin:${RELEASE_PLUGIN_ID}:${RELEASE_SKILL_ID}` },
+            ],
+          }),
+        }],
+      },
+    };
+  }
   if (message.method === "resources/read" && params.uri === CONNECT_INDEX_URI) {
     // The organization's connections, as the gateway advertises them to app hosts.
     return {
@@ -121,11 +145,67 @@ function gatewayResponse(message: Record<string, unknown>): Record<string, unkno
   if (message.method === "tools/call") {
     const name = typeof params.name === "string" ? params.name : "";
     if (name === "search_capabilities") {
+      // Whatever the keywords, the same organization: a built-in skill, a marketplace plugin whose
+      // service an admin still has to set up, and a connection the member has not signed in to.
+      const matches = [
+        { name: "skill:create-skill", kind: "skill", summary: "Create Skill: Create a new OpenWork Cloud skill.", method: "SKILL", path: "skill:create-skill", score: 3, pathParams: [], queryParams: [], hasBody: false },
+        {
+          name: `plugin:${RELEASE_PLUGIN_ID}:${RELEASE_SKILL_ID}`,
+          kind: "skill",
+          summary: "[Engineering Marketplace / Release] Release: Versioning, tagging, and release verification.",
+          method: "PLUGIN",
+          path: "Engineering Marketplace/Release",
+          score: 2,
+          pathParams: [],
+          queryParams: [],
+          hasBody: false,
+          plugin: "Release",
+          marketplace: "Engineering Marketplace",
+          status: "needs_admin_setup",
+          hint: "Release needs an org admin to configure its required MCP connection before it can run in OpenWork Cloud.",
+          mcpRequirements: [{
+            configObjectId: RELEASE_SKILL_ID,
+            pluginId: RELEASE_PLUGIN_ID,
+            pluginName: "Release",
+            serverName: "github",
+            name: "GitHub",
+            state: "needs_admin_setup",
+            action: { type: "setup_connection", label: "Set up GitHub", surface: "openwork_organization_connections", retry: "search_capabilities" },
+          }],
+        },
+        {
+          name: `mcp:${NOTION_CONNECTION_ID}:*`,
+          kind: "connection_status",
+          summary: "[Notion] Not connected for this member yet.",
+          method: "MCP",
+          path: "https://mcp.notion.example/mcp",
+          score: 1,
+          pathParams: [],
+          queryParams: [],
+          hasBody: false,
+          status: "needs_connection",
+          hint: "Execute this exact capability name once.",
+          connectionStatus: {
+            version: 1,
+            kind: "connection_action",
+            source: "openwork-cloud",
+            connectionId: NOTION_CONNECTION_ID,
+            connectionName: "Notion",
+            authType: "oauth",
+            credentialMode: "per_member",
+            state: "needs_connection",
+            actor: "member",
+            action: { type: "connect", label: "Connect Notion", surface: "openwork_your_connections", retry: "search_capabilities" },
+            message: "Notion is not connected for you yet.",
+          },
+        },
+      ];
       return {
         jsonrpc: "2.0",
         id,
         result: {
-          content: [{ type: "text", text: JSON.stringify({ matches: [{ name: "skill:create-skill", kind: "skill", title: "Create Skill", description: "Create a new OpenWork Cloud skill." }] }) }],
+          content: [{ type: "text", text: JSON.stringify({ matches }) }],
+          structuredContent: { matches },
         },
       };
     }
@@ -300,18 +380,45 @@ async function clickButtonContaining(app: Awaited<ReturnType<typeof coworker>>, 
   })()`, { timeoutMs: 120_000, label: `button containing ${json(text)}` });
 }
 
+async function clickTestId(app: Awaited<ReturnType<typeof coworker>>, testId: string): Promise<void> {
+  await waitFor(app, `(() => {
+    const element = document.querySelector(${json(`[data-testid="${testId}"]`)});
+    if (!(element instanceof HTMLElement)) return false;
+    if (element instanceof HTMLButtonElement && element.disabled) return false;
+    element.click();
+    return true;
+  })()`, { timeoutMs: 30_000, label: `click ${testId}` });
+}
+
+/** Walk the panel back to the root of its view, then to Activity. */
+async function backToActivity(app: Awaited<ReturnType<typeof coworker>>): Promise<void> {
+  await waitFor(app, `(() => {
+    const panel = document.querySelector('[data-testid="context-panel"]');
+    if (!(panel instanceof HTMLElement) || panel.dataset.collapsed === "true") return false;
+    if (panel.dataset.view === "overview") return true;
+    const back = document.querySelector('[data-testid="panel-back"]') ?? document.querySelector('button[aria-label="Back to activity"]');
+    if (back instanceof HTMLElement) back.click();
+    return false;
+  })()`, { timeoutMs: 30_000, label: "back to the Activity sidebar" });
+}
+
 /** Bring the right panel to the Apps & tools view from whatever state it is in (folded, another view, or Activity). */
 async function openAppsAndTools(app: Awaited<ReturnType<typeof coworker>>): Promise<void> {
   await waitFor(app, `(() => {
     const panel = document.querySelector('[data-testid="context-panel"]');
     if (!(panel instanceof HTMLElement)) return false;
-    if (panel.dataset.collapsed === "false" && panel.dataset.view === "capabilities") return true;
+    if (panel.dataset.collapsed === "false" && panel.dataset.view === "capabilities") {
+      // The view remembers its last level for the session; the journeys start each visit at the root.
+      if (panel.dataset.depth === "0") return true;
+      document.querySelector('[data-testid="panel-back"]')?.click();
+      return false;
+    }
     if (panel.dataset.collapsed === "true") {
       document.querySelector('[data-testid="context-rail-capabilities"]')?.click();
       return false;
     }
     if (panel.dataset.view !== "overview") {
-      document.querySelector('button[aria-label="Back to activity"]')?.click();
+      (document.querySelector('[data-testid="panel-back"]') ?? document.querySelector('button[aria-label="Back to activity"]'))?.click();
       return false;
     }
     const link = [...document.querySelectorAll('nav[aria-label="More for this coworker"] button')]
@@ -328,7 +435,7 @@ async function openDetails(app: Awaited<ReturnType<typeof coworker>>): Promise<v
     if (!(panel instanceof HTMLElement)) return false;
     if (panel.dataset.collapsed === "false" && panel.dataset.view === "overview") return true;
     if (panel.dataset.collapsed === "true") document.querySelector('[data-testid="context-rail-overview"]')?.click();
-    else document.querySelector('button[aria-label="Back to activity"]')?.click();
+    else (document.querySelector('[data-testid="panel-back"]') ?? document.querySelector('button[aria-label="Back to activity"]'))?.click();
     return false;
   })()`, { timeoutMs: 60_000, label: "Activity view" });
 }
@@ -604,12 +711,7 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
     label: "organization model persisted on Scout",
   });
   expect(isRecord(scout) && scout.model).toBe(`${PROVIDER_RECORD_ID}/${MODEL_ID}`);
-  await waitFor(app, `(() => {
-    const back = document.querySelector('button[aria-label="Back to activity"]');
-    if (!(back instanceof HTMLElement)) return false;
-    back.click();
-    return true;
-  })()`, { timeoutMs: 30_000, label: "back to the Activity sidebar" });
+  await backToActivity(app);
 
   evidence.recordAssertionEvidence(
     "The organization's model reaches Coworker settings labelled by source, without a model step in creation",
@@ -618,26 +720,30 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
   );
 
   // --- OpenWork Connect reaches the coworker: one minted gateway token, the gateway registered in Scout's
-  // workspace, and the Apps & tools surface reporting it in plain words.
+  // workspace, and the Apps & tools root row reporting it in plain words.
   await openAppsAndTools(app);
-  const connectSettled = await waitFor(app, `(() => {
-    const card = document.querySelector('[data-testid="coworker-connect-card"]');
-    const status = card?.getAttribute("data-status") ?? "";
-    if (!status || status === "connecting") return false;
-    return { status, detail: document.querySelector('[data-testid="coworker-connect-detail"]')?.textContent ?? "" };
+  const rootRow = await waitFor(app, `(() => {
+    const row = document.querySelector('[data-testid="apps-tools-row-connected"]');
+    if (!(row instanceof HTMLElement)) return false;
+    const text = row.innerText;
+    if (!text.includes("Connected as") && !text.includes("Needs") && !text.includes("Unavailable")) return false;
+    return text;
   })()`, { timeoutMs: 240_000, label: "OpenWork Connect settled for Scout" });
-  expect(connectSettled, `Connect card: ${JSON.stringify(connectSettled)}`).toMatchObject({ status: "connected" });
+  expect(String(rootRow)).toContain(`Connected as ${ORG_NAME}`);
+  await clickTestId(app, "apps-tools-row-connected");
   const connectCard = await waitFor(app, `(() => {
     const card = document.querySelector('[data-testid="coworker-connect-card"]');
     if (!(card instanceof HTMLElement) || card.getAttribute("data-status") !== "connected") return false;
     return {
+      route: document.querySelector('[data-testid="panel-content"]')?.getAttribute("data-route"),
       text: card.innerText,
       status: document.querySelector('[data-testid="coworker-connect-status"]')?.textContent?.trim() ?? "",
-      askEnabled: [...card.querySelectorAll("button")].some((button) => button.textContent?.trim() === "Ask Scout" && !button.disabled),
+      askEnabled: !(card.querySelector('[data-testid="coworker-connect-ask"]')?.disabled ?? true),
       createSkillEnabled: !(card.querySelector('[data-testid="coworker-connect-create-skill"]')?.disabled ?? true),
+      detail: document.querySelector('[data-testid="coworker-connect-detail"]')?.textContent ?? "",
     };
   })()`, { timeoutMs: 240_000, label: "OpenWork Connect connected for Scout" });
-  expect(connectCard).toMatchObject({ status: "Connected", askEnabled: true, createSkillEnabled: true });
+  expect(connectCard).toMatchObject({ route: "capabilities/connected", status: `Connected as ${ORG_NAME}`, askEnabled: true, createSkillEnabled: true, detail: "" });
   if (!isRecord(connectCard) || typeof connectCard.text !== "string") throw new Error("Connect card facts were unavailable.");
   expect(connectCard.text).toContain(ORG_NAME);
   expect(connectCard.text.toLowerCase()).not.toContain("mcp");
@@ -660,7 +766,98 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
   expect(connectHealth.present).toEqual(expect.arrayContaining(["openwork-cloud_search_capabilities", "openwork-cloud_execute_capability"]));
   evidence.recordAssertionEvidence(
     "Signing in wires OpenWork Connect into the coworker's workspace",
-    `After sign-in the app minted ${mintedTokens} gateway token(s) and registered the gateway at ${denBaseUrl}/mcp/agent in Scout's workspace; the embedded server reported it usable with both capability tools present, every gateway call carried the minted bearer token, and the Apps & tools card read Connected for ${ORG_NAME} with Ask Scout and Create a skill enabled and no MCP vocabulary.`,
+    `After sign-in the app minted ${mintedTokens} gateway token(s) and registered the gateway at ${denBaseUrl}/mcp/agent in Scout's workspace; the embedded server reported it usable with both capability tools present, every gateway call carried the minted bearer token, the Apps & tools root row read Connected as ${ORG_NAME}, and the Connected screen led with Ask Scout and Create a skill enabled and no MCP vocabulary.`,
+    true,
+  );
+
+  // --- The Connected screen's four groups, read through the gateway's skill index and its search.
+  const connectedRows = await waitFor(app, `(() => {
+    const rows = ["connected-apps", "skills", "plugins", "connections"].map((id) => document.querySelector('[data-testid="apps-tools-row-' + id + '"]'));
+    if (!rows.every((row) => row instanceof HTMLElement)) return false;
+    const texts = rows.map((row) => row.innerText);
+    if (texts.some((text) => text.includes("Reading"))) return false;
+    return texts;
+  })()`, { timeoutMs: 120_000, label: "Connected screen rows settled" });
+  if (!Array.isArray(connectedRows)) throw new Error("Connected rows were unavailable.");
+  const [appsRowText, skillsRowText, pluginsRowText, connectionsRowText] = connectedRows.map(String);
+  expect(appsRowText).toContain("Apps");
+  expect(appsRowText).toContain("1");
+  expect(skillsRowText).toContain("Skills");
+  expect(skillsRowText).toContain("2");
+  expect(pluginsRowText).toContain("Plugins & marketplaces");
+  expect(pluginsRowText).toContain("1");
+  expect(pluginsRowText).toContain("needs attention");
+  expect(connectionsRowText).toContain("Connections");
+  expect(connectionsRowText).toContain("2");
+  expect(connectionsRowText).toContain("1 needs you");
+  const searchQueries = gatewayCalls.filter((call) => call.endpoint === "gateway" && call.method === "tools/call" && call.tool === "search_capabilities");
+  expect(searchQueries.length).toBeGreaterThanOrEqual(2);
+  expect(searchQueries.length).toBeLessThanOrEqual(4);
+  expect(gatewayCalls.some((call) => call.endpoint === "gateway" && call.method === "resources/read" && call.tool === SKILL_INDEX_URI)).toBe(true);
+
+  await clickTestId(app, "apps-tools-row-connections");
+  const connectionRows = await waitFor(app, `(() => {
+    const rows = [...document.querySelectorAll('[data-testid="apps-tools-connection"]')];
+    if (rows.length !== 2) return false;
+    return rows.map((row) => row.innerText.replace(/\\s+/g, " ").trim());
+  })()`, { timeoutMs: 60_000, label: "connections as rows" });
+  expect(connectionRows).toEqual([expect.stringMatching(/^Notion Needs sign-in/), expect.stringMatching(/^Skill studio Connected 1/)]);
+  await waitFor(app, `(() => {
+    const row = [...document.querySelectorAll('[data-testid="apps-tools-connection"]')].find((candidate) => (candidate.textContent ?? "").includes("Notion"));
+    if (!(row instanceof HTMLElement)) return false;
+    row.click();
+    return true;
+  })()`, { timeoutMs: 30_000, label: "open Notion" });
+  const notion = await waitFor(app, `(() => {
+    const detail = document.querySelector('[data-testid="coworker-connection-detail"]');
+    if (!(detail instanceof HTMLElement)) return false;
+    return {
+      route: document.querySelector('[data-testid="panel-content"]')?.getAttribute("data-route"),
+      status: document.querySelector('[data-testid="apps-tools-detail-status"]')?.textContent?.trim(),
+      action: document.querySelector('[data-testid="apps-tools-human-action"]')?.textContent ?? "",
+      text: detail.innerText,
+      askEnabled: !(detail.querySelector('[data-testid="apps-tools-ask"]')?.disabled ?? true),
+    };
+  })()`, { timeoutMs: 30_000, label: "Notion connection detail" });
+  expect(notion).toMatchObject({ route: `capabilities/connected/connections/connection:${NOTION_CONNECTION_ID}`, status: "Needs sign-in", askEnabled: false });
+  if (!isRecord(notion) || typeof notion.action !== "string" || typeof notion.text !== "string") throw new Error("Notion detail facts were unavailable.");
+  expect(notion.action).toContain("Connect Notion on your Connections page in OpenWork.");
+  expect(notion.text).toContain("Notion is not connected for you yet.");
+  expect(notion.text.toLowerCase()).not.toContain("needs_connection");
+  await clickTestId(app, "panel-crumb");
+  await clickTestId(app, "apps-tools-row-connected");
+  await clickTestId(app, "apps-tools-row-plugins");
+  await waitFor(app, `(() => {
+    const row = [...document.querySelectorAll('[data-testid="apps-tools-plugin"]')].find((candidate) => (candidate.textContent ?? "").includes("Release"));
+    if (!(row instanceof HTMLElement) || !(row.textContent ?? "").includes("Needs setup by an admin")) return false;
+    row.click();
+    return true;
+  })()`, { timeoutMs: 60_000, label: "the Release plugin reads Needs setup by an admin" });
+  const release = await waitFor(app, `(() => {
+    const detail = document.querySelector('[data-testid="coworker-plugin-detail"]');
+    const servers = document.querySelector('[data-testid="apps-tools-plugin-servers"]');
+    if (!(detail instanceof HTMLElement) || !(servers instanceof HTMLElement)) return false;
+    return { text: detail.innerText, servers: servers.innerText, skills: [...detail.querySelectorAll('[data-testid="apps-tools-skill"]')].map((row) => row.textContent) };
+  })()`, { timeoutMs: 30_000, label: "Release plugin detail" });
+  if (!isRecord(release) || typeof release.text !== "string" || typeof release.servers !== "string") throw new Error("Release detail facts were unavailable.");
+  expect(release.text).toContain("Engineering Marketplace");
+  expect(release.servers).toContain("GitHub");
+  expect(release.servers).toContain("Needs setup by an admin");
+  expect(release.servers).toContain("Ask an organization admin to set up GitHub on the organization's Connections dashboard in OpenWork.");
+  expect(release.skills).toEqual([expect.stringContaining("Release")]);
+  expect(release.text.toLowerCase()).not.toContain("needs_admin_setup");
+  await clickTestId(app, "panel-crumb");
+  await clickTestId(app, "apps-tools-row-connected");
+  await clickTestId(app, "apps-tools-row-skills");
+  const skillRows = await waitFor(app, `(() => {
+    const rows = [...document.querySelectorAll('[data-testid="apps-tools-skill"]')];
+    if (rows.length !== 2) return false;
+    return rows.map((row) => row.innerText.replace(/\\s+/g, " ").trim());
+  })()`, { timeoutMs: 60_000, label: "skills as rows" });
+  expect(skillRows).toEqual([expect.stringMatching(/^Create Skill Built in/), expect.stringMatching(/^Release Release · Engineering Marketplace/)]);
+  evidence.recordAssertionEvidence(
+    "The Connected screen lists Apps, Skills, Plugins & marketplaces, and Connections in plain words with the human step that unblocks each",
+    "Read through the gateway's skill index and at most four keyword searches: Skills listed Create Skill (built in) and Release (Engineering Marketplace); Plugins listed Release as Needs setup by an admin, its detail naming GitHub and asking an organization admin to set it up on the organization's Connections dashboard; Connections listed Notion (Needs sign-in, with the step Connect Notion on your Connections page in OpenWork) and Skill studio (Connected) — never a status code.",
     true,
   );
 
@@ -679,26 +876,26 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
   expect(appCatalog, `App catalog: ${JSON.stringify(appCatalog)}`).toMatchObject({
     apps: { servers: expect.arrayContaining([expect.objectContaining({ displayName: "Skill studio", connectionId: CONNECTION_ID, reachable: true })]) },
   });
+  await clickTestId(app, "panel-crumb");
+  await clickTestId(app, "apps-tools-row-connected");
+  await clickTestId(app, "apps-tools-row-connected-apps");
   await waitFor(app, `(() => {
-    const card = [...document.querySelectorAll('[data-testid="coworker-mcp-app"]')].find((candidate) => (candidate.textContent ?? "").includes("Skill studio"));
-    if (!(card instanceof HTMLElement)) return false;
-    card.click();
+    const row = [...document.querySelectorAll('[data-testid="coworker-mcp-app"]')].find((candidate) => (candidate.textContent ?? "").includes("Skill studio"));
+    if (!(row instanceof HTMLElement) || !(row.textContent ?? "").includes("OpenWork Connect")) return false;
+    row.click();
     return true;
   })()`, { timeoutMs: 120_000, label: "Skill studio App from OpenWork Connect" });
-  await clickButton(app, "Open App", { timeoutMs: 30_000 });
+  await clickTestId(app, "apps-tools-open-app");
   await waitFor(app, `document.querySelector(${json(`[data-mcp-app-resource="${SKILL_APP_RESOURCE}"]`)})?.getAttribute("data-mcp-app-ready") === "true"`, {
     timeoutMs: 120_000,
     label: "Skill studio App mounted",
   });
   expect(gatewayCalls.some((call) => call.endpoint === "connection" && call.method === "tools/call" && call.tool === SKILL_APP_TOOL && call.authorization === `Bearer ${APP_HOST_TOKEN}`)).toBe(true);
   expect(gatewayCalls.some((call) => call.endpoint === "connection" && call.method === "resources/read" && call.tool === SKILL_APP_RESOURCE)).toBe(true);
-  await clickButton(app, "← All Apps");
-  await waitFor(app, `(() => {
-    const button = document.querySelector('[data-testid="coworker-connect-create-skill"]');
-    if (!(button instanceof HTMLElement) || button.disabled) return false;
-    button.click();
-    return true;
-  })()`, { timeoutMs: 30_000, label: "Create a skill" });
+  await clickTestId(app, "panel-back");
+  await clickTestId(app, "panel-back");
+  await waitFor(app, `document.querySelector('[data-testid="panel-content"]')?.getAttribute("data-route") === "capabilities/connected"`, { timeoutMs: 30_000, label: "back on the Connected screen" });
+  await clickTestId(app, "coworker-connect-create-skill");
   const skillDraft = String(await waitFor(app, `(() => {
     const composer = document.querySelector('textarea[aria-label="Message Scout"]');
     return composer instanceof HTMLTextAreaElement && composer.value.includes("create-skill") ? composer.value : false;
@@ -707,8 +904,8 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
   expect(await evalIn(app, `[...document.querySelectorAll('[data-message-role="user"]')].length`)).toBe(0);
   await fill(app, 'textarea[aria-label="Message Scout"]', "");
   evidence.recordAssertionEvidence(
-    "Gateway Apps render and skill creation starts from the Apps & tools surface",
-    `The Skill studio App, published by an organization connection behind the Connect gateway, was discovered through the gateway's connection index with the app-host token, opened through the connection's own tools/call and resources/read, and mounted in the sandbox; Create a skill prefilled Scout's discussion with a search-first create-skill request without sending it.`,
+    "Gateway Apps render and skill creation starts from the Connected screen",
+    `The Skill studio App, published by an organization connection behind the Connect gateway, was listed under Connected › Apps with its OpenWork Connect source line, opened through the connection's own tools/call and resources/read, and mounted in the sandbox; two Backs returned to the Connected screen, where Create a skill prefilled Scout's discussion with a search-first create-skill request without sending it.`,
     true,
   );
 
@@ -805,17 +1002,23 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
   })()`, { awaitPromise: true, timeoutMs: 60_000 });
   expect(isRecord(gatewayAfterSignOut) && (gatewayAfterSignOut.status === 404 || gatewayAfterSignOut.present === false)).toBe(true);
   await openAppsAndTools(app);
-  await waitFor(app, `document.querySelector('[data-testid="coworker-connect-card"]')?.getAttribute("data-status") === "signed-out"`, {
+  await waitFor(app, `(document.querySelector('[data-testid="apps-tools-row-connected"]')?.textContent ?? "").includes("Not connected")`, {
     timeoutMs: 30_000,
-    label: "Connect card back to its signed-out pitch",
+    label: "the Connected with OpenWork row reads Not connected",
   });
-  expect(String(await evalIn(app, `document.querySelector('[data-testid="coworker-connect-card"]')?.innerText ?? ""`))).toContain("Continue with OpenWork");
-  await waitFor(app, `(() => {
-    const back = document.querySelector('button[aria-label="Back to activity"]');
-    if (!(back instanceof HTMLElement)) return false;
-    back.click();
-    return true;
-  })()`, { timeoutMs: 30_000, label: "back to the Activity sidebar" });
+  await clickTestId(app, "apps-tools-row-connected");
+  const signedOutCard = await waitFor(app, `(() => {
+    const card = document.querySelector('[data-testid="coworker-connect-card"]');
+    if (!(card instanceof HTMLElement) || card.getAttribute("data-status") !== "signed-out") return false;
+    return { pitch: card.getAttribute("data-pitch"), text: card.innerText, fillsPanel: card.getBoundingClientRect().height >= 400 };
+  })()`, { timeoutMs: 30_000, label: "Connect card back to its signed-out pitch" });
+  // Signed out for the first time this session, the explanation is the first step again.
+  expect(signedOutCard).toMatchObject({ pitch: "full", fillsPanel: true });
+  if (!isRecord(signedOutCard) || typeof signedOutCard.text !== "string") throw new Error("Signed-out card facts were unavailable.");
+  expect(signedOutCard.text).toContain("Continue with OpenWork");
+  await clickButton(app, "Skip");
+  await waitFor(app, `document.querySelector('[data-testid="coworker-connect-card"]')?.getAttribute("data-pitch") === "compact"`, { timeoutMs: 30_000, label: "short Connect form after Skip" });
+  await backToActivity(app);
   await fill(app, 'textarea[aria-label="Message Scout"]', "Reply with exactly SIGNED OUT.");
   await clickButton(app, "Send");
   const failureText = String(await waitFor(app, `document.querySelector('[data-testid="coworker-turn-failed"]')?.textContent ?? false`, {
@@ -830,7 +1033,7 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
 
   evidence.recordAssertionEvidence(
     "Signing out removes the organization's providers and turns the saved model into an actionable failure",
-    `After Sign out the settings showed Local mode with no OpenWork Cloud group, and the next discussion turn failed visibly with a plain headline, naming ${PROVIDER_RECORD_ID}/${MODEL_ID} in the detail, explaining that no account is signed in, with Continue with OpenWork and Choose AI model actions.`,
+    `After Sign out the settings showed Local mode with no OpenWork Cloud group, the Apps & tools root row read Not connected with the Connect explanation as the Connected screen's first step again (Skip left the short card), and the next discussion turn failed visibly with a plain headline, naming ${PROVIDER_RECORD_ID}/${MODEL_ID} in the detail, explaining that no account is signed in, with Continue with OpenWork and Choose AI model actions.`,
     true,
   );
 });
