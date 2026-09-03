@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   DISCUSSION_REGISTRY_FILE,
+  classifyThreads,
   configureDiscussionStore,
   discussionIds,
   discussionIdsForWorkspace,
@@ -39,6 +40,21 @@ test("splitDiscussionThreads never lets a discussion count as an assignment", ()
   const { discussions, assignments } = splitDiscussionThreads(threads, ["ses_1", "ses_3"]);
   assert.deepEqual(discussions.map((thread) => thread.id), ["ses_1", "ses_3"]);
   assert.deepEqual(assignments.map((thread) => thread.id), ["ses_2"]);
+});
+
+test("classifyThreads keeps Worker threads out of both discussions and assignments, by registry not title", () => {
+  const threads = [
+    { id: "ses_chat", title: "Discussion with Scout" },
+    { id: "ses_work", title: "Launch brief" },
+    { id: "ses_w1", title: "Worker: Market scan" },
+    { id: "ses_w2", title: "Looks like an assignment" },
+    { id: "ses_both", title: "Registered twice" },
+  ];
+  const sorted = classifyThreads(threads, { discussions: ["ses_chat", "ses_both"], workers: new Set(["ses_w1", "ses_w2", "ses_both"]) });
+  assert.deepEqual(sorted.discussions.map((thread) => thread.id), ["ses_chat"]);
+  assert.deepEqual(sorted.workers.map((thread) => thread.id), ["ses_w1", "ses_w2", "ses_both"]);
+  assert.deepEqual(sorted.assignments.map((thread) => thread.id), ["ses_work"]);
+  assert.deepEqual(classifyThreads(threads, { discussions: [], workers: [] }).assignments.length, threads.length);
 });
 
 test("discussionLabel and discussionTitleFromPrompt read well in a list", () => {

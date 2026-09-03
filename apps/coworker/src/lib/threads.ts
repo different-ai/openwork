@@ -384,9 +384,12 @@ export function createCoworkerThreads(options: {
   conversationThreadId?: string;
   /** Every discussion this coworker holds, open or not; none of them is an assignment. */
   discussionThreadIds?: readonly string[];
+  /** The coworker's Workers' own threads; they count as work in progress, never as assignments. */
+  workerThreadIds?: readonly string[];
 }): CoworkerThreads {
   const parsedModel = parseModelPreference(options.model ?? "");
   const discussions = discussionIds(options.discussionThreadIds ?? [], options.conversationThreadId);
+  const notAssignments = [...discussions, ...(options.workerThreadIds ?? [])];
   const client = createHeadlessThreadClient({
     baseUrl: options.serverUrl,
     workspaceId: options.workspaceId,
@@ -425,7 +428,7 @@ export function createCoworkerThreads(options: {
   }
 
   async function listThreads(): Promise<ThreadListItem[]> {
-    return assignmentThreads(await listAllThreads(), discussions);
+    return assignmentThreads(await listAllThreads(), notAssignments);
   }
 
   async function renameThread(threadId: string, title: string): Promise<void> {
@@ -494,7 +497,7 @@ export function createCoworkerThreads(options: {
       listAllThreads(),
       listPendingInteractions().catch((): PendingInteractions => ({ permissions: [], questions: [] })),
     ]);
-    const assignments = assignmentThreads(allSessions, discussions);
+    const assignments = assignmentThreads(allSessions, notAssignments);
     const recentOf = (excludeId: string | undefined): RecentWork[] =>
       assignments
         .filter((session) => session.id !== excludeId && session.status === "idle")
@@ -624,6 +627,7 @@ export async function readCoworkerActivity(options: {
   workspaceId: string;
   token: string;
   conversationThreadId?: string;
+  workerThreadIds?: readonly string[];
 }): Promise<CoworkerActivity> {
   try {
     // Discussions other than the open one are only known to the coworker's registry.

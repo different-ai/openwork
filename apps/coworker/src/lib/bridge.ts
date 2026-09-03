@@ -1,6 +1,7 @@
 /** Typed access to the Open Coworker main-process bridge. */
 import type { AutomationSchedule } from "@openwork/types/automations";
 import type { Personality } from "./personalities";
+import type { WorkerEvent, WorkerLifespan, WorkerSummary } from "./workers";
 
 /** A group chat: several coworkers in one conversation with the person. */
 export type CoworkerGroupSummary = {
@@ -235,6 +236,24 @@ export const coworkerBridge = {
     cancelQueued: (slug: string, id: string) =>
       invoke<{ ok: boolean }>("localResponsibilities.cancelQueued", { slug, id }),
     status: () => invoke<LocalRunStatus>("localResponsibilities.status"),
+  },
+  /**
+   * Workers: long-lived sub-agents in the coworker's own workspace. Their turns
+   * share this Mac's parallel-run limit with responsibilities, and every
+   * finding wakes the coworker in its open discussion.
+   */
+  workers: {
+    list: (slug: string) => invoke<WorkerSummary[]>("workers.list", { slug }),
+    get: (slug: string, id: string) => invoke<WorkerSummary>("workers.get", { slug, id }),
+    /** A missing lifespan means the default turn budget; a Worker is never unbounded by accident. */
+    spawn: (slug: string, input: { name: string; goal: string; lifespan?: WorkerLifespan; spawnedFromThreadId?: string }) =>
+      invoke<WorkerSummary>("workers.spawn", { slug, ...input }),
+    /** Arrives as the Worker's next turn; if one is in flight, it waits for it. */
+    steer: (slug: string, id: string, text: string) => invoke<WorkerSummary>("workers.steer", { slug, id, text }),
+    cancel: (slug: string, id: string, reason?: string) => invoke<WorkerSummary>("workers.cancel", { slug, id, reason }),
+    pause: (slug: string, id: string) => invoke<WorkerSummary>("workers.pause", { slug, id }),
+    resume: (slug: string, id: string) => invoke<WorkerSummary>("workers.resume", { slug, id }),
+    findings: (slug: string, id: string, limit?: number) => invoke<WorkerEvent[]>("workers.findings", { slug, id, limit }),
   },
   settings: {
     get: () => invoke<CoworkerSettings>("settings.get"),

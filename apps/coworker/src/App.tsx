@@ -317,12 +317,15 @@ export default function App() {
             // One phrase for one fact: the header, rail, and sidebar all say the AI service is unavailable.
             return [coworker.slug, { state: "offline", label: "AI unavailable", detail: "", updatedAt: 0 }] as const;
           }
+          // Worker threads are work in progress, never finished assignments; their ids come from the main process.
+          const workers = await coworkerBridge.workers.list(coworker.slug).catch(() => []);
           const [readActivity, localResponsibilities] = await Promise.all([
             readCoworkerActivity({
               serverUrl: runtime.serverUrl,
               workspaceId: coworker.workspaceId,
               token: runtime.ownerToken,
               conversationThreadId: coworker.conversationThreadId,
+              workerThreadIds: workers.map((worker) => worker.threadId).filter(Boolean),
             }),
             coworkerBridge.localResponsibilities.list(coworker.slug).catch(() => []),
           ]);

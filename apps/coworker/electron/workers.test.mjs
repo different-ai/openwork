@@ -1,0 +1,333 @@
+import assert from "node:assert/strict";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { after, test } from "node:test";
+import { createCoworker } from "./coworkers.mjs";
+import {
+  DEFAULT_TURN_BUDGET,
+  MAX_LIVE_WORKERS,
+  REVIEW_OPENER,
+  WORKERS_REGISTRY_FILE,
+  appendWorkerEvent,
+  createReviewScheduler,
+  createWorker,
+  describeLifespanForPrompt,
+  getWorker,
+  lifespanSpent,
+  listWorkers,
+  liveWorkers,
+  nextWorkerState,
+  normalizeLifespan,
+  parseEvents,
+  parseWorkerReport,
+  readWorkerEvents,
+  readWorkerRegistry,
+  registerWorkerThread,
+  reviewPrompt,
+  steerBody,
+  updateWorker,
+  workerThreadTitle,
+  workerTurnPrompt,
+} from "./workers.mjs";
+
+const roots = [];
+async function fixture() {
+  const root = await mkdtemp(path.join(tmpdir(), "coworker-workers-"));
+  roots.push(root);
+  const coworkersDir = path.join(root, "coworkers");
+  await createCoworker(coworkersDir, { name: "Scout" });
+  return coworkersDir;
+}
+
+after(async () => {
+  await Promise.all(roots.map((root) => rm(root, { recursive: true, force: true })));
+});
+
+const NOW = Date.UTC(2026, 8, 2, 15, 0);
+
+test("a lifespan is always bounded by default and validated when chosen", () => {
+  assert.deepEqual(normalizeLifespan(undefined, { now: NOW }), { kind: "turns", max: DEFAULT_TURN_BUDGET, used: 0 });
+  assert.deepEqual(normalizeLifespan({ kind: "turns", max: 3.4 }, { now: NOW }), { kind: "turns", max: 3, used: 0 });
+  assert.deepEqual(normalizeLifespan({ kind: "until", at: NOW + 60_000 }, { now: NOW }), { kind: "until", at: NOW + 60_000 });
+  assert.deepEqual(normalizeLifespan({ kind: "open" }, { now: NOW }), { kind: "open" });
+  assert.throws(() => normalizeLifespan({ kind: "until", at: NOW - 1 }, { now: NOW }), /in the future/);
+  assert.throws(() => normalizeLifespan({ kind: "turns", max: 0 }, { now: NOW }), /between 1 and/);
+  assert.throws(() => normalizeLifespan({ kind: "forever" }, { now: NOW }), /lifespan/);
+  assert.equal(lifespanSpent({ kind: "turns", max: 2, used: 2 }, NOW), true);
+  assert.equal(lifespanSpent({ kind: "until", at: NOW }, NOW), true);
+  assert.equal(lifespanSpent({ kind: "open" }, NOW), false);
+  assert.equal(describeLifespanForPrompt({ kind: "turns", max: 10, used: 7 }, NOW), "3 of 10 turns left");
+  assert.equal(describeLifespanForPrompt({ kind: "open" }, NOW), "until you are stopped");
+  assert.match(describeLifespanForPrompt({ kind: "until", at: NOW + 3_600_000 }, NOW), /^until /);
+});
+
+test("workers are created under the coworker home, listed newest first, capped, and never deleted", async () => {
+  const coworkersDir = await fixture();
+  const first = await createWorker(coworkersDir, "scout", { name: "  Market   scan ", goal: "Watch vendor prices.", spawnedBy: "person" }, { now: 1_000 });
+  assert.match(first.id, /^wrk_[a-z0-9]{20}$/);
+  assert.equal(first.name, "Market scan");
+  assert.equal(first.status, "starting");
+  assert.deepEqual(first.lifespan, { kind: "turns", max: DEFAULT_TURN_BUDGET, used: 0 });
+  assert.equal(workerThreadTitle(first.name), "Worker: Market scan");
+
+  const second = await createWorker(coworkersDir, "scout", { name: "Inbox watch", goal: "Watch the inbox.", spawnedBy: "coworker", spawnedFromThreadId: "ses_chat", lifespan: { kind: "open" } }, { now: 2_000 });
+  assert.equal(second.spawnedFromThreadId, "ses_chat");
+  assert.deepEqual((await listWorkers(coworkersDir, "scout")).map((worker) => worker.id), [second.id, first.id]);
+
+  await createWorker(coworkersDir, "scout", { name: "Third", goal: "Do a third thing.", spawnedBy: "person" }, { now: 3_000 });
+  await assert.rejects(
+    createWorker(coworkersDir, "scout", { name: "Fourth", goal: "One too many.", spawnedBy: "person" }),
+    new RegExp(`${MAX_LIVE_WORKERS} Workers are already running`),
+  );
+  // Stopping one makes room; the stopped Worker stays on disk.
+  const stopped = await updateWorker(coworkersDir, "scout", first.id, { status: "cancelled" }, { now: 4_000 });
+  assert.equal(stopped.status, "cancelled");
+  assert.equal(stopped.endedAt, 4_000);
+  assert.equal(liveWorkers(await listWorkers(coworkersDir, "scout")).length, 2);
+  const fourth = await createWorker(coworkersDir, "scout", { name: "Fourth", goal: "Now there is room.", spawnedBy: "person" }, { now: 5_000 });
+  assert.equal((await listWorkers(coworkersDir, "scout")).length, 4);
+  assert.equal((await getWorker(coworkersDir, "scout", fourth.id)).goal, "Now there is room.");
+
+  await assert.rejects(createWorker(coworkersDir, "scout", { name: "", goal: "x", spawnedBy: "person" }), /needs a name/);
+  await assert.rejects(createWorker(coworkersDir, "scout", { name: "x", goal: "", spawnedBy: "person" }), /needs a goal/);
+  await assert.rejects(getWorker(coworkersDir, "scout", "wrk_../escape"), /Invalid Worker id/);
+  await assert.rejects(getWorker(coworkersDir, "../scout", first.id), /Invalid coworker slug/);
+});
+
+test("updates are validated and a stopped worker never changes status again", async () => {
+  const coworkersDir = await fixture();
+  const worker = await createWorker(coworkersDir, "scout", { name: "Scan", goal: "Scan.", spawnedBy: "person" }, { now: 1_000 });
+  const running = await updateWorker(coworkersDir, "scout", worker.id, { status: "running", threadId: "ses_w1" }, { now: 2_000 });
+  assert.equal(running.status, "running");
+  assert.equal(running.threadId, "ses_w1");
+  const waiting = await updateWorker(coworkersDir, "scout", worker.id, { status: "waiting", waitingFor: "decision", lastFindingAt: 2_500, steerCount: 1 }, { now: 2_500 });
+  assert.equal(waiting.waitingFor, "decision");
+  assert.equal(waiting.lastFindingAt, 2_500);
+  assert.equal(waiting.steerCount, 1);
+  await assert.rejects(updateWorker(coworkersDir, "scout", worker.id, { status: "sleeping" }), /Unknown Worker status/);
+  await assert.rejects(updateWorker(coworkersDir, "scout", worker.id, { waitingFor: "coffee" }), /wait reason/);
+  const finished = await updateWorker(coworkersDir, "scout", worker.id, { status: "finished" }, { now: 3_000 });
+  assert.equal(finished.waitingFor, "");
+  assert.equal(finished.endedAt, 3_000);
+  await assert.rejects(updateWorker(coworkersDir, "scout", worker.id, { status: "running" }), /already stopped/);
+  // Non-status fields still update after the end (an error message, for example).
+  assert.equal((await updateWorker(coworkersDir, "scout", worker.id, { error: "late note" })).error, "late note");
+});
+
+test("findings append in order, tolerate one truncated final line, and keep their shape", async () => {
+  const coworkersDir = await fixture();
+  const worker = await createWorker(coworkersDir, "scout", { name: "Scan", goal: "Scan.", spawnedBy: "person" });
+  assert.deepEqual(await readWorkerEvents(coworkersDir, "scout", worker.id), []);
+  const [finding, steer] = await Promise.all([
+    appendWorkerEvent(coworkersDir, "scout", worker.id, { kind: "finding", report: "decision", text: "Include vendor C?" }, { now: 10 }),
+    appendWorkerEvent(coworkersDir, "scout", worker.id, { kind: "steer", text: "Yes, include it.", by: "coworker" }, { now: 20 }),
+  ]);
+  assert.equal(finding.report, "decision");
+  assert.equal(steer.by, "coworker");
+  const review = await appendWorkerEvent(coworkersDir, "scout", worker.id, { kind: "review", text: "Reviewed", reviewThreadId: "ses_chat", findingIds: [finding.id] }, { now: 30 });
+  assert.deepEqual(review.findingIds, [finding.id]);
+  assert.deepEqual((await readWorkerEvents(coworkersDir, "scout", worker.id)).map((event) => event.kind), ["finding", "steer", "review"]);
+  assert.deepEqual((await readWorkerEvents(coworkersDir, "scout", worker.id, { limit: 1 })).map((event) => event.id), [review.id]);
+
+  const file = path.join(coworkersDir, "scout", "workers", worker.id, "findings.jsonl");
+  await writeFile(file, `${await readFile(file, "utf8")}{"id":"evt_cut","kind":"finding","te`, "utf8");
+  assert.equal((await readWorkerEvents(coworkersDir, "scout", worker.id)).length, 3);
+  assert.throws(() => parseEvents('{"id":"evt_a","kind":"status","text":"a"}\nnot json\n{"id":"evt_b","kind":"status","text":"b"}\n'), SyntaxError);
+  await assert.rejects(appendWorkerEvent(coworkersDir, "scout", worker.id, { kind: "gossip", text: "no" }), /Unknown Worker event kind/);
+});
+
+test("the registry lists worker threads once, in the same shape as discussions.json", async () => {
+  const coworkersDir = await fixture();
+  assert.deepEqual(await readWorkerRegistry(coworkersDir, "scout"), []);
+  assert.deepEqual(await registerWorkerThread(coworkersDir, "scout", "ses_w1"), ["ses_w1"]);
+  assert.deepEqual(await registerWorkerThread(coworkersDir, "scout", "ses_w2"), ["ses_w1", "ses_w2"]);
+  assert.deepEqual(await registerWorkerThread(coworkersDir, "scout", "ses_w1"), ["ses_w1", "ses_w2"]);
+  const stored = JSON.parse(await readFile(path.join(coworkersDir, "scout", WORKERS_REGISTRY_FILE), "utf8"));
+  assert.deepEqual(stored, { schemaVersion: 1, threadIds: ["ses_w1", "ses_w2"] });
+  await assert.rejects(registerWorkerThread(coworkersDir, "scout", ""), /thread id is required/);
+});
+
+test("a worker's reply is read back as a finding, a decision, or done — and never lost", () => {
+  assert.deepEqual(parseWorkerReport(""), { kind: "none", text: "" });
+  assert.deepEqual(
+    parseWorkerReport("I checked three vendors.\n\n## Finding\nPrices rose 3% at two vendors. The third has not updated.\n"),
+    { kind: "finding", text: "Prices rose 3% at two vendors. The third has not updated." },
+  );
+  assert.deepEqual(
+    parseWorkerReport("**Finding:** Nothing changed since the last check."),
+    { kind: "finding", text: "Nothing changed since the last check." },
+  );
+  assert.deepEqual(
+    parseWorkerReport("Some work.\n\n**Needs a decision**\nShould I include vendor C?\n- A) Yes\n- B) No"),
+    { kind: "decision", text: "Should I include vendor C?\n- A) Yes\n- B) No" },
+  );
+  // "Done" may stand alone; the finding before it carries the words.
+  assert.deepEqual(
+    parseWorkerReport("## Finding\nAll vendors covered; the report is saved.\n\nDone."),
+    { kind: "done", text: "All vendors covered; the report is saved." },
+  );
+  assert.deepEqual(parseWorkerReport("### Done\nThe goal is met; see report.md."), { kind: "done", text: "The goal is met; see report.md." });
+  // A reply that skipped the contract still counts as a finding.
+  assert.deepEqual(parseWorkerReport("Just some prose without a heading."), { kind: "finding", text: "Just some prose without a heading." });
+  assert.deepEqual(parseWorkerReport("Needs a decision"), { kind: "decision", text: "Needs a decision." });
+});
+
+test("the worker prompt frame names the goal, the lifespan, and the reporting contract", () => {
+  const worker = { name: "Market scan", goal: "Watch vendor prices.", lifespan: { kind: "turns", max: 10, used: 4 } };
+  const prompt = workerTurnPrompt({ worker, coworkerName: "Nova", body: "Begin working toward the goal now.", now: NOW });
+  assert.match(prompt, /^You are a Worker named "Market scan" started by Nova\./);
+  assert.match(prompt, /Watch vendor prices\./);
+  assert.match(prompt, /Lifespan: 6 of 10 turns left\./);
+  assert.match(prompt, /section titled "Finding"/);
+  assert.match(prompt, /section titled "Needs a decision"/);
+  assert.match(prompt, /section titled "Done"/);
+  assert.ok(prompt.endsWith("Begin working toward the goal now."));
+  assert.equal(
+    steerBody([{ by: "coworker", text: "Skip vendor C." }, { by: "person", text: "Add vendor D." }], "Nova"),
+    "Steering from Nova: Skip vendor C.\n\nSteering from the person Nova works for: Add vendor D.",
+  );
+});
+
+test("a settled turn decides whether the worker continues, holds, or stops", () => {
+  const base = { id: "wrk_a", name: "Scan", status: "running", waitingFor: "", lifespan: { kind: "turns", max: 3, used: 0 } };
+  const finding = nextWorkerState(base, { kind: "settled", report: { kind: "finding", text: "Step one done." } }, { now: NOW });
+  assert.equal(finding.schedule, "continue");
+  assert.deepEqual(finding.patch, { status: "waiting", waitingFor: "turn", lifespan: { kind: "turns", max: 3, used: 1 }, lastFindingAt: NOW });
+  assert.deepEqual(finding.events, [{ kind: "finding", report: "finding", text: "Step one done." }]);
+
+  const decision = nextWorkerState(base, { kind: "settled", report: { kind: "decision", text: "A or B?" } }, { now: NOW });
+  assert.equal(decision.schedule, "hold");
+  assert.equal(decision.patch.waitingFor, "decision");
+  // A steer that already arrived answers the decision.
+  assert.equal(nextWorkerState(base, { kind: "settled", report: { kind: "decision", text: "A or B?" } }, { now: NOW, hasPendingSteer: true }).schedule, "continue");
+
+  const done = nextWorkerState(base, { kind: "settled", report: { kind: "done", text: "Finished." } }, { now: NOW });
+  assert.equal(done.schedule, "stop");
+  assert.equal(done.patch.status, "finished");
+
+  const spent = nextWorkerState({ ...base, lifespan: { kind: "turns", max: 3, used: 2 } }, { kind: "settled", report: { kind: "finding", text: "Last step." } }, { now: NOW });
+  assert.equal(spent.schedule, "stop");
+  assert.equal(spent.patch.status, "finished");
+  assert.deepEqual(spent.events.map((event) => event.kind), ["finding", "status"]);
+  assert.match(spent.events[1].text, /lifespan/);
+
+  const deadline = nextWorkerState({ ...base, lifespan: { kind: "until", at: NOW - 1 } }, { kind: "settled", report: { kind: "finding", text: "x" } }, { now: NOW });
+  assert.equal(deadline.patch.status, "finished");
+
+  const paused = nextWorkerState({ ...base, status: "paused" }, { kind: "settled", report: { kind: "finding", text: "x" } }, { now: NOW });
+  assert.equal(paused.schedule, "hold");
+  assert.equal(paused.patch.status, undefined);
+
+  const silent = nextWorkerState(base, { kind: "settled", report: { kind: "none", text: "" } }, { now: NOW });
+  assert.deepEqual(silent.events, []);
+  assert.equal(silent.schedule, "continue");
+
+  const failed = nextWorkerState(base, { kind: "failed", error: "Model unavailable" }, { now: NOW });
+  assert.equal(failed.schedule, "stop");
+  assert.equal(failed.patch.status, "failed");
+  assert.equal(failed.patch.error, "Model unavailable");
+  assert.deepEqual(failed.events, [{ kind: "status", text: "Didn't finish: Model unavailable" }]);
+
+  // A stop that arrived while the turn ran wins over the turn's outcome.
+  assert.deepEqual(nextWorkerState({ ...base, status: "cancelled" }, { kind: "settled", report: { kind: "done", text: "x" } }, { now: NOW }), { patch: {}, events: [], schedule: "stop" });
+});
+
+test("the review prompt opens with the marker the renderer recognises and lists each update", () => {
+  const workers = [
+    { id: "wrk_a", name: "Market scan", status: "running", waitingFor: "", lifespan: { kind: "turns", max: 10, used: 2 } },
+    { id: "wrk_b", name: "Inbox watch", status: "waiting", waitingFor: "decision", lifespan: { kind: "open" } },
+  ];
+  const prompt = reviewPrompt({
+    coworkerName: "Nova",
+    workers,
+    findings: [
+      { workerId: "wrk_a", workerName: "Market scan", report: "finding", text: "Prices rose 3%." },
+      { workerId: "wrk_b", workerName: "Inbox watch", report: "decision", text: "Archive the newsletter?" },
+      { workerId: "wrk_gone", workerName: "Old one", report: "done", text: "All done." },
+      { workerId: "wrk_flaky", workerName: "Flaky", report: "failed", text: "Model unavailable" },
+    ],
+    now: NOW,
+  });
+  assert.match(prompt, /Worker "Flaky" didn't finish: Model unavailable/);
+  assert.ok(prompt.startsWith(`${REVIEW_OPENER}\n`));
+  assert.match(prompt, /- "Market scan" — working on it, 8 of 10 turns left/);
+  assert.match(prompt, /- "Inbox watch" — waiting for a decision/);
+  assert.match(prompt, /Worker "Market scan" reported: Prices rose 3%\./);
+  assert.match(prompt, /Worker "Inbox watch" needs a decision: Archive the newsletter\?/);
+  assert.match(prompt, /Worker "Old one" finished: All done\./);
+  assert.match(prompt, /say so plainly/);
+  assert.match(reviewPrompt({ coworkerName: "Nova", workers: [], findings: [], toolsAvailable: true }), /use your Worker tools now/);
+});
+
+test("reviews run at once for the first finding, batch inside the window, and retry once after a failure", async () => {
+  const timers = [];
+  let clock = 0;
+  const reviews = [];
+  let outcome = "reviewed";
+  const dropped = [];
+  const scheduler = createReviewScheduler({
+    review: async (slug, findings) => {
+      reviews.push({ slug, ids: findings.map((finding) => finding.id) });
+      if (outcome === "throw") throw new Error("model failed");
+      return outcome;
+    },
+    debounceMs: 60_000,
+    now: () => clock,
+    setTimer: (callback, wait) => {
+      const timer = { callback, at: clock + wait };
+      timers.push(timer);
+      return timer;
+    },
+    clearTimer: (timer) => timers.splice(timers.indexOf(timer), 1),
+    onDropped: (slug, batch) => dropped.push(batch.map((finding) => finding.id)),
+  });
+  const fire = async () => {
+    timers.sort((a, b) => a.at - b.at);
+    const next = timers.shift();
+    if (!next) return false;
+    clock = Math.max(clock, next.at);
+    next.callback();
+    await new Promise((resolve) => setImmediate(resolve));
+    return true;
+  };
+
+  scheduler.add("scout", { id: "f1" });
+  assert.equal(timers[0].at, 0);
+  await fire();
+  assert.deepEqual(reviews, [{ slug: "scout", ids: ["f1"] }]);
+
+  // Two findings inside the window join one review, scheduled at the window's end.
+  clock = 10_000;
+  scheduler.add("scout", { id: "f2" });
+  clock = 20_000;
+  scheduler.add("scout", { id: "f3" });
+  assert.equal(timers.length, 1);
+  assert.equal(timers[0].at, 60_000);
+  await fire();
+  assert.deepEqual(reviews[1], { slug: "scout", ids: ["f2", "f3"] });
+
+  // A held review keeps its findings and tries again after the window.
+  outcome = "hold";
+  clock = 130_000;
+  scheduler.add("scout", { id: "f4" });
+  await fire();
+  assert.deepEqual(reviews[2].ids, ["f4"]);
+  assert.deepEqual(scheduler.pending("scout").map((finding) => finding.id), ["f4"]);
+  outcome = "reviewed";
+  await fire();
+  assert.deepEqual(reviews[3].ids, ["f4"]);
+  assert.deepEqual(scheduler.pending("scout"), []);
+
+  // A failing review is retried once, then its findings are dropped.
+  outcome = "throw";
+  clock = 400_000;
+  scheduler.add("scout", { id: "f5" });
+  await fire();
+  await fire();
+  assert.deepEqual(reviews.slice(4).map((review) => review.ids), [["f5"], ["f5"]]);
+  assert.deepEqual(dropped, [["f5"]]);
+  assert.deepEqual(scheduler.pending("scout"), []);
+  scheduler.clear("scout");
+  assert.equal(timers.length, 0);
+});
