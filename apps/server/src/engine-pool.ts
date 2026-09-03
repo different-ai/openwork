@@ -66,6 +66,8 @@ export type EnginePoolHooks = {
   now?: () => number;
   schedule?: (operation: () => void, delayMs: number) => ReturnType<typeof setTimeout>;
   waitForHealthy?: (handle: ManagedOpencodeServer) => Promise<void>;
+  /** Called once when the pool shuts down, before its engines are retired. */
+  onDisposed?: () => void;
   logger?: EnginePoolLogger;
 };
 
@@ -977,6 +979,7 @@ export class EnginePool {
   /** Close every engine this pool owns. Draining generations go first. */
   async disposeAll(): Promise<void> {
     this.disposed = true;
+    this.hooks.onDisposed?.();
     this.pendingRollover = null;
     if (this.recoveryTimer) clearTimeout(this.recoveryTimer);
     this.recoveryTimer = null;

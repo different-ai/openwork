@@ -110,7 +110,8 @@ import {
   type CloudMcpHealth,
 } from "./cloud-mcp-health.js";
 import { runAgentContextDiagnostics } from "./agent-context-diagnostics.js";
-import { createAgentDiagnosticsEngineFetch } from "./agent-context-engine-inspection.js";
+import { createAgentDiagnosticsEngineFetch, validateEffectiveEngineSnapshot } from "./agent-context-engine-inspection.js";
+import { selectGoverningAgent, summarizeEffectivePermissions } from "./effective-permissions.js";
 import { sanitizeDiagnosticString } from "./diagnostic-sanitizer.js";
 import {
   mergeOpencodeConfigs,
@@ -135,6 +136,7 @@ import {
 } from "./openwork-workspace-config-store.js";
 import { buildOpenworkRuntimeConfigObject, openworkRuntimeConfigFilePath, writeOpenworkRuntimeConfigFile } from "./openwork-runtime-config.js";
 import { findManagedEngineWorkspace } from "./workspaces.js";
+import { startThreadApprovalReplayer, type ThreadApprovalReplayer } from "./thread-approvals.js";
 import { CloudProviderSync, parseCloudProviderDenSession } from "./cloud-provider-sync.js";
 import pkg from "../package.json" with { type: "json" };
 import constants from "../../../constants.json" with { type: "json" };
@@ -2547,6 +2549,41 @@ function createRoutes(
     return jsonResponse({ item: removed, warnings: [] });
   });
 
+  addRoute(routes, "GET", "/workspace/:id/permissions/effective", "client", async (ctx) => {
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    // The engine's own evaluated ruleset decides; OpenWork only names the
+    // layer each winning rule came from.
+    const opencode = createWorkspaceOpencodeClient(config, workspace, { boundedDiagnosticsReads: true });
+    const [configResult, agentResult] = await Promise.all([opencode.config.get({}), opencode.app.agents({})]);
+    const snapshot = validateEffectiveEngineSnapshot({
+      config: unwrapOpencodeResult(configResult, "/config"),
+      agents: unwrapOpencodeResult(agentResult, "/agent"),
+    });
+    if (!snapshot) {
+      throw new ApiError(502, "opencode_invalid_response", "OpenCode returned an unreadable agent list", { workspaceId: workspace.id });
+    }
+    const agent = selectGoverningAgent(snapshot.agents, snapshot.defaultAgent);
+    if (!agent) {
+      throw new ApiError(502, "opencode_agent_missing", "OpenCode reported no agent for this workspace", { workspaceId: workspace.id });
+    }
+    const globalPath = resolveOpencodeConfigFilePath("global", workspace.path);
+    const emptyConfig: Record<string, unknown> = {};
+    const [workspaceConfig, globalConfig, injected] = await Promise.all([
+      readOpencodeConfig(workspace.path),
+      readJsoncFile(globalPath, emptyConfig, { allowInvalid: true }).then((result) => result.data),
+      buildOpenworkRuntimeConfigObject(config),
+    ]);
+    return jsonResponse({
+      agent: agent.name,
+      rows: summarizeEffectivePermissions(agent.permission, {
+        global: globalConfig.permission,
+        openwork: injected.permission,
+        workspace: workspaceConfig.permission,
+      }),
+      files: { workspace: opencodeConfigPath(workspace.path), global: globalPath },
+    });
+  });
+
   addRoute(routes, "GET", "/workspace/:id/authorized-folders", "client", async (ctx) => {
     const workspace = await resolveWorkspace(config, ctx.params.id);
     const opencode = mergeOpencodeConfigs(
@@ -4900,10 +4937,15 @@ export function createEnginePoolForConfig(input: {
   trustedIdentity: string | null;
 }): EnginePool {
   const { config } = input;
+  const logger = createServerLogger(config);
+  // Thread approvals live in OpenWork because the engine forgets an "always"
+  // reply whenever this pool rebuilds an instance or rolls over.
+  let threadApprovals: ThreadApprovalReplayer | null = null;
   const pool = new EnginePool({
     config,
     template: input.template,
     hooks: {
+      onDisposed: () => threadApprovals?.stop(),
       reloadInPlace: (poolConfig, workspace, options) =>
         reloadOpencodeEngineInPlace(poolConfig, workspace, undefined, options),
       engineBusy: (poolConfig, workspace) => engineHasActiveSessions(poolConfig, workspace),
@@ -4914,7 +4956,7 @@ export function createEnginePoolForConfig(input: {
       writeRuntimeConfigFile: (poolConfig) => writeOpenworkRuntimeConfigFile(poolConfig),
       registerTrusted: (poolConfig, generation) => registerTrustedOpencodeProcess(poolConfig, generation),
       clearTrusted: (poolConfig, identity) => clearTrustedOpencodeProcess(poolConfig, identity),
-      logger: createServerLogger(config),
+      logger,
     },
   });
   pool.adoptPrimary({
@@ -4924,6 +4966,22 @@ export function createEnginePoolForConfig(input: {
     trustedIdentity: input.trustedIdentity,
   });
   setEnginePoolForConfig(config, pool);
+  threadApprovals = startThreadApprovalReplayer({
+    config,
+    primary: () => pool.connections().find((entry) => entry.role === "primary") ?? null,
+    // The engine reports an instance by its canonical path (macOS resolves
+    // /tmp and /var through /private), so compare canonical forms.
+    workspaceIdForDirectory: async (directory) => {
+      const reported = await realpath(normalizeOpencodeDirectory(directory)).catch(() => normalizeOpencodeDirectory(directory));
+      for (const workspace of config.workspaces) {
+        const owned = resolveOpencodeDirectory(workspace);
+        if (!owned) continue;
+        if (owned === reported || (await realpath(owned).catch(() => owned)) === reported) return workspace.id;
+      }
+      return null;
+    },
+    logger,
+  });
   return pool;
 }
 

@@ -243,7 +243,6 @@ function PreparedWorkspacePage({ prepared }: { prepared: PreparedBootstrapSummar
     try {
       const result = await exchangeHandoffAndSignIn(grant, {
         baseUrl: settings.baseUrl,
-        client: createDenClient({ baseUrl: settings.baseUrl }),
         // A pasted one-time code is a desktop-initiated sign-in.
         desktopInitiated: true,
       });
