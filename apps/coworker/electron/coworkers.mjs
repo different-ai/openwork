@@ -14,6 +14,8 @@
 import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { openworkConfigDir } from "@openwork/paths";
+import { DOCUMENTS_INDEX_FILE, documentsIndexTemplate } from "./documents.mjs";
+import { parseFrontmatter, serializeFrontmatter } from "./frontmatter.mjs";
 import {
   addToMemoryIndex,
   isMemoryFileName,
@@ -22,6 +24,8 @@ import {
   parseMemoryIndex,
   removeFromMemoryIndex,
 } from "./memory-index.mjs";
+
+export { parseFrontmatter, serializeFrontmatter };
 
 export const COWORKERS_DIR_NAME = "coworkers";
 const COWORKER_CONFIG_FILE = "coworker.md";
@@ -76,55 +80,6 @@ export function slugifyCoworkerName(name) {
   return slug || "coworker";
 }
 
-/**
- * Minimal deterministic frontmatter codec. Open Coworker is the only writer
- * of coworker.md, so the accepted grammar is intentionally small: `key: value`
- * lines where value is a JSON string, JSON array, or a bare string.
- */
-export function parseFrontmatter(content) {
-  const text = String(content ?? "");
-  if (!text.startsWith("---\n")) return { data: {}, body: text };
-  const end = text.indexOf("\n---", 4);
-  if (end === -1) return { data: {}, body: text };
-  const raw = text.slice(4, end);
-  const body = text.slice(text.indexOf("\n", end + 1) + 1);
-  const data = {};
-  for (const line of raw.split("\n")) {
-    const separator = line.indexOf(":");
-    if (separator === -1) continue;
-    const key = line.slice(0, separator).trim();
-    const value = line.slice(separator + 1).trim();
-    if (!key) continue;
-    if (value.startsWith("[") || value.startsWith("\"")) {
-      try {
-        data[key] = JSON.parse(value);
-        continue;
-      } catch {
-        // Fall through to the bare-string reading.
-      }
-    }
-    data[key] = value;
-  }
-  return { data, body };
-}
-
-export function serializeFrontmatter(data, body) {
-  const lines = ["---"];
-  for (const [key, value] of Object.entries(data)) {
-    if (value === undefined || value === null) continue;
-    if (Array.isArray(value)) {
-      lines.push(`${key}: ${JSON.stringify(value)}`);
-      continue;
-    }
-    const text = String(value);
-    const needsQuoting = text.includes(":") || text.startsWith("[") || text.startsWith("\"")
-      || text !== text.trim();
-    lines.push(`${key}: ${needsQuoting ? JSON.stringify(text) : text}`);
-  }
-  lines.push("---", "");
-  return `${lines.join("\n")}${String(body ?? "")}`;
-}
-
 function coworkerPath(coworkersDir, slug) {
   const cleaned = String(slug ?? "").trim();
   if (!/^[a-z0-9][a-z0-9-]*$/.test(cleaned)) {
@@ -173,8 +128,17 @@ ${mission || "Help with the work I am given, and own it over time."}
 `;
 }
 
-function agentsTemplate({ name }) {
-  return `# ${name} — coworker contract
+/**
+ * The contract's version. Bumping it makes every existing coworker's AGENTS.md
+ * regenerate on the next launch (`repairCoworkerContract`); soul and memory are
+ * never touched by that repair.
+ */
+export const AGENTS_CONTRACT_VERSION = 2;
+const AGENTS_CONTRACT_MARKER = /<!-- open-coworker-contract: (\d+) -->/;
+
+export function agentsTemplate({ name }) {
+  return `<!-- open-coworker-contract: ${AGENTS_CONTRACT_VERSION} -->
+# ${name} — coworker contract
 
 You are ${name}, a persistent Open Coworker teammate. This directory is your
 home: your identity, memory, and workspace live here as plain files, and every
@@ -187,8 +151,56 @@ conversation in this workspace is part of one continuous working relationship.
 - \`memory/index.md\` — map of your long-term memories. Loaded every turn.
 - \`memory/long-term/*.md\` — durable memories. Read the relevant file when
   the index shows one that matters for the current work.
+- \`documents/index.md\` — the documents in play right now, one line each.
+  Loaded every turn. The documents themselves live in \`documents/\` and are
+  managed only through the document tools, never edited as files.
 - \`workspace/\` — your working area for repositories, artifacts, and output.
 - \`coworker.md\` — configuration owned by the Open Coworker app. Do not edit it.
+
+## How I talk
+
+I talk like a colleague in a chat, not like a report. The point first, then two
+to four sentences, then at most three highlights. A reply is rarely more than
+about 120 words. When I need more than that to be useful, I say the short
+version in the message and put the rest in a document.
+
+- When the person asks for something substantial — a plan, a comparison,
+  research, a draft, a summary of many things — I write or update a document
+  with \`document_create\` or \`document_update\` **in the same turn**, then
+  answer with the short version and mention the document by name. I never
+  paste the document into the message.
+- I keep documents clean: a title, a one-sentence summary, three to five
+  highlights, then well-headed \`##\` sections. I update the existing document
+  when the topic continues (\`document_update\`, one section at a time when
+  that is enough) and start a new one when the topic is new. I refresh
+  \`summary\` and \`highlights\` every time the body changes.
+- Every time I create or refresh a document, I look at the active set in
+  \`documents/index.md\` and call \`context_set\` to put aside what the current
+  work no longer needs. I keep the active set to about five. I never archive
+  on my own; the person does that.
+- When the index says the person edited a document, I ask before rewriting it.
+- A quick question gets a quick answer and no document.
+
+### Examples
+
+**Research question.** "What are the trade-offs between hosting our own model
+and using an API?"
+Before: twelve paragraphs on latency, cost, privacy, staffing, and vendor risk.
+After: \`document_create\` "Hosting vs API — trade-offs", then: "Short version:
+an API wins for the next year, self-hosting only pays off past roughly 40M
+tokens a day or with strict data rules. The three things that decide it are
+volume, privacy, and who runs it. Details and numbers are in Hosting vs API."
+
+**Plan request.** "Put together a launch plan for the onboarding redesign."
+Before: the whole plan in the bubble, headings and all.
+After: \`document_create\` "Launch plan", \`context_set\` to put aside last
+quarter's notes, then: "Done — the plan runs three weeks in three phases:
+research, build, and a soft launch to 10% of new signups. Two owners, one open
+risk (the vendor handoff). It's in Launch plan; tell me what to change."
+
+**Quick factual question.** "What time is the vendor call tomorrow?"
+Before: a document titled "Vendor call".
+After: "10:30 your time, with Priya and Tom. Want me to add a prep note?"
 
 ## Working memory duty
 
@@ -240,11 +252,14 @@ know what I can recall; the files themselves are read only when relevant.
 `;
 }
 
+/** Files the engine loads on every turn; the documents index rides beside memory. */
+export const COWORKER_INSTRUCTIONS = ["soul.md", "memory/working.md", "memory/index.md", "documents/index.md"];
+
 function opencodeConfigTemplate() {
   return `${JSON.stringify(
     {
       $schema: "https://opencode.ai/config.json",
-      instructions: ["soul.md", "memory/working.md", "memory/index.md"],
+      instructions: COWORKER_INSTRUCTIONS,
     },
     null,
     2,
@@ -360,7 +375,61 @@ export async function createCoworker(coworkersDir, input) {
   await writeFile(path.join(root, "opencode.json"), opencodeConfigTemplate(), "utf8");
   await writeFile(path.join(root, WORKING_MEMORY_FILE), workingMemoryTemplate(name), "utf8");
   await writeFile(path.join(root, MEMORY_INDEX_FILE), memoryIndexTemplate(), "utf8");
+  await mkdir(path.dirname(path.join(root, DOCUMENTS_INDEX_FILE)), { recursive: true });
+  await writeFile(path.join(root, DOCUMENTS_INDEX_FILE), documentsIndexTemplate(), "utf8");
   return readCoworkerRecord(coworkersDir, slug);
+}
+
+/** The contract version an existing AGENTS.md carries; 0 when it predates versioning. */
+export function agentsContractVersion(content) {
+  const match = AGENTS_CONTRACT_MARKER.exec(String(content ?? ""));
+  return match ? Number(match[1]) : 0;
+}
+
+/**
+ * Bring an existing coworker up to the current contract during normal startup:
+ * regenerate `AGENTS.md` when it predates this version, make sure the engine
+ * loads `documents/index.md` every turn, and create that index when it is
+ * missing. `soul.md` and everything under `memory/` are never touched — they
+ * are the coworker's, not the app's. Returns what changed.
+ */
+export async function repairCoworkerContract(coworkersDir, slug) {
+  const root = coworkerPath(coworkersDir, slug);
+  const coworker = await readCoworkerRecord(coworkersDir, slug);
+  const changed = [];
+  const agentsPath = path.join(root, "AGENTS.md");
+  let agents = "";
+  try {
+    agents = await readFile(agentsPath, "utf8");
+  } catch {
+    agents = "";
+  }
+  if (agentsContractVersion(agents) < AGENTS_CONTRACT_VERSION) {
+    await writeFile(agentsPath, agentsTemplate({ name: coworker.name }), "utf8");
+    changed.push("AGENTS.md");
+  }
+  const configPath = path.join(root, "opencode.json");
+  let config = {};
+  try {
+    const parsed = JSON.parse(await readFile(configPath, "utf8"));
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) config = parsed;
+  } catch {
+    config = {};
+  }
+  const instructions = Array.isArray(config.instructions) ? config.instructions.filter((entry) => typeof entry === "string") : [];
+  const missing = COWORKER_INSTRUCTIONS.filter((entry) => !instructions.includes(entry));
+  if (missing.length > 0 || !Array.isArray(config.instructions)) {
+    const next = { $schema: "https://opencode.ai/config.json", ...config, instructions: [...instructions, ...missing] };
+    await writeFile(configPath, `${JSON.stringify(next, null, 2)}\n`, "utf8");
+    changed.push("opencode.json");
+  }
+  const indexPath = path.join(root, DOCUMENTS_INDEX_FILE);
+  if (!(await pathExists(indexPath))) {
+    await mkdir(path.dirname(indexPath), { recursive: true });
+    await writeFile(indexPath, documentsIndexTemplate(), "utf8");
+    changed.push("documents/index.md");
+  }
+  return { slug, changed };
 }
 
 /** Patch platform references (workspace, discussion, automations, model) inside coworker.md. */
