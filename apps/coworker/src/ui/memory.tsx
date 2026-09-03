@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { coworkerBridge, type CoworkerMemoryFile, type CoworkerSummary, type LongTermMemory } from "@/lib/bridge";
+import { coworkerBridge, type CoworkerMemoryFile, type CoworkerSummary, type LongTermMemory, type MemoryChange } from "@/lib/bridge";
 import { relativeTime } from "@/lib/activity-summary";
+import { describeMemoryChange } from "@/lib/memory-changes";
 import { Button, Empty, ErrorNote, inputClass } from "@/ui/kit";
 import { Markdown } from "@/ui/markdown";
 
@@ -22,18 +23,23 @@ export function MemoryPanel({ coworker }: { coworker: CoworkerSummary }) {
   const [tab, setTab] = useState<MemoryTab>("working");
   const [files, setFiles] = useState<CoworkerMemoryFile[]>([]);
   const [memories, setMemories] = useState<LongTermMemory[] | null>(null);
+  const [changes, setChanges] = useState<MemoryChange[]>([]);
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const [indexOpen, setIndexOpen] = useState(false);
   const [error, setError] = useState("");
+  // Bumped after an undo so the open page re-reads its file at once instead of on its next poll.
+  const [revision, setRevision] = useState(0);
 
   const refresh = useCallback(async () => {
     try {
-      const [nextFiles, nextMemories] = await Promise.all([
+      const [nextFiles, nextMemories, nextChanges] = await Promise.all([
         coworkerBridge.files.list(coworker.slug),
         coworkerBridge.memory.list(coworker.slug),
+        coworkerBridge.memory.changes(coworker.slug, 12),
       ]);
       setFiles(nextFiles);
       setMemories(nextMemories);
+      setChanges(nextChanges);
       setError("");
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
@@ -45,15 +51,26 @@ export function MemoryPanel({ coworker }: { coworker: CoworkerSummary }) {
     setSelectedFile(null);
     setIndexOpen(false);
     setMemories(null);
+    setChanges([]);
     void refresh();
   }, [refresh]);
 
-  // The coworker promotes and rewrites memories while working; the list follows.
+  // The coworker remembers, promotes, and rewrites while working; the list and the changes follow.
   useEffect(() => {
-    if (tab !== "long-term") return;
     const timer = window.setInterval(() => void refresh(), 5_000);
     return () => window.clearInterval(timer);
-  }, [refresh, tab]);
+  }, [refresh]);
+
+  async function undo(change: MemoryChange) {
+    try {
+      await coworkerBridge.memory.undo(coworker.slug, change.id);
+      setError("");
+      setRevision((value) => value + 1);
+      await refresh();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    }
+  }
 
   const indexFile = files.find((file) => file.id === "index") ?? null;
   const selectedMemory = selectedFile ? memories?.find((memory) => memory.file === selectedFile) ?? null : null;
@@ -87,7 +104,7 @@ export function MemoryPanel({ coworker }: { coworker: CoworkerSummary }) {
         </TabButton>
       </nav>
       {tab !== "long-term" ? (
-        <FixedFileTab slug={coworker.slug} file={files.find((file) => file.id === FIXED_TABS.find((entry) => entry.id === tab)?.fileId) ?? null} />
+        <FixedFileTab slug={coworker.slug} revision={revision} file={files.find((file) => file.id === FIXED_TABS.find((entry) => entry.id === tab)?.fileId) ?? null} />
       ) : indexOpen && indexFile ? (
         <div className="space-y-3" data-testid="memory-index-editor">
           <BackLink onClick={() => setIndexOpen(false)}>All memories</BackLink>
@@ -125,7 +142,51 @@ export function MemoryPanel({ coworker }: { coworker: CoworkerSummary }) {
           onError={setError}
         />
       )}
+      <RecentChanges coworker={coworker} changes={changes} onUndo={(change) => void undo(change)} />
     </div>
+  );
+}
+
+/**
+ * What changed in memory and soul lately, newest first, each with Undo. The
+ * coworker's changes read as they did in the conversation; the person's edits
+ * and undos are named too, so every line here can be trusted and reversed.
+ */
+function RecentChanges({ coworker, changes, onUndo }: { coworker: CoworkerSummary; changes: MemoryChange[]; onUndo: (change: MemoryChange) => void }) {
+  return (
+    <section className="border-t border-line pt-3" data-testid="memory-recent-changes">
+      <div className="flex items-center justify-between gap-2 px-1">
+        <h3 className="text-[11px] font-semibold text-mist">Recent changes</h3>
+        {changes.length > 0 ? <span className="text-[10px] text-mist">{changes.length}</span> : null}
+      </div>
+      {changes.length === 0 ? (
+        <p className="mt-1.5 px-1 text-[11px] leading-relaxed text-mist">Nothing yet. What {coworker.name} remembers or changes about itself shows up here, and you can undo it.</p>
+      ) : (
+        <ul className="mt-1.5 divide-y divide-line/70" data-testid="memory-change-list">
+          {changes.map((change) => {
+            const label = describeMemoryChange(change, changes);
+            const when = relativeTime(change.at);
+            return (
+              <li key={change.id} className="flex items-center gap-2 py-1.5" data-testid="memory-change-row" data-change-id={change.id} data-tool={change.tool} data-undone={change.undone ? "true" : "false"}>
+                <span className={`min-w-0 flex-1 truncate text-[11px] leading-relaxed ${change.undone ? "text-mist line-through decoration-mist/60" : "text-snow"}`} title={label} data-testid="memory-change-label">
+                  {label}
+                </span>
+                {when ? <span className="shrink-0 text-[10px] text-mist">{when === "now" ? "just now" : `${when} ago`}</span> : null}
+                <button
+                  type="button"
+                  className="shrink-0 rounded-md px-1.5 py-0.5 text-[11px] font-medium text-spark transition-colors hover:bg-spark/10 disabled:cursor-default disabled:text-mist/50 disabled:hover:bg-transparent"
+                  aria-label={`Undo: ${label}`}
+                  disabled={change.undone}
+                  onClick={() => onUndo(change)}
+                >
+                  {change.undone ? "Undone" : "Undo"}
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </section>
   );
 }
 
@@ -160,9 +221,9 @@ function describeUpdated(updatedAt: number): string {
   return ago === "now" ? "Updated just now" : `Updated ${ago} ago`;
 }
 
-function FixedFileTab({ slug, file }: { slug: string; file: CoworkerMemoryFile | null }) {
+function FixedFileTab({ slug, file, revision }: { slug: string; file: CoworkerMemoryFile | null; revision: number }) {
   if (!file) return <Empty>No memory files yet.</Empty>;
-  return <FileEditor key={file.path} slug={slug} path={file.path} label={file.label} defaultMode="view" />;
+  return <FileEditor key={`${file.path}:${revision}`} slug={slug} path={file.path} label={file.label} defaultMode="view" />;
 }
 
 /** The list the index describes, joined with what is actually on disk. */
