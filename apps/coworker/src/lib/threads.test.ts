@@ -10,6 +10,7 @@ import {
   modelSourceLabel,
   parseModelPreference,
   recommendModel,
+  threadStatusOf,
 } from "./threads.ts";
 import { fixtureCatalog, fixtureProvider } from "./provider-catalog.fixture.ts";
 
@@ -239,4 +240,13 @@ test("assignmentThreads excludes every discussion, not just the open one", () =>
   assert.deepEqual(assignmentThreads(threads, ["ses_a", "ses_b"]), [{ id: "ses_work", title: "Launch brief" }]);
   assert.deepEqual(assignmentThreads(threads, new Set(["ses_a", " "])), threads.slice(1));
   assert.deepEqual(assignmentThreads(threads, []), threads);
+});
+
+test("a retry the engine never moved on from reads as idle once its next attempt is long past", () => {
+  const now = 1_000_000;
+  assert.equal(threadStatusOf(undefined, now), "idle");
+  assert.equal(threadStatusOf({ type: "busy" }, now), "busy");
+  assert.equal(threadStatusOf({ type: "retry", attempt: 2, message: "Rate limit exceeded", next: now + 5_000 }, now), "retry");
+  assert.equal(threadStatusOf({ type: "retry", attempt: 2, message: "Rate limit exceeded", next: now - 30_000 }, now), "retry");
+  assert.equal(threadStatusOf({ type: "retry", attempt: 2, message: "Rate limit exceeded", next: now - 90_000 }, now), "idle");
 });
