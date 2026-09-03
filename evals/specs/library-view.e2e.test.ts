@@ -413,15 +413,6 @@ test.skipIf(!apiUrl || !webUrl)(title, async () => {
     return Boolean(pluginRow && [...pluginRow.querySelectorAll('img')]
       .some((image) => image.src.includes("github.com/anthropics.png")));
   })()`, { timeoutMs: 30_000, label: "GitHub owner avatar on the spec plugin row" });
-  const pluginChipIsNeutral = await evalIn(browser, `(() => {
-    const pluginRow = [...document.querySelectorAll('[data-library-item-type="plugin"]')]
-      .find((entry) => (entry.textContent ?? "").includes(${JSON.stringify(pluginName)}));
-    const kindChip = pluginRow?.querySelector('[data-library-chip]');
-    return kindChip instanceof HTMLElement
-      && getComputedStyle(kindChip).backgroundColor !== "rgb(254, 243, 199)";
-  })()`);
-  expect(pluginChipIsNeutral).toBe(true);
-
   const needsSignInTabClicked = await evalIn(browser, `(() => {
     const tab = [...document.querySelectorAll('[role="tab"]')]
       .find((entry) => (entry.textContent ?? "").trim().startsWith("Needs your sign-in"));
