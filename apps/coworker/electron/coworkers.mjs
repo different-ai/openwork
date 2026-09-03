@@ -24,6 +24,7 @@ import {
   parseMemoryIndex,
   removeFromMemoryIndex,
 } from "./memory-index.mjs";
+import { TEAM_ROSTER_FILE, refreshTeamRosters, roleById, writeTeamRoster } from "./team.mjs";
 
 export { parseFrontmatter, serializeFrontmatter };
 
@@ -62,6 +63,19 @@ function avatarGlasses(value) {
 
 function personality(value) {
   return PERSONALITIES.has(value) ? value : "neutral";
+}
+
+/** The catalog role a coworker was created from, or "" for one the person shaped by hand. */
+function roleIdOf(value) {
+  return roleById(value) ? String(value).trim().toLowerCase() : "";
+}
+
+/** Who proposed this coworker and why, or null when the person added it themselves. */
+function suggestedByOf(value) {
+  if (!value || typeof value !== "object") return null;
+  const slug = typeof value.slug === "string" ? value.slug.trim() : "";
+  const why = typeof value.why === "string" ? value.why.replace(/\s+/g, " ").trim().slice(0, 240) : "";
+  return slug && /^[a-z0-9][a-z0-9-]*$/.test(slug) ? { slug, why } : null;
 }
 
 /** Resolve the shared coworkers home inside the existing OpenWork config dir. */
@@ -133,7 +147,7 @@ ${mission || "Help with the work I am given, and own it over time."}
  * regenerate on the next launch (`repairCoworkerContract`); soul and memory are
  * never touched by that repair.
  */
-export const AGENTS_CONTRACT_VERSION = 4;
+export const AGENTS_CONTRACT_VERSION = 5;
 const AGENTS_CONTRACT_MARKER = /<!-- open-coworker-contract: (\d+) -->/;
 
 export function agentsTemplate({ name }) {
@@ -154,6 +168,8 @@ conversation in this workspace is part of one continuous working relationship.
 - \`documents/index.md\` — the documents in play right now, one line each.
   Loaded every turn. The documents themselves live in \`documents/\` and are
   managed only through the document tools, never edited as files.
+- \`team/roster.md\` — your teammates, one line each, and the roles the person
+  recently declined. Loaded every turn. Open Coworker writes it; never edit it.
 - \`workspace/\` — your working area for repositories, artifacts, and output.
 - \`coworker.md\` — configuration owned by the Open Coworker app. Do not edit it.
 
@@ -222,6 +238,29 @@ at once; \`workers_list\` shows them.
 - The person can see, steer, pause, and stop my Workers in the Workers view;
   when they do, I follow their lead.
 
+## My team
+
+I read \`team/roster.md\` every turn: it is the whole team, and I never invent a
+teammate who is not in it.
+
+- When a request is clearly a teammate's job and more than a quick answer — a
+  draft when I do research, a schedule when I write — I call
+  \`coworker_team_refer\` **before** doing the work, with the person's request in
+  their own words and one sentence on why, then reply with one short sentence
+  and stop. The person chooses. If they tell me to continue, I do the work
+  myself and do not refer again in that conversation.
+- A quick question I just answer. In a group chat I never refer; I say who
+  should take it instead.
+- When the person keeps asking for work nobody on the team covers — twice in
+  one conversation, or once when it is ongoing or scheduled ("every morning") —
+  or asks who could do something, I call \`coworker_team_suggest\` with the role,
+  a one-sentence mission, and why. The tool tells me when a teammate already
+  covers it (then I offer to pass it to them) or when the person said not now
+  recently (then I stay quiet). I reply with one short sentence; the person
+  decides whether to add them.
+- I never create, rename, or retire a coworker, and I never suggest more than
+  one teammate a day.
+
 ## Keeping memory and soul current
 
 After any turn in which the person states a preference, a stable fact about
@@ -267,14 +306,15 @@ external actions.
 `;
 }
 
-function workingMemoryTemplate(name) {
+function workingMemoryTemplate(name, firstNote = "") {
+  const now = String(firstNote ?? "").replace(/\s+/g, " ").trim().slice(0, 400);
   return `# Working memory — ${name}
 
 Curated active memory. I edit this continuously; my human can too.
 
 ## Now
 
-- Nothing yet. I was just created.
+- ${now || "Nothing yet. I was just created."}
 
 ## Carrying forward
 
@@ -292,8 +332,8 @@ know what I can recall; the files themselves are read only when relevant.
 `;
 }
 
-/** Files the engine loads on every turn; the documents index rides beside memory. */
-export const COWORKER_INSTRUCTIONS = ["soul.md", "memory/working.md", "memory/index.md", "documents/index.md"];
+/** Files the engine loads on every turn; the documents index and the team description ride beside memory. */
+export const COWORKER_INSTRUCTIONS = ["soul.md", "memory/working.md", "memory/index.md", "documents/index.md", TEAM_ROSTER_FILE];
 
 function opencodeConfigTemplate() {
   return `${JSON.stringify(
@@ -306,7 +346,7 @@ function opencodeConfigTemplate() {
   )}\n`;
 }
 
-function coworkerConfigTemplate({ name, role, mission, avatarColor: color, avatarGlasses: glasses, personality: voice, createdAt }) {
+function coworkerConfigTemplate({ name, role, mission, avatarColor: color, avatarGlasses: glasses, personality: voice, roleId, suggestedBy, createdAt }) {
   return serializeFrontmatter(
     {
       name,
@@ -315,6 +355,8 @@ function coworkerConfigTemplate({ name, role, mission, avatarColor: color, avata
       avatarColor: avatarColor(color),
       avatarGlasses: avatarGlasses(glasses),
       personality: personality(voice),
+      ...(roleId ? { roleId } : {}),
+      ...(suggestedBy ? { suggestedBySlug: suggestedBy.slug, suggestedByWhy: suggestedBy.why } : {}),
       workspaceId: "",
       conversationThreadId: "",
       model: "",
@@ -368,6 +410,10 @@ async function readCoworkerRecord(coworkersDir, slug) {
     avatarGlasses: avatarGlasses(data.avatarGlasses),
     /** Voice for the working state only; see src/lib/personalities.ts. */
     personality: personality(data.personality),
+    /** The catalog role this coworker was created from; "" when the person shaped it by hand. */
+    roleId: roleIdOf(data.roleId),
+    /** The teammate who proposed this coworker and why; null when the person added it themselves. */
+    suggestedBy: suggestedByOf({ slug: data.suggestedBySlug, why: data.suggestedByWhy }),
     workspaceId: typeof data.workspaceId === "string" ? data.workspaceId.trim() : "",
     /** Native OpenWork session used for ongoing discussion, never counted as an assignment. */
     conversationThreadId: typeof data.conversationThreadId === "string" ? data.conversationThreadId.trim() : "",
@@ -409,6 +455,8 @@ export async function createCoworker(coworkersDir, input) {
   const color = avatarColor(input?.avatarColor);
   const glasses = avatarGlasses(input?.avatarGlasses);
   const voice = personality(input?.personality);
+  const roleId = roleIdOf(input?.roleId);
+  const suggestedBy = suggestedByOf(input?.suggestedBy);
   const slug = slugifyCoworkerName(name);
   const root = coworkerPath(coworkersDir, slug);
   if (await pathExists(root)) {
@@ -419,16 +467,19 @@ export async function createCoworker(coworkersDir, input) {
   await mkdir(path.join(root, WORKSPACE_DIR), { recursive: true });
   await writeFile(
     path.join(root, COWORKER_CONFIG_FILE),
-    coworkerConfigTemplate({ name, role, mission, avatarColor: color, avatarGlasses: glasses, personality: voice, createdAt }),
+    coworkerConfigTemplate({ name, role, mission, avatarColor: color, avatarGlasses: glasses, personality: voice, roleId, suggestedBy, createdAt }),
     "utf8",
   );
   await writeFile(path.join(root, SOUL_FILE), soulTemplate({ name, role, mission }), "utf8");
   await writeFile(path.join(root, "AGENTS.md"), agentsTemplate({ name }), "utf8");
   await writeFile(path.join(root, "opencode.json"), opencodeConfigTemplate(), "utf8");
-  await writeFile(path.join(root, WORKING_MEMORY_FILE), workingMemoryTemplate(name), "utf8");
+  // The one line memory starts with is written here, once; after this the memory is the coworker's.
+  await writeFile(path.join(root, WORKING_MEMORY_FILE), workingMemoryTemplate(name, input?.firstNote), "utf8");
   await writeFile(path.join(root, MEMORY_INDEX_FILE), memoryIndexTemplate(), "utf8");
   await mkdir(path.dirname(path.join(root, DOCUMENTS_INDEX_FILE)), { recursive: true });
   await writeFile(path.join(root, DOCUMENTS_INDEX_FILE), documentsIndexTemplate(), "utf8");
+  // Every coworker's team description names the newcomer, and the newcomer's names everyone.
+  await refreshTeamRosters(coworkersDir, await listCoworkers(coworkersDir));
   return readCoworkerRecord(coworkersDir, slug);
 }
 
@@ -481,6 +532,8 @@ export async function repairCoworkerContract(coworkersDir, slug) {
     await writeFile(indexPath, documentsIndexTemplate(), "utf8");
     changed.push("documents/index.md");
   }
+  // The team description is the app's: rewrite it whenever it is missing or stale.
+  if (await writeTeamRoster(coworkersDir, coworker, await listCoworkers(coworkersDir))) changed.push(TEAM_ROSTER_FILE);
   return { slug, changed };
 }
 
@@ -489,6 +542,7 @@ export async function updateCoworker(coworkersDir, slug, patch) {
   const root = coworkerPath(coworkersDir, slug);
   const configPath = path.join(root, COWORKER_CONFIG_FILE);
   const { data, body } = parseFrontmatter(await readFile(configPath, "utf8"));
+  const before = { role: data.role, mission: data.mission };
   if (typeof patch?.workspaceId === "string") data.workspaceId = patch.workspaceId.trim();
   if (typeof patch?.conversationThreadId === "string") data.conversationThreadId = patch.conversationThreadId.trim();
   if (Array.isArray(patch?.automations)) {
@@ -504,12 +558,17 @@ export async function updateCoworker(coworkersDir, slug, patch) {
   if (typeof patch?.avatarGlasses === "string") data.avatarGlasses = avatarGlasses(patch.avatarGlasses);
   if (typeof patch?.personality === "string") data.personality = personality(patch.personality);
   await writeFile(configPath, serializeFrontmatter(data, body), "utf8");
+  // Only what teammates read about this coworker refreshes their descriptions; model and thread writes do not.
+  if (before.role !== data.role || before.mission !== data.mission) {
+    await refreshTeamRosters(coworkersDir, await listCoworkers(coworkersDir));
+  }
   return readCoworkerRecord(coworkersDir, slug);
 }
 
 export async function deleteCoworker(coworkersDir, slug) {
   const root = coworkerPath(coworkersDir, slug);
   await rm(root, { recursive: true, force: true });
+  await refreshTeamRosters(coworkersDir, await listCoworkers(coworkersDir));
 }
 
 export const RETIRED_DIR_NAME = ".retired";
@@ -575,6 +634,7 @@ export async function retireCoworker(coworkersDir, slug, { now = Date.now() } = 
   });
   await mkdir(retiredRoot(coworkersDir), { recursive: true });
   await rename(root, target);
+  await refreshTeamRosters(coworkersDir, await listCoworkers(coworkersDir));
   return { slug, archiveId, path: target, retiredAt };
 }
 
@@ -628,6 +688,7 @@ export async function restoreCoworker(coworkersDir, archiveId) {
     delete record.retiredAt;
   });
   await rename(archivePath, root);
+  await refreshTeamRosters(coworkersDir, await listCoworkers(coworkersDir));
   return readCoworkerRecord(coworkersDir, slug);
 }
 
