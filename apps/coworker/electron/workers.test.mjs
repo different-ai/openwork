@@ -240,8 +240,8 @@ test("a settled turn decides whether the worker continues, holds, or stops", () 
 
 test("the review prompt opens with the marker the renderer recognises and lists each update", () => {
   const workers = [
-    { id: "wrk_a", name: "Market scan", status: "running", waitingFor: "", lifespan: { kind: "turns", max: 10, used: 2 } },
-    { id: "wrk_b", name: "Inbox watch", status: "waiting", waitingFor: "decision", lifespan: { kind: "open" } },
+    { id: "wrk_a", name: "Market scan", status: "running", waitingFor: "", spawnedBy: "coworker", lifespan: { kind: "turns", max: 10, used: 2 } },
+    { id: "wrk_b", name: "Inbox watch", status: "waiting", waitingFor: "decision", spawnedBy: "person", lifespan: { kind: "open" } },
   ];
   const prompt = reviewPrompt({
     coworkerName: "Nova",
@@ -256,13 +256,15 @@ test("the review prompt opens with the marker the renderer recognises and lists 
   });
   assert.match(prompt, /Worker "Flaky" didn't finish: Model unavailable/);
   assert.ok(prompt.startsWith(`${REVIEW_OPENER}\n`));
-  assert.match(prompt, /- "Market scan" — working on it, 8 of 10 turns left/);
-  assert.match(prompt, /- "Inbox watch" — waiting for a decision/);
+  assert.match(prompt, /- "Market scan" \(wrk_a\) — working on it, 8 of 10 turns left — started by you/);
+  assert.match(prompt, /- "Inbox watch" \(wrk_b\) — waiting for a decision — started by the person/);
   assert.match(prompt, /Worker "Market scan" reported: Prices rose 3%\./);
   assert.match(prompt, /Worker "Inbox watch" needs a decision: Archive the newsletter\?/);
   assert.match(prompt, /Worker "Old one" finished: All done\./);
   assert.match(prompt, /say so plainly/);
-  assert.match(reviewPrompt({ coworkerName: "Nova", workers: [], findings: [], toolsAvailable: true }), /use your Worker tools now/);
+  const withTools = reviewPrompt({ coworkerName: "Nova", workers: [], findings: [], toolsAvailable: true });
+  assert.match(withTools, /steer it with your Worker tools now/);
+  assert.match(withTools, /never stop a Worker the person started unless they ask/);
 });
 
 test("reviews run at once for the first finding, batch inside the window, and retry once after a failure", async () => {
@@ -427,6 +429,10 @@ test("the coworker starts, lists, steers, reads, and stops Workers through its o
     assert.match(stopped.content[0].text, /^Stopped "Market scan"\./);
     assert.deepEqual(calls[2], ["cancel", "scout", id, "Enough"]);
     assert.equal((await getWorker(coworkersDir, "scout", id)).status, "cancelled");
+
+    const again = await call("worker_cancel", { id, reason: "Twice" });
+    assert.match(again.content[0].text, /had already stopped; nothing to stop\./);
+    assert.equal(calls.filter((entry) => entry[0] === "cancel").length, 1);
 
     const bad = await call("worker_steer", { id: "nope", text: "x" });
     assert.equal(bad.isError, true);

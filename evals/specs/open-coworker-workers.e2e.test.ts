@@ -246,7 +246,7 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   await clickButton(app, "New Worker");
   await waitFor(app, `Boolean(document.querySelector('[data-testid="new-worker"]'))`, { timeoutMs: 10_000, label: "New Worker form" });
   await fill(app, '[data-testid="new-worker-name"]', "Long watch");
-  await fill(app, '[data-testid="new-worker-goal"]', 'Count upward from 1. Each turn, end with a section titled "Finding" that contains only the next number.');
+  await fill(app, '[data-testid="new-worker-goal"]', 'Keep watch on the file workspace/notes.md. Each turn, check whether it exists and how many lines it has, and end with a section titled "Finding" that states just that in one sentence.');
   await evalIn(app, `[...document.querySelectorAll('[data-testid="new-worker"] [role="radio"]')].find((radio) => radio.textContent?.trim() === "Until stopped").click(); true`);
   await clickButton(app, "Start Worker");
   const watcherRow = await waitFor(app, `(() => {
@@ -261,12 +261,12 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   if (!watcher) throw new Error(`The Worker started from the view is missing: ${JSON.stringify(listed)}`);
   const watcherId = String(watcher.id);
   expect(watcher).toMatchObject({ spawnedBy: "person", lifespan: { kind: "open" } });
-  // The header and rail say a Worker is working, in words, before any review begins.
+  // The rail speaks about Workers in words: the Worker's own turn, or the coworker using its Worker tools.
   const railLine = await waitFor(app, `(() => {
     const line = document.querySelector('[data-testid="coworker-rail-line"]')?.textContent?.trim() ?? "";
     return /Worker/.test(line) ? line : false;
   })()`, { timeoutMs: 30_000, label: "rail line naming the Worker" });
-  expect(String(railLine)).toMatch(/^(Worker Long watch is working|Working on .+ · 1 Worker running|1 Worker running)$/);
+  expect(String(railLine)).toMatch(/^(Worker Long watch is working|Working on .+ · \d Workers? running|\d Workers running|Working on (starting|steering|stopping) (a Worker|.+)|Working on (looking over its Workers|reading a Worker's findings))$/);
 
   // Steering from the view arrives as the Worker's next turn, visible in its own work.
   await fill(app, '[data-testid="worker-steer-input"]', "Count by twos from now on.");
@@ -346,9 +346,35 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   await evalIn(app, `document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); true`);
   await waitFor(app, `document.querySelector('[data-testid="context-panel"]')?.getAttribute("data-collapsed") === "true"`, { timeoutMs: 10_000, label: "panel folded by Escape" });
 
+  // The coworker starts a Worker through its own tool when asked; the conversation shows the receipt.
+  const toolPrompt = 'Use your worker_spawn tool right now to start a Worker named "Tool check" with the goal: reply with a section titled "Finding" whose only sentence is TOOL WORKER READY, then say Done. Give it 1 turn. Do not ask me anything; after the tool call, tell me in one sentence what you started.';
+  await fill(app, 'textarea[aria-label="Message Editor"]', toolPrompt);
+  await clickButton(app, "Send");
+  const toolStarted = await waitFor(app, `window.__COWORKER__.invoke("workers.list", { slug: "editor" }).then((response) => {
+    const worker = (response.result ?? []).find((candidate) => candidate.name === "Tool check");
+    return worker ? { id: worker.id, spawnedBy: worker.spawnedBy, lifespan: worker.lifespan } : false;
+  })`, { awaitPromise: true, timeoutMs: 300_000, label: "a Worker started by the coworker's tool" });
+  expect(toolStarted).toMatchObject({ spawnedBy: "coworker", lifespan: { kind: "turns", max: 1 } });
+  const toolWorkerId = isRecord(toolStarted) ? String(toolStarted.id) : "";
+  // The receipt names the Worker either as its one line or as one step of a larger receipt.
+  const receipt = await waitFor(app, `(() => {
+    const summaries = [...document.querySelectorAll('[data-testid="coworker-work-summary"]')];
+    for (const summary of summaries) {
+      const line = summary.textContent?.trim() ?? "";
+      if (/Started a Worker/.test(line)) return line;
+      if (/Workers/.test(line) && summary.getAttribute("aria-expanded") !== "true") summary.click();
+    }
+    const step = [...document.querySelectorAll('[data-testid="coworker-work-step"]')].map((node) => node.textContent?.trim() ?? "").find((line) => /Started a Worker/.test(line));
+    return step ?? false;
+  })()`, { timeoutMs: 120_000, label: "the receipt for starting a Worker" });
+  expect(String(receipt)).toContain("Started a Worker");
+  const toolEvents = await workerEvents(app, toolWorkerId);
+  expect(toolEvents[0]).toMatchObject({ kind: "status", text: "Started by Editor", by: "coworker" });
+  await waitForWorker(app, toolWorkerId, (worker) => worker.status === "finished", { timeoutMs: 300_000, label: "the tool-started Worker to finish its one turn" });
+
   evidence.recordAssertionEvidence(
     "From the Workers view a person starts, steers, pauses, resumes, and stops a Worker",
-    `The folded panel's Workers icon opened the view (data-view workers), which listed Echo check as Done. New Worker started open-ended Worker ${watcherId} ("Long watch") from the form; its row read "${watcherLine}" and the rail said "${String(railLine)}". A steer typed in the row appeared in its timeline and then as the Worker's next turn in its read-only work view (Worker badge, no composer, no Stop in the header, no person bubbles). Pause held it (row Paused, nothing queued), Resume let it go on, Stop ended it: record Stopped with an end time, events Paused/Resumed/Stopped attributed to the person, no finding after the stop within 15 seconds, no active or queued runs, a second stop harmless, steering refused, both Workers listed newest first. The view had no card inside a card and Escape folded the panel.`,
+    `The folded panel's Workers icon opened the view (data-view workers), which listed Echo check as Done. New Worker started open-ended Worker ${watcherId} ("Long watch") from the form; its row read "${watcherLine}" and the rail said "${String(railLine)}". A steer typed in the row appeared in its timeline and then as the Worker's next turn in its read-only work view (Worker badge, no composer, no Stop in the header, no person bubbles). Pause held it (row Paused, nothing queued), Resume let it go on, Stop ended it: record Stopped with an end time, events Paused/Resumed/Stopped attributed to the person, no finding after the stop within 15 seconds, no active or queued runs, a second stop harmless, steering refused, both Workers listed newest first. The view had no card inside a card and Escape folded the panel. Asked in the discussion, Editor started Worker ${toolWorkerId} ("Tool check", 1 turn) through its own worker_spawn tool; the conversation showed the receipt "${String(receipt)}", the Worker's first event read Started by Editor, and it finished its one turn.`,
     true,
   );
 });
