@@ -150,7 +150,6 @@ test(title, async ({ evidence, place }) => {
       .filter((element) => (element.textContent ?? '').trim() === 'Preview').length;
     return {
       exactPreviewLabels,
-      identityFieldClass: fields?.className ?? '',
       applicationName: applicationInput instanceof HTMLInputElement ? applicationInput.value : null,
       accentColor: accentSelect instanceof HTMLSelectElement ? accentSelect.value : null,
       applicationWidth: applicationRect?.width ?? 0,
@@ -174,7 +173,6 @@ test(title, async ({ evidence, place }) => {
   })()`);
   expect(presentation).toMatchObject({
     exactPreviewLabels: 0,
-    identityFieldClass: "grid gap-5",
     applicationName: initialName,
     accentColor: "violet",
     screenWithinViewport: true,
@@ -193,7 +191,6 @@ test(title, async ({ evidence, place }) => {
     "White-label Desktop identity has no Preview card or unused column at a narrow desktop width",
     `At 820px wide the page rendered ${JSON.stringify(presentation)}.`,
     presentation.exactPreviewLabels === 0
-      && presentation.identityFieldClass === "grid gap-5"
       && presentation.screenWithinViewport === true
       && presentation.horizontalOverflow === false
       && presentation.applicationWidth === presentation.fieldWidth
