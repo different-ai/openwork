@@ -1645,7 +1645,6 @@ function WorkspaceSidebarGroup({
                 variant="ghost"
                 size="icon"
                 className="absolute right-2 top-1/2 z-10 size-5 -translate-y-1/2 text-muted-foreground flex items-center justify-center group/expand-collapse-button"
-                data-sidebar-workspace-toggle
                 aria-label={isExpanded ? t("sidebar.collapse") : t("sidebar.expand")}
                 aria-expanded={isExpanded}
                 onClick={(e) => {

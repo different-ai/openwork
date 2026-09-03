@@ -250,6 +250,129 @@ export async function responsiveSessions(seed: Seed) {
   return { ...world, primary, secondary };
 }
 
+export type SidebarRouteWorkspace = { id: string; name: string; loading: boolean; error: string | null };
+export type SidebarRouteSession = { id: string; title: string };
+export type SidebarRouteFacts = {
+  selectedWorkspaceId: string;
+  workspaces: SidebarRouteWorkspace[];
+  sessionsByWorkspaceId: Record<string, SidebarRouteSession[]>;
+};
+
+function parseSidebarRouteFacts(value: unknown): SidebarRouteFacts {
+  if (!isRecord(value) || typeof value.selectedWorkspaceId !== "string" || !Array.isArray(value.workspaces) || !isRecord(value.sessionsByWorkspaceId)) {
+    throw new Error(`Route inspector slice was unavailable: ${JSON.stringify(value)}`);
+  }
+  const workspaces: SidebarRouteWorkspace[] = [];
+  for (const workspace of value.workspaces) {
+    if (!isRecord(workspace) || typeof workspace.id !== "string" || typeof workspace.name !== "string" || typeof workspace.loading !== "boolean") {
+      throw new Error(`Route inspector workspace was invalid: ${JSON.stringify(workspace)}`);
+    }
+    workspaces.push({
+      id: workspace.id,
+      name: workspace.name,
+      loading: workspace.loading,
+      error: typeof workspace.error === "string" ? workspace.error : null,
+    });
+  }
+  const sessionsByWorkspaceId: Record<string, SidebarRouteSession[]> = {};
+  for (const [workspaceId, sessions] of Object.entries(value.sessionsByWorkspaceId)) {
+    if (!Array.isArray(sessions)) throw new Error(`Route inspector sessions for ${workspaceId} were invalid: ${JSON.stringify(sessions)}`);
+    sessionsByWorkspaceId[workspaceId] = sessions.map((session) => {
+      if (!isRecord(session) || typeof session.id !== "string" || typeof session.title !== "string") {
+        throw new Error(`Route inspector session was invalid: ${JSON.stringify(session)}`);
+      }
+      return { id: session.id, title: session.title };
+    });
+  }
+  return { selectedWorkspaceId: value.selectedWorkspaceId, workspaces, sessionsByWorkspaceId };
+}
+
+/**
+ * Two empty workspaces on one desktop. `other` is created last, which selects
+ * it and expands its sidebar group; the group stays expanded after the spec
+ * returns to `home`, so `other`'s rows keep rendering while it is not selected.
+ */
+export async function externalSessionVisibility(seed: Seed) {
+  const runId = `${Date.now().toString(36)}-${process.pid}`;
+  const app = await seed.desktop({ name: "sidebar-external-session-visibility" });
+  const home = await seed.workspace(app, `/tmp/openwork-external-sessions-${runId}-home`);
+  const other = await additionalWorkspace(seed, app, `/tmp/openwork-external-sessions-${runId}-other`);
+  // TODO(primitive): seed.desktop should accept an initial viewport for Electron surfaces.
+  // The sidebar renders its workspace rows only on a desktop-width viewport.
+  await app.client.send("Emulation.setDeviceMetricsOverride", {
+    width: 1_400,
+    height: 900,
+    deviceScaleFactor: 1,
+    mobile: false,
+  });
+  return {
+    app,
+    home,
+    other,
+    /** The sidebar's own per-workspace session lists and load state. */
+    // TODO(primitive): probe.route should expose the sidebar's per-workspace session lists.
+    async route(): Promise<SidebarRouteFacts> {
+      return parseSidebarRouteFacts(await seed.evalIn(app, `(() => {
+        const route = window.__openwork?.slice?.("route");
+        if (!route) return null;
+        return {
+          selectedWorkspaceId: String(route.selectedWorkspaceId ?? ""),
+          workspaces: (route.workspaces ?? []).map((workspace) => ({
+            id: String(workspace.id),
+            name: String(workspace.displayNameResolved ?? ""),
+            loading: Boolean(workspace.loading),
+            error: typeof workspace.error === "string" ? workspace.error : null,
+          })),
+          sessionsByWorkspaceId: Object.fromEntries(Object.entries(route.sessionsByWorkspaceId ?? {}).map(([workspaceId, sessions]) => [
+            workspaceId,
+            (sessions ?? []).map((session) => ({ id: String(session?.id ?? ""), title: String(session?.title ?? "") })),
+          ])),
+        };
+      })()`));
+    },
+    /** Session ids currently rendered as rows under one sidebar workspace group. */
+    // TODO(primitive): probe.sidebarSessions should list the rendered session rows of a workspace group.
+    async sidebarSessionIds(workspaceId: string): Promise<string[]> {
+      const value = await seed.evalIn(app, `(workspaceId) => Array.from(document.querySelectorAll(
+        "[data-sidebar-session-workspace-id=" + JSON.stringify(workspaceId) + "]",
+      )).map((element) => element.getAttribute("data-sidebar-session-id")).filter(Boolean)`, { args: [workspaceId] });
+      if (!Array.isArray(value) || value.some((id) => typeof id !== "string")) {
+        throw new Error(`Sidebar returned invalid session rows: ${JSON.stringify(value)}`);
+      }
+      return value.filter((id): id is string => typeof id === "string");
+    },
+    /**
+     * Creates a session the way another client would: straight against the
+     * OpenWork server's workspace mount, never through the desktop's UI state.
+     */
+    // TODO(primitive): seed.externalSession should create a session on the server without touching the renderer.
+    async createSessionOutsideWindow(workspaceId: string, title: string): Promise<string> {
+      const value = await seed.evalIn(app, `async (workspaceId, title) => {
+        const info = await window.__OPENWORK_ELECTRON__?.invokeDesktop?.("openworkServerInfo");
+        if (!info?.running || !info.baseUrl) return { error: "local_server_unavailable" };
+        const response = await fetch(
+          String(info.baseUrl).replace(/\\/+$/, "") + "/workspace/" + encodeURIComponent(workspaceId) + "/opencode/session",
+          {
+            method: "POST",
+            headers: {
+              Authorization: "Bearer " + String(info.ownerToken ?? info.clientToken ?? ""),
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ title }),
+            signal: AbortSignal.timeout(60_000),
+          },
+        );
+        const body = await response.json().catch(() => null);
+        return { ok: response.ok, status: response.status, id: typeof body?.id === "string" ? body.id : null };
+      }`, { args: [workspaceId, title], awaitPromise: true, timeoutMs: 90_000 });
+      if (!isRecord(value) || value.ok !== true || typeof value.id !== "string") {
+        throw new Error(`Creating a session outside the window failed: ${JSON.stringify(value)}`);
+      }
+      return value.id;
+    },
+  };
+}
+
 export async function crossWorkspaceSessions(seed: Seed) {
   const runId = `${Date.now().toString(36)}-${process.pid}`;
   const app = await seed.desktop({ name: "cross-workspace-split-view" });
