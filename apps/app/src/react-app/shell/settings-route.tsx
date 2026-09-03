@@ -2403,6 +2403,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
               const message = await providerAuthStore.disconnectProvider(providerId);
               if (typeof message === "string" && message.trim()) {
                 setConfigActionStatus(message);
+                toast.success(message);
               }
             }}
             canDisconnectProvider={(provider) =>

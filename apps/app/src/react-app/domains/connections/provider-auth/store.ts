@@ -2182,9 +2182,13 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       await removeProviderAuthCredentials(resolved);
       const updated = await refreshProviders({ dispose: true });
       if (Array.isArray(updated?.connected) && updated.connected.includes(resolved)) {
-        // Provider is still connected (e.g. via env var). Just remove
-        // stored credentials; do NOT add to disabled_providers.
-        return `Removed stored credentials for ${resolved}${t("providers.still_connected_suffix")}`;
+        const provider = updated.all.find((entry) => entry.id === resolved);
+        if (provider?.source === "env") {
+          // Environment-backed providers are controlled outside OpenWork.
+          return `Removed stored credentials for ${resolved}${t("providers.still_connected_suffix")}`;
+        }
+        await ensureProjectProviderDisabledState(resolved, true);
+        await refreshProviders({ dispose: true });
       }
       removeProviderFromState(resolved);
       return `${t("providers.disconnected_prefix")} ${resolved}`;
