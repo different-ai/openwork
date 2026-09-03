@@ -5,13 +5,11 @@ import { test } from "@openwork/testkit";
 
 const repoRoot = resolve(import.meta.dirname, "../..");
 
-test("the app SDK smoke server is hermetic and completes its core calls", ({ evidence }) => {
+test("the app SDK smoke suite isolates each OpenCode process and completes", ({ evidence }) => {
   const result = spawnSync("pnpm", [
     "--filter",
     "@openwork/app",
-    "exec",
-    "node",
-    "scripts/e2e.mjs",
+    "test:e2e",
   ], {
     cwd: repoRoot,
     encoding: "utf8",
@@ -22,20 +20,16 @@ test("the app SDK smoke server is hermetic and completes its core calls", ({ evi
 
   expect(result.error, output).toBeUndefined();
   expect(result.status, output).toBe(0);
-  const report = JSON.parse(result.stdout) as {
-    ok: boolean;
-    steps: Array<{ name: string; status: string }>;
-  };
-  expect(report.ok).toBe(true);
-  expect(report.steps.filter((step) => step.status === "error")).toEqual([]);
-  expect(report.steps.find((step) => step.name === "health")?.status).toBe("ok");
-  expect(report.steps.find((step) => step.name === "path.get")?.status).toBe("ok");
-  expect(report.steps.find((step) => step.name === "session.create")?.status).toBe("ok");
-  expect(report.steps.find((step) => step.name === "event.subscribe")?.status).toBe("ok");
+  expect(output).not.toContain('"ok": false');
+  expect(output).not.toContain('"status": "error"');
+  expect(output).toContain('"name": "path.get"');
+  expect(output).toContain('"name": "session.messages switch"');
+  expect(output).toContain('"root":".openwork/test-engine"');
+  expect(output).toContain('"name": "assert.built-in-browser-quickstart"');
 
   evidence.recordAssertionEvidence(
-    "The hermetic OpenCode process serves every core SDK smoke call",
-    "A temporary database and minimal config complete health, path.get, session create/list/messages/prompt/todo, and SSE subscription with no error step.",
+    "Every core SDK smoke script receives isolated OpenCode state",
+    "The exact app test:e2e command completes core health/path/session/prompt/todo/SSE, session switching, filesystem operations, and the browser-entry project command with no error report.",
     true,
   );
 });
