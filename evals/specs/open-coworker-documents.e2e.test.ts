@@ -1,4 +1,4 @@
-import { clickButton, coworker, evalIn, fill, needs, test, waitFor, waitForText } from "@openwork/testkit";
+import { EVAL_COWORKER_MODEL, clickButton, coworker, evalIn, fill, needs, test, waitFor, waitForText } from "@openwork/testkit";
 import { expect } from "vitest";
 
 const enabled = process.env.OPENWORK_EVAL_E2E_TESTS === "1";
@@ -121,7 +121,7 @@ test.skipIf(!enabled)(title, { timeout: 1_200_000 }, async ({ evidence }) => {
     avatarGlasses: "round",
   }));
   expect(created.workspaceId).toEqual(expect.any(String));
-  await invokeCoworker(app, "coworkers.update", { slug: SLUG, patch: { model: "opencode/big-pickle", modelVariant: "" } });
+  await invokeCoworker(app, "coworkers.update", { slug: SLUG, patch: { model: EVAL_COWORKER_MODEL, modelVariant: "" } });
   await reload(app);
   await waitFor(app, `document.querySelector('[data-testid="coworker-top-status"]')?.textContent?.trim() === "Ready"`, {
     timeoutMs: 240_000,
