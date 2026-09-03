@@ -422,7 +422,7 @@ export function workerTurnPrompt({ worker, coworkerName, body, now = Date.now() 
     worker.goal,
     "",
     `Lifespan: ${describeLifespanForPrompt(worker.lifespan, now)}.`,
-    `You are a Worker, not ${coworkerName}: never start, steer, or stop Workers (the worker tools are ${coworkerName}'s), and leave ${coworkerName}'s memory files alone.`,
+    `You are a Worker, not ${coworkerName}: never start, steer, or stop Workers, never set up or change assignments, and never change ${coworkerName}'s memory or soul (those tools are ${coworkerName}'s), and leave ${coworkerName}'s memory files alone.`,
     "Work in bounded steps. After each meaningful step, end your turn with a section titled \"Finding\": 2–6 sentences a person can read. If you need a decision before you can go on, end instead with a section titled \"Needs a decision\" and list the options. When the goal is met, end with a section titled \"Done\" and your final finding.",
     "",
     body,
