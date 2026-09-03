@@ -90,7 +90,12 @@ async function openAppsAndTools(app: Awaited<ReturnType<typeof coworker>>): Prom
   await waitFor(app, `(() => {
     const panel = document.querySelector('[data-testid="context-panel"]');
     if (!(panel instanceof HTMLElement)) return false;
-    if (panel.dataset.collapsed === "false" && panel.dataset.view === "capabilities") return true;
+    if (panel.dataset.collapsed === "false" && panel.dataset.view === "capabilities") {
+      // The view remembers its last level for the session; the journeys start each visit at the root.
+      if (panel.dataset.depth === "0") return true;
+      document.querySelector('[data-testid="panel-back"]')?.click();
+      return false;
+    }
     if (panel.dataset.collapsed === "true") {
       document.querySelector('[data-testid="context-rail-capabilities"]')?.click();
       return false;
