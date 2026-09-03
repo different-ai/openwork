@@ -36,6 +36,9 @@ export const InferenceKeyTable = mysqlTable(
     name: varchar("name", { length: 255 }),
     key_hash: varchar("key_hash", { length: 255 }).notNull(),
     key_prefix: varchar("key_prefix", { length: 32 }),
+    // Raw `ow_inf_` key (encrypted) so den-api can hand it back to the member's
+    // desktop without materializing an llm_provider row. Null on legacy rows.
+    encrypted_key: encryptedTextColumn("encrypted_key"),
     status: mysqlEnum("status", InferenceKeyStatus).notNull().default("active"),
     revoked_at: timestamp("revoked_at", { fsp: 3 }),
     ...timestamps,

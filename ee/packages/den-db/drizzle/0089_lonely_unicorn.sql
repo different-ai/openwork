@@ -1,0 +1,1 @@
+ALTER TABLE `inference_keys` ADD `encrypted_key` text;
