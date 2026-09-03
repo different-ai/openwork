@@ -90,23 +90,47 @@ function streamReply(response: ServerResponse, model: string, text: string): voi
   response.end();
 }
 
+/** Responses still being held; a real provider drops these when the client goes away. */
+const held = new Set<ServerResponse>();
+/** What happened to held responses, for a failure message worth reading. */
+const heldLog: string[] = [];
+
 /**
  * Open the stream at once (with an opening line when given), then hold the rest for `holdMs`; a
- * closed connection (a stop, an abort) cancels the wait. The connection is not kept alive: an
- * aborted client must not queue its next request behind a response that is still being held.
+ * closed connection (a stop, an abort) cancels the wait.
  */
 function holdThenReply(response: ServerResponse, model: string, text: string, holdMs: number, opening = ""): void {
   response.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache", connection: "close" });
   response.write(chunk(model, { role: "assistant" }, null));
   if (opening) response.write(chunk(model, { content: `${opening} ` }, null));
+  held.add(response);
+  const openedAt = Date.now();
+  heldLog.push(`${text.slice(0, 12)} held at ${openedAt}`);
   const timer = setTimeout(() => {
+    held.delete(response);
     if (response.writableEnded || response.destroyed) return;
+    heldLog.push(`${text.slice(0, 12)} released by the hold after ${Date.now() - openedAt} ms`);
     response.write(chunk(model, { content: text }, null));
     response.write(chunk(model, {}, "stop"));
     response.write("data: [DONE]\n\n");
     response.end();
   }, holdMs);
-  response.on("close", () => clearTimeout(timer));
+  response.on("close", () => {
+    heldLog.push(`${text.slice(0, 12)} connection closed after ${Date.now() - openedAt} ms`);
+    held.delete(response);
+    clearTimeout(timer);
+  });
+}
+
+/**
+ * What a provider does once the client has stopped listening: drop the held
+ * response and its connection. The engine's runtime keeps an aborted stream's
+ * connection around and would queue its next request behind it otherwise.
+ */
+function releaseHeld(): void {
+  heldLog.push(`release asked with ${held.size} held`);
+  for (const response of held) response.destroy();
+  held.clear();
 }
 
 function refuse(response: ServerResponse, status: number, message: string, type: string, headers: Record<string, string> = {}): void {
@@ -286,7 +310,7 @@ async function describeThread(app: App, serverUrl: string, token: string, worksp
       return { id: message.info.id, role: message.info.role, parentID: message.info.parentID, completed: isRecord(message.info.time) ? message.info.time.completed : undefined, error: message.info.error ? JSON.stringify(message.info.error).slice(0, 200) : null, parts };
     })
     : messages;
-  return JSON.stringify({ status, mock: scripted.requests.map((request) => `${request.model}:${request.prompt.slice(0, 24)}`), messages: summary, turns }, null, 1);
+  return JSON.stringify({ status, mock: scripted.requests.map((request) => `${request.model}:${request.prompt.slice(0, 24)}`), held: heldLog, messages: summary, turns }, null, 1);
 }
 
 test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
@@ -483,6 +507,7 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
   await waitUntilRunning(app, STOP_PROMPT);
   await waitFor(app, `document.querySelector('[data-testid="coworker-send"]')?.getAttribute("data-role") === "stop"`, { timeoutMs: 30_000, label: "the round control became Stop" });
   await evalIn(app, `document.querySelector('[data-testid="coworker-send"][data-role="stop"]').click(); true`);
+  releaseHeld();
   const stoppedLine = await waitFor(app, `(() => {
     const line = document.querySelector('[data-testid="coworker-turn-line"][data-outcome="stopped-by-you"]');
     if (!line) return false;
@@ -536,6 +561,7 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
   await evalIn(app, `[...document.querySelectorAll('[data-testid="coworker-next-row"]')][1].querySelector('[data-testid="coworker-next-remove"]').click(); true`);
   expect(await rows()).toEqual(["Next one"]);
   await evalIn(app, `document.querySelector('[data-testid="coworker-next-row"] [data-testid="coworker-next-send-now"]').click(); true`);
+  releaseHeld();
   await waitFor(app, `[...document.querySelectorAll('[data-message-role="user"]')].some((node) => (node.textContent ?? "").trim() === "Next one")`, { timeoutMs: 30_000, label: "Send now sent the waiting message" });
   await waitForReply(app, DEFAULT_REPLY, 60_000);
   expect(await rows()).toEqual([]);
@@ -582,6 +608,7 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
     headers: { Authorization: `Bearer ${ownerToken}` },
   });
   expect(aborted.status).toBe(200);
+  releaseHeld();
   await waitFor(app, `Boolean(document.querySelector('[data-testid="coworker-discussion-view"]')) && [...document.querySelectorAll("h1")].some((heading) => heading.textContent?.trim() === "Nova")`, { timeoutMs: 120_000, label: "Nova discussion view after the reload" });
   const cutLine = await waitFor(app, `(() => {
     const line = document.querySelector('[data-testid="coworker-turn-line"][data-outcome="cut-off"]');
