@@ -20,7 +20,7 @@ export function CoworkerMark({
   tile?: boolean;
 }) {
   const motionClass = loading ? "is-loading" : animated ? "is-animated" : "";
-  const avatarRef = useAvatarPointerGaze();
+  const avatarRef = useAvatarPointerGaze(true, animated || loading);
 
   return (
     <svg
