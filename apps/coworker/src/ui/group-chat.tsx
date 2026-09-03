@@ -1,4 +1,4 @@
-import { createHeadlessThreadClient } from "@openwork/headless-threads";
+import { createHeadlessThreadClient, isRunning, type HeadlessThreadClient, type HeadlessTurnAcceptance } from "@openwork/headless-threads";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { coworkerBridge, type CoworkerGroupSummary, type CoworkerGroupTurn, type CoworkerSummary, type GroupTimelineEvent, type RuntimeInfo } from "@/lib/bridge";
 import { assignmentPrompt, assignmentTitle, timeLabelBetween, type DiscussionMessage } from "@/lib/conversation";
@@ -64,6 +64,53 @@ function coordinatorReady(): Promise<{ workspaceId: string }> {
   return coordinatorPromise;
 }
 const CATALOG_TTL_MS = 60_000;
+/** How long a settled thread may still be catching up on its reply text before it counts as no reply. */
+const REPLY_TEXT_GRACE_MS = 10_000;
+
+function sleep(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(done, ms);
+    function done() {
+      clearTimeout(timer);
+      signal.removeEventListener("abort", done);
+      resolve();
+    }
+    signal.addEventListener("abort", done, { once: true });
+  });
+}
+
+/**
+ * The visible text of one accepted turn once the thread is done with it. A
+ * thread can read idle for a moment before its reply text has landed, so an
+ * empty reply gets a short grace period (and another wait if the thread turns
+ * out to be running again) before it counts as no reply.
+ */
+async function settledReplyText(client: HeadlessThreadClient, threadId: string, acceptance: HeadlessTurnAcceptance, timeoutMs: number, signal: AbortSignal, name: string): Promise<string> {
+  const deadline = Date.now() + timeoutMs;
+  let result = await client.waitForThread(threadId, { timeoutMs, pollIntervalMs: 600, since: acceptance, signal });
+  for (;;) {
+    if (result.outcome === "aborted") throw new Error("Stopped.");
+    if (result.outcome === "timeout") {
+      await client.abortThread(threadId).catch(() => undefined);
+      throw new Error(`${name} took too long to reply.`);
+    }
+    if (result.outcome === "failed") throw new Error(result.terminalError?.message || `${name} could not reply.`);
+    const text = replyTextSince(result.snapshot.messages, acceptance.messageCountBefore);
+    if (text) return text;
+    const graceEnd = Date.now() + REPLY_TEXT_GRACE_MS;
+    let snapshot = result.snapshot;
+    while (Date.now() < graceEnd && !signal.aborted) {
+      await sleep(500, signal);
+      snapshot = await client.getThreadSnapshot(threadId, { signal });
+      const later = replyTextSince(snapshot.messages, acceptance.messageCountBefore);
+      if (later) return later;
+      if (isRunning(snapshot.status)) break;
+    }
+    if (signal.aborted) throw new Error("Stopped.");
+    if (!isRunning(snapshot.status)) return "";
+    result = await client.waitForThread(threadId, { timeoutMs: Math.max(1_000, deadline - Date.now()), pollIntervalMs: 600, since: acceptance, signal });
+  }
+}
 
 /** The `@handle` being typed just before the caret, if any. */
 function mentionAtCaret(value: string, caret: number): { start: number; query: string } | null {
@@ -209,14 +256,7 @@ export function GroupChat({
     run.abortCurrent = () => threads.client.abortThread(threadId);
     try {
       const acceptance = await threads.client.sendTurn(threadId, { prompt, messageId: newId("msg"), signal });
-      const result = await threads.client.waitForThread(threadId, { timeoutMs: REPLY_TIMEOUT_MS, pollIntervalMs: 600, since: acceptance, signal });
-      if (result.outcome === "aborted") throw new Error("Stopped.");
-      if (result.outcome === "timeout") {
-        await threads.client.abortThread(threadId).catch(() => undefined);
-        throw new Error(`${coworker.name} took too long to reply.`);
-      }
-      if (result.outcome === "failed") throw new Error(result.terminalError?.message || `${coworker.name} could not reply.`);
-      return { text: replyTextSince(result.snapshot.messages, acceptance.messageCountBefore), threadId };
+      return { text: await settledReplyText(threads.client, threadId, acceptance, REPLY_TIMEOUT_MS, signal, coworker.name), threadId };
     } finally {
       if (run.abortCurrent) run.abortCurrent = null;
     }
@@ -262,12 +302,7 @@ export function GroupChat({
     }
     const ask: FacilitatorAsk = async (text, model, askSignal) => {
       const acceptance = await client.sendTurn(threadId, { prompt: text, model: { providerId: model.providerId, modelId: model.modelId }, messageId: newId("msg"), signal: askSignal });
-      const result = await client.waitForThread(threadId, { timeoutMs: ROUTING_TIMEOUT_MS, pollIntervalMs: 400, since: acceptance, signal: askSignal });
-      if (result.outcome !== "settled") {
-        if (result.outcome === "timeout") await client.abortThread(threadId).catch(() => undefined);
-        throw new Error(result.terminalError?.message || `The facilitator did not answer (${result.outcome}).`);
-      }
-      return replyTextSince(result.snapshot.messages, acceptance.messageCountBefore);
+      return settledReplyText(client, threadId, acceptance, ROUTING_TIMEOUT_MS, askSignal, "The facilitator");
     };
     return routeWithFacilitator({ prompt, participants: input.participants, mentions: input.mentions, models, ask, signal });
   }
@@ -529,8 +564,8 @@ export function GroupChat({
               const speaker = recoverable && event.turnId === recoverable.id ? unfinished.find((entry) => entry.slug === event.slug) : undefined;
               const failure = speaker ? describeSpeakerFailure(speaker.error, nameFor(speaker.slug)) : null;
               return (
-                <p key={event.id} className="flex flex-wrap items-center justify-center gap-x-3 px-12 text-center text-[11px] text-mist" data-testid="group-status" data-status={event.status} data-speaker={event.slug}>
-                  <span>{event.text}</span>
+                <p key={event.id} className="flex flex-wrap items-center justify-center gap-x-3 px-12 text-center text-[11px] text-mist" data-testid="group-status" data-status={event.status} data-speaker={event.slug} data-error={speaker?.error}>
+                  <span title={speaker?.error && speaker.error !== event.text ? speaker.error : undefined}>{event.text}</span>
                   {speaker && recoverable ? (
                     <span className="flex items-center gap-x-3">
                       <button type="button" className="font-medium text-snow/80 underline-offset-2 hover:underline" data-testid="group-speaker-retry" data-speaker={speaker.slug} onClick={() => void resume(recoverable, speaker.slug)}>Retry</button>
