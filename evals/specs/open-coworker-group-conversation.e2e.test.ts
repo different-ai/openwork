@@ -22,8 +22,8 @@ const ROLL_CALL = "@everyone Reply with exactly ROLL CALL followed by your own n
 const RESEARCH_QUESTION = "A research question about checking sources: reply with exactly SOURCES CHECKED and nothing else.";
 const SECOND_ROUND = "@Editor @Scout Editor first: reply with exactly ROUND TWO EDITOR. Scout after reading Editor's reply: reply with exactly ROUND TWO SCOUT.";
 const MODEL_CHECK = "@everyone Reply with exactly MODEL CHECK followed by your own name, and nothing else.";
-const SLOW_STOP = "@everyone Count from 1 to 80, one number per line, then write the words RIVER DONE.";
-const SLOW_RELOAD = "@everyone Count from 1 to 80, one number per line, then write the words RELOAD DONE.";
+const SLOW_STOP = "@everyone Count from 1 to 40, one number per line.";
+const SLOW_RELOAD = "@everyone Count down from 40 to 1, one number per line.";
 
 type App = Awaited<ReturnType<typeof coworker>>;
 
@@ -383,12 +383,14 @@ test.skipIf(!enabled)(title, { timeout: 1_500_000 }, async ({ evidence }) => {
   timeline = await readTimeline(app);
   const continuedBubbles = timeline.filter((line) => line.kind === "assistant");
   expect(continuedBubbles.length).toBe(stoppedBubblesBefore + stoppedSpeakers.length);
-  for (const line of continuedBubbles.slice(-stoppedSpeakers.length)) expect(line.text).toContain("RIVER DONE");
+  const continuedReplies = continuedBubbles.slice(-stoppedSpeakers.length);
+  expect(continuedReplies.map((line) => line.speaker).sort()).toEqual(stoppedSpeakers.map((speaker) => speaker.slug).sort());
+  for (const line of continuedReplies) expect(line.text).toMatch(/\d/);
   expect(await evalIn(app, `Boolean(document.querySelector('[data-testid="group-turn-continue"]'))`)).toBe(false);
 
   evidence.recordAssertionEvidence(
     "Continue lets the stopped coworkers reply to the same message and only them",
-    `After Continue the turn is succeeded; ${stoppedSpeakers.length} new bubble(s) containing RIVER DONE arrived, the earlier bubbles were untouched (${stoppedBubblesBefore} before, ${continuedBubbles.length} after), and Continue disappeared.`,
+    `After Continue the turn is succeeded; ${stoppedSpeakers.length} new counted reply bubble(s) arrived from ${continuedReplies.map((line) => names[line.speaker]).join(" and ")}, the earlier bubbles were untouched (${stoppedBubblesBefore} before, ${continuedBubbles.length} after), and Continue disappeared.`,
     true,
   );
 
@@ -417,11 +419,13 @@ test.skipIf(!enabled)(title, { timeout: 1_500_000 }, async ({ evidence }) => {
   await waitFor(app, `document.querySelector('[data-testid="group-chat"]')?.getAttribute("data-live") === "true"`, { timeoutMs: 30_000, label: "Continue after reload started" });
   await settledTurn(app, groupId, 5);
   timeline = await readTimeline(app);
-  for (const line of timeline.filter((line) => line.kind === "assistant").slice(-interruptedSpeakers.length)) expect(line.text).toContain("RELOAD DONE");
+  const recoveredReplies = timeline.filter((line) => line.kind === "assistant").slice(-interruptedSpeakers.length);
+  expect(recoveredReplies.map((line) => line.speaker).sort()).toEqual(interruptedSpeakers.map((speaker) => speaker.slug).sort());
+  for (const line of recoveredReplies) expect(line.text).toMatch(/\d/);
 
   evidence.recordAssertionEvidence(
     "A reload mid-turn loses nothing: the timeline is kept, the cut-off turn is settled, and Continue finishes it",
-    `After reloading while a coworker was replying, the group kept its ${bubblesBeforeReload} earlier bubbles, the turn became partial with ${interruptedSpeakers.length} speaker(s) marked "Stopped when the app closed", the timeline showed "${interruptedLine?.text ?? ""}", and Continue finished it with RELOAD DONE.`,
+    `After reloading while a coworker was replying, the group kept its ${bubblesBeforeReload} earlier bubbles, the turn became partial with ${interruptedSpeakers.length} speaker(s) marked "Stopped when the app closed", the timeline showed "${interruptedLine?.text ?? ""}", and Continue finished it with a counted reply from ${recoveredReplies.map((line) => names[line.speaker]).join(" and ")}.`,
     true,
   );
 
