@@ -3007,8 +3007,9 @@ function createRoutes(
     readJsonBody,
     requireClientScope,
     resolveWorkspace,
-    reloadOpencodeEngine: (routeConfig, workspace) =>
-      reloadOpencodeEngine(routeConfig, workspace, engineMcpServerState, { reason: "operation_route" }),
+    reloadOpencodeEngine: (routeConfig, workspace, options) =>
+      reloadOpencodeEngine(routeConfig, workspace, engineMcpServerState, { reason: "operation_route", manual: options?.force === true }),
+    readOptionalJsonBody,
   });
 
   registerFileRoutes({
@@ -4266,13 +4267,14 @@ async function reloadOpencodeEngine(
   config: ServerConfig,
   workspace: WorkspaceInfo,
   serverState?: EngineMcpServerState,
-  options?: { awaitPostRefreshSync?: boolean; forceStandby?: boolean; reason?: RolloverReason },
+  options?: { awaitPostRefreshSync?: boolean; forceStandby?: boolean; reason?: RolloverReason; manual?: boolean },
 ): Promise<void> {
   const pool = enginePoolForConfig(config);
   if (pool) {
     await pool.requestRollover({
       reason: options?.reason ?? "engine_reload",
       workspace,
+      manual: options?.manual,
       awaitPostRefreshSync: options?.awaitPostRefreshSync,
       forceStandby: options?.forceStandby,
     });

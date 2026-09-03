@@ -33,6 +33,7 @@ import type { PanelBounds } from "@/lib/panel-layout";
 
 /** The team rail: drag it narrower than a row can show and it folds to avatars. */
 const RAIL_BOUNDS: PanelBounds = { min: 220, max: 380, collapsedWidth: 88, collapseBelow: 170 };
+import { LocalModeScreen } from "@/ui/local-mode";
 import { OnboardingWelcome } from "@/ui/onboarding";
 import { AppLoader, CoworkerMark } from "@/ui/brand";
 import { OpenWorkSettings, type SettingsSection } from "@/ui/openwork-settings";
@@ -71,6 +72,8 @@ export default function App() {
   const [groupDetailsOpen, setGroupDetailsOpen] = useState(false);
   const [connecting, setConnecting] = useState(false);
   const [onboardingReady, setOnboardingReady] = useState(false);
+  /** The "Use this Mac" step: what this Mac already has, before the first coworker. */
+  const [localSetup, setLocalSetup] = useState(false);
   const [globalSettings, setGlobalSettings] = useState<SettingsSection | null>(null);
   const [globalSettingsMounted, setGlobalSettingsMounted] = useState(false);
   const [activityBySlug, setActivityBySlug] = useState<Record<string, CoworkerActivity>>({});
@@ -559,13 +562,26 @@ export default function App() {
   }
 
   if (coworkers.length === 0 && !onboardingReady && !creating) {
+    if (localSetup) {
+      return (
+        <LocalModeScreen
+          runtime={runtime}
+          session={session}
+          onConnectAccount={() => setConnecting(true)}
+          onRuntimeChanged={refreshRuntime}
+          onBack={() => setLocalSetup(false)}
+          onContinue={() => {
+            setLocalSetup(false);
+            setOnboardingReady(true);
+            setCreating(true);
+          }}
+        />
+      );
+    }
     return (
       <OnboardingWelcome
         onConnect={() => setConnecting(true)}
-        onContinueLocally={() => {
-          setOnboardingReady(true);
-          setCreating(true);
-        }}
+        onContinueLocally={() => setLocalSetup(true)}
       />
     );
   }
@@ -757,6 +773,7 @@ export default function App() {
             onSyncProviders={syncProviders}
             onRefreshRuntime={refreshRuntime}
             onRestartRuntime={restartRuntime}
+            onCoworkerChanged={updateCoworkerInList}
           />
         </div>
       ) : null}
