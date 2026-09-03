@@ -90,9 +90,13 @@ function streamReply(response: ServerResponse, model: string, text: string): voi
   response.end();
 }
 
-/** Open the stream at once (with an opening line when given), then hold the rest for `holdMs`; a closed connection (a stop, an abort) cancels the wait. */
+/**
+ * Open the stream at once (with an opening line when given), then hold the rest for `holdMs`; a
+ * closed connection (a stop, an abort) cancels the wait. The connection is not kept alive: an
+ * aborted client must not queue its next request behind a response that is still being held.
+ */
 function holdThenReply(response: ServerResponse, model: string, text: string, holdMs: number, opening = ""): void {
-  response.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache", connection: "keep-alive" });
+  response.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache", connection: "close" });
   response.write(chunk(model, { role: "assistant" }, null));
   if (opening) response.write(chunk(model, { content: `${opening} ` }, null));
   const timer = setTimeout(() => {
@@ -264,6 +268,25 @@ async function engineUserMessages(serverUrl: string, token: string, workspaceId:
     .map((message) => (Array.isArray(message.parts) ? message.parts : [])
       .map((part) => (isRecord(part) && part.type === "text" && typeof part.text === "string" ? part.text : ""))
       .join(""));
+}
+
+/** What the engine, the mock, and the record hold right now — for a failure message worth reading. */
+async function describeThread(app: App, serverUrl: string, token: string, workspaceId: string, threadId: string, scripted: { requests: Recorded[] }): Promise<string> {
+  const headers = { Authorization: `Bearer ${token}` };
+  const base = `${serverUrl}/workspace/${encodeURIComponent(workspaceId)}/opencode`;
+  const [messages, status, turns] = await Promise.all([
+    fetch(`${base}/session/${encodeURIComponent(threadId)}/message`, { headers }).then((response) => response.json()).catch((error: unknown) => String(error)),
+    fetch(`${base}/session/status`, { headers }).then((response) => response.json()).catch((error: unknown) => String(error)),
+    invokeCoworker(app, "coworkers.files.read", { slug: "nova", path: "turns.json" }).catch((error: unknown) => String(error)),
+  ]);
+  const summary = Array.isArray(messages)
+    ? messages.map((message) => {
+      if (!isRecord(message) || !isRecord(message.info)) return message;
+      const parts = Array.isArray(message.parts) ? message.parts.map((part) => (isRecord(part) ? `${String(part.type)}:${typeof part.text === "string" ? part.text.slice(0, 40) : ""}` : "?")) : [];
+      return { id: message.info.id, role: message.info.role, parentID: message.info.parentID, completed: isRecord(message.info.time) ? message.info.time.completed : undefined, error: message.info.error ? JSON.stringify(message.info.error).slice(0, 200) : null, parts };
+    })
+    : messages;
+  return JSON.stringify({ status, mock: scripted.requests.map((request) => `${request.model}:${request.prompt.slice(0, 24)}`), messages: summary, turns }, null, 1);
 }
 
 test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
@@ -473,7 +496,11 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
   })()`, { timeoutMs: 60_000, label: "the Stopped. line" });
   expect(stoppedLine).toEqual({ text: "Stopped.", choices: ["retry"], header: "Stopped", rail: "Stopped.", working: false });
   await evalIn(app, `document.querySelector('[data-testid="coworker-turn-line"][data-outcome="stopped-by-you"] [data-choice="retry"]').click(); true`);
-  await waitForReply(app, STOP_REPLY, 120_000);
+  try {
+    await waitForReply(app, STOP_REPLY, 120_000);
+  } catch (error) {
+    throw new Error(`${error instanceof Error ? error.message : String(error)}\nThread after Retry: ${await describeThread(app, serverUrl, ownerToken, workspaceId, threadId, scripted)}`);
+  }
   const stopBubbles = await evalIn(app, USER_BUBBLES);
   expect(Array.isArray(stopBubbles) && stopBubbles.filter((text) => String(text).includes("STOP")).length).toBe(1);
   expect((await engineUserMessages(serverUrl, ownerToken, workspaceId, threadId)).filter((text) => text.includes("STOP"))).toHaveLength(1);
@@ -569,12 +596,21 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
     };
   })()`, { timeoutMs: 120_000, label: "the cut-off line after the reload" });
   expect(cutLine).toEqual({ text: "Stopped when the app closed before Nova replied.", choices: ["continue", "discard"], header: "Stopped", rail: "Stopped when the app closed before Nova replied.", next: ["After the cut"], failed: 0 });
+  const beforeContinue = await describeThread(app, serverUrl, ownerToken, workspaceId, threadId, scripted);
   await evalIn(app, `document.querySelector('[data-testid="coworker-turn-line"][data-outcome="cut-off"] [data-choice="continue"]').click(); true`);
-  await waitForReply(app, CUT_REPLY, 120_000);
-  await waitFor(app, `(() => {
-    const users = ${USER_BUBBLES};
-    return users.at(-1) === "After the cut" && document.querySelectorAll('[data-testid="coworker-next-row"]').length === 0;
-  })()`, { timeoutMs: 120_000, label: "Next drained after Continue" });
+  try {
+    await waitForReply(app, CUT_REPLY, 120_000);
+  } catch (error) {
+    throw new Error(`${error instanceof Error ? error.message : String(error)}\nThread at the cut-off line: ${beforeContinue}\nThread after Continue timed out: ${await describeThread(app, serverUrl, ownerToken, workspaceId, threadId, scripted)}`);
+  }
+  try {
+    await waitFor(app, `(() => {
+      const users = ${USER_BUBBLES};
+      return users.at(-1) === "After the cut" && document.querySelectorAll('[data-testid="coworker-next-row"]').length === 0;
+    })()`, { timeoutMs: 120_000, label: "Next drained after Continue" });
+  } catch (error) {
+    throw new Error(`${error instanceof Error ? error.message : String(error)}\nThread after the drain wait: ${await describeThread(app, serverUrl, ownerToken, workspaceId, threadId, scripted)}`);
+  }
   await waitFor(app, `document.querySelector('[data-testid="coworker-top-status"]')?.textContent?.trim() === "Ready"`, { timeoutMs: 120_000, label: "settled after the cut" });
   const afterCut = await engineUserMessages(serverUrl, ownerToken, workspaceId, threadId);
   expect(afterCut.filter((text) => text.includes("CUT"))).toHaveLength(1);

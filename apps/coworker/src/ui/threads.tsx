@@ -1712,11 +1712,10 @@ function ThreadView({
             }
             // A reply that ended without words stays in the transcript as one quiet line; the turn still
             // unresolved is told by the outcome below instead, with its actions.
-            const ended = endedWithoutWords(block.message);
-            if (ended && block.message.parentId !== pendingTurn?.messageId) {
-              return <QuietLine key={block.message.id} outcome={ended === "stopped" ? "stopped" : "failed"} text={ended === "stopped" ? "Stopped." : describeTurnFailure(block.message.error?.message ?? "", coworker.name).headline} />;
+            if (block.kind === "ended") {
+              if (block.message.parentId === pendingTurn?.messageId) return null;
+              return <QuietLine key={block.message.id} outcome={block.ended} text={block.ended === "stopped" ? "Stopped." : describeTurnFailure(block.message.error?.message ?? "", coworker.name).headline} />;
             }
-            if (ended) return null;
             return (
               <Fragment key={block.message.id}>
                 <TimeLabel label={timeLabelBetween(block.previous?.createdAt, block.message.createdAt)} />
@@ -1823,7 +1822,9 @@ function ThreadView({
 
 type ConversationBlock =
   | { kind: "actions"; id: string; review: WorkerReview | null; reasoning: string; calls: TranscriptToolCall[] }
-  | { kind: "message"; message: TranscriptMessage; previous: TranscriptMessage | undefined; active: boolean; continued: boolean; tail: boolean; calls: TranscriptToolCall[] };
+  | { kind: "message"; message: TranscriptMessage; previous: TranscriptMessage | undefined; active: boolean; continued: boolean; tail: boolean; calls: TranscriptToolCall[] }
+  /** A reply that ended without words — stopped or failed — kept as one quiet line where it happened. */
+  | { kind: "ended"; message: TranscriptMessage; ended: "stopped" | "failed" };
 
 /** The app's own turn that wakes the coworker with its Workers' updates; never a bubble from the person. */
 function reviewTurn(message: TranscriptMessage): WorkerReview | null {
@@ -1869,6 +1870,14 @@ export function conversationBlocks(
       if (!pendingId) pendingId = message.id;
       if (message.reasoning && !active) reasoning.push(message.reasoning);
       if (message.toolCalls.length > 0) calls = [...calls, ...message.toolCalls];
+      const ended = active ? null : endedWithoutWords(message);
+      if (ended) {
+        // Whatever it thought or did before it ended stays on its own line; the ending is one more.
+        flush();
+        pendingId = "";
+        blocks.push({ kind: "ended", message, ended });
+        return;
+      }
       if (!message.text && !active) return;
     }
     // The bubble keeps its own turn's calls too, so it can end with a document card.
