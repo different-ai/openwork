@@ -100,8 +100,8 @@ test("an automatic attempt the app scheduled reads the same as the engine's, and
   assert.deepEqual(outcome?.retry, { attempt: 1, nextAt: NOW + 2_000, by: "app" });
 });
 
-test("a stop by the person is one word with Retry, whatever the engine still reports", () => {
-  const outcome = deriveTurnOutcome(facts({ turn: { messageId: "msg_1", prompt: "Draft the note.", startedAt: NOW - 5_000, stoppedAt: NOW - 1_000, recovered: false } }));
+test("a stop by the person is one word with Retry, whatever the engine or the wait still reports", () => {
+  const outcome = deriveTurnOutcome(facts({ turn: { messageId: "msg_1", prompt: "Draft the note.", startedAt: NOW - 5_000, stoppedAt: NOW - 1_000, recovered: false }, failure: "The operation was aborted" }));
   assert.equal(outcome?.kind, "stopped-by-you");
   assert.equal(outcome?.line, "Stopped.");
   assert.equal(outcome?.label, "Stopped");
