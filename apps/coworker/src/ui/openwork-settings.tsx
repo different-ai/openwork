@@ -466,7 +466,40 @@ export function OpenWorkSettings({
   );
 }
 
-const PARALLEL_CHOICES = [1, 2, 3, 4];
+const PARALLEL_CHOICES = [1, 2, 3, 4, 6, 8];
+const GAP_CHOICES = [15, 30, 60];
+const PER_DAY_CHOICES = [1, 2, 4, 6, 8, 12];
+
+/** One row of small radio choices, as the limit control is drawn. */
+function ChoiceRow({ label, testId, choices, value, disabled, format, onChoose }: {
+  label: string;
+  testId: string;
+  choices: number[];
+  value: number | null;
+  disabled: boolean;
+  format?: (choice: number) => string;
+  onChoose: (choice: number) => void;
+}) {
+  return (
+    <div className="flex shrink-0 items-center gap-1 rounded-lg border border-line bg-ink p-0.5" role="radiogroup" aria-label={label} data-testid={testId}>
+      {choices.map((choice) => (
+        <button
+          key={choice}
+          type="button"
+          role="radio"
+          aria-checked={value === choice}
+          disabled={disabled || value === null}
+          className={`min-w-9 rounded-md px-2.5 py-1.5 text-xs font-medium transition-colors disabled:cursor-not-allowed ${
+            value === choice ? "bg-white/10 text-snow" : "text-mist hover:text-snow"
+          }`}
+          onClick={() => onChoose(choice)}
+        >
+          {format ? format(choice) : choice}
+        </button>
+      ))}
+    </div>
+  );
+}
 
 /**
  * How many responsibilities may run at once on this Mac. Runs past the limit
@@ -503,11 +536,11 @@ function LocalRunsCard({ active }: { active: boolean }) {
     };
   }, [active]);
 
-  async function choose(limit: number) {
+  async function choose(patch: Partial<CoworkerSettings>) {
     setSaving(true);
     setError("");
     try {
-      setSettings(await coworkerBridge.settings.update({ maxParallelLocalRuns: limit }));
+      setSettings(await coworkerBridge.settings.update(patch));
       setStatus(await coworkerBridge.localResponsibilities.status());
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
@@ -533,22 +566,48 @@ function LocalRunsCard({ active }: { active: boolean }) {
           {live ? <p className="mt-2 text-[11px] text-mist" data-testid="local-runs-live">{live}</p> : null}
           {error ? <div className="mt-2"><ErrorNote>{error}</ErrorNote></div> : null}
         </div>
-        <div className="flex shrink-0 items-center gap-1 rounded-lg border border-line bg-ink p-0.5" role="radiogroup" aria-label="Runs at the same time">
-          {PARALLEL_CHOICES.map((choice) => (
-            <button
-              key={choice}
-              type="button"
-              role="radio"
-              aria-checked={limit === choice}
-              disabled={saving || limit === null}
-              className={`min-w-9 rounded-md px-2.5 py-1.5 text-xs font-medium transition-colors disabled:cursor-not-allowed ${
-                limit === choice ? "bg-white/10 text-snow" : "text-mist hover:text-snow"
-              }`}
-              onClick={() => void choose(choice)}
-            >
-              {choice}
-            </button>
-          ))}
+        <ChoiceRow
+          label="Runs at the same time"
+          testId="local-runs-limit"
+          choices={PARALLEL_CHOICES}
+          value={limit}
+          disabled={saving}
+          onChoose={(choice) => void choose({ maxParallelLocalRuns: choice })}
+        />
+      </div>
+      <div className="flex flex-wrap items-start justify-between gap-4 border-t border-line px-4 py-4" data-testid="schedule-guardrails">
+        <div className="min-w-0 flex-1">
+          <h3 className="text-sm font-semibold text-snow">How often one assignment may run</h3>
+          <p className="mt-1 max-w-md text-xs leading-relaxed text-mist">
+            A schedule a coworker sets up itself, or one you add, is refused when its runs would be closer together than this or more than this in a day.
+          </p>
+        </div>
+        <div className="flex flex-col items-end gap-2">
+          <div className="flex items-center gap-2">
+            <span className="text-[11px] text-mist">At least</span>
+            <ChoiceRow
+              label="Minimum minutes between runs"
+              testId="minimum-run-gap"
+              choices={GAP_CHOICES}
+              value={settings?.minimumRunGapMinutes ?? null}
+              disabled={saving}
+              format={(choice) => `${choice} min`}
+              onChoose={(choice) => void choose({ minimumRunGapMinutes: choice })}
+            />
+            <span className="text-[11px] text-mist">apart</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-[11px] text-mist">At most</span>
+            <ChoiceRow
+              label="Most runs per assignment per day"
+              testId="max-runs-per-day"
+              choices={PER_DAY_CHOICES}
+              value={settings?.maxRunsPerDay ?? null}
+              disabled={saving}
+              onChoose={(choice) => void choose({ maxRunsPerDay: choice })}
+            />
+            <span className="text-[11px] text-mist">a day</span>
+          </div>
         </div>
       </div>
     </SettingsCard>

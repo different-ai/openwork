@@ -3,7 +3,8 @@
  * is pure so the copy is unit-tested once and the rows only render what these
  * return: no time-zone identifiers, no slots, no threads, no status codes.
  */
-import type { AutomationSchedule } from "@openwork/types/automations";
+import { parseCronExpression } from "./local-schedule.ts";
+import type { CronFields, CronSchedule, IntervalSchedule, LocalSchedule, TimeOfDay } from "./local-schedule.ts";
 import type { RunEntry, RunOutcome } from "./run-history.ts";
 
 const WEEKDAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
@@ -42,27 +43,106 @@ function joinNames(names: string[]): string {
   return `${names.slice(0, -1).join(", ")}, and ${names[names.length - 1]}`;
 }
 
+/** "day", "weekday", or "Monday and Thursday" for a set of weekdays; empty when it means every day. */
+function describeDays(daysOfWeek: readonly number[] | undefined): string {
+  const days = [...new Set(daysOfWeek ?? [])].filter((day) => day >= 0 && day <= 6).sort((a, b) => a - b);
+  if (days.length === 0 || days.length === 7) return "";
+  if (days.length === 5 && WEEKDAY_SET.every((day) => days.includes(day))) return "weekday";
+  return joinNames(days.map((day) => WEEKDAYS[day] ?? `day ${day}`));
+}
+
+/** "Every 2 hours", "Every hour", "Every 12 hours". */
+function describeEvery(minutes: number): string {
+  if (minutes === 60) return "Every hour";
+  if (minutes % 60 === 0) return `Every ${minutes / 60} hours`;
+  return `Every ${minutes} minutes`;
+}
+
+/** ", up to 4 times a day" / ", once a day". */
+function describeCap(maxPerDay: number): string {
+  return maxPerDay === 1 ? ", once a day" : `, up to ${maxPerDay} times a day`;
+}
+
+function describeWindow(from: TimeOfDay | undefined, until: TimeOfDay | undefined, locale?: string): string {
+  const start = from ? formatClockTime(from.hour, from.minute, locale) : "";
+  const end = until ? formatClockTime(until.hour, until.minute, locale) : "";
+  if (start && end) return ` between ${start} and ${end}`;
+  if (start) return ` from ${start}`;
+  if (end) return ` until ${end}`;
+  return "";
+}
+
+/** "Every 2 hours between 9:00 AM and 6:00 PM on weekdays, up to 4 times a day". */
+function describeInterval(schedule: IntervalSchedule, options: ClockOptions): string {
+  const days = describeDays(schedule.daysOfWeek);
+  const dayText = days ? (days === "weekday" ? " on weekdays" : ` on ${days}`) : "";
+  const zone = describeZone(schedule.timezone, options);
+  return `${describeEvery(schedule.everyMinutes)}${describeWindow(schedule.from, schedule.until, options.locale)}${dayText}${describeCap(schedule.maxPerDay)}${zone ? ` ${zone}` : ""}`;
+}
+
+/**
+ * The everyday reading of a custom timetable when it has one: one time on
+ * some days ("Every weekday at 9:00 AM"), or a stepped hour ("Every 2 hours
+ * between 9:00 AM and 6:00 PM on weekdays"). Null when only the expression
+ * says it.
+ */
+export function cronPlainReading(fields: CronFields, options: ClockOptions = {}): string | null {
+  if (!fields.dayOfMonth.any || !fields.month.any) return null;
+  const minute = fields.minute.values.length === 1 ? fields.minute.values[0] : undefined;
+  if (minute === undefined) return null;
+  const days = fields.dayOfWeek.any ? "" : describeDays(fields.dayOfWeek.values);
+  if (fields.hour.values.length === 1) {
+    const hour = fields.hour.values[0] ?? 0;
+    const time = formatClockTime(hour, minute, options.locale);
+    return `Every ${days || "day"} at ${time}`;
+  }
+  if (fields.hour.step && fields.hour.range) {
+    const [start, end] = fields.hour.range;
+    const wholeDay = start === 0 && end === 23;
+    const window = wholeDay ? "" : describeWindow({ hour: start, minute }, { hour: end, minute }, options.locale);
+    const dayText = days ? (days === "weekday" ? " on weekdays" : ` on ${days}`) : "";
+    return `${describeEvery(fields.hour.step * 60)}${window}${dayText}`;
+  }
+  return null;
+}
+
+function describeCron(schedule: CronSchedule, options: ClockOptions): string {
+  const zone = describeZone(schedule.timezone, options);
+  let reading: string | null = null;
+  try {
+    reading = cronPlainReading(parseCronExpression(schedule.expression), options);
+  } catch {
+    reading = null;
+  }
+  const base = reading ?? "On a custom timetable";
+  return `${base}${describeCap(schedule.maxPerDay)}${zone ? ` ${zone}` : ""}`;
+}
+
 /**
  * "Every day at 9:00 AM", "Every Monday and Thursday at 9:00 AM (Paris time)",
- * "Every weekday at 8:30 AM", "Once, on Sep 5 at 9:00 AM".
+ * "Every weekday at 8:30 AM", "Once, on Sep 5 at 9:00 AM",
+ * "Every 2 hours between 9:00 AM and 6:00 PM, up to 4 times a day",
+ * "On a custom timetable, up to 4 times a day".
  */
-export function describeScheduleForPeople(schedule: AutomationSchedule, options: ClockOptions = {}): string {
+export function describeScheduleForPeople(schedule: LocalSchedule, options: ClockOptions = {}): string {
   if (schedule.kind === "once") {
     return `Once, ${describeMoment(schedule.at, options)}`;
   }
+  if (schedule.kind === "interval") return describeInterval(schedule, options);
+  if (schedule.kind === "cron") return describeCron(schedule, options);
   const time = formatClockTime(schedule.hour, schedule.minute, options.locale);
   const zone = describeZone(schedule.timezone, options);
   const suffix = zone ? ` ${zone}` : "";
   if (schedule.kind === "daily") {
     return `Every day at ${time}${suffix}`;
   }
-  const days = [...new Set(schedule.daysOfWeek)].filter((day) => day >= 0 && day <= 6).sort((a, b) => a - b);
-  const label = days.length === 7
-    ? "day"
-    : days.length === 5 && WEEKDAY_SET.every((day) => days.includes(day))
-      ? "weekday"
-      : joinNames(days.map((day) => WEEKDAYS[day] ?? `day ${day}`));
-  return `Every ${label} at ${time}${suffix}`;
+  return `Every ${describeDays(schedule.daysOfWeek) || "day"} at ${time}${suffix}`;
+}
+
+/** The schedule as a phrase inside a sentence: "every 2 hours between 9:00 AM and 6:00 PM, up to 4 times a day". */
+export function describeScheduleInSentence(schedule: LocalSchedule, options: ClockOptions = {}): string {
+  const text = describeScheduleForPeople(schedule, options);
+  return text.charAt(0).toLowerCase() + text.slice(1);
 }
 
 function startOfDay(timestamp: number): number {

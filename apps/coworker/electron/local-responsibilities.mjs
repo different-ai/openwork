@@ -2,13 +2,19 @@
  * Local Open Coworker responsibilities.
  *
  * These records deliberately reuse OpenWork's Automation schedule contract and
- * occurrence calculation, while remaining honest about placement: the desktop
- * process is the scheduler, so runs happen only while Open Coworker is open.
+ * occurrence calculation, widened by two local-only kinds (an interval and a
+ * custom timetable, see `src/lib/local-schedule.ts`), while remaining honest
+ * about placement: the desktop process is the scheduler, so runs happen only
+ * while Open Coworker is open.
  */
 import { randomUUID } from "node:crypto";
 import { readFile, rename, writeFile } from "node:fs/promises";
-import { nextAutomationOccurrence } from "@openwork/automations";
-import { automationScheduleSchema } from "@openwork/types/automations";
+import {
+  ScheduleError,
+  checkScheduleGuardrails,
+  nextLocalOccurrence,
+  parseLocalSchedule,
+} from "../src/lib/local-schedule.ts";
 import { resolveCoworkerFile } from "./coworkers.mjs";
 
 export const LOCAL_RESPONSIBILITIES_FILE = "local-responsibilities.json";
@@ -67,14 +73,18 @@ function cleanRecord(value) {
   const name = cleanString(value.name, 120);
   const instructions = cleanString(value.instructions);
   if (!id || !name || !instructions) return null;
-  const parsedSchedule = automationScheduleSchema.safeParse(value.schedule);
-  if (!parsedSchedule.success) return null;
+  let schedule;
+  try {
+    schedule = parseLocalSchedule(value.schedule);
+  } catch {
+    return null;
+  }
   const runs = cleanRuns(value.runs, cleanRun(value.latestRun));
   return {
     id,
     name,
     instructions,
-    schedule: parsedSchedule.data,
+    schedule,
     state: value.state === "paused" ? "paused" : "active",
     nextDueAt: cleanTimestamp(value.nextDueAt),
     latestRun: runs[0] ?? null,
@@ -140,12 +150,26 @@ export async function listLocalResponsibilities(coworkersDir, slug) {
   return readStore(coworkersDir, slug);
 }
 
-export async function createLocalResponsibility(coworkersDir, slug, input, now = Date.now()) {
+/**
+ * Read and check a schedule for this Mac: the local superset of the shared
+ * contract, then the app's guardrails when they are given. Every failure is a
+ * `ScheduleError` whose message is a sentence for the person or the coworker.
+ */
+export function acceptLocalSchedule(value, { guardrails = null, defaultTimezone, now = Date.now() } = {}) {
+  const schedule = parseLocalSchedule(value, defaultTimezone ? { defaultTimezone } : {});
+  if (guardrails) {
+    const verdict = checkScheduleGuardrails(schedule, guardrails, now);
+    if (!verdict.ok) throw new ScheduleError(verdict.reason);
+  }
+  return schedule;
+}
+
+export async function createLocalResponsibility(coworkersDir, slug, input, now = Date.now(), options = {}) {
   const name = cleanString(input?.name, 120);
   const instructions = cleanString(input?.instructions);
   if (!name) throw new Error("Responsibility name is required");
   if (!instructions) throw new Error("Responsibility instructions are required");
-  const schedule = automationScheduleSchema.parse(input?.schedule);
+  const schedule = acceptLocalSchedule(input?.schedule, { ...options, now });
   const createdAt = Math.max(0, Math.floor(now));
   const record = {
     id: randomUUID(),
@@ -153,7 +177,7 @@ export async function createLocalResponsibility(coworkersDir, slug, input, now =
     instructions,
     schedule,
     state: "active",
-    nextDueAt: nextAutomationOccurrence(schedule, createdAt),
+    nextDueAt: nextLocalOccurrence(schedule, createdAt),
     latestRun: null,
     runs: [],
     createdAt,
@@ -171,7 +195,41 @@ export async function setLocalResponsibilityActive(coworkersDir, slug, id, activ
     const updated = {
       ...current,
       state: active ? "active" : "paused",
-      nextDueAt: active ? nextAutomationOccurrence(current.schedule, updatedAt) : current.nextDueAt,
+      nextDueAt: active ? nextLocalOccurrence(current.schedule, updatedAt) : current.nextDueAt,
+      updatedAt,
+    };
+    return { items: items.with(index, updated), result: updated };
+  });
+}
+
+/**
+ * Change what a responsibility is called, what it does, when it runs, or
+ * whether it is active. A new schedule takes effect from now; a paused
+ * responsibility that resumes gets its next occurrence from now as well.
+ */
+export async function updateLocalResponsibility(coworkersDir, slug, id, patch, now = Date.now(), options = {}) {
+  const source = patch && typeof patch === "object" ? patch : {};
+  const name = source.name === undefined ? undefined : cleanString(source.name, 120);
+  const instructions = source.instructions === undefined ? undefined : cleanString(source.instructions);
+  if (name === "") throw new Error("Responsibility name is required");
+  if (instructions === "") throw new Error("Responsibility instructions are required");
+  const schedule = source.schedule === undefined ? undefined : acceptLocalSchedule(source.schedule, { ...options, now });
+  const active = typeof source.active === "boolean" ? source.active : undefined;
+  return mutateStore(coworkersDir, slug, (items) => {
+    const index = items.findIndex((item) => item.id === id);
+    if (index === -1) throw new Error("Local responsibility not found");
+    const current = items[index];
+    const updatedAt = Math.max(0, Math.floor(now));
+    const nextState = active === undefined ? current.state : active ? "active" : "paused";
+    const nextSchedule = schedule ?? current.schedule;
+    const rescheduled = schedule !== undefined || (nextState === "active" && current.state !== "active");
+    const updated = {
+      ...current,
+      ...(name !== undefined ? { name } : {}),
+      ...(instructions !== undefined ? { instructions } : {}),
+      schedule: nextSchedule,
+      state: nextState,
+      nextDueAt: rescheduled && nextState === "active" ? nextLocalOccurrence(nextSchedule, updatedAt) : current.nextDueAt,
       updatedAt,
     };
     return { items: items.with(index, updated), result: updated };
@@ -197,7 +255,7 @@ function advanceForTrigger(record, trigger, at) {
   return {
     ...record,
     state: record.schedule.kind === "once" ? "paused" : record.state,
-    nextDueAt: nextAutomationOccurrence(record.schedule, at),
+    nextDueAt: nextLocalOccurrence(record.schedule, at),
   };
 }
 

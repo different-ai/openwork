@@ -2,6 +2,15 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import type { AutomationList, AutomationModel, AutomationRun, AutomationSchedule } from "@openwork/types/automations";
 import { coworkerBridge, type CoworkerSummary, type LocalResponsibility } from "@/lib/bridge";
 import {
+  INTERVAL_MINUTE_CHOICES,
+  ScheduleError,
+  checkScheduleGuardrails,
+  parseLocalSchedule,
+  type IntervalMinutes,
+  type LocalSchedule,
+  type ScheduleGuardrails,
+} from "@/lib/local-schedule";
+import {
   cloudModelOptions,
   describePlacement,
   resolveCloudModel,
@@ -61,6 +70,8 @@ type ResponsibilityRow = {
   warning: string;
   /** What went wrong the last time, in the system's words; kept behind a disclosure. */
   attention: string;
+  /** A custom timetable's raw expression, shown only under Technical details. */
+  technical: string;
   actions: ActionMenuItem[];
   /** Known runs, newest first; cloud rows load theirs when opened. */
   history: RunEntry[] | null;
@@ -200,6 +211,7 @@ export function ResponsibilitiesPanel({
       tone: running || queued ? "spark" : failed ? "rose" : paused ? "mist" : "mint",
       warning: "",
       attention: failed ? latest?.error ?? "" : "",
+      technical: item.schedule.kind === "cron" ? `Timetable: ${item.schedule.expression} (${item.schedule.timezone})` : "",
       history,
       actions: [
         queued
@@ -287,6 +299,7 @@ export function ResponsibilitiesPanel({
       tone: needsAttention ? "rose" : paused ? "mist" : "mint",
       warning: placement.target === "cloud" ? "" : placement.detail,
       attention: entry.automation.needsAttentionReason?.message ?? "",
+      technical: "",
       history: loaded ? history : null,
       loadHistory: async () => {
         if (!den || cloudRuns[id]) return;
@@ -537,6 +550,12 @@ function ResponsibilityDetail({
         </details>
       ) : null}
       {row.warning ? <p className="mt-2 rounded-lg bg-amber/8 px-2.5 py-1.5 text-amber">{row.warning}</p> : null}
+      {row.technical ? (
+        <details className="mt-2 text-[10px] text-mist/75" data-testid="responsibility-technical">
+          <summary className="cursor-pointer select-none">Technical details</summary>
+          <p className="mt-1 font-mono text-mist">{row.technical}</p>
+        </details>
+      ) : null}
       <RunHistory
         entries={known}
         trend={trend}
@@ -679,6 +698,50 @@ function AddResponsibility({
   );
 }
 
+type LocalCadence = "daily" | "weekly" | "interval";
+
+/** The form's picture of an interval; empty times mean the whole day. */
+type IntervalDraft = { everyMinutes: IntervalMinutes; from: string; until: string; days: number[]; maxPerDay: number };
+
+const DEFAULT_GUARDRAILS: ScheduleGuardrails = { minimumGapMinutes: 60, maxRunsPerDay: 4 };
+const EVERY_DAY = [0, 1, 2, 3, 4, 5, 6];
+
+/** The schedule the form describes, or the sentence that says why it cannot be one yet. */
+function localScheduleFromForm(input: {
+  cadence: LocalCadence;
+  time: string;
+  weekday: number;
+  interval: IntervalDraft;
+  timezone: string;
+}): { schedule: LocalSchedule } | { problem: string } {
+  try {
+    if (input.cadence === "interval") {
+      return {
+        schedule: parseLocalSchedule({
+          kind: "interval",
+          timezone: input.timezone,
+          everyMinutes: input.interval.everyMinutes,
+          ...(input.interval.from ? { from: input.interval.from } : {}),
+          ...(input.interval.until ? { until: input.interval.until } : {}),
+          daysOfWeek: input.interval.days,
+          maxPerDay: input.interval.maxPerDay,
+        }),
+      };
+    }
+    const [hourRaw, minuteRaw] = input.time.split(":");
+    const hour = Number.parseInt(hourRaw ?? "", 10);
+    const minute = Number.parseInt(minuteRaw ?? "", 10);
+    if (Number.isNaN(hour) || Number.isNaN(minute)) return { problem: "Choose a time." };
+    return {
+      schedule: parseLocalSchedule(input.cadence === "daily"
+        ? { kind: "daily", timezone: input.timezone, hour, minute }
+        : { kind: "weekly", timezone: input.timezone, daysOfWeek: [input.weekday], hour, minute }),
+    };
+  } catch (cause) {
+    return { problem: cause instanceof ScheduleError ? cause.message : "Check the schedule." };
+  }
+}
+
 function CreateLocalResponsibility({
   coworker,
   onCreated,
@@ -690,29 +753,53 @@ function CreateLocalResponsibility({
   const [name, setName] = useState("");
   const [instructions, setInstructions] = useState("");
   const [time, setTime] = useState("09:00");
-  const [cadence, setCadence] = useState<"daily" | "weekly">("daily");
+  const [cadence, setCadence] = useState<LocalCadence>("daily");
   const [weekday, setWeekday] = useState(1);
+  const [intervalDraft, setIntervalDraft] = useState<IntervalDraft>({ everyMinutes: 120, from: "09:00", until: "18:00", days: EVERY_DAY, maxPerDay: 4 });
+  const [guardrails, setGuardrails] = useState<ScheduleGuardrails>(DEFAULT_GUARDRAILS);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
+  useEffect(() => {
+    let cancelled = false;
+    coworkerBridge.settings
+      .get()
+      .then((settings) => {
+        if (cancelled) return;
+        setGuardrails({ minimumGapMinutes: settings.minimumRunGapMinutes, maxRunsPerDay: settings.maxRunsPerDay });
+        setIntervalDraft((current) => ({ ...current, maxPerDay: Math.min(current.maxPerDay, settings.maxRunsPerDay) }));
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const drafted = localScheduleFromForm({ cadence, time, weekday, interval: intervalDraft, timezone });
+  const verdict = "schedule" in drafted ? checkScheduleGuardrails(drafted.schedule, guardrails) : null;
+  // The sentence a person reads before trying: what the schedule means, or why this Mac refuses it.
+  const scheduleNote = "problem" in drafted
+    ? { tone: "amber" as const, text: drafted.problem }
+    : verdict && !verdict.ok
+      ? { tone: "amber" as const, text: verdict.reason }
+      : { tone: "mist" as const, text: describeScheduleForPeople(drafted.schedule) };
+
   async function create() {
-    const [hourRaw, minuteRaw] = time.split(":");
-    const hour = Number.parseInt(hourRaw ?? "", 10);
-    const minute = Number.parseInt(minuteRaw ?? "", 10);
-    if (!name.trim() || !instructions.trim() || Number.isNaN(hour) || Number.isNaN(minute)) {
-      setError("Add a name, instructions, and valid time.");
+    if (!name.trim() || !instructions.trim()) {
+      setError("Add a name and instructions.");
       return;
     }
-    const schedule: AutomationSchedule = cadence === "daily"
-      ? { kind: "daily", timezone, hour, minute }
-      : { kind: "weekly", timezone, daysOfWeek: [weekday], hour, minute };
+    if (!("schedule" in drafted) || (verdict && !verdict.ok)) {
+      setError(scheduleNote.text);
+      return;
+    }
     setBusy(true);
     setError("");
     try {
       await coworkerBridge.localResponsibilities.create(coworker.slug, {
         name: name.trim(),
         instructions: instructions.trim(),
-        schedule,
+        schedule: drafted.schedule,
       });
       await onCreated();
     } catch (cause) {
@@ -729,6 +816,9 @@ function CreateLocalResponsibility({
       time={time}
       cadence={cadence}
       weekday={weekday}
+      interval={intervalDraft}
+      maxRunsPerDay={guardrails.maxRunsPerDay}
+      scheduleNote={scheduleNote}
       timezone={timezone}
       busy={busy}
       error={error}
@@ -738,6 +828,7 @@ function CreateLocalResponsibility({
       onTimeChange={setTime}
       onCadenceChange={setCadence}
       onWeekdayChange={setWeekday}
+      onIntervalChange={setIntervalDraft}
       onSubmit={() => void create()}
     />
   );
@@ -876,12 +967,18 @@ function CreateResponsibility({
   );
 }
 
+const DAY_LETTERS = ["S", "M", "T", "W", "T", "F", "S"];
+const DAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+
 function ResponsibilityFields({
   name,
   instructions,
   time,
   cadence,
   weekday,
+  interval,
+  maxRunsPerDay,
+  scheduleNote,
   timezone,
   busy,
   error,
@@ -891,13 +988,19 @@ function ResponsibilityFields({
   onTimeChange,
   onCadenceChange,
   onWeekdayChange,
+  onIntervalChange,
   onSubmit,
 }: {
   name: string;
   instructions: string;
   time: string;
-  cadence: "daily" | "weekly";
+  cadence: LocalCadence;
   weekday: number;
+  interval: IntervalDraft;
+  /** The most runs a day this Mac allows one responsibility, from settings. */
+  maxRunsPerDay: number;
+  /** What the schedule means, or why this Mac would refuse it. */
+  scheduleNote: { tone: "mist" | "amber"; text: string };
   timezone: string;
   busy: boolean;
   error: string;
@@ -905,10 +1008,17 @@ function ResponsibilityFields({
   onNameChange: (value: string) => void;
   onInstructionsChange: (value: string) => void;
   onTimeChange: (value: string) => void;
-  onCadenceChange: (value: "daily" | "weekly") => void;
+  onCadenceChange: (value: LocalCadence) => void;
   onWeekdayChange: (value: number) => void;
+  onIntervalChange: (value: IntervalDraft) => void;
   onSubmit: () => void;
 }) {
+  const perDayChoices = Array.from({ length: Math.max(1, maxRunsPerDay) }, (_, index) => index + 1);
+  const toggleDay = (day: number) => {
+    const days = interval.days.includes(day) ? interval.days.filter((candidate) => candidate !== day) : [...interval.days, day].sort((a, b) => a - b);
+    // Every day off is not a schedule; keep at least one day.
+    onIntervalChange({ ...interval, days: days.length === 0 ? [day] : days });
+  };
   return (
     <div className="space-y-3 border-t border-line pt-3">
       <Field label="Name">
@@ -919,26 +1029,94 @@ function ResponsibilityFields({
       </Field>
       <div className="grid grid-cols-2 gap-2">
         <Field label="Cadence">
-          <select className={`${inputClass} bg-panel`} value={cadence} onChange={(event) => onCadenceChange(event.target.value === "weekly" ? "weekly" : "daily")}>
+          <select
+            className={`${inputClass} bg-panel`}
+            value={cadence}
+            aria-label="Cadence"
+            onChange={(event) => onCadenceChange(event.target.value === "weekly" ? "weekly" : event.target.value === "interval" ? "interval" : "daily")}
+          >
             <option value="daily">Daily</option>
             <option value="weekly">Weekly</option>
+            <option value="interval">Every few hours</option>
           </select>
         </Field>
         {cadence === "weekly" ? (
           <Field label="Day">
             <select className={`${inputClass} bg-panel`} value={weekday} onChange={(event) => onWeekdayChange(Number.parseInt(event.target.value, 10))}>
-              {["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"].map((label, index) => (
+              {DAY_NAMES.map((label, index) => (
                 <option key={label} value={index}>{label}</option>
               ))}
             </select>
           </Field>
         ) : null}
+        {cadence === "interval" ? (
+          <Field label="Every">
+            <select
+              className={`${inputClass} bg-panel`}
+              value={interval.everyMinutes}
+              aria-label="Every"
+              onChange={(event) => {
+                const minutes = Number.parseInt(event.target.value, 10);
+                const choice = INTERVAL_MINUTE_CHOICES.find((candidate) => candidate === minutes);
+                if (choice !== undefined) onIntervalChange({ ...interval, everyMinutes: choice });
+              }}
+            >
+              {INTERVAL_MINUTE_CHOICES.map((minutes) => (
+                <option key={minutes} value={minutes}>{minutes === 60 ? "Hour" : `${minutes / 60} hours`}</option>
+              ))}
+            </select>
+          </Field>
+        ) : null}
       </div>
-      <Field label={`Time · ${timezone}`}>
-        <input className={`${inputClass} bg-panel`} type="time" value={time} onChange={(event) => onTimeChange(event.target.value)} />
-      </Field>
+      {cadence === "interval" ? (
+        <div className="space-y-3" data-testid="interval-fields">
+          <div className="grid grid-cols-2 gap-2">
+            <Field label="From (optional)">
+              <input className={`${inputClass} bg-panel`} type="time" aria-label="From" value={interval.from} onChange={(event) => onIntervalChange({ ...interval, from: event.target.value })} />
+            </Field>
+            <Field label="Until (optional)">
+              <input className={`${inputClass} bg-panel`} type="time" aria-label="Until" value={interval.until} onChange={(event) => onIntervalChange({ ...interval, until: event.target.value })} />
+            </Field>
+          </div>
+          <div className="grid grid-cols-[minmax(0,1fr)_auto] items-end gap-2">
+            <Field label="Days">
+              <div className="flex gap-1" role="group" aria-label="Days">
+                {DAY_LETTERS.map((letter, day) => {
+                  const on = interval.days.includes(day);
+                  return (
+                    <button
+                      key={DAY_NAMES[day]}
+                      type="button"
+                      aria-pressed={on}
+                      aria-label={DAY_NAMES[day]}
+                      className={`size-7 rounded-md text-[11px] font-medium transition-colors ${on ? "bg-white/10 text-snow" : "border border-line text-mist hover:text-snow"}`}
+                      onClick={() => toggleDay(day)}
+                    >
+                      {letter}
+                    </button>
+                  );
+                })}
+              </div>
+            </Field>
+            <Field label="Most runs a day">
+              <select className={`${inputClass} bg-panel`} aria-label="Most runs a day" value={interval.maxPerDay} onChange={(event) => onIntervalChange({ ...interval, maxPerDay: Number.parseInt(event.target.value, 10) })}>
+                {perDayChoices.map((count) => (
+                  <option key={count} value={count}>{count}</option>
+                ))}
+              </select>
+            </Field>
+          </div>
+        </div>
+      ) : (
+        <Field label={`Time · ${timezone}`}>
+          <input className={`${inputClass} bg-panel`} type="time" value={time} onChange={(event) => onTimeChange(event.target.value)} />
+        </Field>
+      )}
+      <p className={`text-[11px] leading-relaxed ${scheduleNote.tone === "amber" ? "text-amber" : "text-mist"}`} data-testid="schedule-note" data-tone={scheduleNote.tone}>
+        {scheduleNote.text}
+      </p>
       {error ? <ErrorNote>{error}</ErrorNote> : null}
-      <Button variant="primary" className="w-full" disabled={busy} onClick={onSubmit}>
+      <Button variant="primary" className="w-full" disabled={busy || scheduleNote.tone === "amber"} onClick={onSubmit}>
         {busy ? "Creating…" : actionLabel}
       </Button>
     </div>
