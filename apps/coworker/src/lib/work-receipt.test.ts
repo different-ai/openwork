@@ -57,3 +57,37 @@ test("technical details show a shell command on its own, other input as tidy JSO
   assert.ok(long[0]?.text.endsWith("…"));
   assert.deepEqual(technicalSections({ input: { path: "" }, output: null }), []);
 });
+
+test("the coworker's document tools read as plain steps: wrote, updated by section, put aside, archived", () => {
+  const kept = (document: Record<string, unknown>) => ({ openworkMcpApp: { content: [{ type: "text", text: "ok" }], structuredContent: { document } } });
+  const wrote = describeWorkStep({ tool: "coworker_document_create", status: "completed", input: { title: "Launch plan", summary: "S", body: "B" } });
+  assert.deepEqual([wrote.label, wrote.doing, wrote.service], ["Wrote a document · Launch plan", "writing a document", "documents"]);
+  const updated = describeWorkStep({
+    tool: "coworker_document_update",
+    status: "completed",
+    input: { id: "launch-plan", patch: { heading: "Timeline", content: "x" } },
+    output: { content: [{ type: "text", text: "Updated" }] },
+    metadata: kept({ id: "launch-plan", title: "Launch plan", section: "Timeline" }),
+  });
+  assert.equal(updated.label, "Updated Launch plan · Timeline section");
+  assert.equal(updated.doing, "updating Launch plan");
+  // Without a kept result the id still names the document.
+  assert.equal(describeWorkStep({ tool: "coworker_document_update", status: "running", input: { id: "old-vendor-notes", body: "x" } }).label, "Updated Old vendor notes");
+  assert.equal(describeWorkStep({ tool: "coworker_document_read", status: "completed", input: { id: "launch-plan" } }).label, "Read a document · Launch plan");
+  assert.equal(describeWorkStep({ tool: "coworker_documents_list", status: "completed", input: {} }).label, "Looked over its documents");
+  const aside = describeWorkStep({
+    tool: "coworker_context_set",
+    status: "completed",
+    input: { active: ["launch-plan"], aside: ["old-vendor-notes"] },
+    output: { content: [{ type: "text", text: "Put aside: Old vendor notes." }] },
+    metadata: { openworkMcpApp: { content: [{ type: "text", text: "ok" }], structuredContent: { changed: [{ id: "old-vendor-notes", title: "Old vendor notes", status: "aside" }] } } },
+  });
+  assert.equal(aside.label, "Put aside · Old vendor notes");
+  assert.equal(describeWorkStep({ tool: "coworker_context_set", status: "completed", input: { aside: ["a-b", "c-d", "e-f"] } }).label, "Put aside · A b, C d and 1 more");
+  assert.equal(describeWorkStep({ tool: "coworker_context_set", status: "completed", input: { active: ["a"] } }).label, "Sorted its documents");
+  assert.equal(describeWorkStep({ tool: "coworker_document_archive", status: "completed", input: { id: "old-vendor-notes" } }).label, "Archived · Old vendor notes");
+  // They group into the existing line like any other work, without raw tool names.
+  const line = summarizeWork([wrote, updated, describeWorkStep({ tool: "edit", status: "completed", input: { filePath: "working.md" } })]);
+  assert.equal(line, "Worked with documents and your files · 3 steps");
+  assert.doesNotMatch(wrote.label + updated.label + aside.label, /[a-z]+_[a-z]+/);
+});
