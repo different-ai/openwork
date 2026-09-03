@@ -56,8 +56,12 @@ export type CloudProviderSyncSkippedProvider = {
   cloudProviderId: string;
   providerId: string;
   name: string;
-  /** Why materialization skipped this provider (e.g. declared env vars but no credential to fill them). */
-  reason: "missing_credentials" | "needs_key";
+  /**
+   * Why materialization skipped this provider (e.g. declared env vars but no
+   * credential to fill them). Gateway providers report Den's credentialStatus
+   * verbatim when it is not "ready".
+   */
+  reason: "missing_credentials" | "needs_key" | "member_auth_required" | "org_credential_missing";
 };
 
 export type CloudProviderSyncRunDetail = {
@@ -112,7 +116,11 @@ type DenProviderConnection = DenProvider & {
   apiKey: string | null;
   apiKeys: Record<string, string> | null;
   memberCredentialState: "missing" | "active" | "blocked" | "stale" | "error" | null;
+  /** Gateway providers only: Den's readiness verdict for this member. */
+  credentialStatus: "ready" | "member_auth_required" | "org_credential_missing" | null;
 };
+
+const gatewayProviderSource = "openwork_gateway";
 
 type EnvEntry = {
   key: string;
@@ -245,12 +253,12 @@ function parseModel(value: unknown): DenProviderModel | null {
   return { id, name, config: parseJsonRecord(value.config) };
 }
 
-function parseProvider(value: unknown): DenProvider | null {
+function parseProvider(value: unknown, idPattern: RegExp = /^lpr_/i): DenProvider | null {
   if (!isRecord(value)) return null;
   const id = readRequiredString(value.id);
   const providerId = readRequiredString(value.providerId);
   const name = readRequiredString(value.name);
-  if (!id || !/^lpr_/i.test(id) || !providerId || !name || !Array.isArray(value.models)) return null;
+  if (!id || !idPattern.test(id) || !providerId || !name || !Array.isArray(value.models)) return null;
 
   const models: DenProviderModel[] = [];
   for (const modelValue of value.models) {
@@ -308,6 +316,56 @@ function parseProviderConnection(payload: unknown, expectedId: string): DenProvi
     apiKey: typeof payload.llmProvider.apiKey === "string" ? payload.llmProvider.apiKey : null,
     apiKeys: parseApiKeys(payload.llmProvider.apiKeys),
     memberCredentialState,
+    credentialStatus: null,
+  };
+}
+
+type DenInferenceProviderSummary = DenProvider & {
+  credentialStatus: NonNullable<DenProviderConnection["credentialStatus"]>;
+};
+
+function parseCredentialStatus(value: unknown): DenInferenceProviderSummary["credentialStatus"] | null {
+  return value === "ready" || value === "member_auth_required" || value === "org_credential_missing"
+    ? value
+    : null;
+}
+
+// Gateway rows (`ipr_*`) are a distinct Den resource: one runtime provider per
+// row, `source` pinned to "openwork_gateway" so the desktop can badge them.
+function parseInferenceProvider(value: unknown): DenInferenceProviderSummary | null {
+  const provider = parseProvider(value, /^ipr_/i);
+  if (!provider || !isRecord(value)) return null;
+  const credentialStatus = parseCredentialStatus(value.credentialStatus);
+  if (!credentialStatus) return null;
+  return { ...provider, source: gatewayProviderSource, credentialStatus };
+}
+
+function parseInferenceProviderList(payload: unknown): DenInferenceProviderSummary[] {
+  if (!isRecord(payload) || !Array.isArray(payload.inferenceProviders)) {
+    throw new Error("den_inference_provider_list_invalid_response");
+  }
+  const providers: DenInferenceProviderSummary[] = [];
+  for (const value of payload.inferenceProviders) {
+    const provider = parseInferenceProvider(value);
+    if (!provider) throw new Error("den_inference_provider_list_invalid_response");
+    providers.push(provider);
+  }
+  return providers;
+}
+
+function parseInferenceProviderConnection(payload: unknown, expectedId: string): DenProviderConnection {
+  if (!isRecord(payload) || !isRecord(payload.inferenceProvider)) {
+    throw new Error(`den_inference_provider_connect_invalid_response_${expectedId}`);
+  }
+  const provider = parseInferenceProvider(payload.inferenceProvider);
+  if (!provider || provider.id !== expectedId) {
+    throw new Error(`den_inference_provider_connect_invalid_response_${expectedId}`);
+  }
+  return {
+    ...provider,
+    apiKey: typeof payload.inferenceProvider.apiKey === "string" ? payload.inferenceProvider.apiKey : null,
+    apiKeys: parseApiKeys(payload.inferenceProvider.apiKeys),
+    memberCredentialState: null,
   };
 }
 
@@ -330,6 +388,7 @@ async function requestJson(
   fetchImpl: typeof globalThis.fetch,
   session: CloudProviderDenSession,
   path: string,
+  options: { allowNotFound?: boolean } = {},
 ): Promise<unknown> {
   let response: Response;
   try {
@@ -344,6 +403,7 @@ async function requestJson(
   } catch (error) {
     throw new Error(error instanceof Error ? `den_request_failed: ${error.message}` : "den_request_failed");
   }
+  if (response.status === 404 && options.allowNotFound) return null;
   if (!response.ok) throw new Error(`den_request_failed_${response.status}`);
   try {
     const payload: unknown = await response.json();
@@ -353,7 +413,7 @@ async function requestJson(
   }
 }
 
-async function fetchProviders(
+async function fetchLlmProviders(
   fetchImpl: typeof globalThis.fetch,
   session: CloudProviderDenSession,
 ): Promise<DenProviderConnection[]> {
@@ -365,6 +425,41 @@ async function fetchProviders(
         provider.id,
       )),
   );
+}
+
+async function fetchInferenceProviders(
+  fetchImpl: typeof globalThis.fetch,
+  session: CloudProviderDenSession,
+): Promise<DenProviderConnection[]> {
+  // Older Den servers have no inference-providers resource: a 404 here means
+  // "no gateway providers", never a failed sync of the llm-providers list.
+  const payload = await requestJson(fetchImpl, session, "/v1/inference-providers?scope=usable", { allowNotFound: true });
+  if (payload === null) return [];
+  const providers = parseInferenceProviderList(payload);
+  return Promise.all(
+    providers.map(async (provider) => {
+      // Connect would hand back a key the gateway rejects until the credential
+      // is ready; keep the summary so materialization skips it with the reason.
+      if (provider.credentialStatus !== "ready") {
+        return { ...provider, apiKey: null, apiKeys: null, memberCredentialState: null };
+      }
+      return parseInferenceProviderConnection(
+        await requestJson(fetchImpl, session, `/v1/inference-providers/${encodeURIComponent(provider.id)}/connect`),
+        provider.id,
+      );
+    }),
+  );
+}
+
+async function fetchProviders(
+  fetchImpl: typeof globalThis.fetch,
+  session: CloudProviderDenSession,
+): Promise<DenProviderConnection[]> {
+  const [llmProviders, inferenceProviders] = await Promise.all([
+    fetchLlmProviders(fetchImpl, session),
+    fetchInferenceProviders(fetchImpl, session),
+  ]);
+  return [...llmProviders, ...inferenceProviders];
 }
 
 function stableValue(value: unknown): unknown {
@@ -390,7 +485,7 @@ function runtimeProviderId(provider: DenProvider): string {
 }
 
 function isCloudManagedProviderKey(providerId: string): boolean {
-  return /^lpr_/i.test(providerId) || providerId.trim() === "openwork";
+  return /^(lpr|ipr)_/i.test(providerId) || providerId.trim() === "openwork";
 }
 
 function readProviderEnvNames(providerConfig: JsonRecord): string[] {
@@ -487,6 +582,15 @@ function prepareMaterialization(
         providerId: runtimeProviderId(provider),
         name: provider.name,
         reason: "needs_key",
+      });
+      continue;
+    }
+    if (provider.credentialStatus && provider.credentialStatus !== "ready") {
+      skipped.push({
+        cloudProviderId: provider.id,
+        providerId: runtimeProviderId(provider),
+        name: provider.name,
+        reason: provider.credentialStatus,
       });
       continue;
     }

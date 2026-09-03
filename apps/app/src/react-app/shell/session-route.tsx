@@ -131,7 +131,7 @@ import { sendWithRevertRollback } from "@/react-app/domains/session/surface/safe
 import { CreateRemoteWorkspaceModal } from "@/react-app/domains/workspace/create-remote-workspace-modal";
 import { CreateWorkspaceModal } from "@/react-app/domains/workspace/create-workspace-modal";
 import type { CreateWorkspaceOptions } from "@/react-app/domains/workspace/types";
-import { isCloudManagedProviderKey } from "@/react-app/domains/connections/provider-auth/cloud-provider-config";
+import { isCloudManagedProviderKey, resolveGatewayProviderIds } from "@/react-app/domains/connections/provider-auth/cloud-provider-config";
 import { assignedModelOptions } from "@/react-app/domains/connections/provider-auth/assigned-model-options";
 import {
   filterEntitledModelOptions,
@@ -844,6 +844,10 @@ export function SessionRoute() {
     sessionProviderAuthSnapshot.cloudOrgProviders,
     sessionProviderAuthSnapshot.importedCloudProviders,
   ]);
+  const gatewayProviderIds = useMemo(
+    () => resolveGatewayProviderIds(sessionProviderAuthSnapshot.importedCloudProviders),
+    [sessionProviderAuthSnapshot.importedCloudProviders],
+  );
   const refreshOrganizationModelAccess = useCallback(async () => {
     await refreshCloudProviderSync("manual");
   }, [refreshCloudProviderSync]);
@@ -3510,6 +3514,7 @@ export function SessionRoute() {
         modelPicker.setOpen(false);
       }}
       disabledProviders={disabledProviderIds}
+      gatewayProviderIds={gatewayProviderIds}
       onBehaviorChange={() => {}}
       onToggleProvider={async (providerId, enable) => {
         if (!opencodeClient) return;

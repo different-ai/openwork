@@ -366,6 +366,7 @@ describe("cloud provider sync gateway", () => {
             llmProviders: [buildProvider([{ id: "model-a", name: "Model A", config: {} }])],
           });
         }
+        if (url.pathname === "/v1/inference-providers") return Response.json({ error: "not_found" }, { status: 404 });
         return Response.json({
           llmProvider: buildProvider([{ id: "model-a", name: "Model A", config: {} }]),
         });
@@ -418,6 +419,7 @@ describe("cloud provider sync gateway", () => {
         if (url.pathname === "/v1/llm-providers") {
           return Response.json({ llmProviders: [provider] });
         }
+        if (url.pathname === "/v1/inference-providers") return Response.json({ error: "not_found" }, { status: 404 });
         return Response.json({
           llmProvider: {
             ...provider,
@@ -450,6 +452,122 @@ describe("cloud provider sync gateway", () => {
       name: provider.name,
       reason: "needs_key",
     }]);
+  });
+
+  test("materializes gateway providers per row, skips unready ones, and tolerates an older Den without the endpoint", async () => {
+    const root = await createRoot();
+    const config = serverConfig(root, "https://engine.example.test");
+    config.workspaces = [];
+    const gatewayKey = "ow_inf_member_key";
+    const gatewayBaseUrl = "https://inference.example.test/api/v1/providers/ipr_ready";
+    const llmProvider = buildProvider([{ id: "model-a", name: "Model A", config: {} }]);
+    const readyGateway = {
+      id: "ipr_ready",
+      providerId: "anthropic",
+      name: "Team Anthropic",
+      source: "openwork_gateway",
+      credentialMode: "org",
+      credentialStatus: "ready",
+      authUrl: null,
+      updatedAt: "2026-08-20T00:00:00.000Z",
+      providerConfig: {
+        env: ["ANTHROPIC_API_KEY"],
+        npm: "@ai-sdk/anthropic",
+        api: gatewayBaseUrl,
+        options: { baseURL: gatewayBaseUrl },
+      },
+      models: [{ id: "claude-sonnet", name: "Claude Sonnet", config: {} }],
+    };
+    const pendingGateway = {
+      ...readyGateway,
+      id: "ipr_pending",
+      name: "Member OpenAI",
+      providerId: "openai",
+      credentialMode: "member",
+      credentialStatus: "member_auth_required",
+      providerConfig: { env: ["OPENAI_API_KEY"], npm: "@ai-sdk/openai" },
+    };
+    let inferenceEndpointMissing = false;
+    const denPaths: string[] = [];
+    const den = Bun.serve({
+      port: 0,
+      fetch(request) {
+        const url = new URL(request.url);
+        denPaths.push(`${url.pathname}${url.search}`);
+        if (url.pathname === "/v1/llm-providers") return Response.json({ llmProviders: [llmProvider] });
+        if (url.pathname === `/v1/llm-providers/${llmProvider.id}/connect`) {
+          return Response.json({ llmProvider });
+        }
+        if (inferenceEndpointMissing) return Response.json({ error: "not_found" }, { status: 404 });
+        if (url.pathname === "/v1/inference-providers" && url.searchParams.get("scope") === "usable") {
+          return Response.json({ inferenceProviders: [readyGateway, pendingGateway] });
+        }
+        if (url.pathname === `/v1/inference-providers/${readyGateway.id}/connect`) {
+          return Response.json({
+            inferenceProvider: { ...readyGateway, apiKey: gatewayKey, apiKeys: { ANTHROPIC_API_KEY: gatewayKey } },
+          });
+        }
+        if (url.pathname === `/v1/inference-providers/${pendingGateway.id}/connect`) {
+          return Response.json({ error: "forbidden" }, { status: 403 });
+        }
+        return Response.json({ error: "not_found" }, { status: 404 });
+      },
+    });
+    stops.push(() => den.stop(true));
+    const env = new EnvService({ path: process.env.OPENWORK_ENV_STORE });
+    const sync = new CloudProviderSync({
+      config,
+      env,
+      reloadEngine: async () => undefined,
+      intervalMs: 3_600_000,
+    });
+    stops.push(() => sync.stop());
+
+    sync.setSession({ baseUrl: `http://127.0.0.1:${den.port}`, token: "den-token", orgId: "org_test" });
+    expect((await sync.run("gateway")).status).toBe("applied");
+    expect(denPaths).toContain("/v1/inference-providers?scope=usable");
+    expect(denPaths).toContain(`/v1/inference-providers/${readyGateway.id}/connect`);
+    expect(denPaths).not.toContain(`/v1/inference-providers/${pendingGateway.id}/connect`);
+
+    const status = sync.status();
+    expect(status.providers.map((entry) => entry.cloudProviderId)).toEqual(["ipr_ready", "lpr_test"]);
+    expect(status.providers.map((entry) => entry.providerId)).toEqual(["ipr_ready", "lpr_test"]);
+    expect(status.providers[0]).toMatchObject({
+      sourceProviderId: "anthropic",
+      name: "Team Anthropic",
+      source: "openwork_gateway",
+      modelIds: ["claude-sonnet"],
+    });
+    expect(status.providers[1]?.source).toBe("custom");
+    expect(status.skippedProviders).toEqual([{
+      cloudProviderId: "ipr_pending",
+      providerId: "ipr_pending",
+      name: "Member OpenAI",
+      reason: "member_auth_required",
+    }]);
+
+    const runtimeProviders = runtimeProviderMap(await readGlobalRuntimeOpencodeConfig(config));
+    expect(Object.keys(runtimeProviders).sort()).toEqual(["ipr_ready", "lpr_test"]);
+    const gatewayRuntime = expectRecord(runtimeProviders.ipr_ready, "gateway runtime provider");
+    expect(gatewayRuntime.name).toBe("Team Anthropic");
+    expect(gatewayRuntime.npm).toBe("@ai-sdk/anthropic");
+    expect(gatewayRuntime.api).toBe(gatewayBaseUrl);
+    expect(expectRecord(gatewayRuntime.options, "gateway options").baseURL).toBe(gatewayBaseUrl);
+    expect(JSON.stringify(gatewayRuntime)).not.toContain(gatewayKey);
+    const storedEnv = await env.list();
+    expect(storedEnv.find((entry) => entry.key === "ANTHROPIC_API_KEY")?.value).toBe(gatewayKey);
+    expect(storedEnv.find((entry) => entry.key === "TEST_PROVIDER_API_KEY")?.value).toBe("sk-test-provider");
+    expect(storedEnv.some((entry) => entry.key === "OPENAI_API_KEY")).toBe(false);
+
+    // An older Den has no inference-providers resource: llm-provider sync
+    // must keep working and the gateway rows simply disappear.
+    inferenceEndpointMissing = true;
+    expect((await sync.run("older-den")).status).toBe("applied");
+    expect(sync.status().lastRun?.status).toBe("applied");
+    expect(sync.status().providers.map((entry) => entry.cloudProviderId)).toEqual(["lpr_test"]);
+    expect(sync.status().skippedProviders).toEqual([]);
+    expect(Object.keys(runtimeProviderMap(await readGlobalRuntimeOpencodeConfig(config)))).toEqual(["lpr_test"]);
+    expect((await env.list()).some((entry) => entry.key === "ANTHROPIC_API_KEY")).toBe(false);
   });
 
   test("materializes a credential-less Den provider from a matching local Desktop environment key", async () => {
