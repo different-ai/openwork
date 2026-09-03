@@ -297,7 +297,15 @@ export function createHeadlessThreadClient(options: HeadlessThreadClientOptions)
         const snapshot = await getThreadSnapshot(threadId);
         return { outcome: "aborted", snapshot, waitedMs: now() - startedAt, polls, observedRunning, terminalError: null };
       }
-      const snapshot = await getThreadSnapshot(threadId, { signal: input.signal });
+      let snapshot: HeadlessThreadSnapshot;
+      try {
+        snapshot = await getThreadSnapshot(threadId, { signal: input.signal });
+      } catch (cause) {
+        // An abort that lands while a poll is in flight is the caller's stop, not a failure of the thread.
+        if (!input.signal?.aborted) throw cause;
+        const last = await getThreadSnapshot(threadId);
+        return { outcome: "aborted", snapshot: last, waitedMs: now() - startedAt, polls, observedRunning, terminalError: null };
+      }
       polls += 1;
       const finish = (outcome: HeadlessThreadWaitResult["outcome"]): HeadlessThreadWaitResult => ({
         outcome,
