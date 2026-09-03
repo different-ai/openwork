@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import {
   findFreePort,
@@ -14,7 +17,25 @@ const directory = args.get("dir") ?? process.cwd();
 const requireAi = args.get("require-ai") === "true";
 
 const port = await findFreePort();
-const server = await spawnOpencodeServe({ directory, port });
+// This script verifies core SDK calls only. Loading a developer or CI runner's
+// real OpenCode database, plugins, MCPs, and project config makes /global/health
+// wait on unrelated setup; in CI that has reached the OS connect timeout and
+// left path.get talking to a vanished process. Keep this witness hermetic.
+const isolatedRoot = await mkdtemp(join(tmpdir(), "openwork-app-e2e-"));
+const server = await spawnOpencodeServe({
+  directory,
+  port,
+  env: {
+    OPENCODE_CONFIG_CONTENT: "{}",
+    OPENCODE_DB: join(isolatedRoot, "opencode.db"),
+    OPENCODE_DISABLE_DEFAULT_PLUGINS: "1",
+    OPENCODE_DISABLE_EXTERNAL_SKILLS: "1",
+    OPENCODE_DISABLE_LSP_DOWNLOAD: "1",
+    OPENCODE_DISABLE_MODELS_FETCH: "1",
+    OPENCODE_DISABLE_PROJECT_CONFIG: "1",
+    OPENCODE_DISABLE_PRUNE: "1",
+  },
+});
 
 const results = {
   ok: true,
@@ -160,4 +181,5 @@ try {
   process.exitCode = 1;
 } finally {
   await server.close();
+  await rm(isolatedRoot, { recursive: true, force: true });
 }
