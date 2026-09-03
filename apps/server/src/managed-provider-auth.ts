@@ -28,15 +28,36 @@ type ManagedProviderAuthLogger = {
 
 type EnvReader = { list: () => Promise<Array<{ key: string; value: string }>> };
 
+/**
+ * A pool standby that is healthy but not yet primary. Seeding it before the
+ * flip means the new generation never serves a request without credentials,
+ * and the next primary-scoped sync finds the same applied fingerprints
+ * instead of re-delivering.
+ */
+export type ManagedProviderAuthStandbyTarget = {
+  generationId: string;
+  baseUrl: string;
+  username: string;
+  password: string;
+};
+
 export type ManagedProviderAuthInput = {
   config: ServerConfig;
   env: EnvReader;
   fetchImpl?: typeof globalThis.fetch;
   logger?: ManagedProviderAuthLogger;
+  /** Deliver to this standby instead of the current primary. */
+  target?: ManagedProviderAuthStandbyTarget;
 };
 
 export type ManagedProviderAuthResult = {
   delivered: string[];
+  /**
+   * Delivered providers whose credential value differs from the last value
+   * this process delivered anywhere. Re-seeding a replaced engine with the
+   * same key is delivered but not rotated.
+   */
+  rotated: string[];
   unchanged: string[];
   removed: string[];
   skipped: Array<{ providerId: string; reason: "no_env_names" | "no_stored_credential" }>;
@@ -47,6 +68,8 @@ type ManagedProviderAuthState = {
   epoch: number;
   appliedTargetScope: string | null;
   deliveredFingerprints: Map<string, string>;
+  /** Survives target changes: distinguishes rotation from re-seeding a new engine. */
+  lastDeliveredValueFingerprints: Map<string, string>;
   ownedProviderIdsByScope: Map<string, Set<string>>;
   tail: Promise<void>;
 };
@@ -79,6 +102,7 @@ function stateForConfig(config: ServerConfig): ManagedProviderAuthState {
       current.epoch = cacheEpoch;
       current.appliedTargetScope = null;
       current.deliveredFingerprints.clear();
+      current.lastDeliveredValueFingerprints.clear();
     }
     return current;
   }
@@ -86,6 +110,7 @@ function stateForConfig(config: ServerConfig): ManagedProviderAuthState {
     epoch: cacheEpoch,
     appliedTargetScope: null,
     deliveredFingerprints: new Map(),
+    lastDeliveredValueFingerprints: new Map(),
     ownedProviderIdsByScope: new Map(),
     tail: Promise.resolve(),
   };
@@ -106,11 +131,28 @@ function basicAuthHeader(username: string, password: string): string | undefined
     : undefined;
 }
 
-function resolveManagedProviderAuthTarget(config: ServerConfig): ManagedProviderAuthTarget | null {
+function resolveManagedProviderAuthTarget(
+  config: ServerConfig,
+  standby?: ManagedProviderAuthStandbyTarget,
+): ManagedProviderAuthTarget | null {
   const workspace = findManagedEngineWorkspace(config.workspaces) ?? config.workspaces[0];
   if (!workspace) return null;
 
   const pool = enginePoolForConfig(config);
+  if (standby) {
+    // Same scope shape as the primary branch below, so the flip that promotes
+    // this generation leaves the applied fingerprints valid.
+    const baseUrl = normalizeBaseUrl(standby.baseUrl);
+    if (!pool || !baseUrl) return null;
+    const authHeader = basicAuthHeader(standby.username, standby.password);
+    return {
+      scope: `workspace:${workspace.id}\u0000generation:${standby.generationId}`,
+      ownershipScope: "managed-engine",
+      baseUrl,
+      ...(authHeader ? { authHeader } : {}),
+      isCurrent: () => enginePoolForConfig(config) === pool,
+    };
+  }
   if (pool) {
     const primary = pool.connections().find((connection) => connection.role === "primary");
     const baseUrl = normalizeBaseUrl(primary?.baseUrl);
@@ -198,6 +240,7 @@ export function syncManagedProviderAuth(input: ManagedProviderAuthInput): Promis
 async function reconcileManagedProviderAuth(input: ManagedProviderAuthInput): Promise<ManagedProviderAuthResult> {
   const result: ManagedProviderAuthResult = {
     delivered: [],
+    rotated: [],
     unchanged: [],
     removed: [],
     skipped: [],
@@ -214,7 +257,7 @@ async function reconcileManagedProviderAuth(input: ManagedProviderAuthInput): Pr
     }
   }
 
-  const target = resolveManagedProviderAuthTarget(input.config);
+  const target = resolveManagedProviderAuthTarget(input.config, input.target);
   if (!target) return result;
   const operationEpoch = cacheEpoch;
   const state = stateForConfig(input.config);
@@ -271,6 +314,8 @@ async function reconcileManagedProviderAuth(input: ManagedProviderAuthInput): Pr
         continue;
       }
       state.deliveredFingerprints.set(providerId, next);
+      if (state.lastDeliveredValueFingerprints.get(providerId) !== next) result.rotated.push(providerId);
+      state.lastDeliveredValueFingerprints.set(providerId, next);
       let ownedProviderIds = state.ownedProviderIdsByScope.get(target.ownershipScope);
       if (!ownedProviderIds) {
         ownedProviderIds = new Set();

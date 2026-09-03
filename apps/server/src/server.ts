@@ -15,6 +15,7 @@ import {
   type EnginePoolConnection,
   type EngineEventProxyLease,
   type EngineSpawnTemplate,
+  type RolloverReason,
 } from "./engine-pool.js";
 import { withEngineDirectoryFence } from "./engine-directory-fence.js";
 import {
@@ -607,6 +608,13 @@ const reloadBaselineRefreshers = new WeakMap<
   (workspaceId: string, reasons?: ReloadReason[]) => Promise<void>
 >();
 
+/** The env store owned by a running server, for code that only holds its config. */
+const envServicesByConfig = new WeakMap<ServerConfig, EnvService>();
+
+export function envServiceForConfig(config: ServerConfig): EnvService | null {
+  return envServicesByConfig.get(config) ?? null;
+}
+
 type LogLevel = "info" | "warn" | "error";
 
 type LogAttributes = Record<string, unknown>;
@@ -924,6 +932,7 @@ export async function startServer(config: ServerConfig): Promise<ServeResult> {
   const reloadEvents = new ReloadEventStore();
   const tokens = new TokenService(config);
   const env = new EnvService();
+  envServicesByConfig.set(config, env);
   const logger = createServerLogger(config);
   try {
     await reconcileLocalManagedMcpRuntimeEntries(config);
@@ -962,7 +971,7 @@ export async function startServer(config: ServerConfig): Promise<ServeResult> {
       config,
       resolveEngineRuntimeWorkspace(config),
       engineMcpServerState,
-      { forceStandby: true },
+      { forceStandby: true, reason: "cloud_provider_sync" },
     ),
     engineBusy: () => enginePoolForConfig(config)
       ? Promise.resolve(false)
@@ -2159,7 +2168,7 @@ function createRoutes(
   // the established busy deferral.
   const applyManagedProviderReload = async (workspace: WorkspaceInfo): Promise<"reloaded" | "deferred"> => {
     const reloadDeferred = await shouldDeferInPlaceEngineReload(config, workspace, engineHasActiveSessions);
-    if (!reloadDeferred) await reloadOpencodeEngine(config, workspace, engineMcpServerState);
+    if (!reloadDeferred) await reloadOpencodeEngine(config, workspace, engineMcpServerState, { reason: "managed_provider_reload" });
     if (reloadDeferred) cloudProviderSync.markReloadPending();
     return reloadDeferred ? "deferred" : "reloaded";
   };
@@ -2939,7 +2948,7 @@ function createRoutes(
     requireClientScope,
     resolveWorkspace,
     reloadOpencodeEngine: (routeConfig, workspace) =>
-      reloadOpencodeEngine(routeConfig, workspace, engineMcpServerState),
+      reloadOpencodeEngine(routeConfig, workspace, engineMcpServerState, { reason: "operation_route" }),
   });
 
   registerFileRoutes({
@@ -3712,7 +3721,7 @@ async function resolveWorkspace(config: ServerConfig, id: string): Promise<Works
 function reloadOpencodeEngineAfterInternalBootstrap(config: ServerConfig, workspace: WorkspaceInfo): void {
   const connection = resolveWorkspaceOpencodeConnection(config, workspace);
   if (!connection.baseUrl?.trim()) return;
-  void reloadOpencodeEngine(config, workspace).catch((error) => {
+  void reloadOpencodeEngine(config, workspace, undefined, { reason: "workspace_bootstrap" }).catch((error) => {
     createServerLogger(config).log("error", `Bootstrap engine reload failed for workspace ${workspace.id}.`, {
       "workspace.id": workspace.id,
       "engine.reload.failure": error instanceof Error ? error.message : String(error),
@@ -4179,12 +4188,12 @@ async function reloadOpencodeEngine(
   config: ServerConfig,
   workspace: WorkspaceInfo,
   serverState?: EngineMcpServerState,
-  options?: { awaitPostRefreshSync?: boolean; forceStandby?: boolean },
+  options?: { awaitPostRefreshSync?: boolean; forceStandby?: boolean; reason?: RolloverReason },
 ): Promise<void> {
   const pool = enginePoolForConfig(config);
   if (pool) {
     await pool.requestRollover({
-      reason: "engine_reload",
+      reason: options?.reason ?? "engine_reload",
       workspace,
       awaitPostRefreshSync: options?.awaitPostRefreshSync,
       forceStandby: options?.forceStandby,
@@ -4911,6 +4920,22 @@ export function createEnginePoolForConfig(input: {
       postRefreshSync: async (poolConfig, workspace) => {
         await postEngineRefreshSync(poolConfig, workspace, activeEngineMcpServerState(poolConfig));
         await syncAllWorkspacesRuntimeMcpToEngine(poolConfig);
+      },
+      prepareStandby: async (poolConfig, standby) => {
+        const env = envServiceForConfig(poolConfig);
+        if (!env) return;
+        const result = await syncManagedProviderAuth({
+          config: poolConfig,
+          env,
+          logger: toManagedProviderAuthLogger(logger),
+          target: standby,
+        });
+        logger.log("info", "Engine standby seeded with managed provider credentials.", {
+          "engine.rollover.generation": standby.generationId,
+          "provider.auth.delivered": result.delivered.length,
+          "provider.auth.skipped": result.skipped.length,
+          "provider.auth.failed": result.failed.length,
+        });
       },
       writeRuntimeConfigFile: (poolConfig) => writeOpenworkRuntimeConfigFile(poolConfig),
       registerTrusted: (poolConfig, generation) => registerTrustedOpencodeProcess(poolConfig, generation),
