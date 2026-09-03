@@ -35,6 +35,15 @@ import {
   writeCoworkerFile,
 } from "./coworkers.mjs";
 import {
+  appendGroupEvent,
+  archiveGroup,
+  createGroup,
+  getGroup,
+  listGroups,
+  readGroupTimeline,
+  updateGroup,
+} from "./groups.mjs";
+import {
   attachLocalResponsibilityThread,
   beginLocalResponsibilityRun,
   cancelQueuedLocalRun,
@@ -789,6 +798,15 @@ const commands = {
     await deleteRetiredCoworker(coworkersDir, archiveId);
     return { ok: true };
   },
+  // Group chats: several coworkers in one conversation. Metadata and the timeline
+  // live under the coworkers home beside the coworker folders.
+  "groups.list": async () => listGroups(coworkersDir),
+  "groups.get": async ({ id }) => getGroup(coworkersDir, id),
+  "groups.create": async ({ name, participantSlugs }) => createGroup(coworkersDir, { name, participantSlugs }),
+  "groups.update": async ({ id, patch }) => updateGroup(coworkersDir, id, patch ?? {}),
+  "groups.archive": async ({ id }) => archiveGroup(coworkersDir, id),
+  "groups.readTimeline": async ({ id, limit }) => readGroupTimeline(coworkersDir, id, Number.isFinite(limit) ? { limit } : {}),
+  "groups.appendEvent": async ({ id, event }) => appendGroupEvent(coworkersDir, id, event),
   "coworkers.files.list": async ({ slug }) => listMemoryFiles(coworkersDir, slug),
   "coworkers.files.read": async ({ slug, path: relativePath }) => ({
     content: await readCoworkerFile(coworkersDir, slug, relativePath),
