@@ -22,6 +22,7 @@ function facts(overrides: Partial<TurnFacts> = {}): TurnFacts {
     needsYou: false,
     failure: "",
     appRetry: null,
+    attemptActive: false,
     waitBudgetMs: WAIT_BUDGET_MS,
     signedIn: false,
     recommendedModel: "",
@@ -98,6 +99,15 @@ test("an automatic attempt the app scheduled reads the same as the engine's, and
   assert.equal(outcome?.kind, "retrying");
   assert.equal(outcome?.line, "Couldn't reach the AI model. Trying again in 2 s…");
   assert.deepEqual(outcome?.retry, { attempt: 1, nextAt: NOW + 2_000, by: "app" });
+});
+
+test("an attempt being classified never flashes its raw engine error as a failure", () => {
+  const outcome = deriveTurnOutcome(facts({
+    engine: { type: "idle" },
+    reply: { state: "error", error: "APIError: rate limited", retryable: true, aborted: false },
+    attemptActive: true,
+  }));
+  assert.equal(outcome?.kind, "working");
 });
 
 test("a stop by the person is one word with Retry, whatever the engine or the wait still reports", () => {
