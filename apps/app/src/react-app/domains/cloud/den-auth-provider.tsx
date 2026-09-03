@@ -433,21 +433,25 @@ export function DenAuthProvider({ children }: DenAuthProviderProps) {
     }
 
     handledGrantsRef.current.add(handoff.grant);
-    const client = createDenClient({
-      baseUrl: handoff.denBaseUrl,
-    });
-
     void exchangeHandoffAndSignIn(handoff.grant, {
       baseUrl: handoff.denBaseUrl,
-      client,
       activeOrg: { id: handoff.orgId, slug: handoff.orgSlug || null, name: handoff.orgName || null },
+      // The consumed grant is stripped from the persisted bootstrap in the
+      // same durable commit that enrolls the session, so a relaunch can
+      // neither re-exchange it nor lose the enrollment it produced.
+      bootstrap: { clearHandoff: true },
     }).then((result) => {
-      if (!result.ok) {
+      if (result.ok) return;
+      if (!result.grantConsumed) {
+        // The grant never reached the destination; a later bootstrap heal may
+        // retry it.
         handledGrantsRef.current.delete(handoff.grant);
         return;
       }
-      // Best-effort cleanup; not part of the auth success/failure path.
-      clearConsumedBootstrapHandoff(bootstrap, handoff.denBaseUrl);
+      // The one-time grant is spent but the enrollment did not commit. Drop
+      // the grant from disk (best effort) so restarts do not retry it forever;
+      // the user needs a fresh handoff link.
+      clearConsumedBootstrapHandoff(bootstrap, bootstrap.baseUrl);
     });
   }, [clearConsumedBootstrapHandoff]);
 
@@ -468,34 +472,25 @@ export function DenAuthProvider({ children }: DenAuthProviderProps) {
     isEnterpriseActivation: boolean,
   ) => {
     handledGrantsRef.current.add(grant);
-    const client = createDenClient({
-      baseUrl: denBaseUrl,
-    });
     void exchangeHandoffAndSignIn(grant, {
       baseUrl: denBaseUrl,
-      client,
-    }).then(async (result) => {
-      if (!result.ok) {
+      // Enterprise activation is part of the same durable commit as the
+      // enrollment: the stamp and the session it locks in land together.
+      ...(isEnterpriseActivation
+        ? {
+            bootstrap: {
+              requireSignin: true,
+              enterpriseActivation: {
+                activatedAt: new Date().toISOString(),
+                denBaseUrl,
+              },
+            },
+          }
+        : {}),
+    }).then((result) => {
+      if (!result.ok && !result.grantConsumed) {
         handledGrantsRef.current.delete(grant);
-        return;
       }
-      if (!isEnterpriseActivation) return;
-
-      const bootstrap = readDenBootstrapConfig();
-      await setDenBootstrapConfig({
-        baseUrl: denBaseUrl,
-        requireSignin: true,
-        requireActivation: bootstrap.requireActivation,
-        ...(bootstrap.brandAppName ? { brandAppName: bootstrap.brandAppName } : {}),
-        ...(bootstrap.brandLogoUrl ? { brandLogoUrl: bootstrap.brandLogoUrl } : {}),
-        ...(bootstrap.brandIconUrl ? { brandIconUrl: bootstrap.brandIconUrl } : {}),
-        ...(bootstrap.claimLinks ? { claimLinks: bootstrap.claimLinks } : {}),
-        ...(bootstrap.prepared ? { prepared: bootstrap.prepared } : {}),
-        enterpriseActivation: {
-          activatedAt: new Date().toISOString(),
-          denBaseUrl,
-        },
-      });
     });
   }, []);
 

@@ -346,6 +346,7 @@
       "id": "desktop.onboarding-cloud-auth",
       "description": "Desktop welcome, first workspace, Cloud sign-in, organization join, and bootstrap state",
       "implementation": [
+        "apps/app/src/app/lib/den-handoff.ts",
         "apps/app/src/react-app/domains/cloud/den-auth-provider.tsx",
         "apps/app/src/react-app/domains/cloud/den-signin-surface.tsx",
         "apps/app/src/react-app/domains/cloud/desktop-config-provider.tsx",
@@ -360,6 +361,7 @@
         "apps/app/src/react-app/shell/welcome-route.tsx"
       ],
       "specs": [
+        "evals/specs/cross-server-handoff-atomic-commit.e2e.test.ts",
         "evals/specs/first-run-bootstrap-contract.e2e.test.ts",
         "evals/specs/first-run-cloud-share.e2e.test.ts",
         "evals/specs/first-run-local.e2e.test.ts",
