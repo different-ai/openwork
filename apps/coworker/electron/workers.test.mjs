@@ -265,6 +265,7 @@ test("the review prompt opens with the marker the renderer recognises and lists 
   const withTools = reviewPrompt({ coworkerName: "Nova", workers: [], findings: [], toolsAvailable: true });
   assert.match(withTools, /steer it with your Worker tools now/);
   assert.match(withTools, /never stop a Worker the person started unless they ask/);
+  assert.match(withTools, /do not ask them the same question yourself/);
 });
 
 test("reviews run at once for the first finding, batch inside the window, and retry once after a failure", async () => {

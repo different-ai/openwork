@@ -589,7 +589,7 @@ export function reviewPrompt({ coworkerName, workers, findings, toolsAvailable =
     ...updates,
     "",
     toolsAvailable
-      ? "Review these updates. Reply to the person in a few sentences with what changed and what you will do. If a Worker waits for a decision you can make, or is going the wrong way, steer it with your Worker tools now. Stop a Worker only when its goal is met or the person asked; never stop a Worker the person started unless they ask. If a decision needs the person, ask with the question tool."
+      ? "Review these updates. Reply to the person in a few sentences with what changed and what you will do. If a Worker waits for a decision you can make, or is going the wrong way, steer it with your Worker tools now. If only the person can decide, say what you would choose and leave it to them: they already see the Worker's choices in this discussion and answer there, so do not ask them the same question yourself. Stop a Worker only when its goal is met or the person asked; never stop a Worker the person started unless they ask."
       : "Review these updates. Reply to the person in a few sentences with what changed and what you will do. If a Worker needs steering or should stop, say so plainly; if a decision needs the person, ask them.",
   ].join("\n");
 }
