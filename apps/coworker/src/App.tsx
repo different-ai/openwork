@@ -540,9 +540,13 @@ export default function App() {
     };
   }, [onboardingStep, teamCatalog.length]);
 
-  const updateOnboardingDraft = useCallback((next: OnboardingDraft) => {
-    setOnboardingDraft(next);
-    saveOnboardingDraft(window.sessionStorage, next);
+  /** Change the draft from its latest value (two quick taps must both land) and keep it for the session. */
+  const updateOnboardingDraft = useCallback((next: OnboardingDraft | ((current: OnboardingDraft) => OnboardingDraft)) => {
+    setOnboardingDraft((current) => {
+      const resolved = typeof next === "function" ? next(current) : next;
+      saveOnboardingDraft(window.sessionStorage, resolved);
+      return resolved;
+    });
   }, []);
 
   /** Skip the proposed team: today's blank Add screen. */
@@ -555,12 +559,12 @@ export default function App() {
   const proposeTeam = useCallback(async () => {
     try {
       const drafts = await coworkerBridge.team.recommend(onboardingDraft.intents);
-      updateOnboardingDraft({ ...onboardingDraft, drafts });
+      updateOnboardingDraft((current) => ({ ...current, drafts }));
       setOnboardingStep("team");
     } catch (cause) {
       setBootError(cause instanceof Error ? cause.message : String(cause));
     }
-  }, [onboardingDraft, updateOnboardingDraft]);
+  }, [onboardingDraft.intents, updateOnboardingDraft]);
 
   const updateSelectedLiveActivity = useCallback((activity: CoworkerActivity | null) => {
     if (!selectedSlug) return;
@@ -632,7 +636,7 @@ export default function App() {
         <OnboardingIntents
           catalog={teamCatalog}
           selected={onboardingDraft.intents}
-          onToggle={(id) => updateOnboardingDraft({ ...onboardingDraft, intents: toggleIntent(onboardingDraft.intents, id) })}
+          onToggle={(id) => updateOnboardingDraft((current) => ({ ...current, intents: toggleIntent(current.intents, id) }))}
           onContinue={() => void proposeTeam()}
           onOwn={addOwnCoworker}
           onBack={() => setOnboardingStep("")}

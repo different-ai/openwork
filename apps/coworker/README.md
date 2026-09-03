@@ -386,8 +386,8 @@ tap ever creates a coworker.
   lives in session storage under a stable id (`lib/onboarding-team.ts`), so
   Back, forward, or a crash mid-way loses nothing and creates nothing twice,
   and one failure names the coworker and offers Retry or Remove from team
-  without rolling the others back. The first coworker opens with the composer
-  focused. Each coworker's working memory starts with one line — "Joined the
+  without rolling the others back. The first coworker's empty conversation
+  opens. Each coworker's working memory starts with one line — "Joined the
   team on Sep 3 to help with research and writing." — and `coworker.md`
   records its catalog role. *I'll add my own* skips the proposal for the blank
   Add screen. Existing installs are never routed through the steps; the Add
