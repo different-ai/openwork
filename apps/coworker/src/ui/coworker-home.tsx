@@ -11,6 +11,8 @@ import { useWorkingSaying } from "@/ui/use-working-saying";
 import { CapabilitiesPanel } from "@/ui/capabilities";
 import { ActivityIcon, AppsIcon, Button, ErrorNote, IconButton, MemoryIcon, SlidersIcon, StatusDot, WorkersIcon } from "@/ui/kit";
 import { useResizablePanel } from "@/ui/use-resizable-panel";
+import { PanelContent, PanelHeader, usePanelNavigation } from "@/ui/panel-nav";
+import { pushCrumb, routeDepth, type PanelCrumb } from "@/lib/panel-route";
 import type { PanelBounds } from "@/lib/panel-layout";
 import { MemoryPanel } from "@/ui/memory";
 import { DocumentBesidePane, DocumentsIcon, DocumentsPanel, lastDocumentsOpened, useDocuments } from "@/ui/documents";
@@ -50,6 +52,16 @@ const CONTEXT_ICONS: Record<ContextView, (props: { className?: string }) => Reac
   settings: SlidersIcon,
 };
 const CONTEXT_ORDER: ContextView[] = ["overview", "documents", "workers", "capabilities", "memory", "settings"];
+
+function isContextView(value: string): value is ContextView {
+  return CONTEXT_ORDER.some((view) => view === value);
+}
+/** From this window width on, an App or skill detail may open in a column beside the conversation… */
+const BESIDE_APPS_MIN_WINDOW = 1_280;
+/** …a column at least this wide, and only while the conversation keeps its own minimum next to it. */
+const BESIDE_APPS_MIN_WIDTH = 480;
+/** Below this window width the open panel lies over the conversation instead of beside it. */
+const NARROW_WINDOW = 900;
 
 function activityTone(activity: CoworkerActivity | undefined): "spark" | "mint" | "amber" | "rose" | "mist" {
   if (activity?.state === "working") return "spark";
@@ -115,7 +127,6 @@ export function CoworkerHome({
   /** Something another view asked this one to show on arrival: a settings section, or one thread. */
   request?: CoworkerHomeRequest | null;
 }) {
-  const [contextView, setContextView] = useState<ContextView>("overview");
   const [settingsFocus, setSettingsFocus] = useState<{ id: number; section: "model" } | null>(null);
   const [assignmentDraft, setAssignmentDraft] = useState<{ id: number; text: string } | null>(null);
   const [discussionDraft, setDiscussionDraft] = useState<{ id: number; text: string } | null>(null);
@@ -139,13 +150,33 @@ export function CoworkerHome({
     available: contextPanelRoom,
     startCollapsed: true,
   });
-  /** Open one view, unfolding the panel if it was closed. Choosing the open view again closes it. */
+  /**
+   * Where the panel is: one view and a short path inside it, remembered per view for the
+   * session. Escape goes back a level, or closes the panel at a root; a deep link from
+   * elsewhere in the app (a receipt, the Connect status) opens the panel on its route.
+   */
+  const nav = usePanelNavigation<ContextView>({
+    initialView: "overview",
+    isView: isContextView,
+    open: !contextPanel.collapsed,
+    onEscapeAtRoot: contextPanel.collapse,
+    onRequestOpen: contextPanel.expand,
+  });
+  const contextView = nav.route.view;
+  const setContextView = nav.showView;
+  const [panelContentElement, setPanelContentElement] = useState<HTMLDivElement | null>(null);
+  /**
+   * Open one view, unfolding the panel if it was closed. Choosing the open view again closes
+   * it; the strip icon of the view already showing goes to that view's root, another view
+   * opens where it was last.
+   */
   function showContext(view: ContextView): void {
     if (!contextPanel.collapsed && view === contextView) {
       contextPanel.collapse();
       return;
     }
-    setContextView(view);
+    if (view === contextView) nav.toRoot(view);
+    else nav.showView(view);
     if (contextPanel.collapsed) contextPanel.expand();
   }
   const handledRequestRef = useRef(0);
@@ -160,26 +191,14 @@ export function CoworkerHome({
     if (contextPanel.collapsed) contextPanel.expand();
     setSettingsFocus({ id: request.id, section: request.section });
   }, [contextPanel, request]);
-  /** Escape closes the panel when nothing else is using the key. */
-  const contextPanelOpen = !contextPanel.collapsed;
   const collapseContextPanel = contextPanel.collapse;
-  useEffect(() => {
-    if (!contextPanelOpen) return;
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== "Escape" || event.defaultPrevented) return;
-      // An open menu or dialog owns Escape; the panel only closes when nothing else is in the way.
-      if (document.querySelector('[role="menu"], [role="dialog"], dialog[open]')) return;
-      collapseContextPanel();
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [collapseContextPanel, contextPanelOpen]);
   /** Moving to another coworker returns to the conversation; the panel does not follow. */
   useEffect(() => {
     collapseContextPanel();
     setContextView("overview");
     setBesideDocumentId("");
-  }, [collapseContextPanel, coworker.slug]);
+    setBesidePath(null);
+  }, [collapseContextPanel, coworker.slug, setContextView]);
   useEffect(() => {
     const onResize = () => setWindowWidth(window.innerWidth);
     window.addEventListener("resize", onResize);
@@ -190,6 +209,29 @@ export function CoworkerHome({
   useEffect(() => {
     if (!canOpenBeside) setBesideDocumentId("");
   }, [canOpenBeside]);
+  /** An App or skill detail open in a column beside the conversation, while the window is wide enough. */
+  const [besidePath, setBesidePath] = useState<PanelCrumb[] | null>(null);
+  const besideAppsAvailable = windowWidth >= BESIDE_APPS_MIN_WINDOW
+    && windowWidth - railWidth - panelWidth - BESIDE_APPS_MIN_WIDTH >= MAIN_WORKSPACE_MIN_WIDTH;
+  const navigateTo = nav.navigate;
+  const expandContextPanel = contextPanel.expand;
+  useEffect(() => {
+    if (besideAppsAvailable || !besidePath) return;
+    // The window shrank: the detail folds back into the panel at the same route.
+    navigateTo({ view: "capabilities", path: besidePath });
+    expandContextPanel();
+    setBesidePath(null);
+  }, [besideAppsAvailable, besidePath, expandContextPanel, navigateTo]);
+  /** Closing the column hands focus back to the row the detail was opened from. */
+  function closeBeside(): void {
+    const rowId = besidePath?.[besidePath.length - 1]?.id ?? "";
+    setBesidePath(null);
+    window.requestAnimationFrame(() => {
+      const row = rowId ? panelContentElement?.querySelector<HTMLElement>(`button[data-row-id="${rowId.replaceAll('"', '\\"')}"]`) : null;
+      row?.focus();
+    });
+  }
+  const overlayPanel = windowWidth < NARROW_WINDOW && !contextPanel.collapsed;
   const documentHooks: DocumentHooks = {
     onOpenDocument: (documentId) => {
       setContextView("documents");
@@ -197,7 +239,10 @@ export function CoworkerHome({
       setOpenDocumentRequest({ id: Date.now(), documentId });
     },
     onOpenDocumentBeside: (documentId) => {
-      if (canOpenBeside) setBesideDocumentId(documentId);
+      if (canOpenBeside) {
+        setBesidePath(null);
+        setBesideDocumentId(documentId);
+      }
       else documentHooks.onOpenDocument(documentId);
     },
     canOpenBeside,
@@ -239,7 +284,7 @@ export function CoworkerHome({
   }, [coworker.model, coworker.slug, coworker.workspaceId, onCoworkerChanged, runtime.engineManaged, runtime.ownerToken, runtime.serverUrl]);
 
   return (
-    <div className="glass-main flex h-full min-w-0 flex-1">
+    <div className="glass-main relative flex h-full min-w-0 flex-1">
       <div className="flex min-w-0 flex-1 flex-col">
         <header className="glass-header window-drag flex h-[78px] items-center gap-3 border-b border-line px-6 pt-2" data-testid="conversation-header">
           <CoworkerAvatar
@@ -308,12 +353,59 @@ export function CoworkerHome({
         />
       ) : null}
 
+      {besidePath && besideAppsAvailable ? (
+        <section
+          className="flex h-full flex-1 flex-col border-l border-line"
+          style={{ minWidth: BESIDE_APPS_MIN_WIDTH }}
+          aria-label="Beside the conversation"
+          data-testid="beside-column"
+          data-route={["capabilities", ...besidePath.map((crumb) => crumb.id)].join("/")}
+        >
+          <header className="glass-header window-drag flex h-[78px] items-center gap-2 border-b border-line px-4 pt-2">
+            <h2 className="min-w-0 flex-1 truncate text-sm font-semibold text-snow">{besidePath[besidePath.length - 1]?.title}</h2>
+            <IconButton label="Close" className="window-no-drag" data-testid="beside-close" onClick={closeBeside}>
+              <span aria-hidden="true">×</span>
+            </IconButton>
+          </header>
+          <div className="min-h-0 flex-1 overflow-y-auto p-4">
+            <CapabilitiesPanel
+              mode="beside"
+              runtime={runtime}
+              session={session}
+              coworker={coworker}
+              connect={connect}
+              onRepairConnect={onRepairConnect}
+              onConnectAccount={onConnectAccount}
+              onAssign={(text) => {
+                setAssignmentDraft({ id: Date.now(), text });
+                setBesidePath(null);
+              }}
+              onDiscuss={(text) => {
+                setDiscussionDraft({ id: Date.now(), text });
+                setBesidePath(null);
+              }}
+              path={besidePath}
+              width={BESIDE_APPS_MIN_WIDTH}
+              onPush={(crumb) => setBesidePath(pushCrumb({ view: "capabilities", path: besidePath }, crumb).path)}
+              onSetPath={(path) => setBesidePath(path)}
+            />
+          </div>
+        </section>
+      ) : null}
+      {overlayPanel ? (
+        <div className="absolute inset-0 z-30 bg-black/40" data-testid="context-panel-scrim" onClick={contextPanel.collapse} aria-hidden="true" />
+      ) : null}
       <aside
-        className={`glass-context relative flex h-full shrink-0 flex-col border-l border-line ${contextPanel.resizing ? "" : "transition-[width] duration-[180ms] ease-out motion-reduce:transition-none"}`}
+        className={`glass-context flex h-full shrink-0 flex-col border-l border-line ${overlayPanel ? "absolute inset-y-0 right-0 z-40 shadow-[-24px_0_48px_rgba(0,0,0,0.45)]" : "relative"} ${contextPanel.resizing ? "" : "transition-[width] duration-[180ms] ease-out motion-reduce:transition-none"}`}
         style={{ width: contextPanel.width }}
         data-testid="context-panel"
         data-collapsed={contextPanel.collapsed ? "true" : "false"}
         data-view={contextView}
+        data-depth={routeDepth(nav.route)}
+        data-overlay={overlayPanel ? "true" : "false"}
+        ref={(element) => {
+          nav.panelRef.current = element;
+        }}
       >
         <div
           {...contextPanel.separatorProps}
@@ -354,14 +446,18 @@ export function CoworkerHome({
           </>
         ) : (
           <>
-        <header className="glass-header window-drag flex h-[78px] items-center gap-3 border-b border-line px-4 pt-2">
-          {contextView !== "overview" ? (
-            <IconButton label="Back to activity" className="window-no-drag" onClick={() => setContextView("overview")}>
+        <PanelHeader
+          route={nav.route}
+          rootTitle={CONTEXT_TITLES[contextView]}
+          width={contextPanel.width}
+          onBack={nav.back}
+          onToDepth={nav.toDepth}
+          leading={contextView !== "overview" ? (
+            <IconButton label="Back to activity" className="window-no-drag" onClick={() => nav.toRoot("overview")}>
               <span aria-hidden="true">←</span>
             </IconButton>
-          ) : null}
-          <h2 className="min-w-0 flex-1 truncate text-sm font-semibold text-snow">{CONTEXT_TITLES[contextView]}</h2>
-          {contextView === "overview" ? (
+          ) : undefined}
+          actions={contextView === "overview" ? (
             <IconButton
               label="Coworker settings"
               className="window-no-drag"
@@ -370,9 +466,9 @@ export function CoworkerHome({
             >
               <SlidersIcon />
             </IconButton>
-          ) : null}
-        </header>
-        <div className="min-h-0 flex-1 overflow-y-auto p-4">
+          ) : undefined}
+        />
+        <PanelContent route={nav.route} containerRef={setPanelContentElement}>
           {contextView === "overview" ? (
             <CoworkerOverview
               session={session}
@@ -401,7 +497,10 @@ export function CoworkerHome({
               openRequest={openDocumentRequest}
               onAskToUpdate={askToUpdate}
               canOpenBeside={canOpenBeside}
-              onOpenBeside={(documentId) => setBesideDocumentId(documentId)}
+              onOpenBeside={(documentId) => {
+                setBesidePath(null);
+                setBesideDocumentId(documentId);
+              }}
             />
           ) : null}
           {contextView === "memory" ? <MemoryPanel coworker={coworker} /> : null}
@@ -421,6 +520,21 @@ export function CoworkerHome({
                 setDiscussionDraft({ id: Date.now(), text });
                 setContextView("overview");
               }}
+              path={nav.route.path}
+              width={contextPanel.width}
+              direction={nav.direction}
+              onPush={nav.push}
+              onSetPath={nav.setPath}
+              returnFocusRow={nav.returnFocusRow}
+              contentElement={panelContentElement}
+              beside={{
+                available: besideAppsAvailable,
+                open: (path) => {
+                  setBesideDocumentId("");
+                  setBesidePath(path);
+                  nav.back();
+                },
+              }}
             />
           ) : null}
           {contextView === "settings" ? (
@@ -436,7 +550,7 @@ export function CoworkerHome({
               focus={settingsFocus}
             />
           ) : null}
-        </div>
+        </PanelContent>
           </>
         )}
       </aside>

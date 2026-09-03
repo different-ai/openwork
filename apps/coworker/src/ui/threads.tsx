@@ -50,6 +50,8 @@ import {
 import { markAutoPicked, wasAutoPicked } from "@/lib/model-choice";
 import { describeReview, parseWorkerReview, parseWorkerTurn, workerNameFromTitle, type WorkerReview } from "@/lib/workers";
 import { describeProgress, describeWorkStep, summarizeWork, technicalSections, type ProgressPhase, type WorkStep } from "@/lib/work-receipt";
+import { isServerTool, toolRefPath } from "@/lib/apps-tools";
+import { openPanelRoute } from "@/lib/panel-route";
 import { describeTurnFailure } from "@/lib/turn-failure";
 import { useAutoGrow } from "@/ui/use-auto-grow";
 import { InteractionCards } from "@/ui/interactions";
@@ -2022,7 +2024,20 @@ function WorkReceipt({ calls, client }: { calls: TranscriptToolCall[]; client: C
               <li key={call.partId} className="px-3 py-2" data-testid="coworker-work-step" data-state={step.state}>
                 <div className="flex items-center gap-2">
                   <StatusDot tone={step.state === "failed" ? "rose" : step.state === "done" ? "mint" : "spark"} />
-                  <span className={`min-w-0 flex-1 truncate ${step.state === "failed" ? "text-rose" : "text-snow"}`}>{step.label}</span>
+                  {isServerTool(call.tool) ? (
+                    // A step that used one of the coworker's tools or Apps opens that item in Apps & tools.
+                    <button
+                      type="button"
+                      className={`min-w-0 flex-1 truncate text-left hover:underline ${step.state === "failed" ? "text-rose" : "text-snow"}`}
+                      title="Open in Apps & tools"
+                      data-testid="coworker-work-step-open"
+                      onClick={() => openPanelRoute({ view: "capabilities", path: toolRefPath(call.tool, step.label) })}
+                    >
+                      {step.label}
+                    </button>
+                  ) : (
+                    <span className={`min-w-0 flex-1 truncate ${step.state === "failed" ? "text-rose" : "text-snow"}`}>{step.label}</span>
+                  )}
                   <span className="shrink-0 text-mist">{step.state === "failed" ? "Didn't finish" : step.state === "done" ? "Done" : "Working on it"}</span>
                 </div>
                 <TechnicalDetails call={call} />

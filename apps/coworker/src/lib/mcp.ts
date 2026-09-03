@@ -58,6 +58,13 @@ export type CoworkerMcpAppCatalogServer = {
   apps: CoworkerMcpAppCatalogApp[];
 };
 
+export type CoworkerMcpServerTool = {
+  name: string;
+  title: string | null;
+  description: string | null;
+  resourceUri: string | null;
+};
+
 export type PreservedMcpAppResult = {
   content: Array<Record<string, unknown>>;
   structuredContent?: Record<string, unknown>;
@@ -160,6 +167,26 @@ export function createCoworkerMcpClient(input: {
 
   return {
     listInventory: () => request<{ items: CoworkerMcpItem[] }>(`/workspace/${workspace}/mcp`),
+    /** How the coworker's AI service sees each configured server right now, by name. */
+    engineStatus: () => request<unknown>(`/workspace/${workspace}/opencode/mcp`)
+      .then((value): Record<string, unknown> => (isRecord(value) ? value : {})),
+    /** Every tool identifier the AI service offers, including "<server>_<tool>" for each server's tools. */
+    toolIds: () => request<unknown>(`/workspace/${workspace}/opencode/experimental/tool/ids`)
+      .then((ids) => (Array.isArray(ids) ? ids.filter((id): id is string => typeof id === "string") : [])),
+    /** What one configured remote server offers, as it describes itself. */
+    listServerTools: (serverName: string) => request<unknown>(`/workspace/${workspace}/mcp/${encodeURIComponent(serverName)}/tools`, { timeoutMs: 20_000 })
+      .then((payload): CoworkerMcpServerTool[] => {
+        const tools = isRecord(payload) && Array.isArray(payload.tools) ? payload.tools : [];
+        return tools.flatMap((tool): CoworkerMcpServerTool[] => {
+          if (!isRecord(tool) || typeof tool.name !== "string") return [];
+          return [{
+            name: tool.name,
+            title: typeof tool.title === "string" ? tool.title : null,
+            description: typeof tool.description === "string" ? tool.description : null,
+            resourceUri: typeof tool.resourceUri === "string" ? tool.resourceUri : null,
+          }];
+        });
+      }),
     listApps: () => request<{ servers: CoworkerMcpAppCatalogServer[] }>(
       `/workspace/${workspace}/mcp-apps/list`,
       { timeoutMs: 30_000 },
