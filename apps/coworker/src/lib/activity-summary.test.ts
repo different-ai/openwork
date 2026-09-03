@@ -56,6 +56,8 @@ test("working names the subject once; attention asks for the person", () => {
 
   const retrying = describeNow({ state: "retrying", label: "Retrying", detail: "Weekly digest", updatedAt: now, threadId: "s3" });
   assert.equal(retrying.note, "Retrying after an interruption");
+  const stalled = describeNow({ state: "retrying", label: "Paused", detail: "Weekly digest", reason: "Free usage exceeded, subscribe to Go", updatedAt: now, threadId: "s3" });
+  assert.deepEqual(stalled, { subject: "Weekly digest", note: "The AI model is unavailable: Free usage exceeded, subscribe to Go. Choose another AI model to continue.", needsYou: true });
 
   const offline = describeNow({ state: "offline", label: "Not responding", detail: "", updatedAt: 0 });
   assert.match(offline.note, /not answering/);

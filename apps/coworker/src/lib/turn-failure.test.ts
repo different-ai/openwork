@@ -46,3 +46,9 @@ test("a workspace with no tool-capable model gets a plain headline that points a
   assert.equal(failure.technical, "");
   assert.equal(failure.modelRelated, true);
 });
+
+test("the free tier's usage message reads as a model problem with a way out", () => {
+  const failure = describeTurnFailure("Free usage exceeded, subscribe to Go", "Scout");
+  assert.equal(failure.modelRelated, true);
+  assert.equal(failure.headline, "Scout's AI model could not answer.");
+});
