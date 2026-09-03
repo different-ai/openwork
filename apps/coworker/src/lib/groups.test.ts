@@ -208,7 +208,8 @@ test("plain lines name who is replying, who is next, and why a speaker did not r
   assert.deepEqual(describeSpeakerFailure("Editor took too long to reply.", "Editor"), { headline: "Editor took too long to reply.", modelRelated: false });
   assert.deepEqual(describeSpeakerFailure("Stopped when the app closed", "Editor"), { headline: "Editor was stopped when the app closed.", modelRelated: false });
   assert.deepEqual(describeSpeakerFailure('The saved model "x/y" is not available', "Editor"), { headline: "Editor's AI model is not available.", modelRelated: true });
-  assert.deepEqual(describeSpeakerFailure("socket hang up", "Editor"), { headline: "Editor could not reply.", modelRelated: false });
+  assert.deepEqual(describeSpeakerFailure("socket hang up", "Editor"), { headline: "Editor couldn't reach the AI model.", modelRelated: true });
+  assert.deepEqual(describeSpeakerFailure("Tool execution failed: permission denied", "Editor"), { headline: "Editor could not reply.", modelRelated: false });
   const connected = [{ id: "opencode/big-pickle", providerId: "opencode", providerLabel: "OpenCode" }];
   assert.equal(unavailableModelReason("", connected), "");
   assert.equal(unavailableModelReason("opencode/big-pickle", connected), "");
