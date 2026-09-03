@@ -67,11 +67,15 @@ test("Open Coworker owns a branded boot surface and cross-platform icon set", as
   assert.match(logoSvg, /stroke="#aeb5c0"/);
   assert.doesNotMatch(logoSvg, /fill="#5b8dff"/);
   assert.match(appIconSvg, /fill="#5b8dff"/);
-  assert.match(appIconSvg, /data-layer="back-card"/);
-  assert.match(appIconSvg, /fill="#202126"/);
+  assert.match(appIconSvg, /data-layer="rear-coworker-left"/);
+  assert.match(appIconSvg, /data-layer="rear-coworker-right"/);
+  assert.match(appIconSvg, /linearGradient id="mint-surface"/);
+  assert.match(appIconSvg, /linearGradient id="lavender-surface"/);
   assert.match(appIconSvg, /data-layer="front-coworker"/);
-  assert.match(appIconSvg, /fill="#f7f8fa"/);
-  assert.doesNotMatch(appIconSvg, /(?:linear|radial)Gradient/);
+  assert.match(appIconSvg, /linearGradient id="avatar-surface"/);
+  assert.match(appIconSvg, /fill="url\(#avatar-surface\)"/);
+  assert.match(appIconSvg, /stop-color="#edf0f4"/);
+  assert.doesNotMatch(appIconSvg, /radialGradient/);
   const [iconPng, iconIcns, iconIco, linuxIcon] = await Promise.all([
     "resources/icons/icon.png",
     "resources/icons/icon.icns",
