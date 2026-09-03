@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto"
 import type { InferenceRequestOutcome } from "@openwork/types/den/inference"
 import { Hono } from "hono"
 import type { Context } from "hono"
@@ -17,6 +16,9 @@ import type { InferenceAuthVariables } from "./middleware/inference-auth.js"
 import { loadOrganizationFromDb, orgContext } from "./middleware/org-context.js"
 import type { LoadOrganization, OrganizationVariables } from "./middleware/org-context.js"
 import { listModelCatalog, resolveModelAlias } from "./model-catalog.js"
+import { registerGatewayRoutes } from "./gateway.js"
+import type { GatewayDependencies } from "./gateway.js"
+import { buildRequestId, isEventStreamContentType, isJsonContentType, trackStream } from "./relay.js"
 import { createRequestLogRecorder, insertRequestLogIntoDb } from "./request-log.js"
 import type { InsertRequestLog, RequestLogRecorder } from "./request-log.js"
 import { createOpenAiChatSseUsageParser, parseOpenAiChatJsonUsage } from "./usage/openai-chat.js"
@@ -77,21 +79,11 @@ type ProxyDependencies = {
   loadOrganization?: LoadOrganization
   insertRequestLog?: InsertRequestLog
   reporter?: InferenceReporter
+  gateway?: Partial<GatewayDependencies>
 }
 
 function isJsonRequest(request: Request) {
   return isJsonContentType(request.headers.get("content-type"))
-}
-
-function isJsonContentType(contentType: string | null) {
-  if (!contentType) return false
-  const mediaType = contentType.split(";")[0].trim().toLowerCase()
-  if (mediaType === "application/json") return true
-  const applicationPrefix = "application/"
-  const jsonSuffix = "+json"
-  return mediaType.startsWith(applicationPrefix)
-    && mediaType.endsWith(jsonSuffix)
-    && mediaType.length > applicationPrefix.length + jsonSuffix.length
 }
 
 function isJsonObject(value: unknown): value is JsonObject {
@@ -233,47 +225,8 @@ async function logUpstreamError(input: {
   })
 }
 
-function buildRequestId() {
-  return createHash("sha256").update(`${Date.now()}:${Math.random()}`).digest("hex").slice(0, 32)
-}
-
 function secondsUntil(date: Date) {
   return Math.max(0, Math.ceil((date.getTime() - Date.now()) / 1000))
-}
-
-type StreamHooks = {
-  chunk(value: Uint8Array): void
-  done(): void
-  fail(): void
-}
-
-function trackStream(body: ReadableStream<Uint8Array>, hooks: StreamHooks) {
-  const reader = body.getReader()
-  return new ReadableStream<Uint8Array>({
-    async pull(controller) {
-      try {
-        const chunk = await reader.read()
-        if (chunk.done) {
-          hooks.done()
-          controller.close()
-          return
-        }
-        hooks.chunk(chunk.value)
-        controller.enqueue(chunk.value)
-      } catch (error) {
-        hooks.fail()
-        controller.error(error)
-      }
-    },
-    async cancel(reason) {
-      hooks.fail()
-      await reader.cancel(reason)
-    },
-  })
-}
-
-function isEventStreamContentType(contentType: string | null) {
-  return contentType?.split(";")[0].trim().toLowerCase() === "text/event-stream"
 }
 
 function upstreamRequestId(headers: Headers) {
@@ -808,9 +761,10 @@ export function registerProxyRoutes(app: Hono, dependencies: ProxyDependencies =
     return relayStreamResponse(upstream, headers, recorder)
   }
 
+  api.use("/api/v1/*", inferenceAuth({ findActiveInferenceKey: dependencies.findActiveInferenceKey }))
+  api.use("/api/v1/*", orgContext({ loadOrganization: dependencies.loadOrganization ?? loadOrganizationFromDb }))
+  registerGatewayRoutes(api, { fetch: dependencies.fetch, insertRequestLog, reporter, ...dependencies.gateway })
   for (const path of ["/api/v1", "/api/v1/*"]) {
-    api.use(path, inferenceAuth({ findActiveInferenceKey: dependencies.findActiveInferenceKey }))
-    api.use(path, orgContext({ loadOrganization: dependencies.loadOrganization ?? loadOrganizationFromDb }))
     api.all(path, handleApiRequest)
   }
   app.route("/", api)
