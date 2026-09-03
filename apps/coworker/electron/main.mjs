@@ -1074,6 +1074,8 @@ const coworkerToolTokens = new Map();
 const toolTokenSlugs = new Map();
 /** Coworkers whose workspace carries this launch's tools registration. */
 const toolsRegistered = new Set();
+/** Registrations in flight, so the coworker lists the renderer asks for while booting share one request each. */
+const toolsRegistering = new Map();
 /** Contracts already brought up to date this launch, so the repair runs once per coworker. */
 const contractsRepaired = new Set();
 
@@ -1150,10 +1152,15 @@ function prepareCoworker(coworker) {
       console.warn(`[open-coworker] could not repair the contract for ${coworker.slug}`, error);
     });
   }
-  if (coworker.workspaceId && !toolsRegistered.has(coworker.slug)) {
-    void registerCoworkerTools(coworker).catch((error) => {
-      console.warn(`[open-coworker] could not register the document tools for ${coworker.slug}`, error);
-    });
+  if (coworker.workspaceId && !toolsRegistered.has(coworker.slug) && !toolsRegistering.has(coworker.slug)) {
+    const registration = registerCoworkerTools(coworker)
+      .catch((error) => {
+        console.warn(`[open-coworker] could not register the document tools for ${coworker.slug}`, error);
+      })
+      .finally(() => {
+        toolsRegistering.delete(coworker.slug);
+      });
+    toolsRegistering.set(coworker.slug, registration);
   }
 }
 
@@ -1293,24 +1300,35 @@ async function waitForProvider(providerId, expectConnected, { timeoutMs = 30_000
   const deadline = Date.now() + timeoutMs;
   let last = null;
   while (Date.now() < deadline) {
-    last = (await readEngineProviders().catch(() => [])).find((entry) => entry.id === providerId) ?? null;
-    if (Boolean(last?.connected) === expectConnected) return last?.connected ? last.modelCount : 0;
+    last = (await readConnectedProviders().catch(() => [])).find((entry) => entry.id === providerId) ?? null;
+    if ((last !== null) === expectConnected) return last ? last.modelCount : 0;
     await new Promise((resolve) => setTimeout(resolve, pollMs));
   }
-  return last?.connected ? last.modelCount : 0;
+  return last ? last.modelCount : 0;
 }
 
-async function readEngineProviders() {
-  const payload = await engineRequest("GET", "/provider");
-  const connected = new Set(Array.isArray(payload?.connected) ? payload.connected : []);
-  return (Array.isArray(payload?.all) ? payload.all : []).map((provider) => ({
+function summarizeProvider(provider, connected) {
+  return {
     id: String(provider.id ?? ""),
     name: typeof provider.name === "string" && provider.name.trim() ? provider.name.trim() : String(provider.id ?? ""),
     env: Array.isArray(provider.env) ? provider.env.filter((name) => typeof name === "string") : [],
     source: typeof provider.source === "string" ? provider.source : "",
-    connected: connected.has(provider.id),
+    connected,
     modelCount: provider.models && typeof provider.models === "object" ? Object.keys(provider.models).length : 0,
-  }));
+  };
+}
+
+/** Every provider the engine knows, connected or not: megabytes, read only when a screen needs the whole list. */
+async function readEngineProviders() {
+  const payload = await engineRequest("GET", "/provider");
+  const connected = new Set(Array.isArray(payload?.connected) ? payload.connected : []);
+  return (Array.isArray(payload?.all) ? payload.all : []).map((provider) => summarizeProvider(provider, connected.has(provider.id)));
+}
+
+/** Only the connected providers: kilobytes, so it can be polled while a change takes effect. */
+async function readConnectedProviders() {
+  const payload = await engineRequest("GET", "/config/providers");
+  return (Array.isArray(payload?.providers) ? payload.providers : []).map((provider) => summarizeProvider(provider, true));
 }
 
 /** The engine's own sign-in methods: provider id → labels of its browser/device flows. */
@@ -1325,8 +1343,8 @@ async function readEngineSignIns() {
 }
 
 async function connectedModelCount(providerId) {
-  const provider = (await readEngineProviders()).find((entry) => entry.id === providerId);
-  return provider?.connected ? provider.modelCount : 0;
+  const provider = (await readConnectedProviders()).find((entry) => entry.id === providerId);
+  return provider ? provider.modelCount : 0;
 }
 
 /** Store a credential in the engine's own store and bring it into effect. */
@@ -1508,7 +1526,7 @@ async function addCustomProvider({ name, address, key, models }) {
  */
 async function disconnectProvider(providerId, confirmed) {
   const trimmedId = String(providerId ?? "").trim();
-  const provider = (await readEngineProviders()).find((entry) => entry.id === trimmedId);
+  const provider = (await readConnectedProviders()).find((entry) => entry.id === trimmedId);
   if (!provider) throw new Error("That provider is not connected here.");
   const runtimeIds = await readRuntimeProviderIds().catch(() => []);
   const addedHere = runtimeIds.includes(trimmedId);
