@@ -328,9 +328,16 @@ test.skipIf(!enabled)(title, { timeout: 1_200_000 }, async ({ evidence }) => {
   const scripted = await startScriptedModel();
   // Nothing found on "this Mac" and no keys from the host: the local mode step is a plain Continue.
   const emptyCodexHome = await mkdtemp(path.join(os.tmpdir(), "open-coworker-team-codex-"));
+  // Keep the packaged profile outside this repository. OpenCode walks parent
+  // directories for project configuration; a profile under evals/results
+  // would inherit this checkout's own .opencode plugins and MCPs instead of
+  // exercising a clean person's first launch.
+  const profileDir = await mkdtemp(path.join(os.tmpdir(), "open-coworker-team-profile-"));
   onTestFinished(() => rm(emptyCodexHome, { recursive: true, force: true }));
+  onTestFinished(() => rm(profileDir, { recursive: true, force: true }));
   await using app = await coworker({
     name: "team",
+    profileDir,
     env: {
       CODEX_HOME: emptyCodexHome,
       OPENAI_API_KEY: "",
