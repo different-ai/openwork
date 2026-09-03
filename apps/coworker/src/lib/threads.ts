@@ -17,6 +17,7 @@ import { z } from "zod";
 import { RECENT_WORK_LIMIT } from "./activity-summary.ts";
 import { readCloudProviderSyncStatus, type CloudProviderSyncStatus } from "./den.ts";
 import { discussionIds, discussionIdsForWorkspace } from "./discussions.ts";
+import type { StreamEvent } from "./live-stream.ts";
 import { workerNameFromTitle } from "./workers.ts";
 
 export type ThreadListItem = {
@@ -398,7 +399,12 @@ export type CoworkerThreads = {
   replyPermission: (permission: PendingPermission, reply: PermissionReply) => Promise<void>;
   replyQuestion: (question: PendingQuestion, answers: string[][]) => Promise<void>;
   rejectQuestion: (question: PendingQuestion) => Promise<void>;
-  subscribe: (onEvent: () => void) => () => void;
+  /**
+   * Follow the engine's events. `onEvent` fires for anything worth a re-read;
+   * `onStream`, when given, also receives the words of a reply as they arrive
+   * (the engine writes a text or reasoning part only once it has ended).
+   */
+  subscribe: (onEvent: () => void, onStream?: (event: StreamEvent) => void) => () => void;
 };
 
 function normalizeLegacyPermission(value: {
@@ -680,13 +686,24 @@ export function createCoworkerThreads(options: {
     return (await listModelCatalog()).models;
   }
 
-  function subscribe(onEvent: () => void): () => void {
+  function subscribe(onEvent: () => void, onStream?: (event: StreamEvent) => void): () => void {
     const controller = new AbortController();
     void (async () => {
       try {
         const subscription = await opencode.event.subscribe(undefined, { signal: controller.signal });
         for await (const event of subscription.stream) {
           if (controller.signal.aborted) return;
+          if (onStream && event.type === "message.part.delta") {
+            const { sessionID, messageID, partID, delta } = event.properties;
+            onStream({ kind: "delta", threadId: sessionID, messageId: messageID, partId: partID, delta });
+            continue;
+          }
+          if (onStream && event.type === "message.part.updated") {
+            const part = event.properties.part;
+            if (part.type === "text" || part.type === "reasoning") {
+              onStream({ kind: "part", threadId: part.sessionID, messageId: part.messageID, partId: part.id, type: part.type, text: part.text, ended: part.time?.end !== undefined });
+            }
+          }
           if (
             event.type.startsWith("session.") ||
             event.type.startsWith("message.") ||
