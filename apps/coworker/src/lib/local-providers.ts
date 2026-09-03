@@ -20,6 +20,7 @@ export const LOCAL_MODE_COPY = {
   recommendedAction: "Continue with OpenWork",
   found: "Found on this Mac",
   nothingFound: "Nothing to connect was found on this Mac. The free model is ready, or add something below.",
+  waitingService: "AI is starting up…",
   connected: "Connected",
   freeTitle: "A free model is ready now",
   freeDetail: (name: string) => (name ? `${name}. No setup, no account; coworkers start here until you connect something.` : "No setup, no account; coworkers start here until you connect something."),
