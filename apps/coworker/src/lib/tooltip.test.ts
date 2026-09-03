@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { BANNED_TOOLTIP_WORDS, PANEL_VIEW_TITLES, TOOLTIP_GAP_PX, TOOLTIP_VIEWPORT_MARGIN_PX, panelViewTooltip, tooltipPosition, type PanelView } from "./tooltip.ts";
+import { PANEL_VIEWS, PANEL_VIEW_TITLES } from "./panel-views.ts";
+import { BANNED_TOOLTIP_WORDS, TOOLTIP_GAP_PX, TOOLTIP_VIEWPORT_MARGIN_PX, panelViewTooltip, tooltipPosition } from "./tooltip.ts";
 
 const viewport = { width: 1200, height: 800 };
 const tip = { width: 200, height: 40 };
@@ -27,8 +28,7 @@ test("a tooltip never leaves the window", () => {
 });
 
 test("each strip tooltip is the view's name plus one clause about what it shows, in the coworker's name", () => {
-  const views: PanelView[] = ["overview", "memory", "settings"];
-  for (const view of views) {
+  for (const view of PANEL_VIEWS) {
     const copy = panelViewTooltip(view, "Editor");
     assert.ok(copy.startsWith(`${PANEL_VIEW_TITLES[view]} — `), copy);
     assert.equal(copy.split(" — ").length, 2, copy);

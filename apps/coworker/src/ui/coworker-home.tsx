@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
 import { coworkerBridge, type CoworkerSummary, type LocalResponsibility, type ProviderSyncRun, type RuntimeInfo } from "@/lib/bridge";
 import { describeHeaderStatus, describeNow, describeOutcome, describeStatusDetail, mergeRecentWork, relativeTime, type StatusTone } from "@/lib/activity-summary";
 import type { ConnectState } from "@/lib/connect";
+import { describeCoworkerSummary, showSummaryLine, summaryRowTitle, type CoworkerSummaryLine, type SummaryKind } from "@/lib/coworker-summary";
 import type { DenSession } from "@/lib/den";
 import { clearAutoPicked, markAutoPicked, peekStartingModel, takeStartingModel } from "@/lib/model-choice";
 import { createCoworkerThreads, recommendModel, type CoworkerActivity, type ThreadListItem } from "@/lib/threads";
@@ -9,30 +10,35 @@ import { AvatarControls, CoworkerAvatar } from "@/ui/coworker-avatar";
 import { PersonalityPicker } from "@/ui/personality-picker";
 import { useWorkingSaying } from "@/ui/use-working-saying";
 import { CapabilitiesPanel } from "@/ui/capabilities";
-import { ActivityIcon, AppsIcon, Button, ErrorNote, IconButton, MemoryIcon, SlidersIcon, Tooltip, WorkersIcon } from "@/ui/kit";
+import { ActivityIcon, AppsIcon, Button, ErrorNote, IconButton, MemoryIcon, SlidersIcon, Tooltip } from "@/ui/kit";
 import { useResizablePanel } from "@/ui/use-resizable-panel";
-import { PanelContent, PanelHeader, usePanelNavigation } from "@/ui/panel-nav";
+import { PanelContent, PanelHeader, PanelLevel, usePanelNavigation } from "@/ui/panel-nav";
 import { pushCrumb, routeDepth, type PanelCrumb } from "@/lib/panel-route";
+import {
+  ACTIVITY_CRUMBS,
+  APPS_TOOLS_CRUMB,
+  PANEL_VIEWS,
+  PANEL_VIEW_TITLES,
+  activityRoute,
+  activityScreen,
+  appsToolsRoute,
+  appsToolsRouteKey,
+  isPanelView,
+  settingsScreen,
+  type ActivityLevel,
+  type PanelView,
+} from "@/lib/panel-views";
+import { panelViewTooltip } from "@/lib/tooltip";
 import type { PanelBounds } from "@/lib/panel-layout";
 import { MemoryPanel } from "@/ui/memory";
-import { DocumentBesidePane, DocumentsIcon, DocumentsPanel, lastDocumentsOpened, useDocuments } from "@/ui/documents";
-import { documentsChangedSince } from "@/lib/documents";
+import { DocumentBesidePane, DocumentsPanel, lastDocumentsOpened, useDocuments } from "@/ui/documents";
 import { ThreadsPanel, type DocumentHooks } from "@/ui/threads";
 import { WorkersPanel } from "@/ui/workers";
-import { describeWorkerCount, type WorkerSummary } from "@/lib/workers";
+import { AssignmentsPanel } from "@/ui/assignments";
+import type { WorkerSummary } from "@/lib/workers";
+import { Row, RowList, useReturnFocus } from "@/ui/rows";
 import { ModelPicker, type ModelSelection } from "@/ui/model-picker";
 import type { SettingsSection } from "@/ui/openwork-settings";
-
-type ContextView = "overview" | "documents" | "workers" | "capabilities" | "memory" | "settings";
-
-const CONTEXT_TITLES: Record<ContextView, string> = {
-  overview: "Activity",
-  documents: "Documents",
-  workers: "Workers",
-  capabilities: "Apps & tools",
-  memory: "Memory",
-  settings: "Coworker settings",
-};
 
 const CONTEXT_PANEL_WIDTH_KEY = "open-coworker.context-panel-width";
 const CONTEXT_PANEL_DEFAULT_WIDTH = 360;
@@ -42,19 +48,11 @@ const CONTEXT_PANEL_BOUNDS: PanelBounds = { min: 320, max: 440, collapsedWidth: 
 /** The reading pane beside the conversation, when the window has room for it. */
 const BESIDE_PANE_WIDTH = 440;
 
-const CONTEXT_ICONS: Record<ContextView, (props: { className?: string }) => ReactNode> = {
+const CONTEXT_ICONS: Record<PanelView, (props: { className?: string }) => ReactNode> = {
   overview: ActivityIcon,
-  documents: DocumentsIcon,
-  workers: WorkersIcon,
-  capabilities: AppsIcon,
   memory: MemoryIcon,
   settings: SlidersIcon,
 };
-const CONTEXT_ORDER: ContextView[] = ["overview", "documents", "workers", "capabilities", "memory", "settings"];
-
-function isContextView(value: string): value is ContextView {
-  return CONTEXT_ORDER.some((view) => view === value);
-}
 /** From this window width on, an App or skill detail may open in a column beside the conversation… */
 const BESIDE_APPS_MIN_WINDOW = 1_280;
 /** …a column at least this wide, and only while the conversation keeps its own minimum next to it. */
@@ -63,6 +61,9 @@ const BESIDE_APPS_MIN_WIDTH = 480;
 const NARROW_WINDOW = 900;
 
 const STATUS_TEXT_TONE: Record<StatusTone, string> = { mist: "text-mist", amber: "text-amber", rose: "text-rose" };
+
+/** Which Activity level each part of the summary line opens. */
+const SUMMARY_LEVELS: Record<SummaryKind, ActivityLevel> = { assignments: "assignments", workers: "workers", documents: "documents" };
 
 /**
  * The header's one plain word about the coworker — no dot, colour only when it
@@ -90,6 +91,48 @@ export function HeaderStatusWord({ activity, engineManaged }: { activity: Cowork
 export type CoworkerHomeRequest =
   | { id: number; kind: "settings"; section: "model" }
   | { id: number; kind: "thread"; threadId: string };
+
+/**
+ * What the coworker holds besides its documents — the scheduled assignments and
+ * the Workers — read here once so the composer's summary line, the Activity
+ * rows, and the Assignments level share one picture. Follows a run closely
+ * while one is going or waiting, and idles otherwise.
+ */
+function useCoworkerHoldings(slug: string): {
+  scheduled: LocalResponsibility[];
+  setScheduled: (items: LocalResponsibility[]) => void;
+  workers: WorkerSummary[];
+} {
+  const [scheduled, setScheduled] = useState<LocalResponsibility[]>([]);
+  const [workers, setWorkers] = useState<WorkerSummary[]>([]);
+  const busy = scheduled.some((item) => item.latestRun?.status === "running" || item.latestRun?.status === "queued")
+    || workers.some((worker) => worker.status === "running" || worker.status === "starting");
+  useEffect(() => {
+    setScheduled([]);
+    setWorkers([]);
+  }, [slug]);
+  useEffect(() => {
+    let cancelled = false;
+    const load = () =>
+      Promise.all([
+        coworkerBridge.localResponsibilities.list(slug).catch((): LocalResponsibility[] => []),
+        coworkerBridge.workers.list(slug).catch((): WorkerSummary[] => []),
+      ])
+        .then(([items, liveWorkers]) => {
+          if (cancelled) return;
+          setScheduled((current) => (JSON.stringify(current) === JSON.stringify(items) ? current : items));
+          setWorkers((current) => (JSON.stringify(current) === JSON.stringify(liveWorkers) ? current : liveWorkers));
+        })
+        .catch(() => undefined);
+    void load();
+    const timer = window.setInterval(() => void load(), busy ? 1_500 : 5_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [busy, slug]);
+  return { scheduled, setScheduled, workers };
+}
 
 export function CoworkerHome({
   runtime,
@@ -138,14 +181,21 @@ export function CoworkerHome({
   const [assignmentDraft, setAssignmentDraft] = useState<{ id: number; text: string } | null>(null);
   const [discussionDraft, setDiscussionDraft] = useState<{ id: number; text: string } | null>(null);
   const [openThreadRequest, setOpenThreadRequest] = useState<{ id: number; threadId: string } | null>(null);
-  /** The coworker's one-off assignment threads, as the conversation column lists them; the Workers view shows them beside the scheduled ones. */
+  /** The coworker's one-off assignment threads, as the conversation column lists them, and what each waits on the person for. */
   const [assignmentThreads, setAssignmentThreads] = useState<ThreadListItem[]>([]);
-  /** From a card's Open: show this document in the Documents view; the id makes repeats distinct. */
+  const [assignmentAttention, setAssignmentAttention] = useState<Record<string, string>>({});
+  const onAssignmentsChange = useCallback((items: ThreadListItem[], attention: Record<string, string>) => {
+    // The column re-reads every few seconds; only a real change reaches the summary line and the rows.
+    setAssignmentThreads((current) => (JSON.stringify(current) === JSON.stringify(items) ? current : items));
+    setAssignmentAttention((current) => (JSON.stringify(current) === JSON.stringify(attention) ? current : attention));
+  }, []);
+  /** From a card's Open: show this document in the Documents level; the id makes repeats distinct. */
   const [openDocumentRequest, setOpenDocumentRequest] = useState<{ id: number; documentId: string } | null>(null);
   /** The document open in the reading pane beside the conversation, when the window has room. */
   const [besideDocumentId, setBesideDocumentId] = useState("");
   const [windowWidth, setWindowWidth] = useState(() => window.innerWidth);
   const { documents, refresh: refreshDocuments, error: documentsError } = useDocuments(coworker.slug);
+  const holdings = useCoworkerHoldings(coworker.slug);
   /** The conversation views place their own title line and actions into the one header. */
   const [headerTitleSlot, setHeaderTitleSlot] = useState<HTMLElement | null>(null);
   const [headerActionsSlot, setHeaderActionsSlot] = useState<HTMLElement | null>(null);
@@ -159,26 +209,27 @@ export function CoworkerHome({
     startCollapsed: true,
   });
   /**
-   * Where the panel is: one view and a short path inside it, remembered per view for the
-   * session. Escape goes back a level, or closes the panel at a root; a deep link from
-   * elsewhere in the app (a receipt, the Connect status) opens the panel on its route.
+   * Where the panel is: one of three views and a short path inside it, remembered per view
+   * for the session. Escape goes back a level, or closes the panel at a root; a deep link
+   * from elsewhere in the app (a receipt, the summary line) opens the panel on its route.
    */
-  const nav = usePanelNavigation<ContextView>({
+  const nav = usePanelNavigation<PanelView>({
     initialView: "overview",
-    isView: isContextView,
+    isView: isPanelView,
     open: !contextPanel.collapsed,
     onEscapeAtRoot: contextPanel.collapse,
     onRequestOpen: contextPanel.expand,
   });
   const contextView = nav.route.view;
-  const setContextView = nav.showView;
   const [panelContentElement, setPanelContentElement] = useState<HTMLDivElement | null>(null);
+  // Back hands focus to the row a level was opened from — an Activity count row or the Apps & tools row.
+  useReturnFocus(nav.returnFocusRow, panelContentElement);
   /**
    * Open one view, unfolding the panel if it was closed. Choosing the open view again closes
    * it; the strip icon of the view already showing goes to that view's root, another view
    * opens where it was last.
    */
-  function showContext(view: ContextView): void {
+  function showContext(view: PanelView): void {
     if (!contextPanel.collapsed && view === contextView) {
       contextPanel.collapse();
       return;
@@ -187,6 +238,19 @@ export function CoworkerHome({
     else nav.showView(view);
     if (contextPanel.collapsed) contextPanel.expand();
   }
+  const navigateTo = nav.navigate;
+  const expandContextPanel = contextPanel.expand;
+  /** Open one level of Activity — Documents, Workers, or Assignments — unfolding the panel. */
+  const openActivityLevel = useCallback((level: ActivityLevel) => {
+    navigateTo(activityRoute(level));
+    expandContextPanel();
+  }, [expandContextPanel, navigateTo]);
+  /** Coworker settings at its own rows, brought to one section; never deeper in Apps & tools. */
+  const openSettingsSection = useCallback((section: "model", id: number) => {
+    navigateTo({ view: "settings", path: [] });
+    expandContextPanel();
+    setSettingsFocus({ id, section });
+  }, [expandContextPanel, navigateTo]);
   const handledRequestRef = useRef(0);
   useEffect(() => {
     if (!request || handledRequestRef.current === request.id) return;
@@ -195,18 +259,17 @@ export function CoworkerHome({
       setOpenThreadRequest({ id: request.id, threadId: request.threadId });
       return;
     }
-    setContextView("settings");
-    if (contextPanel.collapsed) contextPanel.expand();
-    setSettingsFocus({ id: request.id, section: request.section });
-  }, [contextPanel, request]);
+    openSettingsSection(request.section, request.id);
+  }, [openSettingsSection, request]);
   const collapseContextPanel = contextPanel.collapse;
+  const toRoot = nav.toRoot;
   /** Moving to another coworker returns to the conversation; the panel does not follow. */
   useEffect(() => {
     collapseContextPanel();
-    setContextView("overview");
+    toRoot("overview");
     setBesideDocumentId("");
     setBesidePath(null);
-  }, [collapseContextPanel, coworker.slug, setContextView]);
+  }, [collapseContextPanel, coworker.slug, toRoot]);
   useEffect(() => {
     const onResize = () => setWindowWidth(window.innerWidth);
     window.addEventListener("resize", onResize);
@@ -217,16 +280,14 @@ export function CoworkerHome({
   useEffect(() => {
     if (!canOpenBeside) setBesideDocumentId("");
   }, [canOpenBeside]);
-  /** An App or skill detail open in a column beside the conversation, while the window is wide enough. */
+  /** An App or skill detail open in a column beside the conversation, while the window is wide enough; its path is the levels below Apps & tools. */
   const [besidePath, setBesidePath] = useState<PanelCrumb[] | null>(null);
   const besideAppsAvailable = windowWidth >= BESIDE_APPS_MIN_WINDOW
     && windowWidth - railWidth - panelWidth - BESIDE_APPS_MIN_WIDTH >= MAIN_WORKSPACE_MIN_WIDTH;
-  const navigateTo = nav.navigate;
-  const expandContextPanel = contextPanel.expand;
   useEffect(() => {
     if (besideAppsAvailable || !besidePath) return;
     // The window shrank: the detail folds back into the panel at the same route.
-    navigateTo({ view: "capabilities", path: besidePath });
+    navigateTo(appsToolsRoute(besidePath));
     expandContextPanel();
     setBesidePath(null);
   }, [besideAppsAvailable, besidePath, expandContextPanel, navigateTo]);
@@ -242,8 +303,7 @@ export function CoworkerHome({
   const overlayPanel = windowWidth < NARROW_WINDOW && !contextPanel.collapsed;
   const documentHooks: DocumentHooks = {
     onOpenDocument: (documentId) => {
-      setContextView("documents");
-      if (contextPanel.collapsed) contextPanel.expand();
+      openActivityLevel("documents");
       setOpenDocumentRequest({ id: Date.now(), documentId });
     },
     onOpenDocumentBeside: (documentId) => {
@@ -255,8 +315,22 @@ export function CoworkerHome({
     },
     canOpenBeside,
   };
-  const documentsChanged = documents ? documentsChangedSince(documents, lastDocumentsOpened(coworker.slug)) : 0;
+  const summary = describeCoworkerSummary({
+    assignments: assignmentThreads,
+    scheduled: holdings.scheduled,
+    workers: holdings.workers,
+    documents: documents ?? [],
+    documentsSeenAt: lastDocumentsOpened(coworker.slug),
+  });
+  const documentsChanged = summary.rows.find((row) => row.kind === "documents")?.changed ?? 0;
+  // "Nothing in progress" is worth a line once the coworker has finished something; a new coworker's first message gets none.
+  const hasWorked = Boolean(activity?.last) || (activity?.recent?.length ?? 0) > 0;
+  const summaryLine: CoworkerSummaryLine | null = showSummaryLine(summary, hasWorked) ? summary : null;
   const askToUpdate = (text: string) => setDiscussionDraft({ id: Date.now(), text });
+  const openThread = (threadId: string) => setOpenThreadRequest({ id: Date.now(), threadId });
+  const explain = (text: string) => setDiscussionDraft({ id: Date.now(), text });
+  /** The panel's Assignments level hands the composer an empty assignment; the conversation column shows it. */
+  const newAssignment = () => setAssignmentDraft({ id: Date.now(), text: "" });
 
   useEffect(() => () => onActivityChange(null), [onActivityChange]);
 
@@ -304,6 +378,9 @@ export function CoworkerHome({
     };
   }, [coworker.model, coworker.slug, coworker.workspaceId, onCoworkerChanged, runtime.engineManaged, runtime.ownerToken, runtime.serverUrl]);
 
+  const activityLevel = activityScreen(nav.route.path);
+  const settingsLevel = settingsScreen(nav.route.path);
+
   return (
     <div className="glass-main relative flex h-full min-w-0 flex-1">
       <div className="flex min-w-0 flex-1 flex-col">
@@ -336,15 +413,14 @@ export function CoworkerHome({
             assignmentDraft={assignmentDraft}
             discussionDraft={discussionDraft}
             openThreadRequest={openThreadRequest}
-            onAssignmentsChange={setAssignmentThreads}
+            onAssignmentsChange={onAssignmentsChange}
             headerSlots={{ title: headerTitleSlot, actions: headerActionsSlot }}
-            onOpenModelSettings={() => {
-              showContext("settings");
-              setSettingsFocus({ id: Date.now(), section: "model" });
-            }}
+            onOpenModelSettings={() => openSettingsSection("model", Date.now())}
             onOpenAccount={() => onOpenOpenWork("account")}
             onActivityChange={onActivityChange}
             documents={documentHooks}
+            summary={summaryLine}
+            onOpenSummary={(kind) => openActivityLevel(SUMMARY_LEVELS[kind])}
           />
         </main>
       </div>
@@ -366,7 +442,7 @@ export function CoworkerHome({
           style={{ minWidth: BESIDE_APPS_MIN_WIDTH }}
           aria-label="Beside the conversation"
           data-testid="beside-column"
-          data-route={["capabilities", ...besidePath.map((crumb) => crumb.id)].join("/")}
+          data-route={appsToolsRouteKey(besidePath)}
         >
           <header className="glass-header window-drag flex h-[78px] items-center gap-2 border-b border-line px-4 pt-2">
             <h2 className="min-w-0 flex-1 truncate text-sm font-semibold text-snow">{besidePath[besidePath.length - 1]?.title}</h2>
@@ -393,7 +469,7 @@ export function CoworkerHome({
               }}
               path={besidePath}
               width={BESIDE_APPS_MIN_WIDTH}
-              onPush={(crumb) => setBesidePath(pushCrumb({ view: "capabilities", path: besidePath }, crumb).path)}
+              onPush={(crumb) => setBesidePath(pushCrumb({ view: "settings", path: besidePath }, crumb).path)}
               onSetPath={(path) => setBesidePath(path)}
             />
           </div>
@@ -427,22 +503,24 @@ export function CoworkerHome({
           <>
             {/* The strip starts level with the header's controls, so the corner above it is not an empty band. */}
             <nav aria-label="Coworker panels" className="window-drag flex flex-col items-center gap-1 px-2 pb-3 pt-[23px]">
-              {CONTEXT_ORDER.map((view) => {
+              {PANEL_VIEWS.map((view) => {
                 const Icon = CONTEXT_ICONS[view];
                 const active = view === contextView;
                 return (
                   <IconButton
                     key={view}
-                    label={CONTEXT_TITLES[view]}
+                    label={PANEL_VIEW_TITLES[view]}
+                    tooltip={panelViewTooltip(view, coworker.name)}
+                    tooltipSide="left"
                     data-testid={`context-rail-${view}`}
                     data-active={active ? "true" : "false"}
                     aria-current={active ? "true" : undefined}
-                    className={active ? "bg-white/8 text-snow ring-1 ring-white/10" : ""}
+                    className={`window-no-drag ${active ? "bg-white/8 text-snow ring-1 ring-white/10" : ""}`}
                     onClick={() => showContext(view)}
                   >
                     <span className="relative flex">
                       <Icon />
-                      {view === "documents" && documentsChanged > 0 ? (
+                      {view === "overview" && documentsChanged > 0 ? (
                         <span className="absolute -right-1.5 -top-1 size-1.5 rounded-full bg-spark" aria-hidden="true" data-testid="documents-changed-dot" />
                       ) : null}
                     </span>
@@ -455,7 +533,7 @@ export function CoworkerHome({
           <>
         <PanelHeader
           route={nav.route}
-          rootTitle={CONTEXT_TITLES[contextView]}
+          rootTitle={PANEL_VIEW_TITLES[contextView]}
           width={contextPanel.width}
           onBack={nav.back}
           onToDepth={nav.toDepth}
@@ -464,63 +542,79 @@ export function CoworkerHome({
               <span aria-hidden="true">←</span>
             </IconButton>
           ) : undefined}
-          actions={contextView === "overview" ? (
-            <IconButton
-              label="Coworker settings"
-              className="window-no-drag"
-              data-testid="coworker-settings-button"
-              onClick={() => setContextView("settings")}
-            >
-              <SlidersIcon />
-            </IconButton>
-          ) : undefined}
         />
         <PanelContent route={nav.route} containerRef={setPanelContentElement}>
-          {contextView === "overview" ? (
-            <CoworkerOverview
-              session={session}
-              coworkers={coworkers}
-              coworker={coworker}
-              activity={activity}
-              engineManaged={runtime.engineManaged}
-              onCoworkerChanged={onCoworkerChanged}
-              onOpenThread={(threadId) => setOpenThreadRequest({ id: Date.now(), threadId })}
-              onExplain={(text) => setDiscussionDraft({ id: Date.now(), text })}
-              onOpenMemory={() => setContextView("memory")}
-              onOpenCapabilities={() => setContextView("capabilities")}
-              onOpenWorkers={() => setContextView("workers")}
-              onOpenOpenWork={() => onOpenOpenWork()}
-            />
+          {contextView === "overview" && activityLevel.kind === "root" ? (
+            <PanelLevel key="activity" direction={nav.direction}>
+              <CoworkerOverview
+                coworker={coworker}
+                activity={activity}
+                engineManaged={runtime.engineManaged}
+                scheduled={holdings.scheduled}
+                summary={summary}
+                onOpenThread={openThread}
+                onOpenLevel={(kind) => nav.push(ACTIVITY_CRUMBS[SUMMARY_LEVELS[kind]], `activity:${kind}`)}
+              />
+            </PanelLevel>
           ) : null}
-          {contextView === "workers" ? (
-            <WorkersPanel
-              session={session}
-              coworkers={coworkers}
-              coworker={coworker}
-              assignments={assignmentThreads}
-              onCoworkerChanged={onCoworkerChanged}
-              onConnect={() => onOpenOpenWork()}
-              onOpenThread={(threadId) => setOpenThreadRequest({ id: Date.now(), threadId })}
-              onExplain={(text) => setDiscussionDraft({ id: Date.now(), text })}
-            />
+          {contextView === "overview" && activityLevel.kind === "documents" ? (
+            <PanelLevel key="documents" direction={nav.direction}>
+              <DocumentsPanel
+                coworker={coworker}
+                documents={documents}
+                error={documentsError}
+                onRefresh={refreshDocuments}
+                openRequest={openDocumentRequest}
+                onAskToUpdate={askToUpdate}
+                canOpenBeside={canOpenBeside}
+                onOpenBeside={(documentId) => {
+                  setBesidePath(null);
+                  setBesideDocumentId(documentId);
+                }}
+              />
+            </PanelLevel>
           ) : null}
-          {contextView === "documents" ? (
-            <DocumentsPanel
-              coworker={coworker}
-              documents={documents}
-              error={documentsError}
-              onRefresh={refreshDocuments}
-              openRequest={openDocumentRequest}
-              onAskToUpdate={askToUpdate}
-              canOpenBeside={canOpenBeside}
-              onOpenBeside={(documentId) => {
-                setBesidePath(null);
-                setBesideDocumentId(documentId);
-              }}
-            />
+          {contextView === "overview" && activityLevel.kind === "workers" ? (
+            <PanelLevel key="workers" direction={nav.direction}>
+              <WorkersPanel coworker={coworker} onOpenThread={openThread} />
+            </PanelLevel>
+          ) : null}
+          {contextView === "overview" && activityLevel.kind === "assignments" ? (
+            <PanelLevel key="assignments" direction={nav.direction}>
+              <AssignmentsPanel
+                session={session}
+                coworkers={coworkers}
+                coworker={coworker}
+                assignments={assignmentThreads}
+                attentionBySession={assignmentAttention}
+                scheduled={holdings.scheduled}
+                onScheduledChanged={holdings.setScheduled}
+                onCoworkerChanged={onCoworkerChanged}
+                onConnect={() => onOpenOpenWork()}
+                onOpenThread={openThread}
+                onExplain={explain}
+                onNewAssignment={newAssignment}
+              />
+            </PanelLevel>
           ) : null}
           {contextView === "memory" ? <MemoryPanel coworker={coworker} /> : null}
-          {contextView === "capabilities" ? (
+          {contextView === "settings" && settingsLevel.kind === "root" ? (
+            <PanelLevel key="settings" direction={nav.direction}>
+              <CoworkerSettings
+                runtime={runtime}
+                session={session}
+                coworker={coworker}
+                onCoworkerChanged={onCoworkerChanged}
+                onCoworkerRemoved={onCoworkerRemoved}
+                onSyncProviders={onSyncProviders}
+                onOpenAccount={() => onOpenOpenWork("account")}
+                onOpenMemory={() => nav.showView("memory")}
+                onOpenAppsTools={() => nav.push(APPS_TOOLS_CRUMB, APPS_TOOLS_CRUMB.id)}
+                focus={settingsFocus}
+              />
+            </PanelLevel>
+          ) : null}
+          {contextView === "settings" && settingsLevel.kind === "apps-tools" ? (
             <CapabilitiesPanel
               runtime={runtime}
               session={session}
@@ -530,17 +624,17 @@ export function CoworkerHome({
               onConnectAccount={onConnectAccount}
               onAssign={(text) => {
                 setAssignmentDraft({ id: Date.now(), text });
-                setContextView("overview");
+                nav.toRoot("overview");
               }}
               onDiscuss={(text) => {
                 setDiscussionDraft({ id: Date.now(), text });
-                setContextView("overview");
+                nav.toRoot("overview");
               }}
-              path={nav.route.path}
+              path={settingsLevel.path}
               width={contextPanel.width}
               direction={nav.direction}
               onPush={nav.push}
-              onSetPath={nav.setPath}
+              onSetPath={(path, fromRow) => nav.setPath([APPS_TOOLS_CRUMB, ...path], fromRow)}
               returnFocusRow={nav.returnFocusRow}
               contentElement={panelContentElement}
               beside={{
@@ -553,19 +647,6 @@ export function CoworkerHome({
               }}
             />
           ) : null}
-          {contextView === "settings" ? (
-            <CoworkerSettings
-              runtime={runtime}
-              session={session}
-              coworker={coworker}
-              onCoworkerChanged={onCoworkerChanged}
-              onCoworkerRemoved={onCoworkerRemoved}
-              onSyncProviders={onSyncProviders}
-              onOpenAccount={() => onOpenOpenWork("account")}
-              onOpenMemory={() => setContextView("memory")}
-              focus={settingsFocus}
-            />
-          ) : null}
         </PanelContent>
           </>
         )}
@@ -574,33 +655,29 @@ export function CoworkerHome({
   );
 }
 
+/**
+ * The Activity root, as flat rows with hairlines: what is happening now (the
+ * subject, its note, the time), then what the coworker holds — Documents,
+ * Workers, Assignments — each opening its level, then Recent. The header owns
+ * the state word, so nothing here repeats it.
+ */
 function CoworkerOverview({
-  session,
-  coworkers,
   coworker,
   activity,
   engineManaged,
-  onCoworkerChanged,
+  scheduled,
+  summary,
   onOpenThread,
-  onExplain,
-  onOpenMemory,
-  onOpenCapabilities,
-  onOpenWorkers,
-  onOpenOpenWork,
+  onOpenLevel,
 }: {
-  session: DenSession | null;
-  coworkers: CoworkerSummary[];
   coworker: CoworkerSummary;
   activity?: CoworkerActivity;
   engineManaged: boolean;
-  onCoworkerChanged: (coworker: CoworkerSummary) => void;
+  /** Scheduled assignments on this Mac, for the Recent list's finished runs. */
+  scheduled: LocalResponsibility[];
+  summary: CoworkerSummaryLine;
   onOpenThread: (threadId: string) => void;
-  /** Prefill the discussion composer with a message about a run; the person still sends it. */
-  onExplain: (message: string) => void;
-  onOpenMemory: () => void;
-  onOpenCapabilities: () => void;
-  onOpenWorkers: () => void;
-  onOpenOpenWork: () => void;
+  onOpenLevel: (kind: SummaryKind) => void;
 }) {
   const now = describeNow(activity);
   const saying = useWorkingSaying(
@@ -609,93 +686,64 @@ function CoworkerOverview({
     activity?.state === "working",
   );
   const nowNote = saying ? `${saying}…` : now.note;
-  const [localResponsibilities, setLocalResponsibilities] = useState<LocalResponsibility[]>([]);
-  const [workers, setWorkers] = useState<WorkerSummary[]>([]);
-  const workersLine = describeWorkerCount(workers);
-  // While a run is going or waiting in line, the list follows it closely; otherwise it idles.
-  const localRunsBusy = localResponsibilities.some(
-    (item) => item.latestRun?.status === "running" || item.latestRun?.status === "queued",
-  );
-
-  useEffect(() => {
-    let cancelled = false;
-    const load = () =>
-      Promise.all([
-        coworkerBridge.localResponsibilities.list(coworker.slug),
-        coworkerBridge.workers.list(coworker.slug).catch((): WorkerSummary[] => []),
-      ])
-        .then(([items, liveWorkers]) => {
-          if (cancelled) return;
-          setLocalResponsibilities(items);
-          setWorkers(liveWorkers);
-        })
-        .catch(() => undefined);
-    void load();
-    const timer = window.setInterval(() => void load(), localRunsBusy ? 1_500 : 5_000);
-    return () => {
-      cancelled = true;
-      window.clearInterval(timer);
-    };
-  }, [coworker.slug, localRunsBusy]);
-
-  const recent = mergeRecentWork(activity, localResponsibilities);
+  const recent = mergeRecentWork(activity, scheduled);
   const nowTime = relativeTime(activity?.updatedAt ?? 0);
   const canOpenSubject = Boolean(activity?.threadId);
+  const showNow = Boolean(now.subject) || Boolean(engineManaged && nowNote);
 
   return (
-    <div className="flex min-h-full flex-col gap-5">
-      {/* The header owns the one-word state; this row names what it is about. */}
-      <section aria-label="Current activity" className="rounded-2xl border border-line bg-ink p-4" data-testid="coworker-activity-summary">
-        {nowTime && now.subject ? (
-          <div className="flex items-center justify-end gap-3">
-            <span className="shrink-0 text-[11px] text-mist" title={activity?.updatedAt ? new Date(activity.updatedAt).toLocaleString() : undefined}>
-              {nowTime}
-            </span>
-          </div>
-        ) : null}
-
+    <div className="flex min-h-full flex-col gap-4">
+      <section aria-label="Current activity" className={showNow ? "border-b border-line pb-3" : ""} data-testid="coworker-activity-summary">
         {now.subject ? (
           <button
             type="button"
-            className={`mt-2.5 block w-full text-left ${canOpenSubject ? "group" : "cursor-default"}`}
+            className={`flex w-full items-start gap-3 rounded-lg px-1 py-1.5 text-left ${canOpenSubject ? "group transition-colors hover:bg-white/[0.04]" : "cursor-default"}`}
             disabled={!canOpenSubject}
             onClick={() => {
               if (activity?.threadId) onOpenThread(activity.threadId);
             }}
-            title={canOpenSubject ? "Open this thread" : undefined}
             data-testid="coworker-current-subject"
           >
-            <span className={`line-clamp-2 block text-sm leading-snug text-snow ${canOpenSubject ? "group-hover:underline" : ""}`}>
-              {now.subject}
+            <span className="min-w-0 flex-1">
+              <span className={`line-clamp-2 block text-sm leading-snug text-snow ${canOpenSubject ? "group-hover:underline" : ""}`}>
+                {now.subject}
+              </span>
+              {nowNote || now.needsYou ? (
+                <span className={`mt-0.5 block text-[11px] ${now.needsYou ? "font-medium text-amber" : "text-mist"}`}>
+                  {now.needsYou ? (canOpenSubject ? "Needs your reply — open to respond" : "Needs your reply") : nowNote}
+                </span>
+              ) : null}
             </span>
-            {nowNote || canOpenSubject ? (
-              <span className={`mt-1 block text-[11px] ${now.needsYou ? "font-medium text-amber" : "text-mist"}`}>
-                {now.needsYou ? (canOpenSubject ? "Needs your reply — open to respond" : "Needs your reply") : nowNote || "Open thread"}
-                {canOpenSubject ? <span aria-hidden="true"> ›</span> : null}
+            {nowTime ? (
+              <span className="shrink-0 pt-0.5 text-[11px] text-mist" title={activity?.updatedAt ? new Date(activity.updatedAt).toLocaleString() : undefined}>
+                {nowTime}
               </span>
             ) : null}
+            {canOpenSubject ? <span className="shrink-0 pt-0.5 text-mist transition-colors group-hover:text-snow" aria-hidden="true">›</span> : null}
           </button>
         ) : engineManaged && nowNote ? (
-          <p className="mt-1.5 text-xs leading-relaxed text-mist" data-testid="coworker-current-note">{nowNote}</p>
-        ) : null}
-        {workersLine ? (
-          <button
-            type="button"
-            className="group mt-2.5 flex w-full items-center justify-between gap-2 border-t border-line/70 pt-2.5 text-left text-[11px] text-mist transition-colors hover:text-snow"
-            onClick={onOpenWorkers}
-            title="Open Workers"
-            data-testid="coworker-workers-line"
-          >
-            <span className="flex items-center gap-1.5"><WorkersIcon className="size-3.5" />{workersLine}</span>
-            <span aria-hidden="true">›</span>
-          </button>
+          <p className="px-1 py-1.5 text-xs leading-relaxed text-mist" data-testid="coworker-current-note">{nowNote}</p>
         ) : null}
       </section>
 
+      <RowList label={`What ${coworker.name} holds`} testId="coworker-holdings" divided>
+        {summary.rows.map((row) => (
+          <Row
+            key={row.kind}
+            id={`activity:${row.kind}`}
+            title={summaryRowTitle(row)}
+            status={row.note || undefined}
+            mark={row.changed > 0}
+            onOpen={() => onOpenLevel(row.kind)}
+            testId={`activity-row-${row.kind}`}
+          />
+        ))}
+      </RowList>
+
       {recent.length > 0 ? (
-        <section aria-label="Recent activity" data-testid="coworker-recent-activity">
-          <h3 className="mb-2 px-1 text-[11px] font-semibold text-mist">Recent</h3>
-          <ul className="divide-y divide-line rounded-2xl border border-line bg-ink">
+        <section aria-label="Recent activity" className="border-t border-line pt-3" data-testid="coworker-recent-activity">
+          <h3 className="mb-1 px-1 text-[11px] font-semibold text-mist">Recent</h3>
+          <ul className="divide-y divide-line">
             {recent.map((entry) => {
               const outcome = describeOutcome(entry);
               const failed = entry.outcome === "failed";
@@ -720,14 +768,13 @@ function CoworkerOverview({
                   {entry.threadId ? (
                     <button
                       type="button"
-                      className="group flex w-full items-center gap-3 px-3.5 py-2.5 text-left transition-colors first:rounded-t-2xl last:rounded-b-2xl hover:bg-white/[0.04]"
+                      className="group flex w-full items-center gap-3 px-1 py-2.5 text-left transition-colors hover:bg-white/[0.04]"
                       onClick={() => onOpenThread(entry.threadId ?? "")}
-                      title="Open this thread"
                     >
                       {body}
                     </button>
                   ) : (
-                    <div className="flex w-full items-center gap-3 px-3.5 py-2.5 text-left">{body}</div>
+                    <div className="flex w-full items-center gap-3 px-1 py-2.5 text-left">{body}</div>
                   )}
                 </li>
               );
@@ -735,27 +782,7 @@ function CoworkerOverview({
           </ul>
         </section>
       ) : null}
-
-      {/* Coworker settings already has its control in the panel header; the foot keeps the two destinations that do not. */}
-      <nav aria-label="More for this coworker" className="mt-auto flex items-center gap-1 border-t border-line pt-3 text-[11px]">
-        <QuietLink icon={<WorkersIcon className="size-3.5" />} onClick={onOpenWorkers}>Workers</QuietLink>
-        <QuietLink icon={<AppsIcon className="size-3.5" />} onClick={onOpenCapabilities}>Apps & tools</QuietLink>
-        <QuietLink icon={<MemoryIcon className="size-3.5" />} onClick={onOpenMemory}>Memory</QuietLink>
-      </nav>
     </div>
-  );
-}
-
-function QuietLink({ icon, children, onClick }: { icon: ReactNode; children: string; onClick: () => void }) {
-  return (
-    <button
-      type="button"
-      className="flex items-center gap-1.5 rounded-lg px-2 py-1.5 font-medium text-mist transition-colors hover:bg-white/5 hover:text-snow focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-spark/60"
-      onClick={onClick}
-    >
-      <span className="text-mist/80" aria-hidden="true">{icon}</span>
-      <span>{children}</span>
-    </button>
   );
 }
 
@@ -809,6 +836,7 @@ function CoworkerSettings({
   onSyncProviders,
   onOpenAccount,
   onOpenMemory,
+  onOpenAppsTools,
   focus,
 }: {
   runtime: RuntimeInfo;
@@ -819,6 +847,8 @@ function CoworkerSettings({
   onSyncProviders: () => Promise<ProviderSyncRun>;
   onOpenAccount: () => void;
   onOpenMemory: () => void;
+  /** Apps & tools is the first level under these settings. */
+  onOpenAppsTools: () => void;
   /** Section to bring into view on open; the id makes repeat requests distinct. */
   focus: { id: number; section: "model" } | null;
 }) {
@@ -896,6 +926,18 @@ function CoworkerSettings({
 
   return (
     <div className="space-y-7">
+      {/* What the coworker can reach comes first: Apps & tools is a level of these settings. */}
+      <RowList label="Coworker settings" testId="coworker-settings-rows">
+        <Row
+          id={APPS_TOOLS_CRUMB.id}
+          icon={<AppsIcon />}
+          title={APPS_TOOLS_CRUMB.title}
+          status={`Apps, skills, and the tools ${coworker.name} can use`}
+          onOpen={onOpenAppsTools}
+          testId="settings-row-apps-tools"
+        />
+      </RowList>
+
       {/* Who the coworker is, laid out as rows on the panel itself rather than as a card inside a card. */}
       <section data-testid="coworker-profile-settings">
         <div className="flex items-center gap-3.5 pb-3">

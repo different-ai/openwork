@@ -26,8 +26,9 @@ import {
   type PanelRouteMemory,
 } from "./panel-route.ts";
 
-type View = "overview" | "capabilities" | "memory";
-const isView = (value: string): value is View => value === "overview" || value === "capabilities" || value === "memory";
+// The route rules are generic over the views; the app's own three views live in panel-views.ts.
+type View = "overview" | "capabilities" | "memory" | "settings";
+const isView = (value: string): value is View => value === "overview" || value === "capabilities" || value === "memory" || value === "settings";
 
 const apps = { id: "apps", title: "Apps" };
 const pulse = { id: "app:chapter-notes:open_team_pulse", title: "Team pulse" };
@@ -49,13 +50,15 @@ test("push and pop walk one level at a time and never go above the root", () => 
   assert.deepEqual(pushCrumb(inApps, { id: "apps", title: "Apps (3)" }).path, [{ id: "apps", title: "Apps (3)" }]);
 });
 
-test("levels stop at root → group → item; a deeper push replaces the item", () => {
-  const route = withPath(rootRoute<View>("capabilities"), [connected, skills, createSkill]);
+test("levels stop at root → level → group → item; a deeper push replaces the item", () => {
+  const appsTools = { id: "apps-tools", title: "Apps & tools" };
+  const route = withPath(rootRoute<View>("settings"), [appsTools, connected, skills, createSkill]);
+  assert.equal(MAX_PANEL_DEPTH, 4);
   assert.equal(route.path.length, MAX_PANEL_DEPTH);
   const deeper = pushCrumb(route, { id: "skill:another", title: "Another" });
   assert.equal(deeper.path.length, MAX_PANEL_DEPTH);
-  assert.deepEqual(deeper.path.map((crumb) => crumb.id), ["connected", "skills", "skill:another"]);
-  assert.equal(withPath(route, [connected, skills, createSkill, { id: "x", title: "X" }]).path.length, MAX_PANEL_DEPTH);
+  assert.deepEqual(deeper.path.map((crumb) => crumb.id), ["apps-tools", "connected", "skills", "skill:another"]);
+  assert.equal(withPath(route, [appsTools, connected, skills, createSkill, { id: "x", title: "X" }]).path.length, MAX_PANEL_DEPTH);
 });
 
 test("replace swaps a sibling in place and truncate jumps up the trail", () => {
@@ -110,11 +113,11 @@ test("routes serialize and restore, and reject unknown views or malformed paths"
   const route = withPath(rootRoute<View>("capabilities"), [apps, pulse]);
   const restored = restorePanelRoute(serializePanelRoute(route), isView);
   assert.deepEqual(restored, route);
-  assert.equal(restorePanelRoute(JSON.stringify({ view: "settings", path: [] }), isView), null);
+  assert.equal(restorePanelRoute(JSON.stringify({ view: "documents", path: [] }), isView), null);
   assert.equal(restorePanelRoute(JSON.stringify({ view: "memory", path: [{ id: 1 }] }), isView), null);
   assert.equal(restorePanelRoute("not json", isView), null);
   assert.equal(restorePanelRoute(null, isView), null);
-  const deep = JSON.stringify({ view: "capabilities", path: [apps, pulse, skills, createSkill] });
+  const deep = JSON.stringify({ view: "capabilities", path: [apps, pulse, skills, createSkill, { id: "x", title: "X" }] });
   assert.equal(restorePanelRoute(deep, isView)?.path.length, MAX_PANEL_DEPTH);
 });
 
