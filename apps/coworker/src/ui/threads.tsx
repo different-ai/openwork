@@ -26,6 +26,7 @@ import {
 import {
   createCoworkerThreads,
   describeInteractions,
+  stalledRetry,
   hasPendingInteractions,
   modelSourceLabel,
   parseModelPreference,
@@ -985,6 +986,11 @@ function ThreadView({
   const [providerRefreshNote, setProviderRefreshNote] = useState("");
   const endRef = useRef<HTMLDivElement>(null);
   const pendingTurnRef = useRef<PendingTurn | null>(null);
+  /** The far-off retry already cancelled for this thread (by its scheduled time), and why it stalled. */
+  const stallRef = useRef<{ next: number; reason: string } | null>(null);
+  const clearStall = () => {
+    stallRef.current = null;
+  };
   const waitControllerRef = useRef<AbortController | null>(null);
   const stopRequestedRef = useRef(false);
   const handledInitialTurnRef = useRef<number | null>(null);
@@ -1025,13 +1031,23 @@ function ThreadView({
       const loadedTitle = transcript.title ?? "Work thread";
       titleLoadedRef.current = true;
       setTitle(titleDiscussionAfterFirstMessage(loadedTitle) ?? loadedTitle);
-      setStatusLabel(transcript.status.type);
+      // A retry the engine pushed hours away is a stall, not progress: cancel it so the turn ends
+      // now, and tell the person why in the provider's words with a way to choose another model.
+      const status = transcript.status;
+      const retryStatus = status.type === "retry" ? status : null;
+      const stall = retryStatus ? stalledRetry({ next: retryStatus.next, message: retryStatus.message }) : null;
+      if (stall && retryStatus && stallRef.current?.next !== retryStatus.next) {
+        stallRef.current = { next: retryStatus.next, reason: stall };
+        void threads.client.abortThread(threadId).catch(() => undefined);
+        waitControllerRef.current?.abort();
+      }
+      setStatusLabel(stall ? "idle" : status.type);
       setTerminalError(
         pendingTurnRef.current
           ? ""
-          : transcript.terminalError
+          : stall ?? stallRef.current?.reason ?? (transcript.terminalError
             ? `${transcript.terminalError.name}: ${transcript.terminalError.message}`
-            : "",
+            : ""),
       );
       setMessages(
         transcript.messages.map((message) => ({
@@ -1122,6 +1138,7 @@ function ThreadView({
         if (renamed) setTitle(renamed);
       }
     }
+    clearStall();
     setTurnIssue(null);
     setTerminalError("");
     setError("");
@@ -1197,6 +1214,10 @@ function ThreadView({
           messageId,
           prompt,
         });
+      } else if (result.outcome === "aborted" && stallRef.current && !stopRequestedRef.current) {
+        // The wait ended because the engine's far-off retry was cancelled: the model is unavailable.
+        const failure = stallRef.current.reason;
+        if (!(await fallBack(failure))) setTurnIssue({ kind: "failed", message: failure, messageId, prompt });
       } else if (result.outcome === "aborted" && stopRequestedRef.current) {
         setTurnIssue({
           kind: "stopped",

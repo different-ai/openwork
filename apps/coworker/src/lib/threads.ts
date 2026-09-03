@@ -25,6 +25,8 @@ export type ThreadListItem = {
   createdAt: number;
   updatedAt: number;
   status: SessionStatus["type"];
+  /** While retrying: when the engine will try again and what stopped it, in the provider's words. */
+  retry?: { next: number; message: string };
 };
 
 /** Keep the coworker's discussions out of outcome-driven assignment lists. */
@@ -53,6 +55,8 @@ export type CoworkerActivity = {
   state: "ready" | "working" | "retrying" | "attention" | "recent" | "starting" | "offline";
   label: string;
   detail: string;
+  /** For `retrying`: set when the engine has pushed its retry far out, so the model is effectively unavailable. */
+  reason?: string;
   updatedAt: number;
   /** Thread the current state refers to, when there is one to open. */
   threadId?: string;
@@ -183,6 +187,24 @@ function sortedVariants(variants: Record<string, unknown> | undefined): string[]
 
 /** A retry the engine scheduled this long ago and never moved on from is over, not pending. */
 export const STALE_RETRY_MS = 60_000;
+/** A retry this far in the future is not "trying again" from the person's point of view; the model is unavailable. */
+export const FAR_RETRY_MS = 5 * 60_000;
+
+function retryOf(status: SessionStatus | undefined): { retry?: { next: number; message: string } } {
+  if (!status || status.type !== "retry") return {};
+  return { retry: { next: status.next, message: status.message } };
+}
+
+/**
+ * A retry the engine has pushed far out (the free tier's daily usage, a long provider
+ * backoff) is a stall: the person should hear that the model is unavailable and be able to
+ * choose another one, not watch "Retrying" for hours. Returns the reason in plain words.
+ */
+export function stalledRetry(retry: { next: number; message: string } | undefined, now = Date.now()): string | null {
+  if (!retry || !Number.isFinite(retry.next) || retry.next - now <= FAR_RETRY_MS) return null;
+  const reason = retry.message.trim().replace(/[.\s]+$/, "");
+  return reason || "The AI provider is not answering";
+}
 
 /**
  * The engine reports each session as idle, busy, or retrying (with the time of the next
@@ -487,6 +509,7 @@ export function createCoworkerThreads(options: {
         createdAt: session.time?.created ?? 0,
         updatedAt: session.time?.updated ?? 0,
         status: threadStatusOf(statuses[session.id]),
+        ...retryOf(statuses[session.id]),
       }))
       .sort((a, b) => b.updatedAt - a.updatedAt);
   }
@@ -598,10 +621,12 @@ export function createCoworkerThreads(options: {
     const subjectIsWorker = active !== undefined && workerIds.has(active.id);
     const workers = runningWorkers > 0 ? { workers: { running: runningWorkers, subject: subjectIsWorker } } : {};
     if (active?.status === "retry") {
+      const stalled = stalledRetry(active.retry);
       return {
         state: "retrying",
-        label: "Retrying",
+        label: stalled ? "Paused" : "Retrying",
         detail: subjectIsWorker ? workerNameFromTitle(active.title) : active.title,
+        ...(stalled ? { reason: stalled } : {}),
         updatedAt: active.updatedAt,
         threadId: active.id,
         ...(last ? { last: { title: last.title, updatedAt: last.finishedAt, threadId: last.id } } : {}),

@@ -10,6 +10,7 @@ import {
   modelSourceLabel,
   parseModelPreference,
   recommendModel,
+  stalledRetry,
   threadStatusOf,
 } from "./threads.ts";
 import { fixtureCatalog, fixtureProvider } from "./provider-catalog.fixture.ts";
@@ -249,4 +250,12 @@ test("a retry the engine never moved on from reads as idle once its next attempt
   assert.equal(threadStatusOf({ type: "retry", attempt: 2, message: "Rate limit exceeded", next: now + 5_000 }, now), "retry");
   assert.equal(threadStatusOf({ type: "retry", attempt: 2, message: "Rate limit exceeded", next: now - 30_000 }, now), "retry");
   assert.equal(threadStatusOf({ type: "retry", attempt: 2, message: "Rate limit exceeded", next: now - 90_000 }, now), "idle");
+});
+
+test("a retry pushed far into the future is a stall with the provider's reason in plain words", () => {
+  const now = 1_000_000;
+  assert.equal(stalledRetry(undefined, now), null);
+  assert.equal(stalledRetry({ next: now + 30_000, message: "Rate limit exceeded." }, now), null);
+  assert.equal(stalledRetry({ next: now + 9 * 3_600_000, message: "Free usage exceeded, subscribe to Go. " }, now), "Free usage exceeded, subscribe to Go");
+  assert.equal(stalledRetry({ next: now + 3_600_000, message: "   " }, now), "The AI provider is not answering");
 });

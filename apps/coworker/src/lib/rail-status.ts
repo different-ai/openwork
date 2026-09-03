@@ -114,6 +114,7 @@ export function describeRailLine({ activity, personality, seed, now = Date.now()
     case "attention":
       return activity.detail || "Needs you.";
     case "retrying":
+      if (activity.reason) return `AI model unavailable: ${activity.reason}`;
       return activity.detail ? `Retrying ${cleanTitle(activity.detail)}` : "Retrying.";
     case "working": {
       const running = activity.workers?.running ?? 0;

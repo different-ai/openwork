@@ -50,7 +50,7 @@ export function describeTurnFailure(raw: string, coworkerName: string): TurnFail
       modelRelated: false,
     };
   }
-  if (/model|provider|endpoint|api ?key|unauthorized|401|403|quota|rate limit|429/i.test(message)) {
+  if (/model|provider|endpoint|api ?key|unauthorized|401|403|quota|rate limit|429|usage exceeded|free usage|subscribe/i.test(message)) {
     return {
       headline: `${coworkerName}'s AI model could not answer.`,
       detail: "The AI provider rejected the request. Choose another AI model or check your account.",
