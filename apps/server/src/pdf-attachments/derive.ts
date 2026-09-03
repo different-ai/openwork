@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { link, mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { link, lstat, mkdir, readdir, readFile, realpath, rename, rm, writeFile } from "node:fs/promises";
 import { basename, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { encode as encodePng } from "fast-png";
 import { encode as encodeJpeg } from "jpeg-js";
@@ -136,11 +136,52 @@ export function pageFileName(page: number, mime: PageImageMime): string {
   return `page-${String(page).padStart(3, "0")}.${mime === "image/png" ? "png" : "jpg"}`;
 }
 
-async function existingSha(path: string): Promise<string | null> {
+function isWithin(parent: string, candidate: string): boolean {
+  const rel = relative(parent, candidate);
+  return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
+}
+
+/**
+ * A workspace may contain hostile symlinks. Every directory this module reads
+ * or writes must resolve to exactly the path expected beneath the real
+ * workspace root; anything routed through a symlink is refused.
+ */
+async function assertConfined(root: string, directory: string): Promise<string> {
+  const [realRoot, realDirectory] = await Promise.all([realpath(root), realpath(directory)]);
+  const expected = resolve(realRoot, relative(root, directory));
+  if (realDirectory !== expected || !isWithin(realRoot, realDirectory)) {
+    throw new Error("PDF attachment storage path resolves through a symlink; refusing to use it.");
+  }
+  return realDirectory;
+}
+
+async function confinedDirectory(root: string, directory: string): Promise<string> {
+  await mkdir(directory, { recursive: true });
+  return assertConfined(root, directory);
+}
+
+async function existingConfinedDirectory(root: string, directory: string): Promise<string | null> {
   try {
-    return sha256(await readFile(path));
+    return await assertConfined(root, directory);
   } catch {
     return null;
+  }
+}
+
+/** Reads a file only when the path itself is a regular file, never a symlink. */
+async function readRegularFile(path: string): Promise<Buffer> {
+  const info = await lstat(path);
+  if (!info.isFile()) throw new Error(`${basename(path)} is not a regular file.`);
+  return readFile(path);
+}
+
+async function existingSha(path: string): Promise<string | null> {
+  try {
+    return sha256(await readRegularFile(path));
+  } catch (cause) {
+    const code = isRecord(cause) ? cause.code : undefined;
+    // A symlink or other non-file at the target counts as "something else lives here".
+    return code === "ENOENT" ? null : "";
   }
 }
 
@@ -165,19 +206,19 @@ async function linkBytesAtomically(target: string, bytes: Uint8Array): Promise<v
 }
 
 async function materializePdf(root: string, safeFilename: string, digest: string, bytes: Uint8Array): Promise<string> {
-  const directory = join(root, MATERIALIZED_DIR);
-  await mkdir(directory, { recursive: true });
+  const directory = await confinedDirectory(root, join(root, MATERIALIZED_DIR));
   for (const name of [`${digest.slice(0, 16)}-${safeFilename}`, `${digest}-${safeFilename}`]) {
     const target = join(directory, name);
+    const relativePath = `${MATERIALIZED_DIR.split(sep).join("/")}/${name}`;
     const current = await existingSha(target);
-    if (current === digest) return toWorkerRelativePath(root, target);
+    if (current === digest) return relativePath;
     if (current !== null) continue;
     try {
       await linkBytesAtomically(target, bytes);
-      return toWorkerRelativePath(root, target);
+      return relativePath;
     } catch (cause) {
       const afterRace = await existingSha(target);
-      if (afterRace === digest) return toWorkerRelativePath(root, target);
+      if (afterRace === digest) return relativePath;
       if (afterRace !== null) continue;
       throw cause;
     }
@@ -265,21 +306,21 @@ function parseManifest(value: unknown, digest: string): StoredManifest | null {
   };
 }
 
-async function readManifest(root: string, derivedDirectory: string, digest: string, safeFilename: string, pdfPath: string): Promise<DerivedPdf | null> {
+async function readManifest(root: string, derivedDirectory: string, displayDirectory: string, digest: string, safeFilename: string, pdfPath: string): Promise<DerivedPdf | null> {
   try {
-    const parsed: unknown = JSON.parse(await readFile(join(derivedDirectory, MANIFEST_FILENAME), "utf8"));
+    const parsed: unknown = JSON.parse((await readRegularFile(join(derivedDirectory, MANIFEST_FILENAME))).toString("utf8"));
     const stored = parseManifest(parsed, digest);
     if (!stored) return null;
     const textFile = join(derivedDirectory, TEXT_FILENAME);
-    const text = stored.hasText ? await readFile(textFile, "utf8") : "";
+    const text = stored.hasText ? (await readRegularFile(textFile)).toString("utf8") : "";
     return {
       sha256: digest,
       filename: safeFilename,
       bytes: 0,
       pageCount: stored.pageCount,
       pdfPath,
-      directory: toWorkerRelativePath(root, derivedDirectory),
-      textPath: stored.hasText ? toWorkerRelativePath(root, textFile) : null,
+      directory: displayDirectory,
+      textPath: stored.hasText ? `${displayDirectory}/${TEXT_FILENAME}` : null,
       text,
       textPages: stored.textPages,
       textBudgetExhausted: stored.textBudgetExhausted,
@@ -417,7 +458,11 @@ async function pruneDerivedBundles(root: string, keep: string): Promise<void> {
   for (const name of entries) {
     if (name === keep) continue;
     try {
-      dated.push({ name, mtimeMs: (await stat(join(directory, name, MANIFEST_FILENAME))).mtimeMs });
+      const entry = await lstat(join(directory, name));
+      if (!entry.isDirectory()) continue;
+      const manifest = await lstat(join(directory, name, MANIFEST_FILENAME));
+      if (!manifest.isFile()) continue;
+      dated.push({ name, mtimeMs: manifest.mtimeMs });
     } catch {
       // Not a derived bundle this code wrote; leave it alone.
     }
@@ -433,11 +478,6 @@ function derivedDirectoryFor(root: string, digest: string, safeFilename: string)
   return join(root, DERIVED_DIR, `${digest.slice(0, 16)}-${stemOf(safeFilename)}`);
 }
 
-function isWithin(parent: string, candidate: string): boolean {
-  const rel = relative(parent, candidate);
-  return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
-}
-
 /**
  * The bundle directory for a derived result, computed from the digest and the
  * sanitized filename only. Never derived from stored strings.
@@ -451,13 +491,18 @@ function bundleDirectory(root: string, derived: DerivedPdf): string | null {
 async function build(root: string | null, filename: string, bytes: Uint8Array, options: DeriveOptions, existing: MemoryEntry | null): Promise<MemoryEntry> {
   const digest = sha256(bytes);
   const safeFilename = safePdfFilename(filename);
-  const derivedDirectory = root ? derivedDirectoryFor(root, digest, safeFilename) : null;
+  const expectedDirectory = root ? derivedDirectoryFor(root, digest, safeFilename) : null;
+  const displayDirectory = expectedDirectory && root ? toWorkerRelativePath(root, expectedDirectory) : null;
 
   let current = existing?.derived ?? null;
-  if (!current && derivedDirectory && root) {
-    const pdfPath = await materializePdf(root, safeFilename, digest, bytes);
-    const stored = await readManifest(root, derivedDirectory, digest, safeFilename, pdfPath);
-    if (stored) current = { ...stored, bytes: bytes.byteLength };
+  if (!current && expectedDirectory && displayDirectory && root) {
+    // Reuse only a bundle that already exists at its confined real path.
+    const existingDirectory = await existingConfinedDirectory(root, expectedDirectory);
+    if (existingDirectory) {
+      const pdfPath = await materializePdf(root, safeFilename, digest, bytes);
+      const stored = await readManifest(root, existingDirectory, displayDirectory, digest, safeFilename, pdfPath);
+      if (stored) current = { ...stored, bytes: bytes.byteLength };
+    }
   }
 
   if (!current) {
@@ -469,7 +514,7 @@ async function build(root: string | null, filename: string, bytes: Uint8Array, o
       bytes: bytes.byteLength,
       pageCount: extracted.pageCount,
       pdfPath,
-      directory: derivedDirectory && root ? toWorkerRelativePath(root, derivedDirectory) : null,
+      directory: displayDirectory,
       textPath: null,
       textPages: extracted.pages.length,
       textBudgetExhausted: extracted.budgetExhausted,
@@ -479,22 +524,23 @@ async function build(root: string | null, filename: string, bytes: Uint8Array, o
       loadError: extracted.loadError,
     };
     const text = extracted.loadError ? "" : textDocument(base, extracted.pages);
-    if (derivedDirectory && root && !extracted.loadError) {
-      await mkdir(derivedDirectory, { recursive: true });
+    if (expectedDirectory && displayDirectory && root && !extracted.loadError) {
+      // Created only now that there is something to store; a symlinked bundle fails the derivation.
+      const derivedDirectory = await confinedDirectory(root, expectedDirectory);
       await writeFileAtomically(join(derivedDirectory, TEXT_FILENAME), text);
-      base.textPath = toWorkerRelativePath(root, join(derivedDirectory, TEXT_FILENAME));
-    }
-    current = { ...base, text };
-    if (derivedDirectory && root && !extracted.loadError) {
+      base.textPath = `${displayDirectory}/${TEXT_FILENAME}`;
+      current = { ...base, text };
       await writeManifest(derivedDirectory, current);
       await pruneDerivedBundles(root, basename(derivedDirectory));
+    } else {
+      current = { ...base, text };
     }
   }
 
   // Page images live only on disk; without a workspace root the model gets text.
-  const needsRender = options.renderPages && derivedDirectory !== null && !current.loadError && current.pageCount > 0 && current.renderedPages.length === 0 && !current.renderBudgetExhausted;
+  const needsRender = options.renderPages && expectedDirectory !== null && root !== null && !current.loadError && current.pageCount > 0 && current.renderedPages.length === 0 && !current.renderBudgetExhausted;
   if (needsRender) {
-    await mkdir(derivedDirectory, { recursive: true });
+    const derivedDirectory = await confinedDirectory(root, expectedDirectory);
     const wanted = Array.from({ length: Math.min(current.pageCount, EAGER_RENDERED_PAGES) }, (_page, index) => index + 1);
     const { rendered, budgetExhausted } = await renderPageImages(bytes, wanted, async (page, image) => {
       await writeFileAtomically(join(derivedDirectory, pageFileName(page, image.mime)), image.bytes);
@@ -555,9 +601,9 @@ export async function renderPdfPages(root: string | null, derived: DerivedPdf, b
   if (wanted.length === 0) return derived;
 
   const current = memory.get(derived.sha256)?.derived ?? derived;
-  const derivedDirectory = bundleDirectory(root, derived);
-  if (!derivedDirectory) return derived;
-  await mkdir(derivedDirectory, { recursive: true });
+  const expectedDirectory = bundleDirectory(root, derived);
+  if (!expectedDirectory) return derived;
+  const derivedDirectory = await confinedDirectory(root, expectedDirectory);
   const { rendered } = await renderPageImages(bytes, wanted, async (page, image) => {
     await writeFileAtomically(join(derivedDirectory, pageFileName(page, image.mime)), image.bytes);
   });
@@ -571,10 +617,12 @@ export async function renderPdfPages(root: string | null, derived: DerivedPdf, b
 /** Reads one rendered page image from the workspace bundle; the path comes from the page number and mime, never from stored names. */
 export async function readPageImage(root: string | null, derived: DerivedPdf, page: PdfPageImage): Promise<Uint8Array | null> {
   if (!root) return null;
-  const directory = bundleDirectory(root, derived);
-  if (!directory || !isCount(page.page) || page.page < 1 || (page.mime !== "image/png" && page.mime !== "image/jpeg")) return null;
+  const expectedDirectory = bundleDirectory(root, derived);
+  if (!expectedDirectory || !isCount(page.page) || page.page < 1 || (page.mime !== "image/png" && page.mime !== "image/jpeg")) return null;
+  const directory = await existingConfinedDirectory(root, expectedDirectory);
+  if (!directory) return null;
   try {
-    return await readFile(join(directory, pageFileName(page.page, page.mime)));
+    return await readRegularFile(join(directory, pageFileName(page.page, page.mime)));
   } catch {
     return null;
   }

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { createHash } from "node:crypto";
@@ -238,6 +238,49 @@ describe("derivePdf", () => {
         const escaped = await readPageImage(root, tampered, { page: 1, width: 10, height: 10, bytes: 18, mime: "image/png", fileName: escape });
         expect(escaped === null || !Buffer.from(escaped).includes("TOP SECRET")).toBe(true);
         expect(await readPageImage(root, derived, { ...derived.renderedPages[0], page: -1 })).toBeNull();
+      } finally {
+        await rm(outside, { recursive: true, force: true });
+      }
+    });
+  });
+
+  test("refuses to write through a symlinked attachments directory planted in the workspace", async () => {
+    await withWorkspace(async (root) => {
+      const outside = await mkdtemp(join(tmpdir(), "openwork-pdf-redirect-"));
+      try {
+        await mkdir(join(root, ".opencode", "openwork", "inbox"), { recursive: true });
+        await symlink(outside, join(root, MATERIALIZED_DIR));
+        await expect(derivePdf(root, "victim.pdf", buildTestPdf(["Confidential"]), { renderPages: false })).rejects.toThrow("resolves through a symlink");
+        expect(await readdir(outside)).toEqual([]);
+      } finally {
+        await rm(outside, { recursive: true, force: true });
+      }
+    });
+  });
+
+  test("refuses a bundle directory that is a symlink and never forwards a symlinked text file", async () => {
+    await withWorkspace(async (root) => {
+      const outside = await mkdtemp(join(tmpdir(), "openwork-pdf-bundle-"));
+      try {
+        const pdf = buildTestPdf(["Bundle"]);
+        const digest = createHash("sha256").update(pdf).digest("hex");
+        await mkdir(join(root, DERIVED_DIR), { recursive: true });
+        const bundle = join(root, DERIVED_DIR, `${digest.slice(0, 16)}-bundle`);
+        await symlink(outside, bundle);
+        await expect(derivePdf(root, "bundle.pdf", pdf, { renderPages: true })).rejects.toThrow("resolves through a symlink");
+        expect(await readdir(outside)).toEqual([]);
+
+        // A real bundle whose text.md is a symlink to a secret is rejected and re-derived.
+        await rm(bundle, { force: true });
+        const secret = join(outside, "secret.txt");
+        await writeFile(secret, "TOP SECRET CONTENT");
+        const honest = await derivePdf(root, "bundle.pdf", pdf, { renderPages: false });
+        resetDerivedPdfMemory();
+        await rm(join(root, honest.textPath ?? ""), { force: true });
+        await symlink(secret, join(root, honest.textPath ?? ""));
+        const reread = await derivePdf(root, "bundle.pdf", pdf, { renderPages: false });
+        expect(reread.text).toContain("--- page 1 ---\nBundle");
+        expect(reread.text.includes("TOP SECRET")).toBe(false);
       } finally {
         await rm(outside, { recursive: true, force: true });
       }
