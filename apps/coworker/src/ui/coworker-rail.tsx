@@ -340,7 +340,7 @@ export function CoworkerRail({
                       </span>
                       <span className="min-w-0 flex-1">
                         <span className="block truncate text-sm font-semibold text-snow">{group.name}</span>
-                        <span className="mt-1 block truncate text-[11px] text-mist">{groupLines[group.id] || members.map((member) => member.name).join(", ")}</span>
+                        <span className="mt-1 block truncate text-[11px] text-mist" data-testid="group-rail-line">{groupLines[group.id] || members.map((member) => member.name).join(", ")}</span>
                       </span>
                     </button>
                   );
