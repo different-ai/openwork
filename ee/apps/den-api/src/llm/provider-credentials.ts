@@ -57,6 +57,63 @@ export function selectLegacyScalarCredentialEnvName(envNames: string[]): string 
   return selectPrimaryCredentialEnvName(envNames, envNames) ?? envNames[0] ?? null
 }
 
+const RUNTIME_ENV_TAG_LENGTH = 5
+
+/**
+ * The tag that scopes a catalog provider's env names to one provider row:
+ * `LPR_` plus the last five alphanumerics of the row id, upper-cased
+ * (`lpr_01kx…120jv` → `LPR_120JV`). It is a pure function of the id, so the
+ * same row always yields the same names and nothing has to be stored or
+ * migrated.
+ */
+export function runtimeProviderEnvTag(providerRowId: string): string {
+  const tail = providerRowId.replace(/[^0-9A-Za-z]/g, "").toUpperCase().slice(-RUNTIME_ENV_TAG_LENGTH)
+  return `LPR_${tail}`
+}
+
+export type RuntimeEnvProvider = {
+  id: string
+  source: string
+  providerConfig: JsonRecord
+}
+
+/**
+ * Only providers created from the models.dev catalog get scoped names. Their
+ * declared names are well-known (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, …):
+ * materialized bare, one organization provider would switch on OpenCode's whole
+ * built-in catalog for that vendor and shadow a key the member set themselves,
+ * and two rows for the same vendor would share one credential slot. Custom
+ * providers keep the exact names their author declared, and the hosted
+ * OpenWork provider keeps `OPENWORK_API_KEY`.
+ */
+export function usesRuntimeProviderEnvTag(provider: Pick<RuntimeEnvProvider, "source">): boolean {
+  return provider.source === "models_dev"
+}
+
+/** The env name a member's machine or a cloud worker sees for one declared name. */
+export function runtimeProviderEnvName(provider: Pick<RuntimeEnvProvider, "id" | "source">, declaredName: string): string {
+  return usesRuntimeProviderEnvTag(provider) ? `${runtimeProviderEnvTag(provider.id)}_${declaredName}` : declaredName
+}
+
+export function runtimeProviderEnvNames(provider: RuntimeEnvProvider): string[] {
+  return readProviderEnvNames(provider.providerConfig).map((name) => runtimeProviderEnvName(provider, name))
+}
+
+/**
+ * Rewrite a provider's declared env names (and the keys of a decoded multi-env
+ * credential) to their runtime names. Stored rows are never rewritten; this is
+ * applied where a provider leaves Den for a machine or worker.
+ */
+export function toRuntimeProviderEnv<T extends RuntimeEnvProvider & { apiKeys?: Record<string, string> | null }>(provider: T): T {
+  if (!usesRuntimeProviderEnvTag(provider) || provider.providerConfig.env === undefined) return provider
+  const providerConfig: JsonRecord = { ...provider.providerConfig, env: runtimeProviderEnvNames(provider) }
+  if (!provider.apiKeys) return { ...provider, providerConfig }
+  const apiKeys = Object.fromEntries(
+    Object.entries(provider.apiKeys).map(([name, value]) => [runtimeProviderEnvName(provider, name), value]),
+  )
+  return { ...provider, providerConfig, apiKeys }
+}
+
 /**
  * A stored credential is a multi-env map only when it parses to a non-empty
  * JSON object whose values are all strings. Real API keys never take that

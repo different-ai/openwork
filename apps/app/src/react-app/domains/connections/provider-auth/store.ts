@@ -394,7 +394,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       merged.set(id, {
         id,
         name: provider.name.trim() || id,
-        env: getCloudProviderEnv(provider.providerConfig),
+        env: provider.runtimeEnvKeys ?? getCloudProviderEnv(provider.providerConfig),
       });
     }
 
