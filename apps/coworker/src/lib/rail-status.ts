@@ -106,6 +106,8 @@ export type RailLineInput = {
 /** The line under the coworker's name. */
 export function describeRailLine({ activity, personality, seed, now = Date.now() }: RailLineInput): string {
   if (!activity) return "Checking current activity…";
+  // A turn that needs words says the same thing here as in the conversation and the header.
+  if (activity.summary) return activity.summary;
   switch (activity.state) {
     case "starting":
       return "Getting ready…";

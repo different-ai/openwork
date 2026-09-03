@@ -72,3 +72,10 @@ test("the rail line prefers now, then needs, then what is next, then the list, t
   assert.ok(FREE_REMARKS.dry.includes(free), free);
   assert.equal(describeRailLine({ activity: activity({ state: "ready" }), personality: "none", seed, now: NOW }), "Ready for an assignment.");
 });
+
+test("a turn that needs words says the same thing in the rail as in the conversation", () => {
+  const seed = "nova";
+  assert.equal(describeRailLine({ activity: activity({ state: "working", detail: "Replying in your discussion", summary: "Still working on it" }), personality: "playful", seed, now: NOW }), "Still working on it");
+  assert.equal(describeRailLine({ activity: activity({ state: "attention", label: "Reply failed", detail: "Replying in your discussion", summary: "Nova couldn't reach the AI model." }), personality: "calm", seed, now: NOW }), "Nova couldn't reach the AI model.");
+  assert.equal(describeRailLine({ activity: activity({ state: "recent", label: "Stopped", summary: "Stopped." }), personality: "dry", seed, now: NOW }), "Stopped.");
+});

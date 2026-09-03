@@ -176,3 +176,9 @@ test("a responsibility run's own thread is listed once, as the run", () => {
   );
   assert.deepEqual(merged.map((entry) => [entry.title, entry.kind]), [["Morning digest", "responsibility"], ["Draft the release note", "assignment"]]);
 });
+
+test("the Now card repeats a turn's own line under the subject instead of inventing a second phrasing", () => {
+  assert.deepEqual(describeNow({ state: "working", label: "Still working", detail: "Replying in your discussion", summary: "Still working on it", updatedAt: now }), { subject: "Replying in your discussion", note: "Still working on it", needsYou: false });
+  assert.deepEqual(describeNow({ state: "attention", label: "Reply failed", detail: "Replying in your discussion", summary: "Nova couldn't reach the AI model.", updatedAt: now }), { subject: "Replying in your discussion", note: "Nova couldn't reach the AI model.", needsYou: false });
+  assert.deepEqual(describeNow({ state: "attention", label: "Needs you", detail: "Wants to run a command", summary: "Wants to run a command", updatedAt: now }), { subject: "Wants to run a command", note: "Wants to run a command", needsYou: true });
+});
