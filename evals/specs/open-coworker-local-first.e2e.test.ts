@@ -1222,6 +1222,9 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
     "Scout and Nova moved their eyewear and pupils toward the same bottom-right pointer, then added a restrained whole-avatar nod and lean. Both stayed animated while unselected and retained different blink durations and offsets so the team never blinked in sync.",
     true,
   );
+  // Idle glances are skipped while the window is hidden or covered (they are for a person who
+  // can see them), so make sure the window is in front before waiting for one.
+  await app.client.send("Page.bringToFront", {});
   // The glance-and-blink overlap lasts about a quarter of a second every five to twelve
   // seconds; polling over the wire would miss it, so the page itself records the moment
   // both classes are present, with the values in force at that instant.

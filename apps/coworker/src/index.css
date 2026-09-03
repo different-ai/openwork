@@ -332,20 +332,29 @@ body.is-resizing-panel * {
   animation: coworker-idle-bob 440ms cubic-bezier(0.2, 0.72, 0.3, 1) 1 both;
 }
 
+/*
+ * The idle motion is sub-pixel (a 0.8px float, turns of about a pixel), so it
+ * is drawn in a handful of steps rather than at 60 frames a second: the eye
+ * cannot tell, but a continuously moving avatar forces this window (with its
+ * vibrancy) to recomposite on every frame — with three or four avatars on
+ * screen that was most of a CPU core spent while the app sat idle. The blink
+ * and the short idle glances keep their smooth curves; they last a fraction of
+ * a second.
+ */
 .coworker-avatar.is-animated .coworker-avatar__body {
-  animation: coworker-float 8.8s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+  animation: coworker-float 8.8s steps(6, jump-none) infinite;
 }
 
 .coworker-avatar.is-animated .coworker-avatar__depth {
-  animation: coworker-depth-turn 8.8s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+  animation: coworker-depth-turn 8.8s steps(6, jump-none) infinite;
 }
 
 .coworker-avatar.is-animated .coworker-avatar__features {
-  animation: coworker-feature-turn 8.8s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+  animation: coworker-feature-turn 8.8s steps(6, jump-none) infinite;
 }
 
 .coworker-avatar.is-animated .coworker-avatar__gaze {
-  animation: coworker-gaze-turn 8.8s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+  animation: coworker-gaze-turn 8.8s steps(6, jump-none) infinite;
 }
 
 .coworker-avatar.is-animated .coworker-avatar__pupils {
@@ -425,20 +434,21 @@ body.is-resizing-panel * {
   transform-origin: center;
 }
 
+/* The mark's idle motion is stepped for the same reason as the avatars' (see above). */
 .coworker-mark:is(.is-animated, .is-loading) .coworker-mark__body {
-  animation: coworker-float var(--mark-motion-duration) cubic-bezier(0.45, 0, 0.55, 1) infinite;
+  animation: coworker-float var(--mark-motion-duration) steps(6, jump-none) infinite;
 }
 
 .coworker-mark:is(.is-animated, .is-loading) .coworker-mark__depth {
-  animation: coworker-depth-turn var(--mark-motion-duration) cubic-bezier(0.45, 0, 0.55, 1) infinite;
+  animation: coworker-depth-turn var(--mark-motion-duration) steps(6, jump-none) infinite;
 }
 
 .coworker-mark:is(.is-animated, .is-loading) .coworker-mark__features {
-  animation: coworker-feature-turn var(--mark-motion-duration) cubic-bezier(0.45, 0, 0.55, 1) infinite;
+  animation: coworker-feature-turn var(--mark-motion-duration) steps(6, jump-none) infinite;
 }
 
 .coworker-mark:is(.is-animated, .is-loading) .coworker-mark__gaze {
-  animation: coworker-gaze-turn var(--mark-motion-duration) cubic-bezier(0.45, 0, 0.55, 1) infinite;
+  animation: coworker-gaze-turn var(--mark-motion-duration) steps(6, jump-none) infinite;
 }
 
 .coworker-mark:is(.is-animated, .is-loading) .coworker-mark__pupils {
