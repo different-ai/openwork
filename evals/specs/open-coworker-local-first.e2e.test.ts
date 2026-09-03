@@ -1731,7 +1731,8 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   await invokeCoworker(app, "localResponsibilities.create", {
     slug: "scout",
     name: "Longer readiness check",
-    instructions: "Write eight numbered sentences about keeping a team's shared notes tidy, then end with LONGER READINESS READY. Do not use tools.",
+    // Long enough that the second run's wait in line outlasts the Assignments list's five-second refresh.
+    instructions: "Write sixteen numbered sentences about keeping a team's shared notes tidy, then end with LONGER READINESS READY. Do not use tools.",
     schedule: { kind: "daily", timezone: "UTC", hour: 10, minute: 0 },
   });
   expect(second).toMatchObject({ ok: true, result: { name: "Second readiness check", state: "active" } });
