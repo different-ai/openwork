@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { coworkerBridge, type CoworkerSummary, type LocalResponsibility, type ProviderSyncRun, type RuntimeInfo } from "@/lib/bridge";
+import { coworkerBridge, type CoworkerSummary, type LocalResponsibility, type ProviderSyncRun, type RuntimeInfo, type TeamStates } from "@/lib/bridge";
 import { describeHeaderStatus, describeNow, describeOutcome, describeStatusDetail, mergeRecentWork, relativeTime, type StatusTone } from "@/lib/activity-summary";
 import type { ConnectState } from "@/lib/connect";
 import { describeCoworkerSummary, showSummaryLine, summaryRowTitle, type CoworkerSummaryLine, type SummaryKind } from "@/lib/coworker-summary";
+import { referralPrompt } from "@/lib/conversation";
 import type { DenSession } from "@/lib/den";
 import { clearAutoPicked, markAutoPicked, peekStartingModel, takeStartingModel } from "@/lib/model-choice";
 import { createCoworkerThreads, recommendModel, type CoworkerActivity, type ThreadListItem } from "@/lib/threads";
@@ -33,6 +34,7 @@ import type { PanelBounds } from "@/lib/panel-layout";
 import { MemoryPanel } from "@/ui/memory";
 import { DocumentBesidePane, DocumentsPanel, lastDocumentsOpened, useDocuments } from "@/ui/documents";
 import { ThreadsPanel, type DocumentHooks } from "@/ui/threads";
+import type { TeamHooks } from "@/ui/team-cards";
 import { WorkersPanel } from "@/ui/workers";
 import { AssignmentsPanel } from "@/ui/assignments";
 import type { WorkerSummary } from "@/lib/workers";
@@ -87,10 +89,11 @@ export function HeaderStatusWord({ activity, engineManaged }: { activity: Cowork
   );
 }
 
-/** A request another view makes of this one: open a settings section, or open one thread. */
+/** A request another view makes of this one: open a settings section, open one thread, or send a message in the open discussion (a request a teammate passed on). */
 export type CoworkerHomeRequest =
   | { id: number; kind: "settings"; section: "model" }
-  | { id: number; kind: "thread"; threadId: string };
+  | { id: number; kind: "thread"; threadId: string }
+  | { id: number; kind: "turn"; prompt: string };
 
 /**
  * What the coworker holds besides its documents — the scheduled assignments and
@@ -152,6 +155,9 @@ export function CoworkerHome({
   onConnectAccount,
   railWidth,
   request = null,
+  onCoworkerAdded,
+  onHandOff,
+  onVisitCoworker,
 }: {
   runtime: RuntimeInfo;
   session: DenSession | null;
@@ -161,6 +167,12 @@ export function CoworkerHome({
   onActivityChange: (activity: CoworkerActivity | null) => void;
   onCoworkerChanged: (coworker: CoworkerSummary) => void;
   onCoworkerRemoved: (slug: string) => void;
+  /** A teammate this coworker proposed was added from the conversation; the rail gains it without leaving. */
+  onCoworkerAdded: (coworker: CoworkerSummary) => void;
+  /** Pass a request to another coworker: switch to them and send it in their open discussion. */
+  onHandOff: (slug: string, prompt: string) => void;
+  /** Open another coworker's conversation (Say hi to a newcomer). */
+  onVisitCoworker: (slug: string) => void;
   onRefreshRuntime: () => Promise<void>;
   /** Stop and start the local AI service; the one honest recovery when it is unavailable. */
   onRestartRuntime: () => Promise<void>;
@@ -251,12 +263,18 @@ export function CoworkerHome({
     expandContextPanel();
     setSettingsFocus({ id, section });
   }, [expandContextPanel, navigateTo]);
+  /** A request passed from a teammate, to send in the open discussion; the id makes repeats distinct. */
+  const [turnRequest, setTurnRequest] = useState<{ id: number; prompt: string } | null>(null);
   const handledRequestRef = useRef(0);
   useEffect(() => {
     if (!request || handledRequestRef.current === request.id) return;
     handledRequestRef.current = request.id;
     if (request.kind === "thread") {
       setOpenThreadRequest({ id: request.id, threadId: request.threadId });
+      return;
+    }
+    if (request.kind === "turn") {
+      setTurnRequest({ id: request.id, prompt: request.prompt });
       return;
     }
     openSettingsSection(request.section, request.id);
@@ -331,6 +349,42 @@ export function CoworkerHome({
   const explain = (text: string) => setDiscussionDraft({ id: Date.now(), text });
   /** The panel's Assignments level hands the composer an empty assignment; the conversation column shows it. */
   const newAssignment = () => setAssignmentDraft({ id: Date.now(), text: "" });
+
+  // How the person answered this coworker's offers about the team, so a tile reads the same after a reload.
+  const [teamStates, setTeamStates] = useState<TeamStates | null>(null);
+  const refreshTeamStates = useCallback(async () => {
+    try {
+      setTeamStates(await coworkerBridge.team.states(coworker.slug));
+    } catch {
+      // The last known answers stand until the next read.
+    }
+  }, [coworker.slug]);
+  useEffect(() => {
+    void refreshTeamStates();
+  }, [refreshTeamStates]);
+  const teamHooks: TeamHooks = {
+    states: teamStates,
+    coworkers,
+    accept: async (card) => {
+      const created = await coworkerBridge.team.accept(coworker.slug, card.id);
+      onCoworkerAdded(created);
+      await refreshTeamStates();
+    },
+    decline: async (card) => {
+      await coworkerBridge.team.decline(coworker.slug, card.id);
+      await refreshTeamStates();
+    },
+    ask: async (card, recent) => {
+      await coworkerBridge.team.referralResolved(coworker.slug, card.id, "asked");
+      await refreshTeamStates();
+      onHandOff(card.to.slug, referralPrompt({ from: { name: coworker.name, role: coworker.role }, message: card.message, why: card.why, recent }));
+    },
+    continueWith: async (card) => {
+      await coworkerBridge.team.referralResolved(coworker.slug, card.id, "continued");
+      await refreshTeamStates();
+    },
+    sayHi: onVisitCoworker,
+  };
 
   useEffect(() => () => onActivityChange(null), [onActivityChange]);
 
@@ -421,6 +475,8 @@ export function CoworkerHome({
             documents={documentHooks}
             summary={summaryLine}
             onOpenSummary={(kind) => openActivityLevel(SUMMARY_LEVELS[kind])}
+            team={teamHooks}
+            turnRequest={turnRequest}
           />
         </main>
       </div>
