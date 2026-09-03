@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { link, mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
-import { basename, join, relative, sep } from "node:path";
+import { basename, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { encode as encodePng } from "fast-png";
 import { encode as encodeJpeg } from "jpeg-js";
 import { looksLikePdf, withPdfDocument } from "./pdfium.js";
@@ -213,54 +213,100 @@ export function pageTextFrom(text: string, page: number): string | null {
   return match ? match[1].trim() : null;
 }
 
-type StoredManifest = Omit<DerivedPdf, "text">;
+/**
+ * Fields a stored manifest may supply. Every path is recomputed from trusted
+ * inputs (workspace root, content digest, the current attachment's sanitized
+ * filename) rather than read back, so a manifest planted in a workspace can
+ * never steer a filesystem read.
+ */
+type StoredManifest = {
+  pageCount: number;
+  textPages: number;
+  textBudgetExhausted: boolean;
+  pagesWithoutText: number[];
+  renderedPages: PdfPageImage[];
+  renderBudgetExhausted: boolean;
+  hasText: boolean;
+};
 
-function parseManifest(value: unknown): StoredManifest | null {
-  if (!isRecord(value) || value.version !== MANIFEST_VERSION) return null;
-  const { sha256: digest, filename, bytes, pageCount, textPages, textBudgetExhausted, pagesWithoutText, renderedPages, renderBudgetExhausted, loadError, pdfPath, directory, textPath } = value;
-  if (typeof digest !== "string" || typeof filename !== "string" || typeof bytes !== "number" || typeof pageCount !== "number") return null;
-  if (typeof textPages !== "number" || typeof textBudgetExhausted !== "boolean" || !Array.isArray(pagesWithoutText) || !Array.isArray(renderedPages) || typeof renderBudgetExhausted !== "boolean") return null;
+function isCount(value: unknown): value is number {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0;
+}
+
+function parseManifest(value: unknown, digest: string): StoredManifest | null {
+  if (!isRecord(value) || value.version !== MANIFEST_VERSION || value.sha256 !== digest) return null;
+  const { pageCount, textPages, textBudgetExhausted, pagesWithoutText, renderedPages, renderBudgetExhausted, hasText } = value;
+  if (!isCount(pageCount) || !isCount(textPages) || textPages > pageCount) return null;
+  if (typeof textBudgetExhausted !== "boolean" || typeof renderBudgetExhausted !== "boolean" || typeof hasText !== "boolean") return null;
+  if (!Array.isArray(pagesWithoutText) || !Array.isArray(renderedPages)) return null;
+  if (!pagesWithoutText.every((page) => isCount(page) && page >= 1 && page <= pageCount)) return null;
+
   const pages: PdfPageImage[] = [];
+  const seen = new Set<number>();
   for (const entry of renderedPages) {
     if (!isRecord(entry)) return null;
-    const { page, width, height, bytes: imageBytes, mime, fileName } = entry;
-    if (typeof page !== "number" || typeof width !== "number" || typeof height !== "number" || typeof imageBytes !== "number" || typeof fileName !== "string") return null;
+    const { page, width, height, bytes, mime, fileName } = entry;
+    if (!isCount(page) || page < 1 || page > pageCount || seen.has(page)) return null;
+    if (!isCount(width) || !isCount(height) || !isCount(bytes) || width === 0 || height === 0) return null;
     if (mime !== "image/png" && mime !== "image/jpeg") return null;
-    pages.push({ page, width, height, bytes: imageBytes, mime, fileName });
+    if (fileName !== pageFileName(page, mime)) return null;
+    seen.add(page);
+    pages.push({ page, width, height, bytes, mime, fileName });
   }
+  pages.sort((left, right) => left.page - right.page);
   return {
-    sha256: digest,
-    filename,
-    bytes,
     pageCount,
-    pdfPath: typeof pdfPath === "string" ? pdfPath : null,
-    directory: typeof directory === "string" ? directory : null,
-    textPath: typeof textPath === "string" ? textPath : null,
     textPages,
     textBudgetExhausted,
-    pagesWithoutText: pagesWithoutText.filter((page): page is number => typeof page === "number"),
+    pagesWithoutText: pagesWithoutText.filter(isCount),
     renderedPages: pages,
     renderBudgetExhausted,
-    loadError: typeof loadError === "string" ? loadError : null,
+    hasText,
   };
 }
 
-async function readManifest(directory: string): Promise<DerivedPdf | null> {
+async function readManifest(root: string, derivedDirectory: string, digest: string, safeFilename: string, pdfPath: string): Promise<DerivedPdf | null> {
   try {
-    const parsed: unknown = JSON.parse(await readFile(join(directory, MANIFEST_FILENAME), "utf8"));
-    const stored = parseManifest(parsed);
+    const parsed: unknown = JSON.parse(await readFile(join(derivedDirectory, MANIFEST_FILENAME), "utf8"));
+    const stored = parseManifest(parsed, digest);
     if (!stored) return null;
-    const text = stored.textPath ? await readFile(join(directory, TEXT_FILENAME), "utf8") : "";
-    return { ...stored, text };
+    const textFile = join(derivedDirectory, TEXT_FILENAME);
+    const text = stored.hasText ? await readFile(textFile, "utf8") : "";
+    return {
+      sha256: digest,
+      filename: safeFilename,
+      bytes: 0,
+      pageCount: stored.pageCount,
+      pdfPath,
+      directory: toWorkerRelativePath(root, derivedDirectory),
+      textPath: stored.hasText ? toWorkerRelativePath(root, textFile) : null,
+      text,
+      textPages: stored.textPages,
+      textBudgetExhausted: stored.textBudgetExhausted,
+      pagesWithoutText: stored.pagesWithoutText,
+      renderedPages: stored.renderedPages,
+      renderBudgetExhausted: stored.renderBudgetExhausted,
+      loadError: null,
+    };
   } catch {
     return null;
   }
 }
 
+/** Persists only what `parseManifest` reads back; paths are always recomputed. */
 async function writeManifest(directory: string, derived: DerivedPdf): Promise<void> {
-  const { text, ...stored } = derived;
-  void text;
-  await writeFileAtomically(join(directory, MANIFEST_FILENAME), JSON.stringify({ version: MANIFEST_VERSION, ...stored }, null, 2));
+  const stored = {
+    version: MANIFEST_VERSION,
+    sha256: derived.sha256,
+    pageCount: derived.pageCount,
+    textPages: derived.textPages,
+    textBudgetExhausted: derived.textBudgetExhausted,
+    pagesWithoutText: derived.pagesWithoutText,
+    renderedPages: derived.renderedPages,
+    renderBudgetExhausted: derived.renderBudgetExhausted,
+    hasText: derived.textPath !== null,
+  };
+  await writeFileAtomically(join(directory, MANIFEST_FILENAME), JSON.stringify(stored, null, 2));
 }
 
 function encodeBitmap(bitmap: PdfRenderedBitmap): EncodedPage {
@@ -387,15 +433,31 @@ function derivedDirectoryFor(root: string, digest: string, safeFilename: string)
   return join(root, DERIVED_DIR, `${digest.slice(0, 16)}-${stemOf(safeFilename)}`);
 }
 
+function isWithin(parent: string, candidate: string): boolean {
+  const rel = relative(parent, candidate);
+  return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
+}
+
+/**
+ * The bundle directory for a derived result, computed from the digest and the
+ * sanitized filename only. Never derived from stored strings.
+ */
+function bundleDirectory(root: string, derived: DerivedPdf): string | null {
+  if (!derived.directory || !/^[0-9a-f]{64}$/.test(derived.sha256)) return null;
+  const directory = derivedDirectoryFor(root, derived.sha256, safePdfFilename(derived.filename));
+  return isWithin(resolve(root, DERIVED_DIR), directory) ? directory : null;
+}
+
 async function build(root: string | null, filename: string, bytes: Uint8Array, options: DeriveOptions, existing: MemoryEntry | null): Promise<MemoryEntry> {
   const digest = sha256(bytes);
   const safeFilename = safePdfFilename(filename);
   const derivedDirectory = root ? derivedDirectoryFor(root, digest, safeFilename) : null;
 
   let current = existing?.derived ?? null;
-  if (!current && derivedDirectory) {
-    const stored = await readManifest(derivedDirectory);
-    if (stored && stored.sha256 === digest) current = stored;
+  if (!current && derivedDirectory && root) {
+    const pdfPath = await materializePdf(root, safeFilename, digest, bytes);
+    const stored = await readManifest(root, derivedDirectory, digest, safeFilename, pdfPath);
+    if (stored) current = { ...stored, bytes: bytes.byteLength };
   }
 
   if (!current) {
@@ -493,7 +555,8 @@ export async function renderPdfPages(root: string | null, derived: DerivedPdf, b
   if (wanted.length === 0) return derived;
 
   const current = memory.get(derived.sha256)?.derived ?? derived;
-  const derivedDirectory = join(root, derived.directory);
+  const derivedDirectory = bundleDirectory(root, derived);
+  if (!derivedDirectory) return derived;
   await mkdir(derivedDirectory, { recursive: true });
   const { rendered } = await renderPageImages(bytes, wanted, async (page, image) => {
     await writeFileAtomically(join(derivedDirectory, pageFileName(page, image.mime)), image.bytes);
@@ -505,11 +568,13 @@ export async function renderPdfPages(root: string | null, derived: DerivedPdf, b
   return updated;
 }
 
-/** Reads one rendered page image from the workspace bundle. */
+/** Reads one rendered page image from the workspace bundle; the path comes from the page number and mime, never from stored names. */
 export async function readPageImage(root: string | null, derived: DerivedPdf, page: PdfPageImage): Promise<Uint8Array | null> {
-  if (!root || !derived.directory) return null;
+  if (!root) return null;
+  const directory = bundleDirectory(root, derived);
+  if (!directory || !isCount(page.page) || page.page < 1 || (page.mime !== "image/png" && page.mime !== "image/jpeg")) return null;
   try {
-    return await readFile(join(root, derived.directory, page.fileName));
+    return await readFile(join(directory, pageFileName(page.page, page.mime)));
   } catch {
     return null;
   }

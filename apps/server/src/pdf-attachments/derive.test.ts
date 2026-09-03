@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtemp, readFile, readdir, rm, stat } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, relative } from "node:path";
+import { createHash } from "node:crypto";
 
 import {
   DERIVED_DIR,
@@ -196,6 +197,65 @@ describe("derivePdf", () => {
     expect(derived.textPath).toBeNull();
     expect(derived.text).toContain("--- page 1 ---\nMemo");
     expect(derived.renderedPages).toEqual([]);
+  });
+
+  test("ignores a planted manifest that points page images or paths outside the bundle", async () => {
+    await withWorkspace(async (root) => {
+      const outside = await mkdtemp(join(tmpdir(), "openwork-pdf-secret-"));
+      try {
+        const secret = join(outside, "secret.txt");
+        await writeFile(secret, "TOP SECRET CONTENT");
+        const pdf = buildTestPdf(["Planted"]);
+        const digest = createHash("sha256").update(pdf).digest("hex");
+        const bundle = join(root, DERIVED_DIR, `${digest.slice(0, 16)}-planted`);
+        await mkdir(bundle, { recursive: true });
+        const escape = relative(bundle, secret).split("/").join("/");
+        await writeFile(join(bundle, "manifest.json"), JSON.stringify({
+          version: 2,
+          sha256: digest,
+          pageCount: 1,
+          textPages: 1,
+          textBudgetExhausted: false,
+          pagesWithoutText: [],
+          renderedPages: [{ page: 1, width: 10, height: 10, bytes: 18, mime: "image/png", fileName: escape }],
+          renderBudgetExhausted: false,
+          hasText: false,
+          directory: relative(root, outside),
+          pdfPath: escape,
+          textPath: escape,
+        }));
+
+        const derived = await derivePdf(root, "planted.pdf", pdf, { renderPages: true });
+        expect(derived.directory).toBe(`${DERIVED_DIR}/${digest.slice(0, 16)}-planted`);
+        expect(derived.pdfPath?.startsWith(`${MATERIALIZED_DIR}/`)).toBe(true);
+        expect(derived.renderedPages.map((page) => page.fileName)).toEqual(["page-001.png"]);
+        const image = await readPageImage(root, derived, derived.renderedPages[0]);
+        expect(Buffer.from(image?.subarray(0, 8) ?? [])).toEqual(PNG_SIGNATURE);
+        expect(Buffer.from(image ?? []).includes("TOP SECRET")).toBe(false);
+
+        // Even a tampered in-memory descriptor cannot steer the read outside the bundle.
+        const tampered = { ...derived, directory: relative(root, outside), filename: "../../planted.pdf" };
+        const escaped = await readPageImage(root, tampered, { page: 1, width: 10, height: 10, bytes: 18, mime: "image/png", fileName: escape });
+        expect(escaped === null || !Buffer.from(escaped).includes("TOP SECRET")).toBe(true);
+        expect(await readPageImage(root, derived, { ...derived.renderedPages[0], page: -1 })).toBeNull();
+      } finally {
+        await rm(outside, { recursive: true, force: true });
+      }
+    });
+  });
+
+  test("rejects manifests whose page metadata is out of range and re-derives", async () => {
+    await withWorkspace(async (root) => {
+      const pdf = buildTestPdf(["One", "Two"]);
+      const first = await derivePdf(root, "meta.pdf", pdf, { renderPages: true });
+      const manifestPath = join(root, first.directory ?? "", "manifest.json");
+      const stored = JSON.parse(await readFile(manifestPath, "utf8"));
+      stored.renderedPages[0].page = 99;
+      await writeFile(manifestPath, JSON.stringify(stored));
+      resetDerivedPdfMemory();
+      const again = await derivePdf(root, "meta.pdf", pdf, { renderPages: true });
+      expect(again.renderedPages.map((page) => page.page)).toEqual([1, 2]);
+    });
   });
 
   test("safe filenames keep readable stems and always end in .pdf", () => {
