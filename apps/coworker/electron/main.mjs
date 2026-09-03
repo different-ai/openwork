@@ -37,11 +37,14 @@ import {
 import {
   appendGroupEvent,
   archiveGroup,
+  beginGroupTurn,
   createGroup,
   getGroup,
   listGroups,
   readGroupTimeline,
+  reconcileInterruptedGroupTurns,
   updateGroup,
+  updateGroupTurn,
 } from "./groups.mjs";
 import {
   attachLocalResponsibilityThread,
@@ -1156,6 +1159,17 @@ const commands = {
   "groups.archive": async ({ id }) => archiveGroup(coworkersDir, id),
   "groups.readTimeline": async ({ id, limit }) => readGroupTimeline(coworkersDir, id, Number.isFinite(limit) ? { limit } : {}),
   "groups.appendEvent": async ({ id, event }) => appendGroupEvent(coworkersDir, id, event),
+  // One turn per message from the person: the record is the source of truth the
+  // view and recovery read, so a double Send or a quit mid-turn loses nothing.
+  "groups.beginTurn": async ({ id, clientMessageId, prompt }) => beginGroupTurn(coworkersDir, id, { clientMessageId, prompt }),
+  "groups.updateTurn": async ({ id, turnId, patch }) => updateGroupTurn(coworkersDir, id, turnId, patch ?? {}),
+  // The window drives group turns, so a fresh window means none is live: every
+  // turn still recorded as running was cut off and is settled as partial here.
+  "groups.recoverInterrupted": async () => {
+    const coworkers = await listCoworkers(coworkersDir).catch(() => []);
+    const names = new Map(coworkers.map((coworker) => [coworker.slug, coworker.name]));
+    return reconcileInterruptedGroupTurns(coworkersDir, { nameFor: (slug) => names.get(slug) ?? slug });
+  },
   "coworkers.files.list": async ({ slug }) => listMemoryFiles(coworkersDir, slug),
   "coworkers.files.read": async ({ slug, path: relativePath }) => ({
     content: await readCoworkerFile(coworkersDir, slug, relativePath),

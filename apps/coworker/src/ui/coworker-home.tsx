@@ -74,6 +74,7 @@ export function CoworkerHome({
   onRepairConnect,
   onConnectAccount,
   railWidth,
+  settingsRequest = null,
 }: {
   runtime: RuntimeInfo;
   session: DenSession | null;
@@ -96,6 +97,8 @@ export function CoworkerHome({
   onConnectAccount: () => void;
   /** Current width of the team rail, so the thread column keeps its minimum before this panel grows. */
   railWidth: number;
+  /** Open Coworker settings at one section as soon as this view shows (a group's "Choose AI model"). */
+  settingsRequest?: { id: number; section: "model" } | null;
 }) {
   const [contextView, setContextView] = useState<ContextView>("overview");
   const [settingsFocus, setSettingsFocus] = useState<{ id: number; section: "model" } | null>(null);
@@ -123,6 +126,14 @@ export function CoworkerHome({
     setContextView(view);
     if (contextPanel.collapsed) contextPanel.expand();
   }
+  const handledSettingsRequestRef = useRef(0);
+  useEffect(() => {
+    if (!settingsRequest || handledSettingsRequestRef.current === settingsRequest.id) return;
+    handledSettingsRequestRef.current = settingsRequest.id;
+    setContextView("settings");
+    if (contextPanel.collapsed) contextPanel.expand();
+    setSettingsFocus({ id: settingsRequest.id, section: settingsRequest.section });
+  }, [contextPanel, settingsRequest]);
   /** Escape closes the panel when nothing else is using the key. */
   const contextPanelOpen = !contextPanel.collapsed;
   const collapseContextPanel = contextPanel.collapse;
