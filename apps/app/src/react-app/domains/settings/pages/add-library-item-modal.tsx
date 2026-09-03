@@ -17,9 +17,15 @@ import { t } from "../../../../i18n";
 import { TextInput } from "../../../design-system/text-input";
 import { createDenClient, readDenSettings } from "../../../../app/lib/den";
 import {
+  emptyLibraryMcpConnectionForm,
+  libraryMcpConnectionFormIncomplete,
   slugifyLibraryItemName,
+  withLibraryMcpAuthType,
   type CreateLibraryItemInput,
   type LibraryAuthorableKind,
+  type LibraryMcpAuthType,
+  type LibraryMcpConnectionForm,
+  type LibraryMcpCredentialMode,
   type LibraryPluginComponentDraft,
   type LibraryPluginComponentKind,
 } from "../library";
@@ -41,6 +47,8 @@ export type AddLibraryItemModalProps = {
   kind: LibraryAuthorableKind | null;
   busy?: boolean;
   cloud?: boolean;
+  /** Owners and admins can configure a plugin's MCP connection inline; Den refuses it from members. */
+  canConfigureMcpConnections?: boolean;
   onClose: () => void;
   onCreate: (input: CreateLibraryItemInput) => Promise<string>;
 };
@@ -96,8 +104,156 @@ function bodyLabelForKind(kind: Exclude<LibraryAuthorableKind, "plugin" | "mcp">
   return t("extensions.add_agent_body_label");
 }
 
-function emptyComponent(kind: LibraryPluginComponentKind): LibraryPluginComponentDraft {
-  return { kind, name: "", description: "", content: "" };
+function emptyComponent(kind: LibraryPluginComponentKind, withConnection: boolean): LibraryPluginComponentDraft {
+  return {
+    kind,
+    name: "",
+    description: "",
+    content: "",
+    ...(kind === "mcp" && withConnection ? { connection: emptyLibraryMcpConnectionForm() } : {}),
+  };
+}
+
+function ChoicePills<TValue extends string>(props: {
+  label: string;
+  options: Array<{ value: TValue; label: string }>;
+  value: TValue;
+  disabled: boolean;
+  onChange: (value: TValue) => void;
+}) {
+  return (
+    <div>
+      <div className="mb-1 text-xs font-medium text-dls-secondary">{props.label}</div>
+      <div role="group" aria-label={props.label} className="flex flex-wrap gap-1.5">
+        {props.options.map((option) => {
+          const selected = option.value === props.value;
+          return (
+            <button
+              key={option.value}
+              type="button"
+              aria-pressed={selected}
+              disabled={props.disabled}
+              className={`rounded-lg px-3 py-1.5 text-xs font-medium transition disabled:cursor-not-allowed disabled:opacity-60 ${
+                selected ? "bg-foreground text-background" : "bg-dls-hover text-dls-secondary hover:text-dls-text"
+              }`}
+              onClick={() => props.onChange(option.value)}
+            >
+              {option.label}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/** The authentication half of Den's Connectors form; access follows the plugin's own sharing. */
+function McpConnectionFields(props: {
+  connection: LibraryMcpConnectionForm;
+  disabled: boolean;
+  onChange: (update: (connection: LibraryMcpConnectionForm) => LibraryMcpConnectionForm) => void;
+}) {
+  const { connection, disabled, onChange } = props;
+  const authOptions: Array<{ value: LibraryMcpAuthType; label: string }> = [
+    { value: "oauth", label: t("extensions.add_mcp_auth_oauth") },
+    { value: "apikey", label: t("extensions.add_mcp_auth_apikey") },
+    { value: "none", label: t("extensions.add_mcp_auth_none") },
+  ];
+  const accountOptions: Array<{ value: LibraryMcpCredentialMode; label: string }> = [
+    { value: "per_member", label: t("extensions.add_mcp_account_per_member") },
+    { value: "shared", label: t("extensions.add_mcp_account_shared") },
+  ];
+  return (
+    <div className="flex flex-col gap-3 rounded-xl bg-dls-hover/60 p-4">
+      <p className="text-xs text-dls-secondary">{t("extensions.add_mcp_connection_hint")}</p>
+      <ChoicePills
+        label={t("extensions.add_mcp_auth_label")}
+        options={authOptions}
+        value={connection.authType}
+        disabled={disabled}
+        onChange={(authType) => onChange((current) => withLibraryMcpAuthType(current, authType))}
+      />
+      {connection.authType === "apikey" ? (
+        <TextInput
+          label={t("extensions.add_mcp_api_key_label")}
+          hint={t("extensions.add_mcp_api_key_hint")}
+          type="password"
+          autoComplete="new-password"
+          autoCapitalize="none"
+          autoCorrect="off"
+          spellCheck={false}
+          value={connection.apiKey}
+          disabled={disabled}
+          placeholder="sk-..."
+          className={libraryFieldClass}
+          onChange={(event) => {
+            const apiKey = event.currentTarget.value;
+            onChange((current) => ({ ...current, apiKey }));
+          }}
+        />
+      ) : null}
+      {connection.authType === "oauth" && !connection.useOAuthClient ? (
+        <button
+          type="button"
+          disabled={disabled}
+          className="self-start text-xs font-medium text-dls-secondary underline underline-offset-4 hover:text-dls-text"
+          onClick={() => onChange((current) => ({ ...current, useOAuthClient: true }))}
+        >
+          {t("extensions.add_mcp_oauth_app_toggle")}
+        </button>
+      ) : null}
+      {connection.authType === "oauth" && connection.useOAuthClient ? (
+        <div className="flex flex-col gap-3 rounded-xl bg-dls-bg p-4">
+          <p className="text-xs text-dls-secondary">{t("extensions.add_mcp_oauth_app_hint")}</p>
+          <TextInput
+            label={t("extensions.add_mcp_oauth_client_id_label")}
+            autoComplete="off"
+            autoCapitalize="none"
+            autoCorrect="off"
+            spellCheck={false}
+            value={connection.oauthClientId}
+            disabled={disabled}
+            className={libraryFieldClass}
+            onChange={(event) => {
+              const oauthClientId = event.currentTarget.value;
+              onChange((current) => ({ ...current, oauthClientId }));
+            }}
+          />
+          <TextInput
+            label={t("extensions.add_mcp_oauth_client_secret_label")}
+            type="password"
+            autoComplete="new-password"
+            autoCapitalize="none"
+            autoCorrect="off"
+            spellCheck={false}
+            value={connection.oauthClientSecret}
+            disabled={disabled}
+            className={libraryFieldClass}
+            onChange={(event) => {
+              const oauthClientSecret = event.currentTarget.value;
+              onChange((current) => ({ ...current, oauthClientSecret }));
+            }}
+          />
+        </div>
+      ) : null}
+      {connection.authType === "oauth" ? (
+        <div>
+          <ChoicePills
+            label={t("extensions.add_mcp_account_label")}
+            options={accountOptions}
+            value={connection.credentialMode}
+            disabled={disabled}
+            onChange={(credentialMode) => onChange((current) => ({ ...current, credentialMode }))}
+          />
+          <p className="mt-1.5 text-xs text-dls-secondary">
+            {connection.credentialMode === "per_member"
+              ? t("extensions.add_mcp_account_per_member_hint")
+              : t("extensions.add_mcp_account_shared_hint")}
+          </p>
+        </div>
+      ) : null}
+    </div>
+  );
 }
 
 const COMPONENT_META: Record<LibraryPluginComponentKind, { label: string; hint: string }> = {
@@ -125,11 +281,13 @@ export function AddLibraryItemModal(props: AddLibraryItemModalProps) {
   const [description, setDescription] = useState("");
   const [instructions, setInstructions] = useState("");
   const [components, setComponents] = useState<LibraryPluginComponentDraft[]>([]);
+  const [connection, setConnection] = useState<LibraryMcpConnectionForm>(emptyLibraryMcpConnectionForm);
   const [shareOrgWide, setShareOrgWide] = useState(false);
   const [marketplaceId, setMarketplaceId] = useState("");
   const [marketplaces, setMarketplaces] = useState<MarketplaceOption[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const configureConnections = props.cloud === true && props.canConfigureMcpConnections === true;
 
   useEffect(() => {
     if (!props.open) return;
@@ -137,6 +295,7 @@ export function AddLibraryItemModal(props: AddLibraryItemModalProps) {
     setDescription("");
     setInstructions("");
     setComponents([]);
+    setConnection(emptyLibraryMcpConnectionForm());
     setShareOrgWide(false);
     setMarketplaceId("");
     setError(null);
@@ -176,6 +335,17 @@ export function AddLibraryItemModal(props: AddLibraryItemModalProps) {
     )));
   };
 
+  const updateComponentConnection = (
+    index: number,
+    update: (connection: LibraryMcpConnectionForm) => LibraryMcpConnectionForm,
+  ) => {
+    setComponents((current) => current.map((component, currentIndex) => (
+      currentIndex === index && component.connection
+        ? { ...component, connection: update(component.connection) }
+        : component
+    )));
+  };
+
   const handleSubmit = async () => {
     if (!kind || submitting) return;
     const trimmedName = name.trim();
@@ -190,6 +360,10 @@ export function AddLibraryItemModal(props: AddLibraryItemModalProps) {
     if (kind === "mcp") {
       if (!instructions.trim()) {
         setError(t("extensions.add_mcp_url_required"));
+        return;
+      }
+      if (configureConnections && libraryMcpConnectionFormIncomplete(connection)) {
+        setError(t("extensions.add_mcp_api_key_required"));
         return;
       }
     } else if (kind !== "plugin") {
@@ -212,6 +386,10 @@ export function AddLibraryItemModal(props: AddLibraryItemModalProps) {
           setError(t("extensions.add_plugin_component_incomplete"));
           return;
         }
+        if (component.connection && libraryMcpConnectionFormIncomplete(component.connection)) {
+          setError(t("extensions.add_mcp_api_key_required"));
+          return;
+        }
       }
     }
     setError(null);
@@ -224,6 +402,7 @@ export function AddLibraryItemModal(props: AddLibraryItemModalProps) {
         orgWide: shareOrgWide,
         marketplaceId: marketplaceId || undefined,
         components: kind === "plugin" ? components : undefined,
+        connection: kind === "mcp" && configureConnections ? connection : undefined,
       });
       props.onClose();
     } catch (caught) {
@@ -300,7 +479,7 @@ export function AddLibraryItemModal(props: AddLibraryItemModalProps) {
                       variant="outline"
                       size="sm"
                       disabled={busy}
-                      onClick={() => setComponents((current) => [...current, emptyComponent(componentKind)])}
+                      onClick={() => setComponents((current) => [...current, emptyComponent(componentKind, configureConnections)])}
                     >
                       <Plus size={14} />
                       {COMPONENT_META[componentKind].label}
@@ -353,13 +532,22 @@ export function AddLibraryItemModal(props: AddLibraryItemModalProps) {
                             />
                           ) : null}
                           {component.kind === "mcp" ? (
-                            <TextInput
-                              value={component.content}
-                              disabled={busy}
-                              placeholder="https://mcp.example.com/mcp"
-                              className={libraryFieldClass}
-                              onChange={(event) => updateComponent(index, { content: event.currentTarget.value })}
-                            />
+                            <>
+                              <TextInput
+                                value={component.content}
+                                disabled={busy}
+                                placeholder="https://mcp.example.com/mcp"
+                                className={libraryFieldClass}
+                                onChange={(event) => updateComponent(index, { content: event.currentTarget.value })}
+                              />
+                              {component.connection ? (
+                                <McpConnectionFields
+                                  connection={component.connection}
+                                  disabled={busy}
+                                  onChange={(update) => updateComponentConnection(index, update)}
+                                />
+                              ) : null}
+                            </>
                           ) : (
                             <Textarea
                               value={component.content}
@@ -443,15 +631,24 @@ export function AddLibraryItemModal(props: AddLibraryItemModalProps) {
               </p>
             ) : null}
             {kind === "mcp" ? (
-              <TextInput
-                label={t("extensions.add_mcp_url_label")}
-                hint={t("extensions.add_mcp_url_hint")}
-                value={instructions}
-                disabled={busy}
-                placeholder="https://mcp.example.com/mcp"
-                className={libraryFieldClass}
-                onChange={(event) => setInstructions(event.currentTarget.value)}
-              />
+              <>
+                <TextInput
+                  label={t("extensions.add_mcp_url_label")}
+                  hint={t("extensions.add_mcp_url_hint")}
+                  value={instructions}
+                  disabled={busy}
+                  placeholder="https://mcp.example.com/mcp"
+                  className={libraryFieldClass}
+                  onChange={(event) => setInstructions(event.currentTarget.value)}
+                />
+                {configureConnections ? (
+                  <McpConnectionFields
+                    connection={connection}
+                    disabled={busy}
+                    onChange={(update) => setConnection(update)}
+                  />
+                ) : null}
+              </>
             ) : (
               <>
                 <TextInput

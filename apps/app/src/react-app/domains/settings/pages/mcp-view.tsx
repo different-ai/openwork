@@ -95,6 +95,7 @@ import {
   type McpViewLocalState,
 } from "./mcp-view-state";
 import { useCloudSession } from "../cloud/cloud-session-provider";
+import { isConnectAdminRole } from "../connect-cloud-readiness";
 import { useDenAuth } from "../../cloud/den-auth-provider";
 import {
   libraryAddAction,
@@ -1614,6 +1615,7 @@ export function McpView(props: McpViewProps) {
         kind={addAuthorableKind}
         busy={props.busy}
         cloud={cloudSession.isSignedIn}
+        canConfigureMcpConnections={isConnectAdminRole(cloudSession.activeOrganization?.role)}
         onClose={() => setAddAuthorableKind(null)}
         onCreate={handleCreateLibraryItem}
       />

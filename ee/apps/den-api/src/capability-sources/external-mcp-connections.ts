@@ -414,6 +414,42 @@ export async function listActiveExternalMcpConnectionBindings(input: {
     ))
 }
 
+/**
+ * A connection that a plugin created for its own MCP requirement follows that
+ * plugin's lifecycle. Once every plugin bound to it is archived or deleted the
+ * connector is retired: the Connections list must not surface it as an
+ * orphaned, unmanaged row. The binding and credentials stay, so restoring the
+ * plugin brings the connection back. A connection an admin created directly
+ * is never retired here, even when an archived plugin also depends on it.
+ */
+export async function listRetiredPluginOwnedExternalMcpConnectionIds(input: {
+  organizationId: OrganizationId
+  connectionIds: ExternalMcpConnectionId[]
+}): Promise<Set<ExternalMcpConnectionId>> {
+  if (input.connectionIds.length === 0) return new Set()
+  const rows = await db
+    .select({
+      connectionId: PluginMcpRequirementBindingTable.externalMcpConnectionId,
+      connectionOwnedByPlugin: PluginMcpRequirementBindingTable.connectionOwnedByPlugin,
+      pluginDeletedAt: PluginTable.deletedAt,
+      pluginStatus: PluginTable.status,
+    })
+    .from(PluginMcpRequirementBindingTable)
+    .innerJoin(PluginTable, eq(PluginMcpRequirementBindingTable.pluginId, PluginTable.id))
+    .where(and(
+      eq(PluginMcpRequirementBindingTable.organizationId, input.organizationId),
+      inArray(PluginMcpRequirementBindingTable.externalMcpConnectionId, input.connectionIds),
+      eq(PluginTable.organizationId, input.organizationId),
+    ))
+  const ownedByPlugin = new Set<ExternalMcpConnectionId>()
+  const requiredByActivePlugin = new Set<ExternalMcpConnectionId>()
+  for (const row of rows) {
+    if (row.connectionOwnedByPlugin) ownedByPlugin.add(row.connectionId)
+    if (row.pluginStatus === "active" && row.pluginDeletedAt === null) requiredByActivePlugin.add(row.connectionId)
+  }
+  return new Set([...ownedByPlugin].filter((connectionId) => !requiredByActivePlugin.has(connectionId)))
+}
+
 export type ExternalMcpAccessInput = {
   orgWide: boolean
   memberIds: OrgMembershipId[]

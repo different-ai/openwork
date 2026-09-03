@@ -219,9 +219,33 @@ export const resourceAccessGrantWriteSchema = z.object({
   }
 })
 
+/**
+ * The same connector setup an admin fills in on the Connections page. It
+ * configures the connection for a plugin-declared MCP server, either inline
+ * while creating the plugin or later through the configure route.
+ */
+export const pluginMcpConnectionSetupSchema = z.object({
+  authType: z.enum(["oauth", "apikey", "none"]).optional().default("oauth"),
+  credentialMode: z.enum(["shared", "per_member"]).optional(),
+  apiKey: z.string().trim().min(1).max(4096).optional(),
+  oauthClient: z.object({
+    clientId: z.string().trim().min(1).max(512),
+    clientSecret: z.string().trim().min(1).max(4096).optional(),
+  }).optional(),
+})
+
 export const pluginCreateComponentSchema = z.object({
   type: configObjectTypeSchema,
   input: configObjectInputSchema,
+  connection: pluginMcpConnectionSetupSchema.optional(),
+}).superRefine((value, ctx) => {
+  if (value.connection && value.type !== "mcp") {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "connection is only allowed on mcp components.",
+      path: ["connection"],
+    })
+  }
 })
 
 export const pluginCreateSchema = z.object({
@@ -424,16 +448,9 @@ export const githubPluginMcpImportSchema = githubPluginMcpImportPreviewSchema.ex
   selectedServerNames: z.array(z.string().trim().min(1).max(255)).max(200).optional(),
 })
 
-export const pluginMcpRequirementConfigureSchema = z.object({
+export const pluginMcpRequirementConfigureSchema = pluginMcpConnectionSetupSchema.extend({
   configObjectId: configObjectIdSchema,
   serverName: z.string().trim().min(1).max(255),
-  authType: z.enum(["oauth", "apikey", "none"]).optional().default("oauth"),
-  credentialMode: z.enum(["shared", "per_member"]).optional(),
-  apiKey: z.string().trim().min(1).max(4096).optional(),
-  oauthClient: z.object({
-    clientId: z.string().trim().min(1).max(512),
-    clientSecret: z.string().trim().min(1).max(4096).optional(),
-  }).optional(),
 })
 
 export const githubDiscoveryTreeQuerySchema = z.object({

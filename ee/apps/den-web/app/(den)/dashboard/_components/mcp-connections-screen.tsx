@@ -23,6 +23,14 @@ import {
 } from "./mcp-connection-editing";
 import { formatConnectionCreatorAttribution } from "./mcp-connection-display";
 import {
+  AUTH_TYPE_OPTIONS,
+  CREDENTIAL_MODE_OPTIONS,
+  credentialModeDescription,
+  MCP_OAUTH_REDIRECT_DOCS_URL,
+  SegmentedControl,
+  type SegmentedControlOption,
+} from "./mcp-connection-form-controls";
+import {
   connectionNeedsOAuthClientConfiguration,
   marketplaceConnectionNeedsAdminSetup,
 } from "./mcp-connection-setup";
@@ -87,7 +95,6 @@ const MCP_REQUIREMENTS_DISCOVERY_DELAY_MS = 500;
 // single-URL requirements discovery.
 const SMART_RESOLVE_DELAY_MS = 800;
 const MCP_TOOL_PAGE_SIZE = 50;
-const MCP_OAUTH_REDIRECT_DOCS_URL = "https://openworklabs.com/docs/cloud/share-with-your-team/shared-mcp-connections#oauth-redirect-url";
 
 function isDiscoverableMcpUrl(value: string): boolean {
   try {
@@ -2064,58 +2071,7 @@ function McpToolCatalog({ connection }: { connection: ExternalMcpConnection }) {
   );
 }
 
-type SegmentedControlOption<TValue extends string> = {
-  value: TValue;
-  label: string;
-};
-
-function SegmentedControl<TValue extends string>({
-  options,
-  value,
-  onChange,
-  disabled = false,
-}: {
-  options: SegmentedControlOption<TValue>[];
-  value: TValue;
-  onChange: (value: TValue) => void;
-  disabled?: boolean;
-}) {
-  const gridColumns = options.length === 2 ? "grid-cols-2" : "grid-cols-3";
-
-  return (
-    <div className={`grid ${gridColumns} gap-1 rounded-full border border-gray-200 bg-gray-50 p-1`} role="group">
-      {options.map((option) => (
-        <button
-          key={option.value}
-          type="button"
-          disabled={disabled}
-          aria-pressed={value === option.value}
-          onClick={() => onChange(option.value)}
-          className={`rounded-full px-3 py-1.5 text-[12px] font-medium transition disabled:cursor-not-allowed disabled:opacity-60 ${
-            value === option.value
-              ? "bg-white text-gray-900 shadow-[0_1px_2px_rgba(15,23,42,0.08)]"
-              : "text-gray-500 hover:text-gray-900"
-          }`}
-        >
-          {option.label}
-        </button>
-      ))}
-    </div>
-  );
-}
-
 type AddConnectionAccessMode = McpConnectionAccessMode;
-
-const AUTH_TYPE_OPTIONS: SegmentedControlOption<ExternalMcpAuthType>[] = [
-  { value: "oauth", label: "OAuth" },
-  { value: "apikey", label: "API key" },
-  { value: "none", label: "None" },
-];
-
-const CREDENTIAL_MODE_OPTIONS: SegmentedControlOption<ExternalMcpCredentialMode>[] = [
-  { value: "per_member", label: "Individual accounts" },
-  { value: "shared", label: "One org account" },
-];
 
 const ACCESS_MODE_OPTIONS: SegmentedControlOption<AddConnectionAccessMode>[] = [
   { value: "everyone", label: "Everyone" },
@@ -3155,9 +3111,7 @@ function AddConnectionDialog({
               <label className="mb-1.5 block text-[12px] font-medium text-gray-700">Whose account does the AI use?</label>
               <SegmentedControl options={CREDENTIAL_MODE_OPTIONS} value={credentialMode} onChange={setCredentialMode} />
               <p className="mt-1.5 text-[12px] leading-5 text-gray-500">
-                {credentialMode === "per_member"
-                  ? "Each person signs in with their own account from Your Connections. Their AI acts as them, with their permissions."
-                  : "You sign in once with a single account — everyone granted access acts as it. Good for bot or service accounts."}
+                {credentialModeDescription(credentialMode)}
               </p>
             </div>
           ) : null}

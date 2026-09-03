@@ -3476,6 +3476,13 @@ export function createDenClient(options: { baseUrl: string; apiBaseUrl?: string 
             normalizedPayloadJson?: Record<string, unknown>;
             metadata: { name: string; description?: string };
           };
+          /** Connector setup for an mcp component; Den configures the server before the plugin is returned. */
+          connection?: {
+            authType: "oauth" | "apikey" | "none";
+            credentialMode: "per_member" | "shared";
+            apiKey?: string;
+            oauthClient?: { clientId: string; clientSecret?: string };
+          };
         }>;
         orgWide?: boolean;
         marketplaceId?: string;

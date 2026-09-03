@@ -14,8 +14,12 @@ import {
   libraryCommandsFromSlashOptions,
   libraryPathForSection,
   denLibraryPluginCreateRequest,
+  emptyLibraryMcpConnectionForm,
   libraryAddAction,
   libraryAddKindsForFilter,
+  libraryMcpConnectionFormIncomplete,
+  libraryMcpConnectionRequest,
+  withLibraryMcpAuthType,
   libraryPluginFileDisplayName,
   libraryPluginFileFallbackDetailId,
   libraryPluginFilePreferredDetailId,
@@ -195,6 +199,66 @@ describe("library destination", () => {
     expect(request.components[0]?.input.normalizedPayloadJson).toEqual({
       mcpServers: { linear: { type: "remote", url: "https://mcp.linear.app/mcp" } },
     });
+  });
+
+  test("Library Add MCP forwards the connector setup Den expects, and only when it was captured", () => {
+    const declarationOnly = denLibraryPluginCreateRequest("mcp", {
+      name: "Linear",
+      description: "",
+      instructions: "https://mcp.linear.app/mcp",
+    });
+    expect(declarationOnly.components[0]?.connection).toBeUndefined();
+
+    const configured = denLibraryPluginCreateRequest("mcp", {
+      name: "Linear",
+      description: "",
+      instructions: "https://mcp.linear.app/mcp",
+      connection: { ...emptyLibraryMcpConnectionForm(), credentialMode: "shared" },
+    });
+    expect(configured.components[0]?.connection).toEqual({ authType: "oauth", credentialMode: "shared" });
+
+    const bundle = denLibraryPluginCreateRequest("plugin", {
+      name: "Sales call prep",
+      description: "",
+      instructions: "",
+      components: [
+        { kind: "skill", name: "briefing", description: "Brief the account", content: "Look up the account." },
+        {
+          kind: "mcp",
+          name: "Linear",
+          description: "",
+          content: "https://mcp.linear.app/mcp",
+          connection: { ...emptyLibraryMcpConnectionForm(), authType: "apikey", apiKey: " sk-test " },
+        },
+      ],
+    });
+    expect(bundle.components[0]?.connection).toBeUndefined();
+    expect(bundle.components[1]?.connection).toEqual({ authType: "apikey", credentialMode: "shared", apiKey: "sk-test" });
+  });
+
+  test("Library Add MCP connector setup sends only the answers that apply", () => {
+    const oauthApp = {
+      ...emptyLibraryMcpConnectionForm(),
+      useOAuthClient: true,
+      oauthClientId: " client-1 ",
+      oauthClientSecret: " secret-1 ",
+    };
+    expect(libraryMcpConnectionRequest(oauthApp)).toEqual({
+      authType: "oauth",
+      credentialMode: "per_member",
+      oauthClient: { clientId: "client-1", clientSecret: "secret-1" },
+    });
+    expect(libraryMcpConnectionRequest({ ...emptyLibraryMcpConnectionForm(), authType: "none", apiKey: "ignored" }))
+      .toEqual({ authType: "none", credentialMode: "shared" });
+    expect(withLibraryMcpAuthType(oauthApp, "apikey")).toMatchObject({
+      authType: "apikey",
+      useOAuthClient: false,
+      oauthClientId: "",
+      oauthClientSecret: "",
+    });
+    expect(libraryMcpConnectionFormIncomplete({ ...emptyLibraryMcpConnectionForm(), authType: "apikey" })).toBe(true);
+    expect(libraryMcpConnectionFormIncomplete({ ...emptyLibraryMcpConnectionForm(), authType: "apikey", apiKey: "sk" })).toBe(false);
+    expect(libraryMcpConnectionFormIncomplete(emptyLibraryMcpConnectionForm())).toBe(false);
   });
 
   test("Library Add plugin bundle keeps MCP servers and does not auto-publish", () => {
