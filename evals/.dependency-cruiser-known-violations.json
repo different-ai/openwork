@@ -638,6 +638,32 @@
   },
   {
     "type": "dependency",
+    "from": "specs/cross-server-handoff-atomic-commit.e2e.test.ts",
+    "to": "@openwork/behaviors",
+    "unresolvedTo": "@openwork/behaviors",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/cross-server-handoff-atomic-commit.e2e.test.ts",
+    "to": "@openwork/hosts",
+    "unresolvedTo": "@openwork/hosts",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
     "from": "specs/cross-workspace-split-view.e2e.test.ts",
     "to": "@openwork/behaviors",
     "unresolvedTo": "@openwork/behaviors",
