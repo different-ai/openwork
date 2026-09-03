@@ -50,6 +50,7 @@ import {
 import { markAutoPicked, wasAutoPicked } from "@/lib/model-choice";
 import { describeReview, parseWorkerReview, parseWorkerTurn, workerNameFromTitle, type WorkerReview, type WorkerSummary } from "@/lib/workers";
 import { WorkerDecisionCards } from "@/ui/worker-decision";
+import { coworkerToolName } from "@/lib/coworker-tools";
 import { describeProgress, describeWorkStep, summarizeWork, technicalSections, type ProgressPhase, type WorkStep } from "@/lib/work-receipt";
 import { isServerTool, toolRefPath } from "@/lib/apps-tools";
 import { openPanelRoute } from "@/lib/panel-route";
@@ -2144,8 +2145,8 @@ function ToolAttachments({ calls, client }: { calls: TranscriptToolCall[]; clien
           })}
         </div>
       ) : null}
-      {/* The coworker's own document tools answer with a card in the bubble, never an App. */}
-      {calls.filter((call) => !isDocumentTool(call.tool)).map((call) => <ToolAppFrame key={call.partId} call={call} client={client} />)}
+      {/* The coworker's own tools — documents, assignments, memory — answer in the bubble or the panel, never as an App. */}
+      {calls.filter((call) => !isDocumentTool(call.tool) && !coworkerToolName(call.tool)).map((call) => <ToolAppFrame key={call.partId} call={call} client={client} />)}
     </>
   );
 }
