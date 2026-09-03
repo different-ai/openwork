@@ -113,8 +113,10 @@ The coworker directory is registered as an ordinary OpenWork workspace, so:
   actually writes), joined with the files on disk so an unlisted file or a
   dangling index line stays visible. A memory can be read, edited, created,
   or deleted; deleting removes the file and its index line together.
-- **Responsibilities have two explicit placements.** OpenWork Cloud is the
-  recommended always-on lane: responsibilities are native Den Automations
+- **Assignments on a schedule (responsibilities, in the code) have two explicit
+  placements.** The person meets them in the Workers view's Assignments section,
+  in one list with the one-off assignments handed over from a discussion.
+  OpenWork Cloud is the recommended always-on lane: scheduled assignments are native Den Automations
   created through the Cloud creation surface (`POST /v1/cloud-automations`),
   so Den fixes their placement to OpenWork Cloud, they keep running with this
   Mac off, and they use a model the organization authorizes
@@ -170,7 +172,7 @@ The coworker directory is registered as an ordinary OpenWork workspace, so:
   the Add coworker screen lists retired coworkers with Restore (re-registers the
   same path, so the workspace id and native threads reattach) and a separately
   armed permanent delete. Retirement is refused while one of the coworker's
-  local responsibilities is still running.
+  scheduled assignments or Workers is still running.
 
 ## Architecture
 
@@ -235,7 +237,8 @@ again when you move to another coworker; the header's details control, a strip
 icon, or a click on its edge opens it, and Escape or the same control closes
 it (its width and last view are remembered, whether it was open is not). Open,
 its Activity view shows only what the selected coworker is doing, what it
-recently finished, and the responsibilities it owns; its AI model, thinking
+recently finished, and a line for its live Workers; the Workers view holds its
+Workers and Assignments (one-off and on a schedule); its AI model, thinking
 effort, memory files, and retirement live behind the icon-only Coworker
 settings control.
 
@@ -379,8 +382,8 @@ person sees it as a brief — "Assignment for Nova", the outcome, and a closed
 instruction (`parseAssignmentBrief` in `lib/conversation.ts`). The engine still
 receives the exact prompt the journeys verify.
 
-Responsibilities read like a to-do list for a person: one line per
-responsibility (its name, then "Every day at 9:00 AM · Done today at 12:05
+Scheduled assignments read like a to-do list for a person: one line per
+assignment (its name, then "Every day at 9:00 AM · Done today at 12:05
 PM") that opens into labelled everyday facts — When, Where, Next, Last time,
 what the coworker said — and each earlier run in the same words. The
 vocabulary is shared with the sidebar's Recent list (`lib/responsibility-copy.ts`,
@@ -389,7 +392,7 @@ schedules show the person's clock and name another time zone only when the
 schedule keeps one ("Every day at 6:30 PM (Paris time)"); nothing in the list
 says slot, thread, UTC, or a status code.
 
-Each responsibility row keeps a bounded run history (`runs`, newest first, in
+Each scheduled assignment's row keeps a bounded run history (`runs`, newest first, in
 `local-responsibilities.json`) with the coworker's own closing summary, the
 duration, and how the run came about; a run can be re-opened as its native
 thread or handed to the discussion composer as an "explain this run" message

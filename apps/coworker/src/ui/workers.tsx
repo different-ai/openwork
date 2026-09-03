@@ -1,6 +1,9 @@
 import { useEffect, useState } from "react";
-import { coworkerBridge, type CoworkerSummary } from "@/lib/bridge";
+import { coworkerBridge, type CoworkerSummary, type LocalResponsibility } from "@/lib/bridge";
 import { relativeTime } from "@/lib/activity-summary";
+import type { DenSession } from "@/lib/den";
+import type { ThreadListItem } from "@/lib/threads";
+import { ResponsibilitiesPanel } from "@/ui/responsibilities";
 import {
   describeLifespan,
   describeWorkerEvent,
@@ -14,29 +17,67 @@ import {
 } from "@/lib/workers";
 import { Button, ErrorNote, StatusDot, inputClass } from "@/ui/kit";
 
+/** One-off assignments shown in the panel: the newest few; the conversation column's Assignments view has them all. */
+const ASSIGNMENT_ROWS = 6;
+
 /** Findings shown newest first; older ones stay in the file. */
 const TIMELINE_LIMIT = 40;
 
 /**
  * The Workers view: what a coworker's Workers are doing, one flat row each,
  * opening into the findings they posted and the few things a person does with
- * a Worker — steer it, pause or resume it, stop it, or open its own thread.
+ * a Worker — steer it, pause or resume it, stop it, or open its own work.
  * Starting one here is the same as asking the coworker to; both land in the
- * same list.
+ * same list. Below the Workers, the coworker's Assignments: the one-off ones
+ * handed over from a discussion and the ones on a schedule, in one list.
  */
 export function WorkersPanel({
+  session,
+  coworkers,
   coworker,
+  assignments,
+  onCoworkerChanged,
+  onConnect,
   onOpenThread,
+  onExplain,
 }: {
+  session: DenSession | null;
+  coworkers: CoworkerSummary[];
   coworker: CoworkerSummary;
-  /** Show the Worker's own work in the main column. */
+  /** The coworker's one-off assignment threads, newest first. */
+  assignments: ThreadListItem[];
+  onCoworkerChanged: (coworker: CoworkerSummary) => void;
+  /** Start the OpenWork sign-in flow (for assignments that run in OpenWork Cloud). */
+  onConnect: () => void;
+  /** Show a Worker's own work or an assignment in the main column. */
   onOpenThread: (threadId: string) => void;
+  /** Prefill the discussion composer with a message about a run; the person still sends it. */
+  onExplain: (message: string) => void;
 }) {
   const [workers, setWorkers] = useState<WorkerSummary[] | null>(null);
   const [expandedId, setExpandedId] = useState("");
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState("");
+  const [scheduled, setScheduled] = useState<LocalResponsibility[]>([]);
   const live = (workers ?? []).some(isLiveWorker);
+  const scheduledBusy = scheduled.some((item) => item.latestRun?.status === "running" || item.latestRun?.status === "queued");
+
+  useEffect(() => {
+    let cancelled = false;
+    const load = () =>
+      coworkerBridge.localResponsibilities
+        .list(coworker.slug)
+        .then((items) => {
+          if (!cancelled) setScheduled(items);
+        })
+        .catch(() => undefined);
+    void load();
+    const timer = window.setInterval(() => void load(), scheduledBusy ? 1_500 : 5_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [coworker.slug, scheduledBusy]);
 
   useEffect(() => {
     let cancelled = false;
@@ -74,6 +115,9 @@ export function WorkersPanel({
   }
 
   const items = workers ?? [];
+  // A scheduled assignment's runs are native threads too; they are listed once, under their schedule.
+  const runThreads = new Set(scheduled.flatMap((item) => item.runs.map((run) => run.threadId).filter(Boolean)));
+  const onceOnly = assignments.filter((item) => !runThreads.has(item.id));
 
   return (
     <div className="flex min-h-full flex-col gap-5" data-testid="coworker-workers">
@@ -135,6 +179,48 @@ export function WorkersPanel({
             })}
           </ul>
         ) : null}
+      </section>
+
+      <section aria-label="Assignments" data-testid="coworker-assignments">
+        <h3 className="mb-2 px-1 text-[11px] font-semibold text-mist">Assignments</h3>
+        {onceOnly.length > 0 ? (
+          <ul className="mb-3 divide-y divide-line rounded-2xl border border-line bg-ink" data-testid="assignment-list">
+            {onceOnly.slice(0, ASSIGNMENT_ROWS).map((item) => (
+              <li key={item.id}>
+                <button
+                  type="button"
+                  className="group flex w-full items-center gap-3 px-3.5 py-2.5 text-left transition-colors first:rounded-t-2xl last:rounded-b-2xl hover:bg-white/[0.04]"
+                  onClick={() => onOpenThread(item.id)}
+                  title="Open this assignment"
+                  data-testid="assignment-row"
+                >
+                  <StatusDot tone={item.status === "busy" ? "spark" : item.status === "retry" ? "amber" : "mint"} />
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-xs text-snow" title={item.title}>{item.title}</span>
+                    <span className="mt-0.5 block truncate text-[11px] text-mist">
+                      Once · {item.status === "busy" ? "Working on it" : item.status === "retry" ? "Retrying" : `Done ${relativeTime(item.updatedAt) || "now"} ago`}
+                    </span>
+                  </span>
+                  <span className="shrink-0 text-mist transition-colors group-hover:text-snow" aria-hidden="true">›</span>
+                </button>
+              </li>
+            ))}
+            {onceOnly.length > ASSIGNMENT_ROWS ? (
+              <li className="px-3.5 py-2 text-[11px] text-mist">{onceOnly.length - ASSIGNMENT_ROWS} more in the conversation's Assignments list.</li>
+            ) : null}
+          </ul>
+        ) : null}
+        <ResponsibilitiesPanel
+          session={session}
+          coworkers={coworkers}
+          coworker={coworker}
+          localItems={scheduled}
+          onLocalItemsChanged={setScheduled}
+          onCoworkerChanged={onCoworkerChanged}
+          onConnect={onConnect}
+          onOpenThread={onOpenThread}
+          onExplain={onExplain}
+        />
       </section>
     </div>
   );
