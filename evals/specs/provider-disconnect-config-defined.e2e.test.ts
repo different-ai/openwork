@@ -4,12 +4,12 @@ import { join } from "node:path";
 import { expect, onTestFinished } from "vitest";
 import {
   createAndSelectWorkspace,
+  desktop,
   evalIn,
   go,
   readAvailableModels,
   waitFor,
-} from "@openwork/behaviors";
-import { desktop } from "@openwork/hosts";
+} from "@openwork/testkit/stack";
 import { needs, test } from "@openwork/testkit";
 
 const providerId = "litellm-disconnect-fixture";
