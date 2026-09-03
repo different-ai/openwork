@@ -35,11 +35,11 @@
   <g data-layer="rear-coworker-left" data-style="peeking-card" transform="translate(145 145) scale(4.6) rotate(-10 59.5 56)">
     <path d="M26 8h65c15 0 23 10 23 26v46c0 15-8 24-23 24H57l-15 9c-5 3-10 0-10-6v-3h-5C12 104 5 95 5 80V34C5 18 12 8 26 8Z" fill="#11201b" opacity=".1" transform="translate(1.2 1.6)"/>
     <path d="M26 8h65c15 0 23 10 23 26v46c0 15-8 24-23 24H57l-15 9c-5 3-10 0-10-6v-3h-5C12 104 5 95 5 80V34C5 18 12 8 26 8Z" fill="url(#mint-surface)" stroke="#ffffff" stroke-opacity=".72" stroke-width="1"/>
-    <g data-layer="rear-glasses" fill="none" stroke="#11151d" stroke-linecap="round" stroke-width="3.6">
-      <circle cx="39" cy="35" r="12.5"/>
-      <circle cx="76" cy="35" r="12.5"/>
-      <path d="M51.5 35c2-4 10-4 12 0"/>
-      <path d="M22 35h4.5M88.5 35h4.5" stroke-width="5"/>
+    <g data-layer="rear-glasses" fill="none" stroke="#11151d" stroke-linecap="round" stroke-width="5">
+      <circle cx="37.5" cy="57" r="17.5"/>
+      <circle cx="82.5" cy="57" r="17.5"/>
+      <path d="M57.5 57c1.25-4 3.75-4 5 0"/>
+      <path d="M15 57h4.5M100.5 57h4.5" stroke-width="7"/>
     </g>
   </g>
 
