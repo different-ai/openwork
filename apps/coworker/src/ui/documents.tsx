@@ -96,7 +96,7 @@ function DocumentRow({ document, coworkerName, onSelect }: { document: CoworkerD
         data-testid="document-row"
         data-document-id={document.id}
         data-status={document.status}
-        className="flex w-full items-start gap-3 px-3 py-2.5 text-left transition-colors hover:bg-white/4 focus-visible:bg-white/4 focus-visible:outline-none"
+        className="flex w-full items-start gap-3 px-1 py-2.5 text-left transition-colors hover:bg-white/4 focus-visible:bg-white/4 focus-visible:outline-none"
         onClick={onSelect}
       >
         <div className="min-w-0 flex-1">
@@ -115,7 +115,7 @@ function DocumentRow({ document, coworkerName, onSelect }: { document: CoworkerD
 
 function RowList({ documents, coworkerName, onSelect, testId }: { documents: CoworkerDocumentSummary[]; coworkerName: string; onSelect: (id: string) => void; testId: string }) {
   return (
-    <ul className="divide-y divide-line overflow-hidden rounded-2xl border border-line bg-ink" data-testid={testId}>
+    <ul className="divide-y divide-line" data-testid={testId}>
       {documents.map((document) => (
         <DocumentRow key={document.id} document={document} coworkerName={coworkerName} onSelect={() => onSelect(document.id)} />
       ))}
