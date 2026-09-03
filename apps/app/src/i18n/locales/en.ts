@@ -1401,6 +1401,7 @@ export default {
   "settings.debug_deeplink_unavailable": "Debug deeplinks are not yet available.",
   "settings.debug_desktop_app": "Desktop app: {version}",
   "settings.debug_hostname": "Hostname: {hostname}",
+  "settings.debug_log_file": "Server log: {path}",
   "settings.debug_lan_url": "LAN URL: {url}",
   "settings.debug_mdns_url": "mDNS URL: {url}",
   "settings.debug_opencode_version": "OpenCode: {version}",
