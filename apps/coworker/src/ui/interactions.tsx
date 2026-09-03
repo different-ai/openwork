@@ -58,6 +58,8 @@ export function OptionRow({
   active = false,
   disabled = false,
   tone = "default",
+  testId = "interaction-option",
+  choice,
   onChoose,
 }: {
   letter: string;
@@ -66,6 +68,9 @@ export function OptionRow({
   active?: boolean;
   disabled?: boolean;
   tone?: "default" | "danger";
+  testId?: string;
+  /** A stable name for what this choice does, for the journeys; the letter is only its position. */
+  choice?: string;
   onChoose: () => void;
 }) {
   return (
@@ -74,8 +79,9 @@ export function OptionRow({
       role="option"
       aria-selected={active}
       disabled={disabled}
-      data-testid="interaction-option"
+      data-testid={testId}
       data-letter={letter}
+      data-choice={choice}
       className={`flex w-full items-center gap-3 px-3 py-2.5 text-left transition-colors first:rounded-t-xl last:rounded-b-xl hover:bg-white/6 disabled:cursor-not-allowed disabled:opacity-60 ${
         active ? "bg-spark/12" : ""
       }`}
@@ -90,13 +96,20 @@ export function OptionRow({
   );
 }
 
-/** The card itself: a coworker-side message with a title, a line of context, and a close control. */
-export function InteractionCard({ label, title, detail, onClose, children, testId }: { label: string; title: string; detail?: string; onClose?: () => void; children: ReactNode; testId: string }) {
+/**
+ * The card itself: a coworker-side message with a title, a line of context, and
+ * a close control. `needsYou` adds the small amber dot that says the coworker is
+ * waiting on the person — never a rose border.
+ */
+export function InteractionCard({ label, title, titleTestId, detail, needsYou = false, onClose, children, testId }: { label: string; title: string; titleTestId?: string; detail?: string; needsYou?: boolean; onClose?: () => void; children: ReactNode; testId: string }) {
   return (
-    <section role="group" aria-label={label} className="max-w-[76%] min-w-[280px] rounded-2xl bg-panel-2 p-4 text-snow" data-testid={testId}>
+    <section role="group" aria-label={label} className="max-w-[76%] min-w-[280px] rounded-2xl bg-panel-2 p-4 text-snow" data-testid={testId} data-needs-you={needsYou ? "true" : "false"}>
       <div className="flex items-start gap-3">
         <div className="min-w-0 flex-1">
-          <h3 className="text-sm font-semibold leading-snug">{title}</h3>
+          <h3 className="flex items-start gap-2 text-sm font-semibold leading-snug">
+            {needsYou ? <span className="mt-1.5 size-1.5 shrink-0 rounded-full bg-amber" aria-hidden="true" title="Needs you" /> : null}
+            <span data-testid={titleTestId}>{title}</span>
+          </h3>
           {detail ? <p className="mt-1 text-xs leading-relaxed text-mist">{detail}</p> : null}
         </div>
         {onClose ? (

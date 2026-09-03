@@ -36,7 +36,7 @@ import {
   type PendingInteractions,
   type ThreadListItem,
 } from "@/lib/threads";
-import type { HeadlessThreadModel } from "@openwork/headless-threads";
+import { isRunning, type HeadlessThreadModel, type HeadlessTurnAcceptance } from "@openwork/headless-threads";
 import {
   classifyThreads,
   configureDiscussionStore,
@@ -57,12 +57,38 @@ import { isServerTool, toolRefPath } from "@/lib/apps-tools";
 import { openPanelRoute } from "@/lib/panel-route";
 import { appsToolsRoute } from "@/lib/panel-views";
 import type { CoworkerSummaryLine, SummaryKind } from "@/lib/coworker-summary";
+import {
+  EMPTY_THREAD_TURNS,
+  beginPending,
+  clearPending,
+  configureTurnStore,
+  dequeue,
+  enqueue,
+  loadThreadTurns,
+  markStopped,
+  removeQueued,
+  saveThreadTurns,
+  takeQueued,
+  type QueuedMessage,
+  type ThreadTurnState,
+} from "@/lib/thread-queue";
+import {
+  NO_REPLY,
+  RETRY_LINE,
+  WAIT_BUDGET_MS,
+  deriveTurnOutcome,
+  type TurnChoice,
+  type TurnEngineStatus,
+  type TurnOutcome,
+  type TurnReplyState,
+} from "@/lib/turn-outcome";
 import { describeTurnFailure } from "@/lib/turn-failure";
+import { classifyFailure, retryDelayMs } from "@/lib/turn-retry";
 import { useAutoGrow } from "@/ui/use-auto-grow";
-import { InteractionCards } from "@/ui/interactions";
+import { InteractionCard, InteractionCards, LETTERS, OptionRow, typingInField } from "@/ui/interactions";
 import { CoworkerAvatar } from "@/ui/coworker-avatar";
 import { InlineLoader } from "@/ui/brand";
-import { AlertIcon, Button, Empty, ErrorNote, PlusIcon, StatusDot, ThoughtIcon, ToolIcon } from "@/ui/kit";
+import { Button, Empty, ErrorNote, PlusIcon, StatusDot, ThoughtIcon, ToolIcon } from "@/ui/kit";
 import { Markdown } from "@/ui/markdown";
 import { DocumentCard } from "@/ui/documents";
 import { documentCardsFromCalls, isDocumentTool, shouldFoldReply, splitReplyLead } from "@/lib/documents";
@@ -81,9 +107,15 @@ type TranscriptToolCall = {
 type TranscriptMessage = {
   id: string;
   role: string;
+  /** The user message a reply answers; null for user messages and optimistic entries. */
+  parentId: string | null;
   text: string;
   /** When the engine recorded the message; null for optimistic entries not yet committed. */
   createdAt: number | null;
+  /** When the engine closed a reply; null while it is being written, or when it was cut off. */
+  completedAt: number | null;
+  /** Why a reply ended without an answer; null when it did not fail. */
+  error: { name: string; message: string; retryable: boolean | null } | null;
   reasoning: string;
   /** Provider/model the engine attributed this reply to; null for user turns and unbound replies. */
   model: { providerId: string; modelId: string } | null;
@@ -106,18 +138,45 @@ type QueuedTurn = {
   messageId: string;
 };
 
-type PendingTurn = {
+/** A turn this view is driving: which message, and whether the engine has accepted it yet. */
+type ActiveTurn = {
   messageId: string;
   prompt: string;
   phase: "accepting" | "waiting";
 };
 
-type TurnIssue = {
-  kind: "failed" | "timeout" | "stopped";
-  message: string;
-  messageId: string;
-  prompt: string;
-};
+/** How a turn is (re)sent: a fresh message, or the same message id run again after a failure, a stop, or a cut-off. */
+type TurnSend = { mode: "send" } | { mode: "retry"; attempt: number };
+
+/** One quiet line's worth of history for a reply that ended without words, kept in the transcript. */
+function endedWithoutWords(message: TranscriptMessage): "stopped" | "failed" | null {
+  if (message.role !== "assistant" || message.text || !message.error) return null;
+  return /abort/i.test(message.error.name) || /abort/i.test(message.error.message) ? "stopped" : "failed";
+}
+
+/** The optimistic user message for a turn the transcript does not carry yet. */
+function optimisticMessage(turn: { messageId: string; prompt: string }): TranscriptMessage {
+  return { id: turn.messageId, role: "user", parentId: null, text: turn.prompt, createdAt: null, completedAt: null, error: null, reasoning: "", model: null, toolCalls: [] };
+}
+
+/** How the engine's reply to one message stands: none yet, still being written, finished, or ended in an error. */
+function replyStateFor(messages: readonly TranscriptMessage[], messageId: string): TurnReplyState {
+  const last = messages.filter((message) => message.role === "assistant" && message.parentId === messageId).at(-1);
+  if (!last) return NO_REPLY;
+  if (last.error) {
+    return {
+      state: "error",
+      error: `${last.error.name}: ${last.error.message}`,
+      retryable: last.error.retryable,
+      aborted: /abort/i.test(last.error.name) || /abort/i.test(last.error.message),
+    };
+  }
+  return { state: last.completedAt === null ? "writing" : "complete", error: "", retryable: null, aborted: false };
+}
+
+function newQueuedId(): string {
+  return `next_${Date.now().toString(36)}_${crypto.randomUUID().replaceAll("-", "").slice(0, 8)}`;
+}
 
 /** How long a freshly (re)started AI service may stay silent before it is a problem worth naming. */
 const WORKSPACE_WARMUP_MS = 45_000;
@@ -166,6 +225,11 @@ configureDiscussionStore({
   readFile: (slug, path) => coworkerBridge.files.read(slug, path),
   writeFile: (slug, path, content) => coworkerBridge.files.write(slug, path, content),
   listCoworkers: () => coworkerBridge.coworkers.list(),
+});
+// The turn in flight and the messages waiting as Next live beside it, written by the main process.
+configureTurnStore({
+  readFile: (slug, path) => coworkerBridge.files.read(slug, path),
+  writeFile: (slug, path, content) => coworkerBridge.files.write(slug, path, content),
 });
 
 /** Where the one conversation header lets a view place its title line and its actions. */
@@ -862,26 +926,40 @@ function ThreadView({
   /** The first message sent here, kept until the thread carries a title of its own. */
   const firstPromptRef = useRef("");
   const titleLoadedRef = useRef(false);
-  const [statusLabel, setStatusLabel] = useState("idle");
-  const [terminalError, setTerminalError] = useState("");
+  /** What the engine reports for this thread: idle, busy, or retrying (with its next attempt). */
+  const [engineStatus, setEngineStatus] = useState<TurnEngineStatus>({ type: "unknown" });
   const [pending, setPending] = useState<PendingInteractions>({ permissions: [], questions: [] });
   const [reply, setReply] = useState("");
   const [assignmentMode, setAssignmentMode] = useState(false);
   const [assignmentText, setAssignmentText] = useState("");
   const [error, setError] = useState("");
   const [assignmentBusy, setAssignmentBusy] = useState(false);
-  const [pendingTurn, setPendingTurn] = useState<PendingTurn | null>(null);
-  const [turnIssue, setTurnIssue] = useState<TurnIssue | null>(null);
+  /** The turn in flight or left unresolved, and the messages waiting as Next — the record turns.json keeps. */
+  const [turnState, setTurnState] = useState<ThreadTurnState>(EMPTY_THREAD_TURNS);
+  const turnStateRef = useRef<ThreadTurnState>(EMPTY_THREAD_TURNS);
+  const [turnsLoaded, setTurnsLoaded] = useState(false);
+  /** The pending turn was read back from disk: a quit or reload happened while it ran. */
+  const [recovered, setRecovered] = useState(false);
+  /** The turn this view is driving right now; null between turns. */
+  const [activeTurn, setActiveTurn] = useState<ActiveTurn | null>(null);
+  const activeTurnRef = useRef<ActiveTurn | null>(null);
+  /** A failure the app met itself, before or beside the engine: a model not connected, a refused send, a stalled retry. */
+  const [failure, setFailure] = useState("");
+  /** An automatic attempt scheduled after a transient failure, and the timer that fires it. */
+  const [appRetry, setAppRetry] = useState<{ attempt: number; nextAt: number } | null>(null);
+  const appRetryTimerRef = useRef<number | null>(null);
+  /** One quiet receipt for a turn that replied only after a retry with another model. */
+  const [resolution, setResolution] = useState<{ messageId: string; note: string } | null>(null);
+  /** Re-derive the outcome every second while a turn is unresolved: "still working" and the retry count are live. */
+  const [now, setNow] = useState(() => Date.now());
   const [providerRefreshNote, setProviderRefreshNote] = useState("");
   const endRef = useRef<HTMLDivElement>(null);
-  const pendingTurnRef = useRef<PendingTurn | null>(null);
   /** The far-off retry already cancelled for this thread (by its scheduled time), and why it stalled. */
   const stallRef = useRef<{ next: number; reason: string } | null>(null);
   const clearStall = () => {
     stallRef.current = null;
   };
   const waitControllerRef = useRef<AbortController | null>(null);
-  const stopRequestedRef = useRef(false);
   const handledInitialTurnRef = useRef<number | null>(null);
   const mcpClient = useMemo(
     () => createCoworkerMcpClient({
@@ -929,21 +1007,19 @@ function ThreadView({
         stallRef.current = { next: retryStatus.next, reason: stall };
         void threads.client.abortThread(threadId).catch(() => undefined);
         waitControllerRef.current?.abort();
+        // A stall found while no turn of this view is in flight (after a reload, say) is still a failure to name.
+        if (!activeTurnRef.current) setFailure(stall);
       }
-      setStatusLabel(stall ? "idle" : status.type);
-      setTerminalError(
-        pendingTurnRef.current
-          ? ""
-          : stall ?? stallRef.current?.reason ?? (transcript.terminalError
-            ? `${transcript.terminalError.name}: ${transcript.terminalError.message}`
-            : ""),
-      );
+      setEngineStatus(status);
       setMessages(
         transcript.messages.map((message) => ({
           id: message.id,
           role: message.role,
+          parentId: message.parentId,
           text: message.text,
           createdAt: message.createdAt,
+          completedAt: message.completedAt,
+          error: message.error,
           reasoning: message.reasoning,
           model: message.model,
           toolCalls: message.toolCalls.map((call) => ({
@@ -985,16 +1061,76 @@ function ThreadView({
     };
   }, [threads, refresh]);
 
-  useEffect(() => () => waitControllerRef.current?.abort(), []);
+  useEffect(() => () => {
+    waitControllerRef.current?.abort();
+    if (appRetryTimerRef.current !== null) window.clearTimeout(appRetryTimerRef.current);
+  }, []);
+
+  // What this thread still owes, read back from the coworker home: a turn cut off by a quit or
+  // reload, or messages that waited as Next. Anything pending at this point was not sent by this view.
+  useEffect(() => {
+    let cancelled = false;
+    void loadThreadTurns(coworker.slug, threadId)
+      .then((state) => {
+        if (cancelled) return;
+        // A turn sent from this window before the file answered already knows more than the disk did.
+        const known = turnStateRef.current;
+        const merged: ThreadTurnState = known === EMPTY_THREAD_TURNS
+          ? state
+          : { pending: known.pending ?? state.pending, next: [...state.next, ...known.next.filter((item) => !state.next.some((other) => other.id === item.id))] };
+        turnStateRef.current = merged;
+        setTurnState(merged);
+        setRecovered(merged.pending !== null && known.pending === null);
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        if (!cancelled) setTurnsLoaded(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [coworker.slug, threadId]);
+
+  /** Change the thread's turn record: the cache updates at once, the file follows through the main process. */
+  const commitTurnState = useCallback((update: (state: ThreadTurnState) => ThreadTurnState): ThreadTurnState => {
+    const next = update(turnStateRef.current);
+    if (next === turnStateRef.current) return next;
+    turnStateRef.current = next;
+    setTurnState(next);
+    void saveThreadTurns(coworker.slug, threadId, next).catch(() => undefined);
+    return next;
+  }, [coworker.slug, threadId]);
+
+  const pendingTurn = turnState.pending;
+  const engineRunning = engineStatus.type === "busy" || engineStatus.type === "retry";
+
+  // A second hand for the words that move: "still working" after the wait budget, the retry count.
+  const wordsMove = (pendingTurn !== null && pendingTurn.stoppedAt === null && (engineRunning || activeTurn !== null)) || appRetry !== null;
+  useEffect(() => {
+    if (!wordsMove) return;
+    setNow(Date.now());
+    const timer = window.setInterval(() => setNow(Date.now()), 1_000);
+    return () => window.clearInterval(timer);
+  }, [wordsMove]);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ block: "end" });
-  }, [messages.length, pendingTurn, statusLabel, pending.permissions.length, pending.questions.length]);
+  }, [messages.length, activeTurn, engineStatus.type, pending.permissions.length, pending.questions.length, turnState.next.length]);
 
-  const submitTurn = useCallback(async (prompt: string, messageId: string, modelOverride?: HeadlessThreadModel, failedModels: readonly string[] = []) => {
-    if (pendingTurnRef.current) return;
+  /**
+   * Run one turn to its end: send (or re-send) the message, follow the engine
+   * until it replies, fails, is stopped, or is cut off, and record each step
+   * in the thread's turn record so the outcome can be derived at any moment —
+   * and after a reload. The wait budget is not a deadline: when it passes while
+   * the engine is still busy, the wait simply continues and the conversation
+   * says "still working". Only the engine going idle without a reply ends the
+   * turn without one.
+   */
+  const submitTurn = useCallback(async (prompt: string, messageId: string, send: TurnSend, modelOverride?: HeadlessThreadModel, failedModels: readonly string[] = []) => {
+    if (activeTurnRef.current) return;
     /** The model this turn actually ran on, so a failure can be attributed and, if it was the app's pick, replaced. */
     let turnModelId = modelOverride ? `${modelOverride.providerId}/${modelOverride.modelId}` : coworker.model;
+    const attempt = send.mode === "retry" ? send.attempt : 0;
     /**
      * When a model the app chose by itself cannot answer, move to the next
      * recommendation and try the same message again, once or twice, telling
@@ -1011,15 +1147,33 @@ function ThreadView({
         markAutoPicked(coworker.slug, next.id);
         onCoworkerChanged(await coworkerBridge.coworkers.update(coworker.slug, { model: next.id, modelVariant: "" }));
         setProviderRefreshNote(`${turnModelId} could not answer, so ${coworker.name} is trying ${next.modelLabel} instead.`);
-        window.setTimeout(() => void submitTurn(prompt, messageId, nextModel, excluded), 0);
+        window.setTimeout(() => void submitTurn(prompt, messageId, { mode: "retry", attempt }, nextModel, excluded), 0);
         return true;
       } catch {
         return false;
       }
     };
-    const nextPending: PendingTurn = { messageId, prompt, phase: "accepting" };
-    pendingTurnRef.current = nextPending;
-    setPendingTurn(nextPending);
+    /**
+     * A transient failure (the network, a busy provider, a 5xx) is tried again
+     * by the app itself, visibly and at most three times, under the same
+     * message id. Anything hard waits for the person.
+     */
+    const retryLater = (message: string, retryable: boolean | null): boolean => {
+      if (classifyFailure(message, retryable) !== "transient") return false;
+      const delay = retryDelayMs(attempt + 1);
+      if (delay === null) return false;
+      const nextAt = Date.now() + delay;
+      setAppRetry({ attempt: attempt + 1, nextAt });
+      appRetryTimerRef.current = window.setTimeout(() => {
+        appRetryTimerRef.current = null;
+        setAppRetry(null);
+        void submitTurn(prompt, messageId, { mode: "retry", attempt: attempt + 1 }, modelOverride, failedModels);
+      }, delay);
+      return true;
+    };
+    const active: ActiveTurn = { messageId, prompt, phase: "accepting" };
+    activeTurnRef.current = active;
+    setActiveTurn(active);
     if (kind === "discussion" && !firstPromptRef.current && (!titleLoadedRef.current || title.trim() === defaultDiscussionTitle)) {
       firstPromptRef.current = prompt;
       if (titleLoadedRef.current) {
@@ -1028,11 +1182,13 @@ function ThreadView({
       }
     }
     clearStall();
-    setTurnIssue(null);
-    setTerminalError("");
+    setFailure("");
+    setAppRetry(null);
+    setRecovered(false);
     setError("");
     setProviderRefreshNote("");
-    stopRequestedRef.current = false;
+    if (resolution?.messageId !== messageId) setResolution(null);
+    commitTurnState((state) => beginPending(state, { messageId, prompt, startedAt: Date.now() }));
     onActivityChange({
       state: "working",
       label: "Working",
@@ -1041,6 +1197,13 @@ function ThreadView({
       threadId,
     });
     let refreshTimer: number | undefined;
+    /** The turn ended without a reply: settle what the person sees, in this order — fall back, retry later, or say so. */
+    const settleFailure = async (message: string, retryable: boolean | null, engineKnows: boolean) => {
+      if (await fallBack(message)) return;
+      if (retryLater(message, retryable)) return;
+      // The engine's own reply carries the words; only a failure it never saw needs remembering here.
+      if (!engineKnows) setFailure(message);
+    };
     try {
       let turnModel: HeadlessThreadModel | undefined = modelOverride;
       if (!turnModel) {
@@ -1064,25 +1227,24 @@ function ThreadView({
             .catch(() => undefined);
         }
       }
-      const acceptance = await threads.client.sendTurn(threadId, {
-        prompt,
-        messageId,
-        model: turnModel,
-      });
-      const waiting: PendingTurn = { messageId, prompt, phase: "waiting" };
-      pendingTurnRef.current = waiting;
-      setPendingTurn(waiting);
+      // A re-send waits for the engine to let go of the earlier attempt (a stop is still settling, say).
+      if (send.mode === "retry") await threads.client.waitUntilIdle(threadId, { timeoutMs: 15_000, pollIntervalMs: 300 });
+      const acceptance: HeadlessTurnAcceptance = send.mode === "retry"
+        ? await threads.client.retryTurn(threadId, { prompt, messageId, model: turnModel })
+        : await threads.client.sendTurn(threadId, { prompt, messageId, model: turnModel });
+      const waiting: ActiveTurn = { messageId, prompt, phase: "waiting" };
+      activeTurnRef.current = waiting;
+      setActiveTurn(waiting);
       await refresh();
 
       const controller = new AbortController();
       waitControllerRef.current = controller;
       refreshTimer = window.setInterval(() => void refresh(), 600);
-      const result = await threads.client.waitForThread(threadId, {
-        timeoutMs: 120_000,
-        pollIntervalMs: 500,
-        since: acceptance,
-        signal: controller.signal,
-      });
+      let result = await threads.client.waitForThread(threadId, { timeoutMs: WAIT_BUDGET_MS, pollIntervalMs: 500, since: acceptance, signal: controller.signal });
+      // The budget passing is not the reply failing: while the engine still owns the turn, keep waiting.
+      while (result.outcome === "timeout" && isRunning(result.snapshot.status)) {
+        result = await threads.client.waitForThread(threadId, { timeoutMs: WAIT_BUDGET_MS, pollIntervalMs: 500, since: acceptance, signal: controller.signal });
+      }
       await refresh();
       // Keep the optimistic working state through the transcript commit. Without
       // this paint boundary, the header can briefly return to Ready before the
@@ -1091,46 +1253,81 @@ function ThreadView({
         window.requestAnimationFrame(() => window.requestAnimationFrame(() => resolvePaint()));
       });
 
-      if (result.outcome === "failed") {
-        const failure = result.terminalError
+      if (result.outcome === "settled") {
+        if (modelOverride && send.mode === "retry") setResolution({ messageId, note: `Retried with ${modelOverride.modelId}` });
+        commitTurnState(clearPending);
+      } else if (result.outcome === "failed") {
+        const failureText = result.terminalError
           ? `${result.terminalError.name}: ${result.terminalError.message}`
           : "The model stopped before producing a response.";
-        if (!(await fallBack(failure))) setTurnIssue({ kind: "failed", message: failure, messageId, prompt });
+        await settleFailure(failureText, result.terminalError?.retryable ?? null, result.terminalError !== null);
       } else if (result.outcome === "timeout") {
-        setTurnIssue({
-          kind: "timeout",
-          message: "No response arrived within two minutes. The conversation is still saved, and you can retry this turn without sending it twice.",
-          messageId,
-          prompt,
-        });
-      } else if (result.outcome === "aborted" && stallRef.current && !stopRequestedRef.current) {
+        // The engine went idle without a reply or an error: the turn ended in silence.
+        await settleFailure("The model stopped before producing a response.", false, false);
+      } else if (result.outcome === "aborted") {
         // The wait ended because the engine's far-off retry was cancelled: the model is unavailable.
-        const failure = stallRef.current.reason;
-        if (!(await fallBack(failure))) setTurnIssue({ kind: "failed", message: failure, messageId, prompt });
-      } else if (result.outcome === "aborted" && stopRequestedRef.current) {
-        setTurnIssue({
-          kind: "stopped",
-          message: "Stopped. The conversation and everything completed so far are still saved.",
-          messageId,
-          prompt,
-        });
+        // A stop by the person is already in the record instead; the outcome reads it from there.
+        const stall = stallRef.current;
+        if (stall && turnStateRef.current.pending?.stoppedAt === null) await settleFailure(stall.reason, false, false);
       }
     } catch (cause) {
       const message = cause instanceof Error ? cause.message : String(cause);
-      if (!(await fallBack(message))) setTurnIssue({ kind: "failed", message, messageId, prompt });
+      await settleFailure(message, null, false);
     } finally {
       if (refreshTimer !== undefined) window.clearInterval(refreshTimer);
       waitControllerRef.current = null;
-      if (pendingTurnRef.current?.messageId === messageId) {
-        pendingTurnRef.current = null;
-        setPendingTurn(null);
+      if (activeTurnRef.current?.messageId === messageId) {
+        activeTurnRef.current = null;
+        setActiveTurn(null);
       }
     }
-  }, [coworker.model, coworker.modelVariant, coworker.name, coworker.slug, defaultDiscussionTitle, kind, onActivityChange, onCoworkerChanged, refresh, session, threadId, threads, title, titleDiscussionAfterFirstMessage]);
+  }, [commitTurnState, coworker.model, coworker.modelVariant, coworker.name, coworker.slug, defaultDiscussionTitle, kind, onActivityChange, onCoworkerChanged, refresh, resolution?.messageId, session, threadId, threads, title, titleDiscussionAfterFirstMessage]);
+
+  /**
+   * After a quit or reload the engine may still be on the turn. Follow it to
+   * its end the same way, without sending anything, so Next can drain after it.
+   */
+  const followTurn = useCallback(async (turn: { messageId: string; prompt: string }) => {
+    if (activeTurnRef.current) return;
+    const active: ActiveTurn = { messageId: turn.messageId, prompt: turn.prompt, phase: "waiting" };
+    activeTurnRef.current = active;
+    setActiveTurn(active);
+    setRecovered(false);
+    let refreshTimer: number | undefined;
+    try {
+      const controller = new AbortController();
+      waitControllerRef.current = controller;
+      refreshTimer = window.setInterval(() => void refresh(), 600);
+      const since = { messageCountBefore: 0, messageId: turn.messageId };
+      let result = await threads.client.waitForThread(threadId, { timeoutMs: WAIT_BUDGET_MS, pollIntervalMs: 500, since, signal: controller.signal });
+      while (result.outcome === "timeout" && isRunning(result.snapshot.status)) {
+        result = await threads.client.waitForThread(threadId, { timeoutMs: WAIT_BUDGET_MS, pollIntervalMs: 500, since, signal: controller.signal });
+      }
+      await refresh();
+      if (result.outcome === "settled") commitTurnState(clearPending);
+      // Anything else is in the transcript now; the outcome names it (a failure, a stop, a cut-off).
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      if (refreshTimer !== undefined) window.clearInterval(refreshTimer);
+      waitControllerRef.current = null;
+      if (activeTurnRef.current?.messageId === turn.messageId) {
+        activeTurnRef.current = null;
+        setActiveTurn(null);
+      }
+    }
+  }, [commitTurnState, refresh, threadId, threads]);
+
+  // A turn read back from disk with the engine still on it: pick the wait up where the last window left it.
+  useEffect(() => {
+    if (!turnsLoaded || !recovered || !pendingTurn || pendingTurn.stoppedAt !== null || engineStatus.type === "unknown") return;
+    if (engineStatus.type === "busy" || engineStatus.type === "retry") void followTurn(pendingTurn);
+  }, [engineStatus.type, followTurn, pendingTurn, recovered, turnsLoaded]);
 
   // After a model-related failure, find a different connected model that can use tools.
+  const needsModelFallback = failure !== "" || (pendingTurn !== null && replyStateFor(messages, pendingTurn.messageId).state === "error");
   useEffect(() => {
-    if (turnIssue?.kind !== "failed" && !terminalError) {
+    if (!needsModelFallback) {
       setRecommendedModel(null);
       return;
     }
@@ -1143,11 +1340,17 @@ function ThreadView({
         if (!cancelled) setRecommendedModel(null);
       });
     return () => { cancelled = true; };
-  }, [coworker.model, terminalError, threads, turnIssue]);
+  }, [coworker.model, needsModelFallback, threads]);
+
+  /** Run the unresolved turn again under its own message id. */
+  const retryPending = useCallback((modelOverride?: HeadlessThreadModel) => {
+    const turn = turnStateRef.current.pending;
+    if (!turn) return;
+    void submitTurn(turn.prompt, turn.messageId, { mode: "retry", attempt: 0 }, modelOverride);
+  }, [submitTurn]);
 
   /** Switch this coworker to the recommended model and retry the failed message. */
   async function useRecommendedModel() {
-    const failed = turnIssue;
     const pick = recommendedModel;
     if (!pick) return;
     const model = parseModelPreference(pick.id);
@@ -1158,21 +1361,67 @@ function ThreadView({
       setError(cause instanceof Error ? cause.message : String(cause));
       return;
     }
-    if (failed?.prompt) void submitTurn(failed.prompt, failed.messageId, model);
+    retryPending(model);
   }
 
   useEffect(() => {
     if (!initialTurn || handledInitialTurnRef.current === initialTurn.id) return;
     handledInitialTurnRef.current = initialTurn.id;
-    void submitTurn(initialTurn.prompt, initialTurn.messageId)
+    void submitTurn(initialTurn.prompt, initialTurn.messageId, { mode: "send" })
       .finally(() => onInitialTurnHandled(initialTurn.id));
   }, [initialTurn, onInitialTurnHandled, submitTurn]);
 
+  /** Send what is next in line, one at a time, once nothing is in flight and nothing unresolved holds the queue. */
+  const drainNext = useCallback(() => {
+    if (activeTurnRef.current || turnStateRef.current.pending) return;
+    const { state, message } = dequeue(turnStateRef.current);
+    if (!message) return;
+    commitTurnState(() => state);
+    void submitTurn(message.text, newMessageId(), { mode: "send" });
+  }, [commitTurnState, submitTurn]);
+
+  useEffect(() => {
+    if (!turnsLoaded || activeTurn || pendingTurn || appRetry || turnState.next.length === 0) return;
+    // Nothing pending and nothing in flight: whatever waited as Next goes now.
+    if (engineStatus.type === "idle") drainNext();
+  }, [activeTurn, appRetry, drainNext, engineStatus.type, pendingTurn, turnState.next.length, turnsLoaded]);
+
+  /**
+   * The composer never holds. A message typed while the coworker works waits as
+   * Next and steers the reply that follows; otherwise it is the next turn.
+   */
   function send() {
     const text = reply.trim();
-    if (!text || pendingTurnRef.current) return;
+    if (!text) return;
     setReply("");
-    void submitTurn(text, newMessageId());
+    if (activeTurnRef.current || turnStateRef.current.pending || appRetry || engineRunning) {
+      commitTurnState((state) => enqueue(state, { id: newQueuedId(), text, queuedAt: Date.now() }));
+      return;
+    }
+    void submitTurn(text, newMessageId(), { mode: "send" });
+  }
+
+  /** Put a waiting message back in the field to change it. */
+  function editQueued(id: string) {
+    const { state, message } = takeQueued(turnStateRef.current, id);
+    if (!message) return;
+    commitTurnState(() => state);
+    setAssignmentMode(false);
+    setReply((current) => (current.trim() ? `${message.text}\n${current}` : message.text));
+  }
+
+  /** Stop the reply in progress and send this waiting message right away. */
+  async function sendQueuedNow(id: string) {
+    const { state, message } = takeQueued(turnStateRef.current, id);
+    if (!message) return;
+    commitTurnState(() => state);
+    if (activeTurnRef.current || appRetry || engineRunning) {
+      await stop();
+      await threads.client.waitUntilIdle(threadId, { timeoutMs: 15_000, pollIntervalMs: 300 }).catch(() => undefined);
+    }
+    // The stopped turn keeps its line in the transcript; the record moves on to this message.
+    commitTurnState(clearPending);
+    void submitTurn(message.text, newMessageId(), { mode: "send" });
   }
 
   /**
@@ -1180,7 +1429,6 @@ function ThreadView({
    * providers, then retry the same message id if the saved model came back.
    */
   async function refreshProvidersAndRetry() {
-    const failed = turnIssue;
     setProviderRefreshNote("Refreshing your OpenWork providers…");
     try {
       const run = await onSyncProviders();
@@ -1195,28 +1443,61 @@ function ThreadView({
         return;
       }
       setProviderRefreshNote("");
-      if (failed?.prompt) void submitTurn(failed.prompt, failed.messageId);
+      retryPending();
     } catch (cause) {
       setProviderRefreshNote(cause instanceof Error ? cause.message : String(cause));
     }
   }
 
+  /** Stop: the engine's turn, an automatic attempt still waiting, or the wait — whichever is going. Next stays. */
   async function stop() {
-    const active = pendingTurnRef.current;
-    stopRequestedRef.current = true;
+    if (appRetryTimerRef.current !== null) {
+      window.clearTimeout(appRetryTimerRef.current);
+      appRetryTimerRef.current = null;
+    }
+    setAppRetry(null);
+    commitTurnState((state) => markStopped(state, Date.now()));
     waitControllerRef.current?.abort();
-    setPendingTurn(null);
-    setTurnIssue({
-      kind: "stopped",
-      message: "Stopped. The conversation and everything completed so far are still saved.",
-      messageId: active?.messageId ?? "",
-      prompt: active?.prompt ?? "",
-    });
     try {
       await threads.client.abortThread(threadId);
       await refresh();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
+    }
+  }
+
+  /** Let a cut-off turn go: nothing is sent again, and whatever waited as Next moves on. */
+  function discardPending() {
+    setFailure("");
+    commitTurnState(clearPending);
+  }
+
+  function chooseTurnAction(choice: TurnChoice) {
+    switch (choice.id) {
+      case "retry":
+      case "continue":
+        retryPending();
+        return;
+      case "use-model":
+        void useRecommendedModel();
+        return;
+      case "choose-model":
+        onOpenModelSettings();
+        return;
+      case "continue-with-openwork":
+        onOpenAccount();
+        return;
+      case "refresh-providers":
+        void refreshProvidersAndRetry();
+        return;
+      case "stop":
+        void stop();
+        return;
+      case "discard":
+        discardPending();
+        return;
+      default:
+        return;
     }
   }
 
@@ -1226,9 +1507,9 @@ function ThreadView({
     setAssignmentBusy(true);
     setError("");
     try {
-      const optimisticTurn = pendingTurn ?? (turnIssue?.messageId && turnIssue.prompt ? turnIssue : null);
+      const optimisticTurn = turnStateRef.current.pending;
       const visibleMessages = optimisticTurn && !messages.some((message) => message.id === optimisticTurn.messageId)
-        ? [...messages, { id: optimisticTurn.messageId, role: "user", text: optimisticTurn.prompt, createdAt: null, reasoning: "", model: null, toolCalls: [] }]
+        ? [...messages, optimisticMessage(optimisticTurn)]
         : messages;
       await onCreateAssignment(outcome, visibleMessages.map(({ role, text }) => ({ role, text })));
       setAssignmentText("");
@@ -1242,87 +1523,91 @@ function ThreadView({
   }
 
   const needsYou = hasPendingInteractions(pending);
-  const engineWorking = statusLabel !== "idle";
-  const turnNeedsAttention = turnIssue?.kind === "failed" || turnIssue?.kind === "timeout" || Boolean(terminalError);
-  const stopped = turnIssue?.kind === "stopped";
-  const working = (pendingTurn !== null || engineWorking) && !needsYou && !turnNeedsAttention && !stopped;
-  const optimisticTurn = pendingTurn ?? (turnIssue?.messageId && turnIssue.prompt ? turnIssue : null);
-  const visibleMessages = optimisticTurn && !messages.some((message) => message.id === optimisticTurn.messageId)
-    ? [...messages, { id: optimisticTurn.messageId, role: "user", text: optimisticTurn.prompt, createdAt: null, reasoning: "", model: null, toolCalls: [] }]
+  // The one value every surface reads: derived from the record, the engine, the reply, and the clock.
+  const outcome = deriveTurnOutcome({
+    coworkerName: coworker.name,
+    now,
+    turn: pendingTurn ? { ...pendingTurn, recovered } : null,
+    engine: engineStatus,
+    reply: pendingTurn ? replyStateFor(messages, pendingTurn.messageId) : NO_REPLY,
+    needsYou,
+    failure,
+    appRetry,
+    waitBudgetMs: WAIT_BUDGET_MS,
+    signedIn: session !== null,
+    recommendedModel: recommendedModel?.modelLabel ?? "",
+  });
+  // A reply that landed while this view was not driving the turn (after a reload) settles the record.
+  useEffect(() => {
+    if (outcome?.kind === "replied" && !activeTurnRef.current) commitTurnState(clearPending);
+  }, [commitTurnState, outcome?.kind]);
+
+  const turnRunning = outcome?.kind === "working" || outcome?.kind === "slow" || outcome?.kind === "retrying";
+  // The engine can be busy on a turn this view never sent (a Worker's review, a scheduled run): still working.
+  const working = turnRunning || (outcome === null && !needsYou && engineRunning) || (activeTurn !== null && outcome === null);
+  const visibleMessages = pendingTurn && !messages.some((message) => message.id === pendingTurn.messageId)
+    ? [...messages, optimisticMessage(pendingTurn)]
     : messages;
   const lastAssistantIndex = visibleMessages.findLastIndex((message) => message.role === "assistant");
-  const displayedFailure = turnIssue?.kind === "failed" ? turnIssue.message : terminalError;
   const activeToolLabel = activeToolCallLabel(visibleMessages);
   // The reply for this turn has started only when the newest message is an
   // assistant message with text; an older reply must not read as progress.
   const newestMessage = visibleMessages.at(-1);
   const replyStarted = newestMessage?.role === "assistant" && newestMessage.text.length > 0;
-  const workingLabel = pendingTurn?.phase === "accepting"
+  const workingLabel = activeTurn?.phase === "accepting"
     ? "Sending"
-    : statusLabel === "retry"
+    : outcome?.kind === "retrying"
       ? "Retrying"
-      : activeToolLabel
-        ? "Using a tool"
-        : replyStarted
-          ? "Working"
-          : "Thinking";
+      : outcome?.kind === "slow"
+        ? "Still working"
+        : activeToolLabel
+          ? "Using a tool"
+          : replyStarted
+            ? "Working"
+            : "Thinking";
 
-  const readableStatus = needsYou
-    ? pending.permissions.length > 0 ? "Waiting for permission" : "Waiting for an answer"
-    : turnNeedsAttention
-      ? turnIssue?.kind === "timeout" ? "Response delayed" : "Reply failed"
-      : stopped
-        ? "Stopped"
+  const readableStatus = outcome && outcome.kind !== "working" && outcome.kind !== "replied"
+    ? outcome.label
     : working
       ? workingLabel
       : "Ready";
+  const settledWord = outcome?.kind === "stopped-by-you" || outcome?.kind === "cut-off";
+  const failed = outcome?.kind === "failed";
 
   useEffect(() => {
     if (needsYou) {
       onActivityChange({
         state: "attention",
-        label: pending.permissions.length > 0 ? "Waiting for permission" : "Waiting for an answer",
+        label: "Needs you",
         detail: describeInteractions(pending),
+        summary: describeInteractions(pending),
         updatedAt: Date.now(),
         threadId,
       });
       return;
     }
-    if (turnIssue?.kind === "failed" || turnIssue?.kind === "timeout") {
-      onActivityChange({
-        state: "attention",
-        label: turnIssue.kind === "timeout" ? "Response delayed" : "Reply failed",
-        detail: describeTurnFailure(turnIssue.message, coworker.name).headline,
-        updatedAt: Date.now(),
-        threadId,
-      });
+    const subject = kind === "discussion" ? "Replying in your discussion" : kind === "worker" ? workerNameFromTitle(title) : title;
+    if (outcome?.kind === "failed") {
+      onActivityChange({ state: "attention", label: outcome.label, detail: subject, summary: outcome.line, updatedAt: Date.now(), threadId });
       return;
     }
-    if (displayedFailure) {
-      onActivityChange({
-        state: "attention",
-        label: "Reply failed",
-        detail: describeTurnFailure(displayedFailure, coworker.name).headline,
-        updatedAt: Date.now(),
-        threadId,
-      });
+    if (outcome?.kind === "retrying") {
+      onActivityChange({ state: "retrying", label: outcome.label, detail: subject, summary: `${RETRY_LINE} Trying again…`, updatedAt: Date.now(), threadId });
       return;
     }
-    if (stopped) {
-      onActivityChange({
-        state: "recent",
-        label: "Stopped",
-        detail: kind === "discussion" ? "Discussion turn stopped" : kind === "worker" ? workerNameFromTitle(title) : title,
-        updatedAt: Date.now(),
-        threadId,
-      });
+    if (outcome?.kind === "slow") {
+      onActivityChange({ state: "working", label: outcome.label, detail: subject, summary: "Still working on it", updatedAt: Date.now(), threadId });
+      return;
+    }
+    if (outcome?.kind === "stopped-by-you" || outcome?.kind === "cut-off") {
+      onActivityChange({ state: "recent", label: outcome.label, detail: subject, summary: outcome.line, updatedAt: Date.now(), threadId });
       return;
     }
     if (working) {
       onActivityChange({
-        state: statusLabel === "retry" ? "retrying" : "working",
+        state: "working",
         label: workingLabel,
-        detail: activeToolLabel ?? (kind === "discussion" ? "Replying in your discussion" : kind === "worker" ? workerNameFromTitle(title) : title),
+        detail: activeToolLabel ?? subject,
         updatedAt: Date.now(),
         threadId,
       });
@@ -1330,13 +1615,14 @@ function ThreadView({
     }
     // A turn accepted in this same effect pass (the first message of a new discussion) has
     // already announced itself; clearing here would leave the header on Ready for one frame.
-    if (pendingTurnRef.current) return;
+    if (activeTurnRef.current) return;
     onActivityChange(null);
-  }, [activeToolLabel, coworker.name, displayedFailure, kind, needsYou, onActivityChange, pending, statusLabel, stopped, threadId, title, turnIssue, working, workingLabel]);
+  }, [activeToolLabel, kind, needsYou, onActivityChange, outcome?.kind, outcome?.label, outcome?.line, pending, threadId, title, working, workingLabel]);
 
   const currentDiscussion: ThreadListItem = discussions.find((item) => item.id === threadId)
     ?? { id: threadId, title, createdAt: 0, updatedAt: 0, status: "idle" };
-  const freshDiscussion = kind === "discussion" && visibleMessages.length === 0 && !working && !needsYou && !error && !displayedFailure;
+  const freshDiscussion = kind === "discussion" && visibleMessages.length === 0 && !working && !needsYou && !error && !outcome;
+  const composerWorking = turnRunning || activeTurn !== null || (engineRunning && !needsYou);
 
   return (
     <section className="flex h-full min-h-0 flex-col bg-ink" data-testid={kind === "discussion" ? "coworker-discussion-view" : kind === "worker" ? "coworker-worker-view" : "coworker-assignment-view"}>
@@ -1366,16 +1652,24 @@ function ThreadView({
         )}
       />
       {/* Progress and problems show inline in the conversation; this keeps the turn state readable to assistive tech and tests. */}
-      <p data-testid="coworker-thread-status" className="sr-only" aria-live="polite" data-state={needsYou ? "needs-you" : working ? "working" : "idle"}>
-        {kind === "discussion" && !working && !needsYou && !turnNeedsAttention && !stopped ? "Ready" : readableStatus}
+      <p data-testid="coworker-thread-status" className="sr-only" aria-live="polite" data-state={needsYou ? "needs-you" : working ? "working" : "idle"} data-outcome={outcome?.kind ?? ""}>
+        {kind === "discussion" && !working && !needsYou && !failed && !settledWord ? "Ready" : readableStatus}
       </p>
       <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5">
         <div className="mx-auto max-w-3xl space-y-3">
           {freshDiscussion ? <QuietEmptyConversation coworker={coworker} /> : null}
-          {conversationBlocks(visibleMessages, (message, index) => working && message.role === "assistant" && index === lastAssistantIndex).map((block) =>
-            block.kind === "actions" ? (
-              <ActionLine key={block.id} review={block.review} reasoning={block.reasoning} calls={block.calls} client={mcpClient} />
-            ) : (
+          {conversationBlocks(visibleMessages, (message, index) => working && message.role === "assistant" && index === lastAssistantIndex).map((block) => {
+            if (block.kind === "actions") {
+              return <ActionLine key={block.id} review={block.review} reasoning={block.reasoning} calls={block.calls} client={mcpClient} />;
+            }
+            // A reply that ended without words stays in the transcript as one quiet line; the turn still
+            // unresolved is told by the outcome below instead, with its actions.
+            const ended = endedWithoutWords(block.message);
+            if (ended && block.message.parentId !== pendingTurn?.messageId) {
+              return <QuietLine key={block.message.id} outcome={ended === "stopped" ? "stopped" : "failed"} text={ended === "stopped" ? "Stopped." : describeTurnFailure(block.message.error?.message ?? "", coworker.name).headline} />;
+            }
+            if (ended) return null;
+            return (
               <Fragment key={block.message.id}>
                 <TimeLabel label={timeLabelBetween(block.previous?.createdAt, block.message.createdAt)} />
                 <MessageBubble
@@ -1390,9 +1684,10 @@ function ThreadView({
                   documents={documents}
                   onLongReply={block.message.id === visibleMessages[lastAssistantIndex]?.id ? recordLongReply : undefined}
                 />
+                {resolution && block.message.id === resolution.messageId ? <QuietLine outcome="retried" text={resolution.note} /> : null}
               </Fragment>
-            ),
-          )}
+            );
+          })}
           <InteractionCards
             coworker={coworker}
             pending={pending}
@@ -1412,59 +1707,34 @@ function ThreadView({
           {kind === "discussion" ? (
             <WorkerDecisionCards coworker={coworker} workers={workers} onAnswered={() => onWorkersChanged?.()} />
           ) : null}
-          {working ? (
+          {working && outcome?.kind !== "retrying" ? (
             <WorkIndicator
               coworker={coworker}
               messages={visibleMessages}
               label={workingLabel}
+              stillWorking={outcome?.kind === "slow" ? outcome.line : ""}
+              onStop={outcome?.kind === "slow" ? () => void stop() : undefined}
             />
           ) : null}
           {visibleMessages.length === 0 && !error && !working && kind !== "discussion" ? (
             <Empty><InlineLoader label={kind === "worker" ? "Loading the Worker's thread" : "Loading assignment"} /></Empty>
           ) : null}
-          {displayedFailure ? (
-            <TurnIssueNote
-              kind="failed"
-              message={displayedFailure}
-              coworkerName={coworker.name}
-              canRetry={Boolean(turnIssue?.prompt)}
-              session={session}
-              onRetry={() => {
-                if (turnIssue?.prompt) void submitTurn(turnIssue.prompt, turnIssue.messageId);
-              }}
-              onOpenModelSettings={onOpenModelSettings}
-              onOpenAccount={onOpenAccount}
-              onRefreshProviders={() => void refreshProvidersAndRetry()}
-              recommendedModel={recommendedModel}
-              onUseRecommended={() => void useRecommendedModel()}
-            />
+          {outcome?.kind === "retrying" || outcome?.kind === "stopped-by-you" || outcome?.kind === "cut-off" ? (
+            <QuietLine outcome={outcome.kind} text={outcome.line} choices={outcome.choices} onChoose={chooseTurnAction} />
           ) : null}
-          {turnIssue?.kind === "timeout" ? (
-            <TurnIssueNote
-              kind="timeout"
-              message={turnIssue.message}
-              coworkerName={coworker.name}
-              canRetry
-              session={session}
-              onRetry={() => void submitTurn(turnIssue.prompt, turnIssue.messageId)}
-              onOpenModelSettings={onOpenModelSettings}
-              onOpenAccount={onOpenAccount}
-              onStop={() => void stop()}
-            />
+          {outcome?.kind === "failed" ? (
+            <TurnFailureBubble coworkerName={coworker.name} outcome={outcome} onChoose={chooseTurnAction} />
           ) : null}
           {providerRefreshNote ? (
             <p className="px-1 text-[11px] leading-relaxed text-mist" data-testid="coworker-provider-refresh">{providerRefreshNote}</p>
-          ) : null}
-          {turnIssue?.kind === "stopped" ? (
-            <div className="flex items-center justify-between gap-3 rounded-xl border border-line bg-panel/45 px-3 py-2.5 text-xs text-mist" data-testid="coworker-turn-stopped">
-              <span>{turnIssue.message}</span>
-              {turnIssue.prompt ? <Button variant="ghost" onClick={() => void submitTurn(turnIssue.prompt, turnIssue.messageId)}>Retry</Button> : null}
-            </div>
           ) : null}
           {error ? <ErrorNote>{error}</ErrorNote> : null}
           <div ref={endRef} />
         </div>
       </div>
+      {kind !== "worker" && turnState.next.length > 0 ? (
+        <NextRows items={turnState.next} onEdit={editQueued} onRemove={(id) => commitTurnState((state) => removeQueued(state, id))} onSendNow={(id) => void sendQueuedNow(id)} />
+      ) : null}
       {kind === "discussion" ? (
         <DiscussionComposer
           message={reply}
@@ -1475,7 +1745,9 @@ function ThreadView({
           assignment={assignmentText}
           onAssignmentChange={setAssignmentText}
           onCreateAssignment={() => void createAssignmentFromDiscussion()}
-          busy={pendingTurn !== null || assignmentBusy}
+          busy={assignmentBusy}
+          working={composerWorking}
+          onStop={() => void stop()}
           coworkerName={coworker.name}
           summary={summary}
           onOpenSummary={onOpenSummary}
@@ -1489,7 +1761,8 @@ function ThreadView({
           value={reply}
           onChange={setReply}
           onSubmit={() => void send()}
-          busy={pendingTurn !== null}
+          working={composerWorking}
+          onStop={() => void stop()}
           placeholder={`Follow up with ${coworker.name}…`}
           summary={summary}
           onOpenSummary={onOpenSummary}
@@ -1786,7 +2059,7 @@ function progressPhase(label: string, hasActiveStep: boolean): ProgressPhase {
   if (label === "Sending") return "sending";
   if (label === "Retrying") return "retrying";
   if (hasActiveStep) return "tool";
-  if (label === "Working") return "writing";
+  if (label === "Working" || label === "Still working") return "writing";
   return "thinking";
 }
 
@@ -1807,24 +2080,159 @@ function TypingDots() {
 
 /**
  * One live row per active turn: a small avatar, three dots, and one phrase that
- * changes only when the phase changes — never on a timer.
+ * changes only when the phase changes — never on a timer. Past the wait budget
+ * the phrase softens to "still working on it" and gains one inline Stop; a
+ * long wait is not a problem, and nothing rose or card-shaped appears.
  */
 function WorkIndicator({
   coworker,
   messages,
   label,
+  stillWorking = "",
+  onStop,
 }: {
   coworker: CoworkerSummary;
   messages: TranscriptMessage[];
   label: string;
+  /** The softened phrase once the wait budget has passed; empty while the phase phrase applies. */
+  stillWorking?: string;
+  onStop?: () => void;
 }) {
   const step = activeWorkStep(messages);
   const phase = progressPhase(label, step !== null);
   return (
-    <div className="flex items-center gap-2.5 px-1 py-1.5 text-xs text-mist" data-testid="coworker-working" data-phase={phase}>
+    <div className="flex items-center gap-2.5 px-1 py-1.5 text-xs text-mist" data-testid="coworker-working" data-phase={phase} data-outcome={stillWorking ? "slow" : "working"}>
       <CoworkerAvatar animated working={phase === "tool"} color={coworker.avatarColor} glasses={coworker.avatarGlasses} name={coworker.name} size={22} />
       <TypingDots />
-      <span data-testid="coworker-progress-phrase">{describeProgress(coworker.name, phase, step)}</span>
+      <span data-testid="coworker-progress-phrase">{stillWorking || describeProgress(coworker.name, phase, step)}</span>
+      {stillWorking && onStop ? <InlineAction label="Stop" choice="stop" onClick={onStop} /> : null}
+    </div>
+  );
+}
+
+/** One underlined word inside a quiet line or the live row. */
+function InlineAction({ label, choice, onClick }: { label: string; choice: TurnChoice["id"]; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      className="font-medium text-snow/80 underline-offset-2 hover:underline"
+      data-testid="coworker-turn-choice"
+      data-choice={choice}
+      onClick={onClick}
+    >
+      {label}
+    </button>
+  );
+}
+
+/**
+ * One small centered line between bubbles for a turn that did not simply
+ * reply — stopped, cut off, trying again — with at most two underlined
+ * actions beside it. Never a card, never two in a row.
+ */
+function QuietLine({ outcome, text, choices = [], onChoose }: { outcome: string; text: string; choices?: TurnChoice[]; onChoose?: (choice: TurnChoice) => void }) {
+  return (
+    <p
+      className="flex flex-wrap items-center justify-center gap-x-3 px-12 text-center text-[11px] text-mist"
+      data-testid="coworker-turn-line"
+      data-outcome={outcome}
+    >
+      <span>{text}</span>
+      {choices.length > 0 && onChoose ? (
+        <span className="flex items-center gap-x-3">
+          {choices.slice(0, 2).map((choice) => <InlineAction key={choice.id} label={choice.label} choice={choice.id} onClick={() => onChoose(choice)} />)}
+        </span>
+      ) : null}
+    </p>
+  );
+}
+
+/**
+ * A failure is a message from the coworker's side of the conversation: one
+ * headline in its voice, one line of explanation, then the lettered ways out
+ * (never more than three), with the raw text folded away. It sits at the
+ * transcript's bubble width, never across the whole column.
+ */
+function TurnFailureBubble({ coworkerName, outcome, onChoose }: { coworkerName: string; outcome: TurnOutcome; onChoose: (choice: TurnChoice) => void }) {
+  const [busy, setBusy] = useState("");
+  useEffect(() => {
+    setBusy("");
+  }, [outcome.since]);
+  const choose = (choice: TurnChoice) => {
+    if (busy) return;
+    setBusy(choice.id);
+    onChoose(choice);
+  };
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (busy || typingInField(event.target) || event.metaKey || event.ctrlKey || event.altKey) return;
+      const choice = outcome.choices.find((item) => item.letter === event.key.toUpperCase());
+      if (!choice) return;
+      event.preventDefault();
+      choose(choice);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  });
+  return (
+    <div className="flex justify-start" data-testid="coworker-turn-outcome" data-outcome="failed">
+      <InteractionCard
+        label={`${coworkerName} could not reply`}
+        testId="coworker-turn-failed"
+        title={outcome.line}
+        titleTestId="coworker-turn-headline"
+        detail={outcome.detail || undefined}
+        needsYou
+      >
+        <div className="mt-3 divide-y divide-line/70 rounded-xl border border-line/70" role="listbox" aria-label="What to do">
+          {outcome.choices.map((choice, index) => (
+            <OptionRow
+              key={choice.id}
+              letter={choice.letter ?? LETTERS[index] ?? String(index + 1)}
+              label={busy === choice.id ? `${choice.label}…` : choice.label}
+              disabled={busy !== ""}
+              testId="coworker-turn-choice"
+              choice={choice.id}
+              onChoose={() => choose(choice)}
+            />
+          ))}
+        </div>
+        {outcome.technical ? (
+          <details className="mt-2 text-[11px] text-mist" data-testid="coworker-turn-technical">
+            <summary className="cursor-pointer select-none">Technical details</summary>
+            <p className="mt-1 break-words font-mono">{outcome.technical}</p>
+          </details>
+        ) : null}
+      </InteractionCard>
+    </div>
+  );
+}
+
+/**
+ * What the person said while the coworker was working, waiting between the
+ * transcript and the field. Each row is the message on one line with Edit,
+ * Remove, and Send now; the first says what Next means. Rows go one at a
+ * time, in order, as turns settle.
+ */
+function NextRows({ items, onEdit, onRemove, onSendNow }: { items: QueuedMessage[]; onEdit: (id: string) => void; onRemove: (id: string) => void; onSendNow: (id: string) => void }) {
+  return (
+    <div className="bg-ink px-5 pt-1" data-testid="coworker-next">
+      <div className="mx-auto max-w-3xl space-y-1 px-12">
+        {items.map((item, index) => (
+          <div key={item.id} className="flex items-center gap-2 text-[11px] text-mist" data-testid="coworker-next-row" data-queued-id={item.id}>
+            <span className="shrink-0 font-medium text-snow/70">
+              Next
+              {index === 0 ? <span className="font-normal text-mist/70"> · steers the reply that follows</span> : null}
+            </span>
+            <span className="min-w-0 flex-1 truncate" title={item.text}>{item.text}</span>
+            <span className="flex shrink-0 items-center gap-x-3">
+              <button type="button" className="font-medium text-snow/80 underline-offset-2 hover:underline" data-testid="coworker-next-edit" onClick={() => onEdit(item.id)}>Edit</button>
+              <button type="button" className="font-medium text-snow/80 underline-offset-2 hover:underline" data-testid="coworker-next-remove" onClick={() => onRemove(item.id)}>Remove</button>
+              <button type="button" className="font-medium text-snow/80 underline-offset-2 hover:underline" data-testid="coworker-next-send-now" onClick={() => onSendNow(item.id)}>Send now</button>
+            </span>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
@@ -1849,73 +2257,6 @@ function describeUnavailableModel(model: string, available: EngineModelOption[],
       : `The saved model "${model}" belongs to an OpenWork Cloud provider, but no OpenWork account is signed in here. Continue with OpenWork or choose an AI model from this Mac.`;
   }
   return `The saved model "${model}" is not available: provider "${providerId}" is not connected on this Mac. Choose another AI model or connect that provider in OpenWork.`;
-}
-
-function TurnIssueNote({
-  kind,
-  message,
-  coworkerName,
-  canRetry,
-  session,
-  onRetry,
-  onOpenModelSettings,
-  onOpenAccount,
-  onRefreshProviders,
-  onStop,
-  recommendedModel = null,
-  onUseRecommended,
-}: {
-  kind: "failed" | "timeout";
-  message: string;
-  coworkerName: string;
-  canRetry: boolean;
-  session: DenSession | null;
-  onRetry: () => void;
-  onOpenModelSettings: () => void;
-  onOpenAccount: () => void;
-  /** Re-read the account's providers, then retry; only offered while signed in. */
-  onRefreshProviders?: () => void;
-  onStop?: () => void;
-  /** A different tool-capable model to switch to and retry with, when one is connected. */
-  recommendedModel?: EngineModelOption | null;
-  onUseRecommended?: () => void;
-}) {
-  const failure = kind === "failed"
-    ? describeTurnFailure(message, coworkerName)
-    : { headline: "The reply is taking too long", detail: message, technical: "", modelRelated: false };
-  return (
-    <div className="rounded-xl border border-rose/25 bg-rose/5 px-3 py-3" data-testid={`coworker-turn-${kind}`}>
-      <div className="flex items-start gap-2.5">
-        <AlertIcon className="mt-0.5 size-4 shrink-0 text-rose" />
-        <div className="min-w-0 flex-1">
-          <p className="text-xs font-semibold text-snow" data-testid="coworker-turn-headline">{failure.headline}</p>
-          {failure.detail ? <p className="mt-1 break-words text-xs leading-relaxed text-mist">{failure.detail}</p> : null}
-          <div className="mt-2 flex flex-wrap items-center gap-2">
-            {failure.modelRelated && recommendedModel && onUseRecommended && canRetry ? (
-              <Button variant="primary" onClick={onUseRecommended} title={`Switch to ${recommendedModel.label} and retry`} data-testid="coworker-use-recommended-model">
-                Use {recommendedModel.modelLabel}
-              </Button>
-            ) : null}
-            {canRetry ? <Button variant="ghost" onClick={onRetry}>Retry</Button> : null}
-            {onStop ? <Button variant="ghost" onClick={onStop}>Stop</Button> : null}
-            <Button variant="ghost" onClick={onOpenModelSettings}>Choose AI model</Button>
-            {kind === "failed" && session && onRefreshProviders ? (
-              <Button variant="ghost" onClick={onRefreshProviders}>Refresh providers</Button>
-            ) : null}
-            {kind === "failed" ? (
-              <Button variant="ghost" onClick={onOpenAccount}>{session ? "Open account settings" : "Continue with OpenWork"}</Button>
-            ) : null}
-          </div>
-          {failure.technical ? (
-            <details className="mt-2 text-[11px] text-mist" data-testid="coworker-turn-technical">
-              <summary className="cursor-pointer select-none">Technical details</summary>
-              <p className="mt-1 break-words font-mono">{failure.technical}</p>
-            </details>
-          ) : null}
-        </div>
-      </div>
-    </div>
-  );
 }
 
 /**
@@ -2156,6 +2497,8 @@ function DiscussionComposer({
   onAssignmentChange,
   onCreateAssignment,
   busy,
+  working = false,
+  onStop,
   waiting,
   error,
   coworkerName,
@@ -2170,7 +2513,11 @@ function DiscussionComposer({
   assignment: string;
   onAssignmentChange: (value: string) => void;
   onCreateAssignment: () => void;
+  /** An assignment is being created from the field; the field waits for it. */
   busy: boolean;
+  /** A reply is in progress: the field stays open, Enter puts the message on Next, and the round control stops when the field is empty. */
+  working?: boolean;
+  onStop?: () => void;
   /** Why sending has to wait a moment (for example, the workspace is still starting); typing stays possible. */
   waiting?: string;
   error?: string;
@@ -2185,9 +2532,10 @@ function DiscussionComposer({
   const fieldRef = useRef<HTMLTextAreaElement>(null);
   useAutoGrow(fieldRef, value);
   const modeLabel = assignmentMode ? "Back to chat" : "Create assignment";
-  const submitLabel = busy ? "Working…" : assignmentMode ? "Create assignment" : "Send";
+  const stopping = working && !assignmentMode && !value.trim() && Boolean(onStop);
+  const submitLabel = busy ? "Working…" : assignmentMode ? "Create assignment" : working ? "Next" : "Send";
   return (
-    <div className="bg-ink px-5 pb-2 pt-2" data-testid="coworker-composer">
+    <div className="bg-ink px-5 pb-2 pt-2" data-testid="coworker-composer" data-working={working ? "true" : "false"}>
       <div className="mx-auto max-w-3xl">
         {error ? <div className="mb-2"><ErrorNote>{error}</ErrorNote></div> : null}
         {assignmentMode ? (
@@ -2224,12 +2572,20 @@ function DiscussionComposer({
                 if (canSubmit) submit();
               }}
             />
-            <SendButton label={submitLabel} busy={busy} disabled={!canSubmit} title={waiting} onClick={submit} />
+            {stopping && onStop ? (
+              <SendButton label="Stop" busy={false} disabled={false} stop onClick={onStop} />
+            ) : (
+              <SendButton label={submitLabel} busy={busy} disabled={!canSubmit} title={waiting} onClick={submit} />
+            )}
           </div>
         </div>
         <div className="mt-1.5 flex items-center justify-between gap-3 px-12 text-[9px] text-mist/65">
           <span className="hidden sm:inline" data-testid="coworker-composer-hint">
-            {waiting && !busy ? `${waiting}…` : `Enter to ${assignmentMode ? "create" : "send"} · Shift Enter for a new line`}
+            {waiting && !busy
+              ? `${waiting}…`
+              : working && !assignmentMode
+                ? "Enter sends it next · Shift Enter for a new line"
+                : `Enter to ${assignmentMode ? "create" : "send"} · Shift Enter for a new line`}
           </span>
           <SummaryLine summary={summary} onOpen={onOpenSummary} />
         </div>
@@ -2270,8 +2626,12 @@ export function SummaryLine({ summary, onOpen }: { summary: CoworkerSummaryLine 
   );
 }
 
-/** The round send control shared by every composer: our accent when it can send, quiet otherwise. */
-export function SendButton({ label, busy, disabled, title, onClick, testId = "coworker-send" }: { label: string; busy: boolean; disabled: boolean; title?: string; onClick: () => void; testId?: string }) {
+/**
+ * The round control shared by every composer: our accent when it can send,
+ * quiet otherwise. While a reply runs and the field is empty it turns into a
+ * stop control, so Stop is always one click away.
+ */
+export function SendButton({ label, busy, disabled, title, onClick, testId = "coworker-send", stop = false }: { label: string; busy: boolean; disabled: boolean; title?: string; onClick: () => void; testId?: string; stop?: boolean }) {
   return (
     <button
       type="button"
@@ -2279,13 +2639,18 @@ export function SendButton({ label, busy, disabled, title, onClick, testId = "co
       disabled={disabled}
       title={title || label}
       data-testid={testId}
+      data-role={stop ? "stop" : "send"}
       className={`mb-0.5 flex size-7 shrink-0 items-center justify-center rounded-full transition-colors ${
-        disabled ? "bg-white/8 text-mist/60" : "bg-spark text-white hover:bg-spark/90"
+        disabled ? "bg-white/8 text-mist/60" : stop ? "bg-white/12 text-snow hover:bg-white/18" : "bg-spark text-white hover:bg-spark/90"
       } disabled:cursor-not-allowed`}
       onClick={onClick}
     >
       {busy ? (
         <span aria-hidden="true" className="block size-3 animate-spin rounded-full border-2 border-white/30 border-t-white" />
+      ) : stop ? (
+        <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+          <rect x="4.5" y="4.5" width="7" height="7" rx="1.5" fill="currentColor" />
+        </svg>
       ) : (
         <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
           <path d="M8 13V3.5M3.8 7.7 8 3.5l4.2 4.2" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" />
@@ -2300,7 +2665,8 @@ function MessageComposer({
   value,
   onChange,
   onSubmit,
-  busy,
+  working = false,
+  onStop,
   placeholder,
   summary = null,
   onOpenSummary,
@@ -2308,16 +2674,19 @@ function MessageComposer({
   value: string;
   onChange: (value: string) => void;
   onSubmit: () => void;
-  busy: boolean;
+  /** A reply is in progress: the field stays open, Enter puts the message on Next, and the round control stops when the field is empty. */
+  working?: boolean;
+  onStop?: () => void;
   placeholder: string;
   summary?: CoworkerSummaryLine | null;
   onOpenSummary?: (kind: SummaryKind) => void;
 }) {
-  const canSubmit = !busy && Boolean(value.trim());
+  const canSubmit = Boolean(value.trim());
+  const stopping = working && !value.trim() && Boolean(onStop);
   const fieldRef = useRef<HTMLTextAreaElement>(null);
   useAutoGrow(fieldRef, value);
   return (
-    <div className="bg-ink px-5 pb-2 pt-2" data-testid="coworker-composer">
+    <div className="bg-ink px-5 pb-2 pt-2" data-testid="coworker-composer" data-working={working ? "true" : "false"}>
       <div className="mx-auto max-w-3xl">
         <div className="flex min-w-0 items-end gap-1 rounded-[20px] border border-line bg-panel/60 py-1 pl-4 pr-1 transition-colors focus-within:border-spark/50">
           <textarea
@@ -2334,7 +2703,11 @@ function MessageComposer({
               if (canSubmit) onSubmit();
             }}
           />
-          <SendButton label={busy ? "Working…" : "Send"} busy={busy} disabled={!canSubmit} onClick={onSubmit} />
+          {stopping && onStop ? (
+            <SendButton label="Stop" busy={false} disabled={false} stop onClick={onStop} />
+          ) : (
+            <SendButton label={working ? "Next" : "Send"} busy={false} disabled={!canSubmit} onClick={onSubmit} />
+          )}
         </div>
         {summary ? (
           <div className="mt-1.5 flex items-center justify-end px-1 text-[9px] text-mist/65">
