@@ -208,6 +208,31 @@ test("recommendModel picks a connected, tool-capable model — the account's fir
   assert.equal(recommendModel({ models: catalog.models.filter((model) => model.providerId === "openrouter") }), null, "a deprecated model is never recommended");
 });
 
+test("recommendModel prefers the account, then a subscription or key on this Mac, then a local server, and the free model last", () => {
+  const model = (name: string, releaseDate: string) => ({ name, capabilities: { toolcall: true, reasoning: true }, status: "active", release_date: releaseDate });
+  const providers = {
+    free: { id: "opencode", name: "OpenCode Zen", source: "custom", env: [], options: {}, models: { "big-pickle": model("Big Pickle", "2026-09-01") } },
+    ollama: { id: "ollama", name: "Ollama", source: "config", env: [], options: { baseURL: "http://127.0.0.1:11434/v1" }, models: { "llama3.2:latest": model("llama3.2", "2026-08-30") } },
+    lan: { id: "custom-office-box", name: "Office box", source: "config", env: [], options: { baseURL: "http://192.168.1.20:8000/v1" }, models: { qwen: model("Qwen", "2026-08-29") } },
+    chatgpt: { id: "openai", name: "OpenAI", source: "custom", env: [], options: {}, models: { "gpt-5": model("GPT-5", "2025-08-07") } },
+    remote: { id: "custom-remote", name: "Remote", source: "config", env: [], options: { baseURL: "https://ai.example.com/v1" }, models: { big: model("Big", "2025-01-01") } },
+    org: { id: "lpr_01org", name: "Org", source: "config", env: [], options: {}, models: { "org-large": model("Org Large", "2024-01-01") } },
+  };
+  const catalogOf = (...entries: Array<(typeof providers)[keyof typeof providers]>) =>
+    connectedModelCatalog({ connected: entries.map((entry) => entry.id), default: {}, all: entries } as unknown as Parameters<typeof connectedModelCatalog>[0]);
+
+  const everything = catalogOf(providers.free, providers.ollama, providers.lan, providers.chatgpt, providers.remote, providers.org);
+  assert.deepEqual(
+    Object.fromEntries(everything.models.map((entry) => [entry.providerId, entry.tier])),
+    { opencode: "free", ollama: "local-server", "custom-office-box": "local-server", openai: "key", "custom-remote": "key", lpr_01org: "cloud" },
+  );
+  assert.equal(recommendModel(everything)?.id, "lpr_01org/org-large", "the account wins even when it is the oldest release");
+  assert.equal(recommendModel(catalogOf(providers.free, providers.ollama, providers.chatgpt, providers.remote))?.id, "openai/gpt-5", "a subscription beats a local server and the free model");
+  assert.equal(recommendModel(catalogOf(providers.free, providers.ollama, providers.lan))?.id, "ollama/llama3.2:latest", "a local server beats the free model");
+  assert.equal(recommendModel(catalogOf(providers.free))?.id, "opencode/big-pickle", "the free model is what is left when nothing is connected");
+  assert.equal(recommendModel(catalogOf(providers.free, providers.chatgpt), { exclude: "openai/gpt-5" })?.id, "opencode/big-pickle", "an excluded model hands over to the next tier");
+});
+
 test("assignmentThreads excludes every discussion, not just the open one", () => {
   const threads = [{ id: "ses_a", title: "Discussion with Scout" }, { id: "ses_b", title: "Move the car" }, { id: "ses_work", title: "Launch brief" }];
   assert.deepEqual(assignmentThreads(threads, ["ses_a", "ses_b"]), [{ id: "ses_work", title: "Launch brief" }]);
