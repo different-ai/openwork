@@ -38,6 +38,11 @@
       "reason": "requires local placement, Bun, and independently owned Den and worker worlds"
     },
     {
+      "test": "compatible-release-picker.e2e.test.ts",
+      "category": "fresh-desktop-profile",
+      "reason": "spawns a fresh-profile/second Electron; cannot reuse the shared prewarmed desktop sandbox"
+    },
+    {
       "test": "connect-policy-runtime-restart.e2e.test.ts",
       "category": "raw-or-local-placement",
       "reason": "requires a caller-owned local desktop profile and local MySQL Den"
@@ -76,6 +81,16 @@
       "test": "first-run-bootstrap-contract.e2e.test.ts",
       "category": "raw-or-local-placement",
       "reason": "requires local placement, local MySQL, and a caller-owned first-run profile"
+    },
+    {
+      "test": "first-run-cloud-share.e2e.test.ts",
+      "category": "fresh-desktop-profile",
+      "reason": "spawns a fresh-profile/second Electron; cannot reuse the shared prewarmed desktop sandbox"
+    },
+    {
+      "test": "first-run-local.e2e.test.ts",
+      "category": "fresh-desktop-profile",
+      "reason": "spawns a fresh-profile/second Electron; cannot reuse the shared prewarmed desktop sandbox"
     },
     {
       "test": "first-signin-fresh-profile.e2e.test.ts",
@@ -158,6 +173,11 @@
       "reason": "requires externally attached fixed Den API/Web URLs and pre-seeded credentials"
     },
     {
+      "test": "reliable-app-recovery.e2e.test.ts",
+      "category": "fresh-desktop-profile",
+      "reason": "spawns a fresh-profile/second Electron; cannot reuse the shared prewarmed desktop sandbox"
+    },
+    {
       "test": "remote-session-desktop-runner.e2e.test.ts",
       "category": "local-bun-world",
       "reason": "requires local placement and a Bun-backed remote-session worker world"
@@ -206,6 +226,16 @@
       "test": "tool-tester-page.e2e.test.ts",
       "category": "fresh-den-url",
       "reason": "requires fresh Den Web/API and OAuth callback origins for its browser-driven connection"
+    },
+    {
+      "test": "two-daytona-desktops.e2e.test.ts",
+      "category": "fresh-desktop-profile",
+      "reason": "spawns a fresh-profile/second Electron; cannot reuse the shared prewarmed desktop sandbox"
+    },
+    {
+      "test": "welcome-one-field.e2e.test.ts",
+      "category": "fresh-desktop-profile",
+      "reason": "spawns a fresh-profile/second Electron; cannot reuse the shared prewarmed desktop sandbox"
     },
     {
       "test": "workflows.e2e.test.ts",

@@ -17,6 +17,7 @@ const execFileAsync = promisify(execFile);
 const allowedCategories = new Set([
   "per-test-den-env",
   "fresh-den-url",
+  "fresh-desktop-profile",
   "fault-proxy",
   "local-bun-world",
   "unavailable-secret-or-docker",
@@ -109,6 +110,7 @@ test("Daytona E2E regression profile excludes only audited shared-topology incom
   expect(categoryByTest.get("automation-model-needs-attention.e2e.test.ts")).toBe("per-test-den-env");
   expect(categoryByTest.get("automation-proposal-model-resolution.e2e.test.ts")).toBe("per-test-den-env");
   expect(categoryByTest.get("opencode-mcp-agent-oauth.e2e.test.ts")).toBe("fresh-den-url");
+  expect(categoryByTest.get("welcome-one-field.e2e.test.ts")).toBe("fresh-desktop-profile");
   expect(categoryByTest.get("library-advanced-refresh.e2e.test.ts")).toBe("fault-proxy");
   expect(categoryByTest.get("library-mcp-connect-error.e2e.test.ts")).toBe("raw-or-local-placement");
   expect(categoryByTest.get("slack-style-mcp-connector.e2e.test.ts")).toBe("raw-or-local-placement");

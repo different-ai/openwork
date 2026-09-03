@@ -6,7 +6,7 @@ import { listQuarantined } from "./quarantine.mjs";
 const specsDirectory = new URL("../specs/", import.meta.url);
 const profileUrl = new URL("../specs/daytona-e2e-regression-profile.json", import.meta.url);
 
-const SINGLES_CATEGORIES = ["fresh-den-url", "fault-proxy"];
+const SINGLES_CATEGORIES = ["fresh-den-url", "fault-proxy", "fresh-desktop-profile"];
 const QUARANTINED = new Set(listQuarantined());
 
 const SINGLES_DENYLIST = new Map([

@@ -11,6 +11,8 @@ test("the regression suite runs the full eligible suite bi-daily without manual 
   const workflow = await readFile(workflowPath, "utf8");
   const wardenAuthorization = workflow.indexOf("- name: Authorize Warden-cleared pull request");
   const guardedPathCheck = workflow.indexOf("E2E regression withheld: PR changes trusted review machinery.");
+  const setupBun = workflow.indexOf("- name: Setup Bun");
+  const installDependencies = workflow.indexOf("- name: Install dependencies");
 
   expect(workflow).toContain('cron: "0 6,18 * * *"');
   expect(workflow).toContain(
@@ -19,14 +21,19 @@ test("the regression suite runs the full eligible suite bi-daily without manual 
   expect(workflow).toContain("steps.authorize-scheduled.outputs.authorized");
   expect(workflow).toContain("github.event_name == 'schedule'");
   expect(workflow).toContain(
-    "environment: ${{ github.event_name == 'schedule' && 'scheduled-e2e-regression' || 'pr-slow-specs' }}",
+    "environment: ${{ github.event_name == 'workflow_run' && 'pr-slow-specs' || 'scheduled-e2e-regression' }}",
   );
+  expect(workflow).toContain(
+    "uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2",
+  );
+  expect(workflow).toContain("bun-version: 1.3.14");
+  expect(setupBun).toBeLessThan(installDependencies);
   expect(wardenAuthorization).toBeGreaterThan(-1);
   expect(guardedPathCheck).toBeGreaterThan(wardenAuthorization);
 
   evidence.recordAssertionEvidence(
     "The Daytona E2E regression suite runs the full eligible suite bi-daily without manual approval",
-    "The workflow schedules 06:00 and 18:00 UTC runs, authorizes and configures schedule events, routes them to an unprotected environment, and preserves Warden plus trusted-review-machinery guards for pull requests.",
+    "The workflow schedules 06:00 and 18:00 UTC runs, installs pinned Bun before dependencies, routes schedule and workflow_dispatch events to an unprotected environment, and preserves Warden, reviewer approval, and trusted-review-machinery guards for workflow_run pull requests.",
     true,
   );
 });
