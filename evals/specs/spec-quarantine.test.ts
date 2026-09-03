@@ -46,6 +46,7 @@ parent-child-permission-approval.e2e.test.ts
 reliable-app-recovery.e2e.test.ts
 responsive-session-layout.e2e.test.ts
 saved-script-automations.e2e.test.ts
+session-error-technical-details.e2e.test.ts
 sidebar-title-overflow-fade.e2e.test.ts
 sso-invite-sign-in.e2e.test.ts
 task-activity-shimmer.e2e.test.ts
