@@ -13,7 +13,7 @@ type RecordedRequest = {
   redirect: RequestRedirect | undefined;
   signal: AbortSignal | undefined;
 };
-type MessageWire = { info: { id: string; role: string; parentID?: string; providerID?: string; modelID?: string; time?: { created: number }; error?: unknown; tokens?: unknown; cost?: number }; parts: unknown[] };
+type MessageWire = { info: { id: string; role: string; parentID?: string; providerID?: string; modelID?: string; time?: { created: number; completed?: number }; error?: unknown; tokens?: unknown; cost?: number }; parts: unknown[] };
 /** One poll's worth of thread state, consumed in order by snapshot reads. */
 type Beat = { status: HeadlessThreadStatus; messages: MessageWire[] };
 
@@ -98,10 +98,18 @@ function createOpenworkDouble(input?: { beats?: Beat[]; messages?: MessageWire[]
     if (method === "POST" && parsed.pathname === `/workspace/ws_1/opencode/session/${SESSION_ID}/abort`) {
       return Response.json(input?.abortResult ?? true);
     }
+    const deleted = /^\/workspace\/ws_1\/opencode\/session\/ses_1\/message\/([^/]+)$/.exec(parsed.pathname);
+    if (method === "DELETE" && deleted) {
+      const messageId = decodeURIComponent(deleted[1] ?? "");
+      const index = messages.findIndex((message) => message.info.id === messageId);
+      if (index === -1) return Response.json({ code: "not_found", message: "Message not found" }, { status: 404 });
+      messages.splice(index, 1);
+      return Response.json(true);
+    }
     return Response.json({ code: "not_found", message: "Not found" }, { status: 404 });
   };
 
-  return { fetchImpl, requests, snapshotReads: () => beatIndex };
+  return { fetchImpl, requests, messages, snapshotReads: () => beatIndex };
 }
 
 /** A clock that only moves when the client sleeps, so waits are instant. */
@@ -333,6 +341,82 @@ describe("sendTurn", () => {
   });
 });
 
+describe("retryTurn", () => {
+  const failed: MessageWire = {
+    info: { id: "msg_reply", role: "assistant", parentID: "msg_ask", time: { created: 2, completed: 3 }, error: { name: "APIError", data: { message: "503 overloaded" } } },
+    parts: [],
+  };
+
+  test("forgets the earlier attempt newest first, then prompts again under the same message id", async () => {
+    const double = createOpenworkDouble({
+      messages: [reply("msg_1", "user", "Earlier"), reply("msg_2", "assistant", "Done.", "msg_1"), reply("msg_ask", "user", "Run the report."), failed],
+    });
+
+    const acceptance = await createClient(double).retryTurn(SESSION_ID, {
+      prompt: "Run the report.",
+      messageId: "msg_ask",
+      model: { providerId: "anthropic", modelId: "claude-sonnet-5" },
+    });
+
+    expect(acceptance).toEqual({
+      threadId: SESSION_ID,
+      acceptedAt: 0,
+      messageCountBefore: 2,
+      messageId: "msg_ask",
+      alreadyPresent: false,
+      retried: true,
+    });
+    expect(double.requests.map(({ method, path }) => `${method} ${path}`)).toEqual([
+      "GET /workspace/ws_1/opencode/session/ses_1/message",
+      "DELETE /workspace/ws_1/opencode/session/ses_1/message/msg_reply",
+      "DELETE /workspace/ws_1/opencode/session/ses_1/message/msg_ask",
+      "POST /workspace/ws_1/opencode/session/ses_1/prompt_async",
+    ]);
+    expect(double.requests[3]?.body).toEqual({
+      parts: [{ type: "text", text: "Run the report." }],
+      messageID: "msg_ask",
+      model: { providerID: "anthropic", modelID: "claude-sonnet-5" },
+    });
+    // The earlier exchange is untouched; only the retried turn was removed before the engine recreates it.
+    expect(double.messages.map((message) => message.info.id)).toEqual(["msg_1", "msg_2"]);
+  });
+
+  test("sends a message the engine never held instead of deleting anything", async () => {
+    const double = createOpenworkDouble({ messages: [reply("msg_1", "user", "Earlier"), reply("msg_2", "assistant", "Done.", "msg_1")] });
+
+    const acceptance = await createClient(double).retryTurn(SESSION_ID, { prompt: "Run it.", messageId: "msg_new" });
+
+    expect(acceptance).toMatchObject({ messageCountBefore: 2, messageId: "msg_new", alreadyPresent: false, retried: false });
+    expect(double.requests.map(({ method }) => method)).toEqual(["GET", "POST"]);
+    expect(double.requests[1]?.body).toEqual({ parts: [{ type: "text", text: "Run it." }], messageID: "msg_new" });
+  });
+
+  test("refuses to redo a turn that a later message has already followed", async () => {
+    const double = createOpenworkDouble({
+      messages: [reply("msg_ask", "user", "First."), failed, reply("msg_later", "user", "Second.")],
+    });
+
+    await expect(createClient(double).retryTurn(SESSION_ID, { prompt: "First.", messageId: "msg_ask" })).rejects.toMatchObject({
+      code: "not_last_turn",
+      status: 409,
+    });
+    expect(double.requests.map(({ method }) => method)).toEqual(["GET"]);
+    expect(double.messages).toHaveLength(3);
+  });
+
+  test("surfaces a refused deletion as a headless thread error and sends nothing", async () => {
+    const double = createOpenworkDouble({ messages: [reply("msg_ask", "user", "First."), failed] });
+    const fetchImpl: HeadlessFetch = async (url, init) => {
+      if (init?.method === "DELETE") return Response.json({ code: "busy", message: "Session is busy" }, { status: 409 });
+      return double.fetchImpl(url, init);
+    };
+    const client = createHeadlessThreadClient({ baseUrl: BASE_URL, workspaceId: "ws_1", token: "owt_test", fetch: fetchImpl });
+
+    await expect(client.retryTurn(SESSION_ID, { prompt: "First.", messageId: "msg_ask" })).rejects.toBeInstanceOf(HeadlessThreadError);
+    expect(double.requests.map(({ method }) => method)).toEqual(["GET"]);
+  });
+});
+
 describe("getThreadSnapshot", () => {
   test("reads session, messages, todos, and status in parallel", async () => {
     const requests: string[] = [];
@@ -432,6 +516,20 @@ describe("getThreadSnapshot", () => {
     ]);
     const transcript = await createClient(double).exportTranscript(SESSION_ID);
     expect(transcript.messages[1]?.model).toEqual({ providerId: "openwork", modelId: "fable" });
+  });
+
+  test("tells a finished reply from one the engine was cut off while writing", async () => {
+    const double = createOpenworkDouble({
+      messages: [
+        { info: { id: "msg_user", role: "user", time: { created: 1 } }, parts: [{ id: "prt_user", type: "text", text: "Ping" }] },
+        { info: { id: "msg_done", role: "assistant", parentID: "msg_user", time: { created: 2, completed: 5 } }, parts: [{ id: "prt_done", type: "text", text: "Pong" }] },
+        { info: { id: "msg_cut", role: "assistant", parentID: "msg_user", time: { created: 6 } }, parts: [{ id: "prt_cut", type: "text", text: "Po" }] },
+      ],
+    });
+
+    const transcript = await createClient(double).exportTranscript(SESSION_ID);
+
+    expect(transcript.messages.map((message) => message.completedAt)).toEqual([null, 5, null]);
   });
 });
 
