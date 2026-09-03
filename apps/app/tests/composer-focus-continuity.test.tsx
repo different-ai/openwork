@@ -2,6 +2,7 @@
 import { expect, mock, test } from "bun:test";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import { QueryClientProvider } from "@tanstack/react-query";
+import { fileURLToPath } from "node:url";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import type { SessionStatus } from "@opencode-ai/sdk/v2/client";
@@ -40,7 +41,28 @@ async function waitFor(predicate: () => boolean, label: string) {
 }
 
 test("a same-session snapshot swap preserves Lexical focus and draft text", async () => {
-  GlobalRegistrator.register({ url: "http://localhost/" });
+  if (process.env.OPENWORK_COMPOSER_FOCUS_ISOLATED !== "1") {
+    const child = Bun.spawn([
+      process.execPath,
+      "test",
+      "--isolate",
+      fileURLToPath(import.meta.url),
+    ], {
+      env: { ...process.env, OPENWORK_COMPOSER_FOCUS_ISOLATED: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [exitCode, stdout, stderr] = await Promise.all([
+      child.exited,
+      new Response(child.stdout).text(),
+      new Response(child.stderr).text(),
+    ]);
+    expect(exitCode, `${stdout}\n${stderr}`).toBe(0);
+    return;
+  }
+
+  const registeredDom = typeof globalThis.window === "undefined" || typeof globalThis.document === "undefined";
+  if (registeredDom) GlobalRegistrator.register({ url: "http://localhost/" });
   Object.defineProperty(globalThis, "IS_REACT_ACT_ENVIRONMENT", {
     configurable: true,
     value: true,
@@ -169,6 +191,6 @@ test("a same-session snapshot swap preserves Lexical focus and draft text", asyn
     queryClient.clear();
     container.remove();
     mock.restore();
-    await GlobalRegistrator.unregister();
+    if (registeredDom) await GlobalRegistrator.unregister();
   }
 });

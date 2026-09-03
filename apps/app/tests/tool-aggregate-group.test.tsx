@@ -261,7 +261,10 @@ describe("tool aggregate long details", () => {
   });
 
   test("clicking a clipped command reveals every line and copies the full command", async () => {
-    GlobalRegistrator.register();
+    const registeredDom = typeof globalThis.window === "undefined" || typeof globalThis.document === "undefined";
+    if (registeredDom) GlobalRegistrator.register();
+    const previousRect = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "getBoundingClientRect");
+    const previousClipboard = Object.getOwnPropertyDescriptor(navigator, "clipboard");
     Object.defineProperty(globalThis, "IS_REACT_ACT_ENVIRONMENT", {
       configurable: true,
       value: true,
@@ -329,7 +332,11 @@ describe("tool aggregate long details", () => {
     } finally {
       await act(async () => root.unmount());
       container.remove();
-      GlobalRegistrator.unregister();
+      if (previousRect) Object.defineProperty(HTMLElement.prototype, "getBoundingClientRect", previousRect);
+      else Reflect.deleteProperty(HTMLElement.prototype, "getBoundingClientRect");
+      if (previousClipboard) Object.defineProperty(navigator, "clipboard", previousClipboard);
+      else Reflect.deleteProperty(navigator, "clipboard");
+      if (registeredDom) await GlobalRegistrator.unregister();
     }
   });
 

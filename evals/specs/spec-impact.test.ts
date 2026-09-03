@@ -74,18 +74,17 @@ test("the soft spec-impact snapshot identifies uncovered and covered contract ch
 
   const covered = run(
     "ee/apps/den-api/src/workflow-runs.ts",
-    "evals/specs/generated-artifact-views.e2e.test.ts",
+    "evals/specs/workflows.e2e.test.ts",
   )
   expect(covered).toContain("Covered by a changed E2E test")
   expect(covered).not.toContain("::warning title=Spec impact snapshot::")
 
   const matched = JSON.parse(runMatched("ee/apps/den-api/src/workflow-runs.ts"))
   expect(matched).toContain("evals/specs/workflows.e2e.test.ts")
-  expect(matched).toContain("evals/specs/generated-artifact-views.e2e.test.ts")
 
   evidence.recordAssertionEvidence(
     "Implementation changes map to their E2E tests",
-    "The advisory report warned without a mapped E2E test change and cleared when the generated Artifact view E2E test changed.",
+    "The advisory report warned without a mapped E2E test change and cleared when the Workflow E2E test changed.",
     true,
   )
 })

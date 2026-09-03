@@ -1,10 +1,8 @@
 import { mkdir } from "node:fs/promises";
-import { fileURLToPath } from "node:url";
 import type { Seed } from "@openwork/env";
 import {
   createDaytonaK3sCluster,
   createPlacement,
-  ensureKubeStack,
   kindServer,
   KUBE_CLUSTER_NAME,
   KUBE_CONTEXT,
@@ -21,13 +19,6 @@ import { signIn as signInDen } from "@openwork/behaviors";
 
 export async function emptyInfraWorld(_seed: Seed) {
   return {};
-}
-
-export async function sessionsWorld(seed: Seed) {
-  const den = await seed.den({ org: { name: "acme" } });
-  const app = await seed.desktop({ den, as: "admin" });
-  const sessions = await seed.sessions(app, ["Q3 report", "Invoice cleanup"]);
-  return { app, den, sessions };
 }
 
 export async function oauthDenWorld(seed: Seed) {
@@ -84,19 +75,6 @@ export async function localDenSelfTestWorld(_seed: Seed, { place }: { place: Pla
   return { den, database: den.database, ports: den.ports, signedIn, close, [Symbol.asyncDispose]: close };
 }
 
-export async function daytonaK3sWorld(_seed: Seed) {
-  const sandboxName = `openwork-k3s-${Date.now().toString(36)}-${crypto.randomUUID().slice(0, 8)}`;
-  const placement = createPlacement({
-    id: "live-k3s",
-    provider: "daytona-k3s",
-    privileged: true,
-    resources: { cpu: 4, memoryGb: 8, diskGb: 10 },
-  });
-  const ownership = await provisionDaytonaK3sSandbox({ name: sandboxName, snapshot: "daytona-large" });
-  const cluster = await createDaytonaK3sCluster({ placement, ownership });
-  return { cluster, sandboxName, async [Symbol.asyncDispose]() { await cluster[Symbol.asyncDispose](); } };
-}
-
 export async function remoteSessionServerWorld(_seed: Seed) {
   process.env.DATABASE_URL ??= "mysql://root:password@127.0.0.1:3306/openwork_test";
   process.env.DEN_DB_ENCRYPTION_KEY ??= "x".repeat(32);
@@ -133,28 +111,6 @@ export async function remoteSessionRunnerWorld(_seed: Seed, { place }: { place: 
     replace: true,
   });
   return { cloud, worker, stack, async [Symbol.asyncDispose]() { await stack.disposeAsync(); } };
-}
-
-export async function kindDenWorld(_seed: Seed, { place }: { place: Place }) {
-  const stateDir = fileURLToPath(new URL("../results/.kube-stack/", import.meta.url));
-  await ensureKubeStack({
-    cdpCandidates: [],
-    skipApp: true,
-    images: "published",
-    stateDir,
-    log: (message) => console.error(`[openwork/testkit] ${message}`),
-  });
-  const stack = new AsyncDisposableStack();
-  const den = stack.use(await kindServer());
-  const appSurface = stack.use(await app({ den, place, as: "admin" }));
-  if (!den.ports) throw new Error("Kind Den did not expose ports.");
-  let closed = false;
-  const close = async () => {
-    if (closed) return;
-    closed = true;
-    await stack.disposeAsync();
-  };
-  return { app: appSurface, den, ports: den.ports, stateDir, close, [Symbol.asyncDispose]: close };
 }
 
 export {

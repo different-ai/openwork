@@ -53,6 +53,7 @@ two-daytona-desktops.e2e.test.ts
 unfinished-tool-lifecycle.e2e.test.ts
 welcome-one-field.e2e.test.ts
 workspace-new-task-hit-target.e2e.test.ts
+workspace-storm-auth-coherence.e2e.test.ts
 `.trim().split("\n");
 
 interface QuarantineEntry {

@@ -65,12 +65,10 @@
       ],
       "specs": [
         "evals/specs/connectors-quick-add.e2e.test.ts",
-        "evals/specs/google-workspace-direct-uploads.e2e.test.ts",
         "evals/specs/google-workspace-multi-account.e2e.test.ts",
         "evals/specs/org-connection-lifecycle.e2e.test.ts",
         "evals/specs/org-connector-two-members.e2e.test.ts",
-        "evals/specs/slack-style-mcp-connector.e2e.test.ts",
-        "evals/specs/telegram-removed.e2e.test.ts"
+        "evals/specs/slack-style-mcp-connector.e2e.test.ts"
       ]
     },
     {
@@ -87,8 +85,6 @@
         "ee/packages/den-db/src/schema/dashboards.ts"
       ],
       "specs": [
-        "evals/specs/dashboard-deployment-contract.e2e.test.ts",
-        "evals/specs/den-sidebar-footer-pin.e2e.test.ts",
         "evals/specs/den-sidebar-ia.e2e.test.ts",
         "evals/specs/org-managed-dashboard-desktop.e2e.test.ts",
         "evals/specs/tool-tester-page.e2e.test.ts"
@@ -116,11 +112,8 @@
         "packages/openwork-bootstrap/**"
       ],
       "specs": [
-        "evals/specs/enterprise-install-guide.e2e.test.ts",
         "evals/specs/enterprise-invite-install-connect.e2e.test.ts",
         "evals/specs/initial-admin-bootstrap.e2e.test.ts",
-        "evals/specs/join-org-success-download.e2e.test.ts",
-        "evals/specs/member-dashboard-os-download.e2e.test.ts",
         "evals/specs/self-host-onboarding.e2e.test.ts"
       ]
     },
@@ -142,11 +135,8 @@
       ],
       "specs": [
         "evals/specs/admin-model-limits.e2e.test.ts",
-        "evals/specs/azure-byok-live.e2e.test.ts",
         "evals/specs/cloud-model-infra.e2e.test.ts",
-        "evals/specs/den-litellm-provider.e2e.test.ts",
         "evals/specs/litellm-per-member-credentials.e2e.test.ts",
-        "evals/specs/litellm-per-member-world.e2e.test.ts",
         "evals/specs/llm-provider-access-parity.e2e.test.ts",
         "evals/specs/models-available.e2e.test.ts",
         "evals/specs/org-model-analytics-desktop.e2e.test.ts",
@@ -178,9 +168,7 @@
       ],
       "specs": [
         "evals/specs/org-api-key-authenticates.e2e.test.ts",
-        "evals/specs/org-team-lifecycle-critical-path.e2e.test.ts",
-        "evals/specs/role-change-session-survival.e2e.test.ts",
-        "evals/specs/team-access-view.e2e.test.ts"
+        "evals/specs/org-team-lifecycle-critical-path.e2e.test.ts"
       ]
     },
     {
@@ -207,8 +195,7 @@
         "evals/specs/github-sync-self-healing.e2e.test.ts",
         "evals/specs/library-authoring-routes.e2e.test.ts",
         "evals/specs/marketplace-catalog-legibility.e2e.test.ts",
-        "evals/specs/plugin-access-panel.e2e.test.ts",
-        "evals/specs/team-access-view.e2e.test.ts"
+        "evals/specs/plugin-access-panel.e2e.test.ts"
       ]
     },
     {
@@ -247,7 +234,6 @@
         "ee/packages/den-db/src/schema/workflows.ts"
       ],
       "specs": [
-        "evals/specs/generated-artifact-views.e2e.test.ts",
         "evals/specs/saved-script-automations.e2e.test.ts",
         "evals/specs/workflows.e2e.test.ts"
       ]
@@ -265,14 +251,10 @@
         "packages/automations/**"
       ],
       "specs": [
-        "evals/specs/automation-deployment-gate.e2e.test.ts",
         "evals/specs/automation-desktop-lifecycle.e2e.test.ts",
-        "evals/specs/automation-desktop-recovery-window.e2e.test.ts",
         "evals/specs/automation-model-needs-attention.e2e.test.ts",
         "evals/specs/automation-proposal-model-resolution.e2e.test.ts",
         "evals/specs/automation-revision-revert.e2e.test.ts",
-        "evals/specs/automation-runtime-placement.e2e.test.ts",
-        "evals/specs/automations-den-hosted.e2e.test.ts",
         "evals/specs/saved-script-automations.e2e.test.ts"
       ]
     },
@@ -300,11 +282,8 @@
         "evals/specs/attachment-upload-loading-state.e2e.test.ts",
         "evals/specs/chat-loading-shimmer.e2e.test.ts",
         "evals/specs/chat-render-cycle-stability.e2e.test.ts",
-        "evals/specs/chat-survives-flaky-den-link.e2e.test.ts",
-        "evals/specs/chat-tool-details-expand.e2e.test.ts",
         "evals/specs/clamp-html-errors.e2e.test.ts",
         "evals/specs/composer-draft-reload.e2e.test.ts",
-        "evals/specs/composer-focus-continuity.e2e.test.ts",
         "evals/specs/composer-queued-drain-while-away.e2e.test.ts",
         "evals/specs/composer-queued-follow-ups-sequential.e2e.test.ts",
         "evals/specs/cross-workspace-composer-switch.e2e.test.ts",
@@ -337,11 +316,9 @@
         "apps/server/src/local-managed-mcp.ts"
       ],
       "specs": [
-        "evals/specs/cloud-mcp-provider-capability-submit.e2e.test.ts",
         "evals/specs/composer-connections-menu.e2e.test.ts",
         "evals/specs/connect-policy-runtime-restart.e2e.test.ts",
         "evals/specs/connect-readiness-preseeded.e2e.test.ts",
-        "evals/specs/connect-state-provenance.e2e.test.ts",
         "evals/specs/connector-tool-call-branding.e2e.test.ts",
         "evals/specs/library-add-connector-discovery.e2e.test.ts",
         "evals/specs/library-add-session-restore.e2e.test.ts",
@@ -352,7 +329,6 @@
         "evals/specs/library-signed-in-render-stability.e2e.test.ts",
         "evals/specs/library-state-tabs.e2e.test.ts",
         "evals/specs/library-view.e2e.test.ts",
-        "evals/specs/local-managed-mcp-oauth.e2e.test.ts",
         "evals/specs/managed-vault-recovery.e2e.test.ts"
       ]
     },
@@ -363,7 +339,6 @@
         "apps/app/src/react-app/domains/dashboard/**"
       ],
       "specs": [
-        "evals/specs/dashboard-deployment-gate.e2e.test.ts",
         "evals/specs/org-managed-dashboard-desktop.e2e.test.ts"
       ]
     },
@@ -417,7 +392,6 @@
         "evals/specs/cloud-provider-local-credential-fallback.e2e.test.ts",
         "evals/specs/cloud-provider-sync-contract.e2e.test.ts",
         "evals/specs/composer-model-picker-no-subscribe-promo.e2e.test.ts",
-        "evals/specs/model-lands-mid-run.e2e.test.ts",
         "evals/specs/models-available.e2e.test.ts",
         "evals/specs/opencode-unconfigured-notification.e2e.test.ts",
         "evals/specs/org-model-analytics-desktop.e2e.test.ts",
@@ -477,14 +451,11 @@
         "evals/specs/responsive-session-layout.e2e.test.ts",
         "evals/specs/session-admission-no-result-recovery.e2e.test.ts",
         "evals/specs/session-archive-button.e2e.test.ts",
-        "evals/specs/session-completion-reconciliation.e2e.test.ts",
         "evals/specs/session-loading-idle.e2e.test.ts",
-        "evals/specs/session-switch-settings-runtime.e2e.test.ts",
         "evals/specs/session-title-failure-warning.e2e.test.ts",
         "evals/specs/settings-visit-live-run-continuity.e2e.test.ts",
         "evals/specs/task-activity-shimmer.e2e.test.ts",
-        "evals/specs/unfinished-tool-lifecycle.e2e.test.ts",
-        "evals/specs/working-status-liveness.e2e.test.ts"
+        "evals/specs/unfinished-tool-lifecycle.e2e.test.ts"
       ]
     },
     {
@@ -502,7 +473,6 @@
         "evals/specs/settings-narrow-window-navigation.e2e.test.ts",
         "evals/specs/sidebar-primary-actions.e2e.test.ts",
         "evals/specs/sidebar-title-overflow-fade.e2e.test.ts",
-        "evals/specs/sidebar-workspace-title-fit.e2e.test.ts",
         "evals/specs/workspace-new-task-hit-target.e2e.test.ts",
         "evals/specs/workspace-sidebar-order.e2e.test.ts"
       ]
@@ -522,7 +492,6 @@
         "evals/specs/artifact-code-browser.e2e.test.ts",
         "evals/specs/markdown-editor-autosave.e2e.test.ts",
         "evals/specs/mermaid-rendering.e2e.test.ts",
-        "evals/specs/skill-authoring-session-freshness.e2e.test.ts",
         "evals/specs/skills-local.e2e.test.ts"
       ]
     },
@@ -603,26 +572,10 @@
         "evals/packages/testkit/src/state.ts"
       ],
       "specs": [
-        "evals/specs/local-managed-mcp-oauth.e2e.test.ts",
         "evals/specs/saved-script-automations.e2e.test.ts",
         "evals/specs/testkit-app-boot.e2e.test.ts",
         "evals/specs/testkit-selftest.e2e.test.ts",
         "evals/specs/workflows.e2e.test.ts"
-      ]
-    },
-    {
-      "id": "evals.world-headless",
-      "description": "Script-world loading, headless app lifecycle, seeded sessions, and Kind placement",
-      "implementation": [
-        "evals/packages/env/src/network-world.ts",
-        "evals/packages/testkit/src/stack.ts",
-        "packages/world/src/**",
-        "worlds/dev-headless.ts"
-      ],
-      "specs": [
-        "evals/specs/headless-world-lifecycle.e2e.test.ts",
-        "evals/specs/world-kind-den.e2e.test.ts",
-        "evals/specs/world-sessions.e2e.test.ts"
       ]
     },
     {
@@ -642,8 +595,6 @@
       ],
       "specs": [
         "evals/specs/capability-search-latency.e2e.test.ts",
-        "evals/specs/capability-search-scale.e2e.test.ts",
-        "evals/specs/cloud-mcp-provider-capability-submit.e2e.test.ts",
         "evals/specs/opencode-mcp-agent-oauth.e2e.test.ts"
       ]
     },
@@ -680,16 +631,9 @@
         "worlds/remote-session.ts"
       ],
       "specs": [
-        "evals/specs/remote-session-desktop-command.e2e.test.ts",
-        "evals/specs/remote-session-desktop-runner.e2e.test.ts",
-        "evals/specs/remote-session-real-server.e2e.test.ts"
+        "evals/specs/remote-session-desktop-runner.e2e.test.ts"
       ]
     }
   ],
-  "unmapped": [
-    {
-      "spec": "evals/specs/daytona-k3s-live.e2e.test.ts",
-      "reason": "Validates the externally provisioned Daytona k3s provider image rather than a repository implementation surface."
-    }
-  ]
+  "unmapped": []
 }

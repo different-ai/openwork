@@ -187,7 +187,7 @@ export function resolveTestNames(names, files = testFiles()) {
       const close = entries.filter((entry) => entry.base.includes(normalized));
       throw new Error(`No test matches "${name}". Close candidates:\n${close.length > 0 ? close.map((entry) => `  ${entry.relative}`).join("\n") : "  (none)"}`);
     }
-    if (isQuarantined(matches[0].base)) {
+    if (process.env.OPENWORK_EVAL_IGNORE_QUARANTINE !== "1" && isQuarantined(matches[0].base)) {
       throw new Error(`Test "${name}" is quarantined: ${quarantineReason(matches[0].base)}`);
     }
     if (!resolved.includes(matches[0].file)) resolved.push(matches[0].file);
