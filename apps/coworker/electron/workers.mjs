@@ -572,7 +572,7 @@ function reportVerb(report) {
 export function reviewPrompt({ coworkerName, workers, findings, toolsAvailable = false, now = Date.now() }) {
   const byId = new Map(workers.map((worker) => [worker.id, worker]));
   const roster = workers.length > 0
-    ? workers.map((worker) => `- "${worker.name}" — ${workerStatusForPrompt(worker, now)}`)
+    ? workers.map((worker) => `- "${worker.name}" (${worker.id}) — ${workerStatusForPrompt(worker, now)} — started by ${worker.spawnedBy === "coworker" ? "you" : "the person"}`)
     : ["- none"];
   const updates = findings.map((finding) => {
     const worker = byId.get(finding.workerId);
@@ -589,7 +589,7 @@ export function reviewPrompt({ coworkerName, workers, findings, toolsAvailable =
     ...updates,
     "",
     toolsAvailable
-      ? "Review these updates. Reply to the person in a few sentences with what changed and what you will do. If a Worker needs steering or is done, use your Worker tools now; if a decision needs the person, ask with the question tool."
+      ? "Review these updates. Reply to the person in a few sentences with what changed and what you will do. If a Worker waits for a decision you can make, or is going the wrong way, steer it with your Worker tools now. Stop a Worker only when its goal is met or the person asked; never stop a Worker the person started unless they ask. If a decision needs the person, ask with the question tool."
       : "Review these updates. Reply to the person in a few sentences with what changed and what you will do. If a Worker needs steering or should stop, say so plainly; if a decision needs the person, ask them.",
   ].join("\n");
 }
@@ -839,7 +839,15 @@ export function createWorkerToolHandlers({ coworkersDir, spawn, steer, cancel, n
       };
     },
     worker_cancel: async (slug, args) => {
-      const worker = await cancel(slug, idOf(args), typeof args.reason === "string" ? args.reason : "");
+      const id = idOf(args);
+      const before = await getWorker(coworkersDir, slug, id);
+      if (isWorkerFinished(before)) {
+        return {
+          text: `"${before.name}" had already ${workerStatusForPrompt(before, now()) === "done" ? "finished" : workerStatusForPrompt(before, now())}; nothing to stop.`,
+          structured: { worker: workerCard(before, { action: "unchanged" }) },
+        };
+      }
+      const worker = await cancel(slug, id, typeof args.reason === "string" ? args.reason : "");
       return {
         text: `Stopped "${worker.name}". Its findings stay in the Workers view; it will not work again.`,
         structured: { worker: workerCard(worker, { action: "stopped" }) },

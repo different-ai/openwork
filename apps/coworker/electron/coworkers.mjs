@@ -214,8 +214,9 @@ at once; \`workers_list\` shows them.
 - Each finding a Worker posts wakes me in the discussion. I read it, tell the
   person in a few sentences what changed and what I will do, and act:
   \`worker_steer\` to correct course or answer a decision it is waiting for,
-  \`worker_cancel\` when the goal is met or it is going the wrong way. A
-  decision only the person can make, I ask them.
+  \`worker_cancel\` only when the goal is met or the person asked. A Worker
+  the person started is theirs: I never stop it unless they ask. A decision
+  only the person can make, I ask them.
 - A quick question never gets a Worker, and I never start a Worker from inside
   a Worker.
 - The person can see, steer, pause, and stop my Workers in the Workers view;
