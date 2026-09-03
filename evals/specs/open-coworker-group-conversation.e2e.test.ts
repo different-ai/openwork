@@ -20,7 +20,8 @@ const title = enabled
 
 const ROLL_CALL = "@everyone Reply with exactly ROLL CALL followed by your own name, and nothing else.";
 const RESEARCH_QUESTION = "A research question about checking sources: reply with exactly SOURCES CHECKED and nothing else.";
-const SECOND_ROUND = "@Editor @Scout Reply with exactly ROUND TWO followed by your own name, and nothing else.";
+const SECOND_ROUND = "@Editor @Scout Editor first: reply with exactly ROUND TWO EDITOR. Scout after reading Editor's reply: reply with exactly ROUND TWO SCOUT.";
+const MODEL_CHECK = "@everyone Reply with exactly MODEL CHECK followed by your own name, and nothing else.";
 const SLOW_STOP = "@everyone Count from 1 to 80, one number per line, then write the words RIVER DONE.";
 const SLOW_RELOAD = "@everyone Count from 1 to 80, one number per line, then write the words RELOAD DONE.";
 
@@ -47,7 +48,7 @@ function resultRecord(response: unknown): Record<string, unknown> {
   return response.result;
 }
 
-type Speaker = { slug: string; status: string; part: string; order: number; error: string; brief: string };
+type Speaker = { slug: string; status: string; part: string; order: number; error: string; brief: string; startedAt: number | null; endedAt: number | null };
 type Turn = { id: string; status: string; routedBy: string; mode: string; prompt: string; speakers: Speaker[] };
 
 async function readGroup(app: App, groupId: string): Promise<{ name: string; archivedAt: number | null; participantThreadIds: Record<string, string>; facilitatorThreadId: string; turns: Turn[] }> {
@@ -72,6 +73,8 @@ async function readGroup(app: App, groupId: string): Promise<{ name: string; arc
         order: Number(speaker.order),
         error: String(speaker.error ?? ""),
         brief: String(speaker.brief ?? ""),
+        startedAt: typeof speaker.startedAt === "number" ? speaker.startedAt : null,
+        endedAt: typeof speaker.endedAt === "number" ? speaker.endedAt : null,
       })),
     })),
   };
@@ -261,7 +264,7 @@ test.skipIf(!enabled)(title, { timeout: 1_500_000 }, async ({ evidence }) => {
     true,
   );
 
-  // --- Two names: the facilitator (or the fallback) orders them, and the second sees the first's reply.
+  // --- Two names: the facilitator (or the fallback) keeps the set and orders it; a sequential second speaker is told the first's reply.
   await sendGroupMessage(app, SECOND_ROUND);
   const secondRound = await settledTurn(app, groupId, 2);
   group = await readGroup(app, groupId);
@@ -271,22 +274,83 @@ test.skipIf(!enabled)(title, { timeout: 1_500_000 }, async ({ evidence }) => {
   if (!firstSpeaker || !secondSpeaker) throw new Error("Two speakers were expected.");
   timeline = await readTimeline(app);
   const roundReplies = timeline.filter((line) => line.kind === "assistant").slice(-2);
+  // Bubbles settle in the recorded order whether the two ran one after the other or at once.
   expect(roundReplies.map((line) => line.speaker)).toEqual([firstSpeaker.slug, secondSpeaker.slug]);
+  for (const line of roundReplies) expect(line.text).toContain("ROUND TWO");
   const secondThread = group.participantThreadIds[secondSpeaker.slug];
   if (!secondThread) throw new Error("The second speaker has no group thread.");
   const secondTranscript = await readThreadTexts(app, workspaces[secondSpeaker.slug] ?? "", secondThread);
   const secondPrompt = [...secondTranscript].reverse().find((message) => message.role === "user")?.text ?? "";
-  expect(secondPrompt).toContain("Already said in reply to this message:");
-  expect(secondPrompt).toContain(`- ${names[firstSpeaker.slug]}: `);
-  expect(secondPrompt).toContain(roundReplies[0]?.text.replace(names[firstSpeaker.slug] ?? "", "").trim().split("\n")[0]?.slice(0, 12) ?? "ROUND TWO");
   expect(secondPrompt).toContain("Your part in this reply:");
   expect(secondPrompt).not.toContain("was stopped");
-  expect(secondPrompt).toMatch(/The person's message: @Editor @Scout Reply with exactly ROUND TWO/);
+  expect(secondPrompt).toMatch(/The person's message: @Editor @Scout Editor first: reply with exactly ROUND TWO EDITOR/);
+  if (secondRound.mode === "sequential") {
+    expect(secondPrompt).toContain("Already said in reply to this message:");
+    expect(secondPrompt).toContain(`- ${names[firstSpeaker.slug]}: `);
+  } else {
+    // Independent replies ran at once: both started before either finished, and neither waited for the other.
+    const started = roundSpeakers.map((speaker) => speaker.startedAt ?? 0);
+    const firstEnd = Math.min(...roundSpeakers.map((speaker) => speaker.endedAt ?? Number.MAX_SAFE_INTEGER));
+    expect(started.every((at) => at > 0 && at <= firstEnd), JSON.stringify(roundSpeakers)).toBe(true);
+    expect(secondPrompt).not.toContain("Already said in reply to this message:");
+  }
   if (secondRound.routedBy === "facilitator") expect(group.facilitatorThreadId).toMatch(/^ses_/);
 
   evidence.recordAssertionEvidence(
-    "Two named coworkers answer in the chosen order and the second is told what the first said",
-    `ROUND TWO was answered by ${names[firstSpeaker.slug]} then ${names[secondSpeaker.slug]} (routed by ${secondRound.routedBy}, mode ${secondRound.mode}); the second speaker's native group thread ${secondThread} holds a prompt with "Already said in reply to this message: - ${names[firstSpeaker.slug]}: …", its own part, and the person's message, and no status lines.${secondRound.routedBy === "facilitator" ? ` The facilitator ran on native thread ${group.facilitatorThreadId} in the hidden coordinator workspace.` : " The deterministic scorer decided this turn."}`,
+    "Two named coworkers keep the set, answer in the chosen order, and a sequential second speaker is told what the first said",
+    `ROUND TWO was answered by ${names[firstSpeaker.slug]} then ${names[secondSpeaker.slug]} (routed by ${secondRound.routedBy}, mode ${secondRound.mode}${firstSpeaker.brief ? `, briefs: "${firstSpeaker.brief}" / "${secondSpeaker.brief}"` : ""}); the second speaker's native group thread ${secondThread} holds a prompt with its own part and the person's message and no status lines${secondRound.mode === "sequential" ? `, plus "Already said in reply to this message: - ${names[firstSpeaker.slug]}: …"` : "; the facilitator judged the two replies independent, so they ran at once and settled in its order"}.${secondRound.routedBy === "facilitator" ? ` The facilitator ran on native thread ${group.facilitatorThreadId} in the hidden coordinator workspace.` : " The deterministic scorer decided this turn."}`,
+    true,
+  );
+
+  // --- One coworker's model is unavailable: the other still answers, the failure names the fix, and Retry
+  // (after the fix) asks only that coworker — with the reply that already landed in its prompt.
+  await invokeCoworker(app, "coworkers.update", { slug: "editor", patch: { model: "missing-provider/missing-model", modelVariant: "" } });
+  await evalIn(app, "location.reload(); true");
+  await waitFor(app, `Boolean(document.querySelector('[data-testid="coworker-rail"]'))`, { timeoutMs: 120_000, label: "app after the model change" });
+  await openGroupFromRail(app, groupId);
+  await waitFor(app, `[...document.querySelectorAll('[data-testid="group-chat"] [data-message-role="assistant"]')].length >= 5`, { timeoutMs: 60_000, label: "timeline back after reload" });
+  await sendGroupMessage(app, MODEL_CHECK);
+  const failedTurn = await settledTurn(app, groupId, 3, "partial");
+  const failedSpeaker = failedTurn.speakers.find((speaker) => speaker.slug === "editor");
+  const fineSpeaker = failedTurn.speakers.find((speaker) => speaker.slug === "scout");
+  expect(failedSpeaker?.status, JSON.stringify(failedTurn.speakers)).toBe("failed");
+  expect(fineSpeaker?.status, JSON.stringify(failedTurn.speakers)).toBe("succeeded");
+  expect(failedSpeaker?.error).toContain("missing-provider/missing-model");
+  await waitFor(app, `Boolean(document.querySelector('[data-testid="group-speaker-retry"][data-speaker="editor"]'))`, { timeoutMs: 30_000, label: "Retry on Editor's failure line" });
+  timeline = await readTimeline(app);
+  const failureLine = timeline.find((line) => line.kind === "group-status" && line.status === "failed" && line.speaker === "editor");
+  expect(failureLine?.text).toContain("Editor's AI model is not available.");
+  expect(failureLine?.text).toContain("Retry");
+  expect(failureLine?.text).toContain("Choose AI model");
+  expect(failureLine?.text).not.toMatch(/engine|APIError|stack/i);
+  expect(timeline.filter((line) => line.kind === "assistant").at(-1)?.speaker).toBe("scout");
+  expect(await evalIn(app, `Boolean(document.querySelector('[data-testid="group-turn-continue"]'))`)).toBe(false);
+
+  await invokeCoworker(app, "coworkers.update", { slug: "editor", patch: { model: "opencode/big-pickle", modelVariant: "" } });
+  await evalIn(app, "location.reload(); true");
+  await waitFor(app, `Boolean(document.querySelector('[data-testid="coworker-rail"]'))`, { timeoutMs: 120_000, label: "app after the model fix" });
+  await openGroupFromRail(app, groupId);
+  await waitFor(app, `Boolean(document.querySelector('[data-testid="group-speaker-retry"][data-speaker="editor"]'))`, { timeoutMs: 60_000, label: "Retry for Editor" });
+  await evalIn(app, `document.querySelector('[data-testid="group-speaker-retry"][data-speaker="editor"]').click(); true`);
+  await waitFor(app, `document.querySelector('[data-testid="group-chat"]')?.getAttribute("data-live") === "true"`, { timeoutMs: 30_000, label: "Retry started" });
+  const retriedTurn = await settledTurn(app, groupId, 3);
+  expect(retriedTurn.speakers.map((speaker) => speaker.status)).toEqual(retriedTurn.speakers.map(() => "succeeded"));
+  group = await readGroup(app, groupId);
+  const editorThread = group.participantThreadIds.editor;
+  if (!editorThread) throw new Error("Editor has no group thread.");
+  const editorTranscript = await readThreadTexts(app, workspaces.editor ?? "", editorThread);
+  const retryPrompt = [...editorTranscript].reverse().find((message) => message.role === "user")?.text ?? "";
+  expect(retryPrompt).toContain("Already said in reply to this message:");
+  expect(retryPrompt).toMatch(/- Scout: .*MODEL CHECK/);
+  expect(retryPrompt).toMatch(/The person's message: @everyone Reply with exactly MODEL CHECK/);
+  timeline = await readTimeline(app);
+  const modelCheckReplies = timeline.filter((line) => line.kind === "assistant" && line.text.includes("MODEL CHECK"));
+  expect(modelCheckReplies.map((line) => line.speaker)).toEqual(["scout", "editor"]);
+  expect(timeline.filter((line) => line.kind === "assistant" && line.speaker === "scout" && line.text.includes("MODEL CHECK"))).toHaveLength(1);
+
+  evidence.recordAssertionEvidence(
+    "One coworker's unavailable model never blocks the other, the failure names the fix, and Retry asks only that coworker with the earlier reply in hand",
+    `With Editor on missing-provider/missing-model, MODEL CHECK was answered by Scout while Editor's line read "Editor's AI model is not available." with Retry and Choose AI model (the turn recorded partial, Editor's reason kept the exact model id). After the model was restored, Retry asked Editor alone: its native thread ${editorThread} holds a prompt with "Already said in reply to this message: - Scout: MODEL CHECK …", Scout was not asked again, and the turn is succeeded.`,
     true,
   );
 
@@ -294,7 +358,7 @@ test.skipIf(!enabled)(title, { timeout: 1_500_000 }, async ({ evidence }) => {
   await sendGroupMessage(app, SLOW_STOP);
   await waitFor(app, `document.querySelector('[data-testid="group-working"]')?.getAttribute("data-phase") === "running"`, { timeoutMs: 120_000, label: "a coworker replying" });
   await clickButton(app, "Stop all");
-  const stoppedTurn = await settledTurn(app, groupId, 3, "");
+  const stoppedTurn = await settledTurn(app, groupId, 4, "");
   expect(["stopped", "partial"], `stopped turn: ${JSON.stringify(stoppedTurn.speakers)}`).toContain(stoppedTurn.status);
   const stoppedSpeakers = stoppedTurn.speakers.filter((speaker) => speaker.status === "stopped");
   expect(stoppedSpeakers.length).toBeGreaterThan(0);
@@ -314,7 +378,7 @@ test.skipIf(!enabled)(title, { timeout: 1_500_000 }, async ({ evidence }) => {
   // --- Continue finishes the stopped turn with the same message; nobody who replied is asked again.
   await evalIn(app, `document.querySelector('[data-testid="group-turn-continue"]').click(); true`);
   await waitFor(app, `document.querySelector('[data-testid="group-chat"]')?.getAttribute("data-live") === "true"`, { timeoutMs: 30_000, label: "Continue started" });
-  const continuedTurn = await settledTurn(app, groupId, 3);
+  const continuedTurn = await settledTurn(app, groupId, 4);
   expect(continuedTurn.speakers.map((speaker) => speaker.status)).toEqual(continuedTurn.speakers.map(() => "succeeded"));
   timeline = await readTimeline(app);
   const continuedBubbles = timeline.filter((line) => line.kind === "assistant");
@@ -337,7 +401,7 @@ test.skipIf(!enabled)(title, { timeout: 1_500_000 }, async ({ evidence }) => {
   await openGroupFromRail(app, groupId);
   await waitFor(app, `[...document.querySelectorAll('[data-testid="group-status"]')].some((node) => (node.textContent ?? "").includes("Stopped when the app closed"))`, { timeoutMs: 60_000, label: "interrupted turn settled" });
   group = await readGroup(app, groupId);
-  const interruptedTurn = group.turns[4];
+  const interruptedTurn = group.turns[5];
   if (!interruptedTurn) throw new Error("The interrupted turn was not recorded.");
   expect(interruptedTurn.status).toBe("partial");
   const interruptedSpeakers = interruptedTurn.speakers.filter((speaker) => speaker.status === "stopped");
@@ -351,7 +415,7 @@ test.skipIf(!enabled)(title, { timeout: 1_500_000 }, async ({ evidence }) => {
   await waitFor(app, `Boolean(document.querySelector('[data-testid="group-turn-continue"]'))`, { timeoutMs: 30_000, label: "Continue after reload" });
   await evalIn(app, `document.querySelector('[data-testid="group-turn-continue"]').click(); true`);
   await waitFor(app, `document.querySelector('[data-testid="group-chat"]')?.getAttribute("data-live") === "true"`, { timeoutMs: 30_000, label: "Continue after reload started" });
-  await settledTurn(app, groupId, 4);
+  await settledTurn(app, groupId, 5);
   timeline = await readTimeline(app);
   for (const line of timeline.filter((line) => line.kind === "assistant").slice(-interruptedSpeakers.length)) expect(line.text).toContain("RELOAD DONE");
 
@@ -376,13 +440,13 @@ test.skipIf(!enabled)(title, { timeout: 1_500_000 }, async ({ evidence }) => {
   await waitFor(app, `!document.querySelector('[data-testid="group-chat"]') && !document.querySelector('[data-testid="group-rail-row"][data-group-id=${json(groupId)}]')`, { timeoutMs: 30_000, label: "group archived" });
   const archived = await readGroup(app, groupId);
   expect(archived.archivedAt).toEqual(expect.any(Number));
-  expect(archived.turns.length).toBe(5);
+  expect(archived.turns.length).toBe(6);
   const storedTimeline = await invokeCoworker(app, "groups.readTimeline", { id: groupId });
   expect(Array.isArray(isRecord(storedTimeline) ? storedTimeline.result : null) ? (storedTimeline as { result: unknown[] }).result.length : 0).toBeGreaterThan(10);
 
   evidence.recordAssertionEvidence(
     "Rename and archive keep the group's history readable",
-    `The group was renamed to "Launch desk" from the header's menu and archived; it left the rail, its record keeps all 5 turns, and its timeline is intact on disk.`,
+    `The group was renamed to "Launch desk" from the header's menu and archived; it left the rail, its record keeps all 6 turns, and its timeline is intact on disk.`,
     true,
   );
 });
