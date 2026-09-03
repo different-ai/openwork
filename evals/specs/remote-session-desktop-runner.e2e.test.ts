@@ -13,6 +13,11 @@ import { expect } from "vitest";
 import { createDesktopAutomationRunner } from "../../apps/desktop/electron/automation-runner.mjs";
 import { bootCloudModelInfra } from "../../worlds/cloud-model-infra.ts";
 import { bootRemoteSession } from "../../worlds/remote-session.ts";
+import type {
+  RemoteSessionExecuteInput,
+  RemoteSessionRuntime,
+  RemoteSessionRuntimeResult,
+} from "../../ee/apps/den-api/src/mcp/remote-session-capabilities.js";
 
 const WORLD_WORKSPACE = "/tmp/openwork-remote-session-world";
 const REQUEST_TIMEOUT_MS = 30_000;
@@ -33,6 +38,10 @@ interface McpToolResult {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isOrganizationId(value: string): value is `org_${string}` {
+  return value.startsWith("org_");
 }
 
 function auth(session: DenSession): Record<string, string> {
@@ -62,6 +71,7 @@ test.skipIf(missingRequirements.length > 0)(title, { timeout: 15 * 60_000 }, asy
   });
   const admin = world.admin;
   const orgId = world.org.id;
+  if (!isOrganizationId(orgId)) throw new Error(`Invalid organization id: ${orgId}`);
   const databaseUrl = world.den.database?.url;
   if (!databaseUrl) throw new Error("The remote-session runner world did not expose its database.");
 
@@ -243,5 +253,71 @@ test.skipIf(missingRequirements.length > 0)(title, { timeout: 15 * 60_000 }, asy
     `The real source-first server returned receipt session ${sessionId} with title ${sessionTitle}; its snapshot was idle with no messages, proving omission of prompt/model created but did not start execution.`,
     localSession?.id === sessionId && localSession.title === sessionTitle
       && status.type === "idle" && Array.isArray(snapshot.messages) && snapshot.messages.length === 0,
+  );
+
+  process.env.DATABASE_URL ??= "mysql://root:password@127.0.0.1:3306/openwork_test";
+  process.env.DEN_DB_ENCRYPTION_KEY ??= "remote-session-test-encryption-key-123456789";
+  process.env.BETTER_AUTH_SECRET ??= "remote-session-test-auth-secret-123456789";
+  process.env.BETTER_AUTH_URL ??= "http://127.0.0.1:8790";
+  process.env.DEN_API_PUBLIC_URL ??= "http://127.0.0.1:8790";
+  const remoteModule = await import("../../ee/apps/den-api/src/mcp/remote-session-capabilities.js");
+  const runtime: RemoteSessionRuntime = {
+    workerId: "worker_real_server_local",
+    baseUrl: manifest.openworkUrl,
+    workspaceId,
+    clientToken: manifest.token,
+    hostToken: manifest.hostToken,
+  };
+  const resolveRuntime = async (): Promise<RemoteSessionRuntimeResult> => ({ ok: true, runtime });
+  const deps = {
+    resolveRuntime,
+    createClient: remoteModule.DEFAULT_REMOTE_SESSION_DEPS.createClient,
+    commandStore: remoteModule.DEFAULT_REMOTE_SESSION_DEPS.commandStore,
+    desktopPresence: remoteModule.DEFAULT_REMOTE_SESSION_DEPS.desktopPresence,
+  };
+  const directInput = (action: "create" | "send" | "read", body: unknown): RemoteSessionExecuteInput => ({
+    action,
+    organizationId: orgId,
+    userId: "user_remote_session_real_server",
+    hasWriteScope: true,
+    body,
+  });
+
+  const created = parseMcpToolResult(await remoteModule.executeRemoteSessionCapability(
+    directInput("create", { title: "Remote session real-server round trip" }),
+    deps,
+  ));
+  const directSessionId = typeof created.payload.sessionId === "string" ? created.payload.sessionId : "";
+  expect(created.isError, created.text).toBe(false);
+  expect(directSessionId).not.toBe("");
+  const sent = parseMcpToolResult(await remoteModule.executeRemoteSessionCapability(
+    directInput("send", { sessionId: directSessionId, prompt: "Reply with the single word pong." }),
+    deps,
+  ));
+  expect(sent.isError, sent.text).toBe(false);
+  expect(sent.payload.state).toBe("accepted");
+  const settled = await eventually(async () => {
+    const read = parseMcpToolResult(await remoteModule.executeRemoteSessionCapability(
+      directInput("read", { sessionId: directSessionId }),
+      deps,
+    ));
+    const messages = Array.isArray(read.payload.messages) ? read.payload.messages.filter(isRecord) : [];
+    return {
+      read,
+      hasUser: messages.some((message) => message.role === "user" && String(message.text ?? "").includes("pong")),
+      hasAssistant: messages.some((message) => message.role === "assistant" && String(message.text ?? "").length > 0),
+    };
+  }, {
+    within: 120_000,
+    intervalMs: 2_000,
+    label: "real openwork-server remote-session create/send/read round trip",
+    until: (result) => !result.read.isError && result.read.payload.status === "idle"
+      && result.hasUser && result.hasAssistant,
+  });
+  expect(settled.read.payload.finalAssistantText).not.toBe("");
+  evidence.recordAssertionEvidence(
+    "The real openwork-server answers remote-session create, send, and read",
+    `Session ${directSessionId} accepted a prompt and settled idle with both the user turn and a non-empty assistant reply visible through remote-session:read.`,
+    settled.hasUser && settled.hasAssistant,
   );
 });
