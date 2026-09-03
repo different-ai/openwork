@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.0.0",
   "scripts": {
-    "prepare": "node scripts/git-hooks/install.mjs",
+    "prepare": "node scripts/git-hooks/install.mjs || exit 0",
     "check:confidentiality": "node --test scripts/confidentiality-tripwire.test.mjs",
     "dev": "OPENWORK_DEV_MODE=1 OPENWORK_ELECTRON_REMOTE_DEBUG_PORT=${OPENWORK_ELECTRON_REMOTE_DEBUG_PORT:-9823} pnpm --filter @openwork/desktop dev",
     "dev:worktree": "OPENWORK_DEV_MODE=1 OPENWORK_DEV_PROFILE=auto OPENWORK_ELECTRON_USE_MOCK_KEYCHAIN=${OPENWORK_ELECTRON_USE_MOCK_KEYCHAIN:-1} OPENWORK_ELECTRON_REMOTE_DEBUG_PORT=0 PORT=0 pnpm --filter @openwork/desktop dev",
