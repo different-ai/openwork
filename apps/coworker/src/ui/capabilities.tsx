@@ -11,7 +11,7 @@ import {
   type CoworkerMcpItem,
   type PreservedMcpAppResult,
 } from "@/lib/mcp";
-import { Button, Empty, ErrorNote, StatusDot, inputClass } from "@/ui/kit";
+import { Button, Empty, ErrorNote, IconButton, StatusDot, inputClass } from "@/ui/kit";
 import { InlineLoader } from "@/ui/brand";
 import { McpAppFrame } from "@/ui/mcp-app-frame";
 
@@ -77,6 +77,17 @@ function appFailureMessage(result: PreservedMcpAppResult): string {
   return "This App could not start with the supplied input.";
 }
 
+/** Remembered per machine once the person asks not to see the full explanation again. */
+export const CONNECT_PITCH_KEY = "open-coworker.connect-pitch";
+
+export function readConnectPitchPreference(storage: Pick<Storage, "getItem"> | null): "full" | "compact" {
+  try {
+    return storage?.getItem(CONNECT_PITCH_KEY) === "compact" ? "compact" : "full";
+  } catch {
+    return "full";
+  }
+}
+
 /** What OpenWork Connect adds, said once, in the person's terms. */
 const CONNECT_VALUE = [
   { title: "One sign-in for the team", text: "Gmail, Slack, Notion and more connected once for your organization, with the same controls as OpenWork Desktop." },
@@ -118,6 +129,20 @@ export function CapabilitiesPanel({
   const [inventory, setInventory] = useState<CoworkerMcpItem[]>([]);
   const [servers, setServers] = useState<CoworkerMcpAppCatalogServer[]>([]);
   const [query, setQuery] = useState("");
+  // The Connect explanation shows in full until it is skipped; "Don't show this again" makes the
+  // compact form the remembered default on this machine.
+  const [pitch, setPitch] = useState<"full" | "compact">(() => readConnectPitchPreference(typeof window === "undefined" ? null : window.localStorage));
+  const [hidePitchNextTime, setHidePitchNextTime] = useState(false);
+  function skipPitch(): void {
+    setPitch("compact");
+    if (hidePitchNextTime) {
+      try {
+        window.localStorage.setItem(CONNECT_PITCH_KEY, "compact");
+      } catch {
+        // Storage may be unavailable; the compact form still applies for this session.
+      }
+    }
+  }
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [selected, setSelected] = useState<SelectedApp | null>(null);
@@ -179,13 +204,36 @@ export function CapabilitiesPanel({
           value={query}
           onChange={(event) => setQuery(event.target.value)}
         />
-        <Button aria-busy={loading} variant="ghost" className="h-9 text-xs" disabled={loading} onClick={() => void refresh()}>
-          {loading ? "Refreshing" : "Refresh"}
-        </Button>
+        <IconButton label={loading ? "Refreshing" : "Refresh"} aria-busy={loading} disabled={loading} onClick={() => void refresh()}>
+          <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true" className={loading ? "motion-safe:animate-spin" : ""}>
+            <path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9M13.5 2.5v2.6h-2.6" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </IconButton>
       </div>
 
-      <section className="rounded-2xl border border-line bg-ink p-4" data-testid="coworker-connect-card" data-status={signedIn ? (connect?.status ?? "connecting") : "signed-out"}>
-        <div className="flex items-start justify-between gap-3">
+      <section
+        className={`rounded-2xl border border-line bg-ink ${!signedIn && pitch === "compact" ? "px-4 py-3" : "p-4"}`}
+        data-testid="coworker-connect-card"
+        data-status={signedIn ? (connect?.status ?? "connecting") : "signed-out"}
+        data-pitch={signedIn ? undefined : pitch}
+      >
+        {!signedIn && pitch === "compact" ? (
+          // The short form: one line and the one action; the explanation was read (or skipped) already.
+          <div>
+            <div className="flex items-center justify-between gap-3">
+              <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-mist">OpenWork Connect</p>
+              <span className="flex shrink-0 items-center gap-1.5 text-[11px] font-medium text-mist" data-testid="coworker-connect-status">
+                <StatusDot tone={status.tone} />
+                {status.label}
+              </span>
+            </div>
+            <p className="mt-1 text-xs leading-relaxed text-mist">Bring your organization's apps and tools to {coworker.name}.</p>
+            <Button variant="primary" className="mt-2.5 h-8 w-full text-xs" onClick={onConnectAccount} data-testid="coworker-connect-cta">
+              Continue with OpenWork
+            </Button>
+          </div>
+        ) : null}
+        <div className={`flex items-start justify-between gap-3 ${!signedIn && pitch === "compact" ? "hidden" : ""}`}>
           <div className="min-w-0">
             <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-mist">OpenWork Connect</p>
             <h3 className="mt-1.5 text-sm font-semibold leading-snug text-snow">
@@ -233,7 +281,7 @@ export function CapabilitiesPanel({
               {needsRepair ? <Button variant="ghost" className="text-xs" onClick={onRepairConnect}>Repair</Button> : null}
             </div>
           </>
-        ) : (
+        ) : pitch === "full" ? (
           <>
             <ul className="mt-3 space-y-2">
               {CONNECT_VALUE.map((item) => (
@@ -242,11 +290,26 @@ export function CapabilitiesPanel({
                 </li>
               ))}
             </ul>
-            <Button variant="primary" className="mt-3 w-full text-xs" onClick={onConnectAccount} data-testid="coworker-connect-cta">
-              Continue with OpenWork
-            </Button>
+            <div className="mt-3 flex items-center gap-2">
+              <Button variant="primary" className="flex-1 text-xs" onClick={onConnectAccount} data-testid="coworker-connect-cta">
+                Continue with OpenWork
+              </Button>
+              <Button variant="ghost" className="text-xs" onClick={skipPitch} data-testid="coworker-connect-skip">
+                Skip
+              </Button>
+            </div>
+            <label className="mt-2.5 flex cursor-pointer items-center gap-2 text-[11px] text-mist">
+              <input
+                type="checkbox"
+                className="size-3.5 accent-[var(--color-spark)]"
+                checked={hidePitchNextTime}
+                onChange={(event) => setHidePitchNextTime(event.target.checked)}
+                data-testid="coworker-connect-hide-pitch"
+              />
+              Don't show this explanation again
+            </label>
           </>
-        )}
+        ) : null}
       </section>
 
       <section>
@@ -295,7 +358,7 @@ export function CapabilitiesPanel({
           <h3 className="text-[11px] font-semibold text-mist">Tools on this Mac</h3>
           {localInventory.length > 0 ? <span className="text-[10px] text-mist">{localInventory.length}</span> : null}
         </div>
-        <div className="overflow-hidden rounded-2xl border border-line bg-ink">
+        <div className={filteredInventory.length > 0 ? "overflow-hidden rounded-2xl border border-line bg-ink" : ""}>
           {filteredInventory.map((item, index) => {
             const status = inventoryStatus(item, servers.find((server) => server.serverName === item.name));
             return (
@@ -321,7 +384,7 @@ export function CapabilitiesPanel({
             );
           })}
           {filteredInventory.length === 0 ? (
-            <Empty>{normalizedQuery ? "No tool matches this search." : "No tools set up on this Mac."}</Empty>
+            <p className="px-1 py-3 text-xs text-mist">{normalizedQuery ? "No tool matches this search." : "No tools set up on this Mac."}</p>
           ) : null}
         </div>
       </section>
