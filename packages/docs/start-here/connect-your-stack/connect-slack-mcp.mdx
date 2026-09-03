@@ -27,11 +27,16 @@ Keep the client secret out of chats and source control. Treat it like any other 
 In Slack, an admin should create or approve an app for OpenWork's MCP access.
 
 1. Open [Slack API apps](https://api.slack.com/apps) and create a new app, or open the existing internal app you want to use.
-2. Go to `OAuth & Permissions`.
-3. Add this redirect URL: `http://127.0.0.1:19876/mcp/oauth/callback`.
-4. Add the `User Token Scopes` for the Slack MCP tools your team wants OpenWork to use.
-5. Save the app and install or approve it for the workspace.
-6. Go to `Basic Information` > `App Credentials` and copy the `Client ID` and `Client Secret`.
+2. Go to the `Agents` tab in the app settings and turn on the `MCP` toggle. Slack only serves MCP requests for apps that have this enabled.
+3. Go to `OAuth & Permissions`.
+4. Add this redirect URL: `http://127.0.0.1:19876/mcp/oauth/callback`.
+5. Add the `User Token Scopes` for the Slack MCP tools your team wants OpenWork to use.
+6. Save the app and install or approve it for the workspace.
+7. Go to `Basic Information` > `App Credentials` and copy the `Client ID` and `Client Secret`.
+
+<Frame>
+  ![Slack app settings Agents tab with the MCP toggle enabled](/images/slack-app-agents-mcp-toggle.png)
+</Frame>
 
 Slack MCP uses user token scopes. Choose the smallest set that matches what your team wants agents to do.
 
@@ -118,6 +123,8 @@ Slack opens in your browser and shows the scopes you configured. Approve the Sla
 ## Troubleshooting
 
 If you see an error like `Incompatible auth server: does not support dynamic client registration`, the Slack MCP entry is missing a pre-registered OAuth client ID and client secret. Reopen the Slack MCP setup, add those values under `Advanced OAuth`, reload the engine, and try sign-in again.
+
+If sign-in fails or Slack rejects the MCP connection even though the client ID and secret are correct, check that MCP is enabled for the Slack app. Open the app in [Slack API apps](https://api.slack.com/apps), go to the `Agents` tab, and turn on the `MCP` toggle. Then retry sign-in from OpenWork.
 
 If Slack says the redirect URL is invalid, add `http://127.0.0.1:19876/mcp/oauth/callback` to the Slack app's `OAuth & Permissions` redirect URLs.
 
