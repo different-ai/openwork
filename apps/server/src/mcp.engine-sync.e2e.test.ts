@@ -1240,4 +1240,44 @@ describe("runtime MCP engine sync", () => {
       else process.env.OPENWORK_RUNTIME_DB = previousDb;
     }
   });
+
+  // A credential written to the engine's own store changes nothing the config
+  // fingerprint sees, so a caller may ask for a reload regardless with
+  // `force`; the flag is validated and an empty body still means an ordinary reload.
+  test("engine reload accepts an optional force flag and rejects a malformed one", async () => {
+    const workspaceRoot = await createWorkspaceRoot();
+    const previousDb = process.env.OPENWORK_RUNTIME_DB;
+    process.env.OPENWORK_RUNTIME_DB = join(workspaceRoot, "runtime.sqlite");
+    try {
+      const mock = startMockOpencode();
+      const openwork = await startOpenworkServer(workspaceRoot, `http://127.0.0.1:${mock.server.port}`);
+
+      const forced = await fetch(`${openwork.base}/workspace/ws_1/engine/reload`, {
+        method: "POST",
+        headers: auth(openwork.token),
+        body: JSON.stringify({ force: true }),
+      });
+      expect(forced.status).toBe(200);
+      const disposeCalls = () => mock.requests.filter((entry) => entry.pathname === "/instance/dispose").length;
+      expect(disposeCalls()).toBe(1);
+
+      const plain = await fetch(`${openwork.base}/workspace/ws_1/engine/reload`, {
+        method: "POST",
+        headers: auth(openwork.token),
+      });
+      expect(plain.status).toBe(200);
+      expect(disposeCalls()).toBe(2);
+
+      const malformed = await fetch(`${openwork.base}/workspace/ws_1/engine/reload`, {
+        method: "POST",
+        headers: auth(openwork.token),
+        body: JSON.stringify({ force: "yes" }),
+      });
+      expect(malformed.status).toBe(400);
+      expect(disposeCalls()).toBe(2);
+    } finally {
+      if (previousDb === undefined) delete process.env.OPENWORK_RUNTIME_DB;
+      else process.env.OPENWORK_RUNTIME_DB = previousDb;
+    }
+  });
 });

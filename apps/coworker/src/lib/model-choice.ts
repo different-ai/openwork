@@ -17,3 +17,24 @@ export function wasAutoPicked(slug: string, modelId: string): boolean {
 export function clearAutoPicked(slug: string): void {
   autoPicked.delete(slug);
 }
+
+/**
+ * The model the person chose to start with before any coworker existed (on
+ * the local mode screen). The first coworker created takes it instead of the
+ * automatic pick, once.
+ */
+let startingModel = "";
+
+export function setStartingModel(modelId: string): void {
+  startingModel = modelId.trim();
+}
+
+export function peekStartingModel(): string {
+  return startingModel;
+}
+
+export function takeStartingModel(): string {
+  const taken = startingModel;
+  startingModel = "";
+  return taken;
+}
