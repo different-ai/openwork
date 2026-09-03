@@ -57,6 +57,8 @@ export type CoworkerActivity = {
   detail: string;
   /** For `retrying`: set when the engine has pushed its retry far out, so the model is effectively unavailable. */
   reason?: string;
+  /** One line the header, the rail, and Activity share when a turn needs words (still working, retrying, failed, stopped). */
+  summary?: string;
   updatedAt: number;
   /** Thread the current state refers to, when there is one to open. */
   threadId?: string;
