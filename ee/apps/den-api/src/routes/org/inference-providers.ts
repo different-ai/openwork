@@ -35,6 +35,7 @@ import {
   buildProviderConfigSnapshot,
   isSupportedGatewayNpm,
   readProviderConfigNpm,
+  upstreamBaseUrlSettingError,
 } from "../../llm/inference-provider-config.js"
 import {
   buildGoogleAuthorizeUrl,
@@ -412,6 +413,10 @@ async function normalizeCatalogInput(input: { providerId: string; modelIds: stri
 }
 
 function validateSettings(providerConfig: Record<string, unknown>, settings: Record<string, unknown>) {
+  const upstreamBaseUrlError = upstreamBaseUrlSettingError(settings)
+  if (upstreamBaseUrlError) {
+    throw failure(400, "invalid_settings", upstreamBaseUrlError)
+  }
   const npm = readProviderConfigNpm(providerConfig)
   const requireString = (key: string) => {
     if (typeof settings[key] !== "string" || !settings[key].trim()) {
