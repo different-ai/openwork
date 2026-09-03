@@ -709,6 +709,7 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
     const avatar = [...document.querySelectorAll("aside nav svg.coworker-avatar.is-idle-looking.is-idle-blinking")][0];
     if (!(avatar instanceof SVGSVGElement)) return false;
     const pupils = avatar.querySelector(".coworker-avatar__pupils");
+    const pointerBody = avatar.querySelector(".coworker-avatar__pointer-body");
     return {
       name: avatar.getAttribute("aria-label"),
       featureY: Number.parseFloat(avatar.style.getPropertyValue("--avatar-idle-feature-y")),
@@ -716,6 +717,7 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
       headY: Number.parseFloat(avatar.style.getPropertyValue("--avatar-idle-head-y")),
       turn: Number.parseFloat(avatar.style.getPropertyValue("--avatar-idle-turn")),
       blinkAnimation: pupils ? getComputedStyle(pupils).animationName : "",
+      bobAnimation: pointerBody ? getComputedStyle(pointerBody).animationName : "",
     };
   })()`, { timeoutMs: 20_000, label: "a coworker's unscripted idle glance and blink" });
   expect(idleAvatar).toMatchObject({
@@ -725,6 +727,7 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
     headY: 0.25,
     turn: expect.any(Number),
     blinkAnimation: "coworker-idle-blink",
+    bobAnimation: "coworker-idle-bob",
   });
   if (!isRecord(idleAvatar) || typeof idleAvatar.turn !== "number") {
     throw new Error("The coworker's idle glance was unavailable.");
@@ -732,7 +735,7 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   expect(Math.abs(idleAvatar.turn)).toBe(0.35);
   evidence.recordAssertionEvidence(
     "Coworkers make small unscripted glances while they wait",
-    "After the pointer became still, one rail avatar briefly looked down: its glasses, pupils, and whole-avatar pose moved by separate sub-pixel amounts with a 0.35-degree lean, and its independent short blink ran before it settled back.",
+    "After the pointer became still, one rail avatar briefly looked down: its glasses, pupils, and whole-avatar pose moved by separate sub-pixel amounts with a 0.35-degree lean, and its short blink carried a sub-pixel check-and-rebound before it settled back.",
     true,
   );
   await clickButtonContaining(app, "Scout");

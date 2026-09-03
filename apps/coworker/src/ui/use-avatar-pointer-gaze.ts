@@ -27,7 +27,7 @@ export function useAvatarPointerGaze(enabled = true, ambient = false, intensity 
     const resetIdlePose = () => {
       const avatar = avatarRef.current;
       if (!avatar) return;
-      avatar.classList.remove("is-idle-looking", "is-idle-blinking");
+      avatar.classList.remove("is-idle-looking", "is-idle-blinking", "is-idle-bobbing");
       avatar.style.setProperty("--avatar-idle-feature-x", "0px");
       avatar.style.setProperty("--avatar-idle-feature-y", "0px");
       avatar.style.setProperty("--avatar-idle-look-x", "0px");
@@ -63,7 +63,7 @@ export function useAvatarPointerGaze(enabled = true, ambient = false, intensity 
 
         const blinkAt = 180 + Math.random() * 180;
         const doubleBlink = Math.random() < 0.22;
-        later(() => avatar.classList.add("is-idle-blinking"), blinkAt);
+        later(() => avatar.classList.add("is-idle-blinking", "is-idle-bobbing"), blinkAt);
         if (doubleBlink) {
           later(() => avatar.classList.remove("is-idle-blinking"), blinkAt + 240);
           later(() => avatar.classList.add("is-idle-blinking"), blinkAt + 360);
