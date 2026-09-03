@@ -181,6 +181,21 @@ function sortedVariants(variants: Record<string, unknown> | undefined): string[]
   });
 }
 
+/** A retry the engine scheduled this long ago and never moved on from is over, not pending. */
+export const STALE_RETRY_MS = 60_000;
+
+/**
+ * The engine reports each session as idle, busy, or retrying (with the time of the next
+ * attempt). A retry whose next attempt is long past is stale — the attempt already happened
+ * and the reply landed, or the run ended — so it reads as idle rather than keeping a finished
+ * coworker "Retrying".
+ */
+export function threadStatusOf(status: SessionStatus | undefined, now = Date.now()): SessionStatus["type"] {
+  if (!status) return "idle";
+  if (status.type === "retry" && Number.isFinite(status.next) && now - status.next > STALE_RETRY_MS) return "idle";
+  return status.type;
+}
+
 export function connectedModelCatalog(
   value: ProviderListResponse,
   cloud: CloudProviderSyncStatus | null = null,
@@ -471,7 +486,7 @@ export function createCoworkerThreads(options: {
         title: session.title?.trim() || "Untitled thread",
         createdAt: session.time?.created ?? 0,
         updatedAt: session.time?.updated ?? 0,
-        status: statuses[session.id]?.type ?? "idle",
+        status: threadStatusOf(statuses[session.id]),
       }))
       .sort((a, b) => b.updatedAt - a.updatedAt);
   }

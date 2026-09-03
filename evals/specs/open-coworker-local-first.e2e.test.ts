@@ -371,27 +371,41 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   if (!isRecord(mascot)) throw new Error("Mascot facts were unavailable.");
   const mascotBox = mascot.box;
   expect(await evalIn(app, `(() => { const r = document.querySelector('[data-testid="onboarding-mascot"]').getBoundingClientRect(); return [Math.round(r.width), Math.round(r.height)].join("x"); })()`)).toBe(mascotBox);
-  const soloPeek = await waitFor(app, `(() => {
+  // A visitor peeks every so often and blinks for a fraction of a second while peeking; the page
+  // records that instant itself (class and data-attribute changes on the stack) so the wait does
+  // not depend on a poll landing inside it.
+  await evalIn(app, `(() => {
     const stack = document.querySelector('[data-testid="onboarding-mascot"]');
     if (!(stack instanceof HTMLElement)) return false;
-    const side = stack.dataset.ambientVisitor;
-    if ((side !== "left" && side !== "right") || stack.dataset.ambientStage !== "peeking") return false;
-    if (!stack.classList.contains(side + "-blinking")) return false;
-    const visitors = [...stack.querySelectorAll('[data-testid="onboarding-mascot-visitor"]')];
-    const visible = visitors.filter((visitor) => getComputedStyle(visitor).visibility === "visible");
-    const active = visitors.filter((visitor) => visitor.getAttribute("data-ambient-active") === "true");
-    const activeAvatar = active[0]?.querySelector(".coworker-avatar");
-    const rect = stack.getBoundingClientRect();
-    return {
-      side,
-      stage: stack.dataset.ambientStage,
-      visitorsState: stack.dataset.visitors,
-      visibleVisitors: visible.length,
-      activeVisitors: active.length,
-      helloAnimation: activeAvatar ? getComputedStyle(activeAvatar).animationName : "",
-      box: [Math.round(rect.width), Math.round(rect.height)].join("x"),
+    window.__soloPeek = null;
+    const capture = () => {
+      if (window.__soloPeek) return;
+      const side = stack.dataset.ambientVisitor;
+      if ((side !== "left" && side !== "right") || stack.dataset.ambientStage !== "peeking") return;
+      if (!stack.classList.contains(side + "-blinking")) return;
+      const visitors = [...stack.querySelectorAll('[data-testid="onboarding-mascot-visitor"]')];
+      const visible = visitors.filter((visitor) => getComputedStyle(visitor).visibility === "visible");
+      const active = visitors.filter((visitor) => visitor.getAttribute("data-ambient-active") === "true");
+      const activeAvatar = active[0]?.querySelector(".coworker-avatar");
+      const rect = stack.getBoundingClientRect();
+      window.__soloPeek = {
+        side,
+        stage: stack.dataset.ambientStage,
+        visitorsState: stack.dataset.visitors,
+        visibleVisitors: visible.length,
+        activeVisitors: active.length,
+        helloAnimation: activeAvatar ? getComputedStyle(activeAvatar).animationName : "",
+        box: [Math.round(rect.width), Math.round(rect.height)].join("x"),
+      };
     };
-  })()`, { timeoutMs: 25_000, label: "one patient onboarding visitor peeking and blinking" });
+    const observer = new MutationObserver(capture);
+    observer.observe(stack, { attributes: true, subtree: true });
+    window.__soloPeekObserver = observer;
+    capture();
+    return true;
+  })()`);
+  const soloPeek = await waitFor(app, `window.__soloPeek ?? false`, { timeoutMs: 40_000, label: "one patient onboarding visitor peeking and blinking" });
+  await evalIn(app, `(() => { window.__soloPeekObserver?.disconnect(); return true; })()`);
   expect(soloPeek).toMatchObject({
     side: expect.stringMatching(/^(left|right)$/),
     stage: "peeking",
