@@ -41,6 +41,9 @@ export function describeNow(activity: CoworkerActivity | undefined): NowSummary 
     case "working":
       return { subject: activity.detail, note: activity.workers?.subject ? "A Worker, working on it" : "", needsYou: false };
     case "retrying":
+      if (activity.reason) {
+        return { subject: activity.detail, note: `The AI model is unavailable: ${activity.reason}. Choose another AI model to continue.`, needsYou: true };
+      }
       return { subject: activity.detail, note: "Retrying after an interruption", needsYou: false };
     case "attention":
       // Permission and question requests wait on the person; a failed run only
