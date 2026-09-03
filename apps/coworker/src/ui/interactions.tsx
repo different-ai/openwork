@@ -1,12 +1,14 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { CoworkerSummary } from "@/lib/bridge";
 import {
   describePermission,
   type PendingInteractions,
   type PendingPermission,
   type PendingQuestion,
+  type PendingQuestionItem,
   type PermissionReply,
 } from "@/lib/threads";
+import type { ReactNode } from "react";
 import { Button, ErrorNote, inputClass } from "@/ui/kit";
 
 /**
@@ -41,6 +43,73 @@ export function InteractionCards({
   );
 }
 
+const LETTERS = "ABCDEFGHIJ";
+
+/** True when a key press belongs to a text field, so a letter shortcut must not steal it. */
+function typingInField(target: EventTarget | null): boolean {
+  return target instanceof HTMLElement && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable);
+}
+
+/** One lettered choice inside a card: the letter doubles as its keyboard shortcut. */
+function OptionRow({
+  letter,
+  label,
+  description,
+  active = false,
+  disabled = false,
+  tone = "default",
+  onChoose,
+}: {
+  letter: string;
+  label: string;
+  description?: string;
+  active?: boolean;
+  disabled?: boolean;
+  tone?: "default" | "danger";
+  onChoose: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      role="option"
+      aria-selected={active}
+      disabled={disabled}
+      data-testid="interaction-option"
+      data-letter={letter}
+      className={`flex w-full items-center gap-3 px-3 py-2.5 text-left transition-colors first:rounded-t-xl last:rounded-b-xl hover:bg-white/6 disabled:cursor-not-allowed disabled:opacity-60 ${
+        active ? "bg-spark/12" : ""
+      }`}
+      onClick={onChoose}
+    >
+      <kbd className={`flex size-6 shrink-0 items-center justify-center rounded-md border text-[11px] font-semibold ${active ? "border-spark/50 bg-spark/20 text-spark" : "border-line bg-ink/60 text-mist"}`}>{letter}</kbd>
+      <span className="min-w-0 flex-1">
+        <span className={`block text-sm ${tone === "danger" ? "text-rose" : "text-snow"}`}>{label}</span>
+        {description ? <span className="mt-0.5 block text-[11px] leading-relaxed text-mist">{description}</span> : null}
+      </span>
+    </button>
+  );
+}
+
+/** The card itself: a coworker-side message with a title, a line of context, and a close control. */
+function InteractionCard({ label, title, detail, onClose, children, testId }: { label: string; title: string; detail?: string; onClose?: () => void; children: ReactNode; testId: string }) {
+  return (
+    <section role="group" aria-label={label} className="max-w-[76%] min-w-[280px] rounded-2xl bg-panel-2 p-4 text-snow" data-testid={testId}>
+      <div className="flex items-start gap-3">
+        <div className="min-w-0 flex-1">
+          <h3 className="text-sm font-semibold leading-snug">{title}</h3>
+          {detail ? <p className="mt-1 text-xs leading-relaxed text-mist">{detail}</p> : null}
+        </div>
+        {onClose ? (
+          <button type="button" className="-mr-1 -mt-1 flex size-7 shrink-0 items-center justify-center rounded-full text-mist transition-colors hover:bg-white/8 hover:text-snow" aria-label="Skip this" title="Skip this" onClick={onClose}>
+            <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" /></svg>
+          </button>
+        ) : null}
+      </div>
+      {children}
+    </section>
+  );
+}
+
 function PermissionCard({
   coworker,
   permission,
@@ -64,40 +133,56 @@ function PermissionCard({
     }
   }
 
+  const choices: { letter: string; label: string; description: string; decision: PermissionReply; tone?: "danger" }[] = [
+    { letter: "A", label: "Allow once", description: "Just this step.", decision: "once" },
+    ...(permission.canAlways ? [{ letter: "B", label: "Always allow", description: "Remember this for the coworker.", decision: "always" as PermissionReply }] : []),
+    { letter: permission.canAlways ? "C" : "B", label: "Don't allow", description: "Ends this step; the coworker explains and continues.", decision: "reject", tone: "danger" as const },
+  ];
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (busy || typingInField(event.target) || event.metaKey || event.ctrlKey || event.altKey) return;
+      const choice = choices.find((item) => item.letter === event.key.toUpperCase());
+      if (!choice) return;
+      event.preventDefault();
+      void decide(choice.decision);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  });
+
   return (
-    <section role="group" aria-label={`${coworker.name} needs permission`} className="rounded-2xl border border-amber/30 bg-amber/6 p-4">
-      <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-amber">Needs you</p>
-      <h3 className="mt-1 text-sm font-semibold text-snow">
-        {coworker.name} wants to {describePermission({ action: permission.action, resources: [] })}
-      </h3>
+    <InteractionCard
+      label={`${coworker.name} needs permission`}
+      testId="permission-card"
+      title={`${coworker.name} wants to ${describePermission({ action: permission.action, resources: [] })}`}
+      detail="Nothing happens until you choose."
+    >
       {permission.resources.length > 0 ? (
         <ul className="mt-2 space-y-1">
           {permission.resources.slice(0, 6).map((resource) => (
-            <li key={resource} className="truncate rounded-lg bg-ink/70 px-2.5 py-1.5 font-mono text-[11px] text-snow" title={resource}>
+            <li key={resource} className="truncate rounded-lg bg-ink/60 px-2.5 py-1.5 font-mono text-[11px] text-snow" title={resource}>
               {resource}
             </li>
           ))}
-          {permission.resources.length > 6 ? (
-            <li className="px-1 text-[11px] text-mist">+{permission.resources.length - 6} more</li>
-          ) : null}
+          {permission.resources.length > 6 ? <li className="px-1 text-[11px] text-mist">+{permission.resources.length - 6} more</li> : null}
         </ul>
       ) : null}
-      <p className="mt-2 text-xs leading-relaxed text-mist">Nothing happens until you choose. Denying ends this step; the coworker will explain and continue.</p>
       {error ? <div className="mt-2"><ErrorNote>{error}</ErrorNote></div> : null}
-      <div className="mt-3 flex flex-wrap gap-1.5">
-        <Button variant="primary" className="text-xs" disabled={busy !== ""} onClick={() => void decide("once")}>
-          {busy === "once" ? "Allowing…" : "Allow once"}
-        </Button>
-        {permission.canAlways ? (
-          <Button variant="default" className="text-xs" disabled={busy !== ""} onClick={() => void decide("always")}>
-            {busy === "always" ? "Saving…" : "Always allow"}
-          </Button>
-        ) : null}
-        <Button variant="ghost" className="text-xs text-rose" disabled={busy !== ""} onClick={() => void decide("reject")}>
-          {busy === "reject" ? "Denying…" : "Deny"}
-        </Button>
+      <div className="mt-3 divide-y divide-line/70 rounded-xl border border-line/70" role="listbox" aria-label="Choices">
+        {choices.map((choice) => (
+          <OptionRow
+            key={choice.decision}
+            letter={choice.letter}
+            label={busy === choice.decision ? `${choice.label}…` : choice.label}
+            description={choice.description}
+            tone={choice.tone}
+            disabled={busy !== ""}
+            onChoose={() => void decide(choice.decision)}
+          />
+        ))}
       </div>
-    </section>
+    </InteractionCard>
   );
 }
 
@@ -156,36 +241,74 @@ function QuestionCard({
     }
   }
 
+  // A single question with one answer sends as soon as a choice is made; anything richer
+  // (several questions, pick-many, or a typed answer) shows the choices and one Send.
+  const instant = question.questions.length === 1 && !question.questions[0]?.multiple;
+
+  async function choose(index: number, item: PendingQuestionItem, label: string) {
+    if (busy) return;
+    if (instant) {
+      setSelected([[label]]);
+      setBusy(true);
+      setError("");
+      try {
+        await onAnswer(question, [[label]]);
+      } catch (cause) {
+        setError(cause instanceof Error ? cause.message : String(cause));
+        setBusy(false);
+      }
+      return;
+    }
+    toggle(index, label, item.multiple);
+  }
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (busy || typingInField(event.target) || event.metaKey || event.ctrlKey || event.altKey) return;
+      // Letters answer the first question still waiting for a choice.
+      const index = question.questions.findIndex((item, position) => item.options.length > 0 && (selected[position] ?? []).length === 0);
+      const item = question.questions[index === -1 ? 0 : index];
+      if (!item) return;
+      const option = item.options[LETTERS.indexOf(event.key.toUpperCase())];
+      if (!option) return;
+      event.preventDefault();
+      void choose(index === -1 ? 0 : index, item, option.label);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  });
+
+  const first = question.questions[0];
   return (
-    <section role="group" aria-label={`${coworker.name} has a question`} className="rounded-2xl border border-amber/30 bg-amber/6 p-4">
-      <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-amber">Needs you</p>
-      <div className="mt-1 space-y-4">
+    <InteractionCard
+      label={`${coworker.name} has a question`}
+      testId="question-card"
+      title={question.questions.length === 1 && first ? first.header || first.question : `${coworker.name} has ${question.questions.length} questions`}
+      detail={question.questions.length === 1 && first && first.header ? first.question : undefined}
+      onClose={busy ? undefined : () => void skip()}
+    >
+      <div className="mt-3 space-y-4">
         {question.questions.map((item, index) => (
           <fieldset key={`${question.id}-${index}`}>
-            <legend className="text-sm font-semibold text-snow">{item.header || `Question ${index + 1}`}</legend>
-            <p className="mt-1 text-xs leading-relaxed text-mist">{item.question}</p>
+            {question.questions.length > 1 ? (
+              <>
+                <legend className="text-sm font-semibold text-snow">{item.header || `Question ${index + 1}`}</legend>
+                <p className="mt-1 text-xs leading-relaxed text-mist">{item.question}</p>
+              </>
+            ) : null}
             {item.options.length > 0 ? (
-              <div className="mt-2 space-y-1.5">
-                {item.options.map((option) => {
-                  const active = (selected[index] ?? []).includes(option.label);
-                  return (
-                    <button
-                      type="button"
-                      key={option.label}
-                      aria-pressed={active}
-                      className={`flex w-full items-start gap-2 rounded-xl border px-3 py-2 text-left transition-colors ${
-                        active ? "border-spark/50 bg-spark/10" : "border-line bg-ink/60 hover:bg-ink"
-                      }`}
-                      onClick={() => toggle(index, option.label, item.multiple)}
-                    >
-                      <span className={`mt-1 size-2 shrink-0 rounded-full ${active ? "bg-spark" : "bg-mist/50"}`} />
-                      <span className="min-w-0">
-                        <span className="block text-xs font-medium text-snow">{option.label}</span>
-                        {option.description ? <span className="mt-0.5 block text-[11px] leading-relaxed text-mist">{option.description}</span> : null}
-                      </span>
-                    </button>
-                  );
-                })}
+              <div className={`divide-y divide-line/70 rounded-xl border border-line/70 ${question.questions.length > 1 ? "mt-2" : ""}`} role="listbox" aria-multiselectable={item.multiple} aria-label={item.header || "Choices"}>
+                {item.options.map((option, optionIndex) => (
+                  <OptionRow
+                    key={option.label}
+                    letter={LETTERS[optionIndex] ?? String(optionIndex + 1)}
+                    label={option.label}
+                    description={option.description}
+                    active={(selected[index] ?? []).includes(option.label)}
+                    disabled={busy}
+                    onChoose={() => void choose(index, item, option.label)}
+                  />
+                ))}
               </div>
             ) : null}
             {item.custom ? (
@@ -206,14 +329,16 @@ function QuestionCard({
         ))}
       </div>
       {error ? <div className="mt-2"><ErrorNote>{error}</ErrorNote></div> : null}
-      <div className="mt-3 flex flex-wrap gap-1.5">
-        <Button variant="primary" className="text-xs" disabled={busy || !complete} onClick={() => void submit()}>
-          {busy ? "Sending…" : "Answer"}
-        </Button>
-        <Button variant="ghost" className="text-xs" disabled={busy} onClick={() => void skip()}>
-          Skip
-        </Button>
-      </div>
-    </section>
+      {!instant || question.questions.some((item) => item.custom) ? (
+        <div className="mt-3 flex items-center justify-between gap-2">
+          <p className="text-[11px] text-mist">{instant ? "Choose an option, or type your own and press Send." : "Press a letter to choose."}</p>
+          <Button variant="primary" className="text-xs" disabled={busy || !complete} onClick={() => void submit()}>
+            {busy ? "Sending…" : "Send"}
+          </Button>
+        </div>
+      ) : (
+        <p className="mt-2 px-1 text-[11px] text-mist">{busy ? "Sending…" : "Click or press a letter to answer."}</p>
+      )}
+    </InteractionCard>
   );
 }

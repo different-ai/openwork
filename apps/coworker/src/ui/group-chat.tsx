@@ -8,6 +8,7 @@ import { GroupAvatars } from "@/ui/coworker-rail";
 import { Button, ErrorNote, StatusDot } from "@/ui/kit";
 import { timeLabelBetween } from "@/lib/conversation";
 import { SendButton } from "@/ui/threads";
+import { useAutoGrow } from "@/ui/use-auto-grow";
 
 const REPLY_TIMEOUT_MS = 180_000;
 
@@ -53,6 +54,7 @@ export function GroupChat({
   groupRef.current = group;
   const scrollRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLTextAreaElement>(null);
+  useAutoGrow(composerRef, message);
 
   const members = useMemo(
     () => group.participantSlugs.map((slug) => coworkers.find((coworker) => coworker.slug === slug)).filter((member): member is CoworkerSummary => Boolean(member)),
@@ -285,7 +287,7 @@ export function GroupChat({
               aria-label={`Message ${group.name}`}
               data-testid="group-composer"
               rows={1}
-              className="max-h-40 min-h-[30px] min-w-0 flex-1 resize-none bg-transparent py-1 text-sm leading-relaxed text-snow outline-none placeholder:text-mist/65"
+              className="min-h-[30px] min-w-0 flex-1 resize-none bg-transparent py-1 text-sm leading-relaxed text-snow outline-none placeholder:text-mist/65"
               placeholder={`Message ${members.map((member) => member.name).join(", ")}`}
               value={message}
               disabled={!runtime.engineManaged}
