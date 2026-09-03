@@ -84,11 +84,11 @@ test("desktop Automation runner retires rejected credentials without changing tr
   const bridgeOutput = `${bridge.stdout}${bridge.stderr}`;
   expect(bridge.error, bridgeOutput).toBeUndefined();
   expect(bridge.status, bridgeOutput).toBe(0);
-  expect(bridgeOutput).toContain("12 pass");
+  expect(bridgeOutput).toContain("14 pass");
   expect(bridgeOutput).toContain("0 fail");
   evidence.recordAssertionEvidence(
     "Rejected runner credentials stop and remint without disrupting valid work",
-    "The runner and bridge suites passed 57 tests covering one-shot 401/403 retirement on every runner route, fresh-token remint backoff, generation races, active assignments, in-flight claims, wake-time work polling, bounded idle polls, serialized bounded heartbeats with a consecutive-miss threshold, bounded terminal and completion delivery, cancellation, provider and workspace failures, durable failed-thread linkage, tool-only completion, remote-session delivery and failure receipts, and work-only polling.",
+    "The runner and bridge suites passed 59 tests covering one-shot 401/403 retirement on every runner route, fresh-token remint backoff, generation races, active assignments, in-flight claims, wake-time work polling, bounded idle polls, serialized bounded heartbeats with a consecutive-miss threshold, bounded terminal and completion delivery, cancellation, provider and workspace failures, durable failed-thread linkage, tool-only completion, remote-session delivery and failure receipts, and work-only polling.",
     true,
   );
 

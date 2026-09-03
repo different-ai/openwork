@@ -22,7 +22,7 @@ test("Den lists Automations as a read-only monitor that routes management to Web
   await using den = await server({ place });
 
   // A published Desktop client still creates through the legacy route with the free starter model.
-  const name = `Monitor placement ${Date.now()}`;
+  const name = "Monitor placement";
   const created = await denFetch(den.admin, "/v1/automations", {
     method: "POST",
     headers: { authorization: `Bearer ${den.admin.token}` },
@@ -74,7 +74,7 @@ test("Den lists Automations as a read-only monitor that routes management to Web
     true,
   );
 
-  await evalIn(browser, `([...document.querySelectorAll("button")].find((button) => button.textContent?.includes(${JSON.stringify(name)})))?.click()`);
+  await evalIn(browser, `([...document.querySelectorAll("button")].find((button) => button.textContent?.includes("Monitor placement")))?.click()`);
   await waitForText(browser, "Run receipt", { timeoutMs: 30_000 });
   const detailCopy = await evalIn(browser, "document.body.innerText");
   expect(detailCopy).toContain("Manage in OpenWork Desktop");
