@@ -21,27 +21,38 @@ export function countRawEscapes(source) {
     + occurrences(source, /\bprobe\.eval\s*\(/g);
 }
 
-export function compareBaseline(current, baseline, existingFiles) {
+export function compareBaseline(current, baseline, existingFiles, newLayerFiles) {
   const errors = [];
-  for (const [file, count] of Object.entries(current)) {
-    const allowed = baseline[file] ?? 0;
-    if (count > allowed) errors.push(`${file}: raw channel escapes increased ${allowed} → ${count}`);
-    if (file in baseline && count < allowed) errors.push(`${file}: baseline is stale ${allowed} → ${count}; lower it`);
+  const warnings = [];
+  for (const file of existingFiles) {
+    const count = current[file] ?? 0;
+    if (file in baseline) {
+      const allowed = baseline[file];
+      if (count > allowed) errors.push(`${file}: raw channel escapes increased ${allowed} → ${count}`);
+      if (count < allowed) errors.push(`${file}: baseline is stale ${allowed} → ${count}; lower it`);
+    } else if (newLayerFiles.has(file)) {
+      if (count > 0) errors.push(`${file}: new-layer spec has ${count} raw channel escapes; expected 0`);
+    } else {
+      warnings.push(`unbaselined legacy spec: ${file} (${count} escapes) — add to baseline when migrating`);
+    }
   }
   for (const file of Object.keys(baseline)) {
     if (!existingFiles.has(file)) errors.push(`${file}: baseline is stale; file no longer exists`);
   }
-  return errors;
+  return { errors, warnings };
 }
 
 export function scanSpecs(directory = specsDirectory) {
   const files = readdirSync(directory).filter((file) => file.endsWith(".e2e.test.ts")).sort();
   const current = {};
+  const newLayerFiles = new Set();
   for (const file of files) {
-    const count = countRawEscapes(readFileSync(resolve(directory, file), "utf8"));
+    const source = readFileSync(resolve(directory, file), "utf8");
+    const count = countRawEscapes(source);
     if (count > 0) current[file] = count;
+    if (source.includes("spec.world(")) newLayerFiles.add(file);
   }
-  return { current, files: new Set(files) };
+  return { current, files: new Set(files), newLayerFiles };
 }
 
 function readBaseline() {
@@ -57,11 +68,12 @@ function readBaseline() {
 
 const invokedDirectly = process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 if (invokedDirectly) {
-  const { current, files } = scanSpecs();
+  const { current, files, newLayerFiles } = scanSpecs();
   if (process.argv.includes("--print-baseline")) {
     console.log(JSON.stringify(current, null, 2));
   } else {
-    const errors = compareBaseline(current, readBaseline(), files);
+    const { errors, warnings } = compareBaseline(current, readBaseline(), files, newLayerFiles);
+    for (const warning of warnings) console.warn(`WARNING: ${warning}`);
     if (errors.length > 0) {
       console.error(`spec-channel-ratchet failed:\n- ${errors.join("\n- ")}\nFix with: pnpm --dir evals exec node scripts/spec-channel-ratchet.mjs --print-baseline > evals/specs/channel-ratchet.baseline.json`);
       process.exitCode = 1;

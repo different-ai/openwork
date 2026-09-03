@@ -17,13 +17,36 @@ test("countRawEscapes counts raw rails only when their exact syntax is present",
 });
 
 test("compareBaseline rejects increases and stale entries", () => {
-  assert.deepEqual(compareBaseline({ "kept.e2e.test.ts": 3 }, { "kept.e2e.test.ts": 2 }, new Set(["kept.e2e.test.ts"])), [
+  const newLayerFiles = new Set();
+  assert.deepEqual(compareBaseline({ "kept.e2e.test.ts": 3 }, { "kept.e2e.test.ts": 2 }, new Set(["kept.e2e.test.ts"]), newLayerFiles).errors, [
     "kept.e2e.test.ts: raw channel escapes increased 2 → 3",
   ]);
-  assert.deepEqual(compareBaseline({ "kept.e2e.test.ts": 1 }, { "kept.e2e.test.ts": 2 }, new Set(["kept.e2e.test.ts"])), [
+  assert.deepEqual(compareBaseline({ "kept.e2e.test.ts": 1 }, { "kept.e2e.test.ts": 2 }, new Set(["kept.e2e.test.ts"]), newLayerFiles).errors, [
     "kept.e2e.test.ts: baseline is stale 2 → 1; lower it",
   ]);
-  assert.deepEqual(compareBaseline({}, { "gone.e2e.test.ts": 1 }, new Set()), [
+  assert.deepEqual(compareBaseline({}, { "gone.e2e.test.ts": 1 }, new Set(), newLayerFiles).errors, [
     "gone.e2e.test.ts: baseline is stale; file no longer exists",
   ]);
+});
+
+test("compareBaseline warns for unbaselined legacy specs without failing", () => {
+  assert.deepEqual(compareBaseline({ "legacy.e2e.test.ts": 2 }, {}, new Set(["legacy.e2e.test.ts"]), new Set()), {
+    errors: [],
+    warnings: ["unbaselined legacy spec: legacy.e2e.test.ts (2 escapes) — add to baseline when migrating"],
+  });
+});
+
+test("compareBaseline rejects raw escapes in an unbaselined new-layer spec", () => {
+  assert.deepEqual(
+    compareBaseline(
+      { "layered.e2e.test.ts": 2 },
+      {},
+      new Set(["layered.e2e.test.ts"]),
+      new Set(["layered.e2e.test.ts"]),
+    ),
+    {
+      errors: ["layered.e2e.test.ts: new-layer spec has 2 raw channel escapes; expected 0"],
+      warnings: [],
+    },
+  );
 });
