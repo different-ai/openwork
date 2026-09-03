@@ -349,7 +349,7 @@ export function ResponsibilitiesPanel({
   return (
     <div className="space-y-2.5">
       <div className="flex items-center justify-between gap-3 px-1">
-        <h3 className="text-[11px] font-semibold text-mist">Responsibilities</h3>
+        <h3 className="text-[11px] font-semibold text-mist">On a schedule</h3>
         {rows.length > 0 && canAdd ? (
           <button
             type="button"
@@ -386,9 +386,9 @@ export function ResponsibilitiesPanel({
 
       {rows.length === 0 && canAdd ? (
         <div className="rounded-2xl border border-dashed border-line bg-ink px-4 py-5 text-center" data-testid="responsibilities-empty">
-          <p className="text-xs text-mist">No responsibilities yet.</p>
+          <p className="text-xs text-mist">Nothing on a schedule yet.</p>
           <Button variant="default" className="mt-3 text-xs" onClick={() => setAdding(session ? "cloud" : "local")}>
-            Add responsibility
+            Add assignment
           </Button>
         </div>
       ) : null}
@@ -639,7 +639,7 @@ function AddResponsibility({
   return (
     <div className="space-y-3 rounded-2xl border border-line bg-ink p-3" data-testid="add-responsibility">
       <div className="flex items-center justify-between gap-3">
-        <p className="text-xs font-semibold text-snow">New responsibility</p>
+        <p className="text-xs font-semibold text-snow">New assignment on a schedule</p>
         <Button variant="ghost" className="px-2 text-xs" onClick={onCancel}>Cancel</Button>
       </div>
       <div className="grid grid-cols-2 rounded-lg border border-line bg-panel/60 p-0.5" role="radiogroup" aria-label="Where it runs">
@@ -669,7 +669,7 @@ function AddResponsibility({
       </p>
       {placement === "cloud" && !session ? (
         <div className="rounded-xl border border-spark/25 bg-spark/5 p-3">
-          <p className="text-xs text-snow">Sign in to OpenWork to run responsibilities in the cloud.</p>
+          <p className="text-xs text-snow">Sign in to OpenWork to run scheduled assignments in the cloud.</p>
           <Button variant="primary" className="mt-2 w-full text-xs" onClick={onConnect}>Continue with OpenWork</Button>
         </div>
       ) : null}
@@ -732,7 +732,7 @@ function CreateLocalResponsibility({
       timezone={timezone}
       busy={busy}
       error={error}
-      actionLabel="Create responsibility"
+      actionLabel="Create assignment"
       onNameChange={setName}
       onInstructionsChange={setInstructions}
       onTimeChange={setTime}
@@ -870,7 +870,7 @@ function CreateResponsibility({
       </Field>
       {error ? <ErrorNote>{error}</ErrorNote> : null}
       <Button variant="primary" className="w-full" disabled={busy} onClick={() => void create()}>
-        {busy ? "Creating…" : "Create responsibility"}
+        {busy ? "Creating…" : "Create assignment"}
       </Button>
     </div>
   );

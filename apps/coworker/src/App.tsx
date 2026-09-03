@@ -366,6 +366,22 @@ export default function App() {
             notAnsweringSince !== null && now - notAnsweringSince < WORKSPACE_WARMUP_MS
               ? { state: "starting", label: "Starting up", detail: "", updatedAt: 0 }
               : readActivity;
+          // A Worker waiting on a decision needs the person as much as a pending question does; the card is in the discussion.
+          const deciding = workers.find((worker) => worker.status === "waiting" && worker.waitingFor === "decision");
+          if (deciding && threadActivity.state !== "attention" && threadActivity.state !== "offline" && threadActivity.state !== "starting") {
+            return [
+              coworker.slug,
+              {
+                state: "attention",
+                label: "Needs you",
+                detail: `${deciding.name} needs a decision`,
+                updatedAt: deciding.updatedAt,
+                ...(coworker.conversationThreadId ? { threadId: coworker.conversationThreadId } : {}),
+                ...(threadActivity.last ? { last: threadActivity.last } : {}),
+                ...(threadActivity.recent ? { recent: threadActivity.recent } : {}),
+              },
+            ] as const;
+          }
           const localRunning = localResponsibilities.find((item) => item.latestRun?.status === "running");
           const localSuccess = localResponsibilities
             .filter((item) => item.latestRun?.status === "succeeded")

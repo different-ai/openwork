@@ -293,19 +293,17 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
     return true;
   })()`, { label: "Activity icon" });
   await waitFor(app, `document.querySelector('[data-testid="context-panel"]')?.dataset.collapsed === "false"`, { timeoutMs: 30_000, label: "details panel open" });
-  await waitForText(app, "Responsibilities", { timeoutMs: 60_000 });
+  await waitFor(app, `Boolean(document.querySelector('[data-testid="coworker-activity-summary"]'))`, { timeoutMs: 60_000, label: "Activity view" });
 
-  // The Activity view is useful as soon as it opens: one status word, the
-  // responsibilities section, quiet secondary links, and no repeated
-  // empty-state phrasing or technical vocabulary.
+  // The Activity view is useful as soon as it opens: one status word, quiet
+  // secondary links, and no technical vocabulary. Scheduled work lives in the
+  // Workers view as Assignments, not here.
   const defaultSidebar = await waitFor(app, `(() => {
     const summary = document.querySelector('[data-testid="coworker-activity-summary"]');
-    const responsibilities = document.querySelector('[data-testid="coworker-responsibilities"]');
-    const empty = document.querySelector('[data-testid="responsibilities-empty"]');
     const settings = document.querySelector('[data-testid="coworker-settings-button"]');
     const icon = settings?.querySelector("svg");
     const links = [...document.querySelectorAll('nav[aria-label="More for this coworker"] button')].map((button) => button.textContent?.trim());
-    if (!(summary instanceof HTMLElement) || !(responsibilities instanceof HTMLElement) || !(settings instanceof HTMLElement) || !icon) return false;
+    if (!(summary instanceof HTMLElement) || !(settings instanceof HTMLElement) || !icon) return false;
     const summaryLines = summary.innerText.split("\\n").map((line) => line.trim()).filter(Boolean);
     // The first poll may still be reading the workspace; wait for the settled idle state.
     if (summaryLines[0] !== "Ready") return false;
@@ -314,10 +312,7 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
     const iconRect = icon.getBoundingClientRect();
     return {
       summaryLines,
-      responsibilitiesVisible: responsibilities.offsetParent !== null,
-      responsibilitiesBelowActivity: responsibilities.getBoundingClientRect().top > summary.getBoundingClientRect().bottom,
-      emptyStateCount: document.querySelectorAll('[data-testid="responsibilities-empty"]').length,
-      emptyStateText: empty?.textContent?.trim() ?? "",
+      scheduledSectionInActivity: Boolean(document.querySelector('[data-testid="coworker-assignments"], [data-testid="responsibilities-empty"]')),
       links,
       settingsLabel: settings.getAttribute("aria-label"),
       settingsTitle: settings.getAttribute("title"),
@@ -331,9 +326,7 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   })()`, { timeoutMs: 240_000, label: "settled default Activity sidebar" });
   expect(defaultSidebar).toMatchObject({
     summaryLines: ["Ready", "Waiting for the first assignment."],
-    responsibilitiesVisible: true,
-    responsibilitiesBelowActivity: true,
-    emptyStateCount: 1,
+    scheduledSectionInActivity: false,
     links: ["Workers", "Apps & tools", "Memory"],
     settingsLabel: "Coworker settings",
     settingsTitle: "Coworker settings",
@@ -344,9 +337,29 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
     sidebarMentionsModel: false,
     readyMentions: 1,
   });
-  if (!isRecord(defaultSidebar) || typeof defaultSidebar.emptyStateText !== "string") throw new Error("Default sidebar facts were unavailable.");
-  expect(defaultSidebar.emptyStateText).toContain("No responsibilities yet.");
-  expect(defaultSidebar.emptyStateText).toContain("Add responsibility");
+  // The Workers view holds the Assignments: nothing running yet, one compact empty state for scheduled work.
+  await clickButton(app, "Workers");
+  const workersView = await waitFor(app, `(() => {
+    const view = document.querySelector('[data-testid="coworker-workers"]');
+    const assignments = document.querySelector('[data-testid="coworker-assignments"]');
+    const empty = document.querySelector('[data-testid="responsibilities-empty"]');
+    if (!(view instanceof HTMLElement) || !(assignments instanceof HTMLElement) || !(empty instanceof HTMLElement)) return false;
+    return {
+      workersEmpty: document.querySelector('[data-testid="workers-empty"]')?.textContent?.trim() ?? "",
+      assignmentsHeading: assignments.querySelector("h3")?.textContent?.trim() ?? "",
+      emptyStateCount: document.querySelectorAll('[data-testid="responsibilities-empty"]').length,
+      emptyStateText: empty.textContent?.trim() ?? "",
+      assignmentsBelowWorkers: assignments.getBoundingClientRect().top > view.querySelector('section[aria-label="Workers"]').getBoundingClientRect().top,
+      panelTitle: document.querySelector('aside h2')?.textContent?.trim() ?? "",
+    };
+  })()`, { timeoutMs: 30_000, label: "Workers view with its Assignments" });
+  expect(workersView).toMatchObject({ assignmentsHeading: "Assignments", emptyStateCount: 1, assignmentsBelowWorkers: true, panelTitle: "Workers" });
+  if (!isRecord(workersView) || typeof workersView.emptyStateText !== "string" || typeof workersView.workersEmpty !== "string") throw new Error("Workers view facts were unavailable.");
+  expect(workersView.workersEmpty).toContain("No Workers running. Ask Scout to start one, or start one here.");
+  expect(workersView.emptyStateText).toContain("Nothing on a schedule yet.");
+  expect(workersView.emptyStateText).toContain("Add assignment");
+  await evalIn(app, `document.querySelector('button[aria-label="Back to activity"]').click()`);
+  await waitFor(app, `Boolean(document.querySelector('[data-testid="coworker-activity-summary"]'))`, { timeoutMs: 30_000, label: "back on Activity" });
   const composerFacts = await evalIn(app, `(() => {
     const composer = document.querySelector('textarea[aria-label="Message Scout"]')?.closest('[data-testid="coworker-composer"]');
     const text = (composer?.textContent ?? "").toLowerCase();
@@ -358,8 +371,8 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   })()`);
   expect(composerFacts).toEqual({ present: true, hasModelControl: false, mentionsModel: false });
   evidence.recordAssertionEvidence(
-    "The Activity view leads with current activity and responsibilities, and the composer carries no model controls",
-    "Once opened, Scout's Activity view showed exactly one idle status line plus one note, the Responsibilities section with a single compact Add responsibility empty state, three quiet links (Workers, Apps & tools, Memory), and an icon-only 32×32 Coworker settings control with a 16×16 glyph; the panel and composer contained no model, thinking-effort, or engine vocabulary.",
+    "The Activity view leads with current activity, the Workers view holds Workers and Assignments, and the composer carries no model controls",
+    "Once opened, Scout's Activity view showed exactly one idle status line plus one note, no scheduled-work section, three quiet links (Workers, Apps & tools, Memory), and an icon-only 32×32 Coworker settings control with a 16×16 glyph; the Workers link opened the Workers view with its empty Workers state and, below it, Assignments with a single compact Add assignment empty state (Nothing on a schedule yet.); the panel and composer contained no model, thinking-effort, or engine vocabulary.",
     true,
   );
 
@@ -902,7 +915,7 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
     true,
   );
   await evalIn(app, `document.querySelector('button[aria-label="Back to activity"]').click()`);
-  await waitForText(app, "Add responsibility", { timeoutMs: 30_000 });
+  await waitFor(app, `Boolean(document.querySelector('[data-testid="coworker-activity-summary"]'))`, { timeoutMs: 30_000, label: "back on Activity" });
 
   const footerPlacement = await evalIn(app, `(() => {
     const button = document.querySelector('button[title="OpenWork account and settings"]');
@@ -999,7 +1012,7 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   );
 
   await clickButtonContaining(app, "Back to coworkers");
-  await waitForText(app, "Add responsibility", { timeoutMs: 30_000 });
+  await waitFor(app, `Boolean(document.querySelector('[data-testid="coworker-activity-summary"]'))`, { timeoutMs: 30_000, label: "back on Activity" });
   const returnedWorkspace = await evalIn(app, `(() => {
     const shell = document.querySelector('[data-testid="coworker-shell"]');
     const workspace = document.querySelector('[data-testid="coworker-workspace"]');
@@ -1015,8 +1028,11 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
     coworkerWorkspaceDisplay: "flex",
     selectedCoworker: true,
   });
-  await clickButton(app, "Add responsibility");
-  await waitFor(app, `Boolean(document.querySelector('[data-testid="add-responsibility"]'))`, { timeoutMs: 30_000, label: "add responsibility form" });
+  // Scheduled work is added from the Workers view's Assignments section.
+  await clickButton(app, "Workers");
+  await waitFor(app, `Boolean(document.querySelector('[data-testid="coworker-assignments"]'))`, { timeoutMs: 30_000, label: "Assignments in the Workers view" });
+  await clickButton(app, "Add assignment");
+  await waitFor(app, `Boolean(document.querySelector('[data-testid="add-responsibility"]'))`, { timeoutMs: 30_000, label: "add assignment form" });
   const placementChoice = await evalIn(app, `(() => {
     const radios = [...document.querySelectorAll('[data-testid="add-responsibility"] [role="radio"]')];
     return radios.map((radio) => ({ label: radio.textContent?.trim(), checked: radio.getAttribute("aria-checked") }));
@@ -1027,7 +1043,7 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   ]);
   await fill(app, 'input[placeholder="Morning competitor report"]', "Local readiness check");
   await fill(app, 'textarea[placeholder="What should happen on every run?"]', "Reply with exactly LOCAL RESPONSIBILITY READY. Do not use tools.");
-  await clickButton(app, "Create responsibility");
+  await clickButton(app, "Create assignment");
   await waitForText(app, "Local readiness check", { timeoutMs: 30_000 });
   // The row is one plain line a person can read at a glance; the where and the details wait behind it.
   const responsibilityRow = String(await evalIn(app, `document.querySelector('[data-testid="responsibility-row"]')?.innerText ?? ""`));
@@ -1089,39 +1105,46 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
     threadId: expect.stringMatching(/^ses_/),
     error: "",
   });
+  // The row in the Workers view reads the outcome in plain words…
+  const rowAfterRun = await waitFor(app, `(() => {
+    const row = document.querySelector('[data-testid="responsibility-row"]');
+    if (!(row instanceof HTMLElement)) return false;
+    const rowText = row.innerText;
+    return /Done (today|yesterday) at/.test(rowText) ? rowText : false;
+  })()`, { timeoutMs: 30_000, label: "the scheduled assignment's row records the run" });
+  expect(String(rowAfterRun)).not.toMatch(/Succeeded|Failed|slot|thread/);
+  // …and Activity records it once, in Recent, as work on a schedule.
+  await evalIn(app, `document.querySelector('button[aria-label="Back to activity"]').click()`);
   const sidebarAfterRun = await waitFor(app, `(() => {
     const summary = document.querySelector('[data-testid="coworker-activity-summary"]');
     const recent = document.querySelector('[data-testid="coworker-recent-activity"]');
-    const row = document.querySelector('[data-testid="responsibility-row"]');
-    if (!(summary instanceof HTMLElement) || !(recent instanceof HTMLElement) || !(row instanceof HTMLElement)) return false;
+    if (!(summary instanceof HTMLElement) || !(recent instanceof HTMLElement)) return false;
     const recentText = recent.innerText;
-    const rowText = row.innerText;
-    if (!recentText.includes("Local readiness check") || !recentText.includes("Done") || !/Done (today|yesterday) at/.test(rowText)) return false;
-    // The activity read and the responsibility read poll independently; wait until both have settled.
+    if (!recentText.includes("Local readiness check") || !recentText.includes("Done")) return false;
+    // The activity read and the scheduled-work read poll independently; wait until both have settled.
     const summaryLines = summary.innerText.split("\\n").map((line) => line.trim()).filter(Boolean);
     if (summaryLines.length !== 1 || summaryLines[0] !== "Ready") return false;
     return {
       summaryLines,
       recentEntries: recent.querySelectorAll("li").length,
       recentText,
-      rowText,
     };
   })()`, {
     timeoutMs: 30_000,
-    label: "right sidebar records the completed local work",
+    label: "Activity records the completed local work",
   });
   expect(sidebarAfterRun).toMatchObject({ summaryLines: ["Ready"], recentEntries: 1 });
   if (!isRecord(sidebarAfterRun)) throw new Error("Sidebar facts after the run were unavailable.");
-  expect(String(sidebarAfterRun.recentText)).toContain("Responsibility");
-  expect(String(sidebarAfterRun.rowText)).not.toMatch(/Succeeded|Failed|slot|thread/);
+  expect(String(sidebarAfterRun.recentText)).toContain("On a schedule");
   evidence.recordAssertionEvidence(
-    "A local Responsibility runs through a native thread and the sidebar records it once, in the right place",
-    "The daily responsibility finished with a native ses_ thread id and no error. Current activity then read just Ready, Recent listed Local readiness check as a succeeded responsibility exactly once, and the responsibility row showed its next occurrence and Last: Succeeded.",
+    "A scheduled assignment runs through a native thread and the panel records it once, in the right place",
+    "The daily assignment finished with a native ses_ thread id and no error. Its row in the Workers view read Done today at a time, Current activity then read just Ready, and Recent listed Local readiness check exactly once as work on a schedule.",
     true,
   );
 
-  // --- Outcomes live beside the responsibility: a run history with the coworker's own words,
+  // --- Outcomes live beside the scheduled assignment: a run history with the coworker's own words,
   // and a way to ask the coworker to explain a run without leaving the discussion.
+  await clickButton(app, "Workers");
   await waitFor(app, `(() => {
     const toggle = document.querySelector('[data-testid="responsibility-history-toggle"]');
     if (!(toggle instanceof HTMLElement) || !(toggle.textContent ?? "").includes("Done")) return false;
@@ -1169,7 +1192,7 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   if (summaryRecorded) expect(explainDraft).toContain("Here is what you reported at the end of that run:");
   expect(await evalIn(app, `[...document.querySelectorAll('[data-message-role="user"]')].length`)).toBe(0);
   evidence.recordAssertionEvidence(
-    "Each responsibility shows its run history and can ask the coworker to explain a run",
+    "Each scheduled assignment shows its run history and can ask the coworker to explain a run",
     `The row read as one plain line and opened into labelled everyday facts (When, Where, Next, Last time) with one run in plain words — Done, when, how long it took, started by you${summaryRecorded ? ", and Scout's own closing summary" : ""} — plus Open the conversation and Ask Scout to explain, with no time-zone ids, slots, threads, or status codes. Explain prefilled the discussion composer with the run's outcome without sending anything.`,
     true,
   );
@@ -1180,7 +1203,7 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   await clickButton(app, "AI & local setup");
   await waitFor(app, `Boolean(document.querySelector('[data-testid="local-runs-card"] [role="radio"][aria-checked="true"]'))`, { timeoutMs: 30_000, label: "parallel-run limit control" });
   const limitCard = String(await evalIn(app, `document.querySelector('[data-testid="local-runs-card"]')?.innerText ?? ""`));
-  expect(limitCard).toContain("Responsibilities on this Mac");
+  expect(limitCard).toContain("Runs on this Mac");
   expect(limitCard).toContain("wait in line");
   expect(limitCard).toMatch(/\d+ running · \d+ waiting/);
   await waitFor(app, `(() => {
@@ -1256,7 +1279,7 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   expect(await invokeCoworker(app, "localResponsibilities.status", {})).toMatchObject({ ok: true, result: { limit: 1, active: 0, queued: 0 } });
   evidence.recordAssertionEvidence(
     "A parallel-run limit set in Settings makes later runs wait in line and start by themselves",
-    "With Responsibilities on this Mac set to 1, two Run now requests admitted the first immediately and queued the second; the second row read Queued · Waiting for a free slot, then started on its own once the first finished, and both ended Succeeded with the queue empty.",
+    "With Runs on this Mac set to 1, two Run now requests admitted the first immediately and queued the second; the second row read Waiting its turn, then started on its own once the first finished, and both ended done with the queue empty.",
     true,
   );
 });

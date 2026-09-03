@@ -1556,7 +1556,7 @@ const commands = {
     }
     if (running > 0) {
       throw new Error(
-        `${running === 1 ? "A local responsibility is" : `${running} local responsibilities are`} still running for this coworker. Wait for it to finish or stop it before retiring.`,
+        `${running === 1 ? "A scheduled assignment is" : `${running} scheduled assignments are`} still running for this coworker. Wait for it to finish or stop it before retiring.`,
       );
     }
     // Deregister the workspace first so the registry never points at a

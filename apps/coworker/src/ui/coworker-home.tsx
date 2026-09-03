@@ -4,7 +4,7 @@ import { describeNow, describeOutcome, mergeRecentWork, relativeTime } from "@/l
 import type { ConnectState } from "@/lib/connect";
 import type { DenSession } from "@/lib/den";
 import { clearAutoPicked, markAutoPicked } from "@/lib/model-choice";
-import { createCoworkerThreads, recommendModel, type CoworkerActivity } from "@/lib/threads";
+import { createCoworkerThreads, recommendModel, type CoworkerActivity, type ThreadListItem } from "@/lib/threads";
 import { AvatarControls, CoworkerAvatar } from "@/ui/coworker-avatar";
 import { PersonalityPicker } from "@/ui/personality-picker";
 import { useWorkingSaying } from "@/ui/use-working-saying";
@@ -17,7 +17,6 @@ import type { PanelBounds } from "@/lib/panel-layout";
 import { MemoryPanel } from "@/ui/memory";
 import { DocumentBesidePane, DocumentsIcon, DocumentsPanel, lastDocumentsOpened, useDocuments } from "@/ui/documents";
 import { describeActiveDocuments, documentsChangedSince } from "@/lib/documents";
-import { ResponsibilitiesPanel } from "@/ui/responsibilities";
 import { ThreadsPanel, type DocumentHooks } from "@/ui/threads";
 import { WorkersPanel } from "@/ui/workers";
 import { describeWorkerCount, type WorkerSummary } from "@/lib/workers";
@@ -131,6 +130,8 @@ export function CoworkerHome({
   const [assignmentDraft, setAssignmentDraft] = useState<{ id: number; text: string } | null>(null);
   const [discussionDraft, setDiscussionDraft] = useState<{ id: number; text: string } | null>(null);
   const [openThreadRequest, setOpenThreadRequest] = useState<{ id: number; threadId: string } | null>(null);
+  /** The coworker's one-off assignment threads, as the conversation column lists them; the Workers view shows them beside the scheduled ones. */
+  const [assignmentThreads, setAssignmentThreads] = useState<ThreadListItem[]>([]);
   /** From a card's Open: show this document in the Documents view; the id makes repeats distinct. */
   const [openDocumentRequest, setOpenDocumentRequest] = useState<{ id: number; documentId: string } | null>(null);
   /** The document open in the reading pane beside the conversation, when the window has room. */
@@ -330,6 +331,7 @@ export function CoworkerHome({
             assignmentDraft={assignmentDraft}
             discussionDraft={discussionDraft}
             openThreadRequest={openThreadRequest}
+            onAssignmentsChange={setAssignmentThreads}
             headerSlots={{ title: headerTitleSlot, actions: headerActionsSlot }}
             onOpenModelSettings={() => {
               showContext("settings");
@@ -486,7 +488,16 @@ export function CoworkerHome({
             />
           ) : null}
           {contextView === "workers" ? (
-            <WorkersPanel coworker={coworker} onOpenThread={(threadId) => setOpenThreadRequest({ id: Date.now(), threadId })} />
+            <WorkersPanel
+              session={session}
+              coworkers={coworkers}
+              coworker={coworker}
+              assignments={assignmentThreads}
+              onCoworkerChanged={onCoworkerChanged}
+              onConnect={() => onOpenOpenWork()}
+              onOpenThread={(threadId) => setOpenThreadRequest({ id: Date.now(), threadId })}
+              onExplain={(text) => setDiscussionDraft({ id: Date.now(), text })}
+            />
           ) : null}
           {contextView === "documents" ? (
             <DocumentsPanel
@@ -696,7 +707,7 @@ function CoworkerOverview({
                     <span className="block truncate text-xs text-snow" title={entry.title}>{entry.title}</span>
                     <span className={`mt-0.5 block truncate text-[11px] ${failed ? "text-rose" : "text-mist"}`} title={entry.error || undefined}>
                       {outcome}
-                      {entry.kind === "responsibility" ? " · Responsibility" : ""}
+                      {entry.kind === "responsibility" ? " · On a schedule" : ""}
                       {failed && entry.error ? ` · ${entry.error}` : ""}
                     </span>
                   </span>
@@ -726,20 +737,6 @@ function CoworkerOverview({
           </ul>
         </section>
       ) : null}
-
-      <section aria-label="Responsibilities" data-testid="coworker-responsibilities">
-        <ResponsibilitiesPanel
-          session={session}
-          coworkers={coworkers}
-          coworker={coworker}
-          localItems={localResponsibilities}
-          onLocalItemsChanged={setLocalResponsibilities}
-          onCoworkerChanged={onCoworkerChanged}
-          onConnect={onOpenOpenWork}
-          onOpenThread={onOpenThread}
-          onExplain={onExplain}
-        />
-      </section>
 
       {/* Coworker settings already has its control in the panel header; the foot keeps the two destinations that do not. */}
       <nav aria-label="More for this coworker" className="mt-auto flex items-center gap-1 border-t border-line pt-3 text-[11px]">
@@ -969,7 +966,7 @@ function CoworkerSettings({
           <div className="space-y-2">
             <p className="text-sm font-semibold text-rose">Retire {coworker.name}?</p>
             <p className="text-xs leading-relaxed text-mist">
-              Identity, memory, workspace files, and local responsibilities move to a Retired folder inside your coworkers
+              Identity, memory, workspace files, Workers, and scheduled assignments move to a Retired folder inside your coworkers
               home. Nothing is deleted; you can restore or permanently remove it later from the Add coworker screen.
             </p>
             <div className="flex gap-2 pt-1">

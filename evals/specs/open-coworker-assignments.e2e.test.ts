@@ -237,9 +237,30 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
   expect(listText).toContain("1 assignment");
   expect(listText).not.toContain(CHAT_PROMPT);
 
+  // The panel's Workers view lists the same assignment once, beside the scheduled ones, and opens it.
+  await evalIn(app, `document.querySelector('[data-testid="context-rail-workers"]').click(); true`);
+  const panelAssignments = await waitFor(app, `(() => {
+    const section = document.querySelector('[data-testid="coworker-assignments"]');
+    const rows = [...document.querySelectorAll('[data-testid="assignment-row"]')];
+    if (!(section instanceof HTMLElement) || rows.length === 0) return false;
+    return {
+      heading: section.querySelector("h3")?.textContent?.trim() ?? "",
+      rows: rows.map((row) => row.innerText.replace(/\s+/g, " ").trim()),
+      scheduledEmpty: Boolean(section.querySelector('[data-testid="responsibilities-empty"]')),
+    };
+  })()`, { timeoutMs: 30_000, label: "the assignment in the panel's Assignments" });
+  expect(panelAssignments).toMatchObject({ heading: "Assignments", scheduledEmpty: true });
+  if (!isRecord(panelAssignments) || !Array.isArray(panelAssignments.rows)) throw new Error("Panel assignment rows were unavailable.");
+  expect(panelAssignments.rows).toHaveLength(1);
+  expect(String(panelAssignments.rows[0])).toContain(expectedTitle);
+  expect(String(panelAssignments.rows[0])).toMatch(/Once · (Done .+ ago|Working on it)/);
+  await evalIn(app, `document.querySelector('[data-testid="assignment-row"]').click(); true`);
+  await waitFor(app, `Boolean(document.querySelector('[data-testid="coworker-assignment-view"]'))`, { timeoutMs: 30_000, label: "the assignment opened from the panel" });
+  await evalIn(app, `document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); true`);
+
   evidence.recordAssertionEvidence(
-    "The standing discussion stays out of the assignment count and list",
-    `Back in the discussion the control read "Assignments · 1"; the Assignments list showed "${expectedTitle}" as the single entry and did not list the discussion session.`,
+    "The standing discussion stays out of the assignment count and list, and the panel lists the assignment once",
+    `Back in the discussion the control read "Assignments · 1"; the Assignments list showed "${expectedTitle}" as the single entry and did not list the discussion session. The panel's Workers view listed the same assignment once under Assignments as a one-off (Once · Done), beside an empty schedule, and opened it in the main column.`,
     true,
   );
 });

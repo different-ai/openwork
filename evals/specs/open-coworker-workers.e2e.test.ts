@@ -372,9 +372,72 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   expect(toolEvents[0]).toMatchObject({ kind: "status", text: "Started by Editor", by: "coworker" });
   await waitForWorker(app, toolWorkerId, (worker) => worker.status === "finished", { timeoutMs: 300_000, label: "the tool-started Worker to finish its one turn" });
 
+  // The Assignments section sits below the Workers: the scheduled run from earlier is listed once, under its
+  // schedule, never again as a one-off from its own thread.
+  await evalIn(app, `document.querySelector('[data-testid="context-rail-workers"]').click(); true`);
+  const assignmentsSection = await waitFor(app, `(() => {
+    const section = document.querySelector('[data-testid="coworker-assignments"]');
+    if (!(section instanceof HTMLElement)) return false;
+    const scheduled = [...section.querySelectorAll('[data-testid="responsibility-row"]')].map((row) => row.innerText.replace(/\s+/g, " ").trim());
+    if (scheduled.length === 0) return false;
+    return { heading: section.querySelector("h3")?.textContent?.trim() ?? "", scheduled, once: document.querySelectorAll('[data-testid="assignment-row"]').length };
+  })()`, { timeoutMs: 30_000, label: "Assignments below the Workers" });
+  expect(assignmentsSection).toMatchObject({ heading: "Assignments", once: 0 });
+  if (!isRecord(assignmentsSection) || !Array.isArray(assignmentsSection.scheduled)) throw new Error("Assignments facts were unavailable.");
+  expect(String(assignmentsSection.scheduled[0])).toContain("Limit check");
+
+  // A Worker that needs a decision asks in the discussion as a lettered card; the answer steers it.
+  const decider = resultRecord(await invokeCoworker(app, "workers.spawn", {
+    slug: "editor",
+    name: "Decider",
+    goal: 'On your first turn, do no other work: end with a section titled "Needs a decision" that asks "Which color should the banner use?" and lists exactly two options as "A) Blue" and "B) Green". On your next turn, end with a section titled "Done" whose only sentence names the chosen color, for example: The banner uses Green.',
+    lifespan: { kind: "turns", max: 2 },
+  }));
+  const deciderId = String(decider.id);
+  await waitForWorker(app, deciderId, (worker) => worker.status === "waiting" && worker.waitingFor === "decision", { timeoutMs: 300_000, label: "the Worker to wait for a decision" });
+  await evalIn(app, `document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); true`);
+  const decisionCard = await waitFor(app, `(() => {
+    const card = document.querySelector('[data-testid="worker-decision-card"]');
+    if (!(card instanceof HTMLElement)) return false;
+    const options = [...card.querySelectorAll('[data-testid="interaction-option"]')].map((option) => option.textContent?.replace(/\s+/g, " ").trim() ?? "");
+    return { title: card.querySelector("h3")?.textContent?.trim() ?? "", text: card.innerText, options };
+  })()`, { timeoutMs: 60_000, label: "the Worker's decision card in the discussion" });
+  expect(decisionCard).toMatchObject({ title: "Decider asks" });
+  if (!isRecord(decisionCard) || !Array.isArray(decisionCard.options)) throw new Error("Decision card facts were unavailable.");
+  expect(String(decisionCard.text)).toMatch(/color/i);
+  expect(decisionCard.options.length).toBeGreaterThanOrEqual(2);
+  const headerWhileDeciding = await waitFor(app, `(() => {
+    const status = document.querySelector('[data-testid="coworker-top-status"]')?.textContent?.trim() ?? "";
+    return status === "Needs you" ? status : false;
+  })()`, { timeoutMs: 30_000, label: "header saying Needs you for the Worker's decision" });
+  expect(headerWhileDeciding).toBe("Needs you");
+  const greenOption = decisionCard.options.findIndex((option) => /green/i.test(String(option)));
+  expect(greenOption).toBeGreaterThanOrEqual(0);
+  await evalIn(app, `document.querySelectorAll('[data-testid="worker-decision-card"] [data-testid="interaction-option"]')[${greenOption}].click(); true`);
+  await waitFor(app, `!document.querySelector('[data-testid="worker-decision-card"]')`, { timeoutMs: 30_000, label: "the decision card gone once answered" });
+  const decided = await waitForWorker(app, deciderId, (worker) => worker.status === "finished", { timeoutMs: 300_000, label: "the deciding Worker to finish" });
+  expect(decided.steerCount).toBe(1);
+  const deciderEvents = await workerEvents(app, deciderId);
+  const steerEvent = deciderEvents.find((event) => event.kind === "steer");
+  expect(steerEvent).toMatchObject({ by: "person", text: expect.stringMatching(/green/i) });
+  const doneEvent = [...deciderEvents].reverse().find((event) => event.kind === "finding" && event.report === "done");
+  expect(String(doneEvent?.text ?? "")).toMatch(/green/i);
+
+  // Workers survive a reload of the window: the same rows, the same states.
+  await evalIn(app, "location.reload(); true");
+  await waitForDiscussionView(app, 120_000);
+  await evalIn(app, `document.querySelector('[data-testid="context-rail-workers"]').click(); true`);
+  const afterReload = await waitFor(app, `(() => {
+    const rows = [...document.querySelectorAll('[data-testid="worker-row"]')];
+    if (rows.length < 4) return false;
+    return rows.map((row) => [row.querySelector('[data-testid="worker-name"]')?.textContent?.trim(), row.getAttribute("data-status")]);
+  })()`, { timeoutMs: 60_000, label: "Workers listed again after the reload" });
+  expect(afterReload).toEqual([["Decider", "finished"], ["Tool check", "finished"], ["Long watch", "cancelled"], ["Echo check", "finished"]]);
+  await evalIn(app, `document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); true`);
+
   evidence.recordAssertionEvidence(
     "From the Workers view a person starts, steers, pauses, resumes, and stops a Worker",
-    `The folded panel's Workers icon opened the view (data-view workers), which listed Echo check as Done. New Worker started open-ended Worker ${watcherId} ("Long watch") from the form; its row read "${watcherLine}" and the rail said "${String(railLine)}". A steer typed in the row appeared in its timeline and then as the Worker's next turn in its read-only work view (Worker badge, no composer, no Stop in the header, no person bubbles). Pause held it (row Paused, nothing queued), Resume let it go on, Stop ended it: record Stopped with an end time, events Paused/Resumed/Stopped attributed to the person, no finding after the stop within 15 seconds, no active or queued runs, a second stop harmless, steering refused, both Workers listed newest first. The view had no card inside a card and Escape folded the panel. Asked in the discussion, Editor started Worker ${toolWorkerId} ("Tool check", 1 turn) through its own worker_spawn tool; the conversation showed the receipt "${String(receipt)}", the Worker's first event read Started by Editor, and it finished its one turn.`,
+    `The folded panel's Workers icon opened the view (data-view workers), which listed Echo check as Done. New Worker started open-ended Worker ${watcherId} ("Long watch") from the form; its row read "${watcherLine}" and the rail said "${String(railLine)}". A steer typed in the row appeared in its timeline and then as the Worker's next turn in its read-only work view (Worker badge, no composer, no Stop in the header, no person bubbles). Pause held it (row Paused, nothing queued), Resume let it go on, Stop ended it: record Stopped with an end time, events Paused/Resumed/Stopped attributed to the person, no finding after the stop within 15 seconds, no active or queued runs, a second stop harmless, steering refused, both Workers listed newest first. The view had no card inside a card and Escape folded the panel. Asked in the discussion, Editor started Worker ${toolWorkerId} ("Tool check", 1 turn) through its own worker_spawn tool; the conversation showed the receipt "${String(receipt)}", the Worker's first event read Started by Editor, and it finished its one turn. Below the Workers, Assignments listed the scheduled Limit check once (its run thread not repeated as a one-off). Worker ${deciderId} ("Decider") asked for a decision: the discussion showed the card "Decider asks" with its lettered choices while the header read Needs you; choosing Green steered it (one steer, by the person) and it finished with Done naming Green. After a window reload the Workers view listed all four Workers with their final states.`,
     true,
   );
 });
