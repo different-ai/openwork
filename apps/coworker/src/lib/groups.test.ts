@@ -202,6 +202,8 @@ test("plain lines name who is replying, who is next, and why a speaker did not r
   assert.equal(describeGroupActivity([], nameFor, { status: "running", speakers: speakers(["succeeded", "running", "queued"]) }), "Editor is replying…");
   assert.equal(describeTurnProgress({ status: "running", speakers: speakers(["running", "queued", "queued"]) }, nameFor), "Scout is replying… then Editor and Ops");
   assert.equal(describeTurnProgress({ status: "running", speakers: speakers(["running", "running"]) }, nameFor), "Scout and Editor are replying…");
+  assert.equal(describeTurnProgress({ status: "running", speakers: speakers(["queued", "queued", "queued"]) }, nameFor), "Starting with Scout… then Editor and Ops");
+  assert.equal(describeTurnProgress({ status: "running", speakers: speakers(["succeeded", "queued"]) }, nameFor), "Starting with Editor…");
   assert.equal(describeTurnProgress({ status: "succeeded", speakers: speakers(["succeeded"]) }, nameFor), "");
   assert.deepEqual(describeSpeakerFailure("Editor took too long to reply.", "Editor"), { headline: "Editor took too long to reply.", modelRelated: false });
   assert.deepEqual(describeSpeakerFailure("Stopped when the app closed", "Editor"), { headline: "Editor was stopped when the app closed.", modelRelated: false });
