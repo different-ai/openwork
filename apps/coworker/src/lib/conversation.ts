@@ -94,6 +94,92 @@ export function parseAssignmentBrief(text: string): AssignmentBrief | null {
   return { outcome, context };
 }
 
+/** A hand-over carries at most this much of the conversation it came from. */
+export const REFERRAL_CONTEXT_EXCHANGES = 3;
+export const REFERRAL_CONTEXT_CHARACTERS = 600;
+/** One long reply never crowds the others out of the brief. */
+const REFERRAL_LINE_CHARACTERS = 160;
+const REFERRAL_OPENER = "Passed from";
+const REFERRAL_CONTEXT_HEADING = "Recent context:";
+const REFERRAL_CLOSER = "Take it from here as your own request; the person is now talking to you.";
+
+export type ReferralBrief = {
+  /** The person's request, in their own words. */
+  message: string;
+  /** Who passed it on. */
+  from: string;
+  fromRole: string;
+  why: string;
+  context: Array<{ speaker: "you" | "coworker"; text: string }>;
+};
+
+/**
+ * The message a teammate receives when the person accepts a hand-over: the
+ * person's request first, then a brief — who passed it and why, and the last
+ * few exchanges (the person and the coworker only, bounded; never tool
+ * payloads or reasoning). `parseReferralBrief` reads it back so the
+ * transcript shows the person's words, not the scaffolding.
+ */
+export function referralPrompt(input: {
+  from: { name: string; role: string };
+  message: string;
+  why: string;
+  recent: ReadonlyArray<DiscussionMessage>;
+}): string {
+  const message = input.message.trim();
+  const why = oneLine(input.why).replace(/\.$/, "");
+  const exchanges: string[] = [];
+  let budget = REFERRAL_CONTEXT_CHARACTERS;
+  const spoken = input.recent.filter((entry) => (entry.role === "user" || entry.role === "assistant") && entry.text.trim() && entry.text.trim() !== message);
+  for (const entry of spoken.slice(-REFERRAL_CONTEXT_EXCHANGES * 2).reverse()) {
+    if (budget <= 0) break;
+    const speaker = entry.role === "user" ? "You" : input.from.name;
+    const words = oneLine(entry.text);
+    const room = Math.min(REFERRAL_LINE_CHARACTERS, budget);
+    const line = `${speaker}: ${words.length > room ? `${words.slice(0, Math.max(0, room - 1))}…` : words}`;
+    budget -= line.length;
+    exchanges.unshift(line);
+  }
+  const from = input.from.role ? `${input.from.name} (${input.from.role})` : input.from.name;
+  return [
+    message,
+    "",
+    `${REFERRAL_OPENER} ${from}${why ? `: ${why}.` : "."}`,
+    ...(exchanges.length > 0 ? ["", REFERRAL_CONTEXT_HEADING, ...exchanges] : []),
+    "",
+    REFERRAL_CLOSER,
+  ].join("\n");
+}
+
+/** Read back a message built by `referralPrompt`; anything else is null and renders as an ordinary message. */
+export function parseReferralBrief(text: string): ReferralBrief | null {
+  const trimmed = text.trim();
+  if (!trimmed.endsWith(REFERRAL_CLOSER)) return null;
+  const body = trimmed.slice(0, -REFERRAL_CLOSER.length).trimEnd();
+  const openerAt = body.lastIndexOf(`\n${REFERRAL_OPENER} `);
+  if (openerAt < 0) return null;
+  const message = body.slice(0, openerAt).trim();
+  if (!message) return null;
+  const tail = body.slice(openerAt + 1);
+  const contextAt = tail.indexOf(`\n${REFERRAL_CONTEXT_HEADING}`);
+  const header = (contextAt >= 0 ? tail.slice(0, contextAt) : tail).trim();
+  const match = /^Passed from ([^:(\n]+?)(?: \(([^)\n]*)\))?(?:: (.*?))?\.?$/s.exec(header);
+  if (!match) return null;
+  const from = (match[1] ?? "").trim();
+  const context: ReferralBrief["context"] = [];
+  if (contextAt >= 0) {
+    for (const line of tail.slice(contextAt + REFERRAL_CONTEXT_HEADING.length + 1).split("\n")) {
+      const cut = line.indexOf(": ");
+      if (cut <= 0) continue;
+      const speaker = line.slice(0, cut);
+      const spoken = line.slice(cut + 2).trim();
+      if (!spoken) continue;
+      context.push({ speaker: speaker === "You" ? "you" : "coworker", text: spoken });
+    }
+  }
+  return { message, from, fromRole: (match[2] ?? "").trim(), why: (match[3] ?? "").trim(), context };
+}
+
 const MAX_EXPLAIN_SUMMARY_CHARACTERS = 1_200;
 
 /**
