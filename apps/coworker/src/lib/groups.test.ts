@@ -7,6 +7,7 @@ import {
   describeSpeakerFailure,
   describeTurnProgress,
   fallbackPlan,
+  unavailableModelReason,
   groupSpeakerPrompt,
   isNothingToAdd,
   mentionCandidates,
@@ -206,6 +207,12 @@ test("plain lines name who is replying, who is next, and why a speaker did not r
   assert.deepEqual(describeSpeakerFailure("Stopped when the app closed", "Editor"), { headline: "Editor was stopped when the app closed.", modelRelated: false });
   assert.deepEqual(describeSpeakerFailure('The saved model "x/y" is not available', "Editor"), { headline: "Editor's AI model is not available.", modelRelated: true });
   assert.deepEqual(describeSpeakerFailure("socket hang up", "Editor"), { headline: "Editor could not reply.", modelRelated: false });
+  const connected = [{ id: "opencode/big-pickle", providerId: "opencode", providerLabel: "OpenCode" }];
+  assert.equal(unavailableModelReason("", connected), "");
+  assert.equal(unavailableModelReason("opencode/big-pickle", connected), "");
+  assert.equal(unavailableModelReason("opencode/other", connected), 'The saved model "opencode/other" is not offered by OpenCode any more. Choose another of its AI models.');
+  assert.equal(unavailableModelReason("missing-provider/missing-model", connected), 'The saved model "missing-provider/missing-model" is not available: provider "missing-provider" is not connected on this Mac. Choose another AI model or connect that provider in OpenWork.');
+  assert.equal(describeSpeakerFailure(unavailableModelReason("missing-provider/missing-model", connected), "Editor").headline, "Editor's AI model is not available.");
 });
 
 test("a group turn is recorded through the store, asks each speaker in order with earlier replies, and keeps going past one failure", async () => {
