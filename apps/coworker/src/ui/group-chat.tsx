@@ -31,6 +31,7 @@ import {
   type GroupParticipant,
   type GroupTurnDeps,
   type RoutingPlan,
+  unavailableModelReason,
 } from "@/lib/groups";
 import { createCoworkerThreads, type EngineModelCatalog } from "@/lib/threads";
 import { CoworkerAvatar } from "@/ui/coworker-avatar";
@@ -237,6 +238,14 @@ export function GroupChat({
     if (loaded) composerRef.current?.focus();
   }, [loaded, group.id]);
 
+  /** The connected models, read through any workspace and kept for a minute. */
+  async function connectedCatalog(threads: ReturnType<typeof createCoworkerThreads>): Promise<EngineModelCatalog> {
+    if (!catalogRef.current || Date.now() - catalogRef.current.at > CATALOG_TTL_MS) {
+      catalogRef.current = { at: Date.now(), catalog: await threads.listModelCatalog() };
+    }
+    return catalogRef.current.catalog;
+  }
+
   /** Send one prompt to a member's group thread (created and registered on first use) and return its reply. */
   async function ask(run: LiveGroupRun, slug: string, prompt: string, signal: AbortSignal): Promise<{ text: string; threadId: string }> {
     const coworker = coworkersRef.current.find((item) => item.slug === slug);
@@ -244,6 +253,9 @@ export function GroupChat({
     const workspaceId = coworker.workspaceId || (await coworkerBridge.coworkers.ensureWorkspace(slug)).workspaceId;
     if (!workspaceId) throw new Error(`${coworker.name}'s workspace is not ready.`);
     const threads = createCoworkerThreads({ serverUrl: runtime.serverUrl, workspaceId, token: runtime.ownerToken, model: coworker.model, modelVariant: coworker.modelVariant });
+    // A saved model that is not connected fails here, by name, rather than as a provider error mid-turn.
+    const unavailable = unavailableModelReason(coworker.model, (await connectedCatalog(threads)).models);
+    if (unavailable) throw new Error(unavailable);
     let threadId = groupRef.current.participantThreadIds[slug] ?? "";
     if (!threadId) {
       const created = await threads.client.createThread({ title: `Group chat: ${groupRef.current.name}`, signal });
@@ -276,10 +288,7 @@ export function GroupChat({
     const signal = AbortSignal.any([input.signal, AbortSignal.timeout(ROUTING_TIMEOUT_MS)]);
     const coordinator = await coordinatorReady();
     const threads = createCoworkerThreads({ serverUrl: runtime.serverUrl, workspaceId: coordinator.workspaceId, token: runtime.ownerToken });
-    if (!catalogRef.current || Date.now() - catalogRef.current.at > CATALOG_TTL_MS) {
-      catalogRef.current = { at: Date.now(), catalog: await threads.listModelCatalog() };
-    }
-    const models = facilitatorModels(catalogRef.current.catalog, membersRef.current, current.facilitatorModel);
+    const models = facilitatorModels(await connectedCatalog(threads), membersRef.current, current.facilitatorModel);
     if (!models.primary) return null;
     const busy = busyGroupSpeakers(current.id);
     const prompt = facilitatorPrompt({

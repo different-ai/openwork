@@ -201,6 +201,20 @@ export function replyTextSince(
     .trim();
 }
 
+/**
+ * Why a coworker's saved model cannot take this turn, checked before asking so
+ * the failure names the model and the fix instead of a provider error. Empty
+ * when the model is connected (or none is saved: the engine default runs).
+ */
+export function unavailableModelReason(model: string, connected: readonly { id: string; providerId: string; providerLabel: string }[]): string {
+  const saved = model.trim();
+  if (!saved || connected.some((option) => option.id === saved)) return "";
+  const providerId = saved.slice(0, Math.max(0, saved.indexOf("/"))) || saved;
+  const provider = connected.find((option) => option.providerId === providerId);
+  if (provider) return `The saved model "${saved}" is not offered by ${provider.providerLabel} any more. Choose another of its AI models.`;
+  return `The saved model "${saved}" is not available: provider "${providerId}" is not connected on this Mac. Choose another AI model or connect that provider in OpenWork.`;
+}
+
 /** The plain reason one speaker did not reply, in the vocabulary the 1:1 view uses. */
 export function describeSpeakerFailure(raw: string, name: string): { headline: string; modelRelated: boolean } {
   const message = raw.trim();
