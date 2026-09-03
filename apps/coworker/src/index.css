@@ -247,11 +247,21 @@ body.is-resizing-panel * {
   --avatar-feature-look-y: 0px;
   --avatar-look-x: 0px;
   --avatar-look-y: 0px;
+  --avatar-head-x: 0px;
+  --avatar-head-y: 0px;
+  --avatar-turn: 0deg;
+  --avatar-idle-feature-x: 0px;
+  --avatar-idle-feature-y: 0px;
+  --avatar-idle-look-x: 0px;
+  --avatar-idle-look-y: 0px;
+  --avatar-idle-head-y: 0px;
+  --avatar-idle-turn: 0deg;
   display: block;
   flex: none;
   overflow: visible;
 }
 
+.coworker-avatar__pointer-body,
 .coworker-avatar__body,
 .coworker-avatar__depth,
 .coworker-avatar__pointer-features,
@@ -263,17 +273,36 @@ body.is-resizing-panel * {
   transform-origin: center;
 }
 
+.coworker-avatar__pointer-body {
+  transform: translate(var(--avatar-head-x), var(--avatar-head-y)) rotate(var(--avatar-turn));
+  transition: transform 220ms cubic-bezier(0.22, 0.72, 0.24, 1);
+  will-change: transform;
+}
+
 .coworker-avatar__pointer-features {
   transform: translate(var(--avatar-feature-look-x), var(--avatar-feature-look-y));
-  transition: transform 180ms cubic-bezier(0.22, 0.72, 0.24, 1);
+  transition: transform 150ms cubic-bezier(0.22, 0.72, 0.24, 1);
   will-change: transform;
 }
 
 .coworker-avatar__pointer-gaze,
 .coworker-mark__pointer-gaze {
   transform: translate(var(--avatar-look-x), var(--avatar-look-y));
-  transition: transform 220ms cubic-bezier(0.22, 0.72, 0.24, 1);
+  transition: transform 180ms cubic-bezier(0.22, 0.72, 0.24, 1);
   will-change: transform;
+}
+
+.coworker-avatar.is-idle-looking .coworker-avatar__pointer-body {
+  transform: translateY(var(--avatar-idle-head-y)) rotate(var(--avatar-idle-turn));
+}
+
+.coworker-avatar.is-idle-looking .coworker-avatar__pointer-features {
+  transform: translate(var(--avatar-idle-feature-x), var(--avatar-idle-feature-y));
+}
+
+.coworker-avatar.is-idle-looking .coworker-avatar__pointer-gaze,
+.coworker-mark.is-idle-looking .coworker-mark__pointer-gaze {
+  transform: translate(var(--avatar-idle-look-x), var(--avatar-idle-look-y));
 }
 
 .coworker-avatar.is-animated .coworker-avatar__body {
@@ -295,6 +324,11 @@ body.is-resizing-panel * {
 .coworker-avatar.is-animated .coworker-avatar__pupils {
   animation: coworker-blink var(--avatar-blink-duration) ease-in-out infinite;
   animation-delay: var(--avatar-blink-delay);
+}
+
+.coworker-avatar.is-idle-blinking .coworker-avatar__pupils,
+.coworker-mark.is-idle-blinking .coworker-mark__pupils {
+  animation: coworker-idle-blink 220ms ease-in-out 1 both !important;
 }
 
 .coworker-avatar.is-animated :is(
@@ -347,6 +381,8 @@ body.is-resizing-panel * {
 .coworker-mark {
   --avatar-look-x: 0px;
   --avatar-look-y: 0px;
+  --avatar-idle-look-x: 0px;
+  --avatar-idle-look-y: 0px;
   display: block;
   flex: none;
   overflow: visible;
@@ -643,6 +679,11 @@ body.is-resizing-panel * {
   42.6% { transform: scaleY(0.08); }
 }
 
+@keyframes coworker-idle-blink {
+  0%, 100% { transform: scaleY(1); }
+  48%, 58% { transform: scaleY(0.08); }
+}
+
 @keyframes loading-line {
   0% { transform: translateX(-115%); }
   52% { transform: translateX(105%); }
@@ -688,6 +729,8 @@ a {
     animation: none !important;
   }
 
+  .coworker-avatar__pointer-body,
+  .coworker-avatar__pointer-features,
   .coworker-avatar__pointer-gaze,
   .coworker-mark__pointer-gaze {
     transform: none !important;
