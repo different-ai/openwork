@@ -16,6 +16,7 @@ import {
   type ConnectState,
 } from "./local-providers.ts";
 import { connectedModelCatalog } from "./threads.ts";
+import { fixtureCatalog, fixtureProvider } from "./provider-catalog.fixture.ts";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 
@@ -23,7 +24,12 @@ function finding(partial: Partial<LocalProviderFinding> & Pick<LocalProviderFind
   return { label: partial.id, detail: "", reason: "", ...partial };
 }
 
-const model = (name: string, extra: Record<string, unknown> = {}) => ({ name, capabilities: { toolcall: true, reasoning: false }, status: "active", release_date: "2026-01-01", ...extra });
+const model = (name: string, extra: { release_date?: string; capabilities?: { toolcall?: boolean; reasoning?: boolean } } = {}) => ({
+  name,
+  capabilities: { toolcall: true, reasoning: false, ...extra.capabilities },
+  status: "active" as const,
+  release_date: extra.release_date ?? "2026-01-01",
+});
 
 test("every line of local mode copy reads plainly", () => {
   const lines: string[] = [
@@ -70,18 +76,18 @@ test("the local mode screens' visible sentences avoid the banned words (source s
 });
 
 test("planLocalMode keeps findings out of Found once their provider is connected, lists connected local providers, and names the free model", () => {
-  const catalog = connectedModelCatalog({
+  const catalog = connectedModelCatalog(fixtureCatalog({
     connected: ["opencode", "openai", "google", "ollama"],
     default: { opencode: "big-pickle" },
     all: [
-      { id: "opencode", name: "OpenCode Zen", source: "custom", env: [], options: {}, models: { "big-pickle": model("Big Pickle"), newer: model("Newer", { release_date: "2026-09-01" }) } },
-      { id: "openai", name: "OpenAI", source: "custom", env: ["OPENAI_API_KEY"], options: {}, models: { "gpt-5": model("GPT-5"), "gpt-5-mini": model("GPT-5 mini") } },
-      { id: "google", name: "Google", source: "env", env: ["GOOGLE_API_KEY", "GEMINI_API_KEY"], options: {}, models: { gemini: model("Gemini") } },
-      { id: "ollama", name: "Ollama", source: "config", env: [], options: { baseURL: "http://127.0.0.1:11434/v1" }, models: { llama: model("llama") } },
-      { id: "anthropic", name: "Anthropic", source: "custom", env: ["ANTHROPIC_API_KEY"], options: {}, models: { claude: model("Claude") } },
-      { id: "github-copilot", name: "GitHub Copilot", source: "custom", env: ["GITHUB_TOKEN"], options: {}, models: { gpt: model("GPT") } },
+      fixtureProvider({ id: "opencode", name: "OpenCode Zen", source: "custom", env: [], options: {}, models: { "big-pickle": model("Big Pickle"), newer: model("Newer", { release_date: "2026-09-01" }) } }),
+      fixtureProvider({ id: "openai", name: "OpenAI", source: "custom", env: ["OPENAI_API_KEY"], options: {}, models: { "gpt-5": model("GPT-5"), "gpt-5-mini": model("GPT-5 mini") } }),
+      fixtureProvider({ id: "google", name: "Google", source: "env", env: ["GOOGLE_API_KEY", "GEMINI_API_KEY"], options: {}, models: { gemini: model("Gemini") } }),
+      fixtureProvider({ id: "ollama", name: "Ollama", source: "config", env: [], options: { baseURL: "http://127.0.0.1:11434/v1" }, models: { llama: model("llama") } }),
+      fixtureProvider({ id: "anthropic", name: "Anthropic", source: "custom", env: ["ANTHROPIC_API_KEY"], options: {}, models: { claude: model("Claude") } }),
+      fixtureProvider({ id: "github-copilot", name: "GitHub Copilot", source: "custom", env: ["GITHUB_TOKEN"], options: {}, models: { gpt: model("GPT") } }),
     ],
-  } as unknown as Parameters<typeof connectedModelCatalog>[0]);
+  }));
   const providers = [
     { id: "opencode", name: "OpenCode Zen", env: [], source: "custom", connected: true, modelCount: 2 },
     { id: "openai", name: "OpenAI", env: ["OPENAI_API_KEY"], source: "custom", connected: true, modelCount: 2 },
