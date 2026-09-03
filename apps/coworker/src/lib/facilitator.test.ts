@@ -24,7 +24,7 @@ function event(partial: Partial<GroupTimelineEvent> & Pick<GroupTimelineEvent, "
 
 function model(id: string, extra: Partial<EngineModelOption> = {}): EngineModelOption {
   const [providerId = "", modelId = ""] = id.split("/");
-  return { id, providerId, providerLabel: providerId, modelId, modelLabel: modelId, label: id, description: "", family: "", variants: [], isProviderDefault: false, source: "local", toolCall: true, reasoning: false, status: "active", releaseDate: "2026-01-01", ...extra };
+  return { id, providerId, providerLabel: providerId, modelId, modelLabel: modelId, label: id, description: "", family: "", variants: [], isProviderDefault: false, source: "local", tier: "key", toolCall: true, reasoning: false, status: "active", releaseDate: "2026-01-01", ...extra };
 }
 
 test("the facilitator is told the room, availability, the bounded conversation, earlier orders, the message, and the mention constraint", () => {

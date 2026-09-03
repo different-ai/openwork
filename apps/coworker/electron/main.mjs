@@ -1247,14 +1247,42 @@ async function engineRequest(method, enginePath, body, { timeoutMs = 20_000, sig
   return json;
 }
 
-/** Rebuild the engine so a credential or provider change is in effect before anyone counts models. */
+/**
+ * Bring a credential change into effect everywhere. The engine keeps one
+ * instance per workspace directory and reads its credential store when an
+ * instance is built, so every registered workspace is reloaded through the
+ * embedded server (which also re-attaches each workspace's tools); `force`
+ * because a store change is invisible to the server's config fingerprint.
+ */
 async function reloadEngine() {
-  const workspaceId = await providerWorkspaceId();
+  await providerWorkspaceId();
   const handle = await ensurePlatformServer();
-  await fetchJson(`${handle.url}/workspace/${encodeURIComponent(workspaceId)}/engine/reload`, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${ownerToken}` },
-  }, 60_000);
+  const headers = { Authorization: `Bearer ${ownerToken}`, "Content-Type": "application/json" };
+  const listed = await fetchJson(`${handle.url}/workspaces`, { headers });
+  const ids = (Array.isArray(listed?.items) ? listed.items : [])
+    .map((workspace) => (typeof workspace?.id === "string" ? workspace.id : ""))
+    .filter(Boolean);
+  for (const id of ids) {
+    await fetchJson(`${handle.url}/workspace/${encodeURIComponent(id)}/engine/reload`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ force: true }),
+    }, 60_000).catch((error) => {
+      console.warn(`[open-coworker] could not reload the AI service for workspace ${id}`, error);
+    });
+  }
+}
+
+/** Poll the provider list until it agrees with `expectConnected`, since a busy engine rolls over in the background. */
+async function waitForProvider(providerId, expectConnected, { timeoutMs = 30_000, pollMs = 750 } = {}) {
+  const deadline = Date.now() + timeoutMs;
+  let last = null;
+  while (Date.now() < deadline) {
+    last = (await readEngineProviders().catch(() => [])).find((entry) => entry.id === providerId) ?? null;
+    if (Boolean(last?.connected) === expectConnected) return last?.connected ? last.modelCount : 0;
+    await new Promise((resolve) => setTimeout(resolve, pollMs));
+  }
+  return last?.connected ? last.modelCount : 0;
 }
 
 async function readEngineProviders() {
@@ -1290,7 +1318,7 @@ async function connectedModelCount(providerId) {
 async function storeCredential(providerId, auth) {
   await engineRequest("PUT", `/auth/${encodeURIComponent(providerId)}`, auth);
   await reloadEngine();
-  return connectedModelCount(providerId);
+  return waitForProvider(providerId, true);
 }
 
 async function patchRuntimeProviders(patch) {
@@ -1346,7 +1374,7 @@ async function connectLocalProvider(id) {
     }
     if (finding.kind === "server") {
       await patchRuntimeProviders(localServerProviderPatch(finding));
-      return connectedResult(finding.providerId, finding.label, await connectedModelCount(finding.providerId));
+      return connectedResult(finding.providerId, finding.label, await waitForProvider(finding.providerId, true));
     }
   } catch (error) {
     if (error instanceof SignInImportError) {
@@ -1409,7 +1437,7 @@ async function startProviderSignIn(providerId, methodIndex) {
   })
     .then(async () => {
       await reloadEngine();
-      attempt.modelCount = await connectedModelCount(trimmedId);
+      attempt.modelCount = await waitForProvider(trimmedId, true);
       attempt.state = attempt.modelCount > 0 ? "connected" : "failed";
       attempt.error = attempt.modelCount > 0 ? "" : "The sign-in finished, but no models became available.";
     })
@@ -1455,7 +1483,7 @@ async function addCustomProvider({ name, address, key, models }) {
   const trimmedKey = String(key ?? "").trim();
   if (trimmedKey) await engineRequest("PUT", `/auth/${encodeURIComponent(providerId)}`, { type: "api", key: trimmedKey });
   await patchRuntimeProviders({ [providerId]: openAiCompatibleProviderConfig({ name: label, address: listed.address, models: chosen }) });
-  return connectedResult(providerId, label, await connectedModelCount(providerId));
+  return connectedResult(providerId, label, await waitForProvider(providerId, true));
 }
 
 /**
@@ -1491,6 +1519,7 @@ async function disconnectProvider(providerId, confirmed) {
   } else {
     await reloadEngine();
   }
+  await waitForProvider(trimmedId, false);
   return { removed: true, needsConfirmation: false, note: "" };
 }
 
@@ -1622,9 +1651,12 @@ const commands = {
     const workspaceId = await providerWorkspaceId();
     const handle = await ensurePlatformServer();
     const engineManaged = Boolean(handle.managedOpencode);
-    if (!engineManaged) return { workspaceId, engineManaged, providers: [], signIns: {} };
+    // Registering the first workspace restarts the platform, which may move it to another port:
+    // the renderer reads the live address from here rather than from an earlier runtime.info.
+    const base = { workspaceId, engineManaged, serverUrl: handle.url, ownerToken };
+    if (!engineManaged) return { ...base, providers: [], signIns: {} };
     const [providers, signIns] = await Promise.all([readEngineProviders(), readEngineSignIns()]);
-    return { workspaceId, engineManaged, providers, signIns };
+    return { ...base, providers, signIns };
   },
   "localProviders.detect": async () => detectLocalProviders({ log: debugLog }),
   "localProviders.connect": async ({ id }) => connectLocalProvider(String(id ?? "")),

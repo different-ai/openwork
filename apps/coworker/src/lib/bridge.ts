@@ -229,6 +229,9 @@ export type EngineProviderSummary = {
 export type LocalProvidersReadiness = {
   workspaceId: string;
   engineManaged: boolean;
+  /** The platform's live address and owner token; preparing the first workspace can move the port. */
+  serverUrl: string;
+  ownerToken: string;
   providers: EngineProviderSummary[];
   /** Provider id → the AI service's own sign-in flows (browser or device code). */
   signIns: Record<string, Array<{ index: number; label: string }>>;

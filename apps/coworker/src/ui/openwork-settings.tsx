@@ -14,16 +14,18 @@ import {
   type EngineModelCatalog,
   type EngineModelOption,
 } from "@/lib/threads";
+import { clearAutoPicked } from "@/lib/model-choice";
 import { CoworkerMark, InlineLoader } from "@/ui/brand";
 import { Button, ErrorNote, StatusDot } from "@/ui/kit";
+import { LocalProviders } from "@/ui/local-providers";
 
 export type SettingsSection = "general" | "account" | "models" | "engine";
 
 const SECTIONS: Array<{ id: SettingsSection; label: string; detail: string }> = [
   { id: "general", label: "General", detail: "Open Coworker and shared defaults" },
   { id: "account", label: "Account", detail: "OpenWork account and organization" },
-  { id: "models", label: "AI models", detail: "AI providers and models every coworker can use" },
-  { id: "engine", label: "AI & local setup", detail: "AI service, runs on this Mac, storage, and diagnostics" },
+  { id: "models", label: "AI models", detail: "What every coworker can use: your account, this Mac, and the free model" },
+  { id: "engine", label: "AI & local setup", detail: "AI service, responsibilities on this Mac, and storage" },
 ];
 
 const EMPTY_CATALOG: EngineModelCatalog = { models: [], connectedProviderIds: [], cloud: null };
@@ -103,6 +105,7 @@ export function OpenWorkSettings({
   onSyncProviders,
   onRefreshRuntime,
   onRestartRuntime,
+  onCoworkerChanged,
 }: {
   active?: boolean;
   runtime: RuntimeInfo;
@@ -120,8 +123,19 @@ export function OpenWorkSettings({
   onRefreshRuntime: () => Promise<void>;
   /** Stop and start the local AI service. */
   onRestartRuntime: () => Promise<void>;
+  /** A coworker's AI model was chosen here. */
+  onCoworkerChanged?: (coworker: CoworkerSummary) => void;
 }) {
   const [section, setSection] = useState<SettingsSection>(initialSection);
+  async function chooseModelFor(coworker: CoworkerSummary, modelId: string) {
+    setError("");
+    try {
+      clearAutoPicked(coworker.slug);
+      onCoworkerChanged?.(await coworkerBridge.coworkers.update(coworker.slug, { model: modelId, modelVariant: "" }));
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    }
+  }
   const [restarting, setRestarting] = useState(false);
   async function restartRuntime() {
     setRestarting(true);
@@ -369,61 +383,48 @@ export function OpenWorkSettings({
                   <div>
                     <h2 className="text-xl font-semibold tracking-[-0.03em] text-snow">AI models</h2>
                     <p className="mt-1 max-w-xl text-sm leading-relaxed text-mist">
-                      Every AI provider connected here is available to all coworkers. OpenWork Cloud providers come from your signed-in account; the rest are configured on this Mac. Each coworker chooses its own AI model in Coworker settings.
+                      Everything connected here is available to every coworker; each one picks its own AI model in Coworker settings.
                     </p>
                   </div>
-                  <Button variant="ghost" disabled={refreshing} onClick={() => void refreshConfiguration({ sync: true })} data-testid="refresh-providers">
-                    {refreshing ? "Refreshing…" : session ? "Refresh providers" : "Refresh"}
-                  </Button>
+                  {session ? (
+                    <Button variant="ghost" disabled={refreshing} onClick={() => void refreshConfiguration({ sync: true })} data-testid="refresh-providers">
+                      {refreshing ? "Refreshing…" : "Refresh providers"}
+                    </Button>
+                  ) : null}
                 </div>
                 {session ? (
-                  <SettingsCard testId="provider-sync-status">
-                    <SettingsRow label="OpenWork account" value={accountHint} tone="mint" />
-                    <SettingsRow label="Provider refresh" value={sync.value} hint={sync.hint} tone={sync.tone} />
-                  </SettingsCard>
-                ) : (
-                  <SettingsCard>
-                    <div className="flex items-center justify-between gap-4 p-4">
-                      <p className="text-xs leading-relaxed text-mist">Sign in to use your organization's models alongside providers on this Mac.</p>
-                      <Button variant="primary" className="shrink-0" onClick={onConnect}>Continue with OpenWork</Button>
-                    </div>
-                  </SettingsCard>
-                )}
-                {refreshing && models.length === 0 ? <div className="py-10"><InlineLoader label="Reading AI models" /></div> : null}
-                {!refreshing && providers.length === 0 ? (
-                  <SettingsCard><p className="p-5 text-sm leading-relaxed text-mist">No AI models are connected. Connect a provider in OpenWork, then refresh.</p></SettingsCard>
-                ) : null}
-                {[
-                  { title: "OpenWork Cloud", entries: cloudProviders, testId: "cloud-providers" },
-                  { title: "This Mac", entries: localProviders, testId: "local-providers" },
-                ].map((group) => (
-                  group.entries.length > 0 ? (
-                    <div key={group.title} className="space-y-3" data-testid={group.testId}>
-                      <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-mist">{group.title}</p>
-                      {group.entries.map(([providerId, provider]) => (
-                        <SettingsCard key={providerId}>
-                          <div className="flex items-center justify-between gap-4 px-4 py-3.5">
-                            <span className="min-w-0">
-                              <span className="block truncate text-sm font-semibold text-snow">{provider.label}</span>
-                              <span className="mt-0.5 block truncate text-[11px] text-mist">{providerId}</span>
-                            </span>
-                            <span className="shrink-0 rounded-full border border-line px-2.5 py-1 text-[10px] font-medium text-mist">{provider.models.length} model{provider.models.length === 1 ? "" : "s"}</span>
-                          </div>
-                        </SettingsCard>
+                  <div className="space-y-3" data-testid="cloud-providers">
+                    <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-mist">OpenWork Cloud</p>
+                    <SettingsCard testId="provider-sync-status">
+                      <SettingsRow label="OpenWork account" value={accountHint} tone="mint" />
+                      <SettingsRow label="Provider refresh" value={sync.value} hint={sync.hint} tone={sync.tone} />
+                      {cloudProviders.map(([providerId, provider]) => (
+                        <SettingsRow key={providerId} label={provider.label} value={`${provider.models.length} model${provider.models.length === 1 ? "" : "s"}`} hint={providerId} />
                       ))}
-                    </div>
-                  ) : null
-                ))}
-                {skipped.length > 0 ? (
-                  <div className="space-y-3" data-testid="skipped-providers">
-                    <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-mist">Granted, not usable here yet</p>
-                    <SettingsCard>
-                      {skipped.map((provider) => (
-                        <SettingsRow key={provider.providerId} label={provider.name} value={provider.reason === "needs_key" ? "Needs your key" : "No credential"} hint={describeSkippedProvider(provider.reason)} tone="amber" />
-                      ))}
+                      {refreshing && cloudProviders.length === 0 ? <div className="px-4 py-3"><InlineLoader label="Reading AI models" /></div> : null}
                     </SettingsCard>
+                    {skipped.length > 0 ? (
+                      <SettingsCard testId="skipped-providers">
+                        {skipped.map((provider) => (
+                          <SettingsRow key={provider.providerId} label={provider.name} value={provider.reason === "needs_key" ? "Needs your key" : "No credential"} hint={describeSkippedProvider(provider.reason)} tone="amber" />
+                        ))}
+                      </SettingsCard>
+                    ) : null}
                   </div>
                 ) : null}
+                <div data-testid="this-mac-providers">
+                  {session ? <p className="mb-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-mist">This Mac</p> : null}
+                  <LocalProviders
+                    key={String(active)}
+                    runtime={runtime}
+                    session={session}
+                    onConnectAccount={onConnect}
+                    onModelsChanged={() => void refreshConfiguration()}
+                    onRuntimeChanged={onRefreshRuntime}
+                    onStartModel={selectedCoworker ? (modelId) => void chooseModelFor(selectedCoworker, modelId) : undefined}
+                    chooseLabel={selectedCoworker ? `Use for ${selectedCoworker.name}` : undefined}
+                  />
+                </div>
               </>
             ) : null}
 
