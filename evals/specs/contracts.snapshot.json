@@ -421,6 +421,7 @@
         "evals/specs/models-available.e2e.test.ts",
         "evals/specs/opencode-unconfigured-notification.e2e.test.ts",
         "evals/specs/org-model-analytics-desktop.e2e.test.ts",
+        "evals/specs/provider-disconnect-config-defined.e2e.test.ts",
         "evals/specs/session-model-availability.e2e.test.ts",
         "evals/specs/subagent-run-survives-provider-sync-storm.e2e.test.ts"
       ]

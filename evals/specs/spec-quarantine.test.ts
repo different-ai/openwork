@@ -43,6 +43,7 @@ org-api-key-authenticates.e2e.test.ts
 org-model-analytics.e2e.test.ts
 org-team-lifecycle-critical-path.e2e.test.ts
 parent-child-permission-approval.e2e.test.ts
+provider-disconnect-config-defined.e2e.test.ts
 reliable-app-recovery.e2e.test.ts
 responsive-session-layout.e2e.test.ts
 saved-script-automations.e2e.test.ts
