@@ -5,7 +5,10 @@
  * transcript only renders what these return. Technical names stay available to
  * the details disclosure, never in the collapsed line.
  */
+import { coworkerToolName, isAssignmentTool, type CoworkerToolName } from "./coworker-tools.ts";
 import { documentToolName, humanizeDocumentId, structuredContextChanges, structuredDocument } from "./documents.ts";
+import { parseLocalSchedule } from "./local-schedule.ts";
+import { describeScheduleForPeople, describeScheduleInSentence } from "./responsibility-copy.ts";
 import { describeWorkerToolStep, workerToolName } from "./workers.ts";
 
 export type WorkStepInput = {
@@ -13,7 +16,7 @@ export type WorkStepInput = {
   status: string;
   input: Record<string, unknown>;
   error?: string | null;
-  /** The tool's result and kept metadata, when the transcript has them; documents name themselves through these. */
+  /** The tool's result and kept metadata, when the transcript has them; the coworker's own tools name what they touched through these. */
   output?: unknown;
   metadata?: Record<string, unknown>;
 };
@@ -43,6 +46,10 @@ export function workStepState(status: string): WorkStepState {
 
 function text(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function baseName(pathLike: string): string {
@@ -121,6 +128,108 @@ function describeDocumentStep(name: string, call: WorkStepInput, step: (label: s
   }
 }
 
+/** The first line of a tool's answer, when it answered with text. */
+function firstOutputLine(output: unknown): string {
+  if (typeof output === "string") return output.split("\n")[0]?.trim() ?? "";
+  if (typeof output === "object" && output !== null && "output" in output && typeof output.output === "string") {
+    return output.output.split("\n")[0]?.trim() ?? "";
+  }
+  return "";
+}
+
+/** The name a coworker tool quoted in its answer: `Paused assignment "Move the car"` → Move the car. */
+function quotedName(output: unknown): string {
+  const match = /"([^"]+)"/.exec(firstOutputLine(output));
+  return match?.[1]?.trim() ?? "";
+}
+
+const LABEL_TEXT_LIMIT = 80;
+
+function clipLabel(value: string): string {
+  const single = value.replace(/\s+/g, " ").trim();
+  return single.length > LABEL_TEXT_LIMIT ? `${single.slice(0, LABEL_TEXT_LIMIT - 1)}…` : single;
+}
+
+/** The schedule in a tool's input as people read it, or empty when it does not read. */
+function scheduleWords(value: unknown, inSentence = false): string {
+  try {
+    const schedule = parseLocalSchedule(value);
+    return inSentence ? describeScheduleInSentence(schedule) : describeScheduleForPeople(schedule);
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * The coworker's own tools, in the words the person sees between bubbles:
+ * "Created assignment · Move the car · Every weekday at 9:00 AM",
+ * "Remembered · You work in Product", "Updated how I work · Shorter replies".
+ * A step that did not finish never repeats what it was told, so a refused
+ * secret is not echoed into the conversation.
+ */
+function describeCoworkerTool(name: CoworkerToolName, call: WorkStepInput, state: WorkStepState): WorkStep {
+  const input = call.input ?? {};
+  const service = isAssignmentTool(name) ? "your assignments" : "your memory";
+  const step = (label: string, doing: string): WorkStep => ({ label, doing, service, state, tool: call.tool });
+  const failed = state === "failed";
+  const running = state === "running";
+  const named = quotedName(call.output) || text(input.name);
+  const subject = named ? clipLabel(named) : "an assignment";
+  switch (name) {
+    case "assignments_list":
+      return step(failed ? "Couldn't check the assignments" : running ? "Checking the assignments" : "Checked the assignments", "checking the assignments");
+    case "assignment_create": {
+      const when = scheduleWords(input.schedule);
+      if (failed) return step(`Couldn't create assignment · ${subject}`, "setting up an assignment");
+      if (running) return step(`Setting up an assignment · ${subject}`, "setting up an assignment");
+      return step(`Created assignment · ${subject}${when ? ` · ${when}` : ""}`, "setting up an assignment");
+    }
+    case "assignment_update": {
+      const patch = isRecord(input.patch) ? input.patch : {};
+      const current = quotedName(call.output) || "the assignment";
+      if (failed) return step(`Couldn't change ${current}`, "changing an assignment");
+      if (running) return step(`Changing ${current}`, "changing an assignment");
+      const when = scheduleWords(patch.schedule, true);
+      if (when) return step(`Changed ${clipLabel(current)} to ${when}`, "changing an assignment");
+      if (patch.active === false) return step(`Paused ${clipLabel(current)}`, "pausing an assignment");
+      if (patch.active === true) return step(`Resumed ${clipLabel(current)}`, "resuming an assignment");
+      if (text(patch.name)) return step(`Renamed ${clipLabel(current)} to ${clipLabel(text(patch.name))}`, "renaming an assignment");
+      if (text(patch.instructions)) return step(`Changed what ${clipLabel(current)} does`, "changing an assignment");
+      return step(`Changed ${clipLabel(current)}`, "changing an assignment");
+    }
+    case "assignment_run_now": {
+      const current = quotedName(call.output) || "an assignment";
+      return step(failed ? `Couldn't start ${current} now` : running ? `Starting ${current} now` : `Started ${clipLabel(current)} now`, "starting an assignment");
+    }
+    case "assignment_remove": {
+      const current = quotedName(call.output) || "an assignment";
+      return step(failed ? `Couldn't remove ${current}` : running ? `Removing ${current}` : `Removed ${clipLabel(current)}`, "removing an assignment");
+    }
+    case "memory_remember": {
+      const fact = clipLabel(text(input.text));
+      if (failed) return step("Couldn't remember that", "remembering something");
+      if (running) return step(fact ? `Remembering · ${fact}` : "Remembering something", "remembering something");
+      const moved = /^moved/i.test(firstOutputLine(call.output));
+      return step(fact ? `${moved ? "Moved to long-term memory" : "Remembered"} · ${fact}` : "Remembered something", "remembering something");
+    }
+    case "memory_forget": {
+      const target = clipLabel(text(input.target));
+      if (failed) return step("Couldn't forget that", "forgetting something");
+      if (running) return step(target ? `Forgetting · ${target}` : "Forgetting something", "forgetting something");
+      return step(target ? `Forgot · ${target}` : "Forgot something", "forgetting something");
+    }
+    case "soul_update": {
+      const change = isRecord(input.change) ? input.change : {};
+      const summary = clipLabel(text(change.text) || (text(change.target) ? `dropped “${text(change.target)}”` : "") || text(input.section));
+      if (failed) return step("Couldn't update how I work", "updating how I work");
+      if (running) return step("Updating how I work", "updating how I work");
+      return step(summary ? `Updated how I work · ${summary}` : "Updated how I work", "updating how I work");
+    }
+    case "self_read":
+      return step(failed ? "Couldn't check what I remember" : running ? "Checking what I remember" : "Checked what I remember", "checking what I remember");
+  }
+}
+
 /** One tool call as a step a person can read. */
 export function describeWorkStep(call: WorkStepInput): WorkStep {
   const state = workStepState(call.status);
@@ -138,6 +247,8 @@ export function describeWorkStep(call: WorkStepInput): WorkStep {
     const described = describeWorkerToolStep(workerTool, { input, output: call.output, metadata: call.metadata ?? {} });
     return step(described.label, described.doing, "Workers");
   }
+  const own = coworkerToolName(tool);
+  if (own) return describeCoworkerTool(own, call, state);
   if (normalized.endsWith("search_capabilities")) {
     const query = text(input.query);
     return step(
