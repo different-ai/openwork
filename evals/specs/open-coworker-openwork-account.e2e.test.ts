@@ -954,6 +954,8 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
   expect(accountText).not.toContain(SESSION_TOKEN);
   await clickButton(app, "AI models");
   await waitFor(app, `Boolean(document.querySelector('[data-testid="cloud-providers"]'))`, { timeoutMs: 60_000, label: "OpenWork Cloud provider group" });
+  // The group appears while the account's models are still being read; wait for the provider itself.
+  await waitForText(app, "Eval Org Provider", { timeoutMs: 60_000 });
   const modelsText = String(await evalIn(app, "document.body.innerText"));
   expect(modelsText).toContain("Eval Org Provider");
   expect(modelsText).toContain(PROVIDER_RECORD_ID);
