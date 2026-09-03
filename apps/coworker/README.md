@@ -45,10 +45,22 @@ The coworker directory is registered as an ordinary OpenWork workspace, so:
   discussion is titled after its first message (`session.update`; the engine
   keeps custom titles), and a reply in progress keeps going while another
   discussion is open. Each view places its own title line and actions (Back,
-  Stop, Assignments) into that header, so there is never a second header row.
-  An empty conversation shows only a small avatar, the coworker's name and
-  role, one line ("What should we work through?"), and the focused composer;
-  there are no starter cards.
+  Stop) into that header, so there is never a second header row. The header
+  ends in one plain status word — Ready, Working, Retrying, Needs you,
+  Stopped… — with no dot: mist unless the coworker is asking for the person
+  (amber: Needs you, Waiting for permission, Waiting for an answer) or reporting
+  a failure (rose: AI unavailable, Not responding, Reply failed, Response
+  delayed). The moment-to-moment phases (Sending, Thinking, Using a tool) fold
+  into Working there; the live row in the transcript owns those phrases, and a
+  tooltip on the word adds the reason and the time ("Retrying after an
+  interruption · since 7:40 AM"). An empty conversation shows only a small
+  avatar, the coworker's name and role, one line ("What should we work
+  through?"), and the focused composer; there are no starter cards. At the foot
+  of the conversation column one discreet **summary line** on the composer's
+  hint row says what the coworker holds — "2 assignments · 1 Worker · 3
+  documents" (`lib/coworker-summary.ts`) — each part opening the matching level
+  of the Activity panel; a coworker that holds nothing and has never finished
+  anything shows no line at all.
 - **Group chats put several coworkers in one conversation.** A group lives
   under `<coworkers home>/.groups/<id>/` as `group.json` (members, the native
   thread each member uses for it, the facilitator's thread, and the last 50
@@ -121,8 +133,8 @@ The coworker directory is registered as an ordinary OpenWork workspace, so:
   dangling index line stays visible. A memory can be read, edited, created,
   or deleted; deleting removes the file and its index line together.
 - **Assignments on a schedule (responsibilities, in the code) have two explicit
-  placements.** The person meets them in the Workers view's Assignments section,
-  in one list with the one-off assignments handed over from a discussion.
+  placements.** The person meets them in the Activity panel's Assignments
+  level, below the one-off assignments handed over from a discussion.
   OpenWork Cloud is the recommended always-on lane: scheduled assignments are native Den Automations
   created through the Cloud creation surface (`POST /v1/cloud-automations`),
   so Den fixes their placement to OpenWork Cloud, they keep running with this
@@ -156,7 +168,7 @@ The coworker directory is registered as an ordinary OpenWork workspace, so:
   Workers through its own tools (`worker_spawn`, `worker_steer`,
   `worker_cancel`, `workers_list`, `worker_findings`, served by the same
   loopback MCP server as its document tools); the person does the same from
-  the panel's Workers view — flat rows opening into the findings timeline,
+  the Activity panel's Workers level — flat rows opening into the findings timeline,
   Steer, Pause/Resume, Stop, and Open its work (the Worker's thread, read-only)
   — and starts one with New Worker. At most three Workers are live per
   coworker; a Worker never starts a Worker. `workers.json` keeps Worker threads
@@ -211,10 +223,11 @@ read more.
   current work no longer needs (about five stay in play). Coworkers never
   archive on their own. A document the person edited is marked in the index so
   the coworker asks before rewriting it.
-- **The Documents view** in the right panel (strip icon between Activity and
-  Apps & tools, with a small dot when something changed since it was last
-  opened) shows two flat groups — Active by last update and Put aside, closed
-  by default — plus Archived behind a quiet link. A row is title, one-line
+- **The Documents level** of the Activity panel (reached from Activity's
+  Documents row or the summary line's "n documents"; a small dot on the
+  Activity strip icon, the row, and the line marks documents changed since it
+  was last opened) shows two flat groups — Active by last update and Put aside,
+  closed by default — plus Archived behind a quiet link. A row is title, one-line
   summary, when, and *by <coworker> / by you*. Opening a document shows a
   reading header (title, updated, revision) over Markdown rendered for reading
   (`lib/document-markdown.ts`: a 68ch measure, stable heading ids with a quiet
@@ -434,33 +447,45 @@ run on the local lane by construction.
 First run: choose OpenWork Cloud or local mode, name a coworker, then give it
 work. Identity and memory are plain files under `~/.config/openwork/coworkers/`.
 The right panel starts folded to its icon strip on every launch and closes
-again when you move to another coworker; the header's details control, a strip
-icon, or a click on its edge opens it, and Escape or the same control closes
-it (its width and last view are remembered, whether it was open is not). Open,
-its Activity view shows only what the selected coworker is doing, what it
-recently finished, and a line for its live Workers; the Workers view holds its
-Workers and Assignments (one-off and on a schedule); its AI model, thinking
-effort, memory files, and retirement live behind the icon-only Coworker
-settings control.
+again when you move to another coworker; a strip icon or a click on its edge
+opens it, and Escape or the same edge closes it (its width and last view are
+remembered, whether it was open is not). The strip is **three icons** —
+Activity, Memory, Coworker settings (`lib/panel-views.ts`) — each with a
+tooltip that says what the view shows in the coworker's name ("Activity — what
+Editor is doing now, recently, and the assignments, Workers, and documents it
+holds"; the one `Tooltip` primitive in `ui/kit.tsx` and the copy in
+`lib/tooltip.ts`). Open, Activity is flat rows with hairlines and no card
+inside the panel: what the coworker is doing now (the subject as a line that
+opens its thread, a note underneath, the time at the right — never the status
+word the header already shows), then three count rows — Documents, Workers,
+Assignments ("3 documents ›", "1 Worker ›", "2 assignments ›") — that each
+open a **level** of Activity, then Recent. The Documents level is the
+Documents view above; the Workers level holds the coworker's Workers only; the
+Assignments level holds every one-off assignment (newest first, with New
+assignment) followed by the ones on a schedule (with Add assignment). Its AI
+model, thinking effort, memory files, Apps & tools, and retirement live under
+the strip's Coworker settings icon.
 
 The panel keeps a **route** (`lib/panel-route.ts`): one view and a short path
-inside it, at most root → group → item, remembered per view for the session.
-Its 78 px header band shows breadcrumbs — the root and each level as buttons,
-the current one in white; narrower than 380 px, or when the trail is long, the
-middle folds into `…` with a menu of the skipped levels — and one back control
-that names the level it returns to (*Back to Apps & tools*). Back is that
-arrow, `⌘[` / `Alt+←`, or a two-finger swipe right on the panel; Escape goes
-back one level and closes the panel only at a root; the strip icon of the view
-already showing goes to its root, another view opens where it was last. Each
-level slides in over about 160 ms (none under reduced motion), keeps its own
-scroll position, and hands focus back to the row it was opened from. Any part
-of the app can open a route with `openPanelRoute` — a receipt step that used a
-tool or an App opens that item. Below 900 px the open panel lies over the
-conversation behind a scrim. A discreet OpenWork control in the bottom-left rail opens the
-full-window global settings (account, AI models, AI & local setup) without
-taking space from the thread. That surface reads the active connected-provider
-catalog, so OpenWork model and provider changes stay visible without a second
-settings store. User-facing copy says "AI model", "AI providers", and "AI is
+inside it, at most root → level → group → item, remembered per view for the
+session. Its 78 px header band shows breadcrumbs — the root and each level as
+buttons, the current one in white; narrower than 380 px, or when the trail is
+long, the middle folds into `…` with a menu of the skipped levels — and one
+back control that names the level it returns to (*Back to Apps & tools*). Back
+is that arrow, `⌘[` / `Alt+←`, or a two-finger swipe right on the panel;
+Escape goes back one level and closes the panel only at a root; the strip icon
+of the view already showing goes to its root, another view opens where it was
+last. Each level slides in over about 160 ms (none under reduced motion),
+keeps its own scroll position, and hands focus back to the row it was opened
+from. Any part of the app can open a route with `openPanelRoute` — a receipt
+step that used a tool or an App opens that item under Coworker settings ›
+Apps & tools, and the composer's summary line opens the Activity level it
+counts. Below 900 px the open panel lies over the conversation behind a scrim.
+A discreet OpenWork control in the bottom-left rail opens the full-window
+global settings (account, AI models, AI & local setup) without taking space
+from the thread. That surface reads the active connected-provider catalog, so
+OpenWork model and provider changes stay visible without a second settings
+store. User-facing copy says "AI model", "AI providers", and "AI is
 ready/unavailable"; the word "engine" is reserved for developer-facing
 documentation, diagnostics, and code.
 
@@ -470,9 +495,9 @@ them, so there is no separate fold button (the keyboard still nudges, folds
 with Home, and resets with Enter). The folded team
 rail keeps every coworker as an avatar with a bottom status dot, marks the
 active one, and shows a hover card naming what that coworker is doing; the
-folded context panel keeps Activity, Apps & tools, Memory, and Coworker
-settings as icons that unfold straight into the chosen view. Widths are
-remembered per machine; the team rail also remembers whether it was folded.
+folded context panel keeps Activity, Memory, and Coworker settings as icons
+that unfold straight into the chosen view. Widths are remembered per machine;
+the team rail also remembers whether it was folded.
 
 Signing in also brings OpenWork Connect to every coworker: the app mints the
 same short-lived gateway token the OpenWork desktop uses (`POST /v1/mcp/token`)
@@ -486,11 +511,13 @@ under `Resources/opencode-plugins`, as the desktop does.
 
 ## Apps & tools
 
-The Apps & tools view is a small navigable surface inside the panel — tap in,
-read, tap back — never one long page of everything (`ui/capabilities.tsx`,
-levels in `lib/apps-tools.ts`, states in `lib/connection-words.ts`, the Connect
-catalog in `lib/connect-catalog.ts`). Its root is three flat rows, each with an
-icon, a title, one status line, a count, and a chevron:
+Apps & tools is the first row of Coworker settings and a small navigable
+surface inside the panel — tap in, read, tap back — never one long page of
+everything (`ui/capabilities.tsx`, levels in `lib/apps-tools.ts`, states in
+`lib/connection-words.ts`, the Connect catalog in `lib/connect-catalog.ts`).
+Its trail starts *Coworker settings › Apps & tools*, so an item sits at the
+panel's fourth level (root → level → group → item). Its root is three flat
+rows, each with an icon, a title, one status line, a count, and a chevron:
 
 - **Connected with OpenWork** — *Connected as <org>*, *Not connected*, *Needs
   sign-in*, *Needs setup by an admin*, *Needs attention*, or *Unavailable*,
@@ -559,10 +586,11 @@ icon itself is one coworker over one charcoal card on the OpenWork-blue tile
 (`resources/icons/open-coworker-app-icon.svg`); every raster is regenerated from
 it with `pnpm --filter @openwork/coworker icons:render`.
 
-Coworker settings lay out as rows on the panel — an identity row, then Profile
-(look, glasses, role, mission, personality) as hairline-separated rows, the AI
-model, Memory, and a quiet Retire row — with Save appearing only when something
-changed; no card sits inside another card.
+Coworker settings lay out as rows on the panel — Apps & tools first (the level
+described above), then an identity row, Profile (look, glasses, role, mission,
+personality) as hairline-separated rows, the AI model, Memory, and a quiet
+Retire row — with Save appearing only when something changed; no card sits
+inside another card.
 
 Thinking and tool work fold into two quiet lines above a reply: provider-returned
 thinking becomes a borderless "Thought through" disclosure once the reply is
