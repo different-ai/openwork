@@ -1,5 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
-import { link, lstat, mkdir, readdir, readFile, realpath, rename, rm, writeFile } from "node:fs/promises";
+import { constants } from "node:fs";
+import { link, lstat, mkdir, open, readdir, realpath, rename, rm } from "node:fs/promises";
+import type { FileHandle } from "node:fs/promises";
 import { basename, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { encode as encodePng } from "fast-png";
 import { encode as encodeJpeg } from "jpeg-js";
@@ -160,34 +162,95 @@ async function confinedDirectory(root: string, directory: string): Promise<strin
   return realDirectory;
 }
 
-/** Hashes the regular file at `path`; a symlink or other non-file counts as "something else lives here". */
-async function existingSha(path: string): Promise<string | null> {
+/**
+ * Opens `path` for reading without following a symlink at the final component,
+ * then confirms the opened file is a regular file that the path still names
+ * beneath `realParent`. A path swapped around the open fails the identity
+ * check, so content only ever flows through a verified handle.
+ */
+export async function openVerifiedForRead(realParent: string, path: string): Promise<FileHandle> {
+  const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
   try {
-    const info = await lstat(path);
-    if (!info.isFile()) return "";
-    return sha256(await readFile(path));
-  } catch {
-    return null;
+    const opened = await handle.stat();
+    if (!opened.isFile()) throw new Error(`${basename(path)} is not a regular file.`);
+    const real = await realpath(path);
+    const named = await lstat(real);
+    if (!isWithin(realParent, real) || named.dev !== opened.dev || named.ino !== opened.ino) {
+      throw new Error(`${basename(path)} changed underneath the read; refusing to use it.`);
+    }
+    return handle;
+  } catch (cause) {
+    await handle.close();
+    throw cause;
   }
 }
 
-async function writeFileAtomically(target: string, bytes: Uint8Array | string): Promise<void> {
+/** Hashes the regular file at `path`; a symlink or other non-file counts as "something else lives here". */
+async function existingSha(realDirectory: string, path: string): Promise<string | null> {
+  let handle: FileHandle;
+  try {
+    handle = await openVerifiedForRead(realDirectory, path);
+  } catch (cause) {
+    const code = typeof cause === "object" && cause !== null && "code" in cause ? cause.code : undefined;
+    return code === "ENOENT" ? null : "";
+  }
+  try {
+    return sha256(await handle.readFile());
+  } finally {
+    await handle.close();
+  }
+}
+
+/**
+ * Creates a new file (never following a symlink) and confirms it landed inside
+ * `realDirectory` before any content is written through the returned handle.
+ */
+async function createVerifiedFile(realDirectory: string, path: string): Promise<FileHandle> {
+  const handle = await open(path, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
+  try {
+    const created = await handle.stat();
+    const real = await realpath(path);
+    const named = await lstat(real);
+    if (!isWithin(realDirectory, real) || named.dev !== created.dev || named.ino !== created.ino) {
+      throw new Error("PDF attachment storage path changed underneath the write; refusing to use it.");
+    }
+    return handle;
+  } catch (cause) {
+    await handle.close();
+    await rm(path, { force: true }).catch(() => undefined);
+    throw cause;
+  }
+}
+
+async function writeFileAtomically(realDirectory: string, name: string, bytes: Uint8Array | string): Promise<void> {
+  const target = join(realDirectory, name);
   const tmp = `${target}.${randomUUID()}.tmp`;
-  await writeFile(tmp, bytes, { flag: "wx" });
+  const handle = await createVerifiedFile(realDirectory, tmp);
+  try {
+    await handle.writeFile(bytes);
+  } finally {
+    await handle.close();
+  }
   try {
     await rename(tmp, target);
   } finally {
-    await rm(tmp, { force: true });
+    await rm(tmp, { force: true }).catch(() => undefined);
   }
 }
 
-async function linkBytesAtomically(target: string, bytes: Uint8Array): Promise<void> {
+async function linkBytesAtomically(realDirectory: string, name: string, bytes: Uint8Array): Promise<void> {
+  const target = join(realDirectory, name);
   const tmp = `${target}.${randomUUID()}.tmp`;
-  await writeFile(tmp, bytes, { flag: "wx" });
+  const handle = await createVerifiedFile(realDirectory, tmp);
+  try {
+    await handle.writeFile(bytes);
+  } finally {
+    await handle.close();
+  }
   try {
     await link(tmp, target);
   } finally {
-    await rm(tmp, { force: true });
+    await rm(tmp, { force: true }).catch(() => undefined);
   }
 }
 
@@ -196,14 +259,14 @@ async function materializePdf(root: string, safeFilename: string, digest: string
   for (const name of [`${digest.slice(0, 16)}-${safeFilename}`, `${digest}-${safeFilename}`]) {
     const target = join(directory, name);
     const relativePath = `${MATERIALIZED_DIR.split(sep).join("/")}/${name}`;
-    const current = await existingSha(target);
+    const current = await existingSha(directory, target);
     if (current === digest) return relativePath;
     if (current !== null) continue;
     try {
-      await linkBytesAtomically(target, bytes);
+      await linkBytesAtomically(directory, name, bytes);
       return relativePath;
     } catch (cause) {
-      const afterRace = await existingSha(target);
+      const afterRace = await existingSha(directory, target);
       if (afterRace === digest) return relativePath;
       if (afterRace !== null) continue;
       throw cause;
@@ -253,7 +316,7 @@ async function writeManifest(directory: string, derived: DerivedPdf): Promise<vo
     renderedPages: derived.renderedPages,
     renderBudgetExhausted: derived.renderBudgetExhausted,
   };
-  await writeFileAtomically(join(directory, MANIFEST_FILENAME), JSON.stringify(stored, null, 2));
+  await writeFileAtomically(directory, MANIFEST_FILENAME, JSON.stringify(stored, null, 2));
 }
 
 function encodeBitmap(bitmap: PdfRenderedBitmap): EncodedPage {
@@ -399,7 +462,7 @@ async function storePageImage(root: string | null, derived: DerivedPdf, page: nu
   if (!root || !derived.directory) return;
   try {
     const directory = await confinedDirectory(root, derivedDirectoryFor(root, derived.sha256, derived.filename));
-    await writeFileAtomically(join(directory, pageFileName(page, image.mime)), image.bytes);
+    await writeFileAtomically(directory, pageFileName(page, image.mime), image.bytes);
   } catch {
     // The workspace copy is a convenience; the in-memory image still reaches the model.
   }
@@ -435,7 +498,7 @@ async function build(root: string | null, filename: string, bytes: Uint8Array, o
     if (expectedDirectory && displayDirectory && root && !extracted.loadError) {
       // Created only now that there is something to store; a symlinked bundle fails the derivation.
       const derivedDirectory = await confinedDirectory(root, expectedDirectory);
-      await writeFileAtomically(join(derivedDirectory, TEXT_FILENAME), text);
+      await writeFileAtomically(derivedDirectory, TEXT_FILENAME, text);
       base.textPath = `${displayDirectory}/${TEXT_FILENAME}`;
       current = { ...base, text };
       await writeManifest(derivedDirectory, current);

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { createHash } from "node:crypto";
@@ -14,6 +14,7 @@ import {
   PAGE_IMAGE_MAX_BYTES,
   PAGE_LONG_EDGE_PX,
   derivePdf,
+  openVerifiedForRead,
   pageImageOf,
   pageTextFrom,
   renderPdfPages,
@@ -253,6 +254,29 @@ describe("derivePdf", () => {
         await symlink(outside, join(root, DERIVED_DIR, `${digest.slice(0, 16)}-bundle`));
         await expect(derivePdf(root, "bundle.pdf", pdf, { renderPages: true })).rejects.toThrow("resolves through a symlink");
         expect(await readdir(outside)).toEqual([]);
+      } finally {
+        await rm(outside, { recursive: true, force: true });
+      }
+    });
+  });
+
+  test("verified reads refuse symlinks, directories, and files outside the parent", async () => {
+    await withWorkspace(async (root) => {
+      const outside = await mkdtemp(join(tmpdir(), "openwork-pdf-verified-"));
+      try {
+        const realRoot = await realpath(root);
+        const regular = join(realRoot, "ok.pdf");
+        await writeFile(regular, "%PDF-1.4 ok");
+        const handle = await openVerifiedForRead(realRoot, regular);
+        expect((await handle.readFile()).toString()).toBe("%PDF-1.4 ok");
+        await handle.close();
+
+        const secret = join(outside, "secret.pdf");
+        await writeFile(secret, "%PDF-1.4 secret");
+        await symlink(secret, join(realRoot, "link.pdf"));
+        await expect(openVerifiedForRead(realRoot, join(realRoot, "link.pdf"))).rejects.toThrow();
+        await expect(openVerifiedForRead(realRoot, realRoot)).rejects.toThrow("not a regular file");
+        await expect(openVerifiedForRead(realRoot, await realpath(secret))).rejects.toThrow("changed underneath");
       } finally {
         await rm(outside, { recursive: true, force: true });
       }

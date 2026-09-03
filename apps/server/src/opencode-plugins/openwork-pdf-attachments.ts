@@ -1,4 +1,4 @@
-import { readFile, realpath } from "node:fs/promises";
+import { realpath } from "node:fs/promises";
 import { basename, isAbsolute, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
@@ -9,6 +9,7 @@ import {
   derivePdf,
   EAGER_RENDERED_PAGES,
   MAX_PAGES_PER_REQUEST,
+  openVerifiedForRead,
   pageImageOf,
   pageTextFrom,
   renderPdfPages,
@@ -230,20 +231,27 @@ function decodeDataUrl(url: string): Buffer {
   return buffer;
 }
 
-async function confinedWorkspacePath(root: string | null, filePath: string): Promise<string> {
+/**
+ * Reads a workspace PDF the user or model pointed at. The path must resolve
+ * inside the workspace, and the bytes flow through a handle whose identity is
+ * verified after opening, so a path swapped mid-read is refused rather than
+ * forwarded.
+ */
+async function readWorkspacePdf(root: string | null, filePath: string): Promise<Buffer> {
   if (!root) throw new Error("Workspace root is unavailable for workspace PDF paths.");
   const absolute = resolve(root, filePath);
   if (!isWithin(root, absolute)) throw new Error("PDF path points outside the active workspace.");
   const realRoot = await realpath(root);
   const realFilePath = await realpath(absolute);
   if (!isWithin(realRoot, realFilePath)) throw new Error("PDF path points outside the active workspace.");
-  return realFilePath;
-}
-
-async function readWorkspacePdf(root: string | null, filePath: string): Promise<Buffer> {
-  const buffer = await readFile(await confinedWorkspacePath(root, filePath));
-  if (buffer.byteLength > MAX_PDF_BYTES) throw new Error(`PDF exceeds the ${MAX_PDF_BYTES / MIB} MiB processing limit.`);
-  return buffer;
+  const handle = await openVerifiedForRead(realRoot, realFilePath);
+  try {
+    const { size } = await handle.stat();
+    if (size > MAX_PDF_BYTES) throw new Error(`PDF exceeds the ${MAX_PDF_BYTES / MIB} MiB processing limit.`);
+    return await handle.readFile();
+  } finally {
+    await handle.close();
+  }
 }
 
 async function bytesFromSource(source: PdfSource, root: string | null): Promise<Buffer> {
