@@ -48,12 +48,14 @@ describe("toTranscript", () => {
     );
 
     expect(transcript.messages).toEqual([
-      { id: "msg_1", role: "user", createdAt: null, completedAt: null, text: "Why?", reasoning: "", model: null, toolCalls: [] },
+      { id: "msg_1", role: "user", parentId: null, createdAt: null, completedAt: null, error: null, text: "Why?", reasoning: "", model: null, toolCalls: [] },
       {
         id: "msg_2",
         role: "assistant",
+        parentId: null,
         createdAt: 200,
         completedAt: null,
+        error: null,
         text: "Because the window closed.",
         reasoning: "check the policy",
         model: { providerId: "anthropic", modelId: "claude-sonnet-5" },
