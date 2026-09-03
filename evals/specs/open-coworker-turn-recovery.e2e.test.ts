@@ -90,14 +90,19 @@ function streamReply(response: ServerResponse, model: string, text: string): voi
   response.end();
 }
 
-/** Responses still being held; a real provider drops these when the client goes away. */
+/** Responses still being held, so a failure can say what became of them. */
 const held = new Set<ServerResponse>();
 /** What happened to held responses, for a failure message worth reading. */
 const heldLog: string[] = [];
 
+/** A model that is taking its time still produces a token now and then; a wholly silent stream is not how providers behave. */
+const KEEP_ALIVE_MS = 2_000;
+
 /**
- * Open the stream at once (with an opening line when given), then hold the rest for `holdMs`; a
- * closed connection (a stop, an abort) cancels the wait.
+ * Open the stream at once (with an opening line when given), then hold the rest for `holdMs`,
+ * sending one space every couple of seconds meanwhile the way a slow model keeps streaming; a
+ * closed connection (a stop, an abort) cancels the wait. The engine can only act on an abort
+ * when the provider stream yields something, so a held reply must not fall wholly silent.
  */
 function holdThenReply(response: ServerResponse, model: string, text: string, holdMs: number, opening = ""): void {
   response.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache", connection: "close" });
@@ -106,8 +111,13 @@ function holdThenReply(response: ServerResponse, model: string, text: string, ho
   held.add(response);
   const openedAt = Date.now();
   heldLog.push(`${text.slice(0, 12)} held at ${openedAt}`);
+  const keepAlive = setInterval(() => {
+    if (response.writableEnded || response.destroyed) return;
+    response.write(chunk(model, { content: " " }, null));
+  }, KEEP_ALIVE_MS);
   const timer = setTimeout(() => {
     held.delete(response);
+    clearInterval(keepAlive);
     if (response.writableEnded || response.destroyed) return;
     heldLog.push(`${text.slice(0, 12)} released by the hold after ${Date.now() - openedAt} ms`);
     response.write(chunk(model, { content: text }, null));
@@ -118,19 +128,9 @@ function holdThenReply(response: ServerResponse, model: string, text: string, ho
   response.on("close", () => {
     heldLog.push(`${text.slice(0, 12)} connection closed after ${Date.now() - openedAt} ms`);
     held.delete(response);
+    clearInterval(keepAlive);
     clearTimeout(timer);
   });
-}
-
-/**
- * What a provider does once the client has stopped listening: drop the held
- * response and its connection. The engine's runtime keeps an aborted stream's
- * connection around and would queue its next request behind it otherwise.
- */
-function releaseHeld(): void {
-  heldLog.push(`release asked with ${held.size} held`);
-  for (const response of held) response.destroy();
-  held.clear();
 }
 
 function refuse(response: ServerResponse, status: number, message: string, type: string, headers: Record<string, string> = {}): void {
@@ -138,7 +138,10 @@ function refuse(response: ServerResponse, status: number, message: string, type:
   response.end(JSON.stringify({ error: { message, type, param: null, code: type } }));
 }
 
-async function startScriptedModel(): Promise<{ baseUrl: string; requests: Recorded[]; countFor: (prompt: string) => number }> {
+/** Prompts whose reply is being held on purpose right now; the journey holds and releases them around a stop. */
+const holding = new Set<string>();
+
+async function startScriptedModel(): Promise<{ baseUrl: string; requests: Recorded[]; countFor: (prompt: string) => number; hold: (key: string) => void; release: (key: string) => void }> {
   const requests: Recorded[] = [];
   const seen = new Map<string, number>();
   const countFor = (prompt: string) => requests.filter((request) => request.prompt.includes(prompt)).length;
@@ -166,9 +169,10 @@ async function startScriptedModel(): Promise<{ baseUrl: string; requests: Record
         }
         if (prompt.includes("HARD")) return refuse(response, 400, "No endpoints found that support tool use. Try disabling tools.", "invalid_request_error");
         if (prompt.includes("SLOW")) return holdThenReply(response, model, SLOW_REPLY, SLOW_HOLD_MS, SLOW_OPENING);
-        if (prompt.includes("STOP")) return nth === 1 ? holdThenReply(response, model, "Never sent.", 120_000) : streamReply(response, model, STOP_REPLY);
+        // Held while the journey says so — whatever request lands first — and answered once it lets go.
+        if (prompt.includes("STOP")) return holding.has("STOP") ? holdThenReply(response, model, "Never sent.", 120_000) : streamReply(response, model, STOP_REPLY);
         if (prompt.includes("HOLD")) return holdThenReply(response, model, HOLD_REPLY, HOLD_MS);
-        if (prompt.includes("CUT")) return nth === 1 ? holdThenReply(response, model, "Never sent.", 90_000) : streamReply(response, model, CUT_REPLY);
+        if (prompt.includes("CUT")) return holding.has("CUT") ? holdThenReply(response, model, "Never sent.", 90_000) : streamReply(response, model, CUT_REPLY);
         return streamReply(response, model, DEFAULT_REPLY);
       });
       return;
@@ -186,7 +190,7 @@ async function startScriptedModel(): Promise<{ baseUrl: string; requests: Record
   });
   const address = server.address();
   if (!address || typeof address === "string") throw new Error("Scripted model did not bind a TCP port.");
-  return { baseUrl: `http://127.0.0.1:${address.port}/v1`, requests, countFor };
+  return { baseUrl: `http://127.0.0.1:${address.port}/v1`, requests, countFor, hold: (key) => holding.add(key), release: (key) => holding.delete(key) };
 }
 
 type App = Awaited<ReturnType<typeof coworker>>;
@@ -503,11 +507,11 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
 
   // --- (d) Stop is one click away; Stopped. with Retry; Retry re-runs the same message. -------------
   await waitForSettled(app);
+  scripted.hold("STOP");
   await type(app, STOP_PROMPT);
   await waitUntilRunning(app, STOP_PROMPT);
   await waitFor(app, `document.querySelector('[data-testid="coworker-send"]')?.getAttribute("data-role") === "stop"`, { timeoutMs: 30_000, label: "the round control became Stop" });
   await evalIn(app, `document.querySelector('[data-testid="coworker-send"][data-role="stop"]').click(); true`);
-  releaseHeld();
   const stoppedLine = await waitFor(app, `(() => {
     const line = document.querySelector('[data-testid="coworker-turn-line"][data-outcome="stopped-by-you"]');
     if (!line) return false;
@@ -520,6 +524,7 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
     };
   })()`, { timeoutMs: 60_000, label: "the Stopped. line" });
   expect(stoppedLine).toEqual({ text: "Stopped.", choices: ["retry"], header: "Stopped", rail: "Stopped.", working: false });
+  scripted.release("STOP");
   await evalIn(app, `document.querySelector('[data-testid="coworker-turn-line"][data-outcome="stopped-by-you"] [data-choice="retry"]').click(); true`);
   try {
     await waitForReply(app, STOP_REPLY, 120_000);
@@ -561,7 +566,6 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
   await evalIn(app, `[...document.querySelectorAll('[data-testid="coworker-next-row"]')][1].querySelector('[data-testid="coworker-next-remove"]').click(); true`);
   expect(await rows()).toEqual(["Next one"]);
   await evalIn(app, `document.querySelector('[data-testid="coworker-next-row"] [data-testid="coworker-next-send-now"]').click(); true`);
-  releaseHeld();
   await waitFor(app, `[...document.querySelectorAll('[data-message-role="user"]')].some((node) => (node.textContent ?? "").trim() === "Next one")`, { timeoutMs: 30_000, label: "Send now sent the waiting message" });
   await waitForReply(app, DEFAULT_REPLY, 60_000);
   expect(await rows()).toEqual([]);
@@ -598,6 +602,7 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
   // the window is away — the same interruption a quit of the app produces — and the record on disk is
   // what the returning window reads.
   await waitForSettled(app);
+  scripted.hold("CUT");
   await type(app, CUT_PROMPT);
   await waitUntilRunning(app, CUT_PROMPT);
   await type(app, "After the cut");
@@ -608,7 +613,6 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
     headers: { Authorization: `Bearer ${ownerToken}` },
   });
   expect(aborted.status).toBe(200);
-  releaseHeld();
   await waitFor(app, `Boolean(document.querySelector('[data-testid="coworker-discussion-view"]')) && [...document.querySelectorAll("h1")].some((heading) => heading.textContent?.trim() === "Nova")`, { timeoutMs: 120_000, label: "Nova discussion view after the reload" });
   const cutLine = await waitFor(app, `(() => {
     const line = document.querySelector('[data-testid="coworker-turn-line"][data-outcome="cut-off"]');
@@ -624,6 +628,7 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
   })()`, { timeoutMs: 120_000, label: "the cut-off line after the reload" });
   expect(cutLine).toEqual({ text: "Stopped when the app closed before Nova replied.", choices: ["continue", "discard"], header: "Stopped", rail: "Stopped when the app closed before Nova replied.", next: ["After the cut"], failed: 0 });
   const beforeContinue = await describeThread(app, serverUrl, ownerToken, workspaceId, threadId, scripted);
+  scripted.release("CUT");
   await evalIn(app, `document.querySelector('[data-testid="coworker-turn-line"][data-outcome="cut-off"] [data-choice="continue"]').click(); true`);
   try {
     await waitForReply(app, CUT_REPLY, 120_000);
