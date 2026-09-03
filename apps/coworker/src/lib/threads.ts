@@ -627,10 +627,14 @@ export function createCoworkerThreads(options: {
   }
 
   async function readActivity(): Promise<CoworkerActivity> {
-    const [allSessions, pending] = await Promise.all([
-      listAllThreads(),
-      listPendingInteractions().catch((): PendingInteractions => ({ permissions: [], questions: [] })),
-    ]);
+    const allSessions = await listAllThreads();
+    // A thread waiting on a person (a permission, a question) is busy until it is answered, so
+    // when nothing is running there is nothing pending to read; every coworker is read this
+    // way every few seconds, and the two extra reads per coworker added up to most of the idle traffic.
+    const anyRunning = allSessions.some((session) => session.status === "busy" || session.status === "retry");
+    const pending = anyRunning
+      ? await listPendingInteractions().catch((): PendingInteractions => ({ permissions: [], questions: [] }))
+      : { permissions: [], questions: [] };
     const assignments = assignmentThreads(allSessions, notAssignments);
     const recentOf = (excludeId: string | undefined): RecentWork[] =>
       assignments
