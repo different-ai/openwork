@@ -1,5 +1,6 @@
 /** Typed access to the Open Coworker main-process bridge. */
 import type { AutomationSchedule } from "@openwork/types/automations";
+import type { CoworkerDocument, CoworkerDocumentSummary, DocumentRevision, DocumentStatus } from "./documents";
 import type { Personality } from "./personalities";
 import type { WorkerEvent, WorkerLifespan, WorkerSummary } from "./workers";
 
@@ -277,6 +278,25 @@ export const coworkerBridge = {
       invoke<{ ok: boolean }>("coworkers.memory.index", { slug, file, summary }),
     /** Forget a memory: the file and its index line go together. */
     remove: (slug: string, file: string) => invoke<{ ok: boolean }>("coworkers.memory.delete", { slug, file }),
+  },
+  /**
+   * Documents: the coworker writes them through its own tools; the person
+   * reads, edits, organizes, exports, and restores them here. A save is a new
+   * revision by the person, which the coworker sees in its index next turn.
+   */
+  documents: {
+    list: (slug: string) => invoke<CoworkerDocumentSummary[]>("documents.list", { slug }),
+    read: (slug: string, id: string) => invoke<CoworkerDocument>("documents.read", { slug, id }),
+    save: (slug: string, id: string, patch: Partial<Pick<CoworkerDocument, "title" | "summary" | "highlights" | "body">>) =>
+      invoke<CoworkerDocument & { changed: boolean }>("documents.save", { slug, id, ...patch }),
+    setStatus: (slug: string, id: string, status: DocumentStatus) => invoke<CoworkerDocument>("documents.setStatus", { slug, id, status }),
+    revisions: (slug: string, id: string) => invoke<DocumentRevision[]>("documents.revisions", { slug, id }),
+    restore: (slug: string, id: string, revision: number) => invoke<CoworkerDocument & { changed: boolean }>("documents.restore", { slug, id, revision }),
+    /** Opens the native save dialog; `cancelled` when the person closed it. */
+    export: (slug: string, id: string) => invoke<{ ok: boolean; cancelled: boolean; path: string }>("documents.export", { slug, id }),
+    /** A reply ran long with no document behind it; the coworker's next turn carries a one-line reminder. */
+    recordLongReply: (slug: string, messageId: string, chars: number) =>
+      invoke<{ recorded: boolean }>("documents.recordLongReply", { slug, messageId, chars }),
   },
   localResponsibilities: {
     list: (slug: string) => invoke<LocalResponsibility[]>("localResponsibilities.list", { slug }),
