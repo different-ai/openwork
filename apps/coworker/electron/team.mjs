@@ -397,7 +397,8 @@ async function readLog(target) {
 
 /**
  * Fold an append-only log into its current entries: the first line with an id
- * is the entry; later lines with the same id carry a new state (and when).
+ * is the entry; later lines with the same id carry a new state (and when) and
+ * anything the answer added, such as the coworker created from a suggestion.
  */
 export function foldLog(entries) {
   const byId = new Map();
@@ -408,10 +409,9 @@ export function foldLog(entries) {
       byId.set(entry.id, { ...entry, stateAt: typeof entry.at === "number" ? entry.at : 0 });
       continue;
     }
-    if (typeof entry.state === "string") {
-      current.state = entry.state;
-      current.stateAt = typeof entry.at === "number" ? entry.at : current.stateAt;
-    }
+    const { id: _id, at, ...patch } = entry;
+    Object.assign(current, patch);
+    if (typeof entry.state === "string") current.stateAt = typeof at === "number" ? at : current.stateAt;
   }
   return [...byId.values()];
 }

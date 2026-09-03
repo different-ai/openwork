@@ -150,9 +150,10 @@ test("logs fold by id, latest state wins, and states survive a torn line", () =>
     { id: "a", at: 1, state: "offered", role: "support" },
     { id: "b", at: 2, state: "offered", role: "sales" },
     { id: "a", at: 3, state: "declined" },
-    { at: 4, state: "orphan" },
+    { id: "b", at: 4, state: "accepted", createdSlug: "pipeline" },
+    { at: 5, state: "orphan" },
   ]);
-  assert.deepEqual(folded.map((entry) => [entry.id, entry.state, entry.stateAt]), [["a", "declined", 3], ["b", "offered", 2]]);
+  assert.deepEqual(folded.map((entry) => [entry.id, entry.state, entry.stateAt, entry.createdSlug ?? "", entry.at]), [["a", "declined", 3, "", 1], ["b", "accepted", 4, "pipeline", 2]]);
 });
 
 test("suggestionGuard: an existing teammate first, then a recent decline, then the daily limit", () => {
