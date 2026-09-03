@@ -2,7 +2,7 @@
 import { expect, mock, test } from "bun:test";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import { QueryClientProvider } from "@tanstack/react-query";
-import { fileURLToPath } from "node:url";
+import { createRequire } from "node:module";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import type { SessionStatus } from "@opencode-ai/sdk/v2/client";
@@ -41,26 +41,36 @@ async function waitFor(predicate: () => boolean, label: string) {
 }
 
 test("a same-session snapshot swap preserves Lexical focus and draft text", async () => {
-  if (process.env.OPENWORK_COMPOSER_FOCUS_ISOLATED !== "1") {
-    const child = Bun.spawn([
-      process.execPath,
-      "test",
-      "--isolate",
-      fileURLToPath(import.meta.url),
-    ], {
-      env: { ...process.env, OPENWORK_COMPOSER_FOCUS_ISOLATED: "1" },
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [exitCode, stdout, stderr] = await Promise.all([
-      child.exited,
-      new Response(child.stdout).text(),
-      new Response(child.stderr).text(),
-    ]);
-    expect(exitCode, `${stdout}\n${stderr}`).toBe(0);
-    return;
+  const require = createRequire(import.meta.url);
+  // Bun's isolated test loader cycles Lexical's ESM entries; use their real CJS entries before the app imports the editor.
+  for (const moduleId of [
+    "lexical",
+    "@lexical/react/LexicalComposer.js",
+    "@lexical/react/LexicalPlainTextPlugin.js",
+    "@lexical/react/LexicalContentEditable.js",
+    "@lexical/react/LexicalErrorBoundary.js",
+    "@lexical/react/LexicalOnChangePlugin.js",
+    "@lexical/react/LexicalHistoryPlugin.js",
+    "@lexical/react/LexicalComposerContext.js",
+  ]) {
+    const moduleExports = require(moduleId);
+    mock.module(moduleId, () => moduleExports);
   }
-
+  const [
+    { createOpenworkServerClient },
+    { IDLE_CLOUD_MCP_SUBMISSION_GATE_STATE },
+    { useComposerStateStore },
+    { getReactQueryClient },
+    { LocalProvider },
+    { ShellConfigProvider },
+  ] = await Promise.all([
+    import("../src/app/lib/openwork-server"),
+    import("../src/react-app/domains/connections/cloud-mcp-submit-readiness"),
+    import("../src/react-app/domains/session/surface/composer-state-store"),
+    import("../src/react-app/infra/query-client"),
+    import("../src/react-app/kernel/local-provider"),
+    import("../src/react-app/shell/shell-config"),
+  ]);
   const registeredDom = typeof globalThis.window === "undefined" || typeof globalThis.document === "undefined";
   if (registeredDom) GlobalRegistrator.register({ url: "http://localhost/" });
   Object.defineProperty(globalThis, "IS_REACT_ACT_ENVIRONMENT", {
@@ -80,25 +90,8 @@ test("a same-session snapshot swap preserves Lexical focus and draft text", asyn
   mock.module("@/app/lib/opencode-session-native", () => ({
     composeNativeSessionSnapshot: async () => fetchedSnapshot,
   }));
-  const [
-    { createOpenworkServerClient },
-    { IDLE_CLOUD_MCP_SUBMISSION_GATE_STATE },
-    { LocalProvider },
-    { useComposerStateStore },
-    { SessionSurface },
-    { snapshotKey, transcriptKey },
-    { getReactQueryClient },
-    { ShellConfigProvider },
-  ] = await Promise.all([
-    import("../src/app/lib/openwork-server"),
-    import("../src/react-app/domains/connections/cloud-mcp-submit-readiness"),
-    import("../src/react-app/kernel/local-provider"),
-    import("../src/react-app/domains/session/surface/composer-state-store"),
-    import("../src/react-app/domains/session/surface/session-surface"),
-    import("../src/react-app/domains/session/sync/session-sync"),
-    import("../src/react-app/infra/query-client"),
-    import("../src/react-app/shell/shell-config"),
-  ]);
+  const { SessionSurface } = await import("../src/react-app/domains/session/surface/session-surface");
+  const { snapshotKey, transcriptKey } = await import("../src/react-app/domains/session/sync/session-sync");
   const queryClient = getReactQueryClient();
   queryClient.clear();
   queryClient.setQueryData(snapshotKey(workspaceId, sessionId), createSnapshot({ type: "busy" }, 1));
