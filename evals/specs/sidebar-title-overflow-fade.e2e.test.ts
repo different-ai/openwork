@@ -43,12 +43,30 @@ async function titleState(probe: Probe, title: string): Promise<TitleState> {
 }
 
 test("the sidebar title fade follows only the edges with hidden text", async ({ world, user, probe, step }) => {
+  const workspaceName = world.workspacePath.split("/").at(-1) ?? world.workspacePath;
   const resting = await probe.eventually(() => titleState(probe, world.longTitle), {
     within: 60_000,
     label: "overflowing sidebar title",
     until: (state) => state.scrollWidth > state.clientWidth && state.hiddenEdges === "end",
   });
   expect(resting.maskImage).not.toBe("none");
+
+  await step("a fitting workspace row stays fully visible on hover", async () => {
+    const fitting = await probe.eventually(() => titleState(probe, workspaceName), {
+      within: 30_000,
+      label: "fitting workspace title",
+      until: (state) => state.scrollWidth <= state.clientWidth && state.hiddenEdges === "none",
+    });
+    expect(fitting.maskImage).toBe("none");
+    await user.hover({ text: workspaceName });
+    const hovered = await probe.eventually(() => titleState(probe, workspaceName), {
+      within: 10_000,
+      label: "fitting workspace title after hover",
+      until: (state) => state.hiddenEdges === "none",
+    });
+    expect(hovered.scrollWidth).toBeLessThanOrEqual(hovered.clientWidth);
+    expect(hovered.maskImage).toBe("none");
+  });
 
   await step("hover reveals the clipped ending without fading it", async () => {
     await user.hover({ text: world.longTitle });
@@ -87,6 +105,9 @@ test("the sidebar title fade follows only the edges with hidden text", async ({ 
     });
     expect(fitting.clientWidth).toBeGreaterThanOrEqual(fitting.scrollWidth);
     expect(fitting.maskImage).toBe("none");
+    const workspaceAfterResize = await titleState(probe, workspaceName);
+    expect(workspaceAfterResize.hiddenEdges).toBe("none");
+    expect(workspaceAfterResize.maskImage).toBe("none");
     await user.screenshot();
   });
 });

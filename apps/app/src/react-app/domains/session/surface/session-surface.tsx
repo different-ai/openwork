@@ -407,107 +407,6 @@ function createSessionLifecycleEvalMessages(sessionId: string): UIMessage[] {
   ];
 }
 
-const TOOL_DETAILS_EVAL_COMMAND =
-  "pnpm world up dev-headless --detach -- --replace --keep-tokens && OPENWORK_EVAL_E2E_TESTS=1 pnpm vitest run evals/specs/chat-loading-shimmer.e2e.test.ts --reporter=verbose";
-const TOOL_DETAILS_EVAL_PATTERN =
-  "seed_unfinished_tools|git status --short --branch|createSessionLifecycleEvalMessages|useControlAction";
-const TOOL_DETAILS_EVAL_ERROR =
-  "Process exited with code 2\nerror: pathspec 'release/2026.09' did not match any file(s) known to git\nhint: use 'git fetch origin release/2026.09' first";
-
-function createToolDetailsEvalMessages(sessionId: string): UIMessage[] {
-  const now = Date.now();
-  return [
-    {
-      id: `${sessionId}:eval-tool-details-user`,
-      role: "user",
-      parts: [{ type: "text", text: "Run the headless proof and find the seed hook." }],
-      metadata: { opencode: { created: now } },
-    },
-    {
-      id: `${sessionId}:eval-tool-details-assistant`,
-      role: "assistant",
-      parts: [
-        {
-          type: "dynamic-tool",
-          toolName: "bash",
-          toolCallId: "eval-tool-details-bash",
-          state: "output-available",
-          input: { command: TOOL_DETAILS_EVAL_COMMAND, description: "Run the headless proof" },
-          output: "ok",
-        },
-        {
-          type: "dynamic-tool",
-          toolName: "grep",
-          toolCallId: "eval-tool-details-grep",
-          state: "output-available",
-          input: { pattern: TOOL_DETAILS_EVAL_PATTERN, path: "apps/app/src", include: "*.tsx" },
-          output: "2 matches",
-        },
-        {
-          type: "dynamic-tool",
-          toolName: "bash",
-          toolCallId: "eval-tool-details-failed",
-          state: "output-error",
-          input: { command: "git checkout release/2026.09", description: "Switch to the release branch" },
-          errorText: TOOL_DETAILS_EVAL_ERROR,
-        },
-      ],
-      metadata: { opencode: { created: now + 1, completed: now + 4_000 } },
-    },
-  ];
-}
-
-// Long enough (well past the one-line clip and the box's max height) that
-// seeing its last line proves the whole running command is readable.
-const TOOL_DETAILS_EVAL_RUNNING_COMMAND = [
-  "cat <<'EOF' > /tmp/openwork-eval/release-check.sh",
-  "#!/usr/bin/env bash",
-  "set -euo pipefail",
-  "export OPENWORK_EVAL_E2E_TESTS=1",
-  "pnpm world up dev-headless --detach -- --replace --keep-tokens",
-  "for spec in \\",
-  "  chat-loading-shimmer \\",
-  "  chat-tool-details-expand \\",
-  "  chat-thought-chronology \\",
-  "  live-tool-visible-after-session-switch \\",
-  "  session-completion-reconciliation \\",
-  "  active-session-workspace-storm; do",
-  "  pnpm vitest run \"evals/specs/$spec.e2e.test.ts\" --reporter=verbose",
-  "done",
-  "pnpm --filter @openwork/app typecheck",
-  "pnpm --filter @openwork/app test",
-  "pnpm evals:typecheck",
-  "pnpm world down dev-headless",
-  "EOF",
-  "bash /tmp/openwork-eval/release-check.sh --reporter=verbose",
-].join("\n");
-
-function createToolDetailsRunningCommandEvalMessages(sessionId: string): UIMessage[] {
-  const now = Date.now();
-  return [
-    {
-      id: `${sessionId}:eval-tool-details-running-user`,
-      role: "user",
-      parts: [{ type: "text", text: "Write and run the release check." }],
-      metadata: { opencode: { created: now } },
-    },
-    {
-      id: `${sessionId}:eval-tool-details-running-assistant`,
-      role: "assistant",
-      parts: [
-        {
-          type: "dynamic-tool",
-          toolName: "bash",
-          toolCallId: "eval-tool-details-running-bash",
-          state: "input-available",
-          input: { command: TOOL_DETAILS_EVAL_RUNNING_COMMAND, description: "Run the release check" },
-        },
-      ],
-      metadata: { opencode: { created: now + 1 } },
-    },
-  ];
-}
-
 function createSubagentActivityEvalMessages(sessionId: string, childSessionId?: string): UIMessage[] {
   const now = Date.now();
   return [
@@ -1477,39 +1376,6 @@ export function SessionSurface(props: SessionSurfaceProps) {
     };
   }, [props.sessionId]);
   useControlAction(props.isControlTarget ? seedConnectorToolCallControlAction : null);
-  const seedToolDetailsControlAction = useMemo<OpenworkControlAction | null>(() => {
-    if (!import.meta.env.DEV) return null;
-
-    return {
-      id: "eval.tool_details.seed",
-      label: "Seed a settled tool group with long details",
-      description: "Dev-only eval hook that renders a long command, a long search pattern, and a multi-line failure in one aggregate group.",
-      sideEffect: "mutation",
-      disabled: !props.sessionId,
-      execute: () => {
-        setEvalMarkdownMessages(createToolDetailsEvalMessages(props.sessionId));
-        return { ok: true };
-      },
-    };
-  }, [props.sessionId]);
-  useControlAction(props.isControlTarget ? seedToolDetailsControlAction : null);
-  const seedRunningCommandControlAction = useMemo<OpenworkControlAction | null>(() => {
-    if (!import.meta.env.DEV) return null;
-
-    return {
-      id: "eval.tool_details.seed_running_command",
-      label: "Seed a running long command",
-      description: "Dev-only eval hook that renders one in-flight multi-line command in an active session.",
-      sideEffect: "mutation",
-      disabled: !props.sessionId,
-      execute: () => {
-        setEvalMarkdownMessages(createToolDetailsRunningCommandEvalMessages(props.sessionId));
-        useSessionActivityStore.getState().setRunStatus(props.workspaceId, props.sessionId, { type: "busy" });
-        return { ok: true };
-      },
-    };
-  }, [props.sessionId, props.workspaceId]);
-  useControlAction(props.isControlTarget ? seedRunningCommandControlAction : null);
   const seedSessionLifecycleControlAction = useMemo<OpenworkControlAction | null>(() => {
     if (!import.meta.env.DEV) return null;
 
@@ -1552,35 +1418,6 @@ export function SessionSurface(props: SessionSurfaceProps) {
     };
   }, [props.sessionId, props.workspaceId]);
   useControlAction(props.isControlTarget ? seedSessionLifecycleControlAction : null);
-  const refreshCurrentSessionControlAction = useMemo<OpenworkControlAction | null>(() => {
-    if (!import.meta.env.DEV) return null;
-
-    return {
-      id: "eval.composer_focus.refresh_current_session",
-      label: "Refresh current session while composing",
-      description: "Dev-only eval hook that exercises a same-session snapshot refresh without changing tasks.",
-      sideEffect: "none",
-      disabled: !props.sessionId,
-      execute: async () => {
-        const editor = composerShellRef.current?.querySelector<HTMLElement>(
-          '[contenteditable="true"][data-lexical-editor="true"]',
-        );
-        const wasFocused = editor === document.activeElement;
-        const result = await snapshotQuery.refetch();
-        await new Promise<void>((resolve) => {
-          window.requestAnimationFrame(() => window.requestAnimationFrame(() => resolve()));
-        });
-
-        return {
-          ok: result.status === "success",
-          wasFocused,
-          remainsFocused: editor === document.activeElement,
-          editable: editor?.getAttribute("contenteditable") === "true",
-        };
-      },
-    };
-  }, [props.sessionId, snapshotQuery.refetch]);
-  useControlAction(props.isControlTarget ? refreshCurrentSessionControlAction : null);
   const seedSubagentActivityControlAction = useMemo<OpenworkControlAction | null>(() => {
     if (!import.meta.env.DEV) return null;
 

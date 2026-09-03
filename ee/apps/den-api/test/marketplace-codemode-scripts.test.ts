@@ -98,6 +98,7 @@ afterEach(async () => {
 
 async function seedScript(input: {
   code: string
+  objectType?: "script" | "workflow"
   payload: Record<string, unknown>
   title: string
 }): Promise<SeededScript> {
@@ -161,7 +162,7 @@ async function seedScript(input: {
   }
   const plugin = await pluginStore.createPluginBundle({
     components: [{
-      type: "workflow",
+      type: input.objectType ?? "workflow",
       value: {
         metadata: { title: input.title, description: `${input.title} description` },
         normalizedPayloadJson: input.payload,
@@ -423,7 +424,11 @@ describe("saved marketplace Workflows", () => {
     const seeded = await seedScript({
       title: "Directly shared Workflow",
       code: "return { shared: true }",
-      payload: { language: "codemode-js", requiredCapabilities: [] },
+      payload: {
+        language: "codemode-js",
+        exampleInput: { token: "viewer-authoring-secret" },
+        requiredCapabilities: [],
+      },
     })
     const viewerUserId = createDenTypeId("user")
     const viewerMemberId = createDenTypeId("member")
@@ -492,11 +497,19 @@ describe("saved marketplace Workflows", () => {
       configObjectId: seeded.configObjectId,
     })
     expect(detail.workflow.plugin).toBeNull()
+    expect(detail.script.currentVersion.code).toBeNull()
+    expect(detail.script.currentVersion.exampleInput).toBeNull()
+    expect(JSON.stringify(detail)).not.toContain("viewer-authoring-secret")
+    expect(JSON.stringify(detail)).not.toContain("return { shared: true }")
     expect(JSON.stringify(detail.workflow)).not.toContain("Directly shared Workflow Plugin")
 
     const library = await workflowLibrary.listWorkflowLibraryItems({ context })
     expect(library).toHaveLength(1)
     expect(library[0]?.plugin).toBeNull()
+    expect(library[0]).not.toHaveProperty("code")
+    expect(library[0]).not.toHaveProperty("data")
+    expect(library[0]).not.toHaveProperty("html")
+    expect(library[0]).not.toHaveProperty("compiledHtml")
   })
 
   test("executes a createPluginBundle Workflow with typed input binding", async () => {
@@ -537,11 +550,13 @@ describe("saved marketplace Workflows", () => {
     const seeded = await seedScript({
       title: "Legacy Script",
       code: "return { migrated: input.value }",
+      objectType: "script",
       payload: { language: "codemode-js", requiredCapabilities: [] },
     })
-    await db.update(ConfigObjectTable)
-      .set({ objectType: "script" })
+    const stored = await db.select({ objectType: ConfigObjectTable.objectType })
+      .from(ConfigObjectTable)
       .where(eq(ConfigObjectTable.id, seeded.configObjectId))
+    expect(stored[0]?.objectType).toBe("script")
 
     const matches = await marketplaceCapabilities.searchMarketplaceCapabilities({
       enabled: true,

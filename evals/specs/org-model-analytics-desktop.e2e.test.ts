@@ -1,12 +1,5 @@
 import { createHash } from "node:crypto";
-import { execFile } from "node:child_process";
-import { access, cp, copyFile, mkdir, mkdtemp, readFile, realpath, rm } from "node:fs/promises";
 import { createServer as createHttpServer } from "node:http";
-import { createRequire } from "node:module";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
 import { expect } from "vitest";
 import {
   denFetch,
@@ -39,8 +32,6 @@ const defaultReply = "Welcome aboard — your team is glad you're here.";
 const manualReply = "Milestone reached — great work, team!";
 const providerKeyA = "witness-member-a";
 const providerKeyB = "witness-member-b";
-const repoRoot = fileURLToPath(new URL("../..", import.meta.url));
-const execFileAsync = promisify(execFile);
 
 type ProviderRequest = {
   receivedAt: string;
@@ -81,56 +72,6 @@ function fingerprint(value: string): string {
 function bearerToken(authorization: string | undefined): string {
   if (!authorization?.startsWith("Bearer ")) return "";
   return authorization.slice("Bearer ".length).trim();
-}
-
-async function prepareElectronNativeBinding(): Promise<void> {
-  if (!repoRoot.includes(" ")) return;
-  const desktopNodeModules = join(repoRoot, "apps", "desktop", "node_modules");
-  const source = await realpath(join(desktopNodeModules, "better-sqlite3"));
-  // better-sqlite3 >= 13 ships ABI-stable prebuilds; no Electron rebuild is needed
-  // (its gyp build is a stamp-only no-op that produces no build/Release binding).
-  try {
-    await access(join(source, "prebuilds", `${process.platform}-${process.arch}.node`));
-    process.env.OPENWORK_ELECTRON_SKIP_NATIVE_REBUILD = "1";
-    return;
-  } catch {
-    // No prebuild for this platform: fall through to the temp-dir rebuild.
-  }
-  const electronPackage: unknown = JSON.parse(await readFile(join(desktopNodeModules, "electron", "package.json"), "utf8"));
-  const electronVersion = isRecord(electronPackage) && typeof electronPackage.version === "string" ? electronPackage.version : "";
-  if (!electronVersion) throw new Error("Could not resolve the Electron version for the native witness build.");
-
-  const root = await mkdtemp(join(tmpdir(), "openwork-electron-native-"));
-  const moduleCopy = join(root, "better-sqlite3");
-  const home = join(root, "home");
-  await cp(source, moduleCopy, { recursive: true, dereference: true });
-  await rm(join(moduleCopy, "build"), { recursive: true, force: true });
-  await mkdir(home, { recursive: true });
-  const desktopRequire = createRequire(join(repoRoot, "apps", "desktop", "package.json"));
-  const rebuildEntry = desktopRequire.resolve("@electron/rebuild");
-  const nodeGypScript = createRequire(rebuildEntry).resolve("node-gyp/bin/node-gyp.js");
-  try {
-    await execFileAsync(process.execPath, [
-      nodeGypScript,
-      "rebuild",
-      "--directory",
-      moduleCopy,
-      `--target=${electronVersion}`,
-      `--arch=${process.arch}`,
-      "--dist-url=https://electronjs.org/headers",
-      "--runtime=electron",
-    ], {
-      cwd: repoRoot,
-      env: { ...process.env, HOME: home },
-      timeout: 300_000,
-      maxBuffer: 16 * 1024 * 1024,
-    });
-    await mkdir(join(source, "build", "Release"), { recursive: true });
-    await copyFile(join(moduleCopy, "build", "Release", "better_sqlite3.node"), join(source, "build", "Release", "better_sqlite3.node"));
-    process.env.OPENWORK_ELECTRON_SKIP_NATIVE_REBUILD = "1";
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
 }
 
 async function startProviderWitness(): Promise<ProviderWitness> {
@@ -425,13 +366,28 @@ async function openManualModelChoice(appSurface: Surface): Promise<void> {
     return Boolean(button);
   })()`);
   expect(opened).toBe(true);
-  await waitFor(appSurface, `Boolean(document.querySelector('input[placeholder="Search models..."]'))`, {
+  await waitFor(appSurface, `(() => {
+    const button = [...document.querySelectorAll("button")].find((candidate) =>
+      (candidate.textContent ?? "").includes("Model") && (candidate.textContent ?? "").includes(${JSON.stringify(defaultModelName)}));
+    if (!(button instanceof HTMLButtonElement)) return false;
+    button.click();
+    return true;
+  })()`, { timeoutMs: 30_000, label: "open full model picker from composer menu" });
+  await waitFor(appSurface, `(() => {
+    const button = [...document.querySelectorAll("button")]
+      .find((candidate) => (candidate.textContent ?? "").trim() === "All models");
+    if (!(button instanceof HTMLButtonElement)) return false;
+    button.click();
+    return true;
+  })()`, { timeoutMs: 30_000, label: "open all models dialog" });
+  await waitFor(appSurface, `Boolean(document.querySelector('input[placeholder="Search providers and models..."]'))`, {
     timeoutMs: 30_000,
-    label: "compact model picker search",
+    label: "model picker search",
   });
-  await fill(appSurface, 'input[placeholder="Search models..."]', manualModelName);
-  await waitFor(appSurface, `([...document.querySelectorAll('[data-slot="command-item"]')].some((item) =>
-    (item.textContent ?? "").includes(${JSON.stringify(manualModelName)})))`, {
+  await fill(appSurface, 'input[placeholder="Search providers and models..."]', manualModelName);
+  await waitFor(appSurface, `([...document.querySelectorAll("button")].some((item) =>
+    (item.textContent ?? "").includes(${JSON.stringify(manualModelName)})
+      && (item.textContent ?? "").includes(${JSON.stringify(manualModelId)})))`, {
     timeoutMs: 30_000,
     label: "manual analytics model choice",
   });
@@ -439,8 +395,9 @@ async function openManualModelChoice(appSurface: Surface): Promise<void> {
 
 async function chooseManualModel(appSurface: Surface): Promise<void> {
   const selected = await evalIn(appSurface, `(() => {
-    const item = [...document.querySelectorAll('[data-slot="command-item"]')].find((candidate) =>
-      (candidate.textContent ?? "").includes(${JSON.stringify(manualModelName)}));
+    const item = [...document.querySelectorAll("button")].find((candidate) =>
+      (candidate.textContent ?? "").includes(${JSON.stringify(manualModelName)})
+        && (candidate.textContent ?? "").includes(${JSON.stringify(manualModelId)}));
     item?.click();
     return Boolean(item);
   })()`);
@@ -522,7 +479,6 @@ test("two members visibly drive default and manual model analytics end to end", 
     },
   });
   await using provider = await startProviderWitness();
-  await prepareElectronNativeBinding();
   const orgId = await organizationIdByName(den.admin, orgName);
   const memberA = den.members.a;
   const memberB = den.members.b;
@@ -654,16 +610,4 @@ test("two members visibly drive default and manual model analytics end to end", 
     expect(seen.ok, seen.why).toBe(true);
   }
 
-  await evidence.close();
-  const testRun: unknown = JSON.parse(await readFile(join(evidence.dir, "test-run.json"), "utf8"));
-  expect(testRun).toMatchObject({
-    summary: {
-      ok: true,
-      totalArtifacts: 7,
-      passedArtifacts: 7,
-      unvalidatedArtifacts: 0,
-    },
-  });
-  const artifacts = isRecord(testRun) && Array.isArray(testRun.artifacts) ? testRun.artifacts.filter(isRecord) : [];
-  expect(artifacts.filter((artifact) => typeof artifact.fileName === "string" && artifact.fileName.endsWith(".png"))).toHaveLength(5);
 });

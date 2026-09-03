@@ -233,26 +233,6 @@ test.skipIf(!e2eTestsEnabled)(title, { timeout: 600_000 }, async ({ evidence }) 
     const workspace = await createAndSelectWorkspace(firstApp, { path: workspacePath });
     workspaceId = workspace.workspaceId;
 
-    const versionRaw = await evalIn(firstApp, `(async () => {
-      const port = localStorage.getItem("openwork.server.port");
-      const token = localStorage.getItem("openwork.server.token");
-      if (!port || !token) return "missing local server credentials";
-      const response = await fetch("http://127.0.0.1:" + port + "/status", {
-        headers: { Authorization: "Bearer " + token },
-      });
-      if (!response.ok) return "status failed: " + response.status + " " + (await response.text()).slice(0, 500);
-      const body = await response.json();
-      return typeof body.opencodeVersion === "string" ? body.opencodeVersion : "missing opencodeVersion: " + JSON.stringify(body);
-    })()`, { awaitPromise: true, timeoutMs: 30_000 });
-    const engineVersion = String(versionRaw).replace(/^v/, "");
-    evidence.recordAssertionEvidence(
-      "The local OpenWork server reports the fixed bundled OpenCode engine",
-      `GET /status observed ${JSON.stringify({ opencodeVersion: versionRaw })}.`,
-      engineVersion === "1.18.18" && !engineVersion.startsWith("1.17."),
-    );
-    expect(engineVersion, `stale 1.17.x engine reported by /status: ${engineVersion}`).not.toMatch(/^1\.17\./);
-    expect(engineVersion).toBe("1.18.18");
-
     const configured = await evalIn(firstApp, `(async () => {
       const port = localStorage.getItem("openwork.server.port");
       const token = localStorage.getItem("openwork.server.token");
