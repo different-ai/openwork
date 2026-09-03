@@ -15,6 +15,8 @@ export type ParsedUsage = {
 
 export type UsageParser = {
   push(chunkText: string): void
+  // Binary framings (AWS event-stream) must see the raw bytes.
+  pushBytes?(chunk: Uint8Array): void
   result(): ParsedUsage
 }
 

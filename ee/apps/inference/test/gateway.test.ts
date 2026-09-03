@@ -3,8 +3,11 @@ import { test } from "node:test"
 import { Hono } from "hono"
 import type { GatewayCredential, GatewayProvider } from "../src/gateway.js"
 import type { InferenceReporter } from "../src/inference-reporting.js"
+import type { MintGcpAccessToken } from "../src/credentials/gcp-service-account.js"
+import type { RefreshGoogleOauthToken } from "../src/credentials/google-oauth-refresh.js"
 import { createProviderCatalog } from "../src/provider-catalog.js"
 import type { InferenceRequestLogRow } from "../src/request-log.js"
+import { bedrockStreamFrames } from "./helpers/event-stream.js"
 
 process.env.OPENWORK_DEV_MODE = "1"
 process.env.DATABASE_URL = "mysql://root:password@127.0.0.1:3306/openwork_den"
@@ -43,6 +46,8 @@ type TestServerOptions = {
   access?: boolean
   fetch?: typeof fetch
   now?: Date
+  refreshGoogleOauthToken?: RefreshGoogleOauthToken
+  mintGcpAccessToken?: MintGcpAccessToken
 }
 
 function provider(overrides: Partial<GatewayProvider> = {}): GatewayProvider {
@@ -54,6 +59,8 @@ function provider(overrides: Partial<GatewayProvider> = {}): GatewayProvider {
     settings: {},
     credential_mode: "org",
     status: "active",
+    oauth_client_id: null,
+    oauth_client_secret: null,
     ...overrides,
   }
 }
@@ -160,6 +167,12 @@ function createTestServer(options: TestServerOptions = {}) {
     gateway: {
       catalog,
       now: options.now ? () => options.now ?? new Date() : undefined,
+      refreshGoogleOauthToken: options.refreshGoogleOauthToken ?? (async () => {
+        throw new Error("unexpected oauth refresh")
+      }),
+      mintGcpAccessToken: options.mintGcpAccessToken ?? (async () => {
+        throw new Error("unexpected gcp token mint")
+      }),
       async loadInferenceProvider(input) {
         if (!providerRow || input.organizationId !== providerRow.organization_id || input.inferenceProviderId !== providerRow.id) return null
         return providerRow
@@ -563,26 +576,212 @@ test("org mode without a credential → 502 provider_credential_missing", async 
   assert.equal(row.error_code, "provider_credential_missing")
 })
 
-test("aws_keys / gcp_service_account credentials and bedrock providers → 501", async () => {
-  const gcp = createTestServer({
-    provider: { provider_id: "google-vertex", settings: { project: "p", location: "us-east1" } },
-    credential: { kind: "gcp_service_account", secret: JSON.stringify({ client_email: "a@b", private_key: "k", token_uri: "https://oauth2.googleapis.com/token" }) },
+test("member oauth_google near expiry is refreshed under the lock and the fresh bearer is forwarded", async () => {
+  const now = new Date("2026-09-03T12:00:00Z")
+  const refreshCalls: Array<Parameters<RefreshGoogleOauthToken>[0]> = []
+  const { app, upstreamRequests, logRows } = createTestServer({
+    provider: { credential_mode: "member", provider_id: "google-vertex", provider_config: { npm: "@ai-sdk/google-vertex" }, settings: { project: "p", location: "us-central1" }, oauth_client_id: "cid", oauth_client_secret: "csecret" },
+    credential: { kind: "oauth_google", secret: JSON.stringify({ accessToken: "old", refreshToken: "rt" }), expires_at: new Date(now.getTime() + 30_000) },
+    now,
+    async refreshGoogleOauthToken(input) {
+      refreshCalls.push(input)
+      return {
+        kind: "refreshed",
+        credential: { ...input.credential, secret: JSON.stringify({ accessToken: "fresh", refreshToken: "rt" }), expires_at: new Date(now.getTime() + 3600_000) },
+      }
+    },
   })
-  const gcpResponse = await gcp.app.fetch(gatewayRequest({ path: "/models/gemini:generateContent", body: {} }))
-  assert.equal(gcpResponse.status, 501)
-  assert.equal((await readError(gcpResponse)).code, "unsupported_credential_kind")
-  assert.equal(gcp.upstreamRequests.length, 0)
-  const gcpRow = await waitForRows(gcp.logRows)
-  assert.equal(gcpRow.error_code, "unsupported_credential_kind")
+  const response = await app.fetch(gatewayRequest({ path: "/v1beta/models/gemini-2.5-pro:generateContent", body: { contents: [] } }))
+  assert.equal(response.status, 200)
+  assert.equal(upstreamRequests[0]?.headers.get("authorization"), "Bearer fresh")
+  assert.equal(refreshCalls.length, 1)
+  assert.equal(refreshCalls[0]?.provider.oauth_client_id, "cid")
+  assert.equal(refreshCalls[0]?.token.refreshToken, "rt")
+  const row = await waitForRows(logRows)
+  assert.equal(row.outcome, "ok")
+  assert.equal(row.inference_provider_credential_id, credentialId)
+})
 
-  const bedrock = createTestServer({
-    provider: { provider_id: "amazon-bedrock", provider_config: { npm: "@ai-sdk/amazon-bedrock", api: "https://bedrock-runtime.us-east-1.amazonaws.com" } },
+test("member oauth_google with plenty of time left is not refreshed", async () => {
+  const { app, upstreamRequests } = createTestServer({
+    provider: { credential_mode: "member" },
+    credential: { kind: "oauth_google", secret: JSON.stringify({ accessToken: "current", refreshToken: "rt" }), expires_at: new Date(Date.now() + 10 * 60_000) },
+  })
+  const response = await app.fetch(gatewayRequest({ path: "/chat/completions", body: { model: "x" } }))
+  assert.equal(response.status, 200)
+  assert.equal(upstreamRequests[0]?.headers.get("authorization"), "Bearer current")
+})
+
+test("member oauth_google refresh invalid_grant → 401 openwork_auth_required; stale outcome forwards the old token", async () => {
+  const now = new Date("2026-09-03T12:00:00Z")
+  const failed = createTestServer({
+    provider: { credential_mode: "member" },
+    credential: { kind: "oauth_google", secret: JSON.stringify({ accessToken: "old", refreshToken: "rt" }), expires_at: new Date(now.getTime() - 1000) },
+    now,
+    refreshGoogleOauthToken: async () => ({ kind: "auth_required" }),
+  })
+  const response = await failed.app.fetch(gatewayRequest({ path: "/chat/completions", body: { model: "x" } }))
+  assert.equal(response.status, 401)
+  assert.equal(response.headers.get("x-openwork-auth-required"), "1")
+  const error = await readError(response)
+  assert.equal(error.code, "openwork_auth_required")
+  assert.match(String(error.message), /refresh_failed/)
+  assert.equal(failed.upstreamRequests.length, 0)
+  const row = await waitForRows(failed.logRows)
+  assert.equal(row.error_code, "member_auth_required")
+
+  const stale = createTestServer({
+    provider: { credential_mode: "member" },
+    credential: { kind: "oauth_google", secret: JSON.stringify({ accessToken: "old", refreshToken: "rt" }), expires_at: new Date(now.getTime() - 1000) },
+    now,
+    refreshGoogleOauthToken: async () => ({ kind: "stale" }),
+    fetch: async () => Response.json({ error: "expired" }, { status: 401 }),
+  })
+  const staleResponse = await stale.app.fetch(gatewayRequest({ path: "/chat/completions", body: { model: "x" } }))
+  assert.equal(staleResponse.status, 401)
+  assert.equal(staleResponse.headers.get("x-openwork-auth-required"), null)
+  assert.equal(stale.upstreamRequests[0]?.headers.get("authorization"), "Bearer old")
+})
+
+test("org-subject oauth expired → 502 provider_credential_expired, no refresh attempted", async () => {
+  const now = new Date("2026-09-03T12:00:00Z")
+  const { app, upstreamRequests, logRows } = createTestServer({
+    credential: { kind: "oauth_google", secret: JSON.stringify({ accessToken: "old", refreshToken: "rt" }), expires_at: new Date(now.getTime() - 1000) },
+    now,
+  })
+  const response = await app.fetch(gatewayRequest({ path: "/chat/completions", body: { model: "x" } }))
+  assert.equal(response.status, 502)
+  assert.equal((await readError(response)).code, "provider_credential_expired")
+  assert.equal(upstreamRequests.length, 0)
+  const row = await waitForRows(logRows)
+  assert.equal(row.error_code, "provider_credential_expired")
+})
+
+test("org gcp_service_account on vertex mints a bearer from the service account", async () => {
+  const mintCalls: string[] = []
+  const { app, upstreamRequests, logRows } = createTestServer({
+    provider: { provider_id: "google-vertex", provider_config: { npm: "@ai-sdk/google-vertex" }, settings: { project: "p", location: "us-east1" } },
+    credential: { kind: "gcp_service_account", secret: JSON.stringify({ client_email: "a@b", private_key: "k", token_uri: "https://oauth2.googleapis.com/token" }) },
+    async mintGcpAccessToken(input) {
+      mintCalls.push(`${input.credentialId}:${input.serviceAccount.client_email}`)
+      return { kind: "token", accessToken: "ya29.sa" }
+    },
+  })
+  const response = await app.fetch(gatewayRequest({ path: "/models/gemini:generateContent", body: { contents: [] } }))
+  assert.equal(response.status, 200)
+  assert.deepEqual(mintCalls, [`${credentialId}:a@b`])
+  assert.equal(upstreamRequests[0]?.url, "https://us-east1-aiplatform.googleapis.com/v1/projects/p/locations/us-east1/publishers/google/models/gemini:generateContent")
+  assert.equal(upstreamRequests[0]?.headers.get("authorization"), "Bearer ya29.sa")
+  const row = await waitForRows(logRows)
+  assert.equal(row.outcome, "ok")
+
+  const broken = createTestServer({
+    provider: { provider_id: "google-vertex", provider_config: { npm: "@ai-sdk/google-vertex" }, settings: { project: "p", location: "us-east1" } },
+    credential: { kind: "gcp_service_account", secret: JSON.stringify({ client_email: "a@b", private_key: "k", token_uri: "https://oauth2.googleapis.com/token" }) },
+    mintGcpAccessToken: async () => ({ kind: "error", message: "token endpoint returned 500" }),
+  })
+  const brokenResponse = await broken.app.fetch(gatewayRequest({ path: "/models/gemini:generateContent", body: { contents: [] } }))
+  assert.equal(brokenResponse.status, 502)
+  assert.equal((await readError(brokenResponse)).code, "provider_token_mint_failed")
+  assert.equal(broken.upstreamRequests.length, 0)
+})
+
+test("bedrock: aws_keys request is SigV4-signed after the body rewrite, host from the credential region, stream usage from event-stream metadata", async () => {
+  const now = new Date("2026-09-03T12:00:00Z")
+  const { app, upstreamRequests, logRows } = createTestServer({
+    provider: { provider_id: "amazon-bedrock", provider_config: { npm: "@ai-sdk/amazon-bedrock" }, settings: { region: "us-east-1" } },
+    credential: { kind: "aws_keys", secret: JSON.stringify({ accessKeyId: "AKIDEXAMPLE", secretAccessKey: "secret", sessionToken: "tok", region: "eu-west-1" }) },
+    now,
+    fetch: async () => new Response(new ReadableStream<Uint8Array>({
+      start(controller) {
+        for (const frame of bedrockStreamFrames) controller.enqueue(frame)
+        controller.close()
+      },
+    }), { status: 200, headers: { "content-type": "application/vnd.amazon.eventstream", "x-amzn-requestid": "aws-1" } }),
+  })
+  const response = await app.fetch(gatewayRequest({
+    path: "/model/anthropic.claude-3-5-sonnet-20241022-v2%3A0/converse-stream",
+    body: { messages: [{ role: "user", content: [{ text: "hi" }] }] },
+    headers: { "x-api-key": "leak" },
+  }))
+  assert.equal(response.status, 200)
+  await response.text()
+
+  const upstream = upstreamRequests[0]
+  assert.ok(upstream)
+  assert.equal(upstream.url, "https://bedrock-runtime.eu-west-1.amazonaws.com/model/anthropic.claude-3-5-sonnet-20241022-v2%3A0/converse-stream")
+  assert.equal(upstream.headers.get("x-amz-date"), "20260903T120000Z")
+  assert.equal(upstream.headers.get("x-amz-security-token"), "tok")
+  assert.equal(upstream.headers.get("x-api-key"), null)
+  const authorization = upstream.headers.get("authorization") ?? ""
+  assert.match(authorization, /^AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE\/20260903\/eu-west-1\/bedrock\/aws4_request, SignedHeaders=content-type;host;x-amz-date;x-amz-security-token;x-openwork-request-id, Signature=[0-9a-f]{64}$/)
+  // Re-sign the exact forwarded request locally and compare: proves the
+  // signature covers the final (rewritten) body and the region host.
+  const { signAwsRequest } = await import("../src/credentials/aws-sigv4.js")
+  const check = new Headers()
+  for (const name of ["content-type", "x-openwork-request-id"]) check.set(name, upstream.headers.get(name) ?? "")
+  signAwsRequest({
+    method: "POST",
+    url: new URL(upstream.url),
+    headers: check,
+    body: upstream.body,
+    credentials: { accessKeyId: "AKIDEXAMPLE", secretAccessKey: "secret", sessionToken: "tok" },
+    region: "eu-west-1",
+    service: "bedrock",
+    now,
+  })
+  assert.equal(check.get("authorization"), authorization)
+
+  const row = await waitForRows(logRows)
+  assert.equal(row.protocol, "bedrock_converse")
+  assert.equal(row.upstream_host, "bedrock-runtime.eu-west-1.amazonaws.com")
+  assert.equal(row.requested_model, "anthropic.claude-3-5-sonnet-20241022-v2:0")
+  assert.equal(row.stream, true)
+  assert.equal(row.usage_source, "stream")
+  assert.equal(row.input_tokens, 12)
+  assert.equal(row.output_tokens, 7)
+  assert.equal(row.total_tokens, 19)
+  assert.equal(row.cache_read_tokens, 4)
+  assert.equal(row.cache_write_tokens, 2)
+})
+
+test("bedrock: non-stream converse JSON usage; settings.region host; missing region → 502 provider_misconfigured", async () => {
+  const ok = createTestServer({
+    provider: { provider_id: "amazon-bedrock", provider_config: { npm: "@ai-sdk/amazon-bedrock" }, settings: { region: "us-west-2" } },
+    credential: { kind: "aws_keys", secret: JSON.stringify({ accessKeyId: "a", secretAccessKey: "b" }) },
+    fetch: async () => Response.json({ output: {}, usage: { inputTokens: 3, outputTokens: 4, totalTokens: 7 } }),
+  })
+  const response = await ok.app.fetch(gatewayRequest({ path: "/model/claude/converse", body: { messages: [] } }))
+  assert.equal(response.status, 200)
+  assert.equal(ok.upstreamRequests[0]?.url, "https://bedrock-runtime.us-west-2.amazonaws.com/model/claude/converse")
+  assert.equal(ok.upstreamRequests[0]?.headers.get("x-amz-security-token"), null)
+  assert.ok(ok.upstreamRequests[0]?.headers.get("authorization")?.startsWith("AWS4-HMAC-SHA256 Credential=a/"))
+  const row = await waitForRows(ok.logRows)
+  assert.equal(row.usage_source, "json")
+  assert.equal(row.total_tokens, 7)
+  assert.equal(row.stream, false)
+
+  const missing = createTestServer({
+    provider: { provider_id: "amazon-bedrock", provider_config: { npm: "@ai-sdk/amazon-bedrock" }, settings: {} },
     credential: { kind: "aws_keys", secret: JSON.stringify({ accessKeyId: "a", secretAccessKey: "b" }) },
   })
-  const bedrockResponse = await bedrock.app.fetch(gatewayRequest({ path: "/model/claude/converse", body: {} }))
-  assert.equal(bedrockResponse.status, 501)
-  assert.equal((await readError(bedrockResponse)).code, "unsupported_provider")
-  assert.equal(bedrock.upstreamRequests.length, 0)
+  const missingResponse = await missing.app.fetch(gatewayRequest({ path: "/model/claude/converse", body: {} }))
+  assert.equal(missingResponse.status, 502)
+  assert.equal((await readError(missingResponse)).code, "provider_misconfigured")
+  assert.equal(missing.upstreamRequests.length, 0)
+  const missingRow = await waitForRows(missing.logRows)
+  assert.equal(missingRow.error_code, "provider_misconfigured")
+  assert.equal(missingRow.inference_provider_credential_id, credentialId)
+})
+
+test("aws_keys on a non-bedrock provider → 502 provider_misconfigured", async () => {
+  const { app, upstreamRequests } = createTestServer({
+    credential: { kind: "aws_keys", secret: JSON.stringify({ accessKeyId: "a", secretAccessKey: "b", region: "us-east-1" }) },
+  })
+  const response = await app.fetch(gatewayRequest({ path: "/chat/completions", body: { model: "x" } }))
+  assert.equal(response.status, 502)
+  assert.equal((await readError(response)).code, "provider_misconfigured")
+  assert.equal(upstreamRequests.length, 0)
 })
 
 test("logs upstream_unreachable when fetch throws", async () => {

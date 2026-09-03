@@ -11,6 +11,11 @@ import { sanitizeIncomingHeaders } from "./inference-reporting.js"
 import type { InferenceReporter } from "./inference-reporting.js"
 import type { InferenceAuthVariables } from "./middleware/inference-auth.js"
 import type { OrganizationVariables } from "./middleware/org-context.js"
+import { bedrockRuntimeHost, bedrockService, signAwsRequest } from "./credentials/aws-sigv4.js"
+import { createGcpServiceAccountTokenMinter } from "./credentials/gcp-service-account.js"
+import type { MintGcpAccessToken } from "./credentials/gcp-service-account.js"
+import { createDbGoogleOauthRefreshStore, createGoogleOauthRefresher } from "./credentials/google-oauth-refresh.js"
+import type { RefreshGoogleOauthToken } from "./credentials/google-oauth-refresh.js"
 import {
   buildAuthHeader,
   classifyProtocolFamily,
@@ -18,21 +23,27 @@ import {
   defaultBaseUrl,
   filterQuery,
   isAllowedRequestHeader,
+  parseBedrockModelPath,
   parseGoogleModelPath,
   stripApiVersionPrefix,
   vertexPublisherBase,
 } from "./protocols.js"
-import type { ProtocolFamily } from "./protocols.js"
+import type { AuthHeader, ProtocolFamily } from "./protocols.js"
 import { hasProviderAccessFromDb } from "./provider-access.js"
 import type { HasProviderAccess } from "./provider-access.js"
 import { loadProviderCatalogFromFile } from "./provider-catalog.js"
 import type { CatalogProvider, ProviderCatalog } from "./provider-catalog.js"
 import { loadProviderCredentialFromDb, resolveUpstreamCredential } from "./provider-credentials.js"
-import type { GatewayCredential, GatewayProvider, LoadProviderCredential } from "./provider-credentials.js"
+import type { GatewayCredential, GatewayProvider, LoadProviderCredential, ResolvedUpstreamCredential } from "./provider-credentials.js"
 import { buildRequestId, isEventStreamContentType, isJsonContentType, trackStream } from "./relay.js"
 import { createRequestLogRecorder } from "./request-log.js"
 import type { InsertRequestLog, RequestLogRecorder } from "./request-log.js"
 import { createAnthropicMessagesSseUsageParser, parseAnthropicMessagesJsonUsage } from "./usage/anthropic-messages.js"
+import {
+  createBedrockConverseEventStreamUsageParser,
+  isAwsEventStreamContentType,
+  parseBedrockConverseJsonUsage,
+} from "./usage/bedrock-converse.js"
 import {
   createGoogleGenerateContentSseUsageParser,
   parseGoogleGenerateContentJsonUsage,
@@ -59,6 +70,8 @@ export type GatewayDependencies = {
   loadInferenceProvider: LoadInferenceProvider
   hasProviderAccess: HasProviderAccess
   loadProviderCredential: LoadProviderCredential
+  refreshGoogleOauthToken: RefreshGoogleOauthToken
+  mintGcpAccessToken: MintGcpAccessToken
   catalog: ProviderCatalog
   now: () => Date
 }
@@ -80,6 +93,14 @@ type PreparedRequest = {
   url: URL
 }
 
+type UsableCredential = Extract<ResolvedUpstreamCredential, { kind: "secret" | "aws_keys" }>
+
+// Static header auth, or a signer that must run on the final request (SigV4
+// hashes the body, so it follows every body rewrite).
+type UpstreamAuth =
+  | { kind: "header"; header: AuthHeader }
+  | { kind: "signer"; host: string; sign: (request: { method: string; url: URL; headers: Headers; body: string | null }) => void }
+
 export const gatewayPathPrefix = "/api/v1/providers"
 
 const droppedResponseHeaders = new Set(["content-encoding", "content-length", "transfer-encoding", "connection"])
@@ -100,6 +121,8 @@ export const loadInferenceProviderFromDb: LoadInferenceProvider = async (input) 
       settings: InferenceProviderTable.settings,
       credential_mode: InferenceProviderTable.credential_mode,
       status: InferenceProviderTable.status,
+      oauth_client_id: InferenceProviderTable.oauth_client_id,
+      oauth_client_secret: InferenceProviderTable.oauth_client_secret,
     })
     .from(InferenceProviderTable)
     .where(and(
@@ -157,11 +180,35 @@ function resolveUpstream(provider: GatewayProvider, catalog: CatalogProvider | n
 }
 
 function requestedModelFromPath(protocol: InferenceRequestProtocol, pathname: string) {
-  return protocol === "google_generate_content" ? parseGoogleModelPath(pathname)?.model ?? null : null
+  if (protocol === "google_generate_content") return parseGoogleModelPath(pathname)?.model ?? null
+  if (protocol === "bedrock_converse") return parseBedrockModelPath(pathname)?.model ?? null
+  return null
 }
 
 function isStreamingPath(protocol: InferenceRequestProtocol, pathname: string) {
-  return protocol === "google_generate_content" && parseGoogleModelPath(pathname)?.operation === "streamGenerateContent"
+  if (protocol === "google_generate_content") return parseGoogleModelPath(pathname)?.operation === "streamGenerateContent"
+  if (protocol === "bedrock_converse") return parseBedrockModelPath(pathname)?.stream === true
+  return false
+}
+
+function materializeAuth(credential: UsableCredential, provider: GatewayProvider, family: ProtocolFamily, now: Date): UpstreamAuth | { error: string } {
+  if (family !== "bedrock") {
+    if (credential.kind === "aws_keys") return { error: `AWS credentials are only supported for Amazon Bedrock providers, not ${provider.provider_id}.` }
+    return { kind: "header", header: buildAuthHeader(family, credential.secret) }
+  }
+  const settingsRegion = typeof provider.settings.region === "string" && provider.settings.region ? provider.settings.region : null
+  const region = (credential.kind === "aws_keys" ? credential.awsKeys.region : undefined) ?? settingsRegion
+  if (!region) return { error: "Bedrock providers require a region on the AWS credential or settings.region." }
+  // A static key (Bedrock API key) keeps the settings.region host resolved earlier.
+  if (credential.kind === "secret") return { kind: "header", header: buildAuthHeader(family, credential.secret) }
+  const credentials = credential.awsKeys
+  return {
+    kind: "signer",
+    host: bedrockRuntimeHost(region),
+    sign(request) {
+      signAwsRequest({ ...request, credentials, region, service: bedrockService, now })
+    },
+  }
 }
 
 async function prepareRequest(request: Request, upstream: ResolvedUpstream): Promise<PreparedRequest | { error: Response; errorCode: string }> {
@@ -206,13 +253,11 @@ async function prepareRequest(request: Request, upstream: ResolvedUpstream): Pro
   return { body: modified ? JSON.stringify(json) : text, requestedModel, stream, url }
 }
 
-function buildUpstreamHeaders(request: Request, family: ProtocolFamily, secret: string, openworkRequestId: string) {
+function buildUpstreamHeaders(request: Request, family: ProtocolFamily, openworkRequestId: string) {
   const headers = new Headers()
   request.headers.forEach((value, name) => {
     if (isAllowedRequestHeader(family, name)) headers.set(name, value)
   })
-  const auth = buildAuthHeader(family, secret)
-  headers.set(auth.name, auth.value)
   headers.set("x-openwork-request-id", openworkRequestId)
   return headers
 }
@@ -245,12 +290,16 @@ function parseJsonUsage(protocol: InferenceRequestProtocol, body: unknown): Pars
     case "google_generate_content":
       return parseGoogleGenerateContentJsonUsage(body)
     case "bedrock_converse":
+      return parseBedrockConverseJsonUsage(body)
     case "passthrough":
       return null
   }
 }
 
 function createStreamUsageParser(protocol: InferenceRequestProtocol, contentType: string | null): UsageParser | null {
+  if (protocol === "bedrock_converse") {
+    return isAwsEventStreamContentType(contentType) ? createBedrockConverseEventStreamUsageParser() : null
+  }
   if (isEventStreamContentType(contentType)) {
     switch (protocol) {
       case "openai_chat":
@@ -261,7 +310,6 @@ function createStreamUsageParser(protocol: InferenceRequestProtocol, contentType
         return createAnthropicMessagesSseUsageParser()
       case "google_generate_content":
         return createGoogleGenerateContentSseUsageParser()
-      case "bedrock_converse":
       case "passthrough":
         return null
     }
@@ -334,7 +382,8 @@ function relayStreamResponse(upstream: Response, protocol: InferenceRequestProto
     chunk(value) {
       recorder.markFirstByte()
       responseBytes += value.byteLength
-      if (parser) parser.push(decoder.decode(value, { stream: true }))
+      if (parser?.pushBytes) parser.pushBytes(value)
+      else if (parser) parser.push(decoder.decode(value, { stream: true }))
     },
     done() {
       finish(upstreamOutcome(upstream))
@@ -344,6 +393,14 @@ function relayStreamResponse(upstream: Response, protocol: InferenceRequestProto
     },
   })
   return new Response(body, { status: upstream.status, statusText: upstream.statusText, headers })
+}
+
+function refreshGoogleOauthTokenWithDb(fetchImpl: typeof fetch): RefreshGoogleOauthToken {
+  let refresher: Promise<RefreshGoogleOauthToken> | null = null
+  return (input) => {
+    refresher ??= import("./db.js").then(({ db }) => createGoogleOauthRefresher({ fetch: fetchImpl, store: createDbGoogleOauthRefreshStore(db) }))
+    return refresher.then((refresh) => refresh(input))
+  }
 }
 
 function restOfPath(pathname: string, inferenceProviderId: string) {
@@ -359,6 +416,8 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
     loadInferenceProvider: input.loadInferenceProvider ?? loadInferenceProviderFromDb,
     hasProviderAccess: input.hasProviderAccess ?? hasProviderAccessFromDb,
     loadProviderCredential: input.loadProviderCredential ?? loadProviderCredentialFromDb,
+    refreshGoogleOauthToken: input.refreshGoogleOauthToken ?? refreshGoogleOauthTokenWithDb(input.fetch),
+    mintGcpAccessToken: input.mintGcpAccessToken ?? createGcpServiceAccountTokenMinter({ fetch: input.fetch }),
     catalog: input.catalog ?? loadProviderCatalogFromFile(),
     now: input.now ?? (() => new Date()),
   }
@@ -450,23 +509,16 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
       )
     }
 
-    if (resolved.family === "bedrock") {
-      startRecorder({ protocol: resolved.protocol, url: resolved.url, requestedModel: null, stream: false })
-      return reject(
-        gatewayError(501, "unsupported_provider", "Amazon Bedrock (SigV4 signing) is not yet supported by the OpenWork inference gateway."),
-        "unsupported_provider",
-        "Unsupported inference provider family",
-      )
-    }
-
     const credential = await resolveUpstreamCredential({
       provider,
       orgMembershipId: identity.orgMembershipId,
       envNames: catalog?.env ?? [],
       loadProviderCredential: dependencies.loadProviderCredential,
+      refreshGoogleOauthToken: dependencies.refreshGoogleOauthToken,
+      mintGcpAccessToken: dependencies.mintGcpAccessToken,
       now: startedAt,
     })
-    if (credential.kind !== "secret") {
+    if (credential.kind !== "secret" && credential.kind !== "aws_keys") {
       startRecorder({
         protocol: resolved.protocol,
         url: resolved.url,
@@ -503,13 +555,19 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
             "provider_credential_invalid",
             "Invalid org credential",
           )
-        case "unsupported_credential_kind":
+        case "token_mint_failed":
           return reject(
-            gatewayError(501, "unsupported_credential_kind", `Credential kind ${credential.credentialKind} is not yet supported by the OpenWork inference gateway.`, { provider_id: provider.id }),
-            "unsupported_credential_kind",
-            "Unsupported credential kind",
+            gatewayError(502, "provider_token_mint_failed", `Could not mint an upstream token for this inference provider: ${credential.message}`, { provider_id: provider.id }),
+            "provider_token_mint_failed",
+            "Upstream token minting failed",
           )
       }
+    }
+
+    const auth = materializeAuth(credential, provider, resolved.family, startedAt)
+    if ("error" in auth) {
+      startRecorder({ protocol: resolved.protocol, url: resolved.url, requestedModel: null, stream: false, credentialId: credential.credentialId })
+      return reject(gatewayError(502, "provider_misconfigured", auth.error, { provider_id: provider.id }), "provider_misconfigured", "Misconfigured inference provider")
     }
 
     const prepared = await prepareRequest(c.req.raw, resolved)
@@ -517,6 +575,7 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
       startRecorder({ protocol: resolved.protocol, url: resolved.url, requestedModel: null, stream: false, credentialId: credential.credentialId })
       return reject(prepared.error, prepared.errorCode, "Invalid gateway request body")
     }
+    if (auth.kind === "signer") prepared.url.host = auth.host
     startRecorder({
       protocol: resolved.protocol,
       url: prepared.url,
@@ -526,13 +585,13 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
       requestBytes: prepared.body === null ? null : Buffer.byteLength(prepared.body),
     })
 
+    const headers = buildUpstreamHeaders(c.req.raw, resolved.family, openworkRequestId)
+    if (auth.kind === "header") headers.set(auth.header.name, auth.header.value)
+    else auth.sign({ method, url: prepared.url, headers, body: prepared.body })
+
     let upstream: Response
     try {
-      upstream = await dependencies.fetch(prepared.url, {
-        method,
-        headers: buildUpstreamHeaders(c.req.raw, resolved.family, credential.secret, openworkRequestId),
-        body: prepared.body,
-      })
+      upstream = await dependencies.fetch(prepared.url, { method, headers, body: prepared.body })
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       console.error("[inference-gateway] Failed to reach provider upstream", {
@@ -574,11 +633,11 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
       })
     }
 
-    const headers = relayHeaders(upstream, openworkRequestId)
+    const responseHeaders = relayHeaders(upstream, openworkRequestId)
     if (!prepared.stream && isJsonContentType(upstream.headers.get("content-type"))) {
-      return relayJsonResponse(upstream, resolved.protocol, headers, recorder)
+      return relayJsonResponse(upstream, resolved.protocol, responseHeaders, recorder)
     }
-    return relayStreamResponse(upstream, resolved.protocol, headers, recorder)
+    return relayStreamResponse(upstream, resolved.protocol, responseHeaders, recorder)
   }
 
   api.all(`${gatewayPathPrefix}/:inferenceProviderId`, handleGatewayRequest)
