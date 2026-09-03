@@ -272,9 +272,11 @@ describe("tool aggregate long details", () => {
     Object.defineProperty(HTMLElement.prototype, "getBoundingClientRect", {
       configurable: true,
       value(this: HTMLElement) {
+        // Shiki's inline highlighting replaces "\n" with <br>, and it lands
+        // asynchronously, so count both forms to stay independent of timing.
         const visibleLines = this.classList.contains("line-clamp-1")
           ? 1
-          : Math.max(1, (this.textContent ?? "").split("\n").length);
+          : Math.max(1, (this.textContent ?? "").split("\n").length, this.querySelectorAll("br").length + 1);
         return new DOMRect(0, 0, 320, visibleLines * 20);
       },
     });
