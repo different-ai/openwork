@@ -86,7 +86,7 @@ function sendStream(response: ServerResponse, chunks: Record<string, unknown>[])
   });
   let delay = 75;
   for (const chunk of chunks) {
-    setTimeout(() => response.write(`data: ${JSON.stringify(chunk)}\n\n`), delay);
+    setTimeout(() => response.write(`data: ${jsLiteral(chunk)}\n\n`), delay);
     delay += 75;
   }
   setTimeout(() => response.end("data: [DONE]\n\n"), delay);
@@ -409,10 +409,10 @@ async function startDaytonaFixture(sandbox: string): Promise<WebsiteFixture> {
   const source = `
     import { createServer } from "node:http";
     import { writeFileSync } from "node:fs";
-    const modelId = ${JSON.stringify(modelId)};
-    const closingReply = ${JSON.stringify(closingReply)};
-    const mainPage = ${JSON.stringify(mainPage())};
-    const framePage = ${JSON.stringify(framePage())};
+    const modelId = ${jsLiteral(modelId)};
+    const closingReply = ${jsLiteral(closingReply)};
+    const mainPage = ${jsLiteral(mainPage())};
+    const framePage = ${jsLiteral(framePage())};
     ${providerFixtureFunctions()}
     const records = [];
     const providerRequests = [];
@@ -459,7 +459,7 @@ async function startDaytonaFixture(sandbox: string): Promise<WebsiteFixture> {
     server.listen(0, "127.0.0.1", () => {
       const address = server.address();
       if (!address || typeof address === "string") throw new Error("Fixture did not bind a TCP port.");
-      writeFileSync(${JSON.stringify(readyPath)}, String(address.port));
+      writeFileSync(${jsLiteral(readyPath)}, String(address.port));
     });
   `;
   const encoded = Buffer.from(source, "utf8").toString("base64");
@@ -514,6 +514,18 @@ async function startWebsiteFixture(sandbox?: string): Promise<WebsiteFixture> {
   return sandbox ? startDaytonaFixture(sandbox) : startLocalFixture();
 }
 
+/**
+ * Serializes a value as a JavaScript literal that is safe to splice into
+ * evaluated code: JSON.stringify output is escaped for the U+2028/U+2029 line
+ * terminators and angle brackets, so page-supplied strings such as tab and tool
+ * ids can never break out of the surrounding expression.
+ */
+function jsLiteral(value: unknown): string {
+  return JSON.stringify(value).replace(/[<>\u2028\u2029]/g, (character) =>
+    `\\u${character.charCodeAt(0).toString(16).padStart(4, "0")}`,
+  );
+}
+
 async function browserBridgeJson(app: Parameters<typeof evalIn>[0], expression: string): Promise<unknown> {
   const raw = await evalIn(app, `(async () => JSON.stringify(await (${expression})))()`, { awaitPromise: true });
   if (typeof raw !== "string") throw new Error("The desktop browser bridge did not return JSON.");
@@ -535,7 +547,7 @@ test.skipIf(!e2eTestsEnabled)(title, async ({ evidence }) => {
     const pageOrigin = new URL(pageUrl).origin;
     const opened = await browserBridgeJson(
       app,
-      `window.__OPENWORK_ELECTRON__.browser.openUrl(${JSON.stringify(pageUrl)}, "builtin")`,
+      `window.__OPENWORK_ELECTRON__.browser.openUrl(${jsLiteral(pageUrl)}, "builtin")`,
     ) as { tab_id: string };
     expect(opened.tab_id).toBeTruthy();
 
@@ -544,7 +556,7 @@ test.skipIf(!e2eTestsEnabled)(title, async ({ evidence }) => {
     for (let attempt = 0; attempt < 80; attempt += 1) {
       const candidate = await browserBridgeJson(
         app,
-        `window.__OPENWORK_ELECTRON__.browser.listWebMcpTools({ tabId: ${JSON.stringify(opened.tab_id)} })`,
+        `window.__OPENWORK_ELECTRON__.browser.listWebMcpTools({ tabId: ${jsLiteral(opened.tab_id)} })`,
       ) as ToolListResult;
       lastListResult = candidate;
       if (candidate.ok && candidate.tools.length === 3) {
@@ -555,7 +567,7 @@ test.skipIf(!e2eTestsEnabled)(title, async ({ evidence }) => {
     }
     expect(
       listed,
-      `main-frame and child-frame WebMCP tools should become discoverable; last discovery was ${JSON.stringify(lastListResult)}`,
+      `main-frame and child-frame WebMCP tools should become discoverable; last discovery was ${jsLiteral(lastListResult)}`,
     ).not.toBeNull();
     if (!listed) throw new Error("WebMCP tools never became discoverable.");
     expect(listed.tools.map((tool) => tool.name).sort()).toEqual([
@@ -576,7 +588,7 @@ test.skipIf(!e2eTestsEnabled)(title, async ({ evidence }) => {
     if (!readSession) throw new Error("read_session was not discovered.");
     const invalid = await browserBridgeJson(
       app,
-      `window.__OPENWORK_ELECTRON__.browser.executeWebMcpTool(${JSON.stringify({
+      `window.__OPENWORK_ELECTRON__.browser.executeWebMcpTool(${jsLiteral({
         toolId: readSession.toolId,
         input: { section: "credentials" },
       })})`,
@@ -586,7 +598,7 @@ test.skipIf(!e2eTestsEnabled)(title, async ({ evidence }) => {
 
     const executed = await browserBridgeJson(
       app,
-      `window.__OPENWORK_ELECTRON__.browser.executeWebMcpTool(${JSON.stringify({
+      `window.__OPENWORK_ELECTRON__.browser.executeWebMcpTool(${jsLiteral({
         toolId: readSession.toolId,
         input: { section: "profile" },
       })})`,
@@ -604,7 +616,7 @@ test.skipIf(!e2eTestsEnabled)(title, async ({ evidence }) => {
     if (!frameEcho) throw new Error("frame_echo was not discovered.");
     const echoed = await browserBridgeJson(
       app,
-      `window.__OPENWORK_ELECTRON__.browser.executeWebMcpTool(${JSON.stringify({
+      `window.__OPENWORK_ELECTRON__.browser.executeWebMcpTool(${jsLiteral({
         toolId: frameEcho.toolId,
         input: { value: "from OpenWork" },
       })})`,
@@ -633,7 +645,7 @@ test.skipIf(!e2eTestsEnabled)(title, async ({ evidence }) => {
       const port = localStorage.getItem("openwork.server.port");
       const token = localStorage.getItem("openwork.server.token");
       if (!port || !token) return "missing local server credentials";
-      const workspaceId = ${JSON.stringify(workspace.workspaceId)};
+      const workspaceId = ${jsLiteral(workspace.workspaceId)};
       const request = async (path, init) => {
         const response = await fetch("http://127.0.0.1:" + port + path, {
           ...init,
@@ -647,11 +659,11 @@ test.skipIf(!e2eTestsEnabled)(title, async ({ evidence }) => {
         body: JSON.stringify({
           opencode: {
             provider: {
-              [${JSON.stringify(providerId)}]: {
+              [${jsLiteral(providerId)}]: {
                 npm: "@ai-sdk/openai-compatible",
                 name: "WebMCP agent proof model",
-                options: { baseURL: ${JSON.stringify(new URL("/v1", fixture.url).toString())}, apiKey: "sk-webmcp-agent-proof" },
-                models: { [${JSON.stringify(modelId)}]: { name: "WebMCP agent proof model", tool_call: true } },
+                options: { baseURL: ${jsLiteral(new URL("/v1", fixture.url).toString())}, apiKey: "sk-webmcp-agent-proof" },
+                models: { [${jsLiteral(modelId)}]: { name: "WebMCP agent proof model", tool_call: true } },
               },
             },
           },
@@ -668,11 +680,11 @@ test.skipIf(!e2eTestsEnabled)(title, async ({ evidence }) => {
       if (!preferences || typeof preferences !== "object" || Array.isArray(preferences)) preferences = {};
       localStorage.setItem("openwork.preferences", JSON.stringify({
         ...preferences,
-        defaultModel: { providerID: ${JSON.stringify(providerId)}, modelID: ${JSON.stringify(modelId)} },
+        defaultModel: { providerID: ${jsLiteral(providerId)}, modelID: ${jsLiteral(modelId)} },
         modelVariant: null,
         providerStepCompleted: true,
       }));
-      localStorage.setItem("openwork.defaultModel", ${JSON.stringify(`${providerId}/${modelId}`)});
+      localStorage.setItem("openwork.defaultModel", ${jsLiteral(`${providerId}/${modelId}`)});
       localStorage.removeItem("openwork.sessionModels." + workspaceId);
       return "ok";
     })()`, { awaitPromise: true, timeoutMs: 90_000 });
@@ -709,7 +721,7 @@ test.skipIf(!e2eTestsEnabled)(title, async ({ evidence }) => {
     });
     await clickButton(app, "Run task", { timeoutMs: 30_000 });
     try {
-      await waitFor(app, `document.body.innerText.includes(${JSON.stringify(closingReply)})`, {
+      await waitFor(app, `document.body.innerText.includes(${jsLiteral(closingReply)})`, {
         timeoutMs: 45_000,
         label: "agent completed the WebMCP site-tool journey",
       });
@@ -740,19 +752,19 @@ test.skipIf(!e2eTestsEnabled)(title, async ({ evidence }) => {
     await evalIn(
       app,
       `(async () => {
-        await window.__OPENWORK_ELECTRON__.browser.selectTab(${JSON.stringify(opened.tab_id)});
-        await window.__OPENWORK_ELECTRON__.browser.navigate(${JSON.stringify(new URL("/after", pageUrl).toString())});
+        await window.__OPENWORK_ELECTRON__.browser.selectTab(${jsLiteral(opened.tab_id)});
+        await window.__OPENWORK_ELECTRON__.browser.navigate(${jsLiteral(new URL("/after", pageUrl).toString())});
         return true;
       })()`,
       { awaitPromise: true },
     );
-    await waitFor(app, `window.__OPENWORK_ELECTRON__.browser.getState().then((state) => state.tabs.some((tab) => tab.id === ${JSON.stringify(opened.tab_id)} && tab.url.endsWith("/after")))`, {
+    await waitFor(app, `window.__OPENWORK_ELECTRON__.browser.getState().then((state) => state.tabs.some((tab) => tab.id === ${jsLiteral(opened.tab_id)} && tab.url.endsWith("/after")))`, {
       timeoutMs: 10_000,
       label: "WebMCP fixture navigation",
     });
     const stale = await browserBridgeJson(
       app,
-      `window.__OPENWORK_ELECTRON__.browser.executeWebMcpTool(${JSON.stringify({
+      `window.__OPENWORK_ELECTRON__.browser.executeWebMcpTool(${jsLiteral({
         toolId: readSession.toolId,
         input: { section: "profile" },
       })})`,

@@ -40,8 +40,10 @@ export function iframeAllowsTools(allow, parentOrigin, childOrigin, sourceOrigin
   if (!directive) return false;
   const tokens = directive.split(/\s+/).slice(1).map((value) => value.replace(/^["']|["']$/g, ""));
   // `allow="tools"` is the standard shorthand for delegating to the frame's
-  // source origin. An explicit allowlist can narrow that grant.
-  if (tokens.length === 0) return true;
+  // source origin only. A frame that has since navigated elsewhere, or whose
+  // source origin cannot be read, is not covered by the shorthand; only an
+  // explicit `*` token delegates to any origin.
+  if (tokens.length === 0) return Boolean(sourceOrigin) && childOrigin === sourceOrigin;
   return tokens.some((token) => {
     if (token === "*") return true;
     if (token.toLowerCase() === "none") return false;

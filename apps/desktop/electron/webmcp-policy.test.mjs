@@ -15,7 +15,14 @@ test("parses WebMCP response and iframe Permissions Policy allowlists", () => {
   assert.equal(permissionsPolicyAllows('tools=("https://child.example")', "https://app.example", "https://child.example"), true);
   assert.equal(permissionsPolicyAllows("camera=()", "https://app.example", "https://app.example"), null);
 
-  assert.equal(iframeAllowsTools("tools", "https://app.example", "https://child.example"), true);
+  // The bare shorthand delegates to the iframe's source origin only: a frame
+  // that navigated elsewhere, or whose source origin is unknown, is not covered.
+  assert.equal(iframeAllowsTools("tools", "https://app.example", "https://child.example", "https://child.example"), true);
+  assert.equal(iframeAllowsTools("tools", "https://app.example", "https://evil.example", "https://child.example"), false);
+  assert.equal(iframeAllowsTools("tools", "https://app.example", "https://child.example"), false);
+  assert.equal(iframeAllowsTools("tools", "https://app.example", "https://child.example", null), false);
+  assert.equal(iframeAllowsTools("tools *", "https://app.example", "https://evil.example", "https://child.example"), true);
+  assert.equal(iframeAllowsTools("tools 'src'", "https://app.example", "https://evil.example", "https://child.example"), false);
   assert.equal(iframeAllowsTools("camera; tools 'none'", "https://app.example", "https://child.example"), false);
   assert.equal(iframeAllowsTools("tools *", "https://app.example", "https://child.example"), true);
   assert.equal(iframeAllowsTools("tools 'self'", "https://app.example", "https://child.example"), false);

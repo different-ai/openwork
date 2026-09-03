@@ -111,6 +111,34 @@ test("navigation and descriptor changes invalidate opaque handles", async () => 
   assert.match(afterMutation.error, /changed/i);
 });
 
+test("a tool that declares itself read-only still asks before running", async () => {
+  let confirmations = 0;
+  const setup = fixture({
+    confirm: async ({ tool }) => {
+      confirmations += 1;
+      assert.equal(tool.annotations.readOnlyHint, true);
+      return false;
+    },
+  });
+  const listed = await setup.broker.listTools();
+  const result = await setup.broker.executeTool({
+    toolId: listed.tools[0].toolId,
+    input: { section: "profile" },
+  });
+  assert.equal(result.code, "user_denied");
+  assert.equal(confirmations, 1);
+  assert.equal(setup.executions.length, 0);
+
+  const approved = fixture();
+  const relisted = await approved.broker.listTools();
+  const executed = await approved.broker.executeTool({
+    toolId: relisted.tools[0].toolId,
+    input: { section: "profile" },
+  });
+  assert.equal(executed.ok, true);
+  assert.equal(executed.retrySafe, false);
+});
+
 test("mutable tools require approval and never execute after denial", async () => {
   let confirmations = 0;
   const setup = fixture({
