@@ -103,13 +103,101 @@ export const getCloudManagedProviderId = (
 
 /**
  * A provider key in `opencode.jsonc` that is owned by the cloud-import system:
- * `lpr_*` keys (org-managed providers) and the `openwork` hosted provider.
+ * `lpr_*` keys (org-managed providers), `ipr_*` keys (providers routed through
+ * the OpenWork inference gateway) and the `openwork` hosted provider.
  * These keys are never hand-authored, so re-importing over an existing block
  * with one of these ids is a safe reconcile (recovers a lost import baseline)
  * rather than a clobber of a user's manual provider (#2346).
  */
 export const isCloudManagedProviderKey = (providerId: string) =>
-  /^lpr_/i.test(providerId) || providerId.trim() === "openwork";
+  /^(lpr|ipr)_/i.test(providerId) || providerId.trim() === "openwork";
+
+export const OPENWORK_GATEWAY_PROVIDER_SOURCE = "openwork_gateway";
+/** Badge copy for providers routed through the OpenWork inference gateway. */
+export const OPENWORK_GATEWAY_BADGE_LABEL = "via OpenWork Gateway";
+
+/**
+ * Runtime provider ids whose sync status reports the OpenWork inference
+ * gateway as source — the UI badges these "via OpenWork Gateway".
+ */
+/**
+ * A gateway provider the server sync skipped because this member has not yet
+ * authorized their own account (`member_auth_required`). Rendered as a
+ * "Connect" row in Settings > AI providers and the model picker.
+ */
+export type GatewayConnectProvider = {
+  cloudProviderId: string;
+  providerId: string;
+  name: string;
+  /** Den's OAuth start URL; null on older Den servers that do not return one. */
+  authUrl: string | null;
+};
+
+export const GATEWAY_MEMBER_AUTH_REQUIRED_REASON = "member_auth_required";
+
+/** Copy shown under a gateway provider that still needs the member's sign-in. */
+export const gatewayConnectCopy = (name: string) => `Sign in to ${name} to use it`;
+
+/** Skipped sync entries that need the member's own sign-in, in server order. */
+export const resolveGatewayConnectProviders = (
+  skippedProviders:
+    | Record<string, { cloudProviderId: string; providerId: string; name: string; reason: string; authUrl?: string | null }>
+    | undefined
+    | null,
+): GatewayConnectProvider[] =>
+  Object.values(skippedProviders ?? {})
+    .filter((provider) => provider.reason === GATEWAY_MEMBER_AUTH_REQUIRED_REASON)
+    .map((provider) => ({
+      cloudProviderId: provider.cloudProviderId,
+      providerId: provider.providerId,
+      name: provider.name,
+      authUrl: provider.authUrl ?? null,
+    }));
+
+export const GATEWAY_CONNECT_POLL_INTERVAL_MS = 10_000;
+export const GATEWAY_CONNECT_POLL_ATTEMPTS = 6;
+
+/**
+ * Opens the member's OAuth start URL in the system browser, then re-syncs cloud
+ * providers a few times (~60s by default) so the provider appears once the
+ * member finishes the grant in the browser. Stops early when `isConnected`
+ * reports the provider is no longer waiting on sign-in.
+ */
+export async function connectGatewayProvider(input: {
+  provider: GatewayConnectProvider;
+  openUrl: (url: string) => void | Promise<void>;
+  resync: () => Promise<unknown>;
+  /** Whether the provider is now materialized (sync no longer skips it). */
+  isConnected: () => boolean;
+  wait?: (ms: number) => Promise<void>;
+  pollIntervalMs?: number;
+  attempts?: number;
+}): Promise<boolean> {
+  if (!input.provider.authUrl) return false;
+  await input.openUrl(input.provider.authUrl);
+  const wait = input.wait ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+  const attempts = input.attempts ?? GATEWAY_CONNECT_POLL_ATTEMPTS;
+  const interval = input.pollIntervalMs ?? GATEWAY_CONNECT_POLL_INTERVAL_MS;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    await wait(interval);
+    try {
+      await input.resync();
+    } catch {
+      // A failed poll is not fatal: the next scheduled sync will pick it up.
+    }
+    if (input.isConnected()) return true;
+  }
+  return input.isConnected();
+}
+
+export const resolveGatewayProviderIds = (
+  importedCloudProviders: Record<string, Pick<CloudImportedProvider, "providerId" | "source">> | undefined,
+): Set<string> =>
+  new Set(
+    Object.values(importedCloudProviders ?? {})
+      .filter((provider) => provider.source === OPENWORK_GATEWAY_PROVIDER_SOURCE)
+      .map((provider) => provider.providerId),
+  );
 
 
 export const getProviderModelIds = (

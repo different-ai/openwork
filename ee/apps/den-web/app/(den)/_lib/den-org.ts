@@ -583,6 +583,22 @@ export function getNewLlmProviderRoute(orgSlug?: string | null): string {
   return `${getLlmProvidersRoute(orgSlug)}/new`;
 }
 
+export function getGatewayProvidersRoute(orgSlug?: string | null): string {
+  return `${getOrgDashboardRoute(orgSlug)}/gateway-providers`;
+}
+
+export function getGatewayProviderRoute(orgSlug: string | null | undefined, inferenceProviderId: string): string {
+  return `${getGatewayProvidersRoute(orgSlug)}/${encodeURIComponent(inferenceProviderId)}`;
+}
+
+export function getEditGatewayProviderRoute(orgSlug: string | null | undefined, inferenceProviderId: string): string {
+  return `${getGatewayProviderRoute(orgSlug, inferenceProviderId)}/edit`;
+}
+
+export function getNewGatewayProviderRoute(orgSlug?: string | null): string {
+  return `${getGatewayProvidersRoute(orgSlug)}/new`;
+}
+
 export function getBillingRoute(orgSlug?: string | null): string {
   return `${getOrgDashboardRoute(orgSlug)}/billing`;
 }

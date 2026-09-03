@@ -15,7 +15,6 @@ import {
   createInferenceBearerKey,
   inferenceBearerKeyPrefix,
   inferenceBearerKeyStorageDigest,
-  type InferenceBearerKey,
 } from "@openwork-ee/utils/inference-bearer-key"
 import {
   INFERENCE_RESET_STRATEGY_BY_WINDOW_TYPE,
@@ -144,15 +143,72 @@ async function createMemberInferenceKey(input: { organizationId: OrgId; memberId
     id: createDenTypeId("inferenceKey"),
     organization_id: input.organizationId,
     org_membership_id: input.memberId,
-    name: "OpenWork Models",
+    name: "OpenWork Inference",
     key_hash: await inferenceBearerKeyStorageDigest(key),
     key_prefix: inferenceBearerKeyPrefix(key),
+    encrypted_key: key.value,
     status: "active",
   })
   return key
 }
 
-async function ensureOpenWorkLlmProviderForMember(input: { organizationId: OrgId; memberId: MemberId; inferenceKey: InferenceBearerKey }) {
+async function findActiveMemberInferenceKey(input: { organizationId: OrgId; memberId: MemberId }) {
+  const [row] = await db
+    .select({ id: InferenceKeyTable.id, encryptedKey: InferenceKeyTable.encrypted_key })
+    .from(InferenceKeyTable)
+    .where(and(
+      eq(InferenceKeyTable.organization_id, input.organizationId),
+      eq(InferenceKeyTable.org_membership_id, input.memberId),
+      eq(InferenceKeyTable.status, "active"),
+    ))
+    .limit(1)
+  return row ?? null
+}
+
+async function findOpenWorkLlmProviderApiKey(input: { organizationId: OrgId; memberId: MemberId }) {
+  const [provider] = await db
+    .select({ apiKey: LlmProviderTable.apiKey })
+    .from(LlmProviderTable)
+    .where(and(
+      eq(LlmProviderTable.organizationId, input.organizationId),
+      eq(LlmProviderTable.createdByOrgMembershipId, input.memberId),
+      eq(LlmProviderTable.source, "openwork"),
+      eq(LlmProviderTable.providerId, OPENWORK_PROVIDER_ID),
+    ))
+    .limit(1)
+  const apiKey = provider?.apiKey?.trim()
+  return apiKey || null
+}
+
+/**
+ * Return the member's raw `ow_inf_` key. Every member gets a key regardless of
+ * the org's OpenWork Models tier (plan decision #4); entitlement is enforced
+ * by the inference middleware. This never creates an `llm_provider` row.
+ *
+ * Legacy rows minted before `encrypted_key` existed only carried the raw
+ * value on the synthetic OpenWork Models provider row; when that row is still
+ * present its value is backfilled, otherwise the key is rotated.
+ */
+export async function ensureMemberInferenceKey(input: { organizationId: OrgId; memberId: MemberId }): Promise<string> {
+  const existing = await findActiveMemberInferenceKey(input)
+  if (existing?.encryptedKey) {
+    return existing.encryptedKey
+  }
+
+  if (existing) {
+    const legacyKey = await findOpenWorkLlmProviderApiKey(input)
+    if (legacyKey) {
+      await db.update(InferenceKeyTable).set({ encrypted_key: legacyKey }).where(eq(InferenceKeyTable.id, existing.id))
+      return legacyKey
+    }
+    await revokeMemberInferenceKeys(input.memberId)
+  }
+
+  const key = await createMemberInferenceKey(input)
+  return key.value
+}
+
+async function ensureOpenWorkLlmProviderForMember(input: { organizationId: OrgId; memberId: MemberId; rawKey: string }) {
   const now = new Date()
   const providerRows = await db
     .select({ id: LlmProviderTable.id })
@@ -172,7 +228,7 @@ async function ensureOpenWorkLlmProviderForMember(input: { organizationId: OrgId
     if (providerRows[0]) {
       await tx
         .update(LlmProviderTable)
-        .set({ name: "OpenWork Models", providerConfig, apiKey: input.inferenceKey.value, updatedAt: now })
+        .set({ name: "OpenWork Models", providerConfig, apiKey: input.rawKey, updatedAt: now })
         .where(eq(LlmProviderTable.id, providerId))
       await tx.delete(LlmProviderModelTable).where(eq(LlmProviderModelTable.llmProviderId, providerId))
       await tx.delete(LlmProviderAccessTable).where(eq(LlmProviderAccessTable.llmProviderId, providerId))
@@ -185,7 +241,7 @@ async function ensureOpenWorkLlmProviderForMember(input: { organizationId: OrgId
         providerId: OPENWORK_PROVIDER_ID,
         name: "OpenWork Models",
         providerConfig,
-        apiKey: input.inferenceKey.value,
+        apiKey: input.rawKey,
         createdAt: now,
         updatedAt: now,
       })
@@ -202,8 +258,8 @@ async function ensureOpenWorkLlmProviderForMember(input: { organizationId: OrgId
 }
 
 async function ensureMemberInferenceAccess(input: { organizationId: OrgId; memberId: MemberId }) {
-  const key = await createMemberInferenceKey(input)
-  await ensureOpenWorkLlmProviderForMember({ ...input, inferenceKey: key })
+  const rawKey = await ensureMemberInferenceKey(input)
+  await ensureOpenWorkLlmProviderForMember({ ...input, rawKey })
 }
 
 async function memberHasOpenWorkInferenceAccess(input: { organizationId: OrgId; memberId: MemberId }) {
@@ -217,15 +273,7 @@ async function memberHasOpenWorkInferenceAccess(input: { organizationId: OrgId; 
       eq(LlmProviderTable.providerId, OPENWORK_PROVIDER_ID),
     ))
     .limit(1)
-  const [key] = await db
-    .select({ id: InferenceKeyTable.id })
-    .from(InferenceKeyTable)
-    .where(and(
-      eq(InferenceKeyTable.organization_id, input.organizationId),
-      eq(InferenceKeyTable.org_membership_id, input.memberId),
-      eq(InferenceKeyTable.status, "active"),
-    ))
-    .limit(1)
+  const key = await findActiveMemberInferenceKey(input)
 
   return Boolean(provider && key)
 }
@@ -254,7 +302,8 @@ export async function repairMemberInferenceAccessIfNeeded(input: {
     return false
   }
 
-  await revokeMemberInferenceKeys(input.memberId)
+  // Reuses the member's existing active key (e.g. minted gateway-first) so
+  // gaining the tier never rotates it; only the provider row is (re)created.
   await ensureMemberInferenceAccess(input)
   return true
 }
@@ -597,18 +646,14 @@ export async function setInferenceEnabled(input: { organizationId: OrgId; enable
   }
 
   if (!input.enabled) {
-    const members = await listOrgMembers(input.organizationId)
+    // Member inference keys are identity, not entitlement: they stay active so
+    // gateway providers keep working. The inference middleware enforces the
+    // OpenWork Models tier on its own route.
     await revokeOrgUpstreamProviderKeys(input.organizationId)
     await db
       .update(OrganizationTable)
       .set({ metadata: setInferenceMetadata(organization.metadata, null) })
       .where(eq(OrganizationTable.id, input.organizationId))
-    if (members.length > 0) {
-      await db
-        .update(InferenceKeyTable)
-        .set({ status: "revoked", revoked_at: new Date() })
-        .where(and(eq(InferenceKeyTable.organization_id, input.organizationId), inArray(InferenceKeyTable.org_membership_id, members.map((member) => member.id))))
-    }
     await deleteOpenWorkProviders({ organizationId: input.organizationId })
     return getInferenceStatus(input.organizationId)
   }

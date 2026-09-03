@@ -8,8 +8,6 @@ import {
     CodeXml,
     Cpu,
     Search,
-    User,
-    Users,
 } from "lucide-react";
 import { DenAutoNameField } from "../../_components/ui/auto-name-field";
 import { DenBrandMark } from "../../_components/ui/brand-mark";
@@ -20,7 +18,6 @@ import { DenSelectableRow } from "../../_components/ui/selectable-row";
 import { DenStickyActionBar } from "../../_components/ui/sticky-action-bar";
 import { UnderlineTabs } from "../../_components/ui/tabs";
 import { DenTextarea } from "../../_components/ui/textarea";
-import { DenToggleRow } from "../../_components/ui/toggle-row";
 import { getErrorMessage, getRequestError, requestJson } from "../../_lib/den-flow";
 import {
     getLlmProviderRoute,
@@ -56,6 +53,11 @@ import {
     type DenModelsDevProviderDetail,
     type DenModelsDevProviderSummary,
 } from "./llm-provider-data";
+import {
+    buildCatalogProviderOptions,
+    ProviderAccessPicker,
+    ProviderModelPicker,
+} from "./llm-provider-pickers";
 
 const SOURCE_TABS = [
     { value: "models_dev" as const, label: "Catalog provider", icon: Cpu },
@@ -89,8 +91,6 @@ export function LlmProviderEditorScreen({
         [llmProviderId, llmProviders],
     );
     const [source, setSource] = useState<EditableLlmProviderSource>("models_dev");
-    const [accessTab, setAccessTab] = useState<"teams" | "people">("teams");
-    const [accessQuery, setAccessQuery] = useState("");
     const [catalogProviders, setCatalogProviders] = useState<
         DenModelsDevProviderSummary[]
     >([]);
@@ -107,7 +107,6 @@ export function LlmProviderEditorScreen({
     const [nameTouched, setNameTouched] = useState(false);
     const [allMembers, setAllMembers] = useState(false);
     const [selectedModelIds, setSelectedModelIds] = useState<string[]>([]);
-    const [modelQuery, setModelQuery] = useState("");
     const [customConfigText, setCustomConfigText] = useState(
         buildCustomProviderTemplate(),
     );
@@ -369,63 +368,8 @@ export function LlmProviderEditorScreen({
         return catalogDetail?.models ?? [];
     }, [isAzureCatalog, azureProbeState, azureProbeResult, catalogDetail?.models]);
 
-    const filteredModels = useMemo(() => {
-        const normalizedQuery = modelQuery.trim().toLowerCase();
-        if (!normalizedQuery) {
-            return catalogModelOptions;
-        }
-
-        return catalogModelOptions.filter(
-            (model) =>
-                model.name.toLowerCase().includes(normalizedQuery) ||
-                model.id.toLowerCase().includes(normalizedQuery),
-        );
-    }, [catalogModelOptions, modelQuery]);
-
-    const filteredTeams = useMemo(() => {
-        const teams = orgContext?.teams ?? [];
-        const normalizedQuery = accessQuery.trim().toLowerCase();
-        if (!normalizedQuery) {
-            return teams;
-        }
-
-        return teams.filter((team) =>
-            team.name.toLowerCase().includes(normalizedQuery),
-        );
-    }, [accessQuery, orgContext?.teams]);
-
-    const filteredMembers = useMemo(() => {
-        const members = orgContext?.members ?? [];
-        const normalizedQuery = accessQuery.trim().toLowerCase();
-        if (!normalizedQuery) {
-            return members;
-        }
-
-        return members.filter(
-            (member) =>
-                member.user.name.toLowerCase().includes(normalizedQuery) ||
-                member.user.email.toLowerCase().includes(normalizedQuery),
-        );
-    }, [accessQuery, orgContext?.members]);
-
     const catalogProviderOptions = useMemo(
-        () =>
-            catalogProviders.map((catalogProvider) => ({
-                value: catalogProvider.id,
-                label: catalogProvider.name,
-                description: catalogProvider.id,
-                meta: `${catalogProvider.modelCount} ${catalogProvider.modelCount === 1 ? "model" : "models"}`,
-                // Companies always show as icon + name.
-                icon: (
-                    <DenBrandMark
-                        name={catalogProvider.name}
-                        simpleIconSlug={getProviderIconSlug(catalogProvider.id)}
-                        serviceUrl={catalogProvider.doc}
-                        className="h-6 w-6 rounded-[8px]"
-                        imageClassName="h-3.5 w-3.5"
-                    />
-                ),
-            })),
+        () => buildCatalogProviderOptions(catalogProviders),
         [catalogProviders],
     );
 
@@ -1376,68 +1320,13 @@ export function LlmProviderEditorScreen({
                             ) : null}
                         </div>
 
-                        <div className="mt-6">
-                            <DenInput
-                                type="search"
-                                icon={Search}
-                                value={modelQuery}
-                                onChange={(event) =>
-                                    setModelQuery(event.target.value)
-                                }
-                                placeholder="Search models..."
-                            />
-                        </div>
                     </div>
 
-                    {catalogDetail ? (
-                        filteredModels.length ? (
-                            <div className="mt-4">
-                                <div className="overflow-hidden rounded-[16px] border border-gray-200 bg-white divide-y divide-gray-200">
-                                    {filteredModels.map((model) => {
-                                        const selected =
-                                            selectedModelIds.includes(model.id);
-                                        return (
-                                            <DenSelectableRow
-                                                key={model.id}
-                                                selected={selected}
-                                                title={model.name}
-                                                description={model.id}
-                                                onClick={() =>
-                                                    setSelectedModelIds(
-                                                        (current) =>
-                                                            current.includes(
-                                                                model.id,
-                                                            )
-                                                                ? current.filter(
-                                                                      (entry) =>
-                                                                          entry !==
-                                                                          model.id,
-                                                                  )
-                                                                : [
-                                                                      ...current,
-                                                                      model.id,
-                                                                  ],
-                                                    )
-                                                }
-                                            />
-                                        );
-                                    })}
-                                </div>
-                            </div>
-                        ) : (
-                            <div className="mt-4 rounded-[24px] border border-dashed border-gray-200 bg-gray-50 px-5 py-6 text-[15px] text-gray-500">
-                                No models match{" "}
-                                <span className="font-medium text-gray-700">
-                                    &quot;{modelQuery}&quot;
-                                </span>
-                                .
-                            </div>
-                        )
-                    ) : (
-                        <div className="mt-4 rounded-[24px] border border-dashed border-gray-200 bg-gray-50 px-5 py-6 text-[15px] text-gray-500">
-                            Select a provider to browse its models.
-                        </div>
-                    )}
+                    <ProviderModelPicker
+                        models={catalogDetail ? catalogModelOptions : null}
+                        selectedModelIds={selectedModelIds}
+                        onChange={setSelectedModelIds}
+                    />
                 </section>
             ) : null}
 
@@ -1451,168 +1340,21 @@ export function LlmProviderEditorScreen({
                     </p>
                 </div>
 
-                <div className="mt-6">
-                    <DenToggleRow
-                        icon={Users}
-                        testId="llm-provider-all-members"
-                        title={`Everyone in ${orgContext?.organization.name ?? "this organization"}`}
-                        description={`All ${orgContext?.members.length ?? 0} current members — and anyone who joins later — can use these models.`}
-                        checked={allMembers}
-                        onChange={(checked) => setAllMembers(checked)}
-                    />
-                </div>
-
-                {allMembers ? (
-                    <p className="mt-3 text-[13px] text-gray-400">
-                        Turn off “Everyone” to pick specific teams and people.
-                    </p>
-                ) : null}
-
-                <div className={allMembers ? "pointer-events-none select-none opacity-45" : undefined} aria-disabled={allMembers}>
-                <div className="mt-6 grid w-80 grid-cols-2 rounded-xl bg-gray-200 p-1 text-[13px] font-medium text-gray-500">
-                    <button
-                        type="button"
-                        onClick={() => {
-                            setAccessTab("teams");
-                            setAccessQuery("");
-                        }}
-                        className={`inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2 transition ${accessTab === "teams" ? "bg-white text-gray-900 shadow-sm" : "hover:text-gray-700"}`}
-                    >
-                        <Users className="h-4 w-4" />
-                        {`Teams (${selectedTeamIds.length})`}
-                    </button>
-                    <button
-                        type="button"
-                        onClick={() => {
-                            setAccessTab("people");
-                            setAccessQuery("");
-                        }}
-                        className={`inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2 transition ${accessTab === "people" ? "bg-white text-gray-900 shadow-sm" : "hover:text-gray-700"}`}
-                    >
-                        <User className="h-4 w-4" />
-                        {`People (${selectedMemberIds.length})`}
-                    </button>
-                </div>
-
-                <div className="mt-6">
-                    <DenInput
-                        type="search"
-                        icon={Search}
-                        value={accessQuery}
-                        onChange={(event) => setAccessQuery(event.target.value)}
-                        placeholder={
-                            accessTab === "teams"
-                                ? "Search teams..."
-                                : "Search people..."
-                        }
-                    />
-                </div>
-
-                {accessTab === "teams" ? (
-                    orgContext?.teams.length ? (
-                        filteredTeams.length ? (
-                            <div className="mt-4 overflow-hidden rounded-[16px] border border-gray-200 bg-white divide-y divide-gray-200">
-                                {filteredTeams.map((team) => {
-                                    const selected = selectedTeamIds.includes(team.id);
-                                    return (
-                                        <DenSelectableRow
-                                            key={team.id}
-                                            selected={selected}
-                                            leading={
-                                                <Users className="h-4 w-4 text-gray-400" />
-                                            }
-                                            title={team.name}
-                                            description={`${team.memberIds.length} ${team.memberIds.length === 1 ? "member" : "members"}`}
-                                            onClick={() =>
-                                                setSelectedTeamIds((current) =>
-                                                    current.includes(team.id)
-                                                        ? current.filter(
-                                                              (entry) =>
-                                                                  entry !== team.id,
-                                                          )
-                                                        : [...current, team.id],
-                                                )
-                                            }
-                                        />
-                                    );
-                                })}
-                            </div>
-                        ) : (
-                            <div className="mt-4 rounded-[24px] border border-dashed border-gray-200 bg-gray-50 px-5 py-6 text-[15px] text-gray-500">
-                                No teams match{" "}
-                                <span className="font-medium text-gray-700">
-                                    &quot;{accessQuery}&quot;
-                                </span>
-                                .
-                            </div>
-                        )
-                    ) : (
-                        <div className="mt-4 rounded-[24px] border border-dashed border-gray-200 bg-gray-50 px-5 py-6 text-[15px] text-gray-500">
-                            Create teams from the Members page before assigning team
-                            access.
-                        </div>
-                    )
-                ) : orgContext?.members.length ? (
-                    filteredMembers.length ? (
-                        <div className="mt-4 overflow-hidden rounded-[16px] border border-gray-200 bg-white divide-y divide-gray-200">
-                            {filteredMembers.map((member) => {
-                                const selected = selectedMemberIds.includes(
-                                    member.id,
-                                );
-                                const locked = lockedMemberId === member.id;
-                                return (
-                                    <DenSelectableRow
-                                        key={member.id}
-                                        disabled={locked}
-                                        selected={selected}
-                                        leading={
-                                            <div className="flex h-8 w-8 items-center justify-center rounded-full bg-[#0f172a] text-[11px] font-semibold uppercase text-white">
-                                                {member.user.name
-                                                    .split(" ")
-                                                    .map((part) => part[0])
-                                                    .join("")
-                                                    .slice(0, 2)}
-                                            </div>
-                                        }
-                                        descriptionBelow
-                                        title={member.user.name}
-                                        description={member.user.email}
-                                        aside={
-                                            locked ? (
-                                                <span className="rounded-full bg-gray-100 px-2.5 py-1 text-[11px] font-medium text-gray-500">
-                                                    Locked
-                                                </span>
-                                            ) : undefined
-                                        }
-                                        onClick={() =>
-                                            setSelectedMemberIds((current) =>
-                                                current.includes(member.id)
-                                                    ? current.filter(
-                                                          (entry) =>
-                                                              entry !== member.id,
-                                                      )
-                                                    : [...current, member.id],
-                                            )
-                                        }
-                                    />
-                                );
-                            })}
-                        </div>
-                    ) : (
-                        <div className="mt-4 rounded-[24px] border border-dashed border-gray-200 bg-gray-50 px-5 py-6 text-[15px] text-gray-500">
-                            No people match{" "}
-                            <span className="font-medium text-gray-700">
-                                &quot;{accessQuery}&quot;
-                            </span>
-                            .
-                        </div>
-                    )
-                ) : (
-                    <div className="mt-4 rounded-[24px] border border-dashed border-gray-200 bg-gray-50 px-5 py-6 text-[15px] text-gray-500">
-                        No people are available to assign yet.
-                    </div>
-                )}
-                </div>
+                <ProviderAccessPicker
+                    orgContext={orgContext}
+                    value={{
+                        allMembers,
+                        memberIds: selectedMemberIds,
+                        teamIds: selectedTeamIds,
+                    }}
+                    onChange={(next) => {
+                        setAllMembers(next.allMembers);
+                        setSelectedMemberIds(next.memberIds);
+                        setSelectedTeamIds(next.teamIds);
+                    }}
+                    lockedMemberId={lockedMemberId}
+                    testIdPrefix="llm-provider"
+                />
             </section>
 
             <DenStickyActionBar

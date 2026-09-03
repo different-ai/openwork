@@ -1,10 +1,16 @@
 /** @jsxImportSource react */
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import type { ReactNode } from "react";
-import { ArrowRight, CheckCircle2, KeyRound, X } from "lucide-react";
+import { ArrowRight, CheckCircle2, KeyRound, LogIn, X } from "lucide-react";
 
 import { t } from "@/i18n";
-import { isCloudManagedProviderKey } from "@/react-app/domains/connections/provider-auth/cloud-provider-config";
+import {
+  gatewayConnectCopy,
+  type GatewayConnectProvider,
+  isCloudManagedProviderKey,
+  OPENWORK_GATEWAY_BADGE_LABEL,
+} from "@/react-app/domains/connections/provider-auth/cloud-provider-config";
 import { ProviderIcon } from "../../../design-system/provider-icon";
 import { SettingsNotice, SettingsStatusBadge } from "../settings-section";
 import {
@@ -44,6 +50,13 @@ export type AiSettingsViewProps = {
   organizationName?: string;
   /** Set of local provider IDs that were imported from cloud. */
   cloudProviderIds?: Set<string>;
+  /** Cloud provider IDs routed through the OpenWork inference gateway. */
+  gatewayProviderIds?: ReadonlySet<string>;
+  /** Gateway providers waiting on this member's own sign-in before they can be used. */
+  gatewayConnectProviders?: GatewayConnectProvider[];
+  /** Provider whose sign-in is currently open in the browser / being polled. */
+  connectingGatewayProviderId?: string | null;
+  onConnectGatewayProvider?: (provider: GatewayConnectProvider) => void | Promise<void>;
   showOpenWorkModelsSubscribe?: boolean;
   /** Subtle fallback row when OpenWork Models is not connected and the banner was dismissed. */
   showOpenWorkModelsConnect?: boolean;
@@ -76,6 +89,41 @@ function providerStatusTone(label: string): "ready" | "warning" | "neutral" {
   if (label.toLowerCase().includes("connected")) return "ready";
   if (label.toLowerCase().includes("error") || label.toLowerCase().includes("fail")) return "warning";
   return "neutral";
+}
+
+/** A gateway provider the member must sign in to before its models are usable. */
+export function GatewayConnectRow(props: {
+  provider: GatewayConnectProvider;
+  busy: boolean;
+  onConnect?: (provider: GatewayConnectProvider) => void | Promise<void>;
+}) {
+  const { provider } = props;
+  return (
+    <LayoutSectionItem
+      className="flex-row flex-wrap items-center justify-between gap-3 rounded-2xl border border-dashed border-dls-border px-4 py-3"
+    >
+      <div className="flex min-w-0 items-center gap-3">
+        <ProviderIcon providerId={provider.providerId} providerName={provider.name} size={20} className="text-muted-foreground" />
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <span className="truncate text-sm font-medium text-dls-text">{provider.name}</span>
+            <Badge variant="outline" className="h-auto px-2 py-0.5 text-[10px] text-muted-foreground">
+              {OPENWORK_GATEWAY_BADGE_LABEL}
+            </Badge>
+          </div>
+          <div className="truncate text-xs text-muted-foreground">{gatewayConnectCopy(provider.name)}</div>
+        </div>
+      </div>
+      <Button
+        variant="outline"
+        onClick={() => void props.onConnect?.(provider)}
+        disabled={props.busy || !provider.authUrl || !props.onConnect}
+      >
+        <LogIn className="mr-1.5 size-3.5" />
+        {props.busy ? "Waiting for sign-in…" : "Connect"}
+      </Button>
+    </LayoutSectionItem>
+  );
 }
 
 export function AiSettingsView(props: AiSettingsViewProps) {
@@ -182,6 +230,11 @@ export function AiSettingsView(props: AiSettingsViewProps) {
                             {sourceLabel}
                           </span>
                         ) : null}
+                        {props.gatewayProviderIds?.has(provider.id) ? (
+                          <Badge variant="outline" className="h-auto px-2 py-0.5 text-[10px] text-muted-foreground">
+                            {OPENWORK_GATEWAY_BADGE_LABEL}
+                          </Badge>
+                        ) : null}
                       </div>
                       <div className="truncate font-mono text-xs text-muted-foreground">{provider.id}</div>
                     </div>
@@ -209,6 +262,15 @@ export function AiSettingsView(props: AiSettingsViewProps) {
             })}
           </div>
         ) : null}
+
+        {props.gatewayConnectProviders?.map((provider) => (
+          <GatewayConnectRow
+            key={provider.cloudProviderId}
+            provider={provider}
+            busy={props.connectingGatewayProviderId === provider.cloudProviderId}
+            onConnect={props.onConnectGatewayProvider}
+          />
+        ))}
 
         {props.showOpenWorkModelsConnect ? (
           <LayoutSectionItem className="flex-row flex-wrap items-center justify-between gap-3 rounded-2xl border border-dashed border-dls-border px-4 py-3">

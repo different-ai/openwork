@@ -17,9 +17,15 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { t } from "@/i18n";
 import { readDenSettings } from "@/app/lib/den";
+import {
+  gatewayConnectCopy,
+  type GatewayConnectProvider,
+  OPENWORK_GATEWAY_BADGE_LABEL,
+} from "@/react-app/domains/connections/provider-auth/cloud-provider-config";
 import { modelEquals, resolveProviderDisplayName } from "../../../../app/utils";
 import type { ModelOption, ModelRef } from "../../../../app/types";
 import { isRecommendedModel } from "../../../../app/defaults";
@@ -60,6 +66,11 @@ export type ModelPickerModalProps = {
   openWorkModelsSyncing?: boolean;
   onRefreshOrganizationModels?: () => void | Promise<void>;
   restrictToCloud?: boolean;
+  /** Runtime provider ids routed through the OpenWork inference gateway (sync status source "openwork_gateway"). */
+  gatewayProviderIds?: ReadonlySet<string>;
+  /** Gateway providers waiting on this member's sign-in; shown as a compact "Connect" hint. */
+  gatewayConnectProviders?: GatewayConnectProvider[];
+  onConnectGatewayProvider?: (provider: GatewayConnectProvider) => void | Promise<void>;
 };
 
 type ProviderGroup = {
@@ -67,6 +78,7 @@ type ProviderGroup = {
   name: string;
   isNew: boolean;
   isCloud: boolean;
+  isGateway: boolean;
   isDisabled: boolean;
   hasCurrent: boolean;
   recommended: ModelOption[];
@@ -79,6 +91,23 @@ export type ModelPickerEmptyState = {
   showRefreshOrganizationModels: boolean;
   showOrganizationModelsSettings: boolean;
 };
+
+export type ProviderGroupBadge = { label: string; className: string };
+
+/** Header badges for one provider group, in display order. */
+export function resolveProviderGroupBadges(
+  group: Pick<ProviderGroup, "isNew" | "isCloud" | "isGateway" | "hasCurrent">,
+  organizationProviderLabel: string,
+): ProviderGroupBadge[] {
+  const badges: ProviderGroupBadge[] = [];
+  if (group.isNew) badges.push({ label: "New", className: "bg-blue-3 text-blue-11" });
+  if (group.isCloud) badges.push({ label: organizationProviderLabel, className: "bg-blue-3/50 text-blue-11/70" });
+  if (group.isGateway) {
+    badges.push({ label: OPENWORK_GATEWAY_BADGE_LABEL, className: "border-dls-border text-dls-secondary" });
+  }
+  if (group.hasCurrent) badges.push({ label: "Current", className: "bg-green-3 text-green-11" });
+  return badges;
+}
 
 export function resolveModelPickerEmptyState(input: {
   providerGroupCount: number;
@@ -167,6 +196,7 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
           name: opt.description ?? resolveProviderDisplayName(opt.providerID),
           isNew: !!opt.isRecommended,
           isCloud: opt.source === "cloud",
+          isGateway: props.gatewayProviderIds?.has(opt.providerID) === true,
           isDisabled: disabledSet.has(opt.providerID),
           hasCurrent: false,
           recommended: [],
@@ -194,7 +224,7 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
       if (a.hasCurrent !== b.hasCurrent) return a.hasCurrent ? -1 : 1;
       return a.name.localeCompare(b.name);
     });
-  }, [filteredOptions, props.current, disabledSet]);
+  }, [filteredOptions, props.current, props.gatewayProviderIds, disabledSet]);
 
   // Auto-expand on search
   useEffect(() => {
@@ -317,6 +347,32 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
             </div>
           ) : null}
 
+          {props.gatewayConnectProviders?.map((provider) => (
+            <div
+              key={provider.cloudProviderId}
+              className="mb-3 flex shrink-0 items-center gap-3 rounded-2xl border border-dashed border-dls-border px-3 py-2.5"
+            >
+              <ProviderIcon providerId={provider.providerId} providerName={provider.name} size={18} className="shrink-0 text-dls-secondary" />
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-1.5 text-[13px] font-medium text-dls-text">
+                  <span className="truncate">{provider.name}</span>
+                  <Badge variant="outline" className="h-auto rounded-md px-1.5 py-0.5 text-[10px] text-dls-secondary">
+                    {OPENWORK_GATEWAY_BADGE_LABEL}
+                  </Badge>
+                </div>
+                <div className="truncate text-[11px] text-dls-secondary">{gatewayConnectCopy(provider.name)}</div>
+              </div>
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={!provider.authUrl || !props.onConnectGatewayProvider}
+                onClick={() => void props.onConnectGatewayProvider?.(provider)}
+              >
+                Connect
+              </Button>
+            </div>
+          ))}
+
           {/* Content */}
           <div className="min-h-0 flex-1 space-y-1 overflow-y-auto pr-1 -mr-1">
             {emptyState ? (
@@ -416,15 +472,15 @@ function ProviderAccordion({
           </div>
           {" "}
           <span className="flex shrink-0 items-center gap-1.5">
-            {group.isNew ? (
-              <span className="rounded-md bg-blue-3 px-1.5 py-0.5 text-[10px] font-medium text-blue-11">New</span>
-            ) : null}
-            {group.isCloud ? (
-              <span className="rounded-md bg-blue-3/50 px-1.5 py-0.5 text-[10px] font-medium text-blue-11/70">{organizationProviderLabel}</span>
-            ) : null}
-            {group.hasCurrent ? (
-              <span className="rounded-md bg-green-3 px-1.5 py-0.5 text-[10px] font-medium text-green-11">Current</span>
-            ) : null}
+            {resolveProviderGroupBadges(group, organizationProviderLabel).map((badge) => (
+              <Badge
+                key={badge.label}
+                variant="outline"
+                className={`h-auto rounded-md border-transparent px-1.5 py-0.5 text-[10px] ${badge.className}`}
+              >
+                {badge.label}
+              </Badge>
+            ))}
           </span>
         </button>
         {canToggleProvider ? (

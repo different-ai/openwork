@@ -26,8 +26,15 @@ import {
   InferenceOrgLimitPolicyTable,
   InferenceOrgUpstreamProviderKeyTable,
   InferenceOrgUsageBucketTable,
+  InferenceProviderAccessTable,
+  InferenceProviderCredentialTable,
+  InferenceProviderModelTable,
+  InferenceProviderOauthStateTable,
+  InferenceProviderTable,
+  InferenceRequestLogTable,
   InferenceUsageLedgerBucketChargeTable,
   InferenceUsageLedgerEntryTable,
+  InferenceUsageRollupTable,
   InstallLinkTable,
   InvitationTable,
   LlmProviderAccessTable,
@@ -436,6 +443,21 @@ export function registerDeleteOrganizationRoutes<T extends { Variables: OrgRoute
         if (ledgerEntryIds.length > 0) {
           await tx.delete(InferenceUsageLedgerBucketChargeTable).where(inArray(InferenceUsageLedgerBucketChargeTable.ledger_entry_id, ledgerEntryIds))
         }
+
+        const inferenceProviderIds = (await tx
+          .select({ id: InferenceProviderTable.id })
+          .from(InferenceProviderTable)
+          .where(eq(InferenceProviderTable.organization_id, organizationId)))
+          .map((row) => row.id)
+        if (inferenceProviderIds.length > 0) {
+          await tx.delete(InferenceProviderModelTable).where(inArray(InferenceProviderModelTable.inference_provider_id, inferenceProviderIds))
+          await tx.delete(InferenceProviderAccessTable).where(inArray(InferenceProviderAccessTable.inference_provider_id, inferenceProviderIds))
+          await tx.delete(InferenceProviderOauthStateTable).where(inArray(InferenceProviderOauthStateTable.inference_provider_id, inferenceProviderIds))
+        }
+        await tx.delete(InferenceProviderCredentialTable).where(eq(InferenceProviderCredentialTable.organization_id, organizationId))
+        await tx.delete(InferenceRequestLogTable).where(eq(InferenceRequestLogTable.organization_id, organizationId))
+        await tx.delete(InferenceUsageRollupTable).where(eq(InferenceUsageRollupTable.organization_id, organizationId))
+        await tx.delete(InferenceProviderTable).where(eq(InferenceProviderTable.organization_id, organizationId))
 
         const llmProviderIds = (await tx
           .select({ id: LlmProviderTable.id })

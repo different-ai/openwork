@@ -3,14 +3,16 @@
 import Link from "next/link";
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, ExternalLink, KeyRound, Trash2, Users } from "lucide-react";
+import { ArrowLeft, ArrowRightLeft, ExternalLink, KeyRound, Trash2, Users } from "lucide-react";
 import { DenButton } from "../../_components/ui/button";
 import { getRequestError, requestJson } from "../../_lib/den-flow";
 import {
     getEditLlmProviderRoute,
+    getGatewayProviderRoute,
     getLlmProvidersRoute,
 } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
+import { migrateLlmProviderToGateway } from "./inference-provider-data";
 import {
     formatProviderTimestamp,
     getProviderApiBase,
@@ -44,6 +46,9 @@ export function LlmProviderDetailScreen({
         useOrgLlmProviders(orgId);
     const [deleteBusy, setDeleteBusy] = useState(false);
     const [deleteError, setDeleteError] = useState<string | null>(null);
+    const [confirmingMigrate, setConfirmingMigrate] = useState(false);
+    const [migrateBusy, setMigrateBusy] = useState(false);
+    const [migrateError, setMigrateError] = useState<string | null>(null);
 
     const provider = useMemo(
         () => llmProviders.find((entry) => entry.id === llmProviderId) ?? null,
@@ -89,6 +94,29 @@ export function LlmProviderDetailScreen({
             );
         } finally {
             setDeleteBusy(false);
+        }
+    }
+
+    async function moveToGateway() {
+        if (!provider) {
+            return;
+        }
+        setMigrateError(null);
+        setMigrateBusy(true);
+        try {
+            await runReauthableAction("migrate-llm-provider", async () => {
+                const gatewayProvider = await migrateLlmProviderToGateway(provider.id);
+                router.push(getGatewayProviderRoute(orgSlug, gatewayProvider.id));
+                router.refresh();
+            });
+        } catch (nextError) {
+            setMigrateError(
+                nextError instanceof Error
+                    ? nextError.message
+                    : "Could not move the provider to the gateway.",
+            );
+        } finally {
+            setMigrateBusy(false);
         }
     }
 
@@ -142,6 +170,19 @@ export function LlmProviderDetailScreen({
                 </Link>
 
                 <div className="flex flex-wrap gap-3">
+                    {provider.canManage && provider.source === "models_dev" ? (
+                        <DenButton
+                            variant="secondary"
+                            data-testid="llm-provider-move-to-gateway"
+                            onClick={() => {
+                                setMigrateError(null);
+                                setConfirmingMigrate(true);
+                            }}
+                        >
+                            <ArrowRightLeft className="h-4 w-4" />
+                            Move to gateway
+                        </DenButton>
+                    ) : null}
                     {provider.canManage && provider.source !== "openwork" ? (
                         <>
                             <Link
@@ -170,6 +211,49 @@ export function LlmProviderDetailScreen({
             {deleteError ? (
                 <div className="mb-6 rounded-[28px] border border-red-200 bg-red-50 px-6 py-4 text-[14px] text-red-700">
                     {deleteError}
+                </div>
+            ) : null}
+            {migrateError ? (
+                <div className="mb-6 rounded-[28px] border border-red-200 bg-red-50 px-6 py-4 text-[14px] text-red-700">
+                    {migrateError}
+                </div>
+            ) : null}
+
+            {confirmingMigrate ? (
+                <div
+                    className="fixed inset-0 z-50 flex items-center justify-center bg-gray-950/30 px-4"
+                    role="dialog"
+                    aria-modal="true"
+                    aria-labelledby="move-to-gateway-title"
+                >
+                    <div className="w-full max-w-md rounded-2xl border border-gray-200 bg-white p-6 shadow-xl">
+                        <h2 id="move-to-gateway-title" className="text-[18px] font-semibold text-gray-950">
+                            Move “{provider.name}” to the OpenWork gateway?
+                        </h2>
+                        <p className="mt-2 text-[13px] leading-5 text-gray-500">
+                            The saved credential moves to the OpenWork server and is no longer sent to devices.
+                            Members keep the same models and access, and call them via OpenWork Gateway with their
+                            own OpenWork key. Desktop apps re-sync automatically. This provider disappears from
+                            Bring your Own Keys.
+                        </p>
+                        {migrateError ? (
+                            <p className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-[13px] text-red-700">
+                                {migrateError}
+                            </p>
+                        ) : null}
+                        <div className="mt-6 flex justify-end gap-2">
+                            <DenButton variant="secondary" onClick={() => setConfirmingMigrate(false)}>
+                                Cancel
+                            </DenButton>
+                            <DenButton
+                                data-testid="llm-provider-move-to-gateway-confirm"
+                                loading={migrateBusy}
+                                onClick={() => void moveToGateway()}
+                            >
+                                Move to gateway
+                            </DenButton>
+                        </div>
+                    </div>
                 </div>
             ) : null}
 

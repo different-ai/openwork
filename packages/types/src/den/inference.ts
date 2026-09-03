@@ -1,3 +1,5 @@
+import { z } from "zod";
+
 export const INFERENCE_USAGE_CONVERSION_FACTOR = 100_000_000;
 
 export const INFERENCE_WINDOW_TYPES = [
@@ -116,3 +118,135 @@ export type InferenceOrganizationMetadata = {
   enabled: true;
   tier: InferenceTier;
 };
+
+// --- Inference gateway (per-org provider destinations) ---
+
+export const INFERENCE_PROVIDER_CREDENTIAL_MODES = ["org", "member"] as const;
+export type InferenceProviderCredentialMode =
+  (typeof INFERENCE_PROVIDER_CREDENTIAL_MODES)[number];
+
+export const INFERENCE_PROVIDER_STATUSES = ["active", "disabled"] as const;
+export type InferenceProviderStatus = (typeof INFERENCE_PROVIDER_STATUSES)[number];
+
+export const INFERENCE_PROVIDER_CREDENTIAL_KINDS = [
+  "api_key",
+  "api_key_map",
+  "aws_keys",
+  "gcp_service_account",
+  "oauth_google",
+  "oauth_azure",
+] as const;
+export type InferenceProviderCredentialKind =
+  (typeof INFERENCE_PROVIDER_CREDENTIAL_KINDS)[number];
+
+export const INFERENCE_PROVIDER_CREDENTIAL_STATUSES = [
+  "active",
+  "revoked",
+  "refresh_failed",
+] as const;
+export type InferenceProviderCredentialStatus =
+  (typeof INFERENCE_PROVIDER_CREDENTIAL_STATUSES)[number];
+
+export const INFERENCE_REQUEST_ROUTES = ["openwork_openrouter", "org_provider"] as const;
+export type InferenceRequestRoute = (typeof INFERENCE_REQUEST_ROUTES)[number];
+
+export const INFERENCE_REQUEST_PROTOCOLS = [
+  "openai_chat",
+  "openai_responses",
+  "anthropic_messages",
+  "google_generate_content",
+  "bedrock_converse",
+  "passthrough",
+] as const;
+export type InferenceRequestProtocol = (typeof INFERENCE_REQUEST_PROTOCOLS)[number];
+
+export const INFERENCE_REQUEST_OUTCOMES = [
+  "ok",
+  "upstream_error",
+  "upstream_unreachable",
+  "client_aborted",
+  "rejected",
+] as const;
+export type InferenceRequestOutcome = (typeof INFERENCE_REQUEST_OUTCOMES)[number];
+
+export const INFERENCE_USAGE_SOURCES = ["stream", "json", "missing"] as const;
+export type InferenceUsageSource = (typeof INFERENCE_USAGE_SOURCES)[number];
+
+export const INFERENCE_ROLLUP_GRANULARITIES = ["hour", "day"] as const;
+export type InferenceRollupGranularity = (typeof INFERENCE_ROLLUP_GRANULARITIES)[number];
+
+// Decrypted `secret` payloads for the structured credential kinds. `api_key`
+// is a plain string and has no schema.
+
+export const inferenceApiKeyMapSecretSchema = z
+  .record(z.string(), z.string())
+  .refine((value) => Object.keys(value).length > 0, {
+    message: "api_key_map must contain at least one entry",
+  });
+export type InferenceApiKeyMapSecret = z.infer<typeof inferenceApiKeyMapSecretSchema>;
+
+export const inferenceAwsKeysSecretSchema = z.object({
+  accessKeyId: z.string().min(1),
+  secretAccessKey: z.string().min(1),
+  sessionToken: z.string().min(1).optional(),
+  region: z.string().min(1).optional(),
+});
+export type InferenceAwsKeysSecret = z.infer<typeof inferenceAwsKeysSecretSchema>;
+
+export const inferenceGcpServiceAccountSecretSchema = z.looseObject({
+  client_email: z.string().min(1),
+  private_key: z.string().min(1),
+  token_uri: z.string().min(1),
+});
+export type InferenceGcpServiceAccountSecret = z.infer<
+  typeof inferenceGcpServiceAccountSecretSchema
+>;
+
+export const inferenceOauthTokenSecretSchema = z.object({
+  accessToken: z.string().min(1),
+  refreshToken: z.string().min(1).optional(),
+  tokenType: z.string().min(1).optional(),
+});
+export type InferenceOauthTokenSecret = z.infer<typeof inferenceOauthTokenSecretSchema>;
+
+export type InferenceProviderSecret =
+  | { kind: "api_key"; apiKey: string }
+  | { kind: "api_key_map"; apiKeys: InferenceApiKeyMapSecret }
+  | { kind: "aws_keys"; awsKeys: InferenceAwsKeysSecret }
+  | { kind: "gcp_service_account"; serviceAccount: InferenceGcpServiceAccountSecret }
+  | { kind: "oauth_google"; token: InferenceOauthTokenSecret }
+  | { kind: "oauth_azure"; token: InferenceOauthTokenSecret };
+
+function parseJsonSecret(raw: string): unknown {
+  try {
+    return JSON.parse(raw);
+  } catch {
+    throw new Error("Inference provider secret is not valid JSON");
+  }
+}
+
+/**
+ * Parse a decrypted `inference_provider_credentials.secret` value by kind.
+ * Throws on malformed input; never logs the raw value.
+ */
+export function parseInferenceProviderSecret(
+  kind: InferenceProviderCredentialKind,
+  raw: string,
+): InferenceProviderSecret {
+  switch (kind) {
+    case "api_key":
+      return { kind, apiKey: raw.trim() };
+    case "api_key_map":
+      return { kind, apiKeys: inferenceApiKeyMapSecretSchema.parse(parseJsonSecret(raw)) };
+    case "aws_keys":
+      return { kind, awsKeys: inferenceAwsKeysSecretSchema.parse(parseJsonSecret(raw)) };
+    case "gcp_service_account":
+      return {
+        kind,
+        serviceAccount: inferenceGcpServiceAccountSecretSchema.parse(parseJsonSecret(raw)),
+      };
+    case "oauth_google":
+    case "oauth_azure":
+      return { kind, token: inferenceOauthTokenSecretSchema.parse(parseJsonSecret(raw)) };
+  }
+}
