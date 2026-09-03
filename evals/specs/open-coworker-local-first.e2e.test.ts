@@ -130,9 +130,11 @@ function lastUserText(body: unknown): string {
   return "";
 }
 
-/** Whether the request already carries a tool result: the second half of a tool-calling turn. */
+/** Whether the current turn (after the last user message) already carries a tool result: the second half of a tool-calling turn. */
 function hasToolResult(body: unknown): boolean {
-  return isRecord(body) && Array.isArray(body.messages) && body.messages.some((message) => isRecord(message) && message.role === "tool");
+  if (!isRecord(body) || !Array.isArray(body.messages)) return false;
+  const lastUser = body.messages.map((message) => isRecord(message) && message.role === "user").lastIndexOf(true);
+  return body.messages.slice(lastUser + 1).some((message) => isRecord(message) && message.role === "tool");
 }
 
 function streamChunks(response: ServerResponse, deltas: Array<Record<string, unknown>>, finish: string): void {
@@ -1746,8 +1748,17 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
     }),
   });
   expect(providerPatch.status).toBe(200);
+  // The config route announces the change; without the desktop's reload listener the engine is reloaded here.
+  const engineReload = await fetch(`${serverUrl}/workspace/${encodeURIComponent(scoutWorkspaceId)}/engine/reload`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${ownerToken}` },
+  });
+  expect(engineReload.status).toBe(200);
   expect(await invokeCoworker(app, "coworkers.update", { slug: "scout", patch: { model: `${SCRIPTED_PROVIDER}/${SCRIPTED_MODEL}`, modelVariant: "" } })).toMatchObject({ ok: true });
   await evalIn(app, "location.reload(); true");
+  // Two coworkers exist now; the app opens on the first, so pick Scout as a person would.
+  await waitFor(app, `Boolean(document.querySelector('[data-testid="coworker-rail"]'))`, { timeoutMs: 120_000, label: "team rail after the model change" });
+  await clickButtonContaining(app, "Scout");
   await waitFor(app, `Boolean(document.querySelector('[data-testid="coworker-discussion-view"]')) && [...document.querySelectorAll("h1")].some((heading) => heading.textContent?.trim() === "Scout")`, { timeoutMs: 120_000, label: "Scout discussion view after the model change" });
   await waitFor(app, `document.querySelector('[data-testid="coworker-top-status"]')?.textContent?.trim() === "Ready"`, { timeoutMs: 240_000, label: "Scout ready on the scripted model" });
   await fill(app, 'textarea[aria-label="Message Scout"]', CAR_PROMPT);
@@ -1766,7 +1777,7 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
     const replyIndex = bubbles.findIndex((bubble) => (bubble.textContent ?? "").includes(${json(CAR_REPLY)}));
     const lineTop = line.getBoundingClientRect().top;
     return {
-      summary: summary.textContent?.trim() ?? "",
+      summary: summary.querySelector("span.truncate")?.textContent?.trim() ?? "",
       state: receipt.dataset.state,
       betweenBubbles: userIndex !== -1 && replyIndex !== -1 && bubbles[userIndex].getBoundingClientRect().bottom <= lineTop && lineTop <= bubbles[replyIndex].getBoundingClientRect().top,
       actionLines: document.querySelectorAll('[data-testid="coworker-action-line"]').length,
@@ -1815,7 +1826,7 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   })()`, { timeoutMs: 60_000, label: "Workers view with Assignments for the chat-created assignment" });
   const carRow = String(await waitFor(app, `(() => {
     const row = [...document.querySelectorAll('[data-testid="responsibility-row"]')].find((candidate) => (candidate.textContent ?? "").includes("Move the car"));
-    return row instanceof HTMLElement ? row.innerText.replace(/\s+/g, " ") : false;
+    return row instanceof HTMLElement ? row.innerText.replace(/\\s+/g, " ") : false;
   })()`, { timeoutMs: 60_000, label: "the chat-created assignment in the panel" }));
   expect(carRow).toContain("Move the car Every weekday at 9:00 AM");
   expect(carRow).toMatch(/Next: (today|tomorrow|\w+ \d+) at 9:00 AM/);
@@ -1878,7 +1889,7 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   await clickButton(app, "Schedule assignment");
   const intervalRow = String(await waitFor(app, `(() => {
     const row = [...document.querySelectorAll('[data-testid="responsibility-row"]')].find((candidate) => (candidate.textContent ?? "").includes("Competitor page"));
-    return row instanceof HTMLElement ? row.innerText.replace(/\s+/g, " ") : false;
+    return row instanceof HTMLElement ? row.innerText.replace(/\\s+/g, " ") : false;
   })()`, { timeoutMs: 60_000, label: "the interval responsibility in the panel" }));
   expect(intervalRow).toContain("Competitor page Every 2 hours between 9:00 AM and 6:00 PM on weekdays, up to 4 times a day");
   expect(intervalRow).not.toMatch(/UTC|America\/|slot|thread|cron|interval|everyMinutes/);
@@ -1899,6 +1910,8 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
     const gap = document.querySelector('[data-testid="minimum-run-gap"]');
     const perDay = document.querySelector('[data-testid="max-runs-per-day"]');
     if (!limit || !gap || !perDay) return false;
+    // The card reads its settings first; wait until every group shows its saved choice.
+    if ([limit, gap, perDay].some((group) => !group.querySelector('[role="radio"][aria-checked="true"]'))) return false;
     const read = (group) => [...group.querySelectorAll('[role="radio"]')].map((radio) => radio.textContent?.trim() + (radio.getAttribute("aria-checked") === "true" ? "*" : ""));
     return { limit: read(limit), gap: read(gap), perDay: read(perDay), text: document.querySelector('[data-testid="schedule-guardrails"]')?.textContent ?? "" };
   })()`, { timeoutMs: 30_000, label: "guardrail controls" });
