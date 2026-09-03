@@ -105,6 +105,8 @@ export type TeamRole = {
   id: string;
   defaultName: string;
   role: string;
+  /** What this kind of coworker helps with, for the person choosing: "Schedules, reminders, and follow-ups". */
+  pitch: string;
   mission: string;
   avatarColor: AvatarColor;
   avatarGlasses: AvatarGlasses;
@@ -112,7 +114,7 @@ export type TeamRole = {
 };
 
 /** A proposed coworker before it exists: a catalog role with a name the person may change. */
-export type TeamDraft = Omit<TeamRole, "id" | "defaultName"> & { roleId: string; name: string };
+export type TeamDraft = Omit<TeamRole, "id" | "defaultName" | "pitch"> & { roleId: string; name: string };
 
 export type TeamSuggestionState = "offered" | "accepted" | "declined";
 export type TeamReferralState = "offered" | "asked" | "continued";
