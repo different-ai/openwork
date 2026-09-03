@@ -3,8 +3,8 @@
   "lane": "critical-path-e2e-required",
   "specs": [
     {
-      "test": "welcome-one-field.e2e.test.ts",
-      "covers": "The first-run welcome screen and organization join entry point.",
+      "test": "first-run-local.e2e.test.ts",
+      "covers": "The first-run welcome screen and local onboarding path.",
       "evidence": "https://github.com/different-ai/openwork/pull/4337"
     },
     {

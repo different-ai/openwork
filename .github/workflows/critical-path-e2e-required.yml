@@ -141,23 +141,23 @@ jobs:
           set -euo pipefail
           mapfile -t tests < <(node evals/scripts/list-critical-path-tests.mjs)
           critical="org-team-lifecycle-critical-path.e2e.test.ts"
-          welcome="welcome-one-field.e2e.test.ts"
+          onboarding="first-run-local.e2e.test.ts"
           core=()
           for test in "${tests[@]}"; do
-            if [ "$test" != "$critical" ] && [ "$test" != "$welcome" ]; then
+            if [ "$test" != "$critical" ] && [ "$test" != "$onboarding" ]; then
               core+=("$test")
             fi
           done
           if [ "${#core[@]}" -ne "$((${#tests[@]} - 2))" ]; then
-            echo "::error::The critical-path manifest must contain the standalone welcome and team-lifecycle journeys exactly once."
+            echo "::error::The critical-path manifest must contain the standalone onboarding and team-lifecycle journeys exactly once."
             exit 1
           fi
 
           OPENWORK_EVAL_MAX_WORKERS=3 OPENWORK_EVAL_MODEL=big-pickle \
             pnpm evals:e2e --daytona "${core[@]}"
 
-      - name: Run standalone welcome entry point
-        id: welcome
+      - name: Run standalone local onboarding
+        id: onboarding
         if: steps.deterministic.outcome == 'success'
         shell: bash
         env:
@@ -168,11 +168,11 @@ jobs:
         run: |
           set -euo pipefail
           OPENWORK_EVAL_MODEL=big-pickle \
-            pnpm evals:e2e --daytona welcome-one-field.e2e.test.ts
+            pnpm evals:e2e --daytona first-run-local.e2e.test.ts
 
       - name: Run team-lifecycle critical path
         id: lifecycle
-        if: steps.welcome.outcome == 'success'
+        if: steps.onboarding.outcome == 'success'
         shell: bash
         env:
           DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
@@ -222,7 +222,7 @@ jobs:
           AUTHORIZED: ${{ github.event_name == 'workflow_dispatch' && steps.authorize-manual.outputs.authorized || steps.authorize.outputs.authorized }}
           SELECTION_RESULT: ${{ steps.selection.outcome }}
           DETERMINISTIC_RESULT: ${{ steps.deterministic.outcome }}
-          WELCOME_RESULT: ${{ steps.welcome.outcome }}
+          ONBOARDING_RESULT: ${{ steps.onboarding.outcome }}
           LIFECYCLE_RESULT: ${{ steps.lifecycle.outcome }}
           JUDGE_RESULT: ${{ steps.judge.outcome }}
           TEST_COUNT: ${{ steps.selection.outputs.count }}
@@ -233,11 +233,11 @@ jobs:
             echo
             echo "Selected specs: **${TEST_COUNT:-0}**."
             echo "Authorized: **${AUTHORIZED:-false}**."
-            echo "Configuration: **$CONFIG_RESULT**; selection: **$SELECTION_RESULT**; shared deterministic lane: **$DETERMINISTIC_RESULT**; standalone welcome: **$WELCOME_RESULT**; team lifecycle: **$LIFECYCLE_RESULT**; vision judgment: **$JUDGE_RESULT**."
+            echo "Configuration: **$CONFIG_RESULT**; selection: **$SELECTION_RESULT**; shared deterministic lane: **$DETERMINISTIC_RESULT**; standalone onboarding: **$ONBOARDING_RESULT**; team lifecycle: **$LIFECYCLE_RESULT**; vision judgment: **$JUDGE_RESULT**."
             echo "Only successful, non-skipped test runs and successful deferred-claim judgment pass this required check."
           } >> "$GITHUB_STEP_SUMMARY"
 
           [ "$AUTHORIZED" = "true" ] || exit 1
-          for result in "$CONFIG_RESULT" "$SELECTION_RESULT" "$DETERMINISTIC_RESULT" "$WELCOME_RESULT" "$LIFECYCLE_RESULT" "$JUDGE_RESULT"; do
+          for result in "$CONFIG_RESULT" "$SELECTION_RESULT" "$DETERMINISTIC_RESULT" "$ONBOARDING_RESULT" "$LIFECYCLE_RESULT" "$JUDGE_RESULT"; do
             [ "$result" = "success" ] || exit 1
           done
