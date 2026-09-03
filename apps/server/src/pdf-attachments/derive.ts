@@ -147,18 +147,48 @@ function isWithin(parent: string, candidate: string): boolean {
   return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
 }
 
+const SYMLINK_REFUSED = "PDF attachment storage path resolves through a symlink; refusing to use it.";
+
+function errorCode(cause: unknown): string | undefined {
+  return typeof cause === "object" && cause !== null && "code" in cause && typeof cause.code === "string" ? cause.code : undefined;
+}
+
+/**
+ * Creates `directory` beneath `root` one component at a time, never creating
+ * or descending through a symlink, so a hostile workspace cannot make this
+ * module create directories anywhere else.
+ */
+async function mkdirRefusingSymlinks(root: string, directory: string): Promise<void> {
+  const parts = relative(root, directory).split(sep).filter((part) => part.length > 0);
+  let current = root;
+  for (const part of parts) {
+    current = join(current, part);
+    try {
+      const info = await lstat(current);
+      if (info.isSymbolicLink() || !info.isDirectory()) throw new Error(SYMLINK_REFUSED);
+    } catch (cause) {
+      if (errorCode(cause) !== "ENOENT") throw cause;
+      try {
+        await mkdir(current);
+      } catch (created) {
+        if (errorCode(created) !== "EEXIST") throw created;
+        const info = await lstat(current);
+        if (info.isSymbolicLink() || !info.isDirectory()) throw new Error(SYMLINK_REFUSED);
+      }
+    }
+  }
+}
+
 /**
  * A workspace may contain hostile symlinks. Every directory this module writes
  * must resolve to exactly the path expected beneath the real workspace root;
  * anything routed through a symlink is refused.
  */
 async function confinedDirectory(root: string, directory: string): Promise<string> {
-  await mkdir(directory, { recursive: true });
+  await mkdirRefusingSymlinks(root, directory);
   const [realRoot, realDirectory] = await Promise.all([realpath(root), realpath(directory)]);
   const expected = resolve(realRoot, relative(root, directory));
-  if (realDirectory !== expected || !isWithin(realRoot, realDirectory)) {
-    throw new Error("PDF attachment storage path resolves through a symlink; refusing to use it.");
-  }
+  if (realDirectory !== expected || !isWithin(realRoot, realDirectory)) throw new Error(SYMLINK_REFUSED);
   return realDirectory;
 }
 
@@ -191,8 +221,7 @@ async function existingSha(realDirectory: string, path: string): Promise<string 
   try {
     handle = await openVerifiedForRead(realDirectory, path);
   } catch (cause) {
-    const code = typeof cause === "object" && cause !== null && "code" in cause ? cause.code : undefined;
-    return code === "ENOENT" ? null : "";
+    return errorCode(cause) === "ENOENT" ? null : "";
   }
   try {
     return sha256(await handle.readFile());
@@ -217,7 +246,10 @@ async function createVerifiedFile(realDirectory: string, path: string): Promise<
     return handle;
   } catch (cause) {
     await handle.close();
-    await rm(path, { force: true }).catch(() => undefined);
+    // Remove the empty file only if it verifiably sits where it was meant to; never delete through a swapped path.
+    await realpath(path)
+      .then((real) => (isWithin(realDirectory, real) ? rm(real, { force: true }) : undefined))
+      .catch(() => undefined);
     throw cause;
   }
 }

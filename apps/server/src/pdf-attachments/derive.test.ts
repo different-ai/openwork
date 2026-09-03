@@ -244,6 +244,21 @@ describe("derivePdf", () => {
     });
   });
 
+  test("never creates directories through a symlinked parent", async () => {
+    await withWorkspace(async (root) => {
+      const outside = await mkdtemp(join(tmpdir(), "openwork-pdf-parent-"));
+      try {
+        // `.opencode/openwork` itself points elsewhere: nothing below it may be created.
+        await mkdir(join(root, ".opencode"), { recursive: true });
+        await symlink(outside, join(root, ".opencode", "openwork"));
+        await expect(derivePdf(root, "victim.pdf", buildTestPdf(["Confidential"]), { renderPages: true })).rejects.toThrow("resolves through a symlink");
+        expect(await readdir(outside)).toEqual([]);
+      } finally {
+        await rm(outside, { recursive: true, force: true });
+      }
+    });
+  });
+
   test("refuses a bundle directory that is a symlink", async () => {
     await withWorkspace(async (root) => {
       const outside = await mkdtemp(join(tmpdir(), "openwork-pdf-bundle-"));
