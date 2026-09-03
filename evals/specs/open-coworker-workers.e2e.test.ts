@@ -378,7 +378,7 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   const assignmentsSection = await waitFor(app, `(() => {
     const section = document.querySelector('[data-testid="coworker-assignments"]');
     if (!(section instanceof HTMLElement)) return false;
-    const scheduled = [...section.querySelectorAll('[data-testid="responsibility-row"]')].map((row) => row.innerText.replace(/\s+/g, " ").trim());
+    const scheduled = [...section.querySelectorAll('[data-testid="responsibility-row"]')].map((row) => row.innerText.replace(/\\s+/g, " ").trim());
     if (scheduled.length === 0) return false;
     return { heading: section.querySelector("h3")?.textContent?.trim() ?? "", scheduled, once: document.querySelectorAll('[data-testid="assignment-row"]').length };
   })()`, { timeoutMs: 30_000, label: "Assignments below the Workers" });
@@ -399,7 +399,7 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   const decisionCard = await waitFor(app, `(() => {
     const card = document.querySelector('[data-testid="worker-decision-card"]');
     if (!(card instanceof HTMLElement)) return false;
-    const options = [...card.querySelectorAll('[data-testid="interaction-option"]')].map((option) => option.textContent?.replace(/\s+/g, " ").trim() ?? "");
+    const options = [...card.querySelectorAll('[data-testid="interaction-option"]')].map((option) => option.textContent?.replace(/\\s+/g, " ").trim() ?? "");
     return { title: card.querySelector("h3")?.textContent?.trim() ?? "", text: card.innerText, options };
   })()`, { timeoutMs: 60_000, label: "the Worker's decision card in the discussion" });
   expect(decisionCard).toMatchObject({ title: "Decider asks" });
