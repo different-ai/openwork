@@ -1,0 +1,19 @@
+# Desktop provider authentication, settings, policy, and credential sync
+/apps/app/src/react-app/domains/connections/provider-auth/** @benjaminshafii @reachjalil @OmarMcAdam
+/apps/app/src/react-app/domains/settings/pages/ai-view.tsx @benjaminshafii @reachjalil @OmarMcAdam
+/apps/app/src/react-app/domains/settings/pages/cloud-providers-view.tsx @benjaminshafii @reachjalil @OmarMcAdam
+/apps/app/src/app/cloud/desktop-app-restrictions.ts @benjaminshafii @reachjalil @OmarMcAdam
+/apps/server/src/cloud-provider-sync.ts @benjaminshafii @reachjalil @OmarMcAdam
+
+# Organization desktop policies
+/ee/apps/den-api/src/desktop-policies.ts @benjaminshafii @src-opn @OmarMcAdam
+/ee/apps/den-api/src/routes/org/desktop-policies.ts @benjaminshafii @src-opn @OmarMcAdam
+
+# Organization providers, connections, and SSO
+/ee/apps/den-api/src/llm/** @benjaminshafii @reachjalil @OmarMcAdam
+/ee/apps/den-api/src/routes/org/mcp-connections.ts @benjaminshafii @reachjalil @OmarMcAdam
+/ee/apps/den-api/src/**/sso* @OmarMcAdam @benjaminshafii @src-opn
+
+# CI guardrails and spec quarantine
+/.github/workflows/** @benjaminshafii @OmarMcAdam @reachjalil
+/evals/specs/quarantine.json @benjaminshafii @OmarMcAdam @reachjalil
