@@ -93,6 +93,18 @@ reviewable list; naming one through `evals:e2e` fails with its quarantine reason
 A spec enters quarantine with control-run evidence and leaves only after a green
 Daytona or local run has published test evidence.
 
+### Required critical-path PR lane
+
+[`specs/critical-path-lane.json`](./specs/critical-path-lane.json) is the small,
+reviewable Daytona desktop lane behind the `critical-path-e2e-required` pull
+request check. `scripts/list-critical-path-tests.mjs` rejects missing,
+quarantined, profile-excluded, duplicate, or out-of-range selections.
+
+Keep the lane at 8-12 specs and under 15 minutes. Add or replace a spec only when
+it covers a critical user surface and its manifest entry links a recent green
+Daytona run; remove or replace it when that evidence is no longer trustworthy or
+the spec enters quarantine. The team-lifecycle journey remains mandatory.
+
 ### Live lane
 
 Surface and substrate are independent axes:

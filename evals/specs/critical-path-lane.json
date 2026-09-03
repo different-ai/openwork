@@ -1,0 +1,46 @@
+{
+  "version": 1,
+  "lane": "critical-path-e2e-required",
+  "specs": [
+    {
+      "test": "welcome-one-field.e2e.test.ts",
+      "covers": "The first-run welcome screen and organization join entry point.",
+      "evidence": "https://github.com/different-ai/openwork/pull/4337"
+    },
+    {
+      "test": "first-run-cloud-share.e2e.test.ts",
+      "covers": "Fresh-profile OpenWork Cloud browser sign-in and desktop handoff.",
+      "evidence": "https://github.com/different-ai/openwork/pull/4337"
+    },
+    {
+      "test": "cloud-provider-sync-contract.e2e.test.ts",
+      "covers": "Organization provider sync and its truthful settings status.",
+      "evidence": "https://github.com/different-ai/openwork/actions/runs/33666666928/job/100370124668"
+    },
+    {
+      "test": "cloud-provider-local-credential-fallback.e2e.test.ts",
+      "covers": "Local credentials satisfy an entitled organization provider without leaking ownership.",
+      "evidence": "https://github.com/different-ai/openwork/actions/runs/33666666928/job/100370124699"
+    },
+    {
+      "test": "llm-provider-access-parity.e2e.test.ts",
+      "covers": "Provider list, connection, and resource-snapshot access parity.",
+      "evidence": "https://github.com/different-ai/openwork/actions/runs/33666666928/job/100370124572"
+    },
+    {
+      "test": "org-api-key-authenticates.e2e.test.ts",
+      "covers": "Organization API-key authentication for enterprise provider provisioning.",
+      "evidence": "https://github.com/different-ai/openwork/actions/runs/33666666928/job/100370124699"
+    },
+    {
+      "test": "library-add-connector-discovery.e2e.test.ts",
+      "covers": "The signed-in Library connector discovery surface and organization handoff.",
+      "evidence": "https://github.com/different-ai/openwork/actions/runs/33666666928/job/100370124572"
+    },
+    {
+      "test": "org-team-lifecycle-critical-path.e2e.test.ts",
+      "covers": "The existing two-person organization, model, skill, and connector critical path.",
+      "evidence": "https://github.com/different-ai/openwork/actions/runs/33717545951/job/100529800475"
+    }
+  ]
+}

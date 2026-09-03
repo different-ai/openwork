@@ -1,0 +1,225 @@
+# Runs a small evidence-backed desktop E2E lane on pull-request heads. Keep the
+# single job name stable: branch protection consumes it as the required context.
+name: Critical-Path Desktop E2E
+
+on:
+  pull_request:
+    branches: [dev]
+  workflow_dispatch:
+    inputs:
+      model:
+        description: "Bare OpenAI model id for the existing team-lifecycle journey"
+        required: false
+        default: "gpt-5.6-luna"
+        type: string
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: critical-path-e2e-required-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  critical-path-e2e-required:
+    name: critical-path-e2e-required
+    if: >-
+      github.repository == 'different-ai/openwork' &&
+      (github.event_name == 'workflow_dispatch' ||
+      github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 20
+
+    steps:
+      - name: Authorize pull request
+        id: authorize
+        if: github.event_name == 'pull_request'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          guarded="$(gh api --paginate "repos/$REPO/pulls/$PR/files" --jq '.[].filename' \
+            | grep -E '^(\.github/|warden\.toml$|\.warden/|\.agents/skills/|\.claude/skills/)' || true)"
+          if [ -n "$guarded" ]; then
+            echo "::notice::Critical-path E2E withheld: PR changes trusted review machinery."
+            echo "authorized=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "authorized=true" >> "$GITHUB_OUTPUT"
+
+      - name: Authorize manual run
+        id: authorize-manual
+        if: github.event_name == 'workflow_dispatch'
+        run: echo "authorized=true" >> "$GITHUB_OUTPUT"
+
+      - name: Check critical-path E2E configuration
+        id: config
+        if: steps.authorize.outputs.authorized == 'true' || steps.authorize-manual.outputs.authorized == 'true'
+        shell: bash
+        env:
+          DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          set -euo pipefail
+
+          missing=""
+          [ -z "${DAYTONA_API_KEY:-}" ] && missing="$missing DAYTONA_API_KEY"
+          [ -z "${OPENAI_API_KEY:-}" ] && missing="$missing OPENAI_API_KEY"
+          if [ -n "$missing" ]; then
+            echo "::error::Critical-path E2E cannot run; missing GitHub configuration:$missing."
+            exit 1
+          fi
+
+      - name: Checkout pull-request head
+        if: steps.config.outcome == 'success'
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Setup Node
+        if: steps.config.outcome == 'success'
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+
+      - name: Setup pnpm
+        if: steps.config.outcome == 'success'
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 11.4.0
+
+      - name: Install dependencies
+        if: steps.config.outcome == 'success'
+        shell: bash
+        run: |
+          set -euo pipefail
+          pnpm install --frozen-lockfile
+          pnpm --dir evals install --frozen-lockfile --ignore-scripts
+
+      - name: Install Daytona CLI
+        if: steps.config.outcome == 'success'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
+          DAYTONA_CLI_TAG: v0.204.0
+          DAYTONA_CLI_SHA256: 76701138c2ce93c14b30e7b10f51aa5ea2a9e156777bab933a4272237d81f14d
+        run: |
+          set -euo pipefail
+          gh release download "$DAYTONA_CLI_TAG" --repo daytona/clients --pattern daytona-linux-amd64 --output /tmp/daytona --clobber
+          echo "$DAYTONA_CLI_SHA256  /tmp/daytona" | sha256sum -c -
+          sudo install -m 0755 /tmp/daytona /usr/local/bin/daytona
+          daytona --version
+          daytona login --api-key "$DAYTONA_API_KEY"
+
+      - name: Select critical-path specs
+        id: selection
+        if: steps.config.outcome == 'success'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t tests < <(node evals/scripts/list-critical-path-tests.mjs)
+          printf '%s\n' "${tests[@]}"
+          echo "count=${#tests[@]}" >> "$GITHUB_OUTPUT"
+
+      - name: Run deterministic critical-path specs
+        id: deterministic
+        if: steps.selection.outcome == 'success'
+        shell: bash
+        env:
+          DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENWORK_EVAL_REF: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+          NO_COLOR: "1"
+        run: |
+          set -euo pipefail
+          mapfile -t tests < <(node evals/scripts/list-critical-path-tests.mjs)
+          critical="org-team-lifecycle-critical-path.e2e.test.ts"
+          core=()
+          for test in "${tests[@]}"; do
+            [ "$test" = "$critical" ] || core+=("$test")
+          done
+          if [ "${#core[@]}" -ne "$((${#tests[@]} - 1))" ]; then
+            echo "::error::The critical-path manifest must contain the team-lifecycle journey exactly once."
+            exit 1
+          fi
+
+          OPENWORK_EVAL_MAX_WORKERS=3 OPENWORK_EVAL_MODEL=big-pickle \
+            pnpm evals:e2e --daytona "${core[@]}"
+
+      - name: Run team-lifecycle critical path
+        id: lifecycle
+        if: steps.deterministic.outcome == 'success'
+        shell: bash
+        env:
+          DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENWORK_EVAL_REF: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+          DISPATCH_MODEL: ${{ inputs.model }}
+          EVENT_NAME: ${{ github.event_name }}
+          REQUIRED_MODEL: ${{ vars.OPENWORK_EVAL_NIGHTLY_MODEL }}
+          NO_COLOR: "1"
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            model="${DISPATCH_MODEL:-gpt-5.6-luna}"
+          else
+            model="${REQUIRED_MODEL:-gpt-5.6-luna}"
+          fi
+          OPENWORK_EVAL_MODEL="$model" \
+            pnpm evals:e2e --daytona org-team-lifecycle-critical-path.e2e.test.ts
+
+      - name: Judge deferred vision claims
+        id: judge
+        if: steps.lifecycle.outcome == 'success'
+        shell: bash
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          set -euo pipefail
+          for test_run in "$GITHUB_WORKSPACE"/evals/results/test-runs/*; do
+            [ -d "$test_run" ] || continue
+            pnpm --dir evals evidence:judge -- --test-run "$test_run"
+          done
+
+      - name: Upload critical-path test artifacts
+        if: always() && steps.config.outcome == 'success'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: critical-path-e2e-required-artifacts
+          path: evals/results/test-runs/
+          retention-days: 14
+          if-no-files-found: warn
+
+      - name: Report required critical-path verdict
+        if: always()
+        shell: bash
+        env:
+          CONFIG_RESULT: ${{ steps.config.outcome }}
+          AUTHORIZED: ${{ github.event_name == 'workflow_dispatch' && steps.authorize-manual.outputs.authorized || steps.authorize.outputs.authorized }}
+          SELECTION_RESULT: ${{ steps.selection.outcome }}
+          DETERMINISTIC_RESULT: ${{ steps.deterministic.outcome }}
+          LIFECYCLE_RESULT: ${{ steps.lifecycle.outcome }}
+          JUDGE_RESULT: ${{ steps.judge.outcome }}
+          TEST_COUNT: ${{ steps.selection.outputs.count }}
+        run: |
+          set -euo pipefail
+          {
+            echo "## Required Critical-Path Desktop E2E"
+            echo
+            echo "Selected specs: **${TEST_COUNT:-0}**."
+            echo "Authorized: **${AUTHORIZED:-false}**."
+            echo "Configuration: **$CONFIG_RESULT**; selection: **$SELECTION_RESULT**; deterministic lane: **$DETERMINISTIC_RESULT**; team lifecycle: **$LIFECYCLE_RESULT**; vision judgment: **$JUDGE_RESULT**."
+            echo "Only successful, non-skipped test runs and successful deferred-claim judgment pass this required check."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          [ "$AUTHORIZED" = "true" ] || exit 1
+          for result in "$CONFIG_RESULT" "$SELECTION_RESULT" "$DETERMINISTIC_RESULT" "$LIFECYCLE_RESULT" "$JUDGE_RESULT"; do
+            [ "$result" = "success" ] || exit 1
+          done
