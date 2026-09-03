@@ -319,7 +319,9 @@ export function AutomationsPage(props: { providerCatalog?: AutomationProviderCat
   }
 
   if (creating) {
-    const workflow = placement === "cloud" && workflowId ? workflowQuery.data : undefined
+    // Only a Workflow the person can run may be pinned; Den enforces the same
+    // bar on create, this just keeps a viewer from reaching a form that fails.
+    const workflow = placement === "cloud" && workflowId && workflowQuery.data?.canRun ? workflowQuery.data : undefined
     const workflowVersion = workflow
       ? workflow.versions.find((version) => version.id === workflowVersionId) ?? workflow.currentVersion
       : undefined
@@ -339,6 +341,8 @@ export function AutomationsPage(props: { providerCatalog?: AutomationProviderCat
         </div>
         {placement === "cloud" && workflowId && workflowQuery.error ? (
           <Alert variant="warning"><AlertCircle /><AlertTitle>Workflow unavailable</AlertTitle><AlertDescription>{describeError(workflowQuery.error)}</AlertDescription></Alert>
+        ) : placement === "cloud" && workflowId && workflowQuery.data && !workflowQuery.data.canRun ? (
+          <Alert variant="warning"><AlertCircle /><AlertTitle>You can read this Workflow but not run it</AlertTitle><AlertDescription>Ask a Workflow manager for run access to schedule it. You can still create an ordinary Automation below.</AlertDescription></Alert>
         ) : null}
         <AutomationEditor
           key={workflowVersion?.id ?? "agent"}

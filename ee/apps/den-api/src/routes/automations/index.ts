@@ -101,7 +101,7 @@ function failure(error: unknown): { status: 400 | 403 | 404 | 409; body: { error
     return { status: 400, body: { error: error.message, message: "The selected Workflow version is unavailable." } }
   }
   if (error.message === "automation_saved_script_forbidden") {
-    return { status: 403, body: { error: error.message, message: "The Automation owner does not have access to this Workflow." } }
+    return { status: 403, body: { error: error.message, message: "The Automation owner needs run access to this Workflow." } }
   }
   if (error.message === "automation_owner_inactive") {
     return { status: 409, body: { error: error.message, message: "The Automation owner is no longer an active organization member." } }
