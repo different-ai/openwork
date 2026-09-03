@@ -1,4 +1,4 @@
-import { clickButton, coworker, evalIn, fill, needs, test, waitFor } from "@openwork/testkit";
+import { EVAL_COWORKER_MODEL, clickButton, coworker, evalIn, fill, needs, test, waitFor } from "@openwork/testkit";
 import { expect } from "vitest";
 
 /**
@@ -189,7 +189,7 @@ test.skipIf(!enabled)(title, { timeout: 1_500_000 }, async ({ evidence }) => {
   expect(workspaces.scout).not.toBe("");
   expect(workspaces.editor).not.toBe("");
   for (const slug of ["scout", "editor"]) {
-    await invokeCoworker(app, "coworkers.update", { slug, patch: { model: "opencode/big-pickle", modelVariant: "" } });
+    await invokeCoworker(app, "coworkers.update", { slug, patch: { model: EVAL_COWORKER_MODEL, modelVariant: "" } });
   }
   await evalIn(app, "location.reload(); true");
   await waitFor(app, `Boolean(document.querySelector('[data-testid="coworker-rail"]')) && document.querySelector('[data-testid="coworker-top-status"]')?.textContent?.trim() === "Ready"`, {
@@ -325,7 +325,7 @@ test.skipIf(!enabled)(title, { timeout: 1_500_000 }, async ({ evidence }) => {
   expect(timeline.filter((line) => line.kind === "assistant").at(-1)?.speaker).toBe("scout");
   expect(await evalIn(app, `Boolean(document.querySelector('[data-testid="group-turn-continue"]'))`)).toBe(false);
 
-  await invokeCoworker(app, "coworkers.update", { slug: "editor", patch: { model: "opencode/big-pickle", modelVariant: "" } });
+  await invokeCoworker(app, "coworkers.update", { slug: "editor", patch: { model: EVAL_COWORKER_MODEL, modelVariant: "" } });
   await evalIn(app, "location.reload(); true");
   await waitFor(app, `Boolean(document.querySelector('[data-testid="coworker-rail"]'))`, { timeoutMs: 120_000, label: "app after the model fix" });
   await openGroupFromRail(app, groupId);

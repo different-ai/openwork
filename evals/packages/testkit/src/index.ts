@@ -14,6 +14,7 @@ export type { StepRecord, TestOutcome, TraceEntry } from "@openwork/test-evidenc
 export { test } from "./fixture.ts";
 export * from "@openwork/env";
 export * from "./brief.ts";
+export * from "./coworker-model.ts";
 export * from "./eventually.ts";
 export * from "./link.ts";
 export * from "./self-host.ts";

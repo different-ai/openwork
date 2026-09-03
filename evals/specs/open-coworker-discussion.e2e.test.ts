@@ -1,4 +1,4 @@
-import { clickButton, coworker, evalIn, fill, needs, test, waitFor, waitForText } from "@openwork/testkit";
+import { EVAL_COWORKER_MODEL, clickButton, coworker, evalIn, fill, needs, test, waitFor, waitForText } from "@openwork/testkit";
 import { expect } from "vitest";
 
 const enabled = process.env.OPENWORK_EVAL_E2E_TESTS === "1";
@@ -117,7 +117,7 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   expect(created.workspaceId).not.toBe("");
   await invokeCoworker(app, "coworkers.update", {
     slug: "editor",
-    patch: { model: "opencode/big-pickle", modelVariant: "" },
+    patch: { model: EVAL_COWORKER_MODEL, modelVariant: "" },
   });
   await reload(app);
   // The first coworker's AI service restarts to pick up the new workspace; a person waits for
