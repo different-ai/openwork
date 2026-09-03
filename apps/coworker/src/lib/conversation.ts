@@ -119,3 +119,22 @@ export function explainRunPrompt(input: {
     "Tell me what happened, what the outcome means, and whether anything needs my attention or a change to the responsibility.",
   ].join("\n");
 }
+
+/** Messages more than this far apart get a small centered time label between them. */
+export const TIME_LABEL_GAP_MS = 20 * 60_000;
+
+/**
+ * The time label to show above a message, or null when it follows the previous one closely.
+ * Today and yesterday are named; the rest of the week uses the weekday; older dates the date.
+ */
+export function timeLabelBetween(previous: number | null | undefined, current: number | null | undefined, now = Date.now()): string | null {
+  if (!current) return null;
+  if (previous && current - previous < TIME_LABEL_GAP_MS) return null;
+  const date = new Date(current);
+  const time = date.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+  const today = new Date(now);
+  if (date.toDateString() === today.toDateString()) return `Today ${time}`;
+  if (date.toDateString() === new Date(now - 86_400_000).toDateString()) return `Yesterday ${time}`;
+  const withinWeek = now - current < 6 * 86_400_000;
+  return `${date.toLocaleDateString(undefined, withinWeek ? { weekday: "long" } : { month: "short", day: "numeric" })} ${time}`;
+}
