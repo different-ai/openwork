@@ -1,10 +1,14 @@
 /** @jsxImportSource react */
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import type { ReactNode } from "react";
 import { ArrowRight, CheckCircle2, KeyRound, X } from "lucide-react";
 
 import { t } from "@/i18n";
-import { isCloudManagedProviderKey } from "@/react-app/domains/connections/provider-auth/cloud-provider-config";
+import {
+  isCloudManagedProviderKey,
+  OPENWORK_GATEWAY_BADGE_LABEL,
+} from "@/react-app/domains/connections/provider-auth/cloud-provider-config";
 import { ProviderIcon } from "../../../design-system/provider-icon";
 import { SettingsNotice, SettingsStatusBadge } from "../settings-section";
 import {
@@ -44,6 +48,8 @@ export type AiSettingsViewProps = {
   organizationName?: string;
   /** Set of local provider IDs that were imported from cloud. */
   cloudProviderIds?: Set<string>;
+  /** Cloud provider IDs routed through the OpenWork inference gateway. */
+  gatewayProviderIds?: ReadonlySet<string>;
   showOpenWorkModelsSubscribe?: boolean;
   /** Subtle fallback row when OpenWork Models is not connected and the banner was dismissed. */
   showOpenWorkModelsConnect?: boolean;
@@ -181,6 +187,11 @@ export function AiSettingsView(props: AiSettingsViewProps) {
                           <span className={providerSourceBadgeClassName({ orgManaged, source: provider.source })}>
                             {sourceLabel}
                           </span>
+                        ) : null}
+                        {props.gatewayProviderIds?.has(provider.id) ? (
+                          <Badge variant="outline" className="h-auto px-2 py-0.5 text-[10px] text-muted-foreground">
+                            {OPENWORK_GATEWAY_BADGE_LABEL}
+                          </Badge>
                         ) : null}
                       </div>
                       <div className="truncate font-mono text-xs text-muted-foreground">{provider.id}</div>

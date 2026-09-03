@@ -103,13 +103,31 @@ export const getCloudManagedProviderId = (
 
 /**
  * A provider key in `opencode.jsonc` that is owned by the cloud-import system:
- * `lpr_*` keys (org-managed providers) and the `openwork` hosted provider.
+ * `lpr_*` keys (org-managed providers), `ipr_*` keys (providers routed through
+ * the OpenWork inference gateway) and the `openwork` hosted provider.
  * These keys are never hand-authored, so re-importing over an existing block
  * with one of these ids is a safe reconcile (recovers a lost import baseline)
  * rather than a clobber of a user's manual provider (#2346).
  */
 export const isCloudManagedProviderKey = (providerId: string) =>
-  /^lpr_/i.test(providerId) || providerId.trim() === "openwork";
+  /^(lpr|ipr)_/i.test(providerId) || providerId.trim() === "openwork";
+
+export const OPENWORK_GATEWAY_PROVIDER_SOURCE = "openwork_gateway";
+/** Badge copy for providers routed through the OpenWork inference gateway. */
+export const OPENWORK_GATEWAY_BADGE_LABEL = "via OpenWork Gateway";
+
+/**
+ * Runtime provider ids whose sync status reports the OpenWork inference
+ * gateway as source — the UI badges these "via OpenWork Gateway".
+ */
+export const resolveGatewayProviderIds = (
+  importedCloudProviders: Record<string, Pick<CloudImportedProvider, "providerId" | "source">> | undefined,
+): Set<string> =>
+  new Set(
+    Object.values(importedCloudProviders ?? {})
+      .filter((provider) => provider.source === OPENWORK_GATEWAY_PROVIDER_SOURCE)
+      .map((provider) => provider.providerId),
+  );
 
 
 export const getProviderModelIds = (

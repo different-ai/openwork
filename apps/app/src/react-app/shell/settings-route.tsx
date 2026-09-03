@@ -69,6 +69,7 @@ import { createConnectionsStore, useConnectionsStoreSnapshot } from "@/react-app
 import { cleanupOpenworkCloudMcpAfterSignOut } from "@/react-app/domains/connections/cloud-mcp-reconciler";
 import { useOrgMcpConnections } from "@/react-app/domains/connections/use-org-mcp-connections";
 import { createOpenworkServerStore, useOpenworkServerStoreSnapshot } from "@/react-app/domains/connections/openwork-server-store";
+import { resolveGatewayProviderIds } from "@/react-app/domains/connections/provider-auth/cloud-provider-config";
 import { createProviderAuthStore, useProviderAuthStoreSnapshot } from "@/react-app/domains/connections/provider-auth/store";
 import ProviderAuthModal from "@/react-app/domains/connections/provider-auth/provider-auth-modal";
 import ConnectionsModals from "@/react-app/domains/connections/modals";
@@ -832,6 +833,10 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   const openworkServerSnapshot = useOpenworkServerStoreSnapshot(openworkServerStore);
   const connectionsSnapshot = useConnectionsStoreSnapshot(connectionsStore);
   const providerAuthSnapshot = useProviderAuthStoreSnapshot(providerAuthStore);
+  const gatewayProviderIds = useMemo(
+    () => resolveGatewayProviderIds(providerAuthSnapshot.importedCloudProviders),
+    [providerAuthSnapshot.importedCloudProviders],
+  );
   const extensionsSnapshot = useExtensionsStoreSnapshot(extensionsStore);
   const orgMcpConnections = useOrgMcpConnections();
 
@@ -2363,6 +2368,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
               ...Object.values(providerAuthSnapshot.importedCloudProviders ?? {}).map((p) => p.providerId),
               ...(openWorkModelsEntitled || openWorkModelsAvailable ? ["openwork"] : []),
             ])}
+            gatewayProviderIds={gatewayProviderIds}
             showOpenWorkModelsSubscribe={showOpenWorkModelsSubscribe}
             showOpenWorkModelsConnect={showOpenWorkModelsConnect}
             showOpenWorkModelsSyncing={showOpenWorkModelsSyncing}
@@ -2853,6 +2859,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
       <ModelPickerModal
         open={modelPicker.open}
         options={modelPicker.options}
+        gatewayProviderIds={gatewayProviderIds}
         query={modelPicker.query}
         setQuery={modelPicker.setQuery}
         target="default"
