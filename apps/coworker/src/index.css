@@ -305,6 +305,10 @@ body.is-resizing-panel * {
   transform: translate(var(--avatar-idle-look-x), var(--avatar-idle-look-y));
 }
 
+.coworker-avatar.is-idle-bobbing .coworker-avatar__pointer-body {
+  animation: coworker-idle-bob 440ms cubic-bezier(0.2, 0.72, 0.3, 1) 1 both;
+}
+
 .coworker-avatar.is-animated .coworker-avatar__body {
   animation: coworker-float 8.8s cubic-bezier(0.45, 0, 0.55, 1) infinite;
 }
@@ -682,6 +686,14 @@ body.is-resizing-panel * {
 @keyframes coworker-idle-blink {
   0%, 100% { transform: scaleY(1); }
   48%, 58% { transform: scaleY(0.08); }
+}
+
+@keyframes coworker-idle-bob {
+  0%, 20% { transform: translate(0, var(--avatar-idle-head-y)) rotate(var(--avatar-idle-turn)); }
+  40% { transform: translate(-0.16px, 0.46px) rotate(var(--avatar-idle-turn)); }
+  52% { transform: translate(0.3px, 0.88px) rotate(0deg); }
+  68% { transform: translate(-0.12px, 0.4px) rotate(var(--avatar-idle-turn)); }
+  100% { transform: translate(0, var(--avatar-idle-head-y)) rotate(var(--avatar-idle-turn)); }
 }
 
 @keyframes loading-line {
