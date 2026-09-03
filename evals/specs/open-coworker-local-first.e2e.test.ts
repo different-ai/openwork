@@ -469,7 +469,7 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
     indicatorTone: "mist",
     indicatorAtBottom: true,
     peekRightOfRail: true,
-    panelIcons: ["Activity:true", "Apps & tools:false", "Memory:false", "Coworker settings:false"],
+    panelIcons: ["Activity:true", "Documents:false", "Workers:false", "Apps & tools:false", "Memory:false", "Coworker settings:false"],
     panelIconText: "",
   });
   expect(String(foldedPanels.collapsed.peekText)).toContain("Scout");
@@ -486,7 +486,7 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   expect(foldedPanels.settingsButtonBack).toBe(true);
   evidence.recordAssertionEvidence(
     "Both side panels fold to icon rails and unfold from them",
-    "With no fold buttons anywhere, a click on each panel's edge folded it: the team rail became an 88px rail clear of the window controls, without the logo, with a search icon, Scout's avatar marked current, a bottom status dot, and a hover card beside the rail naming Scout and Ready; the context panel became a 56px strip with Activity, Apps & tools, Memory, and Coworker settings icons and no words, and choosing Memory unfolded the panel on that view. Dragging the rail edge past the fold threshold closed it, a click on the edge reopened and refolded it, and the search icon reopened it with the cursor in the search box.",
+    "With no fold buttons anywhere, a click on each panel's edge folded it: the team rail became an 88px rail clear of the window controls, without the logo, with a search icon, Scout's avatar marked current, a bottom status dot, and a hover card beside the rail naming Scout and Ready; the context panel became a 56px strip with Activity, Documents, Workers, Apps & tools, Memory, and Coworker settings icons and no words, and choosing Memory unfolded the panel on that view. Dragging the rail edge past the fold threshold closed it, a click on the edge reopened and refolded it, and the search icon reopened it with the cursor in the search box.",
     true,
   );
 
@@ -518,7 +518,7 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   });
   evidence.recordAssertionEvidence(
     "The details panel is transient",
-    "Escape folded the open panel back to its 56px strip of four icons, the strip's Activity icon reopened it on Activity (the strip icons giving way to the panel), and a click on the panel's edge folded it again.",
+    "Escape folded the open panel back to its 56px strip of six icons, the strip's Activity icon reopened it on Activity (the strip icons giving way to the panel), and a click on the panel's edge folded it again.",
     true,
   );
 
