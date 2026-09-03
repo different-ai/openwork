@@ -2182,8 +2182,21 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       await removeProviderAuthCredentials(resolved);
       const updated = await refreshProviders({ dispose: true });
       if (Array.isArray(updated?.connected) && updated.connected.includes(resolved)) {
-        // Provider is still connected (e.g. via env var). Just remove
-        // stored credentials; do NOT add to disabled_providers.
+        const stillConnected = updated.all.find((provider) => provider.id === resolved);
+        if (stillConnected && stillConnected.source !== "env") {
+          // The provider definition lives in an opencode config file (for
+          // example ~/.config/opencode/opencode.json), so credential removal
+          // alone can never disconnect it. Disable it via disabled_providers,
+          // exactly like the built-in OpenCode Zen branch above, instead of
+          // leaving the Disconnect button a silent no-op.
+          await ensureProjectProviderDisabledState(resolved, true);
+          await refreshProviders({ dispose: true });
+          removeProviderFromState(resolved);
+          return `${t("providers.disconnected_prefix")} ${resolved}`;
+        }
+        // Provider is still connected via env var. Just remove stored
+        // credentials; the environment stays operator-owned, so do NOT add
+        // it to disabled_providers.
         return `Removed stored credentials for ${resolved}${t("providers.still_connected_suffix")}`;
       }
       removeProviderFromState(resolved);

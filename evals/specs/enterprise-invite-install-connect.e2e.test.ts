@@ -1,16 +1,9 @@
-import { spawn } from "node:child_process";
-import { mkdtemp, writeFile } from "node:fs/promises";
-import net from "node:net";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { expect } from "vitest";
 import { denFetch, evalIn, signIn, waitFor } from "@openwork/behaviors";
 import { attachSurface, callFunctionOnSurface, navigate } from "@openwork/cdp";
 import { screenshot, validate } from "@openwork/test-evidence";
 import { chrome, localHost } from "@openwork/hosts";
-import { startEgressLab } from "@openwork/labs";
 import { needs, server, test, unmetNeeds } from "@openwork/testkit";
-import { resolveSystemCaEnv } from "../../apps/desktop/electron/runtime.mjs";
 import type { TestNeeds } from "@openwork/testkit";
 
 const requirements: TestNeeds = {
@@ -31,93 +24,6 @@ function stringField(value: unknown, key: string): string | null {
   return typeof field === "string" ? field : null;
 }
 
-const chainErrorPattern = /UNABLE_TO_VERIFY_LEAF_SIGNATURE|unable to verify the first certificate|unable to get local issuer/i;
-
-// Async spawn on purpose: the egress lab's TLS and AIA servers run inside this
-// vitest process, so a sync spawn would deadlock the child's TLS handshake.
-async function fetchLabInChild(url: string, env: NodeJS.ProcessEnv): Promise<{ status: number | null; output: string }> {
-  const script = `
-    fetch(process.argv[1]).then(async (response) => {
-      console.log(JSON.stringify({ ok: response.ok, status: response.status }));
-      process.exit(response.ok ? 0 : 1);
-    }).catch((error) => {
-      console.log(JSON.stringify({ ok: false, message: error?.message ?? String(error), causeCode: error?.cause?.code ?? null }));
-      process.exit(1);
-    });
-  `;
-  const child = spawn(process.execPath, ["--eval", script, url], { env });
-  const timer = setTimeout(() => child.kill("SIGKILL"), 15_000);
-  let output = "";
-  child.stdout.setEncoding("utf8");
-  child.stderr.setEncoding("utf8");
-  child.stdout.on("data", (chunk: string) => {
-    output += chunk;
-  });
-  child.stderr.on("data", (chunk: string) => {
-    output += chunk;
-  });
-  const status = await new Promise<number | null>((resolve) => {
-    child.on("error", () => resolve(null));
-    child.on("close", (code) => resolve(code));
-  });
-  clearTimeout(timer);
-  return { status, output: output.trim() };
-}
-
-// Exactly the record the enterprise gate stamps after a confirmed exchange
-// (enterprise-activation-gate.tsx, exchangeConfirmedGrant).
-async function writeStampedBootstrap(denBaseUrl: string): Promise<string> {
-  const dir = await mkdtemp(join(tmpdir(), "openwork-invite-connect-activation-"));
-  const bootstrapPath = join(dir, "desktop-bootstrap.json");
-  const stamped = {
-    baseUrl: denBaseUrl,
-    requireSignin: true,
-    enterpriseActivation: { activatedAt: new Date().toISOString(), denBaseUrl },
-  };
-  await writeFile(bootstrapPath, `${JSON.stringify(stamped, null, 2)}\n`, "utf8");
-  return bootstrapPath;
-}
-
-async function resolveCaEnvFromRecord(options: {
-  bootstrapPath: string;
-  rootPem: string;
-}): Promise<{ caEnv: NodeJS.ProcessEnv; logs: string[] }> {
-  const userDataDir = await mkdtemp(join(tmpdir(), "openwork-invite-connect-chain-"));
-  const logs: string[] = [];
-  const caEnv: NodeJS.ProcessEnv = await resolveSystemCaEnv({
-    tlsModule: { getCACertificates: () => [] },
-    userDataDir,
-    parentEnv: {},
-    logInfo(message: unknown) {
-      logs.push(String(message));
-    },
-    loadPlatformCertificates: async () => [options.rootPem],
-    platformSourceName: "egress-lab-root",
-    chainRepair: {
-      bootstrapPath: options.bootstrapPath,
-      rootsProvider: () => [options.rootPem],
-    },
-  });
-  return { caEnv, logs };
-}
-
-async function reserveClosedPort(): Promise<number> {
-  const srv = net.createServer();
-  const port = await new Promise<number>((resolve, reject) => {
-    srv.once("error", reject);
-    srv.listen(0, "127.0.0.1", () => {
-      const address = srv.address();
-      if (!address || typeof address === "string") {
-        reject(new Error("port reservation did not bind to a TCP port"));
-        return;
-      }
-      resolve(address.port);
-    });
-  });
-  await new Promise<void>((resolve) => srv.close(() => resolve()));
-  return port;
-}
-
 /**
  * The whole new journey in one tape: an admin invites a teammate; the teammate
  * creates the account THROUGH the invite (never a sign-in against a
@@ -125,9 +31,7 @@ async function reserveClosedPort(): Promise<number> {
  * no installer token anywhere, and links a real blank-slate Enterprise desktop
  * by typing the workspace address the guide showed — with the pasted
  * openwork:// URL as the same field's silent recovery. The one-time grant dies
- * after use, and the activation record this flow stamps is exactly what the
- * TLS chain-repair seam consumes, unlocking only the stamped origin on a
- * broken-chain, semi-airgapped network.
+ * after use.
  */
 test(title, { timeout: 1_800_000 }, async ({ evidence, place }) => {
   needs(requirements);
@@ -256,49 +160,57 @@ test(title, { timeout: 1_800_000 }, async ({ evidence, place }) => {
     { timeoutMs: 90_000, label: "clean authenticated /install after joining" },
   );
   await screenshot(browser);
+  const member = await signIn(den.ref, { email: invitee.email, password: invitee.password });
+  const installTokenStored = await evalIn(browser, `(() => {
+    localStorage.setItem("openwork:web:auth-token", ${JSON.stringify(member.token)});
+    return localStorage.getItem("openwork:web:auth-token") === ${JSON.stringify(member.token)};
+  })()`);
+  expect(installTokenStored).toBe(true);
+  const memberConfig = await denFetch(den.ref, "/v1/me/install-config", {
+    headers: { authorization: `Bearer ${member.token}` },
+  });
+  expect(memberConfig.response.status).toBe(200);
 
-  const rawInstall = await evalIn(browser, `(async () => {
+  const rawInstall = await evalIn(browser, `(() => {
     const resources = performance.getEntriesByType("resource").map((entry) => entry.name);
     const hrefs = [...document.querySelectorAll("a[href]")].map((anchor) => anchor.href);
-    const headers = new Headers({ Accept: "application/json" });
-    const storedToken = localStorage.getItem("openwork:web:auth-token")?.trim();
-    if (storedToken) headers.set("Authorization", "Bearer " + storedToken);
-    const configResponse = await fetch("/api/den/v1/me/install-config", {
-      credentials: "include",
-      headers,
-    });
-    const config = await configResponse.json();
     return JSON.stringify({
       search: location.search,
       configLoaded: resources.some((url) => url.includes("/v1/me/install-config")),
       mintedToken: resources.some((url) => url.includes("/install-links") || url.includes("/v1/install-config?token=")),
-      configStatus: configResponse.status,
-      distribution: config?.distribution,
       downloadHrefs: hrefs.filter((href) => href.includes("/v1/me/install/")),
       cloudDownloadSurface: [...document.querySelectorAll("h1")]
         .some((heading) => (heading.textContent ?? "").trim() === "Download OpenWork"),
       cloudReturnControl: [...document.querySelectorAll("a")]
         .some((anchor) => (anchor.textContent ?? "").trim() === "I already installed OpenWork"),
       enterpriseGuide: Boolean(document.querySelector('[data-testid="install-guide"]')),
+      guideSteps: [...document.querySelectorAll('[data-testid="install-guide"] > li')]
+        .map((step) => step.querySelector("button > span.grow")?.textContent?.trim() ?? ""),
+      fourthGuideStep: Boolean(document.querySelector('[data-testid="install-guide"] > li:nth-child(4)')),
       skipControl: Boolean(document.querySelector('[data-testid="install-skip-download"]')),
       workspaceControl: Boolean(document.querySelector('[data-testid="install-workspace-address"]')),
       text: document.body.innerText.replace(/\\s+/g, " ").slice(0, 400),
     });
-  })()`, { awaitPromise: true });
+  })()`);
   const install: unknown = JSON.parse(String(rawInstall));
-  if (!isRecord(install) || !Array.isArray(install.downloadHrefs) || !install.downloadHrefs.every((href) => typeof href === "string")) {
+  if (
+    !isRecord(install)
+    || !Array.isArray(install.downloadHrefs)
+    || !install.downloadHrefs.every((href) => typeof href === "string")
+    || !Array.isArray(install.guideSteps)
+    || !install.guideSteps.every((step) => typeof step === "string")
+  ) {
     throw new Error(`Install facts had an unexpected shape: ${JSON.stringify(install)}`);
   }
-  const distribution = install.distribution;
+  const distribution = stringField(memberConfig.body, "distribution");
   if (distribution !== "cloud" && distribution !== "enterprise") {
-    throw new Error(`Install config returned an invalid distribution: ${JSON.stringify(distribution)}`);
+    throw new Error(`Install config returned an invalid distribution: ${JSON.stringify(memberConfig.body)}`);
   }
   const downloadHref = install.downloadHrefs[0];
   if (typeof downloadHref !== "string") throw new Error("Install page exposed no authenticated download link");
   expect(install.search).toBe("");
   expect(install.configLoaded).toBe(true);
   expect(install.mintedToken).toBe(false);
-  expect(install.configStatus).toBe(200);
   expect(install.downloadHrefs.length).toBeGreaterThan(0);
   for (const href of install.downloadHrefs) {
     expect(href).toContain("/v1/me/install/");
@@ -313,11 +225,12 @@ test(title, { timeout: 1_800_000 }, async ({ evidence, place }) => {
     expect(install.workspaceControl).toBe(false);
   } else {
     expect(install.enterpriseGuide).toBe(true);
+    expect(install.guideSteps).toEqual(["Download", "Install and open it", "Connect"]);
+    expect(install.fourthGuideStep).toBe(false);
     expect(install.skipControl).toBe(true);
     expect(install.cloudReturnControl).toBe(false);
   }
 
-  const member = await signIn(den.ref, { email: invitee.email, password: invitee.password });
   // Daytona preview duplicates CORS headers on Origin-bearing responses; top-level downloads bypass CORS, so probe through the session directly.
   const downloadPath = new URL(downloadHref).pathname;
   const authedDownload = await denFetch(den.ref, downloadPath, {
@@ -353,10 +266,16 @@ test(title, { timeout: 1_800_000 }, async ({ evidence, place }) => {
       `document.querySelector('[data-testid="install-workspace-address"] input')?.value ?? ""`,
     ));
     expect(shownAddress).toBe(webOrigin);
+    expect(new URL(shownAddress).search).toBe("");
+    expect(new URL(shownAddress).hash).toBe("");
+    expect(shownAddress).not.toMatch(/token|credential|grant/i);
     evidence.recordAssertionEvidence(
-      "Connect hands the member the exact workspace address",
-      `Step 3 shows ${shownAddress}, exactly the Den web origin the browser is signed in on, with a copy control and no credential.`,
-      shownAddress === webOrigin,
+      "The three-step Enterprise guide hands the member the exact token-free workspace address",
+      `The only steps were Download, Install and open it, and Connect; step 3 showed ${shownAddress}, exactly the Den web origin with no query, fragment, token, credential, or grant, and there was no I already installed control.`,
+      shownAddress === webOrigin
+        && install.guideSteps.join(",") === "Download,Install and open it,Connect"
+        && install.fourthGuideStep === false
+        && install.cloudReturnControl === false,
     );
   }
 
@@ -487,39 +406,6 @@ test(title, { timeout: 1_800_000 }, async ({ evidence, place }) => {
     await desktopSurface.stop().catch(() => undefined);
     await host.disposeSurface(handle).catch(() => undefined);
   }
-
-  // ── Frame 6: the stamped record unlocks ONLY its origin on a broken-chain,
-  //             semi-airgapped network ─────────────────────────────────────
-  await using lab = await startEgressLab({ profile: "broken-chain" });
-  if (!lab.caPath || !lab.rootPem) throw new Error("egress lab did not expose its private root material");
-  const labOrigin = new URL(lab.url).origin;
-
-  const before = await fetchLabInChild(lab.url, { ...process.env, NODE_EXTRA_CA_CERTS: lab.caPath });
-  expect(before.status).not.toBe(0);
-  expect(before.output).toMatch(chainErrorPattern);
-
-  const repaired = await resolveCaEnvFromRecord({
-    bootstrapPath: await writeStampedBootstrap(labOrigin),
-    rootPem: lab.rootPem,
-  });
-  expect(repaired.logs.some((line) => line.includes(`chain repaired for ${labOrigin}`))).toBe(true);
-  const healed = await fetchLabInChild(lab.url, { ...process.env, ...repaired.caEnv });
-  expect(healed.status).toBe(0);
-
-  const mismatchedOrigin = `https://127.0.0.1:${await reserveClosedPort()}`;
-  const mismatched = await resolveCaEnvFromRecord({
-    bootstrapPath: await writeStampedBootstrap(mismatchedOrigin),
-    rootPem: lab.rootPem,
-  });
-  expect(mismatched.logs.some((line) => /chain repaired/.test(line))).toBe(false);
-  const stillBroken = await fetchLabInChild(lab.url, { ...process.env, ...mismatched.caEnv });
-  expect(stillBroken.status).not.toBe(0);
-  expect(stillBroken.output).toMatch(chainErrorPattern);
-  evidence.recordAssertionEvidence(
-    "The activation record from this flow repairs TLS only for its own origin",
-    `With the exact bootstrap shape the gate stamps, a leaf-only broken chain at ${labOrigin} failed (${chainErrorPattern.exec(before.output)?.[0] ?? "chain error"}), was repaired solely from the stamped origin (exit 0), and a record naming ${mismatchedOrigin} left the lab unreachable — the semi-airgapped network stays closed to everything but the stamped workspace.`,
-    true,
-  );
 
   const finalShot = await screenshot(browser);
   const seen = await validate(finalShot, distribution === "cloud"

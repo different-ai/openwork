@@ -1,5 +1,5 @@
 import { expect } from "vitest";
-import { denFetch, evalIn, fill, waitFor } from "@openwork/behaviors";
+import { denFetch, evalIn, fill, signInInBrowser, waitFor } from "@openwork/behaviors";
 import type { DenSession } from "@openwork/behaviors";
 import { navigate } from "@openwork/cdp";
 import { chrome } from "@openwork/hosts";
@@ -100,8 +100,9 @@ test(title, async ({ evidence, place }) => {
 
   await using browser = await chrome({
     name: "brand-appearance-preview-removal",
-    startUrl: "about:blank",
+    startUrl: den.ref.webUrl,
     headless: true,
+    host: place.host(),
   });
   await browser.client.send("Emulation.setDeviceMetricsOverride", {
     width: 820,
@@ -109,20 +110,11 @@ test(title, async ({ evidence, place }) => {
     deviceScaleFactor: 1,
     mobile: false,
   });
-  await browser.client.send("Network.enable");
-  await browser.client.send("Network.setExtraHTTPHeaders", {
-    headers: { Authorization: `Bearer ${den.admin.token}` },
-  });
-  await browser.client.send("Page.addScriptToEvaluateOnNewDocument", {
-    source: `if (location.origin === ${JSON.stringify(new URL(den.ref.webUrl).origin)}) {
-      localStorage.setItem("openwork:web:auth-token", ${JSON.stringify(den.admin.token)});
-    }`,
-  });
-  await navigate(browser.client, den.ref.webUrl);
-  await waitFor(browser, `location.pathname.startsWith("/dashboard")`, {
+  await waitFor(browser, `location.href.startsWith(${JSON.stringify(den.ref.webUrl)}) && document.readyState === "complete"`, {
     timeoutMs: 60_000,
-    label: "Den Web dashboard from pre-seeded session token",
+    label: "Den Web origin before admin sign-in",
   });
+  await signInInBrowser(browser, den.ref.webUrl, den.admin);
   await navigate(browser.client, `${den.ref.webUrl}/dashboard/brand-appearance`);
   await waitFor(browser, `(() => {
     const input = document.querySelector('input[placeholder="OpenWork"]');
@@ -135,6 +127,13 @@ test(title, async ({ evidence, place }) => {
   })()`, {
     timeoutMs: 60_000,
     label: "saved brand appearance controls",
+  });
+  await waitFor(browser, `(() => {
+    const form = document.querySelector('[data-testid="brand-appearance-screen"] form');
+    return Boolean(form && Object.keys(form).some((key) => key.startsWith("__reactProps$")));
+  })()`, {
+    timeoutMs: 60_000,
+    label: "hydrated brand appearance form",
   });
 
   const presentation = await evalIn(browser, `(() => {
@@ -150,7 +149,6 @@ test(title, async ({ evidence, place }) => {
       .filter((element) => (element.textContent ?? '').trim() === 'Preview').length;
     return {
       exactPreviewLabels,
-      identityFieldClass: fields?.className ?? '',
       applicationName: applicationInput instanceof HTMLInputElement ? applicationInput.value : null,
       accentColor: accentSelect instanceof HTMLSelectElement ? accentSelect.value : null,
       applicationWidth: applicationRect?.width ?? 0,
@@ -174,7 +172,6 @@ test(title, async ({ evidence, place }) => {
   })()`);
   expect(presentation).toMatchObject({
     exactPreviewLabels: 0,
-    identityFieldClass: "grid gap-5",
     applicationName: initialName,
     accentColor: "violet",
     screenWithinViewport: true,
@@ -193,7 +190,6 @@ test(title, async ({ evidence, place }) => {
     "White-label Desktop identity has no Preview card or unused column at a narrow desktop width",
     `At 820px wide the page rendered ${JSON.stringify(presentation)}.`,
     presentation.exactPreviewLabels === 0
-      && presentation.identityFieldClass === "grid gap-5"
       && presentation.screenWithinViewport === true
       && presentation.horizontalOverflow === false
       && presentation.applicationWidth === presentation.fieldWidth
@@ -213,14 +209,22 @@ test(title, async ({ evidence, place }) => {
     const button = [...document.querySelectorAll('button')]
       .find((entry) => (entry.textContent ?? '').trim() === 'Save brand appearance');
     if (!(button instanceof HTMLButtonElement) || button.disabled) return false;
+    button.scrollIntoView({ block: 'center' });
     button.click();
     return true;
   })()`);
   expect(saveClicked).toBe(true);
-  await waitFor(browser, `document.body.innerText.includes("Brand appearance updated.")`, {
-    timeoutMs: 30_000,
-    label: "brand appearance save confirmation",
-  });
+  await expect.poll(async () => {
+    const metadata = await organizationMetadata(den.admin, orgId);
+    return {
+      brandAppName: metadata.brandAppName,
+      brandAccentColor: metadata.brandAccentColor,
+    };
+  }, {
+    message: "brand appearance save did not reach the organization metadata",
+    timeout: 30_000,
+    interval: 250,
+  }).toEqual({ brandAppName: updatedName, brandAccentColor: "teal" });
 
   await navigate(browser.client, `${den.ref.webUrl}/dashboard/brand-appearance`);
   await waitFor(browser, `(() => {

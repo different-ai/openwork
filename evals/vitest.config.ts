@@ -17,7 +17,9 @@ const attachedDen = Boolean(process.env.OPENWORK_EVAL_DEN_API_URL?.trim());
 const managedStack = prepareSuite && !attachedDen;
 const e2eWorkers = managedStack ? suiteWorkerCount(process.argv, process.env) : 1;
 const namedLiveSpec = process.argv.some((argument) => argument.endsWith(".live.test.ts"));
-const quarantinedE2eSpecs = listQuarantined().map((spec) => `**/${spec}`);
+const quarantinedE2eSpecs = process.env.OPENWORK_EVAL_IGNORE_QUARANTINE === "1"
+  ? []
+  : listQuarantined().map((spec) => `**/${spec}`);
 
 export default defineConfig({
   test: {

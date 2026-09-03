@@ -3,7 +3,10 @@ import { spec } from "@openwork/testkit";
 import { attachmentUpload } from "../worlds/chat.ts";
 
 const attachmentName = "big-photo.png";
-const test = spec.world(attachmentUpload, { timeout: 300_000 });
+const test = spec.world(attachmentUpload, {
+  needs: { commands: ["bun"] },
+  timeout: 300_000,
+});
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);

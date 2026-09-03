@@ -2,7 +2,10 @@ import { expect } from "vitest";
 import { spec } from "@openwork/testkit";
 import { appDenTlsFaultWorld } from "../worlds/first-run.ts";
 
-const test = spec.world(appDenTlsFaultWorld, { timeout: 180_000 });
+const test = spec.world(appDenTlsFaultWorld, {
+  needs: { commands: ["bun"] },
+  timeout: 180_000,
+});
 
 test("a desktop pointed at a TLS-intercepted Den never claims it is connected, and diagnostics name the interception", async ({ world, user, step }) => {
   await step("The welcome surface offers cloud sign-in without a crash", async () => {

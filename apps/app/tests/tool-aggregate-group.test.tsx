@@ -1,5 +1,8 @@
 /** @jsxImportSource react */
 import { describe, expect, test } from "bun:test";
+import { GlobalRegistrator } from "@happy-dom/global-registrator";
+import { act } from "react";
+import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 import type { DynamicToolUIPart } from "ai";
 
@@ -255,6 +258,88 @@ describe("tool aggregate long details", () => {
     expect(collapsed).toContain("line-clamp-1");
     expect(collapsed).not.toContain("overflow-y-auto");
     expect(collapsed).not.toContain("data-tool-aggregate-copy");
+  });
+
+  test("clicking a clipped command reveals every line and copies the full command", async () => {
+    const registeredDom = typeof globalThis.window === "undefined" || typeof globalThis.document === "undefined";
+    if (registeredDom) GlobalRegistrator.register();
+    const previousRect = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "getBoundingClientRect");
+    const previousClipboard = Object.getOwnPropertyDescriptor(navigator, "clipboard");
+    Object.defineProperty(globalThis, "IS_REACT_ACT_ENVIRONMENT", {
+      configurable: true,
+      value: true,
+    });
+    Object.defineProperty(HTMLElement.prototype, "getBoundingClientRect", {
+      configurable: true,
+      value(this: HTMLElement) {
+        // Shiki's inline highlighting replaces "\n" with <br>, and it lands
+        // asynchronously, so count both forms to stay independent of timing.
+        const visibleLines = this.classList.contains("line-clamp-1")
+          ? 1
+          : Math.max(1, (this.textContent ?? "").split("\n").length, this.querySelectorAll("br").length + 1);
+        return new DOMRect(0, 0, 320, visibleLines * 20);
+      },
+    });
+    const command = [
+      "pnpm world up dev-headless --detach -- --replace",
+      "pnpm --filter @openwork/app test",
+      "pnpm --filter @openwork/app typecheck",
+      "pnpm world down dev-headless",
+    ].join("\n");
+    const clipboardWrites: string[] = [];
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: {
+        writeText: async (text: string) => {
+          clipboardWrites.push(text);
+        },
+      },
+    });
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    let expanded = false;
+    const render = () => root.render(
+      <DetailBox
+        kind="command"
+        text={command}
+        expanded={expanded}
+        onToggle={() => {
+          expanded = !expanded;
+          render();
+        }}
+      />,
+    );
+
+    try {
+      await act(async () => render());
+      const collapsed = container.querySelector<HTMLElement>("[data-tool-aggregate-detail=command] code");
+      if (!collapsed) throw new Error("Expected the collapsed command text");
+      expect(Math.round(collapsed.getBoundingClientRect().height / 20)).toBe(1);
+      expect(collapsed.textContent).toBe(command);
+
+      const toggle = container.querySelector<HTMLButtonElement>("[data-tool-aggregate-detail=command]");
+      if (!toggle) throw new Error("Expected the command detail toggle");
+      await act(async () => toggle.click());
+
+      const revealed = container.querySelector<HTMLElement>("[data-tool-aggregate-detail=command] code");
+      if (!revealed) throw new Error("Expected the revealed command text");
+      expect(Math.round(revealed.getBoundingClientRect().height / 20)).toBe(command.split("\n").length);
+      expect(revealed.textContent).toBe(command);
+
+      const copy = container.querySelector<HTMLButtonElement>("[data-tool-aggregate-copy]");
+      if (!copy) throw new Error("Expected the expanded command copy action");
+      await act(async () => copy.click());
+      expect(clipboardWrites).toEqual([command]);
+    } finally {
+      await act(async () => root.unmount());
+      container.remove();
+      if (previousRect) Object.defineProperty(HTMLElement.prototype, "getBoundingClientRect", previousRect);
+      else Reflect.deleteProperty(HTMLElement.prototype, "getBoundingClientRect");
+      if (previousClipboard) Object.defineProperty(navigator, "clipboard", previousClipboard);
+      else Reflect.deleteProperty(navigator, "clipboard");
+      if (registeredDom) await GlobalRegistrator.unregister();
+    }
   });
 
   test("only commands offer a copy action; errors and patterns do not", () => {

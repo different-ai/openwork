@@ -89,7 +89,7 @@
     "@openwork-ee/utils": "workspace:*",
     "@planetscale/database": "^1.19.0",
     "drizzle-orm": "^0.45.2",
-    "mysql2": "^3.22.0"
+    "mysql2": "^3.23.1"
   },
   "devDependencies": {
     "@types/node": "^20.11.30",

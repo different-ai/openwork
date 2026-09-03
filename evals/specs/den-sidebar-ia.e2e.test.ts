@@ -1,5 +1,5 @@
 import { expect } from "vitest";
-import { denFetch, evalIn, waitFor } from "@openwork/behaviors";
+import { denFetch, evalIn, signInInBrowser, waitFor } from "@openwork/behaviors";
 import type { DenSession } from "@openwork/behaviors";
 import { navigate } from "@openwork/cdp";
 import { screenshot, validate } from "@openwork/test-evidence";
@@ -20,6 +20,18 @@ type SidebarSection = {
   items: string[];
   children: string[];
 };
+
+interface SidebarPinLayout {
+  viewportHeight: number;
+  navScrollHeight: number;
+  navClientHeight: number;
+  navOverflowY: string;
+  asideScrollTop: number;
+  asideClientHeight: number;
+  asideScrollHeight: number;
+  footerTop: number;
+  footerBottom: number;
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -42,6 +54,36 @@ function parseSections(value: unknown): SidebarSection[] {
     }
     return { name: entry.name, items: entry.items, children: entry.children };
   });
+}
+
+function parsePinLayout(value: unknown): SidebarPinLayout {
+  if (!isRecord(value)) {
+    throw new Error(`Sidebar pin layout was not found: ${JSON.stringify(value)}`);
+  }
+  if (
+    typeof value.viewportHeight !== "number"
+    || typeof value.navScrollHeight !== "number"
+    || typeof value.navClientHeight !== "number"
+    || typeof value.navOverflowY !== "string"
+    || typeof value.asideScrollTop !== "number"
+    || typeof value.asideClientHeight !== "number"
+    || typeof value.asideScrollHeight !== "number"
+    || typeof value.footerTop !== "number"
+    || typeof value.footerBottom !== "number"
+  ) {
+    throw new Error(`Sidebar pin layout had an unexpected shape: ${JSON.stringify(value)}`);
+  }
+  return {
+    viewportHeight: value.viewportHeight,
+    navScrollHeight: value.navScrollHeight,
+    navClientHeight: value.navClientHeight,
+    navOverflowY: value.navOverflowY,
+    asideScrollTop: value.asideScrollTop,
+    asideClientHeight: value.asideClientHeight,
+    asideScrollHeight: value.asideScrollHeight,
+    footerTop: value.footerTop,
+    footerBottom: value.footerBottom,
+  };
 }
 
 function itemNames(sections: SidebarSection[]): string[] {
@@ -76,6 +118,27 @@ const readSidebar = `(() => {
   }));
 })()`;
 
+const readPinLayout = `(() => {
+  const nav = document.querySelector('[data-testid="den-org-sidebar"]');
+  const footer = document.querySelector('[data-testid="den-org-sidebar-footer"]');
+  const aside = nav?.closest("aside");
+  if (!(nav instanceof HTMLElement) || !(footer instanceof HTMLElement) || !(aside instanceof HTMLElement)) {
+    return null;
+  }
+  const footerRect = footer.getBoundingClientRect();
+  return {
+    viewportHeight: window.innerHeight,
+    navScrollHeight: nav.scrollHeight,
+    navClientHeight: nav.clientHeight,
+    navOverflowY: getComputedStyle(nav).overflowY,
+    asideScrollTop: aside.scrollTop,
+    asideClientHeight: aside.clientHeight,
+    asideScrollHeight: aside.scrollHeight,
+    footerTop: footerRect.top,
+    footerBottom: footerRect.bottom,
+  };
+})()`;
+
 test(title, async ({ evidence, place }) => {
   needs(requirements);
   await using den = await server({
@@ -98,6 +161,14 @@ test(title, async ({ evidence, place }) => {
   if (!flip.response.ok) {
     throw new Error(`Enabling sidebar capabilities failed: HTTP ${flip.response.status} ${flip.text.slice(0, 500)}`);
   }
+  const openWorkWebAccess = await denFetch(den.admin, `/v1/admin/organizations/${orgId}/openwork-web-access`, {
+    method: "PUT",
+    headers: { authorization: `Bearer ${den.admin.token}` },
+    body: JSON.stringify({ enabled: true, reason: "Exercise the OpenWork Web sidebar destination" }),
+  });
+  if (!openWorkWebAccess.response.ok) {
+    throw new Error(`Enabling OpenWork Web failed: HTTP ${openWorkWebAccess.response.status} ${openWorkWebAccess.text.slice(0, 500)}`);
+  }
 
   await using browser = await chrome({
     name: "den-sidebar-ia",
@@ -119,11 +190,7 @@ test(title, async ({ evidence, place }) => {
     label: "Den Web origin before admin auth token handoff",
   });
 
-  const adminTokenStored = await evalIn(browser, `(() => {
-    localStorage.setItem("openwork:web:auth-token", ${JSON.stringify(den.admin.token)});
-    return localStorage.getItem("openwork:web:auth-token") === ${JSON.stringify(den.admin.token)};
-  })()`);
-  expect(adminTokenStored).toBe(true);
+  await signInInBrowser(browser, den.ref.webUrl, den.admin);
   await navigate(browser.client, `${den.ref.webUrl}/dashboard/org-settings`);
   await waitFor(browser, `Boolean(document.querySelector('[data-testid="den-org-sidebar"] [data-sidebar-section="manage"]'))
     && Boolean(document.querySelector('[data-testid="den-org-sidebar"] [data-sidebar-section="team"]'))
@@ -183,11 +250,36 @@ test(title, async ({ evidence, place }) => {
     expect(seen.ok, seen.why).toBe(true);
   }
 
-  const memberTokenStored = await evalIn(browser, `(() => {
-    localStorage.setItem("openwork:web:auth-token", ${JSON.stringify(member.token)});
-    return localStorage.getItem("openwork:web:auth-token") === ${JSON.stringify(member.token)};
-  })()`);
-  expect(memberTokenStored).toBe(true);
+  // The same signed-in admin session must keep the workspace switcher pinned
+  // when the expanded Settings tree is taller than the viewport.
+  await browser.client.send("Emulation.setDeviceMetricsOverride", {
+    width: 1440,
+    height: 720,
+    deviceScaleFactor: 1,
+    mobile: false,
+  });
+  await waitFor(browser, `window.innerHeight === 720`, {
+    timeoutMs: 30_000,
+    label: "admin sidebar reflowed to the short viewport",
+  });
+  const pinLayout = parsePinLayout(await evalIn(browser, readPinLayout));
+  const footerInView = pinLayout.footerTop >= 0 && pinLayout.footerBottom <= pinLayout.viewportHeight;
+  const navIsScroller = pinLayout.navScrollHeight > pinLayout.navClientHeight + 8
+    && (pinLayout.navOverflowY === "auto" || pinLayout.navOverflowY === "scroll");
+  const asideDoesNotOverflow = pinLayout.asideScrollTop === 0
+    && pinLayout.asideScrollHeight <= pinLayout.asideClientHeight + 1;
+  expect(footerInView).toBe(true);
+  expect(navIsScroller).toBe(true);
+  expect(asideDoesNotOverflow).toBe(true);
+  evidence.recordAssertionEvidence(
+    "At 720px, the workspace switcher stays visible while only the sidebar navigation scrolls",
+    JSON.stringify(pinLayout),
+    footerInView && navIsScroller && asideDoesNotOverflow,
+  );
+
+  await browser.client.send("Network.clearBrowserCookies");
+  await evalIn(browser, `localStorage.removeItem("openwork:web:auth-token")`);
+  await signInInBrowser(browser, den.ref.webUrl, member);
   await navigate(browser.client, `${den.ref.webUrl}/dashboard/library`);
   await waitFor(browser, `Boolean(document.querySelector('[data-testid="den-org-sidebar"] [data-sidebar-section="work"]'))
     && [...document.querySelectorAll("h1")].some((heading) => heading.textContent?.trim() === "My Library")`, {

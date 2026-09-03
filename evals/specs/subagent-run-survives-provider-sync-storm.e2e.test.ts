@@ -1,12 +1,16 @@
-import { expect } from "vitest";
+import { createServer } from "node:http";
+import { expect, onTestFinished } from "vitest";
 import {
   control,
+  denFetch,
   evalIn,
   readAvailableModels,
+  readCurrentOrganizationMemberId,
   selectModel,
   sendComposerMessage,
   waitFor,
 } from "@openwork/behaviors";
+import type { DenSession } from "@openwork/behaviors";
 import { screenshot, validate } from "@openwork/test-evidence";
 import { app, eventually, needs, server, test, unmetNeeds } from "@openwork/testkit";
 import type { TestNeeds } from "@openwork/testkit";
@@ -43,6 +47,7 @@ import type { TestNeeds } from "@openwork/testkit";
 const requirements: TestNeeds = {
   env: ["ANTHROPIC_API_KEY"],
   optIn: ["OPENWORK_EVAL_E2E_TESTS"],
+  placement: "local",
 };
 const missingRequirements = unmetNeeds(requirements, process.env);
 const title = missingRequirements.length > 0
@@ -51,7 +56,12 @@ const title = missingRequirements.length > 0
 
 const COMPLETE_MARKER = "STORM-RUN-COMPLETE";
 const FOLLOWUP_MARKER = "STORM-FOLLOWUP-OK";
+const NEW_MODEL_MARKER = "NEW-MODEL-LIVE";
 const INTERRUPTED_TEXT = "The message was interrupted";
+const GRANT_MODEL_ID = "fresh-grant-deterministic-model";
+const GRANT_PROVIDER_KEY = "fresh-grant-deterministic-provider";
+const GRANT_PROVIDER_NAME = "Fresh Grant Models";
+const GRANT_API_KEY = "sk-fresh-grant-local-only";
 const STORM_TICK_MS = 15_000;
 const STORM_MAX_TICKS = 48; // 12 minutes of trigger pressure at most
 const MIN_BUSY_TICKS = 8; // the run must stay busy through >=2 minutes of storm
@@ -145,9 +155,85 @@ const stopDisabledExpression = `(() => {
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
+async function startGrantProviderMock(): Promise<string> {
+  const mock = createServer((request, response) => {
+    const url = request.url ?? "";
+    if (request.method === "GET" && url.startsWith("/v1/models")) {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({ object: "list", data: [{ id: GRANT_MODEL_ID, object: "model" }] }));
+      return;
+    }
+    if (request.method === "POST" && (url === "/v1/chat/completions" || url === "/chat/completions")) {
+      request.resume();
+      request.on("end", () => {
+        response.writeHead(200, {
+          "content-type": "text/event-stream",
+          "cache-control": "no-cache",
+          connection: "keep-alive",
+        });
+        const chunks = [
+          { id: "chatcmpl-fresh-grant", object: "chat.completion.chunk", choices: [{ index: 0, delta: { role: "assistant" }, finish_reason: null }] },
+          { id: "chatcmpl-fresh-grant", object: "chat.completion.chunk", choices: [{ index: 0, delta: { content: NEW_MODEL_MARKER }, finish_reason: null }] },
+          { id: "chatcmpl-fresh-grant", object: "chat.completion.chunk", choices: [{ index: 0, delta: {}, finish_reason: "stop" }] },
+        ];
+        for (const chunk of chunks) response.write(`data: ${JSON.stringify(chunk)}\n\n`);
+        response.end("data: [DONE]\n\n");
+      });
+      return;
+    }
+    response.writeHead(404, { "content-type": "application/json" });
+    response.end(JSON.stringify({ error: { message: "not found" } }));
+  });
+  await new Promise<void>((resolve, reject) => {
+    mock.once("error", reject);
+    mock.listen(0, "127.0.0.1", resolve);
+  });
+  onTestFinished(async () => {
+    mock.closeAllConnections();
+    await new Promise<void>((resolve) => mock.close(() => resolve()));
+  });
+  const address = mock.address();
+  if (!address || typeof address === "string") throw new Error("Fresh-grant provider mock did not bind a port.");
+  return `http://127.0.0.1:${address.port}/v1`;
+}
+
+async function grantOrgModel(
+  admin: DenSession,
+  orgId: string,
+  memberId: string,
+  baseUrl: string,
+): Promise<{ providerId: string; modelId: string }> {
+  const result = await denFetch(admin, "/v1/llm-providers", {
+    method: "POST",
+    headers: { authorization: `Bearer ${admin.token}`, "x-openwork-org-id": orgId },
+    body: JSON.stringify({
+      name: GRANT_PROVIDER_NAME,
+      source: "custom",
+      customConfig: {
+        id: GRANT_PROVIDER_KEY,
+        name: GRANT_PROVIDER_NAME,
+        npm: "@ai-sdk/openai-compatible",
+        env: ["FRESH_GRANT_API_KEY"],
+        api: baseUrl,
+        models: [{ id: GRANT_MODEL_ID, name: "Fresh Grant Deterministic Model" }],
+      },
+      apiKey: GRANT_API_KEY,
+      memberIds: [memberId],
+      teamIds: [],
+    }),
+  });
+  const provider = isRecord(result.body) && isRecord(result.body.llmProvider) ? result.body.llmProvider : null;
+  const providerId = provider && typeof provider.id === "string" ? provider.id : "";
+  if (result.response.status !== 201 || !providerId) {
+    throw new Error(`Fresh-grant provider creation failed: HTTP ${result.response.status} ${result.text.slice(0, 300)}`);
+  }
+  return { providerId, modelId: GRANT_MODEL_ID };
+}
+
 test.skipIf(missingRequirements.length > 0)(title, { timeout: 2_700_000 }, async ({ evidence, place }) => {
   needs(requirements);
 
+  const grantProviderBaseUrl = await startGrantProviderMock();
   await using den = await server({ place });
   // Signing in matters: a Den session is what arms the server-side cloud
   // provider sync (PUT /den-session -> CloudProviderSync.setSession).
@@ -321,6 +407,9 @@ test.skipIf(missingRequirements.length > 0)(title, { timeout: 2_700_000 }, async
     }).then(() => true, () => false);
   }
   const armedStatus = await readSyncStatus();
+  const activeOrgIdValue = await evalIn(desktopApp, `localStorage.getItem("openwork.den.activeOrgId") ?? ""`);
+  const activeOrgId = typeof activeOrgIdValue === "string" ? activeOrgIdValue : "";
+  expect(activeOrgId).toMatch(/^org_/);
   evidence.recordAssertionEvidence(
     "The server-side cloud provider sync is armed by the signed-in Den session",
     `GET /cloud-provider-sync/status -> ok=${armedStatus.ok} hasSession=${armedStatus.hasSession} lastRun=${armedStatus.lastRunStatus} (armed by: ${armedBy}).`,
@@ -356,6 +445,7 @@ test.skipIf(missingRequirements.length > 0)(title, { timeout: 2_700_000 }, async
   );
 
   // ── Launch the long subagent run ────────────────────────────────────────
+  const ownerMemberId = await readCurrentOrganizationMemberId(den.admin);
   await control(desktopApp, "session.create_task");
   const sessionId = newestSessionId(await control(desktopApp, "session.list_sessions"));
   // Sandbox clock, not the driver's: the SSE tail timestamps its events with
@@ -379,6 +469,15 @@ test.skipIf(missingRequirements.length > 0)(title, { timeout: 2_700_000 }, async
     sawSubagents,
   );
   expect(sawSubagents, "The run never showed subagent activity; the reproduction needs child sessions").toBe(true);
+
+  const grant = await grantOrgModel(den.admin, activeOrgId, ownerMemberId, grantProviderBaseUrl);
+  const stillRunningAfterGrant = (await evalIn(desktopApp, stopEnabledExpression)) === true;
+  evidence.recordAssertionEvidence(
+    "A deterministic OpenAI-compatible model is granted while the subagent run is live",
+    `Den registered ${grant.modelId} as provider ${grant.providerId} while the composer remained stoppable.`,
+    stillRunningAfterGrant,
+  );
+  expect(stillRunningAfterGrant).toBe(true);
 
   const midRunShot = await screenshot(desktopApp);
   const midRunSeen = await validate(midRunShot, [
@@ -532,4 +631,28 @@ test.skipIf(missingRequirements.length > 0)(title, { timeout: 2_700_000 }, async
     followedUp,
   );
   expect(followedUp, "the session could not complete a follow-up prompt after the storm").toBe(true);
+
+  const grantedModels = await eventually(() => readAvailableModels(desktopApp), {
+    within: 180_000,
+    intervalMs: 3_000,
+    label: "mid-run granted model became selectable after completion",
+    until: (available) => available.some((model) => model.id === grant.modelId && model.selectable),
+  });
+  expect(grantedModels.some((model) => model.id === grant.modelId && model.selectable)).toBe(true);
+  await selectModel(desktopApp, grant.modelId);
+  await sendComposerMessage(desktopApp, `Reply with exactly: ${NEW_MODEL_MARKER}`);
+  await waitFor(desktopApp, assistantHasText(NEW_MODEL_MARKER), {
+    timeoutMs: 120_000,
+    label: "newly granted deterministic model answered",
+  });
+  evidence.recordAssertionEvidence(
+    "The model granted mid-run is selectable and answers immediately after the run",
+    `${grant.modelId} appeared in the picker after the original run settled and returned ${NEW_MODEL_MARKER}.`,
+    true,
+  );
+
+  await denFetch(den.admin, `/v1/llm-providers/${encodeURIComponent(grant.providerId)}`, {
+    method: "DELETE",
+    headers: { authorization: `Bearer ${den.admin.token}`, "x-openwork-org-id": activeOrgId },
+  }).catch(() => undefined);
 });

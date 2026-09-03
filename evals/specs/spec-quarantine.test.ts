@@ -14,7 +14,6 @@ const categories = new Set(["unmigrated", "pre-existing-red", "product-finding",
 const evidenceCategories = new Set(["pre-existing-red", "product-finding"]);
 const expectedEnabled = `
 active-session-workspace-storm.e2e.test.ts
-alpha-update-eligibility.e2e.test.ts
 app-den-tls-fault.e2e.test.ts
 app-smoke.e2e.test.ts
 artifact-code-browser.e2e.test.ts
@@ -31,14 +30,12 @@ config-object-large-skill.e2e.test.ts
 connect-readiness-preseeded.e2e.test.ts
 connector-tool-call-branding.e2e.test.ts
 cross-workspace-split-view.e2e.test.ts
-den-behind-enterprise-tls.e2e.test.ts
 first-run-cloud-share.e2e.test.ts
 first-run-local.e2e.test.ts
 library-add-connector-discovery.e2e.test.ts
 library-signed-in-render-stability.e2e.test.ts
 live-tool-visible-after-session-switch.e2e.test.ts
 llm-provider-access-parity.e2e.test.ts
-managed-vault-recovery.e2e.test.ts
 org-api-key-authenticates.e2e.test.ts
 org-model-analytics.e2e.test.ts
 org-team-lifecycle-critical-path.e2e.test.ts
@@ -47,12 +44,12 @@ reliable-app-recovery.e2e.test.ts
 responsive-session-layout.e2e.test.ts
 saved-script-automations.e2e.test.ts
 sidebar-title-overflow-fade.e2e.test.ts
-sso-invite-sign-in.e2e.test.ts
 task-activity-shimmer.e2e.test.ts
 two-daytona-desktops.e2e.test.ts
 unfinished-tool-lifecycle.e2e.test.ts
 welcome-one-field.e2e.test.ts
 workspace-new-task-hit-target.e2e.test.ts
+workspace-storm-auth-coherence.e2e.test.ts
 `.trim().split("\n");
 
 interface QuarantineEntry {

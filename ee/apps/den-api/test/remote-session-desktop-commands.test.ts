@@ -1,7 +1,13 @@
-import { beforeAll, expect, test } from "bun:test"
+import { beforeAll, expect, setSystemTime, test } from "bun:test"
 
+import { eq } from "@openwork-ee/den-db/drizzle"
+import { RemoteSessionCommandTable } from "@openwork-ee/den-db/schema/remote-session-commands"
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
-import { remoteSessionCommandCompleteRequestSchema } from "@openwork/types/automations"
+import {
+  automationDesktopRunnerRegistrationSchema,
+  remoteSessionCommandCompleteRequestSchema,
+} from "@openwork/types/automations"
+import { Hono } from "hono"
 import type {
   RemoteSessionExecuteDeps,
   RemoteSessionRuntime,
@@ -11,6 +17,7 @@ import type {
   RemoteSessionCommand,
   RemoteSessionCommandStore,
 } from "../src/remote-sessions/commands.js"
+import type { OrganizationContextVariables } from "../src/middleware/index.js"
 
 function seedRequiredEnv() {
   process.env.DATABASE_URL = process.env.DATABASE_URL ?? "mysql://root:password@127.0.0.1:3306/openwork_test"
@@ -208,6 +215,125 @@ test("desktop create queues a ten-minute command for the connected member", asyn
     ttlMs: defaultTtlMs,
   })
   expect(enqueued[0]?.idempotencyKey).toMatch(/^rsc_/)
+})
+
+test("a legacy runner stays connected for Automations without receiving remote-session work", async () => {
+  const now = new Date("2026-08-18T12:00:00.000Z")
+  setSystemTime(now)
+  const commandStore = (await import("../src/remote-sessions/commands.js")).databaseRemoteSessionCommandStore
+  const database = (await import("../src/db.js")).db
+  const { AutomationService } = await import("../src/automations/service.js")
+  const { automationRunnerAuth } = await import("../src/automations/runner-auth.js")
+  const { registerAutomationRoutes } = await import("../src/routes/automations/index.js")
+  const automationRunId = createDenTypeId("automationRun")
+  const runnerId = "legacy-desktop-runner"
+  let commandId = ""
+
+  try {
+    const registration = automationDesktopRunnerRegistrationSchema.parse({
+      runnerId,
+      protocolVersion: 1,
+      supportedExecutionTargets: ["desktop"],
+      appVersion: "0.18.8",
+      platform: "darwin",
+      concurrency: 1,
+    })
+    expect(registration.capabilities).toEqual([])
+
+    const queued = await commandStore.enqueue({
+      organizationId: ORGANIZATION_ID,
+      ownerMemberId: MEMBER_ID,
+      createdByUserId: USER_ID,
+      title: "Desktop handoff",
+      prompt: "Inspect the repo",
+      model: { providerId: "provider", modelId: "model", variant: "high" },
+      ttlMs: defaultTtlMs,
+      idempotencyKey: "legacy-runner-command",
+    })
+    commandId = queued.id
+
+    const service = new AutomationService()
+    service.isActiveRunnerOwner = async () => true
+    service.discoverDesktopRunnerWork = async () => [{ runId: automationRunId, executionTarget: "desktop" }]
+    const app = new Hono<{ Variables: Partial<OrganizationContextVariables> }>()
+    registerAutomationRoutes(app, { service })
+    const credential = automationRunnerAuth.issue({
+      organizationId: ORGANIZATION_ID,
+      ownerMemberId: MEMBER_ID,
+      runnerId,
+      capabilities: registration.capabilities,
+    }, "http://den.local")
+
+    const response = await app.request("http://den.local/v1/automation-runner/work", {
+      headers: { authorization: `Bearer ${credential.token}` },
+    })
+    expect(response.status).toBe(200)
+    expect(await response.json()).toEqual({
+      items: [{ runId: automationRunId, executionTarget: "desktop" }],
+    })
+
+    const pendingRows = await database.select().from(RemoteSessionCommandTable)
+      .where(eq(RemoteSessionCommandTable.id, queued.id))
+    expect(pendingRows[0]).toMatchObject({
+      status: "pending",
+      title: "Desktop handoff",
+      prompt: "Inspect the repo",
+      model_provider_id: "provider",
+      model_model_id: "model",
+      model_variant: "high",
+      idempotency_key: "legacy-runner-command",
+      expires_at: new Date(now.getTime() + defaultTtlMs),
+    })
+
+    const pendingWork = await commandStore.listPendingForRunner({
+      organizationId: ORGANIZATION_ID,
+      ownerMemberId: MEMBER_ID,
+      now: now.getTime(),
+      limit: 5,
+    })
+    expect(pendingWork).toContainEqual(queued)
+
+    const claimed = await commandStore.claim({
+      commandId: queued.id,
+      organizationId: ORGANIZATION_ID,
+      ownerMemberId: MEMBER_ID,
+      runnerId: "capable-desktop-runner",
+      now: now.getTime() + 1_000,
+    })
+    expect(claimed).toMatchObject({ status: "claimed", claimedByRunnerId: "capable-desktop-runner" })
+    const completed = await commandStore.complete({
+      commandId: queued.id,
+      runnerId: "capable-desktop-runner",
+      status: "delivered",
+      sessionId: "ses_fixture",
+      workspaceId: "ws_fixture",
+      resultSummary: "created",
+    })
+    expect(completed).toMatchObject({
+      status: "delivered",
+      sessionId: "ses_fixture",
+      workspaceId: "ws_fixture",
+      resultSummary: "created",
+      error: null,
+    })
+
+    const deliveredRows = await database.select().from(RemoteSessionCommandTable)
+      .where(eq(RemoteSessionCommandTable.id, queued.id))
+    expect(deliveredRows[0]).toMatchObject({
+      status: "delivered",
+      claimed_by_runner_id: "capable-desktop-runner",
+      session_id: "ses_fixture",
+      workspace_id: "ws_fixture",
+      result_summary: "created",
+      error_code: null,
+      error_message: null,
+    })
+  } finally {
+    if (commandId) {
+      await database.delete(RemoteSessionCommandTable).where(eq(RemoteSessionCommandTable.id, commandId))
+    }
+    setSystemTime()
+  }
 })
 
 test("read by command id returns claimed and delivered desktop states", async () => {

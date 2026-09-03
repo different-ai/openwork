@@ -13,6 +13,7 @@ test("artifact editor renders code with Pierre and browses workspace files", asy
     await user.press("Tab");
     await user.press("Enter");
     await user.see("Select tab: openwork-artifact-proof.ts", { timeoutMs: 30_000 });
+    await user.see({ text: /export const artifactEditor = true/ }, { timeoutMs: 30_000 });
     await user.looks([
       "The artifact panel visibly shows a workspace file tree beside a syntax-highlighted TypeScript code viewer",
       "The code viewer visibly contains the TypeScript declaration export const artifactEditor = true",

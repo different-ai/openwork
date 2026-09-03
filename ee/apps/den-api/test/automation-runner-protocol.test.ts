@@ -1,5 +1,19 @@
 import assert from "node:assert/strict"
 import test from "node:test"
+import { eq, inArray } from "@openwork-ee/den-db/drizzle"
+import {
+  AuthUserTable,
+  AutomationRevisionTable,
+  AutomationRunnerNotificationTable,
+  AutomationRunnerTable,
+  AutomationRunEventTable,
+  AutomationRunTable,
+  AutomationTable,
+  MemberTable,
+  OrganizationTable,
+} from "@openwork-ee/den-db/schema"
+import { createDenTypeId } from "@openwork-ee/utils/typeid"
+import { AUTOMATION_MIN_CLAIM_WINDOW_MS } from "@openwork/automations"
 import {
   AUTOMATION_MODEL_ATTENTION_CAPABILITY,
   automationDesktopRunnerAssignmentSchema,
@@ -141,6 +155,251 @@ test("desktop occurrences stay claimable through the recovery window with named 
   assert.match(expire, /code: "runner_unavailable"/)
 })
 
+test("desktop recovery deadlines hold, expire with exact causes, and never invoke a provider", async () => {
+  process.env.DATABASE_URL ??= "mysql://root:password@127.0.0.1:3306/openwork_test"
+  process.env.DB_MODE ??= "mysql"
+  process.env.DEN_DB_ENCRYPTION_KEY ??= "runner-recovery-test-encryption-key-123456789"
+  process.env.BETTER_AUTH_SECRET ??= "runner-recovery-test-secret-1234567890123"
+  process.env.BETTER_AUTH_URL ??= "http://127.0.0.1:8790"
+  process.env.DEN_AUTOMATIONS_RUNNER_CLAIM_DEADLINE_MS = "1000"
+
+  const [{ db }, { env }, { DenAutomationRepository }] = await Promise.all([
+    import("../src/db.js"),
+    import("../src/env.js"),
+    import("../src/automations/repository.js"),
+  ])
+  const repository = new DenAutomationRepository()
+  const organizationId = createDenTypeId("organization")
+  const userId = createDenTypeId("user")
+  const memberId = createDenTypeId("member")
+  const runnerId = "recovery-window-runner"
+  const automationIds: string[] = []
+  const runIds: string[] = []
+  const realFetch = globalThis.fetch
+  let providerCompletionCalls = 0
+  globalThis.fetch = async () => {
+    providerCompletionCalls += 1
+    return new Response(null, { status: 503 })
+  }
+
+  const cleanup = async () => {
+    await db.delete(AutomationRunnerNotificationTable)
+      .where(eq(AutomationRunnerNotificationTable.organization_id, organizationId))
+    if (runIds.length > 0) {
+      await db.delete(AutomationRunEventTable).where(inArray(AutomationRunEventTable.run_id, runIds))
+      await db.delete(AutomationRunTable).where(inArray(AutomationRunTable.id, runIds))
+    }
+    if (automationIds.length > 0) {
+      await db.delete(AutomationRevisionTable).where(inArray(AutomationRevisionTable.automation_id, automationIds))
+      await db.delete(AutomationTable).where(inArray(AutomationTable.id, automationIds))
+    }
+    await db.delete(AutomationRunnerTable).where(eq(AutomationRunnerTable.id, runnerId))
+    await db.delete(MemberTable).where(eq(MemberTable.id, memberId))
+    await db.delete(OrganizationTable).where(eq(OrganizationTable.id, organizationId))
+    await db.delete(AuthUserTable).where(eq(AuthUserTable.id, userId))
+  }
+
+  try {
+    assert.equal(env.automations.runnerClaimDeadlineMs, 1_000)
+    await db.insert(AuthUserTable).values({
+      id: userId,
+      name: "Runner Recovery User",
+      email: `${userId}@runner-recovery.test`,
+      emailVerified: true,
+    })
+    await db.insert(OrganizationTable).values({
+      id: organizationId,
+      name: "Runner Recovery Test",
+      slug: `runner-recovery-${organizationId}`,
+    })
+    await db.insert(MemberTable).values({ id: memberId, organizationId, userId, role: "member" })
+
+    const createAutomation = async (name: string, now: number, dueAt = now) => {
+      const item = await repository.create({
+        organizationId,
+        ownerMemberId: memberId,
+        definition: {
+          name,
+          instructions: `Run ${name}`,
+          schedule: { kind: "once", timezone: "UTC", at: dueAt },
+          model: { providerId: "opencode", modelId: "big-pickle", variant: null },
+        },
+        now,
+      })
+      automationIds.push(item.automation.id)
+      return item
+    }
+    const queueScheduled = async (name: string, now: number) => {
+      const item = await createAutomation(name, now - 1, now)
+      const queued = await repository.claim({
+        automation: item.automation,
+        revision: item.revision,
+        trigger: "scheduled",
+        scheduledFor: now,
+        leaseOwner: "scheduler:test",
+        leaseMs: 60_000,
+        claimDeadlineMs: env.automations.runnerClaimDeadlineMs,
+        now,
+      })
+      assert.equal(queued.kind, "claimed")
+      runIds.push(queued.run.id)
+      return { item, run: queued.run }
+    }
+    const receipt = async (runId: string) => {
+      const value = await repository.getRunReceipt({ organizationId, ownerMemberId: memberId, runId })
+      assert.ok(value)
+      return value.run
+    }
+    const error = async (runId: string) => (await receipt(runId)).error
+
+    const start = Date.UTC(2026, 7, 18, 12)
+    const never = await queueScheduled("Never connected", start)
+    assert.deepEqual(await repository.expireUnclaimedDesktop({
+      now: start + env.automations.runnerClaimDeadlineMs - 1,
+      limit: 10,
+    }), [])
+    assert.equal((await receipt(never.run.id)).status, "queued")
+    assert.deepEqual(await repository.expireUnclaimedDesktop({
+      now: start + env.automations.runnerClaimDeadlineMs,
+      limit: 10,
+    }), [never.run.id])
+    assert.deepEqual(await error(never.run.id), {
+      code: "runner_unavailable",
+      message: "Missed — no desktop was connected.",
+      retryable: false,
+    })
+
+    const recoveryAt = start + 10_000
+    const recovered = await queueScheduled("Recovered once", recoveryAt)
+    assert.deepEqual(await repository.expireUnclaimedDesktop({
+      now: recoveryAt + env.automations.runnerClaimDeadlineMs - 1,
+      limit: 10,
+    }), [])
+    await repository.registerDesktopRunner({
+      organizationId,
+      ownerMemberId: memberId,
+      runnerId,
+      protocolVersion: 1,
+      supportedExecutionTargets: ["desktop"],
+      capabilities: [],
+      appVersion: "test",
+      platform: "darwin",
+      concurrency: 1,
+      now: recoveryAt + env.automations.runnerClaimDeadlineMs - 1,
+    })
+    const work = await repository.discoverDesktopWork({
+      organizationId,
+      ownerMemberId: memberId,
+      now: recoveryAt + env.automations.runnerClaimDeadlineMs - 1,
+      limit: 4,
+    })
+    assert.deepEqual(work, [{ runId: recovered.run.id, executionTarget: "desktop" }])
+    const leaseOwner = `desktop:${memberId}:${runnerId}`
+    const claimed = await repository.claimDesktop({
+      organizationId,
+      ownerMemberId: memberId,
+      leaseOwner,
+      leaseMs: 60_000,
+      runId: recovered.run.id,
+      now: recoveryAt + env.automations.runnerClaimDeadlineMs - 1,
+    })
+    assert.equal(claimed?.run.attemptCount, 1)
+    await repository.complete({
+      runId: recovered.run.id,
+      leaseOwner,
+      status: "succeeded",
+      resultSummary: "Recovered after the desktop returned.",
+      usage: { inputTokens: 1, outputTokens: 1, costMicros: null },
+      error: null,
+      attempt: 1,
+      now: recoveryAt + env.automations.runnerClaimDeadlineMs,
+    })
+    assert.equal((await receipt(recovered.run.id)).attemptCount, 1)
+    assert.equal(await repository.claimDesktop({
+      organizationId,
+      ownerMemberId: memberId,
+      leaseOwner,
+      leaseMs: 60_000,
+      runId: recovered.run.id,
+      now: recoveryAt + env.automations.runnerClaimDeadlineMs + 1,
+    }), null)
+
+    const silentAt = start + 20_000
+    const silent = await queueScheduled("Silent desktop", silentAt)
+    await repository.expireUnclaimedDesktop({
+      now: silentAt + env.automations.runnerClaimDeadlineMs,
+      limit: 10,
+    })
+    assert.deepEqual(await error(silent.run.id), {
+      code: "runner_unavailable",
+      message: "Missed — the connected desktop did not pick this up in time.",
+      retryable: false,
+    })
+
+    const busyAt = start + 30_000
+    await repository.touchDesktopRunner({ organizationId, ownerMemberId: memberId, runnerId, now: busyAt })
+    const holder = await queueScheduled("Busy holder", busyAt)
+    const holderClaim = await repository.claimDesktop({
+      organizationId,
+      ownerMemberId: memberId,
+      leaseOwner,
+      leaseMs: 60_000,
+      runId: holder.run.id,
+      now: busyAt + 100,
+    })
+    assert.equal(holderClaim?.run.attemptCount, 1)
+    const busy = await queueScheduled("Busy victim", busyAt)
+    await repository.expireUnclaimedDesktop({
+      now: busyAt + env.automations.runnerClaimDeadlineMs,
+      limit: 10,
+    })
+    assert.deepEqual(await error(busy.run.id), {
+      code: "runner_unavailable",
+      message: "Missed — the desktop was busy with another Automation run.",
+      retryable: false,
+    })
+    await repository.complete({
+      runId: holder.run.id,
+      leaseOwner,
+      status: "succeeded",
+      resultSummary: "Busy holder released.",
+      usage: { inputTokens: 1, outputTokens: 1, costMicros: null },
+      error: null,
+      attempt: 1,
+      now: busyAt + env.automations.runnerClaimDeadlineMs + 1,
+    })
+
+    const manualAt = start + 40_000
+    const manualItem = await createAutomation("Manual floor", manualAt, manualAt + 24 * 60 * 60_000)
+    const manual = await repository.claim({
+      automation: manualItem.automation,
+      revision: manualItem.revision,
+      trigger: "manual",
+      scheduledFor: null,
+      nonce: "manual-floor",
+      leaseOwner: "scheduler:test",
+      leaseMs: 1_000,
+      claimDeadlineMs: AUTOMATION_MIN_CLAIM_WINDOW_MS,
+      now: manualAt,
+    })
+    assert.equal(manual.kind, "claimed")
+    runIds.push(manual.run.id)
+    assert.deepEqual(await repository.expireUnclaimedDesktop({
+      now: manualAt + AUTOMATION_MIN_CLAIM_WINDOW_MS - 1,
+      limit: 10,
+    }), [])
+    assert.equal((await receipt(manual.run.id)).status, "queued")
+    assert.deepEqual(await repository.expireUnclaimedDesktop({
+      now: manualAt + AUTOMATION_MIN_CLAIM_WINDOW_MS,
+      limit: 10,
+    }), [manual.run.id])
+    assert.equal(providerCompletionCalls, 0)
+  } finally {
+    globalThis.fetch = realFetch
+    await cleanup()
+  }
+})
+
 test("runner presence is a read-only view of existing liveness data", () => {
   const presence = serviceSource.slice(
     serviceSource.indexOf("async desktopRunnerPresence"),
@@ -186,6 +445,35 @@ test("expired lease recovery cannot clobber a concurrently renewed lease", () =>
   )
   assert.match(recovery, /where\(and\([\s\S]*eq\(AutomationRunTable\.id, run\.id\)[\s\S]*eq\(AutomationRunTable\.lease_owner, run\.lease_owner\)[\s\S]*lt\(AutomationRunTable\.lease_expires_at, new Date\(input\.now\)\)/)
   assert.match(recovery, /engine_sequence:\s*retry \? 0 : run\.engine_sequence/)
+})
+
+test("Desktop runner claims are idempotent for one owner and exclude competing runners", () => {
+  const claim = repositorySource.slice(
+    repositorySource.indexOf("async claimDesktop"),
+    repositorySource.indexOf("async heartbeatDesktop"),
+  )
+  assert.match(claim, /eq\(AutomationRunTable\.lease_owner, input\.leaseOwner\)[\s\S]*inArray\(AutomationRunTable\.status, \["claimed", "running"\]\)/)
+  assert.match(claim, /if \(!selected\) \{[\s\S]*eq\(AutomationRunTable\.status, "queued"\)[\s\S]*attempt_count: selected\.run\.attempt_count \+ 1/)
+  assert.match(claim, /if \(!selected\) return null/)
+  assert.match(claim, /run: mapRun\(currentRuns\[0\]\)/)
+})
+
+test("expired attempts reject stale completion and stop after the bounded retry", () => {
+  const completion = repositorySource.slice(
+    repositorySource.indexOf("async complete(input"),
+    repositorySource.indexOf("async recoverExpiredLeases"),
+  )
+  const recovery = repositorySource.slice(
+    repositorySource.indexOf("async recoverExpiredLeases"),
+    repositorySource.indexOf("async requestCancellation"),
+  )
+  const routesSource = readFileSync(join(import.meta.dir, "../src/routes/automations/index.ts"), "utf8")
+  assert.match(completion, /eq\(AutomationRunTable\.attempt_count, input\.attempt\)/)
+  assert.match(completion, /current\.lease_expires_at\.getTime\(\) <= input\.now[\s\S]*automation_run_complete_lease_lost/)
+  assert.match(routesSource, /automation_run_complete_lease_lost[\s\S]*runner_lease_lost[\s\S]*409/)
+  assert.match(recovery, /run\.attempt_count < AUTOMATION_MAXIMUM_ATTEMPTS/)
+  assert.match(recovery, /status: retry \? "queued" : "failed"/)
+  assert.match(recovery, /code: "lease_lost"[\s\S]*retryable: false/)
 })
 
 test("a no-op heartbeat renewal is reported as a lost lease", () => {
@@ -356,7 +644,7 @@ test("every dispatch path revalidates the owner's model access", () => {
   const executorSource = readFileSync(join(import.meta.dir, "../src/automations/cloud-agent-executor.ts"), "utf8")
   const execution = executorSource.slice(executorSource.indexOf("export async function executeCloudAgent"))
   assert.match(executorSource, /currentAgentAuthority[\s\S]*resolveAutomationModelAccess\(/)
-  assert.match(execution, /currentAgentAuthority\(input\)[\s\S]*readyWorker/)
+  assert.match(execution, /currentAgentAuthority\(input\)[\s\S]*resolveCloudAgentReadyWorker/)
   assert.match(execution, /currentAgentAuthority\(input\)[\s\S]*createThread/)
   assert.match(execution, /currentAgentAuthority\(input\)[\s\S]*abortAndObserve\(client, nativeThreadId\)[\s\S]*sendTurn/)
   assert.match(serviceSource, /"owner_membership_lost",[\s\S]*markNeedsAttention/)
