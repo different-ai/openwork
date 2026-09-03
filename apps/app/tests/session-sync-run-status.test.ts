@@ -777,6 +777,7 @@ describe("run status reconcile liveness health", () => {
 
     expect(fetches).toBeGreaterThan(fetchesBeforeOnline);
     expect(useSessionActivityStore.getState().recordsByWorkspaceId[workspaceId]?.[sessionId]?.runActive).toBe(false);
+    expect(getReactQueryClient().getQueryData(statusKey(workspaceId, sessionId))).toEqual({ type: "idle" });
     const health = useWorkspaceSyncStreamStore.getState().reconcileHealthByKey[workspaceSyncStreamKey(input)];
     expect(health?.consecutiveFailures ?? 0).toBe(0);
 
