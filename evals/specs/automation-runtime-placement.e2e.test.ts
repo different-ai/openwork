@@ -63,7 +63,8 @@ test("Den lists Automations as a read-only monitor that routes management to Web
   const listCopy = await evalIn(browser, "document.body.innerText");
   expect(listCopy).toContain("Create and edit Cloud Automations in OpenWork Web");
   expect(listCopy).toContain("Open in OpenWork Web");
-  expect(listCopy).toContain("Scheduled");
+  // The group heading renders with CSS uppercase, which innerText reflects.
+  expect(listCopy).toMatch(/scheduled/i);
   expect(listCopy).not.toContain("New Automation");
   const openInWebHref = await evalIn(browser, `[...document.querySelectorAll("a")].find((anchor) => anchor.textContent?.includes("Open in OpenWork Web"))?.getAttribute("href") ?? ""`);
   expect(openInWebHref).toMatch(/\/automations$/);
