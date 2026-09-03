@@ -198,7 +198,7 @@ export async function sidebarPrimaryActions(seed: Seed) {
 export async function sidebarOverflow(seed: Seed) {
   const longTitle = "Reading Google Drive documents for the quarterly workspace review";
   const app = await seed.desktop({ name: "sidebar-title-overflow-fade" });
-  const workspacePath = `/tmp/Yonder-${Date.now().toString(36)}`;
+  const workspacePath = "/tmp/Yonder";
   const workspace = await seed.workspace(app, workspacePath);
   const sessions = await seed.sessions(app, [longTitle]);
   return { app, workspace, workspacePath, sessions, longTitle };
