@@ -85,6 +85,21 @@ test.skipIf(!e2eTestsEnabled || !localPlacement || !mysqlOpen)(title, async ({ e
     as: "fresh",
     place,
     localServerDelayMs: 5_000,
+    beforeSignIn: async (surface) => {
+      const preSignInState = await eventually(() => readConnectState(surface), {
+        within: 15_000,
+        label: "fresh-profile Connect state before sign-in",
+        until: (state) => state.ok && state.status === "missing",
+      });
+      expect(preSignInState.status).toBe("missing");
+      expect(preSignInState.connectEnabled).toBe(false);
+      expect(preSignInState.status).not.toBe("available");
+      evidence.recordAssertionEvidence(
+        "Before sign-in, Connect is missing rather than explicitly disabled",
+        "The fresh profile reported status=missing and connectEnabled=false, not status=available.",
+        preSignInState.status === "missing" && preSignInState.connectEnabled === false,
+      );
+    },
   });
 
   const initialState = await eventually(() => readConnectState(desktopApp), {
