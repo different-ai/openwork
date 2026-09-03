@@ -37,8 +37,7 @@ draft = false
 type = "local"
 
 # Public repo: customer/prospect/partner identities must never land in the
-# tree. Complements the string-matching tripwire (ci-confidentiality.yml) by
-# catching paraphrases and names not yet on the private term list.
+# tree (see AGENTS.md, Confidentiality).
 [[skills]]
 name = "confidentiality-review"
 

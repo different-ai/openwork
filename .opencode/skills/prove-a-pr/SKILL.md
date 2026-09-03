@@ -7,13 +7,14 @@ description: Prove a PR, prepare merge verification, publish all evidence, check
 
 ## Confidentiality gate (before the first push)
 
-- This repo is public. Before pushing, run
-  `node scripts/confidentiality-tripwire.mjs range origin/dev HEAD --branch "$(git branch --show-current)"`
-  (the pre-push hook runs the same check). Any hit is a blocker.
-- Also re-read the PR title/body and evidence descriptions you are about to
-  post: no customer/prospect/partner name, no person outside the team, no Slack
-  channel or link, no quoted end-user text. Refer to reports by internal ticket
-  ID only; see AGENTS.md "Confidentiality".
+- This repo is public. Before pushing, re-read the branch name, every unpushed
+  commit message (`git log origin/dev..HEAD`), the added lines
+  (`git diff origin/dev...HEAD`), and the PR title/body and evidence
+  descriptions you are about to post: no customer/prospect/partner name, no
+  person outside the team, no Slack channel or link, no quoted end-user text.
+  Refer to reports by internal ticket ID only; see AGENTS.md "Confidentiality".
+  Warden reviews only the diff, so this re-read is the sole gate for branch
+  names and PR text.
 - A branch name hit means: new neutral branch, reworded cherry-picks, new PR.
   Never push and "fix it later" — the branch name cannot be scrubbed.
 

@@ -40,9 +40,9 @@ fixtures, docs, and test-evidence descriptions.
 - Keep customer context (briefs, reports, transcripts) outside the repo tree.
   Nothing under a public worktree, even untracked, may hold it.
 - Before every push, re-read the branch name, unpushed commit messages, PR text,
-  and added lines for the above. `scripts/confidentiality-tripwire.mjs` runs as
-  a pre-push hook and a required PR check; treat a hit as a blocker, never as
-  something to work around.
+  and added lines for the above. Warden's `confidentiality-review` skill checks
+  the diff on every PR and blocks clearance on a finding; branch names and PR
+  text are not machine-checked, so that re-read is the only gate for them.
 - If something has already been pushed: scrub every mutable surface (PR body,
   comments, files via a follow-up PR with neutral wording), delete branch-named
   preview comments, and report the immutable remainder (commit messages, PR

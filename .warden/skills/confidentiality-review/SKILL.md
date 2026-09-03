@@ -9,10 +9,10 @@ added lines publish the identity of a customer, prospect, partner, or a person
 outside the OpenWork team?
 
 This repository is public. Bug reports, POCs, and partner work arrive with
-that context attached, and it must not follow the fix into the tree. A
-deterministic tripwire already string-matches a private list of organization
-names; your job is what a string match cannot do — paraphrases, descriptions,
-and names not yet on that list.
+that context attached, and it must not follow the fix into the tree. There is
+no allowlist or denylist of names to consult: judge from the text itself
+whether a line attributes work to, or describes, a specific outside
+organization or person.
 
 Report a HIGH finding when an added line contains any of:
 
