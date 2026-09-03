@@ -535,6 +535,7 @@
         "evals/specs/cross-workspace-composer-switch.e2e.test.ts",
         "evals/specs/cross-workspace-split-view.e2e.test.ts",
         "evals/specs/first-run-cloud-share.e2e.test.ts",
+        "evals/specs/sidebar-external-session-visibility.e2e.test.ts",
         "evals/specs/workspace-new-task-hit-target.e2e.test.ts",
         "evals/specs/workspace-sidebar-order.e2e.test.ts",
         "evals/specs/workspace-storm-auth-coherence.e2e.test.ts",
