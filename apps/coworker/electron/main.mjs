@@ -17,6 +17,9 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { BrowserWindow, Menu, app, dialog, ipcMain, shell } from "electron";
 import { openworkConfigDir } from "@openwork/paths";
 import { createHeadlessThreadClient, toTranscript } from "@openwork/headless-threads";
+import { cloudModelOptions, resolveCloudModel } from "../src/lib/cloud-responsibilities.ts";
+import { createDenAutomationsClient } from "../src/lib/den.ts";
+import { ASSIGNMENT_INSTRUCTIONS, assignmentToolCatalog, createAssignmentToolHandlers, createSelfToolHandlers, selfToolCatalog } from "./assignment-tools.mjs";
 import {
   createCoworker,
   createLongTermMemory,
@@ -71,6 +74,7 @@ import {
   queueLocalResponsibilityRun,
   reconcileInterruptedLocalRuns,
   setLocalResponsibilityActive,
+  updateLocalResponsibility,
 } from "./local-responsibilities.mjs";
 import {
   SignInImportError,
@@ -86,7 +90,8 @@ import {
   openAiCompatibleProviderConfig,
 } from "./local-providers.mjs";
 import { resolveBundledOpencodeBinary, resolveUserDataDir } from "./runtime-paths.mjs";
-import { SETTINGS_FILE, readSettings, updateSettings } from "./settings.mjs";
+import { readChanges, trackChange, undoChange, writeTrackedFile } from "./self-memory.mjs";
+import { SETTINGS_FILE, readSettings, scheduleGuardrails, updateSettings } from "./settings.mjs";
 import {
   BEGIN_BODY,
   CONTINUE_BODY,
@@ -1086,6 +1091,8 @@ async function ensureToolsServer() {
   if (toolsServer) return toolsServer;
   // Documents and Workers share one server: starting, steering, and stopping a Worker go
   // through the same functions the Workers view uses, so the run limit and records agree.
+  // Documents, Workers, assignments, and memory share one server: each goes through the same
+  // functions the panel views use, so the run limit, the guardrails, and the records agree.
   startingToolsServer ??= createCoworkerToolsServer({
     resolveSlug: (token) => toolTokenSlugs.get(token) ?? null,
     handlers: {
@@ -1096,9 +1103,17 @@ async function ensureToolsServer() {
         steer: (slug, id, text) => steerWorker(slug, id, text, "coworker"),
         cancel: (slug, id, reason) => cancelWorker(slug, id, reason, "coworker"),
       }),
+      ...createAssignmentToolHandlers({
+        coworkersDir,
+        settings: () => readSettings(settingsPath),
+        timezone: coworkerTimezone,
+        runNow: (slug, id) => startLocalResponsibilityRun(slug, id, "manual"),
+        cloud: () => cloudAssignments(),
+      }),
+      ...createSelfToolHandlers({ coworkersDir }),
     },
-    tools: [...toolCatalog(), ...workerToolCatalog()],
-    instructions: `${DEFAULT_INSTRUCTIONS} Your Worker tools start, steer, and stop long-lived Workers for goals that outlive one reply; each finding they post wakes you to review it.`,
+    tools: [...toolCatalog(), ...workerToolCatalog(), ...assignmentToolCatalog(), ...selfToolCatalog()],
+    instructions: `${DEFAULT_INSTRUCTIONS} Your Worker tools start, steer, and stop long-lived Workers for goals that outlive one reply; each finding they post wakes you to review it. ${ASSIGNMENT_INSTRUCTIONS}`,
     version: app.getVersion(),
   }).then((server) => {
     toolsServer = server;
@@ -1527,6 +1542,66 @@ function debugLog(line) {
   if (isDev) console.debug(`[open-coworker] ${line}`);
 }
 
+// ---------------------------------------------------------------------------
+// Assignments a coworker sets up itself, and the memory and soul it keeps: the
+// schedule guardrails every local schedule is checked with, OpenWork Cloud
+// placement while an account is signed in, and the memory files whose edits
+// the Memory view records and undoes (see `electron/assignment-tools.mjs` and
+// `electron/self-memory.mjs`).
+
+const coworkerTimezone = () => Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+
+/** The store options every schedule on this Mac is checked with: the app's guardrails and the coworker's zone. */
+async function localScheduleOptions() {
+  return { guardrails: scheduleGuardrails(await readSettings(settingsPath)), defaultTimezone: coworkerTimezone() };
+}
+
+/** OpenWork Cloud placement for the assignment tools: present only while an account is signed in. */
+function cloudAssignments() {
+  if (!denSession) return null;
+  const session = {
+    baseUrl: process.env.COWORKER_DEN_BASE_URL?.trim() || DEFAULT_DEN_BASE_URL,
+    token: denSession.token,
+    orgId: denSession.orgId,
+    userName: "",
+    userEmail: "",
+    orgName: "",
+  };
+  const den = createDenAutomationsClient(session);
+  return {
+    async list(slug) {
+      const coworker = await getCoworker(coworkersDir, slug);
+      const list = await den.list();
+      return list.items
+        .filter((entry) => coworker.automations.includes(entry.automation.id) || (coworker.workspaceId && entry.revision.workspaceId === coworker.workspaceId))
+        .map((entry) => ({
+          id: entry.automation.id,
+          name: entry.automation.name,
+          schedule: entry.revision.schedule,
+          nextDueAt: entry.automation.nextDueAt,
+          state: entry.automation.state,
+        }));
+    },
+    async create(slug, draft) {
+      const coworker = await getCoworker(coworkersDir, slug);
+      const providers = await den.listCloudProviders();
+      const options = cloudModelOptions(providers);
+      const preferred = resolveCloudModel({ model: coworker.model, modelVariant: coworker.modelVariant }, providers, options);
+      const detail = await den.create({
+        name: draft.name,
+        instructions: draft.instructions,
+        schedule: draft.schedule,
+        model: { providerId: preferred.model.providerId, modelId: preferred.model.modelId, variant: preferred.model.variant ?? null },
+      });
+      await updateCoworker(coworkersDir, slug, { automations: [...coworker.automations, detail.automation.id] });
+      const chosen = options.find((option) => option.providerId === preferred.model.providerId && option.modelId === preferred.model.modelId);
+      return { id: detail.automation.id, name: detail.automation.name, schedule: detail.revision.schedule, modelName: chosen ? `${chosen.providerName} · ${chosen.modelName}` : "" };
+    },
+  };
+}
+
+const TRACKED_MEMORY_FILES = /^(soul\.md|memory\/(working|index)\.md|memory\/long-term\/[^/]+\.md)$/;
+
 const commands = {
   "runtime.info": async () => {
     await ensurePlatformServer();
@@ -1602,6 +1677,7 @@ const commands = {
       }).catch(() => undefined);
     }
     const retired = await retireCoworker(coworkersDir, slug);
+    coworkerToolServer.forget(String(slug ?? ""));
     return { ok: true, archiveId: retired.archiveId };
   },
   "coworkers.retired.list": async () => listRetiredCoworkers(coworkersDir),
@@ -1671,18 +1747,29 @@ const commands = {
   "coworkers.files.read": async ({ slug, path: relativePath }) => ({
     content: await readCoworkerFile(coworkersDir, slug, relativePath),
   }),
+  // A person's edit to the soul or a memory file takes the same tracked, atomic
+  // path as the coworker's own tools, so the Memory view can show and undo it.
   "coworkers.files.write": async ({ slug, path: relativePath, content }) => {
-    await writeCoworkerFile(coworkersDir, slug, relativePath, content);
+    const relative = String(relativePath ?? "").replace(/\\/g, "/");
+    if (TRACKED_MEMORY_FILES.test(relative)) await writeTrackedFile(coworkersDir, slug, relative, content);
+    else await writeCoworkerFile(coworkersDir, slug, relativePath, content);
     return { ok: true };
   },
   "coworkers.memory.list": async ({ slug }) => listLongTermMemories(coworkersDir, slug),
-  "coworkers.memory.create": async ({ slug, title, summary }) => createLongTermMemory(coworkersDir, slug, { title, summary }),
+  "coworkers.memory.create": async ({ slug, title, summary }) => {
+    const { result } = await trackChange(coworkersDir, slug, ["memory/index.md"], { actor: "person", tool: "memory_create", input: { title, summary } }, async () => {
+      const created = await createLongTermMemory(coworkersDir, slug, { title, summary });
+      return created;
+    });
+    return result;
+  },
   "coworkers.memory.index": async ({ slug, file, summary }) => {
-    await indexLongTermMemory(coworkersDir, slug, file, summary);
+    await trackChange(coworkersDir, slug, ["memory/index.md"], { actor: "person", tool: "memory_index", input: { file } }, () => indexLongTermMemory(coworkersDir, slug, file, summary));
     return { ok: true };
   },
   "coworkers.memory.delete": async ({ slug, file }) => {
-    await deleteLongTermMemory(coworkersDir, slug, file);
+    const relative = `memory/long-term/${String(file ?? "")}`;
+    await trackChange(coworkersDir, slug, ["memory/index.md", relative], { actor: "person", tool: "memory_delete", input: { file } }, () => deleteLongTermMemory(coworkersDir, slug, file));
     return { ok: true };
   },
   // Documents: the coworker writes them through its tools; the person reads,
@@ -1719,9 +1806,14 @@ const commands = {
   /** A reply ran long with no document behind it: remember it so the coworker's next turn carries a one-line reminder. */
   "documents.recordLongReply": async ({ slug, messageId, chars }) =>
     recordStyleEvent(coworkersDir, slug, { kind: "long-reply", messageId, chars: Number(chars) }),
+  /** Recent changes to memory and soul, newest first, by the coworker or the person. */
+  "coworkers.memory.changes": async ({ slug, limit }) => readChanges(coworkersDir, slug, Number.isFinite(limit) ? { limit } : {}),
+  "coworkers.memory.undo": async ({ slug, changeId }) => undoChange(coworkersDir, slug, String(changeId ?? "")),
   "localResponsibilities.list": async ({ slug }) => listLocalResponsibilities(coworkersDir, slug),
   "localResponsibilities.create": async ({ slug, name, instructions, schedule }) =>
-    createLocalResponsibility(coworkersDir, slug, { name, instructions, schedule }),
+    createLocalResponsibility(coworkersDir, slug, { name, instructions, schedule }, Date.now(), await localScheduleOptions()),
+  "localResponsibilities.update": async ({ slug, id, patch }) =>
+    updateLocalResponsibility(coworkersDir, slug, id, patch ?? {}, Date.now(), await localScheduleOptions()),
   "localResponsibilities.setActive": async ({ slug, id, active }) =>
     setLocalResponsibilityActive(coworkersDir, slug, id, Boolean(active)),
   "localResponsibilities.delete": async ({ slug, id }) => {
