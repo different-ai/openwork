@@ -626,6 +626,19 @@ export default function App() {
     setBots((current) => current.map((coworker) => (coworker.slug === updated.slug ? updated : coworker)));
   }
 
+  /** A coworker joined the team (from onboarding, the Add screen, or a teammate's suggestion the person accepted). */
+  function addCoworkerToList(coworker: CoworkerSummary) {
+    setBots((current) => [...current.filter((item) => item.slug !== coworker.slug), coworker].sort((a, b) => a.name.localeCompare(b.name)));
+    void refreshRuntime();
+  }
+
+  /** Open another coworker's conversation, optionally with a message to send there as the person's own. */
+  function visitCoworker(slug: string, prompt?: string) {
+    setSelectedGroupId("");
+    setSelectedSlug(slug);
+    if (prompt) setHomeRequest({ id: Date.now(), slug, kind: "turn", prompt });
+  }
+
   function removeCoworkerFromList(slug: string) {
     const remaining = coworkers.filter((coworker) => coworker.slug !== slug);
     setBots(remaining);
@@ -748,6 +761,9 @@ export default function App() {
               onRepairConnect={() => syncConnect({ force: true, remint: true, slug: selected.slug })}
               onConnectAccount={() => setConnecting(true)}
               railWidth={rail.width}
+              onCoworkerAdded={addCoworkerToList}
+              onHandOff={(slug, prompt) => visitCoworker(slug, prompt)}
+              onVisitCoworker={(slug) => visitCoworker(slug)}
             />
             )}
           </div>

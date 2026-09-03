@@ -1006,3 +1006,20 @@ a {
 .bubble .coworker-markdown > :last-child {
   margin-bottom: 0;
 }
+
+/* A proposed teammate nods once when it joins the team; still under reduced motion. */
+@keyframes teammate-nod {
+  0%, 100% { transform: rotate(0deg) translateY(0); }
+  40% { transform: rotate(-1.5deg) translateY(1px); }
+  70% { transform: rotate(1deg) translateY(0); }
+}
+.teammate-nod {
+  display: inline-block;
+  transform-origin: 50% 80%;
+  animation: teammate-nod 300ms ease-out 1;
+}
+@media (prefers-reduced-motion: reduce) {
+  .teammate-nod {
+    animation: none;
+  }
+}

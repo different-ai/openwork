@@ -13,6 +13,7 @@ import {
   discussionTitle,
   type DiscussionMessage,
   parseAssignmentBrief,
+  parseReferralBrief,
   timeLabelBetween,
 } from "@/lib/conversation";
 import {
@@ -93,6 +94,8 @@ import { Button, Empty, ErrorNote, PlusIcon, StatusDot, ThoughtIcon, ToolIcon } 
 import { Markdown } from "@/ui/markdown";
 import { DocumentCard } from "@/ui/documents";
 import { documentCardsFromCalls, isDocumentTool, shouldFoldReply, splitReplyLead } from "@/lib/documents";
+import { newcomerLine, teamCardsFromCalls } from "@/lib/team";
+import { TeamCardsForTurn, type TeamHooks } from "@/ui/team-cards";
 import { McpAppFrame } from "@/ui/mcp-app-frame";
 
 type TranscriptToolCall = {
@@ -216,14 +219,15 @@ function WorkspaceProblemNote({ problem, onRetry }: { problem: WorkspaceProblem;
   );
 }
 
-/** An empty conversation says who is here and one quiet line; the composer does the rest. */
-function QuietEmptyConversation({ coworker, warmingUp = false }: { coworker: CoworkerSummary; warmingUp?: boolean }) {
+/** An empty conversation says who is here and one quiet line; the composer does the rest. A newcomer a teammate proposed says why it is here. */
+function QuietEmptyConversation({ coworker, warmingUp = false, proposerName = "" }: { coworker: CoworkerSummary; warmingUp?: boolean; proposerName?: string }) {
+  const fromTeammate = newcomerLine(coworker, proposerName);
   return (
     <div className="mx-auto flex h-full max-w-md flex-col items-center justify-center py-10 text-center" data-testid="coworker-discussion-empty">
       <CoworkerAvatar animated color={coworker.avatarColor} glasses={coworker.avatarGlasses} name={coworker.name} size={44} />
       <p className="mt-3 text-sm font-semibold text-snow">{coworker.name}</p>
       {coworker.role ? <p className="mt-0.5 text-xs text-mist">{coworker.role}</p> : null}
-      <p className="mt-4 text-sm text-mist">What should we work through?</p>
+      <p className="mt-4 text-sm text-mist" data-testid="coworker-discussion-empty-line">{fromTeammate || "What should we work through?"}</p>
       {warmingUp ? (
         <div className="mt-3 text-xs text-mist" data-testid="coworker-workspace-warming">
           <InlineLoader label={`Getting ${coworker.name} ready`} />
@@ -295,6 +299,8 @@ export function ThreadsPanel({
   documents,
   summary = null,
   onOpenSummary,
+  team,
+  turnRequest,
 }: {
   runtime: RuntimeInfo;
   session: DenSession | null;
@@ -309,6 +315,10 @@ export function ThreadsPanel({
   openThreadRequest?: { id: number; threadId: string } | null;
   /** The one-off assignment threads as this column lists them, and what each waits on the person for, so the panel's Assignments show the same ones. */
   onAssignmentsChange?: (items: ThreadListItem[], attention: Record<string, string>) => void;
+  /** A message to send in the open discussion as soon as it exists (a request passed from a teammate); the id makes repeats distinct. */
+  turnRequest?: { id: number; prompt: string } | null;
+  /** How the conversation answers a coworker's offers about the team. */
+  team?: TeamHooks;
   headerSlots: HeaderSlots;
   /** Coworker settings, opened at the AI model section — the first recovery step after a model failure. */
   onOpenModelSettings: () => void;
@@ -482,6 +492,20 @@ export function ThreadsPanel({
     return startDiscussion();
   }, [discussionThreadId, startDiscussion]);
 
+  // A request passed from a teammate arrives as the person's next message in the open discussion.
+  const handledTurnRequestRef = useRef(0);
+  useEffect(() => {
+    if (!turnRequest || handledTurnRequestRef.current === turnRequest.id) return;
+    handledTurnRequestRef.current = turnRequest.id;
+    void ensureDiscussion()
+      .then((threadId) => {
+        setQueuedTurn({ id: turnRequest.id, threadId, prompt: turnRequest.prompt, messageId: newMessageId() });
+        setOpenThreadId("");
+        setView("discussion");
+      })
+      .catch((cause) => setError(cause instanceof Error ? cause.message : String(cause)));
+  }, [ensureDiscussion, turnRequest]);
+
   const openNewDiscussion = useCallback(async () => {
     try {
       await startDiscussion();
@@ -575,6 +599,7 @@ export function ThreadsPanel({
         documents={documents}
         summary={summary}
         onOpenSummary={onOpenSummary}
+        team={team}
       />
     );
   }
@@ -627,6 +652,7 @@ export function ThreadsPanel({
       onActivityChange={onActivityChange}
       onCoworkerChanged={onCoworkerChanged}
       documents={documents}
+      team={team}
       workers={workerRecords}
       onWorkersChanged={() => void refresh()}
       summary={summary}
@@ -885,6 +911,7 @@ function ThreadView({
   onCoworkerChanged,
   headerSlots,
   documents,
+  team,
   workers = [],
   onWorkersChanged,
   summary = null,
@@ -897,6 +924,8 @@ function ThreadView({
   /** `worker`: a Worker's own thread, shown read-only; steering and stopping live in the Workers view. */
   kind: "discussion" | "assignment" | "worker";
   headerSlots: HeaderSlots;
+  /** How the conversation answers a coworker's offers about the team; absent in Worker and assignment threads. */
+  team?: TeamHooks;
   /** The coworker's Workers; one waiting for a decision asks for it here, in the discussion. */
   workers?: WorkerSummary[];
   onWorkersChanged?: () => void;
@@ -1333,9 +1362,8 @@ function ThreadView({
         if (stall && turnStateRef.current.pending?.stoppedAt === null) await settleFailure(stall.reason, false, false);
       }
     } catch (cause) {
-      // A stop by the person may surface as the wait's own abort: the record already says Stopped.
-      const stopped = turnStateRef.current.pending?.messageId === messageId && turnStateRef.current.pending.stoppedAt !== null;
-      if (!stopped) await settleFailure(cause instanceof Error ? cause.message : String(cause), null, false);
+      const message = cause instanceof Error ? cause.message : String(cause);
+      await settleFailure(message, null, false);
     } finally {
       if (refreshTimer !== undefined) window.clearInterval(refreshTimer);
       waitControllerRef.current = null;
@@ -1469,6 +1497,13 @@ function ThreadView({
     const text = reply.trim();
     if (!text) return;
     setReply("");
+    sendText(text);
+  }
+
+  /** Words that become the person's next message without passing through the field: a pill the person tapped. */
+  function sendText(words: string) {
+    const text = words.trim();
+    if (!text) return;
     if (activeTurnRef.current || turnStateRef.current.pending || appRetry || engineRunning) {
       commitTurnState((state) => enqueue(state, { id: newQueuedId(), text, queuedAt: Date.now() }));
       return;
@@ -1608,9 +1643,7 @@ function ThreadView({
     now,
     turn: pendingTurn ? { ...pendingTurn, recovered } : null,
     engine: engineStatus,
-    // While this view is still driving the turn it has not concluded anything yet: a reply the
-    // transcript already shows as failed may be about to be retried, so only the engine speaks.
-    reply: pendingTurn && !activeTurn ? replyStateFor(messages, pendingTurn.messageId) : NO_REPLY,
+    reply: pendingTurn ? replyStateFor(messages, pendingTurn.messageId) : NO_REPLY,
     needsYou,
     failure,
     appRetry,
@@ -1630,6 +1663,8 @@ function ThreadView({
     ? [...messages, optimisticMessage(pendingTurn)]
     : messages;
   const lastAssistantIndex = visibleMessages.findLastIndex((message) => message.role === "assistant");
+  /** A team tile's pills stay open only until the person writes again. */
+  const lastPersonIndex = visibleMessages.findLastIndex((message) => message.role === "user");
   const activeToolLabel = activeToolCallLabel(visibleMessages);
   // The reply for this turn has started only when the newest message is an
   // assistant message with text; an older reply must not read as progress.
@@ -1738,7 +1773,7 @@ function ThreadView({
       </p>
       <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5">
         <div className="mx-auto max-w-3xl space-y-3">
-          {freshDiscussion ? <QuietEmptyConversation coworker={coworker} /> : null}
+          {freshDiscussion ? <QuietEmptyConversation coworker={coworker} proposerName={team?.coworkers.find((member) => member.slug === coworker.suggestedBy?.slug)?.name ?? ""} /> : null}
           {conversationBlocks(visibleMessages, (message, index) => working && message.role === "assistant" && index === lastAssistantIndex).map((block) => {
             if (block.kind === "actions") {
               return <ActionLine key={block.id} review={block.review} reasoning={block.reasoning} calls={block.calls} client={mcpClient} />;
@@ -1762,6 +1797,10 @@ function ThreadView({
                   kind={kind}
                   turnCalls={block.calls}
                   documents={documents}
+                  team={kind === "discussion" ? team : undefined}
+                  laterPersonMessage={visibleMessages.indexOf(block.message) < lastPersonIndex}
+                  conversation={visibleMessages}
+                  onSendReply={sendText}
                   onLongReply={block.message.id === visibleMessages[lastAssistantIndex]?.id ? recordLongReply : undefined}
                 />
                 {resolution && block.message.id === resolution.messageId ? <QuietLine outcome="retried" text={resolution.note} /> : null}
@@ -1984,6 +2023,10 @@ function MessageBubble({
   kind = "discussion",
   turnCalls = [],
   documents,
+  team,
+  laterPersonMessage = false,
+  conversation = [],
+  onSendReply,
   onLongReply,
 }: {
   message: TranscriptMessage;
@@ -1997,12 +2040,33 @@ function MessageBubble({
   /** Every tool call of this reply's turn: the bubble ends with a card per document it wrote, and knows whether a long reply had one behind it. */
   turnCalls?: TranscriptToolCall[];
   documents?: DocumentHooks;
+  /** The team tiles a reply ends with (a proposed teammate, an offer to pass the request on) and how the person answers them. */
+  team?: TeamHooks;
+  /** The person wrote again after this reply: a tile's pills are closed. */
+  laterPersonMessage?: boolean;
+  /** The visible conversation, for the brief a hand-over carries. */
+  conversation?: ReadonlyArray<{ role: string; text: string }>;
+  /** Send words as the person's next message (a pill the person tapped). */
+  onSendReply?: (text: string) => void;
   /** A finished reply ran long with no document behind it; reported once so the coworker is reminded next turn. */
   onLongReply?: (messageId: string, chars: number) => void;
   kind?: "discussion" | "assignment" | "worker";
 }) {
   const user = message.role === "user";
   if (user) {
+    // A request a teammate passed on carries a brief for the model; the person sees their own
+    // words as their bubble, with one small line saying where it came from.
+    const passed = kind === "discussion" ? parseReferralBrief(message.text) : null;
+    if (passed) {
+      return (
+        <article className={`flex flex-col items-end ${continued ? "-mt-1.5" : ""}`} data-message-role="user" data-passed-from={passed.from}>
+          <p className="mb-0.5 pr-1 text-[10.5px] font-semibold uppercase tracking-[0.12em] text-mist/80" data-testid="coworker-passed-from">Passed from {passed.from}</p>
+          <div className={`bubble bubble-user max-w-[72%] whitespace-pre-wrap ${tail ? "bubble-tail-right" : ""}`} title={message.createdAt ? new Date(message.createdAt).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" }) : undefined}>
+            {passed.message}
+          </div>
+        </article>
+      );
+    }
     // In a Worker's thread the person never spoke: each user turn is the app's frame plus what it
     // asked for, so only that ask is shown, as one quiet line.
     const workerTurn = kind === "worker" ? parseWorkerTurn(message.text) : null;
@@ -2052,9 +2116,11 @@ function MessageBubble({
 
   // A 1:1 chat reads like Messages: the coworker is named once in the header, so each reply is a
   // plain gray bubble. Thinking and tool work are shown as one small line between bubbles
-  // (see conversationBlocks), never inside or stacked.
+  // (see conversationBlocks), never inside or stacked. A team tile (a proposed teammate, an
+  // offer to pass the request on) follows the bubble as its own rounded tile, like a shared contact.
+  const teamCards = team ? teamCardsFromCalls(turnCalls) : [];
   return (
-    <article className={`flex flex-col items-start ${continued ? "-mt-1" : ""}`} data-message-role="assistant" data-continued={continued ? "true" : "false"}>
+    <article className={`flex flex-col items-start gap-2 ${continued ? "-mt-1" : ""}`} data-message-role="assistant" data-continued={continued ? "true" : "false"}>
       <p className="sr-only">
         {coworker.name}
         {message.model ? (
@@ -2065,7 +2131,7 @@ function MessageBubble({
       </p>
       {message.text ? (
         <div
-          className={`bubble bubble-coworker max-w-[76%] ${tail ? "bubble-tail-left" : ""}`}
+          className={`bubble bubble-coworker max-w-[76%] ${tail && (active || teamCards.length === 0) ? "bubble-tail-left" : ""}`}
           title={message.model ? `Answered by ${message.model.providerId}/${message.model.modelId}` : undefined}
         >
           <ReplyText message={message} active={active} turnCalls={turnCalls} onLongReply={onLongReply} />
@@ -2079,8 +2145,18 @@ function MessageBubble({
             />
           ))}
         </div>
-      ) : !active && !message.reasoning && message.toolCalls.length === 0 ? (
+      ) : !active && !message.reasoning && message.toolCalls.length === 0 && teamCards.length === 0 ? (
         <div className={`bubble bubble-coworker ${tail ? "bubble-tail-left" : ""} text-mist`}>…</div>
+      ) : null}
+      {team && teamCards.length > 0 && !active ? (
+        <TeamCardsForTurn
+          cards={teamCards}
+          coworker={coworker}
+          team={team}
+          laterPersonMessage={laterPersonMessage}
+          recent={conversation.map((entry) => ({ role: entry.role, text: entry.text }))}
+          onSendReply={onSendReply ?? (() => undefined)}
+        />
       ) : null}
     </article>
   );
