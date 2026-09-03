@@ -21,6 +21,7 @@ adds no new database concepts.
 │   ├── working.md     active memory the coworker itself edits while working
 │   ├── index.md       always-loaded map of long-term memories
 │   ├── long-term/     durable Markdown memories, read on demand
+│   ├── changes.jsonl  recent changes to memory and soul, with the text before and after
 │   └── style.jsonl    when a reply ran long with no document behind it
 ├── documents/
 │   ├── index.md       always-loaded list of the documents in play
@@ -111,7 +112,8 @@ The coworker directory is registered as an ordinary OpenWork workspace, so:
   deleted and a running turn keeps going when another view is open.
 - **Identity and memory ride the engine's existing instruction loading**
   (`AGENTS.md` + `opencode.json` `instructions`); the coworker maintains
-  `memory/working.md` with ordinary file tools. No memory backend. The app
+  `memory/working.md`, its long-term memories, and its soul through its own
+  memory and soul tools (see below) or ordinary file tools. No memory backend. The app
   shows memory as structure rather than raw files: Soul and Working memory
   render as pages with an editor behind them, and Long-term is the list the
   index describes (`electron/memory-index.mjs` parses the bullets a model
@@ -131,11 +133,12 @@ The coworker directory is registered as an ordinary OpenWork workspace, so:
   and labels any older desktop-placed Automation honestly (those run only
   while the OpenWork desktop app is open — Open Coworker hosts no desktop
   runner). Association stays in `coworker.md`. This Mac is a local-first
-  lane: schedules reuse `@openwork/automations` occurrence rules, persist
-  beside the coworker, and create native OpenWork threads through
-  `@openwork/headless-threads`. Local responsibilities run while Open Coworker
-  is available and recover at most one missed occurrence after relaunch; they
-  do not pretend to be always-on Cloud work.
+  lane: schedules reuse `@openwork/automations` occurrence rules (widened
+  locally by an interval and a custom timetable, see "Scheduling from the
+  chat"), persist beside the coworker, and create native OpenWork threads
+  through `@openwork/headless-threads`. Local responsibilities run while Open
+  Coworker is available and recover at most one missed occurrence after
+  relaunch; they do not pretend to be always-on Cloud work.
 - **Workers are long-lived helpers a coworker runs for one goal.** A Worker is
   a native thread in the coworker's own workspace — same files, memory, tools,
   and permissions — started for a goal that outlives one reply (watching
@@ -421,6 +424,13 @@ OPENWORK_EVAL_ELECTRON_BINARY="apps/coworker/dist-electron/mac-arm64/Open Cowork
   pnpm evals:e2e open-coworker-local-first --local
 ```
 
+The other journeys (`open-coworker-discussion`, `open-coworker-assignments`,
+`open-coworker-mcp-apps`, `open-coworker-openwork-account`,
+`open-coworker-self-memory`) run the same way. `local-first`, `self-memory`,
+`mcp-apps`, and `openwork-account` host a deterministic model, Den, or MCP
+fixture on the runner's loopback, which a sandboxed app cannot reach, so they
+run on the local lane by construction.
+
 First run: choose OpenWork Cloud or local mode, name a coworker, then give it
 work. Identity and memory are plain files under `~/.config/openwork/coworkers/`.
 The right panel starts folded to its icon strip on every launch and closes
@@ -588,10 +598,81 @@ Each scheduled assignment's row keeps a bounded run history (`runs`, newest firs
 duration, and how the run came about; a run can be re-opened as its native
 thread or handed to the discussion composer as an "explain this run" message
 that the person still sends. Runs on this Mac respect a shared limit stored in
-`coworker-settings.json` (`maxParallelLocalRuns`, 1–4, default 2, editable
-under AI & local setup); later runs are recorded as `queued` and start by
-themselves when a slot frees, and a failed run with a thread can be resumed
-inside that same thread. OpenWork Cloud schedules its own runs.
+`coworker-settings.json` (`maxParallelLocalRuns`, 1–8 with choices
+1 · 2 · 3 · 4 · 6 · 8, default 2, editable under AI & local setup); later runs
+are recorded as `queued` and start by themselves when a slot frees, and a
+failed run with a thread can be resumed inside that same thread. OpenWork Cloud
+schedules its own runs.
+
+## Scheduling from the chat
+
+A person can say *"every weekday at 9 remind me to move the car"* or *"check
+the competitor page every 2 hours during the day, at most 4 times"* and the
+coworker sets it up itself. The assignment tools — `assignments_list`,
+`assignment_create`, `assignment_update`, `assignment_run_now`,
+`assignment_remove` (`electron/assignment-tools.mjs`) — ride the same loopback
+MCP server as the document and Worker tools (`electron/coworker-tools.mjs`):
+one bearer token per coworker, every request bound to the coworker that token
+was minted for, registered in the workspace as the remote MCP server
+`coworker` on creation and repaired on every launch. They work on the same
+local store and run gate the panel uses; nothing is stored twice. Placement is this Mac unless the person is
+signed in and asks for OpenWork Cloud, which keeps the shared daily / weekly /
+once contract (the tool says so when asked for an interval there). Tools
+answer in plain words plus ids, and a refusal is a sentence the coworker
+relays.
+
+Schedules on this Mac are a superset of OpenWork's shared contract
+(`src/lib/local-schedule.ts`, pure and shared by the main process and the
+renderer): `once` / `daily` / `weekly` as before, plus `interval` (every 1, 2,
+3, 4, 6, 8, or 12 hours, an optional active window, optional days, the most
+runs a day — default 4) and `cron` (a five-field expression read in the
+coworker's time zone, plus the most runs a day). Daylight-saving gaps shift
+forward to the next valid minute; a repeated hour takes its first instance; a
+missing time zone is filled from the coworker's own, never invented. Two
+guardrails in `coworker-settings.json` — `minimumRunGapMinutes` (15, 30, or 60,
+default 60) and `maxRunsPerDay` (default 4) — refuse a schedule with a sentence
+before anything is created, in the form and in the tool alike. The shared
+`@openwork/types` contract is untouched.
+
+In the conversation each call reads as what it did, between the bubbles:
+*"Created assignment · Move the car · Every weekday at 9:00 AM"*, *"Changed
+Move the car to every 2 hours between 9:00 AM and 6:00 PM, up to 4 times a
+day"*, *"Paused Move the car"*, *"Removed Move the car"*; the tool id waits
+behind Technical details. The same words describe the schedule in the panel
+(`describeScheduleForPeople`): a custom timetable shows its plain reading when
+it has one (*"Every weekday at 9:00 AM"*), otherwise *"On a custom timetable"*
+with the expression under Technical details. The panel form offers the
+interval (every N hours, window, days, most runs a day) beside Daily and
+Weekly and shows the schedule, or the guardrail sentence, inline before
+creating. When the cadence is ambiguous the coworker asks with the question
+tool, which renders as the lettered choice card.
+
+## Memory and soul the coworker keeps
+
+As the person talks (*"call me J"*, *"I work in Product"*, *"be shorter"*,
+*"never email customers without asking"*), the coworker records what will
+matter later with the self tools on the same server — `memory_remember`
+(kind `working` for what the current work needs, `long-term` with a topic for
+what stays true), `memory_forget`, `soul_update` (one change inside one of the
+four soul sections: Role, Mission, Principles, Communication — add, replace,
+remove, or rewrite — never touching another), and `self_read` (its own files
+back, so *"what do you know about me?"* is answered honestly). The coworker
+contract (`AGENTS.md`, refreshed on launch for existing coworkers without
+touching their soul or memory) asks for this in the same turn the person says
+it, and to state a significant soul change in one sentence rather than ask.
+
+Every write is atomic (temp file + rename), keeps the files small (working
+memory is curated, capped, never appended blindly; a fact promoted to
+long-term memory leaves working memory), and refuses secrets or credentials
+with a sentence. Each change lands in `memory/changes.jsonl` with the prior
+and new text (`electron/self-memory.mjs`), and the person's own edits from the
+Memory view take the same path. The conversation shows each change as an
+action line — *"Remembered · You work in Product"*, *"Moved to long-term
+memory · …"*, *"Forgot · …"*, *"Updated how I work · Shorter replies"*,
+*"Checked what I remember"*; a step that did not finish never echoes what it
+was told. The Memory view keeps its Soul / Working memory / Long-term tabs and
+adds *Recent changes*: flat rows, newest first, in the same words, each with
+**Undo**, which restores the prior text and is itself a recorded change.
 Existing or manually copied coworker directories are registered as native
 OpenWork workspaces automatically when the app loads them; the manual prepare
 action is retained only as recovery when registration fails.
