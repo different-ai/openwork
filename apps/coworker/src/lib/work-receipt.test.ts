@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { describeProgress, describeWorkStep, summarizeWork, workStepState } from "./work-receipt.ts";
+import { describeProgress, describeWorkStep, summarizeWork, technicalSections, workStepState } from "./work-receipt.ts";
 
 test("tool calls become steps a person can read, with the tool name kept for details", () => {
   const edit = describeWorkStep({ tool: "edit", status: "completed", input: { filePath: "/Users/me/coworkers/yo/memory/index.md" } });
@@ -40,4 +40,20 @@ test("the progress phrase follows the phase, not a timer", () => {
   assert.equal(describeProgress("Nova", "writing"), "Nova is putting it together…");
   assert.equal(describeProgress("Nova", "retrying"), "Nova is trying again…");
   assert.equal(describeProgress("Nova", "finishing"), "Nova is finishing up…");
+});
+
+test("technical details show a shell command on its own, other input as tidy JSON, then result and error, all clipped", () => {
+  assert.deepEqual(technicalSections({ input: { command: "ls -la /tmp\n", description: "list" }, output: "a\nb\n" }), [
+    { label: "Command", text: "ls -la /tmp" },
+    { label: "Input", text: '{\n  "description": "list"\n}' },
+    { label: "Result", text: "a\nb" },
+  ]);
+  assert.deepEqual(technicalSections({ input: {}, output: { ok: true }, error: "boom" }), [
+    { label: "Result", text: '{\n  "ok": true\n}' },
+    { label: "Error", text: "boom" },
+  ]);
+  const long = technicalSections({ input: { command: "x".repeat(2000) } });
+  assert.equal(long[0]?.text.length, 1200);
+  assert.ok(long[0]?.text.endsWith("…"));
+  assert.deepEqual(technicalSections({ input: { path: "" }, output: null }), []);
 });
