@@ -13,6 +13,14 @@ import type { PanelCrumb } from "./panel-route.ts";
 
 export const APPS_TOOLS_TITLE = "Apps & tools";
 
+/** The app's own tools for the coworker (documents), registered in every workspace; not something a person set up. */
+export const APP_OWN_TOOLS_NAME = "coworker";
+
+/** Servers the person set up, as opposed to the gateway and the app's own tools. */
+export function isPersonalTool(item: { name: string }): boolean {
+  return item.name !== CONNECT_MCP_NAME && item.name !== APP_OWN_TOOLS_NAME;
+}
+
 /** The fixed levels. Items add their own crumb after one of these. */
 export const APPS_TOOLS_CRUMBS = {
   connected: { id: "connected", title: "Connected with OpenWork" },
@@ -37,7 +45,9 @@ export type AppsToolsScreen =
   | { kind: "tool"; name: string }
   | { kind: "skill"; capability: string }
   | { kind: "plugin"; name: string }
-  | { kind: "connection"; id: string };
+  | { kind: "connection"; id: string }
+  /** A tool named by a receipt, not yet matched to an item; the view resolves it once its catalog is read. */
+  | { kind: "tool-ref"; tool: string };
 
 /** Which screen a route's path shows: the last crumb decides. */
 export function appsToolsScreen(path: PanelCrumb[]): AppsToolsScreen {
@@ -59,6 +69,7 @@ export function appsToolsScreen(path: PanelCrumb[]): AppsToolsScreen {
     case "skill": return { kind: "skill", capability: rest };
     case "plugin": return { kind: "plugin", name: rest };
     case "connection": return { kind: "connection", id: rest };
+    case "tool-ref": return { kind: "tool-ref", tool: rest };
     default: return { kind: "root" };
   }
 }
@@ -139,6 +150,19 @@ export function connectionPath(connection: Pick<ConnectConnection, "id" | "name"
   return [APPS_TOOLS_CRUMBS.connected, APPS_TOOLS_CRUMBS.connections, { id: `connection:${connection.id}`, title: connection.name }];
 }
 
+/**
+ * The trail a receipt opens before the catalog is known: one crumb naming the
+ * tool as the receipt did. The view swaps it for the item's real trail.
+ */
+export function toolRefPath(tool: string, label: string): PanelCrumb[] {
+  return [{ id: `tool-ref:${tool}`, title: label }];
+}
+
+/** Built-in tools of the AI service never lead to Apps & tools; only a server's tools do. */
+export function isServerTool(tool: string): boolean {
+  return tool.includes("_") && !/^(?:browser|openwork|coworker)_/.test(tool);
+}
+
 /** The tool identifiers the AI service projects for one server: "<server>_<tool>". */
 export function toolIdsForServer(toolIds: readonly string[], serverName: string): string[] {
   const prefix = `${serverName.replace(/[^a-zA-Z0-9_-]/g, "_")}_`;
@@ -195,6 +219,8 @@ export function searchScope(path: PanelCrumb[]): SearchGroup[] {
     case "local":
     case "tool":
       return ["local"];
+    case "tool-ref":
+      return SEARCH_GROUP_ORDER;
   }
 }
 
