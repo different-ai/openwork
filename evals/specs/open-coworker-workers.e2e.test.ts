@@ -185,7 +185,14 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   const finished = await waitForWorker(app, workerId, (worker) => worker.status === "finished", { timeoutMs: 600_000, label: "the Worker to finish within its lifespan" });
   expect(finished.lifespan).toMatchObject({ kind: "turns", max: 2, used: 2 });
   expect(finished.endedAt).toEqual(expect.any(Number));
-  const finalEvents = await workerEvents(app, workerId);
+  // The review is recorded on the Worker once the coworker's reply has settled.
+  const reviewDeadline = Date.now() + 300_000;
+  let finalEvents: Record<string, unknown>[] = [];
+  while (Date.now() < reviewDeadline) {
+    finalEvents = await workerEvents(app, workerId);
+    if (finalEvents.some((event) => event.kind === "review" && event.reviewThreadId === discussionThreadId && !event.error)) break;
+    await sleep(2_000);
+  }
   expect(finalEvents.filter((event) => event.kind === "finding").length).toBeGreaterThanOrEqual(1);
   expect(finalEvents.some((event) => event.kind === "review" && event.reviewThreadId === discussionThreadId && !event.error)).toBe(true);
   const responsibilityRun = await waitFor(app, `window.__COWORKER__.invoke("localResponsibilities.list", { slug: "editor" }).then((response) => {
@@ -225,39 +232,123 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
     true,
   );
 
-  // An open-ended Worker is stopped while it works; the stop is recorded and it never posts again.
-  const watcher = resultRecord(await invokeCoworker(app, "workers.spawn", {
-    slug: "editor",
-    name: "Long watch",
-    goal: 'Count upward from 1. Each turn, end with a section titled "Finding" that contains only the next number.',
-    lifespan: { kind: "open" },
-  }));
+  // The Workers view: the panel starts folded to its strip; its Workers icon opens the view, which
+  // lists the finished Worker and starts a new, open-ended one from its own form.
+  expect(await evalIn(app, `document.querySelector('[data-testid="context-panel"]')?.getAttribute("data-collapsed")`)).toBe("true");
+  await evalIn(app, `document.querySelector('[data-testid="context-rail-workers"]').click(); true`);
+  await waitFor(app, `Boolean(document.querySelector('[data-testid="coworker-workers"]'))`, { timeoutMs: 30_000, label: "Workers view" });
+  expect(await evalIn(app, `document.querySelector('[data-testid="context-panel"]')?.getAttribute("data-view")`)).toBe("workers");
+  const finishedRow = await evalIn(app, `(() => {
+    const row = document.querySelector('[data-testid="worker-row"]');
+    return row ? { status: row.getAttribute("data-status"), name: row.querySelector('[data-testid="worker-name"]')?.textContent?.trim(), line: row.querySelector('[data-testid="worker-line"]')?.textContent?.trim() } : null;
+  })()`);
+  expect(finishedRow).toMatchObject({ status: "finished", name: "Echo check", line: expect.stringMatching(/^Done/) });
+  await clickButton(app, "New Worker");
+  await waitFor(app, `Boolean(document.querySelector('[data-testid="new-worker"]'))`, { timeoutMs: 10_000, label: "New Worker form" });
+  await fill(app, '[data-testid="new-worker-name"]', "Long watch");
+  await fill(app, '[data-testid="new-worker-goal"]', 'Count upward from 1. Each turn, end with a section titled "Finding" that contains only the next number.');
+  await evalIn(app, `[...document.querySelectorAll('[data-testid="new-worker"] [role="radio"]')].find((radio) => radio.textContent?.trim() === "Until stopped").click(); true`);
+  await clickButton(app, "Start Worker");
+  const watcherRow = await waitFor(app, `(() => {
+    const row = [...document.querySelectorAll('[data-testid="worker-row"]')].find((candidate) => candidate.querySelector('[data-testid="worker-name"]')?.textContent?.trim() === "Long watch");
+    if (!row || row.getAttribute("data-status") !== "running") return false;
+    return { expanded: row.getAttribute("data-expanded"), line: row.querySelector('[data-testid="worker-line"]')?.textContent?.trim() ?? "" };
+  })()`, { timeoutMs: 120_000, label: "the new Worker's row while it works" });
+  expect(watcherRow).toMatchObject({ expanded: "true", line: expect.stringContaining("Working on it · Until you stop it") });
+  const watcherLine = isRecord(watcherRow) ? String(watcherRow.line) : "";
+  const listed = resultRecords(await invokeCoworker(app, "workers.list", { slug: "editor" }));
+  const watcher = listed.find((worker) => worker.name === "Long watch");
+  if (!watcher) throw new Error(`The Worker started from the view is missing: ${JSON.stringify(listed)}`);
   const watcherId = String(watcher.id);
-  await waitForWorker(app, watcherId, (worker) => worker.status === "running" && typeof worker.threadId === "string" && worker.threadId.startsWith("ses_"), {
-    timeoutMs: 120_000,
-    label: "the open-ended Worker's first turn",
-  });
-  const stopped = resultRecord(await invokeCoworker(app, "workers.cancel", { slug: "editor", id: watcherId, reason: "Enough for now" }));
+  expect(watcher).toMatchObject({ spawnedBy: "person", lifespan: { kind: "open" } });
+  // The header and rail say a Worker is working, in words, before any review begins.
+  const railLine = await waitFor(app, `(() => {
+    const line = document.querySelector('[data-testid="coworker-rail-line"]')?.textContent?.trim() ?? "";
+    return /Worker/.test(line) ? line : false;
+  })()`, { timeoutMs: 30_000, label: "rail line naming the Worker" });
+  expect(String(railLine)).toMatch(/^(Worker Long watch is working|Working on .+ · 1 Worker running|1 Worker running)$/);
+
+  // Steering from the view arrives as the Worker's next turn, visible in its own work.
+  await fill(app, '[data-testid="worker-steer-input"]', "Count by twos from now on.");
+  await evalIn(app, `document.querySelector('[data-testid="worker-steer-send"]').click(); true`);
+  await waitFor(app, `[...document.querySelectorAll('[data-testid="worker-event"][data-kind="steer"]')].some((event) => (event.textContent ?? "").includes("Count by twos from now on."))`, { timeoutMs: 30_000, label: "steer in the timeline" });
+  await evalIn(app, `document.querySelector('[data-testid="worker-open-work"]').click(); true`);
+  await waitFor(app, `Boolean(document.querySelector('[data-testid="coworker-worker-view"]'))`, { timeoutMs: 30_000, label: "the Worker's own work in the main column" });
+  const workerViewShape = await evalIn(app, `(() => ({
+    badge: [...document.querySelectorAll("header span")].some((node) => node.textContent?.trim() === "Worker"),
+    readonly: Boolean(document.querySelector('[data-testid="coworker-worker-readonly"]')),
+    composer: Boolean(document.querySelector('textarea[aria-label="Message Editor"]')),
+    stopButtons: [...document.querySelectorAll("header button")].filter((button) => button.textContent?.trim() === "Stop").length,
+  }))()`);
+  expect(workerViewShape).toMatchObject({ badge: true, readonly: true, composer: false, stopButtons: 0 });
+  const steerDeadline = Date.now() + 300_000;
+  let steerTurn: unknown = false;
+  while (Date.now() < steerDeadline) {
+    steerTurn = await evalIn(app, `(() => {
+      const turn = [...document.querySelectorAll('[data-testid="coworker-worker-turn"]')]
+        .find((node) => (node.textContent ?? "").includes("Count by twos from now on."));
+      return turn?.textContent?.trim() ?? false;
+    })()`);
+    if (steerTurn) break;
+    const probe = await evalIn(app, `(() => ({
+      workerView: Boolean(document.querySelector('[data-testid="coworker-worker-view"]')),
+      discussionView: Boolean(document.querySelector('[data-testid="coworker-discussion-view"]')),
+      turns: [...document.querySelectorAll('[data-testid="coworker-worker-turn"]')].map((node) => (node.textContent ?? "").slice(0, 60)),
+      messages: document.querySelectorAll('[data-message-role]').length,
+      status: document.querySelector('[data-testid="coworker-thread-status"]')?.textContent?.trim() ?? "",
+      top: document.querySelector('[data-testid="coworker-top-status"]')?.textContent?.trim() ?? "",
+    }))()`);
+    if (isRecord(probe) && probe.workerView !== true) {
+      const record = resultRecord(await invokeCoworker(app, "workers.get", { slug: "editor", id: watcherId }));
+      const events = await workerEvents(app, watcherId);
+      console.log(`[workers-probe ${new Date().toISOString()}] ${JSON.stringify({ ...probe, worker: { status: record.status, waitingFor: record.waitingFor, lifespan: record.lifespan, threadId: record.threadId }, events: events.map((event) => `${event.kind}:${String(event.text).slice(0, 40)}`) })}`);
+    }
+    await sleep(2_000);
+  }
+  if (!steerTurn) throw new Error("Timed out waiting for the steer as the Worker's next turn; see the workers-probe lines above.");
+  expect(String(steerTurn)).toBe("Steering from the person Editor works for: Count by twos from now on.");
+  expect(await evalIn(app, `[...document.querySelectorAll('[data-message-role="user"]:not([data-worker-turn])')].length`)).toBe(0);
+  await clickButton(app, "Back");
+  await waitForText(app, "COWORKER CHAT READY", { timeoutMs: 30_000 });
+
+  // Pause holds the Worker after its current step; Resume lets it go on; Stop ends it for good.
+  await evalIn(app, `document.querySelector('[data-testid="worker-pause"]').click(); true`);
+  await waitFor(app, `[...document.querySelectorAll('[data-testid="worker-row"]')].some((row) => row.querySelector('[data-testid="worker-name"]')?.textContent?.trim() === "Long watch" && row.getAttribute("data-status") === "paused")`, { timeoutMs: 30_000, label: "paused row" });
+  const pausedLine = String(await evalIn(app, `[...document.querySelectorAll('[data-testid="worker-row"]')].find((row) => row.getAttribute("data-status") === "paused")?.querySelector('[data-testid="worker-line"]')?.textContent?.trim() ?? ""`));
+  expect(pausedLine).toMatch(/^Paused/);
+  await waitForWorker(app, watcherId, (worker) => worker.status === "paused", { timeoutMs: 10_000, label: "paused record" });
+  await sleep(2_000);
+  expect(resultRecord(await invokeCoworker(app, "localResponsibilities.status", {}))).toMatchObject({ queued: 0 });
+  await evalIn(app, `document.querySelector('[data-testid="worker-resume"]').click(); true`);
+  await waitForWorker(app, watcherId, (worker) => worker.status === "running" || worker.status === "waiting", { timeoutMs: 60_000, label: "resumed Worker" });
+  await evalIn(app, `document.querySelector('[data-testid="worker-stop"]').click(); true`);
+  await waitFor(app, `[...document.querySelectorAll('[data-testid="worker-row"]')].some((row) => row.querySelector('[data-testid="worker-name"]')?.textContent?.trim() === "Long watch" && row.getAttribute("data-status") === "cancelled")`, { timeoutMs: 30_000, label: "stopped row" });
+  const stopped = resultRecord(await invokeCoworker(app, "workers.get", { slug: "editor", id: watcherId }));
   expect(stopped).toMatchObject({ status: "cancelled", waitingFor: "" });
   expect(stopped.endedAt).toEqual(expect.any(Number));
   const stopEvents = await workerEvents(app, watcherId);
   const stopEvent = stopEvents.find((event) => event.kind === "status" && String(event.text).startsWith("Stopped"));
-  expect(stopEvent).toMatchObject({ text: "Stopped: Enough for now", by: "person" });
+  expect(stopEvent).toMatchObject({ text: "Stopped", by: "person" });
+  expect(stopEvents.some((event) => event.kind === "status" && String(event.text).startsWith("Paused"))).toBe(true);
+  expect(stopEvents.some((event) => event.kind === "status" && String(event.text) === "Resumed")).toBe(true);
   await sleep(15_000);
   const afterStop = await workerEvents(app, watcherId);
   expect(afterStop.filter((event) => event.kind === "finding" && Number(event.at) > Number(stopEvent?.at)).length).toBe(0);
-  expect(resultRecord(await invokeCoworker(app, "workers.get", { slug: "editor", id: watcherId })).status).toBe("cancelled");
   expect(resultRecord(await invokeCoworker(app, "localResponsibilities.status", {}))).toMatchObject({ active: 0, queued: 0 });
   // Stopping again is harmless, and a stopped Worker takes no steering.
   expect(resultRecord(await invokeCoworker(app, "workers.cancel", { slug: "editor", id: watcherId })).status).toBe("cancelled");
-  const steerRefused = await invokeCoworker(app, "workers.steer", { slug: "editor", id: watcherId, text: "Count by twos." });
+  const steerRefused = await invokeCoworker(app, "workers.steer", { slug: "editor", id: watcherId, text: "Count by threes." });
   expect(steerRefused).toMatchObject({ ok: false, error: expect.stringContaining("already stopped") });
-  const listed = resultRecords(await invokeCoworker(app, "workers.list", { slug: "editor" }));
-  expect(listed.map((worker) => [worker.id, worker.status])).toEqual([[watcherId, "cancelled"], [workerId, "finished"]]);
+  expect(resultRecords(await invokeCoworker(app, "workers.list", { slug: "editor" })).map((worker) => [worker.id, worker.status])).toEqual([[watcherId, "cancelled"], [workerId, "finished"]]);
+
+  // The view keeps to flat rows (no card inside a card) and Escape folds the panel away.
+  expect(await evalIn(app, `document.querySelectorAll('[data-testid="coworker-workers"] .rounded-2xl .rounded-2xl').length`)).toBe(0);
+  await evalIn(app, `document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); true`);
+  await waitFor(app, `document.querySelector('[data-testid="context-panel"]')?.getAttribute("data-collapsed") === "true"`, { timeoutMs: 10_000, label: "panel folded by Escape" });
 
   evidence.recordAssertionEvidence(
-    "A Worker stops when asked and never posts again",
-    `Open-ended Worker ${watcherId} was stopped mid-turn with a reason; its record read Stopped with an end time, the stop event was attributed to the person, no finding followed the stop within 15 seconds, this Mac reported no active or queued runs, a second stop was harmless, steering a stopped Worker was refused, and the list showed both Workers newest first with their final states.`,
+    "From the Workers view a person starts, steers, pauses, resumes, and stops a Worker",
+    `The folded panel's Workers icon opened the view (data-view workers), which listed Echo check as Done. New Worker started open-ended Worker ${watcherId} ("Long watch") from the form; its row read "${watcherLine}" and the rail said "${String(railLine)}". A steer typed in the row appeared in its timeline and then as the Worker's next turn in its read-only work view (Worker badge, no composer, no Stop in the header, no person bubbles). Pause held it (row Paused, nothing queued), Resume let it go on, Stop ended it: record Stopped with an end time, events Paused/Resumed/Stopped attributed to the person, no finding after the stop within 15 seconds, no active or queued runs, a second stop harmless, steering refused, both Workers listed newest first. The view had no card inside a card and Escape folded the panel.`,
     true,
   );
 });

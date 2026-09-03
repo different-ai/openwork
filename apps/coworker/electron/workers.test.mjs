@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { after, test } from "node:test";
 import { createCoworker } from "./coworkers.mjs";
+import { createCoworkerToolsServer, handleMcpMessage, toolCatalog } from "./coworker-tools.mjs";
 import {
   DEFAULT_TURN_BUDGET,
   MAX_LIVE_WORKERS,
@@ -12,8 +13,10 @@ import {
   appendWorkerEvent,
   createReviewScheduler,
   createWorker,
+  createWorkerToolHandlers,
   describeLifespanForPrompt,
   getWorker,
+  lifespanFromToolArgs,
   lifespanSpent,
   listWorkers,
   liveWorkers,
@@ -28,6 +31,7 @@ import {
   steerBody,
   updateWorker,
   workerThreadTitle,
+  workerToolCatalog,
   workerTurnPrompt,
 } from "./workers.mjs";
 
@@ -182,6 +186,7 @@ test("the worker prompt frame names the goal, the lifespan, and the reporting co
   assert.match(prompt, /section titled "Finding"/);
   assert.match(prompt, /section titled "Needs a decision"/);
   assert.match(prompt, /section titled "Done"/);
+  assert.match(prompt, /never start, steer, or stop Workers \(the worker tools are Nova's\)/);
   assert.ok(prompt.endsWith("Begin working toward the goal now."));
   assert.equal(
     steerBody([{ by: "coworker", text: "Skip vendor C." }, { by: "person", text: "Add vendor D." }], "Nova"),
@@ -330,4 +335,103 @@ test("reviews run at once for the first finding, batch inside the window, and re
   assert.deepEqual(scheduler.pending("scout"), []);
   scheduler.clear("scout");
   assert.equal(timers.length, 0);
+});
+
+test("the worker tool catalog sits beside the document tools with strict schemas and plain descriptions", () => {
+  const names = workerToolCatalog().map((tool) => tool.name);
+  assert.deepEqual(names, ["workers_list", "worker_spawn", "worker_steer", "worker_cancel", "worker_findings"]);
+  const all = [...toolCatalog(), ...workerToolCatalog()];
+  assert.equal(new Set(all.map((tool) => tool.name)).size, all.length);
+  for (const tool of workerToolCatalog()) {
+    assert.equal(tool.inputSchema.type, "object");
+    assert.equal(tool.inputSchema.additionalProperties, false);
+    assert.ok(tool.description.length > 40);
+  }
+  assert.deepEqual(lifespanFromToolArgs(undefined, { now: NOW }), { kind: "turns", max: DEFAULT_TURN_BUDGET, used: 0 });
+  assert.deepEqual(lifespanFromToolArgs({ kind: "turns", turns: 4 }, { now: NOW }), { kind: "turns", max: 4, used: 0 });
+  assert.deepEqual(lifespanFromToolArgs({ kind: "until", until: new Date(NOW + 3_600_000).toISOString() }, { now: NOW }), { kind: "until", at: NOW + 3_600_000 });
+  assert.deepEqual(lifespanFromToolArgs({ kind: "open" }, { now: NOW }), { kind: "open" });
+  assert.throws(() => lifespanFromToolArgs({ kind: "until", until: "soon" }, { now: NOW }), /ISO 8601/);
+  assert.throws(() => lifespanFromToolArgs({ kind: "forever" }, { now: NOW }), /turns, until, or open/);
+});
+
+test("the coworker starts, lists, steers, reads, and stops Workers through its own MCP server", async () => {
+  const coworkersDir = await fixture();
+  const calls = [];
+  const handlers = createWorkerToolHandlers({
+    coworkersDir,
+    spawn: async (slug, input) => {
+      calls.push(["spawn", slug, input.name]);
+      const worker = await createWorker(coworkersDir, slug, { ...input, spawnedBy: "coworker" }, { now: NOW });
+      return updateWorker(coworkersDir, slug, worker.id, { status: "running", threadId: "ses_w" }, { now: NOW });
+    },
+    steer: async (slug, id, text) => {
+      calls.push(["steer", slug, id, text]);
+      await appendWorkerEvent(coworkersDir, slug, id, { kind: "steer", text, by: "coworker" }, { now: NOW + 1 });
+      return getWorker(coworkersDir, slug, id);
+    },
+    cancel: async (slug, id, reason) => {
+      calls.push(["cancel", slug, id, reason]);
+      await appendWorkerEvent(coworkersDir, slug, id, { kind: "status", text: `Stopped: ${reason}`, by: "coworker" }, { now: NOW + 2 });
+      return updateWorker(coworkersDir, slug, id, { status: "cancelled" }, { now: NOW + 2 });
+    },
+    now: () => NOW,
+  });
+  const server = await createCoworkerToolsServer({
+    resolveSlug: (token) => (token === "scout-token" ? "scout" : null),
+    handlers,
+    tools: workerToolCatalog(),
+    instructions: "Workers too.",
+  });
+  try {
+    const call = async (name, args) => {
+      const response = await fetch(server.url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: "Bearer scout-token" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name, arguments: args } }),
+      });
+      assert.equal(response.status, 200);
+      return (await response.json()).result;
+    };
+    const init = await handleMcpMessage({ jsonrpc: "2.0", id: 0, method: "initialize", params: {} }, { slug: "scout", handlers, tools: workerToolCatalog(), serverInfo: { name: "t", version: "0" }, instructions: "Workers too." });
+    assert.equal(init.result.instructions, "Workers too.");
+
+    const empty = await call("workers_list", {});
+    assert.match(empty.content[0].text, /^No live Workers/);
+    assert.deepEqual(empty.structuredContent.workers, []);
+
+    const started = await call("worker_spawn", { name: "Market scan", goal: "Watch vendor prices.", lifespan: { kind: "turns", turns: 3 } });
+    assert.equal(started.isError, false);
+    assert.match(started.content[0].text, /^Started Worker "Market scan" \(id wrk_[a-z0-9]+\), 3 of 3 turns left\./);
+    assert.match(started.content[0].text, /tell the person in a sentence/);
+    const id = started.structuredContent.worker.id;
+    assert.deepEqual(calls[0], ["spawn", "scout", "Market scan"]);
+    assert.equal(started.structuredContent.worker.action, "started");
+
+    const listed = await call("workers_list", {});
+    assert.match(listed.content[0].text, /Live Workers \(1 of 3\):/);
+    assert.match(listed.content[0].text, new RegExp(`${id} — "Market scan" — working on it, 3 of 3 turns left`));
+
+    const steered = await call("worker_steer", { id, text: "Skip vendor C." });
+    assert.match(steered.content[0].text, /^Steered "Market scan"; it takes that as its next step once its current step settles\./);
+    assert.deepEqual(calls[1], ["steer", "scout", id, "Skip vendor C."]);
+
+    await appendWorkerEvent(coworkersDir, "scout", id, { kind: "finding", report: "finding", text: "Prices rose 3%." }, { now: NOW + 3 });
+    const findings = await call("worker_findings", { id, limit: 5 });
+    assert.match(findings.content[0].text, /^"Market scan" — working on it, 3 of 3 turns left\. Events, oldest first:/);
+    assert.match(findings.content[0].text, /steered by you: Skip vendor C\./);
+    assert.match(findings.content[0].text, /finding: Prices rose 3%\./);
+    assert.equal(findings.structuredContent.events.length, 2);
+
+    const stopped = await call("worker_cancel", { id, reason: "Enough" });
+    assert.match(stopped.content[0].text, /^Stopped "Market scan"\./);
+    assert.deepEqual(calls[2], ["cancel", "scout", id, "Enough"]);
+    assert.equal((await getWorker(coworkersDir, "scout", id)).status, "cancelled");
+
+    const bad = await call("worker_steer", { id: "nope", text: "x" });
+    assert.equal(bad.isError, true);
+    assert.match(bad.content[0].text, /Name the Worker by its id/);
+  } finally {
+    await server.stop();
+  }
 });
