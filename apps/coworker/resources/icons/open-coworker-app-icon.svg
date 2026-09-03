@@ -1,30 +1,68 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
   <!--
-    Open Coworker app icon. One blue tile, one charcoal card behind, one white
-    speech-bubble coworker in front with round glasses and two vertical pupils.
-    Solid colours only; shadows are offset shapes so every renderer agrees.
+    Open Coworker app icon. One blue tile with a mint and lavender coworker
+    fanned behind a white foreground coworker.
+    A restrained surface gradient and offset shadows add depth while keeping
+    the mark crisp across renderers.
     Rasters are regenerated with the icons:render script of @openwork/coworker.
   -->
+  <defs>
+    <linearGradient id="avatar-surface" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="58%" stop-color="#f8f9fb"/>
+      <stop offset="100%" stop-color="#edf0f4"/>
+    </linearGradient>
+    <linearGradient id="mint-surface" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0" stop-color="#f0fcf8"/>
+      <stop offset="100%" stop-color="#c9eadc"/>
+    </linearGradient>
+    <linearGradient id="lavender-surface" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0" stop-color="#f5f1ff"/>
+      <stop offset="100%" stop-color="#ddd4fb"/>
+    </linearGradient>
+  </defs>
+
   <rect x="64" y="64" width="896" height="896" rx="224" fill="#5b8dff"/>
   <rect x="65" y="65" width="894" height="894" rx="223" fill="none" stroke="#8aa9ff" stroke-opacity=".58" stroke-width="2"/>
 
-  <!-- Soft shadow beneath the whole card stack. -->
-  <g data-layer="stack-shadow" opacity=".16">
-    <rect x="288" y="184" width="640" height="576" rx="150" fill="#11141a" transform="rotate(6 608 472)"/>
-    <path d="M26 8h65c15 0 23 10 23 26v46c0 15-8 24-23 24H57l-15 9c-5 3-10 0-10-6v-3h-5C12 104 5 95 5 80V34C5 18 12 8 26 8Z" fill="#11141a" transform="translate(122 210) scale(6.25) rotate(-1.5 59.5 56)"/>
+  <!-- Lavender teammate fanned toward the upper-right. -->
+  <g data-layer="rear-coworker-right" transform="translate(442 92) scale(4) rotate(13 59.5 56)">
+    <path d="M26 8h65c15 0 23 10 23 26v46c0 15-8 24-23 24H57l-15 9c-5 3-10 0-10-6v-3h-5C12 104 5 95 5 80V34C5 18 12 8 26 8Z" fill="#17131f" opacity=".17" transform="translate(1.7 2.3)"/>
+    <path d="M26 8h65c15 0 23 10 23 26v46c0 15-8 24-23 24H57l-15 9c-5 3-10 0-10-6v-3h-5C12 104 5 95 5 80V34C5 18 12 8 26 8Z" fill="url(#lavender-surface)" stroke="#ffffff" stroke-opacity=".72" stroke-width="1"/>
+    <g fill="#11151d">
+      <rect x="34.5" y="50" width="6" height="14" rx="3"/>
+      <rect x="79.5" y="50" width="6" height="14" rx="3"/>
+    </g>
+    <g fill="none" stroke="#11151d" stroke-linecap="round" stroke-width="4.6">
+      <circle cx="37.5" cy="57" r="17.5"/>
+      <circle cx="82.5" cy="57" r="17.5"/>
+      <path d="M57.5 57c1.25-4 3.75-4 5 0"/>
+      <path d="M15 57h4.5M100.5 57h4.5" stroke-width="6.5"/>
+    </g>
   </g>
 
-  <!-- Charcoal card: up and to the right, turned a few degrees, no face. -->
-  <g data-layer="back-card" transform="rotate(6 601 444)">
-    <rect x="281" y="156" width="640" height="576" rx="150" fill="#202126"/>
+  <!-- Mint teammate fanned toward the upper-left. -->
+  <g data-layer="rear-coworker-left" transform="translate(82 92) scale(4) rotate(-13 59.5 56)">
+    <path d="M26 8h65c15 0 23 10 23 26v46c0 15-8 24-23 24H57l-15 9c-5 3-10 0-10-6v-3h-5C12 104 5 95 5 80V34C5 18 12 8 26 8Z" fill="#11201b" opacity=".16" transform="translate(1.7 2.3)"/>
+    <path d="M26 8h65c15 0 23 10 23 26v46c0 15-8 24-23 24H57l-15 9c-5 3-10 0-10-6v-3h-5C12 104 5 95 5 80V34C5 18 12 8 26 8Z" fill="url(#mint-surface)" stroke="#ffffff" stroke-opacity=".72" stroke-width="1"/>
+    <g fill="#11151d">
+      <rect x="34.5" y="50" width="6" height="14" rx="3"/>
+      <rect x="79.5" y="50" width="6" height="14" rx="3"/>
+    </g>
+    <g fill="none" stroke="#11151d" stroke-linecap="round" stroke-width="4.6">
+      <circle cx="37.5" cy="57" r="17.5"/>
+      <circle cx="82.5" cy="57" r="17.5"/>
+      <path d="M57.5 57c1.25-4 3.75-4 5 0"/>
+      <path d="M15 57h4.5M100.5 57h4.5" stroke-width="6.5"/>
+    </g>
   </g>
 
-  <!-- Contact shadow between the white coworker and the charcoal card. -->
-  <path data-layer="front-shadow" d="M26 8h65c15 0 23 10 23 26v46c0 15-8 24-23 24H57l-15 9c-5 3-10 0-10-6v-3h-5C12 104 5 95 5 80V34C5 18 12 8 26 8Z" fill="#11141a" opacity=".24" transform="translate(122 196) scale(6.25) rotate(-1.5 59.5 56)"/>
+  <!-- Contact shadow beneath the foreground coworker. -->
+  <path data-layer="front-shadow" d="M26 8h65c15 0 23 10 23 26v46c0 15-8 24-23 24H57l-15 9c-5 3-10 0-10-6v-3h-5C12 104 5 95 5 80V34C5 18 12 8 26 8Z" fill="#11141a" opacity=".22" transform="translate(179 313) scale(5.55) rotate(-6.5 59.5 56)"/>
 
-  <!-- White coworker in front: slightly lower and left, nearly upright. -->
-  <g data-layer="front-coworker" transform="translate(122 188) scale(6.25) rotate(-1.5 59.5 56)">
-    <path d="M26 8h65c15 0 23 10 23 26v46c0 15-8 24-23 24H57l-15 9c-5 3-10 0-10-6v-3h-5C12 104 5 95 5 80V34C5 18 12 8 26 8Z" fill="#f7f8fa" stroke="#ffffff" stroke-width="1.1"/>
+  <!-- White coworker in front: lower, centered, and leaning in like a curious peek. -->
+  <g data-layer="front-coworker" transform="translate(179 300) scale(5.55) rotate(-6.5 59.5 56)">
+    <path d="M26 8h65c15 0 23 10 23 26v46c0 15-8 24-23 24H57l-15 9c-5 3-10 0-10-6v-3h-5C12 104 5 95 5 80V34C5 18 12 8 26 8Z" fill="url(#avatar-surface)" stroke="#ffffff" stroke-width="1.1"/>
     <g data-layer="pupils" fill="#0b0e14">
       <rect x="34.5" y="50" width="6" height="14" rx="3"/>
       <rect x="79.5" y="50" width="6" height="14" rx="3"/>
