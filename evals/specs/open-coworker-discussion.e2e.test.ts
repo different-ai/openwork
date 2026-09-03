@@ -320,6 +320,8 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   const failurePrompt = "Reply with exactly THIS MUST FAIL.";
   await fill(app, 'textarea[aria-label="Message Editor"]', failurePrompt);
   await clickButton(app, "Send");
+  // The failure is a message on Editor's side of the conversation, not a card across the column:
+  // one headline, the exact model id in the detail, lettered ways out, the raw text folded away.
   const failureText = await waitFor(app, `(() => {
     const failure = document.querySelector('[data-testid="coworker-turn-failed"]');
     return failure?.textContent ?? false;
@@ -328,32 +330,42 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   expect(failureText).toContain("missing-provider/missing-model");
   expect(failureText).toContain("Choose AI model");
   expect(failureText).toContain("Continue with OpenWork");
-  expect(failureText).toContain("Retry");
   expect(String(failureText)).not.toMatch(/engine|APIError|stack/i);
   const failureLayout = await evalIn(app, `(() => {
     const failure = document.querySelector('[data-testid="coworker-turn-failed"]');
     const headline = failure?.querySelector('[data-testid="coworker-turn-headline"]');
     const technical = failure?.querySelector('[data-testid="coworker-turn-technical"]');
+    const choices = [...(failure?.querySelectorAll('[data-testid="coworker-turn-choice"]') ?? [])];
     return {
       headlineFirst: Boolean(headline) && failure?.firstElementChild?.contains(headline) === true,
       technicalOpen: technical instanceof HTMLDetailsElement ? technical.open : null,
       loadingIndicator: Boolean(document.querySelector('[data-testid="coworker-working"]')),
+      roseCard: /rose/.test(failure?.className ?? "") || Boolean(document.querySelector('[data-testid="coworker-turn-timeout"]')),
+      widthRatio: failure && failure.parentElement ? failure.getBoundingClientRect().width / failure.parentElement.getBoundingClientRect().width : null,
+      choices: choices.map((choice) => ({ letter: choice.getAttribute("data-letter"), choice: choice.getAttribute("data-choice") })),
+      outcome: document.querySelector('[data-testid="coworker-thread-status"]')?.getAttribute("data-outcome"),
     };
   })()`);
-  expect(failureLayout).toMatchObject({ headlineFirst: true, loadingIndicator: false });
+  expect(failureLayout).toMatchObject({ headlineFirst: true, loadingIndicator: false, roseCard: false, outcome: "failed" });
+  if (!isRecord(failureLayout) || !Array.isArray(failureLayout.choices)) throw new Error("Failure layout facts were unavailable.");
+  expect(failureLayout.choices.length).toBeLessThanOrEqual(3);
+  expect(failureLayout.choices.map((choice) => (isRecord(choice) ? choice.letter : null))).toEqual(["A", "B", "C"].slice(0, failureLayout.choices.length));
+  expect(failureLayout.choices.map((choice) => (isRecord(choice) ? choice.choice : null))).toEqual(expect.arrayContaining(["choose-model", "continue-with-openwork"]));
+  expect(Number(failureLayout.widthRatio)).toBeLessThanOrEqual(0.8);
   expect(await evalIn(app, `document.querySelector('[data-testid="coworker-thread-status"]')?.textContent?.trim()`)).toBe("Reply failed");
   expect(await evalIn(app, `document.querySelector('[data-testid="coworker-top-status"]')?.textContent?.trim()`)).toBe("Reply failed");
+  expect(await evalIn(app, `document.querySelector('[data-testid="coworker-rail-line"]')?.textContent?.trim()`)).toBe("Editor's AI model is not available.");
   expect(await evalIn(app, `(() => [...document.querySelectorAll('[data-message-role="user"]')]
     .some((message) => (message.textContent ?? "").includes(${json(failurePrompt)})))()`)).toBe(true);
   expect(resultRecord(await invokeCoworker(app, "coworkers.get", { slug: "editor" })).conversationThreadId).toBe(secondDiscussionId);
-  await clickButton(app, "Choose AI model");
+  await evalIn(app, `document.querySelector('[data-testid="coworker-turn-choice"][data-choice="choose-model"]').click(); true`);
   await waitForText(app, "Coworker settings", { timeoutMs: 30_000 });
   await waitFor(app, `Boolean(document.querySelector('[data-testid="coworker-model-settings"]'))`, { timeoutMs: 30_000, label: "AI model section" });
   await waitForText(app, "This saved model is not currently available from a connected provider.", { timeoutMs: 30_000 });
 
   evidence.recordAssertionEvidence(
-    "An invalid coworker model becomes a plain, actionable recovery state instead of a silent Ready thread",
-    "The failed turn kept the user's prompt visible, led with one human headline naming Editor's AI model, kept the exact unavailable model id in the detail, showed Reply failed in both the thread header and the coworker header with no lingering working indicator, offered Retry, Choose AI model, and Continue with OpenWork, opened Coworker settings at the AI model section, and preserved the same discussion id.",
+    "An invalid coworker model becomes a plain, actionable message in the conversation instead of a silent Ready thread",
+    "The failed turn kept the user's prompt visible and answered with one coworker-side message at the bubble's width — a human headline naming Editor's AI model first, the exact unavailable model id in the detail, at most three lettered choices including Choose AI model and Continue with OpenWork, no rose card, no lingering working indicator — while the thread header, the coworker header, and the rail said the same thing; the B choice opened Coworker settings at the AI model section and the discussion id was preserved.",
     true,
   );
 });
