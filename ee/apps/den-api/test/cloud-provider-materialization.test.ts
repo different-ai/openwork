@@ -419,18 +419,19 @@ describe("Cloud provider materialization", () => {
     expect(callMethods(instance.calls)).toEqual([
       "GET /opencode/config",
       `GET /env/${ANTHROPIC_API_KEY_ENV}`,
+      "GET /env/ANTHROPIC_API_KEY",
       "PUT /env",
       "PATCH /runtime-config/providers",
       "GET /opencode/config",
     ])
-    expect(instance.calls[2]?.headers["x-openwork-host-token"]).toBe("host-token")
-    expect(instance.calls[2]?.body).toEqual({
+    expect(instance.calls[3]?.headers["x-openwork-host-token"]).toBe("host-token")
+    expect(instance.calls[3]?.body).toEqual({
       entries: [{ key: ANTHROPIC_API_KEY_ENV, value: "sk-anthropic" }],
     })
-    expect(instance.calls[3]?.headers["x-openwork-host-token"]).toBe("host-token")
-    expect(instance.calls[3]?.headers.authorization).toBeUndefined()
+    expect(instance.calls[4]?.headers["x-openwork-host-token"]).toBe("host-token")
+    expect(instance.calls[4]?.headers.authorization).toBeUndefined()
     expect(instance.calls.every((call) => call.redirect === "error")).toBe(true)
-    expect(instance.calls[3]?.body).toEqual({
+    expect(instance.calls[4]?.body).toEqual({
       provider: {
         [provider.id]: {
           id: "anthropic",
@@ -475,6 +476,33 @@ describe("Cloud provider materialization", () => {
       id: "azure",
       env: [AZURE_RESOURCE_NAME_ENV, AZURE_API_KEY_ENV],
     })
+  })
+
+  test("removes the org credential an earlier release left under the bare catalog name, never a different value", async () => {
+    const provider = makeAnthropicProvider({ apiKey: "sk-anthropic" })
+
+    // Worker materialized before runtime names were provider-scoped: the org
+    // credential sits under ANTHROPIC_API_KEY, which also switches on
+    // OpenCode's built-in Anthropic catalog.
+    const upgraded = makeInstance({
+      envValues: { ANTHROPIC_API_KEY: "sk-anthropic" },
+      runtimeProviders: { [provider.id]: { ...makeAnthropicRuntimeProvider(), env: ["ANTHROPIC_API_KEY"] } },
+    })
+    const first = await materialize({ providers: () => [provider], fetchImpl: upgraded.fetchImpl, force: true })
+    expect(first.status).toBe("applied")
+    expect(upgraded.envValue(ANTHROPIC_API_KEY_ENV)).toBe("sk-anthropic")
+    expect(upgraded.envValue("ANTHROPIC_API_KEY")).toBeNull()
+    expect(callMethods(upgraded.calls)).toContain("DELETE /env/ANTHROPIC_API_KEY")
+
+    const second = await materialize({ providers: () => [provider], fetchImpl: upgraded.fetchImpl, force: true })
+    expect(second.status).toBe("noop")
+
+    // A different value under the bare name is the member's own key.
+    const withOwnKey = makeInstance({ envValues: { ANTHROPIC_API_KEY: "sk-members-own" } })
+    await materialize({ providers: () => [provider], fetchImpl: withOwnKey.fetchImpl, force: true })
+    expect(withOwnKey.envValue(ANTHROPIC_API_KEY_ENV)).toBe("sk-anthropic")
+    expect(withOwnKey.envValue("ANTHROPIC_API_KEY")).toBe("sk-members-own")
+    expect(callMethods(withOwnKey.calls)).not.toContain("DELETE /env/ANTHROPIC_API_KEY")
   })
 
   test("a custom provider keeps the exact env name its author declared", async () => {
@@ -564,6 +592,7 @@ describe("Cloud provider materialization", () => {
     expect(callMethods(instance.calls)).toEqual([
       "GET /opencode/config",
       `GET /env/${ANTHROPIC_API_KEY_ENV}`,
+      "GET /env/ANTHROPIC_API_KEY",
     ])
     expect(writeCalls(instance.calls)).toHaveLength(0)
   })
@@ -586,6 +615,7 @@ describe("Cloud provider materialization", () => {
     expect(callMethods(instance.calls)).toEqual([
       "GET /opencode/config",
       `GET /env/${ANTHROPIC_API_KEY_ENV}`,
+      "GET /env/ANTHROPIC_API_KEY",
       "PUT /env",
       "PATCH /runtime-config/providers",
       "GET /opencode/config",
@@ -609,6 +639,7 @@ describe("Cloud provider materialization", () => {
     expect(callMethods(instance.calls)).toEqual([
       "GET /opencode/config",
       `GET /env/${ANTHROPIC_API_KEY_ENV}`,
+      "GET /env/ANTHROPIC_API_KEY",
       "PUT /env",
       "PATCH /runtime-config/providers",
       "GET /opencode/config",
@@ -783,6 +814,7 @@ describe("Cloud provider materialization", () => {
     expect(callMethods(instance.calls)).toEqual([
       "GET /opencode/config",
       `GET /env/${ANTHROPIC_API_KEY_ENV}`,
+      "GET /env/ANTHROPIC_API_KEY",
       "PUT /env",
     ])
     expect(instance.calls.some((call) => call.method === "PATCH")).toBe(false)
@@ -814,6 +846,7 @@ describe("Cloud provider materialization", () => {
     expect(callMethods(instance.calls)).toEqual([
       "GET /opencode/config",
       `GET /env/${ANTHROPIC_API_KEY_ENV}`,
+      "GET /env/ANTHROPIC_API_KEY",
       "PUT /env",
       "PATCH /runtime-config/providers",
       "PATCH /runtime-config/providers",
@@ -878,6 +911,7 @@ describe("Cloud provider materialization", () => {
     expect(callMethods(instance.calls)).toEqual([
       "GET /opencode/config",
       `GET /env/${ANTHROPIC_API_KEY_ENV}`,
+      "GET /env/ANTHROPIC_API_KEY",
       "PUT /env",
       "PATCH /runtime-config/providers",
       "GET /runtime/versions",

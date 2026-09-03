@@ -629,6 +629,73 @@ describe("cloud provider sync gateway", () => {
     expect((await env.list()).find((entry) => entry.key === "UNRELATED_API_KEY")?.value).toBe("sk-unrelated");
   });
 
+  test("moves the org credential an earlier release stored under the bare catalog name and never touches a member's different value", async () => {
+    const root = await createRoot();
+    // A models.dev provider: Den stores the declared name but the connect
+    // payload delivers the provider-scoped runtime name (LPR_<row tail>_<name>).
+    const catalogProviderId = "lpr_01kx4t3amgendr682dmp6120jv";
+    const declaredEnv = "OPENAI_API_KEY";
+    const scopedEnv = `LPR_120JV_${declaredEnv}`;
+    const orgCredential = "test-only-organization-credential";
+    const userCredential = "test-only-users-own-credential";
+    const stored: FakeProvider = {
+      id: catalogProviderId,
+      providerId: "openai",
+      name: "Organization OpenAI",
+      source: "models_dev",
+      updatedAt: "2026-09-01T00:00:00.000Z",
+      providerConfig: { id: "openai", name: "OpenAI", npm: "@ai-sdk/openai", env: [declaredEnv] },
+      apiKey: orgCredential,
+      apiKeys: null,
+      models: [{ id: "assigned-model", name: "Assigned model", config: {} }],
+    };
+    const runtime: FakeProvider = { ...stored, providerConfig: { ...stored.providerConfig, env: [scopedEnv] } };
+    const fetchImpl = Object.assign(async (input: Parameters<typeof globalThis.fetch>[0]) => {
+      const url = new URL(String(input));
+      if (url.hostname === "den.example.test") {
+        if (url.pathname === "/v1/llm-providers") return Response.json({ llmProviders: [stored] });
+        if (url.pathname === `/v1/llm-providers/${catalogProviderId}/connect`) {
+          return Response.json({ llmProvider: runtime });
+        }
+      }
+      if (url.hostname === "engine.example.test" && url.pathname.startsWith("/auth/")) return Response.json(true);
+      return Response.json({ error: "not_found" }, { status: 404 });
+    }, { preconnect: globalThis.fetch.preconnect });
+    const config = serverConfig(root, "https://engine.example.test");
+    const env = new EnvService({ path: process.env.OPENWORK_ENV_STORE });
+    const envValues = async () => new Map((await env.list()).map((entry) => [entry.key, entry.value]));
+    const session = { baseUrl: "https://den.example.test", token: "den-token", orgId: "org-env-upgrade" };
+    const newSync = () => {
+      const sync = new CloudProviderSync({ config, env, fetchImpl, reloadEngine: async () => undefined, intervalMs: 3_600_000 });
+      stops.push(() => sync.stop());
+      return sync;
+    };
+
+    // The previous release wrote the org credential under the bare catalog
+    // name; the app was then upgraded, so nothing in memory owns that key.
+    await env.upsertMany([{ key: declaredEnv, value: orgCredential }]);
+    let sync = newSync();
+    await sync.setSession(session);
+    expect((await sync.run("first-sync-after-upgrade")).status).toBe("applied");
+    const afterUpgrade = await envValues();
+    expect(afterUpgrade.get(scopedEnv)).toBe(orgCredential);
+    expect(afterUpgrade.has(declaredEnv)).toBe(false);
+    expect((await sync.run("steady")).status).toBe("noop");
+
+    // A member's own key under the bare name has a different value: a
+    // restart-then-sync must leave it alone.
+    sync.stop();
+    await env.upsertMany([{ key: declaredEnv, value: userCredential }]);
+    sync = newSync();
+    await sync.setSession(session);
+    expect((await sync.run("restart")).status).toBe("applied");
+    const afterRestart = await envValues();
+    expect(afterRestart.get(declaredEnv)).toBe(userCredential);
+    expect(afterRestart.get(scopedEnv)).toBe(orgCredential);
+    expect((await sync.run("steady-with-own-key")).status).toBe("noop");
+    expect(afterRestart.get(declaredEnv)).toBe(userCredential);
+  });
+
   test("materializes Den providers globally, reconciles changes, and sweeps the session", async () => {
     const root = await createRoot();
     const engineRequests: string[] = [];

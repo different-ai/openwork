@@ -68,6 +68,12 @@ type PreparedMaterialization = {
   fingerprint: string
   providers: MaterializedProvider[]
   envEntries: EnvEntry[]
+  /**
+   * Entries an earlier release wrote under a catalog provider's declared name
+   * before runtime names were provider-scoped. Deleted only while the worker
+   * still holds exactly the value now written under the scoped name.
+   */
+  supersededEntries: EnvEntry[]
 }
 
 type FetchImpl = (input: string, init?: RequestInit) => Promise<Response>
@@ -413,6 +419,18 @@ function prepareMaterialization(providers: CloudProviderMaterializationProvider[
       upsertEnvEntry(envEntries, entry.key, entry.value)
     }
   }
+  const desiredKeys = new Set(envEntries.map((entry) => entry.key))
+  const supersededEntries: EnvEntry[] = []
+  for (const { provider, envEntries: written } of materialized) {
+    const declared = readProviderEnvNames(provider.providerConfig)
+    runtimeProviderEnvNames(provider).forEach((runtimeName, index) => {
+      const declaredName = declared[index]
+      const value = written.find((entry) => entry.key === runtimeName)?.value
+      if (declaredName && declaredName !== runtimeName && value !== undefined && !desiredKeys.has(declaredName)) {
+        upsertEnvEntry(supersededEntries, declaredName, value)
+      }
+    })
+  }
 
   const fingerprintPayload = materialized.map((entry) => ({
     id: entry.provider.id,
@@ -429,7 +447,12 @@ function prepareMaterialization(providers: CloudProviderMaterializationProvider[
     fingerprint: `owp:v1:${hashString(stableJson(fingerprintPayload))}`,
     providers: materialized,
     envEntries,
+    supersededEntries,
   }
+}
+
+function staleSupersededKeys(supersededEntries: EnvEntry[], snapshot: EnvSnapshot) {
+  return supersededEntries.filter((entry) => snapshot.get(entry.key) === entry.value).map((entry) => entry.key)
 }
 
 export function computeCloudProviderMaterializationFingerprint(providers: CloudProviderMaterializationProvider[]) {
@@ -654,20 +677,20 @@ async function readEnvSnapshot(input: {
   fetchImpl: FetchImpl
   instanceUrl: string
   hostToken: string
-  entries: EnvEntry[]
+  keys: string[]
 }): Promise<EnvSnapshot> {
   const snapshot: EnvSnapshot = new Map()
-  for (const entry of input.entries) {
-    if (snapshot.has(entry.key)) {
+  for (const key of input.keys) {
+    if (snapshot.has(key)) {
       continue
     }
     const existing = await readEnvEntry({
       fetchImpl: input.fetchImpl,
       instanceUrl: input.instanceUrl,
       hostToken: input.hostToken,
-      key: entry.key,
+      key,
     })
-    snapshot.set(entry.key, existing?.value ?? null)
+    snapshot.set(key, existing?.value ?? null)
   }
 
   return snapshot
@@ -1012,11 +1035,17 @@ export async function materializeCloudWorkerProviders(input: {
       fetchImpl,
       instanceUrl,
       hostToken: tokens.hostToken,
-      entries: prepared.envEntries,
+      keys: [...prepared.envEntries, ...prepared.supersededEntries].map((entry) => entry.key),
     })
+    const staleKeys = staleSupersededKeys(prepared.supersededEntries, envSnapshot)
+    // Roll back only what this pass writes or deletes; a bare-name entry that
+    // is left alone is never touched on the way out either.
+    const touchedKeys = new Set([...prepared.envEntries.map((entry) => entry.key), ...staleKeys])
+    const envRollbackSnapshot: EnvSnapshot = new Map([...envSnapshot].filter(([key]) => touchedKeys.has(key)))
     if (
       materializedProviderStateMatches(prepared, currentManagedProviders)
       && materializedEnvStateMatches(prepared.envEntries, envSnapshot)
+      && staleKeys.length === 0
     ) {
       materializedFingerprintByWorkerInstance.set(cacheKey, fingerprint)
       materializationFailureByWorkerInstance.delete(cacheKey)
@@ -1091,7 +1120,7 @@ export async function materializeCloudWorkerProviders(input: {
           fetchImpl,
           instanceUrl,
           hostToken: tokens.hostToken,
-          snapshot: envSnapshot,
+          snapshot: envRollbackSnapshot,
         }).catch((rollbackError) => {
           materializationLogger.warn("cloud provider env rollback failed", {
             worker_id: input.workerId,
@@ -1101,6 +1130,24 @@ export async function materializeCloudWorkerProviders(input: {
         })
       }
       throw error
+    }
+
+    // The org credential an earlier release left under the bare catalog name
+    // would keep enabling OpenCode's built-in vendor catalog. Remove it only on
+    // an exact value match (a different value is the member's own), and only
+    // after the scoped names are in place; a failed delete is retried by the
+    // next pass because it keeps the state out of noop.
+    for (const key of staleKeys) {
+      await deleteEnvEntry({ fetchImpl, instanceUrl, hostToken: tokens.hostToken, key, ignoreNotFound: true }).catch(
+        (deleteError) => {
+          materializationLogger.warn("cloud provider stale env cleanup failed", {
+            worker_id: input.workerId,
+            organization_id: input.organizationId,
+            env_key: key,
+            reason: deleteError instanceof Error ? deleteError.message : "env_delete_failed",
+          })
+        },
+      )
     }
 
     materializedFingerprintByWorkerInstance.set(cacheKey, fingerprint)
