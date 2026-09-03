@@ -42,19 +42,66 @@ The coworker directory is registered as an ordinary OpenWork workspace, so:
   role, one line ("What should we work through?"), and the focused composer;
   there are no starter cards.
 - **Group chats put several coworkers in one conversation.** A group lives
-  under `<coworkers home>/.groups/<id>/` as `group.json` (members and the
-  native thread each member uses for it) plus an append-only `timeline.jsonl`
-  of what was said (`electron/groups.mjs`; bridge `groups.*`). The person
-  writes once; an invisible facilitator chooses who answers
-  (`lib/groups.ts`): an `@name` constrains it, `@everyone` includes all,
-  otherwise the coworker whose role and mission best match the message
-  answers alone. Each reply is a real turn in that coworker's own workspace on
-  a group-specific discussion thread (registered in its `discussions.json`, so
-  it never reads as an assignment), with its own model, memory, tools, and
-  permissions; speakers answer in order and later ones see earlier replies as
-  visible text only. Groups are created from the rail's `New group chat`
-  (at least two coworkers, a name suggested from roles), renamed or archived
-  from their header, and never deleted.
+  under `<coworkers home>/.groups/<id>/` as `group.json` (members, the native
+  thread each member uses for it, the facilitator's thread, and the last 50
+  turns) plus an append-only `timeline.jsonl` of what was said
+  (`electron/groups.mjs`; bridge `groups.*`). The person writes once and the
+  right coworkers answer one after the other, each a real turn in its own
+  workspace on a group-specific discussion thread (registered in its
+  `discussions.json`, so it never reads as an assignment) with its own model,
+  memory, tools, and permissions. Every message opens one **turn record**
+  (`turns[]`: the speakers in order, each with its status, thread, and plain
+  reason) written through the store, so the view, a retry, and recovery all
+  read one source of truth: a double Send never makes two turns, and a turn
+  cut off by a quit or reload is settled at the next launch as `partial`
+  with one quiet line ("Stopped when the app closed before Editor replied.")
+  and a **Continue** control; a coworker that could not reply gets **Retry**
+  (and **Choose AI model** when the model is the likely cause), and nobody
+  who already replied is ever asked again. One coworker failing, timing out
+  (180 s), or being stopped never blocks the next; **Stop all** aborts the
+  in-flight native turn and marks the rest stopped.
+
+  A **silent facilitator** decides who answers (`lib/facilitator.ts`): once
+  per message it is told the members with roles, missions, and who is busy in
+  another group, a bounded visible transcript, the earlier speaking orders,
+  and the message with its mentions, and answers with one strict JSON plan —
+  speakers in order with a one-sentence brief each, sequential or parallel,
+  dependencies, at most one follow-up where a coworker responds to another,
+  and a wrap-up only when it asks for one. The plan is validated (unknown or
+  duplicate coworkers, the wrong count, a set that ignores the person's
+  mentions, or a dependency pointing the wrong way are rejected), repaired
+  once with the reason fed back, tried once more on the next connected model,
+  and otherwise replaced silently by the deterministic role-and-mission
+  scorer (`lib/groups.ts`). Mentions still rule: one `@name` skips routing,
+  several names keep the set and let the facilitator order it, `@everyone`
+  includes all; without a name the default is one speaker, never more than
+  three. It runs in a hidden, tool-less coordinator workspace
+  (`<coworkers home>/.coordinator/`, `electron/coordinator.mjs`: every tool
+  off, permissions denied, no MCP, no memory, no `coworker.md` so it never
+  appears in the rail) on one native thread per group, on the model the
+  group's coworkers already use (account models first; per group under Group
+  details › Advanced). Nobody ever sees its words: the person sees "Choosing
+  who should respond…", then "Scout is replying… then Editor".
+
+  Each speaker's prompt (`groupSpeakerPrompt`) carries the room, the last
+  visible lines (never status lines, reasoning, or tool payloads), every
+  earlier reply in this turn with its speaker's name, its own part from the
+  facilitator's brief, and the message; it is asked to add something new for
+  the person and may answer exactly `Nothing to add.`, which the group shows
+  as a quiet line rather than a bubble. Independent parallel replies still
+  settle into the timeline in the facilitator's order. The composer keeps
+  working while a turn runs (the message goes **Next**; a message naming one
+  coworker waits as that coworker's own next turn), `@` offers member names,
+  and the same `+` control turns a message into an assignment: the person
+  says what someone should own, a lettered choice card asks who (the best
+  match by role proposed first), the assignment is created in the owner's
+  workspace with the signed visible conversation as context, and one action
+  line ("Assignment for Editor · Draft the launch note") opens it. Groups are
+  created from the rail's `New group chat` (at least two coworkers, a name
+  suggested from roles); the header's overflow renames, opens **Group
+  details** (name, members — changes apply to the next message — the
+  who-answers AI model under Advanced, archive) or archives; a group is never
+  deleted and a running turn keeps going when another view is open.
 - **Identity and memory ride the engine's existing instruction loading**
   (`AGENTS.md` + `opencode.json` `instructions`); the coworker maintains
   `memory/working.md` with ordinary file tools. No memory backend. The app
