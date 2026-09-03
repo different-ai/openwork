@@ -160,24 +160,24 @@ test(title, { timeout: 1_800_000 }, async ({ evidence, place }) => {
     { timeoutMs: 90_000, label: "clean authenticated /install after joining" },
   );
   await screenshot(browser);
+  const member = await signIn(den.ref, { email: invitee.email, password: invitee.password });
+  const installTokenStored = await evalIn(browser, `(() => {
+    localStorage.setItem("openwork:web:auth-token", ${JSON.stringify(member.token)});
+    return localStorage.getItem("openwork:web:auth-token") === ${JSON.stringify(member.token)};
+  })()`);
+  expect(installTokenStored).toBe(true);
+  const memberConfig = await denFetch(den.ref, "/v1/me/install-config", {
+    headers: { authorization: `Bearer ${member.token}` },
+  });
+  expect(memberConfig.response.status).toBe(200);
 
-  const rawInstall = await evalIn(browser, `(async () => {
+  const rawInstall = await evalIn(browser, `(() => {
     const resources = performance.getEntriesByType("resource").map((entry) => entry.name);
     const hrefs = [...document.querySelectorAll("a[href]")].map((anchor) => anchor.href);
-    const headers = new Headers({ Accept: "application/json" });
-    const storedToken = localStorage.getItem("openwork:web:auth-token")?.trim();
-    if (storedToken) headers.set("Authorization", "Bearer " + storedToken);
-    const configResponse = await fetch("/api/den/v1/me/install-config", {
-      credentials: "include",
-      headers,
-    });
-    const config = await configResponse.json();
     return JSON.stringify({
       search: location.search,
       configLoaded: resources.some((url) => url.includes("/v1/me/install-config")),
       mintedToken: resources.some((url) => url.includes("/install-links") || url.includes("/v1/install-config?token=")),
-      configStatus: configResponse.status,
-      distribution: config?.distribution,
       downloadHrefs: hrefs.filter((href) => href.includes("/v1/me/install/")),
       cloudDownloadSurface: [...document.querySelectorAll("h1")]
         .some((heading) => (heading.textContent ?? "").trim() === "Download OpenWork"),
@@ -191,7 +191,7 @@ test(title, { timeout: 1_800_000 }, async ({ evidence, place }) => {
       workspaceControl: Boolean(document.querySelector('[data-testid="install-workspace-address"]')),
       text: document.body.innerText.replace(/\\s+/g, " ").slice(0, 400),
     });
-  })()`, { awaitPromise: true });
+  })()`);
   const install: unknown = JSON.parse(String(rawInstall));
   if (
     !isRecord(install)
@@ -202,16 +202,15 @@ test(title, { timeout: 1_800_000 }, async ({ evidence, place }) => {
   ) {
     throw new Error(`Install facts had an unexpected shape: ${JSON.stringify(install)}`);
   }
-  const distribution = install.distribution;
+  const distribution = stringField(memberConfig.body, "distribution");
   if (distribution !== "cloud" && distribution !== "enterprise") {
-    throw new Error(`Install config returned an invalid distribution: ${JSON.stringify(distribution)}`);
+    throw new Error(`Install config returned an invalid distribution: ${JSON.stringify(memberConfig.body)}`);
   }
   const downloadHref = install.downloadHrefs[0];
   if (typeof downloadHref !== "string") throw new Error("Install page exposed no authenticated download link");
   expect(install.search).toBe("");
   expect(install.configLoaded).toBe(true);
   expect(install.mintedToken).toBe(false);
-  expect(install.configStatus).toBe(200);
   expect(install.downloadHrefs.length).toBeGreaterThan(0);
   for (const href of install.downloadHrefs) {
     expect(href).toContain("/v1/me/install/");
@@ -232,7 +231,6 @@ test(title, { timeout: 1_800_000 }, async ({ evidence, place }) => {
     expect(install.cloudReturnControl).toBe(false);
   }
 
-  const member = await signIn(den.ref, { email: invitee.email, password: invitee.password });
   // Daytona preview duplicates CORS headers on Origin-bearing responses; top-level downloads bypass CORS, so probe through the session directly.
   const downloadPath = new URL(downloadHref).pathname;
   const authedDownload = await denFetch(den.ref, downloadPath, {
