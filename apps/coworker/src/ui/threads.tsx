@@ -48,7 +48,7 @@ import {
   rememberWorkspaceSlug,
 } from "@/lib/discussions";
 import { markAutoPicked, wasAutoPicked } from "@/lib/model-choice";
-import { describeReview, parseWorkerReview, type WorkerReview } from "@/lib/workers";
+import { describeReview, parseWorkerReview, parseWorkerTurn, workerNameFromTitle, type WorkerReview } from "@/lib/workers";
 import { describeProgress, describeWorkStep, summarizeWork, technicalSections, type ProgressPhase, type WorkStep } from "@/lib/work-receipt";
 import { describeTurnFailure } from "@/lib/turn-failure";
 import { useAutoGrow } from "@/ui/use-auto-grow";
@@ -481,7 +481,7 @@ export function ThreadsPanel({
         threadId={openThreadId}
         coworker={coworker}
         runtime={runtime}
-        kind="assignment"
+        kind={workerThreadIds.includes(openThreadId) ? "worker" : "assignment"}
         assignmentCount={items.length}
         headerSlots={headerSlots}
         initialTurn={queuedTurn?.threadId === openThreadId ? queuedTurn : null}
@@ -913,7 +913,8 @@ function ThreadView({
   threadId: string;
   coworker: CoworkerSummary;
   runtime: RuntimeInfo;
-  kind: "discussion" | "assignment";
+  /** `worker`: a Worker's own thread, shown read-only; steering and stopping live in the Workers view. */
+  kind: "discussion" | "assignment" | "worker";
   assignmentCount: number;
   headerSlots: HeaderSlots;
   assignmentDraft?: AssignmentDraft;
@@ -949,7 +950,7 @@ function ThreadView({
   const defaultDiscussionTitle = discussionTitle(coworker.name);
   // Until the transcript answers, a discussion carries its default title (which reads as "New
   // discussion" while empty); only an assignment falls back to the generic placeholder.
-  const [title, setTitle] = useState(kind === "discussion" ? defaultDiscussionTitle : "Work thread");
+  const [title, setTitle] = useState(kind === "discussion" ? defaultDiscussionTitle : kind === "worker" ? "Worker" : "Work thread");
   /** The first message sent here, kept until the thread carries a title of its own. */
   const firstPromptRef = useRef("");
   const titleLoadedRef = useRef(false);
@@ -1111,7 +1112,7 @@ function ThreadView({
     onActivityChange({
       state: "working",
       label: "Working",
-      detail: kind === "discussion" ? "Replying in your discussion" : title,
+      detail: kind === "discussion" ? "Replying in your discussion" : kind === "worker" ? workerNameFromTitle(title) : title,
       updatedAt: Date.now(),
       threadId,
     });
@@ -1383,7 +1384,7 @@ function ThreadView({
       onActivityChange({
         state: "recent",
         label: "Stopped",
-        detail: kind === "discussion" ? "Discussion turn stopped" : title,
+        detail: kind === "discussion" ? "Discussion turn stopped" : kind === "worker" ? workerNameFromTitle(title) : title,
         updatedAt: Date.now(),
         threadId,
       });
@@ -1393,7 +1394,7 @@ function ThreadView({
       onActivityChange({
         state: statusLabel === "retry" ? "retrying" : "working",
         label: workingLabel,
-        detail: activeToolLabel ?? (kind === "discussion" ? "Replying in your discussion" : title),
+        detail: activeToolLabel ?? (kind === "discussion" ? "Replying in your discussion" : kind === "worker" ? workerNameFromTitle(title) : title),
         updatedAt: Date.now(),
         threadId,
       });
@@ -1410,7 +1411,7 @@ function ThreadView({
   const freshDiscussion = kind === "discussion" && visibleMessages.length === 0 && !working && !needsYou && !error && !displayedFailure;
 
   return (
-    <section className="flex h-full min-h-0 flex-col bg-ink" data-testid={kind === "discussion" ? "coworker-discussion-view" : "coworker-assignment-view"}>
+    <section className="flex h-full min-h-0 flex-col bg-ink" data-testid={kind === "discussion" ? "coworker-discussion-view" : kind === "worker" ? "coworker-worker-view" : "coworker-assignment-view"}>
       {/* The one header above carries the coworker; the view places its title line and actions there. */}
       <HeaderContent
         slots={headerSlots}
@@ -1425,14 +1426,14 @@ function ThreadView({
           />
         ) : (
           <>
-            <span className="truncate">{title}</span>
-            <span className="shrink-0 rounded-full border border-spark/20 bg-spark/8 px-1.5 py-0.5 text-[8px] font-semibold uppercase tracking-[0.08em] text-spark">Assignment</span>
+            <span className="truncate">{kind === "worker" ? workerNameFromTitle(title) : title}</span>
+            <span className="shrink-0 rounded-full border border-spark/20 bg-spark/8 px-1.5 py-0.5 text-[8px] font-semibold uppercase tracking-[0.08em] text-spark">{kind === "worker" ? "Worker" : "Assignment"}</span>
           </>
         )}
         actions={(
           <>
-            {kind === "assignment" ? <Button variant="ghost" onClick={onBack} title="Back to discussion">Back</Button> : null}
-            {working || needsYou ? <Button variant="ghost" onClick={() => void stop()}>Stop</Button> : null}
+            {kind !== "discussion" ? <Button variant="ghost" onClick={onBack} title="Back to discussion">Back</Button> : null}
+            {(working || needsYou) && kind !== "worker" ? <Button variant="ghost" onClick={() => void stop()}>Stop</Button> : null}
             {kind === "discussion" ? <AssignmentsLink count={assignmentCount} onClick={onShowAssignments} /> : null}
           </>
         )}
@@ -1489,7 +1490,7 @@ function ThreadView({
             />
           ) : null}
           {visibleMessages.length === 0 && !error && !working && kind !== "discussion" ? (
-            <Empty><InlineLoader label="Loading assignment" /></Empty>
+            <Empty><InlineLoader label={kind === "worker" ? "Loading the Worker's thread" : "Loading assignment"} /></Empty>
           ) : null}
           {displayedFailure ? (
             <TurnIssueNote
@@ -1547,6 +1548,10 @@ function ThreadView({
           busy={pendingTurn !== null || assignmentBusy}
           coworkerName={coworker.name}
         />
+      ) : kind === "worker" ? (
+        <p className="border-t border-line px-5 py-3 text-center text-[11px] text-mist" data-testid="coworker-worker-readonly">
+          This is the Worker's own work. Steer, pause, or stop it from the Workers view.
+        </p>
       ) : (
         <MessageComposer
           value={reply}
@@ -1696,10 +1701,20 @@ function MessageBubble({
   documents?: DocumentHooks;
   /** A finished reply ran long with no document behind it; reported once so the coworker is reminded next turn. */
   onLongReply?: (messageId: string, chars: number) => void;
-  kind?: "discussion" | "assignment";
+  kind?: "discussion" | "assignment" | "worker";
 }) {
   const user = message.role === "user";
   if (user) {
+    // In a Worker's thread the person never spoke: each user turn is the app's frame plus what it
+    // asked for, so only that ask is shown, as one quiet line.
+    const workerTurn = kind === "worker" ? parseWorkerTurn(message.text) : null;
+    if (workerTurn) {
+      return (
+        <article className="flex justify-center py-0.5" data-message-role="user" data-worker-turn="true">
+          <p className="max-w-[80%] whitespace-pre-wrap text-center text-[11px] leading-relaxed text-mist" data-testid="coworker-worker-turn">{workerTurn.body}</p>
+        </article>
+      );
+    }
     // The message that opens an assignment carries scaffolding for the model; the person sees
     // the outcome they asked for, with the discussion it came from behind a small disclosure.
     const brief = kind === "assignment" ? parseAssignmentBrief(message.text) : null;

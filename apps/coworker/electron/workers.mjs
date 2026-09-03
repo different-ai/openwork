@@ -422,6 +422,7 @@ export function workerTurnPrompt({ worker, coworkerName, body, now = Date.now() 
     worker.goal,
     "",
     `Lifespan: ${describeLifespanForPrompt(worker.lifespan, now)}.`,
+    `You are a Worker, not ${coworkerName}: never start, steer, or stop Workers (the worker tools are ${coworkerName}'s), and leave ${coworkerName}'s memory files alone.`,
     "Work in bounded steps. After each meaningful step, end your turn with a section titled \"Finding\": 2–6 sentences a person can read. If you need a decision before you can go on, end instead with a section titled \"Needs a decision\" and list the options. When the goal is met, end with a section titled \"Done\" and your final finding.",
     "",
     body,
@@ -681,6 +682,184 @@ export function createReviewScheduler({
       const queue = queueFor(slug);
       if (queue.timer) clearTimer(queue.timer);
       queues.delete(slug);
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// The coworker's own Worker tools, served beside its document tools by the
+// app's loopback MCP server (`coworker-tools.mjs`). Names reach the model as
+// `coworker_<tool>`. The bearer token names the coworker, so no tool takes a
+// coworker from the model; the Worker id is the only handle it passes.
+
+const WORKER_ID_SCHEMA = { type: "string", description: "The Worker id, as listed by workers_list or returned when it was started." };
+
+/** What the coworker can do with its Workers, in its own plain words. */
+export function workerToolCatalog() {
+  return [
+    {
+      name: "workers_list",
+      description: `List my Workers — the long-lived helpers I start for one goal each — with status, lifespan left, and their last finding. Check it before starting another: at most ${MAX_LIVE_WORKERS} can be live at once.`,
+      inputSchema: { type: "object", properties: {}, additionalProperties: false },
+    },
+    {
+      name: "worker_spawn",
+      description: `Start a Worker for one goal that outlives this reply: watching something over time, a long research pass, a multi-step job. It works in my workspace with my files and tools, reports a finding after each bounded step, and each finding wakes me to review it. Give it a short name and a goal that says what done looks like. Choose its lifespan: a number of turns (default ${DEFAULT_TURN_BUDGET}), a deadline, or until stopped. Then tell the person in a sentence what I started. Never start a Worker to answer a quick question, and never from inside a Worker.`,
+      inputSchema: {
+        type: "object",
+        properties: {
+          name: { type: "string", description: "Short and specific, e.g. \"Market scan\"." },
+          goal: { type: "string", description: "What done looks like, what to watch or produce, and any limits." },
+          lifespan: {
+            type: "object",
+            description: "How long it lives. Omit for the default number of turns.",
+            properties: {
+              kind: { type: "string", enum: ["turns", "until", "open"] },
+              turns: { type: "integer", minimum: 1, maximum: MAX_TURN_BUDGET, description: "With kind turns: how many bounded steps." },
+              until: { type: "string", description: "With kind until: when it must stop, as an ISO 8601 date-time." },
+            },
+            required: ["kind"],
+            additionalProperties: false,
+          },
+        },
+        required: ["name", "goal"],
+        additionalProperties: false,
+      },
+    },
+    {
+      name: "worker_steer",
+      description: "Send a Worker a correction, more context, or the decision it is waiting for. It takes the message as its next step. Use it after reviewing a finding that needs a change of course.",
+      inputSchema: {
+        type: "object",
+        properties: { id: WORKER_ID_SCHEMA, text: { type: "string", description: "What to do differently, in plain words." } },
+        required: ["id", "text"],
+        additionalProperties: false,
+      },
+    },
+    {
+      name: "worker_cancel",
+      description: "Stop a Worker for good: the goal is met well enough, it is going the wrong way, or the person asked. Say why in a few words. A stopped Worker keeps its findings but never works again.",
+      inputSchema: {
+        type: "object",
+        properties: { id: WORKER_ID_SCHEMA, reason: { type: "string", description: "Why it stops, in a few words." } },
+        required: ["id"],
+        additionalProperties: false,
+      },
+    },
+    {
+      name: "worker_findings",
+      description: "Read what one Worker has reported so far, oldest first, including any steering and reviews.",
+      inputSchema: {
+        type: "object",
+        properties: { id: WORKER_ID_SCHEMA, limit: { type: "integer", minimum: 1, maximum: 100, description: "How many recent events; default 20." } },
+        required: ["id"],
+        additionalProperties: false,
+      },
+    },
+  ];
+}
+
+/** A Worker as a tool result names it: the fields the app's receipts and the model both read. */
+export function workerCard(worker, extra = {}) {
+  return {
+    id: worker.id,
+    name: worker.name,
+    status: worker.status,
+    waitingFor: worker.waitingFor,
+    lifespan: worker.lifespan,
+    lastFindingAt: worker.lastFindingAt,
+    ...extra,
+  };
+}
+
+/** The tool's lifespan argument as the record the store keeps; missing means the default turn budget. */
+export function lifespanFromToolArgs(input, { now = Date.now() } = {}) {
+  if (input === undefined || input === null) return normalizeLifespan(undefined, { now });
+  if (!input || typeof input !== "object") throw new Error("lifespan must be an object with a kind.");
+  if (input.kind === "turns") return normalizeLifespan({ kind: "turns", max: input.turns ?? DEFAULT_TURN_BUDGET }, { now });
+  if (input.kind === "until") {
+    const at = typeof input.until === "string" ? Date.parse(input.until) : Number(input.until);
+    if (!Number.isFinite(at)) throw new Error("With kind until, give the stop time as an ISO 8601 date-time.");
+    return normalizeLifespan({ kind: "until", at }, { now });
+  }
+  if (input.kind === "open") return { kind: "open" };
+  throw new Error("lifespan.kind must be turns, until, or open.");
+}
+
+function describeWorkerForModel(worker, now) {
+  const status = workerStatusForPrompt(worker, now);
+  const last = worker.lastFindingAt ? ` — last finding ${Math.max(1, Math.round((now - worker.lastFindingAt) / 60_000))} min ago` : "";
+  return `- ${worker.id} — "${worker.name}" — ${status}${last}\n    goal: ${worker.goal.replace(/\s+/g, " ").slice(0, 200)}`;
+}
+
+/**
+ * Tool handlers for the coworker's Workers. Starting, steering, and stopping
+ * go through the main process (`spawn`, `steer`, `cancel`), which owns the
+ * turn loop and this Mac's run limit; listing and findings read the store.
+ * Each returns `{ text, structured }`: a plain sentence for the model and the
+ * card the app's receipts read.
+ */
+export function createWorkerToolHandlers({ coworkersDir, spawn, steer, cancel, now = Date.now }) {
+  const idOf = (args) => {
+    const id = typeof args.id === "string" ? args.id.trim() : "";
+    if (!isWorkerId(id)) throw new Error("Name the Worker by its id, as listed by workers_list.");
+    return id;
+  };
+  return {
+    workers_list: async (slug) => {
+      const workers = await listWorkers(coworkersDir, slug);
+      const live = liveWorkers(workers);
+      const ended = workers.filter((worker) => isWorkerFinished(worker)).slice(0, 5);
+      const at = now();
+      const lines = [];
+      lines.push(live.length === 0 ? `No live Workers (${MAX_LIVE_WORKERS} may run at once).` : `Live Workers (${live.length} of ${MAX_LIVE_WORKERS}):`);
+      for (const worker of live) lines.push(describeWorkerForModel(worker, at));
+      if (ended.length > 0) {
+        lines.push("Recently ended:");
+        for (const worker of ended) lines.push(describeWorkerForModel(worker, at));
+      }
+      return { text: lines.join("\n"), structured: { workers: workers.map((worker) => workerCard(worker)) } };
+    },
+    worker_spawn: async (slug, args) => {
+      const worker = await spawn(slug, {
+        name: typeof args.name === "string" ? args.name : "",
+        goal: typeof args.goal === "string" ? args.goal : "",
+        lifespan: lifespanFromToolArgs(args.lifespan, { now: now() }),
+      });
+      return {
+        text: `Started Worker "${worker.name}" (id ${worker.id}), ${describeLifespanForPrompt(worker.lifespan, now())}. It will report a finding after each step and each finding wakes you. Now tell the person in a sentence what you started.`,
+        structured: { worker: workerCard(worker, { action: "started" }) },
+      };
+    },
+    worker_steer: async (slug, args) => {
+      const worker = await steer(slug, idOf(args), typeof args.text === "string" ? args.text : "");
+      return {
+        text: `Steered "${worker.name}"; it takes that as its next step${worker.status === "running" ? " once its current step settles" : ""}.`,
+        structured: { worker: workerCard(worker, { action: "steered" }) },
+      };
+    },
+    worker_cancel: async (slug, args) => {
+      const worker = await cancel(slug, idOf(args), typeof args.reason === "string" ? args.reason : "");
+      return {
+        text: `Stopped "${worker.name}". Its findings stay in the Workers view; it will not work again.`,
+        structured: { worker: workerCard(worker, { action: "stopped" }) },
+      };
+    },
+    worker_findings: async (slug, args) => {
+      const id = idOf(args);
+      const worker = await getWorker(coworkersDir, slug, id);
+      const limit = Number.isFinite(Number(args.limit)) ? Math.min(100, Math.max(1, Math.round(Number(args.limit)))) : 20;
+      const events = await readWorkerEvents(coworkersDir, slug, id, { limit });
+      const at = now();
+      const lines = [`"${worker.name}" — ${workerStatusForPrompt(worker, at)}. ${events.length === 0 ? "Nothing reported yet." : "Events, oldest first:"}`];
+      for (const event of events) {
+        const when = new Date(event.at).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+        if (event.kind === "finding") lines.push(`- ${when} ${event.report === "decision" ? "needs a decision" : event.report === "done" ? "done" : "finding"}: ${event.text}`);
+        else if (event.kind === "steer") lines.push(`- ${when} steered by ${event.by === "coworker" ? "you" : "the person"}: ${event.text}`);
+        else if (event.kind === "review") lines.push(`- ${when} ${event.error ? "review did not go through" : "you reviewed this"}`);
+        else lines.push(`- ${when} ${event.text}`);
+      }
+      return { text: lines.join("\n"), structured: { worker: workerCard(worker, { action: "read" }), events } };
     },
   };
 }

@@ -17,6 +17,7 @@ import { z } from "zod";
 import { RECENT_WORK_LIMIT } from "./activity-summary.ts";
 import { readCloudProviderSyncStatus, type CloudProviderSyncStatus } from "./den.ts";
 import { discussionIds, discussionIdsForWorkspace } from "./discussions.ts";
+import { workerNameFromTitle } from "./workers.ts";
 
 export type ThreadListItem = {
   id: string;
@@ -64,6 +65,8 @@ export type CoworkerActivity = {
   next?: { name: string; at: number };
   /** Finished assignments, newest first, excluding whatever is active now. */
   recent?: RecentWork[];
+  /** Workers with a turn in flight; `subject` says `detail` names one of them rather than the coworker's own work. */
+  workers?: { running: number; subject: boolean };
 };
 
 const sessionListSchema = z.array(
@@ -389,7 +392,8 @@ export function createCoworkerThreads(options: {
 }): CoworkerThreads {
   const parsedModel = parseModelPreference(options.model ?? "");
   const discussions = discussionIds(options.discussionThreadIds ?? [], options.conversationThreadId);
-  const notAssignments = [...discussions, ...(options.workerThreadIds ?? [])];
+  const workerIds = new Set(options.workerThreadIds ?? []);
+  const notAssignments = [...discussions, ...workerIds];
   const client = createHeadlessThreadClient({
     baseUrl: options.serverUrl,
     workspaceId: options.workspaceId,
@@ -525,29 +529,36 @@ export function createCoworkerThreads(options: {
         recent,
       };
     }
-    const active = allSessions.find((session) => session.status === "busy" || session.status === "retry");
+    // The coworker's own turn is the subject when it has one; otherwise a Worker's turn is.
+    const busy = allSessions.filter((session) => session.status === "busy" || session.status === "retry");
+    const runningWorkers = busy.filter((session) => workerIds.has(session.id)).length;
+    const active = busy.find((session) => !workerIds.has(session.id)) ?? busy[0];
     const recent = recentOf(active?.id);
     const last = recent[0];
+    const subjectIsWorker = active !== undefined && workerIds.has(active.id);
+    const workers = runningWorkers > 0 ? { workers: { running: runningWorkers, subject: subjectIsWorker } } : {};
     if (active?.status === "retry") {
       return {
         state: "retrying",
         label: "Retrying",
-        detail: active.title,
+        detail: subjectIsWorker ? workerNameFromTitle(active.title) : active.title,
         updatedAt: active.updatedAt,
         threadId: active.id,
         ...(last ? { last: { title: last.title, updatedAt: last.finishedAt, threadId: last.id } } : {}),
         recent,
+        ...workers,
       };
     }
     if (active) {
       return {
         state: "working",
         label: "Working",
-        detail: active.title,
+        detail: subjectIsWorker ? workerNameFromTitle(active.title) : active.title,
         updatedAt: active.updatedAt,
         threadId: active.id,
         ...(last ? { last: { title: last.title, updatedAt: last.finishedAt, threadId: last.id } } : {}),
         recent,
+        ...workers,
       };
     }
     if (last) {

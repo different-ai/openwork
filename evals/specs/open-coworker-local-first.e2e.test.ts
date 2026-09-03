@@ -334,7 +334,7 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
     responsibilitiesVisible: true,
     responsibilitiesBelowActivity: true,
     emptyStateCount: 1,
-    links: ["Apps & tools", "Memory"],
+    links: ["Workers", "Apps & tools", "Memory"],
     settingsLabel: "Coworker settings",
     settingsTitle: "Coworker settings",
     settingsText: "",
@@ -359,7 +359,7 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   expect(composerFacts).toEqual({ present: true, hasModelControl: false, mentionsModel: false });
   evidence.recordAssertionEvidence(
     "The Activity view leads with current activity and responsibilities, and the composer carries no model controls",
-    "Once opened, Scout's Activity view showed exactly one idle status line plus one note, the Responsibilities section with a single compact Add responsibility empty state, two quiet links, and an icon-only 32×32 Coworker settings control with a 16×16 glyph; the panel and composer contained no model, thinking-effort, or engine vocabulary.",
+    "Once opened, Scout's Activity view showed exactly one idle status line plus one note, the Responsibilities section with a single compact Add responsibility empty state, three quiet links (Workers, Apps & tools, Memory), and an icon-only 32×32 Coworker settings control with a 16×16 glyph; the panel and composer contained no model, thinking-effort, or engine vocabulary.",
     true,
   );
 

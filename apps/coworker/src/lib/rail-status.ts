@@ -115,8 +115,16 @@ export function describeRailLine({ activity, personality, seed, now = Date.now()
       return activity.detail || "Needs you.";
     case "retrying":
       return activity.detail ? `Retrying ${cleanTitle(activity.detail)}` : "Retrying.";
-    case "working":
-      return activity.detail ? `Working on ${lowerFirst(cleanTitle(activity.detail))}` : "Working.";
+    case "working": {
+      const running = activity.workers?.running ?? 0;
+      const own = activity.detail ? `Working on ${lowerFirst(cleanTitle(activity.detail))}` : "Working.";
+      if (running === 0) return own;
+      // A Worker's turn is the coworker working too; say whose turn it is in plain words.
+      if (activity.workers?.subject) {
+        return running === 1 && activity.detail ? `Worker ${cleanTitle(activity.detail)} is working` : `${running} Workers running`;
+      }
+      return `${own} · ${running === 1 ? "1 Worker" : `${running} Workers`} running`;
+    }
     default:
       break;
   }
