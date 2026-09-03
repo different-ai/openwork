@@ -10,8 +10,8 @@ adds no new database concepts.
 ```
 ~/.config/openwork/coworkers/<slug>/   ← via @openwork/paths openworkConfigDir()
 ├── AGENTS.md          coworker contract: conduct + memory maintenance duties
-├── opencode.json      instructions: soul.md, memory/working.md, memory/index.md, documents/index.md
-├── coworker.md        app-owned profile, workspace id, model + reasoning preference
+├── opencode.json      instructions: soul.md, memory/working.md, memory/index.md, documents/index.md, team/roster.md
+├── coworker.md        app-owned profile, workspace id, model + reasoning preference, catalog role, who proposed it
 ├── discussions.json   which native threads are discussions (the open one is in coworker.md)
 ├── local-responsibilities.json  local schedule and run state
 ├── workers.json       which native threads belong to Workers
@@ -27,6 +27,10 @@ adds no new database concepts.
 │   ├── index.md       always-loaded list of the documents in play
 │   ├── <id>.md        a document: frontmatter + Markdown body
 │   └── .history/      the last five revisions of each document
+├── team/
+│   ├── roster.md      always-loaded description of the teammates; written by the app, never by the coworker
+│   ├── suggestions.jsonl  teammates this coworker proposed and how the person answered
+│   └── referrals.jsonl    requests it offered to hand over and what the person chose
 └── workspace/         the coworker's working area
 ```
 
@@ -55,7 +59,8 @@ The coworker directory is registered as an ordinary OpenWork workspace, so:
   tooltip on the word adds the reason and the time ("Retrying after an
   interruption · since 7:40 AM"). An empty conversation shows only a small
   avatar, the coworker's name and role, one line ("What should we work
-  through?"), and the focused composer; there are no starter cards. At the foot
+  through?", or, for a coworker a teammate proposed, "Nova suggested me — …"),
+  and the focused composer; there are no starter cards. At the foot
   of the conversation column one discreet **summary line** on the composer's
   hint row says what the coworker holds — "2 assignments · 1 Worker · 3
   documents" (`lib/coworker-summary.ts`) — each part opening the matching level
@@ -361,6 +366,90 @@ copy the sign-in link, paste it here) or a local path with no account. Cloud
 adds always-on responsibilities and shared organization settings; local use
 keeps identity, memory, model preference, schedules, and thread execution on
 this Mac.
+
+## A team that grows
+
+A new person never meets a blank form first, coworkers know who else is on the
+team, and the team can grow from the conversation — while only the person's
+tap ever creates a coworker.
+
+- **Onboarding proposes a team.** After the account or local-mode step, *What
+  will your team help with?* (`ui/onboarding-intents.tsx`) offers six roles —
+  Research and synthesis, Writing and content, Operations and scheduling,
+  Customer support, Sales and relationships, Product and engineering — picked
+  one or more in order. *Meet your team* (`ui/onboarding-team.tsx`) then shows
+  the coworkers proposed from the picks (`electron/team.mjs` `recommendTeam`:
+  one intent brings its complement — Ops for everyone, Scout for Ops — two or
+  three stand alone, more keep the first three) as live cards: tap the name to
+  rename in place, remove (at least one stays), add another role. *Create my
+  team* makes them one by one behind a calm preparation screen; the draft
+  lives in session storage under a stable id (`lib/onboarding-team.ts`), so
+  Back, forward, or a crash mid-way loses nothing and creates nothing twice,
+  and one failure names the coworker and offers Retry or Remove from team
+  without rolling the others back. The first coworker opens with the composer
+  focused. Each coworker's working memory starts with one line — "Joined the
+  team on Sep 3 to help with research and writing." — and `coworker.md`
+  records its catalog role. *I'll add my own* skips the proposal for the blank
+  Add screen. Existing installs are never routed through the steps; the Add
+  screen offers up to three roles nobody covers yet as cards
+  (`new-coworker-suggested`) that fill the form in, still editable. The §4
+  connector grid, model disclosure, reordering, and a *Personalize your team*
+  indicator for existing installs are not built.
+- **Teammates know each other.** Every coworker home carries `team/roster.md`:
+  who it is, its teammates one line each (name, id, role, mission; alphabetical,
+  twelve then "and n more"), the roles the person declined in the last two
+  weeks, and how to hand work over or propose a teammate. The app writes it
+  whenever the team changes (create, a role or mission change, retire,
+  restore, delete) and on launch; it is loaded every turn beside memory and the
+  documents index and never carries another coworker's memory, documents, or
+  conversation. Contract v5 (`## My team`) says when to use it: refer *before*
+  doing a teammate's job when it is more than a quick answer, never in a group
+  chat, suggest only when uncovered work keeps coming up or the person asks
+  who could do it, never create, rename, or retire anyone, never more than one
+  suggestion a day.
+- **Three team tools** on the coworker's own server (`electron/team-tools.mjs`;
+  `coworker_team_list`, `coworker_team_refer`, `coworker_team_suggest`). A
+  referral names a real teammate (by name or id, never itself), carries the
+  person's request in their words and one sentence of why, and is only an
+  offer. A suggestion is guarded in the handler too, so a model that ignores
+  its contract still cannot nag: a teammate who already covers the role
+  answers "Editor already covers writing — offer to pass it to them instead",
+  a role the person declined within fourteen days answers "don't bring it up",
+  a second proposal in one day answers "you already suggested a teammate
+  today"; none of those leaves a tile. Both offers are appended to the
+  coworker's `team/*.jsonl` logs, and the person's answer is appended after.
+- **Tiles like a shared contact** (`ui/team-cards.tsx`). A reply whose turn
+  made an offer ends with a rounded tile after the bubble, the radius and width
+  of a bubble: a live avatar, the name plate, role, mission, and small print
+  ("Suggested by Nova · Customer support", "Editor could take this · Writing
+  and content"). No buttons inside; the choice is a right-aligned pill row
+  under it, and tapping a pill is the person's answer. **Add to team** creates
+  the coworker the one way there is (`team.accept` → the same path as the Add
+  screen), inheriting the proposer's model and remembering who proposed it and
+  why; the rail gains the row without leaving the conversation, the tile flips
+  to *Added to your team* with one **Say hi** pill, and the newcomer's empty
+  conversation opens with "Nova suggested me — the support inbox comes up
+  every morning." **Not now** keeps the tile as a quiet record and reaches the
+  coworker through its team description. **Ask Editor** records the choice,
+  switches to Editor, and sends the request as the person's own message with a
+  brief (`lib/conversation.ts` `referralPrompt`: who passed it and why, at most
+  three exchanges and 600 characters, never tool payloads or reasoning);
+  Editor's transcript shows the person's words under a small *Passed from
+  Nova* line (`parseReferralBrief`), and Nova's tile reads *Passed to Editor*.
+  **Continue with Nova** sends "Go ahead, Nova." as the person's message and
+  the contract tells Nova to do the work and not refer again. Letters A–D and
+  Enter work as accelerators for the last open row, read only by assistive
+  tech. A later message from the person closes open pills; the tile stays. The
+  person's answers are restored after a reload from the logs (`team.states`);
+  tiles come only from kept tool results (`lib/team.ts`), never from prose.
+  Receipts read "Checked the team", "Offered to pass this to Editor",
+  "Suggested a teammate · Care", "Checked the team · Editor already covers
+  this" — never an id.
+
+Proof: `evals/specs/open-coworker-team.e2e.test.ts` (a scripted model plays
+both coworkers so every tool call is exact) plus the unit tests in
+`electron/team.test.mjs`, `electron/team-tools.test.mjs`, `src/lib/team.test.ts`,
+and `src/lib/onboarding-team.test.ts`.
 
 ## Local mode
 
