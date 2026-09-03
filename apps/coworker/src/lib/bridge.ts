@@ -193,6 +193,66 @@ export type ProviderSyncRun = {
   message: string;
 };
 
+/**
+ * Something already on this Mac a coworker could use. `how` says what Connect
+ * does: `import` hands an existing sign-in to the AI service as it is, `add`
+ * points the AI service at a local server, `in-use` is already available, and
+ * `unavailable` carries the plain reason. Never a path to a secret file, never
+ * a value.
+ */
+export type LocalProviderFinding = {
+  id: string;
+  kind: "codex" | "claude-code" | "copilot" | "opencode" | "env" | "server";
+  label: string;
+  detail: string;
+  providerId: string;
+  how: "import" | "add" | "in-use" | "unavailable";
+  reason: string;
+  envName?: string;
+  address?: string;
+  models?: string[];
+};
+
+export type LocalProviderDetection = { found: LocalProviderFinding[]; checkedAt: number };
+
+/** One AI provider as the AI service knows it, whether or not anything connects it yet. */
+export type EngineProviderSummary = {
+  id: string;
+  name: string;
+  /** Environment variable names that would connect it; the first is the key's usual name. */
+  env: string[];
+  source: string;
+  connected: boolean;
+  modelCount: number;
+};
+
+export type LocalProvidersReadiness = {
+  workspaceId: string;
+  engineManaged: boolean;
+  providers: EngineProviderSummary[];
+  /** Provider id → the AI service's own sign-in flows (browser or device code). */
+  signIns: Record<string, Array<{ index: number; label: string }>>;
+};
+
+export type LocalProviderConnected = { status: "connected"; providerId: string; label: string; modelCount: number };
+export type LocalProviderConnectResult =
+  | LocalProviderConnected
+  | { status: "failed"; providerId: string; label: string; error: string; fallback: "sign-in" };
+
+export type ProviderSignInStart = {
+  attemptId: string;
+  providerId: string;
+  url: string;
+  /** A device code to enter in the browser, when the flow uses one. */
+  code: string;
+  instructions: string;
+  label: string;
+};
+
+export type ProviderSignInStatus = { state: "waiting" | "connected" | "failed"; error: string; modelCount: number };
+
+export type ProviderDisconnectResult = { removed: boolean; needsConfirmation: boolean; note: string };
+
 /** What one turn update may change: the whole speaker list, one speaker's progress, routing, or status. */
 export type GroupTurnPatch = {
   speakers?: Array<Pick<GroupSpeakerRun, "slug"> & Partial<Omit<GroupSpeakerRun, "slug" | "order">>>;
@@ -350,6 +410,31 @@ export const coworkerBridge = {
       invoke<ProviderSyncRun>("den.session.set", session),
     clearSession: () => invoke<{ ok: boolean }>("den.session.clear"),
     syncProviders: () => invoke<ProviderSyncRun>("den.providers.sync"),
+  },
+  /**
+   * AI providers on this Mac. Everything goes through the AI service's own
+   * credential store and sign-in flows in the main process; a key typed here
+   * travels once and is never read back.
+   */
+  localProviders: {
+    /** Make sure the AI service is reachable (before any coworker exists too) and read what it offers. */
+    prepare: () => invoke<LocalProvidersReadiness>("localProviders.prepare"),
+    detect: () => invoke<LocalProviderDetection>("localProviders.detect"),
+    connect: (id: string) => invoke<LocalProviderConnectResult>("localProviders.connect", { id }),
+    saveKey: (providerId: string, key: string) => invoke<LocalProviderConnected>("localProviders.saveKey", { providerId, key }),
+    disconnect: (providerId: string, confirmed: boolean) =>
+      invoke<ProviderDisconnectResult>("localProviders.disconnect", { providerId, confirmed }),
+    signIn: {
+      start: (providerId: string, method?: number) => invoke<ProviderSignInStart>("localProviders.signIn.start", { providerId, method }),
+      status: (attemptId: string) => invoke<ProviderSignInStatus>("localProviders.signIn.status", { attemptId }),
+      cancel: (attemptId: string) => invoke<{ ok: boolean }>("localProviders.signIn.cancel", { attemptId }),
+    },
+    custom: {
+      /** Lists the models a server answers with before anything is saved. */
+      probe: (address: string, key: string) => invoke<{ address: string; models: string[] }>("localProviders.custom.probe", { address, key }),
+      add: (input: { name: string; address: string; key: string; models: string[] }) =>
+        invoke<LocalProviderConnected>("localProviders.custom.add", input),
+    },
   },
   /**
    * Subscribe to OS-delivered `opencoworker://` links. Links that arrived

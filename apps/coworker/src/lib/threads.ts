@@ -87,6 +87,48 @@ const sessionListSchema = z.array(
  */
 export type ModelSource = "cloud" | "local";
 
+/**
+ * What stands behind a model, in the order a coworker should prefer when
+ * nobody chose: the OpenWork account, a subscription or key on this Mac, a
+ * model server running on this Mac, and last the free model that needs
+ * nothing at all.
+ */
+export type ModelTier = "cloud" | "key" | "local-server" | "free";
+
+export const MODEL_TIER_ORDER: readonly ModelTier[] = ["cloud", "key", "local-server", "free"];
+
+/** The provider whose models cost nothing and need no setup. */
+export const FREE_PROVIDER_ID = "opencode";
+
+function isPrivateHost(hostname: string): boolean {
+  const host = hostname.replace(/^\[|\]$/g, "").toLowerCase();
+  return host === "localhost"
+    || host === "::1"
+    || host.endsWith(".local")
+    || /^127\./.test(host)
+    || /^10\./.test(host)
+    || /^192\.168\./.test(host)
+    || /^172\.(1[6-9]|2\d|3[01])\./.test(host)
+    || host === "0.0.0.0";
+}
+
+/** A provider whose address is on this machine or the local network serves models locally. */
+export function isLocalServerProvider(provider: { id: string; options?: Record<string, unknown> }): boolean {
+  const baseURL = provider.options?.baseURL;
+  if (typeof baseURL !== "string" || !baseURL.trim()) return false;
+  try {
+    return isPrivateHost(new URL(baseURL).hostname);
+  } catch {
+    return false;
+  }
+}
+
+export function modelTier(provider: { id: string; options?: Record<string, unknown> }, source: ModelSource): ModelTier {
+  if (source === "cloud") return "cloud";
+  if (provider.id === FREE_PROVIDER_ID) return "free";
+  return isLocalServerProvider(provider) ? "local-server" : "key";
+}
+
 export type EngineModelOption = {
   /** "providerId/modelId" */
   id: string;
@@ -100,6 +142,7 @@ export type EngineModelOption = {
   variants: string[];
   isProviderDefault: boolean;
   source: ModelSource;
+  tier: ModelTier;
   /** Coworkers work through tools (files, MCP); a model without tool calls cannot do the job. */
   toolCall: boolean;
   reasoning: boolean;
@@ -169,6 +212,7 @@ export function connectedModelCatalog(
         variants: sortedVariants(model.variants),
         isProviderDefault: value.default?.[provider.id] === modelId,
         source,
+        tier: modelTier(provider, source),
         // Older catalogs omit capabilities; treat unknown as capable rather than hiding a usable model.
         toolCall: model.capabilities?.toolcall ?? true,
         reasoning: model.capabilities?.reasoning ?? false,
@@ -189,10 +233,12 @@ export function connectedModelCatalog(
 
 /**
  * The model a coworker should start on when nobody chose one: a connected,
- * tool-capable, non-deprecated model — from the OpenWork account when signed
- * in, else from this Mac — preferring the provider's own default, then the
- * newest release. Returns null when no connected model can use tools, so the
- * caller can say so instead of picking something that would fail.
+ * tool-capable, non-deprecated model from the best tier available — the
+ * OpenWork account, then a subscription or key on this Mac, then a local model
+ * server, and only then the free model — preferring the provider's own
+ * default, then the newest release. Returns null when no connected model can
+ * use tools, so the caller can say so instead of picking something that would
+ * fail. Coworkers that chose a model keep it; this only fills a blank.
  */
 export function recommendModel(
   catalog: Pick<EngineModelCatalog, "models">,
@@ -202,9 +248,8 @@ export function recommendModel(
   const candidates = catalog.models.filter(
     (model) => model.toolCall && model.status !== "deprecated" && !excluded.has(model.id),
   );
-  const pool = candidates.some((model) => model.source === "cloud")
-    ? candidates.filter((model) => model.source === "cloud")
-    : candidates;
+  const bestTier = MODEL_TIER_ORDER.find((tier) => candidates.some((model) => model.tier === tier));
+  const pool = bestTier ? candidates.filter((model) => model.tier === bestTier) : [];
   // Coworkers do multi-step tool work, so among provider defaults a reasoning
   // model beats a chat alias; then the newest release.
   return [...pool].sort((left, right) =>
