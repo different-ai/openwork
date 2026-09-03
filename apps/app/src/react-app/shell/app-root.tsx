@@ -48,6 +48,9 @@ import { ShellConfigProvider } from "./shell-config";
 import { WelcomeRoute } from "./welcome-route";
 import { readOrgSelectionPending } from "../../app/lib/den-sign-in-intent";
 import { signedInRoute } from "./den-signin-routing";
+import { DomainRoute } from "@/react-app/domains/domain-route";
+// Side-effect: registra os domínios de negócio (Core → Domínio → Entidade).
+import "@/react-app/domains/domain-bootstrap";
 
 
 type DenSigninGateProps = {
@@ -493,6 +496,24 @@ export function AppRoot() {
                 element={
                   <DevProfiler id="SettingsRoute">
                     <SettingsRoute />
+                  </DevProfiler>
+                }
+              />
+              {/* Rotas genéricas de domínios: /dominios/:domainId/* (Core desconhece o
+                  domínio específico; o domínio registrado renderiza a rota). */}
+              <Route
+                path="/dominios/:domainId"
+                element={
+                  <DevProfiler id="DomainRoute">
+                    <DomainRoute />
+                  </DevProfiler>
+                }
+              />
+              <Route
+                path="/dominios/:domainId/*"
+                element={
+                  <DevProfiler id="DomainRoute">
+                    <DomainRoute />
                   </DevProfiler>
                 }
               />

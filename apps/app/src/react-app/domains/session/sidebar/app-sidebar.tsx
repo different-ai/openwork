@@ -108,6 +108,7 @@ import {
 } from "@/components/ui/select";
 
 import { SidebarContext, useSidebarContext } from "./app-sidebar-provider";
+import { DomainsSidebarGroup } from "../../../domains/domain-sidebar-group";
 import { AccountStatusMenu, type AccountStatusMenuProps } from "./account-status-menu";
 import { usePlatform } from "../../../kernel/platform";
 import {
@@ -1228,6 +1229,8 @@ export function AppSidebar(props: AppSidebarProps) {
             data-session-number-modifier-held={props.sessionNumberShortcuts.modifierHeld ? "true" : undefined}
             className="no-scrollbar flex min-h-0 flex-1 flex-col gap-0 overflow-auto [--radius:var(--radius-md)] group-data-[collapsible=icon]:overflow-hidden"
           >
+            {/* Domínios de negócio (Core → Domínio → Entidade) — genérico, sem conceito de Engenharia. */}
+            <DomainsSidebarGroup />
             {pinnedSessions.length > 0 ? (
               <GlobalPinnedSessions entries={pinnedSessions} />
             ) : null}
