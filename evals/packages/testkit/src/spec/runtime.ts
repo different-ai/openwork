@@ -6,6 +6,7 @@ import {
   evalIn,
   listSessions,
   readComposerState,
+  renameSessionAndWait,
   signInDesktopAs,
   waitUntilInteractive,
 } from "@openwork/behaviors";
@@ -497,7 +498,7 @@ export class SeedChannel implements Seed {
       const seeded: { sessionId: string; title: string }[] = [];
       for (const title of titles) {
         const sessionId = await createSessionWhenReady(app);
-        await control(app, "session.rename", { sessionId, title });
+        await renameSessionAndWait((action, args) => control(app, action, args), sessionId, title);
         seeded.push({ sessionId, title });
       }
       const observed = await listSessions(app);

@@ -14,6 +14,8 @@ const REPO_ROOT = fileURLToPath(new URL("../../../..", import.meta.url));
 const DESKTOP_READY_TIMEOUT_MS = 300_000;
 const INSTALL_TIMEOUT_MS = 25 * 60 * 1_000;
 const SERVER_SCRIPT_TIMEOUT_MS = 20 * 60 * 1_000;
+const VITE_PREWARM_TIMEOUT_MS = 180_000;
+const READINESS_POLL_INTERVAL_MS = 5_000;
 const HTTPS_URL = /https:\/\/[^\s"'<>)]+/;
 const DEN_WEB_PORT = 3005;
 const DEN_API_PORT = 8788;
@@ -96,6 +98,10 @@ export interface ConnectorE2eTestEnv {
 
 function messageText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function isInfrastructureReadinessError(error: unknown): boolean {
+  return /(?:status|HTTP) 502|connection refused|ECONNREFUSED/i.test(messageText(error));
 }
 
 function outputTail(result: DaytonaExecResult): string {
@@ -406,11 +412,24 @@ log = open("/tmp/vite-prewarm.log", "ab", buffering=0)
 subprocess.Popen(["bash", "-lc", "cd /workspace && pnpm -w dev:ui"], stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT, start_new_session=True, close_fds=True)
 PYEOF
 echo detached`;
-    await execInSandbox(exec, sandbox, detachScript, { timeoutMs: 30_000, context: `Vite prewarm detach for ${sandbox}` });
-
-    const deadline = Date.now() + 180_000;
+    const deadline = Date.now() + VITE_PREWARM_TIMEOUT_MS;
     let last = "not attempted";
+    let detached = false;
     while (Date.now() < deadline) {
+      if (!detached) {
+        try {
+          await execInSandbox(exec, sandbox, detachScript, {
+            timeoutMs: Math.min(30_000, Math.max(1, deadline - Date.now())),
+            context: `Vite prewarm detach for ${sandbox}`,
+          });
+          detached = true;
+        } catch (error) {
+          if (!isInfrastructureReadinessError(error)) throw error;
+          last = messageText(error);
+          await delay(Math.min(READINESS_POLL_INTERVAL_MS, Math.max(0, deadline - Date.now())));
+          continue;
+        }
+      }
       try {
         const result = await execInSandbox(
           exec,
@@ -423,7 +442,7 @@ echo detached`;
       } catch (error) {
         last = messageText(error);
       }
-      await delay(5_000);
+      await delay(Math.min(READINESS_POLL_INTERVAL_MS, Math.max(0, deadline - Date.now())));
     }
     const viteLog = await execInSandbox(
       exec,
@@ -431,7 +450,8 @@ echo detached`;
       "tail -80 /tmp/vite-prewarm.log 2>&1 || true",
       { timeoutMs: 30_000, context: `Vite prewarm log for ${sandbox}` },
     );
-    throw new Error(`Vite prewarm gate failed for ${sandbox}: last probe ${last}. Log tail:\n${outputTail(viteLog)}`);
+    const phase = detached ? "Vite to answer on port 5173" : "the Daytona exec tunnel to accept the detach command";
+    throw new Error(`Vite prewarm gate timed out after ${VITE_PREWARM_TIMEOUT_MS}ms waiting for ${phase} in ${sandbox}. Last readiness error: ${last}. Log tail:\n${outputTail(viteLog)}`);
   });
 
   return { sandbox, created: !reused };
