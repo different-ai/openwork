@@ -281,16 +281,24 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   if (!isRecord(decisionCard) || !Array.isArray(decisionCard.options)) throw new Error("Decision card facts were unavailable.");
   expect(String(decisionCard.text)).toMatch(/color/i);
   expect(decisionCard.options.length).toBeGreaterThanOrEqual(2);
-  // Once the coworker's own review reply has settled, the header says the Worker needs the person.
+  // Once the coworker's own review reply has settled, the header says the person is needed — for the Worker's
+  // decision, or for a question the coworker chose to ask about it.
   const headerWhileDeciding = await waitFor(app, `(() => {
     const status = document.querySelector('[data-testid="coworker-top-status"]')?.textContent?.trim() ?? "";
-    return status === "Needs you" ? status : false;
-  })()`, { timeoutMs: 300_000, label: "header saying Needs you for the Worker's decision" });
-  expect(headerWhileDeciding).toBe("Needs you");
+    return status === "Needs you" || status === "Waiting for an answer" ? status : false;
+  })()`, { timeoutMs: 300_000, label: "header saying the person is needed for the Worker's decision" });
+  expect(String(headerWhileDeciding)).toMatch(/^(Needs you|Waiting for an answer)$/);
   const greenOption = decisionCard.options.findIndex((option) => /green/i.test(String(option)));
   expect(greenOption).toBeGreaterThanOrEqual(0);
   await evalIn(app, `document.querySelectorAll('[data-testid="worker-decision-card"] [data-testid="interaction-option"]')[${greenOption}].click(); true`);
   await waitFor(app, `!document.querySelector('[data-testid="worker-decision-card"]')`, { timeoutMs: 30_000, label: "the decision card gone once answered" });
+  // If the coworker also asked the person about it, answer that too so the discussion is free again.
+  await evalIn(app, `(() => {
+    const option = [...document.querySelectorAll('[data-testid="question-card"] [data-testid="interaction-option"]')].find((candidate) => /green/i.test(candidate.textContent ?? ""))
+      ?? document.querySelector('[data-testid="question-card"] [data-testid="interaction-option"]');
+    if (option instanceof HTMLElement) option.click();
+    return true;
+  })()`);
   const decided = await waitForWorker(app, deciderId, (worker) => worker.status === "finished", { timeoutMs: 300_000, label: "the deciding Worker to finish" });
   expect(decided.steerCount).toBe(1);
   const deciderEvents = await workerEvents(app, deciderId);
