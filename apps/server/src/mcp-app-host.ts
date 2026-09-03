@@ -17,7 +17,9 @@ import {
   createLocalManagedMcpGuardedFetch,
   LocalManagedMcpPrivateUrlError,
 } from "./local-managed-mcp-url-guard.js";
+import { OPENWORK_CLOUD_MCP_NAME } from "./cloud-mcp-health.js";
 import { diagnoseMcpToolDenies, listMcp } from "./mcp.js";
+import { readGlobalRuntimeMcpConfig } from "./runtime-opencode-config-store.js";
 
 const MCP_APP_EXTENSION = "io.modelcontextprotocol/ui";
 const MCP_APP_MIME_TYPE = "text/html;profile=mcp-app";
@@ -803,7 +805,14 @@ export async function callMcpAppTool(input: {
     serverName: input.serverName,
   });
   const configured = privateItem ? [] : await listMcp(input.serverConfig, input.workspaceId, input.workspaceRoot);
-  const item = privateItem ?? configured.find((candidate) => candidate.name === input.serverName);
+  // The Connect gateway is account-scoped: its authoritative row is the engine-global one, which
+  // the workspace inventory does not repeat, so an app-audience call to it reads that row.
+  const globalGateway = !privateItem && input.serverName === OPENWORK_CLOUD_MCP_NAME && !configured.some((candidate) => candidate.name === input.serverName)
+    ? await readGlobalRuntimeMcpConfig(input.serverConfig, input.serverName)
+    : null;
+  const item = privateItem
+    ?? configured.find((candidate) => candidate.name === input.serverName)
+    ?? (globalGateway ? { name: input.serverName, config: globalGateway } : undefined);
   if (!item || item.config.enabled === false) {
     throw new McpAppHostError("server_unavailable", "The originating MCP server is not available to this workspace.");
   }
