@@ -11,25 +11,64 @@ export type CoworkerGroupSummary = {
   participantSlugs: string[];
   /** The native discussion thread each participant uses for this group, in its own workspace. */
   participantThreadIds: Record<string, string>;
+  /** "providerId/modelId" for the silent facilitator; empty means Automatic. */
   facilitatorModel: string;
+  /** The facilitator's own native thread for this group, in the hidden coordinator workspace. */
+  facilitatorThreadId: string;
+  /** The last turns, oldest first: what the view and recovery read instead of component state. */
+  turns: CoworkerGroupTurn[];
   createdAt: number;
   updatedAt: number;
   archivedAt: number | null;
 };
 
-export type GroupTimelineEventKind = "user" | "coworker" | "status";
+export type GroupSpeakerStatus = "queued" | "running" | "succeeded" | "passed" | "failed" | "stopped";
+/** A speaker replies to the person, follows up on another coworker, or wraps the round up. */
+export type GroupSpeakerPart = "reply" | "follow-up" | "wrap-up";
+
+export type GroupSpeakerRun = {
+  slug: string;
+  order: number;
+  status: GroupSpeakerStatus;
+  part: GroupSpeakerPart;
+  /** One sentence from the facilitator on what this coworker should cover; empty when none. */
+  brief: string;
+  threadId: string;
+  error: string;
+  startedAt: number | null;
+  endedAt: number | null;
+};
+
+export type GroupTurnStatus = "routing" | "running" | "succeeded" | "partial" | "failed" | "stopped";
+
+export type CoworkerGroupTurn = {
+  id: string;
+  clientMessageId: string;
+  prompt: string;
+  createdAt: number;
+  updatedAt: number;
+  status: GroupTurnStatus;
+  mode: "sequential" | "parallel";
+  routedBy: "facilitator" | "mentions" | "fallback";
+  speakers: GroupSpeakerRun[];
+};
+
+export type GroupTimelineEventKind = "user" | "coworker" | "status" | "action";
 
 export type GroupTimelineEvent = {
   id: string;
   at: number;
   kind: GroupTimelineEventKind;
   text: string;
-  /** The coworker who spoke (coworker events) or whom a status concerns. */
+  /** The coworker who spoke (coworker events) or whom a status or action concerns. */
   slug?: string;
   turnId?: string;
   clientMessageId?: string;
   status?: string;
   threadId?: string;
+  /** What an action line links to, e.g. `assignment`. */
+  action?: string;
+  title?: string;
 };
 
 export type CoworkerSummary = {
@@ -153,6 +192,15 @@ export type ProviderSyncRun = {
   message: string;
 };
 
+/** What one turn update may change: the whole speaker list, one speaker's progress, routing, or status. */
+export type GroupTurnPatch = {
+  speakers?: Array<Pick<GroupSpeakerRun, "slug"> & Partial<Omit<GroupSpeakerRun, "slug" | "order">>>;
+  speaker?: Pick<GroupSpeakerRun, "slug"> & Partial<Omit<GroupSpeakerRun, "slug" | "order">>;
+  mode?: CoworkerGroupTurn["mode"];
+  routedBy?: CoworkerGroupTurn["routedBy"];
+  status?: GroupTurnStatus;
+};
+
 type BridgeResponse = { ok: true; result: unknown } | { ok: false; error: string };
 
 type BridgeWindow = Window & {
@@ -194,12 +242,18 @@ export const coworkerBridge = {
     list: () => invoke<CoworkerGroupSummary[]>("groups.list"),
     get: (id: string) => invoke<CoworkerGroupSummary>("groups.get", { id }),
     create: (input: { name: string; participantSlugs: string[] }) => invoke<CoworkerGroupSummary>("groups.create", input),
-    update: (id: string, patch: Partial<Pick<CoworkerGroupSummary, "name" | "participantSlugs" | "participantThreadIds" | "facilitatorModel">>) =>
+    update: (id: string, patch: Partial<Pick<CoworkerGroupSummary, "name" | "participantSlugs" | "participantThreadIds" | "facilitatorModel" | "facilitatorThreadId">>) =>
       invoke<CoworkerGroupSummary>("groups.update", { id, patch }),
     archive: (id: string) => invoke<CoworkerGroupSummary>("groups.archive", { id }),
     readTimeline: (id: string, limit?: number) => invoke<GroupTimelineEvent[]>("groups.readTimeline", { id, limit }),
     appendEvent: (id: string, event: Omit<GroupTimelineEvent, "id" | "at"> & Partial<Pick<GroupTimelineEvent, "id" | "at">>) =>
       invoke<GroupTimelineEvent>("groups.appendEvent", { id, event }),
+    /** Opens the turn and writes the person's line; the same client message id returns the existing turn. */
+    beginTurn: (id: string, input: { clientMessageId: string; prompt: string }) =>
+      invoke<{ group: CoworkerGroupSummary; turn: CoworkerGroupTurn; created: boolean; userEvent: GroupTimelineEvent | null }>("groups.beginTurn", { id, ...input }),
+    updateTurn: (id: string, turnId: string, patch: GroupTurnPatch) => invoke<CoworkerGroupTurn>("groups.updateTurn", { id, turnId, patch }),
+    /** Settle every turn a quit or reload cut off; returns which ones it touched. */
+    recoverInterrupted: () => invoke<{ groupId: string; turnId: string }[]>("groups.recoverInterrupted"),
   },
   files: {
     list: (slug: string) => invoke<CoworkerMemoryFile[]>("coworkers.files.list", { slug }),

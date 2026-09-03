@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { coworkerBridge, type CoworkerGroupSummary, type CoworkerSummary, type ProviderSyncRun, type RuntimeInfo } from "@/lib/bridge";
+import { coworkerBridge, type CoworkerGroupSummary, type CoworkerGroupTurn, type CoworkerSummary, type ProviderSyncRun, type RuntimeInfo } from "@/lib/bridge";
+import { subscribeGroupRuns } from "@/lib/group-runs";
+import { describeGroupActivity } from "@/lib/groups";
 import {
   createDenAutomationsClient,
   exchangeGrant,
@@ -63,6 +65,8 @@ export default function App() {
   const replaceGroup = useCallback((group: CoworkerGroupSummary) => {
     setGroups((current) => [group, ...current.filter((item) => item.id !== group.id)].sort((a, b) => b.updatedAt - a.updatedAt));
   }, []);
+  /** A request to open one coworker's settings at a section, made from elsewhere (a group's "Choose AI model"). */
+  const [homeSettingsRequest, setHomeSettingsRequest] = useState<{ id: number; slug: string; section: "model" } | null>(null);
   const [connecting, setConnecting] = useState(false);
   const [onboardingReady, setOnboardingReady] = useState(false);
   const [globalSettings, setGlobalSettings] = useState<SettingsSection | null>(null);
@@ -89,6 +93,8 @@ export default function App() {
       const info = await coworkerBridge.runtimeInfo();
       setRuntime(info);
       setBots(list);
+      // A fresh window runs no group turn, so any still recorded as running was cut off: settle it first.
+      await coworkerBridge.groups.recoverInterrupted().catch(() => []);
       setGroups(await coworkerBridge.groups.list().catch(() => []));
       setSelectedSlug((current) =>
         current && list.some((coworker) => coworker.slug === current) ? current : (list[0]?.slug ?? ""),
@@ -102,6 +108,24 @@ export default function App() {
   useEffect(() => {
     void boot();
   }, [boot]);
+
+  // A group turn keeps running when its view is closed; the rail line still says who is replying.
+  useEffect(() => {
+    const lastTurn = new Map<string, CoworkerGroupTurn>();
+    return subscribeGroupRuns((update) => {
+      const nameFor = (slug: string) => coworkers.find((coworker) => coworker.slug === slug)?.name ?? slug;
+      if (update.turn) {
+        lastTurn.set(update.groupId, update.turn);
+        if (update.turn.status === "routing" || update.turn.status === "running") setGroupLine(update.groupId, describeGroupActivity([], nameFor, update.turn));
+      }
+      if (update.done) {
+        const turn = lastTurn.get(update.groupId);
+        const last = turn ? [...turn.speakers].reverse().find((speaker) => speaker.status === "succeeded") : undefined;
+        if (last) setGroupLine(update.groupId, `${nameFor(last.slug)} replied`);
+        lastTurn.delete(update.groupId);
+      }
+    });
+  }, [coworkers, setGroupLine]);
 
   const openGlobalSettings = useCallback((section: SettingsSection = "general") => {
     const opener = document.activeElement;
@@ -644,6 +668,11 @@ export default function App() {
                   setSelectedGroupId("");
                 }}
                 onActivityLine={setGroupLine}
+                onChooseModel={(slug) => {
+                  setSelectedGroupId("");
+                  setSelectedSlug(slug);
+                  setHomeSettingsRequest({ id: Date.now(), slug, section: "model" });
+                }}
               />
             ) : (
             <CoworkerHome
@@ -653,6 +682,7 @@ export default function App() {
               coworkers={coworkers}
               coworker={selected}
               activity={visibleActivityBySlug[selected.slug]}
+              settingsRequest={homeSettingsRequest?.slug === selected.slug ? homeSettingsRequest : null}
               onActivityChange={updateSelectedLiveActivity}
               onCoworkerChanged={updateCoworkerInList}
               onCoworkerRemoved={removeCoworkerFromList}
