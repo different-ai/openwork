@@ -4,12 +4,13 @@ import { briefTest, claim, testBrief } from "@openwork/testkit";
 import type { Client, ProviderListItem, WorkspaceDisplay } from "../../apps/app/src/app/types";
 import { createProviderAuthStore } from "../../apps/app/src/react-app/domains/connections/provider-auth/store";
 
-// Airwallex report (Desktop 0.18.41/0.18.42): a provider named `LiteLLM`
-// defined in the user-level ~/.config/opencode/opencode.json cannot be
-// disconnected from Settings > AI Providers — clicking Disconnect removes no
-// state (auth removal is a no-op because the definition lives in a config
-// file the app never edits), the provider stays connected, and under a
-// managed-models-only desktop policy it cannot be used either.
+// Field report (Desktop 0.18.41/0.18.42): a custom OpenAI-compatible provider
+// (for example a LiteLLM proxy) defined in the user-level
+// ~/.config/opencode/opencode.json cannot be disconnected from
+// Settings > AI Providers — clicking Disconnect removes no state (auth removal
+// is a no-op because the definition lives in a config file the app never
+// edits), the provider stays connected, and under a managed-models-only
+// desktop policy it cannot be used either.
 
 function providerItem(input: {
   id: string;
@@ -147,7 +148,7 @@ briefTest(testBrief({
 }), async ({ prove }) => {
   const { engine, ui, store } = createHarness();
 
-  // --- Config-file provider (the Airwallex LiteLLM case) ---
+  // --- Config-file provider (the reported LiteLLM-proxy case) ---
   const message = await store.disconnectProvider("litellm");
 
   // Auth removal was attempted for exactly this provider (it is a no-op on
