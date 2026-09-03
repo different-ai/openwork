@@ -98,9 +98,17 @@ test("createCoworker writes the minimal coworker filesystem representation", asy
   assert.match(agents, /coworker_soul_update/);
   assert.match(agents, /in that same turn/);
   const opencodeConfig = JSON.parse(await readFile(path.join(coworker.path, "opencode.json"), "utf8"));
-  assert.deepEqual(opencodeConfig.instructions, ["soul.md", "memory/working.md", "memory/index.md", "documents/index.md"]);
+  assert.deepEqual(opencodeConfig.instructions, ["soul.md", "memory/working.md", "memory/index.md", "documents/index.md", "team/roster.md"]);
   const working = await readFile(path.join(coworker.path, "memory", "working.md"), "utf8");
   assert.match(working, /Working memory/);
+  assert.match(working, /Nothing yet\. I was just created\./);
+  // The one coworker on the team reads a description that says so.
+  const roster = await readFile(path.join(coworker.path, "team", "roster.md"), "utf8");
+  assert.match(roster, /^# My team/);
+  assert.match(roster, /I am Research Bot \(Research\)\./);
+  assert.match(roster, /No teammates yet/);
+  assert.equal(coworker.roleId, "");
+  assert.equal(coworker.suggestedBy, null);
   const documentsIndex = await readFile(path.join(coworker.path, "documents", "index.md"), "utf8");
   assert.match(documentsIndex, /^# Documents/);
   assert.match(documentsIndex, /\(none yet\)/);
@@ -131,6 +139,63 @@ test("the coworker contract says how to talk: short replies, depth in a document
   assert.match(agents, /documents\/index\.md/);
 });
 
+test("the coworker contract says how to work with the team: refer before doing a teammate's job, suggest sparingly, never create", () => {
+  const agents = agentsTemplate({ name: "Nova" });
+  assert.match(agents, /## My team/);
+  assert.match(agents, /team\/roster\.md/);
+  assert.match(agents, /`coworker_team_refer` \*\*before\*\* doing the work/);
+  assert.match(agents, /In a group chat I never refer/);
+  assert.match(agents, /`coworker_team_suggest`/);
+  assert.match(agents, /never create, rename, or retire a coworker/);
+  assert.match(agents, /never suggest more than\s+one teammate a day/);
+});
+
+test("every coworker reads a description of its team that follows the team through create, retire, and restore", async () => {
+  const coworkersDir = await tempCoworkersDir();
+  const nova = await createCoworker(coworkersDir, {
+    name: "Nova",
+    role: "Research and synthesis",
+    mission: "I dig into questions.",
+    roleId: "research",
+    firstNote: "Joined the team on Sep 3 to help with research and writing.",
+  });
+  assert.equal(nova.roleId, "research");
+  assert.match(await readFile(path.join(nova.path, "memory", "working.md"), "utf8"), /- Joined the team on Sep 3 to help with research and writing\./);
+
+  const care = await createCoworker(coworkersDir, {
+    name: "Care",
+    role: "Customer support",
+    mission: "I watch the inbox.",
+    roleId: "support",
+    suggestedBy: { slug: "nova", why: "the support inbox comes up every morning" },
+    firstNote: "Joined the team on Sep 3; Nova suggested me because the support inbox comes up every morning.",
+  });
+  assert.deepEqual(care.suggestedBy, { slug: "nova", why: "the support inbox comes up every morning" });
+  const reread = await getCoworker(coworkersDir, "care");
+  assert.deepEqual(reread.suggestedBy, care.suggestedBy, "who suggested a coworker survives a reread");
+
+  // Both descriptions name the other; neither carries the other's memory.
+  const novaRoster = await readFile(path.join(nova.path, "team", "roster.md"), "utf8");
+  assert.match(novaRoster, /- Care \(`care`\) — Customer support — I watch the inbox\./);
+  assert.doesNotMatch(novaRoster, /Nova \(`nova`\)/, "a coworker is not its own teammate");
+  assert.doesNotMatch(novaRoster, /Joined the team/, "another coworker's memory never enters the description");
+  assert.match(await readFile(path.join(care.path, "team", "roster.md"), "utf8"), /- Nova \(`nova`\) — Research and synthesis — I dig into questions\./);
+
+  // A mission change reaches teammates; a model change is not theirs to know.
+  await updateCoworker(coworkersDir, "care", { mission: "I watch the inbox and the chat." });
+  assert.match(await readFile(path.join(nova.path, "team", "roster.md"), "utf8"), /I watch the inbox and the chat\./);
+
+  const retired = await retireCoworker(coworkersDir, "care");
+  assert.match(await readFile(path.join(nova.path, "team", "roster.md"), "utf8"), /No teammates yet/);
+  await restoreCoworker(coworkersDir, retired.archiveId);
+  assert.match(await readFile(path.join(nova.path, "team", "roster.md"), "utf8"), /- Care \(`care`\)/);
+
+  // Unknown catalog ids and malformed proposers are dropped, never stored.
+  const loose = await createCoworker(coworkersDir, { name: "Loose", roleId: "wizard", suggestedBy: { slug: "../x", why: "no" } });
+  assert.equal(loose.roleId, "");
+  assert.equal(loose.suggestedBy, null);
+});
+
 test("repairing an older coworker regenerates only the app-owned contract files", async () => {
   const coworkersDir = await tempCoworkersDir();
   const coworker = await createCoworker(coworkersDir, { name: "Legacy" });
@@ -141,15 +206,19 @@ test("repairing an older coworker regenerates only the app-owned contract files"
   await writeFile(path.join(coworker.path, "soul.md"), "# Soul — Legacy\n\nMy own words.\n", "utf8");
   await writeFile(path.join(coworker.path, "memory", "working.md"), "# Working memory\n\n- remembered\n", "utf8");
 
+  await rm(path.join(coworker.path, "team"), { recursive: true, force: true });
+
   const repaired = await repairCoworkerContract(coworkersDir, "legacy");
-  assert.deepEqual(repaired.changed, ["AGENTS.md", "opencode.json", "documents/index.md"]);
+  assert.deepEqual(repaired.changed, ["AGENTS.md", "opencode.json", "documents/index.md", "team/roster.md"]);
   const agents = await readFile(path.join(coworker.path, "AGENTS.md"), "utf8");
   assert.match(agents, /## How I talk/);
+  assert.match(agents, /## My team/);
   assert.match(agents, /# Legacy — coworker contract/);
   const config = JSON.parse(await readFile(path.join(coworker.path, "opencode.json"), "utf8"));
-  assert.deepEqual(config.instructions, ["soul.md", "memory/working.md", "memory/index.md", "documents/index.md"]);
+  assert.deepEqual(config.instructions, ["soul.md", "memory/working.md", "memory/index.md", "documents/index.md", "team/roster.md"]);
   assert.deepEqual(config.mcp, { keep: { type: "remote", url: "http://x" } }, "other config keys survive the repair");
   assert.match(await readFile(path.join(coworker.path, "documents", "index.md"), "utf8"), /\(none yet\)/);
+  assert.match(await readFile(path.join(coworker.path, "team", "roster.md"), "utf8"), /^# My team/);
   // Soul and memory are the coworker's; the repair never touches them.
   assert.equal(await readFile(path.join(coworker.path, "soul.md"), "utf8"), "# Soul — Legacy\n\nMy own words.\n");
   assert.equal(await readFile(path.join(coworker.path, "memory", "working.md"), "utf8"), "# Working memory\n\n- remembered\n");
@@ -378,7 +447,7 @@ test("the refreshed contract keeps the soul and memory untouched and carries the
   assert.match(agents, /## Keeping memory and soul current/);
   assert.doesNotMatch(agents, /## Working memory duty/);
   const config = JSON.parse(await readFile(path.join(coworker.path, "opencode.json"), "utf8"));
-  assert.deepEqual(config.instructions, ["soul.md", "memory/working.md", "memory/index.md", "documents/index.md"]);
+  assert.deepEqual(config.instructions, ["soul.md", "memory/working.md", "memory/index.md", "documents/index.md", "team/roster.md"]);
   assert.deepEqual(config.mcp, { notes: { type: "remote", url: "http://127.0.0.1:1/mcp" } });
   assert.equal(config.$schema, "https://opencode.ai/config.json");
   assert.equal(await readFile(soulPath, "utf8"), "# Soul — Pilot\n\n## Role\n\nOps lead, edited by hand.\n");
