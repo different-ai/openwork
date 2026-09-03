@@ -164,6 +164,10 @@ function optimisticMessage(turn: { messageId: string; prompt: string }): Transcr
 }
 
 const EMPTY_REPLY_MESSAGE = "The model stopped before producing a response.";
+// Reconcile the transcript frequently even though a genuinely long turn is
+// allowed to keep working. In particular, a retry reuses its message id and
+// some engine versions do not report that replacement as a fresh settlement.
+const TURN_OBSERVER_SLICE_MS = 5_000;
 
 /** A reply the engine closed with neither words nor work behind it: the provider went quiet, not an answer. */
 function endedEmpty(message: Pick<TranscriptMessage, "text" | "toolCalls" | "completedAt" | "error">): boolean {
@@ -1314,10 +1318,12 @@ function ThreadView({
       const controller = new AbortController();
       waitControllerRef.current = controller;
       refreshTimer = window.setInterval(() => void refresh(), 600);
-      let result = await threads.client.waitForThread(threadId, { timeoutMs: WAIT_BUDGET_MS, pollIntervalMs: 500, since: acceptance, signal: controller.signal });
-      // The budget passing is not the reply failing: while the engine still owns the turn, keep waiting.
+      let result = await threads.client.waitForThread(threadId, { timeoutMs: TURN_OBSERVER_SLICE_MS, pollIntervalMs: 500, since: acceptance, signal: controller.signal });
+      // An observation slice ending is not the reply failing: while the engine
+      // still owns the turn, keep watching. The separate clock above decides
+      // when the conversation says "Still working".
       while (result.outcome === "timeout" && isRunning(result.snapshot.status)) {
-        result = await threads.client.waitForThread(threadId, { timeoutMs: WAIT_BUDGET_MS, pollIntervalMs: 500, since: acceptance, signal: controller.signal });
+        result = await threads.client.waitForThread(threadId, { timeoutMs: TURN_OBSERVER_SLICE_MS, pollIntervalMs: 500, since: acceptance, signal: controller.signal });
       }
       await refresh();
       // Keep the optimistic working state through the transcript commit. Without
@@ -1393,9 +1399,9 @@ function ThreadView({
       waitControllerRef.current = controller;
       refreshTimer = window.setInterval(() => void refresh(), 600);
       const since = { messageCountBefore: 0, messageId: turn.messageId };
-      let result = await threads.client.waitForThread(threadId, { timeoutMs: WAIT_BUDGET_MS, pollIntervalMs: 500, since, signal: controller.signal });
+      let result = await threads.client.waitForThread(threadId, { timeoutMs: TURN_OBSERVER_SLICE_MS, pollIntervalMs: 500, since, signal: controller.signal });
       while (result.outcome === "timeout" && isRunning(result.snapshot.status)) {
-        result = await threads.client.waitForThread(threadId, { timeoutMs: WAIT_BUDGET_MS, pollIntervalMs: 500, since, signal: controller.signal });
+        result = await threads.client.waitForThread(threadId, { timeoutMs: TURN_OBSERVER_SLICE_MS, pollIntervalMs: 500, since, signal: controller.signal });
       }
       await refresh();
       if (result.outcome === "settled") commitTurnState(clearPending);
