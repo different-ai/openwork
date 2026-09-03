@@ -78,8 +78,6 @@ function createOpenworkDouble(input?: { beats?: Beat[]; messages?: MessageWire[]
       return Response.json(session);
     }
     if (method === "GET" && parsed.pathname === `/workspace/ws_1/opencode/session/${SESSION_ID}`) {
-      activeBeat = beats[Math.min(beatIndex, beats.length - 1)];
-      beatIndex += 1;
       return Response.json(session);
     }
     if (method === "GET" && parsed.pathname === `/workspace/ws_1/opencode/session/${SESSION_ID}/message`) {
@@ -89,6 +87,9 @@ function createOpenworkDouble(input?: { beats?: Beat[]; messages?: MessageWire[]
       return Response.json([]);
     }
     if (method === "GET" && parsed.pathname === "/workspace/ws_1/opencode/session/status") {
+      // Every poll reads the status once, so the status read is the beat of the engine's clock.
+      activeBeat = beats[Math.min(beatIndex, beats.length - 1)];
+      beatIndex += 1;
       const status = activeBeat?.status;
       return Response.json(status === undefined || status.type === "idle" ? {} : { [SESSION_ID]: status });
     }
@@ -442,11 +443,12 @@ describe("getThreadSnapshot", () => {
 
     const pending = client.getThreadSnapshot(SESSION_ID);
     await allStarted;
+    // All four go out together; the status read leads because it decides what the rest means.
     expect(requests).toEqual([
+      "/workspace/ws_1/opencode/session/status",
       "/workspace/ws_1/opencode/session/ses_1",
       "/workspace/ws_1/opencode/session/ses_1/message",
       "/workspace/ws_1/opencode/session/ses_1/todo",
-      "/workspace/ws_1/opencode/session/status",
     ]);
     releaseRequests();
 
@@ -556,6 +558,27 @@ describe("waitForThread", () => {
     expect(result.snapshot.status).toEqual({ type: "idle" });
   });
 
+  test("polls a running turn by its status alone and reads the transcript once it may have settled", async () => {
+    const double = createOpenworkDouble({
+      beats: [
+        { status: { type: "busy" }, messages: [reply("msg_1", "user")] },
+        { status: { type: "busy" }, messages: [reply("msg_1", "user")] },
+        { status: { type: "idle" }, messages: [reply("msg_1", "user"), reply("msg_2", "assistant", "Answer.")] },
+      ],
+    });
+
+    const result = await createClient(double).waitForThread(SESSION_ID, { timeoutMs: 10_000, pollIntervalMs: 100 });
+
+    expect(result.outcome).toBe("settled");
+    expect(result.polls).toBe(3);
+    const reads = (suffix: string) => double.requests.filter((request) => request.method === "GET" && request.path.endsWith(suffix)).length;
+    // Three status reads, but the growing transcript was read only when the status stopped saying busy.
+    expect(reads("/session/status")).toBe(3);
+    expect(reads(`/session/${SESSION_ID}/message`)).toBe(1);
+    expect(reads(`/session/${SESSION_ID}/todo`)).toBe(1);
+    expect(result.snapshot.messages.at(-1)?.id).toBe("msg_2");
+  });
+
   test("ignores an assistant reply that predates the turn being waited on", async () => {
     const before = [reply("msg_1", "user"), reply("msg_2", "assistant", "First answer.")];
     const double = createOpenworkDouble({
@@ -615,7 +638,7 @@ describe("waitForThread", () => {
     let polls = 0;
     const double = createOpenworkDouble({ beats: [{ status: { type: "busy" }, messages: [reply("msg_1", "user")] }] });
     const fetchImpl: HeadlessFetch = async (url, init) => {
-      if (new URL(url).pathname.endsWith("/message") && init?.signal) {
+      if (new URL(url).pathname.endsWith("/session/status") && init?.signal) {
         polls += 1;
         // The caller stops while this read is in flight: the request itself rejects with the abort.
         if (polls === 2) {
@@ -756,7 +779,8 @@ describe("failures", () => {
     if (!(error instanceof HeadlessThreadError)) throw new Error("expected a HeadlessThreadError");
     expect(error.code).toBe("request_failed");
     expect(error.method).toBe("GET");
-    expect(error.path).toBe("/workspace/ws_1/opencode/session/ses_1");
+    // The status read is asked first, so it is the one whose bound trips.
+    expect(error.path).toBe("/workspace/ws_1/opencode/session/status");
     expect(error.status).toBeNull();
   });
 
