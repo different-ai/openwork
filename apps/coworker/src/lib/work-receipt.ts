@@ -5,12 +5,16 @@
  * transcript only renders what these return. Technical names stay available to
  * the details disclosure, never in the collapsed line.
  */
+import { documentToolName, humanizeDocumentId, structuredContextChanges, structuredDocument } from "./documents.ts";
 
 export type WorkStepInput = {
   tool: string;
   status: string;
   input: Record<string, unknown>;
   error?: string | null;
+  /** The tool's result and kept metadata, when the transcript has them; documents name themselves through these. */
+  output?: unknown;
+  metadata?: Record<string, unknown>;
 };
 
 export type WorkStepState = "running" | "done" | "failed";
@@ -68,6 +72,54 @@ function serviceName(server: string): string {
   return titleCase(server);
 }
 
+function joinTitles(titles: string[]): string {
+  if (titles.length <= 2) return titles.join(" and ");
+  return `${titles.slice(0, 2).join(", ")} and ${titles.length - 2} more`;
+}
+
+/**
+ * The coworker's own document tools, in the words the person reads between
+ * bubbles: "Wrote a document · Launch plan", "Updated Launch plan · Timeline
+ * section", "Put aside · Old vendor notes". The document names itself through
+ * the kept result when there is one, else through the call's input.
+ */
+function describeDocumentStep(name: string, call: WorkStepInput, step: (label: string, doing: string, service: string) => WorkStep): WorkStep {
+  const input = call.input ?? {};
+  const kept = call.output !== undefined || call.metadata ? structuredDocument({ output: call.output, metadata: call.metadata ?? {} }) : null;
+  const id = text(kept?.id) || text(input.id);
+  const title = text(kept?.title) || text(input.title) || (id ? humanizeDocumentId(id) : "");
+  switch (name) {
+    case "documents_list":
+      return step("Looked over its documents", "looking over its documents", "documents");
+    case "document_create":
+      return step(title ? `Wrote a document · ${title}` : "Wrote a document", "writing a document", "documents");
+    case "document_update": {
+      const patch = typeof input.patch === "object" && input.patch !== null && !Array.isArray(input.patch) ? input.patch : null;
+      const section = text(kept?.section) || (patch && "heading" in patch ? text(patch.heading) : "");
+      const subject = title || "a document";
+      return step(section ? `Updated ${subject} · ${section} section` : `Updated ${subject}`, `updating ${subject}`, "documents");
+    }
+    case "document_read":
+      return step(title ? `Read a document · ${title}` : "Read a document", "reading a document", "documents");
+    case "document_archive":
+      return step(title ? `Archived · ${title}` : "Archived a document", "archiving a document", "documents");
+    default: {
+      const changed = call.output !== undefined || call.metadata ? structuredContextChanges({ output: call.output, metadata: call.metadata ?? {} }) : [];
+      const asideIds = Array.isArray(input.aside) ? input.aside.map((entry) => text(entry)).filter(Boolean) : [];
+      const activeIds = Array.isArray(input.active) ? input.active.map((entry) => text(entry)).filter(Boolean) : [];
+      const asideTitles = changed.filter((entry) => entry.status === "aside").map((entry) => entry.title);
+      const activeTitles = changed.filter((entry) => entry.status === "active").map((entry) => entry.title);
+      if (changed.length > 0) {
+        if (asideTitles.length > 0 && activeTitles.length === 0) return step(`Put aside · ${joinTitles(asideTitles)}`, "sorting its documents", "documents");
+        if (activeTitles.length > 0 && asideTitles.length === 0) return step(`Brought back · ${joinTitles(activeTitles)}`, "sorting its documents", "documents");
+        return step("Sorted its documents", "sorting its documents", "documents");
+      }
+      if (asideIds.length > 0 && activeIds.length === 0) return step(`Put aside · ${joinTitles(asideIds.map(humanizeDocumentId))}`, "sorting its documents", "documents");
+      return step("Sorted its documents", "sorting its documents", "documents");
+    }
+  }
+}
+
 /** One tool call as a step a person can read. */
 export function describeWorkStep(call: WorkStepInput): WorkStep {
   const state = workStepState(call.status);
@@ -78,6 +130,8 @@ export function describeWorkStep(call: WorkStepInput): WorkStep {
 
   const step = (label: string, doing: string, service: string): WorkStep => ({ label, doing, service, state, tool });
 
+  const documentTool = documentToolName(tool);
+  if (documentTool) return describeDocumentStep(documentTool, call, step);
   if (normalized.endsWith("search_capabilities")) {
     const query = text(input.query);
     return step(
