@@ -46,8 +46,10 @@ const T = {
   done: 2_300,
 } as const;
 const BLINK_MS = 240;
-const AMBIENT_PEEK_MIN_MS = 9_000;
-const AMBIENT_PEEK_RANGE_MS = 8_000;
+// While nobody has clicked yet, a visitor peeks in every five and a half to eleven seconds:
+// often enough to feel alive on a screen someone is reading, never a metronome.
+const AMBIENT_PEEK_MIN_MS = 5_500;
+const AMBIENT_PEEK_RANGE_MS = 5_500;
 const AMBIENT_BLINK_AT_MS = 620;
 const AMBIENT_RETURN_AT_MS = 1_600;
 const AMBIENT_HIDE_AT_MS = 2_050;
