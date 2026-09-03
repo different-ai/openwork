@@ -1,9 +1,9 @@
 import { createHash } from "node:crypto";
-import { constants, type Stats } from "node:fs";
-import { lstat, open, realpath, rm } from "node:fs/promises";
+import { lstat, realpath } from "node:fs/promises";
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { z } from "zod";
 import { appendAgentInstructions, createInstructionSection } from "./agent-instruction-compose.js";
+import { WorkspaceFileError, openWorkspaceFileForReading, openWorkspaceFileForWriting } from "./workspace-file-identity.js";
 import {
   MAX_COMPRESSED_BYTES,
   XLSX_WRITE_MAX_CELLS,
@@ -99,89 +99,6 @@ function resolveWorkspacePath(root: string, input: string): WorkspaceFile {
   return { root, absolutePath, relativePath: toWorkspaceRelative(root, absolutePath) };
 }
 
-function sameFile(left: Stats, right: Stats): boolean {
-  return left.dev === right.dev && left.ino === right.ino;
-}
-
-function changedWhileWorking(label: string): Error {
-  return new Error(`${label} changed on disk while it was being accessed; nothing was read or written. Try again.`);
-}
-
-/**
- * Write a workbook without ever placing bytes through a path: the destination
- * folder must already exist and prove to be inside the workspace; the file is
- * opened without following links (O_EXCL for a new file, so nothing can be
- * overwritten by accident, or the existing inode for an overwrite); the open
- * handle is proven to be the validated file sitting in that folder; and only
- * then are bytes written through the handle. A new file that proves to have
- * landed anywhere else is removed by identity and the write is refused.
- */
-async function writeWorkbookInPlace(realRoot: string, file: WorkspaceFile, bytes: Uint8Array, overwrite: boolean): Promise<{ replaced: boolean }> {
-  const label = `Destination ${JSON.stringify(file.relativePath)}`;
-  const relativeFolder = dirname(file.relativePath);
-  const folder = relativeFolder === "." ? realRoot : join(realRoot, ...relativeFolder.split("/"));
-  const realFolder = await realpath(folder).catch(() => null);
-  if (!realFolder) {
-    throw new Error(`${label}: the folder ${JSON.stringify(relativeFolder)} does not exist. Create it first (for example with the bash tool), then write the workbook again.`);
-  }
-  // The folder must be exactly this path under the real root: no link in any component.
-  if (realFolder !== folder) throw new Error(`${label} passes through a symbolic link, which is not allowed.`);
-  const folderInfo = await lstat(folder);
-  if (!folderInfo.isDirectory()) throw new Error(`${label}: ${JSON.stringify(relativeFolder)} is not a folder.`);
-  const finalPath = join(folder, basename(file.absolutePath));
-
-  const existing = await lstat(finalPath).catch(() => null);
-  if (existing?.isDirectory()) throw new Error(`${JSON.stringify(file.relativePath)} is a directory.`);
-  if (existing?.isSymbolicLink()) throw new Error(`${JSON.stringify(file.relativePath)} is a symbolic link; write to a regular file path instead.`);
-  if (existing && !overwrite) {
-    throw new Error(`${JSON.stringify(file.relativePath)} already exists. Pass overwrite: true to replace it (all of its current sheets, formatting, and formulas are replaced by the sheets you pass), or write to a new path.`);
-  }
-
-  const noFollow = constants.O_NOFOLLOW ?? 0;
-  let handle;
-  if (existing) {
-    // Overwrite: open the validated inode itself. No O_CREAT and no O_TRUNC,
-    // so nothing changes until the handle is proven to be that inode.
-    handle = await open(finalPath, constants.O_WRONLY | noFollow);
-    const actual = await handle.stat();
-    if (!actual.isFile() || !sameFile(actual, existing)) {
-      await handle.close();
-      throw changedWhileWorking(label);
-    }
-  } else {
-    // Create. Node has no openat/O_RESOLVE_BENEATH, so this exclusive create is
-    // the one pathname-based step. It is made harmless by construction:
-    // O_EXCL can never replace an existing file, no content is written here,
-    // and the empty inode is only kept if it is proven to sit at this exact
-    // path in the same folder inode that was validated. Anything else is
-    // removed by identity and the write is refused before a byte moves.
-    handle = await open(finalPath, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | noFollow, 0o644);
-    const actual = await handle.stat();
-    const [placed, placedReal, folderNow] = await Promise.all([
-      lstat(finalPath).catch(() => null),
-      realpath(finalPath).catch(() => null),
-      lstat(folder).catch(() => null),
-    ]);
-    const inPlace = placed !== null && placedReal === finalPath && sameFile(placed, actual)
-      && folderNow !== null && folderNow.isDirectory() && sameFile(folderNow, folderInfo);
-    if (!inPlace) {
-      if (placed && sameFile(placed, actual)) await rm(finalPath, { force: true }).catch(() => undefined);
-      await handle.close();
-      throw changedWhileWorking(label);
-    }
-  }
-  // From here on, bytes flow only through a handle proven to be in place.
-
-  try {
-    await handle.truncate(0);
-    await handle.writeFile(bytes);
-    await handle.sync();
-  } finally {
-    await handle.close();
-  }
-  return { replaced: existing !== null };
-}
-
 function describeUnsupportedExtension(extension: string): string {
   if (extension === ".xls") return "Legacy .xls (BIFF) workbooks are not supported; ask for the file as .xlsx or convert it first.";
   if (extension === ".csv" || extension === ".tsv") return "CSV/TSV files are plain text; use the read tool instead.";
@@ -190,39 +107,68 @@ function describeUnsupportedExtension(extension: string): string {
   return `Unsupported spreadsheet extension ${JSON.stringify(extension || "(none)")}; only .xlsx and .xlsm workbooks can be read.`;
 }
 
+/** The lexical location of a workspace file under the real root; no link may sit anywhere in it. */
+async function workspaceLocation(root: string, file: WorkspaceFile): Promise<{ realRoot: string; path: string }> {
+  const realRoot = await realpath(root);
+  return { realRoot, path: join(realRoot, ...file.relativePath.split("/")) };
+}
+
 /**
- * Read a workbook without a check-then-read gap: resolve the real path, prove
- * it is inside the workspace, then open that exact path without following a
- * link and take the size and file type from the open handle.
+ * Read a workbook with open-then-verify ordering: the handle is obtained first
+ * and its own inode is proven to be the regular file at exactly this path
+ * before any bytes are read. See workspace-file-identity.ts.
  */
 async function readWorkbookFile(root: string, input: string): Promise<{ file: WorkspaceFile; bytes: Buffer }> {
   const file = resolveWorkspacePath(root, input);
   const extension = extname(file.absolutePath).toLowerCase();
   if (!READABLE_EXTENSIONS.has(extension)) throw new Error(describeUnsupportedExtension(extension));
   const label = `Workbook ${JSON.stringify(file.relativePath)}`;
-  const realRoot = await realpath(root);
-  // The file must sit at exactly this path under the real root: no link in
-  // any component, so nothing under the workspace is ever followed.
-  const path = join(realRoot, ...file.relativePath.split("/"));
-  const realPath = await realpath(path).catch(() => null);
-  if (!realPath) throw new Error(`${label} was not found in the workspace.`);
-  if (realPath !== path) throw new Error(`${label} passes through a symbolic link, which is not allowed.`);
-  // Identity of the validated file, captured with the validation itself.
-  const expected = await lstat(path).catch(() => null);
-  if (!expected) throw new Error(`${label} was not found in the workspace.`);
-  if (!expected.isFile()) throw new Error(`${label} is not a regular file.`);
-  if (expected.size > MAX_COMPRESSED_BYTES) throw new Error(`${label} is ${expected.size} bytes; the limit is ${MAX_COMPRESSED_BYTES} bytes.`);
-  const handle = await open(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0)).catch(() => null);
-  if (!handle) throw new Error(`${label} was not found in the workspace.`);
+  const { realRoot, path } = await workspaceLocation(root, file);
+  const { handle, info } = await openWorkspaceFileForReading(realRoot, path, label);
   try {
-    // The open handle must be the validated inode.
-    const actual = await handle.stat();
-    if (!actual.isFile() || !sameFile(actual, expected)) throw changedWhileWorking(label);
-    if (actual.size > MAX_COMPRESSED_BYTES) throw new Error(`${label} is ${actual.size} bytes; the limit is ${MAX_COMPRESSED_BYTES} bytes.`);
+    if (info.size > MAX_COMPRESSED_BYTES) throw new Error(`${label} is ${info.size} bytes; the limit is ${MAX_COMPRESSED_BYTES} bytes.`);
     return { file, bytes: await handle.readFile() };
   } finally {
     await handle.close();
   }
+}
+
+/**
+ * Write a workbook with open-then-verify ordering. The folder is never
+ * created (so no directory is ever made through a pathname); an existing
+ * file is opened without O_CREAT or O_TRUNC and must prove to be the inode
+ * observed here; a new file is created with O_EXCL and must prove to be in
+ * place. Bytes are written only through the proven handle. The write is not
+ * atomic: a crash mid-write leaves a partial file that the next write
+ * replaces.
+ */
+async function writeWorkbookFile(root: string, file: WorkspaceFile, bytes: Uint8Array, overwrite: boolean): Promise<{ replaced: boolean }> {
+  const label = `Destination ${JSON.stringify(file.relativePath)}`;
+  const relativeFolder = dirname(file.relativePath);
+  const { realRoot, path } = await workspaceLocation(root, file);
+  const existing = await lstat(path).catch(() => null);
+  if (existing?.isDirectory()) throw new Error(`${JSON.stringify(file.relativePath)} is a directory.`);
+  if (existing?.isSymbolicLink()) throw new Error(`${JSON.stringify(file.relativePath)} is a symbolic link; write to a regular file path instead.`);
+  if (existing && !overwrite) {
+    throw new Error(`${JSON.stringify(file.relativePath)} already exists. Pass overwrite: true to replace it (all of its current sheets, formatting, and formulas are replaced by the sheets you pass), or write to a new path.`);
+  }
+  let opened;
+  try {
+    opened = await openWorkspaceFileForWriting(realRoot, path, existing, label);
+  } catch (error) {
+    if (error instanceof WorkspaceFileError && error.code === "folder-missing") {
+      throw new Error(`${label}: the folder ${JSON.stringify(relativeFolder)} does not exist. Create it first (for example with the bash tool), then write the workbook again.`);
+    }
+    throw error;
+  }
+  try {
+    await opened.handle.truncate(0);
+    await opened.handle.writeFile(bytes);
+    await opened.handle.sync();
+  } finally {
+    await opened.handle.close();
+  }
+  return { replaced: !opened.created };
 }
 
 function sheetFacts(sheet: XlsxSheetData) {
@@ -372,7 +318,7 @@ export const OpenWorkSpreadsheets = async (factoryInput?: unknown) => {
           const file = resolveWorkspacePath(root, args.path);
           if (extname(file.absolutePath).toLowerCase() !== ".xlsx") throw new Error(`spreadsheet_write only creates .xlsx workbooks; ${JSON.stringify(file.relativePath)} has a different extension.`);
           const result = await writeXlsxWorkbook(args.sheets);
-          const { replaced } = await writeWorkbookInPlace(await realpath(root), file, result.bytes, args.overwrite ?? false);
+          const { replaced } = await writeWorkbookFile(root, file, result.bytes, args.overwrite ?? false);
           return JSON.stringify({
             ok: true,
             path: file.relativePath,

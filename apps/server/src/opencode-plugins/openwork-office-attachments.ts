@@ -1,6 +1,5 @@
 import { createHash } from "node:crypto";
-import { constants, type Stats } from "node:fs";
-import { lstat, mkdir, open, realpath, rm } from "node:fs/promises";
+import { lstat, mkdir, realpath } from "node:fs/promises";
 import { basename, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -17,6 +16,7 @@ import {
   type XlsxSheetData,
   type ZipEntry,
 } from "@openwork/workbook";
+import { openWorkspaceFileForReading, openWorkspaceFileForWriting } from "./workspace-file-identity.js";
 
 const DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
 const PPTX_MIME = "application/vnd.openxmlformats-officedocument.presentationml.presentation";
@@ -180,31 +180,17 @@ function decodeDataUrl(url: string): Buffer {
   return buffer;
 }
 
-const NO_FOLLOW = constants.O_NOFOLLOW ?? 0;
-
-function sameFile(left: Stats, right: Stats): boolean {
-  return left.dev === right.dev && left.ino === right.ino;
-}
-
 /**
- * Read a regular file that must sit at exactly this path inside the real
- * workspace root: no link in any component (the real path has to equal the
- * lexical path), opened without following a link, and proven to be the
- * validated inode before it is read.
+ * Read a regular file at exactly this path inside the real workspace root with
+ * open-then-verify ordering (see workspace-file-identity.ts): the handle is
+ * obtained first and proven to be the file at this path, with no link in any
+ * component, before it is read.
  */
 async function readWorkspaceFile(realRoot: string, path: string, label: string): Promise<Buffer> {
   if (!isWithin(realRoot, path)) throw new Error(`${label} points outside the active workspace.`);
-  const real = await realpath(path).catch(() => null);
-  if (real === null) throw new Error(`${label} was not found in the active workspace.`);
-  if (real !== path) throw new Error(`${label} passes through a symbolic link, which is not allowed.`);
-  const expected = await lstat(path);
-  if (!expected.isFile()) throw new Error(`${label} is not a regular file.`);
-  if (expected.size > MAX_COMPRESSED_BYTES) throw new Error("Office attachment exceeds the compressed byte limit.");
-  const handle = await open(path, constants.O_RDONLY | NO_FOLLOW);
+  const { handle, info } = await openWorkspaceFileForReading(realRoot, path, label);
   try {
-    const actual = await handle.stat();
-    if (!actual.isFile() || !sameFile(actual, expected)) throw new Error(`${label} changed on disk while it was being read.`);
-    if (actual.size > MAX_COMPRESSED_BYTES) throw new Error("Office attachment exceeds the compressed byte limit.");
+    if (info.size > MAX_COMPRESSED_BYTES) throw new Error("Office attachment exceeds the compressed byte limit.");
     return await handle.readFile();
   } finally {
     await handle.close();
@@ -224,7 +210,9 @@ async function bytesFromPart(part: OfficeFilePart, root: string | null): Promise
 /**
  * Ensure the materialization folder exists one component at a time, refusing
  * a link at any level, so the folder can only ever be the real directory
- * directly under the real workspace root.
+ * directly under the real workspace root. Creating a missing component is the
+ * only pathname-dependent mutation here, and it can only ever produce an
+ * empty directory.
  */
 async function ensureMaterializedDirectory(realRoot: string): Promise<string> {
   let current = realRoot;
@@ -253,19 +241,12 @@ async function existingDigest(realRoot: string, path: string): Promise<string | 
 
 /**
  * Create the file exclusively (never replacing anything), prove the new inode
- * sits in the materialization folder, then write through the handle. Bytes
- * never travel through a pathname after validation.
+ * is in place, then write through the handle. Bytes never travel through a
+ * pathname after validation.
  */
-async function writeMaterializedFile(realRoot: string, directory: string, target: string, bytes: Buffer): Promise<void> {
-  const handle = await open(target, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | NO_FOLLOW, 0o644);
+async function writeMaterializedFile(realRoot: string, target: string, bytes: Buffer): Promise<void> {
+  const { handle } = await openWorkspaceFileForWriting(realRoot, target, null, "Materialized Office attachment");
   try {
-    const actual = await handle.stat();
-    const [placed, placedReal] = await Promise.all([lstat(target).catch(() => null), realpath(target).catch(() => null)]);
-    const inPlace = placed !== null && placedReal === target && sameFile(placed, actual) && isWithin(realRoot, placedReal) && placedReal.startsWith(`${directory}${sep}`);
-    if (!inPlace) {
-      if (placed && sameFile(placed, actual)) await rm(target, { force: true }).catch(() => undefined);
-      throw new Error("Office attachment folder changed on disk while the attachment was being written.");
-    }
     await handle.writeFile(bytes);
     await handle.sync();
   } finally {
@@ -285,7 +266,7 @@ async function materializeAttachment(root: string | null, filename: string, kind
     if (current === digest) return { sha256: digest, relativePath: toWorkerRelativePath(realRoot, target) };
     if (current !== null) continue;
     try {
-      await writeMaterializedFile(realRoot, directory, target, bytes);
+      await writeMaterializedFile(realRoot, target, bytes);
       return { sha256: digest, relativePath: toWorkerRelativePath(realRoot, target) };
     } catch (cause) {
       const afterRace = await existingDigest(realRoot, target);
