@@ -1,8 +1,65 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { describeNow, describeOutcome, mergeRecentWork, relativeTime } from "./activity-summary.ts";
+import {
+  AI_UNAVAILABLE,
+  CHECKING_STATUS,
+  FAILURE_LABELS,
+  HEADER_COLLAPSED_LABELS,
+  HEADER_WORKING_WORD,
+  clockTime,
+  describeHeaderStatus,
+  describeNow,
+  describeOutcome,
+  describeStatusDetail,
+  mergeRecentWork,
+  relativeTime,
+} from "./activity-summary.ts";
+import type { CoworkerActivity } from "./threads.ts";
 
 const now = Date.UTC(2026, 8, 1, 12, 0, 0);
+
+test("the header shows one plain word: the phases fold into Working, colour only for asks and failures", () => {
+  const at = (state: CoworkerActivity["state"], label: string, extra: Partial<CoworkerActivity> = {}): CoworkerActivity =>
+    ({ state, label, detail: "", updatedAt: now, ...extra });
+  assert.deepEqual(describeHeaderStatus(undefined, false), { word: AI_UNAVAILABLE, tone: "rose" });
+  assert.deepEqual(describeHeaderStatus(undefined, true), { word: CHECKING_STATUS, tone: "mist" });
+  for (const phase of HEADER_COLLAPSED_LABELS) {
+    assert.deepEqual(describeHeaderStatus(at("working", phase), true), { word: HEADER_WORKING_WORD, tone: "mist" });
+  }
+  assert.deepEqual(describeHeaderStatus(at("working", "Working"), true), { word: "Working", tone: "mist" });
+  assert.deepEqual(describeHeaderStatus(at("recent", "Ready"), true), { word: "Ready", tone: "mist" });
+  assert.deepEqual(describeHeaderStatus(at("ready", "Ready"), true), { word: "Ready", tone: "mist" });
+  assert.deepEqual(describeHeaderStatus(at("recent", "Stopped"), true), { word: "Stopped", tone: "mist" });
+  assert.deepEqual(describeHeaderStatus(at("retrying", "Retrying"), true), { word: "Retrying", tone: "mist" });
+  assert.deepEqual(describeHeaderStatus(at("starting", "Starting up"), true), { word: "Starting up", tone: "mist" });
+  // Asking for the person: amber.
+  assert.deepEqual(describeHeaderStatus(at("attention", "Needs you"), true), { word: "Needs you", tone: "amber" });
+  assert.deepEqual(describeHeaderStatus(at("attention", "Waiting for permission"), true), { word: "Waiting for permission", tone: "amber" });
+  assert.deepEqual(describeHeaderStatus(at("attention", "Waiting for an answer"), true), { word: "Waiting for an answer", tone: "amber" });
+  assert.deepEqual(describeHeaderStatus(at("retrying", "Paused", { reason: "Free usage exceeded" }), true), { word: "Paused", tone: "amber" });
+  // Failures: rose, whichever state carried them.
+  for (const label of FAILURE_LABELS) {
+    const state: CoworkerActivity["state"] = label === "Not responding" || label === AI_UNAVAILABLE ? "offline" : "attention";
+    assert.deepEqual(describeHeaderStatus(at(state, label), true), { word: label, tone: "rose" });
+  }
+});
+
+test("the status tooltip adds the reason and the time, never the live row's phrase", () => {
+  const since = clockTime(now);
+  assert.equal(describeStatusDetail(undefined, true), "");
+  assert.equal(describeStatusDetail({ state: "working", label: "Thinking", detail: "Replying in your discussion", updatedAt: now }, false), "");
+  assert.equal(describeStatusDetail({ state: "retrying", label: "Retrying", detail: "Weekly digest", updatedAt: now }, true), `Retrying after an interruption · since ${since}`);
+  assert.equal(
+    describeStatusDetail({ state: "retrying", label: "Paused", detail: "Weekly digest", reason: "Free usage exceeded", updatedAt: now }, true),
+    `The AI model is unavailable: Free usage exceeded · since ${since}`,
+  );
+  assert.equal(describeStatusDetail({ state: "attention", label: "Needs you", detail: "Wants to run a command", updatedAt: now }, true), `Wants to run a command · since ${since}`);
+  // The transcript's live row already says what the coworker is doing; the tooltip keeps only the time.
+  assert.equal(describeStatusDetail({ state: "working", label: "Using a tool", detail: "Editing index.md", updatedAt: now }, true), `since ${since}`);
+  assert.equal(describeStatusDetail({ state: "recent", label: "Ready", detail: "Draft", updatedAt: now }, true), `since ${since}`);
+  // Nothing to add: no tooltip.
+  assert.equal(describeStatusDetail({ state: "ready", label: "Ready", detail: "Waiting for first assignment", updatedAt: 0 }, true), "");
+});
 
 test("relativeTime is compact and empty when unknown", () => {
   assert.equal(relativeTime(0, now), "");
@@ -54,8 +111,9 @@ test("working names the subject once; attention asks for the person", () => {
   const failedRun = describeNow({ state: "attention", label: "Run failed", detail: "Morning digest", updatedAt: now, threadId: "s4" });
   assert.deepEqual(failedRun, { subject: "Morning digest", note: "", needsYou: false });
 
+  // The header already says Retrying; the row names the subject and does not say it again.
   const retrying = describeNow({ state: "retrying", label: "Retrying", detail: "Weekly digest", updatedAt: now, threadId: "s3" });
-  assert.equal(retrying.note, "Retrying after an interruption");
+  assert.deepEqual(retrying, { subject: "Weekly digest", note: "", needsYou: false });
   const stalled = describeNow({ state: "retrying", label: "Paused", detail: "Weekly digest", reason: "Free usage exceeded, subscribe to Go", updatedAt: now, threadId: "s3" });
   assert.deepEqual(stalled, { subject: "Weekly digest", note: "The AI model is unavailable: Free usage exceeded, subscribe to Go. Choose another AI model to continue.", needsYou: true });
 

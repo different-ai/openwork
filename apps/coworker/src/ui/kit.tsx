@@ -1,4 +1,23 @@
-import { useEffect, useId, useRef, useState, type ButtonHTMLAttributes, type ReactNode } from "react";
+import {
+  Children,
+  cloneElement,
+  isValidElement,
+  useCallback,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ButtonHTMLAttributes,
+  type FocusEvent as ReactFocusEvent,
+  type MouseEvent as ReactMouseEvent,
+  type ReactElement,
+  type ReactNode,
+} from "react";
+import { createPortal } from "react-dom";
+import { TOOLTIP_DELAY_MS, tooltipPosition, type TooltipSide } from "@/lib/tooltip";
+
+export type { TooltipSide };
 
 export function Button({
   variant = "default",
@@ -185,27 +204,152 @@ export function PlusIcon({ className = "size-4" }: { className?: string }) {
   );
 }
 
+type TriggerProps = {
+  onMouseEnter?: (event: ReactMouseEvent<HTMLElement>) => void;
+  onMouseLeave?: (event: ReactMouseEvent<HTMLElement>) => void;
+  onFocus?: (event: ReactFocusEvent<HTMLElement>) => void;
+  onBlur?: (event: ReactFocusEvent<HTMLElement>) => void;
+  onClick?: (event: ReactMouseEvent<HTMLElement>) => void;
+  "aria-describedby"?: string;
+};
+
 /**
- * A 32×32 icon-only control. `label` is both the accessible name and the
- * tooltip, so the icon never needs a visible word beside it.
+ * One tooltip for the whole app: a short delay, placed on the chosen side of
+ * its trigger, rendered at the document root so no panel's overflow clips it,
+ * and named to assistive tech through `aria-describedby`. The child is the
+ * trigger and must be one element that takes pointer and focus handlers.
+ * Nothing shows when `content` is empty.
+ */
+export function Tooltip({
+  content,
+  side = "top",
+  children,
+}: {
+  content: string;
+  side?: TooltipSide;
+  children: ReactElement<TriggerProps>;
+}) {
+  const id = useId();
+  const [open, setOpen] = useState(false);
+  const [position, setPosition] = useState<{ top: number; left: number } | null>(null);
+  const triggerRef = useRef<HTMLElement | null>(null);
+  const tipRef = useRef<HTMLDivElement | null>(null);
+  const timerRef = useRef(0);
+
+  const clearTimer = () => {
+    if (timerRef.current) window.clearTimeout(timerRef.current);
+    timerRef.current = 0;
+  };
+  const hide = useCallback(() => {
+    clearTimer();
+    setOpen(false);
+  }, []);
+  const showSoon = (target: HTMLElement) => {
+    triggerRef.current = target;
+    clearTimer();
+    timerRef.current = window.setTimeout(() => setOpen(true), TOOLTIP_DELAY_MS);
+  };
+
+  useEffect(() => () => clearTimer(), []);
+  useEffect(() => {
+    if (!open) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") hide();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [hide, open]);
+  useLayoutEffect(() => {
+    if (!open) {
+      setPosition(null);
+      return;
+    }
+    const trigger = triggerRef.current?.getBoundingClientRect();
+    const tip = tipRef.current?.getBoundingClientRect();
+    if (!trigger || !tip) return;
+    setPosition(tooltipPosition(trigger, tip, side, { width: window.innerWidth, height: window.innerHeight }));
+  }, [open, side, content]);
+
+  const child = Children.only(children);
+  if (!isValidElement<TriggerProps>(child)) return child;
+  if (!content) return child;
+  const trigger = cloneElement(child, {
+    onMouseEnter: (event: ReactMouseEvent<HTMLElement>) => {
+      child.props.onMouseEnter?.(event);
+      showSoon(event.currentTarget);
+    },
+    onMouseLeave: (event: ReactMouseEvent<HTMLElement>) => {
+      child.props.onMouseLeave?.(event);
+      hide();
+    },
+    onFocus: (event: ReactFocusEvent<HTMLElement>) => {
+      child.props.onFocus?.(event);
+      showSoon(event.currentTarget);
+    },
+    onBlur: (event: ReactFocusEvent<HTMLElement>) => {
+      child.props.onBlur?.(event);
+      hide();
+    },
+    onClick: (event: ReactMouseEvent<HTMLElement>) => {
+      child.props.onClick?.(event);
+      hide();
+    },
+    "aria-describedby": open ? [child.props["aria-describedby"], id].filter(Boolean).join(" ") : child.props["aria-describedby"],
+  });
+  return (
+    <>
+      {trigger}
+      {open
+        ? createPortal(
+          <div
+            ref={tipRef}
+            id={id}
+            role="tooltip"
+            data-testid="tooltip"
+            data-side={side}
+            className="pointer-events-none fixed z-[70] max-w-[260px] rounded-lg border border-line bg-[#0d121b] px-2.5 py-1.5 text-[11px] leading-snug text-snow shadow-[0_8px_24px_rgb(0_0_0/0.45)]"
+            style={position ? { top: position.top, left: position.left } : { top: 0, left: 0, visibility: "hidden" }}
+          >
+            {content}
+          </div>,
+          document.body,
+        )
+        : null}
+    </>
+  );
+}
+
+/**
+ * A 32×32 icon-only control. `label` is the accessible name; `tooltip` is what
+ * a person sees on hover — the name by default, or a line that says what the
+ * control shows. There is no native `title`.
  */
 export function IconButton({
   label,
+  tooltip,
+  tooltipSide = "top",
   className = "",
   children,
   ...props
-}: Omit<ButtonHTMLAttributes<HTMLButtonElement>, "aria-label" | "title" | "children"> & { label: string; children: ReactNode }) {
-  return (
+}: Omit<ButtonHTMLAttributes<HTMLButtonElement>, "aria-label" | "title" | "children"> & {
+  label: string;
+  /** Hover copy; `false` for none. Defaults to the label. */
+  tooltip?: string | false;
+  tooltipSide?: TooltipSide;
+  children: ReactNode;
+}) {
+  const button = (
     <button
       type="button"
       {...props}
       aria-label={label}
-      title={label}
       className={`inline-flex size-8 shrink-0 items-center justify-center rounded-lg text-mist transition-colors hover:bg-white/6 hover:text-snow focus-visible:bg-white/6 focus-visible:text-snow focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-spark/60 disabled:cursor-not-allowed disabled:opacity-40 ${className}`}
     >
       {children}
     </button>
   );
+  if (tooltip === false) return button;
+  return <Tooltip content={tooltip ?? label} side={tooltipSide}>{button}</Tooltip>;
 }
 
 export type ActionMenuItem = {
