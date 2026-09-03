@@ -368,6 +368,14 @@ export type McpAppCatalogServer = {
   apps: McpAppCatalogApp[];
 };
 
+export type McpServerToolSummary = {
+  name: string;
+  title: string | null;
+  description: string | null;
+  /** Present when the tool advertises a standard MCP App view. */
+  resourceUri: string | null;
+};
+
 function toolRequiresInput(tool: Tool): boolean {
   const schema: unknown = tool.inputSchema;
   if (!isRecord(schema)) return false;
@@ -740,6 +748,50 @@ export async function resolveSameServerMcpAppResource(input: {
   }
   if (!matches[0]) throw new McpAppHostError("server_unavailable", "The MCP server that produced this App launch is unavailable.");
   return matches[0];
+}
+
+/**
+ * Every tool one configured remote MCP server advertises, as a person browsing
+ * the workspace's tools would see it: names, titles, and descriptions only,
+ * with the App binding noted. Denied tools are left out. Local command servers
+ * are the engine's alone and cannot be listed here.
+ */
+export async function listMcpServerTools(input: {
+  serverConfig: ServerConfig;
+  workspaceId: string;
+  workspaceRoot: string;
+  serverName: string;
+}): Promise<McpServerToolSummary[]> {
+  const configured = await listMcp(input.serverConfig, input.workspaceId, input.workspaceRoot);
+  const item = configured.find((candidate) => candidate.name === input.serverName);
+  if (!item || item.config.enabled === false) {
+    throw new McpAppHostError("server_unavailable", "The requested MCP server is not available to this workspace.");
+  }
+  return await withCatalogProbeTimeout(withRemoteClient(item.config, async (client) => {
+    const tools = await listTools(client);
+    const denies = await diagnoseMcpToolDenies(
+      input.workspaceRoot,
+      input.serverName,
+      tools.map((tool) => projectedMcpToolName(input.serverName, tool.name)),
+    );
+    const denied = new Set(denies.map((deny) => deny.matched));
+    return tools
+      .filter((tool) => !denied.has(projectedMcpToolName(input.serverName, tool.name)))
+      .map((tool): McpServerToolSummary => {
+        let resourceUri: string | null = null;
+        try {
+          resourceUri = toolUiResourceUri(tool);
+        } catch {
+          resourceUri = null;
+        }
+        return {
+          name: tool.name,
+          title: toolDisplayTitle(tool),
+          description: typeof tool.description === "string" && tool.description.trim() ? tool.description : null,
+          resourceUri,
+        };
+      });
+  }));
 }
 
 export async function callMcpAppTool(input: {

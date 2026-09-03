@@ -37,6 +37,7 @@ import { buildOpenWorkV2Instructions, waitForOpenWorkV2Skills, OPENWORK_V2_INSTR
 import {
   callMcpAppTool,
   listMcpAppCatalog,
+  listMcpServerTools,
   McpAppHostError,
   resolveConnectMcpAppResource,
   resolveMcpAppResource,
@@ -3668,6 +3669,24 @@ function createRoutes(
         workspaceRoot: workspace.path,
       });
       return jsonResponse({ servers });
+    } catch (error) {
+      rethrowMcpAppHostError(error);
+    }
+  });
+
+  addRoute(routes, "GET", "/workspace/:id/mcp/:name/tools", "client", async (ctx) => {
+    requireClientScope(ctx, "viewer");
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const name = String(ctx.params.name ?? "").trim();
+    if (!name) throw new ApiError(400, "invalid_payload", "name is required");
+    try {
+      const tools = await listMcpServerTools({
+        serverConfig: config,
+        workspaceId: workspace.id,
+        workspaceRoot: workspace.path,
+        serverName: name,
+      });
+      return jsonResponse({ tools });
     } catch (error) {
       rethrowMcpAppHostError(error);
     }

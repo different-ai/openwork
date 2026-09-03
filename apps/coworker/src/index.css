@@ -824,6 +824,37 @@ body.is-resizing-panel * {
   }
 }
 
+/* One level of the right panel arriving: a short slide of the content only, never the header. */
+.panel-level-forward {
+  animation: panel-level-forward 160ms cubic-bezier(0.2, 0.7, 0.2, 1) backwards;
+}
+
+.panel-level-back {
+  animation: panel-level-back 160ms cubic-bezier(0.2, 0.7, 0.2, 1) backwards;
+}
+
+@keyframes panel-level-forward {
+  from {
+    opacity: 0;
+    transform: translateX(18px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes panel-level-back {
+  from {
+    opacity: 0;
+    transform: translateX(-18px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
 @keyframes coworker-float {
   0%, 100% { transform: translateY(0); }
   44%, 54% { transform: translateY(-0.8px); }
@@ -895,7 +926,9 @@ a {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .view-enter {
+  .view-enter,
+  .panel-level-forward,
+  .panel-level-back {
     animation: none !important;
   }
 
