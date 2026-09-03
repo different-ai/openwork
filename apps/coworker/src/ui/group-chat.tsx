@@ -555,8 +555,8 @@ export function GroupChat({
             ]}
           />
         </div>
-        <span data-testid="coworker-top-status" className={`flex shrink-0 items-center gap-2 text-xs ${live ? "text-spark" : "text-mist"}`}>
-          <StatusDot tone={live ? "spark" : "mist"} />
+        {/* One plain line, no dot: who is replying, or Ready. */}
+        <span data-testid="coworker-top-status" data-tone="mist" className="shrink-0 text-xs text-mist">
           {statusLine}
         </span>
       </header>
