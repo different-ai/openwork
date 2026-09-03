@@ -24,29 +24,11 @@ even before a dedicated UI exists.
 
 ## Confidentiality (hard rule — this repo is public)
 
-Nothing that reaches GitHub may identify a customer, prospect, partner, or
-person outside the team. Applies to every public surface: branch names, commit
-messages, PR titles and bodies, code and spec comments, spec/claim names,
-fixtures, docs, and test-evidence descriptions.
-
-- Never write a customer/prospect/partner organization name, an individual's
-  name or email, a Slack channel or link, or quoted end-user text. Refer to a
-  report only by an opaque internal ticket ID and describe the behavior
-  generically ("a custom OpenAI-compatible provider defined in the user-level
-  opencode.json"), never its origin.
-- Never name a branch or worktree after a customer. A branch name leaks into
-  PR metadata, preview URLs, and evidence JSON and cannot be scrubbed later; if
-  you were handed one, stop and rename it before the first push.
-- Keep customer context (briefs, reports, transcripts) outside the repo tree.
-  Nothing under a public worktree, even untracked, may hold it.
-- Before every push, re-read the branch name, unpushed commit messages, PR text,
-  and added lines for the above. Warden's `confidentiality-review` skill checks
-  the diff on every PR and blocks clearance on a finding; branch names and PR
-  text are not machine-checked, so that re-read is the only gate for them.
-- If something has already been pushed: scrub every mutable surface (PR body,
-  comments, files via a follow-up PR with neutral wording), delete branch-named
-  preview comments, and report the immutable remainder (commit messages, PR
-  head ref) to a human immediately. Do not rewrite shared history on your own.
+Nothing that reaches GitHub — branch names, commit messages, PR text, code and
+spec comments, fixtures, evidence — may name, quote, or describably identify a
+customer, prospect, partner, or person outside the team; refer to reports by
+internal ticket ID only, and if something already leaked, scrub what is mutable
+and escalate the rest rather than rewriting shared history.
 
 ## Verification (every change)
 

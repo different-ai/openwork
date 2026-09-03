@@ -5,21 +5,11 @@ description: Prove a PR, prepare merge verification, publish all evidence, check
 
 # Skill: Prove a PR
 
-## Confidentiality gate (before the first push)
-
-- This repo is public. Before pushing, re-read the branch name, every unpushed
-  commit message (`git log origin/dev..HEAD`), the added lines
-  (`git diff origin/dev...HEAD`), and the PR title/body and evidence
-  descriptions you are about to post: no customer/prospect/partner name, no
-  person outside the team, no Slack channel or link, no quoted end-user text.
-  Refer to reports by internal ticket ID only; see AGENTS.md "Confidentiality".
-  Warden reviews only the diff, so this re-read is the sole gate for branch
-  names and PR text.
-- A branch name hit means: new neutral branch, reworded cherry-picks, new PR.
-  Never push and "fix it later" — the branch name cannot be scrubbed.
-
 ## Verify the tree that will land
 
+- Before the first push, re-read the branch name, unpushed commit messages,
+  added lines, and PR text for any customer, prospect, partner, or outside
+  person (AGENTS.md, Confidentiality) — warden reviews only the diff.
 - Run every check on the PR head after its final rebase or cherry-pick. Re-run
   and re-publish after any history rewrite; test runs are bound to a commit SHA.
 - Before merging a stacked PR, inspect
