@@ -45,11 +45,17 @@ test("Den lists Automations as a read-only monitor that routes management to Web
     headless: true,
     host: place.host(),
   });
-  await waitFor(browser, `location.href.startsWith(${JSON.stringify(den.ref.webUrl)}) && document.readyState === "complete"`, {
+  // Den Web's session provider clears the stored token on mount while it has
+  // none, so seed it only after the signed-out shell has hydrated, then reload.
+  await waitFor(browser, `location.href.startsWith(${JSON.stringify(den.ref.webUrl)}) && document.readyState === "complete" && document.querySelector("button") !== null`, {
     timeoutMs: 60_000,
-    label: "Den Web loaded",
+    label: "Den Web signed-out shell hydrated",
   });
   await evalIn(browser, `localStorage.setItem("openwork:web:auth-token", ${JSON.stringify(den.admin.token)})`);
+  await waitFor(browser, `localStorage.getItem("openwork:web:auth-token") === ${JSON.stringify(den.admin.token)}`, {
+    timeoutMs: 10_000,
+    label: "Den Web auth token retained",
+  });
   await navigate(browser.client, `${den.ref.webUrl}/dashboard/automations`);
   await waitForText(browser, "My Automations", { timeoutMs: 60_000 });
   await waitForText(browser, name, { timeoutMs: 60_000 });
