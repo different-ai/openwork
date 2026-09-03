@@ -15,6 +15,9 @@ export type InferenceCredentialStatus = "ready" | "member_auth_required" | "org_
 
 export type DenInferenceProviderCredential = {
   subject: string;
+  orgMembershipId: string | null;
+  memberName: string | null;
+  memberEmail: string | null;
   kind: InferenceProviderCredentialKind;
   status: string;
   expiresAt: string | null;
@@ -33,6 +36,9 @@ export type DenInferenceProvider = {
   credentialStatus: InferenceCredentialStatus;
   access: { allMembers: boolean; memberIds: string[]; teamIds: string[] } | null;
   credentials: DenInferenceProviderCredential[] | null;
+  /** Org-owned Google OAuth client used in member mode (manage view only). */
+  oauthClientId: string | null;
+  hasOauthClientSecret: boolean;
 };
 
 /** models.dev `npm` packages the gateway can proxy; mirrors den-api. */
@@ -57,6 +63,18 @@ export function isGoogleVertexNpm(npm: string | null): boolean {
 
 export function isAzureNpm(npm: string | null): boolean {
   return npm === "@ai-sdk/azure";
+}
+
+/** Providers den-api allows in credentialMode "member" (`unsupported_credential_mode` otherwise). */
+export const MEMBER_MODE_PROVIDER_IDS = ["google-vertex", "google-vertex-anthropic"] as const;
+
+export function supportsMemberCredentialMode(providerId: string): boolean {
+  return MEMBER_MODE_PROVIDER_IDS.some((entry) => entry === providerId);
+}
+
+/** Redirect URI the org's Google OAuth client must allow; mirrors den-api's callback route. */
+export function getOauthCallbackPath() {
+  return "/v1/inference-providers/oauth/callback";
 }
 
 /** Settings den-api requires for a given provider SDK (`invalid_settings` otherwise). */
@@ -114,7 +132,15 @@ function asCredential(value: unknown): DenInferenceProviderCredential | null {
   const kind = asCredentialKind(value.kind);
   const status = asString(value.status);
   if (!subject || !kind || !status) return null;
-  return { subject, kind, status, expiresAt: asString(value.expiresAt) };
+  return {
+    subject,
+    orgMembershipId: asString(value.orgMembershipId),
+    memberName: asString(value.memberName),
+    memberEmail: asString(value.memberEmail),
+    kind,
+    status,
+    expiresAt: asString(value.expiresAt),
+  };
 }
 
 export function asInferenceProvider(value: unknown): DenInferenceProvider | null {
@@ -160,6 +186,8 @@ export function asInferenceProvider(value: unknown): DenInferenceProvider | null
     credentials: Array.isArray(value.credentials)
       ? value.credentials.map(asCredential).filter((entry): entry is DenInferenceProviderCredential => entry !== null)
       : null,
+    oauthClientId: asString(value.oauthClientId),
+    hasOauthClientSecret: value.hasOauthClientSecret === true,
   };
 }
 
@@ -226,6 +254,9 @@ export type InferenceProviderFormInput = {
   apiKeyValues: Record<string, string>;
   /** Pasted Google service-account JSON (Vertex org mode). */
   serviceAccountJson: string;
+  /** Org-owned Google OAuth client (member mode). Blank secret keeps the stored one. */
+  oauthClientId: string;
+  oauthClientSecret: string;
   access: { allMembers: boolean; memberIds: string[]; teamIds: string[] };
 };
 
@@ -238,6 +269,8 @@ export type InferenceProviderRequestBody = {
   settings: Record<string, string>;
   credential?: { kind: InferenceProviderCredentialKind; secret: string };
   apiKeys?: Record<string, string>;
+  oauthClientId?: string;
+  oauthClientSecret?: string;
   allMembers: boolean;
   memberIds: string[];
   teamIds: string[];
@@ -255,7 +288,9 @@ function trimmedSettings(settings: Record<string, string>) {
 /**
  * Builds the POST/PATCH body for `/v1/inference-providers`. The credential is
  * only included when the admin typed one (blank = keep what is stored), and
- * never in member mode, where each member authorizes their own account.
+ * never in member mode, where each member authorizes their own account through
+ * the org's Google OAuth client (`oauthClientId` always sent, `oauthClientSecret`
+ * only when typed so a blank keeps the stored secret).
  * `apiKeys` is used for multi-env providers exactly like the BYOK editor.
  */
 export function buildInferenceProviderRequestBody(input: InferenceProviderFormInput): InferenceProviderRequestBody {
@@ -272,6 +307,11 @@ export function buildInferenceProviderRequestBody(input: InferenceProviderFormIn
   };
 
   if (input.credentialMode === "member") {
+    body.oauthClientId = input.oauthClientId.trim();
+    const oauthClientSecret = input.oauthClientSecret.trim();
+    if (oauthClientSecret) {
+      body.oauthClientSecret = oauthClientSecret;
+    }
     return body;
   }
 
@@ -298,7 +338,10 @@ export function buildInferenceProviderRequestBody(input: InferenceProviderFormIn
   return body;
 }
 
-/** Client-side check mirroring den-api's `invalid_settings` / `unsupported_provider` rules. */
+/**
+ * Client-side check mirroring den-api's `invalid_settings` / `unsupported_provider` /
+ * `unsupported_credential_mode` / `oauth_client_required` rules.
+ */
 export function validateInferenceProviderForm(input: {
   npm: string | null;
   name: string;
@@ -306,6 +349,11 @@ export function validateInferenceProviderForm(input: {
   modelIds: string[];
   settings: Record<string, string>;
   serviceAccountJson: string;
+  credentialMode: InferenceProviderCredentialMode;
+  oauthClientId: string;
+  oauthClientSecret: string;
+  /** True when den-api already stores a secret, so a blank field keeps it. */
+  hasOauthClientSecret: boolean;
 }): string | null {
   if (!input.providerId) return "Select a provider.";
   if (!isSupportedGatewayNpm(input.npm)) {
@@ -316,6 +364,14 @@ export function validateInferenceProviderForm(input: {
   for (const key of getRequiredSettingKeys(input.npm)) {
     if (!(input.settings[key] ?? "").trim()) {
       return `${getSettingLabel(key)} is required for this provider.`;
+    }
+  }
+  if (input.credentialMode === "member") {
+    if (!supportsMemberCredentialMode(input.providerId)) {
+      return "Each member signs in is only available for Google Vertex providers.";
+    }
+    if (!input.oauthClientId.trim() || (!input.oauthClientSecret.trim() && !input.hasOauthClientSecret)) {
+      return "Each member signs in requires your Google OAuth client ID and client secret.";
     }
   }
   const json = input.serviceAccountJson.trim();

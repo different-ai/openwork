@@ -29,9 +29,15 @@ const credentialColumns: readonly DenTableColumn<DenInferenceProviderCredential>
   {
     key: "subject",
     header: "Holder",
-    render: (row) => (
-      <span className="text-[13px] text-gray-700">{row.subject === "org" ? "Organization" : "Member"}</span>
-    ),
+    render: (row) =>
+      row.subject === "org" ? (
+        <span className="text-[13px] text-gray-700">Organization</span>
+      ) : (
+        <span className="grid text-[13px]">
+          <span className="text-gray-700">{row.memberName ?? row.memberEmail ?? "Member"}</span>
+          {row.memberName && row.memberEmail ? <span className="text-gray-500">{row.memberEmail}</span> : null}
+        </span>
+      ),
   },
   {
     key: "kind",

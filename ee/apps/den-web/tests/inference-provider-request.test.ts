@@ -5,9 +5,11 @@ import {
   buildInferenceProviderRequestBody,
   buildMigrateFromLlmProviderBody,
   getCredentialStatusLabel,
+  getOauthCallbackPath,
   getRequiredSettingKeys,
   isSupportedGatewayNpm,
   readInferenceProvidersFromPayload,
+  supportsMemberCredentialMode,
   validateInferenceProviderForm,
   type InferenceProviderFormInput,
 } from "../app/(den)/dashboard/_components/inference-provider-request";
@@ -23,6 +25,8 @@ const baseInput: InferenceProviderFormInput = {
   apiKey: " sk-ant-123 ",
   apiKeyValues: {},
   serviceAccountJson: "",
+  oauthClientId: "",
+  oauthClientSecret: "",
   access: { allMembers: false, memberIds: ["mem_1", "mem_1"], teamIds: ["team_1"] },
 };
 
@@ -42,7 +46,7 @@ describe("buildInferenceProviderRequestBody", () => {
     });
   });
 
-  test("google-vertex member mode sends settings and never a credential", () => {
+  test("google-vertex member mode sends settings and the OAuth client, never a credential", () => {
     const body = buildInferenceProviderRequestBody({
       ...baseInput,
       name: "Vertex",
@@ -53,6 +57,8 @@ describe("buildInferenceProviderRequestBody", () => {
       envNames: ["GOOGLE_APPLICATION_CREDENTIALS"],
       apiKey: "should-be-ignored",
       serviceAccountJson: '{"type":"service_account"}',
+      oauthClientId: " 123.apps.googleusercontent.com ",
+      oauthClientSecret: " GOCSPX-secret ",
       access: { allMembers: true, memberIds: ["mem_1"], teamIds: ["team_1"] },
     });
     expect(body).toEqual({
@@ -62,12 +68,36 @@ describe("buildInferenceProviderRequestBody", () => {
       credentialMode: "member",
       status: "active",
       settings: { project: "my-project", location: "us-central1" },
+      oauthClientId: "123.apps.googleusercontent.com",
+      oauthClientSecret: "GOCSPX-secret",
       allMembers: true,
       memberIds: [],
       teamIds: [],
     });
     expect(body).not.toHaveProperty("credential");
     expect(body).not.toHaveProperty("apiKeys");
+  });
+
+  test("member mode with a blank secret keeps the stored one (secret omitted, id still sent)", () => {
+    const body = buildInferenceProviderRequestBody({
+      ...baseInput,
+      providerId: "google-vertex",
+      credentialMode: "member",
+      oauthClientId: "123.apps.googleusercontent.com",
+      oauthClientSecret: "   ",
+    });
+    expect(body.oauthClientId).toBe("123.apps.googleusercontent.com");
+    expect(body).not.toHaveProperty("oauthClientSecret");
+  });
+
+  test("org mode never sends OAuth client fields", () => {
+    const body = buildInferenceProviderRequestBody({
+      ...baseInput,
+      oauthClientId: "123.apps.googleusercontent.com",
+      oauthClientSecret: "GOCSPX-secret",
+    });
+    expect(body).not.toHaveProperty("oauthClientId");
+    expect(body).not.toHaveProperty("oauthClientSecret");
   });
 
   test("google-vertex org mode sends the service account JSON as a gcp_service_account credential", () => {
@@ -131,12 +161,44 @@ describe("gateway provider support + settings", () => {
       modelIds: ["m"],
       settings: { project: "p", location: "l" },
       serviceAccountJson: "",
+      credentialMode: "org" as const,
+      oauthClientId: "",
+      oauthClientSecret: "",
+      hasOauthClientSecret: false,
     };
     expect(validateInferenceProviderForm(valid)).toBeNull();
     expect(validateInferenceProviderForm({ ...valid, settings: { project: "p" } })).toContain("Region is required");
     expect(validateInferenceProviderForm({ ...valid, npm: "@ai-sdk/amazon-bedrock" })).toContain("cannot be routed");
     expect(validateInferenceProviderForm({ ...valid, serviceAccountJson: "{" })).toContain("could not be parsed");
     expect(validateInferenceProviderForm({ ...valid, serviceAccountJson: '{"type":"user"}' })).toContain("service_account");
+  });
+
+  test("member mode requires a Google Vertex provider and both OAuth client fields", () => {
+    const member = {
+      npm: "@ai-sdk/google-vertex",
+      name: "Vertex",
+      providerId: "google-vertex",
+      modelIds: ["m"],
+      settings: { project: "p", location: "l" },
+      serviceAccountJson: "",
+      credentialMode: "member" as const,
+      oauthClientId: "123.apps.googleusercontent.com",
+      oauthClientSecret: "GOCSPX-secret",
+      hasOauthClientSecret: false,
+    };
+    expect(validateInferenceProviderForm(member)).toBeNull();
+    expect(validateInferenceProviderForm({ ...member, providerId: "google-vertex-anthropic", npm: "@ai-sdk/google-vertex/anthropic" })).toBeNull();
+    expect(validateInferenceProviderForm({ ...member, oauthClientId: " " })).toContain("client ID and client secret");
+    expect(validateInferenceProviderForm({ ...member, oauthClientSecret: "" })).toContain("client ID and client secret");
+    // A stored secret satisfies the requirement when the field is left blank.
+    expect(validateInferenceProviderForm({ ...member, oauthClientSecret: "", hasOauthClientSecret: true })).toBeNull();
+    expect(validateInferenceProviderForm({ ...member, providerId: "anthropic", npm: "@ai-sdk/anthropic", settings: {} })).toContain(
+      "only available for Google Vertex",
+    );
+    expect(supportsMemberCredentialMode("google-vertex")).toBe(true);
+    expect(supportsMemberCredentialMode("google-vertex-anthropic")).toBe(true);
+    expect(supportsMemberCredentialMode("anthropic")).toBe(false);
+    expect(getOauthCallbackPath()).toBe("/v1/inference-providers/oauth/callback");
   });
 });
 
@@ -170,15 +232,53 @@ describe("response parsing", () => {
           credentialStatus: "ready",
           authUrl: null,
           access: { allMembers: true, memberIds: ["mem_1"], teamIds: [] },
-          credentials: [{ subject: "org", kind: "api_key", status: "active", expiresAt: null }],
+          oauthClientId: null,
+          hasOauthClientSecret: false,
+          credentials: [
+            { subject: "org", orgMembershipId: null, memberName: null, memberEmail: null, kind: "api_key", status: "active", expiresAt: null },
+          ],
         },
         { id: "broken" },
       ],
     });
     expect(providers).toHaveLength(1);
     expect(providers[0].access).toEqual({ allMembers: true, memberIds: ["mem_1"], teamIds: [] });
-    expect(providers[0].credentials).toEqual([{ subject: "org", kind: "api_key", status: "active", expiresAt: null }]);
+    expect(providers[0].credentials).toEqual([
+      { subject: "org", orgMembershipId: null, memberName: null, memberEmail: null, kind: "api_key", status: "active", expiresAt: null },
+    ]);
+    expect(providers[0].oauthClientId).toBeNull();
+    expect(providers[0].hasOauthClientSecret).toBe(false);
     expect(providers[0].models[0].name).toBe("Claude");
+  });
+
+  test("parses the OAuth client state and member identity on credential rows", () => {
+    const provider = asInferenceProvider({
+      id: "infp_2",
+      providerId: "google-vertex",
+      name: "Vertex",
+      credentialMode: "member",
+      status: "active",
+      oauthClientId: "123.apps.googleusercontent.com",
+      hasOauthClientSecret: true,
+      credentials: [
+        {
+          subject: "member:mem_1",
+          orgMembershipId: "mem_1",
+          memberName: "Ada Lovelace",
+          memberEmail: "ada@example.com",
+          kind: "api_key",
+          status: "active",
+          expiresAt: "2026-09-02T00:00:00.000Z",
+        },
+      ],
+    });
+    expect(provider?.oauthClientId).toBe("123.apps.googleusercontent.com");
+    expect(provider?.hasOauthClientSecret).toBe(true);
+    expect(provider?.credentials?.[0]).toMatchObject({
+      orgMembershipId: "mem_1",
+      memberName: "Ada Lovelace",
+      memberEmail: "ada@example.com",
+    });
   });
 
   test("drops rows with unknown modes or statuses", () => {
