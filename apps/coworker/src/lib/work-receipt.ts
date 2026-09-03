@@ -183,3 +183,42 @@ export function describeProgress(name: string, phase: ProgressPhase, activeStep?
       return `${name} is thinking…`;
   }
 }
+
+/** One labelled block inside a step's technical details. */
+export type TechnicalSection = { label: "Command" | "Input" | "Result" | "Error"; text: string };
+
+/** Keep a technical block readable: enough to understand, never a wall. */
+export const TECHNICAL_TEXT_LIMIT = 1200;
+
+function clipText(text: string, limit = TECHNICAL_TEXT_LIMIT): string {
+  const trimmed = text.replace(/\s+$/, "");
+  return trimmed.length > limit ? `${trimmed.slice(0, limit - 1)}…` : trimmed;
+}
+
+function renderValue(value: unknown): string {
+  if (value === null || value === undefined) return "";
+  if (typeof value === "string") return value;
+  try {
+    return JSON.stringify(value, null, 2) ?? "";
+  } catch {
+    return String(value);
+  }
+}
+
+/**
+ * The technical view of one tool call, as labelled blocks: a shell command on its own,
+ * any other input as tidy JSON, then the result and the error when there is one.
+ * Text is clipped so the block keeps a sane height.
+ */
+export function technicalSections(call: { input: Record<string, unknown>; output?: unknown; error?: string | null }): TechnicalSection[] {
+  const sections: TechnicalSection[] = [];
+  const input = call.input ?? {};
+  const command = typeof input.command === "string" ? input.command.trim() : "";
+  if (command) sections.push({ label: "Command", text: clipText(command) });
+  const rest = Object.fromEntries(Object.entries(input).filter(([key, value]) => !(command && key === "command") && value !== undefined && value !== ""));
+  if (Object.keys(rest).length > 0) sections.push({ label: "Input", text: clipText(JSON.stringify(rest, null, 2)) });
+  const result = renderValue(call.output).trim();
+  if (result) sections.push({ label: "Result", text: clipText(result) });
+  if (call.error) sections.push({ label: "Error", text: clipText(call.error) });
+  return sections;
+}

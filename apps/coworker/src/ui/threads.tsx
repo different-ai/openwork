@@ -48,7 +48,7 @@ import {
   splitDiscussionThreads,
 } from "@/lib/discussions";
 import { markAutoPicked, wasAutoPicked } from "@/lib/model-choice";
-import { describeProgress, describeWorkStep, summarizeWork, type ProgressPhase, type WorkStep } from "@/lib/work-receipt";
+import { describeProgress, describeWorkStep, summarizeWork, technicalSections, type ProgressPhase, type WorkStep } from "@/lib/work-receipt";
 import { describeTurnFailure } from "@/lib/turn-failure";
 import { useAutoGrow } from "@/ui/use-auto-grow";
 import { InteractionCards } from "@/ui/interactions";
@@ -1867,7 +1867,7 @@ function WorkReceipt({ calls, client }: { calls: TranscriptToolCall[]; client: C
     <div className="min-w-0 text-[11px]" data-testid="coworker-work-receipt" data-state={tone === "rose" ? "failed" : unsettled ? "working" : "done"}>
       <button
         type="button"
-        className="group flex max-w-full items-center gap-1.5 py-0.5 text-left text-mist hover:text-snow"
+        className="group mx-auto flex max-w-full items-center gap-1.5 py-0.5 text-left text-mist hover:text-snow"
         aria-expanded={expanded}
         onClick={() => setOpen((value) => !value)}
         data-testid="coworker-work-summary"
@@ -1878,30 +1878,57 @@ function WorkReceipt({ calls, client }: { calls: TranscriptToolCall[]; client: C
         <span className={`text-mist/60 transition-transform ${expanded ? "rotate-90" : ""}`} aria-hidden="true">›</span>
       </button>
       {expanded ? (
-        <ol className="mt-1 space-y-1 border-l border-line pl-3" data-testid="coworker-work-steps">
+        // One card of steady width holds the steps; each step can open its technical view.
+        <ol className="mt-1.5 w-[min(100%,560px)] divide-y divide-line/60 overflow-hidden rounded-xl border border-line/70 bg-panel/50 text-left" data-testid="coworker-work-steps">
           {calls.map((call) => {
             const step = describeWorkStep(call);
             return (
-              <li key={call.partId} data-testid="coworker-work-step" data-state={step.state}>
-                <div className="flex items-center gap-1.5">
+              <li key={call.partId} className="px-3 py-2" data-testid="coworker-work-step" data-state={step.state}>
+                <div className="flex items-center gap-2">
                   <StatusDot tone={step.state === "failed" ? "rose" : step.state === "done" ? "mint" : "spark"} />
                   <span className={`min-w-0 flex-1 truncate ${step.state === "failed" ? "text-rose" : "text-snow"}`}>{step.label}</span>
                   <span className="shrink-0 text-mist">{step.state === "failed" ? "Didn't finish" : step.state === "done" ? "Done" : "Working on it"}</span>
                 </div>
-                {call.error ? <p className="mt-0.5 break-words pl-3.5 text-rose">{call.error}</p> : null}
-                <details className="pl-3.5 text-[10px] text-mist/75">
-                  <summary className="cursor-pointer select-none">Technical details</summary>
-                  <p className="mt-0.5 break-all font-mono">{call.tool}</p>
-                  {Object.keys(call.input ?? {}).length > 0 ? (
-                    <pre className="mt-0.5 max-h-40 overflow-auto whitespace-pre-wrap break-all font-mono">{JSON.stringify(call.input, null, 2)}</pre>
-                  ) : null}
-                </details>
+                <TechnicalDetails call={call} />
               </li>
             );
           })}
         </ol>
       ) : null}
       <ToolAttachments calls={calls} client={client} />
+    </div>
+  );
+}
+
+/**
+ * The technical view of one step: the tool's name, then labelled blocks (Command, Input,
+ * Result, Error) in a steady, readable layout. Closed by default; the error line stays visible.
+ */
+function TechnicalDetails({ call }: { call: TranscriptToolCall }) {
+  const sections = technicalSections(call);
+  return (
+    <div className="pl-4">
+      {call.error ? <p className="mt-1 break-words text-rose">{call.error}</p> : null}
+      <details className="group/tech mt-0.5 text-[10px] text-mist/75" data-testid="coworker-work-technical">
+        <summary className="flex cursor-pointer select-none items-center gap-1 hover:text-mist">
+          <span className="text-mist/60 transition-transform group-open/tech:rotate-90" aria-hidden="true">›</span>
+          Technical details
+        </summary>
+        <dl className="mt-1.5 space-y-1.5 rounded-lg bg-ink/70 p-2.5">
+          <div className="flex items-baseline gap-2">
+            <dt className="w-14 shrink-0 text-mist/60">Tool</dt>
+            <dd className="min-w-0 break-all font-mono text-mist">{call.tool}</dd>
+          </div>
+          {sections.map((section) => (
+            <div key={section.label} className="flex items-baseline gap-2">
+              <dt className={`w-14 shrink-0 ${section.label === "Error" ? "text-rose/80" : "text-mist/60"}`}>{section.label}</dt>
+              <dd className="min-w-0 flex-1">
+                <pre className={`max-h-40 overflow-auto whitespace-pre-wrap break-words font-mono leading-relaxed ${section.label === "Error" ? "text-rose" : "text-snow/85"}`}>{section.text}</pre>
+              </dd>
+            </div>
+          ))}
+        </dl>
+      </details>
     </div>
   );
 }
