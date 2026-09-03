@@ -7,6 +7,7 @@ import {
   catalogApps,
   connectionPath,
   humanizeToolName,
+  isServerTool,
   pathForAppTitle,
   pathForTool,
   pluginPath,
@@ -15,6 +16,7 @@ import {
   skillPath,
   toolIdsForServer,
   toolPath,
+  toolRefPath,
   type SearchableItem,
 } from "./apps-tools.ts";
 import type { CoworkerMcpAppCatalogServer } from "./mcp.ts";
@@ -44,6 +46,16 @@ test("the last crumb decides the screen", () => {
   assert.deepEqual(appsToolsScreen(pluginPath({ name: "Release" })), { kind: "plugin", name: "Release" });
   assert.deepEqual(appsToolsScreen(connectionPath({ id: "conn_1", name: "Notion" })), { kind: "connection", id: "conn_1" });
   assert.deepEqual(appsToolsScreen([{ id: "mystery", title: "?" }]), { kind: "root" });
+  assert.deepEqual(appsToolsScreen(toolRefPath("chapter-notes_open_team_pulse", "Used Team pulse")), { kind: "tool-ref", tool: "chapter-notes_open_team_pulse" });
+});
+
+test("only a server's tools lead from a receipt into Apps & tools", () => {
+  assert.ok(isServerTool("chapter-notes_open_team_pulse"));
+  assert.ok(isServerTool("openwork-cloud_search_capabilities"));
+  assert.ok(!isServerTool("read"));
+  assert.ok(!isServerTool("browser_click"));
+  assert.ok(!isServerTool("openwork_context"));
+  assert.ok(!isServerTool("coworker_document_create"));
 });
 
 test("the catalog flattens into Apps with a source line, connected ones first", () => {
