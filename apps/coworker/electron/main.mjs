@@ -15,7 +15,7 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { BrowserWindow, Menu, app, dialog, ipcMain, shell } from "electron";
 import { openworkConfigDir } from "@openwork/paths";
-import { createHeadlessThreadClient } from "@openwork/headless-threads";
+import { createHeadlessThreadClient, toTranscript } from "@openwork/headless-threads";
 import {
   createCoworker,
   createLongTermMemory,
@@ -57,6 +57,27 @@ import {
 } from "./local-responsibilities.mjs";
 import { resolveBundledOpencodeBinary, resolveUserDataDir } from "./runtime-paths.mjs";
 import { SETTINGS_FILE, readSettings, updateSettings } from "./settings.mjs";
+import {
+  BEGIN_BODY,
+  CONTINUE_BODY,
+  RECOVERED_STATUS,
+  appendWorkerEvent,
+  createReviewScheduler,
+  createWorker,
+  getWorker,
+  isWorkerFinished,
+  lifespanSpent,
+  listWorkers,
+  nextWorkerState,
+  parseWorkerReport,
+  readWorkerEvents,
+  registerWorkerThread,
+  reviewPrompt,
+  steerBody,
+  updateWorker,
+  workerThreadTitle,
+  workerTurnPrompt,
+} from "./workers.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const isDev = !app.isPackaged || process.env.OPENWORK_DEV_MODE === "1";
@@ -126,9 +147,9 @@ let ownerToken = "";
 let engineError = "";
 let startingServer = null;
 let localResponsibilitiesTimer = null;
-/** `slug:id` of every run executing in this process. */
+/** `slug:id` of every run executing in this process — responsibility runs and Worker turns alike. */
 const activeLocalRuns = new Set();
-/** Runs waiting for a free slot, oldest first: `{ key, slug, id, runId }`. */
+/** Runs waiting for a free slot, oldest first: `{ key, slug, id, runId, launch }`; `launch` starts it once admitted. */
 const queuedLocalRuns = [];
 /** Admission decisions run one at a time so two requests can never both take the last slot. */
 let localRunAdmission = Promise.resolve();
@@ -559,6 +580,15 @@ function isQueued(key) {
   return queuedLocalRuns.some((entry) => entry.key === key);
 }
 
+function removeQueuedRun(key) {
+  const index = queuedLocalRuns.findIndex((entry) => entry.key === key);
+  return index === -1 ? null : queuedLocalRuns.splice(index, 1)[0];
+}
+
+function queuedResponsibilityRun(slug, id, runId) {
+  return { key: `${slug}:${id}`, slug, id, runId, launch: () => launchLocalRun(slug, id, { runId }) };
+}
+
 /**
  * Start a run now if a slot is free on this Mac, otherwise record it as queued
  * so it starts by itself when one frees up. Returns what happened.
@@ -571,7 +601,7 @@ function startLocalResponsibilityRun(slug, id, trigger) {
     const limit = await parallelRunLimit();
     if (activeLocalRuns.size >= limit) {
       const queued = await queueLocalResponsibilityRun(coworkersDir, slug, id, { trigger });
-      queuedLocalRuns.push({ key, slug, id, runId: queued.latestRun.id });
+      queuedLocalRuns.push(queuedResponsibilityRun(slug, id, queued.latestRun.id));
       return { accepted: true, queued: true, reason: "" };
     }
     activeLocalRuns.add(key);
@@ -598,9 +628,7 @@ function resumeLocalResponsibilityRun(slug, id) {
 }
 
 async function cancelQueuedLocalResponsibilityRun(slug, id) {
-  const key = `${slug}:${id}`;
-  const index = queuedLocalRuns.findIndex((entry) => entry.key === key);
-  const entry = index === -1 ? null : queuedLocalRuns.splice(index, 1)[0];
+  const entry = removeQueuedRun(`${slug}:${id}`);
   const items = await listLocalResponsibilities(coworkersDir, slug);
   const record = items.find((item) => item.id === id);
   const queuedRun = entry?.runId ?? record?.runs.find((run) => run.status === "queued")?.id ?? "";
@@ -616,7 +644,7 @@ function drainLocalRunQueue() {
       const next = queuedLocalRuns.shift();
       if (activeLocalRuns.has(next.key)) continue;
       activeLocalRuns.add(next.key);
-      await launchLocalRun(next.slug, next.id, { runId: next.runId });
+      await next.launch();
     }
   });
 }
@@ -630,8 +658,322 @@ function localRunStatus(limit) {
   return { limit, active: activeLocalRuns.size, queued: queuedLocalRuns.length };
 }
 
+// ---------------------------------------------------------------------------
+// Workers: long-lived sub-agents in a coworker's own workspace. Each Worker
+// turn is one bounded native turn that takes a slot on this Mac like a
+// responsibility run and releases it when it settles; every finding wakes the
+// coworker in its open discussion. Records live in `electron/workers.mjs`.
+
+/** Worker turns in flight in this process: `slug:wrk_…` → controller that cancels the wait. */
+const liveWorkerTurns = new Map();
+/** Steering that arrived while a turn ran or the Worker waited; delivered as its next turn. */
+const pendingWorkerSteers = new Map();
+let workersRecovered = false;
+const REVIEW_IDLE_WAIT_MS = 5 * 60_000;
+const REVIEW_TURN_TIMEOUT_MS = 15 * 60_000;
+const WORKER_TURN_TIMEOUT_MS = 60 * 60_000;
+
+const workerReviews = createReviewScheduler({
+  review: (slug, findings) => reviewWorkerFindings(slug, findings),
+  onDropped: (slug, findings) => {
+    void recordDroppedReview(slug, findings);
+  },
+});
+
+function workerKey(slug, id) {
+  return `${slug}:${id}`;
+}
+
+/** A thread client in the coworker's workspace, on its own model; throws when AI is unavailable here. */
+async function readyWorkerClient(coworker) {
+  const handle = await ensurePlatformServer();
+  if (!handle.managedOpencode) throw new Error(engineError || "AI is unavailable on this Mac");
+  if (!coworker.workspaceId) throw new Error("This coworker's workspace is not ready yet.");
+  return createHeadlessThreadClient({
+    baseUrl: handle.url,
+    workspaceId: coworker.workspaceId,
+    token: ownerToken,
+    defaultModel: localRunModel(coworker),
+  });
+}
+
+async function spawnWorker(slug, input, spawnedBy) {
+  const coworker = await getCoworker(coworkersDir, slug);
+  if (!coworker.workspaceId) throw new Error("This coworker's workspace is not ready yet.");
+  const worker = await createWorker(coworkersDir, slug, { ...input, spawnedBy });
+  await appendWorkerEvent(coworkersDir, slug, worker.id, {
+    kind: "status",
+    text: spawnedBy === "coworker" ? `Started by ${coworker.name}` : "Started by you",
+    by: spawnedBy,
+  });
+  void admitWorkerTurn(slug, worker.id);
+  return worker;
+}
+
+/** Take a slot for the Worker's next turn now, or wait in line with the other runs on this Mac. */
+function admitWorkerTurn(slug, id) {
+  return admitLocalRun(async () => {
+    const key = workerKey(slug, id);
+    if (activeLocalRuns.has(key) || isQueued(key)) return;
+    const worker = await getWorker(coworkersDir, slug, id).catch(() => null);
+    if (!worker || isWorkerFinished(worker) || worker.status === "paused") return;
+    const limit = await parallelRunLimit();
+    if (activeLocalRuns.size >= limit) {
+      queuedLocalRuns.push({ key, slug, id, runId: "", launch: () => launchWorkerTurn(slug, id) });
+      await updateWorker(coworkersDir, slug, id, { status: "waiting", waitingFor: "turn" }).catch(() => undefined);
+      return;
+    }
+    activeLocalRuns.add(key);
+    await launchWorkerTurn(slug, id);
+  });
+}
+
+/** Resolve once the turn is recorded as running (or could not start); the turn itself continues detached. */
+function launchWorkerTurn(slug, id) {
+  return new Promise((resolve) => {
+    void executeWorkerTurn(slug, id, { onStarted: resolve });
+  });
+}
+
+async function executeWorkerTurn(slug, id, { onStarted }) {
+  const key = workerKey(slug, id);
+  let continueAfter = false;
+  try {
+    let worker;
+    let coworker;
+    try {
+      worker = await getWorker(coworkersDir, slug, id);
+      coworker = await getCoworker(coworkersDir, slug);
+      if (isWorkerFinished(worker) || worker.status === "paused") {
+        onStarted();
+        return;
+      }
+      if (lifespanSpent(worker.lifespan)) {
+        await updateWorker(coworkersDir, slug, id, { status: "finished" });
+        await appendWorkerEvent(coworkersDir, slug, id, { kind: "status", text: "Finished: reached the end of its lifespan." });
+        onStarted();
+        return;
+      }
+      worker = await updateWorker(coworkersDir, slug, id, { status: "running", waitingFor: "" });
+    } catch (error) {
+      console.warn(`[open-coworker] Worker ${key} did not start a turn`, error);
+      onStarted();
+      return;
+    }
+    onStarted();
+    const controller = new AbortController();
+    liveWorkerTurns.set(key, controller);
+    try {
+      const client = await readyWorkerClient(coworker);
+      const steers = pendingWorkerSteers.get(key) ?? [];
+      pendingWorkerSteers.delete(key);
+      const body = steers.length > 0 ? steerBody(steers, coworker.name) : worker.threadId ? CONTINUE_BODY : BEGIN_BODY;
+      const prompt = workerTurnPrompt({ worker, coworkerName: coworker.name, body });
+      let threadId = worker.threadId;
+      let acceptance;
+      if (threadId) {
+        acceptance = await client.sendTurn(threadId, { prompt, signal: controller.signal });
+      } else {
+        const thread = await client.createThread({ title: workerThreadTitle(worker.name), prompt, signal: controller.signal });
+        threadId = thread.id;
+        await registerWorkerThread(coworkersDir, slug, threadId);
+        await updateWorker(coworkersDir, slug, id, { threadId });
+      }
+      const result = await client.waitForThread(threadId, {
+        timeoutMs: WORKER_TURN_TIMEOUT_MS,
+        pollIntervalMs: 1_000,
+        signal: controller.signal,
+        ...(acceptance ? { since: acceptance } : {}),
+      });
+      // Stopped while it ran: the stop already recorded itself.
+      if (controller.signal.aborted) return;
+      const settled = result.outcome === "settled" && !result.terminalError;
+      const outcome = settled
+        ? { kind: "settled", report: parseWorkerReport(toTranscript(result.snapshot).finalAssistantText) }
+        : {
+            kind: "failed",
+            error: result.terminalError?.message
+              || (result.outcome === "timeout" ? "The turn timed out after one hour" : `The turn ${result.outcome}`),
+          };
+      continueAfter = await settleWorkerTurn(slug, id, outcome);
+    } catch (error) {
+      if (!controller.signal.aborted) {
+        continueAfter = await settleWorkerTurn(slug, id, { kind: "failed", error: error instanceof Error ? error.message : String(error) });
+      }
+    } finally {
+      liveWorkerTurns.delete(key);
+    }
+  } finally {
+    activeLocalRuns.delete(key);
+    // Runs already in line go first; this Worker's next turn asks for a slot after them.
+    void drainLocalRunQueue();
+    if (continueAfter) void admitWorkerTurn(slug, id);
+  }
+}
+
+/** Record what a settled turn meant and wake the coworker for anything it reported; returns whether to take another turn. */
+async function settleWorkerTurn(slug, id, outcome) {
+  const key = workerKey(slug, id);
+  const now = Date.now();
+  let current;
+  try {
+    current = await getWorker(coworkersDir, slug, id);
+  } catch {
+    return false;
+  }
+  const step = nextWorkerState(current, outcome, { now, hasPendingSteer: (pendingWorkerSteers.get(key) ?? []).length > 0 });
+  const updated = Object.keys(step.patch).length > 0
+    ? await updateWorker(coworkersDir, slug, id, step.patch, { now }).catch(() => current)
+    : current;
+  for (const event of step.events) {
+    const recorded = await appendWorkerEvent(coworkersDir, slug, id, event, { now }).catch(() => null);
+    if (!recorded) continue;
+    if (event.kind === "finding") {
+      workerReviews.add(slug, { id: recorded.id, workerId: id, workerName: updated.name, report: recorded.report, text: recorded.text });
+    } else if (updated.status === "failed") {
+      workerReviews.add(slug, { id: recorded.id, workerId: id, workerName: updated.name, report: "failed", text: updated.error || recorded.text });
+    }
+  }
+  return step.schedule === "continue";
+}
+
+async function steerWorker(slug, id, text, by) {
+  const message = String(text ?? "").trim();
+  if (!message) throw new Error("Say what the Worker should do differently.");
+  const key = workerKey(slug, id);
+  const worker = await getWorker(coworkersDir, slug, id);
+  if (isWorkerFinished(worker)) throw new Error("This Worker has already stopped.");
+  await appendWorkerEvent(coworkersDir, slug, id, { kind: "steer", text: message, by });
+  const steers = pendingWorkerSteers.get(key) ?? [];
+  steers.push({ by, text: message });
+  pendingWorkerSteers.set(key, steers);
+  const updated = await updateWorker(coworkersDir, slug, id, {
+    steerCount: worker.steerCount + 1,
+    ...(worker.status === "waiting" ? { waitingFor: "turn" } : {}),
+  });
+  // A waiting Worker takes the steer as its next turn now; a running one when its turn settles; a paused one when resumed.
+  if (worker.status === "waiting" || worker.status === "starting") void admitWorkerTurn(slug, id);
+  return updated;
+}
+
+async function cancelWorker(slug, id, reason, by) {
+  const key = workerKey(slug, id);
+  const worker = await getWorker(coworkersDir, slug, id);
+  if (isWorkerFinished(worker)) return worker;
+  removeQueuedRun(key);
+  pendingWorkerSteers.delete(key);
+  const updated = await updateWorker(coworkersDir, slug, id, { status: "cancelled" });
+  const why = String(reason ?? "").trim();
+  await appendWorkerEvent(coworkersDir, slug, id, { kind: "status", text: why ? `Stopped: ${why}` : "Stopped", by });
+  const controller = liveWorkerTurns.get(key);
+  if (controller) {
+    controller.abort();
+    if (worker.threadId) {
+      const coworker = await getCoworker(coworkersDir, slug).catch(() => null);
+      if (coworker) await readyWorkerClient(coworker).then((client) => client.abortThread(worker.threadId)).catch(() => undefined);
+    }
+  }
+  return updated;
+}
+
+async function pauseWorker(slug, id) {
+  const worker = await getWorker(coworkersDir, slug, id);
+  if (isWorkerFinished(worker)) throw new Error("This Worker has already stopped.");
+  if (worker.status === "paused") return worker;
+  removeQueuedRun(workerKey(slug, id));
+  const updated = await updateWorker(coworkersDir, slug, id, { status: "paused", waitingFor: "" });
+  await appendWorkerEvent(coworkersDir, slug, id, {
+    kind: "status",
+    text: worker.status === "running" ? "Paused; it finishes its current step first." : "Paused",
+  });
+  return updated;
+}
+
+async function resumeWorker(slug, id) {
+  const worker = await getWorker(coworkersDir, slug, id);
+  if (worker.status !== "paused") return worker;
+  const updated = await updateWorker(coworkersDir, slug, id, { status: "waiting", waitingFor: "turn" });
+  await appendWorkerEvent(coworkersDir, slug, id, { kind: "status", text: "Resumed" });
+  void admitWorkerTurn(slug, id);
+  return updated;
+}
+
+/**
+ * Workers left mid-turn by a quit or crash pick up again once the engine is
+ * ready, waiting their turn like any run. A Worker waiting for a decision
+ * keeps waiting; a paused one stays paused.
+ */
+async function recoverInterruptedWorkers() {
+  if (workersRecovered || !serverHandle?.managedOpencode) return;
+  workersRecovered = true;
+  for (const coworker of await listCoworkers(coworkersDir)) {
+    for (const worker of await listWorkers(coworkersDir, coworker.slug).catch(() => [])) {
+      const key = workerKey(coworker.slug, worker.id);
+      if (isWorkerFinished(worker) || worker.status === "paused" || activeLocalRuns.has(key) || isQueued(key)) continue;
+      if (worker.status === "waiting" && worker.waitingFor === "decision") continue;
+      if (worker.status === "running" || worker.status === "starting") {
+        await updateWorker(coworkersDir, coworker.slug, worker.id, { status: "waiting", waitingFor: "turn" }).catch(() => undefined);
+        await appendWorkerEvent(coworkersDir, coworker.slug, worker.id, { kind: "status", text: RECOVERED_STATUS }).catch(() => undefined);
+      }
+      void admitWorkerTurn(coworker.slug, worker.id);
+    }
+  }
+}
+
+/**
+ * Wake the coworker: one normal turn in its open discussion carrying the new
+ * findings. It never interleaves with a reply in progress or a turn waiting
+ * on the person; without an open discussion the findings are held.
+ */
+async function reviewWorkerFindings(slug, findings) {
+  const coworker = await getCoworker(coworkersDir, slug);
+  if (!coworker.workspaceId || !coworker.conversationThreadId || !serverHandle?.managedOpencode) return "hold";
+  const client = await readyWorkerClient(coworker);
+  const threadId = coworker.conversationThreadId;
+  const idle = await client.waitUntilIdle(threadId, { timeoutMs: REVIEW_IDLE_WAIT_MS, pollIntervalMs: 1_000 });
+  if (idle.outcome !== "settled") return "hold";
+  const workers = await listWorkers(coworkersDir, slug);
+  const mentioned = new Set(findings.map((finding) => finding.workerId));
+  const prompt = reviewPrompt({
+    coworkerName: coworker.name,
+    workers: workers.filter((worker) => !isWorkerFinished(worker) || mentioned.has(worker.id)),
+    findings,
+  });
+  const acceptance = await client.sendTurn(threadId, { prompt });
+  const result = await client.waitForThread(threadId, { timeoutMs: REVIEW_TURN_TIMEOUT_MS, pollIntervalMs: 1_000, since: acceptance });
+  const failure = result.outcome !== "settled" || result.terminalError
+    ? result.terminalError?.message || `The review ${result.outcome}`
+    : "";
+  const now = Date.now();
+  for (const workerId of mentioned) {
+    await appendWorkerEvent(coworkersDir, slug, workerId, {
+      kind: "review",
+      text: failure ? `${coworker.name} could not review this yet.` : `${coworker.name} reviewed this.`,
+      reviewThreadId: threadId,
+      findingIds: findings.filter((finding) => finding.workerId === workerId).map((finding) => finding.id),
+      ...(failure ? { error: failure } : {}),
+    }, { now }).catch(() => undefined);
+  }
+  if (failure) throw new Error(failure);
+  return "reviewed";
+}
+
+async function recordDroppedReview(slug, findings) {
+  for (const workerId of new Set(findings.map((finding) => finding.workerId))) {
+    await appendWorkerEvent(coworkersDir, slug, workerId, {
+      kind: "review",
+      text: "Not reviewed: the coworker's reply failed twice. The findings stay here.",
+      findingIds: findings.filter((finding) => finding.workerId === workerId).map((finding) => finding.id),
+      error: "Review failed twice",
+    }).catch(() => undefined);
+  }
+}
+
 async function runDueLocalResponsibilities() {
   const now = Date.now();
+  await recoverInterruptedWorkers().catch((error) => {
+    console.warn("[open-coworker] Worker recovery failed", error);
+  });
   const coworkers = await listCoworkers(coworkersDir);
   for (const coworker of coworkers) {
     const responsibilities = await reconcileInterruptedLocalRuns(coworkersDir, coworker.slug, {
@@ -643,7 +985,7 @@ async function runDueLocalResponsibilities() {
       // A run queued in an earlier process (quit before its turn) waits in line again.
       const persistedQueue = responsibility.runs.find((run) => run.status === "queued");
       if (persistedQueue && !activeLocalRuns.has(key) && !isQueued(key)) {
-        queuedLocalRuns.push({ key, slug: coworker.slug, id: responsibility.id, runId: persistedQueue.id });
+        queuedLocalRuns.push(queuedResponsibilityRun(coworker.slug, responsibility.id, persistedQueue.id));
       }
       if (responsibility.state !== "active" || !responsibility.nextDueAt || responsibility.nextDueAt > now) continue;
       const trigger = now - responsibility.nextDueAt > 30_000 ? "recovery" : "scheduled";
@@ -757,9 +1099,16 @@ const commands = {
   },
   "coworkers.update": async ({ slug, patch }) => updateCoworker(coworkersDir, slug, patch ?? {}),
   "coworkers.delete": async ({ slug }) => {
-    const running = activeLocalRunIds(String(slug ?? "")).size;
+    const activeIds = [...activeLocalRunIds(String(slug ?? ""))];
+    const workersRunning = activeIds.filter((id) => id.startsWith("wrk_")).length;
+    const running = activeIds.length - workersRunning;
     for (let index = queuedLocalRuns.length - 1; index >= 0; index -= 1) {
       if (queuedLocalRuns[index].slug === String(slug ?? "")) queuedLocalRuns.splice(index, 1);
+    }
+    if (workersRunning > 0) {
+      throw new Error(
+        `${workersRunning === 1 ? "A Worker is" : `${workersRunning} Workers are`} still running for this coworker. Stop them before retiring.`,
+      );
     }
     if (running > 0) {
       throw new Error(
@@ -837,8 +1186,19 @@ const commands = {
   "localResponsibilities.runNow": async ({ slug, id }) => startLocalResponsibilityRun(slug, id, "manual"),
   "localResponsibilities.resume": async ({ slug, id }) => resumeLocalResponsibilityRun(slug, id),
   "localResponsibilities.cancelQueued": async ({ slug, id }) => cancelQueuedLocalResponsibilityRun(slug, id),
-  /** How busy this Mac is with responsibilities right now, and the limit that applies. */
+  /** How busy this Mac is with responsibilities and Worker turns right now, and the limit that applies. */
   "localResponsibilities.status": async () => localRunStatus(await parallelRunLimit()),
+  // Workers: long-lived sub-agents in the coworker's workspace. The person starts,
+  // steers, pauses, and stops them here; the coworker does the same through its tools.
+  "workers.list": async ({ slug }) => listWorkers(coworkersDir, slug),
+  "workers.get": async ({ slug, id }) => getWorker(coworkersDir, slug, id),
+  "workers.spawn": async ({ slug, name, goal, lifespan, spawnedFromThreadId }) =>
+    spawnWorker(slug, { name, goal, lifespan, spawnedFromThreadId }, "person"),
+  "workers.steer": async ({ slug, id, text }) => steerWorker(slug, id, text, "person"),
+  "workers.cancel": async ({ slug, id, reason }) => cancelWorker(slug, id, reason, "person"),
+  "workers.pause": async ({ slug, id }) => pauseWorker(slug, id),
+  "workers.resume": async ({ slug, id }) => resumeWorker(slug, id),
+  "workers.findings": async ({ slug, id, limit }) => readWorkerEvents(coworkersDir, slug, id, Number.isFinite(limit) ? { limit } : {}),
   "settings.get": async () => readSettings(settingsPath),
   "settings.update": async (patch) => {
     const next = await updateSettings(settingsPath, patch);

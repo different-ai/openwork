@@ -37,6 +37,7 @@ import {
 } from "@/lib/threads";
 import type { HeadlessThreadModel } from "@openwork/headless-threads";
 import {
+  classifyThreads,
   configureDiscussionStore,
   discussionIds,
   discussionLabel,
@@ -45,9 +46,9 @@ import {
   loadDiscussionRegistry,
   registerDiscussion,
   rememberWorkspaceSlug,
-  splitDiscussionThreads,
 } from "@/lib/discussions";
 import { markAutoPicked, wasAutoPicked } from "@/lib/model-choice";
+import { describeReview, parseWorkerReview, type WorkerReview } from "@/lib/workers";
 import { describeProgress, describeWorkStep, summarizeWork, technicalSections, type ProgressPhase, type WorkStep } from "@/lib/work-receipt";
 import { describeTurnFailure } from "@/lib/turn-failure";
 import { useAutoGrow } from "@/ui/use-auto-grow";
@@ -231,6 +232,8 @@ export function ThreadsPanel({
     () => discussionIds(registeredDiscussions, discussionThreadId),
     [registeredDiscussions, discussionThreadId],
   );
+  /** Threads that belong to the coworker's Workers (main process registry); never discussions or assignments. */
+  const [workerThreadIds, setWorkerThreadIds] = useState<string[]>([]);
   const threads = useMemo(
     () =>
       coworker.workspaceId
@@ -242,9 +245,10 @@ export function ThreadsPanel({
             modelVariant: coworker.modelVariant,
             conversationThreadId: discussionThreadId,
             discussionThreadIds,
+            workerThreadIds,
           })
         : null,
-    [runtime.serverUrl, runtime.ownerToken, coworker.workspaceId, coworker.model, coworker.modelVariant, discussionThreadId, discussionThreadIds],
+    [runtime.serverUrl, runtime.ownerToken, coworker.workspaceId, coworker.model, coworker.modelVariant, discussionThreadId, discussionThreadIds, workerThreadIds],
   );
   const [items, setItems] = useState<ThreadListItem[]>([]);
   const [discussions, setDiscussions] = useState<ThreadListItem[]>([]);
@@ -312,11 +316,14 @@ export function ThreadsPanel({
   const refresh = useCallback(async () => {
     if (!threads) return;
     try {
-      const [all, pending] = await Promise.all([
+      const [all, pending, workers] = await Promise.all([
         threads.listAllThreads(),
         threads.listPendingInteractions().catch((): PendingInteractions => ({ permissions: [], questions: [] })),
+        coworkerBridge.workers.list(coworker.slug).catch(() => []),
       ]);
-      const split = splitDiscussionThreads(all, discussionThreadIds);
+      const workerIds = workers.map((worker) => worker.threadId).filter(Boolean);
+      setWorkerThreadIds((current) => (current.length === workerIds.length && current.every((id, index) => id === workerIds[index]) ? current : workerIds));
+      const split = classifyThreads(all, { discussions: discussionThreadIds, workers: workerIds });
       setItems(split.assignments);
       setDiscussions(split.discussions);
       const attention: Record<string, string> = {};
@@ -335,7 +342,7 @@ export function ThreadsPanel({
       setFailingSince((current) => current ?? now);
       setLastFailureAt(now);
     }
-  }, [discussionThreadIds, threads]);
+  }, [coworker.slug, discussionThreadIds, threads]);
 
   // Re-read quickly while the workspace is not answering so the view heals as soon as it does.
   const failing = Boolean(error);
@@ -1417,7 +1424,7 @@ function ThreadView({
           {freshDiscussion ? <QuietEmptyConversation coworker={coworker} /> : null}
           {conversationBlocks(visibleMessages, (message, index) => working && message.role === "assistant" && index === lastAssistantIndex).map((block) =>
             block.kind === "actions" ? (
-              <ActionLine key={block.id} reasoning={block.reasoning} calls={block.calls} client={mcpClient} />
+              <ActionLine key={block.id} review={block.review} reasoning={block.reasoning} calls={block.calls} client={mcpClient} />
             ) : (
               <Fragment key={block.message.id}>
                 <TimeLabel label={timeLabelBetween(block.previous?.createdAt, block.message.createdAt)} />
@@ -1529,33 +1536,49 @@ function ThreadView({
 }
 
 type ConversationBlock =
-  | { kind: "actions"; id: string; reasoning: string; calls: TranscriptToolCall[] }
+  | { kind: "actions"; id: string; review: WorkerReview | null; reasoning: string; calls: TranscriptToolCall[] }
   | { kind: "message"; message: TranscriptMessage; previous: TranscriptMessage | undefined; active: boolean; continued: boolean; tail: boolean };
+
+/** The app's own turn that wakes the coworker with its Workers' updates; never a bubble from the person. */
+function reviewTurn(message: TranscriptMessage): WorkerReview | null {
+  return message.role === "user" ? parseWorkerReview(message.text) : null;
+}
 
 /**
  * Lay a transcript out as bubbles with the coworker's thinking and actions gathered into one
  * small line between them. Consecutive replies that only did work (no words) fold into the
  * line before the next bubble, so two action lines never sit one after the other. A reply
- * still in progress keeps its thinking out of the line until it has finished.
+ * still in progress keeps its thinking out of the line until it has finished. The turn that
+ * hands the coworker its Workers' updates joins the same line as what it then did about them.
  */
 export function conversationBlocks(
   messages: readonly TranscriptMessage[],
   isActive: (message: TranscriptMessage, index: number) => boolean,
 ): ConversationBlock[] {
   const blocks: ConversationBlock[] = [];
+  let review: WorkerReview | null = null;
   let reasoning: string[] = [];
   let calls: TranscriptToolCall[] = [];
   let pendingId = "";
   const flush = () => {
-    if (reasoning.length === 0 && calls.length === 0) return;
-    blocks.push({ kind: "actions", id: `actions-${pendingId}`, reasoning: reasoning.join("\n\n"), calls });
+    if (!review && reasoning.length === 0 && calls.length === 0) return;
+    blocks.push({ kind: "actions", id: `actions-${pendingId}`, review, reasoning: reasoning.join("\n\n"), calls });
+    review = null;
     reasoning = [];
     calls = [];
   };
-  // Bubbles decide grouping: a reply with no visible words never counts as a neighbour.
-  const bubbles = messages.filter((message, index) => message.role !== "assistant" || Boolean(message.text) || isActive(message, index));
+  // Bubbles decide grouping: a reply with no visible words never counts as a neighbour, nor does a review turn.
+  const bubbles = messages.filter((message, index) =>
+    message.role === "assistant" ? Boolean(message.text) || isActive(message, index) : !reviewTurn(message),
+  );
   messages.forEach((message, index) => {
     const active = isActive(message, index);
+    const reviewed = reviewTurn(message);
+    if (reviewed) {
+      if (!pendingId) pendingId = message.id;
+      review = review ? { updates: [...review.updates, ...reviewed.updates] } : reviewed;
+      return;
+    }
     if (message.role === "assistant") {
       if (!pendingId) pendingId = message.id;
       if (message.reasoning && !active) reasoning.push(message.reasoning);
@@ -1581,14 +1604,36 @@ export function conversationBlocks(
 }
 
 /** One small centered line between bubbles: what the coworker thought through and did. */
-function ActionLine({ reasoning, calls, client }: { reasoning: string; calls: TranscriptToolCall[]; client: CoworkerMcpClient }) {
+function ActionLine({ review, reasoning, calls, client }: { review: WorkerReview | null; reasoning: string; calls: TranscriptToolCall[]; client: CoworkerMcpClient }) {
   return (
     <div className="flex justify-center py-0.5" data-testid="coworker-action-line">
       <div className="flex max-w-[80%] flex-wrap items-start justify-center gap-x-4 gap-y-1">
+        {review ? <ReviewDisclosure review={review} /> : null}
         {reasoning ? <ThinkingDisclosure text={reasoning} /> : null}
         {calls.length > 0 ? <WorkReceipt calls={calls} client={client} /> : null}
       </div>
     </div>
+  );
+}
+
+const REVIEW_KIND_WORDS = { finding: "reported", decision: "needs a decision", done: "finished", failed: "didn't finish" } as const;
+
+/** "Reviewed 2 updates from Workers", opening into what each Worker said. */
+function ReviewDisclosure({ review }: { review: WorkerReview }) {
+  return (
+    <details className="group text-[11px] text-mist" data-testid="coworker-worker-review">
+      <summary className="flex cursor-pointer list-none items-center gap-1.5 py-0.5 marker:hidden hover:text-snow">
+        <span>{describeReview(review)}</span>
+        <span className="text-mist/60 transition-transform group-open:rotate-90" aria-hidden="true">›</span>
+      </summary>
+      <ul className="mt-1 space-y-1.5 border-l border-line pl-3 leading-relaxed">
+        {review.updates.map((update, index) => (
+          <li key={index} className="whitespace-pre-wrap">
+            <span className="font-semibold text-snow/80">{update.worker}</span> {REVIEW_KIND_WORDS[update.kind]}: {update.text}
+          </li>
+        ))}
+      </ul>
+    </details>
   );
 }
 

@@ -51,13 +51,28 @@ export function splitDiscussionThreads<T extends { id: string }>(
   threads: readonly T[],
   ids: Iterable<string>,
 ): { discussions: T[]; assignments: T[] } {
-  const set = new Set(ids);
+  const { discussions, assignments } = classifyThreads(threads, { discussions: ids, workers: [] });
+  return { discussions, assignments };
+}
+
+/**
+ * Every thread in a coworker's workspace is one of three things: a discussion,
+ * a Worker's own thread, or an assignment. The registries decide, never the
+ * title; a Worker thread listed as a discussion stays a Worker thread.
+ */
+export function classifyThreads<T extends { id: string }>(
+  threads: readonly T[],
+  registries: { discussions: Iterable<string>; workers: Iterable<string> },
+): { discussions: T[]; workers: T[]; assignments: T[] } {
+  const workerIds = new Set(registries.workers);
+  const discussionIds = new Set(registries.discussions);
   const discussions: T[] = [];
+  const workers: T[] = [];
   const assignments: T[] = [];
   for (const thread of threads) {
-    (set.has(thread.id) ? discussions : assignments).push(thread);
+    (workerIds.has(thread.id) ? workers : discussionIds.has(thread.id) ? discussions : assignments).push(thread);
   }
-  return { discussions, assignments };
+  return { discussions, workers, assignments };
 }
 
 /**
