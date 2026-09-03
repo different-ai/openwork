@@ -188,6 +188,10 @@ test(title, async ({ evidence, place }) => {
     deviceScaleFactor: 1,
     mobile: false,
   });
+  await browser.client.send("Network.enable");
+  await browser.client.send("Network.setExtraHTTPHeaders", {
+    headers: { Authorization: `Bearer ${creator.token}` },
+  });
   await waitFor(browser, `location.href.startsWith(${JSON.stringify(den.ref.webUrl)}) && document.readyState === "complete"`, {
     timeoutMs: 60_000,
     label: "Den Web origin before creator auth token handoff",
@@ -247,6 +251,9 @@ test(title, async ({ evidence, place }) => {
     return localStorage.getItem("openwork:web:auth-token") === ${JSON.stringify(member.token)};
   })()`);
   expect(memberTokenStored).toBe(true);
+  await browser.client.send("Network.setExtraHTTPHeaders", {
+    headers: { Authorization: `Bearer ${member.token}` },
+  });
   await navigate(browser.client, teamUrl);
   await waitFor(browser, `document.body.innerText.includes("This setting is managed by workspace admins")`, {
     timeoutMs: 30_000,
