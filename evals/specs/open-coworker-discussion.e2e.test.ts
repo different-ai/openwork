@@ -192,6 +192,11 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   const storedAfterSecond = resultRecord(await invokeCoworker(app, "coworkers.get", { slug: "editor" }));
   expect(storedAfterSecond.conversationThreadId).toBe(discussionThreadId);
 
+  // The reply's text lands a moment before its turn closes; let the live row go before reading the surface.
+  await waitFor(app, `document.querySelector('[data-testid="coworker-thread-status"]')?.textContent?.trim() === "Ready" && document.querySelectorAll('[data-testid="coworker-working"]').length === 0`, {
+    timeoutMs: 120_000,
+    label: "second turn settled",
+  });
   // Discussions never count as assignments. The header carries no Assignments control any more;
   // the composer's summary line names none, and Activity › Assignments has nothing handed over.
   const assignmentFacts = await evalIn(app, `(() => ({
