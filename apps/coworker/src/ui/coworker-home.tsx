@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { coworkerBridge, type CoworkerSummary, type LocalResponsibility, type ProviderSyncRun, type RuntimeInfo } from "@/lib/bridge";
-import { describeNow, describeOutcome, mergeRecentWork, relativeTime } from "@/lib/activity-summary";
+import { describeHeaderStatus, describeNow, describeOutcome, describeStatusDetail, mergeRecentWork, relativeTime, type StatusTone } from "@/lib/activity-summary";
 import type { ConnectState } from "@/lib/connect";
 import type { DenSession } from "@/lib/den";
 import { clearAutoPicked, markAutoPicked, peekStartingModel, takeStartingModel } from "@/lib/model-choice";
@@ -9,14 +9,14 @@ import { AvatarControls, CoworkerAvatar } from "@/ui/coworker-avatar";
 import { PersonalityPicker } from "@/ui/personality-picker";
 import { useWorkingSaying } from "@/ui/use-working-saying";
 import { CapabilitiesPanel } from "@/ui/capabilities";
-import { ActivityIcon, AppsIcon, Button, ErrorNote, IconButton, MemoryIcon, SlidersIcon, StatusDot, WorkersIcon } from "@/ui/kit";
+import { ActivityIcon, AppsIcon, Button, ErrorNote, IconButton, MemoryIcon, SlidersIcon, Tooltip, WorkersIcon } from "@/ui/kit";
 import { useResizablePanel } from "@/ui/use-resizable-panel";
 import { PanelContent, PanelHeader, usePanelNavigation } from "@/ui/panel-nav";
 import { pushCrumb, routeDepth, type PanelCrumb } from "@/lib/panel-route";
 import type { PanelBounds } from "@/lib/panel-layout";
 import { MemoryPanel } from "@/ui/memory";
 import { DocumentBesidePane, DocumentsIcon, DocumentsPanel, lastDocumentsOpened, useDocuments } from "@/ui/documents";
-import { describeActiveDocuments, documentsChangedSince } from "@/lib/documents";
+import { documentsChangedSince } from "@/lib/documents";
 import { ThreadsPanel, type DocumentHooks } from "@/ui/threads";
 import { WorkersPanel } from "@/ui/workers";
 import { describeWorkerCount, type WorkerSummary } from "@/lib/workers";
@@ -62,20 +62,28 @@ const BESIDE_APPS_MIN_WIDTH = 480;
 /** Below this window width the open panel lies over the conversation instead of beside it. */
 const NARROW_WINDOW = 900;
 
-function activityTone(activity: CoworkerActivity | undefined): "spark" | "mint" | "amber" | "rose" | "mist" {
-  if (activity?.state === "working") return "spark";
-  if (activity?.state === "retrying" || activity?.state === "attention") return "amber";
-  if (activity?.state === "offline") return "rose";
-  if (activity?.state === "recent") return "mint";
-  return "mist";
-}
+const STATUS_TEXT_TONE: Record<StatusTone, string> = { mist: "text-mist", amber: "text-amber", rose: "text-rose" };
 
-function activityTextTone(activity: CoworkerActivity | undefined): string {
-  if (activity?.state === "working") return "text-spark";
-  if (activity?.state === "retrying" || activity?.state === "attention") return "text-amber";
-  if (activity?.state === "offline") return "text-rose";
-  if (activity?.state === "recent") return "text-mint";
-  return "text-mist";
+/**
+ * The header's one plain word about the coworker — no dot, colour only when it
+ * asks for the person or reports a failure. The tooltip adds the reason and the
+ * time; the live row in the transcript owns the moment-to-moment phrase.
+ */
+export function HeaderStatusWord({ activity, engineManaged }: { activity: CoworkerActivity | undefined; engineManaged: boolean }) {
+  const status = describeHeaderStatus(activity, engineManaged);
+  const detail = describeStatusDetail(activity, engineManaged);
+  return (
+    <Tooltip content={detail} side="bottom">
+      <span
+        data-testid="coworker-top-status"
+        data-tone={status.tone}
+        tabIndex={detail ? 0 : undefined}
+        className={`window-no-drag shrink-0 rounded-md text-xs focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-spark/60 ${STATUS_TEXT_TONE[status.tone]}`}
+      >
+        {status.word}
+      </span>
+    </Tooltip>
+  );
 }
 
 /** A request another view makes of this one: open a settings section, or open one thread. */
@@ -138,7 +146,6 @@ export function CoworkerHome({
   const [besideDocumentId, setBesideDocumentId] = useState("");
   const [windowWidth, setWindowWidth] = useState(() => window.innerWidth);
   const { documents, refresh: refreshDocuments, error: documentsError } = useDocuments(coworker.slug);
-  const documentsInPlay = describeActiveDocuments(documents ?? []);
   /** The conversation views place their own title line and actions into the one header. */
   const [headerTitleSlot, setHeaderTitleSlot] = useState<HTMLElement | null>(null);
   const [headerActionsSlot, setHeaderActionsSlot] = useState<HTMLElement | null>(null);
@@ -313,22 +320,7 @@ export function CoworkerHome({
             <div ref={setHeaderTitleSlot} className="window-no-drag flex min-h-[18px] min-w-0 items-center gap-2 text-xs text-mist" data-testid="conversation-header-title" />
           </div>
           <div ref={setHeaderActionsSlot} className="window-no-drag flex shrink-0 items-center gap-1" data-testid="conversation-header-actions" />
-          {documentsInPlay ? (
-            <button
-              type="button"
-              className="window-no-drag hidden shrink-0 items-center gap-1.5 text-[11px] text-mist transition-colors hover:text-snow md:flex"
-              title="Open Documents"
-              data-testid="coworker-documents-in-play"
-              onClick={() => showContext("documents")}
-            >
-              <DocumentsIcon className="size-3.5" />
-              {documentsInPlay}
-            </button>
-          ) : null}
-          <span data-testid="coworker-top-status" className={`flex shrink-0 items-center gap-2 text-xs ${runtime.engineManaged ? activityTextTone(activity) : "text-rose"}`} title={activity?.detail}>
-            <StatusDot tone={runtime.engineManaged ? activityTone(activity) : "rose"} />
-            {runtime.engineManaged ? (activity?.label ?? "Checking status") : "AI unavailable"}
-          </span>
+          <HeaderStatusWord activity={activity} engineManaged={runtime.engineManaged} />
         </header>
         {!runtime.engineManaged ? (
           <AiUnavailableNote coworkerName={coworker.name} technical={runtime.engineError} onRestart={onRestartRuntime} />
@@ -649,25 +641,18 @@ function CoworkerOverview({
   const recent = mergeRecentWork(activity, localResponsibilities);
   const nowTime = relativeTime(activity?.updatedAt ?? 0);
   const canOpenSubject = Boolean(activity?.threadId);
-  const statusLabel = engineManaged ? (activity?.label ?? "Checking status") : "AI unavailable";
 
   return (
     <div className="flex min-h-full flex-col gap-5">
+      {/* The header owns the one-word state; this row names what it is about. */}
       <section aria-label="Current activity" className="rounded-2xl border border-line bg-ink p-4" data-testid="coworker-activity-summary">
-        <div className="flex items-center justify-between gap-3">
-          <span
-            data-testid="coworker-current-status"
-            className={`flex min-w-0 items-center gap-2 text-sm font-semibold ${engineManaged ? activityTextTone(activity) : "text-rose"}`}
-          >
-            <StatusDot tone={engineManaged ? activityTone(activity) : "rose"} />
-            <span className="truncate">{statusLabel}</span>
-          </span>
-          {nowTime && now.subject ? (
+        {nowTime && now.subject ? (
+          <div className="flex items-center justify-end gap-3">
             <span className="shrink-0 text-[11px] text-mist" title={activity?.updatedAt ? new Date(activity.updatedAt).toLocaleString() : undefined}>
               {nowTime}
             </span>
-          ) : null}
-        </div>
+          </div>
+        ) : null}
 
         {now.subject ? (
           <button
