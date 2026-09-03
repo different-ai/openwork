@@ -160,9 +160,17 @@ function optimisticMessage(turn: { messageId: string; prompt: string }): Transcr
   return { id: turn.messageId, role: "user", parentId: null, text: turn.prompt, createdAt: null, completedAt: null, error: null, reasoning: "", model: null, toolCalls: [] };
 }
 
+const EMPTY_REPLY_MESSAGE = "The model stopped before producing a response.";
+
+/** A reply the engine closed with neither words nor work behind it: the provider went quiet, not an answer. */
+function endedEmpty(message: Pick<TranscriptMessage, "text" | "toolCalls" | "completedAt" | "error">): boolean {
+  return message.completedAt !== null && message.error === null && !message.text.trim() && message.toolCalls.length === 0;
+}
+
 /** How the engine's reply to one message stands: none yet, still being written, finished, or ended in an error. */
 function replyStateFor(messages: readonly TranscriptMessage[], messageId: string): TurnReplyState {
-  const last = messages.filter((message) => message.role === "assistant" && message.parentId === messageId).at(-1);
+  const replies = messages.filter((message) => message.role === "assistant" && message.parentId === messageId);
+  const last = replies.at(-1);
   if (!last) return NO_REPLY;
   if (last.error) {
     return {
@@ -171,6 +179,10 @@ function replyStateFor(messages: readonly TranscriptMessage[], messageId: string
       retryable: last.error.retryable,
       aborted: /abort/i.test(last.error.name) || /abort/i.test(last.error.message),
     };
+  }
+  // The engine records a stream that ended without a word as finished; to the person it is a reply that never came.
+  if (endedEmpty(last) && replies.every((reply) => !reply.text.trim() && reply.toolCalls.length === 0)) {
+    return { state: "error", error: EMPTY_REPLY_MESSAGE, retryable: false, aborted: false };
   }
   return { state: last.completedAt === null ? "writing" : "complete", error: "", retryable: null, aborted: false };
 }
@@ -1296,7 +1308,14 @@ function ThreadView({
         model: null,
         toolCalls: [],
       })), messageId).state === "complete" && !isRunning(result.snapshot.status);
-      if (result.outcome === "settled" || landed) {
+      const settledReplies = result.snapshot.messages.filter((message) => message.role === "assistant" && message.parentId === messageId);
+      const emptyReply = (result.outcome === "settled" || landed)
+        && settledReplies.length > 0
+        && settledReplies.every((message) => message.parts.every((part) => part.type !== "tool" && !(part.type === "text" && part.text?.trim())));
+      if (emptyReply) {
+        // The stream closed without a word: the person hears that the reply never came and can retry it.
+        await settleFailure(EMPTY_REPLY_MESSAGE, false, true);
+      } else if (result.outcome === "settled" || landed) {
         if (send.mode === "retry" && send.switchedTo) setResolution({ messageId, note: `Retried with ${send.switchedTo}` });
         commitTurnState(clearPending);
       } else if (result.outcome === "failed") {
