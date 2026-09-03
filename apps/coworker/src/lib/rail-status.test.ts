@@ -42,6 +42,19 @@ test("the rail line prefers now, then needs, then what is next, then the list, t
     describeRailLine({ activity: activity({ state: "working", detail: "Set up your memory for the job. 1) Record your mission focus" }), personality: "calm", seed, now: NOW }),
     "Working on set up your memory for the job",
   );
+  // Workers are the coworker working too: named when one is the subject, counted beside the coworker's own turn otherwise.
+  assert.equal(
+    describeRailLine({ activity: activity({ state: "working", detail: "Market scan", workers: { running: 1, subject: true } }), personality: "calm", seed, now: NOW }),
+    "Worker Market scan is working",
+  );
+  assert.equal(
+    describeRailLine({ activity: activity({ state: "working", detail: "Market scan", workers: { running: 2, subject: true } }), personality: "calm", seed, now: NOW }),
+    "2 Workers running",
+  );
+  assert.equal(
+    describeRailLine({ activity: activity({ state: "working", detail: "Draft the launch note", workers: { running: 1, subject: false } }), personality: "calm", seed, now: NOW }),
+    "Working on draft the launch note · 1 Worker running",
+  );
   assert.equal(describeRailLine({ activity: activity({ state: "attention", detail: "Waiting for permission to run a command" }), personality: "calm", seed, now: NOW }), "Waiting for permission to run a command");
   assert.equal(
     describeRailLine({ activity: activity({ state: "ready", next: { name: "Morning competitor report", at: NOW + 2 * HOUR } }), personality: "calm", seed, now: NOW }),

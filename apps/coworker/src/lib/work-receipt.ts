@@ -6,6 +6,7 @@
  * the details disclosure, never in the collapsed line.
  */
 import { documentToolName, humanizeDocumentId, structuredContextChanges, structuredDocument } from "./documents.ts";
+import { describeWorkerToolStep, workerToolName } from "./workers.ts";
 
 export type WorkStepInput = {
   tool: string;
@@ -132,6 +133,11 @@ export function describeWorkStep(call: WorkStepInput): WorkStep {
 
   const documentTool = documentToolName(tool);
   if (documentTool) return describeDocumentStep(documentTool, call, step);
+  const workerTool = workerToolName(tool);
+  if (workerTool) {
+    const described = describeWorkerToolStep(workerTool, { input, output: call.output, metadata: call.metadata ?? {} });
+    return step(described.label, described.doing, "Workers");
+  }
   if (normalized.endsWith("search_capabilities")) {
     const query = text(input.query);
     return step(
