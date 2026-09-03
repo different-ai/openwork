@@ -237,7 +237,22 @@ it (its width and last view are remembered, whether it was open is not). Open,
 its Activity view shows only what the selected coworker is doing, what it
 recently finished, and the responsibilities it owns; its AI model, thinking
 effort, memory files, and retirement live behind the icon-only Coworker
-settings control. A discreet OpenWork control in the bottom-left rail opens the
+settings control.
+
+The panel keeps a **route** (`lib/panel-route.ts`): one view and a short path
+inside it, at most root → group → item, remembered per view for the session.
+Its 78 px header band shows breadcrumbs — the root and each level as buttons,
+the current one in white; narrower than 380 px, or when the trail is long, the
+middle folds into `…` with a menu of the skipped levels — and one back control
+that names the level it returns to (*Back to Apps & tools*). Back is that
+arrow, `⌘[` / `Alt+←`, or a two-finger swipe right on the panel; Escape goes
+back one level and closes the panel only at a root; the strip icon of the view
+already showing goes to its root, another view opens where it was last. Each
+level slides in over about 160 ms (none under reduced motion), keeps its own
+scroll position, and hands focus back to the row it was opened from. Any part
+of the app can open a route with `openPanelRoute` — a receipt step that used a
+tool or an App opens that item. Below 900 px the open panel lies over the
+conversation behind a scrim. A discreet OpenWork control in the bottom-left rail opens the
 full-window global settings (account, AI models, AI & local setup) without
 taking space from the thread. That surface reads the active connected-provider
 catalog, so OpenWork model and provider changes stay visible without a second
@@ -261,11 +276,69 @@ and registers the `openwork-cloud` gateway in each coworker workspace through
 the embedded server's reconcile route, so the coworker gains
 `search_capabilities` / `execute_capability`, remote skills such as
 create-skill, and the organization's Apps (discovered through the gateway's
-connection index and rendered with the standard MCP App host). The Apps &
-tools panel shows one plain status (Connected / Needs attention / Unavailable)
-with Ask, Create a skill, and Repair; signing out removes the gateway again.
-The packaged app ships the engine's OpenWork plugins under
-`Resources/opencode-plugins`, as the desktop does.
+connection index and rendered with the standard MCP App host). Signing out
+removes the gateway again. The packaged app ships the engine's OpenWork plugins
+under `Resources/opencode-plugins`, as the desktop does.
+
+## Apps & tools
+
+The Apps & tools view is a small navigable surface inside the panel — tap in,
+read, tap back — never one long page of everything (`ui/capabilities.tsx`,
+levels in `lib/apps-tools.ts`, states in `lib/connection-words.ts`, the Connect
+catalog in `lib/connect-catalog.ts`). Its root is three flat rows, each with an
+icon, a title, one status line, a count, and a chevron:
+
+- **Connected with OpenWork** — *Connected as <org>*, *Not connected*, *Needs
+  sign-in*, *Needs setup by an admin*, *Needs attention*, or *Unavailable*,
+  mapped from the gateway's own health (a lapsed token is a sign-in; revoked
+  membership, disabled agent access, or the wrong organization needs an admin;
+  anything else offers Repair). Signed out, its screen is the OpenWork Connect
+  explanation as a first step (Continue, Skip, "don't show this again"), then
+  the short card. Signed in, the screen leads with *Ask <coworker>* and *Create
+  a skill*, then four rows: **Apps** (gateway Apps that render inline),
+  **Skills** (built in and from marketplaces, read from the gateway's skill
+  index through `GET /experimental/connect/skills`), **Plugins & marketplaces**
+  (each plugin lists its skills and the services it uses with their readiness in
+  plain words and the step that unblocks them), and **Connections** (each
+  organization connection with its live status and the exact human step —
+  naming your Connections page, the organization's Connections dashboard, or the
+  provider's own console — from the gateway's connection-status results). The
+  gateway has no "list everything" call, so plugin readiness and connection
+  statuses come from its search with four keyword variants, merged and cached
+  once per session and coworker; Refresh reads again. The live status always
+  wins: a connection the catalog reached but the gateway says needs a person
+  reads as the gateway says.
+- **Apps** — everything that renders inline, from any source, with a source line
+  (*OpenWork Connect* or *<tool> on this Mac*). A detail offers **Open** (the
+  App mounts in the panel through the standard MCP App host), **Open beside**
+  when the window has room, **Ask <coworker>** (a prefilled assignment), and a
+  *Technical details* fold with the source, tool, and resource.
+- **Tools on this Mac** — the servers the person set up (the gateway and the
+  app's own document tools are not listed), each with its state in plain words
+  — *Connected*, *Not connected*, *Needs sign-in*, *Needs setup*, *Connecting*,
+  *Off* — read from the workspace config, the managed sign-in, and the AI
+  service's own report, in that order of authority, plus a tool count. A detail
+  says what the server offers by its own titles and descriptions (the embedded
+  server's `GET /workspace/:id/mcp/:name/tools`), lists its Apps, offers *Ask
+  <coworker> to use it*, explains a disconnected state, and keeps identifiers
+  and raw errors behind *Technical details*.
+
+Search is one field in the content, not the header (`⌘F` focuses it while the
+panel is open). At the root it searches everything and groups the results
+(Apps, Skills, Plugins & marketplaces, Connections, Tools on this Mac); inside
+a level it scopes to that level with one tap to *Search everywhere*; a result
+opens its item with the trail built as if navigated. Empty levels are quiet
+lines ("Nothing set up on this Mac yet."), loading lists are skeleton rows, and
+only the root's refresh icon ever spins.
+
+**Open beside** puts an App or skill detail in a column of at least 480 px next
+to the conversation while the panel returns to its list. It is offered from
+1,280 px on and only while the conversation keeps its own minimum width beside
+the rail, the panel, and the column; when the window shrinks below that, the
+column folds back into the panel at the same route. It is closed by default and
+never restored on launch; closing it returns focus to the row it came from.
+Rows are buttons in a list: arrow keys move between them, Enter opens, Back
+returns focus to the originating row, and only one level is ever in the DOM.
 
 The first screen carries a small mascot (`ui/onboarding-mascot.tsx`) with the
 app icon's composition — the flat white Open Coworker bubble in front of one
