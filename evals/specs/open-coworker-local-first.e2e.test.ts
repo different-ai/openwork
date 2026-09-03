@@ -1,11 +1,92 @@
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import http from "node:http";
+import os from "node:os";
+import path from "node:path";
 import { clickButton, evalIn, fill, waitFor, waitForText } from "@openwork/behaviors";
+import { resolveHost } from "@openwork/hosts";
 import { coworker, needs, test } from "@openwork/testkit";
 import { expect } from "vitest";
 
 const enabled = process.env.OPENWORK_EVAL_E2E_TESTS === "1";
 const title = enabled
-  ? "Open Coworker completes local onboarding, a calm default sidebar, model choice in settings, native runs with history, and a run queue"
+  ? "Open Coworker completes local onboarding with what this Mac already has, a calm default sidebar, model choice in settings, native runs with history, and a run queue"
   : "Open Coworker local-first journey skipped — needs: set OPENWORK_EVAL_E2E_TESTS=1";
+
+// Every fixture value is plainly fake; the journey proves none of them ever shows up anywhere a person or a log could read.
+const FAKE_CODEX_REFRESH = "FIXTURE-CODEX-REFRESH-TOKEN-NOT-REAL";
+const FAKE_GEMINI_KEY = "FIXTURE-GEMINI-KEY-NOT-REAL";
+const FAKE_COPILOT_TOKEN = "FIXTURE-COPILOT-TOKEN-NOT-REAL";
+const FIXTURE_SECRETS = [FAKE_CODEX_REFRESH, FAKE_GEMINI_KEY, FAKE_COPILOT_TOKEN];
+const STUB_MODELS = ["stub-small", "stub-large"];
+const STUB_REPLY = "Hello from the stub server.";
+
+/**
+ * A local model server the way Ollama and any OpenAI-compatible server answer:
+ * a tags list, a models list, and streamed chat completions with one fixed
+ * reply. Only reachable when the app runs on this machine.
+ */
+async function startStubModelServer(): Promise<{ port: number; chatCalls: () => number; close: () => Promise<void> }> {
+  let chatCalls = 0;
+  const server = http.createServer((request, response) => {
+    const url = new URL(request.url ?? "/", "http://127.0.0.1");
+    const json = (status: number, body: unknown) => {
+      response.writeHead(status, { "content-type": "application/json" });
+      response.end(JSON.stringify(body));
+    };
+    if (request.method === "GET" && url.pathname === "/api/tags") {
+      json(200, { models: STUB_MODELS.map((name) => ({ name, model: name })) });
+      return;
+    }
+    if (request.method === "GET" && url.pathname === "/v1/models") {
+      json(200, { object: "list", data: STUB_MODELS.map((id) => ({ id, object: "model" })) });
+      return;
+    }
+    if (request.method === "POST" && url.pathname === "/v1/chat/completions") {
+      chatCalls += 1;
+      let body = "";
+      request.on("data", (chunk: Buffer) => { body += chunk.toString("utf8"); });
+      request.on("end", () => {
+        let stream = false;
+        let model: string = STUB_MODELS[0] ?? "stub";
+        try {
+          const parsed: unknown = JSON.parse(body);
+          if (isRecord(parsed)) {
+            stream = parsed.stream === true;
+            if (typeof parsed.model === "string") model = parsed.model;
+          }
+        } catch {
+          // An unreadable body still gets the fixed reply.
+        }
+        if (!stream) {
+          json(200, { id: "chatcmpl-stub", object: "chat.completion", created: 1, model, choices: [{ index: 0, message: { role: "assistant", content: STUB_REPLY }, finish_reason: "stop" }], usage: { prompt_tokens: 1, completion_tokens: 5, total_tokens: 6 } });
+          return;
+        }
+        response.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache", connection: "keep-alive" });
+        const chunk = (delta: Record<string, string>, finish: string | null, usage?: Record<string, number>) =>
+          `data: ${JSON.stringify({ id: "chatcmpl-stub", object: "chat.completion.chunk", created: 1, model, choices: [{ index: 0, delta, finish_reason: finish }], ...(usage ? { usage } : {}) })}\n\n`;
+        response.write(chunk({ role: "assistant", content: "" }, null));
+        response.write(chunk({ content: STUB_REPLY }, null));
+        response.write(chunk({}, "stop", { prompt_tokens: 1, completion_tokens: 5, total_tokens: 6 }));
+        response.write("data: [DONE]\n\n");
+        response.end();
+      });
+      return;
+    }
+    json(404, { error: "not found" });
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
+  const address = server.address();
+  if (!address || typeof address === "string") throw new Error("The stub model server did not report a port.");
+  return {
+    port: address.port,
+    chatCalls: () => chatCalls,
+    close: () => new Promise<void>((resolve) => server.close(() => resolve())),
+  };
+}
+
+function expectNoFixtureSecret(text: string, where: string): void {
+  for (const secret of FIXTURE_SECRETS) expect(text, `${where} must never show ${secret}`).not.toContain(secret);
+}
 
 function json(value: unknown): string {
   const serialized = JSON.stringify(value);
@@ -38,7 +119,45 @@ async function invokeCoworker(app: Awaited<ReturnType<typeof coworker>>, command
 
 test.skipIf(!enabled)(title, async ({ evidence }) => {
   needs({ optIn: ["OPENWORK_EVAL_E2E_TESTS"], commands: ["opencode"] });
-  await using app = await coworker({ name: "local-first" });
+  await using host = await resolveHost();
+  // Fixtures the app finds on "this Mac": a Codex sign-in (a committed fixture the app reads through
+  // CODEX_HOME, so it works wherever the app runs), a Google key in the environment, and — only when the
+  // app runs on this machine — a Copilot sign-in under the profile's XDG config plus a stub model server
+  // standing in for Ollama. Every other key the AI service would read is blanked so the host's own keys
+  // never leak into what the journey asserts.
+  const sameMachine = host.kind === "local";
+  const codexHome = path.join(host.workspaceRoot, "evals", "fixtures", "open-coworker", "codex-home");
+  const stub = sameMachine ? await startStubModelServer() : null;
+  const profileDir = sameMachine ? await mkdtemp(path.join(os.tmpdir(), "open-coworker-local-first-")) : undefined;
+  if (profileDir) {
+    const copilotDir = path.join(profileDir, "xdg-config", "github-copilot");
+    await mkdir(copilotDir, { recursive: true });
+    await writeFile(path.join(copilotDir, "hosts.json"), `${JSON.stringify({ "github.com": { user: "fixture", oauth_token: FAKE_COPILOT_TOKEN } }, null, 2)}\n`, "utf8");
+  }
+  const cleanup = {
+    [Symbol.asyncDispose]: async () => {
+      await stub?.close();
+      if (profileDir) await rm(profileDir, { recursive: true, force: true });
+    },
+  };
+  await using _cleanup = cleanup;
+  await using app = await coworker({
+    name: "local-first",
+    host,
+    ...(profileDir ? { profileDir } : {}),
+    env: {
+      CODEX_HOME: codexHome,
+      GEMINI_API_KEY: FAKE_GEMINI_KEY,
+      OPENAI_API_KEY: "",
+      ANTHROPIC_API_KEY: "",
+      OPENROUTER_API_KEY: "",
+      GOOGLE_API_KEY: "",
+      GOOGLE_GENERATIVE_AI_API_KEY: "",
+      XAI_API_KEY: "",
+      OLLAMA_HOST: stub ? `127.0.0.1:${stub.port}` : "127.0.0.1:9",
+      LMSTUDIO_HOST: "127.0.0.1:9",
+    },
+  });
 
   await waitFor(app, `(document.body?.innerText ?? "").toLowerCase().includes("welcome to open coworker")`, {
     timeoutMs: 120_000,
@@ -197,6 +316,145 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   );
 
   await clickButtonContaining(app, "Use this Mac");
+
+  // --- Local mode: exactly what this Mac has, one Connect per row, the free model, and Add another.
+  await waitFor(app, `document.querySelector('[data-testid="local-providers"]')?.dataset.loaded === "true"`, { timeoutMs: 180_000, label: "local mode screen" });
+  const readRows = `(selector) => [...document.querySelectorAll(selector + ' > li')].map((row) => ({
+    id: row.dataset.testid,
+    title: row.querySelector("span.block")?.textContent?.trim() ?? "",
+    line: row.querySelector('[data-testid$="-line"]')?.textContent?.trim() ?? "",
+    actions: [...row.querySelectorAll("button")].map((button) => button.textContent?.trim()),
+  }))`;
+  const localMode = await waitFor(app, `(() => {
+    const read = ${readRows};
+    const found = read('[data-testid="found-rows"]');
+    if (!document.querySelector('[data-testid="connected-google"]')) return false;
+    return {
+      title: document.querySelector('[data-testid="local-mode"] h1')?.textContent?.trim(),
+      recommended: document.querySelector('[data-testid="local-mode-recommended"]')?.innerText ?? "",
+      found,
+      connected: read('[data-testid="connected-rows"]'),
+      free: document.querySelector('[data-testid="free-model-row"]')?.innerText ?? "",
+      freeChoice: document.querySelector('[data-testid="free-model-choose"]')?.textContent?.trim(),
+      shared: document.querySelector('[data-testid="local-mode-shared"]')?.textContent?.trim(),
+      text: document.body.innerText,
+    };
+  })()`, { timeoutMs: 120_000, label: "local mode rows" });
+  if (!isRecord(localMode) || !Array.isArray(localMode.found) || !Array.isArray(localMode.connected)) throw new Error("Local mode facts were unavailable.");
+  expect(localMode.title).toBe("AI on this Mac");
+  expect(String(localMode.recommended)).toContain("Continue with OpenWork for your organization's models and tools.");
+  // Exactly the fixtures, nothing about providers that are absent, and no Connect for what cannot connect here.
+  expect(localMode.found.map((row) => isRecord(row) ? row.id : row)).toEqual(
+    sameMachine ? ["found-codex", "found-copilot", "found-server:ollama"] : ["found-codex"],
+  );
+  expect(localMode.found[0]).toMatchObject({ title: "ChatGPT (signed in with Codex)", line: "Uses your ChatGPT subscription for coworkers on this Mac.", actions: ["Connect"] });
+  if (sameMachine) {
+    expect(localMode.found[1]).toMatchObject({ title: "GitHub Copilot (signed in on this Mac)", actions: ["Connect"] });
+    expect(localMode.found[2]).toMatchObject({ title: "Ollama (running on this Mac)", line: "2 models ready. Uses them for coworkers on this Mac; no account needed.", actions: ["Connect"] });
+  }
+  expect(localMode.connected.map((row) => isRecord(row) ? [row.id, row.line] : row)).toEqual([["connected-google", "From GEMINI_API_KEY in your environment."]]);
+  expect(localMode.connected[0]).toMatchObject({ actions: ["Start with this"] });
+  expect(String(localMode.free)).toContain("A free model is ready now");
+  expect(String(localMode.free)).toContain("No setup, no account");
+  expect(localMode.freeChoice).toBe("Start with this");
+  expect(localMode.shared).toBe("Sign-ins and keys are shared with OpenWork Desktop and OpenCode on this Mac.");
+  const localModeText = String(localMode.text);
+  for (const absent of ["Claude", "Anthropic", "LM Studio", "OpenRouter", "xAI"]) expect(localModeText, `${absent} is not on this Mac`).not.toContain(absent);
+  for (const banned of ["engine", "provider id", "OAuth", "auth.json", "base URL", "SDK"]) expect(localModeText.toLowerCase(), `plain words only: ${banned}`).not.toContain(banned.toLowerCase());
+  expectNoFixtureSecret(localModeText, "the local mode screen");
+  // The recommended line is dismissible for the session, not nagging.
+  await waitFor(app, `(() => {
+    const dismiss = document.querySelector('[data-testid="local-mode-recommended"] button[aria-label="Dismiss"]');
+    if (!(dismiss instanceof HTMLElement)) return false;
+    dismiss.click();
+    return true;
+  })()`, { label: "dismiss the recommended line" });
+  await waitFor(app, `!document.querySelector('[data-testid="local-mode-recommended"]')`, { timeoutMs: 10_000, label: "recommended line gone" });
+  evidence.recordAssertionEvidence(
+    "Use this Mac shows exactly what was found, with one Connect per row and the free model ready",
+    `After Use this Mac, the AI on this Mac screen listed exactly ${sameMachine ? "the Codex sign-in, the Copilot sign-in, and the stub Ollama server" : "the Codex sign-in"} under Found on this Mac with one plain line and a Connect each, the Google key from the environment under Connected, the free model row with Start with this, one line saying sign-ins are shared with OpenWork Desktop and OpenCode, and nothing about Claude, LM Studio, or other providers that were not there; no banned word and no fixture secret appeared, and the recommended line dismissed for the session.`,
+    true,
+  );
+
+  // Connect on the Codex row hands the sign-in to the AI service as it is: OpenAI moves under Connected with models.
+  await waitFor(app, `(() => {
+    const connect = document.querySelector('[data-testid="found-codex-connect"]');
+    if (!(connect instanceof HTMLElement)) return false;
+    connect.click();
+    return true;
+  })()`, { label: "Connect ChatGPT (signed in with Codex)" });
+  const openaiRow = await waitFor(app, `(() => {
+    const row = document.querySelector('[data-testid="connected-openai"]');
+    if (!(row instanceof HTMLElement) || document.querySelector('[data-testid="found-codex"]')) return false;
+    return {
+      line: row.querySelector('[data-testid="connected-openai-line"]')?.textContent?.trim(),
+      count: row.querySelector('[data-testid="connected-openai-count"]')?.textContent?.trim(),
+      actions: [...row.querySelectorAll("button")].map((button) => button.textContent?.trim()),
+    };
+  })()`, { timeoutMs: 180_000, label: "OpenAI connected from the Codex sign-in" });
+  expect(openaiRow).toMatchObject({ line: "Your ChatGPT subscription, signed in with Codex.", count: expect.stringMatching(/^[1-9]\d* models?$/), actions: ["Start with this", "Disconnect"] });
+  expectNoFixtureSecret(String(await evalIn(app, "document.body.innerText")), "the screen after Connect");
+  evidence.recordAssertionEvidence(
+    "Connect on a found sign-in takes one step and the provider's models become available on this Mac",
+    `Connect on ChatGPT (signed in with Codex) moved OpenAI under Connected with its model count and a Disconnect, and the Codex row left Found on this Mac; the Codex sign-in file's tokens never appeared on screen.`,
+    true,
+  );
+
+  if (sameMachine && stub) {
+    // A local model server connects the same way.
+    await waitFor(app, `(() => {
+      const connect = document.querySelector('[data-testid="found-server:ollama-connect"]');
+      if (!(connect instanceof HTMLElement)) return false;
+      connect.click();
+      return true;
+    })()`, { label: "Connect Ollama" });
+    await waitFor(app, `document.querySelector('[data-testid="connected-ollama-count"]')?.textContent?.trim() === "2 models" && !document.querySelector('[data-testid="found-server:ollama"]')`, { timeoutMs: 180_000, label: "Ollama connected with its two models" });
+    // Add another → Custom: a name, an address, an optional key; the server's models are listed before anything is saved.
+    await waitFor(app, `(() => {
+      const open = document.querySelector('[data-testid="add-another-open"]');
+      if (!(open instanceof HTMLElement)) return false;
+      open.click();
+      return true;
+    })()`, { label: "Add another" });
+    const addable = await waitFor(app, `(() => {
+      const options = [...document.querySelectorAll('[data-testid="add-another"] [data-testid="interaction-option"]')];
+      return options.length > 0 ? options.map((option) => option.textContent?.replace(/^[A-Z]/, "").trim()) : false;
+    })()`, { timeoutMs: 30_000, label: "Add another choices" });
+    if (!Array.isArray(addable)) throw new Error("Add another choices were unavailable.");
+    expect(addable.length).toBeGreaterThan(2);
+    expect(String(addable[addable.length - 1])).toContain("Custom (OpenAI-compatible)");
+    await waitFor(app, `(() => {
+      const custom = [...document.querySelectorAll('[data-testid="add-another"] [data-testid="interaction-option"]')].find((option) => (option.textContent ?? "").includes("Custom"));
+      if (!(custom instanceof HTMLElement)) return false;
+      custom.click();
+      return true;
+    })()`, { label: "Custom (OpenAI-compatible)" });
+    await waitFor(app, `Boolean(document.querySelector('[data-testid="custom-form"]'))`, { timeoutMs: 30_000, label: "custom server form" });
+    expect(await evalIn(app, `[...document.querySelectorAll('[data-testid="custom-form"] input')].map((input) => input.getAttribute("aria-label"))`)).toEqual(["Name", "Address", "Key (optional)"]);
+    await fill(app, '[data-testid="custom-form"] input[aria-label="Name"]', "Stub box");
+    await fill(app, '[data-testid="custom-form"] input[aria-label="Address"]', `127.0.0.1:${stub.port}`);
+    await clickButton(app, "Check");
+    const listedModels = await waitFor(app, `(() => {
+      const select = document.querySelector('[data-testid="custom-start-model"]');
+      return select ? [...select.querySelectorAll("option")].map((option) => option.value) : false;
+    })()`, { timeoutMs: 60_000, label: "the stub server's models listed" });
+    expect(listedModels).toEqual(STUB_MODELS);
+    await evalIn(app, `(() => {
+      const select = document.querySelector('[data-testid="custom-start-model"]');
+      const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")?.set;
+      setter?.call(select, "stub-large");
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+      return select.value;
+    })()`);
+    await clickButton(app, "Save");
+    evidence.recordAssertionEvidence(
+      "A custom OpenAI-compatible server is added with three fields and validated by listing its models first",
+      `Connect on the found Ollama server made its two models available; Add another offered the well-known providers plus Custom (OpenAI-compatible), whose form asked only for a name, an address, and an optional key, listed exactly the stub server's two models on Check, and let the person pick stub-large to start with before saving.`,
+      true,
+    );
+  } else {
+    await clickButton(app, "Continue");
+  }
   await waitForText(app, "Add a coworker", { timeoutMs: 60_000 });
   const creationScreen = await evalIn(app, `(() => {
     const screen = document.querySelector('[data-testid="new-coworker"]');
@@ -234,6 +492,15 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   await clickButton(app, "Add coworker", { timeoutMs: 120_000 });
 
   await waitFor(app, `Boolean(document.querySelector('[data-testid="coworker-rail"]'))`, { timeoutMs: 120_000, label: "team rail" });
+
+  if (sameMachine && stub) {
+    // The model picked to start with on the local mode screen is the new coworker's model, with no further choice.
+    await waitFor(app, `window.__COWORKER__.invoke("coworkers.list").then((response) => response.ok && response.result[0]?.model === "custom-stub-box/stub-large")`, {
+      awaitPromise: true,
+      timeoutMs: 120_000,
+      label: "Scout starts on the custom server's chosen model",
+    });
+  }
 
   // A new coworker opens on the conversation alone: one header that carries the
   // coworker, a quiet empty state with no starter cards, and the details panel
@@ -343,14 +610,16 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
     const view = document.querySelector('[data-testid="coworker-workers"]');
     const assignments = document.querySelector('[data-testid="coworker-assignments"]');
     const empty = document.querySelector('[data-testid="responsibilities-empty"]');
-    if (!(view instanceof HTMLElement) || !(assignments instanceof HTMLElement) || !(empty instanceof HTMLElement)) return false;
+    const workersEmpty = document.querySelector('[data-testid="workers-empty"]');
+    // The Workers list arrives a moment after the view; read it once its empty state has settled.
+    if (!(view instanceof HTMLElement) || !(assignments instanceof HTMLElement) || !(empty instanceof HTMLElement) || !(workersEmpty instanceof HTMLElement)) return false;
     return {
-      workersEmpty: document.querySelector('[data-testid="workers-empty"]')?.textContent?.trim() ?? "",
+      workersEmpty: workersEmpty.textContent?.trim() ?? "",
       assignmentsHeading: assignments.querySelector("h3")?.textContent?.trim() ?? "",
       emptyStateCount: document.querySelectorAll('[data-testid="responsibilities-empty"]').length,
       emptyStateText: empty.textContent?.trim() ?? "",
       assignmentsBelowWorkers: assignments.getBoundingClientRect().top > view.querySelector('section[aria-label="Workers"]').getBoundingClientRect().top,
-      panelTitle: document.querySelector('aside h2')?.textContent?.trim() ?? "",
+      panelTitle: document.querySelector('[data-testid="context-panel"] [data-testid="panel-crumb"][aria-current="page"]')?.textContent?.trim() ?? "",
     };
   })()`, { timeoutMs: 30_000, label: "Workers view with its Assignments" });
   expect(workersView).toMatchObject({ assignmentsHeading: "Assignments", emptyStateCount: 1, assignmentsBelowWorkers: true, panelTitle: "Workers" });
@@ -370,6 +639,11 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
     };
   })()`);
   expect(composerFacts).toEqual({ present: true, hasModelControl: false, mentionsModel: false });
+  // Returning to Activity re-opens the panel with its 180ms unfold; let it settle before measuring it.
+  await waitFor(app, `(() => {
+    const panel = document.querySelector('[data-testid="context-panel"]');
+    return panel instanceof HTMLElement && panel.dataset.collapsed === "false" && panel.getBoundingClientRect().width >= 320;
+  })()`, { timeoutMs: 10_000, label: "context panel open and settled" });
   evidence.recordAssertionEvidence(
     "The Activity view leads with current activity, the Workers view holds Workers and Assignments, and the composer carries no model controls",
     "Once opened, Scout's Activity view showed exactly one idle status line plus one note, no scheduled-work section, three quiet links (Workers, Apps & tools, Memory), and an icon-only 32×32 Coworker settings control with a 16×16 glyph; the Workers link opened the Workers view with its empty Workers state and, below it, Assignments with a single compact Add assignment empty state (Nothing on a schedule yet.); the panel and composer contained no model, thinking-effort, or engine vocabulary.",
@@ -561,6 +835,9 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
     timeoutMs: 120_000,
     label: "AI model search",
   });
+  // Everything connected on this Mac is labelled This Mac in the picker, the Codex-connected OpenAI included.
+  await waitFor(app, `document.querySelector('[data-testid="model-provider-openai"] [data-testid="model-source-local"]')?.textContent?.trim() === "This Mac"`, { timeoutMs: 60_000, label: "OpenAI models labelled This Mac" });
+  expect(await evalIn(app, `document.querySelector('[data-testid="model-provider-google"] [data-testid="model-source-local"]')?.textContent?.trim()`)).toBe("This Mac");
   await fill(app, 'input[aria-label="Search AI models"]', "big-pickle");
   await clickButtonContaining(app, "big-pickle");
   await waitFor(app, `(document.querySelector('[data-testid="model-picker"]')?.textContent ?? "").includes("Big Pickle")`, {
@@ -1003,8 +1280,20 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
     await clickButton(app, destination);
     const pageText = String(await evalIn(app, "document.body.innerText")).toLowerCase();
     expect(pageText, `${destination} copy`).not.toContain("engine");
+    expect(pageText, `${destination} copy`).not.toContain("provider id");
   }
   expect(String(await evalIn(app, `document.querySelector('[data-testid="local-setup-card"]')?.innerText ?? ""`))).toContain("AI is ready");
+  expect(String(await evalIn(app, `document.querySelector('[data-testid="local-setup-card"]')?.closest("main")?.innerText ?? ""`))).not.toMatch(/Connect|Disconnect|Add another/);
+  // AI models is the same screen as Use this Mac: Found on this Mac, Connected, the free model, Add another — and Disconnect.
+  await clickButton(app, "AI models");
+  await waitFor(app, `document.querySelector('[data-testid="this-mac-providers"] [data-testid="local-providers"]')?.dataset.loaded === "true" && Boolean(document.querySelector('[data-testid="connected-openai"]'))`, { timeoutMs: 120_000, label: "AI models page ready" });
+  const modelsPage = String(await evalIn(app, `document.querySelector('[data-testid="openwork-settings"] main')?.innerText ?? ""`));
+  expect(modelsPage).toContain("Found on this Mac".toUpperCase());
+  expect(modelsPage).toContain("A free model is ready now");
+  expect(modelsPage).toContain("Add another");
+  expect(modelsPage).toContain("Use for Scout");
+  expectNoFixtureSecret(modelsPage, "the AI models page");
+  if (sameMachine) expect(modelsPage).toContain("Stub box");
   evidence.recordAssertionEvidence(
     "Global OpenWork settings open as a full-window workspace with their own left navigation and plain AI language",
     "The discreet bottom-left OpenWork control hid the mounted coworker workspace, its rail, and its context-panel resizer, replacing them with a full-width settings shell, a 252px left settings sidebar, and four destinations named General, Account, AI models, and AI & local setup. The pages showed Local mode, AI is ready, and Scout's selected Big Pickle model without the word engine anywhere.",
@@ -1280,6 +1569,53 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   evidence.recordAssertionEvidence(
     "A parallel-run limit set in Settings makes later runs wait in line and start by themselves",
     "With Runs on this Mac set to 1, two Run now requests admitted the first immediately and queued the second; the second row read Waiting its turn, then started on its own once the first finished, and both ended done with the queue empty.",
+    true,
+  );
+
+  if (sameMachine && stub) {
+    // --- A coworker answers with the custom server, and Disconnect takes it away again.
+    await invokeCoworker(app, "coworkers.update", { slug: "scout", patch: { model: "custom-stub-box/stub-large", modelVariant: "" } });
+    await clickButtonContaining(app, "Scout");
+    await waitFor(app, `Boolean(document.querySelector('textarea[aria-label="Message Scout"]'))`, { timeoutMs: 30_000, label: "Scout's discussion composer" });
+    await fill(app, 'textarea[aria-label="Message Scout"]', "Say hello");
+    await clickButton(app, "Send");
+    await waitForText(app, STUB_REPLY, { timeoutMs: 180_000 });
+    await waitFor(app, `[...document.querySelectorAll('[data-testid="coworker-reply-model"]')].some((line) => (line.textContent ?? "").includes("custom-stub-box/stub-large"))`, { timeoutMs: 30_000, label: "the reply came from the custom server" });
+    expect(stub.chatCalls()).toBeGreaterThan(0);
+    await clickButtonContaining(app, "OpenWork");
+    await waitForText(app, "OpenWork settings", { timeoutMs: 30_000 });
+    await clickButton(app, "AI models");
+    await waitFor(app, `(() => {
+      const disconnect = document.querySelector('[data-testid="connected-custom-stub-box-disconnect"]');
+      if (!(disconnect instanceof HTMLElement)) return false;
+      disconnect.click();
+      return true;
+    })()`, { timeoutMs: 120_000, label: "Disconnect the custom server" });
+    await waitFor(app, `document.querySelector('[data-testid="local-providers"]')?.dataset.loaded === "true" && !document.querySelector('[data-testid="connected-custom-stub-box"]') && Boolean(document.querySelector('[data-testid="connected-openai"]'))`, { timeoutMs: 120_000, label: "custom server removed" });
+    const readiness = await invokeCoworker(app, "localProviders.prepare", {});
+    if (!isRecord(readiness) || !isRecord(readiness.result) || !Array.isArray(readiness.result.providers)) throw new Error("Provider readiness was unavailable.");
+    const connectedIds = readiness.result.providers.filter(isRecord).filter((provider) => provider.connected === true).map((provider) => provider.id);
+    expect(connectedIds).not.toContain("custom-stub-box");
+    expect(connectedIds).toContain("openai");
+    expect(connectedIds).toContain("ollama");
+    evidence.recordAssertionEvidence(
+      "A coworker answers with the custom server's model, and Disconnect removes only that server",
+      `Set to custom-stub-box/stub-large, Scout's reply ("${STUB_REPLY}") came from the stub server, which recorded the chat request; on the AI models page, Disconnect on Stub box removed it from Connected and from the AI service's connected providers while the Codex-connected OpenAI and the Ollama server stayed connected.`,
+      true,
+    );
+  }
+
+  // --- Nothing secret left the fixtures: not on screen, not in the app's log.
+  expectNoFixtureSecret(String(await evalIn(app, "document.body.innerText")), "the final screen");
+  const logPath = app.handle.meta?.log;
+  if (sameMachine && typeof logPath === "string") {
+    const log = await readFile(logPath, "utf8").catch(() => "");
+    expect(log.length).toBeGreaterThan(0);
+    expectNoFixtureSecret(log, "the app log");
+  }
+  evidence.recordAssertionEvidence(
+    "Connecting what this Mac already has never shows a secret",
+    `The fixture tokens and key (${FIXTURE_SECRETS.length} values) appeared nowhere in the local mode screen, the AI models page, the final screen${sameMachine ? ", or the app's own log" : ""}; only provider names, model counts, and the environment variable's name were shown.`,
     true,
   );
 });
