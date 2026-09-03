@@ -126,6 +126,23 @@ SSO is not offered to organization members until you explicitly enable it after
 the successful test. If you edit the SSO configuration after a successful test,
 test it again before enabling. Test links expire after five minutes.
 
+## Just-in-time provisioning and password signup
+
+After Entra SAML SSO is enabled for a verified domain, OpenWork's standard
+sign-in flow routes users with that email domain to the organization SSO flow.
+When a user completes SAML sign-in successfully, OpenWork can create their
+organization membership just in time with the default `Member` role.
+
+JIT provisioning happens only after successful SAML authentication. Creating an
+email/password account with the same email domain does not add the user to the
+organization or create a SCIM-managed identity. If that user later completes
+SSO, OpenWork can link the matching account and provision the organization
+membership through SSO.
+
+OpenWork does not convert SAML attributes such as `role`, `groups`, or `admin`
+into elevated organization roles. Assign `Admin`, `Owner`, or custom roles in
+OpenWork after review, or through an invitation that grants the intended role.
+
 ## Troubleshooting
 
 | Symptom | Likely cause | Fix |

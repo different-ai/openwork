@@ -37,6 +37,10 @@ through OpenWork's just-in-time SSO provisioning. JIT provisioning is not the
 same as SCIM:
 
 - It happens when a user signs in successfully.
+- It can create the OpenWork organization membership with the default `Member`
+  role after successful SAML authentication.
+- A standalone email/password signup with the same verified domain does not add
+  the user to the organization or replace the SAML sign-in requirement.
 - It does not continuously sync profile changes from Google.
 - It does not deactivate OpenWork access when a Google user is suspended or
   deleted.
