@@ -115,6 +115,9 @@ describe("@openwork/workbook", () => {
     expect(unsafeFormulaReason("[1]Sheet1!A1")).toBe("references another workbook");
     expect(unsafeFormulaReason("'C:\\evil\\[Book1.xlsx]Sheet1'!A1")).toBe("references another workbook");
     expect(unsafeFormulaReason("[Book1]Sheet1!A1")).toBe("references another workbook");
+    expect(unsafeFormulaReason("[Book.xlsx]シート1!A1")).toBe("references another workbook");
+    expect(unsafeFormulaReason("[Book.xlsx]Übersicht_2!A1")).toBe("references another workbook");
+    expect(unsafeFormulaReason("[Book] Sheet!A1")).toBe("references another workbook");
     expect(unsafeFormulaReason("'[Book1]Sheet 1'!A1")).toBe("references another workbook");
     expect(unsafeFormulaReason("'\\\\attacker\\share\\[book]Sheet1'!A1")).toBe("references another workbook");
     expect(unsafeFormulaReason("'http://attacker.invalid/[book]Sheet1'!A1")).toBe("references another workbook");

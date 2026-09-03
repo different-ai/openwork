@@ -542,9 +542,12 @@ const FORMULA_MAX_CHARS = 8_192;
 // when a workbook recalculates. A generated report never needs them.
 const OUTSIDE_WORKBOOK_FUNCTION = /\b(DDE|WEBSERVICE|FILTERXML|RTD|CALL|REGISTER(?:\.ID)?|EXEC|SQL\.REQUEST|IMPORT(?:DATA|XML|HTML|FEED|RANGE)|IMAGE)\s*\(/i;
 // A bracket group that belongs to a sheet reference ("[Book]Sheet!A1",
-// "'path\\[Book]Sheet'!A1", "[1]Sheet!A1") names another workbook. Structured
-// table references ("Table1[Amount]", "[@Amount]") never precede a "!".
-const EXTERNAL_WORKBOOK_REFERENCE = /\[[^\]]*\][A-Za-z0-9_. ]*!|'[^']*\[[^\]]*\][^']*'!/;
+// "[Book.xlsx]シート1!A1", "'path\\[Book]Sheet'!A1", "[1]Sheet!A1") names
+// another workbook. An unquoted sheet name may contain any script, so the
+// span between "]" and "!" is anything that is not a formula operator or
+// delimiter; structured table references ("Table1[Amount]+Sheet2!A1",
+// "[@Amount]*2") are always followed by an operator or the end of the formula.
+const EXTERNAL_WORKBOOK_REFERENCE = /\[[^\]]*\][^!'"(),;+\-*/^&=<>\[\]{}]*!|'[^']*\[[^\]]*\][^']*'!/u;
 // A quoted sheet reference whose path is a URL or UNC share.
 const REMOTE_PATH_REFERENCE = /'[^']*(?::\/\/|\\\\)[^']*'!/;
 
