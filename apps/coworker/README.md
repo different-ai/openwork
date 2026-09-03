@@ -478,6 +478,20 @@ Verified against the bundled engine (OpenCode 1.18.18) before building:
   coordinator workspace, so the local mode screen has a live catalog during
   onboarding; registering the first workspace restarts the platform, which may
   move its port — `localProviders.prepare` returns the live address.
+- `GET /config/providers` returns only the connected providers (the same
+  `Provider` shape and defaults as `GET /provider`, which also carries every
+  provider the engine knows: 5.7 MB and 7,400 models against about 5 KB). The
+  model catalog, the connect-time polling, and Disconnect read the small one;
+  only the local mode screen's *Add another* list and the key check read the
+  full one.
+- `GET /session/status` is the cheap read that says whether a turn is still
+  running; the shared `@openwork/headless-threads` poller reads only that while
+  a thread is busy and the full snapshot (session, messages, todos) once the
+  status says the turn may be over, so a long turn no longer re-reads its
+  growing transcript every poll (in the view, in group chats, and for every
+  responsibility run and Worker turn in the main process). In the view, the
+  engine's `message.*` events collapse into one refresh per 250 ms; questions,
+  permissions, and status changes still refresh at once.
 
 ## Review / develop
 
