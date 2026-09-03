@@ -16,7 +16,7 @@ jobs:
   classify-changes:
     runs-on: ubuntu-latest
     outputs:
-      snapshot_only: ${{ steps.classify.outputs.snapshot_only }}
+      lane: ${{ steps.classify.outputs.lane }}
     steps:
       - name: Classify changed files
         id: classify
@@ -24,7 +24,8 @@ jobs:
         with:
           script: |
             if (context.eventName !== "pull_request") {
-              core.setOutput("snapshot_only", "false")
+              core.setOutput("lane", "full")
+              core.info("Selected lane: full")
               return
             }
 
@@ -36,11 +37,15 @@ jobs:
             })
             const snapshotOnly = files.length === 1
               && files[0].filename === "ee/apps/inference/src/models/base.json"
-            core.setOutput("snapshot_only", String(snapshotOnly))
+            const docsOnly = files.length > 0
+              && files.every((file) => file.filename.startsWith("packages/docs/"))
+            const lane = snapshotOnly ? "snapshot" : docsOnly ? "docs" : "full"
+            core.setOutput("lane", lane)
+            core.info(`Selected lane: ${lane}`)
 
   openwork-tests:
     needs: classify-changes
-    if: needs.classify-changes.outputs.snapshot_only != 'true'
+    if: needs.classify-changes.outputs.lane == 'full'
     runs-on: ${{ matrix.os }}
 
     strategy:
@@ -206,7 +211,7 @@ jobs:
 
   validate-models-snapshot:
     needs: classify-changes
-    if: needs.classify-changes.outputs.snapshot_only == 'true'
+    if: needs.classify-changes.outputs.lane == 'snapshot'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -268,34 +273,64 @@ jobs:
           }
           NODE
 
+  # Docs never reach a runtime path, so a docs-only PR only needs to prove the
+  # Mintlify site still builds and has no broken pages, anchors, or images.
+  validate-docs:
+    needs: classify-changes
+    if: needs.classify-changes.outputs.lane == 'docs'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/docs
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+      - name: Validate the docs build
+        run: npx -y mint@4.2.868 validate
+      - name: Check for broken links and images
+        run: npx -y mint@4.2.868 broken-links
+
   # Single stable context for branch rulesets to require. Green only when
   # the lane selected by classification succeeds; always reports.
   openwork-tests-required:
-    needs: [classify-changes, openwork-tests, validate-models-snapshot]
+    needs: [classify-changes, openwork-tests, validate-models-snapshot, validate-docs]
     if: always()
     runs-on: ubuntu-latest
     steps:
       - name: Require the selected test lane to pass
         env:
           CLASSIFY_RESULT: ${{ needs.classify-changes.result }}
-          SNAPSHOT_ONLY: ${{ needs.classify-changes.outputs.snapshot_only }}
+          LANE: ${{ needs.classify-changes.outputs.lane }}
           TEST_RESULT: ${{ needs.openwork-tests.result }}
           SNAPSHOT_RESULT: ${{ needs.validate-models-snapshot.result }}
+          DOCS_RESULT: ${{ needs.validate-docs.result }}
         run: |
-          echo "classification: $CLASSIFY_RESULT ($SNAPSHOT_ONLY)"
+          echo "classification: $CLASSIFY_RESULT ($LANE)"
           echo "openwork-tests: $TEST_RESULT"
           echo "snapshot validation: $SNAPSHOT_RESULT"
+          echo "docs validation: $DOCS_RESULT"
 
           if [ "$CLASSIFY_RESULT" != "success" ]; then
             echo "Changed-file classification did not succeed; blocking merge." >&2
             exit 1
           fi
 
-          if [ "$SNAPSHOT_ONLY" = "true" ]; then
-            [ "$SNAPSHOT_RESULT" = "success" ] && [ "$TEST_RESULT" = "skipped" ] || exit 1
-          elif [ "$SNAPSHOT_ONLY" = "false" ]; then
-            [ "$TEST_RESULT" = "success" ] && [ "$SNAPSHOT_RESULT" = "skipped" ] || exit 1
-          else
-            echo "Changed-file classification returned an unexpected value; blocking merge." >&2
-            exit 1
-          fi
+          case "$LANE" in
+            full)
+              [ "$TEST_RESULT" = "success" ] && [ "$SNAPSHOT_RESULT" = "skipped" ] && [ "$DOCS_RESULT" = "skipped" ] || exit 1
+              ;;
+            snapshot)
+              [ "$SNAPSHOT_RESULT" = "success" ] && [ "$TEST_RESULT" = "skipped" ] && [ "$DOCS_RESULT" = "skipped" ] || exit 1
+              ;;
+            docs)
+              [ "$DOCS_RESULT" = "success" ] && [ "$TEST_RESULT" = "skipped" ] && [ "$SNAPSHOT_RESULT" = "skipped" ] || exit 1
+              ;;
+            *)
+              echo "Changed-file classification returned an unexpected value; blocking merge." >&2
+              exit 1
+              ;;
+          esac
