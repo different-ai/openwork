@@ -58,6 +58,16 @@ async function waitForWorker(
   throw new Error(`Timed out waiting for ${label}. Last record: ${JSON.stringify(last)}`);
 }
 
+/** Row actions disable while one is in flight; click only when the button is ready. */
+async function clickRowAction(app: App, testId: string): Promise<void> {
+  await waitFor(app, `(() => {
+    const button = document.querySelector('[data-testid=${JSON.stringify(testId)}]');
+    if (!(button instanceof HTMLButtonElement) || button.disabled) return false;
+    button.click();
+    return true;
+  })()`, { timeoutMs: 30_000, label: `${testId} ready to click` });
+}
+
 async function workerEvents(app: App, id: string): Promise<Record<string, unknown>[]> {
   return resultRecords(await invokeCoworker(app, "workers.findings", { slug: "editor", id }));
 }
@@ -314,16 +324,16 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   await waitForText(app, "COWORKER CHAT READY", { timeoutMs: 30_000 });
 
   // Pause holds the Worker after its current step; Resume lets it go on; Stop ends it for good.
-  await evalIn(app, `document.querySelector('[data-testid="worker-pause"]').click(); true`);
+  await clickRowAction(app, "worker-pause");
   await waitFor(app, `[...document.querySelectorAll('[data-testid="worker-row"]')].some((row) => row.querySelector('[data-testid="worker-name"]')?.textContent?.trim() === "Long watch" && row.getAttribute("data-status") === "paused")`, { timeoutMs: 30_000, label: "paused row" });
   const pausedLine = String(await evalIn(app, `[...document.querySelectorAll('[data-testid="worker-row"]')].find((row) => row.getAttribute("data-status") === "paused")?.querySelector('[data-testid="worker-line"]')?.textContent?.trim() ?? ""`));
   expect(pausedLine).toMatch(/^Paused/);
   await waitForWorker(app, watcherId, (worker) => worker.status === "paused", { timeoutMs: 10_000, label: "paused record" });
   await sleep(2_000);
   expect(resultRecord(await invokeCoworker(app, "localResponsibilities.status", {}))).toMatchObject({ queued: 0 });
-  await evalIn(app, `document.querySelector('[data-testid="worker-resume"]').click(); true`);
+  await clickRowAction(app, "worker-resume");
   await waitForWorker(app, watcherId, (worker) => worker.status === "running" || worker.status === "waiting", { timeoutMs: 60_000, label: "resumed Worker" });
-  await evalIn(app, `document.querySelector('[data-testid="worker-stop"]').click(); true`);
+  await clickRowAction(app, "worker-stop");
   await waitFor(app, `[...document.querySelectorAll('[data-testid="worker-row"]')].some((row) => row.querySelector('[data-testid="worker-name"]')?.textContent?.trim() === "Long watch" && row.getAttribute("data-status") === "cancelled")`, { timeoutMs: 30_000, label: "stopped row" });
   const stopped = resultRecord(await invokeCoworker(app, "workers.get", { slug: "editor", id: watcherId }));
   expect(stopped).toMatchObject({ status: "cancelled", waitingFor: "" });
