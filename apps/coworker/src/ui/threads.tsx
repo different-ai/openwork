@@ -1650,6 +1650,7 @@ function ThreadView({
     needsYou,
     failure,
     appRetry,
+    attemptActive: activeTurn !== null,
     waitBudgetMs: WAIT_BUDGET_MS,
     signedIn: session !== null,
     recommendedModel: recommendedModel?.modelLabel ?? "",
