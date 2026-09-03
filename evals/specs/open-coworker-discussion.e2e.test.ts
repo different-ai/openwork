@@ -228,7 +228,9 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   );
 
   // The coworker is introduced once, in the header. The thread row below names the
-  // discussion itself (after its first message) and is where discussions are switched.
+  // discussion itself (after its first message) and is where discussions are switched. A view
+  // that was just reopened names it as soon as its first read of the thread lands.
+  await waitFor(app, `document.querySelector('[data-testid="coworker-discussion-switcher"]')?.textContent?.trim() === ${json(firstPrompt)}`, { timeoutMs: 30_000, label: "the discussion named after its first message" });
   const headerShape = await evalIn(app, `(() => {
     // The coworker column: the identity header plus the thread area beneath it.
     const column = document.querySelector("main")?.parentElement;
