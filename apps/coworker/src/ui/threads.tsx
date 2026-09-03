@@ -57,6 +57,8 @@ import { CoworkerAvatar } from "@/ui/coworker-avatar";
 import { InlineLoader } from "@/ui/brand";
 import { AlertIcon, Button, Empty, ErrorNote, PlusIcon, StatusDot, ThoughtIcon, ToolIcon } from "@/ui/kit";
 import { Markdown } from "@/ui/markdown";
+import { DocumentCard } from "@/ui/documents";
+import { documentCardsFromCalls, shouldFoldReply, splitReplyLead } from "@/lib/documents";
 import { McpAppFrame } from "@/ui/mcp-app-frame";
 
 type TranscriptToolCall = {
@@ -82,6 +84,13 @@ type TranscriptMessage = {
 };
 
 export type AssignmentDraft = { id: number; text: string } | null;
+
+/** How the conversation reaches the Documents view: open a document there, or beside the chat when the window allows. */
+export type DocumentHooks = {
+  onOpenDocument: (documentId: string) => void;
+  onOpenDocumentBeside: (documentId: string) => void;
+  canOpenBeside: boolean;
+};
 
 type QueuedTurn = {
   id: number;
@@ -206,6 +215,7 @@ export function ThreadsPanel({
   onOpenModelSettings,
   onOpenAccount,
   onActivityChange,
+  documents,
 }: {
   runtime: RuntimeInfo;
   session: DenSession | null;
@@ -224,6 +234,7 @@ export function ThreadsPanel({
   /** The OpenWork account section — where a provider is reconnected. */
   onOpenAccount: () => void;
   onActivityChange: (activity: CoworkerActivity | null) => void;
+  documents?: DocumentHooks;
 }) {
   const [discussionThreadId, setDiscussionThreadId] = useState(coworker.conversationThreadId);
   /** Thread ids registered as discussions in `discussions.json`; the open one is added even when unregistered. */
@@ -487,6 +498,7 @@ export function ThreadsPanel({
         onSyncProviders={onSyncProviders}
         onActivityChange={onActivityChange}
         onCoworkerChanged={onCoworkerChanged}
+        documents={documents}
       />
     );
   }
@@ -560,6 +572,7 @@ export function ThreadsPanel({
       onSyncProviders={onSyncProviders}
       onActivityChange={onActivityChange}
       onCoworkerChanged={onCoworkerChanged}
+      documents={documents}
     />
   );
 }
@@ -894,6 +907,7 @@ function ThreadView({
   onActivityChange,
   onCoworkerChanged,
   headerSlots,
+  documents,
 }: {
   threads: NonNullable<ReturnType<typeof createCoworkerThreads>>;
   threadId: string;
@@ -920,8 +934,16 @@ function ThreadView({
   onSyncProviders: () => Promise<ProviderSyncRun>;
   onActivityChange: (activity: CoworkerActivity | null) => void;
   onCoworkerChanged: (coworker: CoworkerSummary) => void;
+  documents?: DocumentHooks;
 }) {
   const [messages, setMessages] = useState<TranscriptMessage[]>([]);
+  /** Long replies already reported this mount; the store also refuses a repeat by message id. */
+  const longRepliesRecorded = useRef(new Set<string>());
+  const recordLongReply = useCallback((messageId: string, chars: number) => {
+    if (longRepliesRecorded.current.has(messageId)) return;
+    longRepliesRecorded.current.add(messageId);
+    void coworkerBridge.documents.recordLongReply(coworker.slug, messageId, chars).catch(() => undefined);
+  }, [coworker.slug]);
   /** A different connected, tool-capable model to fall back to after a model-related failure. */
   const [recommendedModel, setRecommendedModel] = useState<EngineModelOption | null>(null);
   const defaultDiscussionTitle = discussionTitle(coworker.name);
@@ -1436,6 +1458,9 @@ function ThreadView({
                   continued={block.continued}
                   tail={block.tail}
                   kind={kind}
+                  turnCalls={block.calls}
+                  documents={documents}
+                  onLongReply={block.message.id === visibleMessages[lastAssistantIndex]?.id ? recordLongReply : undefined}
                 />
               </Fragment>
             ),
@@ -1537,7 +1562,7 @@ function ThreadView({
 
 type ConversationBlock =
   | { kind: "actions"; id: string; review: WorkerReview | null; reasoning: string; calls: TranscriptToolCall[] }
-  | { kind: "message"; message: TranscriptMessage; previous: TranscriptMessage | undefined; active: boolean; continued: boolean; tail: boolean };
+  | { kind: "message"; message: TranscriptMessage; previous: TranscriptMessage | undefined; active: boolean; continued: boolean; tail: boolean; calls: TranscriptToolCall[] };
 
 /** The app's own turn that wakes the coworker with its Workers' updates; never a bubble from the person. */
 function reviewTurn(message: TranscriptMessage): WorkerReview | null {
@@ -1585,6 +1610,8 @@ export function conversationBlocks(
       if (message.toolCalls.length > 0) calls = [...calls, ...message.toolCalls];
       if (!message.text && !active) return;
     }
+    // The bubble keeps its own turn's calls too, so it can end with a document card.
+    const turnCalls = message.role === "assistant" ? calls : [];
     flush();
     pendingId = "";
     const position = bubbles.indexOf(message);
@@ -1597,6 +1624,7 @@ export function conversationBlocks(
       active,
       continued: Boolean(previous && previous.role === message.role),
       tail: !next || next.role !== message.role,
+      calls: turnCalls,
     });
   });
   flush();
@@ -1651,6 +1679,9 @@ function MessageBubble({
   continued = false,
   tail = true,
   kind = "discussion",
+  turnCalls = [],
+  documents,
+  onLongReply,
 }: {
   message: TranscriptMessage;
   coworker: CoworkerSummary;
@@ -1660,6 +1691,11 @@ function MessageBubble({
   tail?: boolean;
   /** The previous message is from the same speaker: no avatar or name again, tighter spacing. */
   continued?: boolean;
+  /** Every tool call of this reply's turn: the bubble ends with a card per document it wrote, and knows whether a long reply had one behind it. */
+  turnCalls?: TranscriptToolCall[];
+  documents?: DocumentHooks;
+  /** A finished reply ran long with no document behind it; reported once so the coworker is reminded next turn. */
+  onLongReply?: (messageId: string, chars: number) => void;
   kind?: "discussion" | "assignment";
 }) {
   const user = message.role === "user";
@@ -1719,12 +1755,52 @@ function MessageBubble({
           className={`bubble bubble-coworker max-w-[76%] ${tail ? "bubble-tail-left" : ""}`}
           title={message.model ? `Answered by ${message.model.providerId}/${message.model.modelId}` : undefined}
         >
-          <Markdown text={message.text} />
+          <ReplyText message={message} active={active} turnCalls={turnCalls} onLongReply={onLongReply} />
+          {documentCardsFromCalls(turnCalls).map((card) => (
+            <DocumentCard
+              key={card.id}
+              card={card}
+              onOpen={() => documents?.onOpenDocument(card.id)}
+              canOpenBeside={documents?.canOpenBeside ?? false}
+              onOpenBeside={() => documents?.onOpenDocumentBeside(card.id)}
+            />
+          ))}
         </div>
       ) : !active && !message.reasoning && message.toolCalls.length === 0 ? (
         <div className={`bubble bubble-coworker ${tail ? "bubble-tail-left" : ""} text-mist`}>…</div>
       ) : null}
     </article>
+  );
+}
+
+/**
+ * A reply's words. A finished reply that runs long with no document behind it
+ * shows its first paragraph and a quiet "Show the rest" fold — nothing is cut,
+ * only hidden — and is reported once so the coworker's next turn carries a
+ * reminder of how it talks.
+ */
+function ReplyText({ message, active, turnCalls, onLongReply }: { message: TranscriptMessage; active: boolean; turnCalls: TranscriptToolCall[]; onLongReply?: (messageId: string, chars: number) => void }) {
+  const [open, setOpen] = useState(false);
+  const folded = !active && shouldFoldReply(message.text, turnCalls);
+  useEffect(() => {
+    if (folded && onLongReply) onLongReply(message.id, message.text.length);
+  }, [folded, message.id, message.text.length, onLongReply]);
+  if (!folded) return <Markdown text={message.text} />;
+  const { lead, rest } = splitReplyLead(message.text);
+  return (
+    <div data-testid="reply-fold" data-open={open ? "true" : "false"}>
+      <div data-testid="reply-fold-lead"><Markdown text={lead} /></div>
+      {open ? <Markdown text={rest} className="mt-2" /> : null}
+      <button
+        type="button"
+        className="mt-2 text-[11px] font-medium text-mist underline decoration-mist/40 underline-offset-2 hover:text-snow"
+        aria-expanded={open}
+        onClick={() => setOpen((value) => !value)}
+        data-testid="reply-fold-toggle"
+      >
+        {open ? "Show less" : "Show the rest"}
+      </button>
+    </div>
   );
 }
 
