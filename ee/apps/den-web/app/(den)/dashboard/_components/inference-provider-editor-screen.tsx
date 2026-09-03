@@ -13,15 +13,18 @@ import { DenOptionCard } from "../../_components/ui/option-card";
 import { DenStickyActionBar } from "../../_components/ui/sticky-action-bar";
 import { DenSwitch } from "../../_components/ui/switch";
 import { DenTextarea } from "../../_components/ui/textarea";
+import { denApiEndpoint } from "../../_lib/den-api-origin";
 import { getGatewayProviderRoute, getGatewayProvidersRoute } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { deleteInferenceProvider, saveInferenceProvider, useInferenceProvider } from "./inference-provider-data";
 import {
   buildInferenceProviderRequestBody,
+  getOauthCallbackPath,
   getRequiredSettingKeys,
   getSettingLabel,
   isGoogleVertexNpm,
   isSupportedGatewayNpm,
+  supportsMemberCredentialMode,
   validateInferenceProviderForm,
   type DenInferenceProvider,
 } from "./inference-provider-request";
@@ -74,12 +77,20 @@ export function InferenceProviderEditorScreen({ inferenceProviderId }: { inferen
   const [apiKey, setApiKey] = useState("");
   const [apiKeyValues, setApiKeyValues] = useState<Record<string, string>>({});
   const [serviceAccountJson, setServiceAccountJson] = useState("");
+  const [oauthClientId, setOauthClientId] = useState("");
+  const [oauthClientSecret, setOauthClientSecret] = useState("");
+  // Resolved in the browser: the Den API origin derives from window.location.
+  const [oauthRedirectUri, setOauthRedirectUri] = useState(getOauthCallbackPath());
   const [access, setAccess] = useState<ProviderAccessValue>({ allMembers: false, memberIds: [], teamIds: [] });
   const [active, setActive] = useState(true);
   const [saveBusy, setSaveBusy] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [deleteBusy, setDeleteBusy] = useState(false);
+
+  useEffect(() => {
+    setOauthRedirectUri(denApiEndpoint(getOauthCallbackPath()));
+  }, []);
 
   useEffect(() => {
     if (!orgId) return;
@@ -108,6 +119,7 @@ export function InferenceProviderEditorScreen({ inferenceProviderId }: { inferen
       setSelectedModelIds(provider.models.map((model) => model.id));
       setSettings(provider.settings);
       setCredentialMode(provider.credentialMode);
+      setOauthClientId(provider.oauthClientId ?? "");
       setAccess(provider.access ?? { allMembers: false, memberIds: [], teamIds: [] });
       setActive(provider.status === "active");
     } else {
@@ -117,6 +129,7 @@ export function InferenceProviderEditorScreen({ inferenceProviderId }: { inferen
       setSelectedModelIds([]);
       setSettings({});
       setCredentialMode("org");
+      setOauthClientId("");
       setAccess({
         allMembers: false,
         memberIds: orgContext?.currentMember.id ? [orgContext.currentMember.id] : [],
@@ -127,7 +140,14 @@ export function InferenceProviderEditorScreen({ inferenceProviderId }: { inferen
     setApiKey("");
     setApiKeyValues({});
     setServiceAccountJson("");
+    setOauthClientSecret("");
   }, [orgContext?.currentMember.id, provider]);
+
+  // den-api only allows member mode for Google Vertex; fall back to org when the provider changes.
+  const memberModeSupported = !selectedProviderId || supportsMemberCredentialMode(selectedProviderId);
+  useEffect(() => {
+    if (!memberModeSupported) setCredentialMode("org");
+  }, [memberModeSupported]);
 
   useEffect(() => {
     if (!orgId || !selectedProviderId) {
@@ -181,6 +201,7 @@ export function InferenceProviderEditorScreen({ inferenceProviderId }: { inferen
   const effectiveName = nameTouched && name.trim() ? name.trim() : autoName;
   const lockedMemberId = orgContext?.currentMember.id ?? null;
   const orgCredentialSaved = provider?.credentials?.some((credential) => credential.subject === "org" && credential.status === "active") ?? false;
+  const hasOauthClientSecret = provider?.hasOauthClientSecret ?? false;
 
   async function save() {
     const validationError = validateInferenceProviderForm({
@@ -190,6 +211,10 @@ export function InferenceProviderEditorScreen({ inferenceProviderId }: { inferen
       modelIds: selectedModelIds,
       settings,
       serviceAccountJson,
+      credentialMode,
+      oauthClientId,
+      oauthClientSecret,
+      hasOauthClientSecret,
     });
     if (validationError) {
       setSaveError(validationError);
@@ -212,6 +237,8 @@ export function InferenceProviderEditorScreen({ inferenceProviderId }: { inferen
             apiKey,
             apiKeyValues,
             serviceAccountJson,
+            oauthClientId,
+            oauthClientSecret,
             access,
           }),
         });
@@ -402,17 +429,61 @@ export function InferenceProviderEditorScreen({ inferenceProviderId }: { inferen
             name="gateway-credential-mode"
             testId="gateway-credential-mode-member"
             title="Each member signs in"
-            description="Every member authorizes their own account before using the models."
+            description={
+              memberModeSupported
+                ? "Every member authorizes their own Google account before using the models."
+                : "Only available for Google Vertex providers (google-vertex, google-vertex-anthropic)."
+            }
             checked={credentialMode === "member"}
             onChange={() => setCredentialMode("member")}
+            disabled={!memberModeSupported}
           />
         </div>
 
         {credentialMode === "member" ? (
-          <p className="mt-6 rounded-[20px] bg-gray-50 px-5 py-4 text-[14px] leading-6 text-gray-600">
-            No organization credential is stored. Members will be asked to sign in to the provider from their OpenWork
-            app the first time they use these models.
-          </p>
+          <div className="mt-6 grid gap-6">
+            <p className="rounded-[20px] bg-gray-50 px-5 py-4 text-[14px] leading-6 text-gray-600">
+              No organization credential is stored. Members will be asked to sign in with Google from their OpenWork app
+              the first time they use these models.
+            </p>
+            <div className="grid gap-4 md:grid-cols-2">
+              <label className="grid gap-3">
+                <span className="text-[14px] font-medium text-gray-700">Google OAuth client ID</span>
+                <DenInput
+                  data-testid="gateway-provider-oauth-client-id"
+                  value={oauthClientId}
+                  onChange={(event) => setOauthClientId(event.target.value)}
+                  placeholder="1234567890-abc.apps.googleusercontent.com"
+                  autoComplete="off"
+                  spellCheck={false}
+                />
+              </label>
+              <label className="grid gap-3">
+                <span className="flex flex-wrap items-center gap-2 text-[14px] font-medium text-gray-700">
+                  Google OAuth client secret
+                  {hasOauthClientSecret ? (
+                    <span className="rounded-full bg-emerald-50 px-2.5 py-0.5 text-[11px] font-medium text-emerald-700">
+                      Configured
+                    </span>
+                  ) : null}
+                </span>
+                <DenInput
+                  type="password"
+                  data-testid="gateway-provider-oauth-client-secret"
+                  value={oauthClientSecret}
+                  onChange={(event) => setOauthClientSecret(event.target.value)}
+                  placeholder={hasOauthClientSecret ? "Leave blank to keep the current secret" : "Paste the client secret"}
+                  autoComplete="off"
+                />
+              </label>
+            </div>
+            <p className="text-[13px] text-gray-500">
+              Create an Internal OAuth client in your Google Cloud project and add this redirect URI:{" "}
+              <code data-testid="gateway-provider-oauth-redirect-uri" className="rounded bg-gray-100 px-2 py-0.5 font-mono text-[12px]">
+                {oauthRedirectUri}
+              </code>
+            </p>
+          </div>
         ) : (
           <div className="mt-6 grid gap-6">
             {isVertex ? (

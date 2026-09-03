@@ -109,6 +109,19 @@ describe("Gateway provider editor", () => {
     expect(editor).toContain('data-testid="gateway-provider-delete-confirm"');
     expect(editor).not.toContain("aws_keys");
   });
+
+  test("member mode collects the org's Google OAuth client and is gated to Google Vertex providers", () => {
+    expect(editor).toContain('data-testid="gateway-provider-oauth-client-id"');
+    expect(editor).toContain('data-testid="gateway-provider-oauth-client-secret"');
+    expect(editor).toContain('data-testid="gateway-provider-oauth-redirect-uri"');
+    expect(editor).toContain("Create an Internal OAuth client in your Google Cloud project and add this redirect URI:");
+    expect(editor).toContain("denApiEndpoint(getOauthCallbackPath())");
+    expect(editor).toContain("provider?.hasOauthClientSecret");
+    expect(editor).toContain("Leave blank to keep the current secret");
+    expect(editor).toContain("supportsMemberCredentialMode(selectedProviderId)");
+    expect(editor).toContain("disabled={!memberModeSupported}");
+    expect(editor).toContain("Only available for Google Vertex providers");
+  });
 });
 
 describe("Gateway provider detail", () => {
@@ -120,6 +133,11 @@ describe("Gateway provider detail", () => {
     for (const header of ['header: "Holder"', 'header: "Kind"', 'header: "Status"', 'header: "Expires"']) {
       expect(detail).toContain(header);
     }
+  });
+
+  test("member credential rows show who authorized instead of a generic label", () => {
+    expect(detail).toContain('row.memberName ?? row.memberEmail ?? "Member"');
+    expect(detail).toContain("row.memberEmail");
   });
 });
 
