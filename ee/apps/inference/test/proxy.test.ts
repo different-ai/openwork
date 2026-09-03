@@ -2,6 +2,7 @@ import assert from "node:assert/strict"
 import { test } from "node:test"
 import { Hono } from "hono"
 import type { InferenceHandledErrorReport, InferenceReporter, InferenceRequestReport } from "../src/inference-reporting.js"
+import type { InferenceRequestLogRow } from "../src/request-log.js"
 
 process.env.OPENWORK_DEV_MODE = "1"
 process.env.DATABASE_URL = "mysql://root:password@127.0.0.1:3306/openwork_den"
@@ -33,6 +34,27 @@ type TestServerOptions = {
   providerKey?: { encrypted_api_key: string } | null
   fetch?: typeof fetch
   usageLimited?: boolean
+}
+
+function sseResponse(events: string[], init: ResponseInit = {}) {
+  const encoder = new TextEncoder()
+  const body = new ReadableStream<Uint8Array>({
+    start(controller) {
+      for (const event of events) controller.enqueue(encoder.encode(event))
+      controller.close()
+    },
+  })
+  return new Response(body, { status: 200, headers: { "content-type": "text/event-stream" }, ...init })
+}
+
+async function waitForRows(rows: InferenceRequestLogRow[], count = 1) {
+  for (let attempt = 0; attempt < 50 && rows.length < count; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 5))
+  }
+  assert.equal(rows.length, count)
+  const row = rows[0]
+  assert.ok(row)
+  return row
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -111,6 +133,7 @@ function inferenceRequest(input: { method: string; headers: Headers; body?: stri
 function createTestServer(options: TestServerOptions = {}) {
   const app = new Hono()
   const upstreamRequests: UpstreamRequest[] = []
+  const logRows: InferenceRequestLogRow[] = []
   const reports: CapturedReports = { requests: [], handledErrors: [] }
   const calls: DependencyCalls = {
     findActiveInferenceKey: 0,
@@ -174,10 +197,16 @@ function createTestServer(options: TestServerOptions = {}) {
       }
     },
     fetch: upstreamFetch,
+    async loadOrganization(organizationId) {
+      return { id: organizationId, metadata: null }
+    },
+    async insertRequestLog(row) {
+      logRows.push(row)
+    },
     reporter,
   })
 
-  return { app, upstreamRequests, calls, reports }
+  return { app, upstreamRequests, calls, reports, logRows }
 }
 
 async function expectUnsupportedModelSelection(body: Record<string, unknown>) {
@@ -751,4 +780,189 @@ test("authenticates before rejecting unsupported routes", async () => {
   assert.equal(calls.ensureUsableBuckets, 0)
   assert.equal(calls.getOpenRouterProviderKey, 0)
   assert.equal(upstreamRequests.length, 0)
+})
+
+test("injects stream_options.include_usage and logs one row with usage from the final stream chunk", async () => {
+  const { app, upstreamRequests, logRows } = createTestServer({
+    fetch: async (input, init) => {
+      upstreamRequests.push({ url: requestUrl(input), method: init?.method, body: readInitBody(init?.body), headers: new Headers(init?.headers) })
+      return sseResponse([
+        'data: {"id":"gen-1","model":"z-ai/glm-5.2","choices":[{"delta":{"content":"Hel"}}]}\n\n',
+        'data: {"id":"gen-1","model":"z-ai/glm-5.2","choices":[{"delta":{"content":"lo"}}]}\n\ndata: {"id":"gen-1","model":"z-ai/glm-5.2","choices":[],"usage":{"prompt_tokens":1',
+        '2,"completion_tokens":5,"total_tokens":17,"cost":0.00123,"prompt_tokens_details":{"cached_tokens":4},"completion_tokens_details":{"reasoning_tokens":2}}}\n\n',
+        "data: [DONE]\n\n",
+      ], { headers: { "content-type": "text/event-stream", "x-request-id": "upstream-req-1" } })
+    },
+  })
+  const response = await app.fetch(inferenceRequest({
+    method: "POST",
+    headers: authHeaders("application/json"),
+    body: JSON.stringify({ model: "z-ai/glm-5.2", stream: true, stream_options: { foo: "bar" }, messages: [] }),
+  }))
+
+  assert.equal(response.status, 200)
+  const requestId = response.headers.get("x-openwork-request-id")
+  assert.ok(requestId)
+  const text = await response.text()
+  assert.ok(text.includes('"content":"Hel"'))
+  assert.ok(text.endsWith("data: [DONE]\n\n"))
+
+  const upstream = upstreamRequests[0]
+  assert.ok(upstream)
+  const body = parseJsonObject(requireBodyText(upstream.body))
+  assert.deepEqual(body.stream_options, { foo: "bar", include_usage: true })
+
+  const row = await waitForRows(logRows)
+  assert.equal(row.openwork_request_id, requestId)
+  assert.equal(row.route, "openwork_openrouter")
+  assert.equal(row.protocol, "openai_chat")
+  assert.equal(row.upstream_provider_id, "openrouter")
+  assert.equal(row.upstream_host, "upstream.test")
+  assert.equal(row.upstream_path, "/api/v1/chat/completions")
+  assert.equal(row.organization_id, "organization_123")
+  assert.equal(row.org_membership_id, "member_123")
+  assert.equal(row.inference_key_id, "inference_key_123")
+  assert.equal(row.stream, true)
+  assert.equal(row.status, 200)
+  assert.equal(row.outcome, "ok")
+  assert.equal(row.usage_source, "stream")
+  assert.equal(row.input_tokens, 12)
+  assert.equal(row.output_tokens, 5)
+  assert.equal(row.total_tokens, 17)
+  assert.equal(row.cache_read_tokens, 4)
+  assert.equal(row.reasoning_tokens, 2)
+  assert.equal(row.cost_micro_usd, 1230)
+  assert.equal(row.upstream_model, "z-ai/glm-5.2")
+  assert.equal(row.requested_model, "z-ai/glm-5.2")
+  assert.equal(row.upstream_request_id, "upstream-req-1")
+  assert.ok(row.first_byte_at)
+  assert.ok(row.completed_at)
+  assert.equal(row.response_bytes, Buffer.byteLength(text))
+})
+
+test("logs usage from a non-streaming JSON response without altering the bytes", async () => {
+  const upstreamBody = JSON.stringify({ id: "gen-2", model: "z-ai/glm-5.2-upstream", choices: [], usage: { prompt_tokens: 3, completion_tokens: 4 } })
+  const { app, logRows } = createTestServer({
+    fetch: async () => new Response(upstreamBody, { status: 200, headers: { "content-type": "application/json" } }),
+  })
+  const response = await app.fetch(inferenceRequest({
+    method: "POST",
+    headers: authHeaders("application/json"),
+    body: JSON.stringify({ model: "z-ai/glm-5.2", messages: [] }),
+  }))
+
+  assert.equal(response.status, 200)
+  assert.ok(response.headers.get("x-openwork-request-id"))
+  assert.equal(await response.text(), upstreamBody)
+  const row = await waitForRows(logRows)
+  assert.equal(row.stream, false)
+  assert.equal(row.outcome, "ok")
+  assert.equal(row.usage_source, "json")
+  assert.equal(row.input_tokens, 3)
+  assert.equal(row.output_tokens, 4)
+  assert.equal(row.total_tokens, 7)
+  assert.equal(row.cost_micro_usd, null)
+  assert.equal(row.upstream_model, "z-ai/glm-5.2-upstream")
+})
+
+test("logs a rejected row for model_not_found", async () => {
+  const { app, logRows } = createTestServer()
+  const response = await app.fetch(inferenceRequest({
+    method: "POST",
+    headers: authHeaders("application/json"),
+    body: JSON.stringify({ model: "openwork/unknown-model", stream: true, messages: [] }),
+  }))
+
+  assert.equal(response.status, 404)
+  const row = await waitForRows(logRows)
+  assert.equal(row.outcome, "rejected")
+  assert.equal(row.error_code, "model_not_found")
+  assert.equal(row.status, 404)
+  assert.equal(row.protocol, "openai_chat")
+  assert.equal(row.requested_model, "openwork/unknown-model")
+  assert.equal(row.upstream_model, null)
+  assert.equal(row.stream, true)
+  assert.equal(row.usage_source, "missing")
+  assert.equal(row.upstream_host, "upstream.test")
+})
+
+test("logs a rejected row for rate_limit_exceeded", async () => {
+  const { app, logRows } = createTestServer({ usageLimited: true })
+  const response = await app.fetch(inferenceRequest({
+    method: "POST",
+    headers: authHeaders("application/json"),
+    body: JSON.stringify({ model: "z-ai/glm-5.2", messages: [] }),
+  }))
+
+  assert.equal(response.status, 429)
+  const row = await waitForRows(logRows)
+  assert.equal(row.outcome, "rejected")
+  assert.equal(row.error_code, "rate_limit_exceeded")
+  assert.equal(row.status, 429)
+  assert.equal(row.upstream_model, "z-ai/glm-5.2")
+})
+
+test("does not log a row for 401 authentication failures", async () => {
+  const { app, logRows } = createTestServer()
+  const response = await app.fetch(inferenceRequest({
+    method: "POST",
+    headers: new Headers({ "content-type": "application/json" }),
+    body: JSON.stringify({ model: "z-ai/glm-5.2", messages: [] }),
+  }))
+
+  assert.equal(response.status, 401)
+  await new Promise((resolve) => setTimeout(resolve, 10))
+  assert.equal(logRows.length, 0)
+})
+
+test("logs client_aborted when the client cancels mid-stream", async () => {
+  let upstreamCancelled = false
+  const encoder = new TextEncoder()
+  const { app, logRows } = createTestServer({
+    fetch: async () => new Response(new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(encoder.encode('data: {"model":"z-ai/glm-5.2","choices":[{"delta":{"content":"partial"}}]}\n\n'))
+      },
+      cancel() {
+        upstreamCancelled = true
+      },
+    }), { status: 200, headers: { "content-type": "text/event-stream" } }),
+  })
+  const response = await app.fetch(inferenceRequest({
+    method: "POST",
+    headers: authHeaders("application/json"),
+    body: JSON.stringify({ model: "z-ai/glm-5.2", stream: true, messages: [] }),
+  }))
+
+  assert.equal(response.status, 200)
+  assert.ok(response.body)
+  const reader = response.body.getReader()
+  const first = await reader.read()
+  assert.equal(first.done, false)
+  await reader.cancel()
+
+  const row = await waitForRows(logRows)
+  assert.equal(row.outcome, "client_aborted")
+  assert.equal(row.status, 200)
+  assert.equal(row.usage_source, "missing")
+  assert.equal(row.input_tokens, null)
+  assert.ok(row.first_byte_at)
+  assert.equal(upstreamCancelled, true)
+})
+
+test("logs upstream_error for a non-2xx upstream response", async () => {
+  const { app, logRows } = createTestServer({
+    fetch: async () => Response.json({ error: "upstream unavailable" }, { status: 503 }),
+  })
+  const response = await app.fetch(inferenceRequest({
+    method: "POST",
+    headers: authHeaders("application/json"),
+    body: JSON.stringify({ model: "z-ai/glm-5.2", messages: [] }),
+  }))
+
+  assert.equal(response.status, 503)
+  const row = await waitForRows(logRows)
+  assert.equal(row.outcome, "upstream_error")
+  assert.equal(row.status, 503)
+  assert.equal(row.usage_source, "missing")
 })
