@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { CoworkerGroupSummary, CoworkerSummary, RuntimeInfo } from "@/lib/bridge";
+import { describeRailLine } from "@/lib/rail-status";
 import type { DenSession } from "@/lib/den";
 import type { CoworkerActivity } from "@/lib/threads";
 import { CoworkerAvatar } from "@/ui/coworker-avatar";
@@ -241,9 +242,9 @@ export function CoworkerRail({
                   <span className="ml-auto font-normal text-mist">{relativeTime(activityBySlug[peeked.slug]?.updatedAt ?? 0)}</span>
                 ) : null}
               </p>
-              {activityBySlug[peeked.slug]?.detail ? (
-                <p className="mt-1 line-clamp-3 text-[11px] leading-[1.35] text-mist">{activityBySlug[peeked.slug]?.detail}</p>
-              ) : null}
+              <p className="mt-1 line-clamp-3 text-[11px] leading-[1.35] text-mist">
+                {describeRailLine({ activity: activityBySlug[peeked.slug], personality: peeked.personality, seed: peeked.slug })}
+              </p>
             </div>
           ) : null}
         </>
@@ -305,9 +306,10 @@ export function CoworkerRail({
                     </span>
                     <span
                       className="mt-1 block line-clamp-2 text-[11px] leading-[1.35] text-mist"
-                      title={activity?.detail || coworker.role || "Checking activity"}
+                      data-testid="coworker-rail-line"
+                      title={activity?.detail || coworker.role || undefined}
                     >
-                      {activity?.detail || coworker.role || "Checking current activity…"}
+                      {describeRailLine({ activity, personality: coworker.personality, seed: coworker.slug })}
                     </span>
                   </span>
                 </button>

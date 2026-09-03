@@ -376,7 +376,12 @@ export default function App() {
               },
             ] as const;
           }
-          return [coworker.slug, latestActivity ? { ...threadActivity, last: latestActivity } : threadActivity] as const;
+          // The soonest scheduled responsibility, so an idle coworker can say what is next.
+          const upcoming = localResponsibilities
+            .filter((item) => item.state === "active" && typeof item.nextDueAt === "number" && item.nextDueAt > now)
+            .sort((left, right) => (left.nextDueAt ?? 0) - (right.nextDueAt ?? 0))[0];
+          const withNext = upcoming && upcoming.nextDueAt ? { next: { name: upcoming.name, at: upcoming.nextDueAt } } : {};
+          return [coworker.slug, { ...threadActivity, ...(latestActivity ? { last: latestActivity } : {}), ...withNext }] as const;
         }),
       );
       if (!cancelled) setActivityBySlug(Object.fromEntries(entries));
