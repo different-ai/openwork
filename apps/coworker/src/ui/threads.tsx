@@ -2099,7 +2099,7 @@ function DiscussionComposer({
   const modeLabel = assignmentMode ? "Back to chat" : "Create assignment";
   const submitLabel = busy ? "Working…" : assignmentMode ? "Create assignment" : "Send";
   return (
-    <div className="border-t border-line bg-ink px-5 pb-2 pt-3">
+    <div className="bg-ink px-5 pb-2 pt-2" data-testid="coworker-composer">
       <div className="mx-auto max-w-3xl">
         {error ? <div className="mb-2"><ErrorNote>{error}</ErrorNote></div> : null}
         {assignmentMode ? (
@@ -2193,7 +2193,7 @@ function MessageComposer({
   const fieldRef = useRef<HTMLTextAreaElement>(null);
   useAutoGrow(fieldRef, value);
   return (
-    <div className="border-t border-line bg-ink px-5 pb-2 pt-3">
+    <div className="bg-ink px-5 pb-2 pt-2" data-testid="coworker-composer">
       <div className="mx-auto max-w-3xl">
         <div className="flex min-w-0 items-end gap-1 rounded-[20px] border border-line bg-panel/60 py-1 pl-4 pr-1 transition-colors focus-within:border-spark/50">
           <textarea

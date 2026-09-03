@@ -279,7 +279,7 @@ export function GroupChat({
           {error ? <ErrorNote>{error}</ErrorNote> : null}
         </div>
       </div>
-      <div className="border-t border-line px-5 py-4">
+      <div className="px-5 pb-4 pt-2" data-testid="coworker-composer">
         <div className="mx-auto max-w-3xl">
           <div className="flex min-w-0 items-end gap-1 rounded-[20px] border border-line bg-panel/60 py-1 pl-4 pr-1 transition-colors focus-within:border-spark/50">
             <textarea

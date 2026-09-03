@@ -310,7 +310,7 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   expect(defaultSidebar.emptyStateText).toContain("No responsibilities yet.");
   expect(defaultSidebar.emptyStateText).toContain("Add responsibility");
   const composerFacts = await evalIn(app, `(() => {
-    const composer = document.querySelector('textarea[aria-label="Message Scout"]')?.closest("div.border-t");
+    const composer = document.querySelector('textarea[aria-label="Message Scout"]')?.closest('[data-testid="coworker-composer"]');
     const text = (composer?.textContent ?? "").toLowerCase();
     return {
       present: Boolean(composer),
