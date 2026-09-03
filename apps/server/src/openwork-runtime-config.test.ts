@@ -74,6 +74,8 @@ describe("openwork runtime config file", () => {
     expect(mcp["openwork-connect-stale"]).toBeUndefined();
     expect(parsed.default_agent).toBe("openwork");
     expect(Array.isArray(parsed.plugin)).toBe(true);
+    expect(parsed.plugin).toContainEqual(expect.stringContaining("openwork-browser"));
+    expect(parsed.plugin).not.toContain("opencode-chrome-devtools");
     expect(parsed.agent).toMatchObject({
       openwork: {
         permission: {

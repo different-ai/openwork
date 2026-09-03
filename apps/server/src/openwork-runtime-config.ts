@@ -22,6 +22,7 @@ import {
   openworkAnthropicToolSchemaPluginPath,
   openworkOfficeAttachmentsPluginPath,
   openworkSpreadsheetsPluginPath,
+  openworkBrowserPluginPath,
 } from "./openwork-extensions-plugin-path.js";
 import type { ServerConfig } from "./types.js";
 import { runtimeStorageDir } from "./runtime-db.js";
@@ -78,7 +79,10 @@ export function buildOpenworkRuntimeConfigObjectFromSnapshot(
       },
     },
     plugin: [
-      "opencode-chrome-devtools",
+      // A local bundled path keeps cold starts deterministic. A bare package
+      // name makes OpenCode install it on first use, and simultaneous
+      // coworker workspace boots can contend on that shared installation.
+      openworkBrowserPluginPath(),
       // Registration order is prompt order: the knowledge plugin appends the
       // operating rules first, then the extensions plugin adds app-control
       // mechanics, live Connect steering, and the remote skill and Automation

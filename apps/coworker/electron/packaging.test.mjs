@@ -41,6 +41,8 @@ test("Open Coworker has its own stable packaged identity and local runtime resou
     to: "opencode-plugins",
     filter: ["*.js"],
   });
+  const serverPackage = JSON.parse(await readFile(path.resolve(coworkerRoot, "..", "server", "package.json"), "utf8"));
+  assert.equal(serverPackage.devDependencies["opencode-chrome-devtools"], "^1.0.4");
 });
 
 test("Open Coworker mirrors every embedded-server runtime dependency for electron-builder", async () => {
