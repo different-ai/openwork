@@ -706,3 +706,39 @@ a {
     filter: drop-shadow(0 2px 2px rgb(0 0 0 / 0.28)) !important;
   }
 }
+
+/*
+ * Conversation bubbles. The shape is the familiar messaging one; the colors,
+ * type, and spacing are ours. A bubble gets its small tail only on the last
+ * message of a run, so a burst of replies reads as one group.
+ */
+.bubble {
+  border-radius: 18px;
+  padding: 8px 14px;
+  font-size: 14px;
+  line-height: 1.45;
+  word-break: break-word;
+}
+.bubble-user {
+  background: var(--color-spark);
+  color: #fff;
+}
+.bubble-coworker {
+  background: var(--color-panel-2);
+  color: var(--color-snow);
+}
+.bubble-tail-right {
+  border-bottom-right-radius: 5px;
+}
+.bubble-tail-left {
+  border-bottom-left-radius: 5px;
+}
+.bubble .coworker-markdown {
+  font-size: 14px;
+}
+.bubble .coworker-markdown > :first-child {
+  margin-top: 0;
+}
+.bubble .coworker-markdown > :last-child {
+  margin-bottom: 0;
+}

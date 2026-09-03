@@ -6,6 +6,8 @@ import { createCoworkerThreads } from "@/lib/threads";
 import { CoworkerAvatar } from "@/ui/coworker-avatar";
 import { GroupAvatars } from "@/ui/coworker-rail";
 import { Button, ErrorNote, StatusDot } from "@/ui/kit";
+import { timeLabelBetween } from "@/lib/conversation";
+import { SendButton } from "@/ui/threads";
 
 const REPLY_TIMEOUT_MS = 180_000;
 
@@ -218,7 +220,11 @@ export function GroupChat({
           ) : null}
           {events.map((event, index) => {
             const previous = events[index - 1];
-            const continued = Boolean(previous && previous.kind === event.kind && previous.slug === event.slug && event.at - previous.at < 5 * 60_000);
+            const next = events[index + 1];
+            const sameSpeaker = (other: GroupTimelineEvent | undefined) => Boolean(other && other.kind === event.kind && other.slug === event.slug);
+            const continued = sameSpeaker(previous) && event.at - (previous?.at ?? 0) < 5 * 60_000;
+            const tail = !sameSpeaker(next);
+            const label = timeLabelBetween(previous?.at, event.at);
             if (event.kind === "status") {
               return (
                 <p key={event.id} className="px-12 text-center text-[11px] text-mist" data-testid="group-status" data-status={event.status}>
@@ -228,23 +234,30 @@ export function GroupChat({
             }
             if (event.kind === "user") {
               return (
-                <div key={event.id} className={`flex justify-end ${continued ? "-mt-1.5" : ""}`} data-message-role="user" data-continued={continued ? "true" : "false"}>
-                  <div className="max-w-[72%] rounded-2xl rounded-br-md bg-spark/14 px-4 py-2.5 text-sm leading-relaxed text-snow" title={timeLabel(event.at)}>
-                    <p className="whitespace-pre-wrap">{event.text}</p>
+                <div key={event.id}>
+                  {label ? <p className="pb-1 pt-2 text-center text-[11px] font-medium text-mist/80">{label}</p> : null}
+                  <div className={`flex justify-end ${continued ? "-mt-1.5" : ""}`} data-message-role="user" data-continued={continued ? "true" : "false"}>
+                    <div className={`bubble bubble-user max-w-[72%] whitespace-pre-wrap ${tail ? "bubble-tail-right" : ""}`} title={timeLabel(event.at)}>
+                      {event.text}
+                    </div>
                   </div>
                 </div>
               );
             }
+            // In a group, each reply is signed: a small avatar at the tail and the name once per run.
             const speaker = coworkers.find((coworker) => coworker.slug === event.slug);
             return (
-              <div key={event.id} className={`flex items-end gap-2.5 ${continued ? "-mt-1.5" : ""}`} data-message-role="assistant" data-speaker={event.slug} data-continued={continued ? "true" : "false"}>
-                <span className="w-7 shrink-0">
-                  {!continued && speaker ? <CoworkerAvatar color={speaker.avatarColor} glasses={speaker.avatarGlasses} name={speaker.name} size={28} /> : null}
-                </span>
-                <div className="max-w-[76%]">
-                  {!continued ? <p className="mb-1 px-1 text-[11px] font-semibold text-mist">{nameFor(event.slug ?? "")}</p> : null}
-                  <div className="rounded-2xl rounded-bl-md bg-panel px-4 py-2.5 text-sm leading-relaxed text-snow" title={timeLabel(event.at)}>
-                    <p className="whitespace-pre-wrap">{event.text}</p>
+              <div key={event.id}>
+                {label ? <p className="pb-1 pt-2 text-center text-[11px] font-medium text-mist/80">{label}</p> : null}
+                <div className={`flex items-end gap-2 ${continued ? "-mt-1.5" : ""}`} data-message-role="assistant" data-speaker={event.slug} data-continued={continued ? "true" : "false"}>
+                  <span className="w-6 shrink-0">
+                    {tail && speaker ? <CoworkerAvatar color={speaker.avatarColor} glasses={speaker.avatarGlasses} name={speaker.name} size={24} /> : null}
+                  </span>
+                  <div className="max-w-[76%]">
+                    {!continued ? <p className="mb-0.5 px-2 text-[11px] font-medium text-mist">{nameFor(event.slug ?? "")}</p> : null}
+                    <div className={`bubble bubble-coworker whitespace-pre-wrap ${tail ? "bubble-tail-left" : ""}`} title={timeLabel(event.at)}>
+                      {event.text}
+                    </div>
                   </div>
                 </div>
               </div>
@@ -266,14 +279,14 @@ export function GroupChat({
       </div>
       <div className="border-t border-line px-5 py-4">
         <div className="mx-auto max-w-3xl">
-          <div className="flex items-end gap-2 rounded-2xl border border-line bg-black/18 px-3 py-2 focus-within:border-spark/50">
+          <div className="flex min-w-0 items-end gap-1 rounded-[20px] border border-line bg-panel/60 py-1 pl-4 pr-1 transition-colors focus-within:border-spark/50">
             <textarea
               ref={composerRef}
               aria-label={`Message ${group.name}`}
               data-testid="group-composer"
               rows={1}
-              className="max-h-40 min-h-[28px] flex-1 resize-none bg-transparent py-1 text-sm text-snow outline-none placeholder:text-mist/70"
-              placeholder={`Message ${members.map((member) => member.name).join(", ")} — @name chooses who answers`}
+              className="max-h-40 min-h-[30px] min-w-0 flex-1 resize-none bg-transparent py-1 text-sm leading-relaxed text-snow outline-none placeholder:text-mist/65"
+              placeholder={`Message ${members.map((member) => member.name).join(", ")}`}
               value={message}
               disabled={!runtime.engineManaged}
               onChange={(event) => setMessage(event.target.value)}
@@ -285,12 +298,12 @@ export function GroupChat({
               }}
             />
             {progress ? (
-              <Button variant="ghost" onClick={() => void stopAll()}>Stop</Button>
+              <Button variant="ghost" className="mb-0.5 rounded-full px-3 py-1 text-xs" onClick={() => void stopAll()}>Stop</Button>
             ) : (
-              <Button variant="primary" onClick={() => void send()} disabled={!message.trim() || !runtime.engineManaged}>Send</Button>
+              <SendButton label="Send" busy={false} disabled={!message.trim() || !runtime.engineManaged} onClick={() => void send()} testId="group-send" />
             )}
           </div>
-          <p className="mt-1.5 px-1 text-[11px] text-mist">Enter to send · Shift Enter for a new line · One coworker answers unless you @mention others or @everyone</p>
+          <p className="mt-1.5 px-4 text-[9px] text-mist/65">Enter to send · Shift Enter for a new line · @name chooses who answers, @everyone asks all</p>
         </div>
       </div>
     </div>
