@@ -83,6 +83,8 @@ export type TurnFacts = {
   failure: string;
   /** An automatic attempt the app scheduled after a transient failure. */
   appRetry: { attempt: number; nextAt: number } | null;
+  /** The view is still classifying this attempt; do not expose its raw terminal message yet. */
+  attemptActive: boolean;
   /** How long the coworker may work before "still working" is said out loud. */
   waitBudgetMs: number;
   signedIn: boolean;
@@ -217,7 +219,7 @@ export function deriveTurnOutcome(facts: TurnFacts): TurnOutcome | null {
   }
 
   const reply = facts.reply;
-  if (reply.state === "error") {
+  if (reply.state === "error" && !facts.attemptActive) {
     if (reply.aborted) {
       if (turn.recovered) return { ...base, kind: "cut-off", since: turn.startedAt, line: cutOffLine(facts.coworkerName), label: "Stopped", tone: "mist", choices: [{ id: "continue", label: "Continue" }, { id: "discard", label: "Discard" }] };
       return failed(facts, turn, "The model stopped before producing a response.", false);
