@@ -365,13 +365,13 @@ test.skipIf(!enabled)(title, { timeout: 1_500_000 }, async ({ evidence }) => {
   expect(stoppedTurn.speakers.every((speaker) => speaker.status === "stopped" || speaker.status === "succeeded")).toBe(true);
   timeline = await readTimeline(app);
   const stopLines = timeline.filter((line) => line.kind === "group-status" && line.status === "stopped");
-  expect(stopLines.map((line) => line.text.replace(/Retry.*$/, "").trim())).toEqual(stoppedSpeakers.map((speaker) => `${names[speaker.slug]} was stopped.`));
+  expect(stopLines.map((line) => line.text)).toEqual([`Stopped before ${stoppedSpeakers.map((speaker) => names[speaker.slug]).join(" and ")} replied.`]);
   await waitFor(app, `Boolean(document.querySelector('[data-testid="group-turn-continue"]'))`, { timeoutMs: 30_000, label: "Continue offered" });
   const stoppedBubblesBefore = timeline.filter((line) => line.kind === "assistant").length;
 
   evidence.recordAssertionEvidence(
     "Stop all ends the turn at once and marks the rest stopped without losing what was said",
-    `${SLOW_STOP} was stopped while ${names[stoppedTurn.speakers.find((speaker) => speaker.status === "running" || speaker.status === "stopped")?.slug ?? ""] ?? "a coworker"} was replying; the turn is ${stoppedTurn.status} with ${stoppedSpeakers.length} stopped speaker(s) (${stoppedSpeakers.map((speaker) => names[speaker.slug]).join(", ")}), one quiet "was stopped." line each, and a Continue control.`,
+    `${SLOW_STOP} was stopped while ${names[stoppedTurn.speakers.find((speaker) => speaker.status === "running" || speaker.status === "stopped")?.slug ?? ""] ?? "a coworker"} was replying; the turn is ${stoppedTurn.status} with ${stoppedSpeakers.length} stopped speaker(s) (${stoppedSpeakers.map((speaker) => names[speaker.slug]).join(", ")}), one quiet "${stopLines[0]?.text ?? ""}" line, and a Continue control.`,
     true,
   );
 

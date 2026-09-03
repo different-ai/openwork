@@ -390,7 +390,7 @@ test("stopping a group turn marks the in-flight speaker and the rest stopped wit
   assert.deepEqual(asked, ["scout"]);
   assert.deepEqual(result.speakers.map((speaker) => speaker.status), ["stopped", "stopped", "stopped"]);
   assert.equal(result.status, "stopped");
-  assert.deepEqual(store.events.filter((entry) => entry.kind === "status").map((entry) => entry.text), ["Scout was stopped."]);
+  assert.deepEqual(store.events.filter((entry) => entry.kind === "status").map((entry) => [entry.status, entry.text]), [["stopped", "Stopped before Scout, Editor and Ops Lead replied."]]);
 });
 
 test("continuing a turn runs only the unfinished speakers with the earlier replies, and retry re-runs one", async () => {
