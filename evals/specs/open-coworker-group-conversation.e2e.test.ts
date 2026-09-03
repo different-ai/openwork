@@ -114,6 +114,18 @@ async function waitForGroupIdle(app: App, timeoutMs = 300_000): Promise<void> {
   await waitFor(app, `document.querySelector('[data-testid="group-chat"]')?.getAttribute("data-live") === "false"`, { timeoutMs, label: "group turn settled" });
 }
 
+/** The turn at `index` once the group is idle; a turn that did not succeed fails loudly with each speaker's recorded reason. */
+async function settledTurn(app: App, groupId: string, index: number, expectedStatus = "succeeded"): Promise<Turn> {
+  await waitForGroupIdle(app);
+  const group = await readGroup(app, groupId);
+  const turn = group.turns[index];
+  if (!turn) throw new Error(`Turn ${index} was not recorded; turns: ${JSON.stringify(group.turns.map((entry) => entry.prompt))}`);
+  if (expectedStatus && turn.status !== expectedStatus) {
+    throw new Error(`Turn ${index} ("${turn.prompt.slice(0, 40)}") is ${turn.status}, expected ${expectedStatus}; speakers: ${JSON.stringify(turn.speakers)}`);
+  }
+  return turn;
+}
+
 async function sendGroupMessage(app: App, text: string): Promise<void> {
   await fill(app, '[data-testid="group-composer"]', text);
   await evalIn(app, `document.querySelector('[data-testid="group-send"]').click(); true`);
@@ -200,13 +212,9 @@ test.skipIf(!enabled)(title, { timeout: 1_500_000 }, async ({ evidence }) => {
   // --- @everyone: both answer, one after the other, each signed with name and avatar.
   await beginStatusTrace(app);
   await sendGroupMessage(app, ROLL_CALL);
-  await waitFor(app, `document.querySelectorAll('[data-testid="group-chat"] [data-message-role="assistant"]').length >= 2`, { timeoutMs: 300_000, label: "two replies to @everyone" });
-  await waitForGroupIdle(app);
+  const rollCallTurn = await settledTurn(app, groupId, 0);
   const rollCallTrace = await endStatusTrace(app);
   let group = await readGroup(app, groupId);
-  const rollCallTurn = group.turns[0];
-  if (!rollCallTurn) throw new Error("The @everyone turn was not recorded.");
-  expect(rollCallTurn.status).toBe("succeeded");
   expect(rollCallTurn.speakers.filter((speaker) => speaker.part === "reply").map((speaker) => speaker.slug).sort()).toEqual(["editor", "scout"]);
   expect(["facilitator", "mentions"]).toContain(rollCallTurn.routedBy);
   let timeline = await readTimeline(app);
@@ -239,11 +247,7 @@ test.skipIf(!enabled)(title, { timeout: 1_500_000 }, async ({ evidence }) => {
 
   // --- A role-matched question: exactly one coworker answers.
   await sendGroupMessage(app, RESEARCH_QUESTION);
-  await waitForGroupIdle(app);
-  group = await readGroup(app, groupId);
-  const researchTurn = group.turns[1];
-  if (!researchTurn) throw new Error("The research turn was not recorded.");
-  expect(researchTurn.status).toBe("succeeded");
+  const researchTurn = await settledTurn(app, groupId, 1);
   expect(researchTurn.speakers.filter((speaker) => speaker.part === "reply")).toHaveLength(1);
   timeline = await readTimeline(app);
   const researchReplies = timeline.filter((line) => line.kind === "assistant").slice(2);
@@ -259,11 +263,8 @@ test.skipIf(!enabled)(title, { timeout: 1_500_000 }, async ({ evidence }) => {
 
   // --- Two names: the facilitator (or the fallback) orders them, and the second sees the first's reply.
   await sendGroupMessage(app, SECOND_ROUND);
-  await waitForGroupIdle(app);
+  const secondRound = await settledTurn(app, groupId, 2);
   group = await readGroup(app, groupId);
-  const secondRound = group.turns[2];
-  if (!secondRound) throw new Error("The second-round turn was not recorded.");
-  expect(secondRound.status).toBe("succeeded");
   const roundSpeakers = secondRound.speakers.filter((speaker) => speaker.part === "reply");
   expect(roundSpeakers.map((speaker) => speaker.slug).sort()).toEqual(["editor", "scout"]);
   const [firstSpeaker, secondSpeaker] = roundSpeakers;
@@ -293,11 +294,8 @@ test.skipIf(!enabled)(title, { timeout: 1_500_000 }, async ({ evidence }) => {
   await sendGroupMessage(app, SLOW_STOP);
   await waitFor(app, `document.querySelector('[data-testid="group-working"]')?.getAttribute("data-phase") === "running"`, { timeoutMs: 120_000, label: "a coworker replying" });
   await clickButton(app, "Stop all");
-  await waitForGroupIdle(app, 60_000);
-  group = await readGroup(app, groupId);
-  const stoppedTurn = group.turns[3];
-  if (!stoppedTurn) throw new Error("The stopped turn was not recorded.");
-  expect(["stopped", "partial"]).toContain(stoppedTurn.status);
+  const stoppedTurn = await settledTurn(app, groupId, 3, "");
+  expect(["stopped", "partial"], `stopped turn: ${JSON.stringify(stoppedTurn.speakers)}`).toContain(stoppedTurn.status);
   const stoppedSpeakers = stoppedTurn.speakers.filter((speaker) => speaker.status === "stopped");
   expect(stoppedSpeakers.length).toBeGreaterThan(0);
   expect(stoppedTurn.speakers.every((speaker) => speaker.status === "stopped" || speaker.status === "succeeded")).toBe(true);
@@ -316,11 +314,7 @@ test.skipIf(!enabled)(title, { timeout: 1_500_000 }, async ({ evidence }) => {
   // --- Continue finishes the stopped turn with the same message; nobody who replied is asked again.
   await evalIn(app, `document.querySelector('[data-testid="group-turn-continue"]').click(); true`);
   await waitFor(app, `document.querySelector('[data-testid="group-chat"]')?.getAttribute("data-live") === "true"`, { timeoutMs: 30_000, label: "Continue started" });
-  await waitForGroupIdle(app);
-  group = await readGroup(app, groupId);
-  const continuedTurn = group.turns[3];
-  if (!continuedTurn) throw new Error("The continued turn was not recorded.");
-  expect(continuedTurn.status).toBe("succeeded");
+  const continuedTurn = await settledTurn(app, groupId, 3);
   expect(continuedTurn.speakers.map((speaker) => speaker.status)).toEqual(continuedTurn.speakers.map(() => "succeeded"));
   timeline = await readTimeline(app);
   const continuedBubbles = timeline.filter((line) => line.kind === "assistant");
@@ -357,9 +351,7 @@ test.skipIf(!enabled)(title, { timeout: 1_500_000 }, async ({ evidence }) => {
   await waitFor(app, `Boolean(document.querySelector('[data-testid="group-turn-continue"]'))`, { timeoutMs: 30_000, label: "Continue after reload" });
   await evalIn(app, `document.querySelector('[data-testid="group-turn-continue"]').click(); true`);
   await waitFor(app, `document.querySelector('[data-testid="group-chat"]')?.getAttribute("data-live") === "true"`, { timeoutMs: 30_000, label: "Continue after reload started" });
-  await waitForGroupIdle(app);
-  group = await readGroup(app, groupId);
-  expect(group.turns[4]?.status).toBe("succeeded");
+  await settledTurn(app, groupId, 4);
   timeline = await readTimeline(app);
   for (const line of timeline.filter((line) => line.kind === "assistant").slice(-interruptedSpeakers.length)) expect(line.text).toContain("RELOAD DONE");
 
