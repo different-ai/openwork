@@ -3,8 +3,8 @@
   "lane": "critical-path-e2e-required",
   "specs": [
     {
-      "test": "first-run-local.e2e.test.ts",
-      "covers": "The first-run welcome screen and local onboarding path.",
+      "test": "app-smoke.e2e.test.ts",
+      "covers": "The baseline desktop workspace and task surface boot successfully.",
       "evidence": "https://github.com/different-ai/openwork/pull/4337"
     },
     {
