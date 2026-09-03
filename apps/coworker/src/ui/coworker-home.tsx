@@ -57,6 +57,11 @@ function activityTextTone(activity: CoworkerActivity | undefined): string {
   return "text-mist";
 }
 
+/** A request another view makes of this one: open a settings section, or open one thread. */
+export type CoworkerHomeRequest =
+  | { id: number; kind: "settings"; section: "model" }
+  | { id: number; kind: "thread"; threadId: string };
+
 export function CoworkerHome({
   runtime,
   session,
@@ -74,7 +79,7 @@ export function CoworkerHome({
   onRepairConnect,
   onConnectAccount,
   railWidth,
-  settingsRequest = null,
+  request = null,
 }: {
   runtime: RuntimeInfo;
   session: DenSession | null;
@@ -97,8 +102,8 @@ export function CoworkerHome({
   onConnectAccount: () => void;
   /** Current width of the team rail, so the thread column keeps its minimum before this panel grows. */
   railWidth: number;
-  /** Open Coworker settings at one section as soon as this view shows (a group's "Choose AI model"). */
-  settingsRequest?: { id: number; section: "model" } | null;
+  /** Something another view asked this one to show on arrival: a settings section, or one thread. */
+  request?: CoworkerHomeRequest | null;
 }) {
   const [contextView, setContextView] = useState<ContextView>("overview");
   const [settingsFocus, setSettingsFocus] = useState<{ id: number; section: "model" } | null>(null);
@@ -126,14 +131,18 @@ export function CoworkerHome({
     setContextView(view);
     if (contextPanel.collapsed) contextPanel.expand();
   }
-  const handledSettingsRequestRef = useRef(0);
+  const handledRequestRef = useRef(0);
   useEffect(() => {
-    if (!settingsRequest || handledSettingsRequestRef.current === settingsRequest.id) return;
-    handledSettingsRequestRef.current = settingsRequest.id;
+    if (!request || handledRequestRef.current === request.id) return;
+    handledRequestRef.current = request.id;
+    if (request.kind === "thread") {
+      setOpenThreadRequest({ id: request.id, threadId: request.threadId });
+      return;
+    }
     setContextView("settings");
     if (contextPanel.collapsed) contextPanel.expand();
-    setSettingsFocus({ id: settingsRequest.id, section: settingsRequest.section });
-  }, [contextPanel, settingsRequest]);
+    setSettingsFocus({ id: request.id, section: request.section });
+  }, [contextPanel, request]);
   /** Escape closes the panel when nothing else is using the key. */
   const contextPanelOpen = !contextPanel.collapsed;
   const collapseContextPanel = contextPanel.collapse;

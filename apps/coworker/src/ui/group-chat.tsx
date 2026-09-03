@@ -1,7 +1,7 @@
 import { createHeadlessThreadClient } from "@openwork/headless-threads";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { coworkerBridge, type CoworkerGroupSummary, type CoworkerGroupTurn, type CoworkerSummary, type GroupTimelineEvent, type RuntimeInfo } from "@/lib/bridge";
-import { timeLabelBetween } from "@/lib/conversation";
+import { assignmentPrompt, assignmentTitle, timeLabelBetween, type DiscussionMessage } from "@/lib/conversation";
 import { registerDiscussion } from "@/lib/discussions";
 import { ROUTING_TIMEOUT_MS, earlierSpeakerOrders, facilitatorModels, facilitatorPrompt, routeWithFacilitator, type FacilitatorAsk } from "@/lib/facilitator";
 import {
@@ -18,6 +18,7 @@ import {
   type QueuedGroupMessage,
 } from "@/lib/group-runs";
 import {
+  chooseSpeakers,
   describeGroupActivity,
   describeSpeakerFailure,
   describeTurnProgress,
@@ -34,7 +35,8 @@ import {
 import { createCoworkerThreads, type EngineModelCatalog } from "@/lib/threads";
 import { CoworkerAvatar } from "@/ui/coworker-avatar";
 import { GroupAvatars } from "@/ui/coworker-rail";
-import { ActionMenu, Button, ErrorNote, StatusDot } from "@/ui/kit";
+import { InteractionCard, LETTERS, OptionRow, typingInField } from "@/ui/interactions";
+import { ActionMenu, Button, ErrorNote, PlusIcon, StatusDot } from "@/ui/kit";
 import { SendButton } from "@/ui/threads";
 import { useAutoGrow } from "@/ui/use-auto-grow";
 
@@ -88,6 +90,7 @@ export function GroupChat({
   onActivityLine,
   onChooseModel,
   onOpenDetails,
+  onOpenAssignment,
 }: {
   group: CoworkerGroupSummary;
   coworkers: CoworkerSummary[];
@@ -100,6 +103,8 @@ export function GroupChat({
   onChooseModel: (slug: string) => void;
   /** Open the group's details (members, facilitator, archive). */
   onOpenDetails?: () => void;
+  /** Open an assignment a group created, in its owner's view. */
+  onOpenAssignment?: (slug: string, threadId: string) => void;
 }) {
   const [events, setEvents] = useState<GroupTimelineEvent[]>([]);
   const [loaded, setLoaded] = useState(false);
@@ -112,6 +117,11 @@ export function GroupChat({
   const [renaming, setRenaming] = useState(false);
   const [nameDraft, setNameDraft] = useState(group.name);
   const [mention, setMention] = useState<{ start: number; query: string; index: number } | null>(null);
+  /** The composer turned towards an assignment: what someone should own, then who. */
+  const [assignmentMode, setAssignmentMode] = useState(false);
+  const [assignment, setAssignment] = useState("");
+  const [pendingAssignment, setPendingAssignment] = useState<{ outcome: string; suggested: string } | null>(null);
+  const [assignmentBusy, setAssignmentBusy] = useState("");
   const groupRef = useRef(group);
   groupRef.current = group;
   const coworkersRef = useRef(coworkers);
@@ -356,6 +366,67 @@ export function GroupChat({
     onGroupChanged(await coworkerBridge.groups.update(group.id, { name: next }));
   }
 
+  // --- an assignment from the group ------------------------------------------------
+  /** Ask who should own it: the best match by role is proposed first; the person confirms. */
+  function proposeAssignment(): void {
+    const outcome = assignment.trim();
+    if (!outcome || members.length === 0) return;
+    setError("");
+    setPendingAssignment({ outcome, suggested: chooseSpeakers(outcome, members, events)[0] ?? members[0]?.slug ?? "" });
+  }
+
+  /** Create the assignment in the owner's own workspace and link it from the timeline as one action line. */
+  async function createAssignment(slug: string, outcome: string): Promise<void> {
+    const owner = coworkersRef.current.find((coworker) => coworker.slug === slug);
+    if (!owner) return;
+    setAssignmentBusy(slug);
+    setError("");
+    try {
+      const workspaceId = owner.workspaceId || (await coworkerBridge.coworkers.ensureWorkspace(slug)).workspaceId;
+      if (!workspaceId) throw new Error(`${owner.name}'s workspace is not ready.`);
+      const threads = createCoworkerThreads({ serverUrl: runtime.serverUrl, workspaceId, token: runtime.ownerToken, model: owner.model, modelVariant: owner.modelVariant });
+      const title = assignmentTitle(outcome);
+      const thread = await threads.client.createThread({ title });
+      // The owner gets the visible group conversation, each line signed, never another coworker's reasoning or tools.
+      const context: DiscussionMessage[] = eventsRef.current
+        .filter((event) => event.kind === "user" || event.kind === "coworker")
+        .map((event) => (event.kind === "user" ? { role: "user", text: event.text } : { role: "assistant", text: `${nameFor(event.slug ?? "")} said: ${event.text}` }));
+      await threads.client.sendTurn(thread.id, { prompt: assignmentPrompt(outcome, context), messageId: newId("msg") });
+      const line = await coworkerBridge.groups.appendEvent(group.id, { kind: "action", slug, action: "assignment", title, threadId: thread.id, text: `Assignment for ${owner.name} · ${title}` });
+      publishGroupRun({ groupId: group.id, event: line });
+      setPendingAssignment(null);
+      setAssignment("");
+      setAssignmentMode(false);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setAssignmentBusy("");
+    }
+  }
+
+  const ownerChoices = useMemo(() => {
+    if (!pendingAssignment) return [];
+    const ordered = [...members].sort((left, right) => Number(right.slug === pendingAssignment.suggested) - Number(left.slug === pendingAssignment.suggested));
+    return ordered.map((member, index) => ({ letter: LETTERS[index] ?? String(index + 1), member, suggested: member.slug === pendingAssignment.suggested }));
+  }, [members, pendingAssignment]);
+
+  useEffect(() => {
+    if (!pendingAssignment) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (typingInField(event.target) || event.metaKey || event.ctrlKey || event.altKey) return;
+      if (event.key === "Escape") {
+        setPendingAssignment(null);
+        return;
+      }
+      const choice = ownerChoices.find((item) => item.letter === event.key.toUpperCase());
+      if (!choice || assignmentBusy) return;
+      event.preventDefault();
+      void createAssignment(choice.member.slug, pendingAssignment.outcome);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  });
+
   // --- @ mentions in the composer -------------------------------------------------
   const mentionOptions = useMemo((): MentionOption[] => {
     if (!mention) return [];
@@ -472,9 +543,14 @@ export function GroupChat({
               );
             }
             if (event.kind === "action") {
+              const open = onOpenAssignment && event.slug && event.threadId ? () => onOpenAssignment(event.slug ?? "", event.threadId ?? "") : null;
               return (
-                <div key={event.id} className="flex justify-center py-0.5" data-testid="group-action-line" data-action={event.action}>
-                  <span className="rounded-full border border-line/70 px-3 py-1 text-[11px] text-mist">{event.text}</span>
+                <div key={event.id} className="flex justify-center py-0.5" data-testid="group-action-line" data-action={event.action} data-speaker={event.slug} data-thread-id={event.threadId}>
+                  {open ? (
+                    <button type="button" className="rounded-full border border-line/70 px-3 py-1 text-[11px] text-mist transition-colors hover:border-spark/40 hover:text-snow" onClick={open}>{event.text}</button>
+                  ) : (
+                    <span className="rounded-full border border-line/70 px-3 py-1 text-[11px] text-mist">{event.text}</span>
+                  )}
                 </div>
               );
             }
@@ -527,11 +603,31 @@ export function GroupChat({
               <button type="button" className="font-medium text-snow/80 underline-offset-2 hover:underline" onClick={() => { const retry = failedSend; setFailedSend(null); void startTurn(retry.text, retry.clientMessageId); }}>Retry</button>
             </div>
           ) : null}
+          {pendingAssignment ? (
+            <InteractionCard label="Who should own this assignment" title="Who should own this?" detail={pendingAssignment.outcome} onClose={() => setPendingAssignment(null)} testId="group-assignment-owner">
+              <div className="mt-3 divide-y divide-line/70 rounded-xl border border-line/70" role="listbox" aria-label="Owner">
+                {ownerChoices.map((choice) => (
+                  <OptionRow
+                    key={choice.member.slug}
+                    letter={choice.letter}
+                    label={assignmentBusy === choice.member.slug ? `${choice.member.name}…` : choice.member.name}
+                    description={[choice.member.role, choice.suggested ? "Suggested" : ""].filter(Boolean).join(" · ")}
+                    active={choice.suggested}
+                    disabled={Boolean(assignmentBusy)}
+                    onChoose={() => void createAssignment(choice.member.slug, pendingAssignment.outcome)}
+                  />
+                ))}
+              </div>
+            </InteractionCard>
+          ) : null}
           {error ? <ErrorNote>{error}</ErrorNote> : null}
         </div>
       </div>
       <div className="px-5 pb-4 pt-2" data-testid="coworker-composer">
         <div className="mx-auto max-w-3xl">
+          {assignmentMode ? (
+            <p className="mb-1.5 px-12 text-[11px] text-mist" data-testid="group-assignment-mode">Something one of them should own, separate from this chat</p>
+          ) : null}
           {queue.map((item) => (
             <div key={item.clientMessageId} className="mb-1.5 flex items-center gap-2 px-4 text-[11px] text-mist" data-testid="group-queued">
               <span className="font-medium text-snow/70">Next</span>
@@ -539,8 +635,25 @@ export function GroupChat({
               <button type="button" className="rounded-full px-1.5 text-mist hover:text-snow" aria-label="Do not send this" onClick={() => dequeueGroupMessage(group.id, item.clientMessageId)}>×</button>
             </div>
           ))}
-          <div className="relative">
-            {mention && mentionOptions.length > 0 ? (
+          <div className="relative flex items-end gap-2">
+            <button
+              type="button"
+              aria-pressed={assignmentMode}
+              data-testid="group-assignment-toggle"
+              className={`mb-0.5 flex size-8 shrink-0 items-center justify-center rounded-full border text-lg leading-none transition-colors ${
+                assignmentMode ? "border-spark/50 bg-spark/15 text-spark" : "border-line text-mist hover:border-spark/40 hover:text-snow"
+              }`}
+              title={assignmentMode ? "Back to chat" : "Create assignment"}
+              onClick={() => {
+                setAssignmentMode((current) => !current);
+                setPendingAssignment(null);
+                requestAnimationFrame(() => composerRef.current?.focus());
+              }}
+            >
+              <PlusIcon className={`size-4 transition-transform ${assignmentMode ? "rotate-45" : ""}`} />
+              <span className="sr-only">{assignmentMode ? "Back to chat" : "Create assignment"}</span>
+            </button>
+            {mention && mentionOptions.length > 0 && !assignmentMode ? (
               <ul
                 role="listbox"
                 aria-label="Coworkers to name"
@@ -567,22 +680,33 @@ export function GroupChat({
                 ))}
               </ul>
             ) : null}
-            <div className="flex min-w-0 items-end gap-1 rounded-[20px] border border-line bg-panel/60 py-1 pl-4 pr-1 transition-colors focus-within:border-spark/50">
+            <div className={`flex min-w-0 flex-1 items-end gap-1 rounded-[20px] border bg-panel/60 py-1 pl-4 pr-1 transition-colors focus-within:border-spark/50 ${assignmentMode ? "border-spark/35" : "border-line"}`}>
               <textarea
                 ref={composerRef}
-                aria-label={`Message ${group.name}`}
+                aria-label={assignmentMode ? "Assignment outcome" : `Message ${group.name}`}
                 data-testid="group-composer"
                 rows={1}
                 className="min-h-[30px] min-w-0 flex-1 resize-none bg-transparent py-1 text-sm leading-relaxed text-snow outline-none placeholder:text-mist/65"
-                placeholder={`Message ${members.map((member) => member.name).join(", ")}`}
-                value={message}
+                placeholder={assignmentMode ? "What should one of them own?" : `Message ${members.map((member) => member.name).join(", ")}`}
+                value={assignmentMode ? assignment : message}
                 disabled={!runtime.engineManaged}
                 onChange={(event) => {
+                  if (assignmentMode) {
+                    setAssignment(event.target.value);
+                    return;
+                  }
                   setMessage(event.target.value);
                   updateMention(event.target.value, event.target.selectionStart ?? event.target.value.length);
                 }}
-                onClick={(event) => updateMention(event.currentTarget.value, event.currentTarget.selectionStart ?? 0)}
+                onClick={(event) => !assignmentMode && updateMention(event.currentTarget.value, event.currentTarget.selectionStart ?? 0)}
                 onKeyDown={(event) => {
+                  if (assignmentMode) {
+                    if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
+                      event.preventDefault();
+                      proposeAssignment();
+                    }
+                    return;
+                  }
                   if (mention && mentionOptions.length > 0) {
                     if (event.key === "ArrowDown" || event.key === "ArrowUp") {
                       event.preventDefault();
@@ -608,11 +732,17 @@ export function GroupChat({
                   }
                 }}
               />
-              {live ? <Button variant="ghost" className="mb-0.5 rounded-full px-3 py-1 text-xs" onClick={() => void stopGroupRun(group.id)}>Stop</Button> : null}
-              <SendButton label={live ? "Next" : "Send"} busy={false} disabled={!message.trim() || !runtime.engineManaged} onClick={send} testId="group-send" />
+              {live && !assignmentMode ? <Button variant="ghost" className="mb-0.5 rounded-full px-3 py-1 text-xs" onClick={() => void stopGroupRun(group.id)}>Stop</Button> : null}
+              {assignmentMode ? (
+                <SendButton label="Create assignment" busy={false} disabled={!assignment.trim() || !runtime.engineManaged || Boolean(pendingAssignment)} onClick={proposeAssignment} testId="group-send" />
+              ) : (
+                <SendButton label={live ? "Next" : "Send"} busy={false} disabled={!message.trim() || !runtime.engineManaged} onClick={send} testId="group-send" />
+              )}
             </div>
           </div>
-          <p className="mt-1.5 px-4 text-[9px] text-mist/65">Enter to send · Shift Enter for a new line · @name chooses who answers, @everyone asks all</p>
+          <p className="mt-1.5 px-12 text-[9px] text-mist/65">
+            {assignmentMode ? "Enter to choose who owns it · Shift Enter for a new line" : "Enter to send · Shift Enter for a new line · @name chooses who answers, @everyone asks all"}
+          </p>
         </div>
       </div>
     </div>
