@@ -72,7 +72,7 @@ test("relativeTime is compact and empty when unknown", () => {
 test("an idle coworker with no history gets exactly one line", () => {
   const summary = describeNow({ state: "ready", label: "Ready", detail: "Waiting for first assignment", updatedAt: 0 });
   assert.deepEqual(summary, { subject: "", note: "Waiting for the first assignment.", needsYou: false });
-  assert.deepEqual(describeNow(undefined), { subject: "", note: "Checking status…", needsYou: false });
+  assert.deepEqual(describeNow(undefined), { subject: "", note: "", needsYou: false });
 });
 
 test("a ready coworker with history says only Ready; the recent list owns the history", () => {

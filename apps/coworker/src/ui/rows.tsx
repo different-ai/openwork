@@ -8,7 +8,7 @@ import { StatusDot } from "@/ui/kit";
  * status line (two lines at most when narrow), a count, and a chevron. Rows
  * are buttons inside a list; arrow keys move between them, Enter opens.
  */
-export function RowList({ label, children, testId }: { label: string; children: ReactNode; testId?: string }) {
+export function RowList({ label, children, testId, divided = false }: { label: string; children: ReactNode; testId?: string; divided?: boolean }) {
   const listRef = useRef<HTMLUListElement>(null);
   const onKeyDown = useCallback((event: KeyboardEvent<HTMLUListElement>) => {
     if (event.key !== "ArrowDown" && event.key !== "ArrowUp" && event.key !== "Home" && event.key !== "End") return;
@@ -23,7 +23,7 @@ export function RowList({ label, children, testId }: { label: string; children: 
     rows[next]?.focus();
   }, []);
   return (
-    <ul ref={listRef} role="list" aria-label={label} className="-mx-1" onKeyDown={onKeyDown} data-testid={testId}>
+    <ul ref={listRef} role="list" aria-label={label} className={divided ? "-mx-1 divide-y divide-line" : "-mx-1"} onKeyDown={onKeyDown} data-testid={testId}>
       {children}
     </ul>
   );
@@ -40,10 +40,12 @@ export function Row({
   testId,
   chevron = true,
   disabled = false,
+  mark = false,
 }: {
   /** Stable within its list; Back returns focus here. */
   id: string;
-  icon: ReactNode;
+  /** The row's glyph in a small box; a row without one is just its words. */
+  icon?: ReactNode;
   title: string;
   /** One line of state or source; wraps to two lines at most. */
   status?: string;
@@ -53,6 +55,8 @@ export function Row({
   testId?: string;
   chevron?: boolean;
   disabled?: boolean;
+  /** A small dot after the title: something new since the person last looked. */
+  mark?: boolean;
 }) {
   return (
     <li>
@@ -64,11 +68,16 @@ export function Row({
         data-row-id={id}
         data-testid={testId}
       >
-        <span className="flex size-8 shrink-0 items-center justify-center rounded-lg border border-line bg-panel text-mist" aria-hidden="true">
-          {icon}
-        </span>
+        {icon ? (
+          <span className="flex size-8 shrink-0 items-center justify-center rounded-lg border border-line bg-panel text-mist" aria-hidden="true">
+            {icon}
+          </span>
+        ) : null}
         <span className="min-w-0 flex-1">
-          <span className="block truncate text-[13px] font-medium text-snow">{title}</span>
+          <span className="flex items-center gap-1.5 text-[13px] font-medium text-snow">
+            <span className="truncate">{title}</span>
+            {mark ? <span className="size-1.5 shrink-0 rounded-full bg-spark" aria-hidden="true" data-testid="row-mark" /> : null}
+          </span>
           {status ? (
             <span className="mt-0.5 flex items-start gap-1.5 text-[11px] leading-snug text-mist">
               {tone ? <span className="mt-[5px] shrink-0"><StatusDot tone={tone} /></span> : null}

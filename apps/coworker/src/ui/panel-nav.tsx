@@ -205,7 +205,8 @@ export function PanelHeader({
         </IconButton>
       ) : leading}
       <nav aria-label="Where you are in this panel" className="window-no-drag flex min-w-0 flex-1 items-center gap-1 overflow-hidden" data-testid="panel-breadcrumbs" data-collapsed={skipped.length > 0 ? "true" : "false"}>
-        {root ? <Crumb crumb={root} onSelect={onToDepth} /> : null}
+        {/* When the trail is tight the root gives way first, so the level on screen stays legible. */}
+        {root ? <Crumb crumb={root} onSelect={onToDepth} yielding={tail.length > 0} /> : null}
         {skipped.length > 0 ? (
           <>
             <Separator />
@@ -213,7 +214,7 @@ export function PanelHeader({
           </>
         ) : null}
         {tail.map((crumb) => (
-          <span key={crumb.depth} className="flex min-w-0 items-center gap-1">
+          <span key={crumb.depth} className={`flex min-w-0 items-center gap-1 ${crumb.current ? "max-w-[70%] shrink-0" : ""}`}>
             <Separator />
             <Crumb crumb={crumb} onSelect={onToDepth} />
           </span>
@@ -228,13 +229,13 @@ function Separator() {
   return <span className="shrink-0 text-[11px] text-mist/60" aria-hidden="true">›</span>;
 }
 
-function Crumb({ crumb, onSelect }: { crumb: Breadcrumb; onSelect: (depth: number) => void }) {
+function Crumb({ crumb, onSelect, yielding = false }: { crumb: Breadcrumb; onSelect: (depth: number) => void; yielding?: boolean }) {
   return (
     <button
       type="button"
       className={`min-w-0 truncate rounded-md px-1 py-0.5 text-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-spark/60 ${
         crumb.current ? "font-semibold text-snow" : "font-medium text-mist hover:text-snow"
-      }`}
+      } ${yielding ? "shrink-[3]" : ""}`}
       aria-current={crumb.current ? "page" : undefined}
       data-testid="panel-crumb"
       data-depth={crumb.depth}

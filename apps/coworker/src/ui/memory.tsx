@@ -276,7 +276,7 @@ function MemoryList({
       </div>
       {creating ? (
         <form
-          className="space-y-2 rounded-2xl border border-line bg-ink p-3"
+          className="space-y-2 border-y border-line py-3"
           data-testid="memory-create-form"
           onSubmit={(event) => {
             event.preventDefault();
@@ -309,14 +309,14 @@ function MemoryList({
       ) : memories.length === 0 ? (
         <Empty>No long-term memories yet. They appear here as {coworker.name} promotes durable facts from working memory.</Empty>
       ) : (
-        <ul className="divide-y divide-line overflow-hidden rounded-2xl border border-line bg-ink" data-testid="memory-list">
+        <ul className="divide-y divide-line" data-testid="memory-list">
           {memories.map((memory) => (
             <li key={memory.file}>
               <button
                 type="button"
                 data-testid="memory-row"
                 data-file={memory.file}
-                className="flex w-full items-start gap-3 px-3 py-2.5 text-left transition-colors hover:bg-white/4 focus-visible:bg-white/4 focus-visible:outline-none"
+                className="flex w-full items-start gap-3 px-1 py-2.5 text-left transition-colors hover:bg-white/4 focus-visible:bg-white/4 focus-visible:outline-none"
                 onClick={() => onSelect(memory)}
               >
                 <div className="min-w-0 flex-1">
@@ -419,7 +419,7 @@ function MemoryDetail({
         ) : null}
       </div>
       {confirming ? (
-        <div className="space-y-2 rounded-2xl border border-rose/25 bg-rose/5 p-3" data-testid="memory-delete-confirm">
+        <div className="space-y-2 border-y border-rose/25 py-3" data-testid="memory-delete-confirm">
           <p className="text-xs leading-relaxed text-rose">
             {memory.exists
               ? `Delete this memory? The file and its line in the index go together, and ${coworker.name} will no longer recall it.`
@@ -439,7 +439,7 @@ function MemoryDetail({
         </div>
       ) : null}
       {memory.exists && !memory.indexed ? (
-        <div className="flex items-center justify-between gap-3 rounded-2xl border border-amber/25 bg-amber/5 px-3 py-2">
+        <div className="flex items-center justify-between gap-3 border-y border-amber/25 py-2">
           <p className="text-xs leading-relaxed text-amber">
             {coworker.name} wrote this file but has not listed it, so it will not come to mind on its own.
           </p>
@@ -547,14 +547,14 @@ function FileEditor({
       </div>
       {error ? <ErrorNote>{error}</ErrorNote> : null}
       {content === null ? null : mode === "view" ? (
-        <div className="min-h-[12rem] rounded-2xl border border-line bg-ink p-4" data-testid="memory-view">
+        <div className="min-h-[12rem] border-t border-line px-1 pt-3" data-testid="memory-view">
           {content.trim() ? <Markdown text={content} /> : <p className="text-sm text-mist">Nothing written yet.</p>}
         </div>
       ) : (
         <>
           <textarea
             aria-label={`${label} memory`}
-            className="h-[52vh] w-full resize-none rounded-2xl border border-line bg-ink p-3 font-mono text-xs leading-relaxed text-snow focus:border-spark/60 focus:outline-none"
+            className="h-[52vh] w-full resize-none rounded-lg border border-line bg-black/18 p-3 font-mono text-xs leading-relaxed text-snow focus:border-spark/60 focus:outline-none"
             value={content}
             spellCheck={false}
             onChange={(event) => setContent(event.target.value)}
