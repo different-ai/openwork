@@ -38,6 +38,7 @@ import {
   getBrandAppearanceRoute,
   getBillingRoute,
   getCustomLlmProvidersRoute,
+  getGatewayProvidersRoute,
   getDiagnosticsRoute,
   getDesktopPoliciesRoute,
   getManagedDashboardsRoute,
@@ -274,6 +275,9 @@ function getDashboardPageTitle(pathname: string, orgSlug: string | null) {
   if (pathname.startsWith(getCustomLlmProvidersRoute(orgSlug))) {
     return "Bring your Own Keys";
   }
+  if (pathname.startsWith(getGatewayProvidersRoute(orgSlug))) {
+    return "Gateway providers";
+  }
   if (pathname.startsWith(getDesktopPoliciesRoute(orgSlug))) {
     return "Desktop Policies";
   }
@@ -465,6 +469,7 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
             ? [{ href: getInferenceRoute(activeOrg.slug), label: "OpenWork Models" }]
             : []),
           { href: getCustomLlmProvidersRoute(activeOrg.slug), label: "Bring your Own Keys" },
+          { href: getGatewayProvidersRoute(activeOrg.slug), label: "Gateway providers" },
         ],
       }
     : null;
