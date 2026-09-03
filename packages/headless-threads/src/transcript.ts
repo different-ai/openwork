@@ -45,6 +45,7 @@ export function toTranscriptMessage(message: HeadlessThreadMessage): HeadlessTra
     id: message.id,
     role: message.role,
     createdAt: message.createdAt,
+    completedAt: message.completedAt,
     text: joinPartText(message, "text"),
     reasoning: joinPartText(message, "reasoning"),
     model: message.model,

@@ -56,6 +56,12 @@ export interface HeadlessThreadMessage {
   /** The user message this assistant response belongs to. */
   parentId: string | null;
   createdAt: number | null;
+  /**
+   * When the engine closed this message. An assistant message with neither a
+   * completion time nor an error was cut off before it finished — the engine
+   * stopped while it was still writing.
+   */
+  completedAt: number | null;
   error: HeadlessThreadMessageError | null;
   usage: HeadlessThreadUsage | null;
   /** Set on assistant messages once the engine has bound the reply to a model. */
@@ -109,6 +115,15 @@ export interface HeadlessThreadTurnInput {
 }
 
 /**
+ * Redo one turn under the message id it already has. The engine forgets the
+ * earlier attempt (the message and every reply it produced) and runs the same
+ * prompt again, so the thread never carries the message twice.
+ */
+export interface HeadlessThreadRetryInput extends HeadlessThreadTurnInput {
+  messageId: string;
+}
+
+/**
  * Proof that the engine accepted a turn, plus the message count observed just
  * before submitting it. `waitForThread` uses that count to tell a fresh
  * assistant reply apart from the replies already in the thread.
@@ -120,6 +135,8 @@ export interface HeadlessTurnAcceptance {
   messageId: string | null;
   /** True when the engine already held this exact user message. */
   alreadyPresent: boolean;
+  /** True when `retryTurn` removed an earlier attempt before the engine accepted this one. */
+  retried?: boolean;
 }
 
 export interface HeadlessThreadWaitInput {
@@ -175,6 +192,8 @@ export interface HeadlessTranscriptMessage {
   id: string;
   role: string;
   createdAt: number | null;
+  /** When the engine closed the message; null while it is still being written or when it was cut off. */
+  completedAt: number | null;
   text: string;
   reasoning: string;
   /** Which model answered; null for user messages and replies the engine has not attributed yet. */
@@ -201,6 +220,12 @@ export interface AgentSessionClient {
 }
 
 export interface HeadlessThreadClient extends AgentSessionClient {
+  /**
+   * Run the thread's last turn again under the same message id. Only the last
+   * turn can be redone: a later user message means there is nothing to retry.
+   * A message the engine never held is simply sent.
+   */
+  retryTurn(threadId: string, input: HeadlessThreadRetryInput): Promise<HeadlessTurnAcceptance>;
   waitForThread(threadId: string, input: HeadlessThreadWaitInput): Promise<HeadlessThreadWaitResult>;
   waitUntilIdle(threadId: string, input: HeadlessThreadWaitInput): Promise<HeadlessThreadWaitResult>;
   exportTranscript(threadId: string, input?: { signal?: AbortSignal }): Promise<HeadlessThreadTranscript>;

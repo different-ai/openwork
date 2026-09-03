@@ -20,6 +20,7 @@ const timeSchema = z
   .object({
     created: z.number().optional(),
     updated: z.number().optional(),
+    completed: z.number().optional(),
   })
   .passthrough();
 
@@ -174,6 +175,7 @@ export function toThreadMessage(message: MessageWire): HeadlessThreadMessage {
     role: message.info.role,
     parentId: message.info.parentID ?? null,
     createdAt: message.info.time?.created ?? null,
+    completedAt: message.info.time?.completed ?? null,
     error: toMessageError(message.info.error),
     model: toMessageModel(message),
     usage: message.info.role === "assistant" && message.info.tokens ? {

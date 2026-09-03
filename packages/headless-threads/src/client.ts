@@ -18,6 +18,7 @@ import type {
   HeadlessThread,
   HeadlessThreadClient,
   HeadlessThreadClientOptions,
+  HeadlessThreadRetryInput,
   HeadlessThreadSnapshot,
   HeadlessThreadTranscript,
   HeadlessThreadTurnInput,
@@ -224,13 +225,8 @@ export function createHeadlessThreadClient(options: HeadlessThreadClientOptions)
     return toThread(session, workspaceId, prompt !== undefined);
   }
 
-  async function sendTurn(threadId: string, input: HeadlessThreadTurnInput): Promise<HeadlessTurnAcceptance> {
+  async function promptTurn(threadId: string, input: HeadlessThreadTurnInput, signal?: AbortSignal): Promise<void> {
     const model = input.model ?? options.defaultModel;
-    const messages = await readMessages(threadId, input.signal);
-    const messageCountBefore = messages.length;
-    if (input.messageId && messages.some((message) => message.info.id === input.messageId && message.info.role === "user")) {
-      return { threadId, acceptedAt: now(), messageCountBefore, messageId: input.messageId, alreadyPresent: true };
-    }
     const path = `${opencodePath}/session/${encodeURIComponent(threadId)}/prompt_async`;
     const result = await opencode.session.promptAsync({
       sessionID: threadId,
@@ -238,9 +234,53 @@ export function createHeadlessThreadClient(options: HeadlessThreadClientOptions)
       ...(input.messageId === undefined ? {} : { messageID: input.messageId }),
       ...(model === undefined ? {} : { model: { providerID: model.providerId, modelID: model.modelId } }),
       ...(model?.variant === undefined ? {} : { variant: model.variant }),
-    }, { signal: requestSignal(input.signal) });
+    }, { signal: requestSignal(signal) });
     sdkSuccess(result, "POST", path);
+  }
+
+  async function sendTurn(threadId: string, input: HeadlessThreadTurnInput): Promise<HeadlessTurnAcceptance> {
+    const messages = await readMessages(threadId, input.signal);
+    const messageCountBefore = messages.length;
+    if (input.messageId && messages.some((message) => message.info.id === input.messageId && message.info.role === "user")) {
+      return { threadId, acceptedAt: now(), messageCountBefore, messageId: input.messageId, alreadyPresent: true };
+    }
+    await promptTurn(threadId, input, input.signal);
     return { threadId, acceptedAt: now(), messageCountBefore, messageId: input.messageId ?? null, alreadyPresent: false };
+  }
+
+  async function retryTurn(threadId: string, input: HeadlessThreadRetryInput): Promise<HeadlessTurnAcceptance> {
+    const messages = await readMessages(threadId, input.signal);
+    const index = messages.findIndex((message) => message.info.id === input.messageId && message.info.role === "user");
+    if (index === -1) {
+      // The engine never held the message (the earlier attempt failed before it was sent): a plain send.
+      await promptTurn(threadId, input, input.signal);
+      return { threadId, acceptedAt: now(), messageCountBefore: messages.length, messageId: input.messageId, alreadyPresent: false, retried: false };
+    }
+    const attempt = messages.slice(index);
+    if (attempt.slice(1).some((message) => message.info.role === "user")) {
+      const path = `${opencodePath}/session/${encodeURIComponent(threadId)}/message/${encodeURIComponent(input.messageId)}`;
+      throw new HeadlessThreadError({
+        code: "not_last_turn",
+        message: "Only the last turn of a thread can be retried",
+        method: "DELETE",
+        path,
+        status: 409,
+        body: { code: "not_last_turn", messageId: input.messageId },
+      });
+    }
+    // The message and everything the engine wrote after it belong to the attempt being redone.
+    // Removing them (newest first) leaves no reply an observer could mistake for the new one;
+    // the engine then recreates the message under the same id, so the thread holds it once.
+    for (const message of [...attempt].reverse()) {
+      const path = `${opencodePath}/session/${encodeURIComponent(threadId)}/message/${encodeURIComponent(message.info.id)}`;
+      sdkSuccess(
+        await opencode.session.deleteMessage({ sessionID: threadId, messageID: message.info.id }, { signal: requestSignal(input.signal) }),
+        "DELETE",
+        path,
+      );
+    }
+    await promptTurn(threadId, input, input.signal);
+    return { threadId, acceptedAt: now(), messageCountBefore: index, messageId: input.messageId, alreadyPresent: false, retried: true };
   }
 
   async function waitForThread(threadId: string, input: HeadlessThreadWaitInput): Promise<HeadlessThreadWaitResult> {
@@ -325,5 +365,5 @@ export function createHeadlessThreadClient(options: HeadlessThreadClientOptions)
     return toTranscript(await getThreadSnapshot(threadId, input));
   }
 
-  return { createThread, sendTurn, waitForThread, waitUntilIdle, getThreadSnapshot, abortThread, exportTranscript };
+  return { createThread, sendTurn, retryTurn, waitForThread, waitUntilIdle, getThreadSnapshot, abortThread, exportTranscript };
 }
