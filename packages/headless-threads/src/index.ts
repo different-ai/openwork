@@ -14,6 +14,7 @@ export type {
   HeadlessThreadMessageError,
   HeadlessThreadMessagePart,
   HeadlessThreadModel,
+  HeadlessThreadRetryInput,
   HeadlessThreadSnapshot,
   HeadlessThreadStatus,
   HeadlessThreadTodo,
