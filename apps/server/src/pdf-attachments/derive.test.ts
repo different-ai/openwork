@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, readFile, readdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { link, mkdir, mkdtemp, readFile, readdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { createHash } from "node:crypto";
@@ -275,7 +275,7 @@ describe("derivePdf", () => {
     });
   });
 
-  test("verified reads refuse symlinks, directories, and files outside the parent", async () => {
+  test("verified reads refuse symlinks, hardlinks, directories, and files outside the parent", async () => {
     await withWorkspace(async (root) => {
       const outside = await mkdtemp(join(tmpdir(), "openwork-pdf-verified-"));
       try {
@@ -292,6 +292,15 @@ describe("derivePdf", () => {
         await expect(openVerifiedForRead(realRoot, join(realRoot, "link.pdf"))).rejects.toThrow();
         await expect(openVerifiedForRead(realRoot, realRoot)).rejects.toThrow("not a regular file");
         await expect(openVerifiedForRead(realRoot, await realpath(secret))).rejects.toThrow("changed underneath");
+
+        // A hardlink gives an outside file an in-workspace name; refuse anything with more than one link.
+        const hardlinked = join(realRoot, "hardlink.pdf");
+        try {
+          await link(secret, hardlinked);
+        } catch {
+          return; // cross-device temp dirs cannot be hardlinked on this machine; nothing to assert
+        }
+        await expect(openVerifiedForRead(realRoot, hardlinked)).rejects.toThrow("more than one hard link");
       } finally {
         await rm(outside, { recursive: true, force: true });
       }

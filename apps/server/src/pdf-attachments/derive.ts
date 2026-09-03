@@ -194,15 +194,17 @@ async function confinedDirectory(root: string, directory: string): Promise<strin
 
 /**
  * Opens `path` for reading without following a symlink at the final component,
- * then confirms the opened file is a regular file that the path still names
- * beneath `realParent`. A path swapped around the open fails the identity
- * check, so content only ever flows through a verified handle.
+ * then confirms the opened file is a regular file with a single hard link that
+ * the path still names beneath `realParent`. A hardlink would give an outside
+ * file an in-workspace name, and a path swapped around the open fails the
+ * identity check, so content only ever flows through a verified handle.
  */
 export async function openVerifiedForRead(realParent: string, path: string): Promise<FileHandle> {
   const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
   try {
     const opened = await handle.stat();
     if (!opened.isFile()) throw new Error(`${basename(path)} is not a regular file.`);
+    if (opened.nlink > 1) throw new Error(`${basename(path)} has more than one hard link; refusing to read it.`);
     const real = await realpath(path);
     const named = await lstat(real);
     if (!isWithin(realParent, real) || named.dev !== opened.dev || named.ino !== opened.ino) {
