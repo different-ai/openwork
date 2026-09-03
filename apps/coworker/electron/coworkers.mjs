@@ -133,7 +133,7 @@ ${mission || "Help with the work I am given, and own it over time."}
  * regenerate on the next launch (`repairCoworkerContract`); soul and memory are
  * never touched by that repair.
  */
-export const AGENTS_CONTRACT_VERSION = 3;
+export const AGENTS_CONTRACT_VERSION = 4;
 const AGENTS_CONTRACT_MARKER = /<!-- open-coworker-contract: (\d+) -->/;
 
 export function agentsTemplate({ name }) {
@@ -222,22 +222,42 @@ at once; \`workers_list\` shows them.
 - The person can see, steer, pause, and stop my Workers in the Workers view;
   when they do, I follow their lead.
 
-## Working memory duty
+## Keeping memory and soul current
 
-Maintain \`memory/working.md\` as part of doing work, not as an afterthought:
+After any turn in which the person states a preference, a stable fact about
+themselves or their work, a standing rule, or corrects you, record it with your
+self tools in that same turn, then reply:
 
-- After meaningful progress, decisions, or new context, update it.
-- Keep it small enough to load every turn: consolidate duplicates, remove
-  stale or completed items, and keep only what future turns need.
-- It is a curated understanding, never a transcript or an append-only log.
+- \`coworker_memory_remember\` with kind "working" for what the current work
+  needs, or kind "long-term" (with a short topic such as "About you") for what
+  will still be true next month.
+- \`coworker_soul_update\` for how you should behave: tone, boundaries, what
+  needs approval.
+- \`coworker_memory_forget\` when something no longer holds or the person asks
+  you to drop it.
+- \`coworker_self_read\` to answer honestly what you know about them or how you
+  are meant to behave.
 
-## Long-term memory duty
+Working memory holds what the current work needs; long-term memory holds what
+stays true; the soul holds how to behave. Keep working memory small enough to
+load every turn: consolidate duplicates and drop what is done. Never record
+trivia, secrets, credentials, or anything the person asks you to keep out.
+When a soul change is significant (a new boundary, a changed role), say so in
+one sentence and continue unless the person objects.
 
-When something in working memory proves durable (stable preferences,
-architecture decisions, project facts, important people), move it to a topic
-file in \`memory/long-term/\` and list that file in \`memory/index.md\` with a
-one-line description. Remove promoted content from working memory. Do not
-record trivia, secrets, or credentials anywhere in memory.
+## Scheduling
+
+When the person asks for recurring or timed work ("every weekday at 9 remind
+me to…", "check this page every 2 hours"), set it up yourself with your
+assignment tools — \`coworker_assignment_create\`, \`coworker_assignment_update\`,
+\`coworker_assignment_run_now\`, \`coworker_assignment_remove\`, and
+\`coworker_assignments_list\` — rather than describing what you would do, then
+confirm the plain-words summary the tool returns in one sentence. Never invent
+a time zone: leave it out and your own is used. When the cadence is ambiguous
+(which day, which time, this Mac or OpenWork Cloud), ask with the question tool
+before creating anything. Assignments on this Mac run only while Open Coworker
+is open and follow its limits on how often they may run; OpenWork Cloud takes
+daily, weekly, or once schedules and needs the person to be signed in.
 
 ## Conduct
 
@@ -318,6 +338,18 @@ async function pathExists(target) {
     return false;
   }
 }
+
+let temporarySequence = 0;
+
+/** Write a whole file so a crash can never leave it half written. */
+async function writeAtomic(target, content) {
+  await mkdir(path.dirname(target), { recursive: true });
+  temporarySequence += 1;
+  const temporary = `${target}.${process.pid}.${temporarySequence}.tmp`;
+  await writeFile(temporary, content, "utf8");
+  await rename(temporary, target);
+}
+
 
 async function readCoworkerRecord(coworkersDir, slug) {
   const root = coworkerPath(coworkersDir, slug);
@@ -425,7 +457,7 @@ export async function repairCoworkerContract(coworkersDir, slug) {
     agents = "";
   }
   if (agentsContractVersion(agents) < AGENTS_CONTRACT_VERSION) {
-    await writeFile(agentsPath, agentsTemplate({ name: coworker.name }), "utf8");
+    await writeAtomic(agentsPath, agentsTemplate({ name: coworker.name }));
     changed.push("AGENTS.md");
   }
   const configPath = path.join(root, "opencode.json");
@@ -440,7 +472,7 @@ export async function repairCoworkerContract(coworkersDir, slug) {
   const missing = COWORKER_INSTRUCTIONS.filter((entry) => !instructions.includes(entry));
   if (missing.length > 0 || !Array.isArray(config.instructions)) {
     const next = { $schema: "https://opencode.ai/config.json", ...config, instructions: [...instructions, ...missing] };
-    await writeFile(configPath, `${JSON.stringify(next, null, 2)}\n`, "utf8");
+    await writeAtomic(configPath, `${JSON.stringify(next, null, 2)}\n`);
     changed.push("opencode.json");
   }
   const indexPath = path.join(root, DOCUMENTS_INDEX_FILE);
@@ -612,8 +644,7 @@ export async function readCoworkerFile(coworkersDir, slug, relativePath) {
 
 export async function writeCoworkerFile(coworkersDir, slug, relativePath, content) {
   const target = resolveCoworkerFile(coworkersDir, slug, relativePath);
-  await mkdir(path.dirname(target), { recursive: true });
-  await writeFile(target, String(content ?? ""), "utf8");
+  await writeAtomic(target, String(content ?? ""));
 }
 
 /** The memory surface shown by the app: fixed files plus long-term entries. */
@@ -658,8 +689,7 @@ async function readMemoryIndex(root) {
 }
 
 async function writeMemoryIndex(root, text) {
-  await mkdir(path.join(root, "memory"), { recursive: true });
-  await writeFile(path.join(root, MEMORY_INDEX_FILE), text, "utf8");
+  await writeAtomic(path.join(root, MEMORY_INDEX_FILE), text);
 }
 
 /**
@@ -733,7 +763,7 @@ export async function createLongTermMemory(coworkersDir, slug, { title, summary 
   for (let attempt = 2; await pathExists(path.join(longTermRoot, file)); attempt += 1) {
     file = base.replace(/\.md$/, `-${attempt}.md`);
   }
-  await writeFile(path.join(longTermRoot, file), `# ${cleanTitle}\n\n`, "utf8");
+  await writeAtomic(path.join(longTermRoot, file), `# ${cleanTitle}\n\n`);
   await writeMemoryIndex(root, addToMemoryIndex(await readMemoryIndex(root), file, String(summary ?? "").trim() || cleanTitle));
   const memories = await listLongTermMemories(coworkersDir, slug);
   return memories.find((memory) => memory.file === file);
