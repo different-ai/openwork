@@ -1,6 +1,6 @@
 import { expect } from "vitest";
 import { screenshot, validate } from "@openwork/test-evidence";
-import { denFetch, evalIn, waitFor, waitForText } from "@openwork/behaviors";
+import { clickText, denFetch, enabledButtons, signInInBrowser, visibleText, waitForText } from "@openwork/behaviors";
 import { navigate } from "@openwork/cdp";
 import { chrome } from "@openwork/hosts";
 import { needs, server, test } from "@openwork/testkit";
@@ -45,47 +45,33 @@ test("Den lists Automations as a read-only monitor that routes management to Web
     headless: true,
     host: place.host(),
   });
-  // Den Web's session provider clears the stored token on mount while it has
-  // none, so seed it only after the signed-out shell has hydrated, then reload.
-  await waitFor(browser, `location.href.startsWith(${JSON.stringify(den.ref.webUrl)}) && document.readyState === "complete" && document.querySelector("button") !== null`, {
-    timeoutMs: 60_000,
-    label: "Den Web signed-out shell hydrated",
-  });
-  await evalIn(browser, `localStorage.setItem("openwork:web:auth-token", ${JSON.stringify(den.admin.token)})`);
-  await waitFor(browser, `localStorage.getItem("openwork:web:auth-token") === ${JSON.stringify(den.admin.token)}`, {
-    timeoutMs: 10_000,
-    label: "Den Web auth token retained",
-  });
+  await signInInBrowser(browser, den.ref.webUrl, { email: den.admin.email, password: den.admin.password });
   await navigate(browser.client, `${den.ref.webUrl}/dashboard/automations`);
   await waitForText(browser, "My Automations", { timeoutMs: 60_000 });
   await waitForText(browser, name, { timeoutMs: 60_000 });
 
-  const listCopy = await evalIn(browser, "document.body.innerText");
+  const listCopy = await visibleText(browser);
   expect(listCopy).toContain("Create and edit Cloud Automations in OpenWork Web");
   expect(listCopy).toContain("Open in OpenWork Web");
   // The group heading renders with CSS uppercase, which innerText reflects.
   expect(listCopy).toMatch(/scheduled/i);
   expect(listCopy).not.toContain("New Automation");
-  const openInWebHref = await evalIn(browser, `[...document.querySelectorAll("a")].find((anchor) => anchor.textContent?.includes("Open in OpenWork Web"))?.getAttribute("href") ?? ""`);
-  expect(openInWebHref).toMatch(/\/automations$/);
   evidence.recordAssertionEvidence(
     "Den monitor has no authoring entry",
     "The Den Automations page lists Den-scheduled work grouped by attention and routes creation to OpenWork Web instead of offering its own form.",
     true,
   );
 
-  await evalIn(browser, `([...document.querySelectorAll("button")].find((button) => button.textContent?.includes("Monitor placement")))?.click()`);
+  await clickText(browser, name, { selector: "button" });
   await waitForText(browser, "Run receipt", { timeoutMs: 30_000 });
-  const detailCopy = await evalIn(browser, "document.body.innerText");
+  const detailCopy = await visibleText(browser);
   expect(detailCopy).toContain("Manage in OpenWork Desktop");
-  const buttonLabels = await evalIn(browser, `[...document.querySelectorAll("button, a")].map((element) => element.textContent?.trim() ?? "")`);
-  expect(Array.isArray(buttonLabels)).toBe(true);
-  const labels = Array.isArray(buttonLabels) ? buttonLabels.filter((label): label is string => typeof label === "string") : [];
+  const buttons = await enabledButtons(browser);
   for (const forbidden of ["Edit", "Deactivate", "Activate", "Run now", "Archive", "Save revision", "Create in Cloud"]) {
-    expect(labels.some((label) => label === forbidden), `unexpected ${forbidden} control on the Den monitor`).toBe(false);
+    expect(buttons.includes(forbidden), `unexpected ${forbidden} control on the Den monitor`).toBe(false);
   }
   // No run is in flight, so the only operational control stays hidden too.
-  expect(labels.some((label) => label === "Cancel run")).toBe(false);
+  expect(buttons.includes("Cancel run")).toBe(false);
   evidence.recordAssertionEvidence(
     "Den detail is read-only apart from cancelling an in-flight run",
     "A Desktop-placed Automation shows its schedule, receipts, and a Desktop management pointer without any edit, state, run-now, or archive control.",

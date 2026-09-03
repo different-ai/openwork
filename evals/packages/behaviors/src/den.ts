@@ -202,6 +202,22 @@ export async function createOrgConnection(
   return { id: connection.id, name: connection.name };
 }
 
+/**
+ * Attempt to create an OpenWork Cloud Automation as the given member. Returns
+ * the raw result so specs can assert refusals as well as successes.
+ */
+export async function createCloudAutomation(
+  member: DenSession,
+  organizationId: string,
+  definition: Record<string, unknown>,
+): Promise<DenFetchResult> {
+  return denFetch(member, "/v1/cloud-automations", {
+    method: "POST",
+    headers: { ...auth(member), "x-openwork-org-id": organizationId },
+    body: JSON.stringify(definition),
+  });
+}
+
 export async function createNativeConnector(
   admin: DenSession,
   input: NativeConnectorInput,
