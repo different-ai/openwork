@@ -302,6 +302,24 @@ test.skipIf(!enabled)(title, { timeout: 240_000 }, async ({ evidence }) => {
   await evalIn(app, "location.reload(); true");
   await waitFor(app, `Boolean(document.querySelector('[data-testid="coworker-rail"]'))`, { timeoutMs: 120_000, label: "team rail" });
   await openAppsAndTools(app);
+  // The first visit to Apps & tools is a full-panel step explaining OpenWork Connect, with
+  // Continue and Skip; skipping shows the regular surface with the short Connect form.
+  const connectIntro = await waitFor(app, `(() => {
+    const intro = document.querySelector('[data-testid="coworker-connect-card"][data-pitch="full"]');
+    if (!(intro instanceof HTMLElement)) return false;
+    return {
+      text: intro.innerText,
+      fillsPanel: intro.getBoundingClientRect().height >= 400,
+      hasSearch: Boolean(document.querySelector('input[aria-label="Search Apps and tools"]')),
+      checkbox: Boolean(intro.querySelector('[data-testid="coworker-connect-hide-pitch"]')),
+    };
+  })()`, { timeoutMs: 30_000, label: "OpenWork Connect introduction step" });
+  expect(connectIntro).toMatchObject({ fillsPanel: true, hasSearch: false, checkbox: true });
+  if (!isRecord(connectIntro) || typeof connectIntro.text !== "string") throw new Error("Connect introduction facts were unavailable.");
+  expect(connectIntro.text).toContain("Continue with OpenWork");
+  expect(connectIntro.text).toContain("Skip");
+  await clickButton(app, "Skip");
+  await waitFor(app, `document.querySelector('[data-testid="coworker-connect-card"]')?.getAttribute("data-pitch") === "compact"`, { timeoutMs: 30_000, label: "short Connect form after Skip" });
   await waitFor(app, `document.querySelectorAll("[data-testid=coworker-mcp-app]").length === 1`, {
     timeoutMs: 60_000,
     label: "live Coworker MCP App catalog",
@@ -319,7 +337,7 @@ test.skipIf(!enabled)(title, { timeout: 240_000 }, async ({ evidence }) => {
   expect(flatSurface).toBe(true);
   evidence.recordAssertionEvidence(
     "Coworker reads the same live MCP inventory and App catalog as OpenWork Desktop",
-    "The right-side Apps & tools surface showed the configured chapter-notes tool under Tools on this Mac, its Team pulse App, live connection state, and the signed-out OpenWork Connect invitation.",
+    "The first visit to Apps & tools was a full-panel OpenWork Connect step (Continue, Skip, and a don't-show-again choice, no search field); after Skip the surface showed the configured chapter-notes tool under Tools on this Mac, its Team pulse App, live connection state, and the short signed-out OpenWork Connect invitation.",
     true,
   );
 
