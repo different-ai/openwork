@@ -191,9 +191,13 @@ export interface HeadlessTranscriptToolCall {
 export interface HeadlessTranscriptMessage {
   id: string;
   role: string;
+  /** The user message this reply belongs to; null for user messages. */
+  parentId: string | null;
   createdAt: number | null;
   /** When the engine closed the message; null while it is still being written or when it was cut off. */
   completedAt: number | null;
+  /** Why this reply ended without an answer; null when it did not fail. */
+  error: HeadlessThreadMessageError | null;
   text: string;
   reasoning: string;
   /** Which model answered; null for user messages and replies the engine has not attributed yet. */
