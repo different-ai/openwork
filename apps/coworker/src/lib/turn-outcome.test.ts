@@ -171,3 +171,15 @@ test("a permission or question waiting on the person comes first, whatever else 
   assert.deepEqual(outcome?.choices, []);
   assert.equal(deriveTurnOutcome(facts({ needsYou: true, turn: null }))?.kind, "waiting-on-you");
 });
+
+test("a finished step while the engine is still busy is still working, not replied", () => {
+  const outcome = deriveTurnOutcome(facts({ engine: { type: "busy" }, reply: { state: "complete", error: "", retryable: null, aborted: false } }));
+  assert.equal(outcome?.kind, "working");
+});
+
+test("a failure keeps one steady moment, so its card does not re-open on every tick", () => {
+  const turn = { messageId: "msg_1", prompt: "Draft the note.", startedAt: NOW - 5_000, stoppedAt: null, recovered: false };
+  const first = deriveTurnOutcome(facts({ turn, engine: { type: "idle" }, reply: { state: "error", error: "ECONNRESET", retryable: null, aborted: false } }));
+  const later = deriveTurnOutcome(facts({ turn, now: NOW + 3_000, engine: { type: "idle" }, reply: { state: "error", error: "ECONNRESET", retryable: null, aborted: false } }));
+  assert.equal(first?.since, later?.since);
+});

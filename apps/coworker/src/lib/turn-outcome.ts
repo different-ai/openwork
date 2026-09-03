@@ -140,7 +140,7 @@ function failed(facts: TurnFacts, turn: NonNullable<TurnFacts["turn"]>, raw: str
     kind: "failed",
     messageId: turn.messageId,
     prompt: turn.prompt,
-    since: facts.now,
+    since: turn.startedAt,
     line: failure.headline,
     detail: failure.detail,
     technical: failure.technical,
@@ -218,18 +218,18 @@ export function deriveTurnOutcome(facts: TurnFacts): TurnOutcome | null {
   const reply = facts.reply;
   if (reply.state === "error") {
     if (reply.aborted) {
-      if (turn.recovered) return { ...base, kind: "cut-off", since: now, line: cutOffLine(facts.coworkerName), label: "Stopped", tone: "mist", choices: [{ id: "continue", label: "Continue" }, { id: "discard", label: "Discard" }] };
+      if (turn.recovered) return { ...base, kind: "cut-off", since: turn.startedAt, line: cutOffLine(facts.coworkerName), label: "Stopped", tone: "mist", choices: [{ id: "continue", label: "Continue" }, { id: "discard", label: "Discard" }] };
       return failed(facts, turn, "The model stopped before producing a response.", false);
     }
     return failed(facts, turn, reply.error, reply.retryable);
   }
-  if (reply.state === "complete") {
-    return { ...base, kind: "replied", since: now, line: "", label: "Ready", tone: "mist", choices: [] };
+  if (reply.state === "complete" && engine.type !== "busy") {
+    return { ...base, kind: "replied", since: turn.startedAt, line: "", label: "Ready", tone: "mist", choices: [] };
   }
   const running = engine.type === "busy";
   if (!running && turn.recovered) {
     // Read back after a quit or reload with the engine idle and no finished reply: the turn was cut off.
-    return { ...base, kind: "cut-off", since: now, line: cutOffLine(facts.coworkerName), label: "Stopped", tone: "mist", choices: [{ id: "continue", label: "Continue" }, { id: "discard", label: "Discard" }] };
+    return { ...base, kind: "cut-off", since: turn.startedAt, line: cutOffLine(facts.coworkerName), label: "Stopped", tone: "mist", choices: [{ id: "continue", label: "Continue" }, { id: "discard", label: "Discard" }] };
   }
   if (now - turn.startedAt >= facts.waitBudgetMs) {
     return { ...base, kind: "slow", since: turn.startedAt, line: stillWorkingLine(facts.coworkerName), label: "Still working", tone: "spark", choices: [STOP] };
