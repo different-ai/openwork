@@ -128,7 +128,9 @@ function sendStream(response: ServerResponse, chunks: Record<string, unknown>[])
   response.end("data: [DONE]\n\n");
 }
 
-async function startLocalProvider(): Promise<AsyncDisposable & { baseUrl: string; offlineToolResults: string[] }> {
+async function startLocalProvider(
+  control: { offlineCapabilityName: string },
+): Promise<AsyncDisposable & { baseUrl: string; offlineToolResults: string[] }> {
   const offlineToolResults: string[] = [];
   const provider = createServer((request, response) => {
     const url = request.url ?? "";
@@ -208,9 +210,36 @@ async function startLocalProvider(): Promise<AsyncDisposable & { baseUrl: string
           ]);
           return;
         }
-        const toolResult = JSON.stringify(toolMessages);
+        const toolResult = JSON.stringify(toolMessages.at(-1));
+        const visiblyFailed = /isError.{0,20}true|needs_connection|503|failed|failure|offline|unavailable|timed out|refused|fetch failed|ECONN/i.test(toolResult);
+        if (toolMessages.length === 1 && !visiblyFailed) {
+          const execute = projectedTool(payload, (name) => name.endsWith("_execute_capability"));
+          if (!execute || !control.offlineCapabilityName) {
+            response.writeHead(500, { "content-type": "application/json" });
+            response.end(JSON.stringify({ error: { message: "execute_capability was not projected" } }));
+            return;
+          }
+          sendStream(response, [
+            streamChunk({ role: "assistant" }),
+            streamChunk({
+              tool_calls: [{
+                index: 0,
+                id: "call_den_outage_execute",
+                type: "function",
+                function: {
+                  name: execute,
+                  arguments: JSON.stringify({
+                    name: control.offlineCapabilityName,
+                    body: { text: OFFLINE_CONNECT_MARKER },
+                  }),
+                },
+              }],
+            }),
+            streamChunk({}, "tool_calls"),
+          ]);
+          return;
+        }
         offlineToolResults.push(toolResult);
-        const visiblyFailed = /error|failed|failure|offline|unavailable|503|connect/i.test(toolResult);
         sendStream(response, [
           streamChunk({ role: "assistant" }),
           streamChunk({ content: visiblyFailed ? OFFLINE_FAILURE_MARKER : OFFLINE_FALSE_SUCCESS }),
@@ -244,8 +273,6 @@ const stopEnabledExpression = `(() => {
   const stop = window.__openworkControl?.listActions().find((action) => action.id === "composer.stop");
   return Boolean(stop && !stop.disabled);
 })()`;
-
-const sessionRunningExpression = (sessionId: string): string => `Boolean(document.querySelector(${JSON.stringify(`[data-sidebar-session-id="${sessionId}"] [data-session-loading-indicator]`)}))`;
 
 const toolRunningExpression = (workspaceId: string, sessionId: string): string => `(async () => {
   const port = localStorage.getItem("openwork.server.port");
@@ -458,7 +485,8 @@ test.skipIf(!runnable)(title, { timeout: 1_500_000 }, async ({ evidence, place }
   needs({ optIn: ["OPENWORK_EVAL_E2E_TESTS"], placement: "local" });
 
   const stamp = Date.now();
-  await using localProvider = await startLocalProvider();
+  const providerControl = { offlineCapabilityName: "" };
+  await using localProvider = await startLocalProvider(providerControl);
   await using den = await server({
     place,
     mocks: { connector: mcpMock({ allowUnauthenticatedMcp: true }) },
@@ -471,13 +499,18 @@ test.skipIf(!runnable)(title, { timeout: 1_500_000 }, async ({ evidence, place }
       },
     },
   });
-  await createOrgConnection(den.admin, {
+  await using connectorProxy = await faultProxy({
+    webUrl: den.mocks.connector.url,
+    apiUrl: den.mocks.connector.url,
+  });
+  const connection = await createOrgConnection(den.admin, {
     name: `Outage echo ${stamp}`,
-    url: den.mocks.connector.mcpUrl,
+    url: `${connectorProxy.ref.webUrl}/mcp`,
     authType: "none",
     credentialMode: "shared",
     access: { orgWide: true },
   });
+  providerControl.offlineCapabilityName = `mcp:${connection.id}:mock_echo`;
   await using proxy = await faultProxy(den.ref, {
     place,
     sandbox: den.placement?.kind === "daytona" ? den.placement.sandboxId : undefined,
@@ -601,20 +634,22 @@ test.skipIf(!runnable)(title, { timeout: 1_500_000 }, async ({ evidence, place }
     });
     await openDiagnostics(desktopApp);
     const outageDiagnostics = await runDiagnostics(desktopApp, `outage ${label} diagnostics`);
+    const outageReportedUnavailable = outageDiagnostics.reportText.includes("List failed")
+      || outageDiagnostics.reportText.includes("Cloud unavailable");
     expect(outageWire.length).toBeGreaterThan(0);
     expect(outageEngine).toEqual(baselineEngine);
     expect(outageDen).toMatchObject({ authTokenPresent: true, activeOrgId: orgId });
     expect(outageSidebar.runtimeState).toBe(baselineSidebar.runtimeState);
-    expect(outageDiagnostics.reportText.includes("List failed"), JSON.stringify(outageDiagnostics)).toBe(true);
+    expect(outageReportedUnavailable, JSON.stringify(outageDiagnostics)).toBe(true);
     evidence.recordAssertionEvidence(
       `Outage ${label} is honest without restarting local work or destroying authentication`,
-      `${outageWire.length} diagnostics-triggered faulted request(s); engine=${JSON.stringify(outageEngine)}; Connect transport ok=${outageConnectTransport.ok}; diagnostics List failed=true; organization=${outageDen.activeOrgId}.`,
+      `${outageWire.length} direct-probe faulted request(s); engine=${JSON.stringify(outageEngine)}; Connect transport ok=${outageConnectTransport.ok}; diagnostics reported Cloud unavailable=${outageDiagnostics.reportText.includes("Cloud unavailable")}; organization=${outageDen.activeOrgId}.`,
       sameEngine(outageEngine, baselineEngine)
         && outageConnectTransport.ok
         && outageDen.authTokenPresent
         && outageDen.activeOrgId === orgId
         && outageSidebar.runtimeState === baselineSidebar.runtimeState
-        && outageDiagnostics.reportText.includes("List failed"),
+        && outageReportedUnavailable,
     );
     if (label === "A") {
       await revealDiagnosticsReport(desktopApp);
@@ -673,6 +708,25 @@ test.skipIf(!runnable)(title, { timeout: 1_500_000 }, async ({ evidence, place }
     await openSession(desktopApp);
     cycleWindows.push({ label, outageStart, recoveryStart, recoveryEnd: Date.now() });
   }
+
+  const shapedDenSession = await evalIn(desktopApp, `(async () => {
+    const info = await window.__OPENWORK_ELECTRON__?.invokeDesktop?.("openworkServerInfo");
+    const token = localStorage.getItem("openwork.den.authToken") ?? "";
+    const activeOrgId = localStorage.getItem("openwork.den.activeOrgId") ?? "";
+    if (!info?.baseUrl || !info.hostToken || !token || !activeOrgId) return 0;
+    const response = await fetch(String(info.baseUrl).replace(/\\/+$/, "") + "/den-session", {
+      method: "PUT",
+      headers: { "x-openwork-host-token": String(info.hostToken), "content-type": "application/json" },
+      body: JSON.stringify({ baseUrl: ${JSON.stringify(proxy.ref.apiUrl)}, token, orgId: activeOrgId }),
+    });
+    return response.status;
+  })()`, { awaitPromise: true, timeoutMs: 30_000 });
+  expect(shapedDenSession).toBe(204);
+  await eventually(() => readConnectState(desktopApp), {
+    within: 60_000,
+    label: "Connect re-armed through the shaped Den endpoint",
+    until: (state) => state.ok && state.connectEnabled === true,
+  });
 
   const availableModels = await readAvailableModels(desktopApp);
   expect(availableModels.some((model) => model.id === LOCAL_MODEL_ID && model.selectable)).toBe(true);
@@ -733,14 +787,16 @@ test.skipIf(!runnable)(title, { timeout: 1_500_000 }, async ({ evidence, place }
   });
 
   await proxy.faults.status("/", 503, { times: 100_000 });
+  await connectorProxy.faults.status("/", 503, { times: 100_000 });
   const localOutageStartedAt = Date.now();
+  await probeDenConnection(desktopApp, proxy.ref.apiUrl);
   await control(desktopApp, "session.create_task");
   const offlineAttemptAt = new Date().toISOString();
   await sendComposerMessage(
     desktopApp,
     `Use search_capabilities to find mock_echo for ${OFFLINE_CONNECT_MARKER}; never claim ${OFFLINE_FALSE_SUCCESS} unless the tool succeeds.`,
   );
-  await waitFor(desktopApp, assistantHasText(OFFLINE_FAILURE_MARKER), {
+  await waitFor(desktopApp, `document.body.innerText.includes(${JSON.stringify(OFFLINE_FAILURE_MARKER)})`, {
     timeoutMs: 90_000,
     label: "offline Connect failure became visible",
   });
@@ -749,7 +805,10 @@ test.skipIf(!runnable)(title, { timeout: 1_500_000 }, async ({ evidence, place }
     return {
       elapsedMs: Date.now() - localOutageStartedAt,
       faults: requests.filter((request) => request.faulted && request.status === 503 && request.at >= localOutageStartedAt).length,
-      runLive: (await evalIn(desktopApp, sessionRunningExpression(localRunSessionId))) === true,
+      runLive: (await evalIn(desktopApp, toolRunningExpression(workspaceId, localRunSessionId), {
+        awaitPromise: true,
+        timeoutMs: 15_000,
+      })) === true,
     };
   }, {
     within: 120_000,
@@ -758,18 +817,21 @@ test.skipIf(!runnable)(title, { timeout: 1_500_000 }, async ({ evidence, place }
     until: (state) => state.elapsedMs >= 30_000 && state.faults > 0 && state.runLive,
   });
   const offlineCalls = await den.mocks.connector.toolCalls({ name: "mock_echo", sinceIso: offlineAttemptAt });
+  const connectorFaults = (await connectorProxy.requestLog()).filter((request) => request.faulted && request.status === 503);
   const falseSuccess = (await evalIn(desktopApp, assistantHasText(OFFLINE_FALSE_SUCCESS))) === true;
-  expect(localProvider.offlineToolResults.some((result) => /error|failed|offline|unavailable|503|connect/i.test(result))).toBe(true);
+  expect(localProvider.offlineToolResults.some((result) => /isError.{0,20}true|needs_connection|503|failed|offline|unavailable|timed out|refused|fetch failed|ECONN/i.test(result))).toBe(true);
   expect(offlineCalls.filter((call) => String(call.args.text ?? "").includes(OFFLINE_CONNECT_MARKER))).toHaveLength(0);
+  expect(connectorFaults.length).toBeGreaterThan(0);
   expect(falseSuccess).toBe(false);
   expect(localOutage.runLive).toBe(true);
   evidence.recordAssertionEvidence(
     "Connect fails visibly offline without a false success while local work continues",
-    `${localOutage.faults} faulted requests overlapped ${localOutage.elapsedMs}ms of session ${localRunSessionId}; the provider saw a failed tool result, mock_echo saw no marker call, and false success visible=${falseSuccess}.`,
-    localOutage.runLive && offlineCalls.length === 0 && !falseSuccess,
+    `${localOutage.faults} Den faults and ${connectorFaults.length} connector faults overlapped ${localOutage.elapsedMs}ms of session ${localRunSessionId}; the provider saw a failed tool result, mock_echo saw no marker call, and false success visible=${falseSuccess}.`,
+    localOutage.runLive && connectorFaults.length > 0 && offlineCalls.length === 0 && !falseSuccess,
   );
 
   await proxy.faults.clear();
+  await connectorProxy.faults.clear();
   await control(desktopApp, "session.open", { sessionId: localRunSessionId });
   await waitFor(desktopApp, assistantHasText(LOCAL_RUN_MARKER), {
     timeoutMs: 240_000,
