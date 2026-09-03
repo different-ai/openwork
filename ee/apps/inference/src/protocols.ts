@@ -2,6 +2,7 @@
 // family comes from the models.dev `npm` package; the per-request protocol
 // (which usage parser to run) comes from the forwarded path.
 import type { InferenceRequestProtocol } from "@openwork/types/den/inference"
+import { bedrockRuntimeHost } from "./credentials/aws-sigv4.js"
 import type { CatalogProvider } from "./provider-catalog.js"
 
 export type ProtocolFamily =
@@ -72,8 +73,21 @@ export function classifyRequestProtocol(family: ProtocolFamily, restPath: string
     case "google_vertex":
       return parseGoogleModelPath(pathname) ? "google_generate_content" : "passthrough"
     case "bedrock":
-      return "bedrock_converse"
+      return parseBedrockModelPath(pathname) ? "bedrock_converse" : "passthrough"
   }
+}
+
+// @ai-sdk/amazon-bedrock: `/model/{encodeURIComponent(modelId)}/converse[-stream]`.
+export function parseBedrockModelPath(pathname: string): { model: string; stream: boolean } | null {
+  const match = /\/model\/([^/]+)\/(converse|converse-stream)$/.exec(pathname)
+  if (!match) return null
+  let model = match[1]
+  try {
+    model = decodeURIComponent(model)
+  } catch {
+    // keep the raw segment
+  }
+  return { model, stream: match[2] === "converse-stream" }
 }
 
 export function parseGoogleModelPath(pathname: string): { model: string; operation: string } | null {
@@ -118,6 +132,13 @@ export function defaultBaseUrl(family: ProtocolFamily, settings: Record<string, 
     return typeof resourceName === "string" && resourceName
       ? `https://${resourceName}.openai.azure.com/openai`
       : null
+  }
+  if (family === "bedrock") {
+    // The gateway re-derives the host once the credential is known (its region
+    // wins over settings.region, plan §5.3), so a missing region here must not
+    // fail URL resolution: the region-less host is replaced before use.
+    const region = settings.region
+    return `https://${typeof region === "string" && region ? bedrockRuntimeHost(region) : "bedrock-runtime.amazonaws.com"}`
   }
   return defaultBaseUrlByFamily[family] ?? null
 }

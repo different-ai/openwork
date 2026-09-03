@@ -115,7 +115,7 @@ export function buildRollupRows(granularity: RollupRow["granularity"], bucketSta
   }))
 }
 
-function affectedRows(result: unknown): number {
+export function affectedRows(result: unknown): number {
   if (Array.isArray(result)) return affectedRows(result[0])
   if (typeof result !== "object" || result === null) return 0
   if ("rowsAffected" in result && typeof result.rowsAffected === "number") return result.rowsAffected
