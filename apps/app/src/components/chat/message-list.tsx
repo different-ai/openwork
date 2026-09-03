@@ -804,10 +804,14 @@ const MessageComponent = React.memo(
   ({ message, isLastMessage, isStreaming, isLastStep, hideReasoning }: MessageComponentProps) => {
     if (isSessionErrorMessage(message)) {
       const presentation = sessionErrorPresentationFromUIMessage(message)
+      const technicalDetails = presentation?.kind === "provider-connectivity" || presentation?.kind === "provider-timeout"
+        ? presentation.technicalDetails
+        : null
       return (
         <ErrorMessage
           error={getMessagesText([message]) || "Session failed"}
           resumePrompt={presentation?.recoveryPrompt}
+          technicalDetails={technicalDetails}
         />
       )
     }
@@ -900,9 +904,10 @@ interface ErrorMessageProps {
   error: string | null
   /** Set only for interrupted runs (aborted / provider timeout) that can resume. */
   resumePrompt?: string | null
+  technicalDetails?: string | null
 }
 
-function ErrorMessage({ error, resumePrompt }: ErrorMessageProps) {
+function ErrorMessage({ error, resumePrompt, technicalDetails }: ErrorMessageProps) {
   const { onResumeInterrupted } = useMessageList()
 
   // A resumable interruption is a pause, not a failure: it renders as a
@@ -913,6 +918,7 @@ function ErrorMessage({ error, resumePrompt }: ErrorMessageProps) {
         <div
           data-testid="session-error-interrupted"
           className="flex min-w-0 items-center gap-2 py-1 text-sm text-muted-foreground"
+          title={technicalDetails ?? undefined}
         >
           <CirclePause aria-hidden="true" className="size-4 shrink-0" />
           <span className="min-w-0 truncate">{error}</span>
@@ -933,7 +939,10 @@ function ErrorMessage({ error, resumePrompt }: ErrorMessageProps) {
   return (
     <Message className="not-prose mx-auto flex w-full max-w-3xl flex-col items-start gap-2 px-0 md:px-10">
       <div className="group flex w-full flex-col items-start gap-0">
-        <div className="flex min-w-0 flex-1 flex-col gap-1.5 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm">
+        <div
+          className="flex min-w-0 flex-1 flex-col gap-1.5 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm"
+          title={technicalDetails ?? undefined}
+        >
           <div className="flex flex-row items-start gap-2">
             <AlertTriangle aria-hidden="true" size={16} className="mt-0.5 shrink-0 text-destructive" />
             <p className="whitespace-pre-wrap text-destructive">{error}</p>

@@ -3,7 +3,7 @@ import type { UIMessage } from "ai";
 import { safeStringify } from "../../../../app/utils";
 import { normalizeErrorText } from "../../../../lib/error-text";
 
-export type OpencodeSessionErrorKind = "aborted" | "provider-timeout" | "generic";
+export type OpencodeSessionErrorKind = "aborted" | "provider-timeout" | "provider-connectivity" | "generic";
 
 export type OpencodeSessionErrorPresentation = {
   kind: OpencodeSessionErrorKind;
@@ -18,6 +18,29 @@ export const interruptedTaskRecoveryPrompt = [
   "First inspect the conversation and workspace to verify which actions already completed.",
   "Preserve completed work, do not repeat side effects, and finish only what remains.",
 ].join(" ");
+
+const providerTransportErrorMessage = "Couldn't reach the AI provider. Check your internet connection and try again.";
+const providerTransportErrorSignatures = [
+  "cannot connect to api",
+  "socket connection was closed",
+  "fetch failed",
+  "econnreset",
+  "etimedout",
+  "enotfound",
+  "eai_again",
+  "socket hang up",
+  "other side closed",
+  "headers timeout",
+];
+
+function isProviderTransportError(message: string) {
+  const lower = message.toLowerCase();
+  return providerTransportErrorSignatures.some((signature) => lower.includes(signature));
+}
+
+export function describeProviderTransportError(message: string) {
+  return isProviderTransportError(message) ? providerTransportErrorMessage : message;
+}
 
 function recordValue(value: unknown, key: string) {
   if (!value || typeof value !== "object") return undefined;
@@ -69,6 +92,7 @@ function sessionErrorKind(name: string | null, message: string | null, code: str
   ) {
     return "provider-timeout";
   }
+  if (isProviderTransportError(searchable)) return "provider-connectivity";
   return "generic";
 }
 
@@ -180,7 +204,9 @@ function technicalErrorDetails(error: unknown, fallback: string, fields: ReturnT
 export function presentOpencodeSessionError(error: unknown, fallback = "Session failed"): OpencodeSessionErrorPresentation {
   const fields = sessionErrorFields(error, fallback);
   const kind = sessionErrorKind(fields.name, fields.message, fields.code);
-  const fallbackTitle = normalizeSessionError(fields.message ?? defaultErrorMessage(fields.name, fallback));
+  const fallbackTitle = normalizeSessionError(
+    describeProviderTransportError(fields.message ?? defaultErrorMessage(fields.name, fallback)),
+  );
   return {
     kind,
     title: errorTitle(kind, fallbackTitle),
