@@ -59,7 +59,7 @@ export function CoworkerAvatar({
   const palette = PALETTES[color];
   const phase = motionPhase(name);
   const motionClass = animated ? `is-animated motion-phase-${phase} blink-phase-${blinkPhase(name)}` : "";
-  const avatarRef = useAvatarPointerGaze(gaze);
+  const avatarRef = useAvatarPointerGaze(gaze, animated, 1.3);
 
   return (
     <svg
@@ -70,70 +70,72 @@ export function CoworkerAvatar({
       style={{ width: size, height: size }}
       viewBox="0 0 122 122"
     >
-      <g className="coworker-avatar__body">
-        <g className="coworker-avatar__depth">
+      <g className="coworker-avatar__pointer-body">
+        <g className="coworker-avatar__body">
+          <g className="coworker-avatar__depth">
+            <path
+              d="M26 8h65c15 0 23 10 23 26v46c0 15-8 24-23 24H57l-15 9c-5 3-10 0-10-6v-3h-5C12 104 5 95 5 80V34C5 18 12 8 26 8Z"
+              fill={palette.depth}
+              opacity="0.72"
+              transform="translate(3 3)"
+            />
+          </g>
           <path
             d="M26 8h65c15 0 23 10 23 26v46c0 15-8 24-23 24H57l-15 9c-5 3-10 0-10-6v-3h-5C12 104 5 95 5 80V34C5 18 12 8 26 8Z"
-            fill={palette.depth}
-            opacity="0.72"
-            transform="translate(3 3)"
+            fill={palette.fill}
+            stroke={palette.edge}
+            strokeWidth="1.25"
           />
-        </g>
-        <path
-          d="M26 8h65c15 0 23 10 23 26v46c0 15-8 24-23 24H57l-15 9c-5 3-10 0-10-6v-3h-5C12 104 5 95 5 80V34C5 18 12 8 26 8Z"
-          fill={palette.fill}
-          stroke={palette.edge}
-          strokeWidth="1.25"
-        />
-        <path
-          d="M26 11h64c12 0 20 7 21 19"
-          fill="none"
-          stroke="#ffffff"
-          strokeLinecap="round"
-          strokeOpacity="0.24"
-          strokeWidth="1"
-        />
+          <path
+            d="M26 11h64c12 0 20 7 21 19"
+            fill="none"
+            stroke="#ffffff"
+            strokeLinecap="round"
+            strokeOpacity="0.24"
+            strokeWidth="1"
+          />
 
-        <g className="coworker-avatar__pointer-features">
-          <g className="coworker-avatar__features">
-            <g className="coworker-avatar__pointer-gaze">
-              <g className="coworker-avatar__gaze">
-                <g className="coworker-avatar__pupils" fill="#0b0e14">
-                  <rect x="34.5" y="50" width="6" height="14" rx="3" />
-                  <rect x="79.5" y="50" width="6" height="14" rx="3" />
+          <g className="coworker-avatar__pointer-features">
+            <g className="coworker-avatar__features">
+              <g className="coworker-avatar__pointer-gaze">
+                <g className="coworker-avatar__gaze">
+                  <g className="coworker-avatar__pupils" fill="#0b0e14">
+                    <rect x="34.5" y="50" width="6" height="14" rx="3" />
+                    <rect x="79.5" y="50" width="6" height="14" rx="3" />
+                  </g>
                 </g>
               </g>
-            </g>
 
-            {glasses === "round" ? (
-              <g
-                className="coworker-avatar__glasses"
-                fill="none"
-                stroke="#11151d"
-                strokeLinecap="round"
-                strokeWidth="5"
-              >
-                <circle cx="37.5" cy="57" r="17.5" />
-                <circle cx="82.5" cy="57" r="17.5" />
-                <path d="M57.5 57c1.25-4 3.75-4 5 0" />
-                <path d="M15 57h4.5M100.5 57h4.5" strokeWidth="7" />
-              </g>
-            ) : null}
-            {glasses === "square" ? (
-              <g
-                className="coworker-avatar__glasses"
-                fill="none"
-                stroke="#11151d"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth="5"
-              >
-                <rect x="19.5" y="39" width="36" height="36" rx="10" />
-                <rect x="64.5" y="39" width="36" height="36" rx="10" />
-                <path d="M58 57c1-3.5 3-3.5 4 0" />
-                <path d="M15 57h4.5M100.5 57h4.5" strokeWidth="7" />
-              </g>
-            ) : null}
+              {glasses === "round" ? (
+                <g
+                  className="coworker-avatar__glasses"
+                  fill="none"
+                  stroke="#11151d"
+                  strokeLinecap="round"
+                  strokeWidth="5"
+                >
+                  <circle cx="37.5" cy="57" r="17.5" />
+                  <circle cx="82.5" cy="57" r="17.5" />
+                  <path d="M57.5 57c1.25-4 3.75-4 5 0" />
+                  <path d="M15 57h4.5M100.5 57h4.5" strokeWidth="7" />
+                </g>
+              ) : null}
+              {glasses === "square" ? (
+                <g
+                  className="coworker-avatar__glasses"
+                  fill="none"
+                  stroke="#11151d"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth="5"
+                >
+                  <rect x="19.5" y="39" width="36" height="36" rx="10" />
+                  <rect x="64.5" y="39" width="36" height="36" rx="10" />
+                  <path d="M58 57c1-3.5 3-3.5 4 0" />
+                  <path d="M15 57h4.5M100.5 57h4.5" strokeWidth="7" />
+                </g>
+              ) : null}
+            </g>
           </g>
         </g>
       </g>

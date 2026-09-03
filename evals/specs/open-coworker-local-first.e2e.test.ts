@@ -545,6 +545,11 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   const avatarMotion = await evalIn(app, `(() => {
     const avatar = document.querySelector('svg[aria-label="Scout avatar"].is-animated');
     if (!avatar) return null;
+    const bounds = avatar.getBoundingClientRect();
+    window.dispatchEvent(new PointerEvent("pointermove", {
+      clientX: bounds.right + 24,
+      clientY: bounds.top - 24,
+    }));
     const read = (selector) => {
       const element = avatar.querySelector(selector);
       if (!element) return null;
@@ -562,6 +567,7 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
       gaze: read(".coworker-avatar__gaze"),
       pupils: read(".coworker-avatar__pupils"),
       glasses: Boolean(avatar.querySelector(".coworker-avatar__glasses")),
+      pointerBody: Boolean(avatar.querySelector(".coworker-avatar__pointer-body")),
     };
   })()`);
   expect(avatarMotion).toMatchObject({
@@ -571,6 +577,7 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
     gaze: { animationName: "coworker-gaze-turn", animationDuration: "8.8s" },
     pupils: { animationName: "coworker-blink", animationDuration: "8.2s", animationDelay: "-1.4s" },
     glasses: true,
+    pointerBody: true,
   });
   if (!isRecord(avatarMotion)) throw new Error("Scout avatar motion layers were unavailable.");
   const animatedLayers = ["body", "depth", "features", "gaze"]
@@ -596,6 +603,11 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
       hasPointerLayer: avatar.querySelector(".coworker-avatar__pointer-gaze") !== null,
       lookX,
       lookY,
+      featureLookX: Number.parseFloat(avatar.style.getPropertyValue("--avatar-feature-look-x")),
+      featureLookY: Number.parseFloat(avatar.style.getPropertyValue("--avatar-feature-look-y")),
+      headX: Number.parseFloat(avatar.style.getPropertyValue("--avatar-head-x")),
+      headY: Number.parseFloat(avatar.style.getPropertyValue("--avatar-head-y")),
+      turn: Number.parseFloat(avatar.style.getPropertyValue("--avatar-turn")),
     };
   })()`, { timeoutMs: 30_000, label: "Scout's gaze following a lower-left pointer" });
   expect(coworkerGaze).toMatchObject({
@@ -609,10 +621,16 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   expect(coworkerGaze.lookX).toBeLessThan(0);
   expect(Math.abs(coworkerGaze.lookX)).toBeLessThanOrEqual(1.5);
   expect(coworkerGaze.lookY).toBeGreaterThan(0);
-  expect(coworkerGaze.lookY).toBeLessThanOrEqual(0.9);
+  expect(coworkerGaze.lookY).toBeLessThanOrEqual(1.1);
+  expect(Number(coworkerGaze.featureLookX)).toBeLessThan(0);
+  expect(Number(coworkerGaze.featureLookY)).toBeGreaterThan(0);
+  expect(Number(coworkerGaze.headX)).toBeLessThan(0);
+  expect(Number(coworkerGaze.headY)).toBeGreaterThan(0);
+  expect(Number(coworkerGaze.turn)).toBeLessThan(0);
+  expect(Math.abs(Number(coworkerGaze.turn))).toBeLessThanOrEqual(1.7);
   evidence.recordAssertionEvidence(
     "The coworker avatar coordinates its head turn and keeps a restrained eye on the pointer",
-    "Scout's body, rear depth, glasses/features, and gaze shared one restrained head-turn phase; its blink used an independent cadence while only the nested pupil layer followed a lower-left pointer within 1.5px horizontal and 0.9px vertical caps.",
+    "Scout's glasses and pupils followed a lower-left pointer at coordinated strengths while the whole avatar added a sub-two-degree lean and a fraction-of-a-pixel vertical nod. Its independent blink cadence remained intact.",
     true,
   );
   const storedCoworker = await invokeCoworker(app, "coworkers.get", { slug: "scout" });
@@ -661,6 +679,8 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
         lookX: Number.parseFloat(avatar.style.getPropertyValue("--avatar-look-x")),
         lookY: Number.parseFloat(avatar.style.getPropertyValue("--avatar-look-y")),
         featureLookY: Number.parseFloat(avatar.style.getPropertyValue("--avatar-feature-look-y")),
+        headY: Number.parseFloat(avatar.style.getPropertyValue("--avatar-head-y")),
+        turn: Number.parseFloat(avatar.style.getPropertyValue("--avatar-turn")),
       };
     });
     // Both avatars have turned toward the bottom-right pointer once every look value is positive.
@@ -677,10 +697,42 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   expect(railAvatars.every((avatar) => typeof avatar.lookX === "number" && avatar.lookX > 0)).toBe(true);
   expect(railAvatars.every((avatar) => typeof avatar.lookY === "number" && avatar.lookY > 0)).toBe(true);
   expect(railAvatars.every((avatar) => typeof avatar.featureLookY === "number" && avatar.featureLookY > 0)).toBe(true);
+  expect(railAvatars.every((avatar) => typeof avatar.headY === "number" && avatar.headY > 0)).toBe(true);
+  expect(railAvatars.every((avatar) => typeof avatar.turn === "number" && avatar.turn > 0 && avatar.turn <= 1.7)).toBe(true);
   expect(new Set(railAvatars.map((avatar) => avatar.blinkDuration)).size).toBe(2);
   evidence.recordAssertionEvidence(
     "Every coworker in the left rail follows the pointer with its eyes and glasses",
-    "Scout and Nova both moved their full eyewear feature group down toward the same bottom-right pointer while their pupils added an independent gaze offset. Both stayed animated while unselected and used different deterministic blink durations and offsets so the team never blinked in sync.",
+    "Scout and Nova moved their eyewear and pupils toward the same bottom-right pointer, then added a restrained whole-avatar nod and lean. Both stayed animated while unselected and retained different blink durations and offsets so the team never blinked in sync.",
+    true,
+  );
+  const idleAvatar = await waitFor(app, `(() => {
+    const avatar = [...document.querySelectorAll("aside nav svg.coworker-avatar.is-idle-looking.is-idle-blinking")][0];
+    if (!(avatar instanceof SVGSVGElement)) return false;
+    const pupils = avatar.querySelector(".coworker-avatar__pupils");
+    return {
+      name: avatar.getAttribute("aria-label"),
+      featureY: Number.parseFloat(avatar.style.getPropertyValue("--avatar-idle-feature-y")),
+      lookY: Number.parseFloat(avatar.style.getPropertyValue("--avatar-idle-look-y")),
+      headY: Number.parseFloat(avatar.style.getPropertyValue("--avatar-idle-head-y")),
+      turn: Number.parseFloat(avatar.style.getPropertyValue("--avatar-idle-turn")),
+      blinkAnimation: pupils ? getComputedStyle(pupils).animationName : "",
+    };
+  })()`, { timeoutMs: 20_000, label: "a coworker's unscripted idle glance and blink" });
+  expect(idleAvatar).toMatchObject({
+    name: expect.stringMatching(/^(Scout|Nova) avatar$/),
+    featureY: 0.65,
+    lookY: 1.2,
+    headY: 0.25,
+    turn: expect.any(Number),
+    blinkAnimation: "coworker-idle-blink",
+  });
+  if (!isRecord(idleAvatar) || typeof idleAvatar.turn !== "number") {
+    throw new Error("The coworker's idle glance was unavailable.");
+  }
+  expect(Math.abs(idleAvatar.turn)).toBe(0.35);
+  evidence.recordAssertionEvidence(
+    "Coworkers make small unscripted glances while they wait",
+    "After the pointer became still, one rail avatar briefly looked down: its glasses, pupils, and whole-avatar pose moved by separate sub-pixel amounts with a 0.35-degree lean, and its independent short blink ran before it settled back.",
     true,
   );
   await clickButtonContaining(app, "Scout");
