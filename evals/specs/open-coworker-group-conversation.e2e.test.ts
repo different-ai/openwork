@@ -153,7 +153,7 @@ async function beginStatusTrace(app: App): Promise<void> {
       trace.push({
         status: document.querySelector('[data-testid="coworker-top-status"]')?.textContent?.trim() ?? "",
         phrase: document.querySelector('[data-testid="group-progress-phrase"]')?.textContent?.trim() ?? "",
-        rail: document.querySelector('[data-testid="group-rail-row"] span:last-child')?.textContent?.trim() ?? "",
+        rail: document.querySelector('[data-testid="group-rail-line"]')?.textContent?.trim() ?? "",
       });
     };
     const observer = new MutationObserver(record);
@@ -236,7 +236,7 @@ test.skipIf(!enabled)(title, { timeout: 1_500_000 }, async ({ evidence }) => {
   expect(phrases.some((phrase) => /^(Choosing who should respond…|(Scout|Editor|Scout and Editor|Editor and Scout) (is|are) replying…( then (Scout|Editor))?)$/.test(phrase)), `live phrases: ${JSON.stringify(phrases)}`).toBe(true);
   expect(rollCallTrace.some((entry) => /is replying…|are replying…|Choosing who should respond…/.test(entry.rail)), `rail lines: ${JSON.stringify([...new Set(rollCallTrace.map((entry) => entry.rail))])}`).toBe(true);
   const lastSpeaker = rollCallReplies[rollCallReplies.length - 1]?.speaker ?? "";
-  expect(await evalIn(app, `document.querySelector('[data-testid="group-rail-row"] span:last-child')?.textContent?.trim()`)).toBe(`${names[lastSpeaker]} replied`);
+  expect(await evalIn(app, `document.querySelector('[data-testid="group-rail-line"]')?.textContent?.trim()`)).toBe(`${names[lastSpeaker]} replied`);
   expect(await evalIn(app, `document.querySelector('[data-testid="coworker-top-status"]')?.textContent?.trim()`)).toBe("Ready");
 
   evidence.recordAssertionEvidence(
