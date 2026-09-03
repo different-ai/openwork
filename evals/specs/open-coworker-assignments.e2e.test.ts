@@ -245,7 +245,7 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
     if (!(section instanceof HTMLElement) || rows.length === 0) return false;
     return {
       heading: section.querySelector("h3")?.textContent?.trim() ?? "",
-      rows: rows.map((row) => row.innerText.replace(/\s+/g, " ").trim()),
+      rows: rows.map((row) => row.innerText.replace(/\\s+/g, " ").trim()),
       scheduledEmpty: Boolean(section.querySelector('[data-testid="responsibilities-empty"]')),
     };
   })()`, { timeoutMs: 30_000, label: "the assignment in the panel's Assignments" });
