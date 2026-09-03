@@ -3,84 +3,9 @@
   "lane": "daytona-ci",
   "excluded": [
     {
-      "test": "admin-model-limits.e2e.test.ts",
-      "category": "fresh-den-url",
-      "reason": "requires a freshly booted Den Web/API origin; the shared Den rotates its public preview URLs between tests"
-    },
-    {
-      "test": "automation-desktop-lifecycle.e2e.test.ts",
-      "category": "per-test-den-env",
-      "reason": "requires test-specific automation scheduler, lease, polling, and runner deadline settings before Den starts"
-    },
-    {
-      "test": "automation-model-needs-attention.e2e.test.ts",
-      "category": "per-test-den-env",
-      "reason": "requires test-specific Den Automation model-attention and runner configuration before Den starts"
-    },
-    {
-      "test": "automation-proposal-model-resolution.e2e.test.ts",
-      "category": "per-test-den-env",
-      "reason": "requires its per-test tool-capable model mock; the shared prewarmed Den exposes only deepseek-v4-flash"
-    },
-    {
-      "test": "brand-appearance-preview-removal.e2e.test.ts",
-      "category": "fresh-den-url",
-      "reason": "requires a freshly booted Den Web/API origin for its pre-seeded browser session"
-    },
-    {
-      "test": "capability-search-latency.e2e.test.ts",
-      "category": "fault-proxy",
-      "reason": "requires the desktop and Den traffic to traverse a per-test latency fault proxy"
-    },
-    {
-      "test": "cloud-model-infra.e2e.test.ts",
-      "category": "local-bun-world",
-      "reason": "requires local placement, Bun, and independently owned Den and worker worlds"
-    },
-    {
       "test": "compatible-release-picker.e2e.test.ts",
       "category": "fresh-desktop-profile",
       "reason": "spawns a fresh-profile/second Electron; cannot reuse the shared prewarmed desktop sandbox"
-    },
-    {
-      "test": "connect-policy-runtime-restart.e2e.test.ts",
-      "category": "raw-or-local-placement",
-      "reason": "requires a caller-owned local desktop profile and local MySQL Den"
-    },
-    {
-      "test": "connectors-quick-add.e2e.test.ts",
-      "category": "fresh-den-url",
-      "reason": "requires a freshly booted Den Web/API origin for its browser-side connector flow"
-    },
-    {
-      "test": "den-intermittent-outage-recovery.e2e.test.ts",
-      "category": "fault-proxy",
-      "reason": "requires all desktop Den traffic to traverse a per-test 503 fault proxy"
-    },
-    {
-      "test": "den-sidebar-ia.e2e.test.ts",
-      "category": "fresh-den-url",
-      "reason": "requires a freshly booted Den Web/API origin for its authenticated browser sessions"
-    },
-    {
-      "test": "den-split-origin-runtime-config.e2e.test.ts",
-      "category": "unavailable-secret-or-docker",
-      "reason": "requires the Docker-backed local kind, kubectl, and Helm topology"
-    },
-    {
-      "test": "engine-rollover-session-survival.e2e.test.ts",
-      "category": "unavailable-secret-or-docker",
-      "reason": "requires ANTHROPIC_API_KEY, which is unavailable to this lane"
-    },
-    {
-      "test": "enterprise-invite-install-connect.e2e.test.ts",
-      "category": "fresh-den-url",
-      "reason": "requires a freshly booted Den URL for its browser invite and desktop-link handoff"
-    },
-    {
-      "test": "first-run-bootstrap-contract.e2e.test.ts",
-      "category": "raw-or-local-placement",
-      "reason": "requires local placement, local MySQL, and a caller-owned first-run profile"
     },
     {
       "test": "first-run-cloud-share.e2e.test.ts",
@@ -93,139 +18,9 @@
       "reason": "spawns a fresh-profile/second Electron; cannot reuse the shared prewarmed desktop sandbox"
     },
     {
-      "test": "first-signin-fresh-profile.e2e.test.ts",
-      "category": "raw-or-local-placement",
-      "reason": "requires local placement, local MySQL, and a fresh caller-owned profile"
-    },
-    {
-      "test": "github-connector-import.e2e.test.ts",
-      "category": "raw-or-local-placement",
-      "reason": "requires local placement, local MySQL, and a local GitHub lab"
-    },
-    {
-      "test": "github-sync-self-healing.e2e.test.ts",
-      "category": "raw-or-local-placement",
-      "reason": "requires local placement, local MySQL, and a local GitHub lab"
-    },
-    {
-      "test": "initial-admin-bootstrap.e2e.test.ts",
-      "category": "per-test-den-env",
-      "reason": "requires multiple fresh local Den boots with distinct bootstrap environment flags"
-    },
-    {
-      "test": "library-advanced-refresh.e2e.test.ts",
-      "category": "fault-proxy",
-      "reason": "requires desktop inventory traffic to traverse a per-test fault proxy"
-    },
-    {
-      "test": "library-authoring-routes.e2e.test.ts",
-      "category": "fault-proxy",
-      "reason": "requires desktop resolved-plugin traffic to traverse a per-test fault proxy"
-    },
-    {
-      "test": "library-mcp-connect-error.e2e.test.ts",
-      "category": "raw-or-local-placement",
-      "reason": "requires a connector mock with no Daytona sandbox adapter"
-    },
-    {
-      "test": "library-view.e2e.test.ts",
-      "category": "raw-or-local-placement",
-      "reason": "requires externally attached fixed Den API/Web URLs and pre-seeded credentials"
-    },
-    {
-      "test": "litellm-per-member-credentials.e2e.test.ts",
-      "category": "unavailable-secret-or-docker",
-      "reason": "requires Docker-backed LiteLLM database mode, unavailable on this runner"
-    },
-    {
-      "test": "login-rate-limit-shared-domain.e2e.test.ts",
-      "category": "raw-or-local-placement",
-      "reason": "requires local placement without an attached Den URL and local MySQL"
-    },
-    {
-      "test": "marketplace-catalog-legibility.e2e.test.ts",
-      "category": "raw-or-local-placement",
-      "reason": "requires externally attached fixed Den API/Web URLs and pre-seeded credentials"
-    },
-    {
-      "test": "opencode-mcp-agent-oauth.e2e.test.ts",
-      "category": "fresh-den-url",
-      "reason": "requires one stable freshly booted Den public URL for OAuth resource metadata and token rotation"
-    },
-    {
-      "test": "org-connector-two-members.e2e.test.ts",
-      "category": "raw-or-local-placement",
-      "reason": "requires two dedicated desktop sandboxes and a separately published connector mock"
-    },
-    {
-      "test": "org-managed-dashboard-desktop.e2e.test.ts",
-      "category": "per-test-den-env",
-      "reason": "requires DEN_DASHBOARDS_ENABLED=true before Den starts"
-    },
-    {
-      "test": "org-model-analytics-desktop.e2e.test.ts",
-      "category": "raw-or-local-placement",
-      "reason": "explicitly requires a cold local Den and local provider witness"
-    },
-    {
-      "test": "plugin-access-panel.e2e.test.ts",
-      "category": "raw-or-local-placement",
-      "reason": "requires externally attached fixed Den API/Web URLs and pre-seeded credentials"
-    },
-    {
       "test": "reliable-app-recovery.e2e.test.ts",
       "category": "fresh-desktop-profile",
       "reason": "spawns a fresh-profile/second Electron; cannot reuse the shared prewarmed desktop sandbox"
-    },
-    {
-      "test": "remote-session-desktop-runner.e2e.test.ts",
-      "category": "local-bun-world",
-      "reason": "requires local placement and a Bun-backed remote-session worker world"
-    },
-    {
-      "test": "self-host-onboarding.e2e.test.ts",
-      "category": "raw-or-local-placement",
-      "reason": "requires local self-hosted Den placement and local MySQL"
-    },
-    {
-      "test": "settings-visit-live-run-continuity.e2e.test.ts",
-      "category": "unavailable-secret-or-docker",
-      "reason": "requires ANTHROPIC_API_KEY, which is unavailable to this lane"
-    },
-    {
-      "test": "slack-style-mcp-connector.e2e.test.ts",
-      "category": "raw-or-local-placement",
-      "reason": "requires a Slack-style MCP mock with no Daytona sandbox adapter"
-    },
-    {
-      "test": "sso-domain-verification.e2e.test.ts",
-      "category": "raw-or-local-placement",
-      "reason": "requires local placement, local MySQL, and a loopback identity provider"
-    },
-    {
-      "test": "sso-invite-sign-in.e2e.test.ts",
-      "category": "raw-or-local-placement",
-      "reason": "requires local placement, local MySQL, and a loopback identity provider"
-    },
-    {
-      "test": "subagent-run-survives-provider-sync-storm.e2e.test.ts",
-      "category": "unavailable-secret-or-docker",
-      "reason": "requires ANTHROPIC_API_KEY, which is unavailable to this lane"
-    },
-    {
-      "test": "testkit-app-boot.e2e.test.ts",
-      "category": "raw-or-local-placement",
-      "reason": "requires local placement without an attached Den URL and local MySQL"
-    },
-    {
-      "test": "testkit-selftest.e2e.test.ts",
-      "category": "raw-or-local-placement",
-      "reason": "requires a local MySQL Den and deliberately includes a missing-environment skip sentinel"
-    },
-    {
-      "test": "tool-tester-page.e2e.test.ts",
-      "category": "fresh-den-url",
-      "reason": "requires fresh Den Web/API and OAuth callback origins for its browser-driven connection"
     },
     {
       "test": "two-daytona-desktops.e2e.test.ts",
@@ -236,16 +31,6 @@
       "test": "welcome-one-field.e2e.test.ts",
       "category": "fresh-desktop-profile",
       "reason": "spawns a fresh-profile/second Electron; cannot reuse the shared prewarmed desktop sandbox"
-    },
-    {
-      "test": "workflows.e2e.test.ts",
-      "category": "fresh-den-url",
-      "reason": "requires a freshly booted Den Web/API origin for its Workflow dashboard assertions"
-    },
-    {
-      "test": "workspace-switch-task-survival.e2e.test.ts",
-      "category": "unavailable-secret-or-docker",
-      "reason": "requires ANTHROPIC_API_KEY, which is unavailable to this lane"
     }
   ]
 }
