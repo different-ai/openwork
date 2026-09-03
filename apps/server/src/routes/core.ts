@@ -10,7 +10,7 @@ import type { CloudMcpLiveStatusObserver } from "../cloud-mcp-health.js";
 import { readOpenWorkConnectSkillCatalog, renderOpenWorkConnectSkillInstruction } from "../connect-skill-catalog.js";
 import { readOpenWorkAutomationCatalog, renderOpenWorkAutomationInstruction } from "../connect-automation-catalog.js";
 import { EnvStoreReadError, InvalidEnvKeyError, isValidEnvKey, type EnvService } from "../env-file.js";
-import { syncManagedProviderAuth } from "../managed-provider-auth.js";
+import { syncManagedProviderAuth, type ManagedProviderAuthResult } from "../managed-provider-auth.js";
 import { ApiError } from "../errors.js";
 import { callExperimentalExtensionAction, listExperimentalExtensionActions } from "../extensions/index.js";
 import type { TokenService } from "../tokens.js";
@@ -44,6 +44,7 @@ interface RegisterCoreRoutesOptions {
   serializeWorkspace: (workspace: ServerConfig["workspaces"][number]) => unknown;
   resolveDevLogPath: () => string | null;
   createOpenAiRealtimeVoiceSession: (env: EnvService, input: unknown) => Promise<unknown>;
+  onManagedProviderAuthChanged?: (result: ManagedProviderAuthResult) => Promise<void>;
   managedProviderAuthLogger?: {
     warn: (message: string, attributes?: Record<string, unknown>) => void;
     error: (message: string, attributes?: Record<string, unknown>) => void;
@@ -105,6 +106,7 @@ export function registerCoreRoutes(options: RegisterCoreRoutesOptions): void {
     serializeWorkspace,
     resolveDevLogPath,
     createOpenAiRealtimeVoiceSession,
+    onManagedProviderAuthChanged,
     managedProviderAuthLogger,
   } = options;
   const envPendingChangesByRuntime = new Map<string, boolean>();
@@ -472,7 +474,10 @@ export function registerCoreRoutes(options: RegisterCoreRoutesOptions): void {
     }
     // A stored credential is useless until the engine holds it: deliver it now
     // rather than waiting for the next engine start.
-    await syncManagedProviderAuth({ config, env, logger: managedProviderAuthLogger }).catch(() => undefined);
+    const authResult = await syncManagedProviderAuth({ config, env, logger: managedProviderAuthLogger }).catch(() => undefined);
+    if (authResult && (authResult.delivered.length > 0 || authResult.removed.length > 0)) {
+      await onManagedProviderAuthChanged?.(authResult).catch(() => undefined);
+    }
     return jsonResponse({ ok: true, count: entries.length });
   });
 

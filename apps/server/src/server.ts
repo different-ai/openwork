@@ -2153,6 +2153,15 @@ function createRoutes(
   cloudProviderSync: CloudProviderSync,
 ): Route[] {
   const routes: Route[] = [];
+  // A rollover-capable pool can apply this immediately without disposing
+  // the generation that owns live sessions. Legacy/external engines keep
+  // the established busy deferral.
+  const applyManagedProviderReload = async (workspace: WorkspaceInfo): Promise<"reloaded" | "deferred"> => {
+    const reloadDeferred = await shouldDeferInPlaceEngineReload(config, workspace, engineHasActiveSessions);
+    if (!reloadDeferred) await reloadOpencodeEngine(config, workspace, engineMcpServerState);
+    if (reloadDeferred) cloudProviderSync.markReloadPending();
+    return reloadDeferred ? "deferred" : "reloaded";
+  };
   registerCoreRoutes({
     routes,
     config,
@@ -2175,6 +2184,9 @@ function createRoutes(
     serializeWorkspace,
     resolveDevLogPath,
     createOpenAiRealtimeVoiceSession,
+    onManagedProviderAuthChanged: async () => {
+      await applyManagedProviderReload(resolveEngineRuntimeWorkspace(config));
+    },
   });
 
   registerWorkspaceRoutes({
@@ -2691,17 +2703,8 @@ function createRoutes(
       || fileResult.changed
       || authResult.delivered.length > 0
       || authResult.removed.length > 0;
-    // A rollover-capable pool can apply this immediately without disposing
-    // the generation that owns live sessions. Legacy/external engines keep
-    // the established busy deferral.
     const reloadDeferred = shouldReload
-      && (await shouldDeferInPlaceEngineReload(config, workspace, engineHasActiveSessions));
-    if (shouldReload && !reloadDeferred) {
-      await reloadOpencodeEngine(config, workspace, engineMcpServerState);
-    }
-    if (reloadDeferred) {
-      cloudProviderSync.markReloadPending();
-    }
+      && (await applyManagedProviderReload(workspace)) === "deferred";
     return jsonResponse({
       ok: true,
       changed: result.changed,
