@@ -23,7 +23,7 @@ const SECTIONS: Array<{ id: SettingsSection; label: string; detail: string }> = 
   { id: "general", label: "General", detail: "Open Coworker and shared defaults" },
   { id: "account", label: "Account", detail: "OpenWork account and organization" },
   { id: "models", label: "AI models", detail: "AI providers and models every coworker can use" },
-  { id: "engine", label: "AI & local setup", detail: "AI service, responsibilities on this Mac, storage, and diagnostics" },
+  { id: "engine", label: "AI & local setup", detail: "AI service, runs on this Mac, storage, and diagnostics" },
 ];
 
 const EMPTY_CATALOG: EngineModelCatalog = { models: [], connectedProviderIds: [], cloud: null };
@@ -524,10 +524,10 @@ function LocalRunsCard({ active }: { active: boolean }) {
     <SettingsCard testId="local-runs-card">
       <div className="flex flex-wrap items-start justify-between gap-4 px-4 py-4">
         <div className="min-w-0 flex-1">
-          <h3 className="text-sm font-semibold text-snow">Responsibilities on this Mac</h3>
+          <h3 className="text-sm font-semibold text-snow">Runs on this Mac</h3>
           <p className="mt-1 max-w-md text-xs leading-relaxed text-mist">
-            Run up to this many at the same time. Any others wait in line and start by themselves when a run finishes.
-            OpenWork Cloud schedules its own runs and is not limited here.
+            Scheduled assignments and Worker turns run up to this many at the same time. Any others wait in line and start by
+            themselves when a run finishes. OpenWork Cloud schedules its own runs and is not limited here.
           </p>
           {live ? <p className="mt-2 text-[11px] text-mist" data-testid="local-runs-live">{live}</p> : null}
           {error ? <div className="mt-2"><ErrorNote>{error}</ErrorNote></div> : null}

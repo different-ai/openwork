@@ -309,3 +309,33 @@ export function describeWorkerToolStep(
       return { label: workerName ? `Read ${workerName}'s findings` : "Read a Worker's findings", doing: "reading a Worker's findings" };
   }
 }
+
+// ---------------------------------------------------------------------------
+// A Worker's "Needs a decision" as a lettered choice card in the discussion.
+
+export type WorkerDecision = {
+  /** The question, without the option lines. */
+  question: string;
+  /** The choices the Worker offered, in order; empty when it asked open-endedly. */
+  options: string[];
+};
+
+const OPTION_LINE = /^\s*(?:[-*•]\s*)?(?:\(?([A-Za-z]|\d{1,2})[).:]|[-*•])\s+(.+?)\s*$/;
+
+/**
+ * Read a decision finding into a question and its choices: lines such as
+ * "A) Include vendor C", "1. Yes", or "- Skip it" become options; the rest is
+ * the question. One lone bullet is part of the question, not a choice.
+ */
+export function parseWorkerDecision(text: string): WorkerDecision {
+  const lines = text.replace(/\r\n/g, "\n").split("\n");
+  const options: string[] = [];
+  const question: string[] = [];
+  for (const line of lines) {
+    const match = OPTION_LINE.exec(line);
+    if (match && match[2]) options.push(match[2].replace(/[*_`]/g, "").trim());
+    else if (line.trim()) question.push(line.trim());
+  }
+  if (options.length < 2) return { question: text.trim(), options: [] };
+  return { question: question.join(" ").trim(), options };
+}

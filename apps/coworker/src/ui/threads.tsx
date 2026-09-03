@@ -48,7 +48,8 @@ import {
   rememberWorkspaceSlug,
 } from "@/lib/discussions";
 import { markAutoPicked, wasAutoPicked } from "@/lib/model-choice";
-import { describeReview, parseWorkerReview, parseWorkerTurn, workerNameFromTitle, type WorkerReview } from "@/lib/workers";
+import { describeReview, parseWorkerReview, parseWorkerTurn, workerNameFromTitle, type WorkerReview, type WorkerSummary } from "@/lib/workers";
+import { WorkerDecisionCards } from "@/ui/worker-decision";
 import { describeProgress, describeWorkStep, summarizeWork, technicalSections, type ProgressPhase, type WorkStep } from "@/lib/work-receipt";
 import { isServerTool, toolRefPath } from "@/lib/apps-tools";
 import { openPanelRoute } from "@/lib/panel-route";
@@ -213,6 +214,7 @@ export function ThreadsPanel({
   assignmentDraft,
   discussionDraft,
   openThreadRequest,
+  onAssignmentsChange,
   headerSlots,
   onOpenModelSettings,
   onOpenAccount,
@@ -230,6 +232,8 @@ export function ThreadsPanel({
   discussionDraft?: AssignmentDraft;
   /** Set by the context rail to jump straight into a thread; the id makes repeat requests distinct. */
   openThreadRequest?: { id: number; threadId: string } | null;
+  /** The one-off assignment threads as this column lists them, so the panel's Assignments can show the same ones. */
+  onAssignmentsChange?: (items: ThreadListItem[]) => void;
   headerSlots: HeaderSlots;
   /** Coworker settings, opened at the AI model section — the first recovery step after a model failure. */
   onOpenModelSettings: () => void;
@@ -247,6 +251,8 @@ export function ThreadsPanel({
   );
   /** Threads that belong to the coworker's Workers (main process registry); never discussions or assignments. */
   const [workerThreadIds, setWorkerThreadIds] = useState<string[]>([]);
+  /** The Workers themselves, for the decision cards in the discussion. */
+  const [workerRecords, setWorkerRecords] = useState<WorkerSummary[]>([]);
   const threads = useMemo(
     () =>
       coworker.workspaceId
@@ -336,8 +342,10 @@ export function ThreadsPanel({
       ]);
       const workerIds = workers.map((worker) => worker.threadId).filter(Boolean);
       setWorkerThreadIds((current) => (current.length === workerIds.length && current.every((id, index) => id === workerIds[index]) ? current : workerIds));
+      setWorkerRecords((current) => (current.length === workers.length && current.every((worker, index) => worker.id === workers[index]?.id && worker.updatedAt === workers[index]?.updatedAt) ? current : workers));
       const split = classifyThreads(all, { discussions: discussionThreadIds, workers: workerIds });
       setItems(split.assignments);
+      onAssignmentsChange?.(split.assignments);
       setDiscussions(split.discussions);
       const attention: Record<string, string> = {};
       for (const permission of pending.permissions) {
@@ -355,7 +363,7 @@ export function ThreadsPanel({
       setFailingSince((current) => current ?? now);
       setLastFailureAt(now);
     }
-  }, [coworker.slug, discussionThreadIds, threads]);
+  }, [coworker.slug, discussionThreadIds, onAssignmentsChange, threads]);
 
   // Re-read quickly while the workspace is not answering so the view heals as soon as it does.
   const failing = Boolean(error);
@@ -575,6 +583,8 @@ export function ThreadsPanel({
       onActivityChange={onActivityChange}
       onCoworkerChanged={onCoworkerChanged}
       documents={documents}
+      workers={workerRecords}
+      onWorkersChanged={() => void refresh()}
     />
   );
 }
@@ -910,6 +920,8 @@ function ThreadView({
   onCoworkerChanged,
   headerSlots,
   documents,
+  workers = [],
+  onWorkersChanged,
 }: {
   threads: NonNullable<ReturnType<typeof createCoworkerThreads>>;
   threadId: string;
@@ -919,6 +931,9 @@ function ThreadView({
   kind: "discussion" | "assignment" | "worker";
   assignmentCount: number;
   headerSlots: HeaderSlots;
+  /** The coworker's Workers; one waiting for a decision asks for it here, in the discussion. */
+  workers?: WorkerSummary[];
+  onWorkersChanged?: () => void;
   assignmentDraft?: AssignmentDraft;
   discussionDraft?: AssignmentDraft;
   initialTurn: QueuedTurn | null;
@@ -1484,6 +1499,9 @@ function ThreadView({
               void refresh();
             }}
           />
+          {kind === "discussion" ? (
+            <WorkerDecisionCards coworker={coworker} workers={workers} onAnswered={() => onWorkersChanged?.()} />
+          ) : null}
           {working ? (
             <WorkIndicator
               coworker={coworker}

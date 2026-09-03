@@ -12,6 +12,7 @@ import {
   describeWorkerToolStep,
   isLiveWorker,
   lifespanFromChoice,
+  parseWorkerDecision,
   parseWorkerReview,
   parseWorkerTurn,
   workerNameFromTitle,
@@ -159,9 +160,17 @@ test("the Workers view speaks plain words: no sub-agents, sessions, threads, slo
   const { readFile } = await import("node:fs/promises");
   const source = await readFile(new URL("../ui/workers.tsx", import.meta.url), "utf8");
   const withoutComments = source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+  // Only what a person can read: JSX text, quoted prose (strings with a space), and the fixed parts of template strings.
+  const copy = [
+    // Text between tags or braces, skipping anything that reads as code rather than words.
+    ...[...withoutComments.matchAll(/[>}]([^<>{}]*[A-Za-z][^<>{}]*)[<{]/g)].map((match) => match[1] ?? "").filter((text) => !/[;=()[\]]/.test(text)),
+    ...[...withoutComments.matchAll(/"([^"\n]* [^"\n]*)"/g)].map((match) => match[1] ?? ""),
+    ...[...withoutComments.matchAll(/`([^`]*)`/g)].map((match) => (match[1] ?? "").replace(/\$\{[^}]*\}/g, " ")),
+  ].join("\n");
   const banned = /\b(sub-agents?|sessions?|threads?|slots?|engines?|orchestrators?)\b/gi;
-  const hits = [...withoutComments.matchAll(banned)].map((match) => match[0]);
+  const hits = [...copy.matchAll(banned)].map((match) => match[0]);
   assert.deepEqual(hits, []);
+  assert.ok(copy.includes("No Workers running."), "the scan reads the view's copy");
 });
 
 test("the coworker's Worker tool calls read as receipts that name the Worker", () => {
@@ -175,4 +184,19 @@ test("the coworker's Worker tool calls read as receipts that name the Worker", (
   assert.deepEqual(describeWorkerToolStep("worker_cancel", { input: { id: "wrk_a" }, output: undefined, metadata: {} }), { label: "Stopped a Worker", doing: "stopping a Worker" });
   assert.deepEqual(describeWorkerToolStep("worker_findings", { input: { id: "wrk_a" }, ...kept }), { label: "Read Market scan's findings", doing: "reading a Worker's findings" });
   assert.deepEqual(describeWorkerToolStep("workers_list", { input: {}, output: undefined, metadata: {} }), { label: "Looked over its Workers", doing: "looking over its Workers" });
+});
+
+test("a decision finding splits into the question and its lettered choices", () => {
+  assert.deepEqual(parseWorkerDecision("Should I include vendor C in the scan?\n- A) Yes, include it\n- B) No, skip it"), {
+    question: "Should I include vendor C in the scan?",
+    options: ["Yes, include it", "No, skip it"],
+  });
+  assert.deepEqual(parseWorkerDecision("Which source first?\n1. The vendor site\n2. The price index\n3. Both"), {
+    question: "Which source first?",
+    options: ["The vendor site", "The price index", "Both"],
+  });
+  assert.deepEqual(parseWorkerDecision("Two ways forward:\n- keep going\n- stop here"), { question: "Two ways forward:", options: ["keep going", "stop here"] });
+  // One bullet is not a choice; open questions keep their text whole.
+  assert.deepEqual(parseWorkerDecision("The file is missing.\n- Should I create it?"), { question: "The file is missing.\n- Should I create it?", options: [] });
+  assert.deepEqual(parseWorkerDecision("What budget should I assume?"), { question: "What budget should I assume?", options: [] });
 });
