@@ -15,7 +15,8 @@ const serverDir = join(repoRoot, "apps", "server");
 
 type BootedServer = { child: ChildProcess; output: () => string; stop: () => Promise<void> };
 
-function bootServer(env: NodeJS.ProcessEnv, workspace: string, token: string): BootedServer {
+function bootServer(env: NodeJS.ProcessEnv, workspace: string, token?: string): BootedServer {
+  const tokenArgs = token ? ["--token", token, "--host-token", `${token}-host`] : [];
   const child = spawn(
     "pnpm",
     [
@@ -29,10 +30,7 @@ function bootServer(env: NodeJS.ProcessEnv, workspace: string, token: string): B
       "127.0.0.1",
       "--port",
       "0",
-      "--token",
-      token,
-      "--host-token",
-      `${token}-host`,
+      ...tokenArgs,
       "--approval",
       "auto",
       "--cors",
@@ -79,6 +77,7 @@ test("openwork-server persists structured, credential-free logs when OPENWORK_SE
 
   const withSink = bootServer({ OPENWORK_SERVER_LOG_FILE: logFile, OPENWORK_LOG_FORMAT: "pretty" }, workspace, token);
   let withoutSink: BootedServer | null = null;
+  let generatedSink: BootedServer | null = null;
   try {
     const port = await eventually(() => listeningPort(withSink.output()), { within: 60_000, intervalMs: 250 });
     const health = await fetch(`http://127.0.0.1:${port}/health`);
@@ -119,6 +118,35 @@ test("openwork-server persists structured, credential-free logs when OPENWORK_SE
       true,
     );
 
+    // Generated credentials are intentionally printed to CLI stdout so a
+    // person can connect, but the persisted copy must redact those message
+    // bodies. Attribute-key redaction alone cannot protect these lines.
+    const generatedLog = join(root, "generated", "openwork-server.log");
+    generatedSink = bootServer({ OPENWORK_SERVER_LOG_FILE: generatedLog, OPENWORK_LOG_FORMAT: "pretty" }, workspace);
+    const generatedOutput = await eventually(() => generatedSink?.output() ?? "", {
+      within: 60_000,
+      intervalMs: 250,
+      until: (output) => output.includes("Client token: ") && output.includes("Host token: "),
+    });
+    const generatedClient = generatedOutput.match(/Client token: (\S+)/)?.[1];
+    const generatedHost = generatedOutput.match(/Host token: (\S+)/)?.[1];
+    expect(generatedClient).toBeTruthy();
+    expect(generatedHost).toBeTruthy();
+    const generatedRaw = await eventually(() => (existsSync(generatedLog) ? readFileSync(generatedLog, "utf8") : ""), {
+      within: 15_000,
+      intervalMs: 250,
+      until: (output) => output.includes("Client token: <redacted>") && output.includes("Host token: <redacted>"),
+    });
+    expect(generatedOutput).toContain(generatedClient);
+    expect(generatedOutput).toContain(generatedHost);
+    expect(generatedRaw).not.toContain(generatedClient);
+    expect(generatedRaw).not.toContain(generatedHost);
+    evidence.recordAssertionEvidence(
+      "Generated startup credentials remain on stdout but are redacted from the file",
+      "A real CLI boot without --token/--host-token printed both generated values for the operator; the JSON file contained only Client token: <redacted> and Host token: <redacted>.",
+      true,
+    );
+
     // Negative half: without the env the same server writes no file at all.
     const otherLog = join(root, "unset", "openwork-server.log");
     withoutSink = bootServer({ OPENWORK_SERVER_LOG_FILE: "" }, workspace, `${token}-2`);
@@ -135,6 +163,7 @@ test("openwork-server persists structured, credential-free logs when OPENWORK_SE
   } finally {
     await withSink.stop();
     await withoutSink?.stop();
+    await generatedSink?.stop();
     rmSync(root, { recursive: true, force: true });
   }
 });
