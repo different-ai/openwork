@@ -2,14 +2,15 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
+import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { clickButton, evalIn, fill, waitFor, waitForText } from "@openwork/behaviors";
 import { resolveHost } from "@openwork/hosts";
 import { coworker, needs, test } from "@openwork/testkit";
-import { expect } from "vitest";
+import { expect, onTestFinished } from "vitest";
 
 const enabled = process.env.OPENWORK_EVAL_E2E_TESTS === "1";
 const title = enabled
-  ? "Open Coworker completes local onboarding with what this Mac already has, a calm default sidebar, model choice in settings, native runs with history, and a run queue"
+  ? "Open Coworker completes local onboarding with what this Mac already has, a calm default sidebar, model choice in settings, native runs with history, a run queue, and scheduling from the chat"
   : "Open Coworker local-first journey skipped — needs: set OPENWORK_EVAL_E2E_TESTS=1";
 
 // Every fixture value is plainly fake; the journey proves none of them ever shows up anywhere a person or a log could read.
@@ -86,6 +87,105 @@ async function startStubModelServer(): Promise<{ port: number; chatCalls: () => 
 
 function expectNoFixtureSecret(text: string, where: string): void {
   for (const secret of FIXTURE_SECRETS) expect(text, `${where} must never show ${secret}`).not.toContain(secret);
+}
+
+/**
+ * A deterministic OpenAI-compatible model for the scheduling part of the
+ * journey: asked for recurring work, it answers with one call to the
+ * coworker's own assignment tool, then confirms in a sentence once the tool
+ * has answered. Everything else — the tool server, the store, the receipt, the
+ * panel — is the real product path.
+ */
+const SCRIPTED_PROVIDER = "eval-scripted";
+const SCRIPTED_MODEL = "scripted";
+const CAR_PROMPT = "Every weekday at 9 remind me to move the car.";
+const CAR_REPLY = "Done — every weekday at 9:00 AM I'll remind you to move the car.";
+const CAR_TOOL_CALL = {
+  name: "coworker_assignment_create",
+  arguments: {
+    name: "Move the car",
+    instructions: "Remind J to move the car for street cleaning, and say which side of the street.",
+    schedule: { kind: "weekly", daysOfWeek: [1, 2, 3, 4, 5], hour: 9, minute: 0 },
+  },
+};
+
+function readBody(request: IncomingMessage): Promise<string> {
+  return new Promise((resolve, reject) => {
+    let raw = "";
+    request.setEncoding("utf8");
+    request.on("data", (chunk: string) => { raw += chunk; });
+    request.on("end", () => resolve(raw));
+    request.on("error", reject);
+  });
+}
+
+/** Text of the last user message in an OpenAI chat completion request. */
+function lastUserText(body: unknown): string {
+  if (!isRecord(body) || !Array.isArray(body.messages)) return "";
+  const user = [...body.messages].reverse().find((message) => isRecord(message) && message.role === "user");
+  if (!isRecord(user)) return "";
+  const content = user.content;
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) return content.map((part) => (isRecord(part) && typeof part.text === "string" ? part.text : "")).join("\n");
+  return "";
+}
+
+/** Whether the request already carries a tool result: the second half of a tool-calling turn. */
+function hasToolResult(body: unknown): boolean {
+  return isRecord(body) && Array.isArray(body.messages) && body.messages.some((message) => isRecord(message) && message.role === "tool");
+}
+
+function streamChunks(response: ServerResponse, deltas: Array<Record<string, unknown>>, finish: string): void {
+  response.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache", connection: "keep-alive" });
+  const base = { id: "chatcmpl-scripted", object: "chat.completion.chunk", created: 1, model: SCRIPTED_MODEL };
+  for (const delta of deltas) response.write(`data: ${JSON.stringify({ ...base, choices: [{ index: 0, delta, finish_reason: null }] })}\n\n`);
+  response.write(`data: ${JSON.stringify({ ...base, choices: [{ index: 0, delta: {}, finish_reason: finish }] })}\n\n`);
+  response.write("data: [DONE]\n\n");
+  response.end();
+}
+
+async function startScriptedModel(): Promise<{ baseUrl: string; requests: number }> {
+  const state = { baseUrl: "", requests: 0 };
+  const server = createServer((request, response) => {
+    const url = request.url ?? "";
+    if (request.method === "GET" && url.startsWith("/v1/models")) {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({ object: "list", data: [{ id: SCRIPTED_MODEL, object: "model" }] }));
+      return;
+    }
+    if (request.method === "POST" && (url === "/v1/chat/completions" || url === "/chat/completions")) {
+      void readBody(request).then((raw) => {
+        state.requests += 1;
+        let body: unknown = null;
+        try { body = JSON.parse(raw); } catch { body = null; }
+        const prompt = lastUserText(body);
+        if (prompt.includes("move the car") && !hasToolResult(body)) {
+          streamChunks(response, [{
+            role: "assistant",
+            content: null,
+            tool_calls: [{ index: 0, id: "call_move_the_car", type: "function", function: { name: CAR_TOOL_CALL.name, arguments: JSON.stringify(CAR_TOOL_CALL.arguments) } }],
+          }], "tool_calls");
+          return;
+        }
+        streamChunks(response, [{ role: "assistant" }, { content: prompt.includes("move the car") ? CAR_REPLY : "Okay." }], "stop");
+      });
+      return;
+    }
+    response.writeHead(404, { "content-type": "application/json" });
+    response.end(JSON.stringify({ error: { message: `scripted model: no route for ${request.method} ${url}` } }));
+  });
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  onTestFinished(async () => {
+    server.closeAllConnections();
+    await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+  });
+  const address = server.address();
+  if (!address || typeof address === "string") throw new Error("Scripted model did not bind a TCP port.");
+  state.baseUrl = `http://127.0.0.1:${address.port}/v1`;
+  return state;
 }
 
 function json(value: unknown): string {
@@ -1616,6 +1716,204 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   evidence.recordAssertionEvidence(
     "Connecting what this Mac already has never shows a secret",
     `The fixture tokens and key (${FIXTURE_SECRETS.length} values) appeared nowhere in the local mode screen, the AI models page, the final screen${sameMachine ? ", or the app's own log" : ""}; only provider names, model counts, and the environment variable's name were shown.`,
+    true,
+  );
+
+  // --- Scheduling from the chat: asked for recurring work, the coworker sets it up itself through
+  // its own assignment tool; the conversation shows exactly what it did, and the panel lists it.
+  const scripted = await startScriptedModel();
+  const runtimeInfo = await invokeCoworker(app, "runtime.info", {});
+  if (!isRecord(runtimeInfo) || !isRecord(runtimeInfo.result)) throw new Error("Runtime info was unavailable.");
+  const serverUrl = String(runtimeInfo.result.serverUrl);
+  const ownerToken = String(runtimeInfo.result.ownerToken);
+  if (!isRecord(storedCoworker) || !isRecord(storedCoworker.result)) throw new Error("Scout's record was unavailable.");
+  const scoutWorkspaceId = String(storedCoworker.result.workspaceId);
+  // The scripted model joins the engine the way any custom provider does: through the workspace config route.
+  const providerPatch = await fetch(`${serverUrl}/workspace/${encodeURIComponent(scoutWorkspaceId)}/config`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${ownerToken}` },
+    body: JSON.stringify({
+      opencode: {
+        provider: {
+          [SCRIPTED_PROVIDER]: {
+            npm: "@ai-sdk/openai-compatible",
+            name: "Scripted model",
+            options: { baseURL: scripted.baseUrl, apiKey: "eval-scripted-key" },
+            models: { [SCRIPTED_MODEL]: { name: "Scripted model", tool_call: true } },
+          },
+        },
+      },
+    }),
+  });
+  expect(providerPatch.status).toBe(200);
+  expect(await invokeCoworker(app, "coworkers.update", { slug: "scout", patch: { model: `${SCRIPTED_PROVIDER}/${SCRIPTED_MODEL}`, modelVariant: "" } })).toMatchObject({ ok: true });
+  await evalIn(app, "location.reload(); true");
+  await waitFor(app, `Boolean(document.querySelector('[data-testid="coworker-discussion-view"]')) && [...document.querySelectorAll("h1")].some((heading) => heading.textContent?.trim() === "Scout")`, { timeoutMs: 120_000, label: "Scout discussion view after the model change" });
+  await waitFor(app, `document.querySelector('[data-testid="coworker-top-status"]')?.textContent?.trim() === "Ready"`, { timeoutMs: 240_000, label: "Scout ready on the scripted model" });
+  await fill(app, 'textarea[aria-label="Message Scout"]', CAR_PROMPT);
+  await clickButton(app, "Send");
+  await waitFor(app, `[...document.querySelectorAll('[data-message-role="assistant"]')].some((message) => (message.textContent ?? "").includes(${json(CAR_REPLY)}))`, {
+    timeoutMs: 300_000,
+    label: "the coworker's confirmation after setting up the assignment",
+  });
+  const chatScheduling = await waitFor(app, `(() => {
+    const line = [...document.querySelectorAll('[data-testid="coworker-action-line"]')].find((candidate) => (candidate.textContent ?? "").includes("Created assignment"));
+    const summary = line?.querySelector('[data-testid="coworker-work-summary"]');
+    const receipt = line?.querySelector('[data-testid="coworker-work-receipt"]');
+    if (!(line instanceof HTMLElement) || !(summary instanceof HTMLElement) || !(receipt instanceof HTMLElement) || receipt.dataset.state !== "done") return false;
+    const bubbles = [...document.querySelectorAll('[data-message-role]')];
+    const userIndex = bubbles.findIndex((bubble) => (bubble.textContent ?? "").includes(${json(CAR_PROMPT)}));
+    const replyIndex = bubbles.findIndex((bubble) => (bubble.textContent ?? "").includes(${json(CAR_REPLY)}));
+    const lineTop = line.getBoundingClientRect().top;
+    return {
+      summary: summary.textContent?.trim() ?? "",
+      state: receipt.dataset.state,
+      betweenBubbles: userIndex !== -1 && replyIndex !== -1 && bubbles[userIndex].getBoundingClientRect().bottom <= lineTop && lineTop <= bubbles[replyIndex].getBoundingClientRect().top,
+      actionLines: document.querySelectorAll('[data-testid="coworker-action-line"]').length,
+      collapsedText: line.innerText,
+      appNotes: line.querySelectorAll("iframe").length,
+    };
+  })()`, { timeoutMs: 60_000, label: "one action line saying what the coworker set up" });
+  expect(chatScheduling).toMatchObject({
+    summary: "Created assignment · Move the car · Every weekday at 9:00 AM",
+    state: "done",
+    betweenBubbles: true,
+    appNotes: 0,
+  });
+  if (!isRecord(chatScheduling) || typeof chatScheduling.collapsedText !== "string") throw new Error("Action line facts were unavailable.");
+  expect(chatScheduling.collapsedText).not.toMatch(/coworker_|assignment_create|"kind"|\{/);
+  // The tool's name waits behind Technical details, never in the line itself.
+  await evalIn(app, `[...document.querySelectorAll('[data-testid="coworker-work-summary"]')].find((button) => (button.textContent ?? "").includes("Created assignment"))?.click(); true`);
+  const technical = String(await waitFor(app, `(() => {
+    const step = [...document.querySelectorAll('[data-testid="coworker-work-step"]')].find((candidate) => (candidate.textContent ?? "").includes("Created assignment"));
+    const details = step?.querySelector('[data-testid="coworker-work-technical"]');
+    return details instanceof HTMLDetailsElement ? details.textContent : false;
+  })()`, { timeoutMs: 30_000, label: "technical details of the assignment step" }));
+  expect(technical).toContain("coworker_assignment_create");
+  const chatCreated = await invokeCoworker(app, "localResponsibilities.list", { slug: "scout" });
+  if (!isRecord(chatCreated) || !Array.isArray(chatCreated.result)) throw new Error("Local responsibilities were unavailable after the chat.");
+  const carItem = chatCreated.result.filter(isRecord).find((item) => item.name === "Move the car");
+  expect(carItem).toMatchObject({
+    name: "Move the car",
+    instructions: CAR_TOOL_CALL.arguments.instructions,
+    state: "active",
+    schedule: { kind: "weekly", daysOfWeek: [1, 2, 3, 4, 5], hour: 9, minute: 0, timezone: expect.any(String) },
+    nextDueAt: expect.any(Number),
+  });
+  if (!isRecord(carItem) || !isRecord(carItem.schedule)) throw new Error("The chat-created assignment was not stored.");
+  // No time zone was invented: the coworker's own was filled in.
+  expect(carItem.schedule.timezone).toBe(await evalIn(app, "Intl.DateTimeFormat().resolvedOptions().timeZone"));
+  // Scheduled work lives in the Workers view's Assignments section; open it from wherever the panel is.
+  await waitFor(app, `(() => {
+    const panel = document.querySelector('[data-testid="context-panel"]');
+    if (!(panel instanceof HTMLElement)) return false;
+    if (panel.dataset.collapsed === "false" && panel.dataset.view === "workers") return Boolean(document.querySelector('[data-testid="coworker-assignments"]'));
+    if (panel.dataset.collapsed === "true") document.querySelector('[data-testid="context-rail-workers"]')?.click();
+    else if (panel.dataset.view === "overview") [...document.querySelectorAll("button")].find((button) => (button.textContent ?? "").trim() === "Workers")?.click();
+    else document.querySelector('button[aria-label="Back to activity"]')?.click();
+    return false;
+  })()`, { timeoutMs: 60_000, label: "Workers view with Assignments for the chat-created assignment" });
+  const carRow = String(await waitFor(app, `(() => {
+    const row = [...document.querySelectorAll('[data-testid="responsibility-row"]')].find((candidate) => (candidate.textContent ?? "").includes("Move the car"));
+    return row instanceof HTMLElement ? row.innerText.replace(/\s+/g, " ") : false;
+  })()`, { timeoutMs: 60_000, label: "the chat-created assignment in the panel" }));
+  expect(carRow).toContain("Move the car Every weekday at 9:00 AM");
+  expect(carRow).toMatch(/Next: (today|tomorrow|\w+ \d+) at 9:00 AM/);
+  expect(carRow).not.toMatch(/UTC|America\/|slot|thread|cron|coworker_/);
+  evidence.recordAssertionEvidence(
+    "A coworker sets up recurring work itself from the conversation and shows exactly what it did",
+    `Asked "${CAR_PROMPT}", Scout called its own assignment tool once (${scripted.requests} model requests), and the conversation showed one action line between the two bubbles reading "Created assignment · Move the car · Every weekday at 9:00 AM" with the tool id only behind Technical details; the assignment was stored as a weekly schedule in the app's own time zone with no zone invented, and the panel listed "Move the car · Every weekday at 9:00 AM" with its next run.`,
+    true,
+  );
+
+  // --- An interval from the form: every N hours inside a window, with the schedule read back in words.
+  await clickButtonContaining(app, "+ Add");
+  await waitFor(app, `Boolean(document.querySelector('[data-testid="add-responsibility"]'))`, { timeoutMs: 30_000, label: "add responsibility form for the interval" });
+  const intervalForm = await evalIn(app, `(async () => {
+    const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+    const setNative = (element, value) => {
+      const setter = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(element), "value")?.set;
+      setter?.call(element, value);
+      element.dispatchEvent(new Event("input", { bubbles: true }));
+      element.dispatchEvent(new Event("change", { bubbles: true }));
+    };
+    const cadence = document.querySelector('select[aria-label="Cadence"]');
+    if (!(cadence instanceof HTMLSelectElement)) return null;
+    const cadenceOptions = [...cadence.options].map((option) => option.text);
+    setNative(cadence, "interval");
+    await wait(200);
+    const every = document.querySelector('select[aria-label="Every"]');
+    const from = document.querySelector('input[aria-label="From"]');
+    const until = document.querySelector('input[aria-label="Until"]');
+    const perDay = document.querySelector('select[aria-label="Most runs a day"]');
+    if (!(every instanceof HTMLSelectElement) || !(from instanceof HTMLInputElement) || !(until instanceof HTMLInputElement) || !(perDay instanceof HTMLSelectElement)) return null;
+    setNative(every, "120");
+    setNative(from, "09:00");
+    setNative(until, "18:00");
+    setNative(perDay, "4");
+    // Weekdays only: switch Saturday and Sunday off.
+    for (const day of ["Saturday", "Sunday"]) document.querySelector('[role="group"][aria-label="Days"] button[aria-label="' + day + '"]')?.click();
+    await wait(200);
+    return {
+      cadenceOptions,
+      everyOptions: [...every.options].map((option) => option.text),
+      perDayOptions: [...perDay.options].map((option) => option.value),
+      days: [...document.querySelectorAll('[role="group"][aria-label="Days"] button')].map((button) => button.getAttribute("aria-pressed")),
+      note: document.querySelector('[data-testid="schedule-note"]')?.textContent?.trim() ?? "",
+      noteTone: document.querySelector('[data-testid="schedule-note"]')?.getAttribute("data-tone"),
+      timeFieldShown: Boolean([...document.querySelectorAll("label")].find((label) => (label.textContent ?? "").startsWith("Time ·"))),
+    };
+  })()`, { awaitPromise: true, timeoutMs: 30_000 });
+  expect(intervalForm).toEqual({
+    cadenceOptions: ["Daily", "Weekly", "Every few hours"],
+    everyOptions: ["Hour", "2 hours", "3 hours", "4 hours", "6 hours", "8 hours", "12 hours"],
+    perDayOptions: ["1", "2", "3", "4"],
+    days: ["false", "true", "true", "true", "true", "true", "false"],
+    note: "Every 2 hours between 9:00 AM and 6:00 PM on weekdays, up to 4 times a day",
+    noteTone: "mist",
+    timeFieldShown: false,
+  });
+  await fill(app, 'input[placeholder="Morning competitor report"]', "Competitor page");
+  await fill(app, 'textarea[placeholder="What should happen on every run?"]', "Reply with exactly COMPETITOR PAGE CHECKED. Do not use tools.");
+  await clickButton(app, "Schedule assignment");
+  const intervalRow = String(await waitFor(app, `(() => {
+    const row = [...document.querySelectorAll('[data-testid="responsibility-row"]')].find((candidate) => (candidate.textContent ?? "").includes("Competitor page"));
+    return row instanceof HTMLElement ? row.innerText.replace(/\s+/g, " ") : false;
+  })()`, { timeoutMs: 60_000, label: "the interval responsibility in the panel" }));
+  expect(intervalRow).toContain("Competitor page Every 2 hours between 9:00 AM and 6:00 PM on weekdays, up to 4 times a day");
+  expect(intervalRow).not.toMatch(/UTC|America\/|slot|thread|cron|interval|everyMinutes/);
+  const intervalStored = await invokeCoworker(app, "localResponsibilities.list", { slug: "scout" });
+  if (!isRecord(intervalStored) || !Array.isArray(intervalStored.result)) throw new Error("Local responsibilities were unavailable after the interval.");
+  const intervalItem = intervalStored.result.filter(isRecord).find((item) => item.name === "Competitor page");
+  expect(intervalItem).toMatchObject({
+    state: "active",
+    schedule: { kind: "interval", everyMinutes: 120, from: { hour: 9, minute: 0 }, until: { hour: 18, minute: 0 }, daysOfWeek: [1, 2, 3, 4, 5], maxPerDay: 4 },
+    nextDueAt: expect.any(Number),
+  });
+  // The guardrails a person can set live in AI & local setup with the run limit, whose choices now reach 8.
+  await clickButtonContaining(app, "OpenWork");
+  await waitForText(app, "OpenWork settings", { timeoutMs: 30_000 });
+  await clickButton(app, "AI & local setup");
+  const guardrailControls = await waitFor(app, `(() => {
+    const limit = document.querySelector('[data-testid="local-runs-limit"]');
+    const gap = document.querySelector('[data-testid="minimum-run-gap"]');
+    const perDay = document.querySelector('[data-testid="max-runs-per-day"]');
+    if (!limit || !gap || !perDay) return false;
+    const read = (group) => [...group.querySelectorAll('[role="radio"]')].map((radio) => radio.textContent?.trim() + (radio.getAttribute("aria-checked") === "true" ? "*" : ""));
+    return { limit: read(limit), gap: read(gap), perDay: read(perDay), text: document.querySelector('[data-testid="schedule-guardrails"]')?.textContent ?? "" };
+  })()`, { timeoutMs: 30_000, label: "guardrail controls" });
+  expect(guardrailControls).toMatchObject({
+    limit: ["1*", "2", "3", "4", "6", "8"],
+    gap: ["15 min", "30 min", "60 min*"],
+    perDay: ["1", "2", "4*", "6", "8", "12"],
+  });
+  if (!isRecord(guardrailControls) || typeof guardrailControls.text !== "string") throw new Error("Guardrail facts were unavailable.");
+  expect(guardrailControls.text).toContain("How often one assignment may run");
+  expect(guardrailControls.text.toLowerCase()).not.toMatch(/cron|engine|slot/);
+  await clickButtonContaining(app, "Back to coworkers");
+  evidence.recordAssertionEvidence(
+    "The panel form offers an interval with a window, days, and a daily cap, and reads the schedule back in words",
+    "Choosing Every few hours revealed the interval fields; the inline note read \"Every 2 hours between 9:00 AM and 6:00 PM on weekdays, up to 4 times a day\" before anything was created, the created row used the same words, the stored schedule kept the window, the weekdays, and the cap, and AI & local setup offered the run limit up to 8 beside the two guardrails (at least 60 minutes apart, at most 4 a day).",
     true,
   );
 });
