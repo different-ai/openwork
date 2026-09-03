@@ -670,6 +670,17 @@ icon itself is one coworker over one charcoal card on the OpenWork-blue tile
 (`resources/icons/open-coworker-app-icon.svg`); every raster is regenerated from
 it with `pnpm --filter @openwork/coworker icons:render`.
 
+The avatars' always-on idle motion (an 8.8 s float of 0.8 px and turns of about
+a pixel, staggered per coworker) is drawn in six steps per movement rather than
+at every frame: a continuously moving avatar forces the vibrancy window to
+recomposite at 60 fps, which with three or four coworkers on screen cost most
+of a CPU core while the app sat idle (renderer 25%, GPU process 61%); stepped,
+the same motion idles near the floor (about 5–10% each), with brief spikes only
+when a coworker actually blinks or glances. Blinks, idle glances, and pointer
+gaze keep their smooth curves. Idle glances are skipped while the window is
+hidden or covered, so a journey brings the window to front before waiting for
+one.
+
 Coworker settings lay out as rows on the panel — Apps & tools first (the level
 described above), then an identity row, Profile (look, glasses, role, mission,
 personality) as hairline-separated rows, the AI model, Memory, and a quiet
