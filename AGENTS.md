@@ -22,6 +22,32 @@ The app consumes OpenWork server surfaces (self-hosted or hosted) rather than
 inventing parallel behavior. Anything OpenCode can do is available in OpenWork,
 even before a dedicated UI exists.
 
+## Confidentiality (hard rule — this repo is public)
+
+Nothing that reaches GitHub may identify a customer, prospect, partner, or
+person outside the team. Applies to every public surface: branch names, commit
+messages, PR titles and bodies, code and spec comments, spec/claim names,
+fixtures, docs, and test-evidence descriptions.
+
+- Never write a customer/prospect/partner organization name, an individual's
+  name or email, a Slack channel or link, or quoted end-user text. Refer to a
+  report only by an opaque internal ticket ID and describe the behavior
+  generically ("a custom OpenAI-compatible provider defined in the user-level
+  opencode.json"), never its origin.
+- Never name a branch or worktree after a customer. A branch name leaks into
+  PR metadata, preview URLs, and evidence JSON and cannot be scrubbed later; if
+  you were handed one, stop and rename it before the first push.
+- Keep customer context (briefs, reports, transcripts) outside the repo tree.
+  Nothing under a public worktree, even untracked, may hold it.
+- Before every push, re-read the branch name, unpushed commit messages, PR text,
+  and added lines for the above. `scripts/confidentiality-tripwire.mjs` runs as
+  a pre-push hook and a required PR check; treat a hit as a blocker, never as
+  something to work around.
+- If something has already been pushed: scrub every mutable surface (PR body,
+  comments, files via a follow-up PR with neutral wording), delete branch-named
+  preview comments, and report the immutable remainder (commit messages, PR
+  head ref) to a human immediately. Do not rewrite shared history on your own.
+
 ## Verification (every change)
 
 - The only proof path is `evals/specs/**/*.test.ts` with `test` from

@@ -76,7 +76,8 @@ jobs:
           mode: report
           findings-file: ${{ steps.analyze.outputs.findings-file }}
 
-      # Consumed by warden-clearance.yml (workflow_run). blocking_count excludes
+      # Consumed by warden-clearance.yml (workflow_run). security_count also
+      # includes confidentiality-review findings (all blocking). blocking_count excludes
       # advisory desktop↔den sync findings so they notify without withholding
       # clearance. The clearance workflow refuses to act on PRs that touch review
       # machinery, so this artifact cannot be forged without tripping that guard.
@@ -91,7 +92,7 @@ jobs:
 
           if [ -n "$FINDINGS_FILE" ] && [ -f "$FINDINGS_FILE" ] && counts="$(jq -ce '
             {
-              security_count: ([.skills[] | select(.name == "diff-security-review") | .findings | length] | add // 0),
+              security_count: ([.skills[] | select(.name == "diff-security-review" or .name == "confidentiality-review") | .findings | length] | add // 0),
               sync_blocking_count: ([.skills[] | select(.name == "desktop-den-sync-review") | .findings[] | select(.severity != "medium" and .severity != "low")] | length),
               sync_advisory_count: ([.skills[] | select(.name == "desktop-den-sync-review") | .findings[] | select(.severity == "medium" or .severity == "low")] | length)
             }
