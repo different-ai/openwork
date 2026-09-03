@@ -142,8 +142,9 @@ test("a glance at the live row shows the end of one line of what is streaming, o
   assert.equal(describeGlimpse({ text: "", reasoning: "", step: null }), "");
   assert.equal(describeGlimpse({ text: "", reasoning: "", step: { doing: "editing index.md" } }), "Editing index.md…");
   assert.equal(describeGlimpse({ text: "", reasoning: "First the sources,\n\nthen the summary.", step: null }), "First the sources, then the summary.");
-  // Words being written win over the thinking behind them and over the step.
+  // Words being written win over the thinking behind them and over the step; words arriving this moment win over all.
   assert.equal(describeGlimpse({ text: "Here is the plan.", reasoning: "hmm", step: { doing: "reading notes.md" } }), "Here is the plan.");
+  assert.equal(describeGlimpse({ live: "and one more thing", text: "Here is the plan.", reasoning: "hmm", step: null }), "and one more thing");
   const long = Array.from({ length: 40 }, (_, index) => `word${index}`).join(" ");
   const glance = describeGlimpse({ text: long, reasoning: "", step: null });
   assert.ok(glance.startsWith("…"), glance);
