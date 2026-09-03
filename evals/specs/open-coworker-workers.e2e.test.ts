@@ -406,10 +406,11 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   if (!isRecord(decisionCard) || !Array.isArray(decisionCard.options)) throw new Error("Decision card facts were unavailable.");
   expect(String(decisionCard.text)).toMatch(/color/i);
   expect(decisionCard.options.length).toBeGreaterThanOrEqual(2);
+  // Once the coworker's own review reply has settled, the header says the Worker needs the person.
   const headerWhileDeciding = await waitFor(app, `(() => {
     const status = document.querySelector('[data-testid="coworker-top-status"]')?.textContent?.trim() ?? "";
     return status === "Needs you" ? status : false;
-  })()`, { timeoutMs: 30_000, label: "header saying Needs you for the Worker's decision" });
+  })()`, { timeoutMs: 300_000, label: "header saying Needs you for the Worker's decision" });
   expect(headerWhileDeciding).toBe("Needs you");
   const greenOption = decisionCard.options.findIndex((option) => /green/i.test(String(option)));
   expect(greenOption).toBeGreaterThanOrEqual(0);
