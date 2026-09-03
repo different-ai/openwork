@@ -38,9 +38,8 @@ function sessionTitle(route: SidebarRouteFacts, workspaceId: string, sessionId: 
 async function expectStillHidden(world: World, workspaceId: string, sessionId: string): Promise<void> {
   const deadline = Date.now() + STALE_OBSERVATION_MS;
   while (Date.now() < deadline) {
-    const [route, rows] = await Promise.all([world.route(), world.sidebarSessionIds(workspaceId)]);
+    const route = await world.route();
     expect(sessionIds(route, workspaceId)).not.toContain(sessionId);
-    expect(rows).not.toContain(sessionId);
     await sleep(250);
   }
 }
@@ -84,7 +83,10 @@ test("sessions created outside the window appear in a non-selected workspace's s
   // --- Path 1: an explicit reload request, as issued by session.create. ---
   const reloadedTitle = "External session surfaced by reload";
   const reloadedId = await world.createSessionOutsideWindow(otherId, reloadedTitle);
-  await step("the external session is not yet visible", () => expectStillHidden(world, otherId, reloadedId));
+  await step("the external session is not yet visible", async () => {
+    await expectStillHidden(world, otherId, reloadedId);
+    await user.notSee({ text: reloadedTitle });
+  });
 
   await agent.run("workspace.reload_sessions", { workspaceId: otherId });
   const afterReload = await probe.eventually(() => world.route(), {
@@ -94,7 +96,7 @@ test("sessions created outside the window appear in a non-selected workspace's s
     until: (route) => sessionIds(route, otherId).includes(reloadedId),
   });
   expect(sessionTitle(afterReload, otherId, reloadedId)).toBe(reloadedTitle);
-  expect(await world.sidebarSessionIds(otherId)).toContain(reloadedId);
+  await user.see({ text: reloadedTitle }, { timeoutMs: 30_000 });
   expect(afterReload.selectedWorkspaceId).toBe(homeId);
   expect(sessionIds(afterReload, homeId)).toEqual(homeSessionsBefore);
   evidence.recordAssertionEvidence(
@@ -106,7 +108,10 @@ test("sessions created outside the window appear in a non-selected workspace's s
   // --- Path 2: selecting the workspace refetches its list. ---
   const selectedTitle = "External session surfaced by selection";
   const selectedId = await world.createSessionOutsideWindow(otherId, selectedTitle);
-  await step("the second external session is not yet visible", () => expectStillHidden(world, otherId, selectedId));
+  await step("the second external session is not yet visible", async () => {
+    await expectStillHidden(world, otherId, selectedId);
+    await user.notSee({ text: selectedTitle });
+  });
 
   await user.click({ role: "button", label: otherName });
   const afterSelect = await probe.eventually(() => world.route(), {
@@ -116,9 +121,8 @@ test("sessions created outside the window appear in a non-selected workspace's s
     until: (route) => route.selectedWorkspaceId === otherId && sessionIds(route, otherId).includes(selectedId),
   });
   expect(sessionTitle(afterSelect, otherId, selectedId)).toBe(selectedTitle);
-  const otherRows = await world.sidebarSessionIds(otherId);
-  expect(otherRows).toContain(selectedId);
-  expect(otherRows).toContain(reloadedId);
+  await user.see({ text: selectedTitle }, { timeoutMs: 30_000 });
+  await user.see({ text: reloadedTitle });
   expect(sessionIds(afterSelect, homeId)).toEqual(homeSessionsBefore);
   evidence.recordAssertionEvidence(
     "Selecting a workspace refetches its session list and reveals sessions created outside the window",

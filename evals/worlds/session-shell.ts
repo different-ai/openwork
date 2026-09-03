@@ -330,17 +330,6 @@ export async function externalSessionVisibility(seed: Seed) {
         };
       })()`));
     },
-    /** Session ids currently rendered as rows under one sidebar workspace group. */
-    // TODO(primitive): probe.sidebarSessions should list the rendered session rows of a workspace group.
-    async sidebarSessionIds(workspaceId: string): Promise<string[]> {
-      const value = await seed.evalIn(app, `(workspaceId) => Array.from(document.querySelectorAll(
-        "[data-sidebar-session-workspace-id=" + JSON.stringify(workspaceId) + "]",
-      )).map((element) => element.getAttribute("data-sidebar-session-id")).filter(Boolean)`, { args: [workspaceId] });
-      if (!Array.isArray(value) || value.some((id) => typeof id !== "string")) {
-        throw new Error(`Sidebar returned invalid session rows: ${JSON.stringify(value)}`);
-      }
-      return value.filter((id): id is string => typeof id === "string");
-    },
     /**
      * Creates a session the way another client would: straight against the
      * OpenWork server's workspace mount, never through the desktop's UI state.
