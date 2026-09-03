@@ -4,8 +4,11 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { app, WebContentsView, clipboard, session, shell } from "electron";
+import { app, WebContentsView, clipboard, dialog, session, shell } from "electron";
 import { runDetachedTask } from "./process-resilience.mjs";
+
+import { createWebMcpBroker } from "./webmcp-host.mjs";
+import { createWebMcpFramePolicy } from "./webmcp-policy.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const BROWSER_SESSION_PARTITION = "persist:openwork-browser";
@@ -21,6 +24,19 @@ const MENU_OVERLAY_HEIGHT = 176;
 const MENU_OVERLAY_READY_TIMEOUT_MS = 2000;
 
 export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink }) {
+  let browserSession = null;
+  let webMcpFramePolicy = null;
+  function ensureBrowserSession() {
+    if (!browserSession) browserSession = session.fromPartition(BROWSER_SESSION_PARTITION);
+    return browserSession;
+  }
+  function ensureWebMcpFramePolicy() {
+    if (!webMcpFramePolicy) {
+      webMcpFramePolicy = createWebMcpFramePolicy(ensureBrowserSession());
+      webMcpFramePolicy.install();
+    }
+    return webMcpFramePolicy;
+  }
   const browserTabs = new Map();
   let browserTabOrder = [];
   let activeBrowserTabId = null;
@@ -36,6 +52,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink }) {
   let menuOverlayReady = false;
   let menuOverlayReadyResolvers = [];
   let menuOverlayShowSerial = 0;
+  const webMcpRefreshTimers = new Map();
 
   function window() {
     return getWindow?.() ?? null;
@@ -208,6 +225,9 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink }) {
       status: isLoading ? "loading" : "ready",
       canGoBack: webContents.canGoBack(),
       canGoForward: webContents.canGoForward(),
+      siteToolCount: Number.isInteger(tab.webMcpToolCount) ? tab.webMcpToolCount : 0,
+      siteTools: Array.isArray(tab.webMcpTools) ? tab.webMcpTools : [],
+      siteToolActivity: Array.isArray(tab.webMcpActivity) ? tab.webMcpActivity : [],
     };
   }
 
@@ -455,8 +475,70 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink }) {
     };
   }
 
+  async function confirmWebMcpExecution({ tool, inputSummary }) {
+    /** @type {import("electron").MessageBoxOptions} */
+    const options = {
+      type: "warning",
+      buttons: ["Cancel", "Allow once"],
+      defaultId: 0,
+      cancelId: 0,
+      noLink: true,
+      title: "Allow website action?",
+      message: `Allow ${tool.origin} to run “${tool.name}”?`,
+      detail: `This tool was supplied by the website and may change data or trigger an external action.\n\nArguments:\n${inputSummary}`,
+    };
+    const mainWindow = window();
+    const result = mainWindow && !mainWindow.isDestroyed()
+      ? await dialog.showMessageBox(mainWindow, options)
+      : await dialog.showMessageBox(options);
+    return result.response === 1;
+  }
+
+  const webMcpBroker = createWebMcpBroker({
+    getTab: (tabId) => getBrowserTab(tabId),
+    getActiveTabId: () => activeBrowserTabId,
+    confirmExecution: confirmWebMcpExecution,
+    isFrameAllowed: (frame) => ensureWebMcpFramePolicy().checkFrame(frame),
+    onActivity: (activity) => {
+      const tab = getBrowserTab(activity.tabId);
+      if (!tab) return;
+      tab.webMcpActivity = [activity, ...(tab.webMcpActivity ?? [])].slice(0, 20);
+      sendBrowserState();
+    },
+    onToolCountChanged: (tabId, count) => {
+      const tab = getBrowserTab(tabId);
+      if (!tab) return;
+      tab.webMcpToolCount = count;
+      sendBrowserState();
+    },
+    onToolsChanged: (tabId, tools) => {
+      const tab = getBrowserTab(tabId);
+      if (!tab) return;
+      tab.webMcpTools = tools;
+      tab.webMcpToolCount = tools.length;
+      sendBrowserState();
+    },
+  });
+
+  function scheduleWebMcpToolCountRefresh(tabId) {
+    if (!tabId || webMcpRefreshTimers.has(tabId)) return;
+    const timer = setTimeout(() => {
+      webMcpRefreshTimers.delete(tabId);
+      void webMcpBroker.refreshTabToolCount(tabId);
+    }, 250);
+    webMcpRefreshTimers.set(tabId, timer);
+  }
+
+  function invalidateWebMcpTab(tab) {
+    if (!tab) return;
+    tab.webMcpRevision = (Number.isInteger(tab.webMcpRevision) ? tab.webMcpRevision : 0) + 1;
+    tab.webMcpToolCount = 0;
+    tab.webMcpTools = [];
+    webMcpBroker.invalidateTab(tab.tabId);
+  }
+
   async function setBrowserProxy(proxyInput) {
-    const browserSession = session.fromPartition(BROWSER_SESSION_PARTITION);
+    const browserSession = ensureBrowserSession();
     const parsed = parseBrowserProxyInput(proxyInput);
     if (parsed) {
       await browserSession.setProxy({ proxyRules: parsed.rules, proxyBypassRules: "<local>" });
@@ -476,6 +558,9 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink }) {
   });
 
   function createBrowserTab(url = "about:blank", { select = true, initializeBlank = true } = {}) {
+    // Browser tabs are created only after Electron is ready. Install the
+    // response-header observer before the first external navigation begins.
+    ensureWebMcpFramePolicy();
     const tabId = createBrowserTabId();
     const view = new WebContentsView({
       webPreferences: {
@@ -483,11 +568,20 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink }) {
         sandbox: true,
         contextIsolation: true,
         nodeIntegration: false,
+        nodeIntegrationInSubFrames: true,
         preload: path.join(__dirname, "browser-content-preload.cjs"),
         partition: BROWSER_SESSION_PARTITION,
       },
     });
-    const tab = { tabId, view, favicon: null };
+    const tab = {
+      tabId,
+      view,
+      favicon: null,
+      webMcpRevision: 0,
+      webMcpToolCount: 0,
+      webMcpTools: [],
+      webMcpActivity: [],
+    };
     browserTabs.set(tabId, tab);
     browserTabOrder.push(tabId);
     // Load about:blank immediately to preempt persistent-session restore.
@@ -502,6 +596,10 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink }) {
       return { action: "deny" };
     });
     view.webContents.on("did-start-navigation", (_event, targetUrl, isInPlace, isMainFrame) => {
+      if (!isInPlace) {
+        invalidateWebMcpTab(tab);
+        sendBrowserState();
+      }
       if (!isMainFrame || isInPlace) return;
       const target = String(targetUrl ?? "");
       // data: loads are internal plumbing (CDP target-marker pages), not
@@ -546,8 +644,15 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink }) {
       sendBrowserState();
     });
     view.webContents.on("did-start-loading", () => sendBrowserState());
-    view.webContents.on("did-stop-loading", () => sendBrowserState());
+    view.webContents.on("did-stop-loading", () => {
+      sendBrowserState();
+      scheduleWebMcpToolCountRefresh(tabId);
+    });
     view.webContents.once("destroyed", () => {
+      webMcpBroker.invalidateTab(tabId);
+      const refreshTimer = webMcpRefreshTimers.get(tabId);
+      if (refreshTimer) clearTimeout(refreshTimer);
+      webMcpRefreshTimers.delete(tabId);
       browserTabs.delete(tabId);
       browserTabOrder = browserTabOrder.filter((id) => id !== tabId);
       if (activeBrowserTabId === tabId) activeBrowserTabId = browserTabOrder[0] ?? null;
@@ -644,6 +749,10 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink }) {
     const closingIndex = browserTabOrder.indexOf(tabId);
     const wasActive = activeBrowserTabId === tabId;
     detachBrowserView(tab.view);
+    webMcpBroker.invalidateTab(tabId);
+    const refreshTimer = webMcpRefreshTimers.get(tabId);
+    if (refreshTimer) clearTimeout(refreshTimer);
+    webMcpRefreshTimers.delete(tabId);
     browserTabs.delete(tabId);
     browserTabOrder = browserTabOrder.filter((id) => id !== tabId);
     if (wasActive) {
@@ -671,6 +780,12 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink }) {
     const tabsToClose = closedTabIds
       .map((tabId) => browserTabs.get(tabId))
       .filter(Boolean);
+    for (const tabId of closedTabIds) {
+      webMcpBroker.invalidateTab(tabId);
+      const refreshTimer = webMcpRefreshTimers.get(tabId);
+      if (refreshTimer) clearTimeout(refreshTimer);
+      webMcpRefreshTimers.delete(tabId);
+    }
     hideBrowserView();
     browserTabs.clear();
     browserTabOrder = [];
@@ -744,8 +859,11 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink }) {
     menuOverlayRequest = null;
     try { overlayView?.webContents.close(); } catch { /* already destroyed */ }
     for (const tab of browserTabs.values()) {
+      webMcpBroker.invalidateTab(tab.tabId);
       try { tab.view.webContents.close(); } catch { /* already destroyed */ }
     }
+    for (const timer of webMcpRefreshTimers.values()) clearTimeout(timer);
+    webMcpRefreshTimers.clear();
     browserTabs.clear();
     browserTabOrder = [];
     activeBrowserTabId = null;
@@ -788,6 +906,15 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink }) {
     ipcMain.handle("openwork:browser:selectTab", (_event, tabId) => selectBrowserTab(String(tabId ?? "")).tabId);
     ipcMain.handle("openwork:browser:reorderTabs", (_event, tabIds) => reorderBrowserTabs(tabIds));
     ipcMain.handle("openwork:browser:listTabs", () => listBrowserTabs());
+    ipcMain.handle("openwork:browser:webmcpListTools", (_event, args) => webMcpBroker.listTools(args));
+    ipcMain.handle("openwork:browser:webmcpExecuteTool", (_event, args) => webMcpBroker.executeTool(args));
+    ipcMain.handle("openwork:webmcp:frame-policy", (event, runtimePolicy) => {
+      const tab = [...browserTabs.values()].find((candidate) => candidate.view.webContents === event.sender);
+      if (!tab || !event.senderFrame) {
+        return { allowed: false, originKeyed: false, reason: "unknown_browser_frame" };
+      }
+      return ensureWebMcpFramePolicy().checkFrame(event.senderFrame, runtimePolicy);
+    });
     ipcMain.handle("openwork:browser:setProxy", (_event, proxy) => setBrowserProxy(proxy));
     ipcMain.handle("openwork:browser:getProxy", () => browserProxyState());
     ipcMain.handle("openwork:browser:tabContextMenu", (_event, tabId, point) => showBrowserTabContextMenu(tabId, point));
@@ -809,11 +936,18 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink }) {
       if (event.sender === menuOverlayView?.webContents) return;
       hideMenuOverlay();
     });
+    ipcMain.on("openwork:webmcp:tools-changed", (event) => {
+      const tab = [...browserTabs.values()].find((candidate) => candidate.view.webContents === event.sender);
+      if (!tab) return;
+      scheduleWebMcpToolCountRefresh(tab.tabId);
+    });
   }
 
   return {
     destroy: destroyBrowserView,
     isMainWindowAllowedNavigation,
+    listWebMcpTools: (args) => webMcpBroker.listTools(args),
+    executeWebMcpTool: (args, options) => webMcpBroker.executeTool(args, options),
     registerIpc,
     routeBlockedMainWindowNavigation,
   };

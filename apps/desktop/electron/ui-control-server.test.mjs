@@ -11,6 +11,11 @@ test("UI control commands never activate the desktop window implicitly", async (
 
   assert.match(source, /webContents\.executeJavaScript/);
   assert.doesNotMatch(source, /\bwin\.(?:show|restore|focus)\(/);
+  assert.match(source, /\/webmcp\/tools/);
+  assert.match(source, /\/webmcp\/execute/);
+  assert.ok(source.includes(
+    "await executeWebMcpTool(await readJsonRequestBody(request), { signal: controller.signal })",
+  ));
 });
 
 test("UI control failures are logged locally without exposing exception details", async () => {
@@ -24,6 +29,8 @@ test("UI control failures are logged locally without exposing exception details"
     appName: "OpenWork",
     appIdentifier: "com.differentai.openwork",
     getWindow: async () => { throw failure; },
+    listWebMcpTools: () => ({ ok: false, error: "The built-in browser is not ready." }),
+    executeWebMcpTool: () => ({ ok: false, error: "The built-in browser is not ready." }),
   });
 
   try {

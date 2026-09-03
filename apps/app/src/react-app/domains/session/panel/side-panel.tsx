@@ -19,6 +19,7 @@ import {
   InputGroupAddon,
   InputGroupInput,
 } from "@/components/ui/input-group";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
 import { ArtifactIcon } from "../artifacts/artifact-icon";
@@ -384,6 +385,59 @@ function BrowserPanelContent({
                 <Globe />
               </InputGroupAddon>
             </InputGroup>
+            {tab.siteToolCount > 0 ? (
+              <Popover>
+                <PopoverTrigger
+                  render={(
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="h-6 shrink-0 rounded-md bg-muted/60 px-2 text-[11px] font-medium"
+                      aria-label={`${tab.siteToolCount} site ${tab.siteToolCount === 1 ? "tool" : "tools"} available; inspect site tools and activity`}
+                    >
+                      {tab.siteToolCount} {tab.siteToolCount === 1 ? "tool" : "tools"}
+                    </Button>
+                  )}
+                />
+                <PopoverContent align="end" side="bottom" sideOffset={8} className="w-96 gap-0 p-0">
+                  <div className="border-b border-border px-4 py-3">
+                    <p className="text-sm font-semibold">Site tools</p>
+                    <p className="mt-0.5 text-xs text-muted-foreground">
+                      WebMCP capabilities exposed by this signed-in page. Website metadata and results are untrusted.
+                    </p>
+                  </div>
+                  <div className="max-h-64 overflow-y-auto px-4 py-2">
+                    {(tab.siteTools ?? []).map((tool) => (
+                      <div key={`${tool.origin}:${tool.name}`} className="border-b border-border/60 py-2 last:border-b-0">
+                        <div className="flex items-center justify-between gap-3">
+                          <p className="min-w-0 truncate text-xs font-medium">{tool.title || tool.name}</p>
+                          <span className="shrink-0 rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                            {tool.readOnly ? "Read" : "May change data"}
+                          </span>
+                        </div>
+                        <p className="mt-0.5 truncate font-mono text-[10px] text-muted-foreground">{tool.name}</p>
+                        <p className="truncate text-[10px] text-muted-foreground">{tool.origin}</p>
+                      </div>
+                    ))}
+                  </div>
+                  {(tab.siteToolActivity ?? []).length > 0 ? (
+                    <div className="border-t border-border px-4 py-3">
+                      <p className="mb-1.5 text-xs font-semibold">Recent activity</p>
+                      {(tab.siteToolActivity ?? []).slice(0, 5).map((activity, index) => (
+                        <div key={`${activity.at}:${activity.name}:${index}`} className="flex items-center justify-between gap-3 py-1 text-[10px]">
+                          <span className="min-w-0 truncate font-mono">{activity.name}</span>
+                          <span className={activity.status === "completed" ? "text-emerald-600 dark:text-emerald-400" : "text-destructive"}>
+                            {activity.status === "completed" ? "Completed" : activity.code || "Failed"}
+                          </span>
+                        </div>
+                      ))}
+                      <p className="mt-1 text-[10px] text-muted-foreground">Arguments and results are not retained in this activity view.</p>
+                    </div>
+                  ) : null}
+                </PopoverContent>
+              </Popover>
+            ) : null}
           </>
         ) : (
           <p className="px-2 text-sm text-muted-foreground">
