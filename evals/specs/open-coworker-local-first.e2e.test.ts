@@ -511,7 +511,7 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
     return { afterEscape, afterOpen, afterEdge, finalCollapsed: panel.dataset.collapsed };
   })()`, { awaitPromise: true, timeoutMs: 30_000 });
   expect(transientPanel).toEqual({
-    afterEscape: { collapsed: "true", width: 56, stripIcons: 4 },
+    afterEscape: { collapsed: "true", width: 56, stripIcons: 6 },
     afterOpen: { collapsed: "false", view: "overview", stripIcons: 0 },
     afterEdge: { collapsed: "true", width: 56 },
     finalCollapsed: "false",
