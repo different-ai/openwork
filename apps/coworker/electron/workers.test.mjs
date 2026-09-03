@@ -186,7 +186,7 @@ test("the worker prompt frame names the goal, the lifespan, and the reporting co
   assert.match(prompt, /section titled "Finding"/);
   assert.match(prompt, /section titled "Needs a decision"/);
   assert.match(prompt, /section titled "Done"/);
-  assert.match(prompt, /never start, steer, or stop Workers \(the worker tools are Nova's\)/);
+  assert.match(prompt, /never start, steer, or stop Workers, never set up or change assignments, and never change Nova's memory or soul \(those tools are Nova's\)/);
   assert.ok(prompt.endsWith("Begin working toward the goal now."));
   assert.equal(
     steerBody([{ by: "coworker", text: "Skip vendor C." }, { by: "person", text: "Add vendor D." }], "Nova"),
