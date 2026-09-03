@@ -3,6 +3,7 @@ import {
   buildGatewayProviderConfig,
   buildProviderConfigSnapshot,
   isSupportedGatewayNpm,
+  upstreamBaseUrlSettingError,
 } from "../src/llm/inference-provider-config.js"
 
 const baseUrl = "https://inference.example.test/"
@@ -115,4 +116,18 @@ test("isSupportedGatewayNpm accepts the proxied SDK families and rejects Bedrock
   expect(isSupportedGatewayNpm("@ai-sdk/amazon-bedrock")).toBe(false)
   expect(isSupportedGatewayNpm("@ai-sdk/mistral")).toBe(false)
   expect(isSupportedGatewayNpm(null)).toBe(false)
+})
+
+test("upstreamBaseUrlSettingError accepts absent or clean http(s) URLs and rejects everything else", () => {
+  expect(upstreamBaseUrlSettingError({})).toBeNull()
+  expect(upstreamBaseUrlSettingError({ project: "p" })).toBeNull()
+  expect(upstreamBaseUrlSettingError({ upstreamBaseUrl: "https://eu.anthropic.example/v1" })).toBeNull()
+  expect(upstreamBaseUrlSettingError({ upstreamBaseUrl: "http://127.0.0.1:4321/v1" })).toBeNull()
+
+  expect(upstreamBaseUrlSettingError({ upstreamBaseUrl: "" })).toContain("non-empty")
+  expect(upstreamBaseUrlSettingError({ upstreamBaseUrl: 42 })).toContain("non-empty")
+  expect(upstreamBaseUrlSettingError({ upstreamBaseUrl: "not a url" })).toContain("absolute URL")
+  expect(upstreamBaseUrlSettingError({ upstreamBaseUrl: "ftp://files.example/v1" })).toContain("http or https")
+  expect(upstreamBaseUrlSettingError({ upstreamBaseUrl: "https://user:pw@host.example/v1" })).toContain("credentials")
+  expect(upstreamBaseUrlSettingError({ upstreamBaseUrl: "https://host.example/v1?key=x" })).toContain("credentials")
 })

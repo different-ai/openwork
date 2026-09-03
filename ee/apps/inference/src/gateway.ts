@@ -143,6 +143,10 @@ function gatewayError(status: number, code: string, message: string, extra: Json
 }
 
 function readBaseUrl(provider: GatewayProvider, catalog: CatalogProvider | null, family: ProtocolFamily) {
+  // Org-configured override (regional host / compatible self-hosted endpoint,
+  // plan §4.1). den-api validates it as a clean http(s) URL at write time.
+  const override = provider.settings.upstreamBaseUrl
+  if (typeof override === "string" && override) return override
   const config = provider.provider_config
   const options = isJsonObject(config.options) ? config.options : null
   if (options && typeof options.baseURL === "string" && options.baseURL) return options.baseURL

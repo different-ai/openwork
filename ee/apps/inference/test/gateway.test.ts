@@ -363,6 +363,32 @@ test("provider_config options.baseURL overrides the catalog base", async () => {
   assert.equal(upstream.url, "https://router.internal/v1/chat/completions")
 })
 
+test("settings.upstreamBaseUrl overrides both provider_config.options.baseURL and the catalog base", async () => {
+  const { app, upstreamRequests, logRows } = createTestServer({
+    provider: {
+      provider_id: "anthropic",
+      provider_config: { npm: "@ai-sdk/anthropic", options: { baseURL: "https://api.anthropic.com/v1" } },
+      settings: { upstreamBaseUrl: "http://127.0.0.1:4321/fake-anthropic/v1/" },
+    },
+  })
+  const response = await app.fetch(gatewayRequest({ path: "/messages", body: { model: "claude-sonnet-4-5", messages: [] } }))
+  assert.equal(response.status, 200)
+  const upstream = upstreamRequests[0]
+  assert.ok(upstream)
+  assert.equal(upstream.url, "http://127.0.0.1:4321/fake-anthropic/v1/messages")
+  assert.equal(upstream.headers.get("x-api-key"), "upstream-secret")
+  const row = await waitForRows(logRows)
+  assert.equal(row.upstream_host, "127.0.0.1")
+  assert.equal(row.upstream_path, "/fake-anthropic/v1/messages")
+
+  // Negative half: a non-string or empty override is ignored, not treated as a base.
+  const ignored = createTestServer({
+    provider: { provider_id: "anthropic", provider_config: { npm: "@ai-sdk/anthropic" }, settings: { upstreamBaseUrl: "" } },
+  })
+  await ignored.app.fetch(gatewayRequest({ path: "/messages", body: { model: "claude-sonnet-4-5", messages: [] } }))
+  assert.equal(ignored.upstreamRequests[0]?.url, "https://api.anthropic.com/v1/messages")
+})
+
 test("google: x-goog-api-key auth, key query stripped, alt=sse preserved, model from path, stream usage", async () => {
   const { app, upstreamRequests, logRows } = createTestServer({
     provider: { provider_id: "google", provider_config: { npm: "@ai-sdk/google" } },

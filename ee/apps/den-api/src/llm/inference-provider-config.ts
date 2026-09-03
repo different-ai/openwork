@@ -49,6 +49,36 @@ export function readProviderConfigNpm(providerConfig: JsonRecord): string | null
   return typeof providerConfig.npm === "string" && providerConfig.npm.trim() ? providerConfig.npm : null
 }
 
+/**
+ * `settings.upstreamBaseUrl` (plan §4.1 "upstream base override") lets an
+ * organization point the gateway at a regional host or a compatible
+ * self-hosted endpoint instead of the catalog default. Non-secret; validated
+ * here so a malformed value fails at create/update time rather than per
+ * request. Returns the error message, or null when absent or valid.
+ */
+export function upstreamBaseUrlSettingError(settings: JsonRecord): string | null {
+  const value = settings.upstreamBaseUrl
+  if (value === undefined) {
+    return null
+  }
+  if (typeof value !== "string" || !value.trim()) {
+    return "settings.upstreamBaseUrl must be a non-empty http(s) URL."
+  }
+  let url: URL
+  try {
+    url = new URL(value)
+  } catch {
+    return "settings.upstreamBaseUrl must be a valid absolute URL."
+  }
+  if (url.protocol !== "https:" && url.protocol !== "http:") {
+    return "settings.upstreamBaseUrl must use http or https."
+  }
+  if (url.username || url.password || url.search || url.hash) {
+    return "settings.upstreamBaseUrl must not carry credentials, a query string, or a fragment."
+  }
+  return null
+}
+
 export function gatewayProviderUrl(baseUrl: string, inferenceProviderId: string) {
   return `${baseUrl.replace(/\/+$/, "")}/api/v1/providers/${inferenceProviderId}`
 }
