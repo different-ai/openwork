@@ -1043,7 +1043,7 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   ]);
   await fill(app, 'input[placeholder="Morning competitor report"]', "Local readiness check");
   await fill(app, 'textarea[placeholder="What should happen on every run?"]', "Reply with exactly LOCAL RESPONSIBILITY READY. Do not use tools.");
-  await clickButton(app, "Create assignment");
+  await clickButton(app, "Schedule assignment");
   await waitForText(app, "Local readiness check", { timeoutMs: 30_000 });
   // The row is one plain line a person can read at a glance; the where and the details wait behind it.
   const responsibilityRow = String(await evalIn(app, `document.querySelector('[data-testid="responsibility-row"]')?.innerText ?? ""`));
