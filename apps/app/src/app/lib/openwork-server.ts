@@ -54,6 +54,8 @@ export type OpenworkCloudProviderSyncSkippedProvider = {
   name: string;
   /** Machine-readable skip reason, e.g. "missing_credentials". */
   reason: string;
+  /** `member_auth_required` gateway providers: Den URL that starts the member's OAuth grant. */
+  authUrl?: string | null;
 };
 
 export type OpenworkCloudProviderSyncStatus = {
@@ -133,6 +135,7 @@ function parseCloudProviderSyncStatus(value: unknown): OpenworkCloudProviderSync
         providerId: raw.providerId,
         name: raw.name,
         reason: raw.reason,
+        ...("authUrl" in raw && typeof raw.authUrl === "string" ? { authUrl: raw.authUrl } : {}),
       });
     }
   }

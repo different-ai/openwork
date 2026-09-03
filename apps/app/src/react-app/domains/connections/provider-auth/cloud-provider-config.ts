@@ -120,6 +120,76 @@ export const OPENWORK_GATEWAY_BADGE_LABEL = "via OpenWork Gateway";
  * Runtime provider ids whose sync status reports the OpenWork inference
  * gateway as source — the UI badges these "via OpenWork Gateway".
  */
+/**
+ * A gateway provider the server sync skipped because this member has not yet
+ * authorized their own account (`member_auth_required`). Rendered as a
+ * "Connect" row in Settings > AI providers and the model picker.
+ */
+export type GatewayConnectProvider = {
+  cloudProviderId: string;
+  providerId: string;
+  name: string;
+  /** Den's OAuth start URL; null on older Den servers that do not return one. */
+  authUrl: string | null;
+};
+
+export const GATEWAY_MEMBER_AUTH_REQUIRED_REASON = "member_auth_required";
+
+/** Copy shown under a gateway provider that still needs the member's sign-in. */
+export const gatewayConnectCopy = (name: string) => `Sign in to ${name} to use it`;
+
+/** Skipped sync entries that need the member's own sign-in, in server order. */
+export const resolveGatewayConnectProviders = (
+  skippedProviders:
+    | Record<string, { cloudProviderId: string; providerId: string; name: string; reason: string; authUrl?: string | null }>
+    | undefined
+    | null,
+): GatewayConnectProvider[] =>
+  Object.values(skippedProviders ?? {})
+    .filter((provider) => provider.reason === GATEWAY_MEMBER_AUTH_REQUIRED_REASON)
+    .map((provider) => ({
+      cloudProviderId: provider.cloudProviderId,
+      providerId: provider.providerId,
+      name: provider.name,
+      authUrl: provider.authUrl ?? null,
+    }));
+
+export const GATEWAY_CONNECT_POLL_INTERVAL_MS = 10_000;
+export const GATEWAY_CONNECT_POLL_ATTEMPTS = 6;
+
+/**
+ * Opens the member's OAuth start URL in the system browser, then re-syncs cloud
+ * providers a few times (~60s by default) so the provider appears once the
+ * member finishes the grant in the browser. Stops early when `isConnected`
+ * reports the provider is no longer waiting on sign-in.
+ */
+export async function connectGatewayProvider(input: {
+  provider: GatewayConnectProvider;
+  openUrl: (url: string) => void | Promise<void>;
+  resync: () => Promise<unknown>;
+  /** Whether the provider is now materialized (sync no longer skips it). */
+  isConnected: () => boolean;
+  wait?: (ms: number) => Promise<void>;
+  pollIntervalMs?: number;
+  attempts?: number;
+}): Promise<boolean> {
+  if (!input.provider.authUrl) return false;
+  await input.openUrl(input.provider.authUrl);
+  const wait = input.wait ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+  const attempts = input.attempts ?? GATEWAY_CONNECT_POLL_ATTEMPTS;
+  const interval = input.pollIntervalMs ?? GATEWAY_CONNECT_POLL_INTERVAL_MS;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    await wait(interval);
+    try {
+      await input.resync();
+    } catch {
+      // A failed poll is not fatal: the next scheduled sync will pick it up.
+    }
+    if (input.isConnected()) return true;
+  }
+  return input.isConnected();
+}
+
 export const resolveGatewayProviderIds = (
   importedCloudProviders: Record<string, Pick<CloudImportedProvider, "providerId" | "source">> | undefined,
 ): Set<string> =>

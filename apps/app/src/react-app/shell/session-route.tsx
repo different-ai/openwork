@@ -131,7 +131,13 @@ import { sendWithRevertRollback } from "@/react-app/domains/session/surface/safe
 import { CreateRemoteWorkspaceModal } from "@/react-app/domains/workspace/create-remote-workspace-modal";
 import { CreateWorkspaceModal } from "@/react-app/domains/workspace/create-workspace-modal";
 import type { CreateWorkspaceOptions } from "@/react-app/domains/workspace/types";
-import { isCloudManagedProviderKey, resolveGatewayProviderIds } from "@/react-app/domains/connections/provider-auth/cloud-provider-config";
+import {
+  connectGatewayProvider,
+  type GatewayConnectProvider,
+  isCloudManagedProviderKey,
+  resolveGatewayConnectProviders,
+  resolveGatewayProviderIds,
+} from "@/react-app/domains/connections/provider-auth/cloud-provider-config";
 import { assignedModelOptions } from "@/react-app/domains/connections/provider-auth/assigned-model-options";
 import {
   filterEntitledModelOptions,
@@ -848,6 +854,21 @@ export function SessionRoute() {
     () => resolveGatewayProviderIds(sessionProviderAuthSnapshot.importedCloudProviders),
     [sessionProviderAuthSnapshot.importedCloudProviders],
   );
+  const gatewayConnectProviders = useMemo(
+    () => resolveGatewayConnectProviders(sessionProviderAuthSnapshot.cloudProviderServerSync?.skippedProviders),
+    [sessionProviderAuthSnapshot.cloudProviderServerSync?.skippedProviders],
+  );
+  const handleConnectGatewayProvider = useCallback(async (provider: GatewayConnectProvider) => {
+    await connectGatewayProvider({
+      provider,
+      openUrl: (url) => platform.openLink(url),
+      resync: () => refreshCloudProviderSync("manual"),
+      isConnected: () => {
+        const skipped = sessionProviderAuthStore.getSnapshot().cloudProviderServerSync?.skippedProviders;
+        return skipped !== undefined && !(provider.cloudProviderId in skipped);
+      },
+    });
+  }, [platform, refreshCloudProviderSync, sessionProviderAuthStore]);
   const refreshOrganizationModelAccess = useCallback(async () => {
     await refreshCloudProviderSync("manual");
   }, [refreshCloudProviderSync]);
@@ -3515,6 +3536,8 @@ export function SessionRoute() {
       }}
       disabledProviders={disabledProviderIds}
       gatewayProviderIds={gatewayProviderIds}
+      gatewayConnectProviders={gatewayConnectProviders}
+      onConnectGatewayProvider={handleConnectGatewayProvider}
       onBehaviorChange={() => {}}
       onToggleProvider={async (providerId, enable) => {
         if (!opencodeClient) return;

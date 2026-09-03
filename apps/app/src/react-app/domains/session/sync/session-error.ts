@@ -3,7 +3,7 @@ import type { UIMessage } from "ai";
 import { safeStringify } from "../../../../app/utils";
 import { normalizeErrorText } from "../../../../lib/error-text";
 
-export type OpencodeSessionErrorKind = "aborted" | "provider-timeout" | "generic";
+export type OpencodeSessionErrorKind = "aborted" | "provider-timeout" | "gateway-auth-required" | "generic";
 
 export type OpencodeSessionErrorPresentation = {
   kind: OpencodeSessionErrorKind;
@@ -11,7 +11,17 @@ export type OpencodeSessionErrorPresentation = {
   description: string | null;
   technicalDetails: string;
   recoveryPrompt: string | null;
+  /**
+   * `gateway-auth-required` only: the OpenWork Gateway's OAuth start URL for
+   * this member (`error.auth_url` in the 401 body). Null when the body omitted
+   * it — the renderer then deep-links to Settings > AI providers. Additive.
+   */
+  connectUrl?: string | null;
 };
+
+/** Error code the OpenWork inference gateway returns when the member's own sign-in is missing or revoked. */
+export const GATEWAY_AUTH_REQUIRED_ERROR_CODE = "openwork_auth_required";
+export const GATEWAY_AUTH_REQUIRED_TITLE = "Sign in to this OpenWork Gateway provider to keep using it";
 
 export const interruptedTaskRecoveryPrompt = [
   "Continue the interrupted task from the current state.",
@@ -75,17 +85,56 @@ function sessionErrorKind(name: string | null, message: string | null, code: str
 function errorTitle(kind: OpencodeSessionErrorKind, fallback: string) {
   if (kind === "aborted") return "Task interrupted";
   if (kind === "provider-timeout") return "Provider did not respond in time";
+  if (kind === "gateway-auth-required") return GATEWAY_AUTH_REQUIRED_TITLE;
   return fallback;
 }
 
-function errorDescription(kind: OpencodeSessionErrorKind) {
+function errorDescription(kind: OpencodeSessionErrorKind, gatewayAuth: GatewayAuthRequired | null) {
   if (kind === "aborted") {
     return "OpenCode stopped before the task finished. Output and files already produced are kept.";
   }
   if (kind === "provider-timeout") {
     return "The provider connection timed out before a response began. Output and files already produced are kept.";
   }
+  if (kind === "gateway-auth-required") {
+    return gatewayAuth?.message ?? "Your sign-in for this provider is missing or was revoked. Connect it again, then retry.";
+  }
   return null;
+}
+
+type GatewayAuthRequired = { connectUrl: string | null; message: string | null };
+
+/**
+ * Detects the gateway's in-band `401 { error: { code: "openwork_auth_required",
+ * message, auth_url?, provider_id } }`. The body reaches us as a string on
+ * whichever field the SDK error exposes (message / responseBody / cause), so
+ * match the code anywhere and pull the URL and message out tolerantly.
+ */
+function detectGatewayAuthRequired(error: unknown, fields: { message: string | null; code: string | null; responseBody: string | null }): GatewayAuthRequired | null {
+  const haystack = [fields.message, fields.responseBody, safeStringify(error)].filter(Boolean).join("\n");
+  if (!haystack.includes(GATEWAY_AUTH_REQUIRED_ERROR_CODE)) return null;
+  for (const candidate of [fields.responseBody, fields.message]) {
+    if (!candidate) continue;
+    const start = candidate.indexOf("{");
+    if (start < 0) continue;
+    try {
+      const parsed: unknown = JSON.parse(candidate.slice(start));
+      const body = recordValue(parsed, "error");
+      if (recordValue(body, "code") !== GATEWAY_AUTH_REQUIRED_ERROR_CODE) continue;
+      const url = firstStringValue([body], ["auth_url", "authUrl"]);
+      return {
+        connectUrl: url && /^https?:\/\//.test(url) ? url : null,
+        message: firstStringValue([body], ["message"]),
+      };
+    } catch {
+      // Not a clean JSON body: fall through to the regex extraction below.
+    }
+  }
+  const match = /"auth_?[uU]rl"\s*:\s*"(https?:\/\/[^"\\]+)"/.exec(haystack);
+  return {
+    connectUrl: match?.[1] ?? null,
+    message: fields.code === GATEWAY_AUTH_REQUIRED_ERROR_CODE ? fields.message : null,
+  };
 }
 
 function errorRecoveryPrompt(kind: OpencodeSessionErrorKind) {
@@ -179,14 +228,16 @@ function technicalErrorDetails(error: unknown, fallback: string, fields: ReturnT
 
 export function presentOpencodeSessionError(error: unknown, fallback = "Session failed"): OpencodeSessionErrorPresentation {
   const fields = sessionErrorFields(error, fallback);
-  const kind = sessionErrorKind(fields.name, fields.message, fields.code);
+  const gatewayAuth = detectGatewayAuthRequired(error, fields);
+  const kind = gatewayAuth ? "gateway-auth-required" : sessionErrorKind(fields.name, fields.message, fields.code);
   const fallbackTitle = normalizeSessionError(fields.message ?? defaultErrorMessage(fields.name, fallback));
   return {
     kind,
     title: errorTitle(kind, fallbackTitle),
-    description: errorDescription(kind),
+    description: errorDescription(kind, gatewayAuth),
     technicalDetails: technicalErrorDetails(error, fallback, fields),
     recoveryPrompt: errorRecoveryPrompt(kind),
+    ...(gatewayAuth ? { connectUrl: gatewayAuth.connectUrl } : {}),
   };
 }
 
@@ -212,7 +263,8 @@ export function sessionErrorPresentationFromUIMessage(message: UIMessage): Openc
     typeof candidate.title !== "string" ||
     !(typeof candidate.description === "string" || candidate.description === null) ||
     typeof candidate.technicalDetails !== "string" ||
-    !(typeof candidate.recoveryPrompt === "string" || candidate.recoveryPrompt === null)
+    !(typeof candidate.recoveryPrompt === "string" || candidate.recoveryPrompt === null) ||
+    !(candidate.connectUrl === undefined || candidate.connectUrl === null || typeof candidate.connectUrl === "string")
   ) {
     return null;
   }

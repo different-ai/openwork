@@ -485,6 +485,7 @@ describe("cloud provider sync gateway", () => {
       providerId: "openai",
       credentialMode: "member",
       credentialStatus: "member_auth_required",
+      authUrl: "https://den.example.test/v1/inference-providers/ipr_pending/oauth/start",
       providerConfig: { env: ["OPENAI_API_KEY"], npm: "@ai-sdk/openai" },
     };
     let inferenceEndpointMissing = false;
@@ -544,6 +545,7 @@ describe("cloud provider sync gateway", () => {
       providerId: "ipr_pending",
       name: "Member OpenAI",
       reason: "member_auth_required",
+      authUrl: "https://den.example.test/v1/inference-providers/ipr_pending/oauth/start",
     }]);
 
     const runtimeProviders = runtimeProviderMap(await readGlobalRuntimeOpencodeConfig(config));

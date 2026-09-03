@@ -808,6 +808,7 @@ const MessageComponent = React.memo(
         <ErrorMessage
           error={getMessagesText([message]) || "Session failed"}
           resumePrompt={presentation?.recoveryPrompt}
+          gatewayConnectUrl={presentation?.kind === "gateway-auth-required" ? presentation.connectUrl ?? null : undefined}
         />
       )
     }
@@ -900,10 +901,16 @@ interface ErrorMessageProps {
   error: string | null
   /** Set only for interrupted runs (aborted / provider timeout) that can resume. */
   resumePrompt?: string | null
+  /**
+   * Set (possibly null) only when the OpenWork Gateway rejected the request
+   * because the member must sign in: a URL opens the grant in the browser,
+   * null deep-links to Settings > AI providers instead.
+   */
+  gatewayConnectUrl?: string | null
 }
 
-function ErrorMessage({ error, resumePrompt }: ErrorMessageProps) {
-  const { onResumeInterrupted } = useMessageList()
+function ErrorMessage({ error, resumePrompt, gatewayConnectUrl }: ErrorMessageProps) {
+  const { onResumeInterrupted, dispatchAction } = useMessageList()
 
   // A resumable interruption is a pause, not a failure: it renders as a
   // quiet status line (like "Working 12s"), with Resume as the emphasis.
@@ -938,6 +945,23 @@ function ErrorMessage({ error, resumePrompt }: ErrorMessageProps) {
             <AlertTriangle aria-hidden="true" size={16} className="mt-0.5 shrink-0 text-destructive" />
             <p className="whitespace-pre-wrap text-destructive">{error}</p>
           </div>
+          {gatewayConnectUrl !== undefined ? (
+            <Button
+              variant="outline"
+              size="sm"
+              data-testid="session-error-gateway-connect"
+              className="self-start"
+              onClick={() => {
+                if (gatewayConnectUrl) {
+                  void openDesktopUrl(gatewayConnectUrl)
+                  return
+                }
+                dispatchAction({ target: "settings", action: "open", section: "providers" })
+              }}
+            >
+              Connect
+            </Button>
+          ) : null}
         </div>
       </div>
     </Message>

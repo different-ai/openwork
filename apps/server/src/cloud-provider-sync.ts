@@ -62,6 +62,12 @@ export type CloudProviderSyncSkippedProvider = {
    * verbatim when it is not "ready".
    */
   reason: "missing_credentials" | "needs_key" | "member_auth_required" | "org_credential_missing";
+  /**
+   * Gateway providers skipped with `member_auth_required`: Den's absolute URL
+   * that starts the member's OAuth grant. Opening it in a browser and
+   * re-syncing is how the provider becomes usable. Additive; absent otherwise.
+   */
+  authUrl?: string | null;
 };
 
 export type CloudProviderSyncRunDetail = {
@@ -118,6 +124,8 @@ type DenProviderConnection = DenProvider & {
   memberCredentialState: "missing" | "active" | "blocked" | "stale" | "error" | null;
   /** Gateway providers only: Den's readiness verdict for this member. */
   credentialStatus: "ready" | "member_auth_required" | "org_credential_missing" | null;
+  /** Gateway providers only: OAuth start URL when the member must authorize. */
+  authUrl: string | null;
 };
 
 const gatewayProviderSource = "openwork_gateway";
@@ -317,11 +325,13 @@ function parseProviderConnection(payload: unknown, expectedId: string): DenProvi
     apiKeys: parseApiKeys(payload.llmProvider.apiKeys),
     memberCredentialState,
     credentialStatus: null,
+    authUrl: null,
   };
 }
 
 type DenInferenceProviderSummary = DenProvider & {
   credentialStatus: NonNullable<DenProviderConnection["credentialStatus"]>;
+  authUrl: string | null;
 };
 
 function parseCredentialStatus(value: unknown): DenInferenceProviderSummary["credentialStatus"] | null {
@@ -337,7 +347,9 @@ function parseInferenceProvider(value: unknown): DenInferenceProviderSummary | n
   if (!provider || !isRecord(value)) return null;
   const credentialStatus = parseCredentialStatus(value.credentialStatus);
   if (!credentialStatus) return null;
-  return { ...provider, source: gatewayProviderSource, credentialStatus };
+  // Tolerant: older Den servers omit authUrl; a non-string is treated as absent.
+  const authUrl = typeof value.authUrl === "string" && value.authUrl.trim() ? value.authUrl : null;
+  return { ...provider, source: gatewayProviderSource, credentialStatus, authUrl };
 }
 
 function parseInferenceProviderList(payload: unknown): DenInferenceProviderSummary[] {
@@ -591,6 +603,7 @@ function prepareMaterialization(
         providerId: runtimeProviderId(provider),
         name: provider.name,
         reason: provider.credentialStatus,
+        ...(provider.credentialStatus === "member_auth_required" ? { authUrl: provider.authUrl } : {}),
       });
       continue;
     }

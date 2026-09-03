@@ -21,7 +21,11 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { t } from "@/i18n";
 import { readDenSettings } from "@/app/lib/den";
-import { OPENWORK_GATEWAY_BADGE_LABEL } from "@/react-app/domains/connections/provider-auth/cloud-provider-config";
+import {
+  gatewayConnectCopy,
+  type GatewayConnectProvider,
+  OPENWORK_GATEWAY_BADGE_LABEL,
+} from "@/react-app/domains/connections/provider-auth/cloud-provider-config";
 import { modelEquals, resolveProviderDisplayName } from "../../../../app/utils";
 import type { ModelOption, ModelRef } from "../../../../app/types";
 import { isRecommendedModel } from "../../../../app/defaults";
@@ -64,6 +68,9 @@ export type ModelPickerModalProps = {
   restrictToCloud?: boolean;
   /** Runtime provider ids routed through the OpenWork inference gateway (sync status source "openwork_gateway"). */
   gatewayProviderIds?: ReadonlySet<string>;
+  /** Gateway providers waiting on this member's sign-in; shown as a compact "Connect" hint. */
+  gatewayConnectProviders?: GatewayConnectProvider[];
+  onConnectGatewayProvider?: (provider: GatewayConnectProvider) => void | Promise<void>;
 };
 
 type ProviderGroup = {
@@ -339,6 +346,32 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
               </div>
             </div>
           ) : null}
+
+          {props.gatewayConnectProviders?.map((provider) => (
+            <div
+              key={provider.cloudProviderId}
+              className="mb-3 flex shrink-0 items-center gap-3 rounded-2xl border border-dashed border-dls-border px-3 py-2.5"
+            >
+              <ProviderIcon providerId={provider.providerId} providerName={provider.name} size={18} className="shrink-0 text-dls-secondary" />
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-1.5 text-[13px] font-medium text-dls-text">
+                  <span className="truncate">{provider.name}</span>
+                  <Badge variant="outline" className="h-auto rounded-md px-1.5 py-0.5 text-[10px] text-dls-secondary">
+                    {OPENWORK_GATEWAY_BADGE_LABEL}
+                  </Badge>
+                </div>
+                <div className="truncate text-[11px] text-dls-secondary">{gatewayConnectCopy(provider.name)}</div>
+              </div>
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={!provider.authUrl || !props.onConnectGatewayProvider}
+                onClick={() => void props.onConnectGatewayProvider?.(provider)}
+              >
+                Connect
+              </Button>
+            </div>
+          ))}
 
           {/* Content */}
           <div className="min-h-0 flex-1 space-y-1 overflow-y-auto pr-1 -mr-1">

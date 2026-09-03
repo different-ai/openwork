@@ -175,6 +175,53 @@ describe("session error resilience", () => {
     )
   }
 
+  test("classifies the gateway's openwork_auth_required 401 and keeps its auth_url as the Connect target", () => {
+    const authUrl = "https://den.example.test/v1/inference-providers/ipr_member/oauth/start"
+    const body = JSON.stringify({
+      error: { code: "openwork_auth_required", message: "Sign in to Member Vertex to continue.", auth_url: authUrl, provider_id: "ipr_member" },
+    })
+    const presentation = presentOpencodeSessionError({
+      name: "APIError",
+      data: { message: `Unauthorized: ${body}`, statusCode: 401, providerID: "ipr_member", responseBody: body },
+    })
+
+    expect(presentation.kind).toBe("gateway-auth-required")
+    expect(presentation.title).toBe("Sign in to this OpenWork Gateway provider to keep using it")
+    expect(presentation.description).toBe("Sign in to Member Vertex to continue.")
+    expect(presentation.connectUrl).toBe(authUrl)
+    expect(presentation.recoveryPrompt).toBeNull()
+
+    const html = renderErrorTranscriptWithResume({
+      name: "APIError",
+      data: { message: `Unauthorized: ${body}`, statusCode: 401, responseBody: body },
+    })
+    expect(html).toContain('data-testid="session-error-gateway-connect"')
+    expect(html).toContain("Connect")
+    expect(html).not.toContain('data-testid="session-error-resume"')
+  })
+
+  test("still offers Connect (deep-linking to providers) when the auth body has no auth_url", () => {
+    const presentation = presentOpencodeSessionError({
+      name: "APIError",
+      data: { message: '{"error":{"code":"openwork_auth_required","provider_id":"ipr_member"}}', statusCode: 401 },
+    })
+    expect(presentation.kind).toBe("gateway-auth-required")
+    expect(presentation.connectUrl).toBeNull()
+    expect(presentation.description).toContain("Connect it again")
+    expect(
+      sessionErrorPresentationFromUIMessage(createSessionErrorUIMessage("turn", presentation)),
+    ).toEqual(presentation)
+  })
+
+  test("does not classify an ordinary 401 as a gateway sign-in", () => {
+    const presentation = presentOpencodeSessionError({
+      name: "APIError",
+      data: { message: "invalid_api_key", statusCode: 401 },
+    })
+    expect(presentation.kind).toBe("generic")
+    expect(presentation.connectUrl).toBeUndefined()
+  })
+
   test("offers Resume on the error card for an engine abort", () => {
     const html = renderErrorTranscriptWithResume({
       name: "MessageAbortedError",

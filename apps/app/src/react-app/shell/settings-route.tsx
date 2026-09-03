@@ -68,7 +68,12 @@ import { createConnectionsStore, useConnectionsStoreSnapshot } from "@/react-app
 import { cleanupOpenworkCloudMcpAfterSignOut } from "@/react-app/domains/connections/cloud-mcp-reconciler";
 import { useOrgMcpConnections } from "@/react-app/domains/connections/use-org-mcp-connections";
 import { createOpenworkServerStore, useOpenworkServerStoreSnapshot } from "@/react-app/domains/connections/openwork-server-store";
-import { resolveGatewayProviderIds } from "@/react-app/domains/connections/provider-auth/cloud-provider-config";
+import {
+  connectGatewayProvider,
+  type GatewayConnectProvider,
+  resolveGatewayConnectProviders,
+  resolveGatewayProviderIds,
+} from "@/react-app/domains/connections/provider-auth/cloud-provider-config";
 import { createProviderAuthStore, useProviderAuthStoreSnapshot } from "@/react-app/domains/connections/provider-auth/store";
 import ProviderAuthModal from "@/react-app/domains/connections/provider-auth/provider-auth-modal";
 import ConnectionsModals from "@/react-app/domains/connections/modals";
@@ -839,6 +844,27 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     () => resolveGatewayProviderIds(providerAuthSnapshot.importedCloudProviders),
     [providerAuthSnapshot.importedCloudProviders],
   );
+  const gatewayConnectProviders = useMemo(
+    () => resolveGatewayConnectProviders(providerAuthSnapshot.cloudProviderServerSync?.skippedProviders),
+    [providerAuthSnapshot.cloudProviderServerSync?.skippedProviders],
+  );
+  const [connectingGatewayProviderId, setConnectingGatewayProviderId] = useState<string | null>(null);
+  const handleConnectGatewayProvider = useCallback(async (provider: GatewayConnectProvider) => {
+    setConnectingGatewayProviderId(provider.cloudProviderId);
+    try {
+      await connectGatewayProvider({
+        provider,
+        openUrl: (url) => platform.openLink(url),
+        resync: () => providerAuthStore.runCloudProviderSync("manual"),
+        isConnected: () => {
+          const skipped = providerAuthStore.getSnapshot().cloudProviderServerSync?.skippedProviders;
+          return skipped !== undefined && !(provider.cloudProviderId in skipped);
+        },
+      });
+    } finally {
+      setConnectingGatewayProviderId(null);
+    }
+  }, [platform, providerAuthStore]);
   const extensionsSnapshot = useExtensionsStoreSnapshot(extensionsStore);
   const orgMcpConnections = useOrgMcpConnections();
 
@@ -2420,6 +2446,9 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
               ...(openWorkModelsEntitled || openWorkModelsAvailable ? ["openwork"] : []),
             ])}
             gatewayProviderIds={gatewayProviderIds}
+            gatewayConnectProviders={gatewayConnectProviders}
+            connectingGatewayProviderId={connectingGatewayProviderId}
+            onConnectGatewayProvider={handleConnectGatewayProvider}
             showOpenWorkModelsSubscribe={showOpenWorkModelsSubscribe}
             showOpenWorkModelsConnect={showOpenWorkModelsConnect}
             showOpenWorkModelsSyncing={showOpenWorkModelsSyncing}
@@ -2891,6 +2920,8 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
         open={modelPicker.open}
         options={modelPicker.options}
         gatewayProviderIds={gatewayProviderIds}
+        gatewayConnectProviders={gatewayConnectProviders}
+        onConnectGatewayProvider={handleConnectGatewayProvider}
         query={modelPicker.query}
         setQuery={modelPicker.setQuery}
         target="default"
