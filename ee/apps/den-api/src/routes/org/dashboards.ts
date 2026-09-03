@@ -5,7 +5,6 @@ import {
   MemberTable,
   TeamTable,
   accessRoleValues,
-  type DashboardElement,
 } from "@openwork-ee/den-db/schema"
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import type { Hono } from "hono"
@@ -21,6 +20,12 @@ import {
 } from "../../middleware/index.js"
 import { denTypeIdSchema, emptyResponse, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
 import type { MemberTeamSummary } from "../../orgs.js"
+import {
+  dashboardElementSchema,
+  parseStoredDashboardElements,
+  toStoredDashboardElement,
+  type DashboardElementInput,
+} from "./dashboard-elements.js"
 import type { OrgRouteVariables } from "./shared.js"
 import { idParamSchema } from "./shared.js"
 
@@ -42,20 +47,6 @@ const dashboardGrantParamsSchema = z.object({
   dashboardId: dashboardParamsSchema.shape.dashboardId,
   grantId: denTypeIdSchema("dashboardAccessGrant"),
 })
-
-const dashboardElementSchema = z.object({
-  serverName: z.string().trim().min(1).max(255),
-  connectionId: z.string().trim().min(1).max(160).optional(),
-  toolName: z.string().trim().min(1).max(256),
-  projectedToolName: z.string().trim().min(1).max(256),
-  resourceUri: z.string().trim().min(1).max(2048).refine((value) => value.startsWith("ui://"), {
-    message: "MCP App resource URIs must use ui://.",
-  }),
-  title: z.string().trim().min(1).max(255),
-  launchArguments: z.record(z.string(), z.unknown()).optional(),
-  requiresApproval: z.boolean().optional(),
-  organizationAutoLaunch: z.boolean().optional(),
-}).meta({ ref: "DashboardElement" })
 
 const dashboardCreateSchema = z.object({
   name: z.string().trim().min(1).max(255),
@@ -129,28 +120,12 @@ const meDashboardSchema = z.object({
 
 const meDashboardListResponseSchema = z.object({ items: z.array(meDashboardSchema) }).meta({ ref: "MeDashboardListResponse" })
 
-type DashboardElementInput = z.infer<typeof dashboardElementSchema>
-
-function toStoredElement(value: DashboardElementInput): DashboardElement {
-  return {
-    serverName: value.serverName,
-    ...(value.connectionId ? { connectionId: value.connectionId } : {}),
-    toolName: value.toolName,
-    projectedToolName: value.projectedToolName,
-    resourceUri: value.resourceUri,
-    title: value.title,
-    ...(value.launchArguments ? { launchArguments: value.launchArguments } : {}),
-    ...(value.requiresApproval === true ? { requiresApproval: true } : {}),
-    ...(value.organizationAutoLaunch === true ? { organizationAutoLaunch: true } : {}),
-  }
-}
-
 function serializeDashboard(row: DashboardRow) {
   return {
     id: row.id,
     organizationId: row.organizationId,
     name: row.name,
-    elements: row.elementsJson,
+    elements: parseStoredDashboardElements(row.elementsJson),
     createdByOrgMembershipId: row.createdByOrgMembershipId,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
@@ -255,7 +230,7 @@ export function registerOrgDashboardRoutes<T extends { Variables: OrgRouteVariab
         id: createDenTypeId("dashboard"),
         organizationId: payload.organization.id,
         name: input.name.trim(),
-        elementsJson: input.elements.map(toStoredElement),
+        elementsJson: input.elements.map(toStoredDashboardElement),
         createdByOrgMembershipId: payload.currentMember.id,
         createdAt: now,
         updatedAt: now,
@@ -319,7 +294,9 @@ export function registerOrgDashboardRoutes<T extends { Variables: OrgRouteVariab
       const next: DashboardRow = {
         ...existing,
         name: input.name?.trim() ?? existing.name,
-        elementsJson: input.elements ? input.elements.map(toStoredElement) : existing.elementsJson,
+        elementsJson: input.elements
+          ? input.elements.map(toStoredDashboardElement)
+          : parseStoredDashboardElements(existing.elementsJson),
         updatedAt,
       }
       await db
@@ -573,7 +550,7 @@ export function registerOrgDashboardRoutes<T extends { Variables: OrgRouteVariab
         return [{
           id: row.id,
           name: row.name,
-          elements: row.elementsJson,
+          elements: parseStoredDashboardElements(row.elementsJson),
           updatedAt: row.updatedAt.toISOString(),
         }]
       })

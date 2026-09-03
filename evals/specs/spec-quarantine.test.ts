@@ -37,6 +37,7 @@ library-signed-in-render-stability.e2e.test.ts
 live-tool-visible-after-session-switch.e2e.test.ts
 llm-provider-access-parity.e2e.test.ts
 org-api-key-authenticates.e2e.test.ts
+org-dashboard-mcp-app-editing.e2e.test.ts
 org-model-analytics.e2e.test.ts
 org-team-lifecycle-critical-path.e2e.test.ts
 parent-child-permission-approval.e2e.test.ts

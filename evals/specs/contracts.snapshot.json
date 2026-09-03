@@ -76,8 +76,11 @@
       "description": "Den administration navigation, managed dashboards, deployment gates, and tool testing",
       "implementation": [
         "ee/apps/den-api/src/routes/admin/**",
+        "ee/apps/den-api/src/routes/org/dashboard-elements.ts",
         "ee/apps/den-api/src/routes/org/dashboards.ts",
         "ee/apps/den-web/app/(den)/dashboard/(admin)/tool-tester/**",
+        "ee/apps/den-web/app/(den)/dashboard/_components/dashboard-app-input.ts",
+        "ee/apps/den-web/app/(den)/dashboard/_components/org-dashboard-detail-screen.tsx",
         "ee/apps/den-web/app/(den)/dashboard/_components/org-dashboard-shell.tsx",
         "ee/apps/den-web/app/(den)/dashboard/_components/tool-tester/**",
         "ee/apps/den-web/app/admin/page.tsx",
@@ -86,6 +89,7 @@
       ],
       "specs": [
         "evals/specs/den-sidebar-ia.e2e.test.ts",
+        "evals/specs/org-dashboard-mcp-app-editing.e2e.test.ts",
         "evals/specs/org-managed-dashboard-desktop.e2e.test.ts",
         "evals/specs/tool-tester-page.e2e.test.ts"
       ]
