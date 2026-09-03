@@ -504,7 +504,10 @@ describe("active session status reconciliation", () => {
       type: "text",
       text: "The final answer is visible.",
     });
+    // Final assistant text is presentation, not a terminal signal. Until the
+    // authoritative level says otherwise, both activity and status stay busy.
     expect(useSessionActivityStore.getState().getStatus(workspaceId, sessionId)).toBe("responding");
+    expect(queryClient.getQueryData(statusKey(workspaceId, sessionId))).toEqual({ type: "busy" });
 
     // No session.status idle or session.idle event arrives. The long-lived
     // stream remains open; only the authoritative status level reports that
