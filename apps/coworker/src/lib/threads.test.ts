@@ -11,6 +11,7 @@ import {
   parseModelPreference,
   recommendModel,
 } from "./threads.ts";
+import { fixtureCatalog, fixtureProvider } from "./provider-catalog.fixture.ts";
 
 test("assignmentThreads excludes the standing discussion without hiding real work", () => {
   const threads = [{ id: "ses_chat", title: "Conversation" }, { id: "ses_work", title: "Launch brief" }];
@@ -47,11 +48,11 @@ test("describeInteractions prefers the first permission, then the first question
 });
 
 test("connectedModelCatalog only lists connected providers and marks provider defaults", () => {
-  const catalog = connectedModelCatalog({
+  const catalog = connectedModelCatalog(fixtureCatalog({
     connected: ["anthropic", "custom-empty"],
     default: { anthropic: "claude-haiku-4-5" },
     all: [
-      {
+      fixtureProvider({
         id: "anthropic",
         name: "Anthropic",
         source: "env",
@@ -61,11 +62,11 @@ test("connectedModelCatalog only lists connected providers and marks provider de
           "claude-haiku-4-5": { name: "Claude Haiku 4.5", variants: { high: {}, low: {} } },
           "claude-sonnet-4-5": { name: "Claude Sonnet 4.5" },
         },
-      },
-      { id: "openai", name: "OpenAI", source: "config", env: [], options: {}, models: { "gpt-5": { name: "GPT-5" } } },
-      { id: "custom-empty", name: "Custom", source: "custom", env: [], options: {}, models: {} },
+      }),
+      fixtureProvider({ id: "openai", name: "OpenAI", source: "config", env: [], options: {}, models: { "gpt-5": { name: "GPT-5" } } }),
+      fixtureProvider({ id: "custom-empty", name: "Custom", source: "custom", env: [], options: {}, models: {} }),
     ],
-  } as unknown as Parameters<typeof connectedModelCatalog>[0]);
+  }));
   assert.deepEqual(catalog.connectedProviderIds, ["anthropic"]);
   assert.deepEqual(
     catalog.models.map((model) => [model.id, model.isProviderDefault, model.variants]),
@@ -84,16 +85,16 @@ test("parseModelPreference accepts provider/model and rejects malformed values",
 });
 
 test("connectedModelCatalog tells account (OpenWork Cloud) providers from this Mac's and lists account models first", () => {
-  const providerList = {
+  const providerList = fixtureCatalog({
     connected: ["anthropic", "lpr_01org", "openwork", "opencode"],
     default: {},
     all: [
-      { id: "anthropic", name: "Anthropic", source: "env", env: [], options: {}, models: { "claude-haiku-4-5": { name: "Claude Haiku 4.5" } } },
-      { id: "lpr_01org", name: "Acme LiteLLM", source: "config", env: [], options: {}, models: { "acme-router": { name: "Acme Router" } } },
-      { id: "openwork", name: "OpenWork", source: "config", env: [], options: {}, models: { fable: { name: "Fable" } } },
-      { id: "opencode", name: "OpenCode Zen", source: "config", env: [], options: {}, models: { "big-pickle": { name: "Big Pickle" } } },
+      fixtureProvider({ id: "anthropic", name: "Anthropic", source: "env", env: [], options: {}, models: { "claude-haiku-4-5": { name: "Claude Haiku 4.5" } } }),
+      fixtureProvider({ id: "lpr_01org", name: "Acme LiteLLM", source: "config", env: [], options: {}, models: { "acme-router": { name: "Acme Router" } } }),
+      fixtureProvider({ id: "openwork", name: "OpenWork", source: "config", env: [], options: {}, models: { fable: { name: "Fable" } } }),
+      fixtureProvider({ id: "opencode", name: "OpenCode Zen", source: "config", env: [], options: {}, models: { "big-pickle": { name: "Big Pickle" } } }),
     ],
-  } as unknown as Parameters<typeof connectedModelCatalog>[0];
+  });
 
   // With the embedded server's sync status, its provider ids decide the source.
   const withStatus = connectedModelCatalog(providerList, {
@@ -143,11 +144,11 @@ test("connectedModelCatalog tells account (OpenWork Cloud) providers from this M
 });
 
 test("recommendModel picks a connected, tool-capable model — the account's first, the provider default first, newest first", () => {
-  const catalog = connectedModelCatalog({
+  const catalog = connectedModelCatalog(fixtureCatalog({
     connected: ["openrouter", "anthropic", "lpr_org"],
     default: { openrouter: "free-chat", anthropic: "claude-haiku-4-5", lpr_org: "org-large" },
     all: [
-      {
+      fixtureProvider({
         id: "openrouter",
         name: "OpenRouter",
         source: "env",
@@ -157,8 +158,8 @@ test("recommendModel picks a connected, tool-capable model — the account's fir
           "free-chat": { name: "Free Chat", capabilities: { toolcall: false, reasoning: false }, status: "active", release_date: "2026-08-01" },
           "old-tools": { name: "Old Tools", capabilities: { toolcall: true, reasoning: false }, status: "deprecated", release_date: "2024-01-01" },
         },
-      },
-      {
+      }),
+      fixtureProvider({
         id: "anthropic",
         name: "Anthropic",
         source: "env",
@@ -168,8 +169,8 @@ test("recommendModel picks a connected, tool-capable model — the account's fir
           "claude-haiku-4-5": { name: "Claude Haiku 4.5", capabilities: { toolcall: true, reasoning: true }, status: "active", release_date: "2025-10-01" },
           "claude-sonnet-4-5": { name: "Claude Sonnet 4.5", capabilities: { toolcall: true, reasoning: true }, status: "active", release_date: "2025-09-01" },
         },
-      },
-      {
+      }),
+      fixtureProvider({
         id: "lpr_org",
         name: "Org Provider",
         source: "custom",
@@ -179,24 +180,24 @@ test("recommendModel picks a connected, tool-capable model — the account's fir
           "org-large": { name: "Org Large", capabilities: { toolcall: true, reasoning: false }, status: "active", release_date: "2026-01-01" },
           "org-chat": { name: "Org Chat", capabilities: { toolcall: false, reasoning: false }, status: "active", release_date: "2026-05-01" },
         },
-      },
+      }),
     ],
-  } as unknown as Parameters<typeof connectedModelCatalog>[0]);
+  }));
   assert.equal(recommendModel(catalog)?.id, "lpr_org/org-large", "the account's tool-capable default wins while signed in");
-  const withChatDefault = connectedModelCatalog({
+  const withChatDefault = connectedModelCatalog(fixtureCatalog({
     connected: ["openai", "anthropic"],
     default: { openai: "gpt-chat-latest", anthropic: "claude-sonnet" },
     all: [
-      {
+      fixtureProvider({
         id: "openai", name: "OpenAI", source: "env", env: [], options: {},
         models: { "gpt-chat-latest": { name: "GPT Chat", capabilities: { toolcall: true, reasoning: false }, status: "active", release_date: "2026-08-01" } },
-      },
-      {
+      }),
+      fixtureProvider({
         id: "anthropic", name: "Anthropic", source: "env", env: [], options: {},
         models: { "claude-sonnet": { name: "Claude Sonnet", capabilities: { toolcall: true, reasoning: true }, status: "active", release_date: "2026-02-01" } },
-      },
+      }),
     ],
-  } as unknown as Parameters<typeof connectedModelCatalog>[0]);
+  }));
   assert.equal(recommendModel(withChatDefault)?.id, "anthropic/claude-sonnet", "a reasoning default beats a newer chat alias");
   assert.equal(recommendModel(withChatDefault, { exclude: ["anthropic/claude-sonnet"] })?.id, "openai/gpt-chat-latest");
   assert.equal(recommendModel(withChatDefault, { exclude: ["anthropic/claude-sonnet", "openai/gpt-chat-latest"] }), null);
@@ -209,17 +210,17 @@ test("recommendModel picks a connected, tool-capable model — the account's fir
 });
 
 test("recommendModel prefers the account, then a subscription or key on this Mac, then a local server, and the free model last", () => {
-  const model = (name: string, releaseDate: string) => ({ name, capabilities: { toolcall: true, reasoning: true }, status: "active", release_date: releaseDate });
+  const model = (name: string, releaseDate: string) => ({ name, capabilities: { toolcall: true, reasoning: true }, release_date: releaseDate });
   const providers = {
-    free: { id: "opencode", name: "OpenCode Zen", source: "custom", env: [], options: {}, models: { "big-pickle": model("Big Pickle", "2026-09-01") } },
-    ollama: { id: "ollama", name: "Ollama", source: "config", env: [], options: { baseURL: "http://127.0.0.1:11434/v1" }, models: { "llama3.2:latest": model("llama3.2", "2026-08-30") } },
-    lan: { id: "custom-office-box", name: "Office box", source: "config", env: [], options: { baseURL: "http://192.168.1.20:8000/v1" }, models: { qwen: model("Qwen", "2026-08-29") } },
-    chatgpt: { id: "openai", name: "OpenAI", source: "custom", env: [], options: {}, models: { "gpt-5": model("GPT-5", "2025-08-07") } },
-    remote: { id: "custom-remote", name: "Remote", source: "config", env: [], options: { baseURL: "https://ai.example.com/v1" }, models: { big: model("Big", "2025-01-01") } },
-    org: { id: "lpr_01org", name: "Org", source: "config", env: [], options: {}, models: { "org-large": model("Org Large", "2024-01-01") } },
+    free: fixtureProvider({ id: "opencode", name: "OpenCode Zen", source: "custom", env: [], options: {}, models: { "big-pickle": model("Big Pickle", "2026-09-01") } }),
+    ollama: fixtureProvider({ id: "ollama", name: "Ollama", source: "config", env: [], options: { baseURL: "http://127.0.0.1:11434/v1" }, models: { "llama3.2:latest": model("llama3.2", "2026-08-30") } }),
+    lan: fixtureProvider({ id: "custom-office-box", name: "Office box", source: "config", env: [], options: { baseURL: "http://192.168.1.20:8000/v1" }, models: { qwen: model("Qwen", "2026-08-29") } }),
+    chatgpt: fixtureProvider({ id: "openai", name: "OpenAI", source: "custom", env: [], options: {}, models: { "gpt-5": model("GPT-5", "2025-08-07") } }),
+    remote: fixtureProvider({ id: "custom-remote", name: "Remote", source: "config", env: [], options: { baseURL: "https://ai.example.com/v1" }, models: { big: model("Big", "2025-01-01") } }),
+    org: fixtureProvider({ id: "lpr_01org", name: "Org", source: "config", env: [], options: {}, models: { "org-large": model("Org Large", "2024-01-01") } }),
   };
   const catalogOf = (...entries: Array<(typeof providers)[keyof typeof providers]>) =>
-    connectedModelCatalog({ connected: entries.map((entry) => entry.id), default: {}, all: entries } as unknown as Parameters<typeof connectedModelCatalog>[0]);
+    connectedModelCatalog(fixtureCatalog({ connected: entries.map((entry) => entry.id), default: {}, all: entries }));
 
   const everything = catalogOf(providers.free, providers.ollama, providers.lan, providers.chatgpt, providers.remote, providers.org);
   assert.deepEqual(

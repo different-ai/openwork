@@ -89,9 +89,14 @@ export function OnboardingMascotStack({
   const [ambientPeek, setAmbientPeek] = useState<AmbientPeek | null>(null);
   const startedRef = useRef(false);
   const ambientActiveRef = useRef(false);
+  // The welcome belongs to the mount: it reads the reveal mode and session key as they were
+  // when it started, so a prop change mid-welcome never restarts it.
+  const welcomeRef = useRef({ reveal, sessionKey });
+  welcomeRef.current = { reveal, sessionKey };
 
   useEffect(() => {
     if (!play || startedRef.current) return;
+    const { reveal, sessionKey } = welcomeRef.current;
     // Strict Mode mounts, unmounts, and mounts again: timers are cleared in between and the
     // session is marked only when the welcome has finished, so it still plays exactly once.
     startedRef.current = true;
@@ -119,9 +124,7 @@ export function OnboardingMascotStack({
       startedRef.current = false;
       for (const timer of timers) window.clearTimeout(timer);
     };
-    // The welcome belongs to the mount, not to the phases it moves through.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [play]);
 
   useEffect(() => {
     if (still || phase !== "rest" || reveal !== "once" || visitors.length < 2) return;

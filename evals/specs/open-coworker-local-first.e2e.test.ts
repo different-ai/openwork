@@ -1133,21 +1133,37 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
     "Scout and Nova moved their eyewear and pupils toward the same bottom-right pointer, then added a restrained whole-avatar nod and lean. Both stayed animated while unselected and retained different blink durations and offsets so the team never blinked in sync.",
     true,
   );
-  const idleAvatar = await waitFor(app, `(() => {
-    const avatar = [...document.querySelectorAll("aside nav svg.coworker-avatar.is-idle-looking.is-idle-blinking")][0];
-    if (!(avatar instanceof SVGSVGElement)) return false;
-    const pupils = avatar.querySelector(".coworker-avatar__pupils");
-    const pointerBody = avatar.querySelector(".coworker-avatar__pointer-body");
-    return {
-      name: avatar.getAttribute("aria-label"),
-      featureY: Number.parseFloat(avatar.style.getPropertyValue("--avatar-idle-feature-y")),
-      lookY: Number.parseFloat(avatar.style.getPropertyValue("--avatar-idle-look-y")),
-      headY: Number.parseFloat(avatar.style.getPropertyValue("--avatar-idle-head-y")),
-      turn: Number.parseFloat(avatar.style.getPropertyValue("--avatar-idle-turn")),
-      blinkAnimation: pupils ? getComputedStyle(pupils).animationName : "",
-      bobAnimation: pointerBody ? getComputedStyle(pointerBody).animationName : "",
+  // The glance-and-blink overlap lasts about a quarter of a second every five to twelve
+  // seconds; polling over the wire would miss it, so the page itself records the moment
+  // both classes are present, with the values in force at that instant.
+  await evalIn(app, `(() => {
+    const avatars = [...document.querySelectorAll("aside nav svg.coworker-avatar")];
+    if (avatars.length === 0) return false;
+    window.__idleGlance = null;
+    const capture = (avatar) => {
+      if (window.__idleGlance || !(avatar instanceof SVGSVGElement)) return;
+      if (!avatar.classList.contains("is-idle-looking") || !avatar.classList.contains("is-idle-blinking")) return;
+      const pupils = avatar.querySelector(".coworker-avatar__pupils");
+      const pointerBody = avatar.querySelector(".coworker-avatar__pointer-body");
+      window.__idleGlance = {
+        name: avatar.getAttribute("aria-label"),
+        featureY: Number.parseFloat(avatar.style.getPropertyValue("--avatar-idle-feature-y")),
+        lookY: Number.parseFloat(avatar.style.getPropertyValue("--avatar-idle-look-y")),
+        headY: Number.parseFloat(avatar.style.getPropertyValue("--avatar-idle-head-y")),
+        turn: Number.parseFloat(avatar.style.getPropertyValue("--avatar-idle-turn")),
+        blinkAnimation: pupils ? getComputedStyle(pupils).animationName : "",
+        bobAnimation: pointerBody ? getComputedStyle(pointerBody).animationName : "",
+      };
     };
-  })()`, { timeoutMs: 20_000, label: "a coworker's unscripted idle glance and blink" });
+    const observer = new MutationObserver((records) => {
+      for (const record of records) capture(record.target);
+    });
+    for (const avatar of avatars) observer.observe(avatar, { attributes: true, attributeFilter: ["class"] });
+    window.__idleGlanceObserver = observer;
+    return true;
+  })()`);
+  const idleAvatar = await waitFor(app, `window.__idleGlance ?? false`, { timeoutMs: 30_000, label: "a coworker's unscripted idle glance and blink" });
+  await evalIn(app, `(() => { window.__idleGlanceObserver?.disconnect(); return true; })()`);
   expect(idleAvatar).toMatchObject({
     name: expect.stringMatching(/^(Scout|Nova) avatar$/),
     featureY: 0.65,
