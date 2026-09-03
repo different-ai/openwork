@@ -221,25 +221,32 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   const menuThreadIds = await evalIn(app, `[...document.querySelectorAll('[data-testid="coworker-discussion-menu"] [role="menuitemradio"]')].map((item) => item.getAttribute("data-thread-id"))`);
   expect(menuThreadIds).toEqual([discussionThreadId]);
   await evalIn(app, `document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); true`);
-  // The control reads "Assignments · 1": the responsibility run's thread counts, the Worker's does not.
-  const assignmentsControl = await evalIn(app, `(() => {
-    const button = [...document.querySelectorAll("button")].find((candidate) => (candidate.textContent ?? "").trim().startsWith("Assignments"));
-    if (!button) return false;
-    const label = button.textContent?.trim() ?? "";
-    button.click();
+  // The composer's summary line reads "1 assignment": the scheduled assignment counts (its run's thread
+  // is not counted again), the Worker's thread does not. Its part opens Activity › Assignments.
+  const assignmentsControl = await waitFor(app, `(() => {
+    const part = document.querySelector('[data-testid="summary-part-assignments"]');
+    if (!(part instanceof HTMLElement)) return false;
+    const label = part.textContent?.trim() ?? "";
+    if (label !== "1 assignment") return false;
+    part.click();
     return label;
-  })()`);
-  expect(assignmentsControl).toBe("Assignments · 1");
-  await waitFor(app, `!document.querySelector('[data-testid="coworker-discussion-view"]')`, { timeoutMs: 30_000, label: "assignments view" });
-  const assignmentsText = String(await evalIn(app, `document.querySelector("main")?.innerText ?? ""`));
+  })()`, { timeoutMs: 30_000, label: "summary line: 1 assignment" });
+  expect(assignmentsControl).toBe("1 assignment");
+  await waitFor(app, `document.querySelector('[data-testid="panel-content"]')?.getAttribute("data-route") === "overview/assignments" && Boolean(document.querySelector('[data-testid="responsibility-row"]'))`, { timeoutMs: 30_000, label: "Activity › Assignments" });
+  const assignmentsText = String(await evalIn(app, `document.querySelector('[data-testid="coworker-assignments"]')?.innerText ?? ""`));
   expect(assignmentsText).not.toContain("Worker: Echo check");
   expect(assignmentsText).toContain("Limit check");
-  await clickButton(app, "Back");
+  expect(await evalIn(app, `document.querySelectorAll('[data-testid="assignment-row"]').length`)).toBe(0);
+  // The conversation never left; Escape goes back to the Activity root, then folds the panel.
+  await evalIn(app, `document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); true`);
+  await waitFor(app, `document.querySelector('[data-testid="context-panel"]')?.getAttribute("data-depth") === "0"`, { timeoutMs: 10_000, label: "Activity root" });
+  await evalIn(app, `document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); true`);
+  await waitFor(app, `document.querySelector('[data-testid="context-panel"]')?.getAttribute("data-collapsed") === "true"`, { timeoutMs: 10_000, label: "panel folded" });
   await waitForText(app, "COWORKER CHAT READY", { timeoutMs: 30_000 });
 
   evidence.recordAssertionEvidence(
     "A Worker posts findings that wake the coworker and shares this Mac's run limit",
-    `Worker ${workerId} started in native thread ${workerThreadId}; with the limit at one, the responsibility run was admitted as queued (status limit 1 / active 1 / queued 1) and later succeeded once the slot freed. The header left Ready ("${String(topStatusWhileWorking)}") while the Worker worked. Its first finding contained WORKER FINDING ONE and woke the coworker in discussion ${discussionThreadId}: the transcript showed the action line "${String(reviewLine)}" followed by the coworker's own reply, with no person bubble carrying the review scaffolding; a review event named that discussion. The Worker finished within its two turns. workers.json listed its thread, the discussion menu listed only the discussion, and the Assignments view named the responsibility run but not the Worker.`,
+    `Worker ${workerId} started in native thread ${workerThreadId}; with the limit at one, the responsibility run was admitted as queued (status limit 1 / active 1 / queued 1) and later succeeded once the slot freed. The header left Ready ("${String(topStatusWhileWorking)}") while the Worker worked. Its first finding contained WORKER FINDING ONE and woke the coworker in discussion ${discussionThreadId}: the transcript showed the action line "${String(reviewLine)}" followed by the coworker's own reply, with no person bubble carrying the review scaffolding; a review event named that discussion. The Worker finished within its two turns. workers.json listed its thread, the discussion menu listed only the discussion, and the composer's summary line read 1 assignment, opening Activity › Assignments, which named the scheduled Limit check once and not the Worker.`,
     true,
   );
 

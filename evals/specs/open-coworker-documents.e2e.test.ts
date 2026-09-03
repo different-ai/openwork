@@ -195,16 +195,23 @@ test.skipIf(!enabled)(title, { timeout: 1_200_000 }, async ({ evidence }) => {
     const panel = document.querySelector('[data-testid="context-panel"]');
     const reader = document.querySelector('[data-testid="document-reader"][data-document-id="launch-plan"]');
     if (!panel || !reader) return false;
+    // The composer's line follows the documents poll; wait for it to count the new document.
+    const summaryLine = document.querySelector('[data-testid="coworker-summary-line"]')?.textContent?.trim() ?? "";
+    if (summaryLine !== "1 document") return false;
     return {
       view: panel.getAttribute("data-view"),
+      route: document.querySelector('[data-testid="panel-content"]')?.getAttribute("data-route") ?? "",
+      crumbs: [...document.querySelectorAll('[data-testid="panel-crumb"]')].map((crumb) => crumb.textContent?.trim()),
       collapsed: panel.getAttribute("data-collapsed"),
       revision: reader.getAttribute("data-revision"),
+      summaryLine,
       toc: [...reader.querySelectorAll('[data-testid="document-toc"] li')].map((node) => node.textContent?.trim() ?? ""),
       headings: [...reader.querySelectorAll('[data-testid="document-body"] h2')].map((node) => node.textContent?.trim() ?? ""),
       title: reader.querySelector('[data-testid="document-title"]')?.textContent?.trim() ?? "",
     };
   })()`, { timeoutMs: 30_000, label: "Documents view opened on Launch plan" });
-  expect(opened).toMatchObject({ view: "documents", collapsed: "false", revision: "1", title: "Launch plan" });
+  // A card's Open lands on Activity › Documents; the composer's summary line already counts the document.
+  expect(opened).toMatchObject({ view: "overview", route: "overview/documents", crumbs: ["Activity", "Documents"], collapsed: "false", revision: "1", title: "Launch plan", summaryLine: "1 document" });
   if (!isRecord(opened) || !Array.isArray(opened.toc) || !Array.isArray(opened.headings)) throw new Error("Reader facts were unavailable.");
   expect(opened.headings).toEqual(["Timeline", "Owners", "Risks"]);
   expect(opened.toc).toEqual(["Timeline", "Owners", "Risks"]);
@@ -310,8 +317,13 @@ test.skipIf(!enabled)(title, { timeout: 1_200_000 }, async ({ evidence }) => {
   const afterReload = await documentsOnDisk(app);
   expect(afterReload.map((document) => [document.id, document.status, document.revision])).toEqual(expect.arrayContaining([["launch-plan", "active", 4], ["old-vendor-notes", "aside", 1]]));
   await waitFor(app, `Boolean(document.querySelector('[data-testid="document-card"][data-document-id="launch-plan"]'))`, { timeoutMs: 60_000, label: "cards survive reload" });
-  await evalIn(app, `document.querySelector('[data-testid="context-rail-documents"]').click(); true`);
-  await waitFor(app, `Boolean(document.querySelector('[data-testid="documents-active"] [data-document-id="launch-plan"]'))`, { timeoutMs: 30_000, label: "Documents view after reload" });
+  // The summary line's documents part opens Activity › Documents from the folded panel.
+  await waitFor(app, `document.querySelector('[data-testid="summary-part-documents"]')?.textContent?.trim() === "1 document"`, { timeoutMs: 30_000, label: "summary line: 1 document" });
+  await evalIn(app, `document.querySelector('[data-testid="summary-part-documents"]').click(); true`);
+  await waitFor(app, `Boolean(document.querySelector('[data-testid="documents-active"] [data-document-id="launch-plan"]'))`, { timeoutMs: 30_000, label: "Documents level after reload" });
+  expect(await evalIn(app, `document.querySelector('[data-testid="panel-content"]')?.getAttribute("data-route")`)).toBe("overview/documents");
+  // The list is flat rows, not a card inside the panel.
+  expect(await evalIn(app, `document.querySelectorAll('[data-testid="documents-active"].rounded-2xl, [data-testid="documents-panel"] .rounded-2xl').length`)).toBe(0);
 
   // 7. A long reply without a document folds to its first paragraph; nothing is lost; the coworker is reminded.
   const foldedBubble = await ask(

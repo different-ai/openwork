@@ -6,6 +6,25 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { clickButton, coworker, evalIn, fill, needs, resolveHost, test, waitFor, waitForText } from "@openwork/testkit";
 import { expect, onTestFinished } from "vitest";
 
+/**
+ * Bring the right panel to one level of Activity — Documents, Workers, or Assignments —
+ * from wherever it is: folded, on another view, on the root, or on another level.
+ */
+async function openActivityLevel(app: Awaited<ReturnType<typeof coworker>>, level: "documents" | "workers" | "assignments"): Promise<void> {
+  await waitFor(app, `(() => {
+    const panel = document.querySelector('[data-testid="context-panel"]');
+    if (!(panel instanceof HTMLElement)) return false;
+    const route = document.querySelector('[data-testid="panel-content"]')?.getAttribute("data-route") ?? "";
+    if (panel.dataset.collapsed === "false" && route === ${JSON.stringify(`overview/${level}`)}) return true;
+    if (panel.dataset.collapsed === "true") document.querySelector('[data-testid="context-rail-overview"]')?.click();
+    else if (panel.dataset.view !== "overview") document.querySelector('button[aria-label="Back to activity"]')?.click();
+    else if (route !== "overview") document.querySelector('[data-testid="panel-back"]')?.click();
+    else document.querySelector(${JSON.stringify(`[data-testid="activity-row-${level}"]`)})?.click();
+    return false;
+  })()`, { timeoutMs: 60_000, label: `Activity › ${level}` });
+}
+
+
 const enabled = process.env.OPENWORK_EVAL_E2E_TESTS === "1";
 const title = enabled
   ? "Open Coworker completes local onboarding with what this Mac already has, a calm default sidebar, model choice in settings, native runs with history, a run queue, and scheduling from the chat"
@@ -676,72 +695,87 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   await waitFor(app, `document.querySelector('[data-testid="context-panel"]')?.dataset.collapsed === "false"`, { timeoutMs: 30_000, label: "details panel open" });
   await waitFor(app, `Boolean(document.querySelector('[data-testid="coworker-activity-summary"]'))`, { timeoutMs: 60_000, label: "Activity view" });
 
-  // The Activity view is useful as soon as it opens: one status word, quiet
-  // secondary links, and no technical vocabulary. Scheduled work lives in the
-  // Workers view as Assignments, not here.
+  // The Activity view is useful as soon as it opens: what is happening now, then what the
+  // coworker holds as three flat rows, and no technical vocabulary. The header owns the one
+  // status word; the panel does not repeat it, and there is no second settings control.
   const defaultSidebar = await waitFor(app, `(() => {
     const summary = document.querySelector('[data-testid="coworker-activity-summary"]');
-    const settings = document.querySelector('[data-testid="coworker-settings-button"]');
-    const icon = settings?.querySelector("svg");
-    const links = [...document.querySelectorAll('nav[aria-label="More for this coworker"] button')].map((button) => button.textContent?.trim());
-    if (!(summary instanceof HTMLElement) || !(settings instanceof HTMLElement) || !icon) return false;
-    const summaryLines = summary.innerText.split("\\n").map((line) => line.trim()).filter(Boolean);
+    const status = document.querySelector('[data-testid="coworker-top-status"]');
+    if (!(summary instanceof HTMLElement) || !(status instanceof HTMLElement)) return false;
     // The first poll may still be reading the workspace; wait for the settled idle state.
-    if (summaryLines[0] !== "Ready") return false;
+    if (status.textContent?.trim() !== "Ready") return false;
+    const summaryLines = summary.innerText.split("\\n").map((line) => line.trim()).filter(Boolean);
+    const rows = [...document.querySelectorAll('[data-testid^="activity-row-"]')];
     const sidebarText = (summary.closest("aside")?.innerText ?? "").toLowerCase();
-    const settingsRect = settings.getBoundingClientRect();
-    const iconRect = icon.getBoundingClientRect();
     return {
       summaryLines,
+      rows: rows.map((row) => row.innerText.split("\\n").map((line) => line.trim()).filter((line) => line && line !== "›").join(" · ")),
+      rowIds: rows.map((row) => row.getAttribute("data-testid")),
       scheduledSectionInActivity: Boolean(document.querySelector('[data-testid="coworker-assignments"], [data-testid="responsibilities-empty"]')),
-      links,
-      settingsLabel: settings.getAttribute("aria-label"),
-      settingsTitle: settings.getAttribute("title"),
-      settingsText: settings.textContent?.trim() ?? "",
-      settingsSize: [Math.round(settingsRect.width), Math.round(settingsRect.height)],
-      iconSize: [Math.round(iconRect.width), Math.round(iconRect.height)],
+      settingsButton: Boolean(document.querySelector('[data-testid="coworker-settings-button"]')),
+      footerLinks: document.querySelectorAll('nav[aria-label="More for this coworker"] button').length,
+      statusDot: status.querySelectorAll("span").length,
+      statusTone: status.getAttribute("data-tone"),
+      statusTitle: status.getAttribute("title"),
       sidebarMentionsEngine: sidebarText.includes("engine"),
       sidebarMentionsModel: sidebarText.includes("model"),
       readyMentions: (sidebarText.match(/ready/g) ?? []).length,
     };
   })()`, { timeoutMs: 240_000, label: "settled default Activity sidebar" });
   expect(defaultSidebar).toMatchObject({
-    summaryLines: ["Ready", "Waiting for the first assignment."],
+    summaryLines: ["Waiting for the first assignment."],
+    rows: ["Documents", "Workers", "Assignments"],
+    rowIds: ["activity-row-documents", "activity-row-workers", "activity-row-assignments"],
     scheduledSectionInActivity: false,
-    links: ["Workers", "Apps & tools", "Memory"],
-    settingsLabel: "Coworker settings",
-    settingsTitle: "Coworker settings",
-    settingsText: "",
-    settingsSize: [32, 32],
-    iconSize: [16, 16],
+    settingsButton: false,
+    footerLinks: 0,
+    statusDot: 0,
+    statusTone: "mist",
+    statusTitle: null,
     sidebarMentionsEngine: false,
     sidebarMentionsModel: false,
-    readyMentions: 1,
+    readyMentions: 0,
   });
-  // The Workers view holds the Assignments: nothing running yet, one compact empty state for scheduled work.
-  await clickButton(app, "Workers");
-  const workersView = await waitFor(app, `(() => {
-    const view = document.querySelector('[data-testid="coworker-workers"]');
-    const assignments = document.querySelector('[data-testid="coworker-assignments"]');
+  // Assignments is a level of Activity: nothing handed over yet, one compact empty state for scheduled work.
+  await openActivityLevel(app, "assignments");
+  const assignmentsLevel = await waitFor(app, `(() => {
+    const view = document.querySelector('[data-testid="coworker-assignments"]');
     const empty = document.querySelector('[data-testid="responsibilities-empty"]');
-    const workersEmpty = document.querySelector('[data-testid="workers-empty"]');
-    // The Workers list arrives a moment after the view; read it once its empty state has settled.
-    if (!(view instanceof HTMLElement) || !(assignments instanceof HTMLElement) || !(empty instanceof HTMLElement) || !(workersEmpty instanceof HTMLElement)) return false;
+    const once = document.querySelector('[data-testid="assignments-empty"]');
+    if (!(view instanceof HTMLElement) || !(empty instanceof HTMLElement) || !(once instanceof HTMLElement)) return false;
     return {
-      workersEmpty: workersEmpty.textContent?.trim() ?? "",
-      assignmentsHeading: assignments.querySelector("h3")?.textContent?.trim() ?? "",
+      onceEmpty: once.textContent?.trim() ?? "",
+      newAssignment: Boolean(document.querySelector('[data-testid="new-assignment-button"]')),
       emptyStateCount: document.querySelectorAll('[data-testid="responsibilities-empty"]').length,
       emptyStateText: empty.textContent?.trim() ?? "",
-      assignmentsBelowWorkers: assignments.getBoundingClientRect().top > view.querySelector('section[aria-label="Workers"]').getBoundingClientRect().top,
+      cards: view.querySelectorAll(".rounded-2xl").length,
+      panelTitle: document.querySelector('[data-testid="context-panel"] [data-testid="panel-crumb"][aria-current="page"]')?.textContent?.trim() ?? "",
+      back: document.querySelector('[data-testid="panel-back"]')?.getAttribute("aria-label") ?? "",
+    };
+  })()`, { timeoutMs: 30_000, label: "Activity › Assignments" });
+  expect(assignmentsLevel).toMatchObject({ newAssignment: true, emptyStateCount: 1, cards: 0, panelTitle: "Assignments", back: "Back to Activity" });
+  if (!isRecord(assignmentsLevel) || typeof assignmentsLevel.emptyStateText !== "string" || typeof assignmentsLevel.onceEmpty !== "string") throw new Error("Assignments level facts were unavailable.");
+  expect(assignmentsLevel.onceEmpty).toContain("Nothing handed over yet.");
+  expect(assignmentsLevel.emptyStateText).toContain("Nothing on a schedule yet.");
+  expect(assignmentsLevel.emptyStateText).toContain("Add assignment");
+  // Workers is its own level, holding Workers only.
+  await openActivityLevel(app, "workers");
+  const workersLevel = await waitFor(app, `(() => {
+    const view = document.querySelector('[data-testid="coworker-workers"]');
+    const workersEmpty = document.querySelector('[data-testid="workers-empty"]');
+    // The Workers list arrives a moment after the view; read it once its empty state has settled.
+    if (!(view instanceof HTMLElement) || !(workersEmpty instanceof HTMLElement)) return false;
+    return {
+      workersEmpty: workersEmpty.textContent?.trim() ?? "",
+      newWorker: Boolean(document.querySelector('[data-testid="new-worker-button"]')),
+      assignmentsHere: Boolean(document.querySelector('[data-testid="coworker-assignments"]')),
       panelTitle: document.querySelector('[data-testid="context-panel"] [data-testid="panel-crumb"][aria-current="page"]')?.textContent?.trim() ?? "",
     };
-  })()`, { timeoutMs: 30_000, label: "Workers view with its Assignments" });
-  expect(workersView).toMatchObject({ assignmentsHeading: "Assignments", emptyStateCount: 1, assignmentsBelowWorkers: true, panelTitle: "Workers" });
-  if (!isRecord(workersView) || typeof workersView.emptyStateText !== "string" || typeof workersView.workersEmpty !== "string") throw new Error("Workers view facts were unavailable.");
-  expect(workersView.workersEmpty).toContain("No Workers running. Ask Scout to start one, or start one here.");
-  expect(workersView.emptyStateText).toContain("Nothing on a schedule yet.");
-  expect(workersView.emptyStateText).toContain("Add assignment");
-  await evalIn(app, `document.querySelector('button[aria-label="Back to activity"]').click()`);
+  })()`, { timeoutMs: 30_000, label: "Activity › Workers" });
+  expect(workersLevel).toMatchObject({ newWorker: true, assignmentsHere: false, panelTitle: "Workers" });
+  if (!isRecord(workersLevel) || typeof workersLevel.workersEmpty !== "string") throw new Error("Workers level facts were unavailable.");
+  expect(workersLevel.workersEmpty).toContain("No Workers running. Ask Scout to start one, or start one here.");
+  await evalIn(app, `document.querySelector('[data-testid="panel-back"]').click()`);
   await waitFor(app, `Boolean(document.querySelector('[data-testid="coworker-activity-summary"]'))`, { timeoutMs: 30_000, label: "back on Activity" });
   const composerFacts = await evalIn(app, `(() => {
     const composer = document.querySelector('textarea[aria-label="Message Scout"]')?.closest('[data-testid="coworker-composer"]');
@@ -750,17 +784,20 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
       present: Boolean(composer),
       hasModelControl: Boolean(document.querySelector('[data-testid="composer-model-control"]')),
       mentionsModel: text.includes("model") || text.includes("thinking effort"),
+      brandLine: text.includes("powered by"),
+      summaryLine: Boolean(composer?.querySelector('[data-testid="coworker-summary-line"]')),
     };
   })()`);
-  expect(composerFacts).toEqual({ present: true, hasModelControl: false, mentionsModel: false });
+  // A coworker that has never held or finished anything gets no summary line under its first message.
+  expect(composerFacts).toEqual({ present: true, hasModelControl: false, mentionsModel: false, brandLine: false, summaryLine: false });
   // Returning to Activity re-opens the panel with its 180ms unfold; let it settle before measuring it.
   await waitFor(app, `(() => {
     const panel = document.querySelector('[data-testid="context-panel"]');
     return panel instanceof HTMLElement && panel.dataset.collapsed === "false" && panel.getBoundingClientRect().width >= 320;
   })()`, { timeoutMs: 10_000, label: "context panel open and settled" });
   evidence.recordAssertionEvidence(
-    "The Activity view leads with current activity, the Workers view holds Workers and Assignments, and the composer carries no model controls",
-    "Once opened, Scout's Activity view showed exactly one idle status line plus one note, no scheduled-work section, three quiet links (Workers, Apps & tools, Memory), and an icon-only 32×32 Coworker settings control with a 16×16 glyph; the Workers link opened the Workers view with its empty Workers state and, below it, Assignments with a single compact Add assignment empty state (Nothing on a schedule yet.); the panel and composer contained no model, thinking-effort, or engine vocabulary.",
+    "The Activity view leads with what is happening, holds Documents, Workers, and Assignments as levels, and the composer carries no model controls or brand line",
+    "Once opened, Scout's Activity view showed one quiet note, three flat rows (Documents, Workers, Assignments) with no card, no second settings control, and no footer links, while the header carried the only Ready — plain text, no dot; the Assignments row opened its level with New assignment, an empty once list, and a single compact Add assignment empty state (Nothing on a schedule yet.); the Workers row opened a level with Workers only and New Worker; the panel and composer contained no model, thinking-effort, or engine vocabulary, and the composer carried neither a brand line nor a summary line for a coworker that has nothing yet.",
     true,
   );
 
@@ -851,6 +888,28 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
       searchFocused,
       finalView: panel.dataset.view,
       settingsButtonBack: Boolean(q('[data-testid="coworker-settings-button"]')),
+      stripTooltip: await (async () => {
+        // Hovering a strip icon names the view and what it shows, in the coworker's name.
+        window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+        await wait(300);
+        const icon = q('[data-testid="context-rail-overview"]');
+        icon?.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
+        await wait(700);
+        const tip = q('[role="tooltip"][data-testid="tooltip"]');
+        const facts = {
+          text: tip?.textContent ?? "",
+          side: tip?.getAttribute("data-side") ?? "",
+          describedBy: Boolean(tip) && icon?.getAttribute("aria-describedby") === tip?.id,
+          leftOfStrip: tip && icon ? tip.getBoundingClientRect().right <= icon.getBoundingClientRect().left : false,
+          nativeTitle: icon?.getAttribute("title"),
+        };
+        icon?.dispatchEvent(new MouseEvent("mouseout", { bubbles: true }));
+        await wait(100);
+        const gone = !q('[role="tooltip"][data-testid="tooltip"]');
+        icon?.click();
+        await wait(400);
+        return { ...facts, gone };
+      })(),
     };
   })()`, { awaitPromise: true, timeoutMs: 30_000 });
   if (!isRecord(foldedPanels) || !isRecord(foldedPanels.collapsed) || !isRecord(foldedPanels.afterIcon)) throw new Error("Folded panel facts were unavailable.");
@@ -870,7 +929,7 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
     indicatorTone: "mist",
     indicatorAtBottom: true,
     peekRightOfRail: true,
-    panelIcons: ["Activity:true", "Documents:false", "Workers:false", "Apps & tools:false", "Memory:false", "Coworker settings:false"],
+    panelIcons: ["Activity:true", "Memory:false", "Coworker settings:false"],
     panelIconText: "",
   });
   expect(String(foldedPanels.collapsed.peekText)).toContain("Scout");
@@ -884,10 +943,18 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   expect(foldedPanels.reopened).toBeGreaterThanOrEqual(220);
   expect(foldedPanels.searchFocused).toBe(true);
   expect(foldedPanels.finalView).toBe("overview");
-  expect(foldedPanels.settingsButtonBack).toBe(true);
+  expect(foldedPanels.settingsButtonBack).toBe(false);
+  expect(foldedPanels.stripTooltip).toEqual({
+    text: "Activity — what Scout is doing now, recently, and the assignments, Workers, and documents it holds",
+    side: "left",
+    describedBy: true,
+    leftOfStrip: true,
+    nativeTitle: null,
+    gone: true,
+  });
   evidence.recordAssertionEvidence(
     "Both side panels fold to icon rails and unfold from them",
-    "With no fold buttons anywhere, a click on each panel's edge folded it: the team rail became an 88px rail clear of the window controls, without the logo, with a search icon, Scout's avatar marked current, a bottom status dot, and a hover card beside the rail naming Scout and Ready; the context panel became a 56px strip with Activity, Documents, Workers, Apps & tools, Memory, and Coworker settings icons and no words, and choosing Memory unfolded the panel on that view. Dragging the rail edge past the fold threshold closed it, a click on the edge reopened and refolded it, and the search icon reopened it with the cursor in the search box.",
+    "With no fold buttons anywhere, a click on each panel's edge folded it: the team rail became an 88px rail clear of the window controls, without the logo, with a search icon, Scout's avatar marked current, a bottom status dot, and a hover card beside the rail naming Scout and Ready; the context panel became a 56px strip with exactly three icons — Activity, Memory, and Coworker settings — and no words, and choosing Memory unfolded the panel on that view. Resting on the Activity icon showed one tooltip beside the strip (Activity — what Scout is doing now, recently, and the assignments, Workers, and documents it holds), named to assistive tech and with no native title behind it. Dragging the rail edge past the fold threshold closed it, a click on the edge reopened and refolded it, and the search icon reopened it with the cursor in the search box.",
     true,
   );
 
@@ -912,26 +979,34 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
     return { afterEscape, afterOpen, afterEdge, finalCollapsed: panel.dataset.collapsed };
   })()`, { awaitPromise: true, timeoutMs: 30_000 });
   expect(transientPanel).toEqual({
-    afterEscape: { collapsed: "true", width: 56, stripIcons: 6 },
+    afterEscape: { collapsed: "true", width: 56, stripIcons: 3 },
     afterOpen: { collapsed: "false", view: "overview", stripIcons: 0 },
     afterEdge: { collapsed: "true", width: 56 },
     finalCollapsed: "false",
   });
   evidence.recordAssertionEvidence(
     "The details panel is transient",
-    "Escape folded the open panel back to its 56px strip of six icons, the strip's Activity icon reopened it on Activity (the strip icons giving way to the panel), and a click on the panel's edge folded it again.",
+    "Escape folded the open panel back to its 56px strip of three icons, the strip's Activity icon reopened it on Activity (the strip icons giving way to the panel), and a click on the panel's edge folded it again.",
     true,
   );
 
-  // Model choice lives in Coworker settings, opened from the icon-only control.
+  // Model choice lives in Coworker settings, reached from the strip's icon (the panel folds first).
   await waitFor(app, `(() => {
-    const button = document.querySelector('[data-testid="coworker-settings-button"]');
-    if (!(button instanceof HTMLElement)) return false;
-    button.click();
-    return true;
-  })()`, { label: "Coworker settings icon button" });
+    const panel = document.querySelector('[data-testid="context-panel"]');
+    if (!(panel instanceof HTMLElement)) return false;
+    if (panel.dataset.collapsed === "false" && panel.dataset.view === "settings") return true;
+    if (panel.dataset.collapsed === "true") document.querySelector('[data-testid="context-rail-settings"]')?.click();
+    else window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    return false;
+  })()`, { timeoutMs: 30_000, label: "Coworker settings from the strip" });
   await waitForText(app, "Coworker settings", { timeoutMs: 30_000 });
   await waitFor(app, `Boolean(document.querySelector('[data-testid="coworker-model-settings"]'))`, { timeoutMs: 30_000, label: "AI model section" });
+  // Apps & tools is the first row of these settings, above who the coworker is.
+  expect(await evalIn(app, `(() => {
+    const row = document.querySelector('[data-testid="settings-row-apps-tools"]');
+    const profile = document.querySelector('[data-testid="coworker-profile-settings"]');
+    return Boolean(row && profile) && row.getBoundingClientRect().top < profile.getBoundingClientRect().top && (row.textContent ?? "").includes("Apps & tools");
+  })()`)).toBe(true);
   expect(String(await evalIn(app, `document.querySelector('[data-testid="coworker-model-settings"]')?.innerText ?? ""`))).toContain("AI model");
   // Who the coworker is comes before what it runs on.
   expect(await evalIn(app, `(() => {
@@ -981,7 +1056,7 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   await waitFor(app, `Boolean(document.querySelector('[data-testid="coworker-activity-summary"]'))`, { timeoutMs: 30_000, label: "Activity sidebar restored" });
   evidence.recordAssertionEvidence(
     "A coworker's AI model and thinking effort are configured in Coworker settings",
-    "The icon-only Coworker settings control opened the AI model section, where the searchable picker selected Big Pickle for Scout and the thinking-effort control appears only when the chosen model offers reasoning variants.",
+    "The strip's Coworker settings icon opened the settings with Apps & tools as their first row, then the AI model section, where the searchable picker selected Big Pickle for Scout and the thinking-effort control appears only when the chosen model offers reasoning variants.",
     true,
   );
   const avatarMotion = await evalIn(app, `(() => {
@@ -1218,8 +1293,7 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
     if (!(panel instanceof HTMLElement)) return false;
     if (panel.dataset.collapsed === "false" && panel.dataset.view === "memory") return true;
     if (panel.dataset.collapsed === "true") document.querySelector('[data-testid="context-rail-memory"]')?.click();
-    else if (panel.dataset.view === "overview") [...document.querySelectorAll('nav[aria-label="More for this coworker"] button')].find((button) => (button.textContent ?? "").trim() === "Memory")?.click();
-    else document.querySelector('button[aria-label="Back to activity"]')?.click();
+    else window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
     return false;
   })()`, { timeoutMs: 60_000, label: "Memory view" });
   const memoryTabs = await waitFor(app, `(() => {
@@ -1447,9 +1521,9 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
     coworkerWorkspaceDisplay: "flex",
     selectedCoworker: true,
   });
-  // Scheduled work is added from the Workers view's Assignments section.
-  await clickButton(app, "Workers");
-  await waitFor(app, `Boolean(document.querySelector('[data-testid="coworker-assignments"]'))`, { timeoutMs: 30_000, label: "Assignments in the Workers view" });
+  // Scheduled work is added from Activity › Assignments.
+  await openActivityLevel(app, "assignments");
+  await waitFor(app, `Boolean(document.querySelector('[data-testid="coworker-assignments"]'))`, { timeoutMs: 30_000, label: "the Assignments level" });
   await clickButton(app, "Add assignment");
   await waitFor(app, `Boolean(document.querySelector('[data-testid="add-responsibility"]'))`, { timeoutMs: 30_000, label: "add assignment form" });
   const placementChoice = await evalIn(app, `(() => {
@@ -1524,7 +1598,7 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
     threadId: expect.stringMatching(/^ses_/),
     error: "",
   });
-  // The row in the Workers view reads the outcome in plain words…
+  // The row in Assignments reads the outcome in plain words…
   const rowAfterRun = await waitFor(app, `(() => {
     const row = document.querySelector('[data-testid="responsibility-row"]');
     if (!(row instanceof HTMLElement)) return false;
@@ -1532,38 +1606,44 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
     return /Done (today|yesterday) at/.test(rowText) ? rowText : false;
   })()`, { timeoutMs: 30_000, label: "the scheduled assignment's row records the run" });
   expect(String(rowAfterRun)).not.toMatch(/Succeeded|Failed|slot|thread/);
-  // …and Activity records it once, in Recent, as work on a schedule.
-  await evalIn(app, `document.querySelector('button[aria-label="Back to activity"]').click()`);
+  // …and Activity records it once, in Recent, as work on a schedule; the header alone says Ready.
+  await evalIn(app, `document.querySelector('[data-testid="panel-back"]').click()`);
   const sidebarAfterRun = await waitFor(app, `(() => {
     const summary = document.querySelector('[data-testid="coworker-activity-summary"]');
     const recent = document.querySelector('[data-testid="coworker-recent-activity"]');
-    if (!(summary instanceof HTMLElement) || !(recent instanceof HTMLElement)) return false;
+    const status = document.querySelector('[data-testid="coworker-top-status"]');
+    if (!(summary instanceof HTMLElement) || !(recent instanceof HTMLElement) || !(status instanceof HTMLElement)) return false;
     const recentText = recent.innerText;
     if (!recentText.includes("Local readiness check") || !recentText.includes("Done")) return false;
     // The activity read and the scheduled-work read poll independently; wait until both have settled.
+    if (status.textContent?.trim() !== "Ready") return false;
     const summaryLines = summary.innerText.split("\\n").map((line) => line.trim()).filter(Boolean);
-    if (summaryLines.length !== 1 || summaryLines[0] !== "Ready") return false;
+    if (summaryLines.length !== 0) return false;
+    const assignmentsRow = document.querySelector('[data-testid="activity-row-assignments"]');
     return {
       summaryLines,
       recentEntries: recent.querySelectorAll("li").length,
       recentText,
+      recentCards: recent.querySelectorAll(".rounded-2xl").length,
+      assignmentsRow: assignmentsRow instanceof HTMLElement ? assignmentsRow.innerText.replace(/\\s+/g, " ").trim() : "",
+      composerLine: document.querySelector('[data-testid="coworker-summary-line"]')?.textContent?.trim() ?? "",
     };
   })()`, {
     timeoutMs: 30_000,
     label: "Activity records the completed local work",
   });
-  expect(sidebarAfterRun).toMatchObject({ summaryLines: ["Ready"], recentEntries: 1 });
+  expect(sidebarAfterRun).toMatchObject({ summaryLines: [], recentEntries: 1, recentCards: 0, assignmentsRow: "1 assignment On a schedule ›", composerLine: "1 assignment" });
   if (!isRecord(sidebarAfterRun)) throw new Error("Sidebar facts after the run were unavailable.");
   expect(String(sidebarAfterRun.recentText)).toContain("On a schedule");
   evidence.recordAssertionEvidence(
     "A scheduled assignment runs through a native thread and the panel records it once, in the right place",
-    "The daily assignment finished with a native ses_ thread id and no error. Its row in the Workers view read Done today at a time, Current activity then read just Ready, and Recent listed Local readiness check exactly once as work on a schedule.",
+    "The daily assignment finished with a native ses_ thread id and no error. Its row in Assignments read Done today at a time, the header alone read Ready while the Activity view's now-row stayed empty, its Assignments row read 1 assignment · On a schedule, the composer's summary line read 1 assignment, and Recent listed Local readiness check exactly once, as flat rows, as work on a schedule.",
     true,
   );
 
   // --- Outcomes live beside the scheduled assignment: a run history with the coworker's own words,
   // and a way to ask the coworker to explain a run without leaving the discussion.
-  await clickButton(app, "Workers");
+  await openActivityLevel(app, "assignments");
   await waitFor(app, `(() => {
     const toggle = document.querySelector('[data-testid="responsibility-history-toggle"]');
     if (!(toggle instanceof HTMLElement) || !(toggle.textContent ?? "").includes("Done")) return false;
@@ -1842,16 +1922,9 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   if (!isRecord(carItem) || !isRecord(carItem.schedule)) throw new Error("The chat-created assignment was not stored.");
   // No time zone was invented: the coworker's own was filled in.
   expect(carItem.schedule.timezone).toBe(await evalIn(app, "Intl.DateTimeFormat().resolvedOptions().timeZone"));
-  // Scheduled work lives in the Workers view's Assignments section; open it from wherever the panel is.
-  await waitFor(app, `(() => {
-    const panel = document.querySelector('[data-testid="context-panel"]');
-    if (!(panel instanceof HTMLElement)) return false;
-    if (panel.dataset.collapsed === "false" && panel.dataset.view === "workers") return Boolean(document.querySelector('[data-testid="coworker-assignments"]'));
-    if (panel.dataset.collapsed === "true") document.querySelector('[data-testid="context-rail-workers"]')?.click();
-    else if (panel.dataset.view === "overview") [...document.querySelectorAll("button")].find((button) => (button.textContent ?? "").trim() === "Workers")?.click();
-    else document.querySelector('button[aria-label="Back to activity"]')?.click();
-    return false;
-  })()`, { timeoutMs: 60_000, label: "Workers view with Assignments for the chat-created assignment" });
+  // Scheduled work lives in Activity › Assignments; open it from wherever the panel is.
+  await openActivityLevel(app, "assignments");
+  await waitFor(app, `Boolean(document.querySelector('[data-testid="coworker-assignments"]'))`, { timeoutMs: 60_000, label: "Assignments for the chat-created assignment" });
   const carRow = String(await waitFor(app, `(() => {
     const row = [...document.querySelectorAll('[data-testid="responsibility-row"]')].find((candidate) => (candidate.textContent ?? "").includes("Move the car"));
     return row instanceof HTMLElement ? row.innerText.replace(/\\s+/g, " ") : false;

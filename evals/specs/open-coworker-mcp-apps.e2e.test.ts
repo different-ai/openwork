@@ -82,30 +82,50 @@ async function resizePanelTo(app: Awaited<ReturnType<typeof coworker>>, width: n
   await waitFor(app, `Math.round(document.querySelector('[data-testid="context-panel"]')?.getBoundingClientRect().width ?? 0) === ${width}`, { timeoutMs: 30_000, label: `panel at ${width}px` });
 }
 
-/** Bring the right panel to the Apps & tools view from whatever state it is in (folded, another view, or Activity). */
+/** The Apps & tools root is the first level of Coworker settings. */
+const APPS_TOOLS_ROUTE = "settings/apps-tools";
+
+/**
+ * Bring the right panel to the Apps & tools root from whatever state it is in: folded, on another
+ * view (Escape folds it), on the Coworker settings rows (their first row opens it), or deeper inside.
+ */
 async function openAppsAndTools(app: Awaited<ReturnType<typeof coworker>>): Promise<void> {
   await waitFor(app, `(() => {
     const panel = document.querySelector('[data-testid="context-panel"]');
     if (!(panel instanceof HTMLElement)) return false;
-    if (panel.dataset.collapsed === "false" && panel.dataset.view === "capabilities") {
+    const route = document.querySelector('[data-testid="panel-content"]')?.getAttribute("data-route") ?? "";
+    if (panel.dataset.collapsed === "false" && panel.dataset.view === "settings") {
       // The view remembers its last level for the session; the journeys start each visit at the root.
-      if (panel.dataset.depth === "0") return true;
-      document.querySelector('[data-testid="panel-back"]')?.click();
+      if (route === ${json(APPS_TOOLS_ROUTE)}) return true;
+      if (panel.dataset.depth === "0") document.querySelector('[data-testid="settings-row-apps-tools"]')?.click();
+      else document.querySelector('[data-testid="panel-back"]')?.click();
       return false;
     }
     if (panel.dataset.collapsed === "true") {
-      document.querySelector('[data-testid="context-rail-capabilities"]')?.click();
+      document.querySelector('[data-testid="context-rail-settings"]')?.click();
       return false;
     }
-    if (panel.dataset.view !== "overview") {
-      document.querySelector('button[aria-label="Back to activity"]')?.click();
-      return false;
-    }
-    const link = [...document.querySelectorAll('nav[aria-label="More for this coworker"] button')]
-      .find((button) => (button.textContent ?? "").includes("Apps & tools"));
-    link?.click();
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
     return false;
-  })()`, { timeoutMs: 60_000, label: "Apps & tools view" });
+  })()`, { timeoutMs: 60_000, label: "Apps & tools root" });
+}
+
+/** Jump to one level of the trail by its depth: a visible crumb, or one folded into the … menu. */
+async function clickCrumb(app: Awaited<ReturnType<typeof coworker>>, depth: number): Promise<void> {
+  await waitFor(app, `(() => {
+    const crumb = document.querySelector(${json(`[data-testid="panel-breadcrumbs"] [data-testid="panel-crumb"][data-depth="${depth}"]`)});
+    if (crumb instanceof HTMLElement) {
+      crumb.click();
+      return true;
+    }
+    const open = document.querySelector(${json(`[role="menu"][aria-label="Levels above"] [data-testid="panel-crumb"][data-depth="${depth}"]`)});
+    if (open instanceof HTMLElement) {
+      open.click();
+      return true;
+    }
+    document.querySelector('[data-testid="panel-crumb-more"]')?.click();
+    return false;
+  })()`, { timeoutMs: 30_000, label: `crumb at depth ${depth}` });
 }
 
 function readBody(request: IncomingMessage): Promise<string> {
@@ -368,7 +388,9 @@ test.skipIf(!enabled)(title, { timeout: 240_000 }, async ({ evidence }) => {
       body: document.body.innerText.toLowerCase(),
     };
   })()`, { timeoutMs: 60_000, label: "Apps & tools root rows with counts" });
-  expect(root).toMatchObject({ route: "capabilities", hasSearch: true, crumbs: ["Apps & tools"] });
+  // Apps & tools sits one level under Coworker settings; the strip has no icon of its own for it.
+  expect(root).toMatchObject({ route: APPS_TOOLS_ROUTE, hasSearch: true, crumbs: ["Coworker settings", "Apps & tools"] });
+  expect(await evalIn(app, `[...document.querySelectorAll('[data-testid^="context-rail-"]')].length`)).toBe(0);
   if (!isRecord(root) || typeof root.connected !== "string" || typeof root.apps !== "string" || typeof root.local !== "string" || typeof root.body !== "string") {
     throw new Error("Root row facts were unavailable.");
   }
@@ -398,7 +420,7 @@ test.skipIf(!enabled)(title, { timeout: 240_000 }, async ({ evidence }) => {
       back: document.querySelector('[data-testid="panel-back"]')?.getAttribute("aria-label"),
     };
   })()`, { timeoutMs: 30_000, label: "OpenWork Connect introduction step" });
-  expect(connectIntro).toMatchObject({ route: "capabilities/connected", fillsPanel: true, hasSearch: false, checkbox: true, back: "Back to Apps & tools" });
+  expect(connectIntro).toMatchObject({ route: `${APPS_TOOLS_ROUTE}/connected`, fillsPanel: true, hasSearch: false, checkbox: true, back: "Back to Apps & tools" });
   if (!isRecord(connectIntro) || typeof connectIntro.text !== "string") throw new Error("Connect introduction facts were unavailable.");
   expect(connectIntro.text).toContain("Continue with OpenWork");
   expect(connectIntro.text).toContain("Skip");
@@ -406,10 +428,10 @@ test.skipIf(!enabled)(title, { timeout: 240_000 }, async ({ evidence }) => {
   await waitFor(app, `document.querySelector('[data-testid="coworker-connect-card"]')?.getAttribute("data-pitch") === "compact"`, { timeoutMs: 30_000, label: "short Connect form after Skip" });
   expect(String(await evalIn(app, `document.querySelector('[data-testid="coworker-connect-card"]')?.innerText ?? ""`))).toContain("Continue with OpenWork");
   await clickTestId(app, "panel-back");
-  await waitFor(app, `document.querySelector('[data-testid="panel-content"]')?.getAttribute("data-route") === "capabilities"`, { timeoutMs: 30_000, label: "back at the root" });
+  await waitFor(app, `document.querySelector('[data-testid="panel-content"]')?.getAttribute("data-route") === ${json(APPS_TOOLS_ROUTE)}`, { timeoutMs: 30_000, label: "back at the Apps & tools root" });
   evidence.recordAssertionEvidence(
-    "Apps & tools opens as a root of rows, and Connected with OpenWork is one level below it",
-    "The root showed Connected with OpenWork (Not connected), Apps (1), and Tools on this Mac (1) as flat rows with a search field in the content and no MCP vocabulary; opening Connected showed the full-panel OpenWork Connect step (Continue, Skip, a don't-show-again choice, no search field) with a back control named after the root, and Skip left the short card.",
+    "Apps & tools opens as a level of Coworker settings with a root of rows, and Connected with OpenWork is one level below it",
+    "Reached from the strip's Coworker settings icon and the first settings row, Apps & tools (trail Coworker settings › Apps & tools) showed Connected with OpenWork (Not connected), Apps (1), and Tools on this Mac (1) as flat rows with a search field in the content and no MCP vocabulary; opening Connected showed the full-panel OpenWork Connect step (Continue, Skip, a don't-show-again choice, no search field) with a back control named after Apps & tools, and Skip left the short card.",
     true,
   );
 
@@ -420,7 +442,7 @@ test.skipIf(!enabled)(title, { timeout: 240_000 }, async ({ evidence }) => {
     if (!(row instanceof HTMLElement) || !(row.textContent ?? "").includes("Connected")) return false;
     return { text: row.innerText, rows: document.querySelectorAll('[data-testid="coworker-mcp-connection"]').length, route: document.querySelector('[data-testid="panel-content"]')?.getAttribute("data-route") };
   })()`, { timeoutMs: 60_000, label: "chapter-notes row reads Connected" });
-  expect(toolRow).toMatchObject({ rows: 1, route: "capabilities/local" });
+  expect(toolRow).toMatchObject({ rows: 1, route: `${APPS_TOOLS_ROUTE}/local` });
   await waitFor(app, `(() => {
     const row = [...document.querySelectorAll('[data-testid="coworker-mcp-connection"]')].find((candidate) => (candidate.textContent ?? "").includes(${json(mcpServerName)}));
     if (!(row instanceof HTMLElement)) return false;
@@ -441,17 +463,17 @@ test.skipIf(!enabled)(title, { timeout: 240_000 }, async ({ evidence }) => {
       width: document.querySelector('[data-testid="context-panel"]')?.getBoundingClientRect().width,
     };
   })()`, { timeoutMs: 60_000, label: "chapter-notes detail with what it offers" });
-  expect(toolDetail).toMatchObject({ route: `capabilities/local/tool:${mcpServerName}`, back: "Back to Tools on this Mac" });
+  expect(toolDetail).toMatchObject({ route: `${APPS_TOOLS_ROUTE}/local/tool:${mcpServerName}`, back: "Back to Tools on this Mac" });
   if (!isRecord(toolDetail) || typeof toolDetail.text !== "string" || !Array.isArray(toolDetail.offers)) throw new Error("Tool detail facts were unavailable.");
   expect(toolDetail.text).toContain("Connected");
   expect(toolDetail.text).toContain("Ask Scout to use it");
   expect(toolDetail.offers.join("\n")).toContain("Team pulse");
   expect(toolDetail.text).not.toContain(toolName);
-  // The panel opens at 360 px: three levels fold the middle crumb into "…".
-  expect(toolDetail).toMatchObject({ collapsed: "true", crumbDepths: ["0", "2"] });
+  // The panel opens at 360 px: four levels fold the middle two crumbs into "…", keeping the root and the current one.
+  expect(toolDetail).toMatchObject({ collapsed: "true", crumbDepths: ["0", "3"] });
   await clickTestId(app, "panel-back");
   const returned = await waitFor(app, `(() => {
-    if (document.querySelector('[data-testid="panel-content"]')?.getAttribute("data-route") !== "capabilities/local") return false;
+    if (document.querySelector('[data-testid="panel-content"]')?.getAttribute("data-route") !== ${json(`${APPS_TOOLS_ROUTE}/local`)}) return false;
     return { focused: document.activeElement?.getAttribute("data-row-id") ?? "" };
   })()`, { timeoutMs: 30_000, label: "back to Tools on this Mac" });
   expect(returned).toEqual({ focused: `tool:${mcpServerName}` });
@@ -461,9 +483,10 @@ test.skipIf(!enabled)(title, { timeout: 240_000 }, async ({ evidence }) => {
     true,
   );
 
-  // --- Apps → Team pulse → Open renders the App inline in the panel.
-  await clickTestId(app, "panel-crumb");
-  await waitFor(app, `document.querySelector('[data-testid="panel-content"]')?.getAttribute("data-route") === "capabilities"`, { timeoutMs: 30_000, label: "root crumb returns to the root" });
+  // --- Apps → Team pulse → Open renders the App inline in the panel. The Apps & tools crumb is folded
+  // into … at this width; its menu returns to the Apps & tools root.
+  await clickCrumb(app, 1);
+  await waitFor(app, `document.querySelector('[data-testid="panel-content"]')?.getAttribute("data-route") === ${json(APPS_TOOLS_ROUTE)}`, { timeoutMs: 30_000, label: "the Apps & tools crumb returns to its root" });
   await clickTestId(app, "apps-tools-row-apps");
   await waitFor(app, `document.querySelectorAll("[data-testid=coworker-mcp-app]").length === 1`, { timeoutMs: 60_000, label: "live Coworker MCP App list" });
   const appRowText = String(await evalIn(app, `document.querySelector("[data-testid=coworker-mcp-app]")?.innerText ?? ""`));
@@ -472,7 +495,7 @@ test.skipIf(!enabled)(title, { timeout: 240_000 }, async ({ evidence }) => {
   await clickButtonContaining(app, "Team pulse");
   await waitForText(app, "Read only", { timeoutMs: 30_000 });
   const appDetailRoute = String(await evalIn(app, `document.querySelector('[data-testid="panel-content"]')?.getAttribute("data-route") ?? ""`));
-  expect(appDetailRoute).toBe(`capabilities/apps/app:${mcpServerName}:${toolName}:${resourceUri}`);
+  expect(appDetailRoute).toBe(`${APPS_TOOLS_ROUTE}/apps/app:${mcpServerName}:${toolName}:${resourceUri}`);
   await clickTestId(app, "apps-tools-open-app");
   await waitFor(app, `Boolean(document.querySelector(${json(`[data-testid="context-panel"] [data-mcp-app-resource="${resourceUri}"] iframe`)}))`, {
     timeoutMs: 60_000,
@@ -512,7 +535,7 @@ test.skipIf(!enabled)(title, { timeout: 240_000 }, async ({ evidence }) => {
   expect(appSeen.ok, appSeen.why).toBe(true);
   evidence.recordAssertionEvidence(
     "A catalog App executes through OpenWork and mounts through the standard MCP Apps bridge",
-    `Apps listed Team pulse with its source line; its detail carried the route capabilities/apps/app:…; Open produced one read-only tools/call, ${resourceReads} resources/read request(s), a different-origin proxy iframe with stable sandbox flags, and visible Team pulse structured content.`,
+    `Apps listed Team pulse with its source line; its detail carried the route settings/apps-tools/apps/app:…; Open produced one read-only tools/call, ${resourceReads} resources/read request(s), a different-origin proxy iframe with stable sandbox flags, and visible Team pulse structured content.`,
     hostClaim === true && toolCalls === 1 && resourceReads >= 1,
   );
 
@@ -531,7 +554,7 @@ test.skipIf(!enabled)(title, { timeout: 240_000 }, async ({ evidence }) => {
       mainWidth: document.querySelector("main")?.getBoundingClientRect().width ?? 0,
     };
   })()`, { timeoutMs: 30_000, label: "App detail beside the conversation" });
-  expect(beside).toMatchObject({ route: appDetailRoute, panelRoute: "capabilities/apps", focused: `app:${mcpServerName}:${toolName}:${resourceUri}` });
+  expect(beside).toMatchObject({ route: appDetailRoute, panelRoute: `${APPS_TOOLS_ROUTE}/apps`, focused: `app:${mcpServerName}:${toolName}:${resourceUri}` });
   if (!isRecord(beside) || typeof beside.width !== "number" || typeof beside.mainWidth !== "number") throw new Error("Beside column facts were unavailable.");
   expect(beside.width).toBeGreaterThanOrEqual(480);
   expect(beside.mainWidth).toBeGreaterThanOrEqual(520);
@@ -575,7 +598,7 @@ test.skipIf(!enabled)(title, { timeout: 240_000 }, async ({ evidence }) => {
       overflow: [...document.querySelectorAll('[data-testid="panel-content"] *')].every((element) => element.scrollWidth <= element.clientWidth + 1 || getComputedStyle(element).overflowX !== "visible"),
     };
   })()`, { timeoutMs: 30_000, label: "panel at 320 px" });
-  expect(narrow).toMatchObject({ collapsed: "true", more: "1 more level", visible: ["Apps & tools", "Team pulse"] });
+  expect(narrow).toMatchObject({ collapsed: "true", more: "2 more levels", visible: ["Coworker settings", "Team pulse"] });
   await waitFor(app, `(() => {
     const more = document.querySelector('[data-testid="panel-crumb-more"]');
     if (!(more instanceof HTMLElement)) return false;
@@ -586,14 +609,14 @@ test.skipIf(!enabled)(title, { timeout: 240_000 }, async ({ evidence }) => {
     const menu = document.querySelector('[role="menu"][aria-label="Levels above"]');
     return menu ? [...menu.querySelectorAll("button")].map((item) => item.textContent) : false;
   })()`, { timeoutMs: 30_000, label: "skipped levels menu" });
-  expect(skipped).toEqual(["Apps"]);
+  expect(skipped).toEqual(["Apps & tools", "Apps"]);
   await waitFor(app, `(() => {
-    const item = document.querySelector('[role="menu"][aria-label="Levels above"] button');
+    const item = document.querySelector('[role="menu"][aria-label="Levels above"] [data-testid="panel-crumb"][data-depth="2"]');
     if (!(item instanceof HTMLElement)) return false;
     item.click();
     return true;
   })()`, { timeoutMs: 30_000, label: "choose Apps from the menu" });
-  await waitFor(app, `document.querySelector('[data-testid="panel-content"]')?.getAttribute("data-route") === "capabilities/apps"`, { timeoutMs: 30_000, label: "the skipped level opens" });
+  await waitFor(app, `document.querySelector('[data-testid="panel-content"]')?.getAttribute("data-route") === ${json(`${APPS_TOOLS_ROUTE}/apps`)}`, { timeoutMs: 30_000, label: "the skipped level opens" });
   await clickButtonContaining(app, "Team pulse");
   // 440 px needs a window with room for it beside the rail and a 520 px conversation.
   await setWindowWidth(app, 1_400);
@@ -606,16 +629,16 @@ test.skipIf(!enabled)(title, { timeout: 240_000 }, async ({ evidence }) => {
       visible: [...document.querySelectorAll('[data-testid="panel-breadcrumbs"] [data-testid="panel-crumb"]')].map((crumb) => crumb.textContent),
     };
   })()`, { timeoutMs: 30_000, label: "panel at 440 px" });
-  expect(wide).toEqual({ collapsed: "false", visible: ["Apps & tools", "Apps", "Team pulse"] });
+  expect(wide).toEqual({ collapsed: "false", visible: ["Coworker settings", "Apps & tools", "Apps", "Team pulse"] });
   evidence.recordAssertionEvidence(
     "The trail folds at 320 px and shows every level at 440 px",
-    "Dragged to 320 px the header kept the root and Team pulse with … holding Apps (opened from its menu); dragged to 440 px all three levels showed; nothing in the content overflowed sideways.",
+    "Dragged to 320 px the header kept Coworker settings and Team pulse with … holding Apps & tools and Apps (Apps opened from its menu); dragged to 440 px all four levels showed; nothing in the content overflowed sideways.",
     true,
   );
 
-  // --- Search from the root opens a result with its trail built as if navigated.
-  await clickTestId(app, "panel-crumb");
-  await waitFor(app, `document.querySelector('[data-testid="panel-content"]')?.getAttribute("data-route") === "capabilities"`, { timeoutMs: 30_000, label: "root again" });
+  // --- Search from the Apps & tools root opens a result with its trail built as if navigated.
+  await clickCrumb(app, 1);
+  await waitFor(app, `document.querySelector('[data-testid="panel-content"]')?.getAttribute("data-route") === ${json(APPS_TOOLS_ROUTE)}`, { timeoutMs: 30_000, label: "Apps & tools root again" });
   await fill(app, '[data-testid="apps-tools-search"]', "pulse");
   const results = await waitFor(app, `(() => {
     const groups = [...document.querySelectorAll('[data-testid="apps-tools-search-group"]')];
@@ -639,19 +662,21 @@ test.skipIf(!enabled)(title, { timeout: 240_000 }, async ({ evidence }) => {
       depth: document.querySelector('[data-testid="context-panel"]')?.getAttribute("data-depth"),
     };
   })()`, { timeoutMs: 30_000, label: "result opened with its trail" });
-  expect(fromSearch).toEqual({ crumbs: ["Apps & tools", "Apps", "Team pulse"], depth: "2" });
+  expect(fromSearch).toEqual({ crumbs: ["Coworker settings", "Apps & tools", "Apps", "Team pulse"], depth: "3" });
 
-  // --- Escape goes back a level at depth 2, and closes the panel only at the root.
+  // --- Escape goes back a level at every depth, and closes the panel only at the Coworker settings root.
   const escape = async () => evalIn(app, `window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); true`);
   await escape();
-  await waitFor(app, `document.querySelector('[data-testid="context-panel"]')?.getAttribute("data-depth") === "1" && document.querySelector('[data-testid="context-panel"]')?.getAttribute("data-collapsed") === "false"`, { timeoutMs: 30_000, label: "Escape at depth 2 goes back" });
+  await waitFor(app, `document.querySelector('[data-testid="context-panel"]')?.getAttribute("data-depth") === "2" && document.querySelector('[data-testid="context-panel"]')?.getAttribute("data-collapsed") === "false"`, { timeoutMs: 30_000, label: "Escape at depth 3 goes back to Apps" });
   await escape();
-  await waitFor(app, `document.querySelector('[data-testid="context-panel"]')?.getAttribute("data-depth") === "0" && document.querySelector('[data-testid="context-panel"]')?.getAttribute("data-collapsed") === "false"`, { timeoutMs: 30_000, label: "Escape at depth 1 reaches the root" });
+  await waitFor(app, `document.querySelector('[data-testid="panel-content"]')?.getAttribute("data-route") === ${json(APPS_TOOLS_ROUTE)} && document.querySelector('[data-testid="context-panel"]')?.getAttribute("data-collapsed") === "false"`, { timeoutMs: 30_000, label: "Escape at depth 2 reaches Apps & tools" });
+  await escape();
+  await waitFor(app, `document.querySelector('[data-testid="context-panel"]')?.getAttribute("data-depth") === "0" && document.querySelector('[data-testid="context-panel"]')?.getAttribute("data-collapsed") === "false" && Boolean(document.querySelector('[data-testid="settings-row-apps-tools"]'))`, { timeoutMs: 30_000, label: "Escape at depth 1 reaches the Coworker settings rows" });
   await escape();
   await waitFor(app, `document.querySelector('[data-testid="context-panel"]')?.getAttribute("data-collapsed") === "true"`, { timeoutMs: 30_000, label: "Escape at the root closes the panel" });
   evidence.recordAssertionEvidence(
     "Search understands where it is, and Escape walks back before it closes",
-    "Searching pulse from the root grouped one App and one tool on this Mac; opening the App showed the trail Apps & tools › Apps › Team pulse at depth 2; Escape went to Apps, then to the root, and only then closed the panel.",
+    "Searching pulse from the Apps & tools root grouped one App and one tool on this Mac; opening the App showed the trail Coworker settings › Apps & tools › Apps › Team pulse at depth 3; Escape went to Apps, then to Apps & tools, then to the Coworker settings rows, and only then closed the panel.",
     true,
   );
 

@@ -209,8 +209,7 @@ async function openMemoryView(app: Awaited<ReturnType<typeof coworker>>): Promis
     if (!(panel instanceof HTMLElement)) return false;
     if (panel.dataset.collapsed === "false" && panel.dataset.view === "memory") return Boolean(document.querySelector('[data-testid="memory-recent-changes"]'));
     if (panel.dataset.collapsed === "true") document.querySelector('[data-testid="context-rail-memory"]')?.click();
-    else if (panel.dataset.view === "overview") [...document.querySelectorAll('nav[aria-label="More for this coworker"] button')].find((button) => (button.textContent ?? "").trim() === "Memory")?.click();
-    else document.querySelector('button[aria-label="Back to activity"]')?.click();
+    else window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
     return false;
   })()`, { timeoutMs: 60_000, label: "Memory view" });
 }

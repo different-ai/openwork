@@ -401,30 +401,50 @@ async function backToActivity(app: Awaited<ReturnType<typeof coworker>>): Promis
   })()`, { timeoutMs: 30_000, label: "back to the Activity sidebar" });
 }
 
-/** Bring the right panel to the Apps & tools view from whatever state it is in (folded, another view, or Activity). */
+/** The Apps & tools root is the first level of Coworker settings. */
+const APPS_TOOLS_ROUTE = "settings/apps-tools";
+
+/**
+ * Bring the right panel to the Apps & tools root from whatever state it is in: folded, on another
+ * view (Escape folds it), on the Coworker settings rows (their first row opens it), or deeper inside.
+ */
 async function openAppsAndTools(app: Awaited<ReturnType<typeof coworker>>): Promise<void> {
   await waitFor(app, `(() => {
     const panel = document.querySelector('[data-testid="context-panel"]');
     if (!(panel instanceof HTMLElement)) return false;
-    if (panel.dataset.collapsed === "false" && panel.dataset.view === "capabilities") {
+    const route = document.querySelector('[data-testid="panel-content"]')?.getAttribute("data-route") ?? "";
+    if (panel.dataset.collapsed === "false" && panel.dataset.view === "settings") {
       // The view remembers its last level for the session; the journeys start each visit at the root.
-      if (panel.dataset.depth === "0") return true;
-      document.querySelector('[data-testid="panel-back"]')?.click();
+      if (route === ${json(APPS_TOOLS_ROUTE)}) return true;
+      if (panel.dataset.depth === "0") document.querySelector('[data-testid="settings-row-apps-tools"]')?.click();
+      else document.querySelector('[data-testid="panel-back"]')?.click();
       return false;
     }
     if (panel.dataset.collapsed === "true") {
-      document.querySelector('[data-testid="context-rail-capabilities"]')?.click();
+      document.querySelector('[data-testid="context-rail-settings"]')?.click();
       return false;
     }
-    if (panel.dataset.view !== "overview") {
-      (document.querySelector('[data-testid="panel-back"]') ?? document.querySelector('button[aria-label="Back to activity"]'))?.click();
-      return false;
-    }
-    const link = [...document.querySelectorAll('nav[aria-label="More for this coworker"] button')]
-      .find((button) => (button.textContent ?? "").includes("Apps & tools"));
-    link?.click();
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
     return false;
-  })()`, { timeoutMs: 60_000, label: "Apps & tools view" });
+  })()`, { timeoutMs: 60_000, label: "Apps & tools root" });
+}
+
+/** Jump to one level of the trail by its depth: a visible crumb, or one folded into the … menu. */
+async function clickCrumb(app: Awaited<ReturnType<typeof coworker>>, depth: number): Promise<void> {
+  await waitFor(app, `(() => {
+    const crumb = document.querySelector(${json(`[data-testid="panel-breadcrumbs"] [data-testid="panel-crumb"][data-depth="${depth}"]`)});
+    if (crumb instanceof HTMLElement) {
+      crumb.click();
+      return true;
+    }
+    const open = document.querySelector(${json(`[role="menu"][aria-label="Levels above"] [data-testid="panel-crumb"][data-depth="${depth}"]`)});
+    if (open instanceof HTMLElement) {
+      open.click();
+      return true;
+    }
+    document.querySelector('[data-testid="panel-crumb-more"]')?.click();
+    return false;
+  })()`, { timeoutMs: 30_000, label: `crumb at depth ${depth}` });
 }
 
 /** Open the right panel on its Activity view (it starts folded and closes when the coworker changes). */
@@ -666,13 +686,17 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
     if (!(status instanceof HTMLElement)) return false;
     return status.textContent?.trim() === "Ready";
   })()`, { timeoutMs: 240_000, label: "coworker AI ready" });
+  // Coworker settings is reached from the strip's own icon; the Activity view carries no second control for it.
   await openDetails(app);
+  expect(await evalIn(app, `Boolean(document.querySelector('[data-testid="coworker-settings-button"]'))`)).toBe(false);
   await waitFor(app, `(() => {
-    const button = document.querySelector('[data-testid="coworker-settings-button"]');
-    if (!(button instanceof HTMLElement)) return false;
-    button.click();
-    return true;
-  })()`, { timeoutMs: 30_000, label: "Coworker settings icon button" });
+    const panel = document.querySelector('[data-testid="context-panel"]');
+    if (!(panel instanceof HTMLElement)) return false;
+    if (panel.dataset.collapsed === "false" && panel.dataset.view === "settings" && panel.dataset.depth === "0") return true;
+    if (panel.dataset.collapsed === "true") document.querySelector('[data-testid="context-rail-settings"]')?.click();
+    else window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    return false;
+  })()`, { timeoutMs: 30_000, label: "Coworker settings from the strip" });
   await waitForText(app, "Coworker settings", { timeoutMs: 30_000 });
   await waitFor(app, `(() => {
     const button = document.querySelector('[data-testid="coworker-model-settings"] [data-testid="model-picker"] > button');
@@ -742,7 +766,7 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
       detail: document.querySelector('[data-testid="coworker-connect-detail"]')?.textContent ?? "",
     };
   })()`, { timeoutMs: 240_000, label: "OpenWork Connect connected for Scout" });
-  expect(connectCard).toMatchObject({ route: "capabilities/connected", status: `Connected as ${ORG_NAME}`, askEnabled: true, createSkillEnabled: true, detail: "" });
+  expect(connectCard).toMatchObject({ route: `${APPS_TOOLS_ROUTE}/connected`, status: `Connected as ${ORG_NAME}`, askEnabled: true, createSkillEnabled: true, detail: "" });
   if (!isRecord(connectCard) || typeof connectCard.text !== "string") throw new Error("Connect card facts were unavailable.");
   expect(connectCard.text).toContain(ORG_NAME);
   expect(connectCard.text.toLowerCase()).not.toContain("mcp");
@@ -818,12 +842,12 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
       askEnabled: !(detail.querySelector('[data-testid="apps-tools-ask"]')?.disabled ?? true),
     };
   })()`, { timeoutMs: 30_000, label: "Notion connection detail" });
-  expect(notion).toMatchObject({ route: `capabilities/connected/connections/connection:${NOTION_CONNECTION_ID}`, status: "Needs sign-in", askEnabled: false });
+  expect(notion).toMatchObject({ route: `${APPS_TOOLS_ROUTE}/connected/connections/connection:${NOTION_CONNECTION_ID}`, status: "Needs sign-in", askEnabled: false });
   if (!isRecord(notion) || typeof notion.action !== "string" || typeof notion.text !== "string") throw new Error("Notion detail facts were unavailable.");
   expect(notion.action).toContain("Connect Notion on your Connections page in OpenWork.");
   expect(notion.text).toContain("Notion is not connected for you yet.");
   expect(notion.text.toLowerCase()).not.toContain("needs_connection");
-  await clickTestId(app, "panel-crumb");
+  await clickCrumb(app, 1);
   await clickTestId(app, "apps-tools-row-connected");
   await clickTestId(app, "apps-tools-row-plugins");
   await waitFor(app, `(() => {
@@ -845,7 +869,7 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
   expect(release.servers).toContain("Ask an organization admin to set up GitHub on the organization's Connections dashboard in OpenWork.");
   expect(release.skills).toEqual([expect.stringContaining("Release")]);
   expect(release.text.toLowerCase()).not.toContain("needs_admin_setup");
-  await clickTestId(app, "panel-crumb");
+  await clickCrumb(app, 1);
   await clickTestId(app, "apps-tools-row-connected");
   await clickTestId(app, "apps-tools-row-skills");
   const skillRows = await waitFor(app, `(() => {
@@ -875,7 +899,7 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
   expect(appCatalog, `App catalog: ${JSON.stringify(appCatalog)}`).toMatchObject({
     apps: { servers: expect.arrayContaining([expect.objectContaining({ displayName: "Skill studio", connectionId: CONNECTION_ID, reachable: true })]) },
   });
-  await clickTestId(app, "panel-crumb");
+  await clickCrumb(app, 1);
   await clickTestId(app, "apps-tools-row-connected");
   await clickTestId(app, "apps-tools-row-connected-apps");
   await waitFor(app, `(() => {
@@ -893,7 +917,7 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
   expect(gatewayCalls.some((call) => call.endpoint === "connection" && call.method === "resources/read" && call.tool === SKILL_APP_RESOURCE)).toBe(true);
   await clickTestId(app, "panel-back");
   await clickTestId(app, "panel-back");
-  await waitFor(app, `document.querySelector('[data-testid="panel-content"]')?.getAttribute("data-route") === "capabilities/connected"`, { timeoutMs: 30_000, label: "back on the Connected screen" });
+  await waitFor(app, `document.querySelector('[data-testid="panel-content"]')?.getAttribute("data-route") === ${json(`${APPS_TOOLS_ROUTE}/connected`)}`, { timeoutMs: 30_000, label: "back on the Connected screen" });
   await clickTestId(app, "coworker-connect-create-skill");
   const skillDraft = String(await waitFor(app, `(() => {
     const composer = document.querySelector('textarea[aria-label="Message Scout"]');
