@@ -17,6 +17,7 @@ import {
   queueLocalResponsibilityRun,
   reconcileInterruptedLocalRuns,
   setLocalResponsibilityActive,
+  updateLocalResponsibility,
 } from "./local-responsibilities.mjs";
 
 const roots = [];
@@ -259,4 +260,69 @@ test("concurrent changes to one coworker's store never lose each other", async (
   assert.equal(items.find((item) => item.id === second.id).latestRun.status, "running");
   assert.equal(items.find((item) => item.id === second.id).latestRun.id, queued.latestRun.id);
   assert.equal(items.find((item) => item.id === third.id).runs.length, 0);
+});
+
+test("local responsibilities accept interval and custom timetables, check the guardrails, and change in place", async () => {
+  const coworkersDir = await fixture();
+  const now = Date.UTC(2026, 8, 4, 8, 0); // a Friday
+  const guardrails = { minimumGapMinutes: 60, maxRunsPerDay: 4 };
+  const interval = await createLocalResponsibility(coworkersDir, "scout", {
+    name: "Competitor page",
+    instructions: "Check the competitor page and note what changed.",
+    schedule: { kind: "interval", everyMinutes: 120, from: "09:00", until: "18:00", timezone: "UTC" },
+  }, now, { guardrails });
+  assert.deepEqual(interval.schedule, {
+    kind: "interval",
+    timezone: "UTC",
+    everyMinutes: 120,
+    from: { hour: 9, minute: 0 },
+    until: { hour: 18, minute: 0 },
+    maxPerDay: 4,
+  });
+  assert.equal(interval.nextDueAt, Date.UTC(2026, 8, 4, 9, 0));
+  // The record survives a re-read with its local-only schedule intact.
+  assert.deepEqual((await listLocalResponsibilities(coworkersDir, "scout"))[0].schedule, interval.schedule);
+
+  await assert.rejects(
+    createLocalResponsibility(coworkersDir, "scout", {
+      name: "Too eager",
+      instructions: "Check every half hour.",
+      schedule: { kind: "cron", expression: "*/30 * * * *", timezone: "UTC" },
+    }, now, { guardrails }),
+    /at least 1 hour between them/,
+  );
+  await assert.rejects(
+    createLocalResponsibility(coworkersDir, "scout", {
+      name: "Too many",
+      instructions: "Check often.",
+      schedule: { kind: "interval", everyMinutes: 60, maxPerDay: 8, timezone: "UTC" },
+    }, now, { guardrails }),
+    /at most 4 times a day/,
+  );
+  // A missing time zone is filled with the coworker's.
+  const filled = await createLocalResponsibility(coworkersDir, "scout", {
+    name: "Move the car",
+    instructions: "Remind me to move the car.",
+    schedule: { kind: "weekly", daysOfWeek: [1, 2, 3, 4, 5], hour: 9, minute: 0 },
+  }, now, { guardrails, defaultTimezone: "Europe/Paris" });
+  assert.equal(filled.schedule.timezone, "Europe/Paris");
+
+  // Changing the schedule takes effect from now; a pause keeps the next occurrence, a resume recomputes it.
+  const later = Date.UTC(2026, 8, 4, 10, 0);
+  const changed = await updateLocalResponsibility(coworkersDir, "scout", interval.id, {
+    name: "Competitor watch",
+    schedule: { kind: "interval", everyMinutes: 180, from: "09:00", until: "18:00", timezone: "UTC", maxPerDay: 3 },
+  }, later, { guardrails });
+  assert.equal(changed.name, "Competitor watch");
+  assert.equal(changed.instructions, interval.instructions);
+  assert.equal(changed.schedule.everyMinutes, 180);
+  assert.equal(changed.nextDueAt, Date.UTC(2026, 8, 4, 12, 0));
+  const paused = await updateLocalResponsibility(coworkersDir, "scout", interval.id, { active: false }, later);
+  assert.equal(paused.state, "paused");
+  assert.equal(paused.nextDueAt, changed.nextDueAt);
+  const resumed = await updateLocalResponsibility(coworkersDir, "scout", interval.id, { active: true }, Date.UTC(2026, 8, 4, 13, 0));
+  assert.equal(resumed.state, "active");
+  assert.equal(resumed.nextDueAt, Date.UTC(2026, 8, 4, 15, 0));
+  await assert.rejects(updateLocalResponsibility(coworkersDir, "scout", interval.id, { name: "  " }, later), /name is required/);
+  await assert.rejects(updateLocalResponsibility(coworkersDir, "scout", "missing", { active: false }, later), /not found/);
 });
