@@ -34,6 +34,7 @@ import {
   updateCoworker,
   writeCoworkerFile,
 } from "./coworkers.mjs";
+import { ensureCoordinatorHome, updateCoordinator } from "./coordinator.mjs";
 import {
   appendGroupEvent,
   archiveGroup,
@@ -1169,6 +1170,17 @@ const commands = {
     const coworkers = await listCoworkers(coworkersDir).catch(() => []);
     const names = new Map(coworkers.map((coworker) => [coworker.slug, coworker.name]));
     return reconcileInterruptedGroupTurns(coworkersDir, { nameFor: (slug) => names.get(slug) ?? slug });
+  },
+  // The silent facilitator's own workspace: hidden, tool-less, registered like a
+  // coworker's but never listed as one.
+  "coordinator.ensure": async () => {
+    await ensurePlatformServer();
+    const coordinator = await ensureCoordinatorHome(coworkersDir);
+    if (coordinator.workspaceId) return coordinator;
+    const workspaceId = await registerCoworkerWorkspace(coordinator);
+    const updated = await updateCoordinator(coworkersDir, { workspaceId });
+    if (!serverHandle?.managedOpencode) await restartPlatformServer();
+    return updated;
   },
   "coworkers.files.list": async ({ slug }) => listMemoryFiles(coworkersDir, slug),
   "coworkers.files.read": async ({ slug, path: relativePath }) => ({

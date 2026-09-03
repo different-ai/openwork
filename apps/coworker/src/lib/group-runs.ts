@@ -48,6 +48,16 @@ export function liveGroupRun(groupId: string): LiveGroupRun | null {
   return runs.get(groupId) ?? null;
 }
 
+/** Coworkers replying right now in some other group: "busy" to a facilitator choosing speakers. */
+export function busyGroupSpeakers(exceptGroupId = ""): Set<string> {
+  const busy = new Set<string>();
+  for (const run of runs.values()) {
+    if (run.groupId === exceptGroupId) continue;
+    for (const speaker of run.turn?.speakers ?? []) if (speaker.status === "running") busy.add(speaker.slug);
+  }
+  return busy;
+}
+
 export function queuedGroupMessages(groupId: string): QueuedGroupMessage[] {
   return queues.get(groupId) ?? [];
 }

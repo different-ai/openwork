@@ -1,8 +1,11 @@
+import { createHeadlessThreadClient } from "@openwork/headless-threads";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { coworkerBridge, type CoworkerGroupSummary, type CoworkerGroupTurn, type CoworkerSummary, type GroupTimelineEvent, type RuntimeInfo } from "@/lib/bridge";
 import { timeLabelBetween } from "@/lib/conversation";
 import { registerDiscussion } from "@/lib/discussions";
+import { ROUTING_TIMEOUT_MS, earlierSpeakerOrders, facilitatorModels, facilitatorPrompt, routeWithFacilitator, type FacilitatorAsk } from "@/lib/facilitator";
 import {
+  busyGroupSpeakers,
   dequeueGroupMessage,
   enqueueGroupMessage,
   liveGroupRun,
@@ -26,8 +29,9 @@ import {
   unfinishedSpeakers,
   type GroupParticipant,
   type GroupTurnDeps,
+  type RoutingPlan,
 } from "@/lib/groups";
-import { createCoworkerThreads } from "@/lib/threads";
+import { createCoworkerThreads, type EngineModelCatalog } from "@/lib/threads";
 import { CoworkerAvatar } from "@/ui/coworker-avatar";
 import { GroupAvatars } from "@/ui/coworker-rail";
 import { ActionMenu, Button, ErrorNote, StatusDot } from "@/ui/kit";
@@ -44,6 +48,20 @@ function newId(prefix: string): string {
 function timeLabel(at: number): string {
   return new Date(at).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
 }
+
+/** The hidden coordinator workspace, registered once per app run; a failure is forgotten so the next turn tries again. */
+let coordinatorPromise: Promise<{ workspaceId: string }> | null = null;
+function coordinatorReady(): Promise<{ workspaceId: string }> {
+  coordinatorPromise ??= coworkerBridge.coordinator.ensure().then((coordinator) => {
+    if (!coordinator.workspaceId) throw new Error("The coordinator workspace is not ready.");
+    return coordinator;
+  });
+  coordinatorPromise.catch(() => {
+    coordinatorPromise = null;
+  });
+  return coordinatorPromise;
+}
+const CATALOG_TTL_MS = 60_000;
 
 /** The `@handle` being typed just before the caret, if any. */
 function mentionAtCaret(value: string, caret: number): { start: number; query: string } | null {
@@ -102,6 +120,7 @@ export function GroupChat({
   eventsRef.current = events;
   const scrollRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLTextAreaElement>(null);
+  const catalogRef = useRef<{ at: number; catalog: EngineModelCatalog } | null>(null);
   useAutoGrow(composerRef, message);
 
   const members = useMemo(
@@ -193,10 +212,61 @@ export function GroupChat({
     }
   }
 
+  /**
+   * The silent facilitator's one routing pass for a message. It runs in the
+   * hidden coordinator workspace on the model the coworkers use; whatever goes
+   * wrong (no model, an unusable answer, a timeout) resolves null and the
+   * deterministic scorer decides instead — the person only ever sees
+   * "Choosing who should respond…".
+   */
+  async function route(input: Parameters<NonNullable<GroupTurnDeps["route"]>>[0]): Promise<RoutingPlan | null> {
+    // One name already decides who speaks; there is nothing to route.
+    if (!input.mentions.everyone && input.mentions.slugs.length === 1) return null;
+    const current = groupRef.current;
+    const signal = AbortSignal.any([input.signal, AbortSignal.timeout(ROUTING_TIMEOUT_MS)]);
+    const coordinator = await coordinatorReady();
+    const threads = createCoworkerThreads({ serverUrl: runtime.serverUrl, workspaceId: coordinator.workspaceId, token: runtime.ownerToken });
+    if (!catalogRef.current || Date.now() - catalogRef.current.at > CATALOG_TTL_MS) {
+      catalogRef.current = { at: Date.now(), catalog: await threads.listModelCatalog() };
+    }
+    const models = facilitatorModels(catalogRef.current.catalog, membersRef.current, current.facilitatorModel);
+    if (!models.primary) return null;
+    const busy = busyGroupSpeakers(current.id);
+    const prompt = facilitatorPrompt({
+      group: current,
+      members: input.participants.map((participant) => ({ ...participant, busy: busy.has(participant.slug) })),
+      recent: input.recent,
+      earlierOrders: earlierSpeakerOrders(current.turns),
+      message: input.message,
+      mentions: input.mentions,
+      nameFor,
+    });
+    const client = createHeadlessThreadClient({ baseUrl: runtime.serverUrl, workspaceId: coordinator.workspaceId, token: runtime.ownerToken });
+    let threadId = current.facilitatorThreadId;
+    if (!threadId) {
+      const created = await client.createThread({ title: `Facilitator · ${current.name}`, signal });
+      threadId = created.id;
+      const updated = await coworkerBridge.groups.update(current.id, { facilitatorThreadId: threadId });
+      groupRef.current = updated;
+      onGroupChanged(updated);
+    }
+    const ask: FacilitatorAsk = async (text, model, askSignal) => {
+      const acceptance = await client.sendTurn(threadId, { prompt: text, model: { providerId: model.providerId, modelId: model.modelId }, messageId: newId("msg"), signal: askSignal });
+      const result = await client.waitForThread(threadId, { timeoutMs: ROUTING_TIMEOUT_MS, pollIntervalMs: 400, since: acceptance, signal: askSignal });
+      if (result.outcome !== "settled") {
+        if (result.outcome === "timeout") await client.abortThread(threadId).catch(() => undefined);
+        throw new Error(result.terminalError?.message || `The facilitator did not answer (${result.outcome}).`);
+      }
+      return replyTextSince(result.snapshot.messages, acceptance.messageCountBefore);
+    };
+    return routeWithFacilitator({ prompt, participants: input.participants, mentions: input.mentions, models, ask, signal });
+  }
+
   function depsFor(run: LiveGroupRun): GroupTurnDeps {
     const groupId = group.id;
     return {
       ask: (slug, prompt, signal) => ask(run, slug, prompt, signal),
+      route: (input) => route(input),
       append: async (event) => {
         const stored = await coworkerBridge.groups.appendEvent(groupId, event);
         publishGroupRun({ groupId, event: stored });
