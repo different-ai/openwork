@@ -22,10 +22,11 @@ import {
 import { readCoworkerActivity, type CoworkerActivity } from "@/lib/threads";
 import { Button, ErrorNote } from "@/ui/kit";
 import { NewCoworker } from "@/ui/new-coworker";
+import { GroupDetailsSheet } from "@/ui/group-details";
 import { NewGroupSheet } from "@/ui/new-group";
 import { GroupChat } from "@/ui/group-chat";
 import { SignInGate } from "@/ui/sign-in";
-import { CoworkerHome } from "@/ui/coworker-home";
+import { CoworkerHome, type CoworkerHomeRequest } from "@/ui/coworker-home";
 import { CoworkerRail } from "@/ui/coworker-rail";
 import { useResizablePanel } from "@/ui/use-resizable-panel";
 import type { PanelBounds } from "@/lib/panel-layout";
@@ -65,8 +66,9 @@ export default function App() {
   const replaceGroup = useCallback((group: CoworkerGroupSummary) => {
     setGroups((current) => [group, ...current.filter((item) => item.id !== group.id)].sort((a, b) => b.updatedAt - a.updatedAt));
   }, []);
-  /** A request to open one coworker's settings at a section, made from elsewhere (a group's "Choose AI model"). */
-  const [homeSettingsRequest, setHomeSettingsRequest] = useState<{ id: number; slug: string; section: "model" } | null>(null);
+  /** A request made of one coworker's view from elsewhere: a group's "Choose AI model" or an assignment it created. */
+  const [homeRequest, setHomeRequest] = useState<(CoworkerHomeRequest & { slug: string }) | null>(null);
+  const [groupDetailsOpen, setGroupDetailsOpen] = useState(false);
   const [connecting, setConnecting] = useState(false);
   const [onboardingReady, setOnboardingReady] = useState(false);
   const [globalSettings, setGlobalSettings] = useState<SettingsSection | null>(null);
@@ -656,6 +658,20 @@ export default function App() {
                 }}
               />
             ) : null}
+            {selectedGroup && groupDetailsOpen ? (
+              <GroupDetailsSheet
+                group={selectedGroup}
+                coworkers={coworkers}
+                runtime={runtime}
+                onClose={() => setGroupDetailsOpen(false)}
+                onChanged={replaceGroup}
+                onArchived={(group) => {
+                  replaceGroup(group);
+                  setGroupDetailsOpen(false);
+                  setSelectedGroupId("");
+                }}
+              />
+            ) : null}
             {selectedGroup ? (
               <GroupChat
                 key={selectedGroup.id}
@@ -671,8 +687,14 @@ export default function App() {
                 onChooseModel={(slug) => {
                   setSelectedGroupId("");
                   setSelectedSlug(slug);
-                  setHomeSettingsRequest({ id: Date.now(), slug, section: "model" });
+                  setHomeRequest({ id: Date.now(), slug, kind: "settings", section: "model" });
                 }}
+                onOpenAssignment={(slug, threadId) => {
+                  setSelectedGroupId("");
+                  setSelectedSlug(slug);
+                  setHomeRequest({ id: Date.now(), slug, kind: "thread", threadId });
+                }}
+                onOpenDetails={() => setGroupDetailsOpen(true)}
               />
             ) : (
             <CoworkerHome
@@ -682,7 +704,7 @@ export default function App() {
               coworkers={coworkers}
               coworker={selected}
               activity={visibleActivityBySlug[selected.slug]}
-              settingsRequest={homeSettingsRequest?.slug === selected.slug ? homeSettingsRequest : null}
+              request={homeRequest?.slug === selected.slug ? homeRequest : null}
               onActivityChange={updateSelectedLiveActivity}
               onCoworkerChanged={updateCoworkerInList}
               onCoworkerRemoved={removeCoworkerFromList}

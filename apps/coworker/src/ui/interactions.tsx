@@ -43,15 +43,15 @@ export function InteractionCards({
   );
 }
 
-const LETTERS = "ABCDEFGHIJ";
+export const LETTERS = "ABCDEFGHIJ";
 
 /** True when a key press belongs to a text field, so a letter shortcut must not steal it. */
-function typingInField(target: EventTarget | null): boolean {
+export function typingInField(target: EventTarget | null): boolean {
   return target instanceof HTMLElement && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable);
 }
 
 /** One lettered choice inside a card: the letter doubles as its keyboard shortcut. */
-function OptionRow({
+export function OptionRow({
   letter,
   label,
   description,
@@ -91,7 +91,7 @@ function OptionRow({
 }
 
 /** The card itself: a coworker-side message with a title, a line of context, and a close control. */
-function InteractionCard({ label, title, detail, onClose, children, testId }: { label: string; title: string; detail?: string; onClose?: () => void; children: ReactNode; testId: string }) {
+export function InteractionCard({ label, title, detail, onClose, children, testId }: { label: string; title: string; detail?: string; onClose?: () => void; children: ReactNode; testId: string }) {
   return (
     <section role="group" aria-label={label} className="max-w-[76%] min-w-[280px] rounded-2xl bg-panel-2 p-4 text-snow" data-testid={testId}>
       <div className="flex items-start gap-3">
