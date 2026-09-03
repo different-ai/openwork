@@ -24,11 +24,9 @@ even before a dedicated UI exists.
 
 ## Confidentiality (hard rule — this repo is public)
 
-Nothing that reaches GitHub — branch names, commit messages, PR text, code and
-spec comments, fixtures, evidence — may name, quote, or describably identify a
-customer, prospect, partner, or person outside the team; refer to reports by
-internal ticket ID only, and if something already leaked, scrub what is mutable
-and escalate the rest rather than rewriting shared history.
+Never let a branch name, commit, PR text, comment, fixture, or evidence identify
+a customer, prospect, partner, or outside person; use internal ticket IDs, and
+escalate any leak instead of rewriting history.
 
 ## Verification (every change)
 
