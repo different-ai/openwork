@@ -2972,6 +2972,31 @@ export function SessionRoute() {
   }), [handleCreateWorkspace]);
   useControlAction(createWorkspaceControlAction);
 
+  // Sessions created outside this window (server-side session.create, other
+  // clients) never reach a non-selected workspace's cached list, so callers
+  // that create them ask the sidebar to refetch that one workspace.
+  const reloadWorkspaceSessionsControlAction = useMemo<OpenworkControlAction>(() => ({
+    id: "workspace.reload_sessions",
+    label: "Reload a workspace's sessions",
+    description: "Refetch the session list of one workspace so sessions created outside this window appear in the sidebar.",
+    sideEffect: "mutation",
+    requiresArgs: true,
+    args: [
+      { name: "workspaceId", type: "string", required: true, description: "Workspace id whose session list should be refetched." },
+    ],
+    execute: async (args) => {
+      const candidate = typeof args === "object" && args !== null && "workspaceId" in args ? args.workspaceId : undefined;
+      const workspaceId = typeof candidate === "string" ? candidate.trim() : "";
+      if (!workspaceId) return { ok: false, error: "workspaceId is required" };
+      if (!workspaces.some((workspace) => workspace.id === workspaceId)) {
+        return { ok: false, error: `No workspace matched ${workspaceId}` };
+      }
+      await reloadWorkspaceSessions(workspaceId);
+      return { workspaceId };
+    },
+  }), [reloadWorkspaceSessions, workspaces]);
+  useControlAction(reloadWorkspaceSessionsControlAction);
+
   const handleCreateRemoteWorkspace = useCallback(async (input: {
     openworkHostUrl?: string | null;
     openworkToken?: string | null;

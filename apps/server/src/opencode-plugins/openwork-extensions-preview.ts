@@ -137,6 +137,7 @@ Do not call browser_navigate without a target_id returned by browser.open_url; a
 type UiBridge = { baseUrl: string; token: string };
 let cachedBridge: UiBridge | null = null;
 let cachedBridgeAt = 0;
+let cachedBridgeDiscovery: string | undefined;
 const BRIDGE_CACHE_MS = 2_000;
 const BRIDGE_TIMEOUT_MS = 5_000;
 
@@ -299,7 +300,10 @@ function uiControlDiscoveryPaths(): string[] {
 }
 
 async function discoverUiBridge(): Promise<UiBridge | null> {
-  if (cachedBridge && Date.now() - cachedBridgeAt < BRIDGE_CACHE_MS) return cachedBridge;
+  // A changed discovery override points at a different desktop; never reuse
+  // the bridge cached for the previous one.
+  const discovery = process.env.OPENWORK_UI_CONTROL_DISCOVERY?.trim();
+  if (cachedBridge && cachedBridgeDiscovery === discovery && Date.now() - cachedBridgeAt < BRIDGE_CACHE_MS) return cachedBridge;
   for (const candidate of uiControlDiscoveryPaths()) {
     try {
       const raw = await readFile(candidate, "utf8");
@@ -307,6 +311,7 @@ async function discoverUiBridge(): Promise<UiBridge | null> {
       if (typeof parsed.baseUrl === "string" && typeof parsed.token === "string") {
         cachedBridge = { baseUrl: parsed.baseUrl, token: parsed.token };
         cachedBridgeAt = Date.now();
+        cachedBridgeDiscovery = discovery;
         return cachedBridge;
       }
     } catch {
@@ -839,12 +844,14 @@ async function resolveContextWorkspace(workspaceId: string | undefined, context:
 async function createOpenWorkSessions(rawArgs: unknown, context: OpenCodeContext): Promise<object> {
   const args = sessionCreateArgsSchema.parse(rawArgs);
   const workspace = await resolveContextWorkspace(args.workspaceId, context);
+  let createdOnEngine = false;
   const results = await Promise.all(args.sessions.map(async (session): Promise<CreatedOpenWorkSessionResult | FailedOpenWorkSessionResult> => {
     try {
       const payload = sessionInfoSchema.parse(await postJson(
         `/workspace/${encodeURIComponent(workspace.id)}/opencode/session`,
         { title: session.title },
       ));
+      createdOnEngine = true;
       await postJson(
         `/workspace/${encodeURIComponent(workspace.id)}/opencode/session/${encodeURIComponent(payload.id)}/prompt_async`,
         { parts: [{ type: "text", text: session.prompt }] },
@@ -866,6 +873,16 @@ async function createOpenWorkSessions(rawArgs: unknown, context: OpenCodeContext
   }));
   const created = results.filter((result): result is CreatedOpenWorkSessionResult => result.ok);
   const failures = results.filter((result): result is FailedOpenWorkSessionResult => !result.ok);
+  // The desktop only receives engine events for its selected workspace, so a
+  // session created here in any other workspace stays invisible until that
+  // list is refetched. A session whose prompt failed still exists, so it is
+  // refetched too. Best effort: headless runs have no UI bridge.
+  if (createdOnEngine) {
+    await uiBridgeRequest("/command", {
+      method: "POST",
+      body: { id: "workspace.reload_sessions", args: { workspaceId: workspace.id } },
+    });
+  }
   return {
     ok: failures.length === 0,
     workspaceId: workspace.id,
