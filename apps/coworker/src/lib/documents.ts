@@ -96,7 +96,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  * object in `output` counts too. Same reading as the App host, kept here so
  * this module stays free of the App client.
  */
-function keptResult(call: { output: unknown; metadata: Record<string, unknown> }): { content: unknown[]; structuredContent: Record<string, unknown> | null } | null {
+export function keptResult(call: { output: unknown; metadata: Record<string, unknown> }): { content: unknown[]; structuredContent: Record<string, unknown> | null } | null {
   for (const candidate of [call.metadata.openworkMcpResult, call.metadata.openworkMcpApp, call.output]) {
     if (!isRecord(candidate) || !Array.isArray(candidate.content)) continue;
     return { content: candidate.content, structuredContent: isRecord(candidate.structuredContent) ? candidate.structuredContent : null };
