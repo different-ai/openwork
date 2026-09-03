@@ -582,8 +582,10 @@ function formulaBody(value: XlsxFormulaInput, reference: string): string {
 /**
  * Turn edited text back into a typed cell without guessing: canonical numbers
  * become numbers (so "02134" and "1,000" stay text), TRUE/FALSE become
- * booleans, an "=" prefix becomes a formula when it is a plain calculation,
- * and everything else is text.
+ * booleans, and everything else is text. Text is never promoted to a formula:
+ * an editor cannot tell a typed formula from imported text that happens to
+ * start with "=", so a workbook saved from the editor contains no executable
+ * cells it did not already contain as `{ formula }` input.
  */
 export function cellInputFromText(text: string): XlsxCellInput {
   if (text === "") return null;
@@ -593,7 +595,6 @@ export function cellInputFromText(text: string): XlsxCellInput {
     const value = Number(text);
     if (Number.isFinite(value)) return value;
   }
-  if (text.startsWith("=") && text.length > 1 && unsafeFormulaReason(text) === null) return { formula: text.slice(1) };
   return text;
 }
 

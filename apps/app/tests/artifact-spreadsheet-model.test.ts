@@ -50,8 +50,9 @@ describe("artifact spreadsheet model", () => {
       ["B2", "number", "11"],
       ["C2", "boolean", "TRUE"],
       ["D2", "inline_string", "02134"],
-      ["E2", "number", "B2/100"],
+      ["E2", "inline_string", "=B2/100"],
     ]);
+    expect(sheet.formulaCount).toBe(0);
     expect(sheet.lastRow).toBe(2);
   });
 

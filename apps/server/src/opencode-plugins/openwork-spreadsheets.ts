@@ -149,21 +149,28 @@ async function writeWorkbookInPlace(realRoot: string, file: WorkspaceFile, bytes
       throw changedWhileWorking(label);
     }
   } else {
-    // Create: O_EXCL can never replace an existing file. Prove the new inode
-    // sits in the validated folder before a single byte is written to it.
+    // Create. Node has no openat/O_RESOLVE_BENEATH, so this exclusive create is
+    // the one pathname-based step. It is made harmless by construction:
+    // O_EXCL can never replace an existing file, no content is written here,
+    // and the empty inode is only kept if it is proven to sit at this exact
+    // path in the same folder inode that was validated. Anything else is
+    // removed by identity and the write is refused before a byte moves.
     handle = await open(finalPath, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | noFollow, 0o644);
     const actual = await handle.stat();
-    const [placed, placedReal] = await Promise.all([
+    const [placed, placedReal, folderNow] = await Promise.all([
       lstat(finalPath).catch(() => null),
       realpath(finalPath).catch(() => null),
+      lstat(folder).catch(() => null),
     ]);
-    const inPlace = placed !== null && placedReal === finalPath && sameFile(placed, actual);
+    const inPlace = placed !== null && placedReal === finalPath && sameFile(placed, actual)
+      && folderNow !== null && folderNow.isDirectory() && sameFile(folderNow, folderInfo);
     if (!inPlace) {
       if (placed && sameFile(placed, actual)) await rm(finalPath, { force: true }).catch(() => undefined);
       await handle.close();
       throw changedWhileWorking(label);
     }
   }
+  // From here on, bytes flow only through a handle proven to be in place.
 
   try {
     await handle.truncate(0);

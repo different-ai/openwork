@@ -127,8 +127,10 @@ export async function parseSpreadsheet(input: { name: string; content: Data }): 
 
 /**
  * Writes the edited grid back. Delimited files stay text; workbooks become a
- * single-sheet .xlsx whose cells keep their types (canonical numbers, TRUE and
- * FALSE, and "=" formulas) instead of turning every value into text.
+ * single-sheet .xlsx whose cells keep their value types (canonical numbers,
+ * TRUE and FALSE) instead of turning every value into text. Text is never
+ * turned into a formula: the editor cannot tell typed formulas from imported
+ * text, so nothing saved here is executable.
  */
 export async function serializeSpreadsheet(name: string, rows: SpreadsheetRows): Promise<Data> {
   const ext = extension(name);
