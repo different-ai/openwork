@@ -9,8 +9,8 @@ import {
   derivePdf,
   EAGER_RENDERED_PAGES,
   MAX_PAGES_PER_REQUEST,
+  pageImageOf,
   pageTextFrom,
-  readPageImage,
   renderPdfPages,
   safePdfFilename,
   sha256,
@@ -437,7 +437,7 @@ async function inlineImages(root: string | null, derived: DerivedPdf, support: M
   let budget = INLINE_IMAGE_BUDGET_BYTES;
   for (const page of derived.renderedPages.slice(0, MAX_INLINE_PAGES)) {
     if (page.bytes > budget) break;
-    const bytes = await readPageImage(root, derived, page);
+    const bytes = pageImageOf(derived, page);
     if (!bytes) break;
     budget -= page.bytes;
     images.push({ mime: page.mime, filename: `${stem} - page ${page.page}.${page.mime === "image/png" ? "png" : "jpg"}`, url: `data:${page.mime};base64,${Buffer.from(bytes).toString("base64")}`, page: page.page });
@@ -637,7 +637,7 @@ export const OpenWorkPdfAttachments = async (factoryInput?: unknown) => {
           const served = updated.renderedPages.filter((image) => wanted.has(image.page)).slice(0, MAX_PAGES_PER_REQUEST);
           const attachments: Array<{ type: "file"; mime: string; url: string; filename?: string }> = [];
           for (const image of served) {
-            const data = await readPageImage(root, updated, image);
+            const data = pageImageOf(updated, image);
             if (!data) continue;
             attachments.push({ type: "file", mime: image.mime, filename: image.fileName, url: `data:${image.mime};base64,${Buffer.from(data).toString("base64")}` });
           }

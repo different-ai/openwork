@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, readFile, readdir, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { createHash } from "node:crypto";
@@ -14,8 +14,8 @@ import {
   PAGE_IMAGE_MAX_BYTES,
   PAGE_LONG_EDGE_PX,
   derivePdf,
+  pageImageOf,
   pageTextFrom,
-  readPageImage,
   renderPdfPages,
   resetDerivedPdfMemory,
   safePdfFilename,
@@ -71,17 +71,18 @@ describe("derivePdf", () => {
         expect(page.width).toBe(Math.floor((612 / 792) * PAGE_LONG_EDGE_PX));
         expect(page.mime).toBe("image/png");
         expect(page.fileName).toBe(`page-00${page.page}.png`);
-        const bytes = await readPageImage(root, derived, page);
+        const bytes = pageImageOf(derived, page);
         if (!bytes) throw new Error("Expected page image bytes");
         expect(Buffer.from(bytes.subarray(0, 8))).toEqual(PNG_SIGNATURE);
         expect(bytes.byteLength).toBe(page.bytes);
+        expect(Buffer.compare(await readFile(join(root, derived.directory ?? "", page.fileName)), Buffer.from(bytes))).toBe(0);
       }
       const files = await readdir(join(root, derived.directory ?? ""));
       expect(files.sort()).toEqual(["manifest.json", "page-001.png", "page-002.png", "text.md"]);
     });
   });
 
-  test("reuses on-disk results after memory is cleared and upgrades text-only results with pages later", async () => {
+  test("re-derives from the attachment bytes after a cold start and never reads the workspace copy back", async () => {
     await withWorkspace(async (root) => {
       const pdf = buildTestPdf(["Alpha", "Beta"]);
       const textOnly = await derivePdf(root, "notes.pdf", pdf, { renderPages: false });
@@ -89,14 +90,17 @@ describe("derivePdf", () => {
 
       const withPages = await derivePdf(root, "notes.pdf", pdf, { renderPages: true });
       expect(withPages.renderedPages.length).toBe(2);
-      const firstPage = join(root, withPages.directory ?? "", "page-001.png");
-      const before = await stat(firstPage);
 
+      // Poison the workspace copy: a cold start must not pick any of it up.
+      await writeFile(join(root, withPages.textPath ?? ""), "POISONED TEXT");
+      await writeFile(join(root, withPages.directory ?? "", "page-001.png"), "POISONED IMAGE");
       resetDerivedPdfMemory();
-      await new Promise((resolve) => setTimeout(resolve, 25));
-      const reused = await derivePdf(root, "notes.pdf", pdf, { renderPages: true });
-      expect(reused).toEqual(withPages);
-      expect((await stat(firstPage)).mtimeMs).toBe(before.mtimeMs);
+      const cold = await derivePdf(root, "notes.pdf", pdf, { renderPages: true });
+      expect(cold.text).toContain("--- page 1 ---\nAlpha");
+      expect(cold.text.includes("POISONED")).toBe(false);
+      const image = pageImageOf(cold, cold.renderedPages[0]);
+      expect(Buffer.from(image?.subarray(0, 8) ?? [])).toEqual(PNG_SIGNATURE);
+      expect(await readFile(join(root, cold.textPath ?? ""), "utf8")).toBe(cold.text);
     });
   });
 
@@ -145,7 +149,7 @@ describe("derivePdf", () => {
       expect(photo.height).toBe(PAGE_LONG_EDGE_PX);
       expect(photo.bytes).toBeLessThanOrEqual(PAGE_IMAGE_MAX_BYTES);
       expect(derived.pagesWithoutText).toEqual([2]);
-      const jpeg = await readPageImage(root, derived, photo);
+      const jpeg = pageImageOf(derived, photo);
       expect(Buffer.from(jpeg?.subarray(0, 3) ?? [])).toEqual(Buffer.from([0xff, 0xd8, 0xff]));
     });
   });
@@ -160,14 +164,11 @@ describe("derivePdf", () => {
       const more = await renderPdfPages(root, eager, pdf, [27, 3, 99, 25, 27]);
       expect(more.renderedPages.map((page) => page.page).slice(-2)).toEqual([25, 27]);
       expect(more.renderedPages.length).toBe(EAGER_RENDERED_PAGES + 2);
-      expect(await readPageImage(root, more, more.renderedPages.at(-1) ?? eager.renderedPages[0])).not.toBeNull();
+      expect(pageImageOf(more, more.renderedPages.at(-1) ?? eager.renderedPages[0])).not.toBeNull();
 
       const tooMany = await renderPdfPages(root, more, pdf, Array.from({ length: 12 }, (_page, index) => 21 + index));
       expect(tooMany.renderedPages.length).toBe(EAGER_RENDERED_PAGES + 2 + MAX_PAGES_PER_REQUEST);
-
-      resetDerivedPdfMemory();
-      const reloaded = await derivePdf(root, "long.pdf", pdf, { renderPages: true });
-      expect(reloaded.renderedPages).toEqual(tooMany.renderedPages);
+      expect((await readdir(join(root, tooMany.directory ?? ""))).filter((name) => name.startsWith("page-")).length).toBe(tooMany.renderedPages.length);
     });
   }, 60_000);
 
@@ -190,16 +191,17 @@ describe("derivePdf", () => {
     });
   }, 60_000);
 
-  test("works without a workspace root by providing text only", async () => {
+  test("works without a workspace root by keeping everything in memory", async () => {
     const derived = await derivePdf(null, "memo.pdf", buildTestPdf(["Memo"]), { renderPages: true });
     expect(derived.pdfPath).toBeNull();
     expect(derived.directory).toBeNull();
     expect(derived.textPath).toBeNull();
     expect(derived.text).toContain("--- page 1 ---\nMemo");
-    expect(derived.renderedPages).toEqual([]);
+    expect(derived.renderedPages.length).toBe(1);
+    expect(pageImageOf(derived, derived.renderedPages[0])?.byteLength).toBe(derived.renderedPages[0].bytes);
   });
 
-  test("ignores a planted manifest that points page images or paths outside the bundle", async () => {
+  test("ignores anything planted in the bundle: the model only ever gets bytes produced here", async () => {
     await withWorkspace(async (root) => {
       const outside = await mkdtemp(join(tmpdir(), "openwork-pdf-secret-"));
       try {
@@ -209,35 +211,18 @@ describe("derivePdf", () => {
         const digest = createHash("sha256").update(pdf).digest("hex");
         const bundle = join(root, DERIVED_DIR, `${digest.slice(0, 16)}-planted`);
         await mkdir(bundle, { recursive: true });
-        const escape = relative(bundle, secret).split("/").join("/");
-        await writeFile(join(bundle, "manifest.json"), JSON.stringify({
-          version: 2,
-          sha256: digest,
-          pageCount: 1,
-          textPages: 1,
-          textBudgetExhausted: false,
-          pagesWithoutText: [],
-          renderedPages: [{ page: 1, width: 10, height: 10, bytes: 18, mime: "image/png", fileName: escape }],
-          renderBudgetExhausted: false,
-          hasText: false,
-          directory: relative(root, outside),
-          pdfPath: escape,
-          textPath: escape,
-        }));
+        await writeFile(join(bundle, "manifest.json"), JSON.stringify({ version: 3, sha256: digest, pageCount: 1, renderedPages: [{ page: 1, fileName: relative(bundle, secret) }] }));
+        await symlink(secret, join(bundle, "text.md"));
+        await symlink(secret, join(bundle, "page-001.png"));
 
         const derived = await derivePdf(root, "planted.pdf", pdf, { renderPages: true });
-        expect(derived.directory).toBe(`${DERIVED_DIR}/${digest.slice(0, 16)}-planted`);
-        expect(derived.pdfPath?.startsWith(`${MATERIALIZED_DIR}/`)).toBe(true);
-        expect(derived.renderedPages.map((page) => page.fileName)).toEqual(["page-001.png"]);
-        const image = await readPageImage(root, derived, derived.renderedPages[0]);
+        expect(derived.text).toContain("--- page 1 ---\nPlanted");
+        expect(derived.text.includes("TOP SECRET")).toBe(false);
+        const image = pageImageOf(derived, derived.renderedPages[0]);
         expect(Buffer.from(image?.subarray(0, 8) ?? [])).toEqual(PNG_SIGNATURE);
-        expect(Buffer.from(image ?? []).includes("TOP SECRET")).toBe(false);
-
-        // Even a tampered in-memory descriptor cannot steer the read outside the bundle.
-        const tampered = { ...derived, directory: relative(root, outside), filename: "../../planted.pdf" };
-        const escaped = await readPageImage(root, tampered, { page: 1, width: 10, height: 10, bytes: 18, mime: "image/png", fileName: escape });
-        expect(escaped === null || !Buffer.from(escaped).includes("TOP SECRET")).toBe(true);
-        expect(await readPageImage(root, derived, { ...derived.renderedPages[0], page: -1 })).toBeNull();
+        // The symlinks were replaced by real files written atomically; the secret is untouched.
+        expect(await readFile(secret, "utf8")).toBe("TOP SECRET CONTENT");
+        expect(await readFile(join(bundle, "text.md"), "utf8")).toBe(derived.text);
       } finally {
         await rm(outside, { recursive: true, force: true });
       }
@@ -258,46 +243,19 @@ describe("derivePdf", () => {
     });
   });
 
-  test("refuses a bundle directory that is a symlink and never forwards a symlinked text file", async () => {
+  test("refuses a bundle directory that is a symlink", async () => {
     await withWorkspace(async (root) => {
       const outside = await mkdtemp(join(tmpdir(), "openwork-pdf-bundle-"));
       try {
         const pdf = buildTestPdf(["Bundle"]);
         const digest = createHash("sha256").update(pdf).digest("hex");
         await mkdir(join(root, DERIVED_DIR), { recursive: true });
-        const bundle = join(root, DERIVED_DIR, `${digest.slice(0, 16)}-bundle`);
-        await symlink(outside, bundle);
+        await symlink(outside, join(root, DERIVED_DIR, `${digest.slice(0, 16)}-bundle`));
         await expect(derivePdf(root, "bundle.pdf", pdf, { renderPages: true })).rejects.toThrow("resolves through a symlink");
         expect(await readdir(outside)).toEqual([]);
-
-        // A real bundle whose text.md is a symlink to a secret is rejected and re-derived.
-        await rm(bundle, { force: true });
-        const secret = join(outside, "secret.txt");
-        await writeFile(secret, "TOP SECRET CONTENT");
-        const honest = await derivePdf(root, "bundle.pdf", pdf, { renderPages: false });
-        resetDerivedPdfMemory();
-        await rm(join(root, honest.textPath ?? ""), { force: true });
-        await symlink(secret, join(root, honest.textPath ?? ""));
-        const reread = await derivePdf(root, "bundle.pdf", pdf, { renderPages: false });
-        expect(reread.text).toContain("--- page 1 ---\nBundle");
-        expect(reread.text.includes("TOP SECRET")).toBe(false);
       } finally {
         await rm(outside, { recursive: true, force: true });
       }
-    });
-  });
-
-  test("rejects manifests whose page metadata is out of range and re-derives", async () => {
-    await withWorkspace(async (root) => {
-      const pdf = buildTestPdf(["One", "Two"]);
-      const first = await derivePdf(root, "meta.pdf", pdf, { renderPages: true });
-      const manifestPath = join(root, first.directory ?? "", "manifest.json");
-      const stored = JSON.parse(await readFile(manifestPath, "utf8"));
-      stored.renderedPages[0].page = 99;
-      await writeFile(manifestPath, JSON.stringify(stored));
-      resetDerivedPdfMemory();
-      const again = await derivePdf(root, "meta.pdf", pdf, { renderPages: true });
-      expect(again.renderedPages.map((page) => page.page)).toEqual([1, 2]);
     });
   });
 

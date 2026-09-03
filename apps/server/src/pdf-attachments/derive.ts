@@ -8,9 +8,14 @@ import type { PdfRenderedBitmap } from "./pdfium.js";
 
 /**
  * Turns one PDF into what a model can actually consume — page-marked text and
- * rendered page images — and keeps the result in the workspace inbox so later
- * steps, other models, and the agent's own tools reuse it instead of
- * re-rendering.
+ * rendered page images — and keeps the result in memory so later steps reuse
+ * it instead of re-rendering.
+ *
+ * Everything that reaches the provider is produced in this process from the
+ * attachment bytes. The workspace copy (materialized PDF, `text.md`, page
+ * images, `manifest.json`) exists for the agent's own tools and for people; it
+ * is write-only here and never read back, so a hostile workspace cannot steer
+ * what the model sees. Writes refuse any path that resolves through a symlink.
  *
  * Limits are deliberate. They keep a single attachment from stalling the turn,
  * blowing the provider's request size, or filling the workspace, while still
@@ -42,8 +47,10 @@ const JPEG_CONSIDER_BYTES = 300 * 1024;
 const JPEG_QUALITY = 85;
 /** Derived bundles kept per workspace; the oldest are pruned when a new one is written. */
 export const MAX_DERIVED_BUNDLES = 64;
-const MANIFEST_VERSION = 2;
-const MEMORY_CACHE_LIMIT = 32;
+/** In-memory page images across all PDFs; least recently used documents are dropped past this. */
+export const MEMORY_IMAGE_BUDGET_BYTES = 96 * 1024 * 1024;
+const MANIFEST_VERSION = 3;
+const MEMORY_ENTRY_LIMIT = 32;
 
 export type PageImageMime = "image/png" | "image/jpeg";
 
@@ -84,6 +91,7 @@ export type DeriveOptions = {
 
 type MemoryEntry = {
   derived: DerivedPdf;
+  pageImages: Map<number, Uint8Array>;
 };
 
 type EncodedPage = {
@@ -95,10 +103,6 @@ type EncodedPage = {
 
 const memory = new Map<string, MemoryEntry>();
 const pending = new Map<string, Promise<MemoryEntry>>();
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
 
 export function sha256(bytes: Uint8Array): string {
   return createHash("sha256").update(bytes).digest("hex");
@@ -142,11 +146,12 @@ function isWithin(parent: string, candidate: string): boolean {
 }
 
 /**
- * A workspace may contain hostile symlinks. Every directory this module reads
- * or writes must resolve to exactly the path expected beneath the real
- * workspace root; anything routed through a symlink is refused.
+ * A workspace may contain hostile symlinks. Every directory this module writes
+ * must resolve to exactly the path expected beneath the real workspace root;
+ * anything routed through a symlink is refused.
  */
-async function assertConfined(root: string, directory: string): Promise<string> {
+async function confinedDirectory(root: string, directory: string): Promise<string> {
+  await mkdir(directory, { recursive: true });
   const [realRoot, realDirectory] = await Promise.all([realpath(root), realpath(directory)]);
   const expected = resolve(realRoot, relative(root, directory));
   if (realDirectory !== expected || !isWithin(realRoot, realDirectory)) {
@@ -155,33 +160,14 @@ async function assertConfined(root: string, directory: string): Promise<string> 
   return realDirectory;
 }
 
-async function confinedDirectory(root: string, directory: string): Promise<string> {
-  await mkdir(directory, { recursive: true });
-  return assertConfined(root, directory);
-}
-
-async function existingConfinedDirectory(root: string, directory: string): Promise<string | null> {
-  try {
-    return await assertConfined(root, directory);
-  } catch {
-    return null;
-  }
-}
-
-/** Reads a file only when the path itself is a regular file, never a symlink. */
-async function readRegularFile(path: string): Promise<Buffer> {
-  const info = await lstat(path);
-  if (!info.isFile()) throw new Error(`${basename(path)} is not a regular file.`);
-  return readFile(path);
-}
-
+/** Hashes the regular file at `path`; a symlink or other non-file counts as "something else lives here". */
 async function existingSha(path: string): Promise<string | null> {
   try {
-    return sha256(await readRegularFile(path));
-  } catch (cause) {
-    const code = isRecord(cause) ? cause.code : undefined;
-    // A symlink or other non-file at the target counts as "something else lives here".
-    return code === "ENOENT" ? null : "";
+    const info = await lstat(path);
+    if (!info.isFile()) return "";
+    return sha256(await readFile(path));
+  } catch {
+    return null;
   }
 }
 
@@ -254,98 +240,18 @@ export function pageTextFrom(text: string, page: number): string | null {
   return match ? match[1].trim() : null;
 }
 
-/**
- * Fields a stored manifest may supply. Every path is recomputed from trusted
- * inputs (workspace root, content digest, the current attachment's sanitized
- * filename) rather than read back, so a manifest planted in a workspace can
- * never steer a filesystem read.
- */
-type StoredManifest = {
-  pageCount: number;
-  textPages: number;
-  textBudgetExhausted: boolean;
-  pagesWithoutText: number[];
-  renderedPages: PdfPageImage[];
-  renderBudgetExhausted: boolean;
-  hasText: boolean;
-};
-
-function isCount(value: unknown): value is number {
-  return typeof value === "number" && Number.isInteger(value) && value >= 0;
-}
-
-function parseManifest(value: unknown, digest: string): StoredManifest | null {
-  if (!isRecord(value) || value.version !== MANIFEST_VERSION || value.sha256 !== digest) return null;
-  const { pageCount, textPages, textBudgetExhausted, pagesWithoutText, renderedPages, renderBudgetExhausted, hasText } = value;
-  if (!isCount(pageCount) || !isCount(textPages) || textPages > pageCount) return null;
-  if (typeof textBudgetExhausted !== "boolean" || typeof renderBudgetExhausted !== "boolean" || typeof hasText !== "boolean") return null;
-  if (!Array.isArray(pagesWithoutText) || !Array.isArray(renderedPages)) return null;
-  if (!pagesWithoutText.every((page) => isCount(page) && page >= 1 && page <= pageCount)) return null;
-
-  const pages: PdfPageImage[] = [];
-  const seen = new Set<number>();
-  for (const entry of renderedPages) {
-    if (!isRecord(entry)) return null;
-    const { page, width, height, bytes, mime, fileName } = entry;
-    if (!isCount(page) || page < 1 || page > pageCount || seen.has(page)) return null;
-    if (!isCount(width) || !isCount(height) || !isCount(bytes) || width === 0 || height === 0) return null;
-    if (mime !== "image/png" && mime !== "image/jpeg") return null;
-    if (fileName !== pageFileName(page, mime)) return null;
-    seen.add(page);
-    pages.push({ page, width, height, bytes, mime, fileName });
-  }
-  pages.sort((left, right) => left.page - right.page);
-  return {
-    pageCount,
-    textPages,
-    textBudgetExhausted,
-    pagesWithoutText: pagesWithoutText.filter(isCount),
-    renderedPages: pages,
-    renderBudgetExhausted,
-    hasText,
-  };
-}
-
-async function readManifest(root: string, derivedDirectory: string, displayDirectory: string, digest: string, safeFilename: string, pdfPath: string): Promise<DerivedPdf | null> {
-  try {
-    const parsed: unknown = JSON.parse((await readRegularFile(join(derivedDirectory, MANIFEST_FILENAME))).toString("utf8"));
-    const stored = parseManifest(parsed, digest);
-    if (!stored) return null;
-    const textFile = join(derivedDirectory, TEXT_FILENAME);
-    const text = stored.hasText ? (await readRegularFile(textFile)).toString("utf8") : "";
-    return {
-      sha256: digest,
-      filename: safeFilename,
-      bytes: 0,
-      pageCount: stored.pageCount,
-      pdfPath,
-      directory: displayDirectory,
-      textPath: stored.hasText ? `${displayDirectory}/${TEXT_FILENAME}` : null,
-      text,
-      textPages: stored.textPages,
-      textBudgetExhausted: stored.textBudgetExhausted,
-      pagesWithoutText: stored.pagesWithoutText,
-      renderedPages: stored.renderedPages,
-      renderBudgetExhausted: stored.renderBudgetExhausted,
-      loadError: null,
-    };
-  } catch {
-    return null;
-  }
-}
-
-/** Persists only what `parseManifest` reads back; paths are always recomputed. */
+/** Written for people and tools browsing the bundle; never read back by this module. */
 async function writeManifest(directory: string, derived: DerivedPdf): Promise<void> {
   const stored = {
     version: MANIFEST_VERSION,
     sha256: derived.sha256,
+    filename: derived.filename,
     pageCount: derived.pageCount,
     textPages: derived.textPages,
     textBudgetExhausted: derived.textBudgetExhausted,
     pagesWithoutText: derived.pagesWithoutText,
     renderedPages: derived.renderedPages,
     renderBudgetExhausted: derived.renderBudgetExhausted,
-    hasText: derived.textPath !== null,
   };
   await writeFileAtomically(join(directory, MANIFEST_FILENAME), JSON.stringify(stored, null, 2));
 }
@@ -434,13 +340,23 @@ async function extract(bytes: Uint8Array): Promise<Extraction> {
   }
 }
 
+function imageBytesOf(entry: MemoryEntry): number {
+  let total = 0;
+  for (const image of entry.pageImages.values()) total += image.byteLength;
+  return total;
+}
+
+/** Keeps the entry most recently used and drops the least recently used past the entry and image-byte budgets. */
 function remember(entry: MemoryEntry): MemoryEntry {
   memory.delete(entry.derived.sha256);
   memory.set(entry.derived.sha256, entry);
-  while (memory.size > MEMORY_CACHE_LIMIT) {
-    const oldest = memory.keys().next().value;
-    if (oldest === undefined) break;
-    memory.delete(oldest);
+  let imageBytes = 0;
+  for (const item of memory.values()) imageBytes += imageBytesOf(item);
+  for (const [digest, item] of memory) {
+    if (memory.size <= MEMORY_ENTRY_LIMIT && imageBytes <= MEMORY_IMAGE_BUDGET_BYTES) break;
+    if (digest === entry.derived.sha256) continue;
+    memory.delete(digest);
+    imageBytes -= imageBytesOf(item);
   }
   return entry;
 }
@@ -478,14 +394,15 @@ function derivedDirectoryFor(root: string, digest: string, safeFilename: string)
   return join(root, DERIVED_DIR, `${digest.slice(0, 16)}-${stemOf(safeFilename)}`);
 }
 
-/**
- * The bundle directory for a derived result, computed from the digest and the
- * sanitized filename only. Never derived from stored strings.
- */
-function bundleDirectory(root: string, derived: DerivedPdf): string | null {
-  if (!derived.directory || !/^[0-9a-f]{64}$/.test(derived.sha256)) return null;
-  const directory = derivedDirectoryFor(root, derived.sha256, safePdfFilename(derived.filename));
-  return isWithin(resolve(root, DERIVED_DIR), directory) ? directory : null;
+/** Best-effort copy of a page image for tools and people; the model never depends on it. */
+async function storePageImage(root: string | null, derived: DerivedPdf, page: number, image: EncodedPage): Promise<void> {
+  if (!root || !derived.directory) return;
+  try {
+    const directory = await confinedDirectory(root, derivedDirectoryFor(root, derived.sha256, derived.filename));
+    await writeFileAtomically(join(directory, pageFileName(page, image.mime)), image.bytes);
+  } catch {
+    // The workspace copy is a convenience; the in-memory image still reaches the model.
+  }
 }
 
 async function build(root: string | null, filename: string, bytes: Uint8Array, options: DeriveOptions, existing: MemoryEntry | null): Promise<MemoryEntry> {
@@ -493,17 +410,8 @@ async function build(root: string | null, filename: string, bytes: Uint8Array, o
   const safeFilename = safePdfFilename(filename);
   const expectedDirectory = root ? derivedDirectoryFor(root, digest, safeFilename) : null;
   const displayDirectory = expectedDirectory && root ? toWorkerRelativePath(root, expectedDirectory) : null;
-
+  const pageImages = existing?.pageImages ?? new Map<number, Uint8Array>();
   let current = existing?.derived ?? null;
-  if (!current && expectedDirectory && displayDirectory && root) {
-    // Reuse only a bundle that already exists at its confined real path.
-    const existingDirectory = await existingConfinedDirectory(root, expectedDirectory);
-    if (existingDirectory) {
-      const pdfPath = await materializePdf(root, safeFilename, digest, bytes);
-      const stored = await readManifest(root, existingDirectory, displayDirectory, digest, safeFilename, pdfPath);
-      if (stored) current = { ...stored, bytes: bytes.byteLength };
-    }
-  }
 
   if (!current) {
     const extracted = await extract(bytes);
@@ -537,24 +445,31 @@ async function build(root: string | null, filename: string, bytes: Uint8Array, o
     }
   }
 
-  // Page images live only on disk; without a workspace root the model gets text.
-  const needsRender = options.renderPages && expectedDirectory !== null && root !== null && !current.loadError && current.pageCount > 0 && current.renderedPages.length === 0 && !current.renderBudgetExhausted;
+  // Page images are produced here and kept in memory; the workspace copy is for tools and people.
+  const needsRender = options.renderPages && !current.loadError && current.pageCount > 0 && current.renderedPages.length === 0 && !current.renderBudgetExhausted;
   if (needsRender) {
-    const derivedDirectory = await confinedDirectory(root, expectedDirectory);
+    const target = current;
     const wanted = Array.from({ length: Math.min(current.pageCount, EAGER_RENDERED_PAGES) }, (_page, index) => index + 1);
     const { rendered, budgetExhausted } = await renderPageImages(bytes, wanted, async (page, image) => {
-      await writeFileAtomically(join(derivedDirectory, pageFileName(page, image.mime)), image.bytes);
+      pageImages.set(page, image.bytes);
+      await storePageImage(root, target, page, image);
     });
     current = { ...current, renderedPages: rendered, renderBudgetExhausted: budgetExhausted };
-    await writeManifest(derivedDirectory, current);
+    if (expectedDirectory && root) {
+      try {
+        await writeManifest(await confinedDirectory(root, expectedDirectory), current);
+      } catch {
+        // Manifest is a convenience for people; skip it when the bundle cannot be written safely.
+      }
+    }
   }
 
-  return { derived: current };
+  return { derived: current, pageImages };
 }
 
 function satisfies(entry: MemoryEntry, options: DeriveOptions): boolean {
   const { derived } = entry;
-  return !options.renderPages || derived.directory === null || derived.renderedPages.length > 0 || derived.renderBudgetExhausted || derived.loadError !== null || derived.pageCount === 0;
+  return !options.renderPages || derived.renderedPages.length > 0 || derived.renderBudgetExhausted || derived.loadError !== null || derived.pageCount === 0;
 }
 
 /**
@@ -567,9 +482,9 @@ export function cachedDerivedPdf(digest: string, options: DeriveOptions): Derive
 }
 
 /**
- * Derives (or reuses) the model-facing representation of a PDF. Results are
- * cached in memory by content hash and, when a workspace root is known, on
- * disk under `.opencode/openwork/inbox/pdf-pages/`.
+ * Derives (or reuses) the model-facing representation of a PDF. Results live
+ * in memory by content hash; a workspace copy is written under
+ * `.opencode/openwork/inbox/pdf-pages/` for tools and people.
  */
 export async function derivePdf(root: string | null, filename: string, bytes: Uint8Array, options: DeriveOptions): Promise<DerivedPdf> {
   const digest = sha256(bytes);
@@ -588,47 +503,43 @@ export async function derivePdf(root: string | null, filename: string, bytes: Ui
 
 /**
  * Renders specific pages that were not rendered yet (on demand, bounded per
- * request) and records them in the bundle. Pages outside the document are
- * ignored; the caller reports them.
+ * request) and records them. Pages outside the document are ignored; the
+ * caller reports them.
  */
 export async function renderPdfPages(root: string | null, derived: DerivedPdf, bytes: Uint8Array, pages: number[]): Promise<DerivedPdf> {
-  if (derived.loadError || derived.pageCount === 0 || !root || !derived.directory) return derived;
-  const have = new Set(derived.renderedPages.map((page) => page.page));
+  if (derived.loadError || derived.pageCount === 0) return derived;
+  const entry = memory.get(derived.sha256) ?? { derived, pageImages: new Map<number, Uint8Array>() };
+  const have = new Set(entry.derived.renderedPages.filter((page) => entry.pageImages.has(page.page)).map((page) => page.page));
   const wanted = [...new Set(pages)]
     .filter((page) => Number.isInteger(page) && page >= 1 && page <= derived.pageCount && !have.has(page))
     .sort((left, right) => left - right)
     .slice(0, MAX_PAGES_PER_REQUEST);
-  if (wanted.length === 0) return derived;
+  if (wanted.length === 0) return remember(entry).derived;
 
-  const current = memory.get(derived.sha256)?.derived ?? derived;
-  const expectedDirectory = bundleDirectory(root, derived);
-  if (!expectedDirectory) return derived;
-  const derivedDirectory = await confinedDirectory(root, expectedDirectory);
   const { rendered } = await renderPageImages(bytes, wanted, async (page, image) => {
-    await writeFileAtomically(join(derivedDirectory, pageFileName(page, image.mime)), image.bytes);
+    entry.pageImages.set(page, image.bytes);
+    await storePageImage(root, entry.derived, page, image);
   });
-  const renderedPages = [...current.renderedPages, ...rendered].sort((left, right) => left.page - right.page);
-  const updated: DerivedPdf = { ...current, renderedPages };
-  await writeManifest(derivedDirectory, updated);
-  remember({ derived: updated });
+  const byPage = new Map(entry.derived.renderedPages.map((page) => [page.page, page]));
+  for (const page of rendered) byPage.set(page.page, page);
+  const updated: DerivedPdf = { ...entry.derived, renderedPages: [...byPage.values()].sort((left, right) => left.page - right.page) };
+  if (root && updated.directory) {
+    try {
+      await writeManifest(await confinedDirectory(root, derivedDirectoryFor(root, updated.sha256, updated.filename)), updated);
+    } catch {
+      // Manifest is a convenience for people; skip it when the bundle cannot be written safely.
+    }
+  }
+  remember({ derived: updated, pageImages: entry.pageImages });
   return updated;
 }
 
-/** Reads one rendered page image from the workspace bundle; the path comes from the page number and mime, never from stored names. */
-export async function readPageImage(root: string | null, derived: DerivedPdf, page: PdfPageImage): Promise<Uint8Array | null> {
-  if (!root) return null;
-  const expectedDirectory = bundleDirectory(root, derived);
-  if (!expectedDirectory || !isCount(page.page) || page.page < 1 || (page.mime !== "image/png" && page.mime !== "image/jpeg")) return null;
-  const directory = await existingConfinedDirectory(root, expectedDirectory);
-  if (!directory) return null;
-  try {
-    return await readRegularFile(join(directory, pageFileName(page.page, page.mime)));
-  } catch {
-    return null;
-  }
+/** Returns a rendered page image from memory; null when it was never rendered here or has been evicted. */
+export function pageImageOf(derived: DerivedPdf, page: PdfPageImage): Uint8Array | null {
+  return memory.get(derived.sha256)?.pageImages.get(page.page) ?? null;
 }
 
-/** Test hook: forgets in-memory results so on-disk reuse can be exercised. */
+/** Test hook: forgets in-memory results so cold-start behaviour can be exercised. */
 export function resetDerivedPdfMemory(): void {
   memory.clear();
   pending.clear();
