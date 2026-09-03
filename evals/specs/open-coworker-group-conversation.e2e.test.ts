@@ -240,10 +240,26 @@ test.skipIf(!enabled)(title, { timeout: 1_500_000 }, async ({ evidence }) => {
   const lastSpeaker = rollCallReplies[rollCallReplies.length - 1]?.speaker ?? "";
   expect(await evalIn(app, `document.querySelector('[data-testid="group-rail-line"]')?.textContent?.trim()`)).toBe(`${names[lastSpeaker]} replied`);
   expect(await evalIn(app, `document.querySelector('[data-testid="coworker-top-status"]')?.textContent?.trim()`)).toBe("Ready");
+  // The group header's status is plain text without a dot, and the composer's hint row carries no brand line; the
+  // members hold nothing yet, so no summary line joins it either.
+  const groupHeader = await waitFor(app, `(() => {
+    const status = document.querySelector('[data-testid="coworker-top-status"]');
+    const group = document.querySelector('[data-testid="group-chat"]');
+    if (!status || !group) return false;
+    // The members' holdings are re-read on a slow poll; settle on the line's absence.
+    if (group.querySelector('[data-testid="coworker-summary-line"]')) return false;
+    return {
+      statusDot: status.querySelectorAll("span").length,
+      statusTone: status.getAttribute("data-tone") ?? "",
+      brandLine: (group.textContent ?? "").includes("Powered by"),
+      summaryLine: false,
+    };
+  })()`, { timeoutMs: 30_000, label: "group header and composer hint row" });
+  expect(groupHeader).toEqual({ statusDot: 0, statusTone: "mist", brandLine: false, summaryLine: false });
 
   evidence.recordAssertionEvidence(
     "@everyone makes both coworkers answer in order, each signed, with a live row and rail line that say who is replying",
-    `Group ${groupId} was created from the rail as "Writing & Research" with Editor and Scout preselected. ROLL CALL was answered by ${rollCallReplies.map((line) => names[line.speaker]).join(" then ")} (routed by ${rollCallTurn.routedBy}, mode ${rollCallTurn.mode}); each bubble carried the speaker's own name, a name label, and its avatar; a time label was shown; live phrases seen: ${JSON.stringify(phrases)}; the rail ended on "${names[lastSpeaker]} replied".`,
+    `Group ${groupId} was created from the rail as "Writing & Research" with Editor and Scout preselected. ROLL CALL was answered by ${rollCallReplies.map((line) => names[line.speaker]).join(" then ")} (routed by ${rollCallTurn.routedBy}, mode ${rollCallTurn.mode}); each bubble carried the speaker's own name, a name label, and its avatar; a time label was shown; live phrases seen: ${JSON.stringify(phrases)}; the rail ended on "${names[lastSpeaker]} replied"; the header then read a plain Ready with no dot and the composer carried no brand line.`,
     true,
   );
 
