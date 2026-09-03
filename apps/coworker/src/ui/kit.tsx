@@ -135,6 +135,18 @@ export function AppsIcon({ className = "size-4" }: { className?: string }) {
   );
 }
 
+/** One coworker fanning out to two: its Workers. */
+export function WorkersIcon({ className = "size-4" }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 16 16" fill="none" aria-hidden="true">
+      <circle cx="3.75" cy="8" r="1.75" stroke="currentColor" strokeWidth="1.25" />
+      <circle cx="12.25" cy="4" r="1.75" stroke="currentColor" strokeWidth="1.25" />
+      <circle cx="12.25" cy="12" r="1.75" stroke="currentColor" strokeWidth="1.25" />
+      <path d="M5.4 7.25 10.6 4.75M5.4 8.75l5.2 2.5" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" />
+    </svg>
+  );
+}
+
 /** A notebook: the Markdown memory the coworker keeps. */
 export function MemoryIcon({ className = "size-4" }: { className?: string }) {
   return (

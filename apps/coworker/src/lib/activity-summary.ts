@@ -39,7 +39,7 @@ export function describeNow(activity: CoworkerActivity | undefined): NowSummary 
   if (!activity) return { subject: "", note: "Checking status…", needsYou: false };
   switch (activity.state) {
     case "working":
-      return { subject: activity.detail, note: "", needsYou: false };
+      return { subject: activity.detail, note: activity.workers?.subject ? "A Worker, working on it" : "", needsYou: false };
     case "retrying":
       return { subject: activity.detail, note: "Retrying after an interruption", needsYou: false };
     case "attention":

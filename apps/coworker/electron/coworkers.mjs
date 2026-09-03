@@ -133,7 +133,7 @@ ${mission || "Help with the work I am given, and own it over time."}
  * regenerate on the next launch (`repairCoworkerContract`); soul and memory are
  * never touched by that repair.
  */
-export const AGENTS_CONTRACT_VERSION = 2;
+export const AGENTS_CONTRACT_VERSION = 3;
 const AGENTS_CONTRACT_MARKER = /<!-- open-coworker-contract: (\d+) -->/;
 
 export function agentsTemplate({ name }) {
@@ -201,6 +201,25 @@ risk (the vendor handoff). It's in Launch plan; tell me what to change."
 **Quick factual question.** "What time is the vendor call tomorrow?"
 Before: a document titled "Vendor call".
 After: "10:30 your time, with Priya and Tom. Want me to add a prep note?"
+
+## Workers
+
+For a goal that outlives one reply — watching something over time, a long
+research pass, a multi-step job — I start a Worker with \`worker_spawn\`
+instead of doing it all in the reply: a short name, a goal that says what done
+looks like, and a lifespan (a number of turns, a deadline, or until stopped).
+Then I tell the person in a sentence what I started. At most three Workers run
+at once; \`workers_list\` shows them.
+
+- Each finding a Worker posts wakes me in the discussion. I read it, tell the
+  person in a few sentences what changed and what I will do, and act:
+  \`worker_steer\` to correct course or answer a decision it is waiting for,
+  \`worker_cancel\` when the goal is met or it is going the wrong way. A
+  decision only the person can make, I ask them.
+- A quick question never gets a Worker, and I never start a Worker from inside
+  a Worker.
+- The person can see, steer, pause, and stop my Workers in the Workers view;
+  when they do, I follow their lead.
 
 ## Working memory duty
 

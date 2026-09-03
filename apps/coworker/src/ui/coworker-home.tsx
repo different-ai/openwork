@@ -9,7 +9,7 @@ import { AvatarControls, CoworkerAvatar } from "@/ui/coworker-avatar";
 import { PersonalityPicker } from "@/ui/personality-picker";
 import { useWorkingSaying } from "@/ui/use-working-saying";
 import { CapabilitiesPanel } from "@/ui/capabilities";
-import { ActivityIcon, AppsIcon, Button, ErrorNote, IconButton, MemoryIcon, SlidersIcon, StatusDot } from "@/ui/kit";
+import { ActivityIcon, AppsIcon, Button, ErrorNote, IconButton, MemoryIcon, SlidersIcon, StatusDot, WorkersIcon } from "@/ui/kit";
 import { useResizablePanel } from "@/ui/use-resizable-panel";
 import type { PanelBounds } from "@/lib/panel-layout";
 import { MemoryPanel } from "@/ui/memory";
@@ -17,14 +17,17 @@ import { DocumentBesidePane, DocumentsIcon, DocumentsPanel, lastDocumentsOpened,
 import { describeActiveDocuments, documentsChangedSince } from "@/lib/documents";
 import { ResponsibilitiesPanel } from "@/ui/responsibilities";
 import { ThreadsPanel, type DocumentHooks } from "@/ui/threads";
+import { WorkersPanel } from "@/ui/workers";
+import { describeWorkerCount, type WorkerSummary } from "@/lib/workers";
 import { ModelPicker, type ModelSelection } from "@/ui/model-picker";
 import type { SettingsSection } from "@/ui/openwork-settings";
 
-type ContextView = "overview" | "documents" | "capabilities" | "memory" | "settings";
+type ContextView = "overview" | "documents" | "workers" | "capabilities" | "memory" | "settings";
 
 const CONTEXT_TITLES: Record<ContextView, string> = {
   overview: "Activity",
   documents: "Documents",
+  workers: "Workers",
   capabilities: "Apps & tools",
   memory: "Memory",
   settings: "Coworker settings",
@@ -41,11 +44,12 @@ const BESIDE_PANE_WIDTH = 440;
 const CONTEXT_ICONS: Record<ContextView, (props: { className?: string }) => ReactNode> = {
   overview: ActivityIcon,
   documents: DocumentsIcon,
+  workers: WorkersIcon,
   capabilities: AppsIcon,
   memory: MemoryIcon,
   settings: SlidersIcon,
 };
-const CONTEXT_ORDER: ContextView[] = ["overview", "documents", "capabilities", "memory", "settings"];
+const CONTEXT_ORDER: ContextView[] = ["overview", "documents", "workers", "capabilities", "memory", "settings"];
 
 function activityTone(activity: CoworkerActivity | undefined): "spark" | "mint" | "amber" | "rose" | "mist" {
   if (activity?.state === "working") return "spark";
@@ -381,8 +385,12 @@ export function CoworkerHome({
               onExplain={(text) => setDiscussionDraft({ id: Date.now(), text })}
               onOpenMemory={() => setContextView("memory")}
               onOpenCapabilities={() => setContextView("capabilities")}
+              onOpenWorkers={() => setContextView("workers")}
               onOpenOpenWork={() => onOpenOpenWork()}
             />
+          ) : null}
+          {contextView === "workers" ? (
+            <WorkersPanel coworker={coworker} onOpenThread={(threadId) => setOpenThreadRequest({ id: Date.now(), threadId })} />
           ) : null}
           {contextView === "documents" ? (
             <DocumentsPanel
@@ -447,6 +455,7 @@ function CoworkerOverview({
   onExplain,
   onOpenMemory,
   onOpenCapabilities,
+  onOpenWorkers,
   onOpenOpenWork,
 }: {
   session: DenSession | null;
@@ -460,6 +469,7 @@ function CoworkerOverview({
   onExplain: (message: string) => void;
   onOpenMemory: () => void;
   onOpenCapabilities: () => void;
+  onOpenWorkers: () => void;
   onOpenOpenWork: () => void;
 }) {
   const now = describeNow(activity);
@@ -470,6 +480,8 @@ function CoworkerOverview({
   );
   const nowNote = saying ? `${saying}…` : now.note;
   const [localResponsibilities, setLocalResponsibilities] = useState<LocalResponsibility[]>([]);
+  const [workers, setWorkers] = useState<WorkerSummary[]>([]);
+  const workersLine = describeWorkerCount(workers);
   // While a run is going or waiting in line, the list follows it closely; otherwise it idles.
   const localRunsBusy = localResponsibilities.some(
     (item) => item.latestRun?.status === "running" || item.latestRun?.status === "queued",
@@ -478,10 +490,14 @@ function CoworkerOverview({
   useEffect(() => {
     let cancelled = false;
     const load = () =>
-      coworkerBridge.localResponsibilities
-        .list(coworker.slug)
-        .then((items) => {
-          if (!cancelled) setLocalResponsibilities(items);
+      Promise.all([
+        coworkerBridge.localResponsibilities.list(coworker.slug),
+        coworkerBridge.workers.list(coworker.slug).catch((): WorkerSummary[] => []),
+      ])
+        .then(([items, liveWorkers]) => {
+          if (cancelled) return;
+          setLocalResponsibilities(items);
+          setWorkers(liveWorkers);
         })
         .catch(() => undefined);
     void load();
@@ -538,6 +554,18 @@ function CoworkerOverview({
           </button>
         ) : engineManaged && nowNote ? (
           <p className="mt-1.5 text-xs leading-relaxed text-mist" data-testid="coworker-current-note">{nowNote}</p>
+        ) : null}
+        {workersLine ? (
+          <button
+            type="button"
+            className="group mt-2.5 flex w-full items-center justify-between gap-2 border-t border-line/70 pt-2.5 text-left text-[11px] text-mist transition-colors hover:text-snow"
+            onClick={onOpenWorkers}
+            title="Open Workers"
+            data-testid="coworker-workers-line"
+          >
+            <span className="flex items-center gap-1.5"><WorkersIcon className="size-3.5" />{workersLine}</span>
+            <span aria-hidden="true">›</span>
+          </button>
         ) : null}
       </section>
 
@@ -601,6 +629,7 @@ function CoworkerOverview({
 
       {/* Coworker settings already has its control in the panel header; the foot keeps the two destinations that do not. */}
       <nav aria-label="More for this coworker" className="mt-auto flex items-center gap-1 border-t border-line pt-3 text-[11px]">
+        <QuietLink icon={<WorkersIcon className="size-3.5" />} onClick={onOpenWorkers}>Workers</QuietLink>
         <QuietLink icon={<AppsIcon className="size-3.5" />} onClick={onOpenCapabilities}>Apps & tools</QuietLink>
         <QuietLink icon={<MemoryIcon className="size-3.5" />} onClick={onOpenMemory}>Memory</QuietLink>
       </nav>

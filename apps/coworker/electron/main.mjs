@@ -35,7 +35,7 @@ import {
   updateCoworker,
   writeCoworkerFile,
 } from "./coworkers.mjs";
-import { COWORKER_TOOLS_MCP_NAME, createCoworkerToolsServer, createToolHandlers } from "./coworker-tools.mjs";
+import { COWORKER_TOOLS_MCP_NAME, DEFAULT_INSTRUCTIONS, createCoworkerToolsServer, createToolHandlers, toolCatalog } from "./coworker-tools.mjs";
 import {
   archiveDocument,
   listDocuments,
@@ -80,6 +80,7 @@ import {
   appendWorkerEvent,
   createReviewScheduler,
   createWorker,
+  createWorkerToolHandlers,
   getWorker,
   isWorkerFinished,
   lifespanSpent,
@@ -92,6 +93,7 @@ import {
   steerBody,
   updateWorker,
   workerThreadTitle,
+  workerToolCatalog,
   workerTurnPrompt,
 } from "./workers.mjs";
 
@@ -954,6 +956,7 @@ async function reviewWorkerFindings(slug, findings) {
     coworkerName: coworker.name,
     workers: workers.filter((worker) => !isWorkerFinished(worker) || mentioned.has(worker.id)),
     findings,
+    toolsAvailable: toolsRegistered.has(slug),
   });
   const acceptance = await client.sendTurn(threadId, { prompt });
   const result = await client.waitForThread(threadId, { timeoutMs: REVIEW_TURN_TIMEOUT_MS, pollIntervalMs: 1_000, since: acceptance });
@@ -1067,9 +1070,21 @@ function coworkerToolToken(slug) {
 
 async function ensureToolsServer() {
   if (toolsServer) return toolsServer;
+  // Documents and Workers share one server: starting, steering, and stopping a Worker go
+  // through the same functions the Workers view uses, so the run limit and records agree.
   startingToolsServer ??= createCoworkerToolsServer({
     resolveSlug: (token) => toolTokenSlugs.get(token) ?? null,
-    handlers: createToolHandlers({ coworkersDir }),
+    handlers: {
+      ...createToolHandlers({ coworkersDir }),
+      ...createWorkerToolHandlers({
+        coworkersDir,
+        spawn: (slug, input) => spawnWorker(slug, input, "coworker"),
+        steer: (slug, id, text) => steerWorker(slug, id, text, "coworker"),
+        cancel: (slug, id, reason) => cancelWorker(slug, id, reason, "coworker"),
+      }),
+    },
+    tools: [...toolCatalog(), ...workerToolCatalog()],
+    instructions: `${DEFAULT_INSTRUCTIONS} Your Worker tools start, steer, and stop long-lived Workers for goals that outlive one reply; each finding they post wakes you to review it.`,
     version: app.getVersion(),
   }).then((server) => {
     toolsServer = server;

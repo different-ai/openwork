@@ -32,6 +32,8 @@ import {
 export const COWORKER_TOOLS_MCP_NAME = "coworker";
 export const SUPPORTED_PROTOCOL_VERSIONS = ["2025-06-18", "2025-03-26", "2024-11-05"];
 const MAX_BODY_BYTES = 2 * 1024 * 1024;
+/** What the engine shows the model about this server; callers serving more than documents extend it. */
+export const DEFAULT_INSTRUCTIONS = "These are your document tools. Keep replies short and put the depth in a document; keep the active set to about five with context_set.";
 
 const DOCUMENT_ID_SCHEMA = { type: "string", description: "The document id, as listed in documents/index.md or returned when it was created." };
 
@@ -280,7 +282,7 @@ function negotiateProtocol(requested) {
  * HTTP layer replies 202). Tool failures become `isError` results with a plain
  * sentence, so the model can act on them; protocol failures become errors.
  */
-export async function handleMcpMessage(message, { slug, handlers, tools, serverInfo }) {
+export async function handleMcpMessage(message, { slug, handlers, tools, serverInfo, instructions = DEFAULT_INSTRUCTIONS }) {
   if (!message || typeof message !== "object" || message.jsonrpc !== "2.0" || typeof message.method !== "string") {
     return jsonRpcError(message?.id ?? null, -32600, "Invalid request");
   }
@@ -294,7 +296,7 @@ export async function handleMcpMessage(message, { slug, handlers, tools, serverI
         protocolVersion: negotiateProtocol(message.params?.protocolVersion),
         capabilities: { tools: { listChanged: false } },
         serverInfo,
-        instructions: "These are your document tools. Keep replies short and put the depth in a document; keep the active set to about five with context_set.",
+        instructions,
       });
     case "ping":
       return jsonRpcResult(id, {});
@@ -360,7 +362,7 @@ function sendJson(response, status, payload) {
  * bearer token belongs to (null rejects the request). Returns the base URL the
  * engine connects to and the config to register in a workspace.
  */
-export async function createCoworkerToolsServer({ resolveSlug, handlers, tools = toolCatalog(), version = "0.0.0", host = "127.0.0.1", port = 0 }) {
+export async function createCoworkerToolsServer({ resolveSlug, handlers, tools = toolCatalog(), instructions = DEFAULT_INSTRUCTIONS, version = "0.0.0", host = "127.0.0.1", port = 0 }) {
   const serverInfo = { name: "open-coworker", version };
   const server = createServer(async (request, response) => {
     const url = new URL(request.url ?? "/", "http://127.0.0.1");
@@ -396,7 +398,7 @@ export async function createCoworkerToolsServer({ resolveSlug, handlers, tools =
       return;
     }
     const messages = Array.isArray(parsed) ? parsed : [parsed];
-    const replies = (await Promise.all(messages.map((message) => handleMcpMessage(message, { slug, handlers, tools, serverInfo })))).filter(Boolean);
+    const replies = (await Promise.all(messages.map((message) => handleMcpMessage(message, { slug, handlers, tools, serverInfo, instructions })))).filter(Boolean);
     if (replies.length === 0) {
       response.writeHead(202);
       response.end();
