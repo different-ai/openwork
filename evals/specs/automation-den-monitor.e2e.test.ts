@@ -1,6 +1,6 @@
 import { expect } from "vitest";
 import { screenshot, validate } from "@openwork/test-evidence";
-import { clickText, denFetch, enabledButtons, signInInBrowser, visibleText, waitForText } from "@openwork/behaviors";
+import { clickText, createDesktopAutomation, enabledButtons, signInInBrowser, visibleText, waitForText } from "@openwork/behaviors";
 import { navigate } from "@openwork/cdp";
 import { chrome } from "@openwork/hosts";
 import { needs, server, test } from "@openwork/testkit";
@@ -13,34 +13,20 @@ import { needs, server, test } from "@openwork/testkit";
  * it, and keeps exactly one operational control: cancelling an in-flight run.
  */
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 test("Den lists Automations as a read-only monitor that routes management to Web and Desktop", async ({ evidence, place }) => {
   needs({ optIn: ["OPENWORK_EVAL_E2E_TESTS", "OPENWORK_EVAL_AUTOMATIONS_E2E_TEST"] });
   await using den = await server({ place });
 
   // A published Desktop client still creates through the legacy route with the free starter model.
   const name = "Monitor placement";
-  const created = await denFetch(den.admin, "/v1/automations", {
-    method: "POST",
-    headers: { authorization: `Bearer ${den.admin.token}` },
-    body: JSON.stringify({
-      name,
-      instructions: "Desktop-created Automation visible to the Den monitor.",
-      schedule: { kind: "daily", timezone: "UTC", hour: 23, minute: 59 },
-      model: { providerId: "opencode", modelId: "big-pickle", variant: null },
-    }),
+  await createDesktopAutomation(den.admin, {
+    name,
+    instructions: "Desktop-created Automation visible to the Den monitor.",
+    schedule: { kind: "daily", timezone: "UTC", hour: 23, minute: 59 },
   });
-  expect(created.response.status, created.text).toBe(201);
-  const automationId = isRecord(created.body) && isRecord(created.body.automation) && typeof created.body.automation.id === "string"
-    ? created.body.automation.id
-    : "";
-  expect(automationId).not.toBe("");
 
   await using browser = await chrome({
-    name: "automation-runtime-placement",
+    name: "automation-den-monitor",
     startUrl: den.ref.webUrl,
     headless: true,
     host: place.host(),

@@ -203,19 +203,26 @@ export async function createOrgConnection(
 }
 
 /**
- * Attempt to create an OpenWork Cloud Automation as the given member. Returns
- * the raw result so specs can assert refusals as well as successes.
+ * Create a Desktop-placed Automation the way a published Desktop client does:
+ * through the legacy route with a Desktop-only model. Returns the new id.
  */
-export async function createCloudAutomation(
+export async function createDesktopAutomation(
   member: DenSession,
-  organizationId: string,
-  definition: Record<string, unknown>,
-): Promise<DenFetchResult> {
-  return denFetch(member, "/v1/cloud-automations", {
+  definition: { name: string; instructions: string; schedule: Record<string, unknown>; model?: Record<string, unknown> },
+): Promise<{ id: string }> {
+  const result = await denFetch(member, "/v1/automations", {
     method: "POST",
-    headers: { ...auth(member), "x-openwork-org-id": organizationId },
-    body: JSON.stringify(definition),
+    headers: auth(member),
+    body: JSON.stringify({
+      model: { providerId: "opencode", modelId: "big-pickle", variant: null },
+      ...definition,
+    }),
   });
+  const automation = isRecord(result.body) && isRecord(result.body.automation) ? result.body.automation : null;
+  if (result.response.status !== 201 || typeof automation?.id !== "string") {
+    throw new Error(`Desktop Automation create failed: HTTP ${result.response.status} ${preview(result.body)}`);
+  }
+  return { id: automation.id };
 }
 
 export async function createNativeConnector(
