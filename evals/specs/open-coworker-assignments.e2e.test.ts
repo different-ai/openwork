@@ -150,10 +150,11 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
 
   const expectedTitle = assignmentTitle(OUTCOME);
   await waitForText(app, expectedTitle, { timeoutMs: 60_000 });
-  // The thread column is the surface under test; the rail and Activity sidebar
-  // may truthfully name the discussion while its session is still busy.
+  // The conversation column is the surface under test: the one header now carries the
+  // assignment's title and badge. The rail and Activity view may truthfully name the
+  // discussion while its session is still busy.
   await waitFor(app, `(() => {
-    const badge = [...document.querySelectorAll("main span")].some((span) => (span.textContent ?? "").trim() === "Assignment");
+    const badge = [...document.querySelectorAll('[data-testid="conversation-header"] span, main span')].some((span) => (span.textContent ?? "").trim() === "Assignment");
     return badge && !document.querySelector('[data-testid="coworker-discussion-view"]');
   })()`, {
     timeoutMs: 30_000,
