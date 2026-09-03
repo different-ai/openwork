@@ -60,6 +60,8 @@ export type CoworkerActivity = {
     updatedAt: number;
     threadId?: string;
   };
+  /** The next scheduled responsibility run, when one is due. */
+  next?: { name: string; at: number };
   /** Finished assignments, newest first, excluding whatever is active now. */
   recent?: RecentWork[];
 };
