@@ -2,6 +2,35 @@
 import type { AutomationSchedule } from "@openwork/types/automations";
 import type { Personality } from "./personalities";
 
+/** A group chat: several coworkers in one conversation with the person. */
+export type CoworkerGroupSummary = {
+  schemaVersion: 1;
+  id: string;
+  name: string;
+  participantSlugs: string[];
+  /** The native discussion thread each participant uses for this group, in its own workspace. */
+  participantThreadIds: Record<string, string>;
+  facilitatorModel: string;
+  createdAt: number;
+  updatedAt: number;
+  archivedAt: number | null;
+};
+
+export type GroupTimelineEventKind = "user" | "coworker" | "status";
+
+export type GroupTimelineEvent = {
+  id: string;
+  at: number;
+  kind: GroupTimelineEventKind;
+  text: string;
+  /** The coworker who spoke (coworker events) or whom a status concerns. */
+  slug?: string;
+  turnId?: string;
+  clientMessageId?: string;
+  status?: string;
+  threadId?: string;
+};
+
 export type CoworkerSummary = {
   slug: string;
   path: string;
@@ -159,6 +188,17 @@ export const coworkerBridge = {
     listRetired: () => invoke<RetiredCoworker[]>("coworkers.retired.list"),
     restore: (archiveId: string) => invoke<CoworkerSummary>("coworkers.restore", { archiveId }),
     deleteRetired: (archiveId: string) => invoke<{ ok: boolean }>("coworkers.retired.delete", { archiveId }),
+  },
+  groups: {
+    list: () => invoke<CoworkerGroupSummary[]>("groups.list"),
+    get: (id: string) => invoke<CoworkerGroupSummary>("groups.get", { id }),
+    create: (input: { name: string; participantSlugs: string[] }) => invoke<CoworkerGroupSummary>("groups.create", input),
+    update: (id: string, patch: Partial<Pick<CoworkerGroupSummary, "name" | "participantSlugs" | "participantThreadIds" | "facilitatorModel">>) =>
+      invoke<CoworkerGroupSummary>("groups.update", { id, patch }),
+    archive: (id: string) => invoke<CoworkerGroupSummary>("groups.archive", { id }),
+    readTimeline: (id: string, limit?: number) => invoke<GroupTimelineEvent[]>("groups.readTimeline", { id, limit }),
+    appendEvent: (id: string, event: Omit<GroupTimelineEvent, "id" | "at"> & Partial<Pick<GroupTimelineEvent, "id" | "at">>) =>
+      invoke<GroupTimelineEvent>("groups.appendEvent", { id, event }),
   },
   files: {
     list: (slug: string) => invoke<CoworkerMemoryFile[]>("coworkers.files.list", { slug }),

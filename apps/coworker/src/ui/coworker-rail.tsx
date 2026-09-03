@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { CoworkerSummary, RuntimeInfo } from "@/lib/bridge";
+import type { CoworkerGroupSummary, CoworkerSummary, RuntimeInfo } from "@/lib/bridge";
 import type { DenSession } from "@/lib/den";
 import type { CoworkerActivity } from "@/lib/threads";
 import { CoworkerAvatar } from "@/ui/coworker-avatar";
@@ -50,6 +50,28 @@ function activityTextTone(activity: CoworkerActivity | undefined): string {
 
 const DOT_BG: Record<Tone, string> = { spark: "bg-spark", mint: "bg-mint", amber: "bg-amber", rose: "bg-rose", mist: "bg-mist" };
 
+/** Up to three member avatars overlapped into one mark; a fourth and beyond become a count. */
+export function GroupAvatars({ members, size = 26 }: { members: readonly CoworkerSummary[]; size?: number }) {
+  const shown = members.slice(0, 3);
+  const extra = members.length - shown.length;
+  const step = Math.round(size * 0.62);
+  const width = shown.length ? size + step * (shown.length - 1) + (extra > 0 ? step : 0) : size;
+  return (
+    <span className="relative block shrink-0" style={{ width, height: size }} data-testid="group-avatars" data-count={members.length} aria-hidden="true">
+      {shown.map((member, index) => (
+        <span key={member.slug} className="absolute top-0 rounded-full ring-2 ring-[rgb(7_10_15)]" style={{ left: index * step, zIndex: index + 1 }}>
+          <CoworkerAvatar color={member.avatarColor} glasses={member.avatarGlasses} name={member.name} size={size} />
+        </span>
+      ))}
+      {extra > 0 ? (
+        <span className="absolute top-0 flex items-center justify-center rounded-full bg-panel text-[10px] font-semibold text-mist ring-2 ring-[rgb(7_10_15)]" style={{ left: shown.length * step, width: size, height: size, zIndex: shown.length + 1 }}>
+          +{extra}
+        </span>
+      ) : null}
+    </span>
+  );
+}
+
 export function CoworkerRail({
   coworkers,
   runtime,
@@ -60,6 +82,11 @@ export function CoworkerRail({
   onSelect,
   onNewCoworker,
   onOpenOpenWork,
+  groups = [],
+  groupLines = {},
+  selectedGroupId = "",
+  onSelectGroup,
+  onNewGroup,
 }: {
   coworkers: CoworkerSummary[];
   runtime: RuntimeInfo;
@@ -71,8 +98,18 @@ export function CoworkerRail({
   onSelect: (slug: string) => void;
   onNewCoworker: () => void;
   onOpenOpenWork: () => void;
+  /** Group chats (several coworkers in one conversation), newest first, archived ones excluded. */
+  groups?: CoworkerGroupSummary[];
+  /** One plain line per group: the latest activity, when known. */
+  groupLines?: Record<string, string>;
+  selectedGroupId?: string;
+  onSelectGroup?: (id: string) => void;
+  onNewGroup?: () => void;
 }) {
+  const bySlug = new Map(coworkers.map((coworker) => [coworker.slug, coworker]));
+  const membersOf = (group: CoworkerGroupSummary) => group.participantSlugs.map((slug) => bySlug.get(slug)).filter((member): member is CoworkerSummary => Boolean(member));
   const [query, setQuery] = useState("");
+  const visibleGroups = groups.filter((group) => !group.archivedAt && (!query.trim() || group.name.toLowerCase().includes(query.trim().toLowerCase())));
   const [peek, setPeek] = useState<{ slug: string; top: number } | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const [focusSearchOnExpand, setFocusSearchOnExpand] = useState(false);
@@ -157,6 +194,27 @@ export function CoworkerRail({
                     data-tone={tone}
                     className={`absolute bottom-1.5 right-1.5 size-2.5 rounded-full ring-2 ring-[rgb(7_10_15)] ${DOT_BG[tone]} ${activity?.state === "working" ? "animate-pulse" : ""}`}
                   />
+                </button>
+              );
+            })}
+            {visibleGroups.map((group) => {
+              const active = group.id === selectedGroupId;
+              return (
+                <button
+                  key={group.id}
+                  type="button"
+                  aria-label={group.name}
+                  aria-current={active ? "true" : undefined}
+                  data-testid="group-rail-avatar"
+                  data-group-id={group.id}
+                  data-active={active ? "true" : "false"}
+                  onClick={() => onSelectGroup?.(group.id)}
+                  className={`window-no-drag relative flex size-14 shrink-0 items-center justify-center rounded-2xl transition-all duration-200 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-spark/60 ${
+                    active ? "bg-white/8 ring-1 ring-white/10" : "hover:bg-white/5"
+                  }`}
+                >
+                  {active ? <span aria-hidden="true" className="absolute -left-3 top-4 h-6 w-[3px] rounded-full bg-spark" /> : null}
+                  <GroupAvatars members={membersOf(group)} size={26} />
                 </button>
               );
             })}
@@ -257,6 +315,47 @@ export function CoworkerRail({
             })}
             {coworkers.length === 0 ? <p className="px-2.5 py-4 text-xs text-mist">No coworkers yet. Add your first teammate.</p> : null}
             {coworkers.length > 0 && visibleCoworkers.length === 0 ? <p className="px-2.5 py-4 text-xs text-mist">No matching coworkers.</p> : null}
+            {coworkers.length >= 2 || visibleGroups.length > 0 ? (
+              <>
+                <p className="px-2 pb-1 pt-4 text-[10px] font-semibold uppercase tracking-[0.14em] text-mist">Group chats</p>
+                {visibleGroups.map((group) => {
+                  const members = membersOf(group);
+                  const active = group.id === selectedGroupId;
+                  return (
+                    <button
+                      key={group.id}
+                      aria-current={active ? "true" : undefined}
+                      data-testid="group-rail-row"
+                      data-group-id={group.id}
+                      data-active={active ? "true" : "false"}
+                      onClick={() => onSelectGroup?.(group.id)}
+                      className={`window-no-drag flex w-full items-start gap-3 rounded-2xl px-2.5 py-3 text-left transition-all duration-200 ${
+                        active ? "bg-white/8 text-snow ring-1 ring-white/10" : "text-mist hover:bg-white/5 hover:text-snow"
+                      }`}
+                    >
+                      <span className="mt-0.5 flex size-11 shrink-0 items-center justify-center">
+                        <GroupAvatars members={members} size={26} />
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-sm font-semibold text-snow">{group.name}</span>
+                        <span className="mt-1 block truncate text-[11px] text-mist">{groupLines[group.id] || members.map((member) => member.name).join(", ")}</span>
+                      </span>
+                    </button>
+                  );
+                })}
+                {coworkers.length >= 2 && onNewGroup ? (
+                  <button
+                    type="button"
+                    data-testid="new-group-chat"
+                    onClick={onNewGroup}
+                    className="window-no-drag flex w-full items-center gap-3 rounded-2xl px-2.5 py-2 text-left text-xs text-mist transition-colors hover:bg-white/5 hover:text-snow"
+                  >
+                    <span aria-hidden="true" className="flex size-11 shrink-0 items-center justify-center text-base">+</span>
+                    New group chat
+                  </button>
+                ) : null}
+              </>
+            ) : null}
           </nav>
           <div className="window-no-drag border-t border-line px-2 py-2">
             <button
