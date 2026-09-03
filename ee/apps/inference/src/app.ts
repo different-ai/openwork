@@ -11,6 +11,7 @@ import { db } from "./db.js";
 import { env } from "./env.js";
 import { isSentryEnabled } from "./instrumentation.js";
 import { registerProxyRoutes } from "./proxy.js";
+import { registerRollupRoutes, runRollups } from "./rollups.js";
 import { registerWebhookRoutes } from "./webhooks.js";
 
 const srcDir = path.dirname(fileURLToPath(import.meta.url));
@@ -89,6 +90,7 @@ if (shouldServeLocalModelCatalog) {
 
 registerProxyRoutes(app);
 registerWebhookRoutes(app);
+registerRollupRoutes(app, { adminToken: env.adminToken, runRollups });
 
 app.onError((error, c) => {
   if (error instanceof z.ZodError) {
