@@ -2,7 +2,7 @@ name: Spec Impact Snapshot
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened, ready_for_review]
+    types: [opened, synchronize, reopened, ready_for_review, labeled, unlabeled]
 
 permissions:
   contents: read
@@ -23,8 +23,14 @@ jobs:
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-        run: >-
-          node evals/scripts/spec-impact.mjs
-          --base "$BASE_SHA"
-          --head "$HEAD_SHA"
-          --summary "$GITHUB_STEP_SUMMARY"
+          NO_RUNTIME_CHANGE: ${{ contains(github.event.pull_request.labels.*.name, 'no-runtime-change') }}
+        run: |
+          args=()
+          if [[ "$NO_RUNTIME_CHANGE" != "true" ]]; then
+            args+=(--strict-paths evals/specs/spec-impact-strict-paths.json)
+          fi
+          node evals/scripts/spec-impact.mjs \
+            --base "$BASE_SHA" \
+            --head "$HEAD_SHA" \
+            --summary "$GITHUB_STEP_SUMMARY" \
+            "${args[@]}"

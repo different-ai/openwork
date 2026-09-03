@@ -11,6 +11,24 @@ function matches(pathname, pattern) {
   return pathname === pattern
 }
 
+function matchesGlob(pathname, pattern) {
+  let expression = "^"
+  for (let index = 0; index < pattern.length; index += 1) {
+    const character = pattern[index]
+    if (character === "*" && pattern[index + 1] === "*") {
+      if (pattern[index + 2] === "/") {
+        expression += "(?:.*/)?"
+        index += 2
+      } else {
+        expression += ".*"
+        index += 1
+      }
+    } else if (character === "*") expression += "[^/]*"
+    else expression += character.replace(/[|\\{}()[\]^$+?.]/g, "\\$&")
+  }
+  return new RegExp(`${expression}$`).test(pathname)
+}
+
 function strings(value, label) {
   if (!Array.isArray(value) || value.length === 0 || value.some((entry) => typeof entry !== "string" || entry.length === 0)) {
     throw new Error(`${label} must be a non-empty string array`)
@@ -64,6 +82,22 @@ export function validateSnapshot(value) {
   return contracts
 }
 
+export function validateStrictPaths(value) {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) throw new Error("strict paths must be an object")
+  if (Reflect.get(value, "version") !== 1) throw new Error("strict paths version must be 1")
+  return {
+    protectedPaths: strings(Reflect.get(value, "protectedPaths"), "strict paths protectedPaths"),
+    testPaths: strings(Reflect.get(value, "testPaths"), "strict paths testPaths"),
+  }
+}
+
+export function analyzeStrictImpact(config, changedFiles) {
+  const changed = [...new Set(changedFiles.map((entry) => entry.trim()).filter(Boolean))].sort()
+  const protectedFiles = changed.filter((pathname) => config.protectedPaths.some((pattern) => matchesGlob(pathname, pattern)))
+  const testFiles = changed.filter((pathname) => config.testPaths.some((pattern) => matchesGlob(pathname, pattern)))
+  return { protectedFiles, testFiles, required: protectedFiles.length > 0 && testFiles.length === 0 }
+}
+
 export function analyzeImpact(contracts, changedFiles) {
   const changed = [...new Set(changedFiles.map((entry) => entry.trim()).filter(Boolean))].sort()
   const changedE2eTests = changed.filter((pathname) => pathname.startsWith("evals/specs/") && pathname.endsWith(".e2e.test.ts"))
@@ -111,6 +145,14 @@ function annotation(value) {
   return value.replaceAll("%", "%25").replaceAll("\r", "%0D").replaceAll("\n", "%0A")
 }
 
+function strictMarkdown(result) {
+  const lines = ["### Strict spec-impact paths", ""]
+  if (result.protectedFiles.length === 0) lines.push("No protected path changed.", "")
+  else if (result.required) lines.push("Protected paths changed without a spec or test change:", ...result.protectedFiles.map((entry) => `- \`${entry}\``), "")
+  else lines.push("Protected path changes include a spec or test change.", "")
+  return lines.join("\n")
+}
+
 function parseArgs(args) {
   const options = { changedFiles: [] }
   for (let index = 0; index < args.length; index += 1) {
@@ -118,11 +160,12 @@ function parseArgs(args) {
     if (argument === "--strict") options.strict = true
     else if (argument === "--json") options.json = true
     else if (argument === "--matched-tests") options.matchedTests = true
-    else if (["--base", "--head", "--snapshot", "--summary", "--changed-file"].includes(argument)) {
+    else if (["--base", "--head", "--snapshot", "--summary", "--strict-paths", "--changed-file"].includes(argument)) {
       const value = args[index + 1]
       if (!value) throw new Error(`${argument} requires a value`)
       index += 1
       if (argument === "--changed-file") options.changedFiles.push(value)
+      else if (argument === "--strict-paths") options.strictPaths = value
       else options[argument.slice(2)] = value
     } else throw new Error(`unknown argument: ${argument}`)
   }
@@ -146,7 +189,10 @@ function main() {
     ? options.changedFiles
     : gitChangedFiles(options.base, options.head)
   const result = analyzeImpact(contracts, changedFiles)
-  const report = markdown(result)
+  const strictImpact = options.strictPaths
+    ? analyzeStrictImpact(validateStrictPaths(JSON.parse(readFileSync(resolve(repoRoot, options.strictPaths), "utf8"))), changedFiles)
+    : undefined
+  const report = [markdown(result), strictImpact && strictMarkdown(strictImpact)].filter(Boolean).join("\n")
   if (options.summary) appendFileSync(options.summary, report)
   if (options.matchedTests) {
     process.stdout.write(`${JSON.stringify(result.matchedTests)}\n`)
@@ -157,7 +203,10 @@ function main() {
   for (const contract of result.attention) {
     process.stdout.write(`::warning title=Spec impact snapshot::${annotation(`${contract.id} changed without a mapped E2E test change`)}\n`)
   }
-  if (options.strict && result.attention.length > 0) process.exitCode = 2
+  if (strictImpact?.required) {
+    process.stdout.write("::error title=Spec or test change required::Protected paths changed without a spec or test change\n")
+  }
+  if ((options.strict && result.attention.length > 0) || strictImpact?.required) process.exitCode = 2
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main()

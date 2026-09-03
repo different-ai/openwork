@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "protectedPaths": [
+    "apps/app/src/react-app/domains/connections/provider-auth/**",
+    "apps/app/src/react-app/domains/settings/pages/ai-view.tsx",
+    "apps/app/src/react-app/domains/settings/pages/cloud-providers-view.tsx",
+    "apps/app/src/app/cloud/desktop-app-restrictions.ts",
+    "apps/server/src/cloud-provider-sync.ts",
+    "ee/apps/den-api/src/desktop-policies.ts",
+    "ee/apps/den-api/src/routes/org/desktop-policies.ts",
+    "ee/apps/den-api/src/llm/**",
+    "ee/apps/den-api/src/routes/org/mcp-connections.ts",
+    "ee/apps/den-api/src/**/sso*",
+    ".github/workflows/**",
+    "evals/specs/quarantine.json"
+  ],
+  "testPaths": [
+    "evals/specs/**",
+    "apps/**/tests/**",
+    "ee/**/test/**"
+  ]
+}
