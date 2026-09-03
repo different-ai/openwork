@@ -172,6 +172,7 @@ afterAll(async () => {
     .select({ id: schema.InferenceProviderTable.id })
     .from(schema.InferenceProviderTable)
     .where(drizzle.eq(schema.InferenceProviderTable.organization_id, organizationId))
+  await db.delete(schema.InferenceProviderOauthStateTable).where(drizzle.inArray(schema.InferenceProviderOauthStateTable.inference_provider_id, inferenceProviderIds))
   await db.delete(schema.InferenceProviderAccessTable).where(drizzle.inArray(schema.InferenceProviderAccessTable.inference_provider_id, inferenceProviderIds))
   await db.delete(schema.InferenceProviderModelTable).where(drizzle.inArray(schema.InferenceProviderModelTable.inference_provider_id, inferenceProviderIds))
   await db.delete(schema.InferenceProviderCredentialTable).where(drizzle.eq(schema.InferenceProviderCredentialTable.organization_id, organizationId))
@@ -329,21 +330,36 @@ test("org-credential provider: create, scoped lists, connect with member key and
 })
 
 test("member-credential mode reports member_auth_required until the member holds a credential", async () => {
+  const memberAnthropic = await request(ownerCookie, "/v1/inference-providers", {
+    method: "POST",
+    body: JSON.stringify({ name: "Member Anthropic", providerId: "anthropic", modelIds: ["claude-haiku-4"], credentialMode: "member" }),
+  })
+  expect(memberAnthropic.status).toBe(400)
+  await expect(memberAnthropic.json()).resolves.toMatchObject({ error: "unsupported_credential_mode" })
+
   const createResponse = await request(ownerCookie, "/v1/inference-providers", {
     method: "POST",
     body: JSON.stringify({
-      name: "Member Anthropic",
-      providerId: "anthropic",
-      modelIds: ["claude-haiku-4"],
+      name: "Member Vertex",
+      providerId: "google-vertex",
+      modelIds: ["gemini-2.5-pro"],
+      settings: { project: "p", location: "us-central1" },
       credentialMode: "member",
+      oauthClientId: "client-id.apps.googleusercontent.com",
+      oauthClientSecret: "GOCSPX-secret-must-not-leak",
       allMembers: true,
     }),
   })
+  const createText = await createResponse.text()
   expect(createResponse.status).toBe(201)
-  const inferenceProviderId = readString(readProvider(await createResponse.json()), "id")
+  expect(createText).not.toContain("GOCSPX-secret-must-not-leak")
+  const created = readProvider(JSON.parse(createText))
+  const inferenceProviderId = readString(created, "id")
+  expect(created).toMatchObject({ oauthClientId: "client-id.apps.googleusercontent.com", hasOauthClientSecret: true })
 
   const memberConnect = readProvider(await (await request(memberCookie, `/v1/inference-providers/${inferenceProviderId}/connect`)).json())
-  expect(memberConnect).toMatchObject({ credentialMode: "member", credentialStatus: "member_auth_required", authUrl: null })
+  expect(memberConnect).toMatchObject({ credentialMode: "member", credentialStatus: "member_auth_required" })
+  expect(readString(memberConnect, "authUrl")).toMatch(new RegExp(`^https?://.+/v1/inference-providers/${inferenceProviderId}/oauth/start$`))
 
   await db.insert(schema.InferenceProviderCredentialTable).values({
     id: createDenTypeId("inferenceProviderCredential"),
@@ -357,9 +373,31 @@ test("member-credential mode reports member_auth_required until the member holds
   })
 
   const readyList = readProviderList(await (await request(memberCookie, "/v1/inference-providers")).json())
-  expect(readyList.find((provider) => provider.id === inferenceProviderId)).toMatchObject({ credentialStatus: "ready" })
+  expect(readyList.find((provider) => provider.id === inferenceProviderId)).toMatchObject({ credentialStatus: "ready", authUrl: null })
   const ownerList = readProviderList(await (await request(ownerCookie, "/v1/inference-providers")).json())
   expect(ownerList.find((provider) => provider.id === inferenceProviderId)).toMatchObject({ credentialStatus: "member_auth_required" })
+
+  // Manage view names the member behind each credential; the OAuth client secret stays server-side.
+  const detailText = await (await request(ownerCookie, `/v1/inference-providers/${inferenceProviderId}`)).text()
+  expect(detailText).not.toContain("GOCSPX-secret-must-not-leak")
+  expect(readProvider(JSON.parse(detailText))).toMatchObject({
+    hasOauthClientSecret: true,
+    credentials: [{ subject: memberId, orgMembershipId: memberId, memberName: "Gateway Member", memberEmail: `gateway-member+${memberUserId}@test.local`, kind: "oauth_google" }],
+  })
+
+  // Clearing the secret while staying in member mode is rejected; absent keeps it.
+  const clearSecret = await request(ownerCookie, `/v1/inference-providers/${inferenceProviderId}`, {
+    method: "PATCH",
+    body: JSON.stringify({ oauthClientSecret: "" }),
+  })
+  expect(clearSecret.status).toBe(400)
+  await expect(clearSecret.json()).resolves.toMatchObject({ error: "oauth_client_required" })
+  const rename = await request(ownerCookie, `/v1/inference-providers/${inferenceProviderId}`, {
+    method: "PATCH",
+    body: JSON.stringify({ name: "Member Vertex 2" }),
+  })
+  expect(rename.status).toBe(200)
+  expect(readProvider(await rename.json())).toMatchObject({ name: "Member Vertex 2", hasOauthClientSecret: true })
 
   const orgModeNoCredential = await request(ownerCookie, "/v1/inference-providers", {
     method: "POST",
