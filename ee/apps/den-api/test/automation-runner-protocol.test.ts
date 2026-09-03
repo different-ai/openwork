@@ -188,6 +188,35 @@ test("expired lease recovery cannot clobber a concurrently renewed lease", () =>
   assert.match(recovery, /engine_sequence:\s*retry \? 0 : run\.engine_sequence/)
 })
 
+test("Desktop runner claims are idempotent for one owner and exclude competing runners", () => {
+  const claim = repositorySource.slice(
+    repositorySource.indexOf("async claimDesktop"),
+    repositorySource.indexOf("async heartbeatDesktop"),
+  )
+  assert.match(claim, /eq\(AutomationRunTable\.lease_owner, input\.leaseOwner\)[\s\S]*inArray\(AutomationRunTable\.status, \["claimed", "running"\]\)/)
+  assert.match(claim, /if \(!selected\) \{[\s\S]*eq\(AutomationRunTable\.status, "queued"\)[\s\S]*attempt_count: selected\.run\.attempt_count \+ 1/)
+  assert.match(claim, /if \(!selected\) return null/)
+  assert.match(claim, /run: mapRun\(currentRuns\[0\]\)/)
+})
+
+test("expired attempts reject stale completion and stop after the bounded retry", () => {
+  const completion = repositorySource.slice(
+    repositorySource.indexOf("async complete(input"),
+    repositorySource.indexOf("async recoverExpiredLeases"),
+  )
+  const recovery = repositorySource.slice(
+    repositorySource.indexOf("async recoverExpiredLeases"),
+    repositorySource.indexOf("async requestCancellation"),
+  )
+  const routesSource = readFileSync(join(import.meta.dir, "../src/routes/automations/index.ts"), "utf8")
+  assert.match(completion, /eq\(AutomationRunTable\.attempt_count, input\.attempt\)/)
+  assert.match(completion, /current\.lease_expires_at\.getTime\(\) <= input\.now[\s\S]*automation_run_complete_lease_lost/)
+  assert.match(routesSource, /automation_run_complete_lease_lost[\s\S]*runner_lease_lost[\s\S]*409/)
+  assert.match(recovery, /run\.attempt_count < AUTOMATION_MAXIMUM_ATTEMPTS/)
+  assert.match(recovery, /status: retry \? "queued" : "failed"/)
+  assert.match(recovery, /code: "lease_lost"[\s\S]*retryable: false/)
+})
+
 test("a no-op heartbeat renewal is reported as a lost lease", () => {
   assert.equal(automationUpdateChangedRows([{ affectedRows: 0 }]), false)
   assert.equal(automationUpdateChangedRows({ rowsAffected: 0 }), false)
@@ -356,7 +385,7 @@ test("every dispatch path revalidates the owner's model access", () => {
   const executorSource = readFileSync(join(import.meta.dir, "../src/automations/cloud-agent-executor.ts"), "utf8")
   const execution = executorSource.slice(executorSource.indexOf("export async function executeCloudAgent"))
   assert.match(executorSource, /currentAgentAuthority[\s\S]*resolveAutomationModelAccess\(/)
-  assert.match(execution, /currentAgentAuthority\(input\)[\s\S]*readyWorker/)
+  assert.match(execution, /currentAgentAuthority\(input\)[\s\S]*resolveCloudAgentReadyWorker/)
   assert.match(execution, /currentAgentAuthority\(input\)[\s\S]*createThread/)
   assert.match(execution, /currentAgentAuthority\(input\)[\s\S]*abortAndObserve\(client, nativeThreadId\)[\s\S]*sendTurn/)
   assert.match(serviceSource, /"owner_membership_lost",[\s\S]*markNeedsAttention/)

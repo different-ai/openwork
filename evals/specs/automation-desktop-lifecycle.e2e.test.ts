@@ -1,4 +1,4 @@
-import { createServer } from "node:http";
+import { createServer, type ServerResponse } from "node:http";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -6,11 +6,13 @@ import { expect, onTestFinished } from "vitest";
 import {
   clickButton,
   clickText,
+  createOrgConnection,
   denFetch,
   evalIn,
   go,
   readAvailableModels,
   visibleText,
+  waitFor,
   waitForText,
 } from "@openwork/behaviors";
 import type { DenSession } from "@openwork/behaviors";
@@ -18,6 +20,7 @@ import type { Surface } from "@openwork/cdp";
 import {
   app,
   eventually,
+  mcpMock,
   needs,
   server,
   test,
@@ -32,7 +35,10 @@ const REPLY = "The synthetic Automation lifecycle completed successfully.";
 const PROVIDER_API_KEY = "sk-automation-reliability-local-only";
 const REQUEST_TIMEOUT_MS = 10_000;
 const RUN_TIMEOUT_MS = 180_000;
-const AUTOMATION_MODEL_ATTENTION_CAPABILITY = "model_attention_v1";
+interface ProviderControl {
+  unavailable?: boolean;
+  connect?: { capabilityName: string; marker: string };
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -46,9 +52,41 @@ function auth(session: DenSession): Record<string, string> {
   return { authorization: `Bearer ${session.token}` };
 }
 
+function projectedTool(payload: Record<string, unknown>, suffix: string): string | null {
+  for (const tool of records(payload.tools)) {
+    const fn = isRecord(tool.function) ? tool.function : {};
+    if (typeof fn.name === "string" && fn.name.endsWith(suffix)) return fn.name;
+  }
+  return null;
+}
+
+function completedToolCount(payload: Record<string, unknown>): number {
+  return records(payload.messages).filter((message) => message.role === "tool").length;
+}
+
+function sendProviderStream(
+  response: ServerResponse,
+  deltas: Array<{ delta: Record<string, unknown>; finishReason?: string | null }>,
+  requestNumber: number,
+): void {
+  response.writeHead(200, {
+    "content-type": "text/event-stream",
+    "cache-control": "no-cache",
+    connection: "keep-alive",
+  });
+  for (const item of deltas) {
+    response.write(`data: ${JSON.stringify({
+      id: `chatcmpl-automation-${requestNumber}`,
+      object: "chat.completion.chunk",
+      choices: [{ index: 0, delta: item.delta, finish_reason: item.finishReason ?? null }],
+    })}\n\n`);
+  }
+  response.end("data: [DONE]\n\n");
+}
+
 function startProviderMock(
   completionBodies: unknown[],
-  control: { unavailable?: boolean } = {},
+  control: ProviderControl = {},
 ): Promise<string> {
   const mock = createServer((request, response) => {
     const url = request.url ?? "";
@@ -78,19 +116,47 @@ function startProviderMock(
           }));
           return;
         }
-        const chunks = [
-          { id: `chatcmpl-automation-${completionBodies.length}`, object: "chat.completion.chunk", choices: [{ index: 0, delta: { role: "assistant" }, finish_reason: null }] },
-          { id: `chatcmpl-automation-${completionBodies.length}`, object: "chat.completion.chunk", choices: [{ index: 0, delta: { content: REPLY }, finish_reason: null }] },
-          { id: `chatcmpl-automation-${completionBodies.length}`, object: "chat.completion.chunk", choices: [{ index: 0, delta: {}, finish_reason: "stop" }] },
-        ];
-        response.writeHead(200, {
-          "content-type": "text/event-stream",
-          "cache-control": "no-cache",
-          connection: "keep-alive",
-        });
-        for (const chunk of chunks) response.write(`data: ${JSON.stringify(chunk)}\n\n`);
-        response.write("data: [DONE]\n\n");
-        response.end();
+        const payload = isRecord(body) ? body : {};
+        if (control.connect && JSON.stringify(payload).includes(control.connect.marker)) {
+          const completed = completedToolCount(payload);
+          if (completed < 2) {
+            const suffix = completed === 0 ? "_search_capabilities" : "_execute_capability";
+            const toolName = projectedTool(payload, suffix);
+            if (!toolName) {
+              response.writeHead(500, { "content-type": "application/json" });
+              response.end(JSON.stringify({ error: { message: `missing projected tool ${suffix}` } }));
+              return;
+            }
+            sendProviderStream(response, [
+              { delta: { role: "assistant" } },
+              {
+                delta: {
+                  tool_calls: [{
+                    index: 0,
+                    id: completed === 0 ? "call_automation_search" : "call_automation_echo",
+                    type: "function",
+                    function: {
+                      name: toolName,
+                      arguments: completed === 0
+                        ? JSON.stringify({ query: "mock echo", type: "mcp", limit: 5 })
+                        : JSON.stringify({
+                            name: control.connect.capabilityName,
+                            body: { text: control.connect.marker },
+                          }),
+                    },
+                  }],
+                },
+              },
+              { delta: {}, finishReason: "tool_calls" },
+            ], completionBodies.length);
+            return;
+          }
+        }
+        sendProviderStream(response, [
+          { delta: { role: "assistant" } },
+          { delta: { content: REPLY } },
+          { delta: {}, finishReason: "stop" },
+        ], completionBodies.length);
       });
       return;
     }
@@ -114,6 +180,39 @@ function startProviderMock(
       resolve(`http://127.0.0.1:${address.port}/v1`);
     });
   });
+}
+
+async function setField(surface: Surface, label: string, value: string): Promise<void> {
+  const changed = await evalIn(surface, `(() => {
+    const label = [...document.querySelectorAll("label")]
+      .find((candidate) => (candidate.textContent ?? "").trim().includes(${JSON.stringify(label)}));
+    const id = label?.getAttribute("for");
+    const field = id ? document.getElementById(id) : label?.querySelector("input, textarea, select");
+    if (!(field instanceof HTMLInputElement || field instanceof HTMLTextAreaElement || field instanceof HTMLSelectElement)) return false;
+    const setter = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(field), "value")?.set;
+    setter?.call(field, ${JSON.stringify(value)});
+    field.dispatchEvent(new Event("input", { bubbles: true }));
+    field.dispatchEvent(new Event("change", { bubbles: true }));
+    return true;
+  })()`);
+  expect(changed, `Could not set ${label}`).toBe(true);
+}
+
+async function selectAutomationModel(surface: Surface): Promise<void> {
+  expect(await evalIn(surface, `(() => {
+    const button = document.getElementById("automation-model");
+    if (!(button instanceof HTMLButtonElement)) return false;
+    button.click();
+    return true;
+  })()`)).toBe(true);
+  await waitFor(surface, `(() => {
+    const item = [...document.querySelectorAll("button")]
+      .find((candidate) => (candidate.textContent ?? "").includes(${JSON.stringify(MODEL_NAME)})
+        && (candidate.textContent ?? "").includes(${JSON.stringify(MODEL_ID)}));
+    if (!(item instanceof HTMLElement)) return false;
+    item.click();
+    return true;
+  })()`, { timeoutMs: 30_000, label: "Automation form selected deterministic model" });
 }
 
 async function organizationId(session: DenSession): Promise<string> {
@@ -252,7 +351,7 @@ async function waitForTerminalReceipt(
 
 async function assertSucceededReceipt(
   receipt: Record<string, unknown>,
-  expected: { automationId: string; revisionId?: string },
+  expected: { automationId: string; revisionId?: string; resultText?: string },
 ): Promise<{ runId: string; sessionId: string }> {
   const run = isRecord(receipt.run) ? receipt.run : {};
   const thread = isRecord(run.executionThread) ? run.executionThread : {};
@@ -263,7 +362,7 @@ async function assertSucceededReceipt(
   expect(run.automationId).toBe(expected.automationId);
   if (expected.revisionId) expect(run.revisionId).toBe(expected.revisionId);
   expect(run.error).toBeNull();
-  expect(run.resultSummary).toContain(REPLY);
+  expect(run.resultSummary).toContain(expected.resultText ?? REPLY);
   expect(thread).toMatchObject({
     threadKind: "automation",
     executionLocation: "desktop",
@@ -327,11 +426,13 @@ async function triggerManualRun(
 }
 
 test("a Desktop Automation completes through UI, API, schedule, thread, and receipt", { timeout: 20 * 60_000 }, async ({ evidence, place }) => {
-  needs({ optIn: ["OPENWORK_EVAL_E2E_TESTS"] });
+  needs({ optIn: ["OPENWORK_EVAL_E2E_TESTS", "OPENWORK_EVAL_AUTOMATIONS_E2E_TEST"], placement: "local" });
   const completionBodies: unknown[] = [];
-  const providerBaseUrl = await startProviderMock(completionBodies);
+  const providerControl: ProviderControl = {};
+  const providerBaseUrl = await startProviderMock(completionBodies, providerControl);
   await using den = await server({
     place,
+    mocks: { connector: mcpMock({ allowUnauthenticatedMcp: true }) },
     org: {
       name: `Automation Reliability ${Date.now()}`,
       admin: { name: "Automation Admin" },
@@ -339,6 +440,13 @@ test("a Desktop Automation completes through UI, API, schedule, thread, and rece
     },
   });
   const orgId = await organizationId(den.admin);
+  const connection = await createOrgConnection(den.admin, {
+    name: `Automation echo ${Date.now()}`,
+    url: den.mocks.connector.mcpUrl,
+    authType: "none",
+    credentialMode: "shared",
+    access: { orgWide: true },
+  });
   const providerId = await createProvider(den.admin, orgId, providerBaseUrl, PROVIDER_API_KEY);
   const stamp = Date.now();
   const automationName = `Synthetic lifecycle ${stamp}`;
@@ -507,10 +615,111 @@ test("a Desktop Automation completes through UI, API, schedule, thread, and rece
     `The detail view showed succeeded with ${MODEL_NAME}, without a stale running, waiting, or missing-result message.`,
     true,
   );
+
+  const uiName = `UI Connect lifecycle ${Date.now()}`;
+  const connectMarker = `automation-connect-${Date.now()}`;
+  providerControl.connect = {
+    capabilityName: `mcp:${connection.id}:mock_echo`,
+    marker: connectMarker,
+  };
+  await go(desktop, "/automations");
+  await clickButton(desktop, "New Automation");
+  await waitFor(desktop, "Boolean(document.querySelector('[data-automation-editor]'))", {
+    timeoutMs: 30_000,
+    label: "Automation create form",
+  });
+  await setField(desktop, "Name", uiName);
+  await setField(
+    desktop,
+    "Instructions",
+    `Use search_capabilities, then execute ${providerControl.connect.capabilityName} with text exactly ${connectMarker}.`,
+  );
+  await setField(desktop, "Schedule", "daily");
+  await setField(desktop, "Time", "23:58");
+  await setField(desktop, "Timezone", "UTC");
+  await selectAutomationModel(desktop);
+  const createScreen = await visibleText(desktop);
+  expect(createScreen).toContain("Den keeps the schedule and run history");
+  expect(createScreen).toContain("local OpenCode runtime");
+  expect(createScreen).not.toMatch(/draft|permission picker|review automation|approve/i);
+  await clickButton(desktop, "Create and activate");
+  await waitForText(desktop, "Active", { timeoutMs: 60_000 });
+
+  const uiCreated = await eventually(async () => {
+    const result = await denFetch(den.admin, "/v1/automations", { headers: auth(den.admin) });
+    const items = isRecord(result.body) ? records(result.body.items) : [];
+    return items.find((item) => {
+      const automation = isRecord(item.automation) ? item.automation : item;
+      return automation.name === uiName;
+    });
+  }, {
+    within: 60_000,
+    intervalMs: 500,
+    label: "UI-created Automation became durable",
+    until: (item) => item !== undefined,
+  });
+  if (!uiCreated) throw new Error("UI-created Automation did not appear in the owner list.");
+  const uiAutomation = isRecord(uiCreated.automation) ? uiCreated.automation : uiCreated;
+  const uiRevision = isRecord(uiCreated.revision) ? uiCreated.revision : {};
+  const uiAutomationId = typeof uiAutomation.id === "string" ? uiAutomation.id : "";
+  const uiRevisionId = typeof uiRevision.id === "string" ? uiRevision.id : undefined;
+  expect(uiAutomationId).not.toBe("");
+  evidence.recordAssertionEvidence(
+    "The desktop create form makes an active Automation without a review detour",
+    `${uiName} was submitted through the visible form and became active as ${uiAutomationId}.`,
+    uiAutomation.state === "active",
+  );
+
+  const callsSince = new Date().toISOString();
+  await openAutomation(desktop, uiAutomationId, uiName);
+  const beforeConnectRun = new Set((await listRuns(den.admin, uiAutomationId)).flatMap((run) =>
+    typeof run.id === "string" ? [run.id] : []));
+  await clickButton(desktop, "Run now");
+  const connectRun = await waitForNewRun(den.admin, uiAutomationId, beforeConnectRun, "manual");
+  const connectRunId = typeof connectRun.id === "string" ? connectRun.id : "";
+  await assertSucceededReceipt(await waitForTerminalReceipt(den.admin, connectRunId), {
+    automationId: uiAutomationId,
+    revisionId: uiRevisionId,
+    resultText: connectMarker,
+  });
+  const echoCalls = await den.mocks.connector.toolCalls({
+    name: "mock_echo",
+    atLeast: 1,
+    sinceIso: callsSince,
+    timeoutMs: RUN_TIMEOUT_MS,
+  });
+  const markerCalls = echoCalls.filter((call) => String(call.args.text ?? "").includes(connectMarker));
+  expect(markerCalls).toHaveLength(1);
+  evidence.recordAssertionEvidence(
+    "The UI-created Automation uses its current Connect integration exactly once",
+    `mock_echo received one call carrying ${connectMarker}.`,
+    markerCalls.length === 1,
+  );
+
+  await openAutomation(desktop, uiAutomationId, uiName);
+  await clickButton(desktop, "Deactivate");
+  await waitForText(desktop, "Inactive", { timeoutMs: 30_000 });
+  await waitFor(desktop, `[...document.querySelectorAll("span")].some((label) =>
+    label.textContent?.trim() === "Next run" && label.parentElement?.innerText.includes("—"))`, {
+    timeoutMs: 30_000,
+    label: "deactivation clears the next run",
+  });
+  await clickButton(desktop, "Activate");
+  await waitForText(desktop, "Active", { timeoutMs: 30_000 });
+  await waitFor(desktop, `[...document.querySelectorAll("span")].some((label) =>
+    label.textContent?.trim() === "Next run" && !label.parentElement?.innerText.includes("—"))`, {
+    timeoutMs: 30_000,
+    label: "activation recomputes the next run",
+  });
+  evidence.recordAssertionEvidence(
+    "Deactivate clears the next run and Activate recomputes it",
+    "The detail page changed to Inactive with an em dash for Next run, then returned to Active with a scheduled occurrence.",
+    true,
+  );
 });
 
 test("a Desktop Automation recovers across restart before execution and while work is queued", { timeout: 20 * 60_000 }, async ({ evidence, place }) => {
-  needs({ optIn: ["OPENWORK_EVAL_E2E_TESTS"] });
+  needs({ optIn: ["OPENWORK_EVAL_E2E_TESTS"], placement: "local" });
   const completionBodies: unknown[] = [];
   const providerBaseUrl = await startProviderMock(completionBodies);
   await using den = await server({
@@ -606,7 +815,7 @@ test("a Desktop Automation recovers across restart before execution and while wo
 });
 
 test("a Desktop Automation records a provider outage and succeeds after recovery", { timeout: 10 * 60_000 }, async ({ evidence, place }) => {
-  needs({ optIn: ["OPENWORK_EVAL_E2E_TESTS"] });
+  needs({ optIn: ["OPENWORK_EVAL_E2E_TESTS"], placement: "local" });
   const completionBodies: unknown[] = [];
   const providerControl = { unavailable: true };
   const providerBaseUrl = await startProviderMock(completionBodies, providerControl);
@@ -653,152 +862,6 @@ test("a Desktop Automation records a provider outage and succeeds after recovery
   evidence.recordAssertionEvidence(
     "A later run succeeds after the provider recovers",
     `Without editing or recreating the Automation, run ${recovered.runId} completed in a new native session after the provider began serving successful responses.`,
-    true,
-  );
-});
-
-test("Desktop runner claims are idempotent and expired leases recover safely", { timeout: 5 * 60_000 }, async ({ evidence, place }) => {
-  needs({ optIn: ["OPENWORK_EVAL_E2E_TESTS"] });
-  const completionBodies: unknown[] = [];
-  const providerBaseUrl = await startProviderMock(completionBodies);
-  await using den = await server({
-    place,
-    env: {
-      DEN_AUTOMATIONS_LEASE_MS: "2500",
-      DEN_AUTOMATIONS_POLL_INTERVAL_MS: "1000",
-      DEN_AUTOMATIONS_RUNNER_CLAIM_DEADLINE_MS: "30000",
-    },
-    org: {
-      name: `Automation Lease Recovery ${Date.now()}`,
-      admin: { name: "Automation Lease Admin" },
-    },
-  });
-  const orgId = await organizationId(den.admin);
-  const providerId = await createProvider(den.admin, orgId, providerBaseUrl, PROVIDER_API_KEY);
-  const created = await createAutomation(den.admin, orgId, {
-    name: `Synthetic lease recovery ${Date.now()}`,
-    instructions: "This synthetic run must never reach a provider.",
-    providerId,
-  });
-  const registration = (runnerId: string) => ({
-    runnerId,
-    protocolVersion: 1,
-    supportedExecutionTargets: ["desktop"],
-    capabilities: [AUTOMATION_MODEL_ATTENTION_CAPABILITY],
-    appVersion: "automation-reliability-eval",
-    platform: "darwin",
-    concurrency: 1,
-  });
-  const mintRunner = async (runnerId: string): Promise<string> => {
-    const response = await denFetch(den.admin, "/v1/automation-runners/token", {
-      method: "POST",
-      headers: auth(den.admin),
-      body: JSON.stringify(registration(runnerId)),
-    });
-    const token = isRecord(response.body) && typeof response.body.token === "string"
-      ? response.body.token
-      : "";
-    expect(response.response.status, response.text).toBe(200);
-    expect(token).not.toBe("");
-    return token;
-  };
-  const runnerRequest = (token: string, path: string, options: RequestInit = {}) =>
-    denFetch(den.admin, path, {
-      ...options,
-      headers: { ...options.headers, authorization: `Bearer ${token}` },
-    });
-
-  const firstRunnerToken = await mintRunner(`synthetic-runner-primary-${Date.now()}`);
-  const secondRunnerToken = await mintRunner(`synthetic-runner-secondary-${Date.now()}`);
-  const run = await triggerManualRun(den.admin, created.automationId);
-  const runId = typeof run.id === "string" ? run.id : "";
-  const work = await runnerRequest(firstRunnerToken, "/v1/automation-runner/work");
-  expect(work.response.status, work.text).toBe(200);
-  expect(JSON.stringify(work.body)).toContain(runId);
-
-  const firstClaim = await runnerRequest(
-    firstRunnerToken,
-    `/v1/automation-runs/${encodeURIComponent(runId)}/claim`,
-    { method: "POST" },
-  );
-  const duplicateClaim = await runnerRequest(
-    firstRunnerToken,
-    `/v1/automation-runs/${encodeURIComponent(runId)}/claim`,
-    { method: "POST" },
-  );
-  expect(firstClaim.response.status, firstClaim.text).toBe(200);
-  expect(duplicateClaim.response.status, duplicateClaim.text).toBe(200);
-  const firstAssignment = isRecord(firstClaim.body) && isRecord(firstClaim.body.assignment)
-    ? firstClaim.body.assignment
-    : {};
-  const duplicateAssignment = isRecord(duplicateClaim.body) && isRecord(duplicateClaim.body.assignment)
-    ? duplicateClaim.body.assignment
-    : {};
-  expect(firstAssignment).toMatchObject({ runId, attempt: 1 });
-  expect(duplicateAssignment).toMatchObject({ runId, attempt: 1 });
-
-  const competingClaim = await runnerRequest(
-    secondRunnerToken,
-    `/v1/automation-runs/${encodeURIComponent(runId)}/claim`,
-    { method: "POST" },
-  );
-  expect(competingClaim.response.status, competingClaim.text).toBe(200);
-  expect(isRecord(competingClaim.body) ? competingClaim.body.assignment : undefined).toBeNull();
-
-  await eventually(async () => {
-    const receipt = await denFetch(den.admin, `/v1/automation-runs/${encodeURIComponent(runId)}`, {
-      headers: auth(den.admin),
-    });
-    return isRecord(receipt.body) && isRecord(receipt.body.run) ? receipt.body.run : {};
-  }, {
-    within: 30_000,
-    intervalMs: 250,
-    label: "first expired lease requeued for recovery",
-    until: (recoveredRun) => recoveredRun.status === "queued" && recoveredRun.attemptCount === 1,
-  });
-
-  const recoveryClaim = await runnerRequest(
-    firstRunnerToken,
-    `/v1/automation-runs/${encodeURIComponent(runId)}/claim`,
-    { method: "POST" },
-  );
-  const recoveryAssignment = isRecord(recoveryClaim.body) && isRecord(recoveryClaim.body.assignment)
-    ? recoveryClaim.body.assignment
-    : {};
-  expect(recoveryClaim.response.status, recoveryClaim.text).toBe(200);
-  expect(recoveryAssignment).toMatchObject({ runId, attempt: 2 });
-
-  const staleCompletion = await runnerRequest(
-    firstRunnerToken,
-    `/v1/automation-runs/${encodeURIComponent(runId)}/complete`,
-    {
-      method: "POST",
-      body: JSON.stringify({
-        attempt: 1,
-        status: "succeeded",
-        sessionId: "stale-session-must-not-win",
-        workspaceId: "stale-workspace-must-not-win",
-        resultSummary: "stale completion",
-        usage: { inputTokens: 1, outputTokens: 1, costMicros: null },
-        error: null,
-      }),
-    },
-  );
-  expect(staleCompletion.response.status, staleCompletion.text).toBe(409);
-  expect(staleCompletion.body).toEqual({ error: "runner_lease_lost" });
-
-  const terminalReceipt = await waitForTerminalReceipt(den.admin, runId);
-  const terminalRun = isRecord(terminalReceipt.run) ? terminalReceipt.run : {};
-  expect(terminalRun).toMatchObject({
-    status: "failed",
-    attemptCount: 2,
-    error: { code: "lease_lost", retryable: false },
-  });
-  expect(terminalRun.resultSummary).toBeNull();
-  expect(completionBodies).toHaveLength(0);
-  evidence.recordAssertionEvidence(
-    "Duplicate claims and expired leases cannot duplicate execution or accept stale completion",
-    `Runner one received the same attempt-1 assignment twice, runner two could not claim it, the first expiry requeued attempt 1, attempt 2 rejected the stale attempt-1 completion with HTTP 409, and the second expiry ended run ${runId} as failed/lease_lost with no provider request.`,
     true,
   );
 });
