@@ -732,7 +732,7 @@ function CreateLocalResponsibility({
       timezone={timezone}
       busy={busy}
       error={error}
-      actionLabel="Create assignment"
+      actionLabel="Schedule assignment"
       onNameChange={setName}
       onInstructionsChange={setInstructions}
       onTimeChange={setTime}
@@ -870,7 +870,7 @@ function CreateResponsibility({
       </Field>
       {error ? <ErrorNote>{error}</ErrorNote> : null}
       <Button variant="primary" className="w-full" disabled={busy} onClick={() => void create()}>
-        {busy ? "Creating…" : "Create assignment"}
+        {busy ? "Scheduling…" : "Schedule assignment"}
       </Button>
     </div>
   );
