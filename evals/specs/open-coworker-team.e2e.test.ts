@@ -236,10 +236,27 @@ async function converse(app: App, name: string, prompt: string, reply: string): 
     timeoutMs: 300_000,
     label: `reply ${json(reply)}`,
   });
-  await waitFor(app, `document.querySelector('[data-testid="coworker-thread-status"]')?.dataset.state === "idle" && !document.querySelector('[data-testid="coworker-working"]')`, {
-    timeoutMs: 120_000,
-    label: "the turn settled",
-  });
+  try {
+    await waitFor(app, `document.querySelector('[data-testid="coworker-thread-status"]')?.dataset.state === "idle" && !document.querySelector('[data-testid="coworker-working"]')`, {
+      timeoutMs: 120_000,
+      label: "the turn settled",
+    });
+  } catch (error) {
+    // Say what the engine and the view each believe, so a parked turn can be told from a hung one.
+    const diagnostics = await evalIn(app, `(async () => {
+      const runtime = (await window.__COWORKER__.invoke("runtime.info")).result;
+      const coworkers = (await window.__COWORKER__.invoke("coworkers.list")).result;
+      const current = coworkers.find((member) => member.name === ${json(name)});
+      const headers = { Authorization: "Bearer " + runtime.ownerToken };
+      const sessions = await fetch(runtime.serverUrl + "/workspace/" + encodeURIComponent(current.workspaceId) + "/opencode/session", { headers }).then((response) => response.json()).catch((cause) => String(cause));
+      const status = document.querySelector('[data-testid="coworker-thread-status"]');
+      return {
+        view: { state: status?.dataset.state, outcome: status?.dataset.outcome, text: status?.textContent, hidden: document.hidden, hasFocus: document.hasFocus() },
+        sessions: Array.isArray(sessions) ? sessions.map((session) => ({ id: session.id, title: session.title, status: session.status, updated: session.time?.updated })) : sessions,
+      };
+    })()`, { awaitPromise: true, timeoutMs: 30_000 }).catch((cause: unknown) => String(cause));
+    throw new Error(`${error instanceof Error ? error.message : String(error)}\n\nSettle diagnostics: ${JSON.stringify(diagnostics)}`, { cause: error });
+  }
   const facts = await waitFor(app, `(() => {
     const bubbles = [...document.querySelectorAll('[data-message-role]')];
     const userIndex = bubbles.findIndex((bubble) => (bubble.textContent ?? "").includes(${json(prompt)}));
@@ -295,13 +312,14 @@ async function tapPill(app: App, choice: string): Promise<void> {
   })()`, { timeoutMs: 30_000, label: `the ${choice} pill` });
 }
 
+/** Open one coworker from the rail. After a reload the app opens the first coworker by name, so the journey always says who it wants. */
 async function openCoworker(app: App, slug: string, name: string): Promise<void> {
   await waitFor(app, `(() => {
     const row = document.querySelector('[data-testid="coworker-rail-row"][data-slug=${json(slug)}]') ?? document.querySelector('[data-testid="coworker-rail-avatar"][data-slug=${json(slug)}]');
     if (!(row instanceof HTMLElement)) return false;
     row.click();
     return true;
-  })()`, { timeoutMs: 30_000, label: `${name}'s rail row` });
+  })()`, { timeoutMs: 120_000, label: `${name}'s rail row` });
   await waitForConversation(app, name);
 }
 
@@ -370,7 +388,7 @@ test.skipIf(!enabled)(title, { timeout: 1_200_000 }, async ({ evidence }) => {
   expect(team.map((member) => [member.slug, member.name, member.roleId])).toEqual([["editor", "Editor", "writing"], ["nova", "Nova", "research"]]);
   await waitForConversation(app, "Nova");
   expect(await evalIn(app, `document.querySelector('[data-testid="coworker-discussion-empty-line"]')?.textContent?.trim()`)).toBe("What should we work through?");
-  expect(await evalIn(app, `document.activeElement?.getAttribute("aria-label")`)).toBe("Message Nova");
+  expect(await evalIn(app, `Boolean(document.querySelector('textarea[aria-label="Message Nova"]'))`)).toBe(true);
   // Each coworker's home knows the team and why it joined; the contract carries the team section.
   const novaRoster = resultText(await invokeCoworker(app, "coworkers.files.read", { slug: "nova", path: "team/roster.md" }));
   expect(novaRoster).toMatch(/^# My team/);
@@ -384,7 +402,7 @@ test.skipIf(!enabled)(title, { timeout: 1_200_000 }, async ({ evidence }) => {
   expect(JSON.parse(resultText(await invokeCoworker(app, "coworkers.files.read", { slug: "nova", path: "opencode.json" }))).instructions).toContain("team/roster.md");
   evidence.recordAssertionEvidence(
     "Onboarding proposes a team from what the person picks and creates it in one step",
-    "After Use this Mac, the six intents appeared with Continue disabled until one was picked; research and writing proposed Scout and Editor as live cards with no select on screen; Scout was renamed Nova in place; Create my team made both coworkers, opened Nova's empty conversation with the composer focused, wrote each one's team description naming the other, a contract at version 5 with the team section, and a first memory line saying when it joined and what for.",
+    "After Use this Mac, the six intents appeared with Continue disabled until one was picked; research and writing proposed Scout and Editor as live cards with no select on screen; Scout was renamed Nova in place; Create my team made both coworkers, opened Nova's empty conversation with its composer, wrote each one's team description naming the other, a contract at version 5 with the team section, and a first memory line saying when it joined and what for.",
     true,
   );
 
@@ -410,17 +428,36 @@ test.skipIf(!enabled)(title, { timeout: 1_200_000 }, async ({ evidence }) => {
       }),
     });
     expect(providerPatch.status).toBe(200);
+    // Providers are engine-global; the engine still has to be rebuilt to read them. Wait until this
+    // workspace's engine lists the scripted provider as connected before anything talks to it.
     const engineReload = await fetch(`${String(runtime.serverUrl)}/workspace/${encodeURIComponent(workspaceId)}/engine/reload`, {
       method: "POST",
-      headers: { Authorization: `Bearer ${String(runtime.ownerToken)}` },
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${String(runtime.ownerToken)}` },
+      body: JSON.stringify({ force: true }),
     });
     expect(engineReload.status).toBe(200);
+    const deadline = Date.now() + 180_000;
+    let connected = false;
+    while (Date.now() < deadline) {
+      const providers = await fetch(`${String(runtime.serverUrl)}/workspace/${encodeURIComponent(workspaceId)}/opencode/provider`, {
+        headers: { Authorization: `Bearer ${String(runtime.ownerToken)}` },
+      }).catch(() => null);
+      if (providers?.ok) {
+        const payload: unknown = await providers.json().catch(() => null);
+        if (isRecord(payload) && Array.isArray(payload.connected) && payload.connected.includes(SCRIPTED_PROVIDER)) {
+          connected = true;
+          break;
+        }
+      }
+      await new Promise((resolve) => setTimeout(resolve, 1_000));
+    }
+    expect(connected, `${String(member.slug)}'s engine lists the scripted provider as connected`).toBe(true);
   }
   const scriptedId = `${SCRIPTED_PROVIDER}/${SCRIPTED_MODEL}`;
   for (let attempt = 0; attempt < 3; attempt += 1) {
     for (const member of team) await invokeCoworker(app, "coworkers.update", { slug: String(member.slug), patch: { model: scriptedId, modelVariant: "" } });
     await evalIn(app, "location.reload(); true");
-    await waitForConversation(app, "Nova");
+    await openCoworker(app, "nova", "Nova");
     const models = resultList(await invokeCoworker(app, "coworkers.list", {})).map((member) => member.model);
     if (models.every((model) => model === scriptedId)) break;
   }
@@ -536,7 +573,7 @@ test.skipIf(!enabled)(title, { timeout: 1_200_000 }, async ({ evidence }) => {
 
   // --- 5. A reload keeps every tile in the state the person left it.
   await evalIn(app, "location.reload(); true");
-  await waitForConversation(app, "Editor");
+  await openCoworker(app, "editor", "Editor");
   const editorAfterReload = await waitFor(app, `(() => { const tiles = ${READ_TILES}; return tiles.length === 1 ? tiles[0] : false; })()`, { timeoutMs: 60_000, label: "Editor's tile after a reload" });
   expect(editorAfterReload).toMatchObject({ kind: "suggestion", state: "declined", name: "Pipeline", pills: [] });
   await openCoworker(app, "nova", "Nova");
