@@ -431,7 +431,11 @@ export function describeTurnProgress(turn: Pick<CoworkerGroupTurn, "status" | "s
   const running = turn.speakers.filter((speaker) => speaker.status === "running");
   const queued = turn.speakers.filter((speaker) => speaker.status === "queued");
   if (running.length === 0 && queued.length === 0) return "";
-  const first = running.length > 0 ? `${listNames(running.map((speaker) => nameFor(speaker.slug)))} ${running.length > 1 ? "are" : "is"} replying…` : "Starting…";
+  if (running.length === 0) {
+    const [next, ...rest] = queued.map((speaker) => nameFor(speaker.slug));
+    return `Starting with ${next}…${rest.length > 0 ? ` then ${listNames(rest)}` : ""}`;
+  }
+  const first = `${listNames(running.map((speaker) => nameFor(speaker.slug)))} ${running.length > 1 ? "are" : "is"} replying…`;
   const then = queued.length > 0 ? ` then ${listNames(queued.map((speaker) => nameFor(speaker.slug)))}` : "";
   return `${first}${then}`;
 }
