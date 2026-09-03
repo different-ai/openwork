@@ -8,6 +8,8 @@ import type {
 } from "@openwork/types/den/inference"
 import type { InferenceReporter } from "./inference-reporting.js"
 import type { InferenceContext } from "./middleware/inference-auth.js"
+import { estimateCostMicroUsd, loadPricingCatalogFromFile } from "./pricing.js"
+import type { PricingCatalog } from "./pricing.js"
 
 export type InferenceRequestLogRow = typeof InferenceRequestLogTable.$inferInsert
 
@@ -55,6 +57,7 @@ export type RequestLogRecorderDependencies = {
   insertRequestLog: InsertRequestLog
   reporter: InferenceReporter
   now?: () => Date
+  pricing?: PricingCatalog
 }
 
 export type RequestLogRecorder = {
@@ -81,6 +84,34 @@ function costMicroUsd(costUsd: number | null | undefined) {
   return typeof costUsd === "number" && Number.isFinite(costUsd) ? Math.round(costUsd * 1_000_000) : null
 }
 
+function hasUsageTokens(usage: RequestLogUsageInput) {
+  return [usage.inputTokens, usage.outputTokens, usage.cacheReadTokens, usage.cacheWriteTokens, usage.reasoningTokens]
+    .some((value) => typeof value === "number")
+}
+
+// OpenAI-style usage reports completion/output tokens inclusive of reasoning
+// tokens, so billing them again as output would double count.
+function reasoningIncludedInOutput(protocol: InferenceRequestProtocol) {
+  return protocol === "openai_chat" || protocol === "openai_responses"
+}
+
+// Snapshot cost from models.dev pricing when the upstream did not report an
+// authoritative cost (OpenRouter's usage.cost wins when present).
+function estimateCost(started: RequestLogStartInput, usage: RequestLogUsageInput | null, upstreamModel: string | null, pricing: PricingCatalog) {
+  const reported = costMicroUsd(usage?.costUsd)
+  if (reported !== null) return reported
+  if (!usage || !upstreamModel || !hasUsageTokens(usage)) return null
+  return estimateCostMicroUsd({
+    providerId: started.upstreamProviderId,
+    modelId: upstreamModel,
+    inputTokens: usage.inputTokens ?? null,
+    outputTokens: usage.outputTokens ?? null,
+    cacheReadTokens: usage.cacheReadTokens ?? null,
+    cacheWriteTokens: usage.cacheWriteTokens ?? null,
+    reasoningTokens: reasoningIncludedInOutput(started.protocol) ? null : usage.reasoningTokens ?? null,
+  }, pricing)
+}
+
 export function createRequestLogRecorder(dependencies: RequestLogRecorderDependencies): RequestLogRecorder {
   const now = dependencies.now ?? (() => new Date())
   let started: RequestLogStartInput | null = null
@@ -103,6 +134,7 @@ export function createRequestLogRecorder(dependencies: RequestLogRecorderDepende
     async finish(input) {
       if (finished || !started || !startedAt) return
       finished = true
+      const upstreamModel = usage?.upstreamModel ?? started.upstreamModel
       const row: InferenceRequestLogRow = {
         id: createDenTypeId("inferenceRequestLog"),
         organization_id: started.identity.organizationId,
@@ -117,7 +149,7 @@ export function createRequestLogRecorder(dependencies: RequestLogRecorderDepende
         upstream_path: started.upstreamPath,
         method: started.method,
         requested_model: started.requestedModel,
-        upstream_model: usage?.upstreamModel ?? started.upstreamModel,
+        upstream_model: upstreamModel,
         stream: started.stream,
         status: input.status,
         outcome: input.outcome,
@@ -129,7 +161,7 @@ export function createRequestLogRecorder(dependencies: RequestLogRecorderDepende
         cache_write_tokens: usage?.cacheWriteTokens ?? null,
         reasoning_tokens: usage?.reasoningTokens ?? null,
         usage_source: usage?.usageSource ?? "missing",
-        cost_micro_usd: costMicroUsd(usage?.costUsd),
+        cost_micro_usd: estimateCost(started, usage, upstreamModel, dependencies.pricing ?? loadPricingCatalogFromFile()),
         upstream_request_id: input.upstreamRequestId ?? null,
         openwork_request_id: started.openworkRequestId,
         started_at: startedAt,
