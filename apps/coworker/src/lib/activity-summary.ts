@@ -105,6 +105,8 @@ export type NowSummary = {
 export function describeNow(activity: CoworkerActivity | undefined): NowSummary {
   // Until the first activity arrives the header already says it is checking; the row stays quiet.
   if (!activity) return { subject: "", note: "", needsYou: false };
+  // A turn that needs words: the same line as the conversation and the rail, under the subject.
+  if (activity.summary) return { subject: activity.detail, note: activity.summary, needsYou: /^(Waiting|Needs you)/.test(activity.label) };
   switch (activity.state) {
     case "working":
       return { subject: activity.detail, note: activity.workers?.subject ? "A Worker, working on it" : "", needsYou: false };
