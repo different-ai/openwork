@@ -1,5 +1,6 @@
 import { createServer, type Server, type ServerResponse } from "node:http";
 import { mkdir, rm } from "node:fs/promises";
+import { callFunctionOnSurface } from "@openwork/cdp";
 import { desktop as launchDesktop } from "@openwork/hosts";
 import type { Seed } from "@openwork/env";
 
@@ -336,7 +337,10 @@ export async function externalSessionVisibility(seed: Seed) {
      */
     // TODO(primitive): seed.externalSession should create a session on the server without touching the renderer.
     async createSessionOutsideWindow(workspaceId: string, title: string): Promise<string> {
-      const value = await seed.evalIn(app, `async (workspaceId, title) => {
+      // Keep the original target for this non-idempotent POST: reattaching and
+      // replaying it could create two sessions, while returning before it
+      // settles strands the renderer fetch when its execution context exits.
+      const value = await callFunctionOnSurface(app, `async (workspaceId, title) => {
         const info = await window.__OPENWORK_ELECTRON__?.invokeDesktop?.("openworkServerInfo");
         if (!info?.running || !info.baseUrl) return { error: "local_server_unavailable" };
         const response = await fetch(
@@ -348,12 +352,12 @@ export async function externalSessionVisibility(seed: Seed) {
               "Content-Type": "application/json",
             },
             body: JSON.stringify({ title }),
-            signal: AbortSignal.timeout(60_000),
+            signal: AbortSignal.timeout(180_000),
           },
         );
         const body = await response.json().catch(() => null);
         return { ok: response.ok, status: response.status, id: typeof body?.id === "string" ? body.id : null };
-      }`, { args: [workspaceId, title], awaitPromise: true, timeoutMs: 90_000 });
+      }`, [workspaceId, title], { awaitPromise: true, timeoutMs: 210_000, reattachAttempts: 0 });
       if (!isRecord(value) || value.ok !== true || typeof value.id !== "string") {
         throw new Error(`Creating a session outside the window failed: ${JSON.stringify(value)}`);
       }
