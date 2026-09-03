@@ -54,7 +54,12 @@ import { recordAudit, readAuditEntries, readLastAudit } from "./audit.js";
 import { ReloadEventStore } from "./events.js";
 import { computeReloadFingerprint } from "./reload-fingerprint.js";
 import { startReloadWatchers } from "./reload-watcher.js";
-import { redactLogAttributes, resolveServerLogFileSink, type ServerLogFileSink } from "./server-log-file.js";
+import {
+  redactLogAttributes,
+  redactServerLogFileRecord,
+  resolveServerLogFileSink,
+  type ServerLogFileSink,
+} from "./server-log-file.js";
 import { opencodeConfigPath, openworkConfigPath, projectCommandsDir, projectSkillsDir } from "./workspace-files.js";
 import { ensureDir, exists, hashToken, shortId } from "./utils.js";
 import { defaultWorkspaceOpenworkConfig, ensureWorkspaceFiles, readRawOpencodeConfig } from "./workspace-init.js";
@@ -716,9 +721,16 @@ export function createServerLogger(
     };
     // The file sink is structured regardless of the stdout format: it exists
     // so rollover reasons and reload triggers survive a packaged app.
-    const json = fileSink || config.logFormat === "json" ? JSON.stringify(record) : null;
-    if (fileSink && json !== null) fileSink.write(json);
-    writeLogLine(config.logFormat === "json" && json !== null ? json : message);
+    if (fileSink) {
+      const secrets = [
+        config.token,
+        config.hostToken,
+        config.opencodePassword ?? "",
+        ...config.workspaces.map((workspace) => workspace.opencodePassword ?? ""),
+      ];
+      fileSink.write(JSON.stringify(redactServerLogFileRecord(record, secrets)));
+    }
+    writeLogLine(config.logFormat === "json" ? JSON.stringify(record) : message);
   };
 
   return { log: emit };

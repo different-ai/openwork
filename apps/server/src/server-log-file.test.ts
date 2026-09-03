@@ -130,6 +130,36 @@ describe("createServerLogger file sink", () => {
     expect(readFileSync(path, "utf8")).not.toContain("should-not-persist");
   });
 
+  test("keeps generated credentials on stdout but removes them from file messages and nested attributes", async () => {
+    const path = tempLogPath();
+    const sink = createServerLogFileSink({ path });
+    const stdout: string[] = [];
+    const config = serverConfig("json");
+    config.token = "generated-client-token";
+    config.hostToken = "generated-host-token";
+    config.opencodePassword = "generated-engine-password";
+    const logger = createServerLogger(config, (line) => stdout.push(line), sink);
+
+    logger.log("info", `Client token: ${config.token}`, {
+      detail: {
+        message: `host=${config.hostToken} engine=${config.opencodePassword}`,
+      },
+    });
+    await settled(sink);
+
+    // CLI stdout remains usable: generated credentials are how a person
+    // connects when no explicit --token/--host-token was supplied.
+    expect(stdout.join("\n")).toContain(config.token);
+    expect(stdout.join("\n")).toContain(config.hostToken);
+    const persisted = readFileSync(path, "utf8");
+    expect(persisted).not.toContain(config.token);
+    expect(persisted).not.toContain(config.hostToken);
+    expect(persisted).not.toContain(config.opencodePassword);
+    const record = JSON.parse(persisted);
+    expect(record.body).toBe("Client token: <redacted>");
+    expect(record.attributes.detail.message).toBe("host=<redacted> engine=<redacted>");
+  });
+
   test("writes nothing to disk when no sink is configured", () => {
     const stdout: string[] = [];
     const logger = createServerLogger(serverConfig("json"), (line) => stdout.push(line), null);

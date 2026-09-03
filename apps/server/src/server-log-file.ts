@@ -29,18 +29,53 @@ export type ServerLogFileSinkOptions = {
 
 const SENSITIVE_ATTRIBUTE_KEY = /(authorization|token|secret|password|api[-_]?key|cookie|credential)/i;
 
+function redactLogText(value: string, secrets: readonly string[]): string {
+  let redacted = value;
+  for (const secret of secrets) {
+    if (secret.length > 0) redacted = redacted.replaceAll(secret, "<redacted>");
+  }
+  return redacted;
+}
+
+function redactLogValue(value: unknown, secrets: readonly string[]): unknown {
+  if (typeof value === "string") return redactLogText(value, secrets);
+  if (Array.isArray(value)) return value.map((entry) => redactLogValue(entry, secrets));
+  if (typeof value !== "object" || value === null) return value;
+  const redacted: Record<string, unknown> = {};
+  for (const [key, entry] of Object.entries(value)) {
+    redacted[key] = SENSITIVE_ATTRIBUTE_KEY.test(key) && entry !== null && entry !== undefined
+      ? "<redacted>"
+      : redactLogValue(entry, secrets);
+  }
+  return redacted;
+}
+
 /**
  * Replace values of credential-looking attribute keys so a persisted log line
  * can never carry a bearer or API key even if a caller passes one by mistake.
  */
-export function redactLogAttributes(attributes: Record<string, unknown>): Record<string, unknown> {
+export function redactLogAttributes(
+  attributes: Record<string, unknown>,
+  secrets: readonly string[] = [],
+): Record<string, unknown> {
   const redacted: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(attributes)) {
     redacted[key] = SENSITIVE_ATTRIBUTE_KEY.test(key) && value !== null && value !== undefined
       ? "<redacted>"
-      : value;
+      : redactLogValue(value, secrets);
   }
   return redacted;
+}
+
+export function redactServerLogFileRecord<T extends { body: string; attributes: Record<string, unknown> }>(
+  record: T,
+  secrets: readonly string[],
+): T {
+  return {
+    ...record,
+    body: redactLogText(record.body, secrets),
+    attributes: redactLogAttributes(record.attributes, secrets),
+  };
 }
 
 /**
