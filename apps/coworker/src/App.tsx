@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { coworkerBridge, type CoworkerSummary, type ProviderSyncRun, type RuntimeInfo } from "@/lib/bridge";
+import { coworkerBridge, type CoworkerGroupSummary, type CoworkerSummary, type ProviderSyncRun, type RuntimeInfo } from "@/lib/bridge";
 import {
   createDenAutomationsClient,
   exchangeGrant,
@@ -20,6 +20,8 @@ import {
 import { readCoworkerActivity, type CoworkerActivity } from "@/lib/threads";
 import { Button, ErrorNote } from "@/ui/kit";
 import { NewCoworker } from "@/ui/new-coworker";
+import { NewGroupSheet } from "@/ui/new-group";
+import { GroupChat } from "@/ui/group-chat";
 import { SignInGate } from "@/ui/sign-in";
 import { CoworkerHome } from "@/ui/coworker-home";
 import { CoworkerRail } from "@/ui/coworker-rail";
@@ -50,6 +52,17 @@ export default function App() {
   const [coworkers, setBots] = useState<CoworkerSummary[]>([]);
   const [selectedSlug, setSelectedSlug] = useState("");
   const [creating, setCreating] = useState(false);
+  /** Group chats: several coworkers in one conversation. Selecting one takes the main column. */
+  const [groups, setGroups] = useState<CoworkerGroupSummary[]>([]);
+  const [selectedGroupId, setSelectedGroupId] = useState("");
+  const [creatingGroup, setCreatingGroup] = useState(false);
+  const [groupLines, setGroupLines] = useState<Record<string, string>>({});
+  const setGroupLine = useCallback((id: string, line: string) => {
+    setGroupLines((current) => (current[id] === line ? current : { ...current, [id]: line }));
+  }, []);
+  const replaceGroup = useCallback((group: CoworkerGroupSummary) => {
+    setGroups((current) => [group, ...current.filter((item) => item.id !== group.id)].sort((a, b) => b.updatedAt - a.updatedAt));
+  }, []);
   const [connecting, setConnecting] = useState(false);
   const [onboardingReady, setOnboardingReady] = useState(false);
   const [globalSettings, setGlobalSettings] = useState<SettingsSection | null>(null);
@@ -76,6 +89,7 @@ export default function App() {
       const info = await coworkerBridge.runtimeInfo();
       setRuntime(info);
       setBots(list);
+      setGroups(await coworkerBridge.groups.list().catch(() => []));
       setSelectedSlug((current) =>
         current && list.some((coworker) => coworker.slug === current) ? current : (list[0]?.slug ?? ""),
       );
@@ -507,6 +521,8 @@ export default function App() {
   }
 
   const selected = coworkers.find((coworker) => coworker.slug === selectedSlug) ?? null;
+  const liveGroups = groups.filter((group) => !group.archivedAt);
+  const selectedGroup = liveGroups.find((group) => group.id === selectedGroupId) ?? null;
   const visibleActivityBySlug: Record<string, CoworkerActivity> = {};
   for (const coworker of coworkers) {
     const attention = attentionBySlug[coworker.slug];
@@ -583,12 +599,45 @@ export default function App() {
               session={session}
               coworkers={coworkers}
               activityBySlug={visibleActivityBySlug}
-              selectedSlug={selectedSlug}
+              selectedSlug={selectedGroup ? "" : selectedSlug}
               panel={rail}
-              onSelect={setSelectedSlug}
+              onSelect={(slug) => {
+                setSelectedGroupId("");
+                setSelectedSlug(slug);
+              }}
               onNewCoworker={() => setCreating(true)}
               onOpenOpenWork={() => openGlobalSettings()}
+              groups={liveGroups}
+              groupLines={groupLines}
+              selectedGroupId={selectedGroup?.id ?? ""}
+              onSelectGroup={setSelectedGroupId}
+              onNewGroup={() => setCreatingGroup(true)}
             />
+            {creatingGroup ? (
+              <NewGroupSheet
+                coworkers={coworkers}
+                onCancel={() => setCreatingGroup(false)}
+                onCreated={(group) => {
+                  replaceGroup(group);
+                  setCreatingGroup(false);
+                  setSelectedGroupId(group.id);
+                }}
+              />
+            ) : null}
+            {selectedGroup ? (
+              <GroupChat
+                key={selectedGroup.id}
+                group={selectedGroup}
+                coworkers={coworkers}
+                runtime={runtime}
+                onGroupChanged={replaceGroup}
+                onGroupArchived={(group) => {
+                  replaceGroup(group);
+                  setSelectedGroupId("");
+                }}
+                onActivityLine={setGroupLine}
+              />
+            ) : (
             <CoworkerHome
               key={selected.slug}
               runtime={runtime}
@@ -608,6 +657,7 @@ export default function App() {
               onConnectAccount={() => setConnecting(true)}
               railWidth={rail.width}
             />
+            )}
           </div>
         )}
       </div>

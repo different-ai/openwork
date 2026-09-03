@@ -41,6 +41,20 @@ The coworker directory is registered as an ordinary OpenWork workspace, so:
   An empty conversation shows only a small avatar, the coworker's name and
   role, one line ("What should we work through?"), and the focused composer;
   there are no starter cards.
+- **Group chats put several coworkers in one conversation.** A group lives
+  under `<coworkers home>/.groups/<id>/` as `group.json` (members and the
+  native thread each member uses for it) plus an append-only `timeline.jsonl`
+  of what was said (`electron/groups.mjs`; bridge `groups.*`). The person
+  writes once; an invisible facilitator chooses who answers
+  (`lib/groups.ts`): an `@name` constrains it, `@everyone` includes all,
+  otherwise the coworker whose role and mission best match the message
+  answers alone. Each reply is a real turn in that coworker's own workspace on
+  a group-specific discussion thread (registered in its `discussions.json`, so
+  it never reads as an assignment), with its own model, memory, tools, and
+  permissions; speakers answer in order and later ones see earlier replies as
+  visible text only. Groups are created from the rail's `New group chat`
+  (at least two coworkers, a name suggested from roles), renamed or archived
+  from their header, and never deleted.
 - **Identity and memory ride the engine's existing instruction loading**
   (`AGENTS.md` + `opencode.json` `instructions`); the coworker maintains
   `memory/working.md` with ordinary file tools. No memory backend. The app
