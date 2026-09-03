@@ -588,6 +588,28 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   } else {
     await clickButton(app, "Continue");
   }
+  // The team steps follow: what the team will help with (six roles, Continue waits for one pick),
+  // then a proposed team. This journey takes the blank Add screen instead.
+  const intentsStep = await waitFor(app, `(() => {
+    const screen = document.querySelector('[data-testid="onboarding-intents"]');
+    if (!(screen instanceof HTMLElement)) return false;
+    const tiles = [...document.querySelectorAll('[data-testid="onboarding-intent"]')];
+    if (tiles.length !== 6) return false;
+    const next = document.querySelector('[data-testid="onboarding-intents-continue"]');
+    return {
+      intents: tiles.map((tile) => tile.getAttribute("data-intent")),
+      pressed: tiles.map((tile) => tile.getAttribute("aria-pressed")),
+      continueDisabled: next instanceof HTMLButtonElement ? next.disabled : null,
+      railVisible: Boolean(document.querySelector('[data-testid="coworker-rail"]')),
+    };
+  })()`, { timeoutMs: 60_000, label: "the what-will-your-team-help-with step" });
+  expect(intentsStep).toEqual({
+    intents: ["research", "writing", "operations", "support", "sales", "product"],
+    pressed: ["false", "false", "false", "false", "false", "false"],
+    continueDisabled: true,
+    railVisible: false,
+  });
+  await evalIn(app, `document.querySelector('[data-testid="onboarding-intents-own"]').click(); true`);
   await waitForText(app, "Add a coworker", { timeoutMs: 60_000 });
   const creationScreen = await evalIn(app, `(() => {
     const screen = document.querySelector('[data-testid="new-coworker"]');
