@@ -362,11 +362,12 @@ export const GLIMPSE_MS = 12_000;
 
 /**
  * One discreet line of what is streaming right now, for a person who taps the
- * live row while waiting: the end of the words being written, else the end of
- * the thinking, else the tool step under way. Empty when nothing has arrived.
+ * live row while waiting: the end of the words arriving this moment, else of
+ * the words already written, else of the thinking, else the tool step under
+ * way. Empty when nothing has arrived.
  */
-export function describeGlimpse(input: { text: string; reasoning: string; step: Pick<WorkStep, "doing"> | null }): string {
-  const source = input.text.trim() || input.reasoning.trim();
+export function describeGlimpse(input: { live?: string; text: string; reasoning: string; step: Pick<WorkStep, "doing"> | null }): string {
+  const source = (input.live ?? "").trim() || input.text.trim() || input.reasoning.trim();
   if (source) {
     const flat = source.replace(/\s+/g, " ").trim();
     return flat.length > GLIMPSE_CHARS ? `…${flat.slice(-GLIMPSE_CHARS).trimStart()}` : flat;

@@ -84,6 +84,7 @@ import {
 } from "@/lib/turn-outcome";
 import { describeTurnFailure } from "@/lib/turn-failure";
 import { classifyFailure, retryDelayMs } from "@/lib/turn-retry";
+import { applyStreamEvent, type LiveStream } from "@/lib/live-stream";
 import { useAutoGrow } from "@/ui/use-auto-grow";
 import { InteractionCard, InteractionCards, LETTERS, OptionRow, typingInField } from "@/ui/interactions";
 import { CoworkerAvatar } from "@/ui/coworker-avatar";
@@ -950,6 +951,8 @@ function ThreadView({
   const appRetryTimerRef = useRef<number | null>(null);
   /** One quiet receipt for a turn that replied only after a retry with another model. */
   const [resolution, setResolution] = useState<{ messageId: string; note: string } | null>(null);
+  /** The words of the reply as they arrive, for a glimpse from the live row; the transcript owns what has landed. */
+  const [liveStream, setLiveStream] = useState<LiveStream | null>(null);
   /** Re-derive the outcome every second while a turn is unresolved: "still working" and the retry count are live. */
   const [now, setNow] = useState(() => Date.now());
   const [providerRefreshNote, setProviderRefreshNote] = useState("");
@@ -1053,13 +1056,16 @@ function ThreadView({
 
   useEffect(() => {
     void refresh();
-    const unsubscribe = threads.subscribe(() => void refresh());
+    const unsubscribe = threads.subscribe(
+      () => void refresh(),
+      (event) => setLiveStream((current) => applyStreamEvent(current, event, threadId)),
+    );
     const timer = window.setInterval(() => void refresh(), 5_000);
     return () => {
       unsubscribe();
       window.clearInterval(timer);
     };
-  }, [threads, refresh]);
+  }, [threadId, threads, refresh]);
 
   useEffect(() => () => {
     waitControllerRef.current?.abort();
@@ -1185,6 +1191,7 @@ function ThreadView({
     setFailure("");
     setAppRetry(null);
     setRecovered(false);
+    setLiveStream(null);
     setError("");
     setProviderRefreshNote("");
     if (resolution?.messageId !== messageId) setResolution(null);
@@ -1752,6 +1759,7 @@ function ThreadView({
             <WorkIndicator
               coworker={coworker}
               messages={visibleMessages}
+              stream={liveStream}
               label={workingLabel}
               stillWorking={outcome?.kind === "slow" ? outcome.line : ""}
               onStop={outcome?.kind === "slow" ? () => void stop() : undefined}
@@ -2133,12 +2141,15 @@ function TypingDots() {
 function WorkIndicator({
   coworker,
   messages,
+  stream = null,
   label,
   stillWorking = "",
   onStop,
 }: {
   coworker: CoworkerSummary;
   messages: TranscriptMessage[];
+  /** The words arriving this moment, when the engine is streaming any. */
+  stream?: LiveStream | null;
   label: string;
   /** The softened phrase once the wait budget has passed; empty while the phase phrase applies. */
   stillWorking?: string;
@@ -2153,7 +2164,7 @@ function WorkIndicator({
     return () => window.clearTimeout(timer);
   }, [peekUntil]);
   const writing = messages.findLast((message) => message.role === "assistant");
-  const glimpse = peekUntil === null ? "" : describeGlimpse({ text: writing?.text ?? "", reasoning: writing?.reasoning ?? "", step });
+  const glimpse = peekUntil === null ? "" : describeGlimpse({ live: stream?.text ?? "", text: writing?.text ?? "", reasoning: writing?.reasoning ?? "", step });
   return (
     <div className="px-1 py-1.5 text-xs text-mist" data-testid="coworker-working" data-phase={phase} data-outcome={stillWorking ? "slow" : "working"} data-peek={peekUntil === null ? "false" : "true"}>
       <div className="flex items-center gap-2.5">
