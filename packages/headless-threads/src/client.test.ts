@@ -610,6 +610,30 @@ describe("waitForThread", () => {
     expect(result.polls).toBe(0);
   });
 
+  test("an abort that lands while a poll is in flight reads as aborted, not as a failed request", async () => {
+    const controller = new AbortController();
+    let polls = 0;
+    const double = createOpenworkDouble({ beats: [{ status: { type: "busy" }, messages: [reply("msg_1", "user")] }] });
+    const fetchImpl: HeadlessFetch = async (url, init) => {
+      if (new URL(url).pathname.endsWith("/message") && init?.signal) {
+        polls += 1;
+        // The caller stops while this read is in flight: the request itself rejects with the abort.
+        if (polls === 2) {
+          controller.abort();
+          throw new DOMException("This operation was aborted", "AbortError");
+        }
+      }
+      return double.fetchImpl(url, init);
+    };
+    const client = createHeadlessThreadClient({ baseUrl: BASE_URL, workspaceId: "ws_1", token: "owt_test", fetch: fetchImpl, sleep: async () => {} });
+
+    const result = await client.waitForThread(SESSION_ID, { timeoutMs: 10_000, pollIntervalMs: 100, signal: controller.signal });
+
+    expect(result.outcome).toBe("aborted");
+    expect(result.polls).toBe(1);
+    expect(result.observedRunning).toBe(true);
+  });
+
   test("aborting mid-wait stops polling after the in-flight beat and never calls abortThread implicitly", async () => {
     const controller = new AbortController();
     const clock = createClock();

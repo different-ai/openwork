@@ -189,10 +189,11 @@ export function deriveTurnOutcome(facts: TurnFacts): TurnOutcome | null {
       retry: { attempt: facts.appRetry.attempt, nextAt: facts.appRetry.nextAt, by: "app" },
     };
   }
-  if (facts.failure) return failed(facts, turn, facts.failure, null);
+  // The person's stop outranks whatever the wait itself reported on the way out.
   if (turn.stoppedAt !== null) {
     return { ...base, kind: "stopped-by-you", since: turn.stoppedAt, line: STOPPED_LINE, label: "Stopped", tone: "mist", choices: [RETRY] };
   }
+  if (facts.failure) return failed(facts, turn, facts.failure, null);
 
   // The engine's own retry: a stale one (its moment long past) is over; a far-off one is a stall the
   // person hears about as a failure with the provider's words; anything else is trying again, live.
