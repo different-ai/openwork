@@ -1,9 +1,12 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { after, test } from "node:test";
 import {
+  AGENTS_CONTRACT_VERSION,
+  agentsContractVersion,
+  agentsTemplate,
   createCoworker,
   createLongTermMemory,
   defaultCoworkersDir,
@@ -17,6 +20,7 @@ import {
   listRetiredCoworkers,
   parseFrontmatter,
   readCoworkerFile,
+  repairCoworkerContract,
   resolveCoworkerFile,
   restoreCoworker,
   retireCoworker,
@@ -86,13 +90,65 @@ test("createCoworker writes the minimal coworker filesystem representation", asy
   assert.match(agents, /memory\/working\.md/);
   assert.match(agents, /Open Coworker/);
   const opencodeConfig = JSON.parse(await readFile(path.join(coworker.path, "opencode.json"), "utf8"));
-  assert.deepEqual(opencodeConfig.instructions, ["soul.md", "memory/working.md", "memory/index.md"]);
+  assert.deepEqual(opencodeConfig.instructions, ["soul.md", "memory/working.md", "memory/index.md", "documents/index.md"]);
   const working = await readFile(path.join(coworker.path, "memory", "working.md"), "utf8");
   assert.match(working, /Working memory/);
+  const documentsIndex = await readFile(path.join(coworker.path, "documents", "index.md"), "utf8");
+  assert.match(documentsIndex, /^# Documents/);
+  assert.match(documentsIndex, /\(none yet\)/);
 
   const listed = await listCoworkers(coworkersDir);
   assert.equal(listed.length, 1);
   assert.equal(listed[0].slug, "research-bot");
+});
+
+test("the coworker contract says how to talk: short replies, depth in a document, an active set of about five", () => {
+  const agents = agentsTemplate({ name: "Nova" });
+  assert.equal(agentsContractVersion(agents), AGENTS_CONTRACT_VERSION);
+  assert.match(agents, /## How I talk/);
+  assert.match(agents, /point first, then two\s+to four sentences, then at most three highlights/);
+  assert.match(agents, /about 120 words/);
+  assert.match(agents, /`document_create` or `document_update` \*\*in the same turn\*\*/);
+  assert.match(agents, /never\s+paste the document into the message/);
+  assert.match(agents, /call `context_set`/);
+  assert.match(agents, /about five/);
+  assert.match(agents, /never archive\s+on my own; the person does that/);
+  assert.match(agents, /ask before rewriting it/);
+  // Three before/after pairs: research, a plan, and a quick question that needs no document.
+  assert.equal(agents.match(/^Before: /gm)?.length, 3);
+  assert.equal(agents.match(/^After: /gm)?.length, 3);
+  assert.match(agents, /\*\*Research question\.\*\*/);
+  assert.match(agents, /\*\*Plan request\.\*\*/);
+  assert.match(agents, /\*\*Quick factual question\.\*\*/);
+  assert.match(agents, /documents\/index\.md/);
+});
+
+test("repairing an older coworker regenerates only the app-owned contract files", async () => {
+  const coworkersDir = await tempCoworkersDir();
+  const coworker = await createCoworker(coworkersDir, { name: "Legacy" });
+  // Make it look like a coworker created before documents existed.
+  await writeFile(path.join(coworker.path, "AGENTS.md"), "# Legacy — coworker contract\n\nOld words.\n", "utf8");
+  await writeFile(path.join(coworker.path, "opencode.json"), `${JSON.stringify({ $schema: "x", instructions: ["soul.md", "memory/working.md", "memory/index.md"], mcp: { keep: { type: "remote", url: "http://x" } } }, null, 2)}\n`, "utf8");
+  await rm(path.join(coworker.path, "documents"), { recursive: true, force: true });
+  await writeFile(path.join(coworker.path, "soul.md"), "# Soul — Legacy\n\nMy own words.\n", "utf8");
+  await writeFile(path.join(coworker.path, "memory", "working.md"), "# Working memory\n\n- remembered\n", "utf8");
+
+  const repaired = await repairCoworkerContract(coworkersDir, "legacy");
+  assert.deepEqual(repaired.changed, ["AGENTS.md", "opencode.json", "documents/index.md"]);
+  const agents = await readFile(path.join(coworker.path, "AGENTS.md"), "utf8");
+  assert.match(agents, /## How I talk/);
+  assert.match(agents, /# Legacy — coworker contract/);
+  const config = JSON.parse(await readFile(path.join(coworker.path, "opencode.json"), "utf8"));
+  assert.deepEqual(config.instructions, ["soul.md", "memory/working.md", "memory/index.md", "documents/index.md"]);
+  assert.deepEqual(config.mcp, { keep: { type: "remote", url: "http://x" } }, "other config keys survive the repair");
+  assert.match(await readFile(path.join(coworker.path, "documents", "index.md"), "utf8"), /\(none yet\)/);
+  // Soul and memory are the coworker's; the repair never touches them.
+  assert.equal(await readFile(path.join(coworker.path, "soul.md"), "utf8"), "# Soul — Legacy\n\nMy own words.\n");
+  assert.equal(await readFile(path.join(coworker.path, "memory", "working.md"), "utf8"), "# Working memory\n\n- remembered\n");
+
+  // Already current: nothing to do, nothing rewritten.
+  const again = await repairCoworkerContract(coworkersDir, "legacy");
+  assert.deepEqual(again.changed, []);
 });
 
 test("createCoworker rejects duplicate slugs", async () => {

@@ -29,11 +29,23 @@ import {
   listMemoryFiles,
   listRetiredCoworkers,
   readCoworkerFile,
+  repairCoworkerContract,
   restoreCoworker,
   retireCoworker,
   updateCoworker,
   writeCoworkerFile,
 } from "./coworkers.mjs";
+import { COWORKER_TOOLS_MCP_NAME, createCoworkerToolsServer, createToolHandlers } from "./coworker-tools.mjs";
+import {
+  archiveDocument,
+  listDocuments,
+  listRevisions,
+  readDocument,
+  recordStyleEvent,
+  restoreRevision,
+  setDocumentStatus,
+  updateDocument,
+} from "./documents.mjs";
 import { ensureCoordinatorHome, updateCoordinator } from "./coordinator.mjs";
 import {
   appendGroupEvent,
@@ -1027,6 +1039,80 @@ async function registerCoworkerWorkspace(coworker) {
   return workspaceId;
 }
 
+// ---------------------------------------------------------------------------
+// Coworker tools: the app's own MCP server on loopback (documents and the
+// active context around them). One bearer token per coworker names the
+// coworker; the endpoint is registered in each workspace like any remote MCP.
+
+/** @type {Awaited<ReturnType<typeof createCoworkerToolsServer>> | null} */
+let toolsServer = null;
+let startingToolsServer = null;
+/** slug → bearer token minted for this launch; the reverse map answers the server. */
+const coworkerToolTokens = new Map();
+const toolTokenSlugs = new Map();
+/** Coworkers whose workspace carries this launch's tools registration. */
+const toolsRegistered = new Set();
+/** Contracts already brought up to date this launch, so the repair runs once per coworker. */
+const contractsRepaired = new Set();
+
+function coworkerToolToken(slug) {
+  let token = coworkerToolTokens.get(slug);
+  if (!token) {
+    token = randomBytes(24).toString("hex");
+    coworkerToolTokens.set(slug, token);
+    toolTokenSlugs.set(token, slug);
+  }
+  return token;
+}
+
+async function ensureToolsServer() {
+  if (toolsServer) return toolsServer;
+  startingToolsServer ??= createCoworkerToolsServer({
+    resolveSlug: (token) => toolTokenSlugs.get(token) ?? null,
+    handlers: createToolHandlers({ coworkersDir }),
+    version: app.getVersion(),
+  }).then((server) => {
+    toolsServer = server;
+    return server;
+  }).finally(() => {
+    startingToolsServer = null;
+  });
+  return startingToolsServer;
+}
+
+/**
+ * Register (or refresh) this launch's tools endpoint in one coworker workspace
+ * through the embedded server, which hot-adds it to the running engine and
+ * re-adds it after an engine restart. Best effort: a coworker without the
+ * tools still talks; it just cannot write documents until the next attempt.
+ */
+async function registerCoworkerTools(coworker) {
+  if (!coworker?.workspaceId) return false;
+  const [handle, server] = await Promise.all([ensurePlatformServer(), ensureToolsServer()]);
+  await fetchJson(`${handle.url}/workspace/${encodeURIComponent(coworker.workspaceId)}/mcp`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${ownerToken}` },
+    body: JSON.stringify({ name: COWORKER_TOOLS_MCP_NAME, config: server.mcpConfig(coworkerToolToken(coworker.slug)) }),
+  }, 30_000);
+  toolsRegistered.add(coworker.slug);
+  return true;
+}
+
+/** Bring one coworker up to the current contract and give it its tools; never blocks the list. */
+function prepareCoworker(coworker) {
+  if (!contractsRepaired.has(coworker.slug)) {
+    contractsRepaired.add(coworker.slug);
+    void repairCoworkerContract(coworkersDir, coworker.slug).catch((error) => {
+      console.warn(`[open-coworker] could not repair the contract for ${coworker.slug}`, error);
+    });
+  }
+  if (coworker.workspaceId && !toolsRegistered.has(coworker.slug)) {
+    void registerCoworkerTools(coworker).catch((error) => {
+      console.warn(`[open-coworker] could not register the document tools for ${coworker.slug}`, error);
+    });
+  }
+}
+
 /**
  * Repair imported or pre-registration coworker records during normal startup.
  * The filesystem home already exists; this completes its native OpenWork
@@ -1034,7 +1120,10 @@ async function registerCoworkerWorkspace(coworker) {
  */
 async function listPreparedCoworkers() {
   const coworkers = await listCoworkers(coworkersDir);
-  if (!coworkers.some((coworker) => !coworker.workspaceId)) return coworkers;
+  if (!coworkers.some((coworker) => !coworker.workspaceId)) {
+    for (const coworker of coworkers) prepareCoworker(coworker);
+    return coworkers;
+  }
 
   await ensurePlatformServer();
   let registeredWorkspace = false;
@@ -1058,6 +1147,7 @@ async function listPreparedCoworkers() {
   if (registeredWorkspace && !serverHandle?.managedOpencode) {
     await restartPlatformServer();
   }
+  for (const coworker of prepared) prepareCoworker(coworker);
   return prepared;
 }
 
@@ -1085,6 +1175,7 @@ const commands = {
     if (!hadEngine) {
       await restartPlatformServer();
     }
+    prepareCoworker(updated);
     return updated;
   },
   "coworkers.ensureWorkspace": async ({ slug }) => {
@@ -1092,6 +1183,7 @@ const commands = {
     const coworker = await getCoworker(coworkersDir, slug);
     if (coworker.workspaceId) {
       if (!serverHandle?.managedOpencode) await restartPlatformServer();
+      prepareCoworker(coworker);
       return coworker;
     }
     const workspaceId = await registerCoworkerWorkspace(coworker);
@@ -1099,6 +1191,7 @@ const commands = {
     if (!serverHandle?.managedOpencode) {
       await restartPlatformServer();
     }
+    prepareCoworker(updated);
     return updated;
   },
   "coworkers.update": async ({ slug, patch }) => updateCoworker(coworkersDir, slug, patch ?? {}),
@@ -1145,6 +1238,7 @@ const commands = {
     const workspaceId = await registerCoworkerWorkspace(restored);
     const updated = await updateCoworker(coworkersDir, restored.slug, { workspaceId });
     if (!hadEngine) await restartPlatformServer();
+    prepareCoworker(updated);
     return updated;
   },
   "coworkers.retired.delete": async ({ archiveId }) => {
@@ -1200,6 +1294,40 @@ const commands = {
     await deleteLongTermMemory(coworkersDir, slug, file);
     return { ok: true };
   },
+  // Documents: the coworker writes them through its tools; the person reads,
+  // edits, organizes, exports, and restores them here. Every write is a new
+  // revision by the person, which the coworker sees in its index next turn.
+  "documents.list": async ({ slug }) => listDocuments(coworkersDir, slug),
+  "documents.read": async ({ slug, id }) => readDocument(coworkersDir, slug, id),
+  "documents.save": async ({ slug, id, title, summary, highlights, body }) =>
+    updateDocument(coworkersDir, slug, id, {
+      ...(typeof title === "string" ? { title } : {}),
+      ...(typeof summary === "string" ? { summary } : {}),
+      ...(Array.isArray(highlights) ? { highlights } : {}),
+      ...(typeof body === "string" ? { body } : {}),
+    }, { by: "person" }),
+  /** active | aside | archived — archiving is the person's call, so it lives here and not in a tool the coworker uses on its own. */
+  "documents.setStatus": async ({ slug, id, status }) =>
+    status === "archived" ? archiveDocument(coworkersDir, slug, id) : setDocumentStatus(coworkersDir, slug, id, status),
+  "documents.revisions": async ({ slug, id }) => listRevisions(coworkersDir, slug, id),
+  "documents.restore": async ({ slug, id, revision }) => restoreRevision(coworkersDir, slug, id, revision),
+  /** Save a copy as Markdown wherever the person chooses; nothing else moves. */
+  "documents.export": async ({ slug, id }) => {
+    const document = await readDocument(coworkersDir, slug, id);
+    const options = {
+      title: "Export document",
+      defaultPath: `${document.title.replace(/[\\/:*?"<>|]+/g, " ").trim() || document.id}.md`,
+      filters: [{ name: "Markdown", extensions: ["md"] }],
+    };
+    const chosen = mainWindow ? await dialog.showSaveDialog(mainWindow, options) : await dialog.showSaveDialog(options);
+    if (chosen.canceled || !chosen.filePath) return { ok: false, cancelled: true, path: "" };
+    const highlights = document.highlights.map((line) => `- ${line}`).join("\n");
+    await writeFile(chosen.filePath, `# ${document.title}\n\n${document.summary ? `${document.summary}\n\n` : ""}${highlights ? `${highlights}\n\n` : ""}${document.body}`, "utf8");
+    return { ok: true, cancelled: false, path: chosen.filePath };
+  },
+  /** A reply ran long with no document behind it: remember it so the coworker's next turn carries a one-line reminder. */
+  "documents.recordLongReply": async ({ slug, messageId, chars }) =>
+    recordStyleEvent(coworkersDir, slug, { kind: "long-reply", messageId, chars: Number(chars) }),
   "localResponsibilities.list": async ({ slug }) => listLocalResponsibilities(coworkersDir, slug),
   "localResponsibilities.create": async ({ slug, name, instructions, schedule }) =>
     createLocalResponsibility(coworkersDir, slug, { name, instructions, schedule }),
@@ -1401,6 +1529,11 @@ if (!singleInstanceLock) {
     if (localResponsibilitiesTimer) {
       clearInterval(localResponsibilitiesTimer);
       localResponsibilitiesTimer = null;
+    }
+    if (toolsServer) {
+      const tools = toolsServer;
+      toolsServer = null;
+      void tools.stop().catch(() => undefined);
     }
     if (!serverHandle) return;
     event.preventDefault();
