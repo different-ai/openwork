@@ -35,6 +35,10 @@ import type { PanelBounds } from "@/lib/panel-layout";
 const RAIL_BOUNDS: PanelBounds = { min: 220, max: 380, collapsedWidth: 88, collapseBelow: 170 };
 import { LocalModeScreen } from "@/ui/local-mode";
 import { OnboardingWelcome } from "@/ui/onboarding";
+import { OnboardingIntents } from "@/ui/onboarding-intents";
+import { OnboardingTeam } from "@/ui/onboarding-team";
+import { emptyOnboardingDraft, loadOnboardingDraft, saveOnboardingDraft, toggleIntent, type OnboardingDraft } from "@/lib/onboarding-team";
+import type { TeamRole } from "@/lib/bridge";
 import { AppLoader, CoworkerMark } from "@/ui/brand";
 import { OpenWorkSettings, type SettingsSection } from "@/ui/openwork-settings";
 
@@ -74,6 +78,10 @@ export default function App() {
   const [onboardingReady, setOnboardingReady] = useState(false);
   /** The "Use this Mac" step: what this Mac already has, before the first coworker. */
   const [localSetup, setLocalSetup] = useState(false);
+  /** After the account or local-mode step: what the team will help with, then the proposed team. */
+  const [onboardingStep, setOnboardingStep] = useState<"" | "intents" | "team">("");
+  const [onboardingDraft, setOnboardingDraft] = useState<OnboardingDraft>(() => emptyOnboardingDraft());
+  const [teamCatalog, setTeamCatalog] = useState<TeamRole[]>([]);
   const [globalSettings, setGlobalSettings] = useState<SettingsSection | null>(null);
   const [globalSettingsMounted, setGlobalSettingsMounted] = useState(false);
   const [activityBySlug, setActivityBySlug] = useState<Record<string, CoworkerActivity>>({});
@@ -104,6 +112,12 @@ export default function App() {
       setSelectedSlug((current) =>
         current && list.some((coworker) => coworker.slug === current) ? current : (list[0]?.slug ?? ""),
       );
+      if (list.length === 0) {
+        // A team drafted before a quit or reload comes back where it was left.
+        const saved = loadOnboardingDraft(window.sessionStorage);
+        setOnboardingDraft(saved);
+        if (saved.drafts.length > 0) setOnboardingStep("team");
+      }
       setBootError("");
     } catch (cause) {
       setBootError(cause instanceof Error ? cause.message : String(cause));
@@ -194,10 +208,7 @@ export default function App() {
       setSession(next);
       await pushSession(next);
       setConnecting(false);
-      if (coworkers.length === 0) {
-        setOnboardingReady(true);
-        setCreating(true);
-      }
+      if (coworkers.length === 0) setOnboardingStep("intents");
     } catch (cause) {
       setSignInError(cause instanceof Error ? cause.message : String(cause));
       setConnecting(true);
@@ -515,6 +526,42 @@ export default function App() {
     defaultWidth: 272,
   });
 
+  // The catalog the onboarding steps propose from, read once when they are first needed.
+  useEffect(() => {
+    if (!onboardingStep || teamCatalog.length > 0) return;
+    let cancelled = false;
+    coworkerBridge.team.catalog()
+      .then((catalog) => {
+        if (!cancelled) setTeamCatalog(catalog);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [onboardingStep, teamCatalog.length]);
+
+  const updateOnboardingDraft = useCallback((next: OnboardingDraft) => {
+    setOnboardingDraft(next);
+    saveOnboardingDraft(window.sessionStorage, next);
+  }, []);
+
+  /** Skip the proposed team: today's blank Add screen. */
+  const addOwnCoworker = useCallback(() => {
+    setOnboardingStep("");
+    setOnboardingReady(true);
+    setCreating(true);
+  }, []);
+
+  const proposeTeam = useCallback(async () => {
+    try {
+      const drafts = await coworkerBridge.team.recommend(onboardingDraft.intents);
+      updateOnboardingDraft({ ...onboardingDraft, drafts });
+      setOnboardingStep("team");
+    } catch (cause) {
+      setBootError(cause instanceof Error ? cause.message : String(cause));
+    }
+  }, [onboardingDraft, updateOnboardingDraft]);
+
   const updateSelectedLiveActivity = useCallback((activity: CoworkerActivity | null) => {
     if (!selectedSlug) return;
     setLiveActivityBySlug((current) => {
@@ -562,6 +609,36 @@ export default function App() {
   }
 
   if (coworkers.length === 0 && !onboardingReady && !creating) {
+    if (onboardingStep === "team") {
+      return (
+        <OnboardingTeam
+          catalog={teamCatalog}
+          draft={onboardingDraft}
+          onChange={updateOnboardingDraft}
+          onBack={() => setOnboardingStep("intents")}
+          onCreated={(team, firstSlug) => {
+            setBots(team);
+            setSelectedSlug(team.some((coworker) => coworker.slug === firstSlug) ? firstSlug : (team[0]?.slug ?? ""));
+            setOnboardingDraft(emptyOnboardingDraft());
+            setOnboardingStep("");
+            setOnboardingReady(true);
+            void refreshRuntime();
+          }}
+        />
+      );
+    }
+    if (onboardingStep === "intents") {
+      return (
+        <OnboardingIntents
+          catalog={teamCatalog}
+          selected={onboardingDraft.intents}
+          onToggle={(id) => updateOnboardingDraft({ ...onboardingDraft, intents: toggleIntent(onboardingDraft.intents, id) })}
+          onContinue={() => void proposeTeam()}
+          onOwn={addOwnCoworker}
+          onBack={() => setOnboardingStep("")}
+        />
+      );
+    }
     if (localSetup) {
       return (
         <LocalModeScreen
@@ -572,8 +649,7 @@ export default function App() {
           onBack={() => setLocalSetup(false)}
           onContinue={() => {
             setLocalSetup(false);
-            setOnboardingReady(true);
-            setCreating(true);
+            setOnboardingStep("intents");
           }}
         />
       );
@@ -658,16 +734,12 @@ export default function App() {
           // Creation takes the whole window: the team list returns once the coworker exists.
           <div key="create" className="view-enter flex min-w-0 flex-1">
             <NewCoworker
+              team={coworkers}
               onCancel={selected || coworkers.length > 0 ? () => setCreating(false) : null}
               onCreated={(coworker) => {
                 setCreating(false);
-                setBots((current) =>
-                  [...current.filter((item) => item.slug !== coworker.slug), coworker].sort((a, b) =>
-                    a.name.localeCompare(b.name),
-                  ),
-                );
+                addCoworkerToList(coworker);
                 setSelectedSlug(coworker.slug);
-                void refreshRuntime();
               }}
             />
           </div>

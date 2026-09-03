@@ -44,7 +44,7 @@ const NOW = Date.UTC(2026, 8, 3, 15, 0, 0);
 test("the catalog has the six roles from the plan, each complete", () => {
   assert.deepEqual(TEAM_ROLES.map((role) => role.id), ["research", "writing", "operations", "support", "sales", "product"]);
   for (const role of TEAM_ROLES) {
-    assert.ok(role.defaultName && role.role && role.mission, role.id);
+    assert.ok(role.defaultName && role.role && role.mission && role.pitch, role.id);
     assert.equal(role.alternateNames.length, 3, role.id);
     assert.ok(role.keywords.length >= 12, `${role.id} has enough words to be recognised`);
     assert.ok(TEAM_ROLES.some((other) => other.id === role.complement), `${role.id}'s complement exists`);
@@ -52,7 +52,7 @@ test("the catalog has the six roles from the plan, each complete", () => {
   }
   const catalog = teamCatalog();
   assert.equal(catalog.length, 6);
-  assert.deepEqual(Object.keys(catalog[0]).sort(), ["avatarColor", "avatarGlasses", "defaultName", "id", "mission", "personality", "role"]);
+  assert.deepEqual(Object.keys(catalog[0]).sort(), ["avatarColor", "avatarGlasses", "defaultName", "id", "mission", "personality", "pitch", "role"]);
 });
 
 test("recommendTeam: one intent brings its complement, two or three stand alone, more than three keeps the first three", () => {

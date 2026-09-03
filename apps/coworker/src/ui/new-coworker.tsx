@@ -1,27 +1,36 @@
-import { useState } from "react";
-import { coworkerBridge, type AvatarColor, type AvatarGlasses, type CoworkerSummary } from "@/lib/bridge";
+import { useEffect, useState } from "react";
+import { coworkerBridge, type AvatarColor, type AvatarGlasses, type CoworkerSummary, type TeamRole } from "@/lib/bridge";
 import { AvatarControls } from "@/ui/coworker-avatar";
 import { OnboardingMascotStack } from "@/ui/onboarding-mascot";
 import { DEFAULT_PERSONALITY, type Personality } from "@/lib/personalities";
 import { PersonalityPicker } from "@/ui/personality-picker";
 import { Button, ErrorNote, Field, inputClass } from "@/ui/kit";
 import { RetiredCoworkers } from "@/ui/retired-coworkers";
+import { PickTeammateTile } from "@/ui/team-cards";
 
 type Step = "identity" | "details";
+
+/** How many suggested roles the Add screen offers above the blank form. */
+const SUGGESTED_ROLES = 3;
 
 /**
  * Creation establishes only a durable identity and workspace: a name and a
  * look, with an optional second step for role, mission, and personality. Each
  * step fits without scrolling; the coworker starts on OpenWork's default AI
- * model, and that choice lives in Coworker settings once it exists.
+ * model, and that choice lives in Coworker settings once it exists. Above the
+ * blank form, up to three roles nobody on the team covers yet are offered as
+ * cards; tapping one fills everything in, still editable.
  */
 export function NewCoworker({
   onCreated,
   onCancel,
+  team = [],
 }: {
   onCreated: (coworker: CoworkerSummary) => void;
   /** Null on first run, when there is no team to go back to. */
   onCancel: (() => void) | null;
+  /** The coworkers that exist, so a role someone already covers is not suggested again. */
+  team?: readonly CoworkerSummary[];
 }) {
   const [step, setStep] = useState<Step>("identity");
   const [name, setName] = useState("");
@@ -30,8 +39,38 @@ export function NewCoworker({
   const [avatarColor, setAvatarColor] = useState<AvatarColor>("blue");
   const [avatarGlasses, setAvatarGlasses] = useState<AvatarGlasses>("round");
   const [personality, setPersonality] = useState<Personality>(DEFAULT_PERSONALITY);
+  const [roleId, setRoleId] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [catalog, setCatalog] = useState<TeamRole[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    coworkerBridge.team.catalog()
+      .then((roles) => {
+        if (!cancelled) setCatalog(roles);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  const takenRoles = new Set(team.map((coworker) => coworker.roleId).filter(Boolean));
+  const takenSlugs = new Set(team.map((coworker) => coworker.slug));
+  const suggested = catalog.filter((item) => !takenRoles.has(item.id)).slice(0, SUGGESTED_ROLES);
+
+  /** Start from a suggested role: everything filled in, everything still editable. */
+  function pick(item: TeamRole) {
+    const free = takenSlugs.has(item.defaultName.toLowerCase()) ? `${item.defaultName} 2` : item.defaultName;
+    setName(free);
+    setRole(item.role);
+    setMission(item.mission);
+    setAvatarColor(item.avatarColor);
+    setAvatarGlasses(item.avatarGlasses);
+    setPersonality(item.personality);
+    setRoleId(item.id);
+    setError("");
+    setStep("details");
+  }
 
   async function create() {
     if (!name.trim()) {
@@ -42,6 +81,9 @@ export function NewCoworker({
     setBusy(true);
     setError("");
     try {
+      const fromCatalog = catalog.find((item) => item.id === roleId);
+      // The catalog role travels only while the role the person kept is still that role.
+      const keptRole = fromCatalog && role.trim() === fromCatalog.role ? fromCatalog.id : "";
       onCreated(
         await coworkerBridge.coworkers.create({
           name: name.trim(),
@@ -50,6 +92,7 @@ export function NewCoworker({
           avatarColor,
           avatarGlasses,
           personality,
+          ...(keptRole ? { roleId: keptRole } : {}),
         }),
       );
     } catch (cause) {
@@ -96,7 +139,23 @@ export function NewCoworker({
                 <p className="mt-1 max-w-sm text-sm leading-relaxed text-mist">
                   Start with a name and a look. You can teach the job in the first assignment.
                 </p>
-                <div className="mt-6 space-y-4">
+                {suggested.length > 0 ? (
+                  <div className="mt-4" data-testid="new-coworker-suggested">
+                    <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-mist/75">Suggested · tap one to start from it</p>
+                    <div className="mt-2 grid gap-2 sm:grid-cols-3">
+                      {suggested.map((item) => (
+                        <PickTeammateTile
+                          key={item.id}
+                          look={{ name: item.defaultName, role: item.role, mission: "", avatarColor: item.avatarColor, avatarGlasses: item.avatarGlasses }}
+                          smallPrint=""
+                          onPick={() => pick(item)}
+                          attributes={{ "data-role-id": item.id }}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+                <div className="mt-5 space-y-4">
                   <Field label="Name">
                     <input
                       autoFocus
