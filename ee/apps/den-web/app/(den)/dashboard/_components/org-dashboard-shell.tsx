@@ -23,6 +23,7 @@ import {
   getBrandAppearanceRoute,
   getBillingRoute,
   getCustomLlmProvidersRoute,
+  getGatewayProvidersRoute,
   getDiagnosticsRoute,
   getDesktopPoliciesRoute,
   getManagedDashboardsRoute,
@@ -244,6 +245,9 @@ function getDashboardPageTitle(pathname: string, orgSlug: string | null) {
   }
   if (pathname.startsWith(getCustomLlmProvidersRoute(orgSlug))) {
     return "Bring your Own Keys";
+  }
+  if (pathname.startsWith(getGatewayProvidersRoute(orgSlug))) {
+    return "Gateway providers";
   }
   if (
     pathname.startsWith(getDesktopPoliciesRoute(orgSlug))

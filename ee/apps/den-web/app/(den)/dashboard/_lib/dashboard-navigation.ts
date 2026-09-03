@@ -23,6 +23,7 @@ import {
   getBillingRoute,
   getBrandAppearanceRoute,
   getCustomLlmProvidersRoute,
+  getGatewayProvidersRoute,
   getDesktopPoliciesRoute,
   getDiagnosticsRoute,
   getInferenceRoute,
@@ -125,6 +126,7 @@ export function buildDashboardNavSections({
             ? [{ href: getInferenceRoute(orgSlug), label: "OpenWork Models" }]
             : []),
           { href: getCustomLlmProvidersRoute(orgSlug), label: "Bring your Own Keys" },
+          { href: getGatewayProvidersRoute(orgSlug), label: "Gateway providers" },
         ],
       }
     : null;
