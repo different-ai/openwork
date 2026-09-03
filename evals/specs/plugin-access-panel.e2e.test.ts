@@ -1,5 +1,5 @@
 import { expect } from "vitest";
-import { denFetch, evalIn, freshSession, waitFor } from "@openwork/behaviors";
+import { denFetch, evalIn, freshSession, signInInBrowser, waitFor } from "@openwork/behaviors";
 import type { DenSession } from "@openwork/behaviors";
 import { navigate } from "@openwork/cdp";
 import { chrome } from "@openwork/hosts";
@@ -188,19 +188,11 @@ test(title, async ({ evidence, place }) => {
     deviceScaleFactor: 1,
     mobile: false,
   });
-  await browser.client.send("Network.enable");
-  await browser.client.send("Network.setExtraHTTPHeaders", {
-    headers: { Authorization: `Bearer ${creator.token}` },
-  });
   await waitFor(browser, `location.href.startsWith(${JSON.stringify(den.ref.webUrl)}) && document.readyState === "complete"`, {
     timeoutMs: 60_000,
     label: "Den Web origin before creator auth token handoff",
   });
-  const creatorTokenStored = await evalIn(browser, `(() => {
-    localStorage.setItem("openwork:web:auth-token", ${JSON.stringify(creator.token)});
-    return localStorage.getItem("openwork:web:auth-token") === ${JSON.stringify(creator.token)};
-  })()`);
-  expect(creatorTokenStored).toBe(true);
+  await signInInBrowser(browser, den.ref.webUrl, creator);
 
   await navigate(browser.client, `${den.ref.webUrl}/dashboard/plugins/${encodeURIComponent(pluginId)}`);
   await waitFor(browser, `document.body.innerText.toUpperCase().includes("WHO CAN ACCESS THIS")
@@ -246,14 +238,9 @@ test(title, async ({ evidence, place }) => {
   ]);
   expect(teamSeen.ok, teamSeen.why).toBe(true);
 
-  const memberTokenStored = await evalIn(browser, `(() => {
-    localStorage.setItem("openwork:web:auth-token", ${JSON.stringify(member.token)});
-    return localStorage.getItem("openwork:web:auth-token") === ${JSON.stringify(member.token)};
-  })()`);
-  expect(memberTokenStored).toBe(true);
-  await browser.client.send("Network.setExtraHTTPHeaders", {
-    headers: { Authorization: `Bearer ${member.token}` },
-  });
+  await browser.client.send("Network.clearBrowserCookies");
+  await evalIn(browser, `localStorage.removeItem("openwork:web:auth-token")`);
+  await signInInBrowser(browser, den.ref.webUrl, member);
   await navigate(browser.client, teamUrl);
   await waitFor(browser, `document.body.innerText.includes("This setting is managed by workspace admins")`, {
     timeoutMs: 30_000,

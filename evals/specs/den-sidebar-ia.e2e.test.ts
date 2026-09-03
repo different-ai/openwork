@@ -1,5 +1,5 @@
 import { expect } from "vitest";
-import { denFetch, evalIn, waitFor } from "@openwork/behaviors";
+import { denFetch, evalIn, signInInBrowser, waitFor } from "@openwork/behaviors";
 import type { DenSession } from "@openwork/behaviors";
 import { navigate } from "@openwork/cdp";
 import { screenshot, validate } from "@openwork/test-evidence";
@@ -177,20 +177,12 @@ test(title, async ({ evidence, place }) => {
     deviceScaleFactor: 1,
     mobile: false,
   });
-  await browser.client.send("Network.enable");
-  await browser.client.send("Network.setExtraHTTPHeaders", {
-    headers: { Authorization: `Bearer ${den.admin.token}` },
-  });
   await waitFor(browser, `location.href.startsWith(${JSON.stringify(den.ref.webUrl)}) && document.readyState === "complete"`, {
     timeoutMs: 60_000,
     label: "Den Web origin before admin auth token handoff",
   });
 
-  const adminTokenStored = await evalIn(browser, `(() => {
-    localStorage.setItem("openwork:web:auth-token", ${JSON.stringify(den.admin.token)});
-    return localStorage.getItem("openwork:web:auth-token") === ${JSON.stringify(den.admin.token)};
-  })()`);
-  expect(adminTokenStored).toBe(true);
+  await signInInBrowser(browser, den.ref.webUrl, den.admin);
   await navigate(browser.client, `${den.ref.webUrl}/dashboard/org-settings`);
   await waitFor(browser, `Boolean(document.querySelector('[data-testid="den-org-sidebar"] [data-sidebar-section="manage"]'))
     && Boolean(document.querySelector('[data-testid="den-org-sidebar"] [data-sidebar-section="team"]'))
@@ -277,14 +269,9 @@ test(title, async ({ evidence, place }) => {
     footerInView && navIsScroller && asideDoesNotOverflow,
   );
 
-  const memberTokenStored = await evalIn(browser, `(() => {
-    localStorage.setItem("openwork:web:auth-token", ${JSON.stringify(member.token)});
-    return localStorage.getItem("openwork:web:auth-token") === ${JSON.stringify(member.token)};
-  })()`);
-  expect(memberTokenStored).toBe(true);
-  await browser.client.send("Network.setExtraHTTPHeaders", {
-    headers: { Authorization: `Bearer ${member.token}` },
-  });
+  await browser.client.send("Network.clearBrowserCookies");
+  await evalIn(browser, `localStorage.removeItem("openwork:web:auth-token")`);
+  await signInInBrowser(browser, den.ref.webUrl, member);
   await navigate(browser.client, `${den.ref.webUrl}/dashboard/library`);
   await waitFor(browser, `Boolean(document.querySelector('[data-testid="den-org-sidebar"] [data-sidebar-section="work"]'))
     && [...document.querySelectorAll("h1")].some((heading) => heading.textContent?.trim() === "My Library")`, {
