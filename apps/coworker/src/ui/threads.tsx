@@ -50,6 +50,7 @@ import {
 import { markAutoPicked, wasAutoPicked } from "@/lib/model-choice";
 import { describeProgress, describeWorkStep, summarizeWork, type ProgressPhase, type WorkStep } from "@/lib/work-receipt";
 import { describeTurnFailure } from "@/lib/turn-failure";
+import { useAutoGrow } from "@/ui/use-auto-grow";
 import { InteractionCards } from "@/ui/interactions";
 import { CoworkerAvatar } from "@/ui/coworker-avatar";
 import { InlineLoader } from "@/ui/brand";
@@ -1414,20 +1415,24 @@ function ThreadView({
       <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5">
         <div className="mx-auto max-w-3xl space-y-3">
           {freshDiscussion ? <QuietEmptyConversation coworker={coworker} /> : null}
-          {visibleMessages.map((message, index) => (
-            <Fragment key={message.id}>
-              <TimeLabel label={timeLabelBetween(visibleMessages[index - 1]?.createdAt, message.createdAt)} />
-              <MessageBubble
-                message={message}
-                coworker={coworker}
-                mcpClient={mcpClient}
-                active={working && message.role === "assistant" && index === lastAssistantIndex}
-                continued={index > 0 && visibleMessages[index - 1]?.role === message.role}
-                tail={visibleMessages[index + 1]?.role !== message.role}
-                kind={kind}
-              />
-            </Fragment>
-          ))}
+          {conversationBlocks(visibleMessages, (message, index) => working && message.role === "assistant" && index === lastAssistantIndex).map((block) =>
+            block.kind === "actions" ? (
+              <ActionLine key={block.id} reasoning={block.reasoning} calls={block.calls} client={mcpClient} />
+            ) : (
+              <Fragment key={block.message.id}>
+                <TimeLabel label={timeLabelBetween(block.previous?.createdAt, block.message.createdAt)} />
+                <MessageBubble
+                  message={block.message}
+                  coworker={coworker}
+                  mcpClient={mcpClient}
+                  active={block.active}
+                  continued={block.continued}
+                  tail={block.tail}
+                  kind={kind}
+                />
+              </Fragment>
+            ),
+          )}
           <InteractionCards
             coworker={coworker}
             pending={pending}
@@ -1523,6 +1528,70 @@ function ThreadView({
   );
 }
 
+type ConversationBlock =
+  | { kind: "actions"; id: string; reasoning: string; calls: TranscriptToolCall[] }
+  | { kind: "message"; message: TranscriptMessage; previous: TranscriptMessage | undefined; active: boolean; continued: boolean; tail: boolean };
+
+/**
+ * Lay a transcript out as bubbles with the coworker's thinking and actions gathered into one
+ * small line between them. Consecutive replies that only did work (no words) fold into the
+ * line before the next bubble, so two action lines never sit one after the other. A reply
+ * still in progress keeps its thinking out of the line until it has finished.
+ */
+export function conversationBlocks(
+  messages: readonly TranscriptMessage[],
+  isActive: (message: TranscriptMessage, index: number) => boolean,
+): ConversationBlock[] {
+  const blocks: ConversationBlock[] = [];
+  let reasoning: string[] = [];
+  let calls: TranscriptToolCall[] = [];
+  let pendingId = "";
+  const flush = () => {
+    if (reasoning.length === 0 && calls.length === 0) return;
+    blocks.push({ kind: "actions", id: `actions-${pendingId}`, reasoning: reasoning.join("\n\n"), calls });
+    reasoning = [];
+    calls = [];
+  };
+  // Bubbles decide grouping: a reply with no visible words never counts as a neighbour.
+  const bubbles = messages.filter((message, index) => message.role !== "assistant" || Boolean(message.text) || isActive(message, index));
+  messages.forEach((message, index) => {
+    const active = isActive(message, index);
+    if (message.role === "assistant") {
+      if (!pendingId) pendingId = message.id;
+      if (message.reasoning && !active) reasoning.push(message.reasoning);
+      if (message.toolCalls.length > 0) calls = [...calls, ...message.toolCalls];
+      if (!message.text && !active) return;
+    }
+    flush();
+    pendingId = "";
+    const position = bubbles.indexOf(message);
+    const previous = position > 0 ? bubbles[position - 1] : undefined;
+    const next = position >= 0 ? bubbles[position + 1] : undefined;
+    blocks.push({
+      kind: "message",
+      message,
+      previous: messages[index - 1],
+      active,
+      continued: Boolean(previous && previous.role === message.role),
+      tail: !next || next.role !== message.role,
+    });
+  });
+  flush();
+  return blocks;
+}
+
+/** One small centered line between bubbles: what the coworker thought through and did. */
+function ActionLine({ reasoning, calls, client }: { reasoning: string; calls: TranscriptToolCall[]; client: CoworkerMcpClient }) {
+  return (
+    <div className="flex justify-center py-0.5" data-testid="coworker-action-line">
+      <div className="flex max-w-[80%] flex-wrap items-start justify-center gap-x-4 gap-y-1">
+        {reasoning ? <ThinkingDisclosure text={reasoning} /> : null}
+        {calls.length > 0 ? <WorkReceipt calls={calls} client={client} /> : null}
+      </div>
+    </div>
+  );
+}
+
 /** A quiet centered time label above a message, shown only when enough time has passed. */
 function TimeLabel({ label }: { label: string | null }) {
   if (!label) return null;
@@ -1588,8 +1657,8 @@ function MessageBubble({
   }
 
   // A 1:1 chat reads like Messages: the coworker is named once in the header, so each reply is a
-  // plain gray bubble. Thinking and tool work stay one quiet line each above the bubble.
-  const extras = Boolean((message.reasoning && !active) || message.toolCalls.length > 0);
+  // plain gray bubble. Thinking and tool work are shown as one small line between bubbles
+  // (see conversationBlocks), never inside or stacked.
   return (
     <article className={`flex flex-col items-start ${continued ? "-mt-1" : ""}`} data-message-role="assistant" data-continued={continued ? "true" : "false"}>
       <p className="sr-only">
@@ -1600,12 +1669,6 @@ function MessageBubble({
           </span>
         ) : null}
       </p>
-      {extras ? (
-        <div className="mb-1 max-w-[76%] space-y-0.5 pl-1">
-          {message.reasoning && !active ? <ThinkingDisclosure text={message.reasoning} /> : null}
-          {message.toolCalls.length > 0 ? <WorkReceipt calls={message.toolCalls} client={mcpClient} /> : null}
-        </div>
-      ) : null}
       {message.text ? (
         <div
           className={`bubble bubble-coworker max-w-[76%] ${tail ? "bubble-tail-left" : ""}`}
@@ -1801,10 +1864,10 @@ function WorkReceipt({ calls, client }: { calls: TranscriptToolCall[]; client: C
   const summary = summarizeWork(steps);
   const tone = steps.some((step) => step.state === "failed") ? "rose" : unsettled ? "spark" : "mint";
   return (
-    <div className="text-[11px]" data-testid="coworker-work-receipt" data-state={tone === "rose" ? "failed" : unsettled ? "working" : "done"}>
+    <div className="min-w-0 text-[11px]" data-testid="coworker-work-receipt" data-state={tone === "rose" ? "failed" : unsettled ? "working" : "done"}>
       <button
         type="button"
-        className="group flex w-full items-center gap-1.5 py-0.5 text-left text-mist hover:text-snow"
+        className="group flex max-w-full items-center gap-1.5 py-0.5 text-left text-mist hover:text-snow"
         aria-expanded={expanded}
         onClick={() => setOpen((value) => !value)}
         data-testid="coworker-work-summary"
@@ -2004,6 +2067,8 @@ function DiscussionComposer({
   const submit = assignmentMode ? onCreateAssignment : onSend;
   const held = busy || Boolean(waiting);
   const canSubmit = !held && Boolean(value.trim());
+  const fieldRef = useRef<HTMLTextAreaElement>(null);
+  useAutoGrow(fieldRef, value);
   const modeLabel = assignmentMode ? "Back to chat" : "Create assignment";
   const submitLabel = busy ? "Working…" : assignmentMode ? "Create assignment" : "Send";
   return (
@@ -2031,9 +2096,10 @@ function DiscussionComposer({
           </button>
           <div className={`flex min-w-0 flex-1 items-end gap-1 rounded-[20px] border bg-panel/60 py-1 pl-4 pr-1 transition-colors focus-within:border-spark/50 ${assignmentMode ? "border-spark/35" : "border-line"}`}>
             <textarea
+              ref={fieldRef}
               aria-label={assignmentMode ? "Assignment outcome" : `Message ${coworkerName}`}
               rows={1}
-              className="max-h-40 min-h-[30px] min-w-0 flex-1 resize-none bg-transparent py-1 text-sm leading-relaxed text-snow outline-none placeholder:text-mist/65"
+              className="min-h-[30px] min-w-0 flex-1 resize-none bg-transparent py-1 text-sm leading-relaxed text-snow outline-none placeholder:text-mist/65"
               placeholder={assignmentMode ? `What should ${coworkerName} own?` : `Message ${coworkerName}`}
               value={value}
               onChange={(event) => assignmentMode ? onAssignmentChange(event.target.value) : onMessageChange(event.target.value)}
@@ -2097,14 +2163,17 @@ function MessageComposer({
   placeholder: string;
 }) {
   const canSubmit = !busy && Boolean(value.trim());
+  const fieldRef = useRef<HTMLTextAreaElement>(null);
+  useAutoGrow(fieldRef, value);
   return (
     <div className="border-t border-line bg-ink px-5 pb-2 pt-3">
       <div className="mx-auto max-w-3xl">
         <div className="flex min-w-0 items-end gap-1 rounded-[20px] border border-line bg-panel/60 py-1 pl-4 pr-1 transition-colors focus-within:border-spark/50">
           <textarea
+            ref={fieldRef}
             aria-label={placeholder.replace("…", "")}
             rows={1}
-            className="max-h-40 min-h-[30px] min-w-0 flex-1 resize-none bg-transparent py-1 text-sm leading-relaxed text-snow outline-none placeholder:text-mist/65"
+            className="min-h-[30px] min-w-0 flex-1 resize-none bg-transparent py-1 text-sm leading-relaxed text-snow outline-none placeholder:text-mist/65"
             placeholder={placeholder}
             value={value}
             onChange={(event) => onChange(event.target.value)}
