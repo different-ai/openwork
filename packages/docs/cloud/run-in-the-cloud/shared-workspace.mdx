@@ -9,29 +9,30 @@ description: "Run a full OpenWork workspace in the browser, hosted by OpenWork"
 
 OpenWork Web gives your team a full OpenWork workspace in the browser, hosted and managed for you — nothing to install. An organization owner or admin can purchase it directly from the organization dashboard.
 
-## Deploy a hosted workspace
+## Turn on OpenWork Web
 
-1. Open your org dashboard and go to `Shared Workspace`.
-2. Click `Add workspace`.
-3. Wait until the status becomes `Ready`.
-4. Click `Connect`.
+1. As an organization owner or admin, open your org dashboard and go to `OpenWork Web`.
+2. Click `Purchase OpenWork Web — $50 per member/month`.
+3. Complete Stripe checkout.
 
-From the connection drawer you can choose `Open in web` to use OpenWork Web directly in the browser, `Open in desktop`, or copy the `Connection URL` plus `Owner token` / `Client token`.
+If a platform admin has granted your organization complimentary access, you do not need to purchase OpenWork Web.
 
-## Open it from the desktop app
+## Open your workspace
 
-The same hosted workspace also opens in the desktop app. From the connection
-drawer, click `Connect` and copy the `Connection URL` plus `Owner token` /
-`Client token`. In the desktop app, choose `Add workspace -> Connect custom
-remote`, paste the connection URL and token, then click `Connect remote`.
+Any signed-in member can open the org dashboard, go to `OpenWork Web`, and click `Open OpenWork Web`. The first time you open it, OpenWork automatically provisions your instance.
+
+Each member gets one instance per organization. Work is not shared between members' instances. After 30 minutes of inactivity, your instance stops automatically and wakes the next time you open it. Your files persist across wakes.
+
+## OpenWork Web and the desktop app
+
+OpenWork Web runs in the browser and is not opened from the desktop app. The desktop app's `Add workspace -> Connect custom remote` flow is for a self-hosted `openwork-server`; see [Self-host OpenWork](/start-here/self-host).
 
 ## When to use OpenWork Web
 
-Use OpenWork Web when your team needs a hosted OpenWork runtime, a stable place for long-running tasks or messaging connectors, or one workspace that several people can open from the same org — especially for teammates who should not have to install anything.
+Use OpenWork Web for teammates who should not install anything, long-running tasks, or working from a machine without the desktop app.
 
 ## Notes
 
 - `DEN_OPENWORK_WEB_ENABLED=true` makes OpenWork Web available to every organization. Missing or false remains fail-closed except for an organization with an explicit complimentary grant from a platform admin in Den `/admin`; organization mode, Stripe-variable presence, and ordinary organization metadata do not act as rollout signals.
-- A workspace must be `Ready` before it can be opened.
-- Hosted workspace limits follow your OpenWork plan.
+- Each member has one OpenWork Web instance per organization; there is no option to add more.
 - If you prefer to self-host a runtime instead, run `openwork-server` and connect the desktop app to that server URL.
