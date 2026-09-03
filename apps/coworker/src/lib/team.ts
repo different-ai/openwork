@@ -184,11 +184,12 @@ export function referralSmallPrint(card: ReferralCard): string {
   return [`${card.to.name} could take this`, card.to.role].filter(Boolean).join(" · ");
 }
 
-/** The one quiet line a newcomer's empty conversation opens with, when a teammate proposed it. */
+/** The one quiet line a newcomer's empty conversation opens with, when a teammate proposed it: "Nova suggested me — the support inbox comes up every morning." */
 export function newcomerLine(coworker: { suggestedBy: { slug: string; why: string } | null }, proposerName: string): string {
   if (!coworker.suggestedBy || !proposerName) return "";
-  const why = coworker.suggestedBy.why.replace(/\.$/, "");
-  return why ? `${proposerName} suggested me for ${why}.` : `${proposerName} suggested me.`;
+  const why = coworker.suggestedBy.why.trim().replace(/\.$/, "");
+  if (!why) return `${proposerName} suggested me.`;
+  return `${proposerName} suggested me — ${why.charAt(0).toLowerCase()}${why.slice(1)}.`;
 }
 
 type TeamStepOutcome = { label: string; doing: string };
