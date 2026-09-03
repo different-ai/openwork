@@ -8,14 +8,30 @@ import {
 } from "../src/react-app/domains/connections/provider-auth/assigned-model-options";
 
 function provider(
-  input: Pick<DenOrgLlmProvider, "id" | "source" | "providerId" | "name" | "hasApiKey" | "models">,
+  input: Pick<DenOrgLlmProvider, "id" | "source" | "providerId" | "name" | "hasApiKey" | "models"> &
+    Partial<Pick<DenOrgLlmProvider, "providerConfig" | "hasMyCredential">>,
 ): DenOrgLlmProvider {
   return {
-    ...input,
     providerConfig: {},
     createdAt: null,
     updatedAt: null,
+    ...input,
   };
+}
+
+const perMemberModels = [{ id: "litellm-model-01", name: "LiteLLM Model 1", config: {}, createdAt: null }];
+
+function perMemberProvider(hasMyCredential: boolean | undefined): DenOrgLlmProvider {
+  return provider({
+    id: "lpr_acme_litellm",
+    source: "custom",
+    providerId: "acme-litellm",
+    name: "Acme LiteLLM",
+    providerConfig: { env: ["LITELLM_API_KEY"] },
+    hasApiKey: false,
+    ...(hasMyCredential === undefined ? {} : { hasMyCredential }),
+    models: perMemberModels,
+  });
 }
 
 function option(providerID: string, modelID: string, title: string): ModelOption {
@@ -68,6 +84,43 @@ describe("assigned model options", () => {
         source: "cloud",
       },
     ]);
+  });
+
+  test("drops a granted provider whose credential the member no longer has", () => {
+    // A per-member provider (hasApiKey is always false) is offered only while
+    // the calling member holds an active binding. After the member's key is
+    // removed the grant remains but the engine can never connect it, so the
+    // picker must not list its models (field-reported stale "Enabled" defect).
+    expect(assignedModelOptions([perMemberProvider(false)])).toEqual([]);
+    expect(assignedModelOptions([perMemberProvider(undefined)])).toEqual([]);
+
+    expect(assignedModelOptions([perMemberProvider(true)])).toMatchObject([
+      { providerID: "lpr_acme_litellm", modelID: "litellm-model-01", source: "cloud" },
+    ]);
+  });
+
+  test("keeps shared-key providers and providers that declare no credential", () => {
+    expect(
+      assignedModelOptions([
+        provider({
+          id: "lpr_shared",
+          source: "custom",
+          providerId: "shared-gateway",
+          name: "Shared Gateway",
+          providerConfig: { env: ["SHARED_GATEWAY_API_KEY"] },
+          hasApiKey: true,
+          models: perMemberModels,
+        }),
+        provider({
+          id: "lpr_keyless",
+          source: "custom",
+          providerId: "keyless-gateway",
+          name: "Keyless Gateway",
+          hasApiKey: false,
+          models: perMemberModels,
+        }),
+      ]).map((option) => option.providerID),
+    ).toEqual(["lpr_shared", "lpr_keyless"]);
   });
 
   test("keeps local API-key models and lets the live workspace catalog replace fallbacks", () => {

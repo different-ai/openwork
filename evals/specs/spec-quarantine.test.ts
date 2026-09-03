@@ -29,6 +29,7 @@ composer-model-picker-no-subscribe-promo.e2e.test.ts
 config-object-large-skill.e2e.test.ts
 connect-readiness-preseeded.e2e.test.ts
 connector-tool-call-branding.e2e.test.ts
+cross-server-handoff-atomic-commit.e2e.test.ts
 cross-workspace-split-view.e2e.test.ts
 first-run-cloud-share.e2e.test.ts
 first-run-local.e2e.test.ts
