@@ -465,6 +465,45 @@ function normalizeQuestion(value: {
   };
 }
 
+/** How long message events are gathered before one refresh answers them all. */
+export const EVENT_REFRESH_WINDOW_MS = 250;
+
+/**
+ * Collapse a burst of calls into one: the first call in a quiet period runs at
+ * once, further calls inside the window run once more at its end.
+ */
+export function coalesceCalls(callback: () => void, windowMs: number, clock: () => number = Date.now): { call: () => void; cancel: () => void } {
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  let lastRunAt = Number.NEGATIVE_INFINITY;
+  let pending = false;
+  const run = () => {
+    pending = false;
+    lastRunAt = clock();
+    callback();
+  };
+  return {
+    call() {
+      const elapsed = clock() - lastRunAt;
+      if (timer === null && elapsed >= windowMs) {
+        run();
+        return;
+      }
+      pending = true;
+      if (timer === null) {
+        timer = setTimeout(() => {
+          timer = null;
+          if (pending) run();
+        }, Math.max(0, windowMs - elapsed));
+      }
+    },
+    cancel() {
+      if (timer !== null) clearTimeout(timer);
+      timer = null;
+      pending = false;
+    },
+  };
+}
+
 export function createCoworkerThreads(options: {
   serverUrl: string;
   workspaceId: string;
@@ -670,7 +709,10 @@ export function createCoworkerThreads(options: {
 
   async function listModelCatalog(): Promise<EngineModelCatalog> {
     const [result, cloud] = await Promise.all([
-      opencode.provider.list(),
+      // Only providers that are actually connected: a few kilobytes, where the full
+      // provider list (every provider the engine knows, thousands of models) is
+      // megabytes per read and this catalog is read often.
+      opencode.config.providers(),
       // Status is advisory: without it, account providers are still recognised by their ids.
       readCloudProviderSyncStatus({ serverUrl: options.serverUrl, token: options.token }).catch(
         (): CloudProviderSyncStatus | null => null,
@@ -679,7 +721,10 @@ export function createCoworkerThreads(options: {
     if (result.error !== undefined || !result.data) {
       throw new Error(`Listing models failed (${result.response?.status ?? "network"})`);
     }
-    return connectedModelCatalog(result.data, cloud);
+    return connectedModelCatalog(
+      { all: result.data.providers, connected: result.data.providers.map((provider) => provider.id), default: result.data.default },
+      cloud,
+    );
   }
 
   async function listModels(): Promise<EngineModelOption[]> {
@@ -688,6 +733,11 @@ export function createCoworkerThreads(options: {
 
   function subscribe(onEvent: () => void, onStream?: (event: StreamEvent) => void): () => void {
     const controller = new AbortController();
+    // A streaming reply raises a message event for every part update; each one
+    // used to trigger a full transcript re-read. Message events now collapse into
+    // one refresh per short window, while a question, a permission, or a change
+    // of the thread's status still refreshes at once.
+    const messageRefresh = coalesceCalls(onEvent, EVENT_REFRESH_WINDOW_MS);
     void (async () => {
       try {
         const subscription = await opencode.event.subscribe(undefined, { signal: controller.signal });
@@ -704,20 +754,27 @@ export function createCoworkerThreads(options: {
               onStream({ kind: "part", threadId: part.sessionID, messageId: part.messageID, partId: part.id, type: part.type, text: part.text, ended: part.time?.end !== undefined });
             }
           }
-          if (
+          if (event.type.startsWith("message.")) {
+            messageRefresh.call();
+          } else if (
             event.type.startsWith("session.") ||
-            event.type.startsWith("message.") ||
             event.type.startsWith("permission.") ||
             event.type.startsWith("question.")
           ) {
+            messageRefresh.cancel();
             onEvent();
           }
         }
       } catch {
         // A bounded poll in the renderer remains the reconnect/backstop path.
+      } finally {
+        messageRefresh.cancel();
       }
     })();
-    return () => controller.abort();
+    return () => {
+      controller.abort();
+      messageRefresh.cancel();
+    };
   }
 
   return {

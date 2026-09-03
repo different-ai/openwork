@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   assignmentThreads,
+  coalesceCalls,
   connectedModelCatalog,
   describeInteractions,
   describePermission,
@@ -258,4 +259,27 @@ test("a retry pushed far into the future is a stall with the provider's reason i
   assert.equal(stalledRetry({ next: now + 30_000, message: "Rate limit exceeded." }, now), null);
   assert.equal(stalledRetry({ next: now + 9 * 3_600_000, message: "Free usage exceeded, subscribe to Go. " }, now), "Free usage exceeded, subscribe to Go");
   assert.equal(stalledRetry({ next: now + 3_600_000, message: "   " }, now), "The AI provider is not answering");
+});
+
+test("coalesceCalls runs the first call at once and folds a burst into one trailing call", async () => {
+  let clock = 1_000;
+  let runs = 0;
+  const coalesced = coalesceCalls(() => { runs += 1; }, 250, () => clock);
+  coalesced.call();
+  assert.equal(runs, 1, "the first call in a quiet period runs immediately");
+  clock += 10;
+  coalesced.call();
+  clock += 10;
+  coalesced.call();
+  assert.equal(runs, 1, "calls inside the window wait");
+  await new Promise((resolve) => setTimeout(resolve, 260));
+  assert.equal(runs, 2, "one trailing call answers the whole burst");
+  clock += 1_000;
+  coalesced.call();
+  assert.equal(runs, 3, "after a quiet period the next call runs at once again");
+  clock += 5;
+  coalesced.call();
+  coalesced.cancel();
+  await new Promise((resolve) => setTimeout(resolve, 260));
+  assert.equal(runs, 3, "cancel drops a pending trailing call");
 });

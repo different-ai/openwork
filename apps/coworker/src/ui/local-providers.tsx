@@ -287,6 +287,8 @@ export function LocalProviders({
   const [findings, setFindings] = useState<LocalProviderFinding[]>([]);
   const [catalog, setCatalog] = useState<EngineModelCatalog>(EMPTY_CATALOG);
   const [loaded, setLoaded] = useState(false);
+  /** Detection has answered at least once; the AI service may still be starting. */
+  const [found, setFound] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
   const [dismissed, setDismissed] = useState(readDismissed);
@@ -304,17 +306,22 @@ export function LocalProviders({
     setRefreshing(true);
     setError("");
     try {
+      // Detection only looks at this Mac, so its rows appear while the AI service
+      // is still starting; the catalog fills in once the service answers.
+      const detecting = coworkerBridge.localProviders.detect().then((detected) => {
+        setFindings(detected.found);
+        setFound(true);
+      });
       const ready = await coworkerBridge.localProviders.prepare();
       setReadiness(ready);
       // Getting the first workspace ready can move the platform to another port.
       if (ready.serverUrl && ready.serverUrl !== runtime.serverUrl) void onRuntimeChanged?.();
       const [detected, models] = await Promise.allSettled([
-        coworkerBridge.localProviders.detect(),
+        detecting,
         ready.engineManaged && ready.workspaceId
           ? createCoworkerThreads({ serverUrl: ready.serverUrl, workspaceId: ready.workspaceId, token: ready.ownerToken }).listModelCatalog()
           : Promise.resolve(EMPTY_CATALOG),
       ]);
-      if (detected.status === "fulfilled") setFindings(detected.value.found);
       if (models.status === "fulfilled") setCatalog(models.value);
       const failed = [detected, models].find((entry): entry is PromiseRejectedResult => entry.status === "rejected");
       if (failed) setError(messageOf(failed.reason));
@@ -335,7 +342,12 @@ export function LocalProviders({
     void refresh();
   }, [refresh]);
 
-  const plan = useMemo(() => planLocalMode({ findings, readiness, catalog }), [catalog, findings, readiness]);
+  const plan = useMemo(() => {
+    // Before the AI service has answered, a finding that is already in use has no Connected row to
+    // move to yet; hold those back so nothing appears under Found only to move a moment later.
+    const visible = loaded ? findings : findings.filter((finding) => finding.how !== "in-use");
+    return planLocalMode({ findings: visible, readiness, catalog });
+  }, [catalog, findings, loaded, readiness]);
   const freeModel = useMemo(() => pickFreeModel(catalog), [catalog]);
 
   const changed = useCallback(async () => {
@@ -457,7 +469,7 @@ export function LocalProviders({
   const addRowState = states["add-another"] ?? IDLE;
 
   return (
-    <div className="space-y-5" data-testid="local-providers" data-loaded={loaded ? "true" : "false"}>
+    <div className="space-y-5" data-testid="local-providers" data-loaded={loaded ? "true" : "false"} data-found={found ? "true" : "false"}>
       {!session && !dismissed ? (
         <div className="flex items-center gap-3 rounded-xl border border-spark/25 bg-spark/8 px-3 py-2 text-[12px] text-snow" data-testid="local-mode-recommended">
           <span className="min-w-0 flex-1">{COPY.recommended}</span>
@@ -494,6 +506,7 @@ export function LocalProviders({
           </button>
         </div>
         {loaded && plan.found.length === 0 ? <QuietLine testId="found-empty">{COPY.nothingFound}</QuietLine> : null}
+        {!loaded && found && plan.found.length === 0 ? <QuietLine testId="found-waiting">{COPY.waitingService}</QuietLine> : null}
         {plan.found.length > 0 ? (
           <ul className="px-1" aria-label={COPY.found} data-testid="found-rows">
             {plan.found.map((finding) => {
@@ -566,7 +579,7 @@ export function LocalProviders({
         <FlatRow
           icon={<GiftIcon />}
           title={COPY.freeTitle}
-          line={loaded ? (plan.free.available ? COPY.freeDetail(plan.free.modelLabel) : COPY.freeUnavailable) : ""}
+          line={loaded ? (plan.free.available ? COPY.freeDetail(plan.free.modelLabel) : COPY.freeUnavailable) : COPY.waitingService}
           tone={loaded && !plan.free.available ? "amber" : undefined}
           testId="free-model-row"
         >
