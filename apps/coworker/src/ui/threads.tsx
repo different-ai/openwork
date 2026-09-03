@@ -146,7 +146,7 @@ type ActiveTurn = {
 };
 
 /** How a turn is (re)sent: a fresh message, or the same message id run again after a failure, a stop, or a cut-off. */
-type TurnSend = { mode: "send" } | { mode: "retry"; attempt: number };
+type TurnSend = { mode: "send" } | { mode: "retry"; attempt: number; switchedTo?: string };
 
 /** One quiet line's worth of history for a reply that ended without words, kept in the transcript. */
 function endedWithoutWords(message: TranscriptMessage): "stopped" | "failed" | null {
@@ -1147,7 +1147,7 @@ function ThreadView({
         markAutoPicked(coworker.slug, next.id);
         onCoworkerChanged(await coworkerBridge.coworkers.update(coworker.slug, { model: next.id, modelVariant: "" }));
         setProviderRefreshNote(`${turnModelId} could not answer, so ${coworker.name} is trying ${next.modelLabel} instead.`);
-        window.setTimeout(() => void submitTurn(prompt, messageId, { mode: "retry", attempt }, nextModel, excluded), 0);
+        window.setTimeout(() => void submitTurn(prompt, messageId, { mode: "retry", attempt, switchedTo: next.modelLabel }, nextModel, excluded), 0);
         return true;
       } catch {
         return false;
@@ -1254,7 +1254,7 @@ function ThreadView({
       });
 
       if (result.outcome === "settled") {
-        if (modelOverride && send.mode === "retry") setResolution({ messageId, note: `Retried with ${modelOverride.modelId}` });
+        if (send.mode === "retry" && send.switchedTo) setResolution({ messageId, note: `Retried with ${send.switchedTo}` });
         commitTurnState(clearPending);
       } else if (result.outcome === "failed") {
         const failureText = result.terminalError
@@ -1342,11 +1342,11 @@ function ThreadView({
     return () => { cancelled = true; };
   }, [coworker.model, needsModelFallback, threads]);
 
-  /** Run the unresolved turn again under its own message id. */
-  const retryPending = useCallback((modelOverride?: HeadlessThreadModel) => {
+  /** Run the unresolved turn again under its own message id, on another model when one was chosen. */
+  const retryPending = useCallback((switched?: { model: HeadlessThreadModel; label: string }) => {
     const turn = turnStateRef.current.pending;
     if (!turn) return;
-    void submitTurn(turn.prompt, turn.messageId, { mode: "retry", attempt: 0 }, modelOverride);
+    void submitTurn(turn.prompt, turn.messageId, { mode: "retry", attempt: 0, ...(switched ? { switchedTo: switched.label } : {}) }, switched?.model);
   }, [submitTurn]);
 
   /** Switch this coworker to the recommended model and retry the failed message. */
@@ -1361,7 +1361,7 @@ function ThreadView({
       setError(cause instanceof Error ? cause.message : String(cause));
       return;
     }
-    retryPending(model);
+    retryPending({ model, label: pick.modelLabel });
   }
 
   useEffect(() => {
