@@ -342,6 +342,12 @@ export type DenOrgLlmProvider = {
    * keeps the catalog's names); absent from Den servers that predate it.
    */
   runtimeEnvKeys?: string[];
+  /**
+   * For `credentialMode: "per_member"` providers: whether the CALLING member
+   * currently has an active credential binding. Den returns it on the usable
+   * provider list; `hasApiKey` is always false for per-member providers.
+   */
+  hasMyCredential?: boolean;
   models: DenOrgLlmProviderModel[];
   createdAt: string | null;
   updatedAt: string | null;
@@ -2121,6 +2127,7 @@ function parseDenOrgLlmProvider(value: unknown): DenOrgLlmProvider | null {
     providerConfig: parseJsonRecord(value.providerConfig),
     hasApiKey: value.hasApiKey === true,
     runtimeEnvKeys: parseStringList(value.runtimeEnvKeys),
+    ...(typeof value.hasMyCredential === "boolean" ? { hasMyCredential: value.hasMyCredential } : {}),
     models: Array.isArray(value.models)
       ? value.models.flatMap((model) => {
           const parsed = parseDenOrgLlmProviderModel(model);

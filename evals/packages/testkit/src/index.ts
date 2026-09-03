@@ -1,4 +1,5 @@
-export { createDesktopHandoffGrant, signInDesktopAs } from "@openwork/behaviors";
+export { control, createDesktopHandoffGrant, evalIn, signInDesktopAs } from "@openwork/behaviors";
+export { desktop as relaunchDesktop, electronProfilePaths } from "@openwork/hosts";
 export type { DesktopHandle } from "@openwork/hosts";
 export type { Surface } from "@openwork/cdp";
 export { renderPrMarkdown } from "@openwork/test-artifacts";

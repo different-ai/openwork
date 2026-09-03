@@ -3,21 +3,21 @@ import { connect } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, onTestFinished } from "vitest";
-import { control, evalIn } from "@openwork/behaviors";
-import { desktop as relaunchDesktop, electronProfilePaths } from "@openwork/hosts";
-import type { DesktopHandle } from "@openwork/hosts";
 import {
   app,
+  control,
   createDesktopHandoffGrant,
+  electronProfilePaths,
+  evalIn,
   eventually,
   localMysqlIsRunning,
   needs,
   readDenClientState,
+  relaunchDesktop,
   server,
   test,
 } from "@openwork/testkit";
-import type { App } from "@openwork/env";
-import type { Surface } from "@openwork/cdp";
+import type { App, DesktopHandle, Surface } from "@openwork/testkit";
 
 /**
  * A cross-server handoff is an atomic enrollment transaction: accepting a

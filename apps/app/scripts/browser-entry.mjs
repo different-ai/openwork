@@ -220,7 +220,7 @@ try {
   });
 
   const port = await findFreePort();
-  opencode = await spawnOpencodeServe({ directory: tmpdir, port });
+  opencode = await spawnOpencodeServe({ directory: tmpdir, port, pure: false });
   const client = makeClient({ baseUrl: opencode.baseUrl, directory: opencode.cwd });
 
   await step("health", async () => {
