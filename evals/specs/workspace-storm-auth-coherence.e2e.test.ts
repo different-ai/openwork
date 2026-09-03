@@ -118,6 +118,19 @@ async function refreshDenSession(desktopApp: App, times: number): Promise<void> 
   })()`, { awaitPromise: true, timeoutMs: 10_000 });
 }
 
+async function probeDenPath(desktopApp: App, apiUrl: string, path: string, times: number): Promise<void> {
+  await evalIn(desktopApp, `(async () => {
+    const token = localStorage.getItem("openwork.den.authToken") ?? "";
+    for (let index = 0; index < ${times}; index += 1) {
+      try {
+        await fetch(${JSON.stringify(apiUrl)} + ${JSON.stringify(path)}, {
+          headers: { Authorization: "Bearer " + token },
+        });
+      } catch {}
+    }
+  })()`, { awaitPromise: true, timeoutMs: 30_000 });
+}
+
 /** Wait until the app itself has adopted the workspace as active. */
 async function waitForAdoptedWorkspace(desktopApp: App, workspaceId: string): Promise<void> {
   await waitFor(desktopApp, `(localStorage.getItem("openwork.react.activeWorkspace") ?? "") === ${JSON.stringify(workspaceId)}
@@ -387,6 +400,7 @@ test.skipIf(!runnable)(
     // slow for a while and desktop-config intermittently rate-limits.
     await proxy.faults.latency("/api/den", 1_200, { times: 40 });
     await proxy.faults.status("/api/den/v1/me/desktop-config", 429, { times: 6 });
+    await probeDenPath(desktopApp, proxy.ref.apiUrl, "/v1/me/desktop-config", 1);
     const waveA = await runSwitchStorm(desktopApp, workspaceIds, {
       passes: 2,
       dwellMs: 500,
@@ -406,6 +420,7 @@ test.skipIf(!runnable)(
     // bounded burst must not sign the desktop out or flip Connect off for good.
     await proxy.faults.clear();
     await proxy.faults.status("/api/den", 401, { times: 6 });
+    await probeDenPath(desktopApp, proxy.ref.apiUrl, "/v1/me/orgs", 6);
     await refreshDenSession(desktopApp, 6);
     const waveB = await runSwitchStorm(desktopApp, workspaceIds, {
       passes: 2,
