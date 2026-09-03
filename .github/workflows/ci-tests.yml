@@ -173,9 +173,6 @@ jobs:
       - name: Run server unit tests
         run: pnpm --filter openwork-server test
 
-      - name: Run Den API unit tests
-        run: pnpm --filter @openwork-ee/den-api test
-
       - name: Run desktop unit tests
         run: pnpm --filter @openwork/desktop test
 
@@ -203,6 +200,109 @@ jobs:
 
       - name: Run e2e tests
         run: pnpm --filter @openwork/app test:e2e
+
+  typecheck:
+    needs: classify-changes
+    if: needs.classify-changes.outputs.snapshot_only != 'true'
+    runs-on: blacksmith-4vcpu-ubuntu-2204
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.4.0
+
+      - name: Get pnpm store path
+        id: pnpm-store
+        shell: bash
+        run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache pnpm store
+        uses: actions/cache@v5
+        continue-on-error: true
+        with:
+          path: ${{ steps.pnpm-store.outputs.path }}
+          key: ${{ runner.os }}-pnpm-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --prefer-offline
+
+      - name: Typecheck app, server, Den API, and Den web
+        run: pnpm typecheck
+
+  ee-unit-tests:
+    needs: classify-changes
+    if: needs.classify-changes.outputs.snapshot_only != 'true'
+    runs-on: blacksmith-4vcpu-ubuntu-2204
+    services:
+      mysql:
+        image: mysql:8
+        env:
+          MYSQL_ROOT_PASSWORD: password
+          MYSQL_DATABASE: mysql
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -ppassword"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.4.0
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+
+      - name: Get pnpm store path
+        id: pnpm-store
+        shell: bash
+        run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache pnpm store
+        uses: actions/cache@v5
+        continue-on-error: true
+        with:
+          path: ${{ steps.pnpm-store.outputs.path }}
+          key: ${{ runner.os }}-pnpm-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --prefer-offline
+
+      - name: Build Den API workspace dependencies
+        run: pnpm --filter @openwork-ee/den-api build:workspace-dependencies
+
+      - name: Prepare Den API test databases
+        run: pnpm --filter @openwork-ee/den-api test:prepare-db
+
+      - name: Run Den API unit tests
+        run: pnpm --filter @openwork-ee/den-api test
+
+      - name: Run Den web unit tests
+        run: pnpm --filter @openwork-ee/den-web test
 
   validate-models-snapshot:
     needs: classify-changes
@@ -271,7 +371,7 @@ jobs:
   # Single stable context for branch rulesets to require. Green only when
   # the lane selected by classification succeeds; always reports.
   openwork-tests-required:
-    needs: [classify-changes, openwork-tests, validate-models-snapshot]
+    needs: [classify-changes, openwork-tests, typecheck, ee-unit-tests, validate-models-snapshot]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -280,10 +380,14 @@ jobs:
           CLASSIFY_RESULT: ${{ needs.classify-changes.result }}
           SNAPSHOT_ONLY: ${{ needs.classify-changes.outputs.snapshot_only }}
           TEST_RESULT: ${{ needs.openwork-tests.result }}
+          TYPECHECK_RESULT: ${{ needs.typecheck.result }}
+          EE_UNIT_RESULT: ${{ needs.ee-unit-tests.result }}
           SNAPSHOT_RESULT: ${{ needs.validate-models-snapshot.result }}
         run: |
           echo "classification: $CLASSIFY_RESULT ($SNAPSHOT_ONLY)"
           echo "openwork-tests: $TEST_RESULT"
+          echo "typecheck: $TYPECHECK_RESULT"
+          echo "EE unit tests: $EE_UNIT_RESULT"
           echo "snapshot validation: $SNAPSHOT_RESULT"
 
           if [ "$CLASSIFY_RESULT" != "success" ]; then
@@ -292,9 +396,15 @@ jobs:
           fi
 
           if [ "$SNAPSHOT_ONLY" = "true" ]; then
-            [ "$SNAPSHOT_RESULT" = "success" ] && [ "$TEST_RESULT" = "skipped" ] || exit 1
+            [ "$SNAPSHOT_RESULT" = "success" ] \
+              && [ "$TEST_RESULT" = "skipped" ] \
+              && [ "$TYPECHECK_RESULT" = "skipped" ] \
+              && [ "$EE_UNIT_RESULT" = "skipped" ] || exit 1
           elif [ "$SNAPSHOT_ONLY" = "false" ]; then
-            [ "$TEST_RESULT" = "success" ] && [ "$SNAPSHOT_RESULT" = "skipped" ] || exit 1
+            [ "$TEST_RESULT" = "success" ] \
+              && [ "$TYPECHECK_RESULT" = "success" ] \
+              && [ "$EE_UNIT_RESULT" = "success" ] \
+              && [ "$SNAPSHOT_RESULT" = "skipped" ] || exit 1
           else
             echo "Changed-file classification returned an unexpected value; blocking merge." >&2
             exit 1

@@ -30,7 +30,7 @@
     "build:ui": "pnpm --filter @openwork/app build",
     "build:web": "pnpm --filter @openwork-ee/den-web build",
     "preview": "pnpm --filter @openwork/app preview",
-    "typecheck": "pnpm --filter @openwork/app typecheck",
+    "typecheck": "pnpm --filter @openwork/app typecheck && pnpm --filter openwork-server typecheck && pnpm --filter @openwork-ee/den-api typecheck && pnpm --filter @openwork-ee/den-web typecheck",
     "check:enterprise-mcp-mock-server": "pnpm --filter @openwork/enterprise-mcp-mock-server check",
     "check:enterprise-mock-lab": "pnpm --filter @openwork-ee/enterprise-mock-lab check",
     "check:diagnostics": "pnpm --filter @openwork-ee/diagnostics test && pnpm --filter @openwork-ee/diagnostics build",
