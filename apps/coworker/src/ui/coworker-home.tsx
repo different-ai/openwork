@@ -3,7 +3,7 @@ import { coworkerBridge, type CoworkerSummary, type LocalResponsibility, type Pr
 import { describeNow, describeOutcome, mergeRecentWork, relativeTime } from "@/lib/activity-summary";
 import type { ConnectState } from "@/lib/connect";
 import type { DenSession } from "@/lib/den";
-import { clearAutoPicked, markAutoPicked } from "@/lib/model-choice";
+import { clearAutoPicked, markAutoPicked, peekStartingModel, takeStartingModel } from "@/lib/model-choice";
 import { createCoworkerThreads, recommendModel, type CoworkerActivity, type ThreadListItem } from "@/lib/threads";
 import { AvatarControls, CoworkerAvatar } from "@/ui/coworker-avatar";
 import { PersonalityPicker } from "@/ui/personality-picker";
@@ -265,10 +265,23 @@ export function CoworkerHome({
     const attempt = async () => {
       attempts += 1;
       try {
-        const pick = recommendModel(await threads.listModelCatalog());
+        const catalog = await threads.listModelCatalog();
+        // A model chosen on the local mode screen before this coworker existed goes first, once;
+        // a provider added a moment ago can still be loading, so wait a little for it.
+        const wanted = peekStartingModel();
+        const chosen = wanted ? catalog.models.find((model) => model.id === wanted) : undefined;
         if (cancelled) return;
+        if (wanted && !chosen) {
+          if (attempts < 8) {
+            timer = window.setTimeout(() => void attempt(), 3_000);
+            return;
+          }
+          takeStartingModel();
+        }
+        const pick = chosen ?? recommendModel(catalog);
         if (pick) {
-          markAutoPicked(coworker.slug, pick.id);
+          if (chosen) takeStartingModel();
+          else markAutoPicked(coworker.slug, pick.id);
           onCoworkerChanged(await coworkerBridge.coworkers.update(coworker.slug, { model: pick.id, modelVariant: "" }));
           return;
         }
