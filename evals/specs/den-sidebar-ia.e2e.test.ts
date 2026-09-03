@@ -161,6 +161,14 @@ test(title, async ({ evidence, place }) => {
   if (!flip.response.ok) {
     throw new Error(`Enabling sidebar capabilities failed: HTTP ${flip.response.status} ${flip.text.slice(0, 500)}`);
   }
+  const openWorkWebAccess = await denFetch(den.admin, `/v1/admin/organizations/${orgId}/openwork-web-access`, {
+    method: "PUT",
+    headers: { authorization: `Bearer ${den.admin.token}` },
+    body: JSON.stringify({ enabled: true, reason: "Exercise the OpenWork Web sidebar destination" }),
+  });
+  if (!openWorkWebAccess.response.ok) {
+    throw new Error(`Enabling OpenWork Web failed: HTTP ${openWorkWebAccess.response.status} ${openWorkWebAccess.text.slice(0, 500)}`);
+  }
 
   await using browser = await chrome({
     name: "den-sidebar-ia",

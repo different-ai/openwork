@@ -241,10 +241,31 @@ test(title, async ({ evidence, place }) => {
   await browser.client.send("Network.clearBrowserCookies");
   await evalIn(browser, `localStorage.removeItem("openwork:web:auth-token")`);
   await signInInBrowser(browser, den.ref.webUrl, member);
+  await evalIn(browser, `localStorage.removeItem("openwork:eval:admin-denial-seen")`);
+  await browser.client.send("Page.addScriptToEvaluateOnNewDocument", {
+    source: `(() => {
+      const capture = () => {
+        if (document.body?.innerText.includes("This setting is managed by workspace admins")) {
+          localStorage.setItem("openwork:eval:admin-denial-seen", "true");
+        }
+      };
+      const start = () => {
+        capture();
+        new MutationObserver(capture).observe(document.documentElement, {
+          childList: true,
+          subtree: true,
+          characterData: true,
+        });
+      };
+      if (document.documentElement) start();
+      else document.addEventListener("DOMContentLoaded", start, { once: true });
+    })();`,
+  });
   await navigate(browser.client, teamUrl);
-  await waitFor(browser, `document.body.innerText.includes("This setting is managed by workspace admins")`, {
+  await waitFor(browser, `localStorage.getItem("openwork:eval:admin-denial-seen") === "true"
+    && location.pathname === "/dashboard"`, {
     timeoutMs: 30_000,
-    label: "non-team member denied the team detail screen",
+    label: "non-team member sees the denial before returning to the dashboard",
   });
   const deniedText = await evalIn(browser, `document.body.innerText`);
   expect(String(deniedText)).not.toContain(pluginName);
