@@ -257,10 +257,13 @@ test(engineTitle, async ({ evidence }) => {
 
     const port = 14000 + Math.floor(Math.random() * 2000);
     const credentials = "pdf-routing-spec";
+    // The spec may itself run under an opencode session; the parent's OPENCODE_* variables
+    // (config path, models URL, credentials) must not reach the isolated engine under test.
+    const inherited = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith("OPENCODE")));
     engine = spawn(binary, ["serve", "--hostname", "127.0.0.1", "--port", String(port)], {
       cwd: workspace,
       env: {
-        ...process.env,
+        ...inherited,
         HOME: home,
         XDG_CONFIG_HOME: join(home, ".config"),
         XDG_DATA_HOME: join(home, ".local", "share"),
