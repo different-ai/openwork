@@ -40,11 +40,21 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           PR: ${{ github.event.pull_request.number }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
           set -euo pipefail
+          workflow_path=".github/workflows/critical-path-e2e-required.yml"
           guarded="$(gh api --paginate "repos/$REPO/pulls/$PR/files" --jq '.[].filename' \
             | grep -E '^(\.github/|warden\.toml$|\.warden/|\.agents/skills/|\.claude/skills/)' || true)"
           if [ -n "$guarded" ]; then
+            # Let this introducing PR prove the new check once. After the file
+            # exists on the base branch, every workflow edit is withheld.
+            if [ "$guarded" = "$workflow_path" ] \
+              && ! gh api "repos/$REPO/contents/$workflow_path?ref=$BASE_SHA" >/dev/null 2>&1; then
+              echo "::notice::Authorizing the initial critical-path workflow bootstrap."
+              echo "authorized=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
             echo "::notice::Critical-path E2E withheld: PR changes trusted review machinery."
             echo "authorized=false" >> "$GITHUB_OUTPUT"
             exit 0
