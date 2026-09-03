@@ -652,7 +652,14 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
   );
   await clickButton(app, "Connect");
 
-  // The exchange happened against the mock Den and the account moved on to coworker creation.
+  // The exchange happened against the mock Den and the account moved on to the team steps; this
+  // journey takes the blank Add screen instead of a proposed team.
+  await waitFor(app, `(() => {
+    const own = document.querySelector('[data-testid="onboarding-intents-own"]');
+    if (!(own instanceof HTMLElement)) return false;
+    own.click();
+    return true;
+  })()`, { timeoutMs: 120_000, label: "the team step's own-coworker link" });
   await waitForText(app, "Add a coworker", { timeoutMs: 120_000 });
   expect(denRequests.some((entry) => entry.method === "POST" && entry.path === "/v1/auth/desktop-handoff/exchange")).toBe(true);
   // The embedded server, not the renderer, read the organization's providers with the session it was handed
