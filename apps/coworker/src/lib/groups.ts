@@ -318,9 +318,11 @@ async function runSpeakers(context: RunContext, turn: CoworkerGroupTurn, earlier
       publish(await deps.record(current.id, { speaker: { slug: entry.slug, part: entry.part, status: "running", startedAt: now() } }));
     }
   }
+  const stoppedNames: string[] = [];
   for (const entry of pending) {
     if (signal.aborted) {
       publish(await deps.record(current.id, { speaker: { slug: entry.slug, part: entry.part, status: "stopped", error: "Stopped.", endedAt: now() } }));
+      stoppedNames.push(nameFor(entry.slug));
       continue;
     }
     const speaker = context.participants.find((participant) => participant.slug === entry.slug);
@@ -345,10 +347,13 @@ async function runSpeakers(context: RunContext, turn: CoworkerGroupTurn, earlier
     } catch (cause) {
       const error = cause instanceof Error ? cause.message : String(cause);
       const status = signal.aborted ? "stopped" : "failed";
-      await deps.append({ kind: "status", slug: speaker.slug, turnId: current.id, status, text: status === "stopped" ? `${speaker.name} was stopped.` : describeSpeakerFailure(error, speaker.name).headline });
+      if (status === "failed") await deps.append({ kind: "status", slug: speaker.slug, turnId: current.id, status, text: describeSpeakerFailure(error, speaker.name).headline });
+      else stoppedNames.push(speaker.name);
       publish(await deps.record(current.id, { speaker: { slug: entry.slug, part: entry.part, status, error, endedAt: now() } }));
     }
   }
+  // One quiet line for the whole stop, whoever was mid-reply and whoever had not started.
+  if (stoppedNames.length > 0) await deps.append({ kind: "status", turnId: current.id, status: "stopped", text: `Stopped before ${listNames(stoppedNames)} replied.` });
   return current;
 }
 
