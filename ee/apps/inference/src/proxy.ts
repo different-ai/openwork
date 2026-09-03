@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto"
-import { inferenceBearerKey } from "@openwork-ee/utils/inference-bearer-key"
 import { ManagedModelsPolicyError } from "@openwork/types/den/managed-models-policy"
-import type { Context, Hono } from "hono"
+import type { InferenceRequestOutcome } from "@openwork/types/den/inference"
+import { Hono } from "hono"
+import type { Context } from "hono"
 import { env } from "./env.js"
 import type { assertOrganizationManagedModelsAllowed as assertOrganizationManagedModelsAllowedFn, findActiveInferenceKey as findActiveInferenceKeyFn, getOpenRouterProviderKey as getOpenRouterProviderKeyFn } from "./keys.js"
 import type { ensureUsableBuckets as ensureUsableBucketsFn } from "./limits.js"
@@ -12,9 +13,17 @@ import {
   sentryInferenceReporter,
 } from "./inference-reporting.js"
 import type { InferenceReporter } from "./inference-reporting.js"
+import { inferenceAuth } from "./middleware/inference-auth.js"
+import type { InferenceAuthVariables } from "./middleware/inference-auth.js"
+import { loadOrganizationFromDb, orgContext } from "./middleware/org-context.js"
+import type { LoadOrganization, OrganizationVariables } from "./middleware/org-context.js"
 import { listModelCatalog, resolveModelAlias } from "./model-catalog.js"
 import type { AnalyticsObserver, beginModelAnalytics } from "./task-analytics.js"
 import { completeChatResponse, inferenceError, readResponseJson, relayChatStream, upstreamError } from "./chat-response.js"
+import { createRequestLogRecorder, insertRequestLogIntoDb } from "./request-log.js"
+import type { InsertRequestLog, RequestLogRecorder } from "./request-log.js"
+import { createOpenAiChatSseUsageParser, parseOpenAiChatJsonUsage } from "./usage/openai-chat.js"
+import type { OpenAiChatUsage } from "./usage/openai-chat.js"
 
 type JsonObject = Record<string, unknown>
 type PreparedBody = {
@@ -26,10 +35,13 @@ type PreparedBody = {
 }
 type PreparedBodyResult = PreparedBody | {
   error: Response
+  errorCode: string
   incomingModel: string | null
   upstreamModel: string | null
+  stream: boolean
 }
 type ProxyRequestInit = RequestInit & { duplex: "half" }
+export type InferenceEnv = { Variables: InferenceAuthVariables & OrganizationVariables }
 
 const chatCompletionsPath = "/api/v1/chat/completions"
 const modelsPath = "/api/v1/models"
@@ -64,6 +76,8 @@ const defaultProxyDependencies: ProxyDependencies = {
     const { beginModelAnalytics } = await import("./task-analytics.js")
     return beginModelAnalytics(input)
   },
+  loadOrganization: loadOrganizationFromDb,
+  insertRequestLog: insertRequestLogIntoDb,
 }
 
 type ProxyDependencies = {
@@ -72,18 +86,10 @@ type ProxyDependencies = {
   getOpenRouterProviderKey: typeof getOpenRouterProviderKeyFn
   ensureUsableBuckets: typeof ensureUsableBucketsFn
   fetch: typeof fetch
+  loadOrganization?: LoadOrganization
+  insertRequestLog?: InsertRequestLog
   reporter?: InferenceReporter
   analytics?: typeof beginModelAnalytics
-}
-
-function readInferenceBearerKey(request: Request) {
-  const auth = request.headers.get("authorization")
-  if (auth?.toLowerCase().startsWith("bearer ")) {
-    const value = auth.slice(7).trim()
-    return value ? inferenceBearerKey(value) : null
-  }
-  const value = request.headers.get("x-api-key")?.trim()
-  return value ? inferenceBearerKey(value) : null
 }
 
 function isJsonRequest(request: Request) {
@@ -228,6 +234,151 @@ function secondsUntil(date: Date) {
   return Math.max(0, Math.ceil((date.getTime() - Date.now()) / 1000))
 }
 
+function trackAnalyticsStream(body: ReadableStream<Uint8Array> | null, observer: AnalyticsObserver | null, ok: boolean) {
+  const finish = (status: "completed" | "failed" | "cancelled") => {
+    try { observer?.finish(status) } catch { /* Optional analytics cannot interrupt inference. */ }
+  }
+  const complete = () => finish(ok ? "completed" : "failed")
+  if (!body) complete()
+  if (!body) return body
+  const reader = body.getReader()
+  return new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      try {
+        const chunk = await reader.read()
+        if (chunk.done) {
+          complete()
+          controller.close()
+          return
+        }
+        try { observer?.chunk(chunk.value) } catch { /* Forward the original bytes even if observation fails. */ }
+        controller.enqueue(chunk.value)
+      } catch (error) {
+        finish("failed")
+        controller.error(error)
+      }
+    },
+    async cancel(reason) {
+      finish("cancelled")
+      await reader.cancel(reason)
+    },
+  })
+}
+
+type StreamHooks = {
+  chunk(value: Uint8Array): void
+  done(): void
+  fail(): void
+}
+
+function trackStream(body: ReadableStream<Uint8Array>, hooks: StreamHooks) {
+  const reader = body.getReader()
+  return new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      try {
+        const chunk = await reader.read()
+        if (chunk.done) {
+          hooks.done()
+          controller.close()
+          return
+        }
+        hooks.chunk(chunk.value)
+        controller.enqueue(chunk.value)
+      } catch (error) {
+        hooks.fail()
+        controller.error(error)
+      }
+    },
+    async cancel(reason) {
+      hooks.fail()
+      await reader.cancel(reason)
+    },
+  })
+}
+
+function isEventStreamContentType(contentType: string | null) {
+  return contentType?.split(";")[0].trim().toLowerCase() === "text/event-stream"
+}
+
+function upstreamRequestId(headers: Headers) {
+  return headers.get("x-request-id") ?? headers.get("request-id")
+}
+
+function upstreamOutcome(upstream: Response): InferenceRequestOutcome {
+  return upstream.ok ? "ok" : "upstream_error"
+}
+
+function recordUsage(recorder: RequestLogRecorder, usage: OpenAiChatUsage, source: "stream" | "json") {
+  recorder.setUsage({
+    usageSource: usage.found ? source : "missing",
+    upstreamModel: usage.model,
+    inputTokens: usage.inputTokens,
+    outputTokens: usage.outputTokens,
+    totalTokens: usage.totalTokens,
+    cacheReadTokens: usage.cacheReadTokens,
+    reasoningTokens: usage.reasoningTokens,
+    costUsd: usage.costUsd,
+  })
+}
+
+async function relayJsonResponse(upstream: Response, headers: Headers, recorder: RequestLogRecorder) {
+  const text = await upstream.text()
+  recorder.markFirstByte()
+  let body: unknown = null
+  try {
+    body = JSON.parse(text)
+  } catch {
+    body = null
+  }
+  recordUsage(recorder, parseOpenAiChatJsonUsage(body), "json")
+  void recorder.finish({
+    status: upstream.status,
+    outcome: upstreamOutcome(upstream),
+    upstreamRequestId: upstreamRequestId(upstream.headers),
+    responseBytes: Buffer.byteLength(text),
+  })
+  return new Response(text, { status: upstream.status, statusText: upstream.statusText, headers })
+}
+
+function relayStreamResponse(upstream: Response, headers: Headers, recorder: RequestLogRecorder) {
+  if (!upstream.body) {
+    void recorder.finish({
+      status: upstream.status,
+      outcome: upstreamOutcome(upstream),
+      upstreamRequestId: upstreamRequestId(upstream.headers),
+      responseBytes: 0,
+    })
+    return new Response(null, { status: upstream.status, statusText: upstream.statusText, headers })
+  }
+
+  const parser = isEventStreamContentType(upstream.headers.get("content-type")) ? createOpenAiChatSseUsageParser() : null
+  const decoder = new TextDecoder()
+  let responseBytes = 0
+  const finish = (outcome: InferenceRequestOutcome) => {
+    if (parser) recordUsage(recorder, parser.result(), "stream")
+    void recorder.finish({
+      status: upstream.status,
+      outcome,
+      upstreamRequestId: upstreamRequestId(upstream.headers),
+      responseBytes,
+    })
+  }
+  const body = trackStream(upstream.body, {
+    chunk(value) {
+      recorder.markFirstByte()
+      responseBytes += value.byteLength
+      if (parser) parser.push(decoder.decode(value, { stream: true }))
+    },
+    done() {
+      finish(upstreamOutcome(upstream))
+    },
+    fail() {
+      finish("client_aborted")
+    },
+  })
+  return new Response(body, { status: upstream.status, statusText: upstream.statusText, headers })
+}
+
 async function prepareBody(request: Request, input: {
   organizationId: string
   orgMembershipId: string
@@ -266,7 +417,7 @@ async function prepareBody(request: Request, input: {
       resolvedUpstreamModel: null,
       status: 415,
     })
-    return { error: openAiError(415, "unsupported_media_type", "Inference requests with a body must use a JSON Content-Type."), incomingModel: null, upstreamModel: null }
+    return { error: openAiError(415, "unsupported_media_type", "Inference requests with a body must use a JSON Content-Type."), errorCode: "unsupported_media_type", incomingModel: null, upstreamModel: null, stream: false }
   }
 
   let json: unknown
@@ -309,10 +460,11 @@ async function prepareBody(request: Request, input: {
       status: 400,
       error: errorMessage,
     })
-    return { error: openAiError(400, "invalid_json", "JSON request body is invalid."), incomingModel: null, upstreamModel: null }
+    return { error: openAiError(400, "invalid_json", "JSON request body is invalid."), errorCode: "invalid_json", incomingModel: null, upstreamModel: null, stream: false }
   }
   const requestedModel = isJsonObject(json) && typeof json.model === "string" ? json.model : null
   const model = requestedModel ? resolveModelAlias(requestedModel) : null
+  const stream = isJsonObject(json) && json.stream === true
   const payloadLog = buildInferencePayloadLog(input.organizationId, json)
   input.reporter.request({
     organizationId: input.organizationId,
@@ -348,7 +500,7 @@ async function prepareBody(request: Request, input: {
       resolvedUpstreamModel: null,
       status: 400,
     })
-    return { error: openAiError(400, "model_required", "JSON request body must include a string model."), incomingModel: null, upstreamModel: null }
+    return { error: openAiError(400, "model_required", "JSON request body must include a string model."), errorCode: "model_required", incomingModel: null, upstreamModel: null, stream }
   }
 
   const blockedSelection = validateModelSelection(json)
@@ -372,7 +524,7 @@ async function prepareBody(request: Request, input: {
       resolvedUpstreamModel: model ? model.upstreamModel : null,
       status: 400,
     })
-    return { error: openAiError(400, "unsupported_model_selection", `OpenWork inference does not allow alternate model selection (${blockedSelection}).`), incomingModel: model ? model.alias : null, upstreamModel: model ? model.upstreamModel : null }
+    return { error: openAiError(400, "unsupported_model_selection", `OpenWork inference does not allow alternate model selection (${blockedSelection}).`), errorCode: "unsupported_model_selection", incomingModel: requestedModel, upstreamModel: model ? model.upstreamModel : null, stream }
   }
 
   if (requestedModel === null) {
@@ -395,7 +547,7 @@ async function prepareBody(request: Request, input: {
       resolvedUpstreamModel: null,
       status: 400,
     })
-    return { error: openAiError(400, "model_required", "JSON request body must include a string model."), incomingModel: null, upstreamModel: null }
+    return { error: openAiError(400, "model_required", "JSON request body must include a string model."), errorCode: "model_required", incomingModel: null, upstreamModel: null, stream }
   }
 
   const body = json
@@ -420,7 +572,7 @@ async function prepareBody(request: Request, input: {
       resolvedUpstreamModel: null,
       status: 404,
     })
-    return { error: openAiError(404, "model_not_found", `Unknown OpenWork model alias: ${requestedModel}`), incomingModel: null, upstreamModel: null }
+    return { error: openAiError(404, "model_not_found", `Unknown OpenWork model alias: ${requestedModel}`), errorCode: "model_not_found", incomingModel: requestedModel, upstreamModel: null, stream }
   }
 
   body.model = model.upstreamModel
@@ -434,13 +586,16 @@ async function prepareBody(request: Request, input: {
     inference_key_id: input.inferenceKeyId,
     openwork_request_id: input.openworkRequestId,
   }
+  if (stream) {
+    body.stream_options = { ...(isJsonObject(body.stream_options) ? body.stream_options : {}), include_usage: true }
+  }
 
   return {
     body: { ...body, trace },
     incomingModel: model.alias,
     modelAlias: model.alias,
     upstreamModel: model.upstreamModel,
-    stream: body.stream === true,
+    stream,
   }
 }
 
@@ -468,6 +623,8 @@ function localRouteRejection(path: string, method: string) {
 
 export function registerProxyRoutes(app: Hono, dependencies: ProxyDependencies = defaultProxyDependencies) {
   const reporter = dependencies.reporter ?? sentryInferenceReporter
+  const insertRequestLog = dependencies.insertRequestLog ?? insertRequestLogIntoDb
+  const api = new Hono<InferenceEnv>()
 
   async function managedModelsRejection(organizationId: string) {
     try {
@@ -481,21 +638,11 @@ export function registerProxyRoutes(app: Hono, dependencies: ProxyDependencies =
     }
   }
 
-  async function handleApiRequest(c: Context) {
+  async function handleApiRequest(c: Context<InferenceEnv>) {
     const openworkRequestId = buildRequestId()
     c.header("x-openwork-request-id", openworkRequestId)
     c.header("cache-control", "no-store")
-    const bearerKey = readInferenceBearerKey(c.req.raw)
-    if (!bearerKey) {
-      logProxyError("Missing inference API key", { path: c.req.path, method: c.req.method })
-      return c.json({ error: { message: "Missing OpenWork inference API key.", type: "authentication_error", code: "missing_api_key" } }, 401)
-    }
-
-    const inferenceKey = await dependencies.findActiveInferenceKey(bearerKey)
-    if (!inferenceKey) {
-      logProxyError("Invalid inference API key", { path: c.req.path, method: c.req.method })
-      return c.json({ error: { message: "Invalid OpenWork inference API key.", type: "authentication_error", code: "invalid_api_key" } }, 401)
-    }
+    const inferenceKey = c.get("inference").key
 
     const policyRejection = await managedModelsRejection(inferenceKey.organization_id)
     if (policyRejection) return policyRejection
@@ -509,6 +656,31 @@ export function registerProxyRoutes(app: Hono, dependencies: ProxyDependencies =
     }
 
     const incomingHeaders = sanitizeIncomingHeaders(c.req.raw.headers)
+    const startedAt = new Date()
+    const upstreamPath = c.req.path.replace(/^\/api\/v1/, "")
+    const upstreamUrl = new URL(`${env.openRouterUpstreamUrl}${upstreamPath}`)
+    const recorder = createRequestLogRecorder({ insertRequestLog, reporter })
+    const startRecorder = (input: { incomingModel: string | null; upstreamModel: string | null; stream: boolean; requestBytes?: number }) => {
+      recorder.start({
+        identity: c.get("inference"),
+        openworkRequestId,
+        route: "openwork_openrouter",
+        protocol: "openai_chat",
+        upstreamProviderId: "openrouter",
+        upstreamHost: upstreamUrl.hostname,
+        upstreamPath: upstreamUrl.pathname,
+        method: c.req.method,
+        requestedModel: input.incomingModel,
+        upstreamModel: input.upstreamModel,
+        stream: input.stream,
+        requestBytes: input.requestBytes,
+        startedAt,
+      })
+    }
+    const reject = (response: Response, errorCode: string) => {
+      void recorder.finish({ status: response.status, outcome: "rejected", errorCode })
+      return response
+    }
 
     if (new URL(c.req.url).search) {
       const payloadLog = buildUnparsedPayloadLog("unsupported_query_parameters", c.req.raw.headers.get("content-type"))
@@ -538,7 +710,8 @@ export function registerProxyRoutes(app: Hono, dependencies: ProxyDependencies =
         resolvedUpstreamModel: null,
         status: 400,
       })
-      return openAiError(400, "unsupported_query_parameters", "OpenWork chat completions does not accept query parameters.")
+      startRecorder({ incomingModel: null, upstreamModel: null, stream: false })
+      return reject(openAiError(400, "unsupported_query_parameters", "OpenWork chat completions does not accept query parameters."), "unsupported_query_parameters")
     }
 
     const prepared = await prepareBody(c.req.raw, {
@@ -558,8 +731,10 @@ export function registerProxyRoutes(app: Hono, dependencies: ProxyDependencies =
         organizationId: inferenceKey.organization_id,
         orgMembershipId: inferenceKey.org_membership_id,
       })
-      return prepared.error
+      startRecorder(prepared)
+      return reject(prepared.error, prepared.errorCode)
     }
+    startRecorder({ ...prepared, requestBytes: Buffer.byteLength(JSON.stringify(prepared.body)) })
 
     const limits = await dependencies.ensureUsableBuckets(inferenceKey.organization_id)
     if (!limits.ok) {
@@ -573,14 +748,14 @@ export function registerProxyRoutes(app: Hono, dependencies: ProxyDependencies =
         c.header("x-ratelimit-remaining-tokens", "0")
         c.header("x-ratelimit-reset-tokens", `${retryAfter}s`)
       }
-      return c.json({
+      return reject(c.json({
         error: {
           message: `Rate limit reached for organization ${inferenceKey.organization_id}.`,
           type: "tokens",
           param: null,
           code: "rate_limit_exceeded",
         },
-      }, 429)
+      }, 429), "rate_limit_exceeded")
     }
 
     const providerKey = await dependencies.getOpenRouterProviderKey(inferenceKey.organization_id)
@@ -605,20 +780,18 @@ export function registerProxyRoutes(app: Hono, dependencies: ProxyDependencies =
         resolvedUpstreamModel: prepared.upstreamModel,
         status: 400,
       })
-      return c.json({ error: { message: "No active OpenRouter provider key configured for organization.", type: "invalid_request_error", code: "missing_provider_key" } }, 400)
+      return reject(c.json({ error: { message: "No active OpenRouter provider key configured for organization.", type: "invalid_request_error", code: "missing_provider_key" } }, 400), "missing_provider_key")
     }
 
-    const upstreamPath = c.req.path.replace(/^\/api\/v1/, "")
-    const upstreamUrl = new URL(`${env.openRouterUpstreamUrl}${upstreamPath}`)
-    const startedAt = Date.now()
     // The provider validates n; only a valid requested cardinality constrains responses.
     const choiceCount = typeof prepared.body.n === "number" && Number.isSafeInteger(prepared.body.n) && prepared.body.n > 0 ? prepared.body.n : 1
+    const analyticsStartedAt = Date.now()
     // Fail closed and bound the optional analytics check; it cannot hold up
     // inference when the analytics store is unavailable.
     let timer: ReturnType<typeof setTimeout> | undefined
     const analytics = await Promise.race([
       (async () => {
-        const begin = await dependencies.analytics?.({ key: inferenceKey, request: c.req.raw, requestId: openworkRequestId, model: prepared.upstreamModel, startedAt })
+        const begin = await dependencies.analytics?.({ key: inferenceKey, request: c.req.raw, requestId: openworkRequestId, model: prepared.upstreamModel, startedAt: analyticsStartedAt })
         return begin?.(prepared.stream) ?? null
       })().catch(() => null),
       new Promise<null>((resolve) => { timer = setTimeout(() => resolve(null), 250) }),
@@ -654,7 +827,7 @@ export function registerProxyRoutes(app: Hono, dependencies: ProxyDependencies =
         c.req.raw.signal.removeEventListener("abort", cancel)
         abort.abort()
         finishAnalytics("failed")
-        return dispatchRejection
+        return reject(dispatchRejection, "managed_models_policy_rejected")
       }
       upstream = await dependencies.fetch(upstreamUrl, upstreamInit)
     } catch {
@@ -687,6 +860,7 @@ export function registerProxyRoutes(app: Hono, dependencies: ProxyDependencies =
         upstreamUrl: upstreamUrl.toString(),
         error: "Upstream connection failed",
       })
+      void recorder.finish({ status: 502, outcome: "upstream_unreachable", errorCode: "upstream_unreachable" })
       return c.json(error, 502)
     }
     clearTimeout(headerTimeout)
@@ -731,6 +905,7 @@ export function registerProxyRoutes(app: Hono, dependencies: ProxyDependencies =
       c.req.raw.signal.removeEventListener("abort", cancel)
       abort.abort()
       await upstream.body?.cancel().catch(() => {})
+      void recorder.finish({ status: upstream.status, outcome: "upstream_error", errorCode: error.error.code, upstreamRequestId: upstreamRequestId(upstream.headers) })
       return Response.json(error, { status: upstream.status, headers })
     }
     const contentType = upstream.headers.get("content-type")?.split(";")[0].trim().toLowerCase()
@@ -740,16 +915,25 @@ export function registerProxyRoutes(app: Hono, dependencies: ProxyDependencies =
         c.req.raw.signal.removeEventListener("abort", cancel)
         abort.abort()
         await upstream.body?.cancel().catch(() => {})
+        void recorder.finish({ status: 502, outcome: "upstream_error", errorCode: "upstream_malformed_stream" })
         return Response.json(inferenceError("upstream_malformed_stream", "The model did not return a response stream. Retry the selected model."), { status: 502, headers })
       }
       headers.set("content-type", "text/event-stream; charset=utf-8")
       headers.set("x-accel-buffering", "no")
+      const usageParser = createOpenAiChatSseUsageParser()
+      const usageDecoder = new TextDecoder()
       return new Response(relayChatStream({
-        body: upstream.body, abort, startedAt, idleMs: env.streamIdleMs, choiceCount,
-        onChunk: observeChunk,
+        body: upstream.body, abort, startedAt: analyticsStartedAt, idleMs: env.streamIdleMs, choiceCount,
+        onChunk(bytes) {
+          observeChunk(bytes)
+          recorder.markFirstByte()
+          usageParser.push(usageDecoder.decode(bytes, { stream: true }))
+        },
         onFinish(result) {
           c.req.raw.signal.removeEventListener("abort", cancel)
           finishAnalytics(result.outcome === "completed" ? "completed" : result.outcome === "cancelled" ? "cancelled" : "failed")
+          recordUsage(recorder, usageParser.result(), "stream")
+          void recorder.finish({ status: upstream.status, outcome: result.outcome === "completed" ? "ok" : result.outcome === "cancelled" ? "client_aborted" : "upstream_error", errorCode: result.code, responseBytes: result.responseBytes, upstreamRequestId: upstreamRequestId(upstream.headers) })
           try {
             reporter.completion?.({ ...result, openworkRequestId, organizationId: inferenceKey.organization_id, orgMembershipId: inferenceKey.org_membership_id, modelAlias: prepared.modelAlias })
           } catch { /* Completion reporting must not interrupt stream cleanup. */ }
@@ -761,16 +945,21 @@ export function registerProxyRoutes(app: Hono, dependencies: ProxyDependencies =
     const bodyTimeout = setTimeout(() => abort.abort(), env.upstreamTimeoutMs)
     try {
       const value = await readResponseJson(upstream.body, abort.signal)
+      recorder.markFirstByte()
+      recordUsage(recorder, parseOpenAiChatJsonUsage(value), "json")
       if (analytics) observeChunk(new TextEncoder().encode(JSON.stringify(value)))
       if (!completeChatResponse(value, choiceCount)) {
         finishAnalytics("failed")
+        void recorder.finish({ status: 502, outcome: "upstream_error", errorCode: "upstream_incomplete" })
         return Response.json(inferenceError("upstream_incomplete", "The model returned an incomplete response. Review your work before retrying."), { status: 502, headers })
       }
       const response = Response.json(value, { headers })
       finishAnalytics("completed")
+      void recorder.finish({ status: upstream.status, outcome: "ok", responseBytes: Buffer.byteLength(JSON.stringify(value)), upstreamRequestId: upstreamRequestId(upstream.headers) })
       return response
     } catch {
       finishAnalytics("failed")
+      void recorder.finish({ status: 502, outcome: c.req.raw.signal.aborted ? "client_aborted" : "upstream_error", errorCode: abortError()?.error.code ?? "upstream_malformed_response" })
       return Response.json(abortError() ?? inferenceError("upstream_malformed_response", "The model response was interrupted or malformed. Review your work before retrying."), { status: 502, headers })
     } finally {
       clearTimeout(bodyTimeout)
@@ -779,6 +968,10 @@ export function registerProxyRoutes(app: Hono, dependencies: ProxyDependencies =
     }
   }
 
-  app.all("/api/v1", handleApiRequest)
-  app.all("/api/v1/*", handleApiRequest)
+  for (const path of ["/api/v1", "/api/v1/*"]) {
+    api.use(path, inferenceAuth({ findActiveInferenceKey: dependencies.findActiveInferenceKey }))
+    api.use(path, orgContext({ loadOrganization: dependencies.loadOrganization ?? loadOrganizationFromDb }))
+    api.all(path, handleApiRequest)
+  }
+  app.route("/", api)
 }
