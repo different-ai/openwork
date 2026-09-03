@@ -246,7 +246,12 @@ async function engineUserMessages(serverUrl: string, token: string, workspaceId:
 test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
   needs({ optIn: ["OPENWORK_EVAL_E2E_TESTS"], commands: ["opencode"] });
   const scripted = await startScriptedModel();
-  await using app = await coworker({ name: "turn-recovery" });
+  // No key from the runner's shell may reach the app: the scripted provider must be the only model
+  // worth recommending besides the free one, so "Use <model>" is deterministic.
+  await using app = await coworker({
+    name: "turn-recovery",
+    env: { ANTHROPIC_API_KEY: "", OPENAI_API_KEY: "", OPENROUTER_API_KEY: "", GEMINI_API_KEY: "", GOOGLE_API_KEY: "", XAI_API_KEY: "", GROQ_API_KEY: "", MISTRAL_API_KEY: "", DEEPSEEK_API_KEY: "" },
+  });
 
   await waitFor(app, `(document.body?.innerText ?? "").toLowerCase().includes("welcome to open coworker")`, {
     timeoutMs: 120_000,
@@ -329,7 +334,7 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
     const technical = failure.querySelector('[data-testid="coworker-turn-technical"]');
     return {
       headline: failure.querySelector('[data-testid="coworker-turn-headline"]')?.textContent?.trim() ?? "",
-      text: failure.textContent ?? "",
+      text: failure.innerText ?? "",
       className: failure.className,
       needsYou: failure.getAttribute("data-needs-you"),
       technicalOpen: technical instanceof HTMLDetailsElement ? technical.open : null,
@@ -357,10 +362,13 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
   expect(hardCard.working).toBe(false);
   await evalIn(app, `document.querySelector('[data-testid="coworker-turn-choice"][data-choice="use-model"]').click(); true`);
   await waitForReply(app, SECOND_MODEL_REPLY, 120_000);
+  // The turn settles a moment after its reply shows: the bubble goes, one receipt line stays.
+  expect(await waitFor(app, `(() => {
+    const lines = [...document.querySelectorAll('[data-testid="coworker-turn-line"][data-outcome="retried"]')].map((line) => line.textContent?.trim());
+    return lines.length > 0 && document.querySelectorAll('[data-testid="coworker-turn-failed"]').length === 0 ? lines : false;
+  })()`, { timeoutMs: 30_000, label: "the Retried with line" })).toEqual([`Retried with ${SECOND_MODEL_LABEL}`]);
   const hardTrace = await endOutcomeTrace(app);
   expect(hardTrace.outcomes).toContain("failed");
-  expect(await evalIn(app, `document.querySelectorAll('[data-testid="coworker-turn-failed"]').length`)).toBe(0);
-  expect(await evalIn(app, `[...document.querySelectorAll('[data-testid="coworker-turn-line"][data-outcome="retried"]')].map((line) => line.textContent?.trim())`)).toEqual([`Retried with ${SECOND_MODEL_LABEL}`]);
   const hardBubbles = await evalIn(app, USER_BUBBLES);
   expect(Array.isArray(hardBubbles) && hardBubbles.filter((text) => String(text).includes("HARD")).length).toBe(1);
   expect(scripted.requests.filter((request) => request.prompt.includes("HARD")).map((request) => request.model)).toEqual([FIRST_MODEL, SECOND_MODEL]);
