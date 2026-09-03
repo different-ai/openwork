@@ -149,8 +149,8 @@ const gmailAttachmentResponseSchema = z.object({
 }).meta({ ref: "GoogleWorkspaceGmailAttachmentResponse" })
 
 const calendarEventsQuerySchema = z.object({
-  timeMin: z.string().datetime().describe("Inclusive lower bound for event start time."),
-  timeMax: z.string().datetime().describe("Exclusive upper bound for event start time."),
+  timeMin: z.string().datetime({ offset: true }).describe("Inclusive lower bound for event start time. RFC 3339 date-time with a UTC offset or Z, e.g. 2026-09-03T00:00:00+02:00 or 2026-09-02T22:00:00Z."),
+  timeMax: z.string().datetime({ offset: true }).describe("Exclusive upper bound for event start time. RFC 3339 date-time with a UTC offset or Z, e.g. 2026-09-04T00:00:00+02:00 or 2026-09-03T22:00:00Z."),
   maxResults: z.coerce.number().int().min(1).max(100).default(25).describe("Maximum events to return, capped at 100."),
 })
 
@@ -180,8 +180,8 @@ const createCalendarEventBodySchema = z.object({
   summary: z.string().trim().min(1).max(1_000).describe("Event title."),
   description: z.string().max(20_000).optional().describe("Optional event description."),
   location: z.string().max(1_000).optional().describe("Optional event location."),
-  start: z.string().datetime().describe("Event start date-time."),
-  end: z.string().datetime().describe("Event end date-time."),
+  start: z.string().datetime({ offset: true }).describe("Event start date-time. RFC 3339 date-time with a UTC offset or Z, e.g. 2026-09-03T17:00:00+02:00 or 2026-09-03T15:00:00Z."),
+  end: z.string().datetime({ offset: true }).describe("Event end date-time. RFC 3339 date-time with a UTC offset or Z, e.g. 2026-09-03T17:30:00+02:00 or 2026-09-03T15:30:00Z."),
   timeZone: z.string().trim().min(1).max(128).optional().describe("Optional IANA time zone for start and end."),
   attendees: z.array(z.string().email()).max(100).optional().describe("Optional attendee email addresses."),
   createMeetLink: z.boolean().optional().describe("Set true to create a Google Meet conferencing link for this event; the response returns meetLink when Google creates it."),

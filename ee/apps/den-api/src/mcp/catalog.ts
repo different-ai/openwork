@@ -215,6 +215,35 @@ export function getJsonRequestBodySchema(operation: OpenApiOperation): unknown {
   return mediaType.schema
 }
 
+export function getQueryParameterSchema(operation: OpenApiOperation): unknown {
+  const parameters = getParameters(operation, "query")
+  if (parameters.length === 0) {
+    return undefined
+  }
+
+  const properties: Record<string, object> = {}
+  const required: string[] = []
+  for (const parameter of parameters) {
+    if (typeof parameter.name !== "string") {
+      continue
+    }
+    const description = typeof parameter.description === "string" ? parameter.description : undefined
+    properties[parameter.name] = {
+      ...(parameter.schema ?? {}),
+      ...(description ? { description } : {}),
+    }
+    if (parameter.required === true) {
+      required.push(parameter.name)
+    }
+  }
+
+  return {
+    type: "object",
+    properties,
+    ...(required.length > 0 ? { required } : {}),
+  }
+}
+
 function getRequestBody(operation: OpenApiOperation): OpenApiRequestBody | null {
   const requestBody = operation.requestBody
   return typeof requestBody === "object" && requestBody !== null ? requestBody : null

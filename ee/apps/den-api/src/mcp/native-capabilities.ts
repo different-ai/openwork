@@ -6,6 +6,7 @@ import type { AgentToolContentPart } from "./tool-content.js"
 import {
   getJsonRequestBodySchema,
   getParameters,
+  getQueryParameterSchema,
   hasJsonRequestBody,
   pathParameterNamesFromTemplate,
   type McpToolOperation,
@@ -37,7 +38,6 @@ export function parseNativeCapabilityName(name: string): { connectionId: string;
 }
 
 export type NativeCapabilityMatch = CapabilityMatch & {
-  inputSchema?: McpToolOperation["inputSchema"]
   kind?: ExternalCapabilityMatch["kind"]
   status?: ExternalCapabilityMatch["status"]
   hint?: string
@@ -74,6 +74,7 @@ function capabilityMatch(
   scriptNamespace?: string,
 ): NativeCapabilityMatch {
   const bodySchema = getJsonRequestBodySchema(operation.operation)
+  const querySchema = getQueryParameterSchema(operation.operation)
   return {
     name: buildNativeCapabilityName(connection.id, operation.name),
     method: operation.method,
@@ -84,8 +85,8 @@ function capabilityMatch(
     queryParams: getParameters(operation.operation, "query")
       .flatMap((parameter) => typeof parameter.name === "string" ? [parameter.name] : []),
     hasBody: hasJsonRequestBody(operation.operation),
-    inputSchema: operation.inputSchema,
     ...(bodySchema === undefined ? {} : { bodySchema }),
+    ...(querySchema === undefined ? {} : { querySchema }),
     ...(scriptNamespace ? { scriptPath: codemodeScriptPath(scriptNamespace, operation.name) } : {}),
   }
 }
