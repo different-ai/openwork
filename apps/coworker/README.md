@@ -264,6 +264,76 @@ OPENWORK_EVAL_ELECTRON_BINARY="apps/coworker/dist-electron/mac-arm64/Open Cowork
   pnpm evals:e2e open-coworker-documents --local
 ```
 
+## When a reply doesn't come
+
+A turn that does not simply reply is still part of the conversation — one
+small line or one coworker-side bubble in the flow, never a wide card. What
+the conversation says is derived from one place, `lib/turn-outcome.ts`: the
+turn in flight (`turns.json` beside `coworker.md` records it per thread), what
+the engine reports (idle, busy, or retrying with its next attempt), the reply
+it holds for that message, and the wait budget. The header status, the rail
+line, Activity's Now card, and the journeys read the same value.
+
+- **Working** is the live row: a small avatar, three dots, and one phrase that
+  changes only with the phase ("Nova is thinking…"). Tap the phrase when you
+  get impatient and one discreet gray line below shows the end of what is
+  streaming right now — the words being written, the thinking, or the tool
+  step — live from the engine's events (the thread itself only carries a text
+  or reasoning part once it has ended); it hides itself after twelve seconds,
+  or on a second tap.
+- **Still working** is not a failure. When two minutes pass while the engine
+  is still busy, the phrase softens to "Nova is still working on it…" and gains
+  one inline *Stop*; the header and rail say *Still working*. Only the engine
+  going idle without a reply ends the turn without one.
+- **Retrying.** The engine retries a rate limit or a 5xx by itself and says
+  when; the app shows "Couldn't reach the AI model. Trying again in 6 s…" with
+  the count live and one *Stop*. When the engine gives up on a transient
+  failure (network, a busy provider, a 5xx, the AI service restarting —
+  `lib/turn-retry.ts`), the app tries again itself, three times at 2, 6, and
+  15 seconds, under the same message id. Hard failures — a model that cannot
+  use tools or is not available, a refused account, a denied tool — are never
+  retried automatically beyond the one-time fallback to another connected
+  model when the app itself had picked the failing one. A retry the engine
+  pushes hours away (the free tier's daily usage) is a failure with the
+  provider's words, not endless Retrying.
+- **A failure** is one message on the coworker's side at the bubble's width: a
+  headline in its voice ("Nova couldn't reach the AI model.", "Nova's AI model
+  cannot use the tools enabled for this coworker."), one line of explanation,
+  then lettered choices — `A Use <model>` when another connected model can take
+  over, else `A Retry`; `B Choose AI model`; and `C Continue with OpenWork`
+  (signed out) or `C Refresh providers` (signed in) when the model is the
+  likely cause. Never more than three. An amber dot says it needs you; the raw
+  text waits behind a closed *Technical details*. When the retry replies the
+  bubble goes and, if the model changed, one line stays: "Retried with Claude".
+- **Stopped.** The round send control becomes a stop control while a reply runs
+  and the field is empty; the live row's *Stop* and the header's *Stop* do the
+  same. Stopping leaves one quiet line — "Stopped." · *Retry* — and Retry runs
+  the same message again under its own id, so it is never in the thread twice
+  (`retryTurn` in `@openwork/headless-threads` removes the earlier attempt and
+  prompts again). A stop pressed while the message is still on its way is kept
+  and carried out as soon as the engine has the turn.
+- **Cut off.** A quit or reload while a reply was on its way reads, on the next
+  open, as "Stopped when the app closed before Nova replied." · *Continue* ·
+  *Discard*; Continue finishes it under the same message id. If the engine is
+  still on the turn when the window returns, the view simply follows it.
+- **Next.** The composer never holds. Enter while the coworker works puts the
+  message on **Next** — rows between the transcript and the field ("Next ·
+  steers the reply that follows") with *Edit* (back to the field), *Remove*,
+  and *Send now*, which stops the reply in progress and sends at once, leaving
+  the stopped turn's one "Stopped." line where it happened. Next drains one
+  message at a time, in order, as turns settle; it holds behind a failure or a
+  stop until you choose, and it survives a reload and a coworker switch.
+  Steering is a Next message: the engine takes a new prompt only at a turn
+  boundary, so nothing is injected mid-generation.
+
+Prove it with the packaged app (the scripted model is on the runner's
+loopback, so this journey runs on the local lane by construction):
+
+```bash
+OPENWORK_EVAL_ELECTRON_BINARY="apps/coworker/dist-electron/mac-arm64/Open Coworker.app/Contents/MacOS/Open Coworker" \
+  pnpm evals:e2e open-coworker-turn-recovery --local
+```
+
 ## Architecture
 
 - `electron/main.mjs` — standalone shell (own app id/userData; single
