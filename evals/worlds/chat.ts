@@ -302,7 +302,14 @@ export async function attachmentUpload(seed: Seed) {
     agentWorkloads: [{
       promptMarker: "Describe the attached image.",
       finalReply: reply,
-      steps: [],
+      steps: [{
+        tool: "bash",
+        arguments: {
+          command: "printf '%s\\n' 'attachment-upload-ready'",
+          timeout: 30_000,
+          description: "Acknowledge the attachment upload",
+        },
+      }],
     }],
   });
   const den = await seed.den({ mocks: { agent: mock } });
