@@ -1,5 +1,4 @@
-import { clickButton, evalIn, fill, waitFor, waitForText } from "@openwork/behaviors";
-import { coworker, needs, test } from "@openwork/testkit";
+import { clickButton, coworker, evalIn, fill, needs, test, waitFor, waitForText } from "@openwork/testkit";
 import { expect } from "vitest";
 
 const enabled = process.env.OPENWORK_EVAL_E2E_TESTS === "1";
