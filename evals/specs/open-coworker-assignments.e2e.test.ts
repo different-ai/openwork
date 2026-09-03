@@ -1,4 +1,4 @@
-import { clickButton, coworker, evalIn, fill, needs, test, waitFor, waitForText } from "@openwork/testkit";
+import { EVAL_COWORKER_MODEL, clickButton, coworker, evalIn, fill, needs, test, waitFor, waitForText } from "@openwork/testkit";
 import { expect } from "vitest";
 import { assignmentPrompt, assignmentTitle } from "../../apps/coworker/src/lib/conversation.ts";
 
@@ -101,7 +101,7 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
   }));
   const workspaceId = String(created.workspaceId);
   expect(workspaceId).not.toBe("");
-  await invokeCoworker(app, "coworkers.update", { slug: "editor", patch: { model: "opencode/big-pickle", modelVariant: "" } });
+  await invokeCoworker(app, "coworkers.update", { slug: "editor", patch: { model: EVAL_COWORKER_MODEL, modelVariant: "" } });
   await evalIn(app, "location.reload(); true");
   await waitFor(app, `Boolean(document.querySelector('[data-testid="coworker-discussion-view"]')) && [...document.querySelectorAll("h1")].some((heading) => heading.textContent?.trim() === "Editor")`, {
     timeoutMs: 120_000,
