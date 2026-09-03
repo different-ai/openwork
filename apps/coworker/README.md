@@ -14,6 +14,8 @@ adds no new database concepts.
 ├── coworker.md        app-owned profile, workspace id, model + reasoning preference
 ├── discussions.json   which native threads are discussions (the open one is in coworker.md)
 ├── local-responsibilities.json  local schedule and run state
+├── workers.json       which native threads belong to Workers
+├── workers/<id>/      one Worker: worker.json (goal, lifespan, status) + findings.jsonl
 ├── soul.md            stable identity, loaded every turn
 ├── memory/
 │   ├── working.md     active memory the coworker itself edits while working
@@ -127,6 +129,29 @@ The coworker directory is registered as an ordinary OpenWork workspace, so:
   `@openwork/headless-threads`. Local responsibilities run while Open Coworker
   is available and recover at most one missed occurrence after relaunch; they
   do not pretend to be always-on Cloud work.
+- **Workers are long-lived helpers a coworker runs for one goal.** A Worker is
+  a native thread in the coworker's own workspace — same files, memory, tools,
+  and permissions — started for a goal that outlives one reply (watching
+  something over time, a long research pass, a multi-step job) with a lifespan:
+  a number of turns (default 10), a time, or until stopped. It works in bounded
+  turns and ends each with a *Finding*, a *Needs a decision*, or *Done*, which
+  the app reads back into `workers/<id>/findings.jsonl`; every turn takes a
+  slot on this Mac like a responsibility run and releases it when it settles,
+  so Workers and scheduled runs wait in one line (`electron/workers.mjs`,
+  `electron/main.mjs`). Each finding wakes the coworker: findings queue per
+  coworker and, at most once a minute, become one ordinary turn in its open
+  discussion listing the Workers and their updates; the transcript folds that
+  turn into the action line ("Reviewed an update from Market scan") beside
+  whatever the coworker did about it. The coworker starts, steers, and stops
+  Workers through its own tools (`worker_spawn`, `worker_steer`,
+  `worker_cancel`, `workers_list`, `worker_findings`, served by the same
+  loopback MCP server as its document tools); the person does the same from
+  the panel's Workers view — flat rows opening into the findings timeline,
+  Steer, Pause/Resume, Stop, and Open its work (the Worker's thread, read-only)
+  — and starts one with New Worker. At most three Workers are live per
+  coworker; a Worker never starts a Worker. `workers.json` keeps Worker threads
+  out of discussions and assignments; a Worker left mid-turn by a quit resumes
+  on the next launch and waits its turn like any run.
 - **Skills and MCP** come for free from the same engine configuration layering
   the OpenWork desktop uses.
 - **Personality is a voice, not a behavior.** Each coworker can have a
