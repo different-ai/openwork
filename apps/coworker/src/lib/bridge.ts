@@ -1,6 +1,6 @@
 /** Typed access to the Open Coworker main-process bridge. */
-import type { AutomationSchedule } from "@openwork/types/automations";
 import type { CoworkerDocument, CoworkerDocumentSummary, DocumentRevision, DocumentStatus } from "./documents";
+import type { LocalSchedule } from "./local-schedule.ts";
 import type { Personality } from "./personalities";
 import type { WorkerEvent, WorkerLifespan, WorkerSummary } from "./workers";
 
@@ -153,7 +153,8 @@ export type LocalResponsibility = {
   id: string;
   name: string;
   instructions: string;
-  schedule: AutomationSchedule;
+  /** The shared once/daily/weekly contract, or a local-only interval or custom timetable. */
+  schedule: LocalSchedule;
   state: "active" | "paused";
   nextDueAt: number | null;
   /** Always `runs[0]` when any run exists. */
@@ -168,8 +169,30 @@ export type LocalResponsibility = {
 export type LocalRunStatus = { limit: number; active: number; queued: number };
 
 export type CoworkerSettings = {
-  /** How many responsibilities may run at the same time on this Mac (1–4). */
+  /** How many responsibilities may run at the same time on this Mac (1–8). */
   maxParallelLocalRuns: number;
+  /** The least time between two runs of one assignment on this Mac: 15, 30, or 60 minutes. */
+  minimumRunGapMinutes: number;
+  /** The most runs one assignment may make in a day on this Mac. */
+  maxRunsPerDay: number;
+};
+
+/** One recorded change to the coworker's memory or soul, by the coworker, the person, or an undo. */
+export type MemoryChange = {
+  id: string;
+  at: number;
+  actor: "coworker" | "person" | "undo";
+  /** The tool that made it (`memory_remember`, `soul_update`, …), `edit` for a person's edit, `undo` for an undo. */
+  tool: string;
+  input: Record<string, unknown>;
+  /** The first line of what the tool answered. */
+  output: string;
+  /** What changed in each file, as short excerpts; null when the file did not exist. */
+  files: Array<{ path: string; before: string | null; after: string | null }>;
+  /** The change this one undid, when it is an undo. */
+  undoes: string | null;
+  /** True once a later change undid this one. */
+  undone: boolean;
 };
 
 export type RuntimeInfo = {
@@ -341,6 +364,10 @@ export const coworkerBridge = {
       invoke<{ ok: boolean }>("coworkers.memory.index", { slug, file, summary }),
     /** Forget a memory: the file and its index line go together. */
     remove: (slug: string, file: string) => invoke<{ ok: boolean }>("coworkers.memory.delete", { slug, file }),
+    /** Recent changes to memory and soul, newest first. */
+    changes: (slug: string, limit?: number) => invoke<MemoryChange[]>("coworkers.memory.changes", { slug, limit }),
+    /** Put the files a change touched back as they were; the undo is recorded as a change too. */
+    undo: (slug: string, changeId: string) => invoke<MemoryChange>("coworkers.memory.undo", { slug, changeId }),
   },
   /**
    * Documents: the coworker writes them through its own tools; the person
@@ -363,8 +390,11 @@ export const coworkerBridge = {
   },
   localResponsibilities: {
     list: (slug: string) => invoke<LocalResponsibility[]>("localResponsibilities.list", { slug }),
-    create: (slug: string, input: { name: string; instructions: string; schedule: AutomationSchedule }) =>
+    create: (slug: string, input: { name: string; instructions: string; schedule: LocalSchedule }) =>
       invoke<LocalResponsibility>("localResponsibilities.create", { slug, ...input }),
+    /** Change a responsibility in place: name, instructions, schedule, or whether it is active. */
+    update: (slug: string, id: string, patch: Partial<{ name: string; instructions: string; schedule: LocalSchedule; active: boolean }>) =>
+      invoke<LocalResponsibility>("localResponsibilities.update", { slug, id, patch }),
     setActive: (slug: string, id: string, active: boolean) =>
       invoke<LocalResponsibility>("localResponsibilities.setActive", { slug, id, active }),
     remove: (slug: string, id: string) => invoke<{ ok: boolean }>("localResponsibilities.delete", { slug, id }),
