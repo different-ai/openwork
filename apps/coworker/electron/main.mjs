@@ -11,6 +11,7 @@
 import { randomBytes } from "node:crypto";
 import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { homedir } from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { BrowserWindow, Menu, app, dialog, ipcMain, shell } from "electron";
@@ -71,6 +72,19 @@ import {
   reconcileInterruptedLocalRuns,
   setLocalResponsibilityActive,
 } from "./local-responsibilities.mjs";
+import {
+  SignInImportError,
+  codexAuthFromFile,
+  codexAuthPath,
+  copilotAuthFromFile,
+  copilotConfigDir,
+  copilotSignedIn,
+  customProviderId,
+  detectLocalProviders,
+  listOpenAiCompatibleModels,
+  localServerProviderPatch,
+  openAiCompatibleProviderConfig,
+} from "./local-providers.mjs";
 import { resolveBundledOpencodeBinary, resolveUserDataDir } from "./runtime-paths.mjs";
 import { SETTINGS_FILE, readSettings, updateSettings } from "./settings.mjs";
 import {
@@ -1166,6 +1180,324 @@ async function listPreparedCoworkers() {
   return prepared;
 }
 
+/** The silent facilitator's hidden workspace, registered on first use; never listed as a coworker. */
+async function ensureCoordinatorWorkspace() {
+  await ensurePlatformServer();
+  const coordinator = await ensureCoordinatorHome(coworkersDir);
+  if (coordinator.workspaceId) return coordinator;
+  const workspaceId = await registerCoworkerWorkspace(coordinator);
+  const updated = await updateCoordinator(coworkersDir, { workspaceId });
+  if (!serverHandle?.managedOpencode) await restartPlatformServer();
+  return updated;
+}
+
+// ---------------------------------------------------------------------------
+// AI providers on this Mac. Detection is `electron/local-providers.mjs`; the
+// connect steps below only ever use the engine's own credential store
+// (`PUT`/`DELETE /auth/{provider}`), its own sign-in flows, and the embedded
+// server's runtime provider config — the same paths OpenWork Desktop uses. A
+// secret travels from a sign-in file or the person's own typing straight to
+// the engine over loopback; this process keeps none of it and logs none of it.
+
+class EngineRequestError extends Error {
+  constructor(status, body) {
+    super(engineErrorMessage(status, body));
+    this.name = "EngineRequestError";
+    this.status = status;
+    this.body = body;
+  }
+}
+
+function engineErrorMessage(status, body) {
+  const data = body && typeof body === "object" ? body : {};
+  const nested = data.data && typeof data.data === "object" ? data.data : {};
+  const message = [nested.message, data.message].find((value) => typeof value === "string" && value.trim());
+  return message ? message.trim() : `The AI service answered with HTTP ${status}.`;
+}
+
+/** A workspace to reach the engine through: the first coworker's, else the hidden coordinator's. */
+async function providerWorkspaceId() {
+  const coworkers = await listCoworkers(coworkersDir).catch(() => []);
+  const ready = coworkers.find((coworker) => coworker.workspaceId);
+  if (ready) return ready.workspaceId;
+  return (await ensureCoordinatorWorkspace()).workspaceId;
+}
+
+async function engineRequest(method, enginePath, body, { timeoutMs = 20_000, signal } = {}) {
+  const workspaceId = await providerWorkspaceId();
+  const handle = await ensurePlatformServer();
+  if (!handle.managedOpencode) throw new Error(engineError || "AI is unavailable on this Mac");
+  const response = await fetch(`${handle.url}/workspace/${encodeURIComponent(workspaceId)}/opencode${enginePath}`, {
+    method,
+    headers: {
+      Authorization: `Bearer ${ownerToken}`,
+      ...(body === undefined ? {} : { "Content-Type": "application/json" }),
+    },
+    body: body === undefined ? undefined : JSON.stringify(body),
+    signal: signal ?? AbortSignal.timeout(timeoutMs),
+  });
+  const text = await response.text();
+  let json = null;
+  try {
+    json = text ? JSON.parse(text) : null;
+  } catch {
+    json = null;
+  }
+  if (!response.ok) throw new EngineRequestError(response.status, json);
+  return json;
+}
+
+/** Rebuild the engine so a credential or provider change is in effect before anyone counts models. */
+async function reloadEngine() {
+  const workspaceId = await providerWorkspaceId();
+  const handle = await ensurePlatformServer();
+  await fetchJson(`${handle.url}/workspace/${encodeURIComponent(workspaceId)}/engine/reload`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${ownerToken}` },
+  }, 60_000);
+}
+
+async function readEngineProviders() {
+  const payload = await engineRequest("GET", "/provider");
+  const connected = new Set(Array.isArray(payload?.connected) ? payload.connected : []);
+  return (Array.isArray(payload?.all) ? payload.all : []).map((provider) => ({
+    id: String(provider.id ?? ""),
+    name: typeof provider.name === "string" && provider.name.trim() ? provider.name.trim() : String(provider.id ?? ""),
+    env: Array.isArray(provider.env) ? provider.env.filter((name) => typeof name === "string") : [],
+    source: typeof provider.source === "string" ? provider.source : "",
+    connected: connected.has(provider.id),
+    modelCount: provider.models && typeof provider.models === "object" ? Object.keys(provider.models).length : 0,
+  }));
+}
+
+/** The engine's own sign-in methods: provider id → labels of its browser/device flows. */
+async function readEngineSignIns() {
+  const methods = await engineRequest("GET", "/provider/auth").catch(() => ({}));
+  return Object.fromEntries(
+    Object.entries(methods && typeof methods === "object" ? methods : {}).map(([providerId, list]) => [
+      providerId,
+      (Array.isArray(list) ? list : []).flatMap((method, index) => (method?.type === "oauth" ? [{ index, label: String(method.label ?? "") }] : [])),
+    ]).filter(([, list]) => list.length > 0),
+  );
+}
+
+async function connectedModelCount(providerId) {
+  const provider = (await readEngineProviders()).find((entry) => entry.id === providerId);
+  return provider?.connected ? provider.modelCount : 0;
+}
+
+/** Store a credential in the engine's own store and bring it into effect. */
+async function storeCredential(providerId, auth) {
+  await engineRequest("PUT", `/auth/${encodeURIComponent(providerId)}`, auth);
+  await reloadEngine();
+  return connectedModelCount(providerId);
+}
+
+async function patchRuntimeProviders(patch) {
+  const handle = await ensurePlatformServer();
+  const tokens = await loadOrCreateTokens();
+  return fetchJson(`${handle.url}/runtime-config/providers`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", "X-OpenWork-Host-Token": tokens.hostToken },
+    body: JSON.stringify({ provider: patch }),
+  }, 90_000);
+}
+
+async function readRuntimeProviderIds() {
+  const handle = await ensurePlatformServer();
+  const tokens = await loadOrCreateTokens();
+  const payload = await fetchJson(`${handle.url}/runtime-config/providers`, { headers: { "X-OpenWork-Host-Token": tokens.hostToken } });
+  return Object.keys(payload?.provider && typeof payload.provider === "object" ? payload.provider : {});
+}
+
+function connectedResult(providerId, label, modelCount) {
+  return { status: "connected", providerId, label, modelCount };
+}
+
+function plainConnectError(error) {
+  if (error instanceof SignInImportError) return error.message;
+  if (error instanceof EngineRequestError) return error.message;
+  return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * Connect one detected finding in one step: a Codex or Copilot sign-in goes to
+ * the engine as the credential its own sign-in would have stored; a local
+ * server becomes an engine provider pointed at its address.
+ */
+async function connectLocalProvider(id) {
+  const { found } = await detectLocalProviders({ log: debugLog });
+  const finding = found.find((entry) => entry.id === id);
+  if (!finding) throw new Error("That is no longer on this Mac. Refresh and try again.");
+  if (finding.how === "in-use") return connectedResult(finding.providerId, finding.label, await connectedModelCount(finding.providerId));
+  if (finding.how === "unavailable") throw new Error(finding.reason);
+  try {
+    if (finding.kind === "codex") {
+      const parsed = JSON.parse(await readFile(codexAuthPath(process.env, homedir()), "utf8"));
+      const modelCount = await storeCredential("openai", codexAuthFromFile(parsed));
+      return connectedResult("openai", finding.label, modelCount);
+    }
+    if (finding.kind === "copilot") {
+      const directory = copilotConfigDir(process.env, homedir());
+      const files = await Promise.all(["apps.json", "hosts.json"].map((file) => readFile(path.join(directory, file), "utf8").then(JSON.parse).catch(() => null)));
+      const parsed = files.find((file) => file && copilotSignedIn(file));
+      const modelCount = await storeCredential("github-copilot", copilotAuthFromFile(parsed));
+      return connectedResult("github-copilot", finding.label, modelCount);
+    }
+    if (finding.kind === "server") {
+      await patchRuntimeProviders(localServerProviderPatch(finding));
+      return connectedResult(finding.providerId, finding.label, await connectedModelCount(finding.providerId));
+    }
+  } catch (error) {
+    if (error instanceof SignInImportError) {
+      return { status: "failed", providerId: finding.providerId, label: finding.label, error: expiredSignInMessage(finding), fallback: "sign-in" };
+    }
+    throw new Error(plainConnectError(error));
+  }
+  throw new Error("This cannot be connected here.");
+}
+
+function expiredSignInMessage(finding) {
+  if (finding.kind === "codex") return "Codex's sign-in has expired — sign in again in Codex, then Connect.";
+  if (finding.kind === "copilot") return "Copilot's sign-in has expired — sign in again in your editor, then Connect.";
+  return "This sign-in has expired.";
+}
+
+/** A key the person typed goes straight to the engine's store; nothing here keeps it. */
+async function saveProviderKey(providerId, key) {
+  const trimmedId = String(providerId ?? "").trim();
+  const trimmedKey = String(key ?? "").trim();
+  if (!trimmedId) throw new Error("Choose a provider first.");
+  if (!trimmedKey) throw new Error("Paste the key first.");
+  const provider = (await readEngineProviders()).find((entry) => entry.id === trimmedId);
+  if (!provider) throw new Error("That provider is not offered here.");
+  const modelCount = await storeCredential(trimmedId, { type: "api", key: trimmedKey });
+  return connectedResult(trimmedId, provider.name, modelCount);
+}
+
+/** Sign-in attempts in flight: the engine waits on the browser or device flow while the renderer polls here. */
+const signInAttempts = new Map();
+const SIGN_IN_WAIT_MS = 15 * 60_000;
+
+function codeFromInstructions(instructions) {
+  const match = /code:?\s*([A-Z0-9][A-Z0-9-]{3,})/i.exec(String(instructions ?? ""));
+  return match ? match[1] : "";
+}
+
+function plainSignInError(error) {
+  const message = plainConnectError(error);
+  if (/ProviderAuthOauthCallbackFailed|callback failed/i.test(message)) return "The sign-in did not finish. Try again.";
+  if (/timed out|TimeoutError|aborted/i.test(message)) return "The sign-in took too long. Try again.";
+  return message;
+}
+
+/** Start the engine's own sign-in for a provider and wait for it in the background. */
+async function startProviderSignIn(providerId, methodIndex) {
+  const trimmedId = String(providerId ?? "").trim();
+  const signIns = await readEngineSignIns();
+  const methods = signIns[trimmedId] ?? [];
+  const chosen = methods.find((method) => method.index === methodIndex) ?? methods[0];
+  if (!chosen) throw new Error("This provider has no sign-in here. Add a key instead.");
+  const inputs = trimmedId === "github-copilot" ? { deploymentType: "github.com" } : {};
+  const authorization = await engineRequest("POST", `/provider/${encodeURIComponent(trimmedId)}/oauth/authorize`, { method: chosen.index, inputs });
+  const attemptId = `sia_${randomBytes(6).toString("hex")}`;
+  const controller = new AbortController();
+  const attempt = { id: attemptId, providerId: trimmedId, state: "waiting", error: "", modelCount: 0, controller };
+  signInAttempts.set(attemptId, attempt);
+  void engineRequest("POST", `/provider/${encodeURIComponent(trimmedId)}/oauth/callback`, { method: chosen.index }, {
+    signal: AbortSignal.any([controller.signal, AbortSignal.timeout(SIGN_IN_WAIT_MS)]),
+  })
+    .then(async () => {
+      await reloadEngine();
+      attempt.modelCount = await connectedModelCount(trimmedId);
+      attempt.state = attempt.modelCount > 0 ? "connected" : "failed";
+      attempt.error = attempt.modelCount > 0 ? "" : "The sign-in finished, but no models became available.";
+    })
+    .catch((error) => {
+      if (controller.signal.aborted) return;
+      attempt.state = "failed";
+      attempt.error = plainSignInError(error);
+    });
+  return {
+    attemptId,
+    providerId: trimmedId,
+    url: typeof authorization?.url === "string" ? authorization.url : "",
+    code: codeFromInstructions(authorization?.instructions),
+    instructions: typeof authorization?.instructions === "string" ? authorization.instructions : "",
+    label: chosen.label,
+  };
+}
+
+function signInStatus(attemptId) {
+  const attempt = signInAttempts.get(String(attemptId ?? ""));
+  if (!attempt) return { state: "failed", error: "This sign-in is no longer running.", modelCount: 0 };
+  return { state: attempt.state, error: attempt.error, modelCount: attempt.modelCount };
+}
+
+function cancelSignIn(attemptId) {
+  const attempt = signInAttempts.get(String(attemptId ?? ""));
+  if (!attempt) return { ok: true };
+  attempt.controller.abort();
+  attempt.state = "failed";
+  attempt.error = "Cancelled.";
+  signInAttempts.delete(attempt.id);
+  return { ok: true };
+}
+
+/** Add a server the person typed in: validated by listing its models first, then saved as an engine provider. */
+async function addCustomProvider({ name, address, key, models }) {
+  const label = String(name ?? "").trim();
+  if (!label) throw new Error("Give the server a name.");
+  const listed = await listOpenAiCompatibleModels(address, key);
+  const wanted = Array.isArray(models) ? models.filter((model) => listed.models.includes(model)) : [];
+  const chosen = wanted.length > 0 ? wanted : listed.models;
+  const providerId = customProviderId(label);
+  const trimmedKey = String(key ?? "").trim();
+  if (trimmedKey) await engineRequest("PUT", `/auth/${encodeURIComponent(providerId)}`, { type: "api", key: trimmedKey });
+  await patchRuntimeProviders({ [providerId]: openAiCompatibleProviderConfig({ name: label, address: listed.address, models: chosen }) });
+  return connectedResult(providerId, label, await connectedModelCount(providerId));
+}
+
+/**
+ * Remove what connects a provider on this Mac. A credential in the engine's
+ * store is shared with OpenWork Desktop and OpenCode, so the first call only
+ * says so; the renderer asks and calls again with `confirmed`.
+ */
+async function disconnectProvider(providerId, confirmed) {
+  const trimmedId = String(providerId ?? "").trim();
+  const provider = (await readEngineProviders()).find((entry) => entry.id === trimmedId);
+  if (!provider) throw new Error("That provider is not connected here.");
+  const runtimeIds = await readRuntimeProviderIds().catch(() => []);
+  const addedHere = runtimeIds.includes(trimmedId);
+  if (provider.source === "env" && !addedHere) {
+    const envName = provider.env[0] ?? "an environment variable";
+    return { removed: false, needsConfirmation: false, note: `This comes from ${envName} in your environment. Remove it there, then restart Open Coworker.` };
+  }
+  // A well-known provider's credential (a key reads as `api`, a sign-in as `custom`) lives in the
+  // store every OpenCode-based app on this Mac reads.
+  const sharedCredential = !addedHere && provider.source !== "env" && provider.source !== "config";
+  if (sharedCredential && !confirmed) {
+    return {
+      removed: false,
+      needsConfirmation: true,
+      note: `This also signs OpenWork Desktop and OpenCode out of ${provider.name} on this Mac.`,
+    };
+  }
+  await engineRequest("DELETE", `/auth/${encodeURIComponent(trimmedId)}`).catch((error) => {
+    if (!(error instanceof EngineRequestError && error.status === 404)) throw error;
+  });
+  if (addedHere) {
+    await patchRuntimeProviders({ [trimmedId]: null });
+  } else {
+    await reloadEngine();
+  }
+  return { removed: true, needsConfirmation: false, note: "" };
+}
+
+function debugLog(line) {
+  if (isDev) console.debug(`[open-coworker] ${line}`);
+}
+
 const commands = {
   "runtime.info": async () => {
     await ensurePlatformServer();
@@ -1282,15 +1614,27 @@ const commands = {
   },
   // The silent facilitator's own workspace: hidden, tool-less, registered like a
   // coworker's but never listed as one.
-  "coordinator.ensure": async () => {
-    await ensurePlatformServer();
-    const coordinator = await ensureCoordinatorHome(coworkersDir);
-    if (coordinator.workspaceId) return coordinator;
-    const workspaceId = await registerCoworkerWorkspace(coordinator);
-    const updated = await updateCoordinator(coworkersDir, { workspaceId });
-    if (!serverHandle?.managedOpencode) await restartPlatformServer();
-    return updated;
+  "coordinator.ensure": async () => ensureCoordinatorWorkspace(),
+  // AI providers on this Mac: what is already here, one-step connect, the
+  // engine's own sign-ins, keys, custom servers, and disconnect. Secrets go
+  // from their source to the engine over loopback and are never returned.
+  "localProviders.prepare": async () => {
+    const workspaceId = await providerWorkspaceId();
+    const handle = await ensurePlatformServer();
+    const engineManaged = Boolean(handle.managedOpencode);
+    if (!engineManaged) return { workspaceId, engineManaged, providers: [], signIns: {} };
+    const [providers, signIns] = await Promise.all([readEngineProviders(), readEngineSignIns()]);
+    return { workspaceId, engineManaged, providers, signIns };
   },
+  "localProviders.detect": async () => detectLocalProviders({ log: debugLog }),
+  "localProviders.connect": async ({ id }) => connectLocalProvider(String(id ?? "")),
+  "localProviders.saveKey": async ({ providerId, key }) => saveProviderKey(providerId, key),
+  "localProviders.disconnect": async ({ providerId, confirmed }) => disconnectProvider(providerId, confirmed === true),
+  "localProviders.signIn.start": async ({ providerId, method }) => startProviderSignIn(providerId, Number.isInteger(method) ? method : undefined),
+  "localProviders.signIn.status": async ({ attemptId }) => signInStatus(attemptId),
+  "localProviders.signIn.cancel": async ({ attemptId }) => cancelSignIn(attemptId),
+  "localProviders.custom.probe": async ({ address, key }) => listOpenAiCompatibleModels(address, key),
+  "localProviders.custom.add": async ({ name, address, key, models }) => addCustomProvider({ name, address, key, models }),
   "coworkers.files.list": async ({ slug }) => listMemoryFiles(coworkersDir, slug),
   "coworkers.files.read": async ({ slug, path: relativePath }) => ({
     content: await readCoworkerFile(coworkersDir, slug, relativePath),
