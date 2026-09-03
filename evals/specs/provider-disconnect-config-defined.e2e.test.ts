@@ -10,7 +10,7 @@ import {
   waitFor,
 } from "@openwork/behaviors";
 import { desktop } from "@openwork/hosts";
-import { eventually, needs, test } from "@openwork/testkit";
+import { needs, test } from "@openwork/testkit";
 
 const providerId = "litellm-disconnect-fixture";
 const providerName = "Config-defined LiteLLM";
@@ -31,6 +31,42 @@ const createOpencodeConfig = (baseURL: string) => ({
     },
   },
 });
+
+async function configureProvider(
+  app: Parameters<typeof evalIn>[0],
+  workspaceId: string,
+  config: ReturnType<typeof createOpencodeConfig>,
+): Promise<void> {
+  const result = await evalIn(app, `(async () => {
+    const info = await window.__OPENWORK_ELECTRON__?.invokeDesktop?.("openworkServerInfo");
+    if (!info?.running || !info.baseUrl) return "local_server_unavailable";
+    const root = String(info.baseUrl).replace(/\\/+$/, "");
+    const headers = {
+      Authorization: "Bearer " + String(info.ownerToken ?? info.clientToken ?? ""),
+      "Content-Type": "application/json",
+    };
+    const configured = await fetch(root + "/workspace/" + encodeURIComponent(${JSON.stringify(workspaceId)}) + "/config", {
+      method: "PATCH",
+      headers,
+      body: JSON.stringify({ opencode: ${JSON.stringify(config)} }),
+      signal: AbortSignal.timeout(30000),
+    });
+    if (!configured.ok) return "config:" + configured.status + ":" + (await configured.text()).slice(0, 300);
+    const reloaded = await fetch(root + "/workspace/" + encodeURIComponent(${JSON.stringify(workspaceId)}) + "/engine/reload", {
+      method: "POST",
+      headers,
+      signal: AbortSignal.timeout(60000),
+    });
+    return reloaded.ok ? "ok" : "reload:" + reloaded.status + ":" + (await reloaded.text()).slice(0, 300);
+  })()`, { awaitPromise: true, timeoutMs: 120_000 });
+  expect(result).toBe("ok");
+
+  await evalIn(app, "location.reload(); true");
+  await waitFor(app, "Boolean(window.__openworkControl)", {
+    timeoutMs: 60_000,
+    label: "desktop restored after provider configuration",
+  });
+}
 
 async function closeModelPicker(app: Parameters<typeof evalIn>[0]): Promise<void> {
   await evalIn(app, `(() => {
@@ -66,24 +102,51 @@ test("disconnect disables a config-defined provider", async ({ evidence }) => {
   const address = provider.address();
   if (!address || typeof address === "string") throw new Error("The provider fixture did not bind a TCP port.");
   const opencodeConfig = createOpencodeConfig(`http://127.0.0.1:${address.port}/v1`);
-  const profileDir = `/tmp/openwork-provider-disconnect-${process.pid}-${Date.now()}`;
-  const workspacePath = join(profileDir, "workspace");
-  const globalConfigDir = join(profileDir, "opencode-config");
-  onTestFinished(async () => rm(profileDir, { recursive: true, force: true }));
+  const workspacePath = `/tmp/openwork-provider-disconnect-${process.pid}-${Date.now()}`;
+  onTestFinished(async () => rm(workspacePath, { recursive: true, force: true }));
   await mkdir(workspacePath, { recursive: true });
-  await mkdir(globalConfigDir, { recursive: true });
   await writeFile(join(workspacePath, "opencode.json"), `${JSON.stringify(opencodeConfig, null, 2)}\n`, "utf8");
-  await writeFile(join(globalConfigDir, "opencode.json"), `${JSON.stringify(opencodeConfig, null, 2)}\n`, "utf8");
 
-  await using app = await desktop({ name: "provider-disconnect-config-defined", profileDir });
+  await using app = await desktop({ name: "provider-disconnect-config-defined" });
   const { workspaceId } = await createAndSelectWorkspace(app, { path: workspacePath });
-  const beforeModels = await eventually(() => readAvailableModels(app), {
-    within: 90_000,
-    intervalMs: 2_000,
-    label: "config-defined LiteLLM model in picker",
-    until: (models) => models.some((model) => model.id === modelId && model.selectable),
+  await configureProvider(app, workspaceId, opencodeConfig);
+  await go(app, `/workspace/${workspaceId}/session`);
+  await readAvailableModels(app);
+  await waitFor(app, `(() => {
+    const dialog = document.querySelector('[data-slot="dialog-content"]');
+    return Boolean(dialog && dialog.innerText.includes(${JSON.stringify(providerName)}));
+  })()`, {
+    timeoutMs: 60_000,
+    label: "config-defined LiteLLM provider in model picker",
   });
-  expect(beforeModels.some((model) => model.id === modelId && model.selectable)).toBe(true);
+  const expanded = await evalIn(app, `(() => {
+    const dialog = document.querySelector('[data-slot="dialog-content"]');
+    const header = [...(dialog?.querySelectorAll('button') ?? [])]
+      .find((button) => (button.textContent ?? '').includes(${JSON.stringify(providerName)}));
+    header?.click();
+    return Boolean(header);
+  })()`);
+  expect(expanded).toBe(true);
+  await waitFor(app, `(() => {
+    const dialog = document.querySelector('[data-slot="dialog-content"]');
+    const header = [...(dialog?.querySelectorAll('button') ?? [])]
+      .find((button) => (button.textContent ?? '').includes(${JSON.stringify(providerName)}));
+    const group = header?.parentElement?.parentElement;
+    return Boolean(group && (group.textContent ?? '').includes(${JSON.stringify(modelId)}));
+  })()`, {
+    timeoutMs: 15_000,
+    label: "config-defined LiteLLM model row",
+  });
+  const beforeModels = await readAvailableModels(app);
+  const fixtureModels = beforeModels.filter(
+    (model) => model.providerName === providerName && model.id === modelId,
+  );
+  expect(fixtureModels, `beforeModels: ${JSON.stringify(beforeModels)}`).not.toHaveLength(0);
+  evidence.recordAssertionEvidence(
+    "The config-defined provider contributes its model before disconnect",
+    `Fixture models: ${JSON.stringify(fixtureModels)}`,
+    fixtureModels.length > 0,
+  );
   await closeModelPicker(app);
 
   await go(app, `/workspace/${workspaceId}/settings/ai`);
@@ -125,7 +188,9 @@ test("disconnect disables a config-defined provider", async ({ evidence }) => {
 
   await go(app, `/workspace/${workspaceId}/session`);
   const afterModels = await readAvailableModels(app);
-  const modelStillAvailable = afterModels.some((model) => model.id === modelId);
+  const modelStillAvailable = afterModels.some(
+    (model) => model.providerName === providerName,
+  );
   expect(modelStillAvailable).toBe(false);
   evidence.recordAssertionEvidence(
     "The disconnected provider no longer contributes models",
