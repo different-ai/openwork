@@ -74,6 +74,7 @@ import {
   type RouteWorkspace,
   type RouteSession,
   describeRouteError,
+  describeTaskCreateFailure,
   describeWorkspaceCreateError,
   downloadWorkspaceJson,
   folderNameFromPath,
@@ -83,10 +84,13 @@ import {
   mapDesktopWorkspace,
   mergeRouteWorkspaces,
   orderRouteWorkspaces,
+  TASK_CREATE_RETRY_DELAYS_MS,
   toSessionGroups,
+  withTransientEngineRetry,
   workspaceExportFilename,
   workspaceLabel,
 } from "@/react-app/shell/route-workspaces";
+import { reloadEngineWithDesktopFallback } from "@/react-app/shell/engine-reload-escalation";
 import { useLocal } from "@/react-app/kernel/local-provider";
 import { usePlatform } from "@/react-app/kernel/platform";
 import {
@@ -2068,12 +2072,27 @@ export function SessionRoute() {
       workspace.path?.trim() || undefined,
       { token: endpoint.token, mode: "openwork" },
     );
+    const toastId = taskCreateUnavailableToastId(workspaceId);
+    const attempts = TASK_CREATE_RETRY_DELAYS_MS.length + 1;
     try {
       setErrorsByWorkspaceId((current) => ({ ...current, [workspaceId]: null }));
       setRouteError(null);
-      const session = unwrap(
-        await workspaceClient.session.create({ directory: workspace.path?.trim() || undefined }),
-      );
+      // A stalled engine (rollover, overload) misses the 10 s request timeout
+      // and used to surface as a dead-end "unavailable" toast that only Cmd+R
+      // seemed to fix. Retry transient failures with a visible countdown first.
+      const session = await withTransientEngineRetry({
+        load: async () => unwrap(
+          await workspaceClient.session.create({ directory: workspace.path?.trim() || undefined }),
+        ),
+        retryDelaysMs: TASK_CREATE_RETRY_DELAYS_MS,
+        onRetry: (attempt) => {
+          toast.info(t("session.engine_catching_up_title"), {
+            id: toastId,
+            description: t("session.engine_catching_up_detail", { attempt: String(attempt), total: String(attempts) }),
+            duration: Infinity,
+          });
+        },
+      });
       if (workspaceId === selectedWorkspaceId) {
         void refreshCloudProviderSync("new_chat");
       }
@@ -2104,13 +2123,28 @@ export function SessionRoute() {
       const message = describeTaskCreateError(error);
       setRouteError(message);
       setErrorsByWorkspaceId((current) => ({ ...current, [workspaceId]: message }));
-      toast.error("OpenCode unavailable", {
-        id: taskCreateUnavailableToastId(workspaceId),
-        description: message,
+      const failure = describeTaskCreateFailure(error, attempts);
+      toast.error(failure.title, {
+        id: toastId,
+        description: failure.description,
         action: {
           label: "Retry",
           onClick: () => void handleCreateTaskInWorkspace(workspaceId),
         },
+        // A blue/green reload brings up a fresh engine without killing live
+        // sessions; the full desktop restart stays a last resort elsewhere.
+        ...(failure.kind === "not_responding"
+          ? {
+              cancel: {
+                label: t("session.engine_reload_action"),
+                onClick: () => {
+                  void reloadEngineWithDesktopFallback(endpoint.client, endpoint.workspaceId)
+                    .then(() => handleCreateTaskInWorkspace(workspaceId))
+                    .catch(() => undefined);
+                },
+              },
+            }
+          : {}),
         duration: Infinity,
       });
       if (isTransientStartupError(message)) {
