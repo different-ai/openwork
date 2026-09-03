@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { coworkerBridge, type CoworkerSummary, type ProviderSyncRun, type RuntimeInfo } from "@/lib/bridge";
 import type { DenSession } from "@/lib/den";
@@ -13,6 +13,7 @@ import {
   discussionTitle,
   type DiscussionMessage,
   parseAssignmentBrief,
+  timeLabelBetween,
 } from "@/lib/conversation";
 import {
   createCoworkerMcpClient,
@@ -52,7 +53,7 @@ import { describeTurnFailure } from "@/lib/turn-failure";
 import { InteractionCards } from "@/ui/interactions";
 import { CoworkerAvatar } from "@/ui/coworker-avatar";
 import { InlineLoader } from "@/ui/brand";
-import { AlertIcon, Button, Empty, ErrorNote, StatusDot, ThoughtIcon, ToolIcon } from "@/ui/kit";
+import { AlertIcon, Button, Empty, ErrorNote, PlusIcon, StatusDot, ThoughtIcon, ToolIcon } from "@/ui/kit";
 import { Markdown } from "@/ui/markdown";
 import { McpAppFrame } from "@/ui/mcp-app-frame";
 
@@ -70,6 +71,8 @@ type TranscriptMessage = {
   id: string;
   role: string;
   text: string;
+  /** When the engine recorded the message; null for optimistic entries not yet committed. */
+  createdAt: number | null;
   reasoning: string;
   /** Provider/model the engine attributed this reply to; null for user turns and unbound replies. */
   model: { providerId: string; modelId: string } | null;
@@ -986,6 +989,7 @@ function ThreadView({
           id: message.id,
           role: message.role,
           text: message.text,
+          createdAt: message.createdAt,
           reasoning: message.reasoning,
           model: message.model,
           toolCalls: message.toolCalls.map((call) => ({
@@ -1265,7 +1269,7 @@ function ThreadView({
     try {
       const optimisticTurn = pendingTurn ?? (turnIssue?.messageId && turnIssue.prompt ? turnIssue : null);
       const visibleMessages = optimisticTurn && !messages.some((message) => message.id === optimisticTurn.messageId)
-        ? [...messages, { id: optimisticTurn.messageId, role: "user", text: optimisticTurn.prompt, reasoning: "", model: null, toolCalls: [] }]
+        ? [...messages, { id: optimisticTurn.messageId, role: "user", text: optimisticTurn.prompt, createdAt: null, reasoning: "", model: null, toolCalls: [] }]
         : messages;
       await onCreateAssignment(outcome, visibleMessages.map(({ role, text }) => ({ role, text })));
       setAssignmentText("");
@@ -1285,7 +1289,7 @@ function ThreadView({
   const working = (pendingTurn !== null || engineWorking) && !needsYou && !turnNeedsAttention && !stopped;
   const optimisticTurn = pendingTurn ?? (turnIssue?.messageId && turnIssue.prompt ? turnIssue : null);
   const visibleMessages = optimisticTurn && !messages.some((message) => message.id === optimisticTurn.messageId)
-    ? [...messages, { id: optimisticTurn.messageId, role: "user", text: optimisticTurn.prompt, reasoning: "", model: null, toolCalls: [] }]
+    ? [...messages, { id: optimisticTurn.messageId, role: "user", text: optimisticTurn.prompt, createdAt: null, reasoning: "", model: null, toolCalls: [] }]
     : messages;
   const lastAssistantIndex = visibleMessages.findLastIndex((message) => message.role === "assistant");
   const displayedFailure = turnIssue?.kind === "failed" ? turnIssue.message : terminalError;
@@ -1411,15 +1415,18 @@ function ThreadView({
         <div className="mx-auto max-w-3xl space-y-3">
           {freshDiscussion ? <QuietEmptyConversation coworker={coworker} /> : null}
           {visibleMessages.map((message, index) => (
-            <MessageBubble
-              key={message.id}
-              message={message}
-              coworker={coworker}
-              mcpClient={mcpClient}
-              active={working && message.role === "assistant" && index === lastAssistantIndex}
-              continued={index > 0 && visibleMessages[index - 1]?.role === message.role}
-              kind={kind}
-            />
+            <Fragment key={message.id}>
+              <TimeLabel label={timeLabelBetween(visibleMessages[index - 1]?.createdAt, message.createdAt)} />
+              <MessageBubble
+                message={message}
+                coworker={coworker}
+                mcpClient={mcpClient}
+                active={working && message.role === "assistant" && index === lastAssistantIndex}
+                continued={index > 0 && visibleMessages[index - 1]?.role === message.role}
+                tail={visibleMessages[index + 1]?.role !== message.role}
+                kind={kind}
+              />
+            </Fragment>
           ))}
           <InteractionCards
             coworker={coworker}
@@ -1516,18 +1523,27 @@ function ThreadView({
   );
 }
 
+/** A quiet centered time label above a message, shown only when enough time has passed. */
+function TimeLabel({ label }: { label: string | null }) {
+  if (!label) return null;
+  return <p className="pb-1 pt-2 text-center text-[11px] font-medium text-mist/80" data-testid="coworker-time-label">{label}</p>;
+}
+
 function MessageBubble({
   message,
   coworker,
   mcpClient,
   active,
   continued = false,
+  tail = true,
   kind = "discussion",
 }: {
   message: TranscriptMessage;
   coworker: CoworkerSummary;
   mcpClient: CoworkerMcpClient;
   active: boolean;
+  /** The next message is from someone else (or this is the last one): the bubble gets its tail. */
+  tail?: boolean;
   /** The previous message is from the same speaker: no avatar or name again, tighter spacing. */
   continued?: boolean;
   kind?: "discussion" | "assignment";
@@ -1540,16 +1556,16 @@ function MessageBubble({
     if (brief) {
       return (
         <article className={`flex justify-end ${continued ? "-mt-1.5" : ""}`} data-message-role="user" data-assignment-brief="true">
-          <div className="max-w-[76%] rounded-2xl rounded-br-md bg-snow px-4 py-2.5 text-sm leading-relaxed text-ink">
-            <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-ink/55">Assignment for {coworker.name}</p>
+          <div className={`bubble bubble-user max-w-[76%] ${tail ? "bubble-tail-right" : ""}`}>
+            <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-white/70">Assignment for {coworker.name}</p>
             <p className="mt-1 whitespace-pre-wrap" data-testid="coworker-assignment-outcome">{brief.outcome}</p>
             {brief.context.length > 0 ? (
-              <details className="group mt-2 text-xs text-ink/70" data-testid="coworker-assignment-context">
-                <summary className="flex cursor-pointer list-none items-center gap-1 marker:hidden hover:text-ink">
+              <details className="group mt-2 text-xs text-white/80" data-testid="coworker-assignment-context">
+                <summary className="flex cursor-pointer list-none items-center gap-1 marker:hidden hover:text-white">
                   <span>From your discussion · {brief.context.length} message{brief.context.length === 1 ? "" : "s"}</span>
                   <span className="transition-transform group-open:rotate-90" aria-hidden="true">›</span>
                 </summary>
-                <ol className="mt-1.5 space-y-1.5 border-l border-ink/15 pl-2.5">
+                <ol className="mt-1.5 space-y-1.5 border-l border-white/25 pl-2.5">
                   {brief.context.map((entry, index) => (
                     <li key={index} className="whitespace-pre-wrap">
                       <span className="font-semibold">{entry.speaker === "you" ? "You" : coworker.name}:</span> {entry.text}
@@ -1564,37 +1580,42 @@ function MessageBubble({
     }
     return (
       <article className={`flex justify-end ${continued ? "-mt-1.5" : ""}`} data-message-role="user" data-continued={continued ? "true" : "false"}>
-        <div className="max-w-[72%] whitespace-pre-wrap rounded-2xl rounded-br-md bg-snow px-4 py-2.5 text-sm leading-relaxed text-ink">
+        <div className={`bubble bubble-user max-w-[72%] whitespace-pre-wrap ${tail ? "bubble-tail-right" : ""}`} title={message.createdAt ? new Date(message.createdAt).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" }) : undefined}>
           {message.text || "…"}
         </div>
       </article>
     );
   }
 
+  // A 1:1 chat reads like Messages: the coworker is named once in the header, so each reply is a
+  // plain gray bubble. Thinking and tool work stay one quiet line each above the bubble.
+  const extras = Boolean((message.reasoning && !active) || message.toolCalls.length > 0);
   return (
-    <article className={`flex items-start gap-2.5 ${continued ? "-mt-1" : ""}`} data-message-role="assistant" data-continued={continued ? "true" : "false"}>
-      {continued ? (
-        <span className="w-[30px] shrink-0" aria-hidden="true" />
-      ) : (
-        <CoworkerAvatar animated={active} color={coworker.avatarColor} glasses={coworker.avatarGlasses} name={coworker.name} size={30} />
-      )}
-      <div className="min-w-0 max-w-[88%] flex-1 pt-0.5">
-        <p className={`text-[11px] font-semibold text-mist ${continued ? "sr-only" : "mb-1.5"}`}>
-          {/* The answering model stays available on hover and to assistive tech, not as everyday copy. */}
-          <span title={message.model ? `Answered by ${message.model.providerId}/${message.model.modelId}` : undefined}>{coworker.name}</span>
-          {message.model ? (
-            <span className="sr-only" data-testid="coworker-reply-model">
-              Answered by {message.model.providerId}/{message.model.modelId}
-            </span>
-          ) : null}
-        </p>
-        {/* Thinking and tool work fold into one line each; the live row below the messages carries the moving state. */}
-        {message.reasoning && !active ? <ThinkingDisclosure text={message.reasoning} /> : null}
-        {message.toolCalls.length > 0 ? <WorkReceipt calls={message.toolCalls} client={mcpClient} /> : null}
-        {message.text ? (
-          <Markdown text={message.text} className={(message.reasoning && !active) || message.toolCalls.length ? "mt-2" : ""} />
-        ) : !active && !message.reasoning && message.toolCalls.length === 0 ? <span className="text-sm text-mist">…</span> : null}
-      </div>
+    <article className={`flex flex-col items-start ${continued ? "-mt-1" : ""}`} data-message-role="assistant" data-continued={continued ? "true" : "false"}>
+      <p className="sr-only">
+        {coworker.name}
+        {message.model ? (
+          <span data-testid="coworker-reply-model">
+            {" "}Answered by {message.model.providerId}/{message.model.modelId}
+          </span>
+        ) : null}
+      </p>
+      {extras ? (
+        <div className="mb-1 max-w-[76%] space-y-0.5 pl-1">
+          {message.reasoning && !active ? <ThinkingDisclosure text={message.reasoning} /> : null}
+          {message.toolCalls.length > 0 ? <WorkReceipt calls={message.toolCalls} client={mcpClient} /> : null}
+        </div>
+      ) : null}
+      {message.text ? (
+        <div
+          className={`bubble bubble-coworker max-w-[76%] ${tail ? "bubble-tail-left" : ""}`}
+          title={message.model ? `Answered by ${message.model.providerId}/${message.model.modelId}` : undefined}
+        >
+          <Markdown text={message.text} />
+        </div>
+      ) : !active && !message.reasoning && message.toolCalls.length === 0 ? (
+        <div className={`bubble bubble-coworker ${tail ? "bubble-tail-left" : ""} text-mist`}>…</div>
+      ) : null}
     </article>
   );
 }
@@ -1982,42 +2003,50 @@ function DiscussionComposer({
   const value = assignmentMode ? assignment : message;
   const submit = assignmentMode ? onCreateAssignment : onSend;
   const held = busy || Boolean(waiting);
+  const canSubmit = !held && Boolean(value.trim());
+  const modeLabel = assignmentMode ? "Back to chat" : "Create assignment";
+  const submitLabel = busy ? "Working…" : assignmentMode ? "Create assignment" : "Send";
   return (
-    <div className="border-t border-line bg-ink px-5 pb-2.5 pt-3">
+    <div className="border-t border-line bg-ink px-5 pb-2 pt-3">
       <div className="mx-auto max-w-3xl">
         {error ? <div className="mb-2"><ErrorNote>{error}</ErrorNote></div> : null}
-        <div className="rounded-2xl border border-line bg-panel/80 p-2 transition-colors focus-within:border-spark/45">
-          <div className="mb-1 flex items-center justify-between gap-3 px-1.5 pt-0.5">
-            <span className="text-[10px] font-medium text-mist">
-              {assignmentMode ? `Something ${coworkerName} should own, separate from this chat` : `Chat with ${coworkerName}`}
-            </span>
-            <button
-              type="button"
-              className="rounded-lg px-2 py-1 text-[10px] font-medium text-spark transition-colors hover:bg-spark/10"
-              onClick={() => onAssignmentModeChange(!assignmentMode)}
-            >
-              {assignmentMode ? "Back to chat" : "Create assignment"}
-            </button>
-          </div>
-          <div className="flex items-end gap-2">
+        {assignmentMode ? (
+          <p className="mb-1.5 px-12 text-[11px] text-mist" data-testid="coworker-assignment-mode">
+            Something {coworkerName} should own, separate from this chat
+          </p>
+        ) : null}
+        <div className="flex items-end gap-2">
+          {/* One quiet control beside the field: turn the message into an assignment, or come back to chat. */}
+          <button
+            type="button"
+            aria-pressed={assignmentMode}
+            className={`mb-0.5 flex size-8 shrink-0 items-center justify-center rounded-full border text-lg leading-none transition-colors ${
+              assignmentMode ? "border-spark/50 bg-spark/15 text-spark" : "border-line text-mist hover:border-spark/40 hover:text-snow"
+            }`}
+            title={modeLabel}
+            onClick={() => onAssignmentModeChange(!assignmentMode)}
+          >
+            <PlusIcon className={`size-4 transition-transform ${assignmentMode ? "rotate-45" : ""}`} />
+            <span className="sr-only">{modeLabel}</span>
+          </button>
+          <div className={`flex min-w-0 flex-1 items-end gap-1 rounded-[20px] border bg-panel/60 py-1 pl-4 pr-1 transition-colors focus-within:border-spark/50 ${assignmentMode ? "border-spark/35" : "border-line"}`}>
             <textarea
               aria-label={assignmentMode ? "Assignment outcome" : `Message ${coworkerName}`}
-              className="max-h-40 min-h-11 min-w-0 flex-1 resize-none bg-transparent px-2 py-2 text-sm leading-relaxed text-snow outline-none placeholder:text-mist/65"
-              placeholder={assignmentMode ? `What should ${coworkerName} own?` : `Message ${coworkerName}…`}
+              rows={1}
+              className="max-h-40 min-h-[30px] min-w-0 flex-1 resize-none bg-transparent py-1 text-sm leading-relaxed text-snow outline-none placeholder:text-mist/65"
+              placeholder={assignmentMode ? `What should ${coworkerName} own?` : `Message ${coworkerName}`}
               value={value}
               onChange={(event) => assignmentMode ? onAssignmentChange(event.target.value) : onMessageChange(event.target.value)}
               onKeyDown={(event) => {
                 if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) return;
                 event.preventDefault();
-                if (!held && value.trim()) submit();
+                if (canSubmit) submit();
               }}
             />
-            <Button aria-busy={held} variant="primary" className="rounded-xl" disabled={held || !value.trim()} onClick={submit} title={waiting}>
-              {busy ? "Working…" : assignmentMode ? "Create assignment" : "Send"}
-            </Button>
+            <SendButton label={submitLabel} busy={busy} disabled={!canSubmit} title={waiting} onClick={submit} />
           </div>
         </div>
-        <div className="mt-1.5 flex items-center justify-between gap-3 px-1 text-[9px] text-mist/65">
+        <div className="mt-1.5 flex items-center justify-between gap-3 px-12 text-[9px] text-mist/65">
           <span className="hidden sm:inline" data-testid="coworker-composer-hint">
             {waiting && !busy ? `${waiting}…` : `Enter to ${assignmentMode ? "create" : "send"} · Shift Enter for a new line`}
           </span>
@@ -2025,6 +2054,32 @@ function DiscussionComposer({
         </div>
       </div>
     </div>
+  );
+}
+
+/** The round send control shared by every composer: our accent when it can send, quiet otherwise. */
+export function SendButton({ label, busy, disabled, title, onClick, testId = "coworker-send" }: { label: string; busy: boolean; disabled: boolean; title?: string; onClick: () => void; testId?: string }) {
+  return (
+    <button
+      type="button"
+      aria-busy={busy}
+      disabled={disabled}
+      title={title || label}
+      data-testid={testId}
+      className={`mb-0.5 flex size-7 shrink-0 items-center justify-center rounded-full transition-colors ${
+        disabled ? "bg-white/8 text-mist/60" : "bg-spark text-white hover:bg-spark/90"
+      } disabled:cursor-not-allowed`}
+      onClick={onClick}
+    >
+      {busy ? (
+        <span aria-hidden="true" className="block size-3 animate-spin rounded-full border-2 border-white/30 border-t-white" />
+      ) : (
+        <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+          <path d="M8 13V3.5M3.8 7.7 8 3.5l4.2 4.2" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      )}
+      <span className="sr-only">{label}</span>
+    </button>
   );
 }
 
@@ -2041,25 +2096,25 @@ function MessageComposer({
   busy: boolean;
   placeholder: string;
 }) {
+  const canSubmit = !busy && Boolean(value.trim());
   return (
-    <div className="border-t border-line bg-ink px-5 pb-2.5 pt-3">
+    <div className="border-t border-line bg-ink px-5 pb-2 pt-3">
       <div className="mx-auto max-w-3xl">
-        <div className="flex items-end gap-2 rounded-2xl border border-line bg-panel/80 p-2 transition-colors focus-within:border-spark/45">
+        <div className="flex min-w-0 items-end gap-1 rounded-[20px] border border-line bg-panel/60 py-1 pl-4 pr-1 transition-colors focus-within:border-spark/50">
           <textarea
             aria-label={placeholder.replace("…", "")}
-            className="max-h-40 min-h-11 min-w-0 flex-1 resize-none bg-transparent px-2 py-2 text-sm leading-relaxed text-snow outline-none placeholder:text-mist/65"
+            rows={1}
+            className="max-h-40 min-h-[30px] min-w-0 flex-1 resize-none bg-transparent py-1 text-sm leading-relaxed text-snow outline-none placeholder:text-mist/65"
             placeholder={placeholder}
             value={value}
             onChange={(event) => onChange(event.target.value)}
             onKeyDown={(event) => {
               if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) return;
               event.preventDefault();
-              if (!busy && value.trim()) onSubmit();
+              if (canSubmit) onSubmit();
             }}
           />
-          <Button aria-busy={busy} variant="primary" className="rounded-xl" disabled={busy || !value.trim()} onClick={onSubmit}>
-            {busy ? "Working…" : "Send"}
-          </Button>
+          <SendButton label={busy ? "Working…" : "Send"} busy={busy} disabled={!canSubmit} onClick={onSubmit} />
         </div>
         <div className="mt-1.5 flex items-center justify-end px-1 text-[9px] text-mist/65">
           <span className="font-medium tracking-[0.06em]">Powered by OpenWork</span>

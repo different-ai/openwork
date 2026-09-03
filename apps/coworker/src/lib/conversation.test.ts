@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { assignmentPrompt, assignmentTitle, discussionTitle, explainRunPrompt, parseAssignmentBrief } from "./conversation.ts";
+import { assignmentPrompt, assignmentTitle, discussionTitle, explainRunPrompt, parseAssignmentBrief, timeLabelBetween } from "./conversation.ts";
 
 test("discussionTitle and assignmentTitle stay readable and within native session limits", () => {
   assert.equal(discussionTitle(" Scout "), "Discussion with Scout");
@@ -81,4 +81,16 @@ test("parseAssignmentBrief reads back the outcome and carried discussion, and no
   assert.deepEqual(bare, { outcome: "Just do it", context: [] });
   assert.equal(parseAssignmentBrief("Reply with exactly CHAT ONE READY."), null);
   assert.equal(parseAssignmentBrief("This is an explicit assignment created from our ongoing discussion.\n\nno headings"), null);
+});
+
+test("time labels appear only after a gap and name today, yesterday, the weekday, or the date", () => {
+  const now = new Date(2026, 8, 2, 16, 0).getTime();
+  const at = (daysAgo: number, hour: number) => now - daysAgo * 86_400_000 - (16 - hour) * 3_600_000;
+  assert.equal(timeLabelBetween(null, null, now), null);
+  assert.equal(timeLabelBetween(at(0, 15), at(0, 15) + 5 * 60_000, now), null);
+  assert.match(timeLabelBetween(null, at(0, 15), now) ?? "", /^Today 3:00/);
+  assert.match(timeLabelBetween(at(0, 14), at(0, 15), now) ?? "", /^Today 3:00/);
+  assert.match(timeLabelBetween(null, at(1, 9), now) ?? "", /^Yesterday 9:00/);
+  assert.match(timeLabelBetween(null, at(3, 9), now) ?? "", /^Sunday 9:00/);
+  assert.match(timeLabelBetween(null, at(20, 9), now) ?? "", /^Aug 13 9:00/);
 });
