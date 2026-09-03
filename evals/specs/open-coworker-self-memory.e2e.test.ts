@@ -80,10 +80,12 @@ function lastUserText(body: unknown): string {
   return "";
 }
 
-/** The tool results the engine sent back, so the script knows a turn's tool half is done. */
+/** The tool results the engine sent back for the current turn (after the last user message), so the script knows the turn's tool half is done. */
 function toolResults(body: unknown): string[] {
   if (!isRecord(body) || !Array.isArray(body.messages)) return [];
+  const lastUser = body.messages.map((message) => isRecord(message) && message.role === "user").lastIndexOf(true);
   return body.messages
+    .slice(lastUser + 1)
     .filter((message): message is Record<string, unknown> => isRecord(message) && message.role === "tool")
     .map((message) => (typeof message.content === "string" ? message.content : JSON.stringify(message.content)));
 }
@@ -191,8 +193,8 @@ async function converse(app: Awaited<ReturnType<typeof coworker>>, prompt: strin
     const summary = line.querySelector('[data-testid="coworker-work-summary"]');
     if (summary instanceof HTMLElement && summary.getAttribute("aria-expanded") !== "true") summary.click();
     return {
-      summary: summary?.textContent?.trim() ?? "",
-      steps: [...line.querySelectorAll('[data-testid="coworker-work-step"]')].map((step) => step.querySelector("span.flex-1, span.truncate")?.textContent?.trim() ?? step.textContent?.trim() ?? ""),
+      summary: summary?.querySelector("span.truncate")?.textContent?.trim() ?? "",
+      steps: [...line.querySelectorAll('[data-testid="coworker-work-step"]')].map((step) => step.querySelector("span.truncate")?.textContent?.trim() ?? ""),
       text: line.innerText,
     };
   })()`, { timeoutMs: 60_000, label: `the action line between ${json(prompt)} and its reply` });
@@ -257,6 +259,12 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
     }),
   });
   expect(providerPatch.status).toBe(200);
+  // The config route announces the change; without the desktop's reload listener the engine is reloaded here.
+  const engineReload = await fetch(`${String(runtime.serverUrl)}/workspace/${encodeURIComponent(workspaceId)}/engine/reload`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${String(runtime.ownerToken)}` },
+  });
+  expect(engineReload.status).toBe(200);
   await invokeCoworker(app, "coworkers.update", { slug: "nova", patch: { model: `${SCRIPTED_PROVIDER}/${SCRIPTED_MODEL}`, modelVariant: "" } });
   await evalIn(app, "location.reload(); true");
   await waitForNovaReady(app);

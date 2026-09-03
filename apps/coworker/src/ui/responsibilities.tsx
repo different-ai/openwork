@@ -1010,14 +1010,17 @@ function ResponsibilityFields({
   onTimeChange: (value: string) => void;
   onCadenceChange: (value: LocalCadence) => void;
   onWeekdayChange: (value: number) => void;
-  onIntervalChange: (value: IntervalDraft) => void;
+  /** Changes read the latest draft, so two quick clicks never undo each other. */
+  onIntervalChange: (update: (current: IntervalDraft) => IntervalDraft) => void;
   onSubmit: () => void;
 }) {
   const perDayChoices = Array.from({ length: Math.max(1, maxRunsPerDay) }, (_, index) => index + 1);
   const toggleDay = (day: number) => {
-    const days = interval.days.includes(day) ? interval.days.filter((candidate) => candidate !== day) : [...interval.days, day].sort((a, b) => a - b);
-    // Every day off is not a schedule; keep at least one day.
-    onIntervalChange({ ...interval, days: days.length === 0 ? [day] : days });
+    onIntervalChange((current) => {
+      const days = current.days.includes(day) ? current.days.filter((candidate) => candidate !== day) : [...current.days, day].sort((a, b) => a - b);
+      // Every day off is not a schedule; keep at least one day.
+      return { ...current, days: days.length === 0 ? [day] : days };
+    });
   };
   return (
     <div className="space-y-3 border-t border-line pt-3">
@@ -1058,7 +1061,7 @@ function ResponsibilityFields({
               onChange={(event) => {
                 const minutes = Number.parseInt(event.target.value, 10);
                 const choice = INTERVAL_MINUTE_CHOICES.find((candidate) => candidate === minutes);
-                if (choice !== undefined) onIntervalChange({ ...interval, everyMinutes: choice });
+                if (choice !== undefined) onIntervalChange((current) => ({ ...current, everyMinutes: choice }));
               }}
             >
               {INTERVAL_MINUTE_CHOICES.map((minutes) => (
@@ -1072,10 +1075,10 @@ function ResponsibilityFields({
         <div className="space-y-3" data-testid="interval-fields">
           <div className="grid grid-cols-2 gap-2">
             <Field label="From (optional)">
-              <input className={`${inputClass} bg-panel`} type="time" aria-label="From" value={interval.from} onChange={(event) => onIntervalChange({ ...interval, from: event.target.value })} />
+              <input className={`${inputClass} bg-panel`} type="time" aria-label="From" value={interval.from} onChange={(event) => { const value = event.target.value; onIntervalChange((current) => ({ ...current, from: value })); }} />
             </Field>
             <Field label="Until (optional)">
-              <input className={`${inputClass} bg-panel`} type="time" aria-label="Until" value={interval.until} onChange={(event) => onIntervalChange({ ...interval, until: event.target.value })} />
+              <input className={`${inputClass} bg-panel`} type="time" aria-label="Until" value={interval.until} onChange={(event) => { const value = event.target.value; onIntervalChange((current) => ({ ...current, until: value })); }} />
             </Field>
           </div>
           <div className="grid grid-cols-[minmax(0,1fr)_auto] items-end gap-2">
@@ -1099,7 +1102,7 @@ function ResponsibilityFields({
               </div>
             </Field>
             <Field label="Most runs a day">
-              <select className={`${inputClass} bg-panel`} aria-label="Most runs a day" value={interval.maxPerDay} onChange={(event) => onIntervalChange({ ...interval, maxPerDay: Number.parseInt(event.target.value, 10) })}>
+              <select className={`${inputClass} bg-panel`} aria-label="Most runs a day" value={interval.maxPerDay} onChange={(event) => { const count = Number.parseInt(event.target.value, 10); onIntervalChange((current) => ({ ...current, maxPerDay: count })); }}>
                 {perDayChoices.map((count) => (
                   <option key={count} value={count}>{count}</option>
                 ))}
