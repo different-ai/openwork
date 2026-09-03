@@ -13,15 +13,18 @@ import { ActivityIcon, AppsIcon, Button, ErrorNote, IconButton, MemoryIcon, Slid
 import { useResizablePanel } from "@/ui/use-resizable-panel";
 import type { PanelBounds } from "@/lib/panel-layout";
 import { MemoryPanel } from "@/ui/memory";
+import { DocumentBesidePane, DocumentsIcon, DocumentsPanel, lastDocumentsOpened, useDocuments } from "@/ui/documents";
+import { describeActiveDocuments, documentsChangedSince } from "@/lib/documents";
 import { ResponsibilitiesPanel } from "@/ui/responsibilities";
-import { ThreadsPanel } from "@/ui/threads";
+import { ThreadsPanel, type DocumentHooks } from "@/ui/threads";
 import { ModelPicker, type ModelSelection } from "@/ui/model-picker";
 import type { SettingsSection } from "@/ui/openwork-settings";
 
-type ContextView = "overview" | "capabilities" | "memory" | "settings";
+type ContextView = "overview" | "documents" | "capabilities" | "memory" | "settings";
 
 const CONTEXT_TITLES: Record<ContextView, string> = {
   overview: "Activity",
+  documents: "Documents",
   capabilities: "Apps & tools",
   memory: "Memory",
   settings: "Coworker settings",
@@ -32,14 +35,17 @@ const CONTEXT_PANEL_DEFAULT_WIDTH = 360;
 const MAIN_WORKSPACE_MIN_WIDTH = 520;
 /** The context panel: drag it narrower than it can usefully be and it folds to an icon strip. */
 const CONTEXT_PANEL_BOUNDS: PanelBounds = { min: 320, max: 440, collapsedWidth: 56, collapseBelow: 240 };
+/** The reading pane beside the conversation, when the window has room for it. */
+const BESIDE_PANE_WIDTH = 440;
 
 const CONTEXT_ICONS: Record<ContextView, (props: { className?: string }) => ReactNode> = {
   overview: ActivityIcon,
+  documents: DocumentsIcon,
   capabilities: AppsIcon,
   memory: MemoryIcon,
   settings: SlidersIcon,
 };
-const CONTEXT_ORDER: ContextView[] = ["overview", "capabilities", "memory", "settings"];
+const CONTEXT_ORDER: ContextView[] = ["overview", "documents", "capabilities", "memory", "settings"];
 
 function activityTone(activity: CoworkerActivity | undefined): "spark" | "mint" | "amber" | "rose" | "mist" {
   if (activity?.state === "working") return "spark";
@@ -110,6 +116,13 @@ export function CoworkerHome({
   const [assignmentDraft, setAssignmentDraft] = useState<{ id: number; text: string } | null>(null);
   const [discussionDraft, setDiscussionDraft] = useState<{ id: number; text: string } | null>(null);
   const [openThreadRequest, setOpenThreadRequest] = useState<{ id: number; threadId: string } | null>(null);
+  /** From a card's Open: show this document in the Documents view; the id makes repeats distinct. */
+  const [openDocumentRequest, setOpenDocumentRequest] = useState<{ id: number; documentId: string } | null>(null);
+  /** The document open in the reading pane beside the conversation, when the window has room. */
+  const [besideDocumentId, setBesideDocumentId] = useState("");
+  const [windowWidth, setWindowWidth] = useState(() => window.innerWidth);
+  const { documents, refresh: refreshDocuments, error: documentsError } = useDocuments(coworker.slug);
+  const documentsInPlay = describeActiveDocuments(documents ?? []);
   /** The conversation views place their own title line and actions into the one header. */
   const [headerTitleSlot, setHeaderTitleSlot] = useState<HTMLElement | null>(null);
   const [headerActionsSlot, setHeaderActionsSlot] = useState<HTMLElement | null>(null);
@@ -161,7 +174,32 @@ export function CoworkerHome({
   useEffect(() => {
     collapseContextPanel();
     setContextView("overview");
+    setBesideDocumentId("");
   }, [collapseContextPanel, coworker.slug]);
+  useEffect(() => {
+    const onResize = () => setWindowWidth(window.innerWidth);
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+  const panelWidth = contextPanel.collapsed ? CONTEXT_PANEL_BOUNDS.collapsedWidth : contextPanel.width;
+  const canOpenBeside = windowWidth - railWidth - panelWidth - BESIDE_PANE_WIDTH >= MAIN_WORKSPACE_MIN_WIDTH;
+  useEffect(() => {
+    if (!canOpenBeside) setBesideDocumentId("");
+  }, [canOpenBeside]);
+  const documentHooks: DocumentHooks = {
+    onOpenDocument: (documentId) => {
+      setContextView("documents");
+      if (contextPanel.collapsed) contextPanel.expand();
+      setOpenDocumentRequest({ id: Date.now(), documentId });
+    },
+    onOpenDocumentBeside: (documentId) => {
+      if (canOpenBeside) setBesideDocumentId(documentId);
+      else documentHooks.onOpenDocument(documentId);
+    },
+    canOpenBeside,
+  };
+  const documentsChanged = documents ? documentsChangedSince(documents, lastDocumentsOpened(coworker.slug)) : 0;
+  const askToUpdate = (text: string) => setDiscussionDraft({ id: Date.now(), text });
 
   useEffect(() => () => onActivityChange(null), [onActivityChange]);
 
@@ -212,6 +250,18 @@ export function CoworkerHome({
             <div ref={setHeaderTitleSlot} className="window-no-drag flex min-h-[18px] min-w-0 items-center gap-2 text-xs text-mist" data-testid="conversation-header-title" />
           </div>
           <div ref={setHeaderActionsSlot} className="window-no-drag flex shrink-0 items-center gap-1" data-testid="conversation-header-actions" />
+          {documentsInPlay ? (
+            <button
+              type="button"
+              className="window-no-drag hidden shrink-0 items-center gap-1.5 text-[11px] text-mist transition-colors hover:text-snow md:flex"
+              title="Open Documents"
+              data-testid="coworker-documents-in-play"
+              onClick={() => showContext("documents")}
+            >
+              <DocumentsIcon className="size-3.5" />
+              {documentsInPlay}
+            </button>
+          ) : null}
           <span data-testid="coworker-top-status" className={`flex shrink-0 items-center gap-2 text-xs ${runtime.engineManaged ? activityTextTone(activity) : "text-rose"}`} title={activity?.detail}>
             <StatusDot tone={runtime.engineManaged ? activityTone(activity) : "rose"} />
             {runtime.engineManaged ? (activity?.label ?? "Checking status") : "AI unavailable"}
@@ -238,9 +288,21 @@ export function CoworkerHome({
             }}
             onOpenAccount={() => onOpenOpenWork("account")}
             onActivityChange={onActivityChange}
+            documents={documentHooks}
           />
         </main>
       </div>
+
+      {besideDocumentId && canOpenBeside ? (
+        <DocumentBesidePane
+          coworker={coworker}
+          documentId={besideDocumentId}
+          onClose={() => setBesideDocumentId("")}
+          onChanged={refreshDocuments}
+          onAskToUpdate={askToUpdate}
+          onOpenDocument={setBesideDocumentId}
+        />
+      ) : null}
 
       <aside
         className={`glass-context relative flex h-full shrink-0 flex-col border-l border-line ${contextPanel.resizing ? "" : "transition-[width] duration-[180ms] ease-out motion-reduce:transition-none"}`}
@@ -275,7 +337,12 @@ export function CoworkerHome({
                     className={active ? "bg-white/8 text-snow ring-1 ring-white/10" : ""}
                     onClick={() => showContext(view)}
                   >
-                    <Icon />
+                    <span className="relative flex">
+                      <Icon />
+                      {view === "documents" && documentsChanged > 0 ? (
+                        <span className="absolute -right-1.5 -top-1 size-1.5 rounded-full bg-spark" aria-hidden="true" data-testid="documents-changed-dot" />
+                      ) : null}
+                    </span>
                   </IconButton>
                 );
               })}
@@ -315,6 +382,18 @@ export function CoworkerHome({
               onOpenMemory={() => setContextView("memory")}
               onOpenCapabilities={() => setContextView("capabilities")}
               onOpenOpenWork={() => onOpenOpenWork()}
+            />
+          ) : null}
+          {contextView === "documents" ? (
+            <DocumentsPanel
+              coworker={coworker}
+              documents={documents}
+              error={documentsError}
+              onRefresh={refreshDocuments}
+              openRequest={openDocumentRequest}
+              onAskToUpdate={askToUpdate}
+              canOpenBeside={canOpenBeside}
+              onOpenBeside={(documentId) => setBesideDocumentId(documentId)}
             />
           ) : null}
           {contextView === "memory" ? <MemoryPanel coworker={coworker} /> : null}
