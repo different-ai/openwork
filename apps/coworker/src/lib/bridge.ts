@@ -82,6 +82,10 @@ export type CoworkerSummary = {
   avatarGlasses: AvatarGlasses;
   /** Voice for the working state only; never changes how the coworker works. */
   personality: Personality;
+  /** The catalog role this coworker was created from; "" when the person shaped it by hand. */
+  roleId: string;
+  /** The teammate who proposed this coworker and why; null when the person added it themselves. */
+  suggestedBy: { slug: string; why: string } | null;
   workspaceId: string;
   /** Native OpenWork session reserved for ongoing chat, separate from assignments. */
   conversationThreadId: string;
@@ -95,6 +99,29 @@ export type CoworkerSummary = {
 
 export type AvatarColor = "blue" | "violet" | "mint" | "orange" | "rose" | "slate";
 export type AvatarGlasses = "round" | "square" | "none";
+
+/** One role from the team catalog, as onboarding and the Add screen propose it. */
+export type TeamRole = {
+  id: string;
+  defaultName: string;
+  role: string;
+  mission: string;
+  avatarColor: AvatarColor;
+  avatarGlasses: AvatarGlasses;
+  personality: Personality;
+};
+
+/** A proposed coworker before it exists: a catalog role with a name the person may change. */
+export type TeamDraft = Omit<TeamRole, "id" | "defaultName"> & { roleId: string; name: string };
+
+export type TeamSuggestionState = "offered" | "accepted" | "declined";
+export type TeamReferralState = "offered" | "asked" | "continued";
+
+/** What the conversation restores after a reload: how the person answered each offer. */
+export type TeamStates = {
+  suggestions: Array<{ id: string; state: TeamSuggestionState; at: number; createdSlug: string }>;
+  referrals: Array<{ id: string; state: TeamReferralState; at: number }>;
+};
 
 export type RetiredCoworker = {
   archiveId: string;
@@ -314,7 +341,7 @@ export const coworkerBridge = {
   coworkers: {
     list: () => invoke<CoworkerSummary[]>("coworkers.list"),
     get: (slug: string) => invoke<CoworkerSummary>("coworkers.get", { slug }),
-    create: (input: { name: string; role: string; mission: string; avatarColor: AvatarColor; avatarGlasses: AvatarGlasses; personality: Personality }) =>
+    create: (input: { name: string; role: string; mission: string; avatarColor: AvatarColor; avatarGlasses: AvatarGlasses; personality: Personality; roleId?: string; firstNote?: string }) =>
       invoke<CoworkerSummary>("coworkers.create", input),
     update: (slug: string, patch: Partial<Pick<CoworkerSummary, "workspaceId" | "conversationThreadId" | "automations" | "mission" | "role" | "model" | "modelVariant" | "avatarColor" | "avatarGlasses" | "personality">>) =>
       invoke<CoworkerSummary>("coworkers.update", { slug, patch }),
@@ -345,6 +372,20 @@ export const coworkerBridge = {
   /** The hidden workspace the silent facilitator runs in; created and registered on first use. */
   coordinator: {
     ensure: () => invoke<{ path: string; name: string; workspaceId: string }>("coordinator.ensure"),
+  },
+  /**
+   * The team: the catalog onboarding proposes from, and the person's answers to
+   * a coworker's offers. Only `accept` ever creates a coworker.
+   */
+  team: {
+    catalog: () => invoke<TeamRole[]>("team.catalog"),
+    recommend: (intents: string[]) => invoke<TeamDraft[]>("team.recommend", { intents }),
+    states: (slug: string) => invoke<TeamStates>("team.states", { slug }),
+    /** Add the proposed coworker; it inherits the proposer's model and remembers who proposed it. */
+    accept: (slug: string, suggestionId: string, name?: string) => invoke<CoworkerSummary>("team.accept", { slug, suggestionId, name }),
+    decline: (slug: string, suggestionId: string) => invoke<{ id: string; state: TeamSuggestionState; at: number }>("team.decline", { slug, suggestionId }),
+    referralResolved: (slug: string, referralId: string, outcome: "asked" | "continued") =>
+      invoke<{ id: string; state: TeamReferralState; at: number }>("team.referralResolved", { slug, referralId, outcome }),
   },
   files: {
     list: (slug: string) => invoke<CoworkerMemoryFile[]>("coworkers.files.list", { slug }),

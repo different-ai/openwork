@@ -5,10 +5,11 @@
  * transcript only renders what these return. Technical names stay available to
  * the details disclosure, never in the collapsed line.
  */
-import { coworkerToolName, isAssignmentTool, type CoworkerToolName } from "./coworker-tools.ts";
+import { coworkerToolName, isAssignmentTool, isTeamTool, type CoworkerToolName } from "./coworker-tools.ts";
 import { documentToolName, humanizeDocumentId, structuredContextChanges, structuredDocument } from "./documents.ts";
 import { parseLocalSchedule } from "./local-schedule.ts";
 import { describeScheduleForPeople, describeScheduleInSentence } from "./responsibility-copy.ts";
+import { describeTeamStep } from "./team.ts";
 import { describeWorkerToolStep, workerToolName } from "./workers.ts";
 
 export type WorkStepInput = {
@@ -169,6 +170,10 @@ function scheduleWords(value: unknown, inSentence = false): string {
  */
 function describeCoworkerTool(name: CoworkerToolName, call: WorkStepInput, state: WorkStepState): WorkStep {
   const input = call.input ?? {};
+  if (isTeamTool(name)) {
+    const described = describeTeamStep(name, { input, output: call.output, metadata: call.metadata ?? {} }, state);
+    return { label: described.label, doing: described.doing, service: "your team", state, tool: call.tool };
+  }
   const service = isAssignmentTool(name) ? "your assignments" : "your memory";
   const step = (label: string, doing: string): WorkStep => ({ label, doing, service, state, tool: call.tool });
   const failed = state === "failed";
