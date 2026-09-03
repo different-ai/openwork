@@ -69,13 +69,12 @@ test("Open Coworker owns a branded boot surface and cross-platform icon set", as
   assert.match(appIconSvg, /fill="#5b8dff"/);
   assert.match(appIconSvg, /data-layer="rear-coworker-left"/);
   assert.match(appIconSvg, /data-layer="rear-coworker-right"/);
-  assert.equal(appIconSvg.match(/data-style="blank-card"/g)?.length, 1);
-  assert.equal(appIconSvg.match(/data-style="peeking-card"/g)?.length, 1);
+  assert.equal(appIconSvg.match(/data-style="peeking-card"/g)?.length, 2);
   assert.match(appIconSvg, /linearGradient id="mint-surface"/);
   assert.match(appIconSvg, /linearGradient id="lavender-surface"/);
   assert.match(appIconSvg, /data-layer="front-coworker"/);
   assert.equal(appIconSvg.match(/data-layer="glasses"/g)?.length, 1);
-  assert.equal(appIconSvg.match(/data-layer="rear-glasses"/g)?.length, 1);
+  assert.equal(appIconSvg.match(/data-layer="rear-glasses"/g)?.length, 2);
   assert.equal(appIconSvg.match(/data-layer="pupils"/g)?.length, 1);
   assert.match(appIconSvg, /linearGradient id="avatar-surface"/);
   assert.match(appIconSvg, /fill="url\(#avatar-surface\)"/);
