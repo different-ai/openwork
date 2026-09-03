@@ -1110,6 +1110,24 @@ function ThreadView({
   const pendingTurn = turnState.pending;
   const engineRunning = engineStatus.type === "busy" || engineStatus.type === "retry";
 
+  /**
+   * Make a stop stick. The engine takes a moment to register a turn after
+   * accepting the message, so one abort can land on nothing and the turn then
+   * runs to its end. Keep aborting while the engine reports the turn running,
+   * until the reply for this message has ended, for at most ten seconds.
+   */
+  const abortUntilQuiet = useCallback(async (messageId: string) => {
+    const deadline = Date.now() + 10_000;
+    while (Date.now() < deadline) {
+      const snapshot = await threads.client.getThreadSnapshot(threadId).catch(() => null);
+      if (!snapshot) return;
+      const reply = snapshot.messages.filter((message) => message.role === "assistant" && message.parentId === messageId).at(-1);
+      if (reply && (reply.error !== null || reply.completedAt !== null)) return;
+      if (isRunning(snapshot.status)) await threads.client.abortThread(threadId).catch(() => undefined);
+      await new Promise<void>((resolveWait) => window.setTimeout(resolveWait, 300));
+    }
+  }, [threadId, threads]);
+
   // A second hand for the words that move: "still working" after the wait budget, the retry count.
   const wordsMove = (pendingTurn !== null && pendingTurn.stoppedAt === null && (engineRunning || activeTurn !== null)) || appRetry !== null;
   useEffect(() => {
@@ -1246,14 +1264,7 @@ function ThreadView({
       // Stop pressed while the message was still on its way: the engine had nothing to abort then.
       // Now that it has the turn, abort it as soon as it runs, until it lets go or the turn is over.
       if (turnStateRef.current.pending?.messageId === messageId && turnStateRef.current.pending.stoppedAt !== null) {
-        const deadline = Date.now() + 10_000;
-        while (Date.now() < deadline) {
-          const snapshot = await threads.client.getThreadSnapshot(threadId);
-          const reply = snapshot.messages.filter((message) => message.role === "assistant" && message.parentId === messageId).at(-1);
-          if (reply && (reply.error !== null || reply.completedAt !== null)) break;
-          if (isRunning(snapshot.status)) await threads.client.abortThread(threadId).catch(() => undefined);
-          await new Promise<void>((resolveWait) => window.setTimeout(resolveWait, 300));
-        }
+        await abortUntilQuiet(messageId);
       }
 
       const controller = new AbortController();
@@ -1314,7 +1325,7 @@ function ThreadView({
         setActiveTurn(null);
       }
     }
-  }, [commitTurnState, coworker.model, coworker.modelVariant, coworker.name, coworker.slug, defaultDiscussionTitle, kind, onActivityChange, onCoworkerChanged, refresh, resolution?.messageId, session, threadId, threads, title, titleDiscussionAfterFirstMessage]);
+  }, [abortUntilQuiet, commitTurnState, coworker.model, coworker.modelVariant, coworker.name, coworker.slug, defaultDiscussionTitle, kind, onActivityChange, onCoworkerChanged, refresh, resolution?.messageId, session, threadId, threads, title, titleDiscussionAfterFirstMessage]);
 
   /**
    * After a quit or reload the engine may still be on the turn. Follow it to
@@ -1502,10 +1513,13 @@ function ThreadView({
       appRetryTimerRef.current = null;
     }
     setAppRetry(null);
+    const stopping = turnStateRef.current.pending;
     commitTurnState((state) => markStopped(state, Date.now()));
     waitControllerRef.current?.abort();
     try {
       await threads.client.abortThread(threadId);
+      // The message may still be on its way to the engine's run; keep the stop in force until the turn has ended.
+      if (stopping && activeTurnRef.current?.phase !== "accepting") await abortUntilQuiet(stopping.messageId);
       await refresh();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
