@@ -77,6 +77,38 @@ export const POPULAR_CONNECTORS: PopularConnector[] = [
 
 export const MORE_CONNECTORS_TEASER = "See Outlook Email, Granola, and more";
 
+/**
+ * What the "+" on a popular row does. Gmail, Drive, and Calendar ride the
+ * org-wide Google Workspace client: when one exists (the org's own or the
+ * OpenWork-provided default) the click goes straight to the member's Google
+ * sign-in; otherwise the client dialog opens for first-time setup.
+ */
+export type PopularAddAction =
+  | { kind: "connect"; connectionId: string }
+  | { kind: "quick-add"; id: string }
+  | { kind: "preset"; presetId: string };
+
+export function popularAddAction(
+  connector: PopularConnector,
+  state: { googleWorkspaceClientReady: boolean },
+): PopularAddAction {
+  switch (connector.target.kind) {
+    case "google-workspace":
+      return state.googleWorkspaceClientReady
+        ? { kind: "connect", connectionId: GOOGLE_WORKSPACE_QUICK_ADD_ID }
+        : { kind: "quick-add", id: GOOGLE_WORKSPACE_QUICK_ADD_ID };
+    case "microsoft-365":
+      return { kind: "quick-add", id: MICROSOFT_365_QUICK_ADD_ID };
+    case "preset":
+      return { kind: "preset", presetId: connector.target.presetId };
+  }
+}
+
+/** Notice shown after the org-wide Google client starts a member's sign-in. */
+export function googleWorkspaceReadyNotice(orgName: string): string {
+  return `Gmail, Google Drive, and Google Calendar are ready for everyone in ${orgName}. Finish signing in to connect your own Google account.`;
+}
+
 /** Starter prompt for connectors without a curated one. */
 export function connectorChatPrompt(displayName: string): string {
   const popular = POPULAR_CONNECTORS.find((connector) => connector.displayName === displayName);

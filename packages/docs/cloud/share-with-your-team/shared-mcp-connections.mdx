@@ -81,6 +81,36 @@ Use the exact scheme, hostname, optional path prefix, and port configured in
 connections created with an older per-connection callback keep that registered
 URL automatically; do not change it just to reconnect.
 
+## Gmail, Google Drive, and Google Calendar
+
+Gmail, Drive, and Calendar share one Google Workspace connector. On OpenWork
+Cloud, OpenWork provides the Google OAuth client, so an admin clicks `+` on any
+of the three rows and goes straight to Google sign-in; every member then finds
+the connector on `Your Connections` and connects their own Google account. No
+Google Cloud project is needed.
+
+An organization can still bring its own Google OAuth web app — for different
+permissions or its own consent screen — from the connector's `Manage` dialog
+(`Use your own client`). The org's client always takes precedence over the
+OpenWork-provided one.
+
+Self-hosted Den instances provide the client through two Den API environment
+variables, set together:
+
+```text
+DEN_CONNECTOR_GOOGLE_WORKSPACE_CLIENT_ID=<Google OAuth web client ID>
+DEN_CONNECTOR_GOOGLE_WORKSPACE_CLIENT_SECRET=<its client secret>
+```
+
+Register the native-provider redirect URL on that Google client:
+
+```text
+<DEN_API_PUBLIC_URL>/v1/oauth-providers/google-workspace/connect/callback
+```
+
+Without these variables, `+` opens the first-time setup dialog where an admin
+pastes the organization's own Google client, exactly as before.
+
 ## Slack
 
 Slack's MCP server does not support automatic OAuth client registration, so a Slack admin creates a Slack app once and OpenWork Cloud uses its credentials for every member.

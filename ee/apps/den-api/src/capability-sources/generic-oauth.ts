@@ -7,10 +7,10 @@ import { clientSelectedFeatures, resolveProviderScopes, type NativeOAuthProvider
 import { readProviderTenantId, resolveTenantEndpointTemplate } from "./oauth-tenant.js"
 import {
   getConnectedAccount,
-  getOrgOAuthClient,
+  resolveOAuthClient,
   refreshConnectedAccountForActiveMember,
   type ConnectedAccountRow,
-  type OrgOAuthClientRow,
+  type OAuthClientCredentials,
 } from "./oauth-credentials.js"
 
 /**
@@ -150,7 +150,7 @@ export function verifyOAuthStateToken(input: { token: string; secret: string; no
 
 export function buildAuthorizeUrl(input: {
   provider: NativeOAuthProviderConfig
-  client: OrgOAuthClientRow
+  client: OAuthClientCredentials
   state: string
   redirectUri: string
   codeChallenge?: string
@@ -358,7 +358,7 @@ async function readBoundedTokenResponse(response: Response): Promise<string> {
 
 export function resolveOAuthEndpointUrl(input: {
   provider: NativeOAuthProviderConfig
-  client: OrgOAuthClientRow
+  client: OAuthClientCredentials
   endpoint: "authorize" | "token"
 }): string {
   const template = input.endpoint === "authorize" ? input.provider.authorizeUrl : input.provider.tokenUrl
@@ -415,7 +415,7 @@ async function postTokenRequest(input: {
 
 export async function exchangeCodeForTokens(input: {
   provider: NativeOAuthProviderConfig
-  client: OrgOAuthClientRow
+  client: OAuthClientCredentials
   code: string
   redirectUri: string
   codeVerifier?: string
@@ -437,7 +437,7 @@ export async function exchangeCodeForTokens(input: {
 
 async function refreshTokens(input: {
   provider: NativeOAuthProviderConfig
-  client: OrgOAuthClientRow
+  client: OAuthClientCredentials
   refreshToken: string
 }): Promise<TokenResponse> {
   const params = new URLSearchParams({
@@ -483,7 +483,7 @@ export async function getValidAccessToken(input: {
     return { error: "not_connected" }
   }
 
-  const client = await getOrgOAuthClient(input.organizationId, input.credentialProviderId)
+  const client = await resolveOAuthClient(input.organizationId, input.credentialProviderId)
   if (!client) {
     return { error: "client_not_configured" }
   }

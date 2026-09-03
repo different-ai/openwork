@@ -41,9 +41,11 @@ function render(overrides: Partial<Parameters<typeof ConnectorCatalog>[0]> = {})
       onAddPopular: noop,
       onAddPreset: noop,
       onAddMicrosoft365: noop,
+      onConnect: noop,
       onManage: noop,
       onRemove: noop,
       addingPresetId: null,
+      connectingConnectionId: null,
       ...overrides,
     }),
   );
@@ -96,5 +98,39 @@ describe("ConnectorCatalog", () => {
     expect(markup).toContain('href="/dashboard/mcp-connections/microsoft-365"');
     expect(markup).toContain('href="/dashboard/mcp-connections/granola"');
     expect(markup).not.toContain('href="/dashboard/mcp-connections/notion"');
+  });
+
+  test("Gmail, Drive, and Calendar offer Connect while the org-wide Google client is published but this person has not signed in", () => {
+    // The org-wide Google Workspace entry (org's own or OpenWork-provided client) as the usable list reports it.
+    const googleWorkspace: ExternalMcpConnection = {
+      id: "google-workspace",
+      name: "Google Workspace",
+      url: "https://workspace.google.com",
+      authType: "oauth",
+      credentialMode: "per_member",
+      nativeProviderKey: "google-workspace",
+      connected: false,
+      connectedAt: null,
+      updatedAt: null,
+      connectedForMe: false,
+      requiredBy: [],
+      identityManagedBy: [],
+      access: null,
+    };
+    const markup = render({ connections: [NOTION, googleWorkspace] });
+    for (const id of ["gmail", "google-drive", "google-calendar"]) {
+      expect(markup).toContain(`data-testid="connector-connect-${id}"`);
+      expect(markup).not.toContain(`data-testid="connector-add-${id}"`);
+    }
+    // Still the options menu (Chat / Manage), never Uninstall for the org-wide Google entry.
+    expect(markup).toContain('data-testid="connector-options-google-workspace"');
+    // Already-connected rows keep just the menu.
+    expect(markup).not.toContain('data-testid="connector-connect-notion"');
+
+    const connected = render({ connections: [NOTION, { ...googleWorkspace, connected: true, connectedForMe: true }] });
+    expect(connected).not.toContain('data-testid="connector-connect-gmail"');
+
+    const busy = render({ connections: [NOTION, googleWorkspace], connectingConnectionId: "google-workspace" });
+    expect(busy).toContain("animate-spin");
   });
 });

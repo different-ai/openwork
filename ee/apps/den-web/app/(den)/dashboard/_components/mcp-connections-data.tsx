@@ -994,6 +994,8 @@ export type SaveNativeProviderClientInput = {
 export type NativeProviderClient = {
   providerId: string;
   configured: boolean;
+  /** "org" when the org saved its own client, "openwork" for the OpenWork-provided default, null when neither exists. */
+  source: "org" | "openwork" | null;
   clientId: string | null;
   tenantId: string | null;
   features: string[];
@@ -1006,6 +1008,7 @@ function parseNativeProviderClient(payload: unknown): NativeProviderClient {
     throw new Error("Native provider client response was incomplete.");
   }
   const { providerId, configured, clientId, tenantId, features, scopes, redirectUri } = payload;
+  const source = payload.source === "org" || payload.source === "openwork" ? payload.source : null;
   if (
     typeof providerId !== "string"
     || typeof configured !== "boolean"
@@ -1017,7 +1020,7 @@ function parseNativeProviderClient(payload: unknown): NativeProviderClient {
   ) {
     throw new Error("Native provider client response was incomplete.");
   }
-  return { providerId, configured, clientId, tenantId, features, scopes, redirectUri };
+  return { providerId, configured, source, clientId, tenantId, features, scopes, redirectUri };
 }
 
 /**

@@ -6,7 +6,9 @@ import {
   connectionForPresetUrl,
   connectorChatDeepLink,
   connectorChatPrompt,
+  googleWorkspaceReadyNotice,
   POPULAR_CONNECTORS,
+  popularAddAction,
   remainingPresets,
 } from "../app/(den)/dashboard/_components/connector-catalog";
 import type { ExternalMcpConnection, ExternalMcpPreset } from "../app/(den)/dashboard/_components/mcp-connections-data";
@@ -125,5 +127,39 @@ describe("connector pages", () => {
     expect(oneClick).toContain('credentialMode: "per_member"');
     expect(oneClick).toContain("{ startOAuth: true }");
     expect(screen).toContain('if (effort === "one_click") {');
+  });
+
+  test("Gmail, Drive, and Calendar connect in one click once an org-wide Google client exists", () => {
+    const googleRows = POPULAR_CONNECTORS.filter((connector) => connector.target.kind === "google-workspace");
+    expect(googleRows.map((connector) => connector.id)).toEqual(["gmail", "google-drive", "google-calendar"]);
+
+    // The org's own client or the OpenWork-provided default: straight to the member's Google sign-in.
+    for (const connector of googleRows) {
+      expect(popularAddAction(connector, { googleWorkspaceClientReady: true })).toEqual({ kind: "connect", connectionId: "google-workspace" });
+    }
+    // Neither exists yet: first-time setup dialog.
+    for (const connector of googleRows) {
+      expect(popularAddAction(connector, { googleWorkspaceClientReady: false })).toEqual({ kind: "quick-add", id: "google-workspace" });
+    }
+    expect(googleWorkspaceReadyNotice("Acme")).toBe(
+      "Gmail, Google Drive, and Google Calendar are ready for everyone in Acme. Finish signing in to connect your own Google account.",
+    );
+  });
+
+  test("the Google client state never changes what other popular rows do", () => {
+    const slack = POPULAR_CONNECTORS.find((connector) => connector.id === "slack")!;
+    const microsoft = { ...slack, id: "outlook", displayName: "Outlook", target: { kind: "microsoft-365" as const } };
+    for (const googleWorkspaceClientReady of [true, false]) {
+      expect(popularAddAction(slack, { googleWorkspaceClientReady })).toEqual({ kind: "preset", presetId: "slack" });
+      expect(popularAddAction(microsoft, { googleWorkspaceClientReady })).toEqual({ kind: "quick-add", id: "microsoft-365" });
+    }
+  });
+
+  test("the catalog screen and ?quickAdd=google-workspace both route through the one-click decision", () => {
+    const screen = readDashboardFile("_components/mcp-connections-screen.tsx");
+    expect(screen).toContain("popularAddAction(connector, { googleWorkspaceClientReady })");
+    expect(screen).toContain('useNativeProviderClient(GOOGLE_WORKSPACE_QUICK_ADD_ID, view === "catalog")');
+    expect(screen).toContain("void handleConnectOAuth(GOOGLE_WORKSPACE_QUICK_ADD_ID);");
+    expect(screen).toContain('clientConfig.data?.source === "openwork"');
   });
 });

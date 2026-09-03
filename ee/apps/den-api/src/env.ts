@@ -42,6 +42,8 @@ const EnvSchema = z.object({
   GITHUB_RECONCILE_MIN_AGE_MS: z.string().optional(),
   GOOGLE_CLIENT_ID: z.string().optional(),
   GOOGLE_CLIENT_SECRET: z.string().optional(),
+  DEN_CONNECTOR_GOOGLE_WORKSPACE_CLIENT_ID: z.string().optional(),
+  DEN_CONNECTOR_GOOGLE_WORKSPACE_CLIENT_SECRET: z.string().optional(),
   EMAIL_FROM: z.string().optional(),
   DEN_ORG_MODE: z.string().optional(),
   DEN_SINGLE_ORG_NAME: z.string().optional(),
@@ -257,6 +259,27 @@ function automationTuning(value: string | undefined, fallback: number) {
 function optionalString(value: string | undefined) {
   const trimmed = value?.trim()
   return trimmed ? trimmed : undefined
+}
+
+export type ConnectorOAuthClientConfig = { clientId: string; clientSecret: string }
+
+/** Both halves are required: a client id without its secret cannot complete a code exchange. */
+function optionalOAuthClient(envPrefix: string, clientId: string | undefined, clientSecret: string | undefined): ConnectorOAuthClientConfig | undefined {
+  const id = optionalString(clientId)
+  const secret = optionalString(clientSecret)
+  if (Boolean(id) !== Boolean(secret)) {
+    throw new Error(`${envPrefix}_CLIENT_ID and ${envPrefix}_CLIENT_SECRET must be set together`)
+  }
+  return id && secret ? { clientId: id, clientSecret: secret } : undefined
+}
+
+function connectorOAuthClients(): Record<string, ConnectorOAuthClientConfig> {
+  const googleWorkspace = optionalOAuthClient(
+    "DEN_CONNECTOR_GOOGLE_WORKSPACE",
+    parsed.DEN_CONNECTOR_GOOGLE_WORKSPACE_CLIENT_ID,
+    parsed.DEN_CONNECTOR_GOOGLE_WORKSPACE_CLIENT_SECRET,
+  )
+  return googleWorkspace ? { "google-workspace": googleWorkspace } : {}
 }
 
 function readOptionalSecretFile(envName: string, pathValue: string | undefined) {
@@ -709,6 +732,14 @@ export const env = {
     clientId: optionalString(parsed.GOOGLE_CLIENT_ID),
     clientSecret: optionalString(parsed.GOOGLE_CLIENT_SECRET),
   },
+  /**
+   * OpenWork-provided OAuth clients for native connectors, keyed by provider
+   * id. When set, every organization can connect that provider without
+   * registering its own OAuth app; an org that saves its own client still
+   * takes precedence. Unlike `google` above (Den sign-in), this client is used
+   * for member connections to Gmail, Drive, and Calendar.
+   */
+  connectorOAuthClients: connectorOAuthClients(),
   email: {
     from: optionalString(parsed.EMAIL_FROM),
   },

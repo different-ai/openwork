@@ -9,7 +9,7 @@ import {
   resolveProviderScopes,
   type NativeOAuthProviderConfig,
 } from "./provider-registry.js"
-import { getConnectedAccount, getOrgOAuthClient } from "./oauth-credentials.js"
+import { getConnectedAccount, getOrgOAuthClient, resolveOAuthClient } from "./oauth-credentials.js"
 import { readProviderTenantId } from "./oauth-tenant.js"
 import { listExternalMcpConnections, listUsableNativeProviderConnections } from "./external-mcp-connections.js"
 
@@ -146,11 +146,11 @@ export async function listNativeProviderUsableEntries(input: {
     if (entry) entries.push(entry)
   }
 
-  // Legacy native-provider clients never had connector rows. Keep their
-  // literal registry key visible org-wide without moving either credentials
-  // or connected accounts.
+  // The literal registry key is the org-wide default: an org's own legacy
+  // client (never a connector row) or the OpenWork-provided client. Keep it
+  // visible org-wide without moving either credentials or connected accounts.
   for (const provider of Object.values(NATIVE_OAUTH_PROVIDERS)) {
-    const client = await getOrgOAuthClient(input.organizationId, provider.providerId)
+    const client = await resolveOAuthClient(input.organizationId, provider.providerId)
     if (!client) continue
     const account = await getConnectedAccount({
       organizationId: input.organizationId,
@@ -180,9 +180,10 @@ export async function resolveDefaultNativeProviderCredentialId(input: {
   nativeProviderKey: string
   teamIds: DenTypeId<"team">[]
 }): Promise<string | null> {
-  // The literal registry key is the legacy alias: it has no connector row or
-  // access grants, so it intentionally remains implicitly org-wide.
-  if (await getOrgOAuthClient(input.organizationId, input.nativeProviderKey)) {
+  // The literal registry key is the org-wide default (legacy org client or the
+  // OpenWork-provided one): it has no connector row or access grants, so it
+  // intentionally remains implicitly org-wide.
+  if (await resolveOAuthClient(input.organizationId, input.nativeProviderKey)) {
     return input.nativeProviderKey
   }
   const legacyAccounts = await db
@@ -209,7 +210,7 @@ export async function resolveManageableNativeProviderCredentialId(input: {
   organizationId: DenTypeId<"organization">
   nativeProviderKey: string
 }): Promise<string | null> {
-  if (await getOrgOAuthClient(input.organizationId, input.nativeProviderKey)) {
+  if (await resolveOAuthClient(input.organizationId, input.nativeProviderKey)) {
     return input.nativeProviderKey
   }
   const legacyAccounts = await db
