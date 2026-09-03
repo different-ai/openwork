@@ -152,9 +152,47 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   if (!isRecord(mascot)) throw new Error("Mascot facts were unavailable.");
   const mascotBox = mascot.box;
   expect(await evalIn(app, `(() => { const r = document.querySelector('[data-testid="onboarding-mascot"]').getBoundingClientRect(); return [Math.round(r.width), Math.round(r.height)].join("x"); })()`)).toBe(mascotBox);
+  const soloPeek = await waitFor(app, `(() => {
+    const stack = document.querySelector('[data-testid="onboarding-mascot"]');
+    if (!(stack instanceof HTMLElement)) return false;
+    const side = stack.dataset.ambientVisitor;
+    if ((side !== "left" && side !== "right") || stack.dataset.ambientStage !== "peeking") return false;
+    if (!stack.classList.contains(side + "-blinking")) return false;
+    const visitors = [...stack.querySelectorAll('[data-testid="onboarding-mascot-visitor"]')];
+    const visible = visitors.filter((visitor) => getComputedStyle(visitor).visibility === "visible");
+    const active = visitors.filter((visitor) => visitor.getAttribute("data-ambient-active") === "true");
+    const activeAvatar = active[0]?.querySelector(".coworker-avatar");
+    const rect = stack.getBoundingClientRect();
+    return {
+      side,
+      stage: stack.dataset.ambientStage,
+      visitorsState: stack.dataset.visitors,
+      visibleVisitors: visible.length,
+      activeVisitors: active.length,
+      helloAnimation: activeAvatar ? getComputedStyle(activeAvatar).animationName : "",
+      box: [Math.round(rect.width), Math.round(rect.height)].join("x"),
+    };
+  })()`, { timeoutMs: 25_000, label: "one patient onboarding visitor peeking and blinking" });
+  expect(soloPeek).toMatchObject({
+    side: expect.stringMatching(/^(left|right)$/),
+    stage: "peeking",
+    visitorsState: "peeking",
+    visibleVisitors: 1,
+    activeVisitors: 1,
+    helloAnimation: "mascot-peek-hello",
+    box: mascotBox,
+  });
+  await waitFor(app, `(() => {
+    const stack = document.querySelector('[data-testid="onboarding-mascot"]');
+    if (!(stack instanceof HTMLElement)) return false;
+    window.dispatchEvent(new PointerEvent("pointermove", { clientX: 12, clientY: 12 }));
+    const hidden = [...stack.querySelectorAll('[data-testid="onboarding-mascot-visitor"]')]
+      .every((visitor) => getComputedStyle(visitor).visibility === "hidden");
+    return stack.dataset.ambientVisitor === "none" && stack.dataset.ambientStage === "waiting" && hidden;
+  })()`, { label: "the solo onboarding peek dismissing on activity" });
   evidence.recordAssertionEvidence(
-    "First run presents the monochrome Open Coworker line mark with a restrained pointer-aware gaze",
-    "The centered launch surface used a white tile, black coworker outline, and offset gray rear shell, stacked a recommended Cloud path above a quieter local path, and moved only the pupil layer toward the pointer within a 1.5px horizontal cap.",
+    "First run presents a restrained pointer-aware mark whose waiting coworkers check in one at a time",
+    "The fixed-size launch mascot completed its opening welcome, then after an idle pause exactly one rear coworker peeked out, lifted less than a pixel, and blinked while the other stayed hidden. Pointer activity tucked it away immediately without moving the onboarding layout.",
     true,
   );
 

@@ -17,7 +17,9 @@ import { CoworkerAvatar } from "@/ui/coworker-avatar";
  * pause 150; mint out 500–900 (-32px, -17px, -2° → -7°); violet out 600–1000
  * (+32px, -17px, +2° → +7°); hold to 1800 with the front blink at 1150 and the
  * visitors' at 1250/1350; mint back 1800–2200; violet back 1900–2300; gaze on
- * from 2300. Reduced motion renders the icon composition at once.
+ * from 2300. If the welcome then sits untouched, one visitor may make a brief
+ * solo peek before returning behind the front card. Reduced motion renders the
+ * icon composition at once and keeps the visitors still.
  */
 
 export type OnboardingMascotVariant =
@@ -44,11 +46,18 @@ const T = {
   done: 2_300,
 } as const;
 const BLINK_MS = 240;
+const AMBIENT_PEEK_MIN_MS = 9_000;
+const AMBIENT_PEEK_RANGE_MS = 8_000;
+const AMBIENT_BLINK_AT_MS = 620;
+const AMBIENT_RETURN_AT_MS = 1_600;
+const AMBIENT_HIDE_AT_MS = 2_050;
 
 /** Welcome already played this app session, per surface; never persisted. */
 const playedSessions = new Set<string>();
 
 type Phase = "settling" | "revealing" | "holding" | "hiding" | "rest";
+type VisitorSide = "left" | "right";
+type AmbientPeek = { side: VisitorSide; stage: "peeking" | "returning" };
 
 function reducedMotion(): boolean {
   return typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -77,7 +86,9 @@ export function OnboardingMascotStack({
   const play = !still && !playedSessions.has(sessionKey) && visitors.length > 0;
   const [phase, setPhase] = useState<Phase>(() => (play ? "settling" : reveal === "hold" && !still ? "holding" : "rest"));
   const [blinks, setBlinks] = useState<{ front: boolean; left: boolean; right: boolean }>({ front: false, left: false, right: false });
+  const [ambientPeek, setAmbientPeek] = useState<AmbientPeek | null>(null);
   const startedRef = useRef(false);
+  const ambientActiveRef = useRef(false);
 
   useEffect(() => {
     if (!play || startedRef.current) return;
@@ -112,6 +123,77 @@ export function OnboardingMascotStack({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  useEffect(() => {
+    if (still || phase !== "rest" || reveal !== "once" || visitors.length < 2) return;
+    let idleTimer: number | undefined;
+    const gestureTimers = new Set<number>();
+
+    const later = (work: () => void, delay: number) => {
+      const timer = window.setTimeout(() => {
+        gestureTimers.delete(timer);
+        work();
+      }, delay);
+      gestureTimers.add(timer);
+    };
+    const clearGestureTimers = () => {
+      for (const timer of gestureTimers) window.clearTimeout(timer);
+      gestureTimers.clear();
+    };
+    const dismissPeek = () => {
+      clearGestureTimers();
+      if (!ambientActiveRef.current) return;
+      ambientActiveRef.current = false;
+      setAmbientPeek(null);
+      setBlinks((current) => ({ ...current, left: false, right: false }));
+    };
+    const schedulePeek = () => {
+      if (idleTimer !== undefined) window.clearTimeout(idleTimer);
+      idleTimer = window.setTimeout(() => {
+        idleTimer = undefined;
+        if (document.hidden) {
+          schedulePeek();
+          return;
+        }
+
+        const side: VisitorSide = Math.random() < 0.5 ? "left" : "right";
+        ambientActiveRef.current = true;
+        setAmbientPeek({ side, stage: "peeking" });
+        later(() => setBlinks((current) => ({ ...current, [side]: true })), AMBIENT_BLINK_AT_MS);
+        later(() => {
+          setBlinks((current) => ({ ...current, [side]: false }));
+          setAmbientPeek({ side, stage: "returning" });
+        }, AMBIENT_RETURN_AT_MS);
+        later(() => {
+          ambientActiveRef.current = false;
+          setAmbientPeek(null);
+          schedulePeek();
+        }, AMBIENT_HIDE_AT_MS);
+      }, AMBIENT_PEEK_MIN_MS + Math.random() * AMBIENT_PEEK_RANGE_MS);
+    };
+    const onActivity = () => {
+      if (idleTimer !== undefined) window.clearTimeout(idleTimer);
+      dismissPeek();
+      schedulePeek();
+    };
+
+    schedulePeek();
+    window.addEventListener("pointermove", onActivity, { passive: true });
+    window.addEventListener("pointerdown", onActivity, { passive: true });
+    window.addEventListener("keydown", onActivity);
+    window.addEventListener("blur", dismissPeek);
+    document.addEventListener("visibilitychange", onActivity);
+    return () => {
+      if (idleTimer !== undefined) window.clearTimeout(idleTimer);
+      clearGestureTimers();
+      ambientActiveRef.current = false;
+      window.removeEventListener("pointermove", onActivity);
+      window.removeEventListener("pointerdown", onActivity);
+      window.removeEventListener("keydown", onActivity);
+      window.removeEventListener("blur", dismissPeek);
+      document.removeEventListener("visibilitychange", onActivity);
+    };
+  }, [phase, reveal, still, visitors.length]);
+
   // Visitors are out while revealing or holding; they slide back while hiding and are hidden at rest.
   const visitorsOut = phase === "revealing" || phase === "holding";
   const visitorsHidden = phase === "rest" || phase === "settling";
@@ -128,6 +210,7 @@ export function OnboardingMascotStack({
         `is-${phase}`,
         visitorsOut ? "visitors-out" : "",
         gazing ? "is-gazing" : "",
+        ambientPeek?.stage === "peeking" ? `ambient-peek-${ambientPeek.side}` : "",
         blinks.front ? "front-blinking" : "",
         blinks.left ? "left-blinking" : "",
         blinks.right ? "right-blinking" : "",
@@ -136,23 +219,34 @@ export function OnboardingMascotStack({
       style={{ width, height, ["--mascot-size" as string]: `${size}px` }}
       data-testid="onboarding-mascot"
       data-phase={phase}
-      data-visitors={visitorsHidden ? "hidden" : visitorsOut ? "out" : "returning"}
+      data-visitors={ambientPeek ? ambientPeek.stage : visitorsHidden ? "hidden" : visitorsOut ? "out" : "returning"}
+      data-ambient-visitor={ambientPeek?.side ?? "none"}
+      data-ambient-stage={ambientPeek?.stage ?? "waiting"}
     >
       <span className="mascot-stack__card" aria-hidden="true" data-testid="onboarding-mascot-card" />
       {!still
-        ? visitors.slice(0, 2).map((visitor, index) => (
-            <div
-              key={`${visitor.color}-${visitor.glasses}-${index}`}
-              className={`mascot-stack__visitor mascot-stack__visitor--${index === 0 ? "left" : "right"}`}
-              aria-hidden="true"
-              data-testid="onboarding-mascot-visitor"
-              data-color={visitor.color}
-              data-glasses={visitor.glasses}
-              style={visitorsHidden ? { visibility: "hidden" } : undefined}
-            >
-              <CoworkerAvatar animated={false} gaze={false} color={visitor.color} glasses={visitor.glasses} name={visitor.name} size={visitorSize} />
-            </div>
-          ))
+        ? visitors.slice(0, 2).map((visitor, index) => {
+            const side: VisitorSide = index === 0 ? "left" : "right";
+            const isAmbientVisitor = ambientPeek?.side === side;
+            return (
+              <div
+                key={`${visitor.color}-${visitor.glasses}-${index}`}
+                className={`mascot-stack__visitor mascot-stack__visitor--${side}`}
+                aria-hidden="true"
+                data-testid="onboarding-mascot-visitor"
+                data-color={visitor.color}
+                data-glasses={visitor.glasses}
+                data-ambient-active={isAmbientVisitor ? "true" : "false"}
+                style={visitorsHidden && !isAmbientVisitor
+                  ? { visibility: "hidden" }
+                  : isAmbientVisitor
+                    ? { visibility: "visible", transitionDelay: "0ms" }
+                    : undefined}
+              >
+                <CoworkerAvatar animated={false} gaze={false} color={visitor.color} glasses={visitor.glasses} name={visitor.name} size={visitorSize} />
+              </div>
+            );
+          })
         : null}
       <div className="mascot-stack__front" data-testid="onboarding-mascot-front">
         {variant.kind === "mark" ? (
