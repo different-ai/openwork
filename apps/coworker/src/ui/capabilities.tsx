@@ -194,6 +194,44 @@ export function CapabilitiesPanel({
     );
   }
 
+  if (!signedIn && pitch === "full") {
+    // The first visit is a step, not a card: the whole panel explains Connect once, then
+    // Continue, or Skip (optionally for good) into the regular Apps & tools view.
+    return (
+      <div className="flex h-full min-h-[420px] flex-col" data-testid="coworker-connect-card" data-status="signed-out" data-pitch="full">
+        <div className="flex flex-1 flex-col justify-center px-1">
+          <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-mist">OpenWork Connect</p>
+          <h3 className="mt-2 text-lg font-semibold leading-snug tracking-[-0.01em] text-snow">Bring your organization's apps and tools to {coworker.name}.</h3>
+          <ul className="mt-5 space-y-3">
+            {CONNECT_VALUE.map((item) => (
+              <li key={item.title} className="text-[13px] leading-relaxed text-mist">
+                <span className="font-medium text-snow">{item.title}.</span> {item.text}
+              </li>
+            ))}
+          </ul>
+        </div>
+        <div className="mt-6 space-y-2 px-1 pb-2">
+          <Button variant="primary" className="h-9 w-full text-xs" onClick={onConnectAccount} data-testid="coworker-connect-cta">
+            Continue with OpenWork
+          </Button>
+          <Button variant="ghost" className="h-9 w-full text-xs" onClick={skipPitch} data-testid="coworker-connect-skip">
+            Skip
+          </Button>
+          <label className="flex cursor-pointer items-center justify-center gap-2 pt-1 text-[11px] text-mist">
+            <input
+              type="checkbox"
+              className="size-3.5 accent-[var(--color-spark)]"
+              checked={hidePitchNextTime}
+              onChange={(event) => setHidePitchNextTime(event.target.checked)}
+              data-testid="coworker-connect-hide-pitch"
+            />
+            Don't show this explanation again
+          </label>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-4" data-testid="coworker-capabilities">
       <div className="flex items-center gap-2">
@@ -212,12 +250,12 @@ export function CapabilitiesPanel({
       </div>
 
       <section
-        className={`rounded-2xl border border-line bg-ink ${!signedIn && pitch === "compact" ? "px-4 py-3" : "p-4"}`}
+        className={`rounded-2xl border border-line bg-ink ${signedIn ? "p-4" : "px-4 py-3"}`}
         data-testid="coworker-connect-card"
         data-status={signedIn ? (connect?.status ?? "connecting") : "signed-out"}
-        data-pitch={signedIn ? undefined : pitch}
+        data-pitch={signedIn ? undefined : "compact"}
       >
-        {!signedIn && pitch === "compact" ? (
+        {!signedIn ? (
           // The short form: one line and the one action; the explanation was read (or skipped) already.
           <div>
             <div className="flex items-center justify-between gap-3">
@@ -233,7 +271,7 @@ export function CapabilitiesPanel({
             </Button>
           </div>
         ) : null}
-        <div className={`flex items-start justify-between gap-3 ${!signedIn && pitch === "compact" ? "hidden" : ""}`}>
+        <div className={`flex items-start justify-between gap-3 ${signedIn ? "" : "hidden"}`}>
           <div className="min-w-0">
             <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-mist">OpenWork Connect</p>
             <h3 className="mt-1.5 text-sm font-semibold leading-snug text-snow">
@@ -280,34 +318,6 @@ export function CapabilitiesPanel({
               </Button>
               {needsRepair ? <Button variant="ghost" className="text-xs" onClick={onRepairConnect}>Repair</Button> : null}
             </div>
-          </>
-        ) : pitch === "full" ? (
-          <>
-            <ul className="mt-3 space-y-2">
-              {CONNECT_VALUE.map((item) => (
-                <li key={item.title} className="text-xs leading-relaxed text-mist">
-                  <span className="font-medium text-snow">{item.title}.</span> {item.text}
-                </li>
-              ))}
-            </ul>
-            <div className="mt-3 flex items-center gap-2">
-              <Button variant="primary" className="flex-1 text-xs" onClick={onConnectAccount} data-testid="coworker-connect-cta">
-                Continue with OpenWork
-              </Button>
-              <Button variant="ghost" className="text-xs" onClick={skipPitch} data-testid="coworker-connect-skip">
-                Skip
-              </Button>
-            </div>
-            <label className="mt-2.5 flex cursor-pointer items-center gap-2 text-[11px] text-mist">
-              <input
-                type="checkbox"
-                className="size-3.5 accent-[var(--color-spark)]"
-                checked={hidePitchNextTime}
-                onChange={(event) => setHidePitchNextTime(event.target.checked)}
-                data-testid="coworker-connect-hide-pitch"
-              />
-              Don't show this explanation again
-            </label>
           </>
         ) : null}
       </section>
