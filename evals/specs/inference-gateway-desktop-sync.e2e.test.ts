@@ -99,17 +99,19 @@ async function deleteGatewayProvider(admin: DenSession, orgId: string, id: strin
   });
 }
 
-async function memberGatewayKey(member: DenSession, orgId: string, id: string): Promise<string> {
+async function memberConnect(member: DenSession, orgId: string, id: string): Promise<{ key: string; gatewayUrl: string }> {
   const result = await denFetch(member, `/v1/inference-providers/${encodeURIComponent(id)}/connect`, {
     headers: orgHeaders(member, orgId),
     signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   });
   const provider = isRecord(result.body) && isRecord(result.body.inferenceProvider) ? result.body.inferenceProvider : null;
   const key = stringAt(provider, "apiKey");
-  if (result.response.status !== 200 || !key) {
+  const providerConfig = isRecord(provider?.providerConfig) ? provider.providerConfig : null;
+  const gatewayUrl = stringAt(providerConfig, "api");
+  if (result.response.status !== 200 || !key || !gatewayUrl) {
     throw new Error(`Member connect failed: HTTP ${result.response.status} ${result.text.slice(0, 500)}`);
   }
-  return key;
+  return { key, gatewayUrl };
 }
 
 interface LocalServerSnapshot {
@@ -180,9 +182,13 @@ test("a gateway provider materializes on the desktop as its own ipr_ provider wi
   onTestFinished(async () => {
     await deleteGatewayProvider(den.admin, orgId, iprId).catch(() => undefined);
   });
-  const gatewayUrl = `${GATEWAY_ORIGIN}/api/v1/providers/${iprId}`;
-  const memberKey = await memberGatewayKey(member, orgId, iprId);
+  // den-api derives the gateway origin from its own INFERENCE_PROXY_BASE_URL
+  // (the spec only controls that env for a local Den), so the lane-independent
+  // claim is: the desktop materializes exactly the URL den-api handed out, and
+  // that URL is the provider-scoped gateway prefix.
+  const { key: memberKey, gatewayUrl } = await memberConnect(member, orgId, iprId);
   expect(memberKey.startsWith(GATEWAY_KEY_PREFIX)).toBe(true);
+  expect(gatewayUrl.endsWith(`/api/v1/providers/${iprId}`)).toBe(true);
 
   await using desktopApp = await app({ den, as: "member", place });
 
