@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { describeProgress, describeWorkStep, summarizeWork, technicalSections, workStepState } from "./work-receipt.ts";
+import { GLIMPSE_CHARS, GLIMPSE_MS, describeGlimpse, describeProgress, describeWorkStep, summarizeWork, technicalSections, workStepState } from "./work-receipt.ts";
 
 test("tool calls become steps a person can read, with the tool name kept for details", () => {
   const edit = describeWorkStep({ tool: "edit", status: "completed", input: { filePath: "/Users/me/coworkers/yo/memory/index.md" } });
@@ -136,4 +136,18 @@ test("the coworker's memory and soul tools read as what it remembered or changed
   assert.equal(describeWorkStep({ tool: "coworker_self_read", status: "completed", input: { what: "memory" }, output: "# Working memory…" }).label, "Checked what I remember");
   assert.equal(describeWorkStep({ tool: "coworker_self_read", status: "running", input: { what: "soul" } }).doing, "checking what I remember");
   assert.equal(summarizeWork([remembered, describeWorkStep({ tool: "coworker_soul_update", status: "completed", input: { section: "Communication", change: { kind: "add", text: "Shorter replies" } } })]), "Worked with your memory · 2 steps");
+});
+
+test("a glance at the live row shows the end of one line of what is streaming, or the step under way, or nothing yet", () => {
+  assert.equal(describeGlimpse({ text: "", reasoning: "", step: null }), "");
+  assert.equal(describeGlimpse({ text: "", reasoning: "", step: { doing: "editing index.md" } }), "Editing index.md…");
+  assert.equal(describeGlimpse({ text: "", reasoning: "First the sources,\n\nthen the summary.", step: null }), "First the sources, then the summary.");
+  // Words being written win over the thinking behind them and over the step.
+  assert.equal(describeGlimpse({ text: "Here is the plan.", reasoning: "hmm", step: { doing: "reading notes.md" } }), "Here is the plan.");
+  const long = Array.from({ length: 40 }, (_, index) => `word${index}`).join(" ");
+  const glance = describeGlimpse({ text: long, reasoning: "", step: null });
+  assert.ok(glance.startsWith("…"), glance);
+  assert.ok(glance.length <= GLIMPSE_CHARS + 1, String(glance.length));
+  assert.ok(glance.endsWith("word39"), glance);
+  assert.equal(GLIMPSE_MS, 12_000);
 });

@@ -32,6 +32,8 @@ const TRANSIENT_REFUSALS = 6;
 const HARD_PROMPT = "HARD: this model cannot use tools.";
 const SECOND_MODEL_REPLY = "Answered by the second model.";
 const SLOW_PROMPT = "SLOW: take longer than two minutes.";
+/** The first words arrive at once; the rest only after the hold. */
+const SLOW_OPENING = "Thinking this through, one moment.";
 const SLOW_REPLY = "Worth the wait.";
 const SLOW_HOLD_MS = 130_000;
 const STOP_PROMPT = "STOP: hold until I stop you.";
@@ -88,10 +90,11 @@ function streamReply(response: ServerResponse, model: string, text: string): voi
   response.end();
 }
 
-/** Open the stream at once, then hold the words for `holdMs`; a closed connection (a stop, an abort) cancels the wait. */
-function holdThenReply(response: ServerResponse, model: string, text: string, holdMs: number): void {
+/** Open the stream at once (with an opening line when given), then hold the rest for `holdMs`; a closed connection (a stop, an abort) cancels the wait. */
+function holdThenReply(response: ServerResponse, model: string, text: string, holdMs: number, opening = ""): void {
   response.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache", connection: "keep-alive" });
   response.write(chunk(model, { role: "assistant" }, null));
+  if (opening) response.write(chunk(model, { content: `${opening} ` }, null));
   const timer = setTimeout(() => {
     if (response.writableEnded || response.destroyed) return;
     response.write(chunk(model, { content: text }, null));
@@ -134,7 +137,7 @@ async function startScriptedModel(): Promise<{ baseUrl: string; requests: Record
           return streamReply(response, model, TRANSIENT_REPLY);
         }
         if (prompt.includes("HARD")) return refuse(response, 400, "No endpoints found that support tool use. Try disabling tools.", "invalid_request_error");
-        if (prompt.includes("SLOW")) return holdThenReply(response, model, SLOW_REPLY, SLOW_HOLD_MS);
+        if (prompt.includes("SLOW")) return holdThenReply(response, model, SLOW_REPLY, SLOW_HOLD_MS, SLOW_OPENING);
         if (prompt.includes("STOP")) return nth === 1 ? holdThenReply(response, model, "Never sent.", 120_000) : streamReply(response, model, STOP_REPLY);
         if (prompt.includes("HOLD")) return holdThenReply(response, model, HOLD_REPLY, HOLD_MS);
         if (prompt.includes("CUT")) return nth === 1 ? holdThenReply(response, model, "Never sent.", 90_000) : streamReply(response, model, CUT_REPLY);
@@ -227,6 +230,26 @@ async function endOutcomeTrace(app: App): Promise<{ outcomes: string[]; headers:
 }
 
 const USER_BUBBLES = `[...document.querySelectorAll('[data-message-role="user"]')].map((node) => node.textContent?.trim() ?? "")`;
+
+/** The turn settled: the header says Ready and the composer is not working. */
+async function waitForSettled(app: App, timeoutMs = 120_000): Promise<void> {
+  await waitFor(app, `document.querySelector('[data-testid="coworker-top-status"]')?.textContent?.trim() === "Ready" && document.querySelector('[data-testid="coworker-composer"]')?.getAttribute("data-working") !== "true"`, {
+    timeoutMs,
+    label: "the turn settled",
+  });
+}
+
+/** The message left the field and the engine has its turn: its bubble is up, the live row is past Sending, and nothing waits as Next. */
+async function waitUntilRunning(app: App, prompt: string): Promise<void> {
+  await waitFor(app, `(() => {
+    const users = ${USER_BUBBLES};
+    const row = document.querySelector('[data-testid="coworker-working"]');
+    return users.some((text) => text.includes(${json(prompt)}))
+      && document.querySelector('[data-testid="coworker-composer"]')?.getAttribute("data-working") === "true"
+      && row instanceof HTMLElement && row.dataset.phase !== "sending"
+      && document.querySelectorAll('[data-testid="coworker-next-row"]').length === 0;
+  })()`, { timeoutMs: 60_000, label: `${json(prompt)} running` });
+}
 
 /** The engine's own record of the thread: user messages by text, so a retried message is provably there once. */
 async function engineUserMessages(serverUrl: string, token: string, workspaceId: string, threadId: string): Promise<string[]> {
@@ -326,6 +349,7 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
   );
 
   // --- (b) A model that cannot use tools: one coworker-side message with A, B, C; A switches model and retries the same message. ---
+  await waitForSettled(app);
   await beginOutcomeTrace(app);
   await type(app, HARD_PROMPT);
   const hardCard = await waitFor(app, `(() => {
@@ -383,8 +407,28 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
   await useFirstModel();
 
   // --- (c) A reply held past the wait budget is still working, not a problem. -------------------------
+  await waitForSettled(app);
   await beginOutcomeTrace(app);
   await type(app, SLOW_PROMPT);
+  await waitUntilRunning(app, SLOW_PROMPT);
+  // An impatient tap on the live row shows one discreet line of what is streaming, live, then hides itself.
+  await waitFor(app, `(() => {
+    const row = document.querySelector('[data-testid="coworker-working"]');
+    if (!(row instanceof HTMLElement) || row.dataset.peek !== "false") return false;
+    row.querySelector('[data-testid="coworker-progress-phrase"]')?.click();
+    return true;
+  })()`, { timeoutMs: 30_000, label: "tap the live row" });
+  const peek = await waitFor(app, `(() => {
+    const line = document.querySelector('[data-testid="coworker-working-peek"]');
+    if (!line || !(line.textContent ?? "").includes(${json(SLOW_OPENING)})) return false;
+    return { text: line.textContent?.trim() ?? "", bubbles: document.querySelectorAll('[data-message-role="assistant"] .bubble').length };
+  })()`, { timeoutMs: 30_000, label: "the glimpse of what is streaming" });
+  expect(peek).toMatchObject({ text: SLOW_OPENING });
+  const peekShownAt = Date.now();
+  await waitFor(app, `!document.querySelector('[data-testid="coworker-working-peek"]') && document.querySelector('[data-testid="coworker-working"]')?.getAttribute("data-peek") === "false"`, { timeoutMs: 30_000, label: "the glimpse hid itself" });
+  const peekLastedMs = Date.now() - peekShownAt;
+  expect(peekLastedMs).toBeGreaterThan(5_000);
+  expect(peekLastedMs).toBeLessThan(20_000);
   const slowRow = await waitFor(app, `(() => {
     const row = document.querySelector('[data-testid="coworker-working"][data-outcome="slow"]');
     if (!row) return false;
@@ -405,13 +449,15 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
   expect(slowTrace.headers).not.toContain("Response delayed");
   expect(slowTrace.headers).not.toContain("Reply failed");
   evidence.recordAssertionEvidence(
-    "Two minutes without a reply is still working, in the same words everywhere, and the reply then lands",
-    `The scripted model held its words for ${SLOW_HOLD_MS / 1_000} s. Past the wait budget the live row read "Nova is still working on it…" with one inline Stop, the header and thread status said Still working and the rail "Still working on it", nothing rose or card-shaped appeared, and the reply arrived afterwards.`,
+    "Two minutes without a reply is still working, in the same words everywhere, a tap shows a glimpse of the stream, and the reply then lands",
+    `The scripted model sent its first words and then held the rest for ${SLOW_HOLD_MS / 1_000} s. A tap on the live row showed one discreet line with the words streaming so far ("${SLOW_OPENING}") and hid it again by itself after ${Math.round(peekLastedMs / 1_000)} s. Past the wait budget the live row read "Nova is still working on it…" with one inline Stop, the header and thread status said Still working and the rail "Still working on it", nothing rose or card-shaped appeared, and the reply arrived afterwards.`,
     true,
   );
 
   // --- (d) Stop is one click away; Stopped. with Retry; Retry re-runs the same message. -------------
+  await waitForSettled(app);
   await type(app, STOP_PROMPT);
+  await waitUntilRunning(app, STOP_PROMPT);
   await waitFor(app, `document.querySelector('[data-testid="coworker-send"]')?.getAttribute("data-role") === "stop"`, { timeoutMs: 30_000, label: "the round control became Stop" });
   await evalIn(app, `document.querySelector('[data-testid="coworker-send"][data-role="stop"]').click(); true`);
   const stoppedLine = await waitFor(app, `(() => {
@@ -439,8 +485,9 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
   );
 
   // --- (e) What you type while the coworker works waits as Next: in order, editable, removable, or sent now. ---
+  await waitForSettled(app);
   await type(app, HOLD_PROMPT);
-  await waitFor(app, `document.querySelector('[data-testid="coworker-composer"]')?.getAttribute("data-working") === "true"`, { timeoutMs: 30_000, label: "the composer stays open while the reply runs" });
+  await waitUntilRunning(app, HOLD_PROMPT);
   await type(app, "Next one");
   await type(app, "Next two");
   const rows = () => evalIn(app, `[...document.querySelectorAll('[data-testid="coworker-next-row"]')].map((row) => row.querySelector("span.truncate")?.textContent?.trim() ?? "")`);
@@ -470,8 +517,9 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
   expect((await engineUserMessages(serverUrl, ownerToken, workspaceId, threadId)).filter((text) => text.includes("HOLD"))).toHaveLength(1);
 
   // Then the ordinary case: two messages wait, and drain one at a time, in order, once the reply lands.
+  await waitForSettled(app);
   await type(app, `${HOLD_PROMPT} Again.`);
-  await waitFor(app, `document.querySelector('[data-testid="coworker-composer"]')?.getAttribute("data-working") === "true"`, { timeoutMs: 30_000, label: "the composer stays open again" });
+  await waitUntilRunning(app, `${HOLD_PROMPT} Again.`);
   await type(app, "Drain A");
   await type(app, "Drain B");
   expect(await rows()).toEqual(["Drain A", "Drain B"]);
@@ -496,8 +544,9 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
   // The window's reload does not stop the engine by itself, so the engine's turn is interrupted while
   // the window is away — the same interruption a quit of the app produces — and the record on disk is
   // what the returning window reads.
+  await waitForSettled(app);
   await type(app, CUT_PROMPT);
-  await waitFor(app, `document.querySelector('[data-testid="coworker-composer"]')?.getAttribute("data-working") === "true"`, { timeoutMs: 30_000, label: "the cut turn is running" });
+  await waitUntilRunning(app, CUT_PROMPT);
   await type(app, "After the cut");
   expect(await rows()).toEqual(["After the cut"]);
   await evalIn(app, "location.reload(); true");
