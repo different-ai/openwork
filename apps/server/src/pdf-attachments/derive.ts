@@ -1,8 +1,8 @@
 import { createHash, randomUUID } from "node:crypto";
 import { constants } from "node:fs";
-import { link, lstat, mkdir, open, readdir, realpath, rename, rm } from "node:fs/promises";
+import { link, lstat, mkdir, open, readdir, realpath, rename, rm, unlink } from "node:fs/promises";
 import type { FileHandle } from "node:fs/promises";
-import { basename, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { encode as encodePng } from "fast-png";
 import { encode as encodeJpeg } from "jpeg-js";
 import { looksLikePdf, withPdfDocument } from "./pdfium.js";
@@ -17,7 +17,8 @@ import type { PdfRenderedBitmap } from "./pdfium.js";
  * attachment bytes. The workspace copy (materialized PDF, `text.md`, page
  * images, `manifest.json`) exists for the agent's own tools and for people; it
  * is write-only here and never read back, so a hostile workspace cannot steer
- * what the model sees. Writes refuse any path that resolves through a symlink.
+ * what the model sees. Writes refuse any path that resolves through a symlink
+ * and are verified through handles on both sides of the publishing step.
  *
  * Limits are deliberate. They keep a single attachment from stalling the turn,
  * blowing the provider's request size, or filling the workspace, while still
@@ -232,60 +233,99 @@ async function existingSha(realDirectory: string, path: string): Promise<string 
   }
 }
 
+const WRITE_CHANGED = "PDF attachment storage path changed underneath the write; refusing to use it.";
+
+type FileIdentity = { dev: number; ino: number };
+
+function sameFile(left: FileIdentity, right: FileIdentity): boolean {
+  return left.dev === right.dev && left.ino === right.ino;
+}
+
+/** Removes `path` only while it still names the file this module created; a swapped path names someone else's file and is left alone. */
+async function unlinkOwn(path: string, identity: FileIdentity): Promise<void> {
+  try {
+    const named = await lstat(path);
+    if (named.isFile() && sameFile(named, identity)) await unlink(path);
+  } catch {
+    // Already gone, or not ours to remove.
+  }
+}
+
 /**
  * Creates a new file (never following a symlink) and confirms it landed inside
  * `realDirectory` before any content is written through the returned handle.
  */
-async function createVerifiedFile(realDirectory: string, path: string): Promise<FileHandle> {
+async function createVerifiedFile(realDirectory: string, path: string): Promise<{ handle: FileHandle; identity: FileIdentity }> {
   const handle = await open(path, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
+  let identity: FileIdentity | null = null;
   try {
     const created = await handle.stat();
+    identity = { dev: created.dev, ino: created.ino };
     const real = await realpath(path);
     const named = await lstat(real);
-    if (!isWithin(realDirectory, real) || named.dev !== created.dev || named.ino !== created.ino) {
-      throw new Error("PDF attachment storage path changed underneath the write; refusing to use it.");
-    }
-    return handle;
+    if (!isWithin(realDirectory, real) || !sameFile(named, identity)) throw new Error(WRITE_CHANGED);
+    return { handle, identity };
   } catch (cause) {
     await handle.close();
-    // Remove the empty file only if it verifiably sits where it was meant to; never delete through a swapped path.
-    await realpath(path)
-      .then((real) => (isWithin(realDirectory, real) ? rm(real, { force: true }) : undefined))
-      .catch(() => undefined);
+    if (identity) await unlinkOwn(path, identity);
     throw cause;
   }
 }
 
-async function writeFileAtomically(realDirectory: string, name: string, bytes: Uint8Array | string): Promise<void> {
-  const target = join(realDirectory, name);
-  const tmp = `${target}.${randomUUID()}.tmp`;
-  const handle = await createVerifiedFile(realDirectory, tmp);
+/**
+ * Confirms `target` names the file just published at its intended place:
+ * reached without a symlink, a regular file with a single link, and either the
+ * inode written here or another writer's copy of the same bytes. Anything else
+ * means the publishing call resolved a swapped path. Exported for tests.
+ */
+export async function verifyPublished(target: string, identity: FileIdentity, bytes: Uint8Array): Promise<void> {
+  const handle = await open(target, constants.O_RDONLY | constants.O_NOFOLLOW);
   try {
-    await handle.writeFile(bytes);
+    const published = await handle.stat();
+    if ((await realpath(target)) !== target || !published.isFile() || published.nlink !== 1) throw new Error(WRITE_CHANGED);
+    if (!sameFile(published, identity) && !(await handle.readFile()).equals(bytes)) throw new Error(WRITE_CHANGED);
   } finally {
     await handle.close();
-  }
-  try {
-    await rename(tmp, target);
-  } finally {
-    await rm(tmp, { force: true }).catch(() => undefined);
   }
 }
 
-async function linkBytesAtomically(realDirectory: string, name: string, bytes: Uint8Array): Promise<void> {
+/**
+ * Publishes the verified temporary file `tmp` as `name` inside `realDirectory`:
+ * `replace` renames over an earlier copy, `create` links and leaves an existing
+ * file for the caller to judge. Node has no directory-relative rename or link,
+ * so the publishing call resolves the path itself; the directory is confirmed
+ * symlink-free immediately before it and the result is verified through a
+ * handle immediately after, and the temporary file is removed only while the
+ * path still names it. Exported for tests.
+ */
+export async function publishVerifiedFile(realDirectory: string, tmp: string, name: string, identity: FileIdentity, bytes: Uint8Array, publish: "replace" | "create"): Promise<void> {
   const target = join(realDirectory, name);
-  const tmp = `${target}.${randomUUID()}.tmp`;
-  const handle = await createVerifiedFile(realDirectory, tmp);
   try {
-    await handle.writeFile(bytes);
+    if ((await realpath(realDirectory)) !== realDirectory) throw new Error(WRITE_CHANGED);
+    if (publish === "replace") await rename(tmp, target);
+    else await link(tmp, target);
   } finally {
-    await handle.close();
+    await unlinkOwn(tmp, identity);
   }
+  await verifyPublished(target, identity, bytes);
+}
+
+/** Writes `content` to `name` inside the verified `realDirectory` through a fresh temporary file and a verified publish. */
+async function writeVerifiedFile(realDirectory: string, name: string, content: Uint8Array | string, publish: "replace" | "create"): Promise<void> {
+  const bytes = typeof content === "string" ? Buffer.from(content, "utf8") : content;
+  const tmp = join(realDirectory, `${name}.${randomUUID()}.tmp`);
+  const { handle, identity } = await createVerifiedFile(realDirectory, tmp);
   try {
-    await link(tmp, target);
-  } finally {
-    await rm(tmp, { force: true }).catch(() => undefined);
+    try {
+      await handle.writeFile(bytes);
+    } finally {
+      await handle.close();
+    }
+  } catch (cause) {
+    await unlinkOwn(tmp, identity);
+    throw cause;
   }
+  await publishVerifiedFile(realDirectory, tmp, name, identity, bytes, publish);
 }
 
 async function materializePdf(root: string, safeFilename: string, digest: string, bytes: Uint8Array): Promise<string> {
@@ -297,7 +337,7 @@ async function materializePdf(root: string, safeFilename: string, digest: string
     if (current === digest) return relativePath;
     if (current !== null) continue;
     try {
-      await linkBytesAtomically(directory, name, bytes);
+      await writeVerifiedFile(directory, name, bytes, "create");
       return relativePath;
     } catch (cause) {
       const afterRace = await existingSha(directory, target);
@@ -350,7 +390,7 @@ async function writeManifest(directory: string, derived: DerivedPdf): Promise<vo
     renderedPages: derived.renderedPages,
     renderBudgetExhausted: derived.renderBudgetExhausted,
   };
-  await writeFileAtomically(directory, MANIFEST_FILENAME, JSON.stringify(stored, null, 2));
+  await writeVerifiedFile(directory, MANIFEST_FILENAME, JSON.stringify(stored, null, 2), "replace");
 }
 
 function encodeBitmap(bitmap: PdfRenderedBitmap): EncodedPage {
@@ -458,22 +498,24 @@ function remember(entry: MemoryEntry): MemoryEntry {
   return entry;
 }
 
-async function pruneDerivedBundles(root: string, keep: string): Promise<void> {
-  const directory = join(root, DERIVED_DIR);
+const BUNDLE_NAME = /^[0-9a-f]{16}-/;
+
+/** Removes the oldest bundles beneath the verified real `pdf-pages` directory once it holds more than the cap. */
+async function pruneDerivedBundles(realDirectory: string, keep: string): Promise<void> {
   let entries: string[];
   try {
-    entries = await readdir(directory);
+    entries = await readdir(realDirectory);
   } catch {
     return;
   }
   if (entries.length <= MAX_DERIVED_BUNDLES) return;
   const dated: Array<{ name: string; mtimeMs: number }> = [];
   for (const name of entries) {
-    if (name === keep) continue;
+    if (name === keep || !BUNDLE_NAME.test(name)) continue;
     try {
-      const entry = await lstat(join(directory, name));
+      const entry = await lstat(join(realDirectory, name));
       if (!entry.isDirectory()) continue;
-      const manifest = await lstat(join(directory, name, MANIFEST_FILENAME));
+      const manifest = await lstat(join(realDirectory, name, MANIFEST_FILENAME));
       if (!manifest.isFile()) continue;
       dated.push({ name, mtimeMs: manifest.mtimeMs });
     } catch {
@@ -483,7 +525,9 @@ async function pruneDerivedBundles(root: string, keep: string): Promise<void> {
   dated.sort((left, right) => left.mtimeMs - right.mtimeMs);
   const excess = entries.length - MAX_DERIVED_BUNDLES;
   for (const { name } of dated.slice(0, Math.max(0, excess))) {
-    await rm(join(directory, name), { recursive: true, force: true });
+    // Deletion resolves the path itself: only ever remove a bundle-named directory while the parent is still reached without a symlink.
+    if ((await realpath(realDirectory)) !== realDirectory) return;
+    await rm(join(realDirectory, name), { recursive: true, force: true });
   }
 }
 
@@ -496,7 +540,7 @@ async function storePageImage(root: string | null, derived: DerivedPdf, page: nu
   if (!root || !derived.directory) return;
   try {
     const directory = await confinedDirectory(root, derivedDirectoryFor(root, derived.sha256, derived.filename));
-    await writeFileAtomically(directory, pageFileName(page, image.mime), image.bytes);
+    await writeVerifiedFile(directory, pageFileName(page, image.mime), image.bytes, "replace");
   } catch {
     // The workspace copy is a convenience; the in-memory image still reaches the model.
   }
@@ -532,11 +576,11 @@ async function build(root: string | null, filename: string, bytes: Uint8Array, o
     if (expectedDirectory && displayDirectory && root && !extracted.loadError) {
       // Created only now that there is something to store; a symlinked bundle fails the derivation.
       const derivedDirectory = await confinedDirectory(root, expectedDirectory);
-      await writeFileAtomically(derivedDirectory, TEXT_FILENAME, text);
+      await writeVerifiedFile(derivedDirectory, TEXT_FILENAME, text, "replace");
       base.textPath = `${displayDirectory}/${TEXT_FILENAME}`;
       current = { ...base, text };
       await writeManifest(derivedDirectory, current);
-      await pruneDerivedBundles(root, basename(derivedDirectory));
+      await pruneDerivedBundles(dirname(derivedDirectory), basename(derivedDirectory));
     } else {
       current = { ...base, text };
     }

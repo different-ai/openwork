@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { link, mkdir, mkdtemp, readFile, readdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { link, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, relative } from "node:path";
+import { basename, join, relative } from "node:path";
 import { createHash } from "node:crypto";
 
 import {
@@ -17,9 +17,11 @@ import {
   openVerifiedForRead,
   pageImageOf,
   pageTextFrom,
+  publishVerifiedFile,
   renderPdfPages,
   resetDerivedPdfMemory,
   safePdfFilename,
+  verifyPublished,
 } from "./derive.js";
 import { buildTestPdf, corruptTestPdf } from "./pdf-fixture.test-helper.js";
 
@@ -304,6 +306,80 @@ describe("derivePdf", () => {
       } finally {
         await rm(outside, { recursive: true, force: true });
       }
+    });
+  });
+
+  test("a directory swapped for a symlink after the temporary file was written is refused, and nothing lands outside", async () => {
+    await withWorkspace(async (root) => {
+      const outside = await mkdtemp(join(tmpdir(), "openwork-pdf-swap-"));
+      try {
+        const realRoot = await realpath(root);
+        const bundle = join(realRoot, "bundle");
+        await mkdir(bundle);
+        for (const publish of ["replace", "create"] as const) {
+          // The temporary file was created and written while `bundle` was the verified directory...
+          const tmp = join(bundle, `text.md.${publish}.tmp`);
+          const bytes = Buffer.from(`derived text (${publish})`);
+          await writeFile(tmp, bytes);
+          const written = await lstat(tmp);
+          // ...and the directory is swapped for a symlink before the publishing call resolves the path.
+          const moved = join(realRoot, `moved-${publish}`);
+          await rename(bundle, moved);
+          await symlink(outside, bundle);
+          await writeFile(join(outside, basename(tmp)), "ATTACKER");
+
+          await expect(publishVerifiedFile(bundle, tmp, "text.md", written, bytes, publish)).rejects.toThrow("changed underneath");
+          expect(await readdir(outside)).toEqual([basename(tmp)]);
+          expect(await readFile(join(outside, basename(tmp)), "utf8")).toBe("ATTACKER");
+          expect(await readFile(join(moved, basename(tmp)))).toEqual(bytes);
+
+          await rm(join(outside, basename(tmp)));
+          await rm(bundle);
+          await rename(moved, bundle);
+        }
+      } finally {
+        await rm(outside, { recursive: true, force: true });
+      }
+    });
+  });
+
+  test("a published file is trusted only while its path names it directly", async () => {
+    await withWorkspace(async (root) => {
+      const realRoot = await realpath(root);
+      const directory = join(realRoot, "bundle");
+      const target = join(directory, "text.md");
+      const bytes = Buffer.from("ours");
+      await mkdir(directory);
+      await writeFile(target, bytes);
+      const ours = await lstat(target);
+      await verifyPublished(target, ours, bytes);
+
+      // Another writer published the same bytes first (a different inode, allocated while ours still existed).
+      const twin = join(directory, "twin.md");
+      await writeFile(twin, bytes);
+      await rename(twin, target);
+      await verifyPublished(target, ours, bytes);
+
+      // Different bytes from someone else are not this write.
+      const other = join(directory, "other.md");
+      await writeFile(other, "theirs");
+      await rename(other, target);
+      await expect(verifyPublished(target, ours, bytes)).rejects.toThrow("changed underneath");
+
+      // A symlink at the final component is never followed.
+      await rm(target);
+      await symlink(join(realRoot, "elsewhere.md"), target);
+      await writeFile(join(realRoot, "elsewhere.md"), bytes);
+      await expect(verifyPublished(target, ours, bytes)).rejects.toThrow();
+
+      // The very inode written here, reached through a directory that is now a symlink, is not trusted either.
+      await rm(target);
+      await writeFile(target, bytes);
+      const identity = await lstat(target);
+      await verifyPublished(target, identity, bytes);
+      await rename(directory, join(realRoot, "moved"));
+      await symlink(join(realRoot, "moved"), directory);
+      await expect(verifyPublished(target, identity, bytes)).rejects.toThrow("changed underneath");
     });
   });
 
