@@ -52,7 +52,7 @@ import { markAutoPicked, wasAutoPicked } from "@/lib/model-choice";
 import { describeReview, parseWorkerReview, parseWorkerTurn, workerNameFromTitle, type WorkerReview, type WorkerSummary } from "@/lib/workers";
 import { WorkerDecisionCards } from "@/ui/worker-decision";
 import { coworkerToolName } from "@/lib/coworker-tools";
-import { describeProgress, describeWorkStep, summarizeWork, technicalSections, type ProgressPhase, type WorkStep } from "@/lib/work-receipt";
+import { GLIMPSE_MS, describeGlimpse, describeProgress, describeWorkStep, summarizeWork, technicalSections, type ProgressPhase, type WorkStep } from "@/lib/work-receipt";
 import { isServerTool, toolRefPath } from "@/lib/apps-tools";
 import { openPanelRoute } from "@/lib/panel-route";
 import { appsToolsRoute } from "@/lib/panel-views";
@@ -1236,6 +1236,18 @@ function ThreadView({
       activeTurnRef.current = waiting;
       setActiveTurn(waiting);
       await refresh();
+      // Stop pressed while the message was still on its way: the engine had nothing to abort then.
+      // Now that it has the turn, abort it as soon as it runs, until it lets go or the turn is over.
+      if (turnStateRef.current.pending?.messageId === messageId && turnStateRef.current.pending.stoppedAt !== null) {
+        const deadline = Date.now() + 10_000;
+        while (Date.now() < deadline) {
+          const snapshot = await threads.client.getThreadSnapshot(threadId);
+          const reply = snapshot.messages.filter((message) => message.role === "assistant" && message.parentId === messageId).at(-1);
+          if (reply && (reply.error !== null || reply.completedAt !== null)) break;
+          if (isRunning(snapshot.status)) await threads.client.abortThread(threadId).catch(() => undefined);
+          await new Promise<void>((resolveWait) => window.setTimeout(resolveWait, 300));
+        }
+      }
 
       const controller = new AbortController();
       waitControllerRef.current = controller;
@@ -2112,6 +2124,11 @@ function TypingDots() {
  * changes only when the phase changes — never on a timer. Past the wait budget
  * the phrase softens to "still working on it" and gains one inline Stop; a
  * long wait is not a problem, and nothing rose or card-shaped appears.
+ *
+ * A person who gets impatient can tap the phrase: one discreet gray line below
+ * shows the end of what is streaming right now — the words being written, the
+ * thinking, or the tool step — live, and goes away by itself after a moment so
+ * the row is discreet again. Tapping again hides it at once.
  */
 function WorkIndicator({
   coworker,
@@ -2129,12 +2146,36 @@ function WorkIndicator({
 }) {
   const step = activeWorkStep(messages);
   const phase = progressPhase(label, step !== null);
+  const [peekUntil, setPeekUntil] = useState<number | null>(null);
+  useEffect(() => {
+    if (peekUntil === null) return;
+    const timer = window.setTimeout(() => setPeekUntil(null), Math.max(0, peekUntil - Date.now()));
+    return () => window.clearTimeout(timer);
+  }, [peekUntil]);
+  const writing = messages.findLast((message) => message.role === "assistant");
+  const glimpse = peekUntil === null ? "" : describeGlimpse({ text: writing?.text ?? "", reasoning: writing?.reasoning ?? "", step });
   return (
-    <div className="flex items-center gap-2.5 px-1 py-1.5 text-xs text-mist" data-testid="coworker-working" data-phase={phase} data-outcome={stillWorking ? "slow" : "working"}>
-      <CoworkerAvatar animated working={phase === "tool"} color={coworker.avatarColor} glasses={coworker.avatarGlasses} name={coworker.name} size={22} />
-      <TypingDots />
-      <span data-testid="coworker-progress-phrase">{stillWorking || describeProgress(coworker.name, phase, step)}</span>
-      {stillWorking && onStop ? <InlineAction label="Stop" choice="stop" onClick={onStop} /> : null}
+    <div className="px-1 py-1.5 text-xs text-mist" data-testid="coworker-working" data-phase={phase} data-outcome={stillWorking ? "slow" : "working"} data-peek={peekUntil === null ? "false" : "true"}>
+      <div className="flex items-center gap-2.5">
+        <CoworkerAvatar animated working={phase === "tool"} color={coworker.avatarColor} glasses={coworker.avatarGlasses} name={coworker.name} size={22} />
+        <TypingDots />
+        <button
+          type="button"
+          className="text-left hover:text-snow"
+          title={peekUntil === null ? `See what ${coworker.name} is doing right now` : "Hide"}
+          aria-expanded={peekUntil !== null}
+          data-testid="coworker-progress-phrase"
+          onClick={() => setPeekUntil((current) => (current === null ? Date.now() + GLIMPSE_MS : null))}
+        >
+          {stillWorking || describeProgress(coworker.name, phase, step)}
+        </button>
+        {stillWorking && onStop ? <InlineAction label="Stop" choice="stop" onClick={onStop} /> : null}
+      </div>
+      {peekUntil !== null ? (
+        <p className="mt-1 truncate pl-[3.75rem] text-[11px] text-mist/60" data-testid="coworker-working-peek" aria-live="polite">
+          {glimpse || `Nothing to show yet — ${coworker.name} hasn't started writing.`}
+        </p>
+      ) : null}
     </div>
   );
 }
